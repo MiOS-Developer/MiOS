@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 param(
@@ -4559,6 +4559,74 @@ function Invoke-DeployPipeline([hashtable]$HW) {
     }
 }
 
+function Start-MiosDevMachine {
+    <#
+    .SYNOPSIS
+    Starts or re-establishes the Podman dev machine (or relay) after a WSL shutdown.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Machine = $BuilderDistro
+    )
+    if (-not $Machine) { $Machine = $DevDistro }
+    if (-not $Machine) { $Machine = 'MiOS-DEV' }
+
+    if ($env:MIOS_SKIP_MACHINE_RESTART -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_MACHINE_RESTART set -- skipping podman machine restart"
+        return $false
+    }
+
+    $ml = $null
+    try {
+        $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+              Where-Object { $_ -match "(?i)^$([regex]::Escape($Machine))\s" }
+    } catch {}
+
+    if (-not $ml) {
+        try {
+            $cand = if ($Machine -match '^podman-(.+)$') { $Matches[1] } else { "podman-$Machine" }
+            $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+                  Where-Object { $_ -match "(?i)^$([regex]::Escape($cand))\s" }
+            if ($ml) { $Machine = $cand }
+        } catch {}
+    }
+
+    if ($ml) {
+        if ($ml -match '(?i)\s+true$') {
+            Log-Ok "$Machine podman machine is already running"
+            return $true
+        }
+        Set-Step "Re-establishing $Machine podman machine after WSL shutdown..."
+        $startOut = [System.Collections.Generic.List[string]]::new()
+        & {
+            $ErrorActionPreference = 'Continue'
+            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            & podman machine start $Machine 2>&1 | ForEach-Object {
+                Write-Log "podman-machine-start: $_"
+                $startOut.Add([string]$_) | Out-Null
+            }
+        }
+        $startJoined = ($startOut -join " ")
+        if ($LASTEXITCODE -eq 0 -or $startJoined -match '(?i)already running') {
+            Log-Ok "$Machine podman machine re-established"
+            return $true
+        } else {
+            Log-Warn "podman machine start $Machine returned non-zero (exit $LASTEXITCODE): $startJoined"
+            return $false
+        }
+    } else {
+        # Fallback for bare WSL distro without podman machine registration: warm with wsl.exe
+        try {
+            & wsl.exe -d $Machine -- /bin/sh -c 'echo ready' 2>&1 | Out-Null
+            return $true
+        } catch {
+            return $false
+        }
+    }
+}
+
 function Test-MiosDevDistroHealthy {
     Set-Step ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_header_template' -Default "Smoke-testing {distro} before rename...") -replace '\{distro\}', $DevDistro)
 
@@ -4591,21 +4659,24 @@ function Test-MiosDevDistroHealthy {
     # 2. systemd up. Retried with backoff: Phase 3's wsl --terminate
     # restarts the distro right before this smoke check runs, so systemd
     # is warming up. Without retry, `systemctl is-system-running` returns
-    # 'offline' before pid1 has finished switch-root.
+    # 'offline' or 'starting' before pid1 has reached steady state.
+    # Acceptance Criterion: WHEN smoke 2/4 checks systemd THE SYSTEM SHALL only accept state running|degraded (not starting).
     # SSOT: attempts + interval resolve through mios.toml [smoke_tests].
     $sysOut = ""
     $sysAttempts  = [int](Get-MiosTomlValue -Section 'smoke_tests' -Key 'systemd_attempts'   -Default 15)
     $smokeIntSec  = [int](Get-MiosTomlValue -Section 'smoke_tests' -Key 'interval_seconds'   -Default 2)
     for ($i = 1; $i -le $sysAttempts; $i++) {
         try { $sysOut = (& wsl.exe -d $name --user root -- /bin/sh -c 'systemctl is-system-running 2>&1 || true' 2>&1) -join "" } catch {}
-        if ($sysOut.Trim() -notmatch '^(offline|unknown)\s*$' -and -not [string]::IsNullOrWhiteSpace($sysOut)) { break }
+        $cleanState = $sysOut.Trim()
+        if ($cleanState -match '^(running|degraded)$') { break }
         if ($i -lt $sysAttempts) { Start-Sleep -Seconds $smokeIntSec }
     }
-    if ($sysOut.Trim() -match '^(offline|unknown)\s*$' -or [string]::IsNullOrWhiteSpace($sysOut)) {
-        Log-Warn "smoke: systemd not reachable in $name after $sysAttempts attempts (state: '$sysOut')"
+    $cleanState = $sysOut.Trim()
+    if ($cleanState -notmatch '^(running|degraded)$') {
+        Log-Warn "smoke: systemd not ready in $name after $sysAttempts attempts (state: '$cleanState' - expected running|degraded)"
         # Non-fatal -- some build flows skip systemd. Continue.
     } else {
-        Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_systemd_template' -Default "smoke 2/4: systemd state '{state}' in {name}") -replace '\{state\}', $sysOut.Trim() -replace '\{name\}', $name)
+        Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_systemd_template' -Default "smoke 2/4: systemd state '{state}' in {name}") -replace '\{state\}', $cleanState -replace '\{name\}', $name)
     }
 
     # 3. MiOS overlay present.
@@ -4618,6 +4689,13 @@ function Test-MiosDevDistroHealthy {
         # we need pre-build.
     } else {
         Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_overlay_template' -Default "smoke 3/4: /usr/share/mios overlay present in {name}") -replace '\{name\}', $name)
+    }
+
+    # 4. Podman API server check.
+    # Re-establish machine if needed before testing podman API.
+    if ($name -eq "podman-$DevDistro" -or $name -eq $DevDistro) {
+        $podMachine = if ($DevDistro) { $DevDistro } else { "MiOS-DEV" }
+        Start-MiosDevMachine -Machine $podMachine | Out-Null
     }
 
     if ($name -eq "podman-$DevDistro") {
@@ -8065,6 +8143,8 @@ exit 0
     Restore-PodmanPrefix   # auto-recover from any previous rename
     Install-MiosWindowsTools   # winget install [packages.windows] (fastfetch, btop, pwsh, ...)
     Install-WindowsBranding
+
+    Start-MiosDevMachine -Machine $BuilderDistro
 
     $devHealthy = Test-MiosDevDistroHealthy
     if ($devHealthy -and ($env:MIOS_RENAME_DISTRO -in @('1','true','TRUE','yes'))) {
