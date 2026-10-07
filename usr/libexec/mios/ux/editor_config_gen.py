@@ -20,6 +20,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _LIB_PATH = os.path.normpath(os.path.join(_HERE, "..", "..", "..", "lib", "mios"))
@@ -243,21 +244,54 @@ class EditorConfigGen:
             with open(target_path, "r", encoding="utf-8") as f:
                 content = json.load(f)
 
-            content_str = json.dumps(content)
-            cloud_keys = [
-                k for k in ["sk-", "ghp_", "api.openai.com", "anthropic.com", "gemini.googleapis.com"]
-                if k in content_str and not k.startswith("sk-local")
-            ]
+            def walk(value, path=""):
+                if isinstance(value, dict):
+                    for key, item in value.items():
+                        field = f"{path}.{key}" if path else key
+                        yield field, key.rsplit(".", 1)[-1].replace("_", "").lower(), item
+                        yield from walk(item, field)
+                elif isinstance(value, list):
+                    for index, item in enumerate(value):
+                        yield from walk(item, f"{path}[{index}]")
 
-            has_local = "localhost" in content_str or "127.0.0.1" in content_str
-            is_compliant = has_local and len(cloud_keys) == 0
+            def endpoint(value):
+                if not isinstance(value, str) or value != value.strip():
+                    return None
+                try:
+                    url = urlsplit(value)
+                    if (url.scheme not in ("http", "https")
+                            or url.hostname not in ("localhost", "127.0.0.1", "::1")
+                            or url.username is not None or url.password is not None
+                            or url.query or url.fragment):
+                        return None
+                    return (url.scheme, url.hostname, url.port, url.path.rstrip("/"))
+                except ValueError:
+                    return None
+
+            allowed = {endpoint(self.agent_endpoint), endpoint(self.inference_endpoint)} - {None}
+            proxy_allowed = {endpoint(self.agent_endpoint.removesuffix("/v1"))} - {None}
+            routes, invalid, cloud_keys = [], [], set()
+            for field, key, value in walk(content):
+                if key in ("apibase", "openaibaseurl", "endpoint", "baseurl", "testoverrideproxyurl"):
+                    routes.append(field)
+                    approved = proxy_allowed if key == "testoverrideproxyurl" else allowed
+                    if endpoint(value) not in approved:
+                        invalid.append(field)
+                if key in ("apikey", "token") and isinstance(value, str):
+                    for prefix in ("sk-", "ghp_"):
+                        if value.startswith(prefix) and not value.startswith("sk-local"):
+                            cloud_keys.add(prefix)
+
+            has_local = bool(routes) and not invalid
+            is_compliant = has_local and not cloud_keys
 
             return {
                 "status": "compliant" if is_compliant else "non-compliant",
                 "path": target_path,
                 "local_endpoint": has_local,
                 "cloud_keys_detected": len(cloud_keys) > 0,
-                "detected_cloud_tokens": cloud_keys,
+                "detected_cloud_tokens": sorted(cloud_keys),
+                "invalid_endpoint_fields": invalid,
             }
         except Exception as e:
             return {
