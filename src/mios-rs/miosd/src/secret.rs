@@ -2,7 +2,7 @@
 // AI-related: src/mios-rs/miosd/src/main.rs, usr/libexec/mios/mios-keyring-autounlock, usr/share/mios/mios.toml
 
 use std::fs;
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 

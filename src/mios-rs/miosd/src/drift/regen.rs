@@ -219,24 +219,53 @@ fn diff_tree(committed: &Path, rendered: &Path) -> Vec<String> {
     out
 }
 
-/// Regenerate-and-compare for a generator that has NO --check mode: snapshot the
-/// committed artifact, run the generator, compare, then put the snapshot back.
-/// The tree is left exactly as it was found whether the check passes or fails.
-pub fn regen_and_compare_file(ctx: &DriftCtx, gen_relpath: &str, target: &str) -> Verdict {
-    let gen_path = ctx.root.join(gen_relpath);
-    if !gen_path.exists() {
-        return Verdict::Fail(format!(
-            "Generator not found: {gen_relpath} (registered by a drift check)"
-        ));
+// regen_and_compare_file (python3-interpreted regen for .py generators) was
+// deleted with the last of its consumers: the names-registry Python generator
+// was strangler-deleted (AGY-1073) and its miosd caller moved to
+// regen_and_compare_native below. Every surviving drift regen check invokes a
+// native binary.
+
+/// Resolve a tools/native generator binary the way the bash gates do
+/// (_gate_bin / native_bin): release before debug, .exe before extensionless,
+/// /usr/libexec fallback. Windows finds the .exe first; the extensionless
+/// Linux ELF is never executable there, so ordering carries the platform.
+pub fn resolve_native_generator(ctx: &DriftCtx, name: &str) -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["tools/native/target/release", "tools/native/target/debug"] {
+        candidates.push(ctx.root.join(dir).join(format!("{name}.exe")));
+        candidates.push(ctx.root.join(dir).join(name));
     }
-    let committed = ctx.root.join(target);
-    let before = match fs::read(&committed) {
-        Ok(b) => b,
-        Err(e) => return Verdict::Fail(format!("Target artifact {target} unreadable: {e}")),
+    candidates.push(std::path::PathBuf::from("/usr/libexec/mios").join(name));
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Native-generator twin of regen_and_compare_file. The Python generator was
+/// strangler-deleted (AGY-1073) while this caller still named the .py path and
+/// the python3 interpreter, failing image builds with "Generator not found".
+/// Snapshots EVERY artifact the generator may rewrite (the python twin
+/// restored only one of the two this generator writes), runs the binary
+/// directly, restores everything before judging, and never returns a Pass it
+/// did not compare.
+pub fn regen_and_compare_native(ctx: &DriftCtx, bin_name: &str, targets: &[&str]) -> Verdict {
+    let Some(bin) = resolve_native_generator(ctx, bin_name) else {
+        return Verdict::Fail(format!(
+            "native generator not built: {bin_name} -- build it: cd tools/native && cargo build -p {bin_name}"
+        ));
     };
 
-    let mut cmd = Command::new("python3");
-    cmd.arg(&gen_path);
+    // Snapshot every target before running anything.
+    let mut snapshots: Vec<(&str, std::path::PathBuf, Vec<u8>)> = Vec::new();
+    for t in targets {
+        let p = ctx.root.join(t);
+        match fs::read(&p) {
+            Ok(b) => snapshots.push((t, p, b)),
+            Err(e) => {
+                return Verdict::Fail(format!("Target artifact {t} unreadable: {e}"));
+            }
+        }
+    }
+
+    let mut cmd = Command::new(&bin);
     cmd.env_clear();
     if let Ok(p) = env::var("PATH") {
         cmd.env("PATH", p);
@@ -248,30 +277,55 @@ pub fn regen_and_compare_file(ctx: &DriftCtx, gen_relpath: &str, target: &str) -
         .env("MIOS_DRIFT_ROOT", ctx.root.as_os_str());
     let out = match cmd.output() {
         Ok(o) => o,
-        Err(e) => return Verdict::Fail(format!("Failed to execute {gen_relpath}: {e}")),
+        Err(e) => {
+            // Restore before returning, so even an exec failure leaves no
+            // half-run state -- nothing was written yet, but the contract is
+            // uniform.
+            return Verdict::Fail(format!("Failed to execute {}: {e}", bin.display()));
+        }
     };
-    let after = fs::read(&committed);
-    // Restore before judging, so a failure never leaves the tree rewritten.
-    let _ = fs::write(&committed, &before);
+
+    // Read the post-run bytes, THEN restore every snapshot, THEN judge: the
+    // tree is left exactly as found whatever the verdict says.
+    let after: Vec<Vec<u8>> = snapshots
+        .iter()
+        .map(|(_, p, _)| fs::read(p).unwrap_or_default())
+        .collect();
+    for (_, p, before) in &snapshots {
+        let _ = fs::write(p, before);
+    }
 
     if !out.status.success() {
         return Verdict::Fail(format!(
-            "{gen_relpath} exited with error: {}",
+            "{} exited with error: {}",
+            bin.display(),
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    match after {
-        Ok(a) if a == before => Verdict::Pass(format!(
-            "{target} matches what {gen_relpath} renders ({} bytes)",
-            before.len()
-        )),
-        Ok(a) => Verdict::Fail(format!(
-            "{target} is stale: committed {} bytes, {gen_relpath} renders {} -- run it",
-            before.len(),
-            a.len()
-        )),
-        Err(e) => Verdict::Fail(format!("{target} vanished during regeneration: {e}")),
+    let mut stale: Vec<String> = Vec::new();
+    for ((t, _, before), now) in snapshots.iter().zip(after.iter()) {
+        if now != before {
+            stale.push(format!(
+                "{t}: committed {} bytes, generator renders {}",
+                before.len(),
+                now.len()
+            ));
+        }
     }
+    if !stale.is_empty() {
+        return Verdict::Fail(format!(
+            "stale projection(s) -- run {} via tools/sync-generated.sh: {}",
+            bin.display(),
+            stale.join("; ")
+        ));
+    }
+    let total: usize = snapshots.iter().map(|(_, _, b)| b.len()).sum();
+    Verdict::Pass(format!(
+        "{} projection(s) match what {} renders ({} bytes total)",
+        snapshots.len(),
+        bin.display(),
+        total
+    ))
 }
 
 #[cfg(test)]
