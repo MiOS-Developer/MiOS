@@ -3,17 +3,28 @@
 // AI-related: tools/native/mios-gen/src/btop_theme.rs, automation/98-drift-checks.sh
 
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
-fn get_repo_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .expect("Failed to find repo root from CARGO_MANIFEST_DIR")
-        .to_path_buf()
+fn fixture() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().expect("temporary fixture");
+    let vendor = temp.path().join("usr/share/mios");
+    fs::create_dir_all(&vendor).unwrap();
+    fs::write(
+        vendor.join("mios.toml"),
+        r##"[colors]
+bg = "#282262"
+fg = "#E7DFD3"
+accent = "#1A407F"
+cursor = "#F35C15"
+success = "#3E7765"
+warning = "#F35C15"
+error = "#DC271B"
+muted = "#948E8E"
+subtle = "#B7C9D7"
+"##,
+    )
+    .unwrap();
+    temp
 }
 
 fn bin() -> &'static str {
@@ -21,7 +32,7 @@ fn bin() -> &'static str {
 }
 
 struct TempCleaner {
-    target: PathBuf,
+    target: std::path::PathBuf,
 }
 
 impl Drop for TempCleaner {
@@ -32,8 +43,16 @@ impl Drop for TempCleaner {
 
 #[test]
 fn test_render_btop_theme_cli_e2e() {
-    let root = get_repo_root();
+    let temp = fixture();
+    let root = temp.path();
     let bin_path = bin();
+
+    assert!(Command::new(bin_path)
+        .args(["render-btop-theme", "--root"])
+        .arg(root)
+        .status()
+        .unwrap()
+        .success());
 
     // 1. Positive control: standard check mode passes with exit code 0
     let output = Command::new(bin_path)
@@ -133,4 +152,69 @@ fn test_render_btop_theme_cli_e2e() {
         Some(1),
         "Expected exit code 1 on corrupted target file"
     );
+}
+
+#[test]
+fn check_rejects_valid_color_drift_without_writing() {
+    let temp = fixture();
+    let root = temp.path();
+    assert!(Command::new(bin())
+        .args(["render-btop-theme", "--root"])
+        .arg(root)
+        .status()
+        .unwrap()
+        .success());
+    let target = root.join("etc/btop/themes/mios.theme");
+    let rendered = fs::read_to_string(&target).unwrap();
+    let changed = rendered.replace("theme[main_bg]=\"#282262\"", "theme[main_bg]=\"#010203\"");
+    assert_ne!(
+        changed, rendered,
+        "negative control must change a real theme key"
+    );
+    fs::write(&target, &changed).unwrap();
+    let result = Command::new(bin())
+        .args(["render-btop-theme", "--check", "--root"])
+        .arg(root)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("drifted from SSOT"));
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        changed,
+        "check must not repair its subject"
+    );
+    fs::write(&target, rendered.replace('\n', "\r\n")).unwrap();
+    assert!(
+        Command::new(bin())
+            .args(["render-btop-theme", "--check", "--root"])
+            .arg(root)
+            .status()
+            .unwrap()
+            .success(),
+        "CRLF-only difference is normalized"
+    );
+}
+
+#[test]
+fn check_rejects_missing_target_without_creating_it() {
+    let temp = fixture();
+    for target in [
+        temp.path().join("etc/btop/themes/mios.theme"),
+        temp.path().join("custom.theme"),
+    ] {
+        let result = Command::new(bin())
+            .args(["render-btop-theme", "--check", "--root"])
+            .arg(temp.path())
+            .arg("--out")
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("does not exist for verification"));
+        assert!(
+            !target.exists(),
+            "check must not generate a missing subject"
+        );
+    }
 }

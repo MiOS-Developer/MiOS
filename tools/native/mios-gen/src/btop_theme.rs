@@ -32,7 +32,8 @@ impl BtopThemeEngine {
             .and_then(|v| v.as_table())
             .ok_or_else(|| "Missing [colors] section in mios.toml".to_string())?;
 
-        let hex_re = Regex::new(r"^#[0-9a-fA-F]{6}$").unwrap();
+        let hex_re = Regex::new(r"^#[0-9a-fA-F]{6}$")
+            .map_err(|e| format!("Failed to compile color validator: {e}"))?;
         let mut palette = BTreeMap::new();
         for (k, v) in colors_tbl {
             if let Some(s) = v.as_str() {
@@ -157,8 +158,10 @@ impl BtopThemeEngine {
     pub fn validate_theme_content(content: &str) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
         let mut found_keys = BTreeSet::new();
-        let line_re = Regex::new(r#"^theme\[([a-zA-Z0-9_]+)\]\s*=\s*"([^"]*)""#).unwrap();
-        let hex_re = Regex::new(r"^#[0-9a-fA-F]{6}$").unwrap();
+        let line_re = Regex::new(r#"^theme\[([a-zA-Z0-9_]+)\]\s*=\s*"([^"]*)""#)
+            .map_err(|e| vec![format!("Failed to compile theme validator: {e}")])?;
+        let hex_re = Regex::new(r"^#[0-9a-fA-F]{6}$")
+            .map_err(|e| vec![format!("Failed to compile color validator: {e}")])?;
 
         for (idx, raw_line) in content.lines().enumerate() {
             let line = raw_line.trim();
@@ -167,8 +170,14 @@ impl BtopThemeEngine {
             }
 
             if let Some(caps) = line_re.captures(line) {
-                let key = caps.get(1).unwrap().as_str();
-                let hex_val = caps.get(2).unwrap().as_str();
+                let key = caps
+                    .get(1)
+                    .ok_or_else(|| vec!["Theme validator did not capture a key".to_string()])?
+                    .as_str();
+                let hex_val = caps
+                    .get(2)
+                    .ok_or_else(|| vec!["Theme validator did not capture a value".to_string()])?
+                    .as_str();
                 found_keys.insert(key.to_string());
 
                 // Value may be empty string for transparency or valid #rrggbb hex
@@ -234,14 +243,20 @@ pub fn run_render_btop_theme(
     };
 
     if check {
-        if target_path.is_file() {
-            let disk_content = fs::read_to_string(&target_path)
-                .map_err(|e| format!("Failed to read {}: {}", target_path.display(), e))?;
-            BtopThemeEngine::validate_theme_content(&disk_content)
-                .map_err(|errs| errs.join("; "))?;
-        } else {
-            // If target file doesn't exist yet, validate rendered content directly
-            BtopThemeEngine::validate_theme_content(&rendered).map_err(|errs| errs.join("; "))?;
+        if !target_path.is_file() {
+            return Err(format!(
+                "btop theme target does not exist for verification: {}",
+                target_path.display()
+            ));
+        }
+        let disk_content = fs::read_to_string(&target_path)
+            .map_err(|e| format!("Failed to read {}: {}", target_path.display(), e))?;
+        BtopThemeEngine::validate_theme_content(&disk_content).map_err(|errs| errs.join("; "))?;
+        if disk_content.replace("\r\n", "\n") != rendered.replace("\r\n", "\n") {
+            return Err(format!(
+                "btop theme drifted from SSOT projection at {}",
+                target_path.display()
+            ));
         }
     } else {
         if let Some(parent) = target_path.parent() {
