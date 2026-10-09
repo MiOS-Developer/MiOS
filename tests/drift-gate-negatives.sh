@@ -5232,16 +5232,13 @@ test_legibility_ratchet() {
     read -r got _ < <(_lr_metric tooling_python_lines)
     [[ "$got" == "$py0" ]] || _lr_fail "check_legibility_ratchet counted a sibling unit test as tooling ($py0 -> ${got:-none}): $_NEG_GATE_OUT"
     _lr_unplant "$pytest_probe"
-    # ADR-0030: one planted file is charged to its domain AND the total; a dependency file is not counted.
-    local f0 dep="${ROOT}/usr/share/mios/vendored/mios-negtest-dep.whl"
-    read -r f0 _ < <(_lr_metric files.automation)
+    # ADR-0030: one planted file is charged to its domain AND the total.
+    local f0; read -r f0 _ < <(_lr_metric files.automation)
     _lr_plant "$probe" 1
     _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the automation budget"
     [[ -n "$f0" && "$_NEG_GATE_OUT" == *"files.automation = $(( f0 + 1 )), over the floor"* && "$_NEG_GATE_OUT" == *"tracked_files = "*", over the floor"* ]] \
         || _lr_fail "check_legibility_ratchet did not charge the planted file to its domain and the total: $_NEG_GATE_OUT"
-    _lr_unplant "$probe"; _lr_plant "$dep" 1
-    _neg_gate check_legibility_ratchet || _lr_fail "check_legibility_ratchet counted a dependency file as source: $_NEG_GATE_OUT"
-    _lr_unplant "$dep"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
+    _lr_unplant "$probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
 
     _neg_gate check_legibility_ratchet || die "check_legibility_ratchet failed after restoration: $_NEG_GATE_OUT"
     log "check_legibility_ratchet negative test passed"
