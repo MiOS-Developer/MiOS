@@ -2,7 +2,7 @@
 # AI-functions: __init__, prewarm_quadlets, simulate_day0_offline_start, BakedImage, QuadletPrewarmer
 
 """
-quadlet_prewarm.py — T-749 WS-BUILD
+quadlet_prewarm.py — task_693 WS-BUILD
 Build-time Quadlet container image pre-warmer and zstd chunked layer optimizer.
 
 Pulls and unpacks enabled Quadlet containers directly into /var/lib/containers/storage

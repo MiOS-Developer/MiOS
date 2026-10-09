@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: GPU-accelerated terminal configuration and Wayland zero-copy DMA-BUF presentation manager (T-727, T-728).
+# AI-hint: GPU-accelerated terminal configuration and Wayland zero-copy DMA-BUF presentation manager (task_671, task_672).
 # AI-related: usr/libexec/mios/desktop/gpu_terminal.py, tests/test-gpu-terminal.py, usr/lib/mios/mios_toml.py, etc/skel/.config/alacritty/alacritty.toml
 """GPU-accelerated terminal configuration and Wayland DMA-BUF presentation manager for MiOS.
 

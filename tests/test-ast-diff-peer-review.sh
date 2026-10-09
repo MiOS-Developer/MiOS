@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CI test suite for AST structural diff calculation and 2-peer review merge gating (T-780 / T-781).
+# AI-hint: Automated CI test suite for AST structural diff calculation and 2-peer review merge gating (task_724 / task_725).
 # AI-related: usr/lib/mios/agent-pipe/mios_ast_diff.py, usr/lib/mios/agent-pipe/server.py, tools/ci-suites.py
 set -euo pipefail
 

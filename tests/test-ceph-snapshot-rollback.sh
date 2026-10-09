@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CephFS snapshot creation (<10ms), retention rotation, and rollback test suite (T-795).
+# AI-hint: Automated CephFS snapshot creation (<10ms), retention rotation, and rollback test suite (task_739).
 # AI-doc: usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md
 set -euo pipefail
 

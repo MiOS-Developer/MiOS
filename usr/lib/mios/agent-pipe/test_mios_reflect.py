@@ -305,11 +305,11 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_react_reflexion.py (T-1092)
+# Consolidated from test_mios_react_reflexion.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for T-031 (ReAct+Reflexion Durable Loop + Checkpoint-per-Superstep). Pure stdlib ...
+# AI-hint: Standalone assert-script unit test for task_31 (ReAct+Reflexion Durable Loop + Checkpoint-per-Superstep). Pure stdlib ...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Unit tests for T-031 ReAct+Reflexion Durable Loop + Checkpoint-per-Superstep."""
+"""Unit tests for task_31 ReAct+Reflexion Durable Loop + Checkpoint-per-Superstep."""
 
 import asyncio
 import sys
@@ -582,12 +582,12 @@ def t_dag_execution_checkpoint_resume():
     _check_react_reflexion("dag-resume: saved level 2 checkpoint to session table", checkpoint_2_saved)
 
 def _main_react_reflexion():
-    print("=== Running T-031 ReAct/Reflexion Durable Loop Tests ===")
+    print("=== Running task_31 ReAct/Reflexion Durable Loop Tests ===")
     t_reflexion_gate()
     t_tool_failure_reflexion_flow()
     t_superstep_checkpoints()
     t_dag_execution_checkpoint_resume()
-    print("=== T-031 ReAct/Reflexion Durable Loop Tests Done ===")
+    print("=== task_31 ReAct/Reflexion Durable Loop Tests Done ===")
     sys.exit(1 if _fails_react_reflexion > 0 else 0)
 
 

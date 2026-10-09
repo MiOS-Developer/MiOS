@@ -176,7 +176,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 2. ADVERSARIAL HARDWARE & WASM HAL TESTS (T-389)
+    // 2. ADVERSARIAL HARDWARE & WASM HAL TESTS (task_333)
     // ============================================================================
 
     #[test]
@@ -257,7 +257,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 3. ADVERSARIAL CPU PINNING & CGROUP BOUNDARY TESTS (T-390)
+    // 3. ADVERSARIAL CPU PINNING & CGROUP BOUNDARY TESTS (task_334)
     // ============================================================================
 
     #[test]
@@ -363,7 +363,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 4. ADVERSARIAL CRDT GC & CAUSALITY TESTS (T-391)
+    // 4. ADVERSARIAL CRDT GC & CAUSALITY TESTS (task_335)
     // ============================================================================
 
     #[test]
@@ -483,7 +483,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 5. ADVERSARIAL WATCHDOG TESTS (T-400)
+    // 5. ADVERSARIAL WATCHDOG TESTS (task_344)
     // ============================================================================
 
     #[test]
@@ -568,7 +568,7 @@ mod m1_stress_adversarial_test {
     use tempfile::NamedTempFile;
 
     // =========================================================================
-    // Task 1 (T-389): Hardware HAL & Wasm Sandbox Allowlist Stress Tests
+    // Task 1 (task_333): Hardware HAL & Wasm Sandbox Allowlist Stress Tests
     // =========================================================================
 
     #[test]
@@ -727,7 +727,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 2 (T-390): Dynamic CPU Pinning & Cgroups Stress Tests
+    // Task 2 (task_334): Dynamic CPU Pinning & Cgroups Stress Tests
     // =========================================================================
 
     #[test]
@@ -840,7 +840,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 3 (T-391): CRDT State Compaction & Snapshot GC Stress Tests
+    // Task 3 (task_335): CRDT State Compaction & Snapshot GC Stress Tests
     // =========================================================================
 
     #[test]
@@ -1006,7 +1006,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 4 (T-400): Hardware Watchdog Supervisor & Ping Stress Tests
+    // Task 4 (task_344): Hardware Watchdog Supervisor & Ping Stress Tests
     // =========================================================================
 
     #[test]
@@ -1119,7 +1119,7 @@ mod m2_deep_adversarial_stress_test {
     use std::thread;
 
     // =========================================================================
-    // Suite 1: Scheduler & Work-Stealing Invariants (T-392)
+    // Suite 1: Scheduler & Work-Stealing Invariants (task_336)
     // =========================================================================
 
     #[test]
@@ -1300,7 +1300,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 2: Buffer Pool Zero-Copy & Recycling Invariants (T-393)
+    // Suite 2: Buffer Pool Zero-Copy & Recycling Invariants (task_337)
     // =========================================================================
 
     #[test]
@@ -1458,7 +1458,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 3: Node Capabilities & Registry Invariants (T-394)
+    // Suite 3: Node Capabilities & Registry Invariants (task_338)
     // =========================================================================
 
     #[test]
@@ -1535,7 +1535,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 4: BLE Beaconing & Offline Mesh Bootstrap (T-395)
+    // Suite 4: BLE Beaconing & Offline Mesh Bootstrap (task_339)
     // =========================================================================
 
     #[test]
@@ -1622,7 +1622,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 5: Multi-Transport Router & Anti-Flap Hysteresis (T-396)
+    // Suite 5: Multi-Transport Router & Anti-Flap Hysteresis (task_340)
     // =========================================================================
 
     #[test]
@@ -1971,7 +1971,7 @@ mod mesh_m2_stress_challenger_test {
     use std::time::Duration;
 
     // =========================================================================
-    // 1. T-392: Stress & Invariant Tests for Work-Stealing Scheduler
+    // 1. task_336: Stress & Invariant Tests for Work-Stealing Scheduler
     // =========================================================================
 
     #[test]
@@ -2122,7 +2122,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+    // 2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
     // =========================================================================
 
     #[test]
@@ -2219,7 +2219,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 3. T-394: Adversarial Capability Probing, Filtering & Corrupted Payloads
+    // 3. task_338: Adversarial Capability Probing, Filtering & Corrupted Payloads
     // =========================================================================
 
     #[test]
@@ -2283,7 +2283,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 4. T-395: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
+    // 4. task_339: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
     // =========================================================================
 
     #[test]
@@ -2350,7 +2350,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 5. T-396: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
+    // 5. task_340: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
     // =========================================================================
 
     #[test]

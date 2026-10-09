@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Atomic composefs image descriptor validator and fs-verity digest verifier (T-527, AGY-2125).
+# AI-hint: Atomic composefs image descriptor validator and fs-verity digest verifier (task_471, task_2704).
 # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
 """
 MiOS Composefs Atomic Descriptor Validator and fs-verity Digest Verifier.
@@ -333,7 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Constructs command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog="mios-composefs-validator",
-        description="MiOS Atomic Composefs Image Descriptor Validator & fs-verity Digest Verifier (T-527, AGY-2125)",
+        description="MiOS Atomic Composefs Image Descriptor Validator & fs-verity Digest Verifier (task_471, task_2704)",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose diagnostic output")
 

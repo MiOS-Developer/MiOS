@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Jensen-Shannon divergence network anomaly detector and PostgreSQL threat_events vector sink (T-512).
+# AI-hint: Jensen-Shannon divergence network anomaly detector and PostgreSQL threat_events vector sink (task_456).
 # AI-doc: usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md
 from __future__ import annotations
 
@@ -136,7 +136,7 @@ class NetAnomalyDetector:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MiOS Network Anomaly Detector (T-512)")
+    parser = argparse.ArgumentParser(description="MiOS Network Anomaly Detector (task_456)")
     parser.add_argument("--input", help="Path to netflow summary JSON file")
     parser.add_argument("--threshold", type=float, default=0.35, help="JSD threshold")
     parser.add_argument("--mock-normal", action="store_true", help="Test with normal traffic")

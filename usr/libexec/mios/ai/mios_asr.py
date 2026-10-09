@@ -3,7 +3,7 @@
 # AI-functions: __init__, is_voiced, process_stream, AudioChunk, SileroVAD, StreamingASREngine
 
 """
-mios_asr.py — T-737 WS-AI
+mios_asr.py — task_681 WS-AI
 Streaming CTC / Conformer ONNX speech recognition daemon and VAD chunker.
 
 Processes 30ms audio windows through quantized Silero VAD, streams voiced PCM

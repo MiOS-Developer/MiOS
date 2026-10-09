@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided controls for T-1135 -- mios-mcp.service gets its MCP port from the resolver-rendered install.env, never a unit literal (Law 7).
+# AI-hint: Two-sided controls for task_3428 -- mios-mcp.service gets its MCP port from the resolver-rendered install.env, never a unit literal (Law 7).
 # AI-related: usr/lib/systemd/system/mios-mcp.service, usr/libexec/mios/mcp-server-runner, usr/lib/mios/mios_toml.py, usr/share/mios/mios.toml
 # AI-functions: render_exports, run_preamble, unit_port_literals, TestMcpPort
-"""T-1135: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
+"""task_3428: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
 defined -- by the resolver-rendered /etc/mios/install.env, not a literal.
 
 * the exports the resolver renders from the vendor mios.toml carry

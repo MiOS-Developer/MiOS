@@ -741,7 +741,7 @@ RUN_TEMPLATE_ENABLE = str(os.environ.get("MIOS_RUN_TEMPLATE")
                           or _toml_section("run_template").get("enable", "true")
                           ).strip().lower() in {"1", "true", "yes"}
 
-from mios_pipe.routing.run_template import (   # T-225: capture+replay source
+from mios_pipe.routing.run_template import (   # task_205: capture+replay source
     _run_template_class, _capture_run_template, load_run_templates,
     configure as _configure_run_template)
 

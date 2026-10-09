@@ -519,9 +519,9 @@ print("test_mios_dispatch: ALL PASS")
 
 
 # ==============================================================================
-# Consolidated from test_mios_dispatch_cmd.py (T-1092)
+# Consolidated from test_mios_dispatch_cmd.py (task_1006)
 # ==============================================================================
-# AI-hint: Isolation tests for mios_pipe.routing.dispatch_cmd -- the verb->bash command BUILDER extracted from the dispatch chokepoint (T-273).
+# AI-hint: Isolation tests for mios_pipe.routing.dispatch_cmd -- the verb->bash command BUILDER extracted from the dispatch chokepoint (task_251).
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 
 import sys
@@ -637,7 +637,7 @@ def _run_extra_dispatch_cmd():
 
 
 # ==============================================================================
-# Consolidated from test_mios_dispatch_redos.py (T-1092)
+# Consolidated from test_mios_dispatch_redos.py (task_1006)
 # ==============================================================================
 # AI-hint: Regression test for the ReDoS in dispatch_cmd's podman-exec shell-stripper -- pins a wall-clock bound on a pathological input, not a pattern string.
 # AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/dispatch_cmd.py

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (T-509).
+# AI-hint: Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (task_453).
 # AI-doc: usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md
 set -euo pipefail
 
@@ -11,7 +11,7 @@ source "$(dirname "$0")/lib/common.sh" 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-mios_log "Hermetic OCI image synthesis and Syft SBOM generation (T-509)"
+mios_log "Hermetic OCI image synthesis and Syft SBOM generation (task_453)"
 
 DEST_SBOM="${MIOS_SBOM_PATH:-${ROOT}/usr/share/doc/mios/sbom.json}"
 install -d -m 0755 "$(dirname "$DEST_SBOM")"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for local Cosign image signing and registry push gate (T-510).
+# AI-hint: Automated unit test suite for local Cosign image signing and registry push gate (task_454).
 # AI-doc: usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md
 from __future__ import annotations
 

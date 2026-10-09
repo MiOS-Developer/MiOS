@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Tree-Sitter / AST semantic merge resolver for multi-agent git conflicts across Python, TOML, JSON, and Shell.
 # AI-related: usr/libexec/mios/git/ast_merge.py, tests/test-ast-merge.py, usr/libexec/mios/git/reconcile_dag.py
-"""AST Semantic Merge Resolver for Multi-Agent Git Conflicts (T-555).
+"""AST Semantic Merge Resolver for Multi-Agent Git Conflicts (task_499).
 
 Performs 3-way abstract syntax tree (AST) semantic merge resolution across
 concurrent agent edits in Python, TOML, JSON, and Shell scripts, avoiding
@@ -449,7 +449,7 @@ class AstMergeResolver:
         )
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Tree-Sitter / AST Semantic Merge Resolver (T-555)")
+    parser = argparse.ArgumentParser(description="MiOS Tree-Sitter / AST Semantic Merge Resolver (task_499)")
     parser.add_argument("--base", metavar="PATH", help="Path to base common ancestor file")
     parser.add_argument("--ours", metavar="PATH", help="Path to ours file")
     parser.add_argument("--theirs", metavar="PATH", help="Path to theirs file")

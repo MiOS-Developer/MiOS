@@ -11,7 +11,7 @@ chmod 0600 /usr/lib/usbguard/usbguard-daemon.conf 2>/dev/null || true
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018). Same
+# succeed and the branch below it was dead on every build (task_962). Same
 # `miosd harden` stage 40 calls; it is idempotent, and 40 runs first.
 _miosd=""
 _h51="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,7 +59,7 @@ _clevis_env="$(dirname "${BASH_SOURCE[0]}")/../etc/mios/clevis-luks.env"
 install -D -m 0644 "${_clevis_env}" /etc/mios/clevis-luks.env
 mios_ok "Installed the committed clevis-luks.env projection"
 
-# Declarative Flatpak permission lockdown profile (T-489)
+# Declarative Flatpak permission lockdown profile (task_433)
 _fp_override="$(dirname "${BASH_SOURCE[0]}")/../usr/share/flatpak/overrides/global"
 if [[ -f "${_fp_override}" ]]; then
     install -D -m 0644 "${_fp_override}" /usr/share/flatpak/overrides/global 2>/dev/null || true

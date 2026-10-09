@@ -3,7 +3,7 @@
 # AI-functions: __init__, define_method, dispatch, register, handle_rpc, VarlinkMethod, VarlinkInterface, VarlinkServer
 
 """
-varlink_activator.py — T-743 WS-NODE
+varlink_activator.py — task_687 WS-NODE
 Point-to-point Varlink IPC socket activator and typed interface compiler.
 
 Exposes typed Varlink JSON-RPC interfaces over point-to-point Unix sockets with

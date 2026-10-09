@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 74: Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser (T-529, AGY-2127). Details TPM 2.0 Endorsement Key validation, SSOT schema for [cluster.blades], zero-touch admission workflow, and cryptographic rejection of wildcard/unverified keys. -->
+<!-- AI-hint: Chapter 74: Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser (task_473, task_2706). Details TPM 2.0 Endorsement Key validation, SSOT schema for [cluster.blades], zero-touch admission workflow, and cryptographic rejection of wildcard/unverified keys. -->
 
 # Chapter 74: Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the architecture, cryptographic verification principles, Single Source of Truth (SSOT) schema, and operational tooling for the **Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser** (T-529, AGY-2127).
+This chapter documents the architecture, cryptographic verification principles, Single Source of Truth (SSOT) schema, and operational tooling for the **Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser** (task_473, task_2706).
 
 ```mermaid
 flowchart TD
@@ -93,7 +93,7 @@ Blade declarations reside under the `[cluster.blades]` section of `mios.toml`. F
 Each blade declaration defines mandatory physical attributes and cryptographic baselines:
 
 ```toml
-# AI-hint: Declarative pre-enrollment registry for bare-metal cluster blades (T-529).
+# AI-hint: Declarative pre-enrollment registry for bare-metal cluster blades (task_473).
 # AI-doc: usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md
 
 [cluster.blades.blade-compute-01]
@@ -185,7 +185,7 @@ The executable utility `/usr/libexec/mios/mios-blade-enroll` provides administra
 ```text
 Usage: mios-blade-enroll [OPTIONS] SUBCOMMAND [ARGS...]
 
-Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (T-529, AGY-2127).
+Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706).
 
 Subcommands:
   parse                     Parse and validate declared blades from config

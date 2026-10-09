@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 1
 
       - name: Resolve ratchet comparison baseline
-        # Wire ratchet comparison base (T-1073).
+        # Wire ratchet comparison base (task_3398).
         run: |
           set -euo pipefail
           target_sha=""

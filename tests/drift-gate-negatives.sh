@@ -211,7 +211,7 @@ EOF
     log "Check_shellcheck negative test passed"
 }
 
-# AGY-1073: the Python generator is deleted; every site runs the native twin.
+# task_1713: the Python generator is deleted; every site runs the native twin.
 _names_gen_bin() {
     local c
     for c in "${MIOS_NATIVE_BIN_DIR:-}/mios-gen" \
@@ -462,7 +462,7 @@ EOF
 
     printf '%s' "${orig_val%X}" > "$main_toml"
 
-    # T-1051: a ceiling may be declared a GENERATED budget and allowed to rise,
+    # task_988: a ceiling may be declared a GENERATED budget and allowed to rise,
     # but only itemised with a reason -- a bare key is a silent skip wearing a
     # register's clothing.
     _rd_restore() { printf '%s' "${orig_val%X}" > "$main_toml"; }
@@ -530,10 +530,10 @@ open(p, "w", encoding="utf-8", newline="").write(t[:m.start()] + blk + t[m.end()
 EOF
     }
 
-    # T-1040: `.socket` was off the renderer's list, so mios-cockpit-link.socket
+    # task_977: `.socket` was off the renderer's list, so mios-cockpit-link.socket
     # shipped its port placeholder verbatim. mios-unit-gen now resolves that port
     # at projection (4c38b100): no shipped .socket carries a placeholder, and
-    # dropping `socket` alone landed nowhere. Plant the T-1040 shape and show the
+    # dropping `socket` alone landed nowhere. Plant the task_977 shape and show the
     # list decides: covered with `socket`, named without it.
     printf '[Socket]\nListenStream=0.0.0.0:${MIOS_%s}\n' PORTS_COCKPIT_LINK > "$probe"
     _neg_gate check_render_extension_coverage || _rec_fail "check_render_extension_coverage refused a .socket placeholder while .socket is declared: ${_NEG_GATE_OUT}"
@@ -583,7 +583,7 @@ test_render_quadlets() {
     }
 
     # A placeholder nothing can resolve would ship literal into the image, which
-    # is the class that shipped mios-cockpit-link.socket unparseable (T-1058).
+    # is the class that shipped mios-cockpit-link.socket unparseable (task_995).
     sed -i 's|^Image=quay.io/ceph/ceph:.*|Image=quay.io/ceph/ceph:${MIOS_NOT_A_REAL_VAR}|' "$unit"
     _neg_gate check_render_quadlets && _rq_fail "check_render_quadlets passed with an unresolvable placeholder"
     cp "$ubak" "$unit"
@@ -622,7 +622,7 @@ test_toolchain_pin() {
     _neg_gate check_toolchain_pin && _tp_fail "check_toolchain_pin passed with the SSOT ahead of the generated pin"
     cp "$tbak" "$toml"
 
-    # No pin at all is the pre-T-1059 state: both workspaces lint-floating.
+    # No pin at all is the pre-task_996 state: both workspaces lint-floating.
     # Absent must never read as clean.
     rm -f "$pin"
     _neg_gate check_toolchain_pin && _tp_fail "check_toolchain_pin passed with rust-toolchain.toml absent"
@@ -712,7 +712,7 @@ test_size_ceiling() {
     _sz_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _sz_fail; die "$1"; }
 
     # Below the measured floor: the tree already exceeds its own budget, which
-    # is the state T-1051 was filed about and must not read as clean.
+    # is the state task_988 was filed about and must not read as clean.
     sed -i 's/^max_tracked_mb\( *\)= [0-9]*/max_tracked_mb\1= 1/' "$toml"
     _neg_gate check_size_ceiling && _sz_fail "check_size_ceiling passed with a ceiling below the measured floor"
     cp "$bak" "$toml"
@@ -827,7 +827,7 @@ test_module_test_coverage() {
     _neg_gate check_module_test_coverage && _mtc_fail "check_module_test_coverage passed despite an untested submodule"
     grep -q "mios_pipe/identity/temp_untested_mod.py is named by no unit test" <<<"$_NEG_GATE_OUT"         || _mtc_fail "check_module_test_coverage did not name the untested submodule: ${_NEG_GATE_OUT}"
 
-    # T-1092: a test file NAMED after the module is not the evidence -- an empty
+    # task_1006: a test file NAMED after the module is not the evidence -- an empty
     # one used to satisfy the old filename check.
     : > "$temp_sibling"
     _neg_gate check_module_test_coverage && _mtc_fail "check_module_test_coverage passed on an empty test named after the module"
@@ -995,7 +995,7 @@ test_bake_unresolved_image() {
 
     # Assert the PROPERTY -- that the check names what failed to resolve -- not
     # one producer's prose. This matched the Python generator's wording; the
-    # gate now validates the native producer (T-1057), whose message is
+    # gate now validates the native producer (task_994), whose message is
     # different and strictly better because it names the VARIABLE.
     printf '%s' "$out" | grep -q "UNRESOLVABLE_PROBE_TAG" || die "check_bake_plan failed without naming the unresolvable Image="
 
@@ -1965,7 +1965,7 @@ test_smoke_manifest() {
     }
     cp "$toml_file" "$bak_file"
 
-    # 1. An overlay naming no [packages] section can never be selected (T-1171).
+    # 1. An overlay naming no [packages] section can never be selected (task_3464).
     # Appending a NEW sub-table keeps the TOML valid, so a red result is the
     # check's verdict and not a parse error.
     printf '\n[testing.smoke_components.sections.zz-planted]\ncommands = ["x"]\n' >> "$toml_file"
@@ -2429,7 +2429,7 @@ test_law_enforcers() {
     _neg_gate check_law_enforcers && _le_fail "check_law_enforcers passed with a drift-check target that is not defined"
     cp "$tbak" "$toml"
 
-    # T-1049: the defect this check could not see. A marker that exists ONLY in
+    # task_986: the defect this check could not see. A marker that exists ONLY in
     # a comment after the script's `exit 0` is not enforcement, and the previous
     # reader matched it as a bare substring for four laws at once.
     sed -i 's|99-postcheck.sh:BOUND-IMAGES|99-postcheck.sh:item14|' "$toml"
@@ -2644,7 +2644,7 @@ test_ssot_consumer_keys() {
     _sck_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _sck_run _sck_fail; die "$1"; }
 
     # (1) Breaking a key a consumer reads must FAIL. Renaming [security]'s
-    # api_require_auth is exactly the T-325 defect, re-created.
+    # api_require_auth is exactly the task_269 defect, re-created.
     sed -i '0,/^api_require_auth /s//api_require_auth_RENAMED /' "$toml"
     _sck_run && _sck_fail "check_ssot_consumer_keys passed with api_require_auth renamed out from under its consumer"
     cp "$bak" "$toml"
@@ -2693,7 +2693,7 @@ test_unit_projection() {
     cp "$bak" "$toml"
 
     # (2) Toolchain-free half: register below its own ceiling. The renderer half
-    # is asserted by tests/projection.rs. See tasks.jsonl T-317.
+    # is asserted by tests/projection.rs. See tasks.jsonl task_267.
     python3 - "$toml" <<'PYX'
 import io, re, sys
 p = sys.argv[1]
@@ -3460,7 +3460,7 @@ test_resolved_env_lossless() {
 }
 
 test_no_duplicate_value_key() {
-    # Every case mutates the SSOT, never the tool: a new group, T-998's one exit, a joiner.
+    # Every case mutates the SSOT, never the tool: a new group, task_942's one exit, a joiner.
     log "Testing check_no_duplicate_value_key"
     local toml_file="${ROOT}/usr/share/mios/mios.toml" ledger="${ROOT}/usr/share/mios/reference/value-dup-baseline.tsv"
     local aliases="${ROOT}/usr/share/mios/reference/value-aliases.tsv" bak_file="${ROOT}/usr/share/mios/mios.toml.bak" dup_value exit_rc=0
@@ -3470,7 +3470,7 @@ test_no_duplicate_value_key() {
     # Case 1 -- a brand-new group: two SSOT keys given one novel value.
     printf '\n[negtest_value_dup]\nalpha = "ZZNEGDUPVALUE4271"\nbeta = "ZZNEGDUPVALUE4271"\n' >> "$toml_file"
     _neg_gate check_no_duplicate_value_key && { mv -f "$bak_file" "$toml_file"; mv -f "${aliases}.bak" "$aliases"; die "check_no_duplicate_value_key passed despite two SSOT keys resolving to one unlisted value"; }
-    # Case 2 -- T-998's one exit: the same plant passes once value-aliases.tsv classifies it keep-distinct.
+    # Case 2 -- task_942's one exit: the same plant passes once value-aliases.tsv classifies it keep-distinct.
     printf 'MIOS_NEGTEST_VALUE_DUP_ALPHA\tMIOS_NEGTEST_VALUE_DUP_BETA\tkeep-distinct\t# two planted settings that agree by accident\n' >> "$aliases"
     _neg_gate check_no_duplicate_value_key || exit_rc=$?; cp "$bak_file" "$toml_file"; mv -f "${aliases}.bak" "$aliases"
     (( exit_rc == 0 )) || { mv -f "$bak_file" "$toml_file"; die "check_no_duplicate_value_key rejected a keep-distinct coincidence: ${_NEG_GATE_OUT}"; }
@@ -3515,7 +3515,7 @@ test_value_aliases() {
     cp "$f" "$backup"
     printf 'MIOS_A2A_COUNCIL\tMIOS_A2A_DISCOVER_PORT\tderive\n' >> "$f"
     _neg_gate check_value_aliases && { cp "$backup" "$f"; die "Check_value_aliases passed despite a derive-pair with divergent values"; }
-    # T-998: keep-distinct needs two declarations and a reason; an alias or a bare pair fails.
+    # task_942: keep-distinct needs two declarations and a reason; an alias or a bare pair fails.
     local row; for row in 'MIOS_PORTS_RADOSGW\tMIOS_RADOSGW_PORT\tkeep-distinct\t# one port, mislabelled a coincidence' \
         'MIOS_SCHED_URGENCY_HIGH\tMIOS_SSOT_TABLES_MAX_UNCONSUMED\tkeep-distinct'; do cp "$backup" "$f"; printf "${row}\n" >> "$f"
         _neg_gate check_value_aliases && { cp "$backup" "$f"; rm -f "$backup"; die "Check_value_aliases accepted an unjustified keep-distinct row: ${row}"; }
@@ -4566,7 +4566,7 @@ test_protected_refs() {
     # Remove the SUPPLY, not the reference. ExecStart still carries the bare
     # ${MIOS_FRONTIER_LANE_B_MODEL} and the unit still declares [Service] env, so the
     # renderer still protects it -- and now nothing on the host provides it.
-    # That is the shipped state T-1064 found: systemd expands the absent name to
+    # That is the shipped state task_3362 found: systemd expands the absent name to
     # "" and Lane B runs with --model ''.
     sed -i '/^Environment="\{0,1\}MIOS_FRONTIER_LANE_B_MODEL=/d' "$unit"   # any value: a literal since 491c36a2
     if cmp -s "$backup" "$unit" || ! grep -q 'MIOS_FRONTIER_LANE_B_MODEL}' "$unit"; then
@@ -4649,7 +4649,7 @@ test_doc_port_scheme() {
     rm -f "$backup"
     _neg_gate check_doc_port_scheme || die "check_doc_port_scheme failed after doc restoration"
 
-    # T-1002 (LAW5-01): planted retired port in a live code file must fail and name file + port
+    # task_946 (LAW5-01): planted retired port in a live code file must fail and name file + port
     local code_file="${ROOT}/usr/libexec/mios/mios-cron-director"
     local code_bak; code_bak="$(mktemp)"
     cp "$code_file" "$code_bak"
@@ -4989,7 +4989,7 @@ test_build_tool_dispatch() {
     # The half that proves the check RESOLVES rather than counting strings: the
     # plant, REGISTERED, is accepted; giving its binary a PATH location makes it
     # reachable, so the register must read as stale rather than staying green.
-    # (T-1018 emptied the shipped register, so the plant supplies the entry.)
+    # (task_962 emptied the shipped register, so the plant supplies the entry.)
     python3 - "$toml" "${planted#"${ROOT}"/}" <<'PYEOF'
 import re, sys
 p, rel = sys.argv[1:3]
@@ -5081,14 +5081,14 @@ test_no_inert_ssot_tables() {
 unused_key = "nothing reads this"
 ' "$tbl" >> "$toml"
     _nist_names "$tbl" || _nist_fail "check_no_inert_ssot_tables did not name the planted table with no consumer"
-    # THE FALSE-CREDIT ARM (T-1001); git add -N or the corpus cannot see the decoy.
+    # THE FALSE-CREDIT ARM (task_945); git add -N or the corpus cannot see the decoy.
     local decoy="${ROOT}/usr/libexec/mios/mios-negtest-decoy.py"
     printf '#!/usr/bin/env python3\n"""Reads usr/share/mios/mios.toml elsewhere."""\nd = compute()\nif d["%s"]:\n    pass\n' "$tbl" > "$decoy"
     git -C "$ROOT" add -N -- "$decoy" >/dev/null 2>&1
     _nist_decoy_clean() { git -C "$ROOT" rm --cached -q -- "$decoy" >/dev/null 2>&1; rm -f "$decoy"; unset -f _nist_decoy_clean; }
     if ! _nist_names "$tbl"; then
         _nist_decoy_clean
-        _nist_fail "check_no_inert_ssot_tables was SATISFIED by a local dict subscript -- the T-1001 false credit is back"
+        _nist_fail "check_no_inert_ssot_tables was SATISFIED by a local dict subscript -- the task_945 false credit is back"
     fi
     _nist_decoy_clean
     # Raising the ceiling must not absorb the plant: the ceiling has to EQUAL
@@ -5151,7 +5151,7 @@ test_bootstrap_sync() {
         || die "check_bootstrap_sync failed without naming the absent checkout: ${_NEG_GATE_OUT}"
     if [ -n "$had_root" ]; then export MIOS_BOOTSTRAP_ROOT="$saved_root"; else unset MIOS_BOOTSTRAP_ROOT; fi
 
-    # Sibling resolution as tools/sync-bootstrap.py does it (T-1033). The old
+    # Sibling resolution as tools/sync-bootstrap.py does it (task_970). The old
     # MSYS-only /c/ default skipped every local run.
     local boot="${MIOS_BOOTSTRAP_ROOT:-}"
     if [ -z "$boot" ]; then
@@ -5219,7 +5219,7 @@ test_legibility_ratchet() {
 
     # The Python arm, both ways. A tooling file must bite; a sibling unit test
     # must NOT count, or this ratchet pulls against check_module_test_coverage
-    # and the cheapest way to stay green is to not write the test (T-1044).
+    # and the cheapest way to stay green is to not write the test (task_981).
     n=$(( pycap - py0 + 1 )); (( n > 0 )) || n=1
     _lr_plant "$pytool" "$n"
     _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite $n new tooling-python lines over the floor"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Hybrid live ISO and iPXE netboot artifact synthesis pipeline using BIB (T-647, T-648).
+# AI-hint: Hybrid live ISO and iPXE netboot artifact synthesis pipeline using BIB (task_591, task_592).
 # AI-related: usr/libexec/mios/build/liveiso.py, tests/test-liveiso-build.py
 """Hybrid live ISO and iPXE netboot artifact synthesis pipeline for MiOS.
 

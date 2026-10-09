@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Global MiOS-USB graduated hardware key runtime and virtual CCID PC/SC multiplexer (T-689, T-690).
+# AI-hint: Global MiOS-USB graduated hardware key runtime and virtual CCID PC/SC multiplexer (task_633, task_634).
 # AI-related: usr/libexec/mios/sec/smartcard_mux.py, tests/test-sec.py
 """Global MiOS-USB graduated hardware key runtime and virtual CCID PC/SC multiplexer for MiOS.
 

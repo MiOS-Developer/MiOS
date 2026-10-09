@@ -1,4 +1,4 @@
-// AI-hint: Integration tests for the mios-node wire protocol, dual-tier executor and CRDT state sync, plus parity with the usr/libexec/mios/node Python twins (T-1188).
+// AI-hint: Integration tests for the mios-node wire protocol, dual-tier executor and CRDT state sync, plus parity with the usr/libexec/mios/node Python twins (task_3481).
 // AI-related: src/mios-rs/mios-node/src/lib.rs, src/mios-rs/mios-node/src/node.rs, usr/libexec/mios/node/
 
 mod node_mesh_test {

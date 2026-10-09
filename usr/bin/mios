@@ -661,7 +661,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write("mios: mios-ai-clear not found at %s\n" % _clear)
         return 1
 
-    # T-513: Dynamic TTY / JSON / YAML output formatting engine
+    # task_457: Dynamic TTY / JSON / YAML output formatting engine
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or (
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.isabs(__file__) else None
@@ -775,7 +775,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"mios: required entrypoint is unavailable: {target}\n")
         return 127
 
-    # Dynamic plugin dispatch (T-514)
+    # Dynamic plugin dispatch (task_458)
     try:
         from cli.plugin_loader import get_available_plugins, run_plugin
         plugins = get_available_plugins()

@@ -208,7 +208,7 @@ class tsck_TestRealTree(unittest.TestCase):
                          len(tsck_mod.sck_register(self.real)))
 
     def test_the_nine_security_controls_resolve(self):
-        # T-325: these sat under an unclosed [security.nohc_allowlist] header, so
+        # task_269: these sat under an unclosed [security.nohc_allowlist] header, so
         # every one of them silently took its compiled default.
         for key in ("api_require_auth", "api_caller_keys_path", "principal_bind_mode",
                     "rule_of_two_mode", "quarantine_mode", "firewall_high_privilege_verbs",
@@ -575,7 +575,7 @@ class tpb_TestShippedTree(unittest.TestCase):
         self.assertTrue(set(tpb_mod.pb_register(self.real)) <= tpb_mod.pb_port_keys(self.real))
 
     def test_the_ports_that_were_wired_are_really_referenced(self):
-        # The four T-318 drains: if any regresses, this fails before the gate does.
+        # The four task_261 drains: if any regresses, this fails before the gate does.
         ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
         for k in ("guacd", "redis", "pxe_hub_api", "forge_ssh"):
             self.assertIn(k, ref, k)
@@ -1218,7 +1218,7 @@ class tbc_TestShippedTree(unittest.TestCase):
 
     def test_the_register_is_drained_and_stays_drained(self):
         # This assertion started as "not empty yet" -- a guard that fired the
-        # moment T-319 drained the register. Revisited as designed: empty is now
+        # moment task_266 drained the register. Revisited as designed: empty is now
         # the goal state, so the claim is the stronger one.
         self.assertEqual(tbc_mod.bc_register(self.real), [])
 

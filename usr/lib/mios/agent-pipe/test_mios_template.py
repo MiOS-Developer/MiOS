@@ -96,12 +96,12 @@ class TestMiosTemplate(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_run_template.py (T-1092)
+# Consolidated from test_mios_run_template.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for mios_pipe.routing.run_template -- the WS-6 capture half plus the T-225 replay re...
+# AI-hint: Standalone assert-script unit test for mios_pipe.routing.run_template -- the WS-6 capture half plus the task_205 replay re...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 
-"""Unit tests for run-template capture + the replay read side (WS-6 / T-225)."""
+"""Unit tests for run-template capture + the replay read side (WS-6 / task_205)."""
 
 import asyncio
 import sys

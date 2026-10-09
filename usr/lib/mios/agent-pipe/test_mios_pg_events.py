@@ -24,7 +24,7 @@ class TestPGEvents(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_session_events.py (T-1092)
+# Consolidated from test_mios_session_events.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.observability.session_events.
 """Unit tests for session event emission and tool text sanitization."""

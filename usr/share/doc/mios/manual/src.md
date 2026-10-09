@@ -86,9 +86,9 @@ automation/build.sh took that list verbatim. A build launched from the
 wrong working directory -- MIOS_ROOT defaults to "." -- would therefore
 run 01, 02, 05, 07, 98, 99 and report BUILD COMPLETE, having skipped the
 kernel config, GPU wiring, SELinux, services, the whole AI plane and
-finalize. The registry now refuses rather than guesses (T-1018).
+finalize. The registry now refuses rather than guesses (task_962).
 
-<!-- mios-src:0150d9c5bda9 from src/mios-rs/mios-build/src/lib.rs:102-111 -->
+<!-- mios-src:f6a2fd766598 from src/mios-rs/mios-build/src/lib.rs:102-111 -->
 
 ### Every KEY=VALUE on one unit line that could carry a...
 
@@ -179,9 +179,9 @@ FIRST path component, while listing `build.ratchet` and
 `security.privileged_quadlets` -- dotted names the comparison can never
 match, since `section` is the text before the first dot. `gates` went the
 other way: a real-looking name for a table mios.toml does not have. The test
-below now rejects both shapes (T-1055).
+below now rejects both shapes (task_992).
 
-<!-- mios-src:68db9f03ed6e from src/mios-rs/mios-gate/src/ratchet.rs:12-21 -->
+<!-- mios-src:2822453608dd from src/mios-rs/mios-gate/src/ratchet.rs:12-21 -->
 
 ### A TABLE of key -> reason, deliberately not an array of...
 
@@ -267,9 +267,9 @@ Parse the TOML; do NOT scan lines. The line scan this replaced treated any
 line containing '=' inside [ports] as a key/value pair, so a COMMENT
 became an environment variable name -- including one carrying a backtick
 pair, which `bash source` reads as command substitution. install.env is
-the file Law 10 (BARE-SAFE-ENV) governs. T-1018.
+the file Law 10 (BARE-SAFE-ENV) governs. task_962.
 
-<!-- mios-src:c32687f70f1e from src/mios-rs/miosd/src/main.rs:615-619 -->
+<!-- mios-src:8b835c4baf3a from src/mios-rs/miosd/src/main.rs:615-619 -->
 
 ### Collect *.container and *.image at `qdir` and one level...
 
@@ -292,9 +292,9 @@ only the text after the first '=' on that one line, so a reflow of the
 array across lines would yield an EMPTY token set -- and an empty set binds
 every image, including the two heavy GPU lanes the register exists to keep
 out of the image. Same defect class as render-chrony's silent hardcoded
-fallback (T-1018).
+fallback (task_962).
 
-<!-- mios-src:33504e08e1c5 from src/mios-rs/miosd/src/main.rs:947-953 -->
+<!-- mios-src:7ae8c88a7798 from src/mios-rs/miosd/src/main.rs:947-953 -->
 
 ### An empty version used to fall back to the literal "44"...
 
@@ -314,9 +314,9 @@ Every write in here used to be `let _ = ...`, and each one was followed by
 an unconditional success line -- "[miosd] enabled usbguard.service" printed
 whether or not the symlink was created. A hardening step that reports
 success it did not achieve is worse than one that fails: the failure is
-recoverable, the false report is not visible at all (T-1018).
+recoverable, the false report is not visible at all (task_962).
 
-<!-- mios-src:3b01a76f0ed3 from src/mios-rs/miosd/src/main.rs:1145-1152 -->
+<!-- mios-src:0f436d8ac3e2 from src/mios-rs/miosd/src/main.rs:1145-1152 -->
 
 ### Say which of the two happened. This returned a bare Ok(())...
 
@@ -325,9 +325,9 @@ printed "Os-release version projected from SSOT via miosd" on the strength
 of that exit code -- so a missing file or an unresolved version reported a
 projection that had not occurred. The bash leg it shadows prints nothing
 in the same situation, because its success log sits inside the branch
-that did the work (T-1018).
+that did the work (task_962).
 
-<!-- mios-src:a3fbd6f06e11 from src/mios-rs/miosd/src/main.rs:1391-1396 -->
+<!-- mios-src:fc1c041d313b from src/mios-rs/miosd/src/main.rs:1391-1396 -->
 
 ### Run one of the repo's generator scripts, resolved against...
 
@@ -339,7 +339,7 @@ in an else-branch that printed "... up to date." and returned Ok when the
 script was not there -- a claim about an artefact it had never opened. Run
 from anywhere but the repo root, `miosd render-uki-cmdline` reported the
 kernel cmdline current without reading a single kargs.d fragment, and the
-build stage that called it took that for a render (T-1018).
+build stage that called it took that for a render (task_962).
 
 An absent generator is now an error naming the root it looked under, so a
 wrong MIOS_ROOT fails loudly instead of passing quietly.
@@ -353,9 +353,9 @@ single-line scalars today, so the scan produced the right answer -- but a
 comment containing '=' or a multi-line value would break it exactly as it
 broke [ports] and [network.ntp]. And unwrap_or_default() meant a
 NONEXISTENT manifest rendered four default config files and exited 0.
-T-1018.
+task_962.
 
-<!-- mios-src:53e065f25511 from src/mios-rs/miosd/src/main.rs:1525-1530 -->
+<!-- mios-src:f90502518c8e from src/mios-rs/miosd/src/main.rs:1525-1530 -->
 
 ### Parse the TOML; do NOT scan lines. [network.ntp].servers is...
 
@@ -365,9 +365,9 @@ to nothing, and silently substituted two hardcoded public NTP hosts --
 Law 7, and a sovereignty question on a machine whose SSOT named a pool.
 There is no hardcoded fallback now: an absent table yields no servers,
 which is what the Python renderer this must match byte-for-byte does.
-T-1018.
+task_962.
 
-<!-- mios-src:9dccae407645 from src/mios-rs/miosd/src/main.rs:1590-1596 -->
+<!-- mios-src:3c3f118fd328 from src/mios-rs/miosd/src/main.rs:1590-1596 -->
 
 ### Every scalar leaf under `[agent_pipe]` and `[dispatch]`...
 
@@ -417,9 +417,9 @@ consumer must be reported. Under the hardcoded nine-name list it was not.
 
 <!-- mios-src:7553ab7a1856 from tools/native/mios-aiplane-lint/src/main.rs:423-424 -->
 
-### T-1039. The Quadlet scan above skips every `localhost/*`...
+### task_976. The Quadlet scan above skips every `localhost/*`...
 
-T-1039. The Quadlet scan above skips every `localhost/*` image, because a
+task_976. The Quadlet scan above skips every `localhost/*` image, because a
 locally built image is not discovered from a Quadlet's Image= line. The
 python generator then RE-ADDS every localhost image declared in `core`;
 this port never did, so every `localhost/*` entry of `[build.bake].core`
@@ -427,7 +427,7 @@ this port never did, so every `localhost/*` entry of `[build.bake].core`
 firecrawl images -- was dropped from the plan lists. Law 12: an image
 missing from the plan is an image the bake does not carry.
 
-<!-- mios-src:6e7cb4e317be from tools/native/mios-bake-plan/src/main.rs:309-315 -->
+<!-- mios-src:39848e63562c from tools/native/mios-bake-plan/src/main.rs:309-315 -->
 
 ### The SSOT exports map every other native consumer resolves...
 
@@ -449,7 +449,7 @@ not ours to substitute.
 ### A unit declaring Environment=/EnvironmentFile= **in...
 
 A unit declaring Environment=/EnvironmentFile= **in `[Service]`** owns its
-Exec refs (T-1040).
+Exec refs (task_977).
 
 The section is the whole point. In a `.container` Quadlet,
 `[Container] Environment=` becomes podman's `--env`: it populates the
@@ -468,7 +468,7 @@ sits on `Image=`, which is not one.
 Every runtime_ref_directive is an `Exec*`, and those live only in
 `[Service]`, so requiring the declaration to share that section is enough.
 
-<!-- mios-src:0174fe3060cc from tools/native/mios-render-quadlets/src/main.rs:142-160 -->
+<!-- mios-src:e1ce4f68ecfb from tools/native/mios-render-quadlets/src/main.rs:142-160 -->
 
 ### The env layer used to live inside the expander, reading...
 
@@ -491,9 +491,9 @@ K3S_TAG="${MIOS_K3S_VERSION:-}" and then ${K3S_TAG/-k3s/+k3s}.
 common.sh sources userenv.sh BEFORE globals.sh and globals.sh guards
 its assignments, so the value comes from userenv.sh -- whose preferred
 tier is this binary. Without the split a bake gets
-docker.io/rancher/k3s:v1.36.3+k3s1 as a release tag (T-1065).
+docker.io/rancher/k3s:v1.36.3+k3s1 as a release tag (task_3363).
 
-<!-- mios-src:dde4ecc22397 from tools/native/mios-resolver/src/emit.rs:60-71 -->
+<!-- mios-src:a3bcbad8a235 from tools/native/mios-resolver/src/emit.rs:60-71 -->
 
 ### Resolve `${MIOS_*}` that one emitted value makes to...
 
@@ -512,7 +512,7 @@ systemd `EnvironmentFile=` and podman `--env-file` have no such expansion,
 so an emitted `MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1`
 means two different things depending on who reads it. It is also why
 `system-sync-env.sh` DROPPED that variable rather than emitting it: its
-filter rejects any value containing `$` (T-1060).
+filter rejects any value containing `$` (task_997).
 
 Expansion reads a snapshot, so the result does not depend on map order, and
 a name that resolves to nothing is left verbatim rather than blanked -- the
@@ -525,9 +525,9 @@ caller can then report it instead of shipping an empty string.
 After the [env] merge, so an [env] value can both reference an
 exported key and be referenced by one. Unresolved values still carry
 `$` and are dropped by the bare-safe filter below (Law 10) -- which is
-exactly how MIOS_AI_ENDPOINT went missing before T-1060.
+exactly how MIOS_AI_ENDPOINT went missing before task_997.
 
-<!-- mios-src:10633ee7f701 from tools/native/mios-resolver/src/emit_install_env.rs:33-36 -->
+<!-- mios-src:452a61ff2829 from tools/native/mios-resolver/src/emit_install_env.rs:33-36 -->
 
 ### shlex_quote single-quotes anything containing `$`, and bash...
 
@@ -594,9 +594,9 @@ this and are not.
 Handing the root itself to a callee as an argument is the same delegation:
 native_generator::command(&ctx.root, "pod-quadlets", true) runs the
 generator's --check over that tree. A path built from it is not
-(`ctx.root.join(` never matches "(ctx.root,"), so T-1045 still holds.
+(`ctx.root.join(` never matches "(ctx.root,"), so task_982 still holds.
 
-<!-- mios-src:2634a62df573 from src/mios-rs/mios-gate/src/stubs.rs:21-27 -->
+<!-- mios-src:bfa8fae20d7e from src/mios-rs/mios-gate/src/stubs.rs:21-27 -->
 
 ### The resolved six-tier SSOT under `root` (vendor < vendor.d...
 
@@ -658,13 +658,13 @@ systemd `EnvironmentFile=` and podman `--env-file` have no such expansion,
 so an emitted `MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1`
 means two different things depending on who reads it. It is also why
 `system-sync-env.sh` DROPPED that variable rather than emitting it: its
-filter rejects any value containing `$` (T-1060).
+filter rejects any value containing `$` (task_997).
 
 Expansion reads a snapshot, so the result does not depend on map order, and
 a name that resolves to nothing is left verbatim rather than blanked -- the
 caller can then report it instead of shipping an empty string.
 
-<!-- mios-src:dc829fd45e2d from tools/native/mios-resolver/src/emit.rs:127-146 -->
+<!-- mios-src:61df50208b7b from tools/native/mios-resolver/src/emit.rs:127-146 -->
 
 ### Parse `paths` lowest precedence first and fold them with...
 
@@ -731,3 +731,34 @@ as MiOS-owned; save their exact old bytes before replacing them.
 Returns the paths of pre-existing owned files, used to scope live reloads.
 
 <!-- mios-src:17ec795e889f from tools/native/mios-service-core/src/host_tmux.rs:34-36 -->
+### A token in a structured field (depends_on, epic, related)...
+
+A token in a structured field (depends_on, epic, related), most specific first: a task's id, a former
+id, an operator decision, the task whose title opens with it, then the banner whose range covers it
+(so "QCAT-01" names the task titled "QCAT-01: ...", not the "QCAT-01..04" banner).
+
+<!-- mios-src:ebdc2dcbe312 from tools/native/mios-task/src/purge.rs:222-224 -->
+
+### Every token the migration resolves, with the typed id it...
+
+Every token the migration resolves, with the typed id it becomes: task ids, former ids, operator
+decisions, title names and the members of every range banner, in the order `structured` prefers them.
+`--mapping-out` writes it outside the tree so a sibling repository can apply the same rewrite
+(`mios-task rewrite-ids`); the tree itself keeps none of it.
+
+<!-- mios-src:01764e2828d2 from tools/native/mios-task/src/purge.rs:815-818 -->
+
+### `mios-task rewrite-ids --mapping FILE --root DIR`: the tree...
+
+`mios-task rewrite-ids --mapping FILE --root DIR`: the tree rewrite of migrate-ids, from a mapping it wrote,
+over a repository that has no task list of its own (mios-bootstrap mirrors MiOS files, Law 15).
+
+<!-- mios-src:c268f4e070c0 from tools/native/mios-task/src/purge.rs:862-863 -->
+
+### Publish an owned worktree migration with byte/mode backups....
+
+Publish an owned worktree migration with byte/mode backups. Each replacement is atomic;
+an ordinary write or final validation error restores all touched paths. Backups stay on disk
+if restoration fails, so the error names recoverable evidence instead of claiming success.
+
+<!-- mios-src:068a99d42b74 from tools/native/mios-task/src/purge.rs:1064-1066 -->

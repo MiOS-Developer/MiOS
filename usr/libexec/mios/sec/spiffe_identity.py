@@ -3,7 +3,7 @@
 # AI-related: tests/test-sec.py
 # AI-functions: SpiffeIdentityAgent, atomic_write_json, main
 """
-WS-SEC (T-567): SPIFFE/SPIRE Workload Identity Agent & Ephemeral 24h mTLS Certificate Rotator.
+WS-SEC (task_511): SPIFFE/SPIRE Workload Identity Agent & Ephemeral 24h mTLS Certificate Rotator.
 Manages dynamic X.509 SPIFFE Verifiable Identity Documents (SVIDs) for local and mesh agent workloads.
 Enforces trust domain verification (spiffe://mios.cluster/node/{node_id}/workload/{workload_name}),
 handles automatic in-memory rotation prior to 24h expiration, and validates mTLS peer identities.
@@ -381,7 +381,7 @@ class SpiffeIdentityAgent:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS SPIFFE Workload Identity & mTLS Agent (T-567)"
+        description="MiOS SPIFFE Workload Identity & mTLS Agent (task_511)"
     )
     parser.add_argument("--issue", action="store_true", help="Issue new SVID for workload")
     parser.add_argument("--workload", metavar="NAME", help="Workload name identifier")

@@ -101,7 +101,7 @@ the wrong response.
 
 | Question | Decision |
 |---|---|
-| Rust tier dispatch (T-1018) | Per-stage absolute path, one commit each, byte-identical output per stage |
+| Rust tier dispatch (task_962) | Per-stage absolute path, one commit each, byte-identical output per stage |
 | The 112 unwired modules | Real features awaiting wiring. **Inventory first**, then wire; nothing culled |
 | `[migration].use_rust_resolver_*` | They are **goals**, not state. Rename so they stop reading as "done" |
 | Retired ports | **Zero occurrences, gated, no exceptions** -- including fixing the generators behind the two generated units |
@@ -112,5 +112,5 @@ the wrong response.
 
 ## 7. Highest priority
 
-**The Rust tier actually running.** T-1018: the binaries that ship in the image
+**The Rust tier actually running.** task_962: the binaries that ship in the image
 should be the ones that build it.

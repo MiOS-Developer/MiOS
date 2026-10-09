@@ -1,5 +1,5 @@
 <!-- AI-hint: Dual-tier OCI AI artifact architecture: standard OCI ModelCars for resident inference lanes via Podman Quadlet image mounts and composefs; CNCF KitOps ModelKits for development, training corpora, SFT/DPO datasets, and LoRA adapters. Read before packaging or deploying any AI model or fine-tuning dataset. -->
-<!-- AI-related: usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md, ROADMAP.md (MODELOCI-01..04), usr/share/mios/mios.toml [artifacts.daily], [finetune.micro], usr/share/containers/systemd/mios-llm-light.container, usr/lib/bootc/bound-images.d/ -->
+<!-- AI-related: usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md, ROADMAP.md (task_3224..task_3227), usr/share/mios/mios.toml [artifacts.daily], [finetune.micro], usr/share/containers/systemd/mios-llm-light.container, usr/lib/bootc/bound-images.d/ -->
 ---
 adr: 0027
 title: Dual-tier OCI AI artifact architecture for resident inference and daily training corpora
@@ -20,7 +20,7 @@ superseded_by: []
 
 accepted — 2026-09-26
 
-Fulfills and coordinates Roadmap items `MODELOCI-01` through `MODELOCI-04`. Ratifies the consensus reached in technical evaluation `docs/research/tech-eval-oci-ai-artifacts-and-pipelines.md` and aligns with Law 1 (FHS), Law 3 (BOUND-IMAGES), Law 5 (UNIFIED-AI-REDIRECTS), Law 12 (BAKE-NOT-FETCH), Law 14 (TARGET-LANGUAGES), and Law 16 (ONE-TEMPLATE-PER-TYPE).
+Fulfills and coordinates Roadmap items `task_3224` through `task_3227`. Ratifies the consensus reached in technical evaluation `docs/research/tech-eval-oci-ai-artifacts-and-pipelines.md` and aligns with Law 1 (FHS), Law 3 (BOUND-IMAGES), Law 5 (UNIFIED-AI-REDIRECTS), Law 12 (BAKE-NOT-FETCH), Law 14 (TARGET-LANGUAGES), and Law 16 (ONE-TEMPLATE-PER-TYPE).
 
 ## Context
 

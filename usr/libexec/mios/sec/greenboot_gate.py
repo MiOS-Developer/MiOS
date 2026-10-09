@@ -3,7 +3,7 @@
 # AI-related: usr/share/doc/mios/adr/0018-shutdown-diff-snapshotting-and-boot-cycle-accrual.md, usr/share/doc/mios/manual/ch63-diff-snapshotting-boot-accrual-and-hitl-rollin.md, tests/test-sec.py
 # AI-functions: GreenbootGateEngine, atomic_write_json, main
 """
-WS-DIFFCYCLE (T-470): Greenboot Post-Bake Health Gate & Automated Fallback.
+WS-DIFFCYCLE (task_414): Greenboot Post-Bake Health Gate & Automated Fallback.
 Invoked during early system boot by Greenboot required checks.
 Verifies that newly baked image layers initialize critical AI and system services cleanly,
 triggering automated bootc rollback and quarantining offending diffs if regressions occur.
@@ -367,7 +367,7 @@ class GreenbootGateEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS WS-DIFFCYCLE (T-470) Greenboot Post-Bake Health Gate & Automated Fallback",
+        description="MiOS WS-DIFFCYCLE (task_414) Greenboot Post-Bake Health Gate & Automated Fallback",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

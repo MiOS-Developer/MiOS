@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated node failure detection and zero-loss dynamic task re-distribution engine (T-538, AGY-2136).
+# AI-hint: Automated node failure detection and zero-loss dynamic task re-distribution engine (task_482, task_2715).
 # AI-doc: usr/share/doc/mios/manual/ch83-task-failover-resilience.md
 """Automated node failure detection and zero-loss dynamic task re-distribution engine.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Comprehensive empirical adversarial test suite for T-401..T-406 (Database, Storage, Encryption, and Replication).
+# AI-hint: Comprehensive empirical adversarial test suite for task_345..task_350 (Database, Storage, Encryption, and Replication).
 # AI-related: usr/libexec/mios/db/mios-pgvector-optimize.py, usr/libexec/mios/storage/mios-ledger-sync, usr/libexec/mios/storage/mios-cephfs-quota, usr/libexec/mios/db/mios-pg-replica.py, usr/libexec/mios/db/mios-db-doctor.py, usr/libexec/mios/db/mios-db-migrate.py, usr/libexec/mios/sec/mios-luks-rotate
-"""MiOS Empirical Adversarial Test Harness (Challenger 1).  Adversarially tests and stress-tests: - pgvector Automated VACUUM & Concurrent HNSW Reindexing (T-401) - CephFS Transactional Ledger Replication & Integrity Hashing (T-402) - CephFS Dynamic Quota Enforcement & Subvolume Sizing (T-403) - Ceph RADOS Gateway Quadlet Isolation (T-404) - LUKS2 / dm-crypt Automated Key Rotation & Safety Rollback (T-405) - PostgreSQL Hot-Standby Streaming Replication & Fencing Coordinator (T-406) - Database Corruption Detector & Non-Destructive Repair Engine (T-407) - Database Schema Migration Runner & Rollback Safety (T-412)"""
+"""MiOS Empirical Adversarial Test Harness (Challenger 1).  Adversarially tests and stress-tests: - pgvector Automated VACUUM & Concurrent HNSW Reindexing (task_345) - CephFS Transactional Ledger Replication & Integrity Hashing (task_346) - CephFS Dynamic Quota Enforcement & Subvolume Sizing (task_347) - Ceph RADOS Gateway Quadlet Isolation (task_348) - LUKS2 / dm-crypt Automated Key Rotation & Safety Rollback (task_349) - PostgreSQL Hot-Standby Streaming Replication & Fencing Coordinator (task_350) - Database Corruption Detector & Non-Destructive Repair Engine (task_351) - Database Schema Migration Runner & Rollback Safety (task_356)"""
 
 from __future__ import annotations
 

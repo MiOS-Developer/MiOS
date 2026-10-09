@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for automated network and audio fallback manager and alert daemon (T-532, AGY-2130).
+# AI-hint: Verification suite for automated network and audio fallback manager and alert daemon (task_476, task_2709).
 # AI-doc: usr/share/doc/mios/manual/ch77-hardware-fallback.md
 set -euo pipefail
 
@@ -14,7 +14,7 @@ show_help() {
 Usage: test-hardware-fallback.sh [OPTIONS]
 
 Verification test suite for automated network and audio fallback manager with
-operator desktop alert daemon (T-532, AGY-2130).
+operator desktop alert daemon (task_476, task_2709).
 
 Options:
   -v, --verbose       Enable verbose test logging
@@ -80,7 +80,7 @@ trap '[[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"' EXIT
 FALLBACK_TOOL="${ROOT_DIR}/usr/libexec/mios/mios-hardware-fallback"
 SYSTEMD_USER_UNIT="${ROOT_DIR}/usr/lib/systemd/user/mios-hardware-fallback.service"
 
-log "=== MiOS Hardware Fallback Manager & Alert Daemon Test Suite (T-532, AGY-2130) ==="
+log "=== MiOS Hardware Fallback Manager & Alert Daemon Test Suite (task_476, task_2709) ==="
 
 # -----------------------------------------------------------------------------
 # Dry-run early exit mode

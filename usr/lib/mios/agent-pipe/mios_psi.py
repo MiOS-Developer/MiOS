@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Continuous Linux PSI (Pressure Stall Information) sampler and throttling monitor (T-485).
+# AI-hint: Continuous Linux PSI (Pressure Stall Information) sampler and throttling monitor (task_429).
 # AI-doc: usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md
 """Linux PSI (Pressure Stall Information) sampler and throttling monitor for agent-pipe.
 

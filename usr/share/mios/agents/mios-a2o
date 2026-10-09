@@ -108,7 +108,7 @@ cmd_dispatch(){
   ensure_server; mkdir -p "$work"
   cat > "$PROMPTS/$name.txt"                          # prompt from stdin
   [ -s "$PROMPTS/$name.txt" ] || die "Empty prompt on stdin"
-  # F-014: Checkpoint marker for automatic container restart recovery
+  # task_3185: Checkpoint marker for automatic container restart recovery
   printf 'NAME=%s\nENGINE=%s\nWORK=%s\nMODEL=%s\nEFFORT=%s\nPROMPT_FILE=%s\nDISPATCH_TS=%s\n' \
     "$name" "$eng" "$work" "$model" "$effort" "$PROMPTS/$name.txt" "$(date +%s)" > "$STATUS/$name.resume"
   local AGY_DEBUG_LOG="$RUND/$name.agy-debug.log"

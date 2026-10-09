@@ -131,7 +131,7 @@ already Python-in-bash) or the **verb dispatcher** — running old+new side-by-s
 diffing to identical before deleting the bash.
 
 > [!NOTE]
-> **Implementation Note (AGY-51):** The native cargo workspace was stood up at `tools/native/` with `mios-version-check` as the first tool. In the absence of a host Rust toolchain, a `TODO(agy): cargo build` is recorded.
+> **Implementation Note (task_1078):** The native cargo workspace was stood up at `tools/native/` with `mios-version-check` as the first tool. In the absence of a host Rust toolchain, a `TODO(agy): cargo build` is recorded.
 
 ## Rationale
 
@@ -203,19 +203,19 @@ Costs / honest status:
 
 - **WS-DEBT** — the technical-debt register (TD-1..TD-8). Phase −1: a `shellcheck`
   CI job + `set -euo pipefail` on the 23 unguarded verbs + audit the 9 `eval` sites
-  (T-269); collapse the 3× `mios.toml` + the 0.2.4 root + the 37× hardcoded headers
-  to one projected version token (T-268); split `mios_dispatch.py` / finish the
-  `server.py` (8,961 ln) decomposition (T-273).
+  (task_247); collapse the 3× `mios.toml` + the 0.2.4 root + the 37× hardcoded headers
+  to one projected version token (task_246); split `mios_dispatch.py` / finish the
+  `server.py` (8,961 ln) decomposition (task_251).
 - **WS-LANG** — the cargo workspace (location an OPEN QUESTION: `C:\MiOS\src\` is
   occupied by `mios-launch.cs` + `autounattend/`, so the workspace goes elsewhere,
   e.g. `C:\MiOS\tools\native\` or `src\mios-rs\`, not clobbering `src/`); the early
   Containerfile Rust stage; the first bash→Rust port — the drift-runner or verb
-  dispatcher — old+new side-by-side, diffed to identical (T-272).
+  dispatcher — old+new side-by-side, diffed to identical (task_250).
 - **WS-TEMPLATE** — `usr/share/mios/templates/*.tmpl` (~15) + `[templates]` schema;
   Python `usr/libexec/mios/mios-new` (`mios new <type>`, reusing `mios-ai-tag`);
   `tools/compile-templates.py` golden tests; `check_template_conformance`
   (`automation/98-drift-checks.sh`, soft→hard ratchet); the candidate Law-14 `[laws]`
-  row + enforcement, operator-gated (T-271).
+  row + enforcement, operator-gated (task_249).
 - Reference impls kept: `usr/libexec/mios/mios-theme-render` (the clean Law-8
   projector the render/drift crates copy); `usr/libexec/mios/mios-ai-tag` (the
   header machinery the templates reuse).

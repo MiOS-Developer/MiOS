@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Zero-copy network buffer pooling for mios-node frames (T-393 / AGY-1991).
+# AI-hint: Zero-copy network buffer pooling for mios-node frames (task_337 / task_2570).
 # AI-related: usr/libexec/mios/node/wire.py, tests/test-node.py
 """
 MiOS Zero-Copy Network Buffer Pool.

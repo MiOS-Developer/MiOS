@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Verification suite for multi-node dynamic AI workload partitioner and capability-aware task router (T-537, AGY-2135).
+# AI-hint: Verification suite for multi-node dynamic AI workload partitioner and capability-aware task router (task_481, task_2714).
 # AI-doc: usr/share/doc/mios/manual/ch82-mesh-workload-partitioning.md
 """Test suite for multi-node dynamic AI workload partitioner and capability-aware router."""
 
@@ -417,7 +417,7 @@ def main() -> int:
     MOCK_MODE = args.mock
 
     print("======================================================================")
-    print("MiOS Multi-Node AI Workload Partitioner & Router Test Suite (T-537)")
+    print("MiOS Multi-Node AI Workload Partitioner & Router Test Suite (task_481)")
     print("======================================================================")
 
     test_1_cli_and_help()

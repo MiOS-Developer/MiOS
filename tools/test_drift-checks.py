@@ -501,7 +501,7 @@ class TestMonitorRegistry(unittest.TestCase):
             self.assertFalse(self.ns["load_ssot_colors"]()[1], theme)
 
 
-# The T-996 pair: a priority scale and a ceiling that must equal its register's
+# The task_940 pair: a priority scale and a ceiling that must equal its register's
 # size, both 9 once -- two facts that agreed by accident.
 T996_ENV = {"MIOS_SCHED_URGENCY_HIGH": "9", "MIOS_SSOT_TABLES_MAX_UNCONSUMED": "9"}
 T996_SOURCES = {"MIOS_SCHED_URGENCY_HIGH": "sched.urgency_high",
@@ -528,7 +528,7 @@ def _value_fixture(tmp, emitted, sources):
 
 
 class TestValueDupCoincidence(unittest.TestCase):
-    """check_no_duplicate_value_key over declarations, and T-998's one exit."""
+    """check_no_duplicate_value_key over declarations, and task_942's one exit."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-value-dup-")
@@ -637,7 +637,7 @@ class TestValueAliasRegistry(unittest.TestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("MUST be equal", r.stderr)
 
-    # T-998. keep-distinct means two declarations whose values may coincide;
+    # task_942. keep-distinct means two declarations whose values may coincide;
     # it used to mean "must differ", which left a real coincidence no exit.
     def test_the_t996_coincidence_passes_as_two_declarations(self):
         r = self._run(T996_ENV, [T996_ROW], T996_SOURCES)

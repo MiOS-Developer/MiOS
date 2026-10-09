@@ -3,7 +3,7 @@
 # AI-related: usr/share/doc/mios/adr/0018-shutdown-diff-snapshotting-and-boot-cycle-accrual.md, usr/share/doc/mios/manual/ch63-diff-snapshotting-boot-accrual-and-hitl-rollin.md, tests/test-image-bake.py
 # AI-functions: ImageBakeEngine, atomic_write_json, main
 """
-WS-DIFFCYCLE (T-469): Autonomous Background OCI Image Synthesis Service.
+WS-DIFFCYCLE (task_413): Autonomous Background OCI Image Synthesis Service.
 Ingests operator-approved diffs from staged manifests, verifies against the quarantine ledger,
 creates structured git commits at repo root (.git == /), builds updated container layers
 inside podman-MiOS-DEV with low CPU/IO priority, and stages images via bootc switch --staged.
@@ -409,7 +409,7 @@ class ImageBakeEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS WS-DIFFCYCLE (T-469) Autonomous Background OCI Image Synthesis Service",
+        description="MiOS WS-DIFFCYCLE (task_413) Autonomous Background OCI Image Synthesis Service",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (T-543, AGY-2141).
+# AI-hint: Proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (task_487, task_2720).
 # AI-doc: usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md
 
 """
@@ -679,7 +679,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="mios-thermald",
-        description="MiOS Proactive PID Thermal Daemon & Dynamic Power Cap Modulator (T-543, AGY-2141)",
+        description="MiOS Proactive PID Thermal Daemon & Dynamic Power Cap Modulator (task_487, task_2720)",
         parents=[common_parser],
     )
 

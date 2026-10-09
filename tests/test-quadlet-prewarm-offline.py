@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-749 & T-750: Quadlet pre-warm and Day-0 offline start.
+# AI-hint: Tests for task_693 & task_694: Quadlet pre-warm and Day-0 offline start.
 # AI-functions: test_offline_container_startup_speed
 
-"""Tests for T-749 & T-750: Quadlet pre-warm and Day-0 offline start."""
+"""Tests for task_693 & task_694: Quadlet pre-warm and Day-0 offline start."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/deploy")
 from quadlet_prewarm import QuadletPrewarmer
@@ -20,4 +20,4 @@ def test_offline_container_startup_speed():
 
 if __name__ == "__main__":
     test_offline_container_startup_speed()
-    print("All T-749/T-750 tests passed.")
+    print("All task_693/task_694 tests passed.")

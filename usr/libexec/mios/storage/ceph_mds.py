@@ -2,7 +2,7 @@
 # AI-functions: __init__, pin_subtree, simulate_mdtest_ops, trigger_failover, MDSRank, CephMDSOperator
 
 """
-ceph_mds.py — T-739 WS-STRG
+ceph_mds.py — task_683 WS-STRG
 Active-Active CephFS MDS metadata clustering and dynamic subtree partitioner.
 
 Sets max_mds=2, configures standby replay daemons, and manages dynamic subtree

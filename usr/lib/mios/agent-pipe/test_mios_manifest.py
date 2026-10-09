@@ -273,7 +273,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_ai_manifest.py (T-1092)
+# Consolidated from test_mios_ai_manifest.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone assert-script unit test for mios_manifest (WS-A1 verb-catalog manifest projection). Pure stdlib, no server.py/DB/pytest.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

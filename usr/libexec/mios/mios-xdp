@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Native eBPF XDP network fastpath and WireGuard packet router manager (T-802).
+# AI-hint: Native eBPF XDP network fastpath and WireGuard packet router manager (task_746).
 # AI-doc: usr/share/doc/mios/manual/ch18-ebpf-xdp-wireguard-fastpath.md
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def query_interfaces_xdp() -> Dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Native eBPF XDP network fastpath and WireGuard packet router (T-802)"
+        description="Native eBPF XDP network fastpath and WireGuard packet router (task_746)"
     )
     parser.add_argument("--check", action="store_true", help="Validate eBPF source syntax and map structure")
     parser.add_argument("--source", default=DEFAULT_SOURCE_PATH, help="Path to eBPF C source file")

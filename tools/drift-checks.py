@@ -154,7 +154,7 @@ def check_resolver_differential_parity() -> int:
         for m in mismatches[:10]:
             print(f"      {m}", file=sys.stderr)
         sys.exit(1)
-    print(f"    resolver divergence: {len(diff_keys)}/{ceil_div} keys, {len(mismatches)}/{ceil_val} values (shrink-only; AGY-1676)", file=sys.stderr)
+    print(f"    resolver divergence: {len(diff_keys)}/{ceil_div} keys, {len(mismatches)}/{ceil_val} values (shrink-only; task_2317)", file=sys.stderr)
 
     print("    mios-resolver --emit=json matches Python SSOT render 100%")
     sys.exit(0)
@@ -260,7 +260,7 @@ def check_legibility_ratchet() -> int:
         # A sibling unit test is not tooling to port. Counting them made this
         # ratchet pull against check_module_test_coverage the same way
         # max_libexec_verbs did below, and 36% of what it measured was test
-        # code. Floor re-baselined down by what the exclusion removes (T-1044).
+        # code. Floor re-baselined down by what the exclusion removes (task_981).
         "max_tooling_python_lines": lines([
             r for r in rels
             if r.endswith(".py") and not _is_generated(r)
@@ -366,7 +366,7 @@ def check_no_duplicate_value_key() -> int:
 
     DEFAULT_HEADER = [
         "# value-dup-baseline.tsv -- ratcheted exemption ledger for",
-        "# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP AGY-1422).",
+        "# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP task_2063).",
         "# Regenerate: MIOS_VALUE_DUP_BASELINE_BUMP=1 bash automation/98-drift-checks.sh check_no_duplicate_value_key",
         "# Format: value<TAB>key_count<TAB>comma-separated MIOS_* keys  (value escapes \\\\ \\t \\r)",
     ]
@@ -463,7 +463,7 @@ def check_no_duplicate_value_key() -> int:
                 return canon
         return min(name_set)
 
-    # T-998: a keep-distinct row in value-aliases.tsv declares its alias column a
+    # task_942: a keep-distinct row in value-aliases.tsv declares its alias column a
     # distinct fact that shares the canonical column's value by coincidence.
     # check_value_aliases proves the two are separate declarations and that the
     # row says why; here the alias side stops counting as a duplicate of a group
@@ -749,7 +749,7 @@ def check_unwired_modules() -> int:
     sys.exit(1 if (new_dead or stale) else 0)
 
 def check_header_integrity() -> int:
-    """A header tagger must never consume line 1 (AGY-1607)."""
+    """A header tagger must never consume line 1 (task_2248)."""
     import os, re, subprocess, sys
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -3219,7 +3219,7 @@ def check_bib_rootfs_label_policy() -> int:
     return 0
 
 def check_smoke_manifest() -> int:
-    """[testing.smoke_components] is closed over the SSOT it ships in (T-1171).
+    """[testing.smoke_components] is closed over the SSOT it ships in (task_3464).
 
     Every probe key is a kind `mios-gate image-equivalence` knows, every file
     probe exists in the source tree (commands, paths and rpm packages are build
@@ -3686,7 +3686,7 @@ def check_value_aliases() -> int:
             if va != vb:
                 bad.append(f"{a}={va!r} != {b}={vb!r} (disposition={disp}: MUST be equal -- silent SSOT divergence)")
         elif disp == "keep-distinct":
-            # T-998. keep-distinct means DISTINCT FACTS: two declarations, never
+            # task_942. keep-distinct means DISTINCT FACTS: two declarations, never
             # collapsed, whose values may coincide. One declaration under two
             # names is an alias whatever the row claims, and a claim nobody can
             # review is not a classification.
@@ -3909,7 +3909,7 @@ def check_secret_handling() -> int:
     import os, sys, re
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    key_regex = re.compile(r'-----BEGIN (?:RSA|OPENSSH|EC|PGP|PRIVATE)[A-Z ]*KEY[A-Z ]*-----\r?\n(?:[^\n]*\r?\n){0,6}?[A-Za-z0-9+/=]{40,}')  # T-1022: a PEM header is not a key
+    key_regex = re.compile(r'-----BEGIN (?:RSA|OPENSSH|EC|PGP|PRIVATE)[A-Z ]*KEY[A-Z ]*-----\r?\n(?:[^\n]*\r?\n){0,6}?[A-Za-z0-9+/=]{40,}')  # task_965: a PEM header is not a key
     conn_regex = re.compile(r'(?:postgres|mysql|mongodb|redis)://[a-zA-Z0-9_-]+:[^@\s\"\'`]{4,}@')
     token_regex = re.compile(r'\b(?:AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|glpat-[a-zA-Z0-9_-]{20})\b')
 
@@ -4473,7 +4473,7 @@ def check_doc_port_scheme() -> int:
         except OSError:
             pass
 
-    # Code surface scanning (T-1002 / LAW5-01):
+    # Code surface scanning (task_946 / LAW5-01):
     code_exemptions, scanned_exempt_hits = set(docs.get("retired_code_exemptions", [])), set()
     max_ex = docs.get("max_retired_code_exemptions")
     if max_ex is not None and len(code_exemptions) != max_ex:
@@ -4555,7 +4555,7 @@ def check_blade_reconcile_schema() -> int:
         if not re.search(r"\b(logical_ts|logical_clock)\b", body):
             viol.append("table '%s' has no logical_ts column, so append-ordered and last-writer-wins have nothing to order by" % table)
     if viol:
-        viol.append("Land AGY-1598 (origin_node + logical_ts) or set [blade.reconcile].enabled = false until it does.")
+        viol.append("Land task_2239 (origin_node + logical_ts) or set [blade.reconcile].enabled = false until it does.")
         print("\n".join(viol))
         return 1
     return 0

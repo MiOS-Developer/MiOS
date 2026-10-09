@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, usr/share/mios/mios.toml
 # AI-functions: FontScalerEngine, DisplayMetrics, ScaledFontConfig, main
 """
-MiOS High-DPI Dynamic Font Size Scaler (T-462).
+MiOS High-DPI Dynamic Font Size Scaler (task_406).
 
 Calculates and applies optimal typography scaling for High-DPI (4K/Retina) vs
 standard (1080p) displays across terminal and desktop surfaces.
@@ -256,7 +256,7 @@ class FontScalerEngine:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS High-DPI Dynamic Font Size Scaler (T-462)"
+        description="MiOS High-DPI Dynamic Font Size Scaler (task_406)"
     )
     parser.add_argument("--auto", action="store_true", help="Auto-detect monitor DPI from Wayland compositor")
     parser.add_argument("--dpi", type=float, help="Explicit target display DPI (e.g. 96.0, 144.0, 192.0)")

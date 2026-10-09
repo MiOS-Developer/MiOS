@@ -4,7 +4,7 @@
 
 # MiOS — Unified Native Installation + Configuration
 
-## Field ownership update (T-261 / T-1118, 2026-09-29)
+## Field ownership update (task_239 / task_3411, 2026-09-29)
 
 `field/` is the canonical hardware-facing component. The retired `cat/` launcher
 paths have been removed; `field/MiOS-Field.{ps1,sh,bat}` owns the media entry. Both

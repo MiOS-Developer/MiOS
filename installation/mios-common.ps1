@@ -538,7 +538,7 @@ function Resolve-MiosDistro {
 }
 
 # ============================================================================
-#  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
+#  MiOS-Data & OCI Bulk Staging (task_239 / task_3411)
 # ============================================================================
 
 function Read-MiosTarEntry {
@@ -894,7 +894,7 @@ function Invoke-MiosStage {
         }
     }
 
-    # T-261: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
+    # task_239: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
     if ($diskSizeGB -ge $MinDiskGB) {
         Write-Host "Disk >= ${MinDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store..." -ForegroundColor Cyan
         $dataDir = Join-Path $drivePath "MiOS-Data"
@@ -1094,7 +1094,7 @@ function Invoke-MiosVerify {
 }
 
 # ============================================================================
-#  Backward Compatibility Aliases (T-1118)
+#  Backward Compatibility Aliases (task_3411)
 # ============================================================================
 function Invoke-MiOSFieldStage { Invoke-MiosStage @args }
 function Invoke-MiOSFieldVerify { Invoke-MiosVerify @args }

@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 71: Composefs fs-verity Root Filesystem Sealing and Atomic Validation (T-527, AGY-2125). Details kernel-level fs-verity digest verification, prepare-root composefs mount execution, descriptor integrity validation, and bootc kargs drop-in configuration. -->
+<!-- AI-hint: Chapter 71: Composefs fs-verity Root Filesystem Sealing and Atomic Validation (task_471, task_2704). Details kernel-level fs-verity digest verification, prepare-root composefs mount execution, descriptor integrity validation, and bootc kargs drop-in configuration. -->
 
 # Chapter 71: Composefs fs-verity Root Filesystem Sealing and Atomic Validation
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the architecture, cryptographic foundations, and operational tooling for **Composefs fs-verity Root Filesystem Sealing and Atomic Image Descriptor Validation** (T-527, AGY-2125).
+This chapter documents the architecture, cryptographic foundations, and operational tooling for **Composefs fs-verity Root Filesystem Sealing and Atomic Image Descriptor Validation** (task_471, task_2704).
 
 ```mermaid
 flowchart TD
@@ -119,7 +119,7 @@ The build pipeline script `automation/93-composefs-seal.sh` automates filesystem
 3. **Kernel Command-Line Sealing**:
    Generates `usr/lib/bootc/kargs.d/50-composefs.toml`:
    ```toml
-   # AI-hint: Boot-time composefs fs-verity root filesystem sealing (T-527)
+   # AI-hint: Boot-time composefs fs-verity root filesystem sealing (task_471)
    # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
    kargs = [
      "ostree.composefs=1",

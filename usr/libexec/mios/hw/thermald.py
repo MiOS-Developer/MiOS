@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Proactive PID thermal frequency governor and dynamic EPP stepping daemon (T-721, T-722).
+# AI-hint: Proactive PID thermal frequency governor and dynamic EPP stepping daemon (task_665, task_666).
 # AI-related: usr/libexec/mios/hw/thermald.py, tests/test-hw.py
 """Proactive PID thermal frequency governor and dynamic EPP stepping daemon for MiOS.
 

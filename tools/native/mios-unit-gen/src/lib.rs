@@ -385,10 +385,10 @@ pub fn render_blade_dropins(ssot: &str) -> Result<BTreeMap<String, String>, Unit
         ));
     }
     let mut selectors = String::from(
-        "# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\nservices:\n"
+        "# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\nservices:\n"
     );
     let mut pcs = String::from(
-        "# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\n"
+        "# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\n"
     );
     for (service, caps) in &requires {
         selectors.push_str(&format!("  {service}:\n    nodeSelector:\n"));
@@ -702,7 +702,7 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
 
                         // No hardening baseline is injected: a generator that
                         // adds undeclared directives is not a projection.
-                        // See tasks.jsonl T-317.
+                        // See tasks.jsonl task_267.
                         let _ = (is_service, is_unconfined, &existing_keys);
                     }
                 }
@@ -877,7 +877,7 @@ mod tests {
     use super::*;
 
     /// The renderer is a PROJECTION: only what `[units.*]` declares comes
-    /// out. It used to inject a hardening baseline. See tasks.jsonl T-317.
+    /// out. It used to inject a hardening baseline. See tasks.jsonl task_267.
     #[test]
     fn test_render_invents_no_directives() {
         let toml_str = r#"

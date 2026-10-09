@@ -1,7 +1,7 @@
 <!-- AI-hint: Primary-source prompt for settling which mesh-VPN client features work in
      userspace-networking mode (inbound, serve, funnel, relay through an egress
      proxy, several instances per host, identity-provider role claims).
-     AI-related: usr/share/mios/mios.toml, TASKS.md T-986, .prompts/README.md -->
+     AI-related: usr/share/mios/mios.toml, TASKS.md task_930, .prompts/README.md -->
 <context>
 MiOS joins hosts that cannot create a TUN device (hosted dev sessions,
 unprivileged containers, the Windows-side dev VM) to its mesh VPN with the
@@ -34,7 +34,7 @@ Raised by, at these revisions (re-read before relying on them):
   (role claims through policy app-capability grants UNVERIFIED), 239 (several
   userspace daemons on one host INFERRED), 385-397 (section 9.1 unit shape),
   590 (probe rows a, b, c, d, f, h), 755-770 (honest gaps).
-- MiOS `TASKS.md` at `a67750d`: lines 10732-10740 (T-986 mesh VPN, Done-When).
+- MiOS `TASKS.md` at `a67750d`: lines 10732-10740 (task_930 mesh VPN, Done-When).
 - MiOS `usr/share/mios/mios.toml` at `a67750d`: lines 828-830 and 1922-1923,
   2473 (units and portal settings that already assume the client's serve
   feature and interface address).

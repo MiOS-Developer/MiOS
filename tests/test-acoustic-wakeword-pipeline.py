@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated benchmark and unit test suite for Three-Stage Acoustic Wake-Word Engine (T-579 / T-580).
+# AI-hint: Automated benchmark and unit test suite for Three-Stage Acoustic Wake-Word Engine (task_523 / task_524).
 # AI-related: usr/libexec/mios/audio/wakeword.py, usr/lib/systemd/user/mios-wakeword.service, usr/share/mios/mios.toml
 """
 Automated Acoustic Noise Rejection, VAD Accuracy, and Wake-Word Trigger Benchmark Suite.

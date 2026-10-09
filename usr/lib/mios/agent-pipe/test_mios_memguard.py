@@ -158,7 +158,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_redact.py (T-1092)
+# Consolidated from test_mios_redact.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for secrets and PII redaction.
 import os

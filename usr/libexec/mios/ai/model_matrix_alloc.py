@@ -3,7 +3,7 @@
 # AI-related: usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md, tests/test-ai.py
 # AI-functions: ModelMatrixAllocator, detect_host_hardware, project_llama_swap_yaml, main
 """
-WS-AI (T-571): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
+WS-AI (task_515): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
 Dynamically detects host GPU VRAM and System RAM to assign modern open-weight models
 (Qwen2.5-Coder, DeepSeek-R1-Distill, nomic-embed-text) across function-named inference lanes
 (mios-llm-light, mios-llm-heavy). Enforces strict VRAM headroom reservation (<=90%) and projects
@@ -318,7 +318,7 @@ class ModelMatrixAllocator:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Hardware-Tiered Model Matrix Allocator (T-571)"
+        description="MiOS Hardware-Tiered Model Matrix Allocator (task_515)"
     )
     parser.add_argument("--detect", action="store_true", help="Detect host hardware profile")
     parser.add_argument("--tier", choices=[TIER_CONSUMER, TIER_PROSUMER, TIER_POWERUSER], help="Force allocation tier")

@@ -1,4 +1,4 @@
-<!-- AI-hint: The staged, lossless-diff-gated plan to collapse the duplicated/proliferated MIOS_* SSOT keys (measured 2523 keys, 79 version/image pairs, dead+alias dupes, one value copy-pasted across ~35 places) into one-value-declared-once-derived-everywhere. 6 phases; the invariant is a byte-identical resolved-env diff (mios-env-snapshot). AGY-479..730 execute it. -->
+<!-- AI-hint: The staged, lossless-diff-gated plan to collapse the duplicated/proliferated MIOS_* SSOT keys (measured 2523 keys, 79 version/image pairs, dead+alias dupes, one value copy-pasted across ~35 places) into one-value-declared-once-derived-everywhere. 6 phases; the invariant is a byte-identical resolved-env diff (mios-env-snapshot). task_1530..task_1582 execute it. -->
 <!-- AI-related: usr/lib/mios/mios_toml.py, tools/lib/userenv.sh, usr/share/mios/mios.toml, automation/98-drift-checks.sh, tasks.jsonl -->
 
 # MiOS Global Unification Plan (GUP)
@@ -20,7 +20,7 @@ Resolved `env | grep ^MIOS_ | sort` on the current tree:
 | Same value copy-pasted across surfaces | k3s `v1.32.1-k3s1` appeared in `[image.sidecars]` (version + ref), `[build.bake].core`, `mios-k3s.container`, `03-extra.list`, `k3s-cockpit.md`, `variables.md`, `mios.html` (configurator), `knowledge-graph.json`, `bound-images.tsv` (SBOM) — **~35 places**. Bumping it required editing all of them. |
 | Two hand-maintained resolver twins | `usr/lib/mios/mios_toml.py` + `tools/lib/userenv.sh` (~200 tuples each), must stay equivalent (check-45) |
 
-This is the **WS-NAME "unified key library"** debt (memory north-star; AGY-463). It is a real NO-HARDCODE / SSOT law violation.
+This is the **WS-NAME "unified key library"** debt (memory north-star; task_1514). It is a real NO-HARDCODE / SSOT law violation.
 
 ## 2. The invariant — LOSSLESS = byte-identical resolved env
 
@@ -69,12 +69,12 @@ No phase below commits until its diff is clean.
 - New gate `check_no_hardcoded_ssot_literal`: a version/ref literal in a non-SSOT file that matches an SSOT key = violation.
 - **Done when:** bumping one value in `mios.toml` + `mios-ssot-regen` updates EVERY surface; the gate is green.
 
-### Phase 5 — Always-latest float + SBOM pin (AGY-384/390/393)
+### Phase 5 — Always-latest float + SBOM pin (task_1435/390/393)
 - Float sidecar refs to `:latest`/family-channel; `mios-resolve-latest` records resolved tag+digest to SBOM at build.
 - Gate: no hand-pinned `:vX.Y.Z` outside SBOM/allowlist.
 - **Done when:** day-0 build floats to latest; SBOM records the pin; NO-HARDCODE-VERSION gate green.
 
-### Phase 6 — Minimal key library (WS-NAME / AGY-463)
+### Phase 6 — Minimal key library (WS-NAME / task_1514)
 - Auto-derive the minimal global key set (collapse `userenv.sh`'s ~200 tuples); reconcile `MIOS_AI_VLLM_*` (emitted) vs short `MIOS_VLLM_*` (consumed).
 - **Done when:** the manual table is generated; env-diff empty; twin-parity green.
 
@@ -83,20 +83,20 @@ No phase below commits until its diff is clean.
 - `check_resolved_env_lossless` — resolved env == committed baseline unless the baseline is deliberately bumped.
 - `check_no_duplicate_value_key` — no two SSOT keys carry the same single-source value (a version in two keys).
 - `check_no_hardcoded_ssot_literal` — docs/UI/graph/SBOM project from SSOT; no matching literal.
-- Pre-commit hook — `mios-ssot-regen` on any `mios.toml` change (AGY-446).
+- Pre-commit hook — `mios-ssot-regen` on any `mios.toml` change (task_1497).
 
 ## 6. AGY task mapping
 
 | Phase | AGY tasks |
 |---|---|
-| 0 | NEW AGY-479 (freeze+baseline+gate) |
-| 1 | NEW AGY-480 (dead/alias-dup removal) |
-| 2 | AGY-463 + NEW AGY-481 (sidecars version-derive) |
-| 3 | AGY-397 (rewire double-bakes) + NEW AGY-482 (compose bake.core) |
-| 4 | NEW AGY-483 (derived-surface projection) + AGY-445 (extend ssot-regen) |
-| 5 | AGY-384 / AGY-390 / AGY-393 |
-| 6 | AGY-463 |
+| 0 | NEW task_1530 (freeze+baseline+gate) |
+| 1 | NEW task_1531 (dead/alias-dup removal) |
+| 2 | task_1514 + NEW task_1532 (sidecars version-derive) |
+| 3 | task_1448 (rewire double-bakes) + NEW task_1533 (compose bake.core) |
+| 4 | NEW task_1534 (derived-surface projection) + task_1496 (extend ssot-regen) |
+| 5 | task_1435 / task_1441 / task_1444 |
+| 6 | task_1514 |
 
 ## 7. Sequencing note
 
-Phase 0 is mandatory first — it commits the messy in-flight tree to a clean base **and** lands the lossless gate that guards Phases 1-6. Nothing touches the resolver until the baseline gate is green. The running `0.3.0` publish is unaffected (it cloned an earlier HEAD); the unified refactor ships in `0.3.1+` (AGY-448 version bump).
+Phase 0 is mandatory first — it commits the messy in-flight tree to a clean base **and** lands the lossless gate that guards Phases 1-6. Nothing touches the resolver until the baseline gate is green. The running `0.3.0` publish is unaffected (it cloned an earlier HEAD); the unified refactor ships in `0.3.1+` (task_1499 version bump).

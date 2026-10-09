@@ -1,4 +1,4 @@
-# AI-hint: Council input-diversity gate + confidence-aware aggregation bypass (T-047 RouteMoA GAP-1 / T-048 MOSAIC GAP-2).
+# AI-hint: Council input-diversity gate + confidence-aware aggregation bypass (task_47 RouteMoA GAP-1 / task_48 MOSAIC GAP-2).
 # AI-doc: usr/share/doc/mios/manual/routing.md
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def select_diverse(vectors: list, threshold: float,
 
 def should_bypass(vectors: list, threshold: float,
                   cosine: Callable = _cosine) -> tuple:
-    """T-048 MOSAIC bypass predicate. Returns ``(bypass, mean_similarity)`` where
+    """task_48 MOSAIC bypass predicate. Returns ``(bypass, mean_similarity)`` where
     ``bypass`` is True iff there are >=2 council responses and EVERY pairwise
     cosine similarity exceeds ``threshold`` (the council converged). Fewer than 2
     responses cannot converge -> ``(False, 0.0)``. ``mean_similarity`` is the mean

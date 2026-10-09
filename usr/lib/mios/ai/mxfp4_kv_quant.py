@@ -2,7 +2,7 @@
 # AI-functions: __init__, quantize_mxfp4, compute_fp16_bytes, MXFP4Tensor, MXFP4KVQuantizer
 
 """
-mxfp4_kv_quant.py — T-771 WS-AI
+mxfp4_kv_quant.py — task_715 WS-AI
 Microscaling MXFP4 (E2M1) KV-cache quantizer and block-32 scale vector manager.
 
 Groups vector elements into 32-value blocks with shared 8-bit scale factor (E8M0),

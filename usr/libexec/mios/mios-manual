@@ -925,7 +925,7 @@ _ANCHOR_RE = re.compile(r'<!--\s*mios-src:([0-9a-f]+)\s+from\s+([^:]+):(\d+)-(\d
 def check_harvested_functions(root: str, target_doc: str | None = None) -> list[str]:
     """Verify that every function named in a harvested AI-functions line exists in its source.
 
-    Acceptance criteria (T-1189):
+    Acceptance criteria (task_3482):
     WHEN a harvested AI-functions line names a function absent from its mios-src
     source THE SYSTEM SHALL fail a check naming the doc line and the function.
     """

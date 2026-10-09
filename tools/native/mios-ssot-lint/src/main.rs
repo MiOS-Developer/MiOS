@@ -1,6 +1,6 @@
 // AI-hint: Rust implementation of SSOT lint checks for mios.toml structure and invariants.
 // tools/native/mios-ssot-lint/src/main.rs
-// Rust port of 97-ssot-lint.sh (AGY-150)
+// Rust port of 97-ssot-lint.sh (task_1201)
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -158,7 +158,7 @@ fn in_render(v: &str, render_lines: &[&str]) -> bool {
 fn main() {
     let root = find_root();
     let userenv_path = root.join("tools/lib/userenv.sh");
-    // The renderer has no allowlist since T-1040; "renderable" now means the
+    // The renderer has no allowlist since task_977; "renderable" now means the
     // resolver emits the name, so the twin reads the generated env baseline.
     let render_path = root.join("usr/share/mios/reference/env-baseline.txt");
     let quadlet_dir = root.join("usr/share/containers/systemd");

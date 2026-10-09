@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: 30-fixture unit test suite for the mios_comments comment classifier (AGY-1583).
+# AI-hint: 30-fixture unit test suite for the mios_comments comment classifier (task_2224).
 # AI-related: usr/lib/mios/mios_comments.py, usr/share/mios/mios.toml, docs/design/doc-generative-documentation.md
 import os
 import sys
@@ -128,7 +128,7 @@ class TestMiosManualComments(unittest.TestCase):
                 self.assertIn(v.cls, ("STAY", "MIGRATE", "DROP", "READONLY", "MIGRATE_HEADER"))
 
     def test_10_ledger_duplicate_preservation(self):
-        """Prove that Ledger preserves all duplicate rows with identical sha12 hashes (AGY-1611)."""
+        """Prove that Ledger preserves all duplicate rows with identical sha12 hashes (task_2252)."""
         import importlib.util
         import importlib.machinery
         manual_script = os.path.join(ROOT, "usr", "libexec", "mios", "mios-manual")

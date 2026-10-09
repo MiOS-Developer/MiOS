@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (T-529, AGY-2127).
+# AI-hint: Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (task_473, task_2706).
 # AI-doc: usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md
 set -euo pipefail
 
@@ -14,7 +14,7 @@ show_help() {
 Usage: test-blade-enroll.sh [OPTIONS]
 
 Verification test suite for declarative SSOT blade pre-enrollment registry and
-TPM 2.0 Endorsement Key (EK) fingerprint parser (T-529, AGY-2127).
+TPM 2.0 Endorsement Key (EK) fingerprint parser (task_473, task_2706).
 
 Options:
   -v, --verbose       Enable verbose test logging
@@ -79,7 +79,7 @@ trap '[[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"' EXIT
 
 ENROLL_TOOL="${ROOT_DIR}/usr/libexec/mios/mios-blade-enroll"
 
-log "=== MiOS Blade Pre-Enrollment & TPM EK Parser Test Suite (T-529, AGY-2127) ==="
+log "=== MiOS Blade Pre-Enrollment & TPM EK Parser Test Suite (task_473, task_2706) ==="
 
 # -----------------------------------------------------------------------------
 # Dry-run early exit mode

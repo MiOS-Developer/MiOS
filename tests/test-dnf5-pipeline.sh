@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for atomic DNF5 package pipeline, local cache staging, and mirror retry (T-503).
+# AI-hint: Verification suite for atomic DNF5 package pipeline, local cache staging, and mirror retry (task_447).
 # AI-doc: usr/share/doc/mios/manual/ch44-host-package-overrides-and-dnf5.md
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-echo "=== [test-dnf5-pipeline] Validating DNF5 caching and retry logic (T-503) ==="
+echo "=== [test-dnf5-pipeline] Validating DNF5 caching and retry logic (task_447) ==="
 
 # 1. Verify DNF_SETOPT options in common.sh
 COMMON_SH="${ROOT_DIR}/automation/lib/common.sh"

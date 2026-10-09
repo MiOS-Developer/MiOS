@@ -2,7 +2,7 @@
 # AI-hint: Contextual prompt compression and selective linguistic token pruning engine.
 # AI-related: tests/test-context-processing.py, usr/share/doc/mios/manual/prompt.md
 """
-MiOS Contextual Prompt Compression & Token Pruning Engine (PROMPT-01 / T-380 / AGY-1978).
+MiOS Contextual Prompt Compression & Token Pruning Engine (PROMPT-01 / task_324 / task_2557).
 
 Prunes conversational boilerplate, pleasantries, redundant markdown headers/spacers,
 and low-information syntactic filler while strictly preserving code syntax, code blocks,

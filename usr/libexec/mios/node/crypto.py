@@ -3,7 +3,7 @@
 # AI-related: src/mios-rs/mios-node/src/crypto.rs, usr/libexec/mios/node/wire.py, tests/test-node-mesh.py
 # AI-doc: usr/share/doc/mios/manual/node.md
 """
-MiOS Node Cryptographic Handshake & Wire AEAD Encryption Engine (T-388 / AGY-1986).
+MiOS Node Cryptographic Handshake & Wire AEAD Encryption Engine (task_332 / task_2565).
 Provides mutual Ed25519 identity verification, X25519 ephemeral Diffie-Hellman key exchange,
 HKDF-SHA256 session key derivation, and ChaCha20-Poly1305 authenticated symmetric payload encryption.
 """

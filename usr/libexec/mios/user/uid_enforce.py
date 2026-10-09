@@ -4,7 +4,7 @@
 
 """
 MiOS Standard Non-System UID 1000 Enforcement & Migration Engine.
-Implements T-964 / AGY-2562: Validates and enforces that primary user 'mios'
+Implements task_908 / task_3141: Validates and enforces that primary user 'mios'
 has UID 1000 and GID 1000, aligning with systemd user session requirements.
 """
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (task_3353 / GATECAT-01).
 # AI-related: usr/libexec/mios/git/merge_fuzzer.py, usr/libexec/mios/git/pre_commit.py, usr/libexec/mios/git/reconcile_dag.py
 """Consolidated Git Operations Domain Test Suite.
 

@@ -332,7 +332,7 @@ def cfv_main() -> int:
 
 
 # ==== from tests/test-sec.py (prefix cc_) ====
-"""Unit and integration test suite for KVCompactEngine and mios_kv_compact CLI (T-548)."""
+"""Unit and integration test suite for KVCompactEngine and mios_kv_compact CLI (task_492)."""
 
 
 import importlib.util
@@ -2094,7 +2094,7 @@ class km_TestKASLRMgr(unittest.TestCase):
 
 
 # ==== from tests/test-sec.py (prefix kl_) ====
-"""Unit and integration test suite for LivepatchManager and livepatch_mgr CLI (T-546)."""
+"""Unit and integration test suite for LivepatchManager and livepatch_mgr CLI (task_490)."""
 
 
 import importlib.util
@@ -3438,7 +3438,7 @@ class scm_TestSmartcardMux(unittest.TestCase):
 
 
 # ==== from tests/test-sec.py (prefix smt_) ====
-"""Unit and integration test suite for SpiffeIdentityAgent and spiffe_identity CLI (T-568)."""
+"""Unit and integration test suite for SpiffeIdentityAgent and spiffe_identity CLI (task_512)."""
 
 
 import datetime

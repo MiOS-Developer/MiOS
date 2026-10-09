@@ -18,7 +18,7 @@ superseded_by: [0012]
 
 ## Status
 
-superseded — 2026-08-02. Originally recorded as `docs/adr/0004-version-floating-and-sidecars.md`; promoted to canonical ADR namespace under T-1014. Formalized and generalized across all artifact classes by ADR-0012.
+superseded — 2026-08-02. Originally recorded as `docs/adr/0004-version-floating-and-sidecars.md`; promoted to canonical ADR namespace under task_958. Formalized and generalized across all artifact classes by ADR-0012.
 
 ## Context
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Local Cosign image signing, registry push, and signature validation gate (T-510).
+# AI-hint: Local Cosign image signing, registry push, and signature validation gate (task_454).
 # AI-doc: usr/share/doc/mios/manual/ch05-build-and-pipeline.md
 from __future__ import annotations
 
@@ -136,7 +136,7 @@ class CosignPublisher:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MiOS Cosign Image Sign and Publish Tool (T-510)")
+    parser = argparse.ArgumentParser(description="MiOS Cosign Image Sign and Publish Tool (task_454)")
     parser.add_argument("--image", default="localhost:5000/mios:latest", help="OCI image reference")
     parser.add_argument("--key", default="/etc/pki/containers/cosign.key", help="Path to Ed25519 signing key")
     parser.add_argument("--pubkey", default="/etc/pki/containers/cosign.pub", help="Path to public verification key")

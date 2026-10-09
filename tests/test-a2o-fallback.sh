@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Unit test for mios-a2o reactive fallback logic on quota exhaustion (F-024).
+# AI-hint: Unit test for mios-a2o reactive fallback logic on quota exhaustion (task_3183).
 # AI-related: usr/share/mios/agents/mios-a2o, tests/test-a2o-fallback.sh
 # AI-functions: run_test_fallback_enabled, run_test_fallback_disabled
 

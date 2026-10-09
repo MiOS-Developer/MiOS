@@ -20,7 +20,7 @@ fn die(msg: &str) -> ExitCode {
 
 /// Every knob comes from `[build.quadlet_render]`. Nothing here is a literal:
 /// the two bash renderers each carried their own hardcoded list and had already
-/// drifted apart by fourteen names (T-1040).
+/// drifted apart by fourteen names (task_977).
 #[derive(Debug)]
 struct Config {
     dirs: Vec<String>,
@@ -140,7 +140,7 @@ where
 }
 
 /// A unit declaring Environment=/EnvironmentFile= **in `[Service]`** owns its
-/// Exec refs (T-1040).
+/// Exec refs (task_977).
 ///
 /// The section is the whole point. In a `.container` Quadlet,
 /// `[Container] Environment=` becomes podman's `--env`: it populates the
@@ -529,7 +529,7 @@ mod tests {
 
     /// Image= is not an Exec line and Quadlet does not expand it, so a floated
     /// tag that resolves to nothing must be NAMED. Four shipped .container
-    /// files carried exactly this (T-1040).
+    /// files carried exactly this (task_977).
     #[test]
     fn an_unresolvable_image_tag_is_reported_with_its_line() {
         let unit = "[Container]\nImage=quay.io/ceph/ceph:${MIOS_VERSIONS_CEPH}\n";

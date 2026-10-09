@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (T-530, AGY-2128).
+# AI-hint: Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (task_474, task_2707).
 # AI-doc: usr/share/doc/mios/manual/ch76-remote-attestation.md
 """
 Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding Daemon.
@@ -619,7 +619,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="mios-attest-server",
-        description="MiOS Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier & Cluster Onboarding Daemon (T-530, AGY-2128)",
+        description="MiOS Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier & Cluster Onboarding Daemon (task_474, task_2707)",
         parents=[common_parser],
     )
 

@@ -81,7 +81,7 @@ def main() -> int:
 
 
 # ==============================================================================
-# mios_pipe.auth middlewares; T-1092 had folded only a placeholder here.
+# mios_pipe.auth middlewares; task_1006 had folded only a placeholder here.
 # ==============================================================================
 import asyncio
 import json
@@ -212,7 +212,7 @@ def _run_extra_auth():
 
 
 # ==============================================================================
-# Consolidated from test_mios_authn.py (T-1092)
+# Consolidated from test_mios_authn.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.access.authn.
 """Unit tests for authentication and caller key management."""

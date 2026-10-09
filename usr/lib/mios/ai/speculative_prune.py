@@ -2,7 +2,7 @@
 # AI-functions: __init__, prune_branches, SpeculativeTree, TreeAttentionPruner
 
 """
-speculative_prune.py — T-735 WS-AI
+speculative_prune.py — task_679 WS-AI
 In-place tree branch bitmask pruner and speculative KV compaction kernel.
 
 Applies a 16-bit branch mask to reset unaccepted KV block pointers in the

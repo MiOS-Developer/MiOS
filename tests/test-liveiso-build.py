@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Hybrid Live ISO and iPXE Netboot Pipeline (T-647, T-648).
+# AI-hint: Automated unit test suite for Hybrid Live ISO and iPXE Netboot Pipeline (task_591, task_592).
 # AI-related: usr/libexec/mios/build/liveiso.py, tests/test-liveiso-build.py
 """Automated unit test suite for MiOS Live ISO & iPXE Pipeline."""
 

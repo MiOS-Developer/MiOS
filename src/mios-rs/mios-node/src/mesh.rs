@@ -1,4 +1,4 @@
-// AI-hint: mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (T-395).
+// AI-hint: mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (task_339).
 // AI-related: src/mios-rs/mios-node/src/crypto.rs, usr/libexec/mios/node/ble.py, tests/test-node.py, src/mios-rs/mios-node/src/heartbeat.rs, usr/libexec/mios/node/overlay.py
 
 pub mod ble {

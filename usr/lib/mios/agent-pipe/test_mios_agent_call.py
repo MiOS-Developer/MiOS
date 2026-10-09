@@ -378,7 +378,7 @@ async def _rr_run_single_slice():
 
 asyncio.run(_rr_run_single_slice())
 
-print("[T-1190: Lock order Gate -> Endpoint -> Lane across mixed RR/non-RR]")
+print("[task_3483: Lock order Gate -> Endpoint -> Lane across mixed RR/non-RR]")
 
 async def _test_t1190_mixed_rr_non_rr_deadlock_free():
     import mios_preempt
@@ -488,8 +488,8 @@ async def _test_t1190_mixed_rr_non_rr_deadlock_free():
         t1 = asyncio.create_task(_dispatch_low())
         t2 = asyncio.create_task(_dispatch_high())
         done, pending = await asyncio.wait([t1, t2], timeout=2.0)
-        ok(len(pending) == 0, "T-1190: mixed RR and non-RR dispatches against 1-permit endpoint complete without deadlock")
-        ok(len(done) == 2, "T-1190: both dispatches completed successfully")
+        ok(len(pending) == 0, "task_3483: mixed RR and non-RR dispatches against 1-permit endpoint complete without deadlock")
+        ok(len(done) == 2, "task_3483: both dispatches completed successfully")
     finally:
         T.RR_SLICE_TOKENS = old_slice_tokens
         T.RR_QUANTUM_S = old_quantum
@@ -528,7 +528,7 @@ T._record_cost({"endpoint": "ep"}, "http://ep/v1", _time.time(), _cbody, _ctext)
 ok(_ledger.snapshot()["dispatches"] == 1,
    "_record_cost is a no-op when cost_accounting_enable is off")
 
-print("[T-021: KV Slot-Save/Restore + --swa-full Guard]")
+print("[task_21: KV Slot-Save/Restore + --swa-full Guard]")
 ok(T._stable_hash("conv1") == T._stable_hash("conv1"), "_stable_hash is deterministic")
 ok(T._stable_hash("conv1") != T._stable_hash("conv2"), "_stable_hash produces different values for different strings")
 
@@ -560,7 +560,7 @@ print("\nALL %d ASSERTIONS PASSED" % PASS)
 
 
 # ==============================================================================
-# Consolidated from test_mios_agentcard_sign.py (T-1092)
+# Consolidated from test_mios_agentcard_sign.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for mios_pipe.federation.agentcard_sign module.
 # AI-related: mios_pipe/federation/agentcard_sign.py

@@ -1,7 +1,7 @@
-<!-- AI-hint: Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177. -->
+<!-- AI-hint: Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178. -->
 # MiOS → Full AIOS: Master Plan (2026-06-14)
 
-> **Archived:** 2026-06-15 &nbsp;|&nbsp; **Status:** Absorbed & Superceded &nbsp;|&nbsp; **Target:** ROADMAP.md Part 17 (T-167..T-177)
+> **Archived:** 2026-06-15 &nbsp;|&nbsp; **Status:** Absorbed & Superceded &nbsp;|&nbsp; **Target:** ROADMAP.md Part 17 (task_168..task_178)
 
 ## Summary & Historical Context
 This document is a historical planning record from the June 2026 AIOS capability alignment cycle. The requirements, architectural specifications, and implementation items outlined herein have been fully integrated into the canonical MiOS architecture, Architectural Decision Records (ADRs 0001..0018), and tracked tasks in ROADMAP.md and TASKS.md.

@@ -117,7 +117,7 @@ Draft a bounded change PROPOSAL for one finding (the Autodata "implementer").
 ### Score the current baseline vs the proposed variant on a...
 
 Score the current baseline vs the proposed variant on a DISCRIMINATIVE held-out
-    eval (T-064). Returns (baseline_score, proposed_score) as pass^k reliabilities, or
+    eval (task_66). Returns (baseline_score, proposed_score) as pass^k reliabilities, or
     None when no eval/solver is available (-> the proposal cannot be proven and is not
     queued). The live path fetches eval candidates, curates them with the solver-gap
     (mios_selfimprove_act.curate_eval over the SSOT weak/strong lane pair), runs each
@@ -154,7 +154,7 @@ One ACT pass: findings -> proposals -> proof-of-utility -> QUEUE (no apply).
 
 The QUEUED self-improvement proposals awaiting human approval (read-only).
     Degrade-open -> {proposals:[], error} when pg is unreachable so the route stays
-    up. These are validated + non-regressing (T-064) but NEVER auto-applied.
+    up. These are validated + non-regressing (task_66) but NEVER auto-applied.
 
 <!-- mios-src:9c21095bf1c0 from usr/lib/mios/agent-pipe/mios_pipe/kernel/daemons.py:342-344 -->
 
@@ -171,8 +171,8 @@ WS-A4: one GC pass over the LOCAL KV slot dir (no-op when it's remote /
 ### Read-only
 
 Read-only: the QUEUED self-improvement proposals awaiting human approval -- the
-    ACT half of #64 (T-062). Each was validated for target isolation and proven
-    non-regressing (T-064 proof-of-utility) before queuing, but is NEVER auto-applied:
+    ACT half of #64 (task_64). Each was validated for target isolation and proven
+    non-regressing (task_66 proof-of-utility) before queuing, but is NEVER auto-applied:
     the operator reviews + approves out of band, then a separate path applies it.
 
 <!-- mios-src:fb34bca1c23f from usr/lib/mios/agent-pipe/mios_pipe/kernel/daemons.py:453-456 -->
@@ -232,12 +232,12 @@ reports in /var/log/mios/crash/, and files structured tickets into PostgreSQL bu
 
 <!-- mios-src:b787735fa70d from usr/libexec/mios/kernel/crash_triage.py:4-9 -->
 
-### dkms_engine.py — T-765 WS-BUILD Ephemeral containerized...
+### dkms_engine.py — task_709 WS-BUILD Ephemeral containerized...
 
-dkms_engine.py — T-765 WS-BUILD
+dkms_engine.py — task_709 WS-BUILD
 Ephemeral containerized DKMS engine and MOK kernel module signer.
 
 Compiles out-of-tree .ko drivers inside bubblewrap sandbox against active UKI kernel,
 signs with local MOK key, and caches in /var/lib/dkms/<kver>/ by build hash.
 
-<!-- mios-src:c81960626213 from usr/libexec/mios/kernel/dkms_engine.py:4-10 -->
+<!-- mios-src:db0ac3c48043 from usr/libexec/mios/kernel/dkms_engine.py:4-10 -->

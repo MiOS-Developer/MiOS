@@ -49,7 +49,7 @@ passes on the real tree or system) and a negative control (a planted defect make
     - Seven lanes are merged: mcp-aio, gate-ledger, gate-tests, gate-docs, gate-neg, docs-ratchet-1 and gate-reg.
     - Still open:
       - gate-legib: shell_lines is 492 over;
-      - value-dup: T-998/T-1013;
+      - value-dup: task_942/task_957;
       - Hyper-V VHDX (P0-9 Phase A).
     - ETA: local replay green in about 3–5 h; GitHub CI green 2–5 h after that, since the smoke bake has not been green since 08-21; then merge on the operator's go-ahead.
 - **M0.5, before the merge that publishes `:latest`** (from `docs/research/upstream-prior-art-gaps-2026-10.md`):
