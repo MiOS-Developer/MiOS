@@ -4,7 +4,7 @@
   "total_metadata_entries": 3021,
   "total_hints": 3011,
   "total_functions_indexed": 1481,
-  "total_related_links": 5084,
+  "total_related_links": 5089,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -2699,13 +2699,18 @@
     },
     {
       "path": "docs/design/doc-tmux-os-integration.md",
-      "hint": "Architectural specification for Tmux-as-OS integration, upstream FOSS multiplexer patterns, and unified 'mios ai' dispatch across Windows Terminal and desktop tmux.",
+      "hint": "Tmux-as-OS: the dual-tier tmux topology, 'mios ai' dispatch as it actually runs, and milestone M8 -- one ratatui tmux desktop, a miosd applet, in every MiOS image, replacing today's monitors and TUIs.",
       "related": [
         "docs/design/doc-desktop-terminal-interaction.md",
         "usr/share/mios/mios.toml [mcp.tmux]",
         "[keybindings]",
         "[agent_cli]",
+        "[terminal]",
         "tools/native/mios-agent-relay/src/main.rs",
+        "src/mios-rs/miosd/src/cli.rs",
+        "usr/libexec/mios/mios-terminal",
+        "usr/libexec/mios/mios-mcp-server",
+        ".devloop/GOALS.md",
         ".agents/COORDINATION.md"
       ],
       "functions": [],

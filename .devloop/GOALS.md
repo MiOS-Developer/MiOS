@@ -371,8 +371,8 @@ passes on the real tree or system) and a negative control (a planted defect make
       - mios-dashboard has no tracked source (fixed in U6).
       - `[rust.categories.serve]` names `mios-serve`, which no crate builds.
   - **Links:**
-    - AGY-1038 closes with the mios-dashboard retirement.
-    - The dispatch table is the desktop subset of the verb-dispatcher task (AGY-1018).
+    - task_1678 closes with the mios-dashboard retirement.
+    - The dispatch table is the desktop subset of the verb-dispatcher task (task_1658).
     - The keybinding fold relates to KEYMAP-01.
     - The mobile-keys and MCP-convergence tasks stay with their agent-plane owners.
     - M7's L1 TUI task builds on U2 and U5.

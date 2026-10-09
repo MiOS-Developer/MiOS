@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1706 |
+| pending | 1733 |
 | in_progress | 50 |
 | completed | 1827 |
 | incomplete | 20 |
 | cancelled | 20 |
-| total | 3623 |
+| total | 3650 |
 
 0 record(s) carry at least one override.
 
@@ -1139,6 +1139,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3585` Fold the two kvfork copies into one module (WS-DEBT | P3 | S) -- pending · P3 · size S
 - `task_3593` Remove [build.ratchet]'s residue: mios-config's BuildRatchet and ADR-0025's max_phase_scripts (WS-DEBT | P3 | S) -- pending · P3 · size S
 
+### Epic task_3624
+
+- `task_3646` M8 U6: retire the mios-dashboard zipapp and tools/compile-dashboard-binary.py -- it has no tracked source; closes task_1678 (WS-DEBT | P2 | S) -- pending · P2 · size S · depends_on task_3633, task_3639
+- `task_3647` M8 U6: retire the Python monitor and TUI family -- mios-mon.py, mios_agent_tui.py, mios-ai-terminal and the human-UI branches of mios-mcp-server -- after porting their tests (WS-DEBT | P1 | L) -- pending · P1 · size L · depends_on task_3632, task_3633, task_3634, task_3635, task_3639
+
 ## WS-DEBT-PIPE
 
 ### No epic
@@ -1334,6 +1339,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3601` M7 F1: L1 admin hypervisor image -- miosd artifact-build field-hypervisor drives sysrescue-customize --auto from a new [field.hypervisor] table, with a QEMU boot test (WS-DEPLOY | P1 | L) -- pending · P1 · size L
 - `task_3603` M7 F2: MiOS-Field integration -- SystemRescue version floor from SSOT in the launchers, and the hypervisor Ventoy entry rendered from SSOT and mirrored to mios-bootstrap (WS-DEPLOY | P2 | M) -- pending · P2 · size M · depends_on task_3601
 
+### Epic task_3624
+
+- `task_3640` M8 U5: L1 SystemRescue -- reconcile the two autorun copies, deliver static binaries and a rendered vendor mios.toml on the MiOS-Field data partition, start the desktop on tty1 (WS-DEPLOY | P1 | M) -- pending · P1 · size M · depends_on task_3629, task_3628
+- `task_3643` M8 U5: cloud and devcontainer -- the desktop runs without systemd or user units, with its socket root under /tmp (WS-DEPLOY | P2 | S) -- pending · P2 · size S · depends_on task_3629
+
 ## WS-DEPRED
 
 ### No epic
@@ -1360,6 +1370,19 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2507` The desktop shell effects are hardcoded rather than projected -- pending · P2 · size M · depends_on task_2488
 - `task_3439` Flatpak hygiene: pre-seed the Fedora Platform runtime and de-duplicate Epiphany -- pending · P3 · size S
 - `task_3501` dconf from SSOT, readable at runtime (WS-DESKTOP | P2 | M) -- pending · P2 · size M · depends_on task_3492, task_3493
+- `task_3624` M8: one tmux TUI desktop in every MiOS image -- a miosd applet rendered with ratatui inside tmux (WS-DESKTOP | P1 | XL) -- pending · P1 · size XL
+
+### Epic task_3624
+
+- `task_3632` M8 U3: clients chooser and agents observer views -- the Rust versions made primary in the applet (WS-DESKTOP | P1 | M) -- pending · P1 · size M · depends_on task_3631
+- `task_3633` M8 U3: system and services view -- the mios-service-core dashboard catalog and probe, with mios-probe facts replacing fastfetch (WS-DESKTOP | P1 | M) -- pending · P1 · size M · depends_on task_3631
+- `task_3634` M8 U3: build progress view from the mios-build progress ledger, not log scraping (WS-DESKTOP | P2 | S) -- pending · P2 · size S · depends_on task_3631
+- `task_3635` M8 U3: flash view -- MiOS-Field media flashing progress from a structured ledger (WS-DESKTOP | P2 | S) -- pending · P2 · size S · depends_on task_3631
+- `task_3636` M8 U3: VMs view (new) -- L2 VMs, nested MiOS containers and the M7 GPU-arbiter state, with start, stop and attach (WS-DESKTOP | P1 | M) -- pending · P1 · size M · depends_on task_3631
+- `task_3637` M8 U3: Images view (new) -- bootc booted/staged/rollback, podman images, and the testing/stable channels (WS-DESKTOP | P2 | M) -- pending · P2 · size M · depends_on task_3631
+- `task_3638` M8 U3: btop as an optional embedded pane, with one theme writer (WS-DESKTOP | P3 | S) -- pending · P3 · size S · depends_on task_3630, task_3631
+- `task_3641` M8 U5: L2 desktop hotkeys call an installed terminal from SSOT, not alacritty (WS-DESKTOP | P2 | S) -- pending · P2 · size S · depends_on task_3629
+- `task_3649` M8 U6: mios-a2o adopts the desktop layout engine -- no hard-coded split ratios (WS-DESKTOP | P3 | S) -- pending · P3 · size S · depends_on task_3630
 
 ## WS-DIAG
 
@@ -1599,6 +1622,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3290` ONE compiled SSOT-projection engine for every dotfiles/theme/config surface **[P1/P2]** (-> task_2007..task_2043, 37 tasks) -- pending
 - `task_3369` ADR-0010 finish charter (restated): registry kind + merge-surface test coverage, ON MAIN, no branches -- completed · P2 · size M · depends_on task_1087
 - `task_3492` `mios-gen dotfiles` module (WS-DOTFILES | P2 | M) -- pending · P2 · size M · depends_on task_3485, task_3488
+
+### Epic task_3624
+
+- `task_3628` M8 U1: pure-Rust runtime render -- port theme_sync.py --render-prompt into mios-gen and fold the mios-unit-gen keybindings into mios-gen (WS-DOTFILES | P1 | M) -- pending · P1 · size M
+- `task_3645` M8 U5: Blink and mobile SSH enter through `mios terminal` and the namespace guard (WS-DOTFILES | P2 | S) -- pending · P2 · size S · depends_on task_3629
 
 ## WS-DOTFILES / ADR-0010
 
@@ -2285,6 +2313,14 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3505` Amend ADR-0021: five function binaries, install/build/task folded in, miosd a thin exec shim (WS-LANG | P1 | S) -- pending · P1 · size S · depends_on task_3488
 - `task_3528` Q19 / M2: MiOS-MODULES -- one Rust workspace, crates as applet libraries, a few domain binaries dispatching on argv[0] (WS-LANG | P1 | L) -- pending · P1 · size L · depends_on task_951, task_3488
 - `task_3529` M3: every script on a product path is a registered thin shim or AI-plane binding, in a shrink-only SSOT register (WS-LANG | P1 | M) -- pending · P1 · size M
+
+### Epic task_3624
+
+- `task_3629` M8 U2: miosd desktop applet -- session and namespace, folding mios-terminal (a path shim stays) under the miosd guard (WS-LANG | P1 | M) -- pending · P1 · size M · depends_on task_3625, task_3628
+- `task_3630` M8 U2: the desktop layout engine -- moved out of mios-agent-relay workspace() into the applet, generalized to every profile (WS-LANG | P1 | M) -- pending · P1 · size M · depends_on task_3629
+- `task_3631` M8 U2: ratatui + crossterm view framework in the applet, static on Linux musl and Windows (WS-LANG | P1 | M) -- pending · P1 · size M · depends_on task_3629
+- `task_3639` M8 U4: one Rust dispatch table for terminal, ai, agents, mon, dash, mini and btop, used on Linux and by mios-launch --dispatch; fix the `ai` conflict (WS-LANG | P1 | M) -- pending · P1 · size M · depends_on task_3629
+- `task_3650` M8 U7: [rust.categories.serve] names a binary (mios-serve) that no crate builds -- registry entries are built or marked planned (WS-LANG | P3 | S) -- pending · P3 · size S
 
 ## WS-LANG,WS-DEBT
 
@@ -3048,6 +3084,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3288` PS AST parse-gate + decompose/compile the 36 PowerShell scripts **[P1/P2]** (-> task_1923..task_1959, 36 tasks) -- pending
 - `task_3567` Q12 (brief P1-20): the Windows host is one DSC v3 document rendered from SSOT; `dsc config test` is the Windows drift gate (WS-PWSH | P1 | L) -- pending · P1 · size L
 
+### Epic task_3624
+
+- `task_3644` M8 U5: Windows native tmux -- miosd.exe views in tmux.exe panes, mios-launch only places the window, one host tmux.conf writer (WS-PWSH | P1 | M) -- pending · P1 · size M · depends_on task_3630, task_3639
+- `task_3648` M8 U6: retire the PowerShell monitors and dashboards and the mios-native-entry.ps1 routing in both repos (Law 15) (WS-PWSH | P2 | M) -- pending · P2 · size M · depends_on task_3644, task_3639
+
 ## WS-RAG
 
 ### No epic
@@ -3149,6 +3190,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3497` Aliases become an SSOT table; Python and bash twins consume `--emit json` (WS-RESOLVER | P3 | M) -- pending · P3 · size M · depends_on task_3486
 - `task_3498` `mios-resolve --explain KEY` (WS-RESOLVER | P3 | M) -- pending · P3 · size M · depends_on task_3485
 - `task_3584` [ai] is WALK_MOSTLY_DEAD in the resolver, so new [ai].x keys are never emitted: document or fix (WS-RESOLVER | P2 | S) -- pending · P2 · size S
+
+### Epic task_3624
+
+- `task_3627` M8 U1: one layered SSOT loader -- mios-resolver only; delete mios-gen terminal.rs::load_layered and mios-service-core::ssot (WS-RESOLVER | P2 | M) -- pending · P2 · size M
 
 ## WS-ROADMAP
 
@@ -3569,6 +3614,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2488` Theme surfaces are projected but new surfaces are not required to be -- pending · P2 · size M
 - `task_2489` The dotfiles registry has one proven surface -- pending · P2 · size L · depends_on task_2488
 - `task_2490` `[code_mode]` and `[pgvector]` keys were moved to reachable tables without consumer tests -- pending · P2 · size S · depends_on task_2482
+
+### Epic task_3624
+
+- `task_3625` M8 U1: [terminal.desktop] SSOT family -- namespace, layout, views and per-environment overrides, absorbing the old desktop keys (WS-SSOT | P1 | M) -- pending · P1 · size M
+- `task_3626` M8 U1: restore [terminal.startup] to vendor -- zz-mios-motd reads a table only bootstrap's mios.toml carries (WS-SSOT | P1 | S) -- pending · P1 · size S
 
 ## WS-STD26
 
@@ -4230,6 +4280,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### Epic task_3524
 
 - `task_3551` Q9 WSL: export the WSL distro locally, install it and boot-test it (WS-WSL | P1 | M) -- pending · P1 · size M
+
+### Epic task_3624
+
+- `task_3642` M8 U5: WSL2 (including inside mios-xbox) -- the desktop runs with no literal podman-MiOS-DEV, and the nested host/guest prefix is settled (WS-WSL | P2 | S) -- pending · P2 · size S · depends_on task_3629, task_3626
 
 ## WS-XBOX
 

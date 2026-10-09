@@ -12351,7 +12351,7 @@ frozen = [
 ]
 # The highest task number issued (ADR-0028). Numbers are never reissued: the list's highest may not fall
 # below this, so a dropped last task cannot hand its number on. Raising it to the current highest tightens it.
-numbered = 3623
+numbered = 3650
 # The old task-id shapes migrate-ids purged. `mios-task check --tree` fails on any of them in a tracked file;
 # a task is named by its typed id task_<number> (the opaque task_<ULID> in tasks.jsonl's structured fields).
 purged = [
