@@ -3741,14 +3741,19 @@ aider_package = "aider-chat"
 antigravity_linux_installer = "https://antigravity.google/cli/install.sh"
 antigravity_windows_installer = "https://antigravity.google/cli/install.ps1"
 antigravity_windows_installer_sha256 = "51c2cb4fada22ce0228da71b9506370383d6544bfebcec85fe7616a52b805344"
+branch_rule = "^cloud/"
 tools = [
-  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true },
-  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true },
-  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true },
-  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true },
-  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true },
-  { name = "agy", kind = "native", mcp = true },
-  { name = "aider", kind = "python", mcp = false },
+  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true, experimental = false, launch_template = "claude -p {task}", status_template = "claude -p \"status\" --output-format json", result_template = "claude -p \"result\" --output-format json", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "claude-cloud", package = "@anthropic-ai/claude-code", kind = "cloud", mcp = true, experimental = false, launch_template = "claude --cloud {task}", status_template = "claude -p \"msg\" --cloud {session} --output-format json", result_template = "claude --teleport {id}", branch_rule = "^cloud/", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true, experimental = false, launch_template = "codex exec {task}", status_template = "codex status", result_template = "codex result", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "codex-cloud", package = "@openai/codex", kind = "cloud", mcp = true, experimental = true, launch_template = "codex cloud exec {task}", status_template = "codex cloud list --json", result_template = "codex apply {task_id}", branch_rule = "^cloud/", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true, experimental = false, launch_template = "gemini -p {task} -o json --approval-mode default", status_template = "gemini status", result_template = "gemini response", required_credentials = ["GEMINI_API_KEY"] },
+  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true, experimental = false, launch_template = "copilot --exec {task}", status_template = "copilot status", result_template = "copilot response", required_credentials = ["GITHUB_TOKEN"] },
+  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true, experimental = false, launch_template = "opencode run {task}", status_template = "opencode status", result_template = "opencode response", required_credentials = [] },
+  { name = "agy", kind = "native", mcp = true, experimental = false, launch_template = "agy -p {task} --output-format json", status_template = "agy status", result_template = "agy response", required_credentials = ["ANTIGRAVITY_API_KEY"] },
+  { name = "aider", kind = "python", mcp = false, experimental = false, launch_template = "aider --message {task}", status_template = "aider status", result_template = "aider response", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/", required_credentials = ["GITHUB_TOKEN"] },
 ]
 
 # Native terminal tools are served by the SAME MiOS MCP endpoint. Each MCP

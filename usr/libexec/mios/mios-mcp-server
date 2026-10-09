@@ -1136,9 +1136,30 @@ class _TmuxBridge:
         if not agent or not task:
             raise ValueError("nested_workflow requires agent and task")
         cfg_cli = _agent_cli_config()
-        known = {row["name"] for row in cfg_cli.get("tools", [])}
-        if agent not in known:
-            raise ValueError(f"Agent '{agent}' is not in the SSOT CLI catalog: {sorted(known)}")
+        tools_by_name = {row["name"]: row for row in cfg_cli.get("tools", [])}
+        if agent not in tools_by_name:
+            raise ValueError(f"Agent '{agent}' is not in the SSOT CLI catalog: {sorted(tools_by_name.keys())}")
+        tool_row = tools_by_name[agent]
+
+        # Enforce branch isolation rule if defined on the tool or global catalog
+        branch_rule = tool_row.get("branch_rule") or (cfg_cli.get("branch_rule") if tool_row.get("kind") == "cloud" else None)
+        if branch_rule:
+            target_branch = args.get("branch")
+            if not target_branch:
+                try:
+                    res = subprocess.run(
+                        ["git", "branch", "--show-current"],
+                        capture_output=True, text=True, timeout=3
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        target_branch = res.stdout.strip()
+                except Exception:
+                    pass
+            if not target_branch or not re.search(branch_rule, target_branch):
+                raise ValueError(
+                    f"Cloud agent '{agent}' requires an isolated branch matching '{branch_rule}'; "
+                    f"got '{target_branch or 'none'}'"
+                )
 
         timeout_s = args.get("timeoutSeconds", self.config["timeout_s"])
         translate_output = args.get("translate_output", True)
@@ -1146,20 +1167,30 @@ class _TmuxBridge:
         escaped_task = shlex.quote(task)
         if task in ("--version", "-v", "version"):
             cmd = f"{agent} {task}"
-        elif agent == "claude":
-            cmd = f"claude -p {escaped_task}"
-        elif agent == "codex":
-            cmd = f"codex exec {escaped_task}"
-        elif agent == "gemini":
-            cmd = f"gemini -p {escaped_task}"
-        elif agent == "copilot":
-            cmd = f"copilot --exec {escaped_task}"
-        elif agent == "opencode":
-            cmd = f"opencode run {escaped_task}"
-        elif agent == "agy":
-            cmd = f"agy -p {escaped_task}"
-        elif agent == "aider":
-            cmd = f"aider --message {escaped_task}"
+        elif "launch_template" in tool_row:
+            template = tool_row["launch_template"]
+            _assert_safe_command_template(template)
+            cmd = template
+            if "{task}" in cmd:
+                cmd = cmd.replace("{task}", escaped_task)
+            elif "{query}" in cmd:
+                cmd = cmd.replace("{query}", escaped_task)
+            elif "{desc}" in cmd:
+                cmd = cmd.replace("{desc}", escaped_task)
+            elif "{prompt}" in cmd:
+                cmd = cmd.replace("{prompt}", escaped_task)
+            else:
+                cmd = f"{cmd} {escaped_task}"
+            for placeholder, default_val in (
+                ("{env_id}", args.get("env_id", "${CODEX_ENV_ID:-default}")),
+                ("{repo}", args.get("repo", "${MIOS_REPO:-.}")),
+                ("{base}", args.get("base", "${MIOS_BASE_BRANCH:-main}")),
+                ("{session}", args.get("session", "${SESSION_ID:-default}")),
+                ("{task_id}", args.get("task_id", "${TASK_ID:-default}")),
+                ("{id}", args.get("id", "${TASK_ID:-default}")),
+            ):
+                if placeholder in cmd:
+                    cmd = cmd.replace(placeholder, str(default_val))
         else:
             cmd = f"{agent} {escaped_task}"
 
@@ -1486,8 +1517,9 @@ def _sdk_server(terminal_only=False):
              "inputSchema": {"type": "object", "properties": {"session": {"type": "string"}}, "required": ["session"], "additionalProperties": False}},
             {"name": "mios_tmux_nested_workflow", "description": "Run a global SSOT agent via the native MiOS dispatcher in a proven free private tmux slot. Returns completed/failed process exit and timeout receipts plus unverified translated frames. It does not register a relay participant, deliver a message or certify a reply: use mios_agent_send/receive/ack and inspect their queued/received receipts for communication. Private HOME receives MCP configuration and the unified endpoint, without credentials or leases.",
              "inputSchema": {"type": "object", "properties": {
-                 "agent": {"type": "string", "enum": ["claude", "codex", "gemini", "copilot", "opencode", "agy", "aider"], "description": "Global agent to execute in the nested workflow."},
+                 "agent": {"type": "string", "enum": sorted(row["name"] for row in _agent_cli_config().get("tools", [])), "description": "Global agent to execute in the nested workflow."},
                  "task": {"type": "string", "description": "Task description or command instruction to execute."},
+                 "branch": {"type": "string", "description": "Target git branch for the workflow (must match branch_rule for cloud agents, e.g. cloud/<purpose>)."},
                  "slot": {"type": "integer", "description": "Requested helper slot; a busy or unverified pane is refused. If omitted, a proven free slot is reserved."},
                  "timeoutSeconds": {"type": "integer", "description": "Execution timeout in seconds (default: [mcp.tmux].timeout_s)."},
                  "translate_output": {"type": "boolean", "description": "Translate and normalize output frames using loop_translate (default: true)."},
@@ -1640,6 +1672,25 @@ def _serve_http(server, port: int) -> None:
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
+FORBIDDEN_BYPASS_FLAGS = (
+    "--dangerously-skip-permissions",
+    "--approval-mode yolo",
+    "--approval-mode=yolo",
+    "--yolo",
+    "-y",
+    "--dangerously-bypass-approvals-and-sandbox",
+)
+
+
+def _assert_safe_command_template(template: str) -> None:
+    if not isinstance(template, str):
+        return
+    tokens = template.split()
+    for flag in FORBIDDEN_BYPASS_FLAGS:
+        if flag in tokens or flag in template:
+            raise ValueError(f"Unsafe permission bypass flag '{flag}' is forbidden in command template: {template}")
+
+
 def _agent_cli_config():
     config = mios_toml.load_merged()["agent_cli"]
     if not config["enabled"]:
@@ -1647,6 +1698,11 @@ def _agent_cli_config():
     names = [row["name"] for row in config["tools"]]
     if len(names) != len(set(names)) or any(not re.fullmatch(r"[a-z][a-z0-9-]*", name) for name in names):
         raise ValueError("invalid or duplicate SSOT agent CLI name")
+    for row in config["tools"]:
+        for key in ("launch_template", "status_template", "result_template"):
+            val = row.get(key)
+            if val:
+                _assert_safe_command_template(val)
     return config
 
 
@@ -1733,6 +1789,8 @@ def _project_agent_wrappers(cfg=None):
     cfg = cfg or _agent_cli_config()
     prefix = Path(cfg["linux_prefix"])
     for row in cfg["tools"]:
+        if row.get("kind") == "cloud":
+            continue
         name = row["name"]
         real = prefix / ("npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin") / name
         if not os.access(real, os.X_OK):
@@ -1757,7 +1815,7 @@ def _install_agent_clis():
     node = subprocess.check_output(["node", "--version"], text=True).strip()
     if int(node.lstrip("v").split(".")[0]) < cfg["node_min_major"]:
         raise RuntimeError("Node is older than [agent_cli].node_min_major")
-    packages = [row["package"] for row in cfg["tools"] if row["kind"] == "npm"]
+    packages = [row["package"] for row in cfg["tools"] if row["kind"] == "npm" and "package" in row]
     subprocess.run(["npm", "install", "--global", "--prefix", str(prefix / "npm"), *packages], check=True)
     python = shutil.which(cfg["python"])
     if not python:
@@ -1784,10 +1842,16 @@ def _install_agent_clis():
 def _monitor_ui_request():
     """One nonsecret configuration for Monitor, embedded chooser and observer."""
     data = mios_toml.load_merged()
+    def _is_tool_installed(row):
+        if row.get("kind") == "cloud":
+            base = row["name"].replace("-cloud", "")
+            return shutil.which(base) is not None or shutil.which(row["name"]) is not None
+        binary_dir = "npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin"
+        return os.access(Path(data["agent_cli"]["linux_prefix"]) / binary_dir / row["name"], os.X_OK)
+
     return {"workspace": data["mcp"]["tmux"]["workspace"], "colors": mios_toml.colors(data),
             "observation_request": _agent_observation_request(), "state": str(_agent_relay_directory()),
-            "agents": [{**row, "installed": os.access(Path(data["agent_cli"]["linux_prefix"]) /
-                ("npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin") / row["name"], os.X_OK)}
+            "agents": [{**row, "installed": _is_tool_installed(row)}
                 for row in data["agent_cli"]["tools"]]}
 
 
@@ -1820,6 +1884,9 @@ def _agent_cli_main(args):
     for row in cfg["tools"]:
         native = Path("/usr/bin") / row["name"]
         executable = str(native) if os.access(native, os.X_OK) else shutil.which(row["name"])
+        if not executable and row.get("kind") == "cloud":
+            base = row["name"].replace("-cloud", "")
+            executable = shutil.which(base)
         rows.append({**row, "executable": executable, "installed": executable is not None})
     print(json.dumps({"agents": rows}, indent=2))
     return 0 if all(row["installed"] for row in rows) else 1
@@ -2000,6 +2067,11 @@ def main() -> int:
             subprocess.run(["tmux", "-S", ui["socket"], "set-option", "-p", "-t", ui["pane"],
                             "@mios-agent-kind", name], check=True, timeout=3)
         _project_agent_clients()
+        if row.get("kind") == "cloud":
+            executable = shutil.which(row["name"]) or shutil.which(row["name"].replace("-cloud", ""))
+            if not executable:
+                raise RuntimeError(f"{name} cloud CLI is not installed or not found on PATH")
+            return subprocess.call([executable, *sys.argv[3:]])
         native = Path(cfg_cli["linux_prefix"]) / ("npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin") / name
         if not os.access(native, os.X_OK):
             raise RuntimeError(f"{name} is not installed; run sudo mios agents --install")
