@@ -41,7 +41,7 @@ USAGE
             ;;
         *)
             echo "Mios-apps: unknown positional arg: $1" >&2
-            echo "  did you mean: mios-apps"$1")" >&2
+            echo "  did you mean: mios-apps --filter $(printf '%q' "$1")" >&2
             exit 64
             ;;
     esac
@@ -367,7 +367,10 @@ fi
 
 header mios-shim
 {
-    ls -1 /usr/libexec/mios/ 2>/dev/null | grep -E '^mios-' || true
+    for f in /usr/libexec/mios/mios-*; do
+        [ -e "$f" ] || continue
+        basename "$f"
+    done
     if [ -d /usr/local/bin ]; then
         for f in /usr/local/bin/mios-*; do
             [ -e "$f" ] || continue

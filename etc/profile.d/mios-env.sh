@@ -1,5 +1,6 @@
 # AI-hint: Resolves and exports MiOS environment variables (MIOS_*) by merging layered TOML configs and .env files to provide a unified configuration for CLI tools, agents, and...
 # AI-doc: usr/share/doc/mios/manual/profile.d.md
+# shellcheck shell=sh
 
 case "$-" in
     *i*) ;;
@@ -7,6 +8,7 @@ case "$-" in
         if [ -r /usr/lib/mios/userenv.sh ] || [ -r /usr/share/mios/tools/lib/userenv.sh ]; then
             for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
                 if [ -r "$_ue" ]; then
+                    # shellcheck source=usr/lib/mios/userenv.sh
                     . "$_ue"
                     break
                 fi
@@ -19,6 +21,7 @@ esac
 
 _mios_source_if_readable() {
     [ -r "$1" ] || return 0
+    # shellcheck source=/dev/null  # operator env files (~/.env.mios, /etc/mios/env.d, install.env) exist only on the host
     . "$1"
 }
 
@@ -37,6 +40,7 @@ _mios_source_if_readable "${HOME}/.config/mios/env"
 
 for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     if [ -r "$_ue" ]; then
+        # shellcheck source=usr/lib/mios/userenv.sh
         . "$_ue"
         break
     fi

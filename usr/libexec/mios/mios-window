@@ -147,9 +147,9 @@ if [ -n "$_OSC_EP" ]; then
         _t="$(_json_str "$_title")"
     elif [ "$sub" = "move" ]; then
         if [ "$#" -ge 3 ]; then
-            _x="${@: -2: 1}"
-            _y="${@: -1: 1}"
-            _title="${@:1:$#-2}"
+            _x="${*: -2: 1}"
+            _y="${*: -1: 1}"
+            _title="${*:1:$#-2}"
         else
             _title="${1:-}"
             _x="${2:-}"
@@ -158,9 +158,9 @@ if [ -n "$_OSC_EP" ]; then
         _t="$(_json_str "$_title")"
     elif [ "$sub" = "resize" ]; then
         if [ "$#" -ge 3 ]; then
-            _w="${@: -2: 1}"
-            _h="${@: -1: 1}"
-            _title="${@:1:$#-2}"
+            _w="${*: -2: 1}"
+            _h="${*: -1: 1}"
+            _title="${*:1:$#-2}"
         else
             _title="${1:-}"
             _w="${2:-}"

@@ -220,9 +220,10 @@ calls() {
 
 health_checks() (
     # Execute the production health function without running image build stages.
+    # shellcheck source=/dev/null  # one function excerpted from automation/build.sh at run time
     source <(sed -n '/^_check_critical_packages() {/,/^}/p' "$ROOT/automation/build.sh")
     local catalog='gnome-shell gdm podman bootc libvirt kernel-core firewalld cockpit NetworkManager pipewire tuned chrony openssh-server'
-    local catalog_rc=0 missing='' result
+    local catalog_rc=0 missing=''
     get_packages_strict() { printf '%s\n' "$catalog"; return "$catalog_rc"; }
     rpm() {
         printf '%s\n' "$@" >> "$TMP/rpm-health.log"
@@ -241,8 +242,10 @@ health_checks() (
     grep -q 'kernel-core.*\[MISS\]' "$TMP/health.log" || exit 1
     pass "one missing critical package is named and fails health validation"
     SCRIPT_FAIL=0; FAILED_SCRIPTS=(); FAIL_LOG=()
+    # shellcheck source=/dev/null  # the health-gate block excerpted from automation/build.sh at run time
     source <(sed -n '/^if ! _check_critical_packages; then/,/^fi$/p' "$ROOT/automation/build.sh") > "$TMP/health.log"
     [[ "$SCRIPT_FAIL" -eq 1 && ${#FAILED_SCRIPTS[@]} -eq 1 && ${#FAIL_LOG[@]} -eq 1 ]] || exit 1
+    # shellcheck source=/dev/null  # the final-exit block excerpted from automation/build.sh at run time
     if (source <(sed -n '/^if \[\[ $SCRIPT_FAIL -gt 0 \]\]; then/,/^fi$/p' "$ROOT/automation/build.sh")); then exit 1; fi
     pass "actual build aggregation and final exit fail for missing critical packages"
     catalog_rc=1

@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mios_err() { echo "$*" >&2; }
+# shellcheck source=/dev/null  # one function excerpted from automation/56-fonts.sh at run time
 source <(sed -n '/^_install_geist_nerd_font() {/,/^}/p' "$ROOT/automation/56-fonts.sh")
 readarray -t inputs < <(python3 - "$ROOT" <<'PY'
 import pathlib, sys, tomllib

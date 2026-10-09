@@ -8,6 +8,7 @@ if [ "${1:-}" = "--config" ]; then
     shift
     for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
         if [ -r "$_ue" ]; then
+            # shellcheck source=usr/lib/mios/userenv.sh
             . "$_ue"
             break
         fi
@@ -38,6 +39,7 @@ fi
 
 for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     if [ -r "$_ue" ]; then
+        # shellcheck source=usr/lib/mios/userenv.sh
         . "$_ue"
         break
     fi
@@ -62,8 +64,9 @@ PG_SQL=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --ns)          DB_NS="$2"; shift 2 ;;
-        --db)          DB_DB="$2"; shift 2 ;;
+        # Retired SurrealDB namespace/database selectors: still accepted, and
+        # still require their value, so existing invocations parse unchanged.
+        --ns|--db)     : "$2"; shift 2 ;;
         --json)        JSON=1; shift ;;
         -f)            FILE="$2"; shift 2 ;;
         --owui)        MODE="owui"; OWUI_SQL="$2"; shift 2 ;;

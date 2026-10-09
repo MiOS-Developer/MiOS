@@ -304,6 +304,7 @@ for cand in \
 done
 if [[ -n "$USERENV_SH" ]]; then
     _log "Sourcing layered config: $USERENV_SH"
+    # shellcheck source=tools/lib/userenv.sh
     source "$USERENV_SH"
 else
     _log "WARN: tools/lib/userenv.sh not found -- using vendor-default env"

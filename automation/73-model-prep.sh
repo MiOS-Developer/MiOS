@@ -6,6 +6,7 @@
 # AI-hint: Bakes GGUF weights into /usr/share/mios/llamacpp/models based on MIOS_LLAMACPP_BAKE_MODELS config to enable the offline mios-llm-light lane; agents use this to ens...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# shellcheck source=usr/lib/mios/log.sh
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 
 source "$(dirname "$0")/lib/common.sh" 2>/dev/null || {
@@ -78,7 +79,7 @@ done
 if [[ "$requested" -gt 0 && "$baked" -eq "$requested" ]]; then
     : > "${SEED_DIR}/.ready"   # the quadlet's ConditionPathExists gate -> lane eligible
     seed_size="$(du -sh "$SEED_DIR" 2>/dev/null | awk '{print $1}')"
-    mios_ok "Baked ${baked} GGUF -> ${SEED_DIR}; .ready set"
+    mios_ok "Baked ${baked} GGUF -> ${SEED_DIR} (${seed_size:-?}); .ready set"
 else
     mios_err "Incomplete GGUF bake: ${baked}/${requested}; required model files missing, .ready withheld"
     exit 1
@@ -146,6 +147,6 @@ if [[ -d "$SEED_DIR" ]]; then
 fi
 
 seed_size="$(du -sh "$SEED_DIR" 2>/dev/null | awk '{print $1}')"
-mios_ok "Baked ${MODEL} -> ${SEED_DIR}"
+mios_ok "Baked ${MODEL} -> ${SEED_DIR} (${seed_size:-?})"
 fi
 exit 0

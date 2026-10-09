@@ -186,7 +186,7 @@ _names_gen_bin() {
 
 _names_gen_run() {
     local b; b="$(_names_gen_bin)" || return 1
-    "$b" "$@"
+    "$b"
 }
 
 test_names_registry() {

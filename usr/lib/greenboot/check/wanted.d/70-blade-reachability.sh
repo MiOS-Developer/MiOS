@@ -7,7 +7,6 @@ log()  { echo "[mios-greenboot] $*"; }
 warn() { echo "[mios-greenboot] WARNING: $*" >&2; }
 
 # Sourced globals or defaults
-TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}"
 PORT="${MIOS_PORTS_AGENT_PIPE:-8700}"
 HOST="${MIOS_BLADE_HOST:-127.0.0.1}"
 

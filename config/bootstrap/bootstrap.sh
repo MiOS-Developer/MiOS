@@ -27,6 +27,7 @@ if [[ -f "$_ENV_FILE" ]]; then
     read -rp "  Load previous build variables? [Y/n]: " _load_ok </dev/tty
     if [[ "${_load_ok,,}" != "n" ]]; then
         set +u
+        # shellcheck source=/dev/null  # the operator's saved answers, written by this script's previous run
         source "$_ENV_FILE"
         set -u
         echo "  ${_g}[OK]${_r} Loaded"

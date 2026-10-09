@@ -177,7 +177,8 @@ Full inventory: \`mios-apps\`. Launch by name: \`mios-launch <name>\`.
 EOF
     ;;
 json)
-    export EP_TS="$(date -Iseconds)" \
+    EP_TS="$(date -Iseconds)"
+    export EP_TS \
         EP_OP_USER="$OPERATOR_NAME" EP_OP_FULL="$OPERATOR_FULL" \
         EP_HOST_TOML="$HOSTNAME_TOML" EP_HOST_LIVE="$HOSTNAME_LIVE" \
         EP_OS="$OS_PRETTY" EP_IS_WSL="$IS_WSL" EP_WSL_DISTRO="$WSL_DISTRO" \

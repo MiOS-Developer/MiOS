@@ -194,8 +194,8 @@ if pgrep -ifa "$match_pat" >/dev/null 2>&1; then
 fi
 
 if [ -z "$OSC_EP" ]; then
-    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed" >&2
+    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed -- $proc_state" >&2
 else
-    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed within ${CONFIRM_SECS}s" >&2
+    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed within ${CONFIRM_SECS}s -- $proc_state" >&2
 fi
 exit 3

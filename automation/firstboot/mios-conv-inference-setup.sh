@@ -14,6 +14,7 @@ slots=1
 
 if [[ -r "$ENV_FILE" ]]; then
     set +u
+    # shellcheck source=/dev/null  # host install profile, written by the installer at deploy time
     . "$ENV_FILE"
     set -u
     tokens="${MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS:-0}"

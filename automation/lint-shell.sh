@@ -69,14 +69,29 @@ if ! shellcheck --severity=error "${files[@]}"; then
     exit 1
 fi
 
+# The warning-level pass is a ratchet: it lints what changed since a base.
+# CI exports MIOS_RATCHET_BASE (the PR base, fetched beside a depth-1 checkout
+# that has neither origin/main nor HEAD~1), so it wins; origin/main, then
+# HEAD~1, serve a full clone. An explicit base that does not resolve is a
+# misconfiguration, not a reason to lint nothing. Paths are repo-relative, so
+# the pass runs from ROOT; a worktree's .git is a file, hence -e.
+cd "$ROOT"
 modified_files=()
-if [ -d ".git" ] && command -v git >/dev/null 2>&1; then
-    git_ref="origin/main"
-    if ! git rev-parse --verify "$git_ref" >/dev/null 2>&1; then
+git_ref=""
+if [ -e ".git" ] && command -v git >/dev/null 2>&1; then
+    if [ -n "${MIOS_RATCHET_BASE:-}" ]; then
+        if ! git rev-parse --verify --quiet "${MIOS_RATCHET_BASE}^{commit}" >/dev/null; then
+            echo "[lint-shell] FAIL: MIOS_RATCHET_BASE=${MIOS_RATCHET_BASE} does not name a commit in this checkout" >&2
+            exit 1
+        fi
+        git_ref="$MIOS_RATCHET_BASE"
+    elif git rev-parse --verify --quiet origin/main >/dev/null; then
+        git_ref="origin/main"
+    elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
         git_ref="HEAD~1"
     fi
 
-    if git rev-parse --verify "$git_ref" >/dev/null 2>&1; then
+    if [ -n "$git_ref" ]; then
         while IFS= read -r f; do
             if [ -f "$f" ]; then
                 if [[ "$f" =~ \.sh$ ]]; then
@@ -94,15 +109,21 @@ if [ -d ".git" ] && command -v git >/dev/null 2>&1; then
     fi
 fi
 
-if [ ${#modified_files[@]} -gt 0 ]; then
-    echo "[lint-shell] Linting ${#modified_files[@]} modified/new shell scripts at warning level"
+if [ -z "$git_ref" ]; then
+    echo "[lint-shell] WARNING: no ratchet base (MIOS_RATCHET_BASE, origin/main or HEAD~1) in this tree; warning-level pass NOT run" >&2
+elif [ ${#modified_files[@]} -gt 0 ]; then
+    echo "[lint-shell] Linting ${#modified_files[@]} modified/new shell scripts at warning level (base ${git_ref})"
     if ! shellcheck --severity=warning "${modified_files[@]}"; then
         echo "[lint-shell] FAIL: shellcheck found warning-level or higher issues in modified files" >&2
         exit 1
     fi
 else
-    echo "[lint-shell] No modified shell scripts to lint at warning level"
+    echo "[lint-shell] No modified shell scripts to lint at warning level (base ${git_ref})"
 fi
 
-echo "[lint-shell] PASS: shellcheck reports no error-level issues repo-wide and no warning-level issues in modified/new scripts"
+if [ -z "$git_ref" ]; then
+    echo "[lint-shell] PASS: shellcheck reports no error-level issues repo-wide (warning-level ratchet not run: no base)"
+else
+    echo "[lint-shell] PASS: shellcheck reports no error-level issues repo-wide and no warning-level issues in modified/new scripts"
+fi
 exit 0

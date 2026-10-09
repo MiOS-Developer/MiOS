@@ -116,6 +116,7 @@ ok "empty critical set probes nothing"
 } > "${WORK}/fn_reach.sh"
 grep -q '_blade_reachable' "${WORK}/fn_reach.sh" || die "could not extract _blade_reachable -- renamed?"
 
+# shellcheck disable=SC2034  # read by _tcp_up, which fn_reach.sh (sourced below) defines
 PROBE_TIMEOUT=3
 # shellcheck disable=SC1091
 . "${WORK}/fn_reach.sh"
