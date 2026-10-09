@@ -276,23 +276,23 @@ def check_legibility_ratchet() -> int:
                                   and r.count("/") == 3
                                   and not _TEST_BASENAME.match(r.rsplit("/", 1)[-1])]),
     }
-    # ADR-0030: the 500-file cap is the PLATFORM -- every tracked file of mios.git
-    # AND its sister repo mios-bootstrap, dependencies included (the operator: "500
-    # files is the target for the entire MiOS Platform"). max_tracked_files stays
-    # this repo's own count, which ratchet-direction compares with main's tree; the
-    # domains below partition the platform listing, bootstrap paths prefixed.
+    # ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+    # operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+    # partitioned into the domains below; its sister repo mios-bootstrap has its
+    # own shrink-only ceiling and target. max_tracked_files is this repo's count,
+    # which ratchet-direction also compares with main's tree.
     import fnmatch
     viol = []
+    source = rels
     bs_root = os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(root, "..", "mios-bootstrap")
     bs_rels, _bs_rc = _tracked(bs_root) if os.path.isdir(bs_root) else (None, 1)
     if bs_rels is None:
-        # Without the sister repo the platform total is unmeasured, which is a
-        # violation, never a smaller number that happens to pass.
+        # Without the sister repo its budget is unmeasured, which is a violation,
+        # never a zero that happens to pass.
         viol.append("mios-bootstrap is not a checkout at %s (set MIOS_BOOTSTRAP_ROOT): "
-                    "the platform file budget counts both repos" % bs_root)
-        bs_rels = []
-    source = list(rels) + ["mios-bootstrap/" + r for r in bs_rels]
-    measured["max_platform_files"] = len(source)
+                    "its file budget cannot be measured" % bs_root)
+    else:
+        measured["max_bootstrap_files"] = len(bs_rels)
 
     # The budget fails closed: an absent table, a missing or non-integer target, or a
     # malformed domain is a violation, never a skipped comparison (peer-lane review of
@@ -301,9 +301,13 @@ def check_legibility_ratchet() -> int:
     if not isinstance(budget, dict) or not budget:
         viol.append("[legibility.file_budget] is absent -- ADR-0030's 500-file budget is then bounded by nothing")
         budget = {}
-    target = budget.get("target_platform_files")
-    if budget and (type(target) is not int or target <= 0):
-        viol.append("[legibility.file_budget].target_platform_files must be a positive integer (got %r)" % (target,))
+    target = budget.get("target_tracked_files")
+    for key in ("target_tracked_files", "target_bootstrap_files"):
+        v = budget.get(key)
+        if budget and (type(v) is not int or v <= 0):
+            viol.append("[legibility.file_budget].%s must be a positive integer (got %r)" % (key, v))
+    if "max_bootstrap_files" not in lim:
+        viol.append("[legibility].max_bootstrap_files is absent -- the sister repo's ceiling is then bounded by nothing")
     order, domains = budget.get("order"), budget.get("domains")
     if budget and (not isinstance(order, list) or not order or not isinstance(domains, dict) or not domains):
         viol.append("[legibility.file_budget] needs a non-empty order list and domains table")
@@ -347,7 +351,7 @@ def check_legibility_ratchet() -> int:
         # Only reached with every target an int (malformed ones were reported above).
         planned = sum(t for _, _, t in per_domain.values() if type(t) is int)
         if type(target) is int and planned > target:
-            viol.append("[legibility.file_budget] domain targets sum to %d, over target_platform_files = %d"
+            viol.append("[legibility.file_budget] domain targets sum to %d, over target_tracked_files = %d"
                         % (planned, target))
     for k, got in sorted(measured.items()):
         cap = lim.get(k)
@@ -359,7 +363,7 @@ def check_legibility_ratchet() -> int:
     print("[legibility] " + "  ".join("%s=%d/%s" % (k.replace("max_", ""), v, lim.get(k, "-"))
                                       for k, v in sorted(measured.items())), file=sys.stderr)
     if per_domain:
-        print("[legibility] platform files toward target %s: " % budget.get("target_platform_files", "-")
+        print("[legibility] files toward target %s: " % budget.get("target_tracked_files", "-")
               + "  ".join("files.%s=%d/%s(->%s)" % (d, n, cap, t) for d, (n, cap, t) in per_domain.items()),
               file=sys.stderr)
     print("\n".join(viol))

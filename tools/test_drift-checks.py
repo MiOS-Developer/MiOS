@@ -734,7 +734,7 @@ max_phase_scripts = 10
 
 [legibility]
 max_tracked_files = 2
-max_platform_files = 3
+max_bootstrap_files = 1
 max_tracked_mb = 1
 max_shell_lines = 100
 max_ps_lines = 100
@@ -742,13 +742,9 @@ max_libexec_verbs = 10
 max_tooling_python_lines = 100
 
 [legibility.file_budget]
-target_platform_files = 6
-order = ["bootstrap", "ssot", "misc"]
-
-[legibility.file_budget.domains.bootstrap]
-max_files = 1
-target_files = 1
-globs = ["mios-bootstrap/*"]
+target_tracked_files = 5
+target_bootstrap_files = 5
+order = ["ssot", "misc"]
 
 [legibility.file_budget.domains.ssot]
 max_files = 1
@@ -773,7 +769,7 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
             fh.write("x\n")
         subprocess.run(["git", "-C", d, "init", "-q"], check=True)
         subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
-        # The platform budget counts the sister repo too (ADR-0030, amended).
+        # The sister repo has its own budget (ADR-0030: 500 EACH per repo).
         b = tempfile.mkdtemp(prefix="budget-boot-")
         self.addCleanup(shutil.rmtree, b, True)
         with open(os.path.join(b, "build-mios.sh"), "w") as fh:
@@ -791,10 +787,16 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
     def test_malformed_budgets_fail_naming_the_fault(self):
         ssot = "[legibility.file_budget.domains.ssot]\nmax_files = 1\ntarget_files = 1\n"
         cases = {
-            "target_platform_files missing": (_BUDGET_TOML.replace("target_platform_files = 6\n", ""),
-                                             "target_platform_files must be a positive integer"),
-            "target_platform_files a string": (_BUDGET_TOML.replace("target_platform_files = 6", 'target_platform_files = "6"'),
-                                              "target_platform_files must be a positive integer"),
+            "target_tracked_files missing": (_BUDGET_TOML.replace("target_tracked_files = 5\n", ""),
+                                             "target_tracked_files must be a positive integer"),
+            "target_tracked_files a string": (_BUDGET_TOML.replace("target_tracked_files = 5", 'target_tracked_files = "5"'),
+                                              "target_tracked_files must be a positive integer"),
+            "target_bootstrap_files missing": (_BUDGET_TOML.replace("target_bootstrap_files = 5\n", ""),
+                                               "target_bootstrap_files must be a positive integer"),
+            "bootstrap ceiling absent": (_BUDGET_TOML.replace("max_bootstrap_files = 1\n", ""),
+                                         "max_bootstrap_files is absent"),
+            "bootstrap over its floor": (_BUDGET_TOML.replace("max_bootstrap_files = 1", "max_bootstrap_files = 0"),
+                                         "bootstrap_files = 1, over the floor of 0"),
             "target_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", 'target_files = "1"')),
                                       "domains.ssot].target_files must be a non-negative integer"),
             "target_files negative": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", "target_files = -1")),
@@ -805,8 +807,8 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
                             "domains.ssot].globs must be a non-empty list"),
             "budget table absent": (_BUDGET_TOML.split("[legibility.file_budget]")[0],
                                     "[legibility.file_budget] is absent"),
-            "targets over the cap": (_BUDGET_TOML.replace("target_platform_files = 6", "target_platform_files = 2"),
-                                     "domain targets sum to 3, over target_platform_files = 2"),
+            "targets over the cap": (_BUDGET_TOML.replace("target_tracked_files = 5", "target_tracked_files = 1"),
+                                     "domain targets sum to 2, over target_tracked_files = 1"),
             "a domain over its floor": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", "max_files = 0")),
                                         "files.ssot = 1, over the floor of 0"),
         }

@@ -1,8 +1,8 @@
-<!-- AI-hint: ADR-0030 caps the MiOS PLATFORM (mios.git + mios-bootstrap) at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES. -->
+<!-- AI-hint: ADR-0030 caps EACH MiOS repo (mios.git and mios-bootstrap) at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES. -->
 <!-- AI-related: /usr/share/mios/mios.toml [legibility], [legibility.file_budget], [drift.generated_ceilings], tools/drift-checks.py, tests/drift-gate-negatives.sh, /usr/share/doc/mios/adr/0010-ssot-as-system-dotfiles.md, /usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md -->
 ---
 adr: 0030
-title: A 500-file platform budget, total -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES
+title: 500 tracked files per MiOS repo -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES
 status: proposed
 date: 2026-10-09
 deciders: [operator, ai-pair]
@@ -14,7 +14,7 @@ supersedes: []
 superseded_by: []
 ---
 
-# ADR-0030: A 500-file platform budget, total -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES
+# ADR-0030: 500 tracked files per MiOS repo -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES
 
 ## Status
 
@@ -22,7 +22,7 @@ proposed — 2026-10-09.
 
 The operator's directive came in two steps. First: "must consolidate the amount of disparate files to a more manageable amount (thinking about 500 files maximum…) theres many files that could and should be combined". Then: "500 disparate files—TOTAL/OVERALL".
 
-So the cap counts every tracked file, dependencies included. A third step widened it: "500 files is the target for the entire MiOS Platform!!! MiOS Main repo (as well as the sister repo; bootstrap) is set to be a total of 500 files". The cap is the platform: mios.git plus mios-bootstrap together.
+So the cap counts every tracked file, dependencies included. A third step widened it: "500 files is the target for the entire MiOS Platform!!! MiOS Main repo (as well as the sister repo; bootstrap) is set to be a total of 500 files". A fourth step settled the scope: "narrowing the overall File count GLOBALLY to 500 total files EACH per MiOS repo(s) -- we need no loss of functionalities, features, systems". The cap is 500 per repo: mios.git and mios-bootstrap each, folded losslessly, with the Rust static-binary port as the primary goal and the hosted `mios.html` -> Rust -> `mios.toml` flow kept intact.
 
 An agent never flips this record to accepted.
 
@@ -55,12 +55,13 @@ The 3,654 files fall into these domains (first glob match wins):
 | tools | 96 | 30 | `tools/*.py` move into `mios-gen` / `mios-gate`. |
 | misc | 61 | 20 | Root dotfiles and `var` seeds are rendered or folded. |
 | harness | 49 | 20 | Per-harness shims are rendered from one source at dev setup. |
-| bootstrap | 201 | 40 | The mios-bootstrap sister repo, counted under a `mios-bootstrap/` prefix. `field/` (137, the MiOS-Field SystemRescue assets) folds into SSOT-rendered bundles; the 24 root files fold into the one installer entry per platform. |
-| **platform total** | **3,855** | **445** | 55 files of headroom under the 500 cap |
+| **mios.git total** | **3,654** | **405** | 95 files of headroom under its 500 cap |
+
+mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (`[legibility].max_bootstrap_files`, shrink-only; `target_bootstrap_files`). It is already under the cap and still folds where that is lossless: `field/` (137, the MiOS-Field SystemRescue assets) into SSOT-rendered bundles (task_3672), and its 24 root files into one installer entry per platform (task_3673).
 
 ## Decision
 
-1. **The cap counts every tracked file of the platform.** `max_platform_files` counts mios.git's `git ls-files` plus mios-bootstrap's, dependencies included, and `[legibility.file_budget].target_platform_files = 500` is the operator's cap. `max_tracked_files` stays mios.git's own count, because ratchet-direction compares it with main's tree. The gate reads the sister repo from `MIOS_BOOTSTRAP_ROOT` (default `../mios-bootstrap`); when it is absent the platform total is unmeasured, which is a violation, never a smaller number that passes.
+1. **The cap is 500 tracked files per repo, dependencies included.** `max_tracked_files` counts mios.git's whole `git ls-files` listing (ratchet-direction also compares it with main's tree), partitioned into the domains below, with `[legibility.file_budget].target_tracked_files = 500`. `[legibility].max_bootstrap_files` counts mios-bootstrap's listing, with `target_bootstrap_files = 500`. The gate reads the sister repo from `MIOS_BOOTSTRAP_ROOT` (default `../mios-bootstrap`); when it is absent its budget is unmeasured, which is a violation, never a smaller number that passes.
 2. **The ceiling is really shrink-only now.**
    - `legibility.max_tracked_files` leaves `[drift.generated_ceilings]`, so `ratchet-direction` refuses any increase over HEAD.
    - Each domain has `[legibility.file_budget.domains.<name>]` with `globs`, a `max_files` ceiling seeded at today's count (shrink-only) and a `target_files`.
