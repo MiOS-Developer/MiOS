@@ -240,10 +240,32 @@ health_checks() (
     [[ "$PKG_OK" -eq 12 && "$PKG_MISS" -eq 1 && "$VALIDATION_FAIL" -eq 1 ]] || exit 1
     grep -q 'kernel-core.*\[MISS\]' "$TMP/health.log" || exit 1
     pass "one missing critical package is named and fails health validation"
-    SCRIPT_FAIL=0; FAILED_SCRIPTS=(); FAIL_LOG=()
-    source <(sed -n '/^if ! _check_critical_packages; then/,/^fi$/p' "$ROOT/automation/build.sh") > "$TMP/health.log"
-    [[ "$SCRIPT_FAIL" -eq 1 && ${#FAILED_SCRIPTS[@]} -eq 1 && ${#FAIL_LOG[@]} -eq 1 ]] || exit 1
-    if (source <(sed -n '/^if \[\[ $SCRIPT_FAIL -gt 0 \]\]; then/,/^fi$/p' "$ROOT/automation/build.sh")); then exit 1; fi
+    # build.sh runs the health gate as a post-build stage: _run_stage records it
+    # in FAIL_LOG and in the native progress ledger, whose final receipt is the
+    # build's exit. Drive those production functions over a one-stage ledger.
+    source <(sed -n -e '/^_post_package_health() {/,/^}/p' -e '/^_finding() {/,/^}/p' \
+        -e '/^_run_stage() {/,/^}/p' -e '/^_stage_child() {/,/^}/p' "$ROOT/automation/build.sh")
+    for fn in _post_package_health _finding _run_stage _stage_child; do
+        declare -F "$fn" >/dev/null || exit 1
+    done
+    local -A PHASE_FATAL=([package-health]=true)
+    local _miosd="$MIOSD" _mios_root="$ROOT" PROGRESS_DIR PROGRESS_STATE SCRIPT_COUNT
+    local -a FAIL_LOG WARN_LOG WARNED_JSON
+    ledger() {  # one build whose only stage is the health gate; returns the receipt's exit
+        PROGRESS_DIR="$(mktemp -d "$TMP/ledger.XXXXXX")"; PROGRESS_STATE="$PROGRESS_DIR/state.json"
+        SCRIPT_COUNT=0; FAIL_LOG=(); WARN_LOG=(); WARNED_JSON=()
+        printf 'package-health\n' | "$_miosd" build-progress --root "$_mios_root" \
+            --state "$PROGRESS_STATE" --event init > "$TMP/stage.log" 2>&1 || exit 1
+        _run_stage package-health _post_package_health >> "$TMP/stage.log" 2>&1
+        "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event finish >> "$TMP/stage.log" 2>&1
+    }
+    missing=''
+    ledger || exit 1
+    [[ ${#FAIL_LOG[@]} -eq 0 ]] || exit 1
+    missing=kernel-core
+    if ledger; then exit 1; fi
+    [[ ${#FAIL_LOG[@]} -eq 1 && "${FAIL_LOG[0]}" == "package-health: exit=1" ]] || exit 1
+    grep -q 'Critical package health: 1 missing' "$TMP/stage.log" || exit 1
     pass "actual build aggregation and final exit fail for missing critical packages"
     catalog_rc=1
     : > "$TMP/rpm-health.log"
@@ -252,7 +274,16 @@ health_checks() (
     pass "failed package resolution stops before any RPM query"
 )
 
+# The build's native registry and progress engine; build.sh refuses to run without it.
+resolve_miosd() {
+    MIOSD="${MIOS_MIOSD_BIN:-$ROOT/src/mios-rs/target/debug/miosd}"
+    if [[ ! -x "$MIOSD" ]]; then
+        (cd "$ROOT/src/mios-rs" && cargo build -q -p miosd) || { echo "[test-profile-packages] ERROR: cannot build miosd" >&2; exit 1; }
+    fi
+}
+
 main() {
+    resolve_miosd
     if ! health_checks; then fail "critical package health controls"; fi
     if [[ "${1:-}" == --health-only ]]; then (( fails == 0 )); return; fi
     dependency_checks
@@ -262,10 +293,7 @@ main() {
         (( fails == 0 ))
         return
     fi
-    local miosd="${MIOS_MIOSD_BIN:-$ROOT/src/mios-rs/target/debug/miosd}"
-    if [[ ! -x "$miosd" ]]; then
-        (cd "$ROOT/src/mios-rs" && cargo build -q -p miosd) || { echo "[test-profile-packages] ERROR: cannot build miosd" >&2; exit 1; }
-    fi
+    local miosd="$MIOSD"
     local core
     core="$(MIOS_ROOT="$ROOT" "$miosd" build --sections --profile core | tr '\n' ' ')"
     [[ " $core " == *" utils "* && " $core " != *" gaming "* ]] \
@@ -289,7 +317,13 @@ main() {
 
     # build.sh itself, truncated before any stage runs: the caller's profile must survive common.sh re-exporting the SSOT env.
     local n_end probe out
-    n_end="$(grep -n "^TOTAL_SCRIPTS=" "$ROOT/automation/build.sh" | cut -d: -f1)"
+    # Truncate at the plan guard: ALL_SCRIPTS is complete there and no stage has run.
+    n_end="$(grep -n '^\[\[ \${#ALL_SCRIPTS\[@\]} -gt 0 \]\]' "$ROOT/automation/build.sh" | head -1 | cut -d: -f1 || true)"
+    if [[ -z "$n_end" ]]; then
+        fail "build.sh no longer guards an empty phase plan, so the profile probe has no truncation point"
+        echo "[test-profile-packages] failures: $fails"
+        return 1
+    fi
     probe="$TMP/build-head.sh"
     head -n "$n_end" "$ROOT/automation/build.sh" \
         | sed "s|^SCRIPT_DIR=.*|SCRIPT_DIR=\"$ROOT/automation\"|" \

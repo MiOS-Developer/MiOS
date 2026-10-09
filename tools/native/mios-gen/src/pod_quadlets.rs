@@ -785,9 +785,17 @@ pub fn apply_bound_image_store(
     ssot_exports: &BTreeMap<String, String>,
     sidecars: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    // Absent or "" disables the projection. Any other non-string (`false`) is a
+    // malformed setting, not a disabled one: silently treating it as missing
+    // dropped the store from every bound unit.
     let store = match bake.get("additional_image_store") {
+        None => "",
         Some(toml::Value::String(s)) => s.as_str(),
-        _ => "",
+        Some(_) => {
+            return Err(
+                "[build.bake].additional_image_store must be an absolute path".to_string(),
+            )
+        }
     };
     if store.is_empty() {
         return Ok(());
@@ -1658,5 +1666,123 @@ mod tests {
             bad_res.is_err(),
             "User-scope unit declaring bootc store must fail"
         );
+    }
+
+    // The bound-store contract tools/test_drift-checks.py held over the retired
+    // generate-pod-quadlets.py, carried to the implementation that replaced it.
+    const STORE: &str = "/usr/lib/bootc/storage";
+    const BAKE: &str = "additional_image_store = \"/usr/lib/bootc/storage\"\nfirstboot_tokens = [\"floating\"]\n";
+
+    /// One system unit `core` running `image`, with `args` as its GlobalArgs.
+    fn project(
+        bake: &str,
+        args: Option<toml::Value>,
+        image: &str,
+    ) -> (Result<(), String>, toml::map::Map<String, toml::Value>) {
+        let bake: toml::Value = toml::from_str(bake).unwrap();
+        let mut section = toml::map::Map::new();
+        section.insert("Image".into(), toml::Value::String(image.into()));
+        if let Some(args) = args {
+            section.insert("GlobalArgs".into(), args);
+        }
+        let mut unit = toml::map::Map::new();
+        unit.insert("Container".into(), toml::Value::Table(section));
+        let mut containers = toml::map::Map::new();
+        containers.insert("core".into(), toml::Value::Table(unit));
+        let res = apply_bound_image_store(
+            &mut containers,
+            &bake,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        (res, containers)
+    }
+
+    fn global_args(containers: &toml::map::Map<String, toml::Value>) -> Option<toml::Value> {
+        containers["core"]["Container"].get("GlobalArgs").cloned()
+    }
+
+    fn strings(items: &[&str]) -> toml::Value {
+        toml::Value::Array(items.iter().map(|s| toml::Value::String((*s).into())).collect())
+    }
+
+    #[test]
+    fn bound_store_preserves_other_args_and_is_idempotent() {
+        let wanted = format!("--storage-opt=additionalimagestore={STORE}");
+        let (res, mut containers) = project(BAKE, Some(strings(&["--log-level=debug"])), "example/core");
+        res.unwrap();
+        let expected = strings(&["--log-level=debug", &wanted]);
+        assert_eq!(global_args(&containers), Some(expected.clone()));
+        let bake: toml::Value = toml::from_str(BAKE).unwrap();
+        let again = apply_bound_image_store(
+            &mut containers,
+            &bake,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        again.unwrap();
+        assert_eq!(global_args(&containers), Some(expected));
+    }
+
+    #[test]
+    fn bound_store_keeps_a_split_option_verbatim() {
+        let split = toml::Value::String(format!("--storage-opt additionalimagestore={STORE}"));
+        let (res, containers) = project(BAKE, Some(split.clone()), "example/core");
+        res.unwrap();
+        assert_eq!(global_args(&containers), Some(split));
+    }
+
+    #[test]
+    fn bound_store_conflicting_or_duplicate_store_fails() {
+        let dup = format!("--storage-opt=additionalimagestore={STORE}");
+        for args in [
+            strings(&["--storage-opt=additionalimagestore=/other"]),
+            strings(&[&dup, &dup]),
+        ] {
+            let (res, _) = project(BAKE, Some(args), "example/core");
+            assert!(res.unwrap_err().contains("conflicting"));
+        }
+    }
+
+    #[test]
+    fn bound_store_malformed_args_fail() {
+        for args in [
+            toml::Value::Integer(0),
+            toml::Value::Boolean(false),
+            toml::Value::Array(vec![toml::Value::Integer(0)]),
+        ] {
+            let (res, _) = project(BAKE, Some(args), "example/core");
+            assert!(res.unwrap_err().contains("GlobalArgs must"));
+        }
+    }
+
+    #[test]
+    fn bound_store_never_reaches_a_floating_image() {
+        let (res, containers) =
+            project(BAKE, Some(strings(&["--log-level=debug"])), "example/floating");
+        res.unwrap();
+        assert_eq!(global_args(&containers), Some(strings(&["--log-level=debug"])));
+        let store = toml::Value::String(format!("--storage-opt=additionalimagestore={STORE}"));
+        let (res, _) = project(BAKE, Some(store), "example/floating");
+        assert!(res.unwrap_err().contains("firstboot image"));
+    }
+
+    #[test]
+    fn bound_store_false_settings_are_not_treated_as_missing() {
+        let (res, _) = project("additional_image_store = false\n", None, "example/core");
+        assert!(res.unwrap_err().contains("absolute path"));
+        let bake = format!("additional_image_store = \"{STORE}\"\nfirstboot_tokens = false\n");
+        let (res, _) = project(&bake, None, "example/core");
+        assert!(res.unwrap_err().contains("string array"));
+        // Absent and "" remain the documented way to disable the projection.
+        for bake in ["", "additional_image_store = \"\"\n"] {
+            let (res, containers) = project(bake, None, "example/core");
+            res.unwrap();
+            assert_eq!(global_args(&containers), None);
+        }
     }
 }

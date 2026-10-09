@@ -203,7 +203,10 @@ except ModuleNotFoundError:  # pragma: no cover -- py<3.11
     import tomli as tomllib  # type: ignore
 
 su_TOML = "usr/share/mios/mios.toml"
-su__PORT_VAR = re.compile(r"\$\{MIOS_PORT_([A-Z0-9_]+)\}")
+# The canonical, path-derived name of [ports].<key>. The retired MIOS_PORT_<KEY>
+# spelling is only an input alias now, so a [urls] entry templated with it does
+# not count as the port's canonical address.
+su__PORT_VAR = re.compile(r"\$\{MIOS_PORTS_([A-Z0-9_]+)\}")
 
 def su_port_keys(data: dict) -> set:
     """Numeric [ports] keys. stack_id is an offset, not a port."""
@@ -297,7 +300,7 @@ def su_bare_port_addresses(data: dict) -> list:
                 num = int(m.group(1))
                 if num in ports:
                     viol.append("%s hardcodes :%d instead of "
-                                "${MIOS_PORT_%s} -- an /etc/mios overlay cannot "
+                                "${MIOS_PORTS_%s} -- an /etc/mios overlay cannot "
                                 "move a baked port, so the service can never be "
                                 "offloaded" % (dotted, num, ports[num].upper()))
 

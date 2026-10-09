@@ -357,67 +357,9 @@ class TestBoundImageStore(unittest.TestCase):
         self.check(1, "symlink targets wrong Quadlet")
 
 
-class TestBoundStoreProjection(unittest.TestCase):
-    def setUp(self):
-        spec = importlib.util.spec_from_file_location(
-            "pod_projection", os.path.join(_HERE, "generate-pod-quadlets.py"))
-        self.mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.mod)
-        self.temp = tempfile.mkdtemp(prefix="store-projection-")
-        self.addCleanup(shutil.rmtree, self.temp, True)
-        self.toml = os.path.join(self.temp, "mios.toml")
-        with open(self.toml, "w", encoding="utf-8") as fh:
-            fh.write('[build.bake]\nadditional_image_store = "/usr/lib/bootc/storage"\n'
-                     'firstboot_tokens = ["floating"]\n')
-
-    def project(self, args=None, image="example/core"):
-        section = {"Image": image}
-        if args is not None:
-            section["GlobalArgs"] = args
-        containers = {"core": {"Container": section}}
-        self.mod.apply_bound_image_store(containers, self.toml)
-        return containers, section
-
-    def test_preserves_other_args_and_is_idempotent(self):
-        containers, section = self.project(["--log-level=debug"])
-        expected = ["--log-level=debug", "--storage-opt=additionalimagestore=/usr/lib/bootc/storage"]
-        self.assertEqual(expected, section["GlobalArgs"])
-        self.mod.apply_bound_image_store(containers, self.toml)
-        self.assertEqual(expected, section["GlobalArgs"])
-
-    def test_split_option_is_preserved(self):
-        args = "--storage-opt additionalimagestore=/usr/lib/bootc/storage"
-        _, section = self.project(args)
-        self.assertEqual(args, section["GlobalArgs"])
-
-    def test_conflicting_or_duplicate_store_fails(self):
-        for args in (["--storage-opt=additionalimagestore=/other"],
-                     ["--storage-opt=additionalimagestore=/usr/lib/bootc/storage"] * 2):
-            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "conflicting"):
-                self.project(args)
-
-    def test_malformed_args_fail(self):
-        for args in (0, False, [0]):
-            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "GlobalArgs must"):
-                self.project(args)
-
-    def test_floating_image_never_uses_bound_store(self):
-        _, section = self.project(["--log-level=debug"], "example/floating")
-        self.assertEqual(["--log-level=debug"], section["GlobalArgs"])
-        with self.assertRaisesRegex(ValueError, "firstboot image"):
-            self.project("--storage-opt=additionalimagestore=/usr/lib/bootc/storage", "example/floating")
-
-    def test_false_settings_are_not_treated_as_missing(self):
-        for setting, value, message in (("additional_image_store", "false", "absolute path"),
-                                         ("firstboot_tokens", "false", "string array")):
-            with self.subTest(setting=setting):
-                with open(self.toml, "w", encoding="utf-8") as fh:
-                    fh.write('[build.bake]\n')
-                    if setting != "additional_image_store":
-                        fh.write('additional_image_store = "/usr/lib/bootc/storage"\n')
-                    fh.write(f"{setting} = {value}\n")
-                with self.assertRaisesRegex(ValueError, message):
-                    self.project()
+# The bound-image-store projection left Python with tools/generate-pod-quadlets.py
+# (f22b85ff, ported to `mios-gen pod-quadlets`). Its six cases now run beside the
+# implementation as the bound_store_* tests in tools/native/mios-gen/src/pod_quadlets.rs.
 
 
 class TestMonitorRegistry(unittest.TestCase):
@@ -512,8 +454,14 @@ class TestMonitorRegistry(unittest.TestCase):
         self.assertEqual("#102030", palette["bg"])
         self.assertEqual("#203040", palette["surface"])
         self.assertTrue(transparent)
+        # Transparency follows the SSOT on every platform, as the tmux theme's
+        # does (mios-service-core tmux_theme.rs): the monitor runs under WSL inside
+        # Windows Terminal, where IS_WINDOWS is False and the acrylic is real.
         self.ns["IS_WINDOWS"] = False
-        self.assertFalse(self.ns["load_ssot_colors"]()[1])
+        self.assertTrue(self.ns["load_ssot_colors"]()[1])
+        for theme in ({"acrylic": False, "opacity": 75}, {"acrylic": True, "opacity": 100}, {}):
+            self.ns.update(monitor_config=lambda theme=theme: {"colors": {"bg": "#102030"}, "theme": theme})
+            self.assertFalse(self.ns["load_ssot_colors"]()[1], theme)
 
 
 class TestValueAliasRegistry(unittest.TestCase):

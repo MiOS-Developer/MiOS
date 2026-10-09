@@ -9,7 +9,7 @@
 # Every name in a row MUST be emitted by the resolver; an unemitted name is a violation that
 # names it. (Skipping such rows hid 14 of the 15 [pgvector] keys a lost table header stranded
 # under [offline].) A name ending in "_" declares a naming family, not a variable.
-MIOS_PGVECTOR_USER	MIOS_PG_USER	keep-distinct	# mios-pgvector service acct != mios postgres role (report 4.1)
+MIOS_PGVECTOR_USER	MIOS_PG_USER	derive	# both spell [pgvector].user, the postgres role every pg client logs in as
 MIOS_COLORS_ACCENT	MIOS_COLOR_ACCENT	derive	# family 9 singular/plural color
 MIOS_COLORS_INFO	MIOS_COLOR_INFO	derive	# family 9
 MIOS_COLORS_ANSI_4_BLUE	MIOS_ANSI_4_BLUE	derive	# family 8 ANSI theme projection
@@ -142,7 +142,7 @@ MIOS_SERVICES_OPEN_WEBUI_UID	MIOS_OPEN_WEBUI_UID	derive	# family 2 service-acct 
 MIOS_SERVICES_OPEN_WEBUI_USER	MIOS_OPEN_WEBUI_USER	derive	# family 2 service-acct identity
 MIOS_SERVICES_PGVECTOR_GID	MIOS_PGVECTOR_GID	derive	# family 2 service-acct identity
 MIOS_SERVICES_PGVECTOR_UID	MIOS_PGVECTOR_UID	derive	# family 2 service-acct identity
-MIOS_SERVICES_PGVECTOR_USER	MIOS_PGVECTOR_USER	derive	# family 2 service-acct identity
+MIOS_SERVICES_PGVECTOR_USER	MIOS_PGVECTOR_USER	keep-distinct	# OS account mios-pgvector != postgres role mios (report 4.1); the canonical [pgvector].user owns MIOS_PGVECTOR_USER
 MIOS_SERVICES_SEARXNG_GID	MIOS_SEARXNG_GID	derive	# family 2 service-acct identity
 MIOS_SERVICES_SEARXNG_UID	MIOS_SEARXNG_UID	derive	# family 2 service-acct identity
 MIOS_SERVICES_SEARXNG_USER	MIOS_SEARXNG_USER	derive	# family 2 service-acct identity

@@ -94,32 +94,39 @@ def check_resolver_differential_parity() -> int:
         print("    mios-resolver binary not built locally -- advisory skip")
         sys.exit(0)
 
-    import importlib.util as _ilu  # the file is render-globals.py; the import name never resolved
-    _sp = _ilu.spec_from_file_location("rg", os.path.join(root, "tools", "render-globals.py")); render_globals = _ilu.module_from_spec(_sp); _sp.loader.exec_module(render_globals)
-
-    py_exports = render_globals.build_exports()
-
-    # build_exports() returns the UNEXPANDED map on purpose: it renders
-    # automation/lib/globals.{sh,ps1}, which bash and PowerShell expand at source
-    # time, and keeping `${MIOS_PORTS_AGENT_PIPE}` live there is what lets an
-    # operator's pre-export propagate. mios-resolver --emit=json is the resolved
-    # view and bakes. Comparing the two directly measured that difference in
-    # representation, not a divergence between the resolvers -- 103 "mismatches"
-    # that were the same 91 values written two correct ways. Both sides are put
-    # in the baked form first, by the same twin the Rust emitter calls, so what
-    # survives is real disagreement about a value.
+    # Both twins resolve the SAME tiers: the root's vendor file and drop-ins,
+    # no host or user overlay, so the comparison depends on the tree alone.
+    tiers = {"MIOS_TOML_ROOT": root,
+             "MIOS_VENDOR_TOML": os.path.join(root, "usr/share/mios/mios.toml"),
+             "MIOS_HOST_TOML": "/nonexistent/mios-host.toml",
+             "MIOS_USER_TOML": "/nonexistent/mios-user.toml"}
+    os.environ.update(tiers)
     _mt_dir = os.path.join(root, "usr", "lib", "mios")
     if _mt_dir not in sys.path:
         sys.path.insert(0, _mt_dir)
     import mios_toml as _mios_toml
-    _mios_toml.resolve_cross_references(py_exports)
+
+    # The Python twin is mios_toml.emit_exports over a merge it performs ITSELF.
+    # load_merged() with no layers hands the merge to mios-resolver whenever one
+    # is on PATH, and the check would then measure the Rust resolver against
+    # itself. emit_exports also resolves ${MIOS_*} cross-references, which is the
+    # baked form --emit=json prints. (tools/render-globals.py, the old Python
+    # side, was ported to `mios-gen render-globals` in 5776d4ff; importing it
+    # crashed this check on every run since.)
+    py_exports = _mios_toml.emit_exports(
+        _mios_toml.load_merged(layers=_mios_toml.layer_paths()))
 
     try:
-        res = subprocess.run([resolver_bin, "--emit=json"], capture_output=True, text=True, check=True)
+        res = subprocess.run([resolver_bin, "--emit=json"], capture_output=True, text=True,
+                             check=True, env=dict(os.environ, **tiers))
         import json
         rs_exports = (_j := json.loads(res.stdout)).get("exports", _j)  # emit_json wraps: {merged, exports}
     except Exception as exc:
         print(f"    mios-resolver --emit=json execution failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not py_exports or not rs_exports:
+        print(f"    a resolver emitted nothing (python {len(py_exports)}, rust "
+              f"{len(rs_exports)}) -- an empty comparison is not parity", file=sys.stderr)
         sys.exit(1)
 
     _rc = _toml_data.get("resolver") or {}; ceil_div = _rc.get("max_key_divergence")

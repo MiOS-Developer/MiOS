@@ -118,7 +118,13 @@ ALL_SCRIPTS=()
 declare -A PHASE_FATAL=()
 _profile_args=()
 [[ -n "$_requested_profile" ]] && _profile_args=(--profile "$_requested_profile")
-BUILD_PROFILE_SECTIONS="$(MIOS_ROOT="$_mios_root" "$_miosd" build --sections "${_profile_args[@]}")"
+# The profile's package sections, SPACE-separated: lib/packages.sh matches
+# " $BUILD_PROFILE_SECTIONS " == *" <section> "*, so miosd's one-per-line list
+# left verbatim selected no section at all under any profile but "*".
+if ! BUILD_PROFILE_SECTIONS="$(MIOS_ROOT="$_mios_root" "$_miosd" build --sections "${_profile_args[@]}" 2>&1 | tr '\n' ' ')"; then
+    printf '[FATAL] miosd build --sections failed: %s\n' "$BUILD_PROFILE_SECTIONS" >&2
+    exit 1
+fi
 export BUILD_PROFILE_SECTIONS
 _phase_list="$(mktemp)"
 if ! MIOS_ROOT="$_mios_root" "$_miosd" build --list "${_profile_args[@]}" >"$_phase_list"; then

@@ -139,21 +139,44 @@ class TestCanonicalAddressIsTheKeyConsumersRead(unittest.TestCase):
             # A fixture is not a consumer: tools/test_render_globals.py carries
             # MIOS_URLS_FORGE as sample data, which is not code reading it.
             "tools/test_",
-            "tasks.jsonl", "ROADMAP.md", "ADR.md", "tests/")
+            "tasks.jsonl", "ROADMAP.md", "ADR.md", "tests/",
+            # The emitters are not consumers: the two resolver twins name every
+            # alias they emit, and the globals renderer carries fixture names.
+            "usr/lib/mios/mios_toml.py", "tools/native/mios-resolver/",
+            "tools/native/mios-gen/src/render_globals.rs")
 
     def _consumers(self, var: str) -> int:
-        out = subprocess.run(["git", "-C", _ROOT, "grep", "-l", var],
+        out = subprocess.run(["git", "-C", _ROOT, "grep", "-lw", var],
                              capture_output=True, text=True, check=False).stdout
         return len([f for f in out.split("\n") if f and not f.startswith(self.SKIP)])
 
     def test_ai_endpoint_is_read_by_real_consumers(self):
         self.assertGreater(self._consumers("MIOS_AI_ENDPOINT"), 5)
 
-    def test_urls_table_is_still_read_by_nobody(self):
-        # If this fails, [urls] gained a consumer: revisit ADR-0016 Decision 1
-        # rather than deleting the assertion.
-        for key in ("MIOS_URLS_SEARXNG", "MIOS_URLS_FORGE", "MIOS_URLS_COCKPIT"):
-            self.assertEqual(self._consumers(key), 0, key)
+    def _urls_keys(self):
+        import tomllib as _t
+        with open(os.path.join(_ROOT, "usr/share/mios/mios.toml"), "rb") as fh:
+            urls = _t.load(fh)["urls"]
+        return sorted(k for k, v in urls.items() if isinstance(v, str))
+
+    def test_every_urls_address_is_read_under_one_name(self):
+        # The path-derived naming (MIOS_<TABLE>_<KEY>) made MIOS_URLS_<KEY> the
+        # canonical name and left MIOS_<KEY>_URL an accepted INPUT alias. Decision
+        # 1's invariant survives the rename: one address, one name its consumers
+        # read. Both spellings having readers is the second scheme it forbids.
+        for key in self._urls_keys():
+            up = key.upper()
+            read = [n for n in ("MIOS_URLS_" + up, "MIOS_%s_URL" % up)
+                    if self._consumers(n)]
+            self.assertLessEqual(len(read), 1, "%s is read as %s" % (key, read))
+
+    def test_migrated_consumers_read_the_canonical_name(self):
+        # searxng and forge consumers moved to the canonical spelling; a reader
+        # going back to the alias -- or to a hand-composed address -- fails here.
+        # If this fails, revisit ADR-0016 Decision 1 rather than deleting it.
+        for key in ("SEARXNG", "FORGE"):
+            self.assertGreater(self._consumers("MIOS_URLS_" + key), 0, key)
+            self.assertEqual(self._consumers("MIOS_%s_URL" % key), 0, key)
 
     def test_the_four_inter_service_keys_left_urls_and_kept_one_name(self):
         """Decision 1, executed: [urls] is the browser-openable surface only."""

@@ -50,9 +50,7 @@ pub fn stack_offset_of(merged: &Value) -> i64 {
 /// active or forced, and [ports] derived from [ports.categories] last so an
 /// override in any tier re-derives.
 pub fn resolve_merged(root_dir: Option<&Path>, db_overlay: bool) -> Result<Value, ResolverError> {
-    let mut merged = layers::create_figment(root_dir)
-        .extract::<Value>()
-        .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+    let mut merged = layers::merge_layer_files(&layers::resolve_layer_paths(root_dir))?;
     db_overlay::maybe_apply_db_overlay(&mut merged, db_overlay);
     ports::derive_ports(&mut merged);
     Ok(merged)
@@ -62,13 +60,8 @@ pub fn resolve_merged(root_dir: Option<&Path>, db_overlay: bool) -> Result<Value
 /// derived the same way resolve_merged derives them, so a derived value the
 /// configurator echoes back is not frozen into the user tier.
 pub fn resolve_below_user(root_dir: Option<&Path>) -> Result<Value, ResolverError> {
-    let mut fig = figment::Figment::new();
-    for p in layers::resolve_layer_paths_below_user(root_dir) {
-        fig = fig.merge(<figment::providers::Toml as figment::providers::Format>::file(p));
-    }
-    let mut merged = fig
-        .extract::<Value>()
-        .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+    let mut merged =
+        layers::merge_layer_files(&layers::resolve_layer_paths_below_user(root_dir))?;
     ports::derive_ports(&mut merged);
     Ok(merged)
 }
@@ -76,14 +69,14 @@ pub fn resolve_below_user(root_dir: Option<&Path>) -> Result<Value, ResolverErro
 /// Deterministic source projections use only the selected root's vendor and
 /// host layers. Process loader pointers and the developer's home cannot alter them.
 pub fn resolve_projection(root: &Path) -> Result<Value, ResolverError> {
-    let mut fig = figment::Figment::new();
+    let mut layer_paths = Vec::new();
     for (file, directory) in [
         ("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"),
         ("etc/mios/mios.toml", "etc/mios/mios.d"),
     ] {
         let path = root.join(file);
         if path.is_file() {
-            fig = fig.merge(<figment::providers::Toml as figment::providers::Format>::file(path));
+            layer_paths.push(path);
         }
         let directory = root.join(directory);
         if directory.exists() {
@@ -96,15 +89,10 @@ pub fn resolve_projection(root: &Path) -> Result<Value, ResolverError> {
                 .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
             paths.retain(|path| path.is_file() && path.extension().is_some_and(|e| e == "toml"));
             paths.sort();
-            for path in paths {
-                fig =
-                    fig.merge(<figment::providers::Toml as figment::providers::Format>::file(path));
-            }
+            layer_paths.extend(paths);
         }
     }
-    let mut merged = fig
-        .extract::<Value>()
-        .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+    let mut merged = layers::merge_layer_files(&layer_paths)?;
     ports::derive_ports(&mut merged);
     Ok(merged)
 }

@@ -1,7 +1,10 @@
 // AI-hint: Tier and fragment discovery -- builds the figment provider stack in vendor < vendor.d < host < host.d < user < user.d precedence order.
 // AI-related: usr/share/mios/mios.toml, /etc/mios/mios.toml
-use figment::providers::{Format, Toml};
-use figment::Figment;
+use crate::error::ResolverError;
+use crate::merge::deep_merge;
+use figment::providers::Serialized;
+use figment::value::{Dict, Map};
+use figment::{Figment, Metadata, Profile, Provider};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -178,12 +181,63 @@ pub fn resolve_layer_paths_below_user(root_dir: Option<&Path>) -> Vec<PathBuf> {
     paths
 }
 
-pub fn create_figment(root_dir: Option<&Path>) -> Figment {
-    let mut fig = Figment::new();
-    for p in resolve_layer_paths(root_dir) {
-        fig = fig.merge(Toml::file(p));
+/// Parse `paths` lowest precedence first and fold them with the MiOS overlay
+/// rule (`merge::deep_merge`): an empty string never overrides a non-empty
+/// value below it (Law 1). figment's own `merge` has no such rule, so stacking
+/// the tiers as figment providers let `endpoint = ""` in /etc/mios erase the
+/// vendor endpoint for every native reader while mios_toml.py kept it.
+/// A layer that vanished between discovery and reading is skipped, as an
+/// absent tier is; one that cannot be read or parsed is an error naming it.
+pub fn merge_layer_files<P: AsRef<Path>>(paths: &[P]) -> Result<toml::Value, ResolverError> {
+    let mut merged = toml::Value::Table(toml::Table::new());
+    for path in paths {
+        let path = path.as_ref();
+        let body = match fs::read_to_string(path) {
+            Ok(body) => body,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(ResolverError::TypeShape {
+                    msg: format!("{}: {e}", path.display()),
+                })
+            }
+        };
+        let layer = body
+            .parse::<toml::Table>()
+            .map_err(|source| ResolverError::LayerParse {
+                path: path.display().to_string(),
+                source,
+            })?;
+        deep_merge(&mut merged, toml::Value::Table(layer));
     }
-    fig
+    Ok(merged)
+}
+
+/// The merged layers as one figment provider, so callers that extract a typed
+/// model or stack `Env` on top keep their API while the tiers merge by Law 1.
+struct Layered(Result<toml::Value, String>);
+
+impl Provider for Layered {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("mios.toml layers")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        match &self.0 {
+            Ok(merged) => Serialized::defaults(merged).data(),
+            Err(e) => Err(figment::Error::from(e.clone())),
+        }
+    }
+}
+
+/// A figment over `paths`, merged by `merge_layer_files`.
+pub fn figment_of<P: AsRef<Path>>(paths: &[P]) -> Figment {
+    Figment::from(Layered(
+        merge_layer_files(paths).map_err(|e| e.to_string()),
+    ))
+}
+
+pub fn create_figment(root_dir: Option<&Path>) -> Figment {
+    figment_of(&resolve_layer_paths(root_dir))
 }
 
 #[cfg(test)]
@@ -263,5 +317,51 @@ mod tests {
         assert_eq!(paths[1], normalize_path(&frag1));
         assert_eq!(paths[2], normalize_path(&frag2));
         assert_eq!(paths[3], normalize_path(&h_file));
+    }
+
+    fn layer_files(bodies: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
+        let dir = tempdir().unwrap();
+        let paths = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                let path = dir.path().join(format!("{i}.toml"));
+                fs::write(&path, body).unwrap();
+                path
+            })
+            .collect();
+        (dir, paths)
+    }
+
+    #[test]
+    fn an_empty_higher_tier_never_erases_a_lower_value() {
+        // Law 1, end to end through the figment every native reader extracts.
+        let (_dir, paths) = layer_files(&[
+            "[ai]\nendpoint = \"http://localhost:8642/v1\"\nmodel = \"a\"\n",
+            "[ai]\nendpoint = \"\"\nmodel = \"b\"\n",
+        ]);
+        let merged: toml::Value = figment_of(&paths).extract().unwrap();
+        assert_eq!(merged["ai"]["endpoint"].as_str(), Some("http://localhost:8642/v1"));
+        assert_eq!(merged["ai"]["model"].as_str(), Some("b"));
+        // A non-empty higher tier still wins, and an empty value with nothing
+        // below it is kept rather than dropped.
+        let (_dir, paths) = layer_files(&[
+            "[ai]\nendpoint = \"http://localhost:8642/v1\"\n",
+            "[ai]\nendpoint = \"http://blade:8700/v1\"\nextra = \"\"\n",
+        ]);
+        let merged = merge_layer_files(&paths).unwrap();
+        assert_eq!(merged["ai"]["endpoint"].as_str(), Some("http://blade:8700/v1"));
+        assert_eq!(merged["ai"]["extra"].as_str(), Some(""));
+    }
+
+    #[test]
+    fn a_malformed_layer_is_named_and_an_absent_one_is_skipped() {
+        let (dir, mut paths) = layer_files(&["[ai]\nendpoint = \"x\"\n", "[ai\n"]);
+        let err = merge_layer_files(&paths).unwrap_err().to_string();
+        assert!(err.contains("1.toml"), "{err}");
+        assert!(figment_of(&paths).extract::<toml::Value>().is_err());
+        paths[1] = dir.path().join("absent.toml");
+        let merged = merge_layer_files(&paths).unwrap();
+        assert_eq!(merged["ai"]["endpoint"].as_str(), Some("x"));
     }
 }

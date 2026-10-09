@@ -203,6 +203,13 @@ this decision exists to prevent. They move to the register, whose comment now na
 reasons an entry may appear there: the port serves no page, or its address is already stated
 elsewhere. The register stops being debt and becomes a classification — which is what it always was.
 
+**Amended 2026-10-08: the measurement above predates path-derived names.** The resolver now
+names every key `MIOS_<TABLE>_<KEY>` (`[urls].searxng` is `MIOS_URLS_SEARXNG`) and keeps the old
+`MIOS_<KEY>_URL` spelling only as an accepted input alias. The searxng and forge consumers moved to
+the canonical spelling, so "every `MIOS_URLS_*` has 0 readers" is no longer true and is no longer
+the point. The invariant is unchanged: each address is read under exactly one name.
+`tests/test-offload-overlay.py` now pins that for every `[urls]` key, plus the direction of the move.
+
 ### 2. A blade is a machine; a node is a lane on a blade
 
 * A **blade** is a machine that serves addresses. `[blades.<name>]` becomes the machine registry:

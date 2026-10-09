@@ -7543,13 +7543,14 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # address is already a key their consumers resolve -- agent_pipe is
 # MIOS_AI_ENDPOINT, pgvector MIOS_DB_URL, llm_light MIOS_LLM_CPU_ENDPOINT,
 # hermes MIOS_HERMES_ENDPOINT, crawl4ai MIOS_CRAWL_SERVICE_URL, otelcol_otlp
-# [observability].otel_endpoint.
+# [observability].otel_endpoint, llm_igpu [nodes.local-igpu].endpoint. headscale
+# is the mesh control API and rpc_igpu a llama.cpp RPC socket: neither is a page.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
   "crawl4ai", "field_live_chat", "hermes", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
   "firecrawl",
-  "forge_ssh", "guacamole_web", "guacd", "hermes_dashboard",
+  "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
   "otelcol_otlp", "piper", "prefilter", "pxe_hub_api", "radosgw", "rdp", "redis",
   "searxng_internal", "sglang", "ssh", "ttyd_bash", "ttyd_powershell", "vllm", "whisper",
@@ -12210,10 +12211,10 @@ path        = "usr/lib/mios/agent-pipe/mios_pipe/mockname.py"
 
 [resolver]
 # Keys the Python and Rust resolvers do not agree on. Shrink-only.
-# The parity check never ran until the binary was found in target/debug,
-# so this is the first measurement, not a regression. AGY-1676 drives it
-# to zero by making one implementation authoritative.
-max_key_divergence = 983
+# 983 measured the retired render-globals.py against the binary; compared
+# twin to twin (mios_toml.emit_exports vs --emit=json over the same tiers)
+# the resolvers agree on every key, so the ceiling is held at that floor.
+max_key_divergence = 0
 # Values that differ for keys both resolvers emit. The remainder is
 # Python's repr of nested arrays/tables, which needs preserve_order on
 # the toml crate to match -- AGY-1676, with a toolchain that can link.
