@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3662,
-  "total_metadata_entries": 3021,
-  "total_hints": 3011,
+  "total_files_scanned": 3654,
+  "total_metadata_entries": 3022,
+  "total_hints": 3012,
   "total_functions_indexed": 1481,
-  "total_related_links": 5094,
+  "total_related_links": 5101,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -28451,6 +28451,23 @@
         "/usr/lib/mios/mios_translate.py",
         "/usr/share/mios/mios.toml [mcp.agents]",
         "[agent_cli]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/adr/0030-source-file-budget.md",
+      "hint": "ADR-0030 caps MiOS at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES.",
+      "related": [
+        "/usr/share/mios/mios.toml [legibility]",
+        "[legibility.file_budget]",
+        "[drift.generated_ceilings]",
+        "tools/drift-checks.py",
+        "tests/drift-gate-negatives.sh",
+        "/usr/share/doc/mios/adr/0010-ssot-as-system-dotfiles.md",
+        "/usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
       ],
       "functions": [],
       "doc": null,
