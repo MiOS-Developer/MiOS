@@ -10,7 +10,7 @@ use crate::protocol::{
 use crate::state_sync::StateStore;
 use anyhow::Result;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 use tokio::time::{self, Duration};
@@ -53,6 +53,7 @@ impl MiOSNode {
         let bind_addr = format!("0.0.0.0:{}", self.port);
         let socket = Arc::new(UdpSocket::bind(&bind_addr).await?);
         socket.set_broadcast(true)?;
+        let broadcast_addr = broadcast_destination(&socket)?;
 
         println!(
             "🚀 [MiOS Node {}] Online & Listening on UDP {}",
@@ -77,7 +78,7 @@ impl MiOSNode {
                 if let Ok(payload_bytes) = serde_json::to_vec(&payload) {
                     let frame = Frame::new(MessageType::Heartbeat, node_id, payload_bytes);
                     if let Ok(encoded) = frame.encode() {
-                        let _ = socket_hb.send_to(&encoded, "255.255.255.255:8650").await;
+                        let _ = socket_hb.send_to(&encoded, broadcast_addr).await;
                     }
                 }
             }
@@ -104,7 +105,7 @@ impl MiOSNode {
                         let frame = Frame::new(MessageType::StateSync, node_id, payload_bytes);
                         if let Ok(encoded) = frame.encode() {
                             let _ = socket_gossip
-                                .send_to(&encoded, "255.255.255.255:8650")
+                                .send_to(&encoded, broadcast_addr)
                                 .await;
                         }
                     }
@@ -212,5 +213,23 @@ impl MiOSNode {
             _ => {}
         }
         Ok(())
+    }
+}
+
+fn broadcast_destination(socket: &UdpSocket) -> std::io::Result<SocketAddr> {
+    Ok(SocketAddr::from((Ipv4Addr::BROADCAST, socket.local_addr()?.port())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn discovery_uses_the_bound_port() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local = socket.local_addr().unwrap();
+        let destination = broadcast_destination(&socket).unwrap();
+        assert_eq!(destination.ip(), Ipv4Addr::BROADCAST);
+        assert_eq!(destination.port(), local.port());
     }
 }
