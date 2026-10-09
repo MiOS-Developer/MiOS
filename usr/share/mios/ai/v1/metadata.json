@@ -4,7 +4,7 @@
   "total_metadata_entries": 3021,
   "total_hints": 3011,
   "total_functions_indexed": 1481,
-  "total_related_links": 5089,
+  "total_related_links": 5094,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -10207,11 +10207,14 @@
     },
     {
       "path": "tools/native/mios-task/src/migrate.rs",
-      "hint": "One-shot `mios-task migrate-canonical` -- folds the retired TASKS.jsonl store and the lane file into tasks.jsonl, keeping each record's id, status and every byte it owned (provenance.sources), counting every input both ways.",
+      "hint": "One-shot task-list migrations: `migrate-canonical` folds the retired TASKS.jsonl store and lane file into tasks.jsonl byte-for-byte; `migrate-ids` (mod purge) mints task_<ULID> ids and numbers and purges old ids.",
       "related": [
         "tasks.jsonl",
         "/usr/lib/mios/schemas/task-record.schema.json",
-        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md"
+        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md",
+        "TASKS.md",
+        "/usr/share/mios/mios.toml [tasks.store]",
+        "tools/native/mios-task/src/record.rs"
       ],
       "functions": [
         "Inputs",
@@ -10223,7 +10226,17 @@
         "lane_deps",
         "kept_sources",
         "chain_after",
-        "frozen_table"
+        "frozen_table",
+        "purge::Resolver::new",
+        "purge::Resolver::text",
+        "purge::Resolver::structured",
+        "purge::rewrite",
+        "purge::cmd",
+        "purge::plan",
+        "purge::tree",
+        "purge::ssot_section",
+        "purge::prefix_of",
+        "purge::publish"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -10247,33 +10260,6 @@
         "render",
         "empty_block",
         "line"
-      ],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-task/src/purge.rs",
-      "hint": "`mios-task migrate-ids` (one-shot) assigns each task an opaque task_<ULID> id and creation-order number, purging old ids from list, history, overrides, and tracked files.",
-      "related": [
-        "tasks.jsonl",
-        "TASKS.md",
-        "/usr/share/mios/mios.toml [tasks.store]",
-        "/usr/lib/mios/schemas/task-record.schema.json",
-        "tools/native/mios-task/src/record.rs",
-        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md"
-      ],
-      "functions": [
-        "Resolver::new",
-        "Resolver::text",
-        "Resolver::structured",
-        "rewrite",
-        "cmd",
-        "plan",
-        "tree",
-        "ssot_section",
-        "prefix_of",
-        "publish"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -28447,6 +28433,24 @@
         "/usr/lib/mios/schemas/task-record.schema.json",
         "tools/native/mios-task",
         "automation/98-drift-checks.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/adr/0029-agent-succession-and-interop.md",
+      "hint": "ADR-0029 adds a coordinator lease (agent.lease, Kubernetes Lease semantics) beside the relay's presence lease, so a standby harness can detect the holder's credit exhaustion from its transcript and take over; maps the relay, translation layer and tmux spawning onto A2A v1.0, MCP 2026-07-28 tasks, OpenAI handoffs/Responses, OpenTelemetry GenAI and AGENTS.md.",
+      "related": [
+        "/usr/share/doc/mios/adr/README.md",
+        ".agents/COORDINATION.md",
+        "/usr/share/doc/mios/mcp-tmux.md",
+        "tools/native/mios-agent-relay",
+        "/usr/libexec/mios/mios-mcp-server",
+        "/usr/lib/mios/mios_translate.py",
+        "/usr/share/mios/mios.toml [mcp.agents]",
+        "[agent_cli]"
       ],
       "functions": [],
       "doc": null,

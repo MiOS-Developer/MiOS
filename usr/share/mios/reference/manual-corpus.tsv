@@ -11361,7 +11361,7 @@ tools/native/mios-task/src/cli.rs	936	936	1	13	91ac57ae5cb8	STAY	local-scoped		0
 tools/native/mios-task/src/cli.rs	994	994	1	15	c1a4625c9fc0	STAY	local-scoped		0				0
 tools/native/mios-task/src/cli.rs	1039	1039	1	19	2412c4f5f6c0	STAY	local-scoped		0				0
 tools/native/mios-task/src/main.rs	1	3	3	31	e6115047f48d	STAY	ai-header		0				0
-tools/native/mios-task/src/migrate.rs	1	3	3	47	8f7385c793a0	STAY	ai-header		0				0
+tools/native/mios-task/src/migrate.rs	1	3	3	58	817115820889	STAY	ai-header		0				0
 tools/native/mios-task/src/migrate.rs	11	11	1	8	f35b5a819e37	STAY	local-scoped		0				0
 tools/native/mios-task/src/migrate.rs	13	13	1	11	65a682573785	STAY	local-scoped		0				0
 tools/native/mios-task/src/migrate.rs	15	15	1	12	4a79e27c6f3d	STAY	local-scoped		0				0
@@ -11384,6 +11384,47 @@ tools/native/mios-task/src/migrate.rs	605	605	1	6	32172a1308ae	STAY	inline-scope
 tools/native/mios-task/src/migrate.rs	863	864	2	23	cea0b1ac98e5	STAY	local-scoped		0				0
 tools/native/mios-task/src/migrate.rs	893	893	1	21	9c7e14fcfc6d	STAY	local-scoped		0				0
 tools/native/mios-task/src/migrate.rs	921	922	2	29	3fb0175c6c49	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	969	970	2	16	b275430bb623	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	982	982	1	7	932e74fcb8d6	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	985	985	1	7	e1b6f276a55c	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	987	988	2	33	1fbf47b3e4be	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	990	990	1	10	84fef9499c3a	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	992	992	1	12	000de61940c5	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	994	994	1	17	7d170152bfc5	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1010	1010	1	12	6db203cc3b4e	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1015	1017	3	53	f49b1c26be53	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1020	1020	1	18	a99a030feced	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1025	1026	2	26	37ac3b4f45f6	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1048	1048	1	10	c098c6256745	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1065	1065	1	15	374ec3d568bf	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1132	1132	1	16	bdb88cd8fb94	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1189	1191	3	47	ebdc2dcbe312	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:ebdc2dcbe312	47	0
+tools/native/mios-task/src/migrate.rs	1216	1217	2	32	55a9da936c22	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1229	1229	1	5	5403e7d1bc98	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1254	1254	1	13	7fae9471e1a7	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1261	1261	1	20	75571fa8485d	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1291	1291	1	9	889b13274aa9	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1295	1295	1	5	1d0f5584127d	STAY	inline-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1317	1317	1	6	2831c486b160	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1356	1356	1	20	713435d40345	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1393	1393	1	14	7bb49d08d8a2	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1439	1439	1	12	02dbbd51397a	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1474	1476	3	46	7b2f9f9995b0	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1509	1510	2	23	5e2c63e5a403	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1595	1595	1	16	924c339c4fe5	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1631	1631	1	6	36f0ffd5c81d	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1669	1669	1	5	10dfc6758ee2	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1696	1696	1	19	bc061acc5cba	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	1721	1723	3	45	d975ecb31b36	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1784	1787	4	56	01764e2828d2	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:01764e2828d2	56	0
+tools/native/mios-task/src/migrate.rs	1831	1832	2	33	c268f4e070c0	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/src.md	mios-src:c268f4e070c0	33	0
+tools/native/mios-task/src/migrate.rs	1946	1947	2	27	d75bcb004ed4	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	1974	1974	1	15	fa4ce7a1e07c	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	2036	2038	3	40	068a99d42b74	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:068a99d42b74	40	0
+tools/native/mios-task/src/migrate.rs	2200	2202	3	47	e914e03e1d15	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	2276	2277	2	29	ec946e851bda	STAY	midsize-why		0				0
+tools/native/mios-task/src/migrate.rs	2364	2364	1	16	52cc53c0c751	STAY	local-scoped		0				0
+tools/native/mios-task/src/migrate.rs	2407	2408	2	29	83e59716b579	STAY	midsize-why		0				0
 tools/native/mios-task/src/overrides.rs	1	3	3	44	77be4c774340	STAY	ai-header		0				0
 tools/native/mios-task/src/overrides.rs	9	9	1	19	4d1c5eb19850	STAY	local-scoped		0				0
 tools/native/mios-task/src/overrides.rs	13	13	1	10	c799c0bb2f8a	STAY	local-scoped		0				0
@@ -11399,47 +11440,6 @@ tools/native/mios-task/src/overrides.rs	214	214	1	11	3ef22703fdc6	STAY	local-sco
 tools/native/mios-task/src/overrides.rs	217	218	2	32	13f0da7b5a26	STAY	midsize-why		0				0
 tools/native/mios-task/src/overrides.rs	234	234	1	13	5f7c2619ab0e	STAY	local-scoped		0				0
 tools/native/mios-task/src/overrides.rs	280	280	1	6	be594f63ee47	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	1	3	3	44	7ad06bbef76c	STAY	ai-header		0				0
-tools/native/mios-task/src/purge.rs	15	15	1	7	932e74fcb8d6	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	18	18	1	7	e1b6f276a55c	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	20	21	2	33	1fbf47b3e4be	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	23	23	1	10	84fef9499c3a	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	25	25	1	12	000de61940c5	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	27	27	1	17	7d170152bfc5	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	43	43	1	12	6db203cc3b4e	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	48	50	3	53	f49b1c26be53	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	53	53	1	18	a99a030feced	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	58	59	2	26	37ac3b4f45f6	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	81	81	1	10	c098c6256745	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	98	98	1	15	374ec3d568bf	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	165	165	1	16	bdb88cd8fb94	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	222	224	3	47	ebdc2dcbe312	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:ebdc2dcbe312	47	0
-tools/native/mios-task/src/purge.rs	249	250	2	32	55a9da936c22	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	262	262	1	5	5403e7d1bc98	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	287	287	1	13	7fae9471e1a7	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	294	294	1	20	75571fa8485d	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	324	324	1	9	889b13274aa9	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	328	328	1	5	1d0f5584127d	STAY	inline-scoped		0				0
-tools/native/mios-task/src/purge.rs	350	350	1	6	2831c486b160	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	388	388	1	20	713435d40345	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	425	425	1	14	7bb49d08d8a2	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	471	471	1	12	02dbbd51397a	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	506	508	3	46	7b2f9f9995b0	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	541	542	2	23	5e2c63e5a403	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	626	626	1	16	924c339c4fe5	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	662	662	1	6	36f0ffd5c81d	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	700	700	1	5	10dfc6758ee2	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	727	727	1	19	bc061acc5cba	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	752	754	3	45	d975ecb31b36	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	815	818	4	56	01764e2828d2	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:01764e2828d2	56	0
-tools/native/mios-task/src/purge.rs	862	863	2	33	c268f4e070c0	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/src.md	mios-src:c268f4e070c0	33	0
-tools/native/mios-task/src/purge.rs	976	977	2	27	d75bcb004ed4	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	1004	1004	1	15	fa4ce7a1e07c	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	1064	1066	3	40	068a99d42b74	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:068a99d42b74	40	0
-tools/native/mios-task/src/purge.rs	1224	1226	3	47	e914e03e1d15	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	1300	1301	2	29	ec946e851bda	STAY	midsize-why		0				0
-tools/native/mios-task/src/purge.rs	1387	1387	1	16	52cc53c0c751	STAY	local-scoped		0				0
-tools/native/mios-task/src/purge.rs	1430	1431	2	29	83e59716b579	STAY	midsize-why		0				0
 tools/native/mios-task/src/record.rs	1	3	3	72	c67c5fb4576d	STAY	ai-header		0				0
 tools/native/mios-task/src/record.rs	11	11	1	16	91298fa403c1	STAY	local-scoped		0				0
 tools/native/mios-task/src/record.rs	14	14	1	14	48bc1816ae2e	STAY	local-scoped		0				0
