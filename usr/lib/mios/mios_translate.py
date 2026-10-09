@@ -8,8 +8,10 @@ gate evidence validation, and terminal envelope invariants.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import re
+import uuid
 from typing import Any, Dict, List, Optional
 
 CREDENTIAL_KEYS = {
@@ -21,6 +23,307 @@ CREDENTIAL_KEYS = {
     "password",
     "private_key",
 }
+
+# ADR-0029 Standards Mapping Constants
+# A2A v1.0.1 ProtoJSON Task States
+A2A_TASK_STATE_SUBMITTED = "TASK_STATE_SUBMITTED"
+A2A_TASK_STATE_WORKING = "TASK_STATE_WORKING"
+A2A_TASK_STATE_INPUT_REQUIRED = "TASK_STATE_INPUT_REQUIRED"
+A2A_TASK_STATE_COMPLETED = "TASK_STATE_COMPLETED"
+A2A_TASK_STATE_FAILED = "TASK_STATE_FAILED"
+A2A_TASK_STATE_REJECTED = "TASK_STATE_REJECTED"
+A2A_TASK_STATE_CANCELED = "TASK_STATE_CANCELED"
+
+A2A_TASK_STATES = {
+    A2A_TASK_STATE_SUBMITTED,
+    A2A_TASK_STATE_WORKING,
+    A2A_TASK_STATE_INPUT_REQUIRED,
+    A2A_TASK_STATE_COMPLETED,
+    A2A_TASK_STATE_FAILED,
+    A2A_TASK_STATE_REJECTED,
+    A2A_TASK_STATE_CANCELED,
+}
+
+# MCP Tasks Extension (2026-07-28)
+MCP_TASK_STATUS_WORKING = "working"
+MCP_TASK_STATUS_INPUT_REQUIRED = "input_required"
+MCP_TASK_STATUS_COMPLETED = "completed"
+MCP_TASK_STATUS_FAILED = "failed"
+MCP_TASK_STATUS_CANCELLED = "cancelled"
+
+MCP_TASK_STATUSES = {
+    MCP_TASK_STATUS_WORKING,
+    MCP_TASK_STATUS_INPUT_REQUIRED,
+    MCP_TASK_STATUS_COMPLETED,
+    MCP_TASK_STATUS_FAILED,
+    MCP_TASK_STATUS_CANCELLED,
+}
+
+# OpenAI Responses Statuses
+OPENAI_STATUS_QUEUED = "queued"
+OPENAI_STATUS_IN_PROGRESS = "in_progress"
+OPENAI_STATUS_INCOMPLETE = "incomplete"
+OPENAI_STATUS_COMPLETED = "completed"
+OPENAI_STATUS_FAILED = "failed"
+OPENAI_STATUS_CANCELLED = "cancelled"
+
+OPENAI_RESPONSES_STATUSES = {
+    OPENAI_STATUS_QUEUED,
+    OPENAI_STATUS_IN_PROGRESS,
+    OPENAI_STATUS_INCOMPLETE,
+    OPENAI_STATUS_COMPLETED,
+    OPENAI_STATUS_FAILED,
+    OPENAI_STATUS_CANCELLED,
+}
+
+# OpenTelemetry GenAI Semantic Conventions
+OTEL_GENAI_AGENT_ID = "gen_ai.agent.id"
+OTEL_GENAI_AGENT_NAME = "gen_ai.agent.name"
+OTEL_GENAI_CONVERSATION_ID = "gen_ai.conversation.id"
+OTEL_GENAI_OPERATION_NAME = "gen_ai.operation.name"
+
+OTEL_GENAI_ATTRIBUTES = {
+    OTEL_GENAI_AGENT_ID,
+    OTEL_GENAI_AGENT_NAME,
+    OTEL_GENAI_CONVERSATION_ID,
+    OTEL_GENAI_OPERATION_NAME,
+}
+
+
+def enforce_receipt_invariant(receipt_status: str, target_state: str) -> None:
+    """Enforce ADR-0029 receipt invariant: a received receipt NEVER maps to WORKING or COMPLETED."""
+    norm_status = str(receipt_status or "").strip().lower()
+    if norm_status == "received":
+        norm_target = str(target_state or "").strip().upper()
+        if norm_target in ("WORKING", "COMPLETED", "TASK_STATE_WORKING", "TASK_STATE_COMPLETED", "IN_PROGRESS"):
+            raise ValueError(f"RECEIPT INVARIANT VIOLATION: receipt 'received' cannot map to {target_state}")
+
+
+def map_task_state(source_standard: str, state: str, target_standard: str, is_receipt: bool = False) -> str:
+    """Map task/receipt state across standards per ADR-0029.
+
+    Standards:
+    - loop.v1 / status: "queued", "working", "blocked", "delivered", "errored", "refused", "cancelled"
+    - a2a: TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_REJECTED, TASK_STATE_CANCELED
+    - mcp_tasks: "working", "input_required", "completed", "failed", "cancelled"
+    - responses / openai: "queued", "in_progress", "incomplete", "completed", "failed", "cancelled"
+    - receipt: "queued", "received"
+    """
+    src = str(source_standard or "").strip().lower()
+    tgt = str(target_standard or "").strip().lower()
+    s = str(state or "").strip()
+
+    is_rec = is_receipt or src in ("receipt", "relay_receipt") or s.lower() == "received"
+
+    if is_rec and s.lower() == "received":
+        if tgt in ("mcp_tasks", "mcp"):
+            raise ValueError("RECEIPT INVARIANT VIOLATION: receipt 'received' cannot map to WORKING or COMPLETED in MCP tasks")
+        canonical = "submitted"
+    elif src == "a2a":
+        if s == A2A_TASK_STATE_SUBMITTED:
+            canonical = "submitted"
+        elif s == A2A_TASK_STATE_WORKING:
+            canonical = "working"
+        elif s == A2A_TASK_STATE_INPUT_REQUIRED:
+            canonical = "input_required"
+        elif s == A2A_TASK_STATE_COMPLETED:
+            canonical = "completed"
+        elif s == A2A_TASK_STATE_FAILED:
+            canonical = "failed"
+        elif s == A2A_TASK_STATE_REJECTED:
+            canonical = "rejected"
+        elif s == A2A_TASK_STATE_CANCELED:
+            canonical = "cancelled"
+        else:
+            canonical = s.lower()
+    elif src in ("mcp_tasks", "mcp"):
+        s_low = s.lower()
+        if s_low == MCP_TASK_STATUS_WORKING:
+            canonical = "working"
+        elif s_low == MCP_TASK_STATUS_INPUT_REQUIRED:
+            canonical = "input_required"
+        elif s_low == MCP_TASK_STATUS_COMPLETED:
+            canonical = "completed"
+        elif s_low == MCP_TASK_STATUS_FAILED:
+            canonical = "failed"
+        elif s_low == MCP_TASK_STATUS_CANCELLED:
+            canonical = "cancelled"
+        else:
+            canonical = s_low
+    elif src in ("responses", "openai", "openai_responses"):
+        s_low = s.lower()
+        if s_low == OPENAI_STATUS_QUEUED:
+            canonical = "submitted"
+        elif s_low == OPENAI_STATUS_IN_PROGRESS:
+            canonical = "working"
+        elif s_low == OPENAI_STATUS_INCOMPLETE:
+            canonical = "input_required"
+        elif s_low == OPENAI_STATUS_COMPLETED:
+            canonical = "completed"
+        elif s_low == OPENAI_STATUS_FAILED:
+            canonical = "failed"
+        elif s_low == OPENAI_STATUS_CANCELLED:
+            canonical = "cancelled"
+        else:
+            canonical = s_low
+    else:
+        s_low = s.lower()
+        if s_low in ("submitted", "queued"):
+            canonical = "submitted"
+        elif s_low in ("working", "in_progress"):
+            canonical = "working"
+        elif s_low in ("blocked", "input_required", "incomplete"):
+            canonical = "input_required"
+        elif s_low in ("delivered", "completed"):
+            canonical = "completed"
+        elif s_low in ("errored", "failed"):
+            canonical = "failed"
+        elif s_low in ("refused", "rejected"):
+            canonical = "rejected"
+        elif s_low in ("cancelled", "canceled"):
+            canonical = "cancelled"
+        else:
+            canonical = s_low
+
+    if is_rec and s.lower() == "received":
+        enforce_receipt_invariant("received", canonical)
+
+    if tgt == "a2a":
+        if canonical == "submitted":
+            res = A2A_TASK_STATE_SUBMITTED
+        elif canonical == "working":
+            res = A2A_TASK_STATE_WORKING
+        elif canonical == "input_required":
+            res = A2A_TASK_STATE_INPUT_REQUIRED
+        elif canonical == "completed":
+            res = A2A_TASK_STATE_COMPLETED
+        elif canonical == "failed":
+            res = A2A_TASK_STATE_FAILED
+        elif canonical == "rejected":
+            res = A2A_TASK_STATE_REJECTED
+        elif canonical == "cancelled":
+            res = A2A_TASK_STATE_CANCELED
+        else:
+            res = f"TASK_STATE_{canonical.upper()}"
+        if is_rec and s.lower() == "received":
+            enforce_receipt_invariant("received", res)
+        return res
+
+    elif tgt in ("mcp_tasks", "mcp"):
+        if is_rec and s.lower() == "received":
+            raise ValueError("RECEIPT INVARIANT VIOLATION: receipt 'received' cannot map to WORKING or COMPLETED in MCP tasks")
+        if canonical == "working":
+            res = MCP_TASK_STATUS_WORKING
+        elif canonical == "input_required":
+            res = MCP_TASK_STATUS_INPUT_REQUIRED
+        elif canonical == "completed":
+            res = MCP_TASK_STATUS_COMPLETED
+        elif canonical in ("failed", "rejected"):
+            res = MCP_TASK_STATUS_FAILED
+        elif canonical == "cancelled":
+            res = MCP_TASK_STATUS_CANCELLED
+        elif canonical == "submitted":
+            raise ValueError("MCP tasks extension has no submitted/queued state; task begins in 'working'")
+        else:
+            res = canonical
+        return res
+
+    elif tgt in ("responses", "openai", "openai_responses"):
+        if canonical == "submitted":
+            res = OPENAI_STATUS_QUEUED
+        elif canonical == "working":
+            res = OPENAI_STATUS_IN_PROGRESS
+        elif canonical == "input_required":
+            res = OPENAI_STATUS_INCOMPLETE
+        elif canonical == "completed":
+            res = OPENAI_STATUS_COMPLETED
+        elif canonical in ("failed", "rejected"):
+            res = OPENAI_STATUS_FAILED
+        elif canonical == "cancelled":
+            res = OPENAI_STATUS_CANCELLED
+        else:
+            res = canonical
+        if is_rec and s.lower() == "received":
+            enforce_receipt_invariant("received", res)
+        return res
+
+    else:
+        if canonical == "submitted":
+            res = "queued"
+        elif canonical == "working":
+            res = "working"
+        elif canonical == "input_required":
+            res = "blocked"
+        elif canonical == "completed":
+            res = "delivered"
+        elif canonical == "failed":
+            res = "errored"
+        elif canonical == "rejected":
+            res = "refused"
+        elif canonical == "cancelled":
+            res = "cancelled"
+        else:
+            res = canonical
+        if is_rec and s.lower() == "received":
+            enforce_receipt_invariant("received", res)
+        return res
+
+
+def build_otel_genai_attributes(
+    *,
+    agent_id: str = "",
+    agent_name: str = "",
+    conversation_id: str = "",
+    operation_name: str = "invoke_agent",
+) -> Dict[str, str]:
+    """Build OpenTelemetry GenAI semantic convention attributes."""
+    attrs = {
+        OTEL_GENAI_OPERATION_NAME: operation_name,
+    }
+    if agent_id:
+        attrs[OTEL_GENAI_AGENT_ID] = str(agent_id)
+    if agent_name:
+        attrs[OTEL_GENAI_AGENT_NAME] = str(agent_name)
+    if conversation_id:
+        attrs[OTEL_GENAI_CONVERSATION_ID] = str(conversation_id)
+    return attrs
+
+
+def extract_otel_genai_attributes(frame: Any) -> Dict[str, str]:
+    """Extract OpenTelemetry GenAI attributes from a frame, metadata or context."""
+    attrs: Dict[str, str] = {}
+    if isinstance(frame, list):
+        for item in frame:
+            found = extract_otel_genai_attributes(item)
+            attrs.update(found)
+        return attrs
+    if not isinstance(frame, dict):
+        return attrs
+
+    for k in OTEL_GENAI_ATTRIBUTES:
+        if k in frame:
+            attrs[k] = str(frame[k])
+
+    md = frame.get("metadata")
+    if isinstance(md, dict):
+        for k in OTEL_GENAI_ATTRIBUTES:
+            if k in md:
+                attrs[k] = str(md[k])
+        if "agent" in md and OTEL_GENAI_AGENT_NAME not in attrs:
+            attrs[OTEL_GENAI_AGENT_NAME] = str(md["agent"])
+        if "agent_id" in md and OTEL_GENAI_AGENT_ID not in attrs:
+            attrs[OTEL_GENAI_AGENT_ID] = str(md["agent_id"])
+
+    if "contextId" in frame and OTEL_GENAI_CONVERSATION_ID not in attrs:
+        attrs[OTEL_GENAI_CONVERSATION_ID] = str(frame["contextId"])
+    elif "conversation_id" in frame and OTEL_GENAI_CONVERSATION_ID not in attrs:
+        attrs[OTEL_GENAI_CONVERSATION_ID] = str(frame["conversation_id"])
+
+    if "agent" in frame and isinstance(frame["agent"], str) and OTEL_GENAI_AGENT_NAME not in attrs:
+        attrs[OTEL_GENAI_AGENT_NAME] = frame["agent"]
+
+    return attrs
+
 
 ANSI_PATTERN = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\].*?(?:\x1b\\|\x07))")
 
@@ -99,6 +402,25 @@ def detect_source(frame: Dict[str, Any]) -> Optional[str]:
             isinstance(b, dict) and b.get("type") == "text" for b in content
         ):
             return "claude"
+    # A2A Message: role in ROLE_AGENT/ROLE_USER, messageId, or parts list
+    if "messageId" in frame or frame.get("role") in ("ROLE_AGENT", "ROLE_USER"):
+        return "a2a"
+    if "parts" in frame and isinstance(frame.get("parts"), list):
+        return "a2a"
+    # A2A Task
+    if "status" in frame and isinstance(frame.get("status"), dict) and "state" in frame["status"]:
+        if str(frame["status"]["state"]).startswith("TASK_STATE_"):
+            return "a2a"
+    if "taskId" in frame and "contextId" in frame and ("status" in frame or "history" in frame or "artifacts" in frame):
+        return "a2a"
+    # MCP Tasks (2026-07-28)
+    if "taskId" in frame and frame.get("status") in MCP_TASK_STATUSES:
+        return "mcp_tasks"
+    # loop.v1
+    if frame.get("schema") == "loop.v1" or "events" in frame:
+        return "loop.v1"
+    if frame.get("kind") in ("text", "tool_call", "tool_output", "terminal", "handoff"):
+        return "loop.v1"
     return None
 
 
@@ -240,7 +562,10 @@ def _openai_item(item: Dict[str, Any]) -> List[Dict[str, Any]]:
         args = item.get("arguments")
         if args is None:
             raise ValueError("RESPONSES ARGUMENTS MISSING")
-        return [{"kind": "tool_call", "call_id": cid, "name": name, "arguments": _parse_arguments(args)}]
+        ev: Dict[str, Any] = {"kind": "tool_call", "call_id": cid, "name": name, "arguments": _parse_arguments(args)}
+        if name.startswith("transfer_to_"):
+            ev["handoff_agent"] = name[len("transfer_to_"):]
+        return [ev]
     if kind == "function_call_output":
         cid = item.get("call_id")
         if not cid:
@@ -308,7 +633,10 @@ def _chat_message(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
             if "arguments" not in fn:
                 raise ValueError("CHAT ARGUMENTS MISSING")
             args = _parse_arguments(fn["arguments"])
-            events.append({"kind": "tool_call", "call_id": cid, "name": name, "arguments": args})
+            ev = {"kind": "tool_call", "call_id": cid, "name": name, "arguments": args}
+            if name.startswith("transfer_to_"):
+                ev["handoff_agent"] = name[len("transfer_to_"):]
+            events.append(ev)
     return events
 
 
@@ -323,12 +651,15 @@ def _openai_chat(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     raise ValueError("CHAT STREAM TOOL ID OR NAME MISSING")
                 full_args = "".join(slot["arguments_fragments"])
                 parsed_args = _parse_arguments(full_args if full_args else "{}")
-                events.append({
+                ev = {
                     "kind": "tool_call",
                     "call_id": slot["id"],
                     "name": slot["name"],
                     "arguments": parsed_args,
-                })
+                }
+                if slot["name"].startswith("transfer_to_"):
+                    ev["handoff_agent"] = slot["name"][len("transfer_to_"):]
+                events.append(ev)
         pending.clear()
 
     for frame in frames:
@@ -384,6 +715,112 @@ def _openai_chat(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return events
 
 
+def _a2a(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    if not isinstance(frame, dict):
+        return []
+
+    # Direct or embedded receipt check
+    status = frame.get("status")
+    if isinstance(status, str) and status.lower() == "received":
+        loop_status = map_task_state("receipt", "received", "loop.v1")
+        return [{"kind": "terminal", "status": loop_status, "text": "", "error": None}]
+    if isinstance(frame.get("receipt"), dict):
+        rec_status = frame["receipt"].get("status")
+        if isinstance(rec_status, str) and rec_status.lower() == "received":
+            loop_status = map_task_state("receipt", "received", "loop.v1")
+            return [{"kind": "terminal", "status": loop_status, "text": "", "error": None}]
+
+    # A2A Message: role, messageId, parts
+    role_raw = frame.get("role")
+    parts = frame.get("parts")
+    if parts is not None or role_raw is not None or "messageId" in frame:
+        role = "user" if str(role_raw or "").upper() in ("ROLE_USER", "USER") else "assistant"
+        msg_id = frame.get("messageId", "")
+        if isinstance(parts, list):
+            for idx, p in enumerate(parts):
+                if not isinstance(p, dict):
+                    continue
+                # A2A v1.0.1: parts discriminated by member presence, NO kind tag
+                if "text" in p:
+                    events.append({"kind": "text", "role": role, "text": str(p["text"]), "message_id": msg_id})
+                elif "data" in p:
+                    d = p["data"]
+                    if isinstance(d, dict) and "tool_call" in d:
+                        tc = d["tool_call"]
+                        name = tc.get("name", "")
+                        cid = tc.get("call_id") or tc.get("id") or f"call_{idx}"
+                        args = _parse_arguments(tc.get("arguments", {}))
+                        ev: Dict[str, Any] = {"kind": "tool_call", "call_id": cid, "name": name, "arguments": args}
+                        if name.startswith("transfer_to_"):
+                            ev["handoff_agent"] = name[len("transfer_to_"):]
+                        events.append(ev)
+                    elif isinstance(d, dict) and "tool_output" in d:
+                        to = d["tool_output"]
+                        cid = to.get("call_id") or to.get("id") or f"call_{idx}"
+                        events.append({"kind": "tool_output", "call_id": cid, "output": to.get("output")})
+                    else:
+                        events.append({"kind": "tool_output", "call_id": f"data_{idx}", "output": d})
+
+    # A2A Task: id/taskId, contextId, status.state, artifacts
+    if isinstance(status, dict) and "state" in status:
+        state = status.get("state")
+        task_id = frame.get("id") or frame.get("taskId", "")
+        ctx_id = frame.get("contextId", "")
+        if state:
+            loop_status = map_task_state("a2a", state, "loop.v1")
+            events.append({
+                "kind": "terminal",
+                "status": loop_status,
+                "text": "",
+                "task_id": task_id,
+                "context_id": ctx_id,
+                "error": None if loop_status == "delivered" else f"Task state: {state}",
+            })
+        for art in (frame.get("artifacts") or []):
+            art_id = art.get("artifactId") or art.get("id", "")
+            for p in (art.get("parts") or []):
+                if isinstance(p, dict) and "data" in p:
+                    events.append({"kind": "tool_output", "call_id": art_id or "artifact", "output": p["data"]})
+                elif isinstance(p, dict) and "text" in p:
+                    events.append({"kind": "text", "role": "assistant", "text": str(p["text"])})
+
+    # A2A Task history recursion
+    if isinstance(frame.get("history"), list):
+        for h in frame["history"]:
+            if isinstance(h, dict):
+                events.extend(_a2a(h))
+
+    return events
+
+
+def _mcp_tasks(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(frame, dict):
+        return []
+    task_id = frame.get("taskId") or frame.get("id", "")
+    status = frame.get("status")
+    if not status:
+        raise ValueError("MCP TASK STATUS MISSING")
+    loop_status = map_task_state("mcp_tasks", status, "loop.v1")
+    return [{
+        "kind": "terminal",
+        "status": loop_status,
+        "text": "",
+        "task_id": task_id,
+        "error": None if loop_status == "delivered" else f"MCP task: {status}",
+    }]
+
+
+def _loop_v1(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(frame, dict):
+        return []
+    if "events" in frame and isinstance(frame["events"], list):
+        return frame["events"]
+    if "kind" in frame:
+        return [frame]
+    return []
+
+
 def responses_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Project loop.v1 events into OpenAI Responses items."""
     items = []
@@ -398,11 +835,12 @@ def responses_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "content": [{"type": content_type, "text": ev.get("text", "")}],
             })
         elif k == "tool_call":
+            name = ev.get("name", "")
             items.append({
                 "type": "function_call",
                 "call_id": ev.get("call_id", ""),
-                "name": ev.get("name", ""),
-                "arguments": json.dumps(ev.get("arguments", {}), ensure_ascii=False),
+                "name": name,
+                "arguments": json.dumps(ev.get("arguments", {}), ensure_ascii=False) if isinstance(ev.get("arguments"), dict) else str(ev.get("arguments", "{}")),
             })
         elif k == "tool_output":
             items.append({
@@ -410,11 +848,159 @@ def responses_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "call_id": ev.get("call_id", ""),
                 "output": ev.get("output"),
             })
+        elif k == "handoff":
+            target = ev.get("target_agent", "")
+            items.append({
+                "type": "function_call",
+                "call_id": ev.get("call_id", f"call_handoff_{target}"),
+                "name": f"transfer_to_{target}",
+                "arguments": json.dumps(ev.get("arguments", {}), ensure_ascii=False) if isinstance(ev.get("arguments"), dict) else str(ev.get("arguments", "{}")),
+            })
     return items
 
 
+def a2a_items(events: List[Dict[str, Any]], context_id: str = "") -> List[Dict[str, Any]]:
+    """Project loop.v1 events into A2A v1.0.1 ProtoJSON items.
+
+    Parts are discriminated strictly by member presence (text, data), NEVER kind tag.
+    """
+    items: List[Dict[str, Any]] = []
+    idx = 0
+    for ev in events:
+        k = ev.get("kind")
+        if k == "text":
+            role = "ROLE_USER" if ev.get("role") == "user" else "ROLE_AGENT"
+            items.append({
+                "role": role,
+                "messageId": ev.get("message_id") or f"msg_{idx}",
+                "contextId": context_id or ev.get("context_id", ""),
+                "parts": [{"text": ev.get("text", "")}],
+            })
+            idx += 1
+        elif k == "tool_call":
+            name = ev.get("name", "")
+            items.append({
+                "role": "ROLE_AGENT",
+                "messageId": f"call_{ev.get('call_id', idx)}",
+                "contextId": context_id or ev.get("context_id", ""),
+                "parts": [{
+                    "data": {
+                        "tool_call": {
+                            "name": name,
+                            "call_id": ev.get("call_id", f"call_{idx}"),
+                            "arguments": ev.get("arguments", {}),
+                        }
+                    }
+                }],
+            })
+            idx += 1
+        elif k == "tool_output":
+            items.append({
+                "role": "ROLE_AGENT",
+                "messageId": f"out_{ev.get('call_id', idx)}",
+                "contextId": context_id or ev.get("context_id", ""),
+                "parts": [{
+                    "data": {
+                        "tool_output": {
+                            "call_id": ev.get("call_id", f"call_{idx}"),
+                            "output": ev.get("output"),
+                        }
+                    }
+                }],
+            })
+            idx += 1
+        elif k == "handoff":
+            target = ev.get("target_agent", "")
+            items.append({
+                "role": "ROLE_AGENT",
+                "messageId": f"handoff_{idx}",
+                "contextId": context_id or ev.get("context_id", ""),
+                "parts": [{
+                    "data": {
+                        "tool_call": {
+                            "name": f"transfer_to_{target}",
+                            "arguments": ev.get("arguments", {}),
+                        }
+                    }
+                }],
+                "metadata": {"agent": target},
+            })
+            idx += 1
+        elif k == "terminal":
+            loop_status = ev.get("status", "delivered")
+            a2a_state = map_task_state("loop.v1", loop_status, "a2a")
+            items.append({
+                "id": ev.get("task_id") or f"task_{context_id or 'default'}",
+                "contextId": context_id or ev.get("context_id", ""),
+                "status": {
+                    "state": a2a_state,
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                },
+                "artifacts": [],
+            })
+    return items
+
+
+def mcp_tasks_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Project loop.v1 events into MCP tasks extension items."""
+    items: List[Dict[str, Any]] = []
+    for ev in events:
+        if ev.get("kind") == "terminal":
+            loop_status = ev.get("status", "delivered")
+            try:
+                mcp_status = map_task_state("loop.v1", loop_status, "mcp_tasks")
+            except ValueError:
+                mcp_status = None
+            if mcp_status:
+                items.append({
+                    "taskId": ev.get("task_id") or "task_default",
+                    "status": mcp_status,
+                    "lastUpdatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                })
+    return items
+
+
+def loop_to_a2a(events: List[Dict[str, Any]], context_id: str = "") -> List[Dict[str, Any]]:
+    """Bidirectional conversion: loop.v1 events -> A2A items."""
+    return a2a_items(events, context_id=context_id)
+
+
+def a2a_to_loop(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bidirectional conversion: A2A frames -> loop.v1 events."""
+    events: List[Dict[str, Any]] = []
+    for f in frames:
+        events.extend(_a2a(f))
+    return events
+
+
+def loop_to_responses(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bidirectional conversion: loop.v1 events -> OpenAI Responses items."""
+    return responses_items(events)
+
+
+def responses_to_loop(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bidirectional conversion: OpenAI Responses frames -> loop.v1 events."""
+    events: List[Dict[str, Any]] = []
+    for f in frames:
+        events.extend(_openai(f))
+    return events
+
+
+def loop_to_mcp_tasks(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bidirectional conversion: loop.v1 events -> MCP task items."""
+    return mcp_tasks_items(events)
+
+
+def mcp_tasks_to_loop(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bidirectional conversion: MCP task frames -> loop.v1 events."""
+    events: List[Dict[str, Any]] = []
+    for f in frames:
+        events.extend(_mcp_tasks(f))
+    return events
+
+
 def translate(request: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate frames into loop.v1 events and Responses items."""
+    """Translate frames into loop.v1 events and standard projections."""
     if not isinstance(request, dict):
         raise ValueError("INVALID TRANSLATE REQUEST")
     source_raw = request.get("source", "")
@@ -425,6 +1011,7 @@ def translate(request: Dict[str, Any]) -> Dict[str, Any]:
     known = {
         "auto", "agy", "claude", "openai", "openai_responses", "codex",
         "openai_chat", "chat_completions", "openai_compatible", "generic",
+        "a2a", "mcp_tasks", "loop.v1",
     }
     if source_raw not in known:
         raise ValueError(f"UNKNOWN SOURCE: {source_raw}")
@@ -462,6 +1049,18 @@ def translate(request: Dict[str, Any]) -> Dict[str, Any]:
         events = []
         for f in frames:
             events.extend(_openai(f))
+    elif source == "a2a":
+        events = []
+        for f in frames:
+            events.extend(_a2a(f))
+    elif source == "mcp_tasks":
+        events = []
+        for f in frames:
+            events.extend(_mcp_tasks(f))
+    elif source == "loop.v1":
+        events = []
+        for f in frames:
+            events.extend(_loop_v1(f))
     else:
         raise ValueError(f"UNKNOWN SOURCE: {source}")
 
@@ -504,8 +1103,12 @@ def translate(request: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 ev["status"] = "unverified"
 
+    ctx_id = str(request.get("context_id") or "")
     return {
         "schema": "loop.v1",
         "events": events,
         "responses_items": responses_items(events),
+        "a2a_items": a2a_items(events, context_id=ctx_id),
+        "mcp_tasks": mcp_tasks_items(events),
+        "otel_attributes": extract_otel_genai_attributes(frames) or build_otel_genai_attributes(conversation_id=ctx_id),
     }
