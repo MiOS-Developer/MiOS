@@ -275,6 +275,109 @@ passes on the real tree or system) and a negative control (a planted defect make
     - F9's self-hosting proof links the M5 self-build task, the Q4 signing task and the fleet-update
       task rather than duplicating them.
     - F4 and F5 extend the Metal class-selector and domain-generator task (brief P2-5).
+- **M8: one tmux TUI desktop in every MiOS image.**
+  - **Goal:** tmux is MiOS's graphical desktop for managing and reaching VMs, images, services and
+    agents. The same TUI runs inside tmux in every MiOS image:
+    - L1 SystemRescue, as the attended console on the iGPU;
+    - L2 MiOS VMs and their nested MiOS containers;
+    - WSL2, including inside `mios-xbox`;
+    - cloud and devcontainer;
+    - Windows, in native `tmux.exe`.
+
+    It replaces today's monitors, `mios ai` and the other TUIs.
+  - **Sources:**
+    - design: `docs/design/doc-tmux-os-integration.md`, section 7;
+    - tasks: the M8 epic in `tasks.jsonl`.
+  - **Operator rulings, 2026-10-09 (binding):**
+    - **R1.** The desktop belongs to `miosd`, as an applet in its multicall binary. This is an explicit
+      exception to M2's "new code goes into its domain, not miosd by default": miosd is already the
+      `mios` dispatcher and the tmux namespace guard. The ADR-0021 amendment, which plans miosd as a
+      thin exec shim, must record this exception.
+    - **R2.** Panes render natively in Rust, with ratatui and crossterm, inside tmux. Python
+      Textual/Rich and the runtime `pip install` are retired.
+  - **Out of scope:** the agent planes stay separate and are not part of the human desktop. They are
+    `mios-mcp-server` with its tmux bridge, `mios-shell-session`, and `tmux-mcp`.
+  - **Phases.** "+" is the positive control (must pass); "-" is the planted defect (must fail).
+    - **U1, SSOT and render.**
+      - AC:
+        - `[terminal.desktop]`, `.layout`, `.views.<id>` and
+          `.env.<sysrescue|vm|wsl|cloud|windows>` own the desktop. They absorb the
+          `[mcp.tmux.workspace]` geometry, `[terminal.monitor]`, `[dashboard]` and the
+          `[mcp.agents.observation]` UI keys. (`[desktop]` is already GNOME/Flatpak's.)
+        - `[terminal.startup]` returns to vendor, and bootstrap's `[terminal.monitor]` schema is
+          reconciled (Law 15).
+        - One layered loader remains: `mios-resolver`.
+        - The runtime render (`mios-gen render-tmux-theme --runtime`) runs in pure Rust, with no
+          `theme_sync.py` and no `mios-unit-gen` subprocess.
+      - +: the runtime render matches its golden with no `python3` and no `mios-unit-gen` on PATH;
+        `mios-toml-get terminal.startup linux` resolves from vendor.
+      - -: a key restated in both the old and the new table fails `check_no_duplicate_value_key`; a
+        second loader fails the single-loader check.
+    - **U2, the miosd desktop applet.**
+      - AC:
+        - it owns the session and namespace, folding in `mios-terminal` (a path shim remains);
+        - it owns the layout engine, moved out of `mios-agent-relay` `workspace()`;
+        - it provides a ratatui view framework, static on Linux musl and Windows.
+      - +: `mios terminal` attaches the `-L` session through miosd; layout goldens pass per profile;
+        views pass TestBackend goldens; the static-linkage audit passes.
+      - -: a view that panics below the minimum size fails; a socket directory owned by another user is
+        refused.
+    - **U3, views.**
+      - AC: the views are:
+        - clients chooser and agents observer, with the Rust versions primary;
+        - system and services, from the `mios-service-core` catalog and probe, with `mios-probe`
+          facts replacing fastfetch;
+        - build progress, from the `mios-build` ledger;
+        - flash;
+        - **new:** VMs (L2 VMs, nested MiOS containers, the M7 arbiter state);
+        - **new:** Images (bootc and podman, and the testing/stable channels);
+        - btop as an optional pane.
+      - +: each view renders its fixture golden, and production callers reach the Rust views.
+      - -: a planted `fastfetch` call fails; a missing data source shows as unavailable instead of
+        crashing; an image channel absent from `[image.streams]` is flagged.
+    - **U4, dispatch.**
+      - AC: one Rust table routes terminal, ai, agents, mon, dash, mini and btop, on Linux and through
+        `mios-launch --dispatch`. It fixes the `ai` conflict: miosd opens Open WebUI while
+        `usr/bin/mios` opens the tmux workspace.
+      - +: a parity test shows every front door resolving each verb to the same target.
+      - -: a planted divergent route fails, naming the verb.
+    - **U5, environments.**
+      - AC:
+        - L1: static binaries and a rendered vendor `mios.toml` on the MiOS-Field data partition, and
+          the desktop on tty1. The two drifted autorun copies are reconciled first.
+        - L2: the desktop hotkeys call an installed terminal, not alacritty.
+        - WSL: no literal `podman-MiOS-DEV`.
+        - cloud and devcontainer: the desktop runs without systemd.
+        - Windows: `miosd.exe` runs in `tmux.exe` panes, and `host_tmux::stage` is the only
+          `.tmux.conf` writer.
+        - Blink: it enters through `mios terminal`.
+      - +: a per-environment smoke test reaches the desktop.
+      - -: each environment's planted defect fails: diverged autorun copies, a literal distro name,
+        an extra `.tmux.conf` writer, and a raw `tmux new-session` in Blink.
+    - **U6, retirement.**
+      - AC: the following are deleted, and listed in `[rust.categories.daemon_meta].replaces` so that
+        `check_rust_categories` fails if one returns:
+        - the mios-dashboard zipapp and its compile script;
+        - `mios-mon.py`, `mios_agent_tui.py` and `mios-ai-terminal`, once their tests are ported;
+        - the relay chooser and observer duplicates;
+        - the PowerShell monitors and dashboards, and the `mios-native-entry.ps1` routing, changed in
+          both repos (Law 15).
+
+        `mios-a2o` adopts the layout engine.
+      - +: `check_rust_categories` and `check_bootstrap_sync` pass.
+      - -: restoring a retired file fails `check_rust_categories`, naming it.
+    - **U7, defects found by the inventory.**
+      - `zz-mios-motd` reads `[terminal.startup]`, which vendor lacks (fixed in U1).
+      - mios-dashboard has no tracked source (fixed in U6).
+      - `[rust.categories.serve]` names `mios-serve`, which no crate builds.
+  - **Links:**
+    - AGY-1038 closes with the mios-dashboard retirement.
+    - The dispatch table is the desktop subset of the verb-dispatcher task (AGY-1018).
+    - The keybinding fold relates to KEYMAP-01.
+    - The mobile-keys and MCP-convergence tasks stay with their agent-plane owners.
+    - M7's L1 TUI task builds on U2 and U5.
+  - **To confirm with the operator:** U4 routes `ai` to the desktop's AI workspace, as `usr/bin/mios`
+    and the design doc already do, and gives Open WebUI its own verb.
 
 ## Operator rulings, 2026-10-09 (/loop-grill, 20 spec questions)
 
