@@ -17,134 +17,33 @@ VERSION_STR="$(cat "${SCRIPT_DIR}/../VERSION" 2>/dev/null || cat /ctx/VERSION 2>
 
 exec > >(mask_filter | tee -a "$BUILD_LOG") 2>&1
 
-W=72  # frame width (inner content = W-4 chars)
-
-_pad() {
-    local width=$1 str=${2:-} dir=${3:-left}
-    local len=${#str}
-    if [[ $len -ge $width ]]; then printf '%s' "${str:0:$width}"; return; fi
-    local pad=$(( width - len ))
-    if [[ "$dir" == "right" ]]; then
-        printf '%s%*s' "$str" "$pad" ""
-    else
-        printf '%*s%s' "$pad" "" "$str"
-    fi
-}
-
-_hline() {
-    local char=${1:--} prefix=${2:-+} suffix=${3:-+}
-    printf '%s' "$prefix"
-    printf '%*s' "$(( W - 2 ))" "" | tr ' ' "$char"
-    printf '%s\n' "$suffix"
-}
-
 _row() {
     local content="$1"
-    local inner=$(( W - 4 ))
-    printf '| %-*s |\n' "$inner" "${content:0:$inner}"
-}
-
-_progress_bar() {
-    local current=$1 total=$2
-    local bar_w=$(( W - 21 ))
-    [[ $bar_w -lt 4 ]] && bar_w=4
-    local filled pct empty
-    pct=$(( current * 100 / total ))
-    if [[ $current -ge $total ]]; then
-        filled=$bar_w; empty=0
-    else
-        filled=$(( current * bar_w / total ))
-        empty=$(( bar_w - filled - 1 ))
-        [[ $empty -lt 0 ]] && empty=0
-    fi
-    printf '| ['
-    [[ $filled -gt 0 ]] && printf '%*s' "$filled" "" | tr ' ' '='
-    [[ $current -lt $total ]] && printf '>'
-    [[ $empty -gt 0 ]] && printf '%*s' "$empty" "" | tr ' ' ' '
-    printf '] %3d/%3d (%3d%%) |\n' "$current" "$total" "$pct"
-}
-
-_step_header() {
-    local step=$1 total=$2 name=$3 elapsed_total=$4
-    local elapsed_fmt
-    elapsed_fmt=$(printf '%02d:%02d' $(( elapsed_total / 60 )) $(( elapsed_total % 60 )))
-    local label
-    label="STEP $(printf '%02d' "$step")/$(printf '%02d' "$total") : ${name}"
-    local right=" ${elapsed_fmt}"
-    local inner=$(( W - 6 ))
-    local label_len=${#label} right_len=${#right}
-    local pad=$(( inner - label_len - right_len ))
-    [[ $pad -lt 0 ]] && pad=0
-    printf '+- %s' "$label"
-    printf '%*s' "$pad" "" | tr ' ' '-'
-    printf '%s -+\n' "$right"
-}
-
-_step_result() {
-    local status=$1 name=$2 elapsed=$3
-    local tag
-    case "$status" in
-        ok)   tag="[ DONE ]" ;;
-        fail) tag="[FAILED]" ;;
-        warn) tag="[ WARN ]" ;;
-    esac
-    local right=" ${elapsed}s"
-    local inner=$(( W - 8 ))
-    local label="${tag} ${name}"
-    local label_len=${#label} right_len=${#right}
-    local pad=$(( inner - label_len - right_len ))
-    [[ $pad -lt 0 ]] && pad=0
-    printf '+-- %s' "$label"
-    printf '%*s' "$pad" "" | tr ' ' '-'
-    printf '%s --+\n' "$right"
-}
-
-_section_header() {
-    _hline '=' '+' '+'
-    _row "  'MiOS' ${VERSION_STR} -- Build Console"
-    _row "  Base: ucore-hci:stable-nvidia + Fedora 44"
-    _row "  Started: $(date '+%Y-%m-%d %H:%M:%S')    Log: ${BUILD_LOG}"
-    _hline '=' '+' '+'
-}
-
-_progress_frame() {
-    local current=$1 total=$2 label=$3 elapsed=$4
-    local elapsed_fmt
-    elapsed_fmt=$(printf '%02d:%02d elapsed' $(( elapsed / 60 )) $(( elapsed % 60 )))
-    _hline '-' '+' '+'
-    _row " PROGRESS | Stage: ${label} | ${elapsed_fmt}"
-    _progress_bar "$current" "$total"
-    _hline '-' '+' '+'
+    printf '%s\n' "$content"
 }
 
 _fail_report() {
     local -a fails=("${@}")
-    _hline '=' '+' '+'
     if [[ ${#fails[@]} -eq 0 ]]; then
         _row " FAILURE LOG: (none)"
     else
         _row " FAILURE LOG:"
-        _hline '-' '+' '+'
         for entry in "${fails[@]}"; do
             _row "  [FAIL]  ${entry}"
         done
     fi
-    _hline '=' '+' '+'
 }
 
 _warn_report() {
     local -a warns=("${@}")
-    _hline '-' '+' '+'
     if [[ ${#warns[@]} -eq 0 ]]; then
         _row " WARNING LOG: (none)"
     else
         _row " WARNING LOG:"
-        _hline '-' '+' '+'
         for entry in "${warns[@]}"; do
             _row "  [WARN]  ${entry}"
         done
     fi
-    _hline '-' '+' '+'
 }
 
 _check_critical_packages() {
@@ -173,26 +72,11 @@ _check_critical_packages() {
     [[ "$VALIDATION_FAIL" -eq 0 ]]
 }
 
-_final_summary() {
-    local scripts=$1 fail_count=$2 warn_count=$3 missing_pkgs=$4 elapsed=$5
-    local result_label
-    if [[ $fail_count -gt 0 ]]; then result_label="BUILD FAILED"; else result_label="BUILD COMPLETE"; fi
-    local elapsed_fmt
-    elapsed_fmt=$(printf '%dm %02ds' $(( elapsed / 60 )) $(( elapsed % 60 )))
-    _hline '=' '+' '+'
-    _row "  'MiOS' ${VERSION_STR} -- ${result_label}"
-    _hline '-' '+' '+'
-    _row "  Duration:   ${elapsed_fmt}"
-    _row "  Scripts:    ${scripts} executed | ${fail_count} FAILED | ${warn_count} warned"
-    _row "  Packages:   ${missing_pkgs} critical missing"
-    _hline '-' '+' '+'
-}
-
 export SYSTEMD_OFFLINE=1
 export container=podman
 
 _build_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
-if [[ ! -d "${_build_root}/.git" ]] && command -v git >/dev/null 2>&1; then
+if [[ ! -e "${_build_root}/.git" ]] && command -v git >/dev/null 2>&1; then
     (
         cd "${_build_root}"
         git init -q 2>/dev/null || true
@@ -211,45 +95,13 @@ if [[ ! -f "$MIOS_TOML" ]]; then
     exit 1
 fi
 
-CONTAINERFILE_SCRIPTS="01-system-files-overlay.sh 55-native-build.sh 97-ssot-lint.sh 98-drift-checks.sh 99-postcheck.sh"
-
-NON_FATAL_SCRIPTS="
-  06-enable-external-repos.sh
-  57-gnome.sh
-  36-ceph-k3s.sh
-  13-accounts-db.sh
-  37-k3s-selinux.sh
-  39-moby-engine.sh
-  76-uki-render.sh
-  22-akmod-guards.sh
-  62-oh-my-posh.sh
-  50-uupd-installer.sh
-  68-bake-kvmfr.sh
-  69-bake-lookingglass-client.sh
-  15-freeipa-client.sh
-  58-gnome-remote-desktop.sh
-  27-vm-gating.sh
-  14-podman-machine-compat.sh
-  53-enable-log-copy-service.sh
-  93-composefs-seal.sh
-  91-strip-build-toolchain.sh
-  65-bake-hyprland.sh
-  66-bake-quickshell.sh
-  67-bake-surfer.sh
-"
-
-auth=$(awk '/^[[:space:]]*build_catalog_authoritative[[:space:]]*=/ {
-    if ($0 ~ /=[[:space:]]*true/) print "true"
-}' "$MIOS_TOML" 2>/dev/null || true)
-
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so this lookup could never succeed and the
 # whole Rust dispatch below it was dead on every build ever run (T-1018).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
           /usr/libexec/mios/miosd \
-          "${_build_root}/src/mios-rs/target/release/miosd" \
-          "${_build_root}/src/mios-rs/target/debug/miosd"; do
+          "${_build_root}/src/mios-rs/target/release/miosd"; do
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
@@ -259,120 +111,49 @@ done
 _mios_root="${MIOS_TOML%/usr/share/mios/mios.toml}"
 [[ "$_mios_root" == "$MIOS_TOML" ]] && _mios_root="$_build_root"
 
+# The registry supplies both ordered execution and fatality policy; no second
+# phase roster or substring allowlist can disagree with it.
+[[ -n "$_miosd" ]] || { printf '[MISSING] Native build registry and progress engine miosd are required\n' >&2; exit 1; }
 ALL_SCRIPTS=()
-# ADR-0025: the caller's MIOS_PROFILES_DEFAULT names the image profile; unset, miosd resolves [profiles].default.
+declare -A PHASE_FATAL=()
 _profile_args=()
 [[ -n "$_requested_profile" ]] && _profile_args=(--profile "$_requested_profile")
-if [[ -n "$_miosd" ]]; then
-    # The profile's package sections, for install_packages* (lib/packages.sh); "*" selects all.
-    if ! BUILD_PROFILE_SECTIONS="$(MIOS_ROOT="$_mios_root" "$_miosd" build --sections "${_profile_args[@]}" 2>&1 | tr '\n' ' ')"; then
-        printf '[FATAL] miosd build --sections failed: %s\n' "$BUILD_PROFILE_SECTIONS" >&2
-        exit 1
-    fi
-    export BUILD_PROFILE_SECTIONS
-    _phase_list="$(mktemp)"
-    # No pipe: $? after one reports the pipe's status, not miosd's.
-    if MIOS_ROOT="$_mios_root" "$_miosd" build --list "${_profile_args[@]}" >"$_phase_list" 2>&1; then
-        mapfile -t PHASE_SCRIPTS < <(awk -F':' '{print $1}' "$_phase_list")
-    else
-        # A short or absent phase list is not a degraded build, it is a
-        # different build wearing the same success message. Refuse.
-        printf '[FATAL] miosd build --list failed (MIOS_ROOT=%s)\n' "$_mios_root" >&2
-        sed 's/^/        /' "$_phase_list" >&2
-        rm -f "$_phase_list"
-        exit 1
-    fi
+BUILD_PROFILE_SECTIONS="$(MIOS_ROOT="$_mios_root" "$_miosd" build --sections "${_profile_args[@]}")"
+export BUILD_PROFILE_SECTIONS
+_phase_list="$(mktemp)"
+if ! MIOS_ROOT="$_mios_root" "$_miosd" build --list "${_profile_args[@]}" >"$_phase_list"; then
+    printf '[FAIL] Native build registry could not resolve selected profile\n' >&2
     rm -f "$_phase_list"
-    if (( ${#PHASE_SCRIPTS[@]} == 0 )); then
-        printf '[FATAL] miosd build --list returned no phases\n' >&2
-        exit 1
-    fi
-    for _n in "${PHASE_SCRIPTS[@]}"; do
-        echo "$CONTAINERFILE_SCRIPTS" | grep -qF "$_n" && continue
-        if [[ -f "$SCRIPT_DIR/$_n" ]]; then
-            ALL_SCRIPTS+=("$SCRIPT_DIR/$_n")
-        fi
-    done
+    exit 1
 fi
-
-if (( ${#ALL_SCRIPTS[@]} == 0 )); then
-    if [[ "$auth" == "true" && -f "$(dirname "$MIOS_TOML")/build_phases.json" ]]; then
-        mapfile -t PHASE_SCRIPTS < <(python3 -c "import json, os; d = json.load(open('$(dirname "$MIOS_TOML")/build_phases.json')); [print(os.path.basename(p['script'])) for p in d]" 2>/dev/null)
-        for _n in "${PHASE_SCRIPTS[@]}"; do
-            echo "$CONTAINERFILE_SCRIPTS" | grep -qF "$_n" && continue
-            if [[ -f "$SCRIPT_DIR/$_n" ]]; then
-                ALL_SCRIPTS+=("$SCRIPT_DIR/$_n")
-            fi
-        done
-    else
-        for _s in "$SCRIPT_DIR"/[0-9][0-9]-*.sh; do
-            _n="$(basename "$_s")"
-            echo "$CONTAINERFILE_SCRIPTS" | grep -qF "$_n" && continue
-            ALL_SCRIPTS+=("$_s")
-        done
-    fi
-fi
-TOTAL_SCRIPTS=${#ALL_SCRIPTS[@]}
-
-_section_header
-echo ""
-
-TOTAL_START=$SECONDS
+while IFS=: read -r _name _fatal _extra; do
+    [[ "$_name" =~ ^[a-zA-Z0-9_-]+\.sh$ && ( "$_fatal" == true || "$_fatal" == false ) && -z "$_extra" ]] || { printf '[FAIL] Invalid native build phase: %s\n' "$_name" >&2; exit 1; }
+    [[ -z "${PHASE_FATAL[$_name]+present}" ]] || { printf '[FAIL] Duplicate native build phase: %s\n' "$_name" >&2; exit 1; }
+    PHASE_FATAL[$_name]=$_fatal
+    case " $_name " in
+        ' 01-system-files-overlay.sh '|' 55-native-build.sh '|' 97-ssot-lint.sh '|' 98-drift-checks.sh '|' 99-postcheck.sh ') continue ;;
+    esac
+    ALL_SCRIPTS+=("$SCRIPT_DIR/$_name")
+done < "$_phase_list"
+rm -f "$_phase_list"
+[[ ${#ALL_SCRIPTS[@]} -gt 0 ]] || { printf '[MISSING] Native build plan selected no phases\n' >&2; exit 1; }
 
 rm -f "$MIOS_VERSION_MANIFEST"
 record_version mios       "$VERSION_STR"                               "git:$(cat /ctx/VERSION 2>/dev/null || echo unknown)"
-record_version base-image "${BASE_IMAGE:-ghcr.io/ublue-os/ucore-hci:stable-nvidia}" "build-time floating tag"
+_base_image="${BASE_IMAGE:-}"
+if [[ -z "$_base_image" ]]; then
+    _base_image="$(MIOS_ROOT="$_mios_root" /usr/bin/mios-toml-get image base)"
+fi
+[[ -n "$_base_image" ]] || { printf '[MISSING] Resolved SSOT build base image is required\n' >&2; exit 1; }
+record_version base-image "$_base_image" "resolved build base image"
 record_version kernel     "$(find /usr/lib/modules/ -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort -V | tail -1)" "from base image"
 
 SCRIPT_COUNT=0
-SCRIPT_FAIL=0
-WARN_FAIL=0
-FAILED_SCRIPTS=()
-WARNED_SCRIPTS=()
 FAIL_LOG=()
 WARN_LOG=()
 WARNED_JSON=()
 
-for script in "${ALL_SCRIPTS[@]}"; do
-    SCRIPT_NAME="$(basename "$script")"
-    SCRIPT_COUNT=$(( SCRIPT_COUNT + 1 ))
-
-    _step_header "$SCRIPT_COUNT" "$TOTAL_SCRIPTS" "$SCRIPT_NAME" "$(( SECONDS - TOTAL_START ))"
-
-    STEP_START=$SECONDS
-
-    STEP_LOG="/tmp/mios-step-${SCRIPT_COUNT}-${SCRIPT_NAME%.sh}.log"
-
-    set +e
-    bash "$script" 2>&1 | tee "$STEP_LOG"
-    SCRIPT_EXIT=${PIPESTATUS[0]}
-    set -e
-
-    STEP_ELAPSED=$(( SECONDS - STEP_START ))
-    TOTAL_ELAPSED=$(( SECONDS - TOTAL_START ))
-
-    if [[ $SCRIPT_EXIT -eq 0 ]]; then
-        _step_result "ok" "$SCRIPT_NAME" "$STEP_ELAPSED"
-    elif echo "$NON_FATAL_SCRIPTS" | grep -qF "$SCRIPT_NAME"; then
-        _step_result "warn" "$SCRIPT_NAME" "$STEP_ELAPSED"
-        WARN_FAIL=$(( WARN_FAIL + 1 ))
-        WARNED_SCRIPTS+=("$SCRIPT_NAME")
-        WARN_LOG+=("${SCRIPT_NAME} (${STEP_ELAPSED}s) exit=${SCRIPT_EXIT}")
-        WARNED_JSON+=("{\"script\":\"${SCRIPT_NAME}\",\"exit_code\":${SCRIPT_EXIT}}")
-    else
-        _step_result "fail" "$SCRIPT_NAME" "$STEP_ELAPSED"
-        SCRIPT_FAIL=$(( SCRIPT_FAIL + 1 ))
-        FAILED_SCRIPTS+=("$SCRIPT_NAME")
-        FAIL_LOG+=("${SCRIPT_NAME} (${STEP_ELAPSED}s) exit=${SCRIPT_EXIT}")
-    fi
-
-    _progress_frame "$SCRIPT_COUNT" "$TOTAL_SCRIPTS" "$SCRIPT_NAME" "$TOTAL_ELAPSED"
-    echo ""
-done
-
-_hline '-' '+' '+'
-_row " POST-BUILD: Bloat removal"
-_hline '-' '+' '+'
+_post_bloat() {
 BLOAT_PACKAGES=$(get_packages "bloat" 2>/dev/null || true)
 if [[ -n "${BLOAT_PACKAGES:-}" ]]; then
     echo "  Removing bloat packages"
@@ -388,20 +169,18 @@ for app in gnome-tour gnome-initial-setup; do
         _row "  Hidden: ${app} (NoDisplay=true)"
     fi
 done
+    return 0
+}
 
-echo ""
-_hline '-' '+' '+'
-_row " POST-BUILD: Package Health Check"
-_hline '-' '+' '+'
+_post_package_health() {
 if ! _check_critical_packages; then
-    SCRIPT_FAIL=$(( SCRIPT_FAIL + 1 ))
-    FAILED_SCRIPTS+=("critical package health")
-    FAIL_LOG+=("critical package health: ${PKG_MISS} missing package(s), ${VALIDATION_FAIL} validation failure(s)")
+    _finding missing "Critical package health: ${PKG_MISS} missing package(s), ${VALIDATION_FAIL} validation failure(s)"
+    return 1
 fi
 if rpm -qa 'kmod-nvidia*' 2>/dev/null | grep -q . ; then
     printf '|  %-38s [ OK ] |\n' "NVIDIA kmod(s)"
 else
-    printf '|  %-38s [WARN] |\n' "NVIDIA kmod(s) -- using ucore base"
+    _finding warn "NVIDIA kmod(s) absent -- using base driver policy"
 fi
 if compgen -G "/etc/pki/akmods/certs/*.der" > /dev/null 2>/dev/null; then
     printf '|  %-38s [ OK ] |\n' "MOK certs"
@@ -410,38 +189,38 @@ if rpm -q malcontent-libs > /dev/null 2>&1; then
     printf '|  %-38s [ OK ] |\n' "malcontent-libs (flatpak dep)"
 else
     printf '|  %-38s [WARN] |\n' "malcontent-libs MISSING -- flatpak may break"
-    WARN_LOG+=("malcontent-libs missing -- flatpak may break")
+    _finding warn "malcontent-libs missing -- flatpak may break"
 fi
-_hline '-' '+' '+'
+    return 0
+}
 
-echo ""
-_row " POST-BUILD: Technical Invariant Validation (99-postcheck.sh)"
-_hline '-' '+' '+'
+_post_invariants() {
 if [[ -f "${SCRIPT_DIR}/99-postcheck.sh" ]]; then
     bash "${SCRIPT_DIR}/99-postcheck.sh"
 else
-    _row "  WARNING: 99-postcheck.sh not found -- skipping"
+    _finding missing "Required build gate 99-postcheck.sh is missing"
+    return 125
 fi
+    return 0
+}
 
-echo ""
-_row " POST-BUILD: SSOT-render conformance lint (97-ssot-lint.sh)"
-_hline '-' '+' '+'
+_post_ssot() {
 if [[ -f "${SCRIPT_DIR}/97-ssot-lint.sh" ]]; then
     bash "${SCRIPT_DIR}/97-ssot-lint.sh"
 else
-    _row "  WARNING: 97-ssot-lint.sh not found -- skipping"
+    _finding missing "Required build gate 97-ssot-lint.sh is missing"
+    return 125
 fi
+    return 0
+}
 
-echo ""
-_row " POST-BUILD: AI-plane source drift checks (98-drift-checks.sh)"
-_hline '-' '+' '+'
+_post_drift() {
 if [[ -f "${SCRIPT_DIR}/98-drift-checks.sh" ]]; then
     _drift_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
     git config --global --add safe.directory "${_drift_root}" 2>/dev/null || true
     git config --global --add safe.directory '*' 2>/dev/null || true
     if git -C "${_drift_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         git -C "${_drift_root}" config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
-        git -C "${_drift_root}" reset --hard HEAD -q 2>/dev/null || true
     fi
     for _projection in uki-cmdline ipa-enroll cockpit; do
         mios_project_config "$_drift_root" "$_projection"
@@ -457,22 +236,25 @@ if [[ -f "${SCRIPT_DIR}/98-drift-checks.sh" ]]; then
     fi
     bash "${SCRIPT_DIR}/98-drift-checks.sh"
 else
-    _row "  WARNING: 98-drift-checks.sh not found -- skipping"
+    _finding missing "Required build gate 98-drift-checks.sh is missing"
+    return 125
 fi
+    return 0
+}
 
-echo ""
-_row " POST-BUILD: Agent-pipe unit tests (test_mios_*.py)"
-_hline '-' '+' '+'
+_post_agent_tests() {
 _agent_pipe_dir="$(cd "${SCRIPT_DIR}/.." && pwd)/usr/lib/mios/agent-pipe"
 _test_py="/usr/lib/mios/agents/.venv/bin/python3"
 if [[ -d "$_agent_pipe_dir" ]] && [[ -x "$_test_py" ]]; then
     _test_fails=0
+    _test_count=0
     _DB_INTEGRATION_TESTS=" test_mios_db_config.py test_mios_build_catalog.py test_mios_config_audit.py test_mios_redact.py test_mios_vector.py "
     shopt -s nullglob
     for _t in "$_agent_pipe_dir"/test_mios_*.py; do
         _tb="$(basename "$_t")"
+        _test_count=$((_test_count + 1))
         if [[ "$_DB_INTEGRATION_TESTS" == *" $_tb "* ]]; then
-            _row "  [SKIP] $_tb (DB-integration -- needs live pgvector; runs in CI/runtime)"
+            _finding skip "$_tb: DB integration requires live pgvector; not certified by image build"
             continue
         fi
         # shellcheck disable=SC2046  # compgen emits one name per line; unset needs them split
@@ -488,16 +270,23 @@ if [[ -d "$_agent_pipe_dir" ]] && [[ -x "$_test_py" ]]; then
     if [[ "$_test_fails" -gt 0 ]]; then
         die "Agent-pipe unit tests: ${_test_fails} test script failed"
     fi
-    _row "  all agent-pipe unit tests passed"
+    [[ "$_test_count" -gt 0 ]] || { _finding missing "No agent-pipe test subjects discovered"; return 125; }
+    _row "  Agent-pipe test scripts examined: $_test_count; DB exclusions recorded separately"
 else
-    _row "  WARNING: agent venv absent (or agent-pipe dir missing) -- skipping agent-pipe unit tests (non-fatal; venv retries next boot)"
+    _finding missing "Required agent test environment or agent-pipe source missing"
+    return 125
 fi
+    return 0
+}
 
+_post_libexec_tests() {
 _libexec_dir="$(cd "${SCRIPT_DIR}/.." && pwd)/usr/libexec/mios"
 if [[ -d "$_libexec_dir" ]] && command -v python3 >/dev/null 2>&1; then
     _lx_fails=0
+    _lx_count=0
     shopt -s nullglob
     for _t in "$_libexec_dir"/test_mios_*.py; do
+        _lx_count=$((_lx_count + 1))
         # MIOS_* resolver exports so hermetic libexec tests match the drift-gate.
         # shellcheck disable=SC2046  # compgen emits one name per line; unset needs them split
         if _lxout="$( cd "$_libexec_dir" && { unset $(compgen -v MIOS_ 2>/dev/null); PYTHONIOENCODING=utf-8 python3 "$(basename "$_t")"; } 2>&1 )"; then
@@ -509,17 +298,18 @@ if [[ -d "$_libexec_dir" ]] && command -v python3 >/dev/null 2>&1; then
         fi
     done
     shopt -u nullglob
+    [[ "$_lx_count" -gt 0 ]] || { _finding missing "No libexec test subjects discovered"; return 125; }
     if [[ "$_lx_fails" -gt 0 ]]; then
         die "Libexec unit tests: ${_lx_fails} test script failed"
     fi
 else
-    _row "  WARNING: libexec dir or python3 missing -- skipping libexec unit tests"
+    _finding missing "Required libexec test environment missing"
+    return 125
 fi
+    return 0
+}
 
-echo ""
-_hline '-' '+' '+'
-_row " POST-BUILD: Capturing Quadlet image digests"
-_hline '-' '+' '+'
+_post_image_digests() {
 if command -v skopeo >/dev/null 2>&1; then
     shopt -s nullglob
     for q in /usr/share/containers/systemd/*.container /etc/containers/systemd/*.container; do
@@ -532,13 +322,13 @@ if command -v skopeo >/dev/null 2>&1; then
     done
     shopt -u nullglob
 else
-    warn "Skopeo not available"
+    _finding missing "Required image digest inspector skopeo unavailable"
+    return 125
 fi
+    return 0
+}
 
-echo ""
-_hline '-' '+' '+'
-_row " LOG CHAIN: Flattening logs + version manifest -> ${MIOS_LOG_DIR}/"
-_hline '-' '+' '+'
+_post_log_chain() {
 mkdir -p "$MIOS_LOG_DIR"
 cp -v /var/log/dnf5.log* /var/log/hawkey.log "$MIOS_LOG_DIR/" 2>/dev/null || true
 
@@ -556,7 +346,7 @@ fi
     else
         echo ""
     fi
-    for step_log in /tmp/mios-step-*.log; do
+    for step_log in "$PROGRESS_DIR"/stage-*.log; do
         [[ -f "$step_log" ]] || continue
         echo ""
         echo "# ====== $(basename "$step_log") ======"
@@ -597,7 +387,10 @@ if [[ -d "$SBOM_ARTIFACTS_DIR" ]]; then
     fi
     _row "  Non-fatal failures marker: ${MARKER_FILE}"
 fi
+    return 0
+}
 
+_post_finalize() {
 $DNF_BIN "${DNF_SETOPT[@]}" clean all 2>/dev/null || true
 rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/geist-font /tmp/*.tar* /tmp/*.rpm 2>/dev/null || true
 # /usr/share/man is NOT wiped wholesale: MiOS renders its own pages there
@@ -619,15 +412,91 @@ rm -rf /usr/share/gnome/help/* /usr/share/help/* 2>/dev/null || true
 rm -f /var/log/dnf5.log* /var/log/hawkey.log 2>/dev/null || true
 rm -rf /run/ceph /run/cockpit /run/k3s /tmp/mios-step-*.log 2>/dev/null || true
 rm -f /var/lib/systemd/random-seed /tmp/mios-build.log "$MIOS_VERSION_MANIFEST" 2>/dev/null || true
+    return 0
+}
 
-TOTAL_ELAPSED=$(( SECONDS - TOTAL_START ))
-echo ""
-_final_summary "$SCRIPT_COUNT" "$SCRIPT_FAIL" "$WARN_FAIL" "$VALIDATION_FAIL" "$TOTAL_ELAPSED"
+_finding() {
+    "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event note --status "$1" --name "$2"
+}
+
+_run_stage() {
+    local name=$1
+    shift
+    "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event start --name "$name"
+    SCRIPT_COUNT=$((SCRIPT_COUNT + 1))
+    local step_log="${PROGRESS_DIR}/stage-${SCRIPT_COUNT}.log" rc tee_rc status
+    local -a pipeline_status=()
+    set +e
+    _stage_child "$@" 2>&1 | tee "$step_log"
+    pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    rc=${pipeline_status[0]}
+    tee_rc=${pipeline_status[1]}
+    status=pass
+    if [[ "$tee_rc" -ne 0 ]]; then
+        status=fail
+        FAIL_LOG+=("${name}: log capture failed exit=${tee_rc}")
+    elif [[ "$rc" -eq 125 ]]; then
+        status=missing
+    elif [[ "$rc" -ne 0 ]]; then
+        if [[ "${PHASE_FATAL[$name]:-true}" == false ]]; then
+            status=warn
+            WARN_LOG+=("${name}: exit=${rc}")
+            WARNED_JSON+=("{\"script\":\"${name}\",\"exit_code\":${rc}}")
+        else
+            status=fail
+            FAIL_LOG+=("${name}: exit=${rc}")
+        fi
+    fi
+    "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event result --name "$name" --status "$status"
+}
+
+_stage_child() {
+    # Functions execute in the pipeline's child shell. Enable errexit there so
+    # a failing post-build gate cannot be overwritten by its final return.
+    set -e
+    "$@"
+}
+
+_run_script() {
+    [[ -f "$1" ]] || { _finding missing "Selected phase is missing: $(basename "$1")"; return 125; }
+    bash "$1"
+}
+
+[[ -n "$_miosd" ]] || { printf '[MISSING] Native build progress engine miosd is required\n' >&2; exit 1; }
+PROGRESS_DIR="$(mktemp -d /tmp/mios-build-progress.XXXXXX)"
+PROGRESS_STATE="${PROGRESS_DIR}/state.json"
+POST_NAMES=()
+POST_FUNCTIONS=()
+declare -A POST_SEEN=()
+_post_plan="$(MIOS_ROOT="$_mios_root" "$_miosd" build --post-list)"
+while IFS=: read -r _name _action _extra; do
+    [[ -n "$_name" && -z "$_extra" && -z "${POST_SEEN[$_name]+present}" ]] || { printf '[FAIL] Invalid or duplicate post-build identity: %s\n' "$_name" >&2; exit 1; }
+    case "$_action" in
+        bloat|package_health|invariants|ssot|drift|agent_tests|libexec_tests|image_digests|log_chain|finalize) ;;
+        *) printf '[FAIL] Unknown post-build action: %s\n' "$_action" >&2; exit 1 ;;
+    esac
+    POST_NAMES+=("$_name")
+    POST_FUNCTIONS+=("_post_${_action}")
+    POST_SEEN[$_name]=true
+    PHASE_FATAL[$_name]=true
+done <<< "$_post_plan"
+{
+    for script in "${ALL_SCRIPTS[@]}"; do basename "$script"; done
+    printf '%s\n' "${POST_NAMES[@]}"
+} | "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event init
+_progress_owner=$BASHPID
+_progress_exit() {
+    local result=$?
+    if [[ "$BASHPID" == "$_progress_owner" && "$result" -ne 0 ]]; then
+        "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event finish || true
+    fi
+}
+trap _progress_exit EXIT
+printf '[BUILD] MiOS %s | base %s | started %s | log %s | receipt %s\n' "$VERSION_STR" "$_base_image" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$BUILD_LOG" "$PROGRESS_STATE"
+for script in "${ALL_SCRIPTS[@]}"; do _run_stage "$(basename "$script")" _run_script "$script"; done
+for i in "${!POST_NAMES[@]}"; do _run_stage "${POST_NAMES[$i]}" "${POST_FUNCTIONS[$i]}"; done
+
 _fail_report "${FAIL_LOG[@]+"${FAIL_LOG[@]}"}"
 _warn_report "${WARN_LOG[@]+"${WARN_LOG[@]}"}"
-echo ""
-
-if [[ $SCRIPT_FAIL -gt 0 ]]; then
-    printf '[FATAL] %d script(s) failed (see FAILURE LOG above)\n' "$SCRIPT_FAIL"
-    exit 1
-fi
+"$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event finish

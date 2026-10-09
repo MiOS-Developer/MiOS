@@ -6,6 +6,7 @@ use std::fmt;
 
 pub mod images;
 pub mod native_build;
+pub mod progress;
 pub mod verification;
 
 /// Executable roles are distinct from Cargo libraries and from their shared

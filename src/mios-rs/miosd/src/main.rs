@@ -21,6 +21,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Update the single build-stage ledger and render its cumulative status.
+    BuildProgress {
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+        #[arg(long)]
+        state: std::path::PathBuf,
+        #[arg(long, value_parser = ["init", "start", "result", "note", "finish"])]
+        event: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, value_parser = ["pass", "fail", "warn", "skip", "missing"])]
+        status: Option<String>,
+    },
     /// Verify or explicitly repair the SSOT tmux namespace without restarting sessions
     TerminalRuntimeCheck {
         #[arg(long, default_value = "/")]
@@ -159,6 +172,9 @@ enum Commands {
         /// Print the profile's package sections ("*" = every section) instead of phases
         #[arg(long)]
         sections: bool,
+        /// Print the SSOT post-build validation plan for the build adapter
+        #[arg(long, conflicts_with_all = ["sections", "list", "plan"])]
+        post_list: bool,
     },
     /// Resolve configuration parameters
     Resolve {
@@ -1189,12 +1205,55 @@ async fn main() {
             list,
             profile,
             sections,
+            post_list,
         } => {
+            if *post_list {
+                let root = std::env::var_os("MIOS_ROOT")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "/".into());
+                match mios_build::progress::post_plan(&root) {
+                    Ok(plan) => {
+                        for (name, action) in plan {
+                            println!("{name}:{action}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("[build-plan] {error}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
             if let Err(e) =
                 mios_build::run_build_selected(phase, *plan, *list, *sections, profile.as_deref())
             {
                 eprintln!("[miosd] Build error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::BuildProgress {
+            root,
+            state,
+            event,
+            name,
+            status,
+        } => {
+            use mios_build::progress::Status;
+            let status = status.as_deref().and_then(|s| match s {
+                "pass" => Some(Status::Pass),
+                "fail" => Some(Status::Fail),
+                "warn" => Some(Status::Warn),
+                "skip" => Some(Status::Skip),
+                "missing" => Some(Status::Missing),
+                _ => None,
+            });
+            match mios_build::progress::run(root, state, event, name.as_deref(), status) {
+                Ok(true) => {}
+                Ok(false) => std::process::exit(1),
+                Err(error) => {
+                    eprintln!("[build-progress] {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Greenboot => {

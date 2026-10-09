@@ -11926,6 +11926,22 @@ bands = [
   { range = [85, 99], purpose = "finalize/validators" },
 ]
 
+[pipeline.console]
+width = 100
+bar_width = 24
+post_steps = [
+    { name = "post-bloat", action = "bloat" },
+    { name = "post-package-health", action = "package_health" },
+    { name = "99-postcheck.sh", action = "invariants" },
+    { name = "97-ssot-lint.sh", action = "ssot" },
+    { name = "98-drift-checks.sh", action = "drift" },
+    { name = "post-agent-tests", action = "agent_tests" },
+    { name = "post-libexec-tests", action = "libexec_tests" },
+    { name = "post-image-digests", action = "image_digests" },
+    { name = "post-log-chain", action = "log_chain" },
+    { name = "post-finalize", action = "finalize" },
+]
+
 [pipeline.invariants]
 prefix_unique       = false
 prefix_in_band      = true

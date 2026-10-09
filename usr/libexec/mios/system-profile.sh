@@ -255,9 +255,14 @@ view_results() {
         has_results=true
     fi
 
-    if [ -d ~/mios-build-assessment-* 2>/dev/null ]; then
+    local -a assessment_dirs=()
+    local assessment_dir
+    for assessment_dir in "$HOME"/mios-build-assessment-*; do
+        [[ -d "$assessment_dir" ]] && assessment_dirs+=("$assessment_dir")
+    done
+    if [[ ${#assessment_dirs[@]} -gt 0 ]]; then
         echo -e "${BOLD}Assessment Reports:${NC}"
-        ls -dlt ~/mios-build-assessment-* 2>/dev/null | head -5 | awk '{print "  "$9}'
+        ls -dlt -- "${assessment_dirs[@]}" 2>/dev/null | head -5 | awk '{print "  "$9}'
         echo ""
         has_results=true
     fi

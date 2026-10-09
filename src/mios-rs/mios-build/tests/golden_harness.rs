@@ -60,15 +60,16 @@ fn test_phase_registry_loads_from_ssot() {
         "99-postcheck.sh",
         "postcheck must be last; it is the bake-time law gate"
     );
-    // Ordinals ascend, so a misplaced entry cannot ride along unnoticed.
-    for w in phases.windows(2) {
-        assert!(
-            w[0].ordinal <= w[1].ordinal,
-            "phase ordinals out of order: {} then {}",
-            w[0].ordinal,
-            w[1].ordinal
-        );
+    // Ordinals identify scripts. Execution follows the SSOT dependency order:
+    // the sandbox consumes installed native tools and the verified font archive.
+    // Sorting IDs would undo the required native -> fonts -> sandbox sequence.
+    let mut scripts = std::collections::BTreeSet::new();
+    for phase in phases {
+        assert!(scripts.insert(&phase.script), "duplicate selected script {}", phase.script);
     }
+    let positions: Vec<_> = ["55-native-build.sh", "56-fonts.sh", "54-bake-coderun-sandbox.sh"]
+        .iter().map(|script| phases.iter().position(|phase| phase.script == *script).expect("required build dependency is registered")).collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "native tools and fonts must precede the sandbox: {positions:?}");
 }
 
 /// Each way of not having a registry is an error, not a short build.
