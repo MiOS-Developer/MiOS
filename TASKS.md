@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1680 |
+| pending | 1706 |
 | in_progress | 50 |
-| completed | 1825 |
+| completed | 1827 |
 | incomplete | 20 |
 | cancelled | 20 |
-| total | 3595 |
+| total | 3623 |
 
 0 record(s) carry at least one override.
 
@@ -616,6 +616,14 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3406` Wire the placement-failover resolver into role-apply -- completed · P1 · size M
 - `task_3559` P1-12: fleet updates -- staged rollout with a disruption budget, signatures enforced first (WS-BLADE | P1 | M) -- pending · P1 · size M · depends_on task_3536
 
+### Epic task_3596
+
+- `task_3613` M7 F8: single-live lease per Quadlet -- exactly one live instance across L2 and the fleet, paused standbys, failover promotion, reusing the k3s Lease (WS-BLADE | P1 | L) -- pending · P1 · size L · depends_on task_3607, task_934
+- `task_3614` M7 F8: single-live gate -- a native check fails when one Quadlet has two live instances, in the rendered placement or in a running fleet (WS-BLADE | P1 | S) -- pending · P1 · size S · depends_on task_3613
+- `task_3615` M7 F8: L3 Quadlet placement across the L2s, including mios-xbox's WSL2 MiOS, and local moves between L2s on one L1 (WS-BLADE | P1 | M) -- pending · P1 · size M · depends_on task_3613, task_3609
+- `task_3616` M7 F8: promotable core services -- an SSOT list of the services and modules that may move up from an L3 Quadlet to a native unit of an L2 image, the promotion mechanism and its gate (WS-BLADE | P2 | M) -- pending · P2 · size M · depends_on task_3615
+- `task_3617` M7 F9: three-phase flightpath for L2 VMs between blades -- detach with a CephFS checkpoint, WireGuard transit, attach with an architecture check (WS-BLADE | P2 | L) -- pending · P2 · size L · depends_on task_2265, task_935, task_3607
+
 ## WS-BOOT
 
 ### No epic
@@ -776,6 +784,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### Epic task_3522
 
 - `task_3533` Q8 (brief P0-2): source-tree drift gates run only in the CI drift-gate job; the bake keeps image-content checks and `bootc container lint --fatal-warnings` (WS-BUILD | P0 | S) -- pending · P0 · size S
+
+### Epic task_3596
+
+- `task_3619` M7 F9: self-hosted blade proof -- offline, a blade builds MiOS, signs it, publishes to its own Forgejo and bootc-upgrades every MiOS it runs (WS-BUILD | P2 | L) -- pending · P2 · size L · depends_on task_3530, task_3536, task_3559, task_3607
 
 ## WS-C0
 
@@ -1317,6 +1329,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3549` Q9 qcow2: build the qcow2 disk locally and boot-test it (WS-DEPLOY | P1 | M) -- pending · P1 · size M
 - `task_3550` Q9 raw: the raw disk goes through the SSOT renderer (account and size), then builds and boots locally (WS-DEPLOY | P1 | M) -- pending · P1 · size M
 
+### Epic task_3596
+
+- `task_3601` M7 F1: L1 admin hypervisor image -- miosd artifact-build field-hypervisor drives sysrescue-customize --auto from a new [field.hypervisor] table, with a QEMU boot test (WS-DEPLOY | P1 | L) -- pending · P1 · size L
+- `task_3603` M7 F2: MiOS-Field integration -- SystemRescue version floor from SSOT in the launchers, and the hypervisor Ventoy entry rendered from SSOT and mirrored to mios-bootstrap (WS-DEPLOY | P2 | M) -- pending · P2 · size M · depends_on task_3601
+
 ## WS-DEPRED
 
 ### No epic
@@ -1403,6 +1420,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2242` Ratchet the 150 stale AI-related references down to zero -- completed · P2 · size M
 - `task_3409` Drop .devloop/foreign-srf-libexec.patch and land its unlanded seed-db-config.py header hunk -- completed · P2 · size S
 - `task_3482` Drop stale AI-functions lines naming removed functions from the harvested manual -- pending · owner antigravity · P3 · size S
+
+### Epic task_3596
+
+- `task_3620` M7 F10: the M7 design doc and Atlas labels as an SSOT projection -- a native gate checks every `[ports].<key>` (value) citation against [ports] (WS-DOCGEN | P3 | S) -- pending · P3 · size S
 
 ## WS-DOCS
 
@@ -2485,6 +2506,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2509` Bare metal is untried -- pending · P1 · size L · depends_on task_2464
 - `task_3576` P2-5: Metal -- GPUs assigned by class selector resolved at boot; vfio-gen fails loudly; a MiOS-guest domain generator (WS-METAL | P2 | M) -- pending · P2 · size M
 
+### Epic task_3596
+
+- `task_3605` M7 F4: the GPU mode key -- attended (default) or headless, in [metal] beside dgpumode, applied at L1 boot (WS-METAL | P1 | S) -- pending · P1 · size S · depends_on task_3601
+- `task_3607` M7 F5: L2 seat VM `mios` -- [blade.mediator] shape, libvirt domain generated from SSOT on L1, desktop on the seat GPU, management on the blade mesh (WS-METAL | P1 | L) -- pending · P1 · size L · depends_on task_3606, task_3576, task_3549, task_3605
+
 ## WS-MINI
 
 ### No epic
@@ -2521,6 +2547,15 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3163` Make hardware-facing capabilities unclaimable by a hosted image -- pending · P1 · size M · depends_on task_3162
 - `task_3164` Derive the k3s role from SSOT and stop shipping a join-less server -- pending · P0 · size L · depends_on task_3162
 - `task_3165` Fail closed on unfenced multi-node Pacemaker, reading the live nodelist -- pending · P0 · size L · depends_on task_3162
+- `task_3596` M7: MiOS-Field hypervisor and blade architecture -- L1 admin plane, sibling L2 VMs, single-live L3 Quadlets (WS-MINI | P1 | XL) -- pending · P1 · size XL
+
+### Epic task_3596
+
+- `task_3598` M7 D2 (decision): L1 flavours -- MiOS-Field live (SystemRescue) and MiOS-Metal installed (bootc MiOS as its own L1) sharing the L2/L3 contracts (WS-MINI | P1 | S) -- pending · P1 · size S
+- `task_3602` M7 F1: L1 admin TUI desktop -- static Rust MiOS-tmux plus the MiOS TUIs in the SRM, on the iGPU console; it starts, attaches to and consoles into the L2 VMs (WS-MINI | P1 | M) -- pending · P1 · size M · depends_on task_3601
+- `task_3608` M7 F5: L2 VM count from hardware pressure -- an SSOT policy in [blade.mediator] sizes how many MiOS VMs L1 runs from CPU, RAM and GPU headroom (WS-MINI | P2 | M) -- pending · P2 · size M · depends_on task_3607
+- `task_3618` M7 F9: per-blade egress exit gateways from [blade.uplink] with a translocation controller that changes exit region without changing workload addresses (WS-MINI | P2 | M) -- pending · P2 · size M · depends_on task_931
+- `task_3621` M7 F5: nested MiOS containers inside L2 MiOS VMs -- full images under podman --systemd=always, Quadlets embedded, counted by hardware pressure (WS-MINI | P1 | L) -- pending · P1 · size L · depends_on task_3607, task_3608
 
 ## WS-MIOSSYS
 
@@ -2757,6 +2792,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3032` Automated mobile peer discovery, adaptive prompt routing (<50ms), and memory sync test suite -- pending · P2 · size S · depends_on task_3031
 - `task_3147` Dual-mode dynamic topology switcher (Seat UI vs Headless Blade) in mios-node -- pending · P1 · size M · depends_on task_3146
 - `task_3148` Automated Seat-to-Blade profile transition and zero GPU leak verification test suite -- pending · P2 · size S · depends_on task_3147
+
+### Epic task_3596
+
+- `task_3604` M7 F3: L1 joins the wg-ipkvm admin mesh at boot; its TUI and SSH listen only there; no route between the admin and blade meshes (WS-NODE | P1 | M) -- pending · P1 · size M · depends_on task_3601
 
 ## WS-NODE-ANDROID
 
@@ -3486,6 +3525,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_3570` Q15: secrets live in systemd-creds (TPM-bound where available) and render as write-only fields; GET never returns one (WS-SEC | P1 | M) -- pending · P1 · size M · depends_on task_3569, task_3500
 
+### Epic task_3596
+
+- `task_3599` M7 D3 (decision): adopt Cilium Tetragon for in-kernel enforcement, or not (WS-SEC | P2 | S) -- pending · P2 · size S
+
 ## WS-SEC2
 
 ### No epic
@@ -3548,6 +3591,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### No epic
 
 - `task_3447` Validate streaming hardware requirements across guest and Blade roles -- pending · P2 · size M
+
+### Epic task_3596
+
+- `task_3612` M7 F7: Sunshine on the seat GPU and browser consoles on the blade mesh only -- Moonlight over Headscale, ttyd and the Hermes dashboard over HTTPS (WS-STREAMING | P2 | M) -- pending · P2 · size M · depends_on task_3607
 
 ## WS-STRG
 
@@ -4102,6 +4149,16 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3414` Measure VFIO group assignment and guest display versus compute -- pending · P1 · size M
 - `task_3546` Q10: GPU-PV in a Hyper-V MiOS VM from a MOK-signed dxgkrnl kmod, with the VM's GPU partition projected from SSOT (WS-VFIO | P2 | M) -- pending · P2 · size M · depends_on task_3545
 
+### Epic task_3596
+
+- `task_3597` M7 D1 (decision, resolved): the dGPU path -- mios-xbox is a sibling of the MiOS VMs on L1, one VFIO hop, frames through an IVSHMEM file on L1 (WS-VFIO | P1 | S) -- completed · P1 · size S
+- `task_3600` M7 D5 (decision, resolved): the seat VM's GPU by GPU mode -- attended (default: L1 keeps the iGPU, the seat takes a second GPU or an iGPU VF) or headless (the iGPU passes to the seat) (WS-VFIO | P1 | S) -- completed · P1 · size S
+- `task_3606` M7 F4: early VFIO on L1 -- [metal.gpu] class selectors that follow the GPU mode (attended excludes the iGPU, headless gives it to the seat); initcpio hook, modprobe.d softdeps and kernel arguments rendered from them (WS-VFIO | P1 | M) -- pending · P1 · size M · depends_on task_3601, task_3576, task_3605
+- `task_3610` M7 F6: dynamic GPU arbiter -- a native state machine moves the dGPU between the inference VM and mios-xbox, with vLLM sleep, light-lane failover and rollback (WS-VFIO | P1 | L) -- pending · P1 · size L · depends_on task_3607, task_3609
+- `task_3611` M7 F7: Looking Glass across siblings -- an IVSHMEM file on L1 sized from SSOT, kvmfr and the client in the seat VM, the host app in mios-xbox (WS-VFIO | P1 | M) -- pending · P1 · size M · depends_on task_3607, task_3609
+- `task_3622` M7 F5: CDI GPU sharing across nested MiOS containers -- per-container VRAM budgets from SSOT and a gate on their sum (WS-VFIO | P1 | M) -- pending · P1 · size M · depends_on task_3621
+- `task_3623` M7 F6: the GPU arbiter drains every nested container's GPU users before a VFIO hand-off to mios-xbox (WS-VFIO | P1 | M) -- pending · P1 · size M · depends_on task_3610, task_3622
+
 ## WS-VIRT
 
 ### No epic
@@ -4185,6 +4242,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### Epic task_3524
 
 - `task_3553` Q9 / Q12: MiOS-Xbox builds to SSOT specs from UUP Dump with DISM, Autounattend and XMLs on both the Linux and Windows pipelines, and is boot-tested (WS-XBOX | P1 | L) -- pending · P1 · size L
+
+### Epic task_3596
+
+- `task_3609` M7 F8: L2 sibling `mios-xbox` -- generated domain on L1 with the dGPU (one VFIO hop), swtpm TPM 2.0, OVMF Secure Boot, IVSHMEM, the Looking Glass host app and its WSL2 MiOS (WS-XBOX | P1 | L) -- pending · P1 · size L · depends_on task_3606, task_3553, task_3551
 
 ## WS-ZEROHC
 

@@ -12351,7 +12351,7 @@ frozen = [
 ]
 # The highest task number issued (ADR-0028). Numbers are never reissued: the list's highest may not fall
 # below this, so a dropped last task cannot hand its number on. Raising it to the current highest tightens it.
-numbered = 3595
+numbered = 3623
 # The old task-id shapes migrate-ids purged. `mios-task check --tree` fails on any of them in a tracked file;
 # a task is named by its typed id task_<number> (the opaque task_<ULID> in tasks.jsonl's structured fields).
 purged = [
@@ -12862,7 +12862,7 @@ max_tracked_files = 3662
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 325
+max_tracked_mb    = 327
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.

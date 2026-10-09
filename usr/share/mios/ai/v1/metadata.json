@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3662,
-  "total_metadata_entries": 3021,
-  "total_hints": 3011,
+  "total_files_scanned": 3663,
+  "total_metadata_entries": 3022,
+  "total_hints": 3012,
   "total_functions_indexed": 1487,
-  "total_related_links": 5079,
+  "total_related_links": 5088,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -2746,6 +2746,25 @@
         "usr/share/mios/mios.toml",
         "docs/adr/",
         "AGY-TASKS.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "docs/design/mios-field-hypervisor.md",
+      "hint": "MiOS-Field hypervisor and blade architecture (milestone M7): the L0-L3 layer model, sibling L2 VMs on a RAM-resident SystemRescue admin plane, GPU arbitration, session paths, single-live Quadlets, spec corrections, decisions and phases F0-F10.",
+      "related": [
+        "usr/share/mios/mios.toml [field]",
+        "[metal.gpu]",
+        "[management_mesh]",
+        "[blade]",
+        "[ports]",
+        "usr/share/doc/mios/adr/0016-blade-node-topology.md",
+        "usr/share/doc/mios/adr/0017-blade-workload-mobility.md",
+        ".devloop/GOALS.md",
+        "tasks.jsonl"
       ],
       "functions": [],
       "doc": null,
