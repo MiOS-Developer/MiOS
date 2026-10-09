@@ -12852,7 +12852,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3654
+max_tracked_files = 3518
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12893,7 +12893,7 @@ target_files = 5
 globs = ["usr/share/mios/vendored/*", "*Cargo.lock"]
 
 [legibility.file_budget.domains.projections]  # rendered by the build from SSOT, not tracked; human views (ROADMAP/TASKS/ADR index) stay
-max_files = 524
+max_files = 388
 target_files = 5
 globs = ["usr/share/man/*", "usr/share/containers/systemd/*", "usr/share/applications/*.desktop", "usr/share/mios/dropins/*", "usr/lib/systemd/system/*", "usr/lib/systemd/user/*", "usr/lib/tmpfiles.d/*", "usr/lib/sysusers.d/*", "usr/lib/sysctl.d/*", "usr/lib/modprobe.d/*", "usr/share/mios/ai/v1/*", "usr/share/mios/reference/*", "ADR.md", "ROADMAP.md", "TASKS.md", "ARTIFACT-PROMPT.md", "automation/manifest.json", "usr/share/mios/pipe-boundaries.manifest.json"]
 

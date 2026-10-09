@@ -1329,12 +1329,9 @@ pub mod render_manpages {
         out
     }
 
-    pub fn validate_man_page(full_path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(full_path)
-            .map_err(|e| format!("cannot read {}: {e}", full_path.display()))?;
-
+    pub fn validate_man_page_content(rel: &str, content: &str) -> Result<(), String> {
         if !content.starts_with(".TH ") {
-            return Err(format!("{} missing .TH header", full_path.display()));
+            return Err(format!("{rel} missing .TH header"));
         }
 
         let has_name = content.contains(".SH NAME");
@@ -1342,10 +1339,17 @@ pub mod render_manpages {
             content.contains(".SH SYNOPSIS") || content.contains(".SH DESCRIPTION");
         if !has_name || !has_synopsis_or_desc {
             return Err(format!(
-                "{} missing required .SH NAME / SYNOPSIS / DESCRIPTION section",
-                full_path.display()
+                "{rel} missing required .SH NAME / SYNOPSIS / DESCRIPTION section"
             ));
         }
+        Ok(())
+    }
+
+    pub fn validate_man_page(full_path: &Path) -> Result<(), String> {
+        let content = fs::read_to_string(full_path)
+            .map_err(|e| format!("cannot read {}: {e}", full_path.display()))?;
+
+        validate_man_page_content(&full_path.to_string_lossy(), &content)?;
 
         // Unix-only external command check if available
         #[cfg(unix)]
@@ -1433,6 +1437,60 @@ pub mod render_manpages {
         })?;
 
         let rendered = render_pages(root, &ssot);
+
+        // ADR-0030 Decision 4 / task_3653: Double-render determinism and registry coverage checks
+        if check {
+            let rendered2 = render_pages(root, &ssot);
+            if rendered != rendered2 {
+                return Err((
+                    "render-manpages: non-deterministic render detected across passes".to_string(),
+                    1,
+                ));
+            }
+
+            let mut missing_declared = Vec::new();
+            let empty_table = toml::value::Table::new();
+            let verbs_table = ssot
+                .get("verbs")
+                .and_then(|v| v.as_table())
+                .unwrap_or(&empty_table);
+            for n in verbs_table.keys() {
+                let p = format!("{MAN}/man1/mios-{n}.1");
+                if !rendered.contains_key(&p) {
+                    missing_declared.push(format!("{p} (declared in [verbs.{n}])"));
+                }
+            }
+            let core_pages = [
+                format!("{MAN}/man1/mios.1"),
+                format!("{MAN}/man5/mios.toml.5"),
+                format!("{MAN}/man7/mios.7"),
+            ];
+            for cp in &core_pages {
+                if !rendered.contains_key(cp) {
+                    missing_declared.push(format!("{cp} (core manual page)"));
+                }
+            }
+            if let Some(var_entries) = ssot
+                .get("variants")
+                .and_then(|v| v.get("entries"))
+                .and_then(|e| e.as_table())
+            {
+                if !var_entries.is_empty() {
+                    let vp = format!("{MAN}/man7/mios-variants.7");
+                    if !rendered.contains_key(&vp) {
+                        missing_declared.push(format!("{vp} (declared in [variants.entries])"));
+                    }
+                }
+            }
+            if !missing_declared.is_empty() {
+                let mut lines = vec!["missing declared man page(s):".to_string()];
+                for m in missing_declared.iter().take(10) {
+                    lines.push(format!("  {m}"));
+                }
+                return Err((lines.join("\n"), 1));
+            }
+        }
+
         let mut drift = Vec::new();
 
         for (rel, body) in &rendered {
@@ -1450,8 +1508,6 @@ pub mod render_manpages {
             if check {
                 if current.is_some() {
                     drift.push(rel.clone());
-                } else {
-                    drift.push(format!("{rel} (missing)"));
                 }
                 continue;
             }
@@ -1508,14 +1564,15 @@ pub mod render_manpages {
         if validate {
             let mut valid_errors = Vec::new();
             let mut validated = 0;
-            for rel in rendered.keys() {
+            for (rel, body) in &rendered {
                 let full = root.join(rel);
-                if !full.is_file() {
-                    valid_errors.push(format!("{rel}: rendered but absent from the tree"));
-                    continue;
-                }
                 validated += 1;
-                if let Err(msg) = validate_man_page(&full) {
+                let res = if full.is_file() {
+                    validate_man_page(&full)
+                } else {
+                    validate_man_page_content(rel, body)
+                };
+                if let Err(msg) = res {
                     valid_errors.push(msg);
                 }
             }
