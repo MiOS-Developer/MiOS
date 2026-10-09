@@ -1672,6 +1672,14 @@ class nbb_TestNodeBleBootstrap(unittest.TestCase):
         # 6. Verify terminal state and advertising shutdown
         self.assertEqual(node.state, ble.BleBootstrapState.PROVISIONED)
         self.assertFalse(adapter.is_advertising())
+        with self.assertRaisesRegex(RuntimeError, "completed"):
+            node.handle_ecdh_exchange(peer_pub_bytes)
+        with self.assertRaisesRegex(RuntimeError, "completed"):
+            node.start()
+        with self.assertRaisesRegex(RuntimeError, "consumed"):
+            node.handle_provisioning_write(enc_payload)
+        self.assertEqual(node.state, ble.BleBootstrapState.PROVISIONED)
+        self.assertFalse(adapter.is_advertising())
 
     def test_tampered_encrypted_payload_rejection(self):
         adapter = ble.MockBleAdapter()
