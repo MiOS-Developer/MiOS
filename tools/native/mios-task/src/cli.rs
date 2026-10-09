@@ -54,10 +54,13 @@ pub const USAGE: &str = "usage: mios-task <verb> [--root DIR] ...
   source REPO:PATH                     print a retired list rebuilt byte for byte from the provenance slices
   migrate-canonical --store F --lane F --classification F... --out F --report F
       [--schema F] [--lane-origin MiOS:PATH] [--dry-run]
-  migrate-ids [--rewrite-tree] [--map OLD=OLD2]... [--report F] [--mapping-out F] [--dry-run]
+  migrate-ids [--rewrite-tree] [--map OLD=OLD2]... [--mapping F] [--report F] [--mapping-out F] [--dry-run]
                                        give every task an opaque task_<ULID> and a number, purge the old ids
                                         from the list, its frozen history and overrides, and with --rewrite-tree
-                                        from every tracked file (ADR-0028); a migrated list is left as it is
+                                        from every tracked file (ADR-0028); on a migrated list it numbers
+                                        the records added in the old shape since, resolving the old ids
+                                        of the tasks migrated before through --mapping (a previous run's
+                                        --mapping-out); with neither, a migrated list is left as it is
   rewrite-ids --mapping F --root DIR [--dry-run]
                                        the same tree rewrite over a sibling repository, from migrate-ids'
                                         --mapping-out (written outside both trees)";

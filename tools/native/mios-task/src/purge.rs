@@ -45,9 +45,14 @@ pub fn prefix_of(tok: &str) -> String {
     tok.split(['-', ' ', '#']).next().unwrap_or(tok).to_string()
 }
 
-/// Old token -> task, over a list that is not yet migrated.
+/// Old token -> task. Over a list not yet migrated every id is old; over a migrated list the old tokens are
+/// the ids of records added in the old shape since (a lane that had not caught up) and, from a previous
+/// run's --mapping-out, the old ids of the tasks migrated before.
 pub struct Resolver {
     exact: HashMap<String, usize>,
+    /// Records that already carry a number, by number: a typed id in a structured field resolves through it.
+    typed: HashMap<u64, usize>,
+    object: String,
     former: HashMap<String, usize>,
     own: HashMap<usize, HashSet<String>>,
     /// Ids that are also workstream names (a record's `workstream`): in text they name the workstream, which
@@ -90,16 +95,29 @@ fn range_of(id: &str) -> Option<(String, u64, u64)> {
 }
 
 impl Resolver {
-    pub fn new(recs: &[Value], maps: &[(String, String)]) -> Result<Resolver, String> {
+    /// `prior` is a previous run's mapping (--mapping), `purged` the shapes the SSOT already forbids.
+    pub fn new(
+        recs: &[Value],
+        maps: &[(String, String)],
+        prior: Option<&Value>,
+        purged: &[String],
+        object: &str,
+    ) -> Result<Resolver, String> {
+        let opaque = format!("{object}_");
+        let old = |r: &Value| !s(r, "id").starts_with(&opaque);
         let mut exact = HashMap::new();
+        let mut typed = HashMap::new();
         for (i, r) in recs.iter().enumerate() {
             exact.entry(s(r, "id").to_string()).or_insert(i);
+            if let Some(n) = r.get("number").and_then(|x| x.as_u64()) {
+                typed.entry(n).or_insert(i);
+            }
         }
         let workstreams: HashSet<&str> = recs.iter().map(|r| s(r, "workstream")).collect();
-        let labels: HashSet<String> = exact
-            .keys()
-            .filter(|k| workstreams.contains(k.as_str()))
-            .cloned()
+        let mut labels: HashSet<String> = recs
+            .iter()
+            .filter(|r| old(r) && workstreams.contains(s(r, "id")))
+            .map(|r| s(r, "id").to_string())
             .collect();
         let mut former = HashMap::new();
         let mut own: HashMap<usize, HashSet<String>> = HashMap::new();
@@ -111,11 +129,36 @@ impl Resolver {
                 }
             }
         }
-        let all_ids: Vec<String> = exact.keys().chain(former.keys()).cloned().collect();
-        let shapes = Shapes::from_ids(all_ids.iter().map(String::as_str), &|i| labels.contains(i));
+        let mut prior_shapes: Vec<String> = purged.to_vec();
+        if let Some(p) = prior {
+            for (tok, t) in p["map"].as_object().into_iter().flatten() {
+                let n = t
+                    .as_str()
+                    .and_then(|x| x.strip_prefix(&opaque))
+                    .and_then(|d| d.parse::<u64>().ok());
+                if let Some(&i) = n.and_then(|n| typed.get(&n)) {
+                    if !exact.contains_key(tok) {
+                        former.entry(tok.clone()).or_insert(i);
+                    }
+                }
+            }
+            labels.extend(strs(p.get("keep")));
+            prior_shapes.extend(strs(p.get("purged")));
+        }
+        let old_ids: Vec<&str> = recs
+            .iter()
+            .filter(|r| old(r))
+            .map(|r| s(r, "id"))
+            .chain(former.keys().map(String::as_str))
+            .collect();
+        let mut list = Shapes::from_ids(old_ids.into_iter(), &|i| labels.contains(i)).list;
+        list.extend(prior_shapes);
+        list.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        list.dedup();
+        let shapes = Shapes::from_list(list)?;
         let mut ranges = Vec::new();
         for (i, r) in recs.iter().enumerate() {
-            if let Some((p, a, b)) = range_of(s(r, "id")) {
+            if let Some((p, a, b)) = range_of(s(r, "id")).filter(|_| old(r)) {
                 ranges.push((p, a, b, i));
             }
         }
@@ -141,6 +184,8 @@ impl Resolver {
         }
         let mut r = Resolver {
             exact,
+            typed,
+            object: object.to_string(),
             former,
             own,
             labels,
@@ -183,6 +228,14 @@ impl Resolver {
         }
         if let Some(&i) = self.former.get(tok) {
             return Some((i, Via::Alias));
+        }
+        let n = tok
+            .strip_prefix(&self.object)
+            .and_then(|x| x.strip_prefix('_'))
+            .filter(|d| !d.starts_with('0'))
+            .and_then(|d| d.parse::<u64>().ok());
+        if let Some(&i) = n.and_then(|n| self.typed.get(&n)) {
+            return Some((i, Via::Id));
         }
         if let Some(&i) = self.maps.get(tok) {
             return Some((i, Via::Map));
@@ -441,11 +494,31 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
             .ok_or(format!("--map {m}: write OLD=OLD2"))?;
         maps.push((o.to_string(), t.to_string()));
     }
-    let r = Resolver::new(recs, &maps)?;
+    let prior: Option<Value> = match a.one("mapping") {
+        None => None,
+        Some(f) => Some(
+            serde_json::from_str(&fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?)
+                .map_err(|e| format!("{f}: {e}"))?,
+        ),
+    };
+    let r = Resolver::new(recs, &maps, prior.as_ref(), &st.purged, &ids.object)?;
     let old: Vec<String> = recs.iter().map(|x| s(x, "id").to_string()).collect();
-    // Numbers: creation order -- the created date (a record without one is older than any that has one),
-    // then the order of the list.
-    let mut order: Vec<usize> = (0..recs.len()).collect();
+    // A record that has a number keeps it and its id (a list migrated before); the others are numbered after
+    // every number issued, in creation order -- the created date (a record without one is older than any
+    // that has one), then the order of the list.
+    let given: Vec<Option<u64>> = recs
+        .iter()
+        .map(|x| x.get("number").and_then(|v| v.as_u64()))
+        .collect();
+    let high = given
+        .iter()
+        .flatten()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .max(st.numbered.unwrap_or(0));
+    let mut last = recs.iter().filter_map(|x| ids.ms_of(s(x, "id"))).max();
+    let mut order: Vec<usize> = (0..recs.len()).filter(|&i| given[i].is_none()).collect();
     order.sort_by(|&x, &y| {
         let c = |i: usize| {
             recs[i]
@@ -455,25 +528,34 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
         };
         c(x).cmp(c(y)).then(x.cmp(&y))
     });
-    let mut numbers = vec![0u64; recs.len()];
+    let mut numbers: Vec<u64> = given.iter().map(|n| n.unwrap_or(0)).collect();
     let mut ms = vec![0u64; recs.len()];
     let mut rank: HashMap<&str, u64> = HashMap::new();
     for (pos, &i) in order.iter().enumerate() {
-        numbers[i] = pos as u64 + 1;
+        numbers[i] = high + pos as u64 + 1;
         let day = recs[i]
             .get("created")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let k = rank.entry(day).or_insert(0);
-        // The day's first millisecond plus the rank within the day: ids sort the way numbers do.
-        ms[i] = ids::day_ms(day).unwrap_or(0) + *k;
+        // The day's first millisecond plus the rank within the day, never before an id already issued: ids
+        // sort the way numbers do.
+        let at = ids::day_ms(day).unwrap_or(0) + *k;
+        ms[i] = match last {
+            Some(l) if at <= l => l + 1,
+            _ => at,
+        };
+        last = Some(ms[i]);
         *k += 1;
     }
     use sha2::{Digest, Sha256};
     let opaque: Vec<String> = (0..recs.len())
-        .map(|i| {
-            let h = Sha256::digest(format!("mios-task migrate-ids\0{}", old[i]).as_bytes());
-            ids.opaque(&ids::ulid(ms[i], &h))
+        .map(|i| match given[i] {
+            Some(_) => old[i].clone(),
+            None => {
+                let h = Sha256::digest(format!("mios-task migrate-ids\0{}", old[i]).as_bytes());
+                ids.opaque(&ids::ulid(ms[i], &h))
+            }
         })
         .collect();
     if opaque.iter().collect::<HashSet<_>>().len() != opaque.len() {
@@ -641,7 +723,15 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
     }
     let mut labels: Vec<String> = r.labels.iter().cloned().collect();
     labels.sort();
-    let mapping = mapping(&r, &numbers, ids);
+    let mut mapping = mapping(&r, &numbers, ids);
+    // A run over a migrated list keeps the old tokens of the earlier run, so the mapping stays complete.
+    if let Some(m) = prior.as_ref().and_then(|p| p["map"].as_object()) {
+        if let Some(out) = mapping["map"].as_object_mut() {
+            for (k, v) in m {
+                out.entry(k.clone()).or_insert(v.clone());
+            }
+        }
+    }
     Ok(Plan {
         digest: check::identity(&out).1,
         lines,
@@ -733,7 +823,7 @@ fn mapping(r: &Resolver, numbers: &[u64], ids: &Ids) -> Value {
             .or_insert_with(|| ids.typed(numbers[i]));
     };
     for (k, &i) in &r.exact {
-        if !r.labels.contains(k) {
+        if !r.labels.contains(k) && !k.starts_with(&format!("{}_", ids.object)) {
             put(k, i);
         }
     }
@@ -748,7 +838,11 @@ fn mapping(r: &Resolver, numbers: &[u64], ids: &Ids) -> Value {
             put(k, *i);
         }
     }
-    for (k, &i) in &r.exact {
+    for (k, &i) in r
+        .exact
+        .iter()
+        .filter(|(k, _)| !k.starts_with(&format!("{}_", ids.object)))
+    {
         let Some((p, a, b)) = range_of(k) else {
             continue;
         };
@@ -807,6 +901,8 @@ pub fn cmd_rewrite(a: &Args) -> Result<(), String> {
     };
     let r = Resolver {
         exact,
+        typed: HashMap::new(),
+        object: ids.object.clone(),
         former: HashMap::new(),
         own: HashMap::new(),
         labels: strs("keep").into_iter().collect(),
@@ -901,10 +997,17 @@ fn ssot_section(text: &str, p: &Plan) -> Result<String, String> {
     let fz = sect
         .find("frozen = [")
         .ok_or("[tasks.store] has no frozen list")?;
-    let close = sect[fz..]
+    let mut close = sect[fz..]
         .find(&format!("{eol}]"))
         .map(|k| fz + k + eol.len() + 1)
         .ok_or("[tasks.store].frozen is not closed by a ']' line")?;
+    // A section migrated before carries numbered and purged after frozen: they are rewritten with it.
+    if let Some(pg) = sect[close..].find("purged = [").map(|k| close + k) {
+        close = sect[pg..]
+            .find(&format!("{eol}]"))
+            .map(|k| pg + k + eol.len() + 1)
+            .ok_or("[tasks.store].purged is not closed by a ']' line")?;
+    }
     let migrated = sect[from..]
         .lines()
         .find_map(|l| {
@@ -1118,7 +1221,23 @@ fn publish(
 pub fn cmd(st: &Store, a: &Args) -> Result<(), String> {
     let _lock = st.locked()?;
     let state = State::load(st)?;
-    let problems = check::check(st, &state, None);
+    // Records added in the old shape after the migration (a lane that had not caught up): they fail the
+    // migrated schema until this run gives them an id and a number, so the clean-list precondition waits
+    // for the result -- which must check clean before anything is published.
+    let late = state
+        .records
+        .iter()
+        .filter(|r| r.get("number").is_none())
+        .count();
+    let problems = if st.is_purged() && late > 0 {
+        println!(
+            "migrate-ids: {} is migrated; {late} record(s) in the old shape get an id and a number",
+            st.path
+        );
+        vec![]
+    } else {
+        check::check(st, &state, None)
+    };
     if !problems.is_empty() {
         return Err(format!(
             "{} fails mios-task check ({} problem(s)); migrate a clean list:\n{}",
@@ -1132,7 +1251,7 @@ pub fn cmd(st: &Store, a: &Args) -> Result<(), String> {
                 .join("\n")
         ));
     }
-    if st.is_purged() {
+    if st.is_purged() && late == 0 && a.one("mapping").is_none() {
         println!(
             "migrate-ids: {} is already migrated ([tasks.store].numbered = {}); nothing to do",
             st.path,
@@ -1318,7 +1437,7 @@ pub fn tree(st: &Store, state: &State) -> Result<Vec<String>, String> {
         shapes = Shapes::from_list(st.purged.clone())?;
         resolver = None;
     } else {
-        let r = Resolver::new(&state.records, &[])?;
+        let r = Resolver::new(&state.records, &[], None, &st.purged, &state.ids.object)?;
         shapes = Shapes::from_list(r.shapes.list.clone())?;
         resolver = Some(r);
     }

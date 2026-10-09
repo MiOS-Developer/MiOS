@@ -1856,3 +1856,88 @@ fn a_sibling_repository_takes_the_same_rewrite_from_the_mapping() {
     );
     assert_eq!(fs::read_to_string(s.join("mirror.md")).unwrap(), "K-999\n");
 }
+
+#[test]
+fn a_record_added_in_the_old_shape_after_the_migration_is_migrated_by_a_second_run() {
+    let d = sandbox("purge-late");
+    let map = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("purge-late-map.json");
+    let o = run(
+        &d,
+        &[
+            "migrate-ids",
+            "--map",
+            "K-404=K-002",
+            "--mapping-out",
+            map.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(o.code, 0, "{}", o.text);
+    // A lane that had not caught up adds a task in the old shape, naming an old id of a migrated task.
+    let p = d.join("tasks.jsonl");
+    let late = json!({"id": "K-900", "type": "task", "title": "K-900: added late", "status": "pending",
+        "owner": "", "epic": "", "goal": "", "priority": null, "size": null, "workstream": null,
+        "domain": null, "depends_on": ["K-001"], "related": [], "acceptance_criteria": ["WHEN a THE SYSTEM SHALL b"],
+        "verification": {"positive_cmd": "true", "negative_control_cmd": "false", "negative_expect": null,
+            "statements": []},
+        "verification_evidence": "", "details": {"what_how": null, "where": null, "why": null, "do_not": null},
+        "links": [], "notes": "after K-002", "extra": [], "created": "2026-09-02", "updated": "2026-09-02",
+        "provenance": null});
+    fs::write(&p, fs::read_to_string(&p).unwrap() + &py(&late) + "\n").unwrap();
+    fs::write(d.join("notes.md"), "see K-900 and K-002\n").unwrap();
+    git_init(&d, &["notes.md"]);
+    let o = run(&d, &["check"]);
+    assert!(
+        o.code == 1 && o.text.contains("missing required number"),
+        "{}",
+        o.text
+    );
+    // Without the first run's mapping the old ids of migrated tasks name nothing: refused, nothing written.
+    let before = bytes(&p);
+    let o = run(&d, &["migrate-ids", "--rewrite-tree"]);
+    assert!(
+        o.code == 1 && o.text.contains("depends_on K-001 names no task"),
+        "{}",
+        o.text
+    );
+    assert_eq!(bytes(&p), before);
+    let o = run(
+        &d,
+        &[
+            "migrate-ids",
+            "--rewrite-tree",
+            "--mapping",
+            map.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(o.code, 0, "{}", o.text);
+    // The late task is numbered after every number issued, though its created date is older; its id sorts last.
+    let r = by_number(&d, 12);
+    assert_eq!(r["title"], "task_12: added late");
+    assert_eq!(r["notes"], "after task_2");
+    assert_eq!(r["depends_on"], json!([by_number(&d, 1)["id"]]));
+    assert!(r["id"].as_str().unwrap() > by_number(&d, 11)["id"].as_str().unwrap());
+    assert_eq!(
+        by_number(&d, 1)["id"],
+        records(&d)[0]["id"],
+        "migrated ids stay as they are"
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("notes.md")).unwrap(),
+        "see task_12 and task_2\n"
+    );
+    let toml = fs::read_to_string(d.join("usr/share/mios/mios.toml")).unwrap();
+    assert!(
+        toml.contains("numbered = 12") && toml.matches("purged = [").count() == 1,
+        "{toml}"
+    );
+    assert_eq!(run(&d, &["check"]).code, 0);
+    // And a third run has nothing left to do.
+    let before = bytes(&p);
+    let o = run(&d, &["migrate-ids"]);
+    assert!(
+        o.code == 0 && o.text.contains("already migrated"),
+        "{}",
+        o.text
+    );
+    assert_eq!(bytes(&p), before);
+}

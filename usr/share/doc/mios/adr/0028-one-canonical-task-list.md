@@ -129,6 +129,11 @@ How the rewrite decides a token, and what it keeps:
 - **What is gone.** Every old id in `tasks.jsonl` (records, frozen slices, `after` labels), `provenance.key`
   and `provenance.aliases`, the overrides block, every tracked file and path. Commit messages and the rest
   of git history keep the old ids; that history is immutable and the operator accepted it.
+- **Late records.** A record added in the old shape after the migration (a lane that had not caught up)
+  fails `check` and its id fails `check --tree`. A second `migrate-ids --rewrite-tree --mapping FILE` gives it
+  a number after every number already issued and an id later than every id, keeps every migrated id and
+  number, and resolves the old ids of earlier-migrated tasks through the first run's mapping; with nothing
+  left in the old shape, a run is a no-op.
 - **Beyond the list.** `--mapping-out FILE` writes every token the migration resolves, with its typed id,
   outside the tree; `mios-task rewrite-ids --mapping FILE --root DIR` applies the same rewrite to a sibling
   repository with no task list of its own, so the Law 15 mirrors in mios-bootstrap match again. The comment
