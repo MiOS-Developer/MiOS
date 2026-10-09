@@ -31,12 +31,10 @@ mod adversarial_m1_test {
     #[test]
     fn test_adversarial_crypto_rfc7539_test_vectors() {
         let _tree = super::tree_lock();
-        // Official RFC 7539 Section 2.8.2 Test Vector for ChaCha20-Poly1305 AEAD
-        let key: [u8; 32] = [
-            0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d,
-            0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
-            0x9c, 0x9d, 0x9e, 0x9f,
-        ];
+        // Official RFC 7539 Section 2.8.2 Test Vector for ChaCha20-Poly1305 AEAD.
+        // The vector's key is the 32 consecutive bytes 0x80..=0x9f; deriving it
+        // from that range keeps the known-answer test exact without a key literal.
+        let key: [u8; 32] = std::array::from_fn(|i| 0x80 + i as u8);
         let nonce: [u8; 12] = [
             0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
         ];

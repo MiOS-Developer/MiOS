@@ -386,6 +386,8 @@ jobs:
   # the image builds. Publishing stays in `build`, which still needs drift-gate.
   smoke-test:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     env:
       MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
     steps:
