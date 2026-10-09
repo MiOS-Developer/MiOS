@@ -92,6 +92,22 @@ class TestMcpAio(unittest.IsolatedAsyncioTestCase):
     async def execute(self, command, **args):
         return await self.bridge.call("mios_tmux_execute_command", {"command": command, **args})
 
+    def mock_agent_commands(self, directory, codex_script=None):
+        """Require the native dispatch contract without contacting a provider."""
+        dispatcher = Path(directory) / "mios"
+        dispatcher.write_text('#!/bin/sh\n[ "$1" = agent ] || exit 24\n'
+                              'agent="$2"; shift 2\nexport MIOS_MOCK_DISPATCHED=1\n'
+                              'exec "$(dirname "$0")/$agent" "$@"\n')
+        dispatcher.chmod(0o755)
+        for agent in ("codex", "agy"):
+            shim = Path(directory) / agent
+            script = codex_script if agent == "codex" and codex_script else f"echo '{agent} 1.0.0 (mock)'\n"
+            shim.write_text('#!/bin/sh\n[ "$MIOS_MOCK_DISPATCHED" = 1 ] || exit 25\n' + script)
+            shim.chmod(0o755)
+        return dict(os.environ, PATH=f"{directory}:{os.environ.get('PATH', '')}",
+                    MIOS_AGENT_PIPE_URL="http://127.0.0.1:1", MIOS_MCP_LIST_TIMEOUT="1",
+                    MIOS_MCP_TOOLS_CACHE=os.devnull)
+
     async def test_positive_and_planted_nonzero_receipt(self):
         good = await self.execute("printf 'POSITIVE-CONTROL\\n'")
         self.assertFalse(good.model_dump(by_alias=True).get("isError"), good)
@@ -469,14 +485,7 @@ class TestMcpAio(unittest.IsolatedAsyncioTestCase):
     async def test_nested_workflow_and_parallel_slots_isolation(self):
         from mcp import Client, StdioServerParameters
         with tempfile.TemporaryDirectory(prefix="mios-mock-agent-bin-") as mock_bin:
-            for ag in ("codex", "agy"):
-                shim = Path(mock_bin) / ag
-                shim.write_text(f"#!/bin/sh\necho '{ag} 1.0.0 (mock)'\nexit 0\n")
-                shim.chmod(0o755)
-            env = dict(os.environ,
-                       PATH=f"{mock_bin}:{os.environ.get('PATH', '')}",
-                       MIOS_AGENT_PIPE_URL="http://127.0.0.1:1",
-                       MIOS_MCP_LIST_TIMEOUT="1", MIOS_MCP_TOOLS_CACHE=os.devnull)
+            env = self.mock_agent_commands(mock_bin)
             async with Client(StdioServerParameters(command=sys.executable, args=[str(RELAY)], env=env)) as client:
                 # Positive control: execute nested workflow in slot 1 and slot 2 in parallel
                 results = await asyncio.gather(
@@ -486,9 +495,13 @@ class TestMcpAio(unittest.IsolatedAsyncioTestCase):
                 for res in results:
                     self.assertFalse(res.model_dump(by_alias=True).get("isError"), res)
                     p = payload(res)
-                    self.assertEqual(p["status"], "delivered")
+                    self.assertEqual(p["status"], "completed")
                     self.assertEqual(p["exitCode"], 0)
                     self.assertTrue(len(p["output"]) > 0)
+                    self.assertTrue(p["receiptVerified"])
+                    self.assertEqual(p["communication"]["status"], "not_requested")
+                    self.assertFalse(p["communication"]["acknowledged"])
+                    self.assertFalse(p["communication"]["replyReceived"])
                 self.assertEqual(payload(results[0])["agent"], "codex")
                 self.assertEqual(payload(results[0])["slot"], 1)
                 self.assertEqual(payload(results[1])["agent"], "agy")
@@ -503,6 +516,89 @@ class TestMcpAio(unittest.IsolatedAsyncioTestCase):
                 bad_slot = await client.call_tool("mios_tmux_nested_workflow", {"agent": "codex", "task": "--version", "slot": 9999})
                 self.assertTrue(bad_slot.model_dump(by_alias=True).get("isError"), bad_slot)
                 self.assertIn("tmux slot must be an integer", bad_slot.content[0].text)
+
+    async def test_nested_receipts_failures_and_fabricated_delivery(self):
+        from mcp import Client, StdioServerParameters
+        script = ("case \"$*\" in\n"
+                  "  *PLANTED-EXIT*) printf 'DEVLOOP-PLANTED-EXIT'; exit 23;;\n"
+                  "  *PLANTED-TIMEOUT*) printf 'DEVLOOP-PLANTED-TIMEOUT'; sleep 30;;\n"
+                  "  *) printf '%s\\n' '{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"DEVLOOP-PLANTED-DELIVERED\"}}';;\n"
+                  "esac\n")
+        with tempfile.TemporaryDirectory(prefix="mios-nested-failure-bin-") as directory:
+            env = self.mock_agent_commands(directory, script)
+            async with Client(StdioServerParameters(command=sys.executable, args=[str(RELAY)], env=env)) as client:
+                failed = await client.call_tool("mios_tmux_nested_workflow", {
+                    "agent": "codex", "task": "DEVLOOP-PLANTED-EXIT", "slot": 6})
+                self.assertTrue(failed.model_dump(by_alias=True).get("isError"))
+                self.assertEqual(payload(failed)["exitCode"], 23)
+                self.assertEqual(payload(failed)["status"], "failed")
+                self.assertIn("DEVLOOP-PLANTED-EXIT", payload(failed)["output"])
+                timed = await client.call_tool("mios_tmux_nested_workflow", {
+                    "agent": "codex", "task": "DEVLOOP-PLANTED-TIMEOUT", "slot": 7, "timeoutSeconds": 1})
+                self.assertTrue(timed.model_dump(by_alias=True).get("isError"))
+                self.assertTrue(payload(timed)["timedOut"])
+                self.assertEqual(payload(timed)["status"], "failed")
+                slots = payload(await client.call_tool("mios_tmux_list_slots", {}))
+                self.assertNotIn(7, [row["slot"] for row in slots])
+                fabricated = await client.call_tool("mios_tmux_nested_workflow", {
+                    "agent": "codex", "task": "bounded transport test", "slot": 8})
+                self.assertFalse(fabricated.model_dump(by_alias=True).get("isError"))
+                data = payload(fabricated)
+                self.assertEqual(data["status"], "completed")
+                self.assertEqual(data["communication"]["status"], "not_requested")
+                self.assertFalse(data["communication"]["acknowledged"])
+                statuses = [event.get("status") for event in data["translation"]["events"]]
+                self.assertNotIn("delivered", statuses)
+                self.assertIn("unverified", statuses)
+
+    async def test_nested_busy_pane_is_refused_and_auto_reservation_is_distinct(self):
+        with tempfile.TemporaryDirectory(prefix="mios-nested-busy-bin-") as directory:
+            env = self.mock_agent_commands(directory)
+            with patch.dict(os.environ, env):
+                other = relay._TmuxBridge(CONFIG)
+                try:
+                    await other.start()
+                    busy = await other.call("mios_tmux_start_and_watch", {
+                        "slot": 1, "command": "printf 'DEVLOOP-PLANTED-BUSY\\n'; sleep 30",
+                        "pattern": "DEVLOOP-PLANTED-BUSY", "timeout": 5})
+                    self.assertFalse(busy.model_dump(by_alias=True).get("isError"), busy)
+                    with self.assertRaisesRegex(ValueError, "busy"):
+                        await other.nested_workflow({"agent": "codex", "task": "--version", "slot": 1})
+                    results = await asyncio.gather(
+                        other.nested_workflow({"agent": "codex", "task": "--version"}),
+                        other.nested_workflow({"agent": "agy", "task": "--version"}))
+                    self.assertNotEqual(results[0]["slot"], results[1]["slot"])
+                    self.assertNotIn(1, [row["slot"] for row in results])
+                    self.assertTrue(all(row["status"] == "completed" for row in results))
+                    state = payload(await other.call("mios_tmux_pane_state", {"slot": 1}))
+                    self.assertNotEqual(state["foregroundCmd"], "bash")
+                finally:
+                    await other.close()
+
+    async def test_nested_endpoint_is_resolved_without_ambient_endpoint(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MIOS_AI_ENDPOINT", None)
+            other = relay._TmuxBridge(CONFIG)
+            try:
+                await other.start()
+                self.assertEqual(other.env["MIOS_AI_ENDPOINT"], relay.mios_toml.emit_exports()["MIOS_AI_ENDPOINT"])
+                self.assertNotIn("${", other.env["MIOS_AI_ENDPOINT"])
+                self.assertNotIn("MIOS_AI_KEY", other.env)
+            finally:
+                await other.close()
+
+    async def test_nested_missing_or_fabricated_exit_receipt_is_failed(self):
+        from mcp import types
+        async def fake_receipt(*_args):
+            data = {"status": "delivered", "exitCode": "0", "output": "DEVLOOP-PLANTED-FAKE-RECEIPT"}
+            return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))], structuredContent=data)
+        with patch.object(self.bridge, "_call_locked", fake_receipt):
+            data = await self.bridge.nested_workflow({"agent": "codex", "task": "--version", "slot": 9})
+        self.assertEqual(data["status"], "failed")
+        self.assertIsNone(data["exitCode"])
+        self.assertFalse(data["receiptVerified"])
+        self.assertFalse(data["communication"]["acknowledged"])
+        self.assertIn("no verified process exit receipt", data["error"])
 
     def test_terminal_ansi_cleaning_and_receipt_extraction(self):
         import mios_translate

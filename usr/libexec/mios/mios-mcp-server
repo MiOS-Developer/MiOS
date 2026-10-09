@@ -505,6 +505,7 @@ class _TmuxBridge:
         self.tools = []
         self.names = {}
         self.slot_locks = {slot: asyncio.Lock() for slot in range(1, config.get("max_slots", 0) + 1)}
+        self.allocation_lock = asyncio.Lock()
         self.start_lock = asyncio.Lock()
 
     async def start(self):
@@ -551,9 +552,11 @@ class _TmuxBridge:
             # A non-secret pointer connects nested workers to the caller's shared
             # agent registry while HOME and credentials remain private.
             self.env["MIOS_AGENT_RELAY_STATE"] = str(_agent_relay_directory())
+            exports = mios_toml.emit_exports()
             for key in ("MIOS_AI_ENDPOINT", "MIOS_AI_MODEL"):
-                if key in os.environ:
-                    self.env[key] = os.environ[key]
+                value = os.environ.get(key) or exports.get(key)
+                if value:
+                    self.env[key] = value
             await self._tmux("new-session", "-d", "-s", "mios-anchor", "-x", "200", "-y", "50",
                              "/bin/bash", "--noprofile", "--norc", check=True)
             for name, value in (("history-limit", str(self.config["history_limit"])),
@@ -643,41 +646,108 @@ class _TmuxBridge:
                 # Closing all slots must serialize with every in-flight call.
                 for lock in (self.slot_locks.values() if slot == "all" else [self.slot_locks[slot]]):
                     await locks.enter_async_context(lock)
-                try:
-                    result = await self.client.call_tool(upstream, args,
-                        read_timeout_seconds=float(self.config["timeout_s"]) + 15)
-                except BaseException:
-                    # A cancelled/failed RPC cannot certify command completion.
-                    # Retire its pane before it can accept the next command.
-                    if upstream in self.creators and self.client:
-                        await asyncio.shield(self.client.call_tool("close-pane", {"slot": slot},
-                            read_timeout_seconds=10))
-                    raise
-                if upstream == "execute-command":
-                    wire = result.model_dump(by_alias=True, exclude_none=True)
-                    data = wire.get("structuredContent")
-                    if data is None:
-                        for block in result.content:
-                            if block.type == "text":
-                                try:
-                                    data = json.loads(block.text)
-                                except ValueError:
-                                    continue
-                                if isinstance(data, dict):
-                                    break
-                    if not wire.get("isError", False):
-                        if not isinstance(data, dict) or "exitCode" not in data:
-                            await self.client.call_tool("close-pane", {"slot": slot}, read_timeout_seconds=10)
-                            raise RuntimeError("tmux command returned no exit receipt")
-                        if data.get("timedOut") or data["exitCode"] != 0:
-                            wire["isError"] = True
-                        if data.get("timedOut"):
-                            await self.client.call_tool("close-pane", {"slot": slot})
-                    return types.CallToolResult.model_validate(wire)
-                return result
+                return await self._call_locked(upstream, args, slot)
         except Exception as error:
             return types.CallToolResult(content=[types.TextContent(type="text", text=str(error))],
                                         isError=True)
+
+    @staticmethod
+    def _payload(result):
+        wire = result.model_dump(by_alias=True, exclude_none=True)
+        if wire.get("structuredContent") is not None:
+            return wire["structuredContent"]
+        for block in result.content:
+            if block.type == "text":
+                try:
+                    return json.loads(block.text)
+                except ValueError:
+                    continue
+        return None
+
+    async def _call_locked(self, upstream, args, slot):
+        from mcp import types
+        try:
+            result = await self.client.call_tool(upstream, args,
+                read_timeout_seconds=float(self.config["timeout_s"]) + 15)
+        except BaseException:
+            # A cancelled/failed RPC cannot certify command completion.
+            if upstream in self.creators and self.client:
+                await asyncio.shield(self.client.call_tool("close-pane", {"slot": slot},
+                    read_timeout_seconds=10))
+            raise
+        if upstream != "execute-command":
+            return result
+        wire = result.model_dump(by_alias=True, exclude_none=True)
+        data = self._payload(result)
+        valid = isinstance(data, dict) and type(data.get("exitCode")) is int
+        if not wire.get("isError", False) and not valid:
+            await self.client.call_tool("close-pane", {"slot": slot}, read_timeout_seconds=10)
+            raise RuntimeError("tmux command returned no exit receipt")
+        if valid and (data.get("timedOut") or data["exitCode"] != 0):
+            wire["isError"] = True
+        if isinstance(data, dict) and data.get("timedOut"):
+            await self.client.call_tool("close-pane", {"slot": slot})
+        return types.CallToolResult.model_validate(wire)
+
+    @staticmethod
+    def _idle_shell(state):
+        """Only our sleeping foreground bash may accept a new workflow.
+
+        A CLI waiting for input is still occupied. Bash/readline may poll
+        instead of n_tty_read; verify its kernel state and terminal ownership.
+        Missing or changing process evidence fails closed.
+        """
+        pid = state.get("panePid")
+        if (type(pid) is not int or pid <= 0 or state.get("foregroundPid") != pid
+                or state.get("foregroundCmd") != "bash" or state.get("isAlive") is not True):
+            return False
+        try:
+            process = Path("/proc") / str(pid)
+            stat = (process / "stat").read_text().rsplit(")", 1)[1].split()
+            channel = (process / "wchan").read_text().strip()
+            return (stat[0] == "S" and int(stat[2]) == pid and int(stat[5]) == pid
+                    and re.fullmatch(r"/dev/pts/\d+", os.readlink(process / "fd/0")) is not None
+                    and len(list((process / "task").iterdir())) == 1
+                    and not (process / "task" / str(pid) / "children").read_text().strip()
+                    and (channel in {"n_tty_read", "wait_woken", "do_select", "ep_poll"}
+                         or channel.startswith("poll_schedule_timeout")))
+        except (OSError, ValueError, IndexError):
+            return False
+
+    async def _reserve_nested_slot(self, requested):
+        """Reserve a slot through the process probe and command dispatch."""
+        if requested is not None and (type(requested) is not int
+                or not 1 <= requested <= int(self.config["max_slots"])):
+            raise ValueError(f"tmux slot must be an integer in 1..{self.config['max_slots']}")
+        if not {"list-slots", "pane-state", "execute-command"} <= set(self.names.values()):
+            raise ValueError("nested workflow requires allowed slot discovery, state and execution tools")
+        async with self.allocation_lock:
+            for slot in ([requested] if requested is not None else self.slot_locks):
+                lock = self.slot_locks[slot]
+                if lock.locked():
+                    continue
+                await lock.acquire()
+                keep = False
+                try:
+                    listed = await self.client.call_tool("list-slots", {}, read_timeout_seconds=10)
+                    slots = self._payload(listed)
+                    if listed.model_dump(by_alias=True).get("isError") or not isinstance(slots, list):
+                        raise RuntimeError("cannot verify helper slot availability")
+                    occupied = next((row for row in slots if row.get("slot") == slot), None)
+                    if occupied is None:
+                        keep = True
+                        return slot
+                    state = await self.client.call_tool("pane-state", {"slot": slot}, read_timeout_seconds=10)
+                    data = self._payload(state)
+                    if (not state.model_dump(by_alias=True).get("isError") and isinstance(data, dict)
+                            and occupied.get("isolated") is True and occupied.get("origin") == "created"
+                            and await asyncio.to_thread(self._idle_shell, data)):
+                        keep = True
+                        return slot
+                finally:
+                    if not keep:
+                        lock.release()
+        raise ValueError("requested tmux slot is busy or no proven free helper slot is available")
 
     async def close(self):
         self.stop.set()
@@ -695,17 +765,6 @@ class _TmuxBridge:
         known = {row["name"] for row in cfg_cli.get("tools", [])}
         if agent not in known:
             raise ValueError(f"Agent '{agent}' is not in the SSOT CLI catalog: {sorted(known)}")
-
-        slot = args.get("slot")
-        if slot is None:
-            for s in range(1, int(self.config["max_slots"]) + 1):
-                if not self.slot_locks[s].locked():
-                    slot = s
-                    break
-            if slot is None:
-                slot = 1
-        elif type(slot) is not int or not 1 <= slot <= int(self.config["max_slots"]):
-            raise ValueError(f"tmux slot must be an integer in 1..{self.config['max_slots']}")
 
         timeout_s = args.get("timeoutSeconds", self.config["timeout_s"])
         translate_output = args.get("translate_output", True)
@@ -730,45 +789,49 @@ class _TmuxBridge:
         else:
             cmd = f"{agent} {escaped_task}"
 
-        result = await self.call("mios_tmux_execute_command", {
-            "command": cmd,
-            "slot": slot,
-            "timeoutSeconds": timeout_s,
-        })
+        await self.start()
+        dispatcher = shutil.which("mios", path=self.env.get("PATH"))
+        if not dispatcher:
+            raise RuntimeError("native MiOS agent dispatcher is missing")
+        # The dispatcher refreshes the private caller's MCP configuration.
+        # No auth/profile files or leases are copied into this worker HOME.
+        cmd = shlex.quote(dispatcher) + " agent " + cmd
+        slot = await self._reserve_nested_slot(args.get("slot"))
+        try:
+            upstream, command_args, _ = self.arguments("mios_tmux_execute_command", {
+                "command": cmd, "slot": slot, "timeoutSeconds": timeout_s})
+            result = await self._call_locked(upstream, command_args, slot)
+        except Exception as error:
+            from mcp import types
+            result = types.CallToolResult(content=[types.TextContent(type="text", text=str(error))], isError=True)
+        finally:
+            self.slot_locks[slot].release()
         wire = result.model_dump(by_alias=True, exclude_none=True)
-        if wire.get("isError"):
-            error_text = result.content[0].text if result.content else "nested workflow failed"
-            return {
-                "agent": agent, "slot": slot, "status": "errored",
-                "error": error_text, "exitCode": 1, "output": error_text,
-            }
-
-        raw_output = ""
-        structured = wire.get("structuredContent") or {}
-        if isinstance(structured, dict):
-            raw_output = structured.get("output", "")
-        if not raw_output:
-            for b in result.content:
-                if getattr(b, "type", None) == "text":
-                    try:
-                        d = json.loads(b.text)
-                        if isinstance(d, dict) and "output" in d:
-                            raw_output = d["output"]
-                            structured = d
-                            break
-                    except ValueError:
-                        raw_output = b.text
-
+        structured = self._payload(result)
+        verified = isinstance(structured, dict) and type(structured.get("exitCode")) is int
+        exit_code = structured["exitCode"] if verified else None
+        timed_out = bool(structured.get("timedOut")) if isinstance(structured, dict) else False
+        raw_output = structured.get("output", "") if isinstance(structured, dict) else ""
+        if not isinstance(raw_output, str):
+            raw_output = ""
         clean_text = mios_translate.strip_ansi(raw_output)
-        exit_code = structured.get("exitCode", 0) if isinstance(structured, dict) else 0
-        status = "delivered" if exit_code == 0 else "errored"
+        completed = verified and exit_code == 0 and not timed_out and not wire.get("isError")
         data = {
             "agent": agent,
             "slot": slot,
             "exitCode": exit_code,
-            "status": status,
+            "timedOut": timed_out,
+            "receiptVerified": verified,
+            "status": "completed" if completed else "failed",
             "output": clean_text,
+            "communication": {"status": "not_requested", "message_id": None,
+                              "acknowledged": False, "replyReceived": False},
         }
+        if not completed:
+            data["error"] = ("nested workflow timed out" if timed_out else
+                f"agent process exited with code {exit_code}" if verified else
+                "nested workflow returned no verified process exit receipt: " +
+                (result.content[0].text if result.content else "empty result"))
         if translate_output and clean_text:
             frames = []
             for line in clean_text.splitlines():
@@ -1024,15 +1087,27 @@ def _sdk_server(terminal_only=False):
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
             {"name": "mios_tmux_session_close", "description": "Reclaim an idle private terminal session and its panes.",
              "inputSchema": {"type": "object", "properties": {"session": {"type": "string"}}, "required": ["session"], "additionalProperties": False}},
-            {"name": "mios_tmux_nested_workflow", "description": "Spawn an isolated nested AI agent workflow in a private tmux slot (1..32) for any global agent (claude, codex, gemini, copilot, opencode, agy, aider). Passes unified AI endpoint and agent relay mailboxes, isolates private HOME, executes prompt, monitors completion, and returns structured receipt and translated frames.",
+            {"name": "mios_tmux_nested_workflow", "description": "Run a global SSOT agent via the native MiOS dispatcher in a proven free private tmux slot. Returns completed/failed process exit and timeout receipts plus unverified translated frames. It does not register a relay participant, deliver a message or certify a reply: use mios_agent_send/receive/ack and inspect their queued/received receipts for communication. Private HOME receives MCP configuration and the unified endpoint, without credentials or leases.",
              "inputSchema": {"type": "object", "properties": {
                  "agent": {"type": "string", "enum": ["claude", "codex", "gemini", "copilot", "opencode", "agy", "aider"], "description": "Global agent to execute in the nested workflow."},
                  "task": {"type": "string", "description": "Task description or command instruction to execute."},
-                 "slot": {"type": "integer", "description": "Tmux slot number (1..32). If omitted, an idle slot is automatically assigned."},
+                 "slot": {"type": "integer", "description": "Requested helper slot; a busy or unverified pane is refused. If omitted, a proven free slot is reserved."},
                  "timeoutSeconds": {"type": "integer", "description": "Execution timeout in seconds (default: [mcp.tmux].timeout_s)."},
                  "translate_output": {"type": "boolean", "description": "Translate and normalize output frames using loop_translate (default: true)."},
                  "session": {"type": "string", "description": "Terminal capability from mios_tmux_session_open; required over HTTP."}
-             }, "required": ["agent", "task"], "additionalProperties": False}},
+             }, "required": ["agent", "task"], "additionalProperties": False},
+             "outputSchema": {"type": "object", "properties": {
+                 "agent": {"type": "string"}, "slot": {"type": "integer"},
+                 "status": {"type": "string", "enum": ["completed", "failed"],
+                            "description": "Process completion only; no task or message delivery certification."},
+                 "exitCode": {"type": ["integer", "null"]}, "timedOut": {"type": "boolean"},
+                 "receiptVerified": {"type": "boolean"}, "output": {"type": "string"},
+                 "communication": {"type": "object", "description": "This command sends no relay message. mios_agent_send reports queued/received; mios_agent_receive reads replies and mios_agent_ack acknowledges reading.",
+                     "properties": {"status": {"type": "string", "enum": ["not_requested"]},
+                         "message_id": {"type": "null"}, "acknowledged": {"type": "boolean", "enum": [False]},
+                         "replyReceived": {"type": "boolean", "enum": [False]}},
+                     "required": ["status", "message_id", "acknowledged", "replyReceived"], "additionalProperties": False},
+             }, "required": ["agent", "slot", "status", "exitCode", "timedOut", "receiptVerified", "output", "communication"]}},
             ])
         extra_tools = [] if terminal_only else _translation_tools()
         rows = sorted([*(payload.get("tools") or []), *terminal, *_agent_relay_tools(), *extra_tools], key=lambda row: row.get("name", ""))
@@ -1072,7 +1147,8 @@ def _sdk_server(terminal_only=False):
                     data = await manager.nested_workflow(args, http=_ctx.request is not None)
                 else:
                     return await manager.call(params.name, args, http=_ctx.request is not None)
-                return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))], structuredContent=data)
+                return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))], structuredContent=data,
+                    isError=params.name == "mios_tmux_nested_workflow" and data["status"] == "failed")
             except Exception as error:
                 return types.CallToolResult(content=[types.TextContent(type="text", text=str(error))], isError=True)
         if terminal_only:
