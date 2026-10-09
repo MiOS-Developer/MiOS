@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CI verification suite for Hyprland direct scanout, Quickshell initialization, and living wallpaper occlusion engine (T-777, T-778, T-779).
+# AI-hint: Automated CI verification suite for Hyprland direct scanout, Quickshell initialization, and living wallpaper occlusion engine (task_721, task_722, task_723).
 # AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 set -euo pipefail
 

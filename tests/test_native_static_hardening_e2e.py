@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Comprehensive E2E test suite for MiOS Native Static Binaries Hardening and Consolidation (T-1148, T-1161, T-1162).
+# AI-hint: Comprehensive E2E test suite for MiOS Native Static Binaries Hardening and Consolidation (task_3441, task_3454, task_3455).
 # AI-related: usr/share/mios/mios.toml, src/mios-rs/mios-gate, tools/native/mios-toml-get, tools/ci-suites.py, tools/sync-bootstrap.py
 # AI-doc: usr/share/doc/mios/manual/tests.md, usr/share/doc/mios/manual/tests.md, PROJECT.md
 """Comprehensive 4-tier E2E test suite for MiOS Native Static Binaries Hardening and Consolidation.
@@ -318,7 +318,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     # ------------------------------------------------------------------------
-    # F1: Static Linkage Audit (T-1148 / §R1)
+    # F1: Static Linkage Audit (task_3441 / §R1)
     # ------------------------------------------------------------------------
 
     def test_f1_01_elf_header_magic_and_class(self):
@@ -380,7 +380,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         self.assertIn("path", info)
 
     # ------------------------------------------------------------------------
-    # F2: Static Linkage Standing Gate (T-1148 / §R1)
+    # F2: Static Linkage Standing Gate (task_3441 / §R1)
     # ------------------------------------------------------------------------
 
     def test_f2_01_gate_passes_on_pure_static_directory(self):
@@ -447,7 +447,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         self.assertTrue(report["passed"])
 
     # ------------------------------------------------------------------------
-    # F3: Stale Python Twins Retirement (T-1161 / §R2)
+    # F3: Stale Python Twins Retirement (task_3454 / §R2)
     # ------------------------------------------------------------------------
 
     def test_f3_01_native_toml_get_crate_exists(self):
@@ -495,7 +495,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
             )
 
     # ------------------------------------------------------------------------
-    # F4: Automation Phase Consolidation (T-1161 / §R2)
+    # F4: Automation Phase Consolidation (task_3454 / §R2)
     # ------------------------------------------------------------------------
 
     def test_f4_01_automation_phases_match_ssot_list(self):
@@ -563,7 +563,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
                 self.assertTrue(first_line.startswith(b"#!"), f"{fn} must start with a valid shebang")
 
     # ------------------------------------------------------------------------
-    # F5: Libexec Verb Consolidation (T-1161 / §R2)
+    # F5: Libexec Verb Consolidation (task_3454 / §R2)
     # ------------------------------------------------------------------------
 
     def test_f5_01_libexec_verbs_within_ratchet_limit(self):
@@ -619,7 +619,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
                 self.assertFalse(target.startswith("C:\\"), f"Symlink {fn} points to Windows absolute: {target}")
 
     # ------------------------------------------------------------------------
-    # F6: Shared Daemon Crate (mios-service-core) (T-1162 / §R3)
+    # F6: Shared Daemon Crate (mios-service-core) (task_3455 / §R3)
     # ------------------------------------------------------------------------
 
     def test_f6_01_find_active_socket_first_match(self):
@@ -661,7 +661,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         self.assertGreater(ports["llm_light"], 1024, "Port must be unprivileged")
 
     # ------------------------------------------------------------------------
-    # F7: Daemon Refactoring (T-1162 / §R3)
+    # F7: Daemon Refactoring (task_3455 / §R3)
     # ------------------------------------------------------------------------
 
     def test_f7_01_daemon_agent_relay_ssot_compliance(self):

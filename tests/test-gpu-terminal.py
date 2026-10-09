@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for GPU Terminal Rendering & Sub-5ms Keystroke Latency (T-727, T-728).
+# AI-hint: Automated unit test suite for GPU Terminal Rendering & Sub-5ms Keystroke Latency (task_671, task_672).
 # AI-related: usr/libexec/mios/desktop/gpu_terminal.py, tests/test-gpu-terminal.py, etc/skel/.config/alacritty/alacritty.toml
 """Automated unit test suite for MiOS GPU Terminal Manager."""
 

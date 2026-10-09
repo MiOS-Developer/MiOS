@@ -22,10 +22,10 @@ VERSION := `cat VERSION 2>/dev/null || echo {{MIOS_VAR_VERSION}}`
 LOCAL := env_var_or_default("MIOS_LOCAL_TAG", "localhost/mios:latest") # @verb:SET_LOCAL
 MIOS_IMG_BIB := "quay.io/centos-bootc/bootc-image-builder:latest" # @verb:GET_BIB
 BIB := env_var_or_default("MIOS_BIB_IMAGE", MIOS_IMG_BIB)
-# miosd by ABSOLUTE path, never `command -v` (T-1018): this tree's build, else the installed one.
+# miosd by ABSOLUTE path, never `command -v` (task_962): this tree's build, else the installed one.
 MIOSD := `for c in "${MIOS_MIOSD_BIN:-}" ./src/mios-rs/target/release/miosd ./src/mios-rs/target/debug/miosd /usr/libexec/mios/miosd; do [ -n "$c" ] && [ -x "$c" ] && { printf '%s' "$c"; exit 0; }; done; printf '%s' miosd-is-not-built`
 
-# Resolved by ABSOLUTE path, never `command -v` (T-1018).
+# Resolved by ABSOLUTE path, never `command -v` (task_962).
 preflight:
     @bin=""; for c in "${MIOS_PROBE_BIN:-}" \
         ./src/mios-rs/target/release/mios-probe \

@@ -42,7 +42,7 @@ mod probes {
     }
 
     /// Free whole gigabytes, or None when undeterminable. None is never "enough".
-    /// `df -BG` matches the retired shell probe byte for byte; it rounds up (T-1019).
+    /// `df -BG` matches the retired shell probe byte for byte; it rounds up (task_963).
     fn free_gib(path: &Path) -> Option<u64> {
         let out = std::process::Command::new("df")
             .arg("-BG")

@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 81: Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite (T-536, AGY-2134). Details remote desktop video streaming benchmarks, sub-12ms frame encoding SLA for 60 FPS, adaptive bitrate (ABR) control loops, tc-netem network simulation, packet loss IDR recovery, and two-sided verification controls. -->
+<!-- AI-hint: Chapter 81: Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite (task_480, task_2713). Details remote desktop video streaming benchmarks, sub-12ms frame encoding SLA for 60 FPS, adaptive bitrate (ABR) control loops, tc-netem network simulation, packet loss IDR recovery, and two-sided verification controls. -->
 
 # Chapter 81: Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the benchmark methodology, SLA latency thresholds, Adaptive Bitrate (ABR) control loops, and network emulation parameters implemented in the **Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite** (T-536, AGY-2134), located at [`tests/test-video-encode-latency.sh`](file:///workspaces/MiOS/tests/test-video-encode-latency.sh).
+This chapter documents the benchmark methodology, SLA latency thresholds, Adaptive Bitrate (ABR) control loops, and network emulation parameters implemented in the **Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite** (task_480, task_2713), located at [`tests/test-video-encode-latency.sh`](file:///workspaces/MiOS/tests/test-video-encode-latency.sh).
 
 ```mermaid
 flowchart TD
@@ -36,7 +36,7 @@ flowchart TD
         Recv --> Telemetry["Frame Latency, Bitrate & Jitter Telemetry"]
     end
 
-    subgraph Audit ["Automated Benchmark Suite (T-536)"]
+    subgraph Audit ["Automated Benchmark Suite (task_480)"]
         Telemetry --> SLA["SLA Validator (< 12ms Target, >= 30 FPS Floor)"]
         SLA --> Pos["Positive Controls: Sub-12ms & ABR Throttling"]
         SLA --> Neg["Negative Controls: Detect > 20ms Latency & < 30 FPS Drops"]

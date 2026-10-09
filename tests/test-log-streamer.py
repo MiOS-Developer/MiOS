@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Automated unit test suite for WS-DURA unified log aggregation pipeline streaming journald events to pgvector.
 # AI-related: usr/libexec/mios/log/mios-log-streamer, usr/lib/systemd/system/mios-log-streamer.service
-"""Automated tests for WS-DURA unified journald log streaming to pgvector (T-411 / AGY-2009)."""
+"""Automated tests for WS-DURA unified journald log streaming to pgvector (task_355 / task_2588)."""
 
 from __future__ import annotations
 

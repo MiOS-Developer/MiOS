@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Flatpak Application State Snapshotter (T-645, T-646).
+# AI-hint: Automated unit test suite for Flatpak Application State Snapshotter (task_589, task_590).
 # AI-related: usr/libexec/mios/app/snapshot.py, tests/test-app-snapshot.py
 """Automated unit test suite for MiOS Flatpak Application Snapshot Manager."""
 

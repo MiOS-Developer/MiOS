@@ -1,10 +1,10 @@
-# AI-hint: Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (T-1004).
+# AI-hint: Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (task_948).
 # AI-related: usr/share/mios/mios.toml, usr/libexec/mios/mios-open-url
 [package]
 name = "mios-browser"
 version.workspace = true
 edition.workspace = true
-description = "Browser launcher resolving browser families and flags from MiOS SSOT (T-1004)"
+description = "Browser launcher resolving browser families and flags from MiOS SSOT (task_948)"
 
 [dependencies]
 clap = { workspace = true }

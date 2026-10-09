@@ -940,7 +940,7 @@ fn frozen_table(inp: &Inputs, out: &[Value]) -> Result<Value, String> {
         inp.lane_origin.clone(),
         (inp.lane_text.len(), sha(&inp.lane_text)),
     );
-    let all = crate::check::slices(out);
+    let all = crate::check::slices(out, &crate::record::Index::new(out, None));
     let mut table = Vec::new();
     let mut errs = Vec::new();
     for (f, (bytes, digest)) in &want {

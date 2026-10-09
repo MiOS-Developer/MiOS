@@ -18,7 +18,7 @@ source "$_self_dir/lib/common.sh" 2>/dev/null || {
 
 mios_log "Projecting bake-plan lists from mios.toml SSOT"
 
-# No `command -v miosd` branch: unreachable at bake (T-1018), and it ran the
+# No `command -v miosd` branch: unreachable at bake (task_962), and it ran the
 # Python anyway. Below dispatches by path, never by lookup.
 
 if [[ -x "/usr/libexec/mios/mios-bake-plan" ]]; then

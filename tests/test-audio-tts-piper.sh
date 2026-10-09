@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification wrapper for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).
+# AI-hint: Verification wrapper for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).
 # AI-doc: usr/share/doc/mios/manual/ch79-streaming-tts-piper.md
 set -euo pipefail
 

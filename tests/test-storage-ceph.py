@@ -99,7 +99,7 @@ class TestBcachefsTierManager(unittest.TestCase):
 # ============================================================================
 
 class TestBcachefsTieredStorage(unittest.TestCase):
-    """Tests for T-761 & T-762: Bcachefs tiering burst write (>10 GB/s) and migration."""
+    """Tests for task_705 & task_706: Bcachefs tiering burst write (>10 GB/s) and migration."""
 
     def test_bcachefs_burst_write_throughput(self):
         """Verify Bcachefs absorbs burst writes at >10 GB/s with SHA-256 integrity."""
@@ -128,7 +128,7 @@ class TestBcachefsTieredStorage(unittest.TestCase):
 # ============================================================================
 
 class TestCephMDSActiveActive(unittest.TestCase):
-    """Tests for T-739 & T-740: active-active CephFS MDS throughput and failover."""
+    """Tests for task_683 & task_684: active-active CephFS MDS throughput and failover."""
 
     def test_active_active_mds_throughput(self):
         """Verify aggregated metadata throughput exceeds 50,000 ops/s across 2 active ranks."""

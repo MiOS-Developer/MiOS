@@ -15,7 +15,7 @@
 allow perm=any uid=0 trust=1 : all
 allow perm=execute : ftype=application/x-executable trust=1
 allow perm=execute : ftype=application/x-sharedlib trust=1
-# T-032: Allow execution of trusted MCP server binaries and their Node.js /
+# task_32: Allow execution of trusted MCP server binaries and their Node.js /
 # Python runtimes under the designated MiOS AI working directories. These
 # paths are the ONLY writable locations the MCP client writes to (via
 # mcp-server-runner gatekeeper). /tmp is NOT included -- an unsigned binary

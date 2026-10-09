@@ -479,7 +479,7 @@ async def main() -> int:
 
 
 # ==============================================================================
-# Consolidated from test_mios_admission.py (T-1092)
+# Consolidated from test_mios_admission.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for the admission seam (mios_pipe.vram_scheduler semaphores + the scheduler.admission priority gate).
 """Unit tests for admission control and lane semaphore management."""
@@ -564,7 +564,7 @@ def _run_extra_admission():
 
 
 # ==============================================================================
-# Consolidated from test_mios_vram.py (T-1092)
+# Consolidated from test_mios_vram.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.scheduler.vram.
 """Unit tests for VRAM and model residency manager."""
@@ -623,7 +623,7 @@ def _run_extra_vram():
 
 
 # ==============================================================================
-# Consolidated from test_mios_vram_scheduler.py (T-1092)
+# Consolidated from test_mios_vram_scheduler.py (task_1006)
 # ==============================================================================
 # AI-hint: [dispatch] values injected through vram_scheduler.configure take effect.
 class TestVramSchedulerDispatch(unittest.TestCase):

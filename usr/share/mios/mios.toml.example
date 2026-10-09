@@ -59,7 +59,7 @@
 # features = []            # extras: ceph-mon, gamescope, waydroid, pxe-hub
 
 # ---- Security / Disk Encryption --------------------------------------------
-# TPM2-backed LUKS disk encryption (WS-VECTOR V1 / T-246).
+# TPM2-backed LUKS disk encryption (WS-VECTOR V1 / task_224).
 [security.disk_encryption]
 # mode     = "tpm2"                          # Encryption mode: "tpm2", "clevis", "none"
 # pcrs     = [7]                             # TPM2 PCR registers (7 = Secure Boot)

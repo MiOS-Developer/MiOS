@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Model Context Protocol (MCP) domain (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Model Context Protocol (MCP) domain (task_3353 / GATECAT-01).
 # AI-related: usr/lib/mios/agent-pipe/mios_mcp.py, usr/libexec/mios/mcp/sandbox.py, usr/lib/mios/agent-pipe/server.py
 """Automated unit test suite for MiOS MCP Domain.
 

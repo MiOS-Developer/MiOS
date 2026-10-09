@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Dedicated Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (T-524, AGY-2122).
+# AI-hint: Dedicated Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (task_468, task_2701).
 # AI-doc: usr/share/doc/mios/manual/ch12-networking-and-mesh.md
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Task T-581/T-582 Nix Subsystem and Declarative Flake Projection Generator.
+# AI-hint: Automated unit test suite for Task task_525/task_526 Nix Subsystem and Declarative Flake Projection Generator.
 # AI-related: usr/libexec/mios/config/nix_project.py, usr/share/mios/nix/flake-template.nix, usr/share/mios/nix/nix.conf, usr/lib/tmpfiles.d/50-nix.conf, automation/59-tools.sh
-"""Automated unit test suite for Declarative Nix Subsystem & NixProject (T-581, T-582)."""
+"""Automated unit test suite for Declarative Nix Subsystem & NixProject (task_525, task_526)."""
 
 from __future__ import annotations
 

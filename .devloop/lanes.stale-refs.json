@@ -32,7 +32,7 @@
       "positive_cmd": "python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;n=json.load(sys.stdin)['stale'];print('stale-refs',n);sys.exit(0 if n<=40 else 1)\"",
       "negative_control_cmd": "f=usr/libexec/mios/ux/font_scaler.py; cp \"$f\" .nc-srf-libexec.bak; trap 'mv .nc-srf-libexec.bak \"$f\"' EXIT; B=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); printf '\\n# AI-related: usr/share/mios/DEVLOOP-PLANTED-SRF-LIBEXEC.md\\n' >> \"$f\"; A=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); echo \"DEVLOOP-PLANTED-SRF-LIBEXEC: stale-refs $B -> $A\"; [ \"$A\" -gt \"$B\" ] || { echo \"the plant changed nothing, so this control is vacuous\"; exit 0; }; exit 1",
       "negative_expect": "DEVLOOP-PLANTED-SRF-LIBEXEC",
-      "task_id": "T-1080"
+      "task_id": "task_1000"
     },
     {
       "id": "srf-lib",
@@ -54,7 +54,7 @@
       "positive_cmd": "python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;n=json.load(sys.stdin)['stale'];print('stale-refs',n);sys.exit(0 if n<=52 else 1)\"",
       "negative_control_cmd": "f=usr/lib/mios/userenv.sh; cp \"$f\" .nc-srf-lib.bak; trap 'mv .nc-srf-lib.bak \"$f\"' EXIT; B=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); printf '\\n# AI-related: usr/share/mios/DEVLOOP-PLANTED-SRF-LIB.md\\n' >> \"$f\"; A=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); echo \"DEVLOOP-PLANTED-SRF-LIB: stale-refs $B -> $A\"; [ \"$A\" -gt \"$B\" ] || { echo \"the plant changed nothing, so this control is vacuous\"; exit 0; }; exit 1",
       "negative_expect": "DEVLOOP-PLANTED-SRF-LIB",
-      "task_id": "T-1081"
+      "task_id": "task_1001"
     },
     {
       "id": "srf-tests",
@@ -76,7 +76,7 @@
       "positive_cmd": "python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;n=json.load(sys.stdin)['stale'];print('stale-refs',n);sys.exit(0 if n<=49 else 1)\"",
       "negative_control_cmd": "f=tests/test-microvm.py; cp \"$f\" .nc-srf-tests.bak; trap 'mv .nc-srf-tests.bak \"$f\"' EXIT; B=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); printf '\\n# AI-related: usr/share/mios/DEVLOOP-PLANTED-SRF-TESTS.md\\n' >> \"$f\"; A=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); echo \"DEVLOOP-PLANTED-SRF-TESTS: stale-refs $B -> $A\"; [ \"$A\" -gt \"$B\" ] || { echo \"the plant changed nothing, so this control is vacuous\"; exit 0; }; exit 1",
       "negative_expect": "DEVLOOP-PLANTED-SRF-TESTS",
-      "task_id": "T-1082"
+      "task_id": "task_1002"
     },
     {
       "id": "srf-native",
@@ -102,7 +102,7 @@
       "positive_cmd": "python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;n=json.load(sys.stdin)['stale'];print('stale-refs',n);sys.exit(0 if n<=54 else 1)\"",
       "negative_control_cmd": "f=tools/render-manpages.py; cp \"$f\" .nc-srf-native.bak; trap 'mv .nc-srf-native.bak \"$f\"' EXIT; B=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); printf '\\n# AI-related: usr/share/mios/DEVLOOP-PLANTED-SRF-NATIVE.md\\n' >> \"$f\"; A=$(python3 usr/libexec/mios/mios-manual --root . audit --stale --json | python3 -c \"import json,sys;print(json.load(sys.stdin)['stale'])\"); echo \"DEVLOOP-PLANTED-SRF-NATIVE: stale-refs $B -> $A\"; [ \"$A\" -gt \"$B\" ] || { echo \"the plant changed nothing, so this control is vacuous\"; exit 0; }; exit 1",
       "negative_expect": "DEVLOOP-PLANTED-SRF-NATIVE",
-      "task_id": "T-1083"
+      "task_id": "task_1003"
     }
   ]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Multi-master divergent Git DAG reconciliation engine and Ed25519 consensus commit signer.
 # AI-related: usr/libexec/mios/git/reconcile_dag.py, tests/test-git-ops.py, usr/libexec/mios/git/ast_merge.py
-"""Multi-Master Divergent Git DAG Reconciliation Engine (T-561).
+"""Multi-Master Divergent Git DAG Reconciliation Engine (task_505).
 
 Reconciles divergent Git commit graphs and branch histories produced by offline
 peer agents or distributed cluster blades. Computes Lowest Common Ancestors (LCA),
@@ -344,7 +344,7 @@ class DagReconcileEngine:
         return {"status": "success" if success else "partial_failure", "remotes": results}
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Git DAG Reconciliation & Consensus Signer (T-561)")
+    parser = argparse.ArgumentParser(description="MiOS Git DAG Reconciliation & Consensus Signer (task_505)")
     parser.add_argument("--local-branch", default="main", help="Local branch name")
     parser.add_argument("--peer-branch", default="peer/main", help="Peer branch name")
     parser.add_argument("--local-head", default="l2222222", help="Local HEAD commit hash")

@@ -2,13 +2,13 @@
 
 # graph
 
-### MiOS Knowledge Graph Traversal Engine (GRAPH-01 / T-379 /...
+### MiOS Knowledge Graph Traversal Engine (GRAPH-01 / task_323 /...
 
-MiOS Knowledge Graph Traversal Engine (GRAPH-01 / T-379 / AGY-1977).
+MiOS Knowledge Graph Traversal Engine (GRAPH-01 / task_323 / task_2556).
 Implements triple ingestion (subject-predicate-object), metadata properties,
 recursive CTE multi-hop dependency resolution, cycle detection, and SQL generation.
 
-<!-- mios-src:30e7c89bea69 from usr/libexec/mios/graph/traversal.py:4-8 -->
+<!-- mios-src:e9b5f3446c6f from usr/libexec/mios/graph/traversal.py:4-8 -->
 
 ### Batch add multiple triples. Each tuple can be: - (subject...
 

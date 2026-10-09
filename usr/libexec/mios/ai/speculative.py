@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Dynamic speculative decoding draft pairing and adaptive draft-length manager in llama-swap (T-655, T-656).
+# AI-hint: Dynamic speculative decoding draft pairing and adaptive draft-length manager in llama-swap (task_601, task_602).
 # AI-related: usr/libexec/mios/ai/speculative.py, tests/test-ai.py, usr/share/mios/llamacpp/mios-llm-light.yaml
 """Dynamic speculative decoding draft pairing and adaptive draft-length manager for MiOS llama-swap.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Jensen-Shannon divergence anomaly alarm and PostgreSQL threat_events vector sink (T-512).
+# AI-hint: Automated unit test suite for Jensen-Shannon divergence anomaly alarm and PostgreSQL threat_events vector sink (task_456).
 # AI-doc: usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md
 from __future__ import annotations
 

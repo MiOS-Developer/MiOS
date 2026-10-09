@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (T-525).
+# AI-hint: Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469).
 # AI-doc: usr/share/doc/mios/manual/ch14-cdi-gpu-passthrough-and-isolation.md
 from __future__ import annotations
 
@@ -220,7 +220,7 @@ def build_intel_cdi_spec(dri_nodes: List[Dict[str, str]]) -> Dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (T-525)"
+        description="Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469)"
     )
     parser.add_argument("--output-dir", default="/etc/cdi", help="Destination directory for CDI JSON specifications")
     parser.add_argument("--vendor", choices=["auto", "nvidia", "amd", "intel", "all"], default="auto")

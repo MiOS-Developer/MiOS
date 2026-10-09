@@ -77,7 +77,7 @@ PK_MAP = {
     "config_kv": "id",
     "account_preference": ("account_id", "layer", "key"),
     "feature_set": "id",
-    # T-1042. system_logs is embeddable (emb vector(768) + an HNSW index) and has
+    # task_979. system_logs is embeddable (emb vector(768) + an HNSW index) and has
     # `id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY`. It was in neither list,
     # which check_backfill_coverage has been failing on at every bake.
     "system_logs": "id",
@@ -180,7 +180,7 @@ def get_text_projection(table: str, row: dict) -> Optional[str]:
         # Byte-identical to what usr/libexec/mios/log/mios-log-streamer embeds at
         # insert time: `f"[{unit}] {message}"`. A backfilled row and a streamed
         # row must land in the same place in the vector space, or the HNSW index
-        # answers differently depending on which path wrote the row (T-1042).
+        # answers differently depending on which path wrote the row (task_979).
         unit = row.get("unit") or ""
         message = row.get("message") or ""
         return f"[{unit}] {message}".strip() or None
@@ -237,7 +237,7 @@ async def run_backfill(current_version: str = "nomic-768-v1") -> dict:
         # A bare cols_map[table] raised KeyError deep inside the loop the moment
         # system_logs joined PK_MAP, taking the whole backfill down. A table can
         # be registered without its projection; say which one and keep going for
-        # the rest rather than aborting every table (T-1042).
+        # the rest rather than aborting every table (task_979).
         cols = cols_map.get(table)
         if cols is None:
             log.error("PK_MAP has %s but cols_map does not -- skipping, and this is a bug", table)

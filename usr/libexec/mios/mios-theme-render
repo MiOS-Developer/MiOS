@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Multi-surface live theme renderer with ANSI OSC 4/10/11 PTY injector and GTK/QT CSS generator (T-499).
+# AI-hint: Multi-surface live theme renderer with ANSI OSC 4/10/11 PTY injector and GTK/QT CSS generator (task_443).
 # AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 from __future__ import annotations
 
@@ -230,7 +230,7 @@ def main() -> int:
             return subprocess.run([sys.executable, engine] + sys.argv[1:]).returncode
 
     parser = argparse.ArgumentParser(
-        description="MiOS Multi-surface live theme renderer and PTY injector (T-499)"
+        description="MiOS Multi-surface live theme renderer and PTY injector (task_443)"
     )
     parser.add_argument("--gtk", action="store_true", help="Generate GTK3/4 CSS overrides")
     parser.add_argument("--qt", action="store_true", help="Generate QT5/6 QSS overrides")

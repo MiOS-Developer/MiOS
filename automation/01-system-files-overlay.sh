@@ -123,7 +123,7 @@ BDIR="/usr/lib/bootc/bound-images.d"
 install -d -m 0755 "${BDIR}"
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
           /usr/libexec/mios/miosd \

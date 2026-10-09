@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for multi-domain storage segregater and inert snapshot export (T-521, AGY-2119).
+# AI-hint: Automated unit test suite for multi-domain storage segregater and inert snapshot export (task_465, task_2698).
 # AI-doc: usr/share/doc/mios/manual/storage.md
 from __future__ import annotations
 

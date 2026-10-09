@@ -3,7 +3,7 @@
 # AI-related: tests/test-ai.py
 # AI-functions: AuditChainRecorder, MerkleTree, generate_ed25519_keypair, main
 """
-WS-AI (T-553): Cryptographic Merkle-Tree Agent Audit Chain Recorder & Ed25519 Block Signer.
+WS-AI (task_497): Cryptographic Merkle-Tree Agent Audit Chain Recorder & Ed25519 Block Signer.
 Maintains an immutable, append-only cryptographic audit chain for all agent decisions,
 tool invocations, and filesystem modifications. Each block cryptographically binds to its predecessor
 via SHA-256 hash chains, signs the block hash using the host node's Ed25519 key, and constructs
@@ -427,7 +427,7 @@ class AuditChainRecorder:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Cryptographic Merkle Audit Chain & Block Signer (T-553)"
+        description="MiOS Cryptographic Merkle Audit Chain & Block Signer (task_497)"
     )
     parser.add_argument("--record", action="store_true", help="Record new audit event")
     parser.add_argument("--event", default="decision", help="Event type identifier")

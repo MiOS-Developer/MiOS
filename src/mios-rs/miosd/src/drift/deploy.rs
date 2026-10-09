@@ -88,7 +88,7 @@ impl Check for BIBConfigCheck {
         "Assert BIB configuration matches single-config policy"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        // T-1045. This used to stat the Justfile and return Pass("BIB single
+        // task_982. This used to stat the Justfile and return Pass("BIB single
         // config invariant verified") without opening it. Ported from the bash
         // twin: every config/artifacts/*.toml must parse, and every recipe that
         // invokes bootc-image-builder must mount EXACTLY ONE /config.toml --
@@ -210,7 +210,7 @@ impl Check for DeployPlaneCheck {
         "Assert deploy plane artifacts and scripts match SSOT"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        // T-1045. This used to stat two files and return Pass("Deploy plane
+        // task_982. This used to stat two files and return Pass("Deploy plane
         // verified"). Stating that a file EXISTS is not verifying what is in
         // it. Ported from the bash twin's content assertions -- and unlike the
         // twin, an absent subject FAILS here rather than printing a WARNING and

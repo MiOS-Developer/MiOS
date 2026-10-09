@@ -1,4 +1,4 @@
-# AI-hint: Offline stdlib-assert test for the F2 CaMeL dual-context QUARANTINE gate (the deeper half of T-033, mios_quarantine).
+# AI-hint: Offline stdlib-assert test for the F2 CaMeL dual-context QUARANTINE gate (the deeper half of task_33, mios_quarantine).
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 """Stdlib assert-script gates for mios_quarantine + its dispatch wiring -- run: python test_mios_quarantine.py"""
 import asyncio
@@ -280,23 +280,23 @@ def t_semantic_firewall_t33() -> None:
         mios_dispatch._db_create = _spy_db_create
 
         res = _run_inner("zq_senwrite", {"k": "v"})
-        _check("T-033: scratchpad taint propagation gates execution", res.get("quarantine_blocked") is True, str(res))
+        _check("task_33: scratchpad taint propagation gates execution", res.get("quarantine_blocked") is True, str(res))
 
         fd_events = [e for e in events if e.get("kind") == "firewall_decision"]
-        _check("T-033: firewall_decision event emitted", len(fd_events) > 0)
+        _check("task_33: firewall_decision event emitted", len(fd_events) > 0)
         if fd_events:
-            _check("T-033: firewall_decision verdict is hitl", fd_events[0]["payload"]["verdict"] == "hitl", str(fd_events[0]))
+            _check("task_33: firewall_decision verdict is hitl", fd_events[0]["payload"]["verdict"] == "hitl", str(fd_events[0]))
 
         events.clear()
 
         mios_scratchpad.has_tainted = lambda sid, sdir: False
         res_allow = _run_inner("zq_roplain", {"k": "v"})
-        _check("T-033: clean session allows safe execution", not res_allow.get("quarantine_blocked"))
+        _check("task_33: clean session allows safe execution", not res_allow.get("quarantine_blocked"))
 
         fd_events_allow = [e for e in events if e.get("kind") == "firewall_decision"]
-        _check("T-033: firewall_decision allow verdict emitted", len(fd_events_allow) > 0)
+        _check("task_33: firewall_decision allow verdict emitted", len(fd_events_allow) > 0)
         if fd_events_allow:
-            _check("T-033: firewall_decision verdict is allow", fd_events_allow[0]["payload"]["verdict"] == "allow", str(fd_events_allow[0]))
+            _check("task_33: firewall_decision verdict is allow", fd_events_allow[0]["payload"]["verdict"] == "allow", str(fd_events_allow[0]))
 
     finally:
         mios_scratchpad.SQLITE_VEC_ENABLE = orig_vec_enable

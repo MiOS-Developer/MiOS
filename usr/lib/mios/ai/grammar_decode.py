@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Logit-level GBNF grammar constrained decoder and JSON schema compiler in llama-swap (T-685, T-686).
+# AI-hint: Logit-level GBNF grammar constrained decoder and JSON schema compiler in llama-swap (task_629, task_630).
 # AI-related: usr/lib/mios/ai/grammar_decode.py, tests/test-ai-acceleration.py, usr/share/mios/llamacpp/mios-llm-light.yaml
 """Logit-level GBNF grammar constrained decoder and JSON schema compiler for MiOS.
 

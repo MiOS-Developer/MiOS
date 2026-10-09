@@ -164,7 +164,7 @@ class VerbCatalogTest(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_build_catalog.py (T-1092)
+# Consolidated from test_mios_build_catalog.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_build_catalog functionality.
 # AI-functions: setUpModule, test_seeding_and_materializing, test_materialization, mock_open_impl, write_impl, TestMiosBuildCatalog

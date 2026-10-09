@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Multi-domain independent LUKS2/fscrypt partition segregater and inert snapshot export tool (T-521, AGY-2119).
+# AI-hint: Multi-domain independent LUKS2/fscrypt partition segregater and inert snapshot export tool (task_465, task_2698).
 # AI-doc: usr/share/doc/mios/manual/ch11-storage-and-persistence.md
 from __future__ import annotations
 

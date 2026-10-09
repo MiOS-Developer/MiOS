@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Comprehensive unit test suite for mios_psi (T-485 PSI monitor).
+# AI-hint: Comprehensive unit test suite for mios_psi (task_429 PSI monitor).
 # AI-doc: usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md
 """Two-sided unit tests for Linux PSI monitoring, threshold detection, and throttling triggers.
 
@@ -449,7 +449,7 @@ class TestServerPsiIntegration(unittest.TestCase):
 
 
 def main() -> int:
-    print("=== Running T-485 Linux PSI Unit Test Suite ===")
+    print("=== Running task_429 Linux PSI Unit Test Suite ===")
     suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

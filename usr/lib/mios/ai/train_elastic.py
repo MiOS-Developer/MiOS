@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Asynchronous non-blocking PyTorch checkpoint engine and TorchElastic preemption manager (T-669, T-670).
+# AI-hint: Asynchronous non-blocking PyTorch checkpoint engine and TorchElastic preemption manager (task_613, task_614).
 # AI-related: usr/lib/mios/ai/train_elastic.py, tests/test-ai-acceleration.py
 """Asynchronous non-blocking PyTorch checkpoint engine and TorchElastic preemption manager for MiOS.
 

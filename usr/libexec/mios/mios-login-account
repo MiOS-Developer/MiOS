@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (T-150..T-153).
+# AI-hint: Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (task_151..task_154).
 # AI-related: /usr/libexec/mios/mios-dashboard.sh, powershell/profile.ps1, mios-pg-query, account (pgvector table)
 # AI-functions: _db_name, main
 set -uo pipefail

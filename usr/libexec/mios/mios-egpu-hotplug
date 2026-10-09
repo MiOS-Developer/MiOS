@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler and CDI refresher (T-495).
+# AI-hint: Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler and CDI refresher (task_439).
 # AI-doc: usr/share/doc/mios/manual/ch14-hardware-and-drivers.md
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def handle_hotplug(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler (T-495)"
+        description="Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler (task_439)"
     )
     parser.add_argument("pos_action", nargs="?", choices=["add", "remove"], help="Hotplug action (positional for udev)")
     parser.add_argument("pos_devpath", nargs="?", help="Device sysfs path (positional for udev)")

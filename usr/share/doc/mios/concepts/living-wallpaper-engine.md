@@ -1,4 +1,4 @@
-<!-- AI-hint: Research for a MiOS "living wallpaper" -- a GPU-accelerated animated mesh-gradient background derived from the SSOT [colors] palette, cross-surface (Windows + Linux GNOME/Wayland + optional Hyprland/Quickshell), with a permissive-license triage (MiOS ships as a distributable OS, so Commons Clause / non-OSI deps are disqualifying). Feeds ROADMAP WS-WBRAND (WBRAND-04..06) / TASKS T-162..T-164. -->
+<!-- AI-hint: Research for a MiOS "living wallpaper" -- a GPU-accelerated animated mesh-gradient background derived from the SSOT [colors] palette, cross-surface (Windows + Linux GNOME/Wayland + optional Hyprland/Quickshell), with a permissive-license triage (MiOS ships as a distributable OS, so Commons Clause / non-OSI deps are disqualifying). Feeds ROADMAP WS-WBRAND (WBRAND-04..06) / TASKS task_163..task_165. -->
 <!-- AI-related: usr/share/mios/mios.toml ([colors]/[branding]/[theme]), ROADMAP.md (WS-WBRAND), usr/share/doc/mios/concepts/multi-agent-orchestration-strategies.md -->
 
 # MiOS Living Wallpaper — Animated GPU Mesh-Gradient from SSOT Palette
@@ -54,9 +54,9 @@ MiOS ships as an image others install, so any vendored wallpaper engine must be 
 
 | Gap | Roadmap item | Task | Priority |
 |---|---|---|---|
-| SSOT-driven mesh-gradient shader (self-authored, permissive), cross-surface, degrade-open | WBRAND-04 | T-162 | P3 |
-| Linux living wallpaper (GNOME layer helper / optional Quickshell ShaderEffect) | WBRAND-05 | T-163 | P3 |
-| Windows animated background (WebView2/D3D canvas or video loop) + `[branding].living_wallpaper` SSOT | WBRAND-06 | T-164 | P3 |
+| SSOT-driven mesh-gradient shader (self-authored, permissive), cross-surface, degrade-open | WBRAND-04 | task_163 | P3 |
+| Linux living wallpaper (GNOME layer helper / optional Quickshell ShaderEffect) | WBRAND-05 | task_164 | P3 |
+| Windows animated background (WebView2/D3D canvas or video loop) + `[branding].living_wallpaper` SSOT | WBRAND-06 | task_165 | P3 |
 
 All: SSOT-driven from `[colors]`, gated + off by default, degrade-open to today's static gradient, **permissive-license-only (verify LICENSE; exclude Commons Clause / non-OSI)**.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for MiOS Context & Prompt Processing domain (T-1021 / GATECAT-01).
+# AI-hint: Automated unit test suite for MiOS Context & Prompt Processing domain (task_3353 / GATECAT-01).
 # AI-related: usr/lib/mios/agent-pipe/context_compactor.py, usr/lib/mios/agent-pipe/mios_pipe/context/ctxpack.py, usr/libexec/mios/prompt/pruning.py, usr/lib/mios/agent-pipe/mios_pipe/routing/turn.py
 """Automated unit test suite for MiOS Context & Prompt Processing.
 

@@ -292,7 +292,7 @@ class am1_TestAdversarialWatchdog(unittest.TestCase):
 # ============================================================================
 # from tests/test-node.py (prefix m2a_)
 # ============================================================================
-"""Adversarial Stress Test Suite for Milestone 2: 1. Async TCP Framing & Wire Codec (T-386)    - Byte-by-byte (1-byte chunk) stream feeding across 50 multi-opcode frames    - Irregular/randomized chunk slicing across packet boundaries    - High-concurrency async TCP client/server throughput (30 concurrent clients, 300 frames)    - Corrupted CRC32 injection across head, middle, and tail of payload    - Corrupted magic, version, opcode, and underflow rejection    - Oversized payload length header rejection (> 64MB)    - Zero-byte payload valid frame roundtrip (CRC32=0)    - Stream buffer partial frame drainage and resume    - NodeWireDispatcher error response generation for unhandled opcodes  2. Heartbeat Monitor & Dead-Peer Eviction (T-387)    - Mathematical boundary precision (0s, 4.999s, 5.0s, 9.999s, 10.0s, 14.999s, 15.0s)    - Rapid flapping and state churn across 20 peers for 100 timesteps    - Mass simultaneous eviction of 100 peers in a single sweep    - Complete listener notification dispatch on mass eviction    - Clean re-admission after eviction with strike and state reset    - Local node ID self-filtering rejection    - Monotonic time jitter / backward timestamp protection    - Custom threshold configuration lifecycle"""
+"""Adversarial Stress Test Suite for Milestone 2: 1. Async TCP Framing & Wire Codec (task_330)    - Byte-by-byte (1-byte chunk) stream feeding across 50 multi-opcode frames    - Irregular/randomized chunk slicing across packet boundaries    - High-concurrency async TCP client/server throughput (30 concurrent clients, 300 frames)    - Corrupted CRC32 injection across head, middle, and tail of payload    - Corrupted magic, version, opcode, and underflow rejection    - Oversized payload length header rejection (> 64MB)    - Zero-byte payload valid frame roundtrip (CRC32=0)    - Stream buffer partial frame drainage and resume    - NodeWireDispatcher error response generation for unhandled opcodes  2. Heartbeat Monitor & Dead-Peer Eviction (task_331)    - Mathematical boundary precision (0s, 4.999s, 5.0s, 9.999s, 10.0s, 14.999s, 15.0s)    - Rapid flapping and state churn across 20 peers for 100 timesteps    - Mass simultaneous eviction of 100 peers in a single sweep    - Complete listener notification dispatch on mass eviction    - Clean re-admission after eviction with strike and state reset    - Local node ID self-filtering rejection    - Monotonic time jitter / backward timestamp protection    - Custom threshold configuration lifecycle"""
 
 
 import asyncio
@@ -311,7 +311,7 @@ import wire
 import discovery
 
 class m2a_TestAsyncFramingAdversarial(unittest.IsolatedAsyncioTestCase):
-    """Adversarial stress testing for T-386 Async Tokio / Asyncio TCP Framing."""
+    """Adversarial stress testing for task_330 Async Tokio / Asyncio TCP Framing."""
 
     def test_byte_by_byte_stream_chunking_multi_frames(self):
         """Stress: Stream 50 multi-opcode, variable-length frames 1 byte at a time."""
@@ -564,7 +564,7 @@ class m2a_TestAsyncFramingAdversarial(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"Unhandled opcode", resp2.payload)
 
 class m2a_TestHeartbeatEvictionAdversarial(unittest.TestCase):
-    """Adversarial stress testing for T-387 Heartbeat Monitor & Dead-Peer Eviction."""
+    """Adversarial stress testing for task_331 Heartbeat Monitor & Dead-Peer Eviction."""
 
     def setUp(self):
         self.monitor = discovery.HeartbeatMonitor(
@@ -756,7 +756,7 @@ def m2a_main() -> int:
 # ============================================================================
 # from tests/test-node.py (prefix m2c2a_)
 # ============================================================================
-"""Adversarial Stress Test Suite for Milestone 2 / T-388 (Challenger 2): 1. Cryptographic Handshake Adversarial Tests:    - Exhaustive single-bit and multi-byte signature tampering across Init and Resp packets (all 64 bytes fuzzed).    - Signature truncation (< 64 bytes) and extension (> 64 bytes) rejection.    - Forged identity pubkeys and ephemeral pubkeys injection / MITM rejection.    - Imposter node identity spoofing and unauthorized packet creation.    - Replay attack resilience and ephemeral key freshness (no key reuse).    - Key derivation symmetry, directional TX/RX key separation, and anti-reflection guarantee.  2. Wire AEAD Encryption Adversarial Tests:    - Exhaustive bit-flip fuzzing across all payload ciphertext bytes.    - Exhaustive bit-flip fuzzing across all 16 bytes of the Poly1305 MAC tag.    - Ciphertext truncation (< 16 bytes) and partial MAC tag drop handling.    - AAD / Node ID spoofing and cross-node ciphertext injection rejection.    - Strict nonce sequence progression, out-of-order packet drop, and wire replay attack prevention.    - High-volume multi-frame stream stress (1,000 frames) with boundary payload sizes (0B, 1B, 15B, 16B, 17B, 64B, 65B, 64KB).    - Layered defense validation: Wire CRC32 transport integrity vs Poly1305 cryptographic authenticity.  3. Concurrency & RFC Standards Compliance:    - Concurrent multi-session thread isolation across 20 distinct mesh nodes.    - Session renegotiation & zero cross-session decryption leakage.    - RFC 8439 / RFC 7748 / RFC 5869 cryptographic correctness verification."""
+"""Adversarial Stress Test Suite for Milestone 2 / task_332 (Challenger 2): 1. Cryptographic Handshake Adversarial Tests:    - Exhaustive single-bit and multi-byte signature tampering across Init and Resp packets (all 64 bytes fuzzed).    - Signature truncation (< 64 bytes) and extension (> 64 bytes) rejection.    - Forged identity pubkeys and ephemeral pubkeys injection / MITM rejection.    - Imposter node identity spoofing and unauthorized packet creation.    - Replay attack resilience and ephemeral key freshness (no key reuse).    - Key derivation symmetry, directional TX/RX key separation, and anti-reflection guarantee.  2. Wire AEAD Encryption Adversarial Tests:    - Exhaustive bit-flip fuzzing across all payload ciphertext bytes.    - Exhaustive bit-flip fuzzing across all 16 bytes of the Poly1305 MAC tag.    - Ciphertext truncation (< 16 bytes) and partial MAC tag drop handling.    - AAD / Node ID spoofing and cross-node ciphertext injection rejection.    - Strict nonce sequence progression, out-of-order packet drop, and wire replay attack prevention.    - High-volume multi-frame stream stress (1,000 frames) with boundary payload sizes (0B, 1B, 15B, 16B, 17B, 64B, 65B, 64KB).    - Layered defense validation: Wire CRC32 transport integrity vs Poly1305 cryptographic authenticity.  3. Concurrency & RFC Standards Compliance:    - Concurrent multi-session thread isolation across 20 distinct mesh nodes.    - Session renegotiation & zero cross-session decryption leakage.    - RFC 8439 / RFC 7748 / RFC 5869 cryptographic correctness verification."""
 
 
 import concurrent.futures
@@ -1301,7 +1301,7 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
     """Deep adversarial challenges and edge case fuzzers for Milestone 2."""
 
     # ---------------------------------------------------------------------
-    # 1. Scheduler (T-392)
+    # 1. Scheduler (task_336)
     # ---------------------------------------------------------------------
     def test_scheduler_pinning_matrix_and_stealable(self):
         # A. Hardware pinned
@@ -1365,7 +1365,7 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         self.assertEqual(sched.total_queue_depth(), 0)
 
     # ---------------------------------------------------------------------
-    # 2. Buffer Pool (T-393)
+    # 2. Buffer Pool (task_337)
     # ---------------------------------------------------------------------
     def test_buffer_pool_boundaries_and_slicing(self):
         pool = m2da_buffer_pool_mod.BufferPool()
@@ -1421,7 +1421,7 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         self.assertGreater(stats.recycles, 0)
 
     # ---------------------------------------------------------------------
-    # 3. Capabilities (T-394)
+    # 3. Capabilities (task_338)
     # ---------------------------------------------------------------------
     def test_capabilities_filtering_and_eviction(self):
         registry = m2da_capabilities_mod.CapabilityRegistry()
@@ -1456,7 +1456,7 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         self.assertGreater(evicted, 0)
 
     # ---------------------------------------------------------------------
-    # 4. BLE Bootstrap (T-395)
+    # 4. BLE Bootstrap (task_339)
     # ---------------------------------------------------------------------
     def test_ble_bootstrap_tamper_rejection(self):
         adapter = m2da_ble_mod.MockBleAdapter()
@@ -1515,7 +1515,7 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         self.assertFalse(adapter.is_advertising())
 
     # ---------------------------------------------------------------------
-    # 5. Multi-Transport Overlay (T-396)
+    # 5. Multi-Transport Overlay (task_340)
     # ---------------------------------------------------------------------
     def test_overlay_anti_flap_flapping_stress(self):
         config = m2da_overlay_mod.HysteresisConfig(
@@ -2339,7 +2339,7 @@ from crdt import StateElement, StateStore, VectorClock
 from watchdog import MockWatchdogDriver, WatchdogConfig, WatchdogSupervisor
 
 class nm1a_TestT389HardwareStress(unittest.TestCase):
-    """Stress tests for T-389 Hardware HAL and Allowlist constraints."""
+    """Stress tests for task_333 Hardware HAL and Allowlist constraints."""
 
     def setUp(self):
         self.allowlist = HardwareAllowlist(
@@ -2395,7 +2395,7 @@ class nm1a_TestT389HardwareStress(unittest.TestCase):
         self.assertEqual(len(res), 64)
 
 class nm1a_TestT390CgroupsStress(unittest.TestCase):
-    """Stress tests for T-390 CPU Pinning and Cgroups limits."""
+    """Stress tests for task_334 CPU Pinning and Cgroups limits."""
 
     def test_topology_core_zero_isolation(self):
         # 1-core topology
@@ -2456,7 +2456,7 @@ class nm1a_TestT390CgroupsStress(unittest.TestCase):
         self.assertEqual(CgroupV2Controller.format_cpu_max(400, 100_000), "400000 100000")
 
 class nm1a_TestT391CrdtCompactionStress(unittest.TestCase):
-    """Stress tests for T-391 CRDT Compaction, Tombstone TTL, and Snapshot GC."""
+    """Stress tests for task_335 CRDT Compaction, Tombstone TTL, and Snapshot GC."""
 
     def test_tombstone_ttl_and_resurrection_resistance(self):
         store = StateStore(10)
@@ -2577,7 +2577,7 @@ class nm1a_TestT391CrdtCompactionStress(unittest.TestCase):
                 self.assertIsNone(reloaded.get(f"k_{i}"))
 
 class nm1a_TestT400WatchdogStress(unittest.TestCase):
-    """Stress tests for T-400 Watchdog Supervisor."""
+    """Stress tests for task_344 Watchdog Supervisor."""
 
     def test_rapid_sequential_pings(self):
         sup = WatchdogSupervisor()
@@ -2689,7 +2689,7 @@ class nm2ac_TestM2AdversarialChallenger(unittest.TestCase):
     """Exhaustive empirical stress tests and edge case verification for Milestone 2."""
 
     # -------------------------------------------------------------------------
-    # 1. T-392: Stress & Invariant Tests for Work-Stealing Scheduler
+    # 1. task_336: Stress & Invariant Tests for Work-Stealing Scheduler
     # -------------------------------------------------------------------------
     def test_stress_concurrent_work_stealing_with_pinned_invariants(self):
         scheduler = WorkStealingScheduler(local_node_id=101, num_workers=4)
@@ -2785,7 +2785,7 @@ class nm2ac_TestM2AdversarialChallenger(unittest.TestCase):
         self.assertEqual(decision.target_type, ScheduledTargetType.LOCAL)
 
     # -------------------------------------------------------------------------
-    # 2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+    # 2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
     # -------------------------------------------------------------------------
     def test_stress_buffer_pool_multithreaded_leasing_and_slicing(self):
         pool = BufferPool()
@@ -2832,7 +2832,7 @@ class nm2ac_TestM2AdversarialChallenger(unittest.TestCase):
             buf.write(b"fail")
 
     # -------------------------------------------------------------------------
-    # 3. T-394: Adversarial Capability Probing & Filtering
+    # 3. task_338: Adversarial Capability Probing & Filtering
     # -------------------------------------------------------------------------
     def test_adversarial_capability_registry_extreme_queries(self):
         registry = CapabilityRegistry()
@@ -2869,7 +2869,7 @@ class nm2ac_TestM2AdversarialChallenger(unittest.TestCase):
         self.assertEqual(registry.active_node_count(), 0)
 
     # -------------------------------------------------------------------------
-    # 4. T-395: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
+    # 4. task_339: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
     # -------------------------------------------------------------------------
     def test_adversarial_ble_bit_flip_fuzzing_and_key_validation(self):
         adapter = MockBleAdapter()
@@ -2916,7 +2916,7 @@ class nm2ac_TestM2AdversarialChallenger(unittest.TestCase):
         self.assertEqual(bootstrap.state, BleBootstrapState.PROVISIONED)
 
     # -------------------------------------------------------------------------
-    # 5. T-396: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
+    # 5. task_340: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
     # -------------------------------------------------------------------------
     def test_stress_overlay_flapping_and_hysteresis_boundaries(self):
         config = HysteresisConfig(

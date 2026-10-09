@@ -2,7 +2,7 @@
 # AI-hint: Declarative mios.toml to Nix flake/home-manager projection generator for atomic user package generations.
 # AI-related: usr/share/mios/nix/flake-template.nix, usr/share/mios/nix/nix.conf, usr/lib/tmpfiles.d/50-nix.conf
 
-"""Declarative Nix Flake Projection Generator and Generation Manager (T-582 / AGY-2180).
+"""Declarative Nix Flake Projection Generator and Generation Manager (task_526 / task_2759).
 
 Parses [dotfiles], [packages], and [shell] sections from mios.toml and renders pure
 Nix flakes (/etc/mios/flake.nix) managing atomic user profile and dotfile generations.

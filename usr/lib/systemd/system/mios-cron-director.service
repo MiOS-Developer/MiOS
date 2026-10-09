@@ -20,7 +20,7 @@ PrivateTmp=true
 ProtectHome=true
 # The state dir is writable through ReadWritePaths only. Its owner and setgid
 # mode belong to usr/lib/tmpfiles.d/mios-cron-director.conf alone; a
-# StateDirectory= here would declare the mode a second time (T-1139).
+# StateDirectory= here would declare the mode a second time (task_3432).
 ReadWritePaths=/var/lib/mios/cron-director
 # Read-only journal/log access is inherited from mios-ai's groups; the daemon
 # only needs to read the rules file + write its state dir.

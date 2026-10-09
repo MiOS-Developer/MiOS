@@ -145,7 +145,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_launch.py (T-1092)
+# Consolidated from test_mios_launch.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the deterministic_action_route logic to ensure "open/launch" commands correctly strip filler phrases and map to open_app(n...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

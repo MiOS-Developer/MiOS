@@ -1,7 +1,7 @@
 <!-- AI-hint: Primary-source prompt for turning a first-boot GGUF manifest entry into a
      verified one: canonical publisher, file, size, sha256 pinned to a repository
      revision, license, and runtime architecture support.
-     AI-related: usr/share/mios/mios.toml [ai.firstboot_models], usr/libexec/mios/mios-models-firstboot, usr/share/mios/llamacpp/mios-llm-light.yaml, TASKS.md T-200 T-201 -->
+     AI-related: usr/share/mios/mios.toml [ai.firstboot_models], usr/libexec/mios/mios-models-firstboot, usr/share/mios/llamacpp/mios-llm-light.yaml, TASKS.md task_180 task_181 -->
 <context>
 MiOS provisions model weights on first boot from the SSOT table
 `[[ai.firstboot_models]]` (name, url, dest, sha256). The fetcher streams the
@@ -37,7 +37,7 @@ Raised by, at these revisions (re-read before relying on them):
 - MiOS `usr/share/mios/llamacpp/mios-llm-light.yaml` at `a67750d`: lines
   9-28 (the micro lane serves LFM2-700M and names the publisher repository
   `LiquidAI/LFM2-700M-GGUF`; architecture `lfm2`).
-- MiOS `TASKS.md` at `a67750d`: lines 2852 and 2856-2866 (T-200/T-201: the
+- MiOS `TASKS.md` at `a67750d`: lines 2852 and 2856-2866 (task_180/task_181: the
   vendor list is meant to stay empty until URLs and digests are verified;
   models land in `/var/lib/mios/llamacpp/models`).
 - MiOS `usr/libexec/mios/mios-models-firstboot` at `a67750d`: the fetcher

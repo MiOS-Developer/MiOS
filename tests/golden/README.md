@@ -1,12 +1,12 @@
-<!-- AI-hint: Golden-master CLI cases for the native mios-gen verbs (AGY-1067 / ADR-0021); every console block below is executed by tools/native/mios-gen/tests/golden.rs.
+<!-- AI-hint: Golden-master CLI cases for the native mios-gen verbs (task_1707 / ADR-0021); every console block below is executed by tools/native/mios-gen/tests/golden.rs.
      AI-related: usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md, docs/design/doc-rust-static-port.md, tools/native/mios-gen/tests/golden.rs, tests/golden/fastfetch/mock.jsonc -->
-# Golden-Master CLI Testing Standards (AGY-1067 / ADR-0021)
+# Golden-Master CLI Testing Standards (task_1707 / ADR-0021)
 
 This file is the **golden-master case registry** for the MiOS Script→Rust Static Binary consolidation (ADR-0021 / `doc-rust-static-port.md`). It is executable: `cargo test -p mios-gen --test golden` (part of `cargo test --workspace` in `tools/native`) runs every `console` block in section 5 against the freshly built `mios-gen`, from the repository root.
 
 ## 1. Core Principle: Two-Sided Verification Before Code
 
-Per the dev-loop Definition of Done and AGY-1067, **no Rust code is written until a golden-master fixture set exists for the script surface being replaced**.
+Per the dev-loop Definition of Done and task_1707, **no Rust code is written until a golden-master fixture set exists for the script surface being replaced**.
 
 Every golden-master suite MUST be two-sided:
 

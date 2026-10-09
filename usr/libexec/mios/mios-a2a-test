@@ -2,7 +2,7 @@
 # AI-hint: A2A federation loopback smoke test -- drives a Message -> Task -> Artifact round-trip against the local MiOS /a2a JSON-RPC surface (MiOS talking to itself as a peer) and confirms the event table recorded the delegation chain. Live-env tool the operator runs on a booted host; degrades open with a clear message when the endpoint is unreachable.
 # AI-related: usr/lib/mios/agent-pipe/mios_pipe/federation/a2a.py, usr/libexec/mios/mios-a2a-delegate, usr/share/mios/tests/test-a2a-loopback.sh
 # AI-functions: build_message, classify_task, extract_artifact_text, jsonrpc_envelope, main
-"""mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / T-066).
+"""mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / task_68).
 
 Registers the local MiOS instance as its own A2A peer (loopback) and runs a
 full JSON-RPC 2.0 ``message/send`` -> Task -> Artifact round-trip against the

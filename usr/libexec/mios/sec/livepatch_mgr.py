@@ -3,7 +3,7 @@
 # AI-related: tests/test-sec.py
 # AI-functions: LivepatchManager, atomic_write_json, main
 """
-WS-SEC (T-545): MOK-signed kpatch livepatching manager and late CPU microcode reload daemon.
+WS-SEC (task_489): MOK-signed kpatch livepatching manager and late CPU microcode reload daemon.
 Enforces MOK module signature verification for runtime livepatch kernel modules (.ko),
 orchestrates atomic livepatch load/unload via kpatch, triggers late processor microcode reloads,
 and stages UKI image updates for subsequent boot cycles.
@@ -453,7 +453,7 @@ class LivepatchManager:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Kernel Livepatch & Microcode Management Daemon (T-545)"
+        description="MiOS Kernel Livepatch & Microcode Management Daemon (task_489)"
     )
     parser.add_argument("--load", metavar="KO_PATH", help="Verify MOK and load kpatch module")
     parser.add_argument("--unload", metavar="PATCH_NAME", help="Unload livepatch module")

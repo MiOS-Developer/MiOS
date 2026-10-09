@@ -6022,6 +6022,7 @@ templates.placeholders.path  MIOS_TEMPLATES_PLACEHOLDERS_PATH
 resolver.max_key_divergence  MIOS_RESOLVER_MAX_KEY_DIVERGENCE
 resolver.max_value_divergence  MIOS_RESOLVER_MAX_VALUE_DIVERGENCE
 tasks.schema_from  MIOS_TASKS_SCHEMA_FROM
+tasks.schema_also  MIOS_TASKS_SCHEMA_ALSO
 tasks.max_duplicate_ids  MIOS_TASKS_MAX_DUPLICATE_IDS
 tasks.store.path  MIOS_TASKS_STORE_PATH
 tasks.store.schema  MIOS_TASKS_STORE_SCHEMA
@@ -6030,6 +6031,8 @@ tasks.store.retired  MIOS_TASKS_STORE_RETIRED
 tasks.store.migrated  MIOS_TASKS_STORE_MIGRATED
 tasks.store.migrated_sha256  MIOS_TASKS_STORE_MIGRATED_SHA256
 tasks.store.frozen  MIOS_TASKS_STORE_FROZEN
+tasks.store.numbered  MIOS_TASKS_STORE_NUMBERED
+tasks.store.purged  MIOS_TASKS_STORE_PURGED
 docs.max_stale_refs  MIOS_DOCS_MAX_STALE_REFS
 docs.max_undocumented_components  MIOS_DOCS_MAX_UNDOCUMENTED_COMPONENTS
 docs.manual_min_verbs  MIOS_DOCS_MANUAL_MIN_VERBS

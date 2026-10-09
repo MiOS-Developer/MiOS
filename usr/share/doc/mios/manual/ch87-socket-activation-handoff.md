@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (T-542, AGY-2140). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD transfer, graceful connection draining, and automated rollback upon candidate failure. -->
+<!-- AI-hint: Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (task_486, task_2719). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD transfer, graceful connection draining, and automated rollback upon candidate failure. -->
 
 # Chapter 87: Zero-Downtime Socket Activation and Daemon Handoff Swapper
 

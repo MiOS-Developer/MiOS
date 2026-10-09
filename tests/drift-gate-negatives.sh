@@ -211,7 +211,7 @@ EOF
     log "Check_shellcheck negative test passed"
 }
 
-# AGY-1073: the Python generator is deleted; every site runs the native twin.
+# task_1713: the Python generator is deleted; every site runs the native twin.
 _names_gen_bin() {
     local c
     for c in "${MIOS_NATIVE_BIN_DIR:-}/mios-gen" \
@@ -462,7 +462,7 @@ EOF
 
     printf '%s' "${orig_val%X}" > "$main_toml"
 
-    # T-1051: a ceiling may be declared a GENERATED budget and allowed to rise,
+    # task_988: a ceiling may be declared a GENERATED budget and allowed to rise,
     # but only itemised with a reason -- a bare key is a silent skip wearing a
     # register's clothing.
     _rd_restore() { printf '%s' "${orig_val%X}" > "$main_toml"; }
@@ -530,10 +530,10 @@ open(p, "w", encoding="utf-8", newline="").write(t[:m.start()] + blk + t[m.end()
 EOF
     }
 
-    # T-1040: `.socket` was off the renderer's list, so mios-cockpit-link.socket
+    # task_977: `.socket` was off the renderer's list, so mios-cockpit-link.socket
     # shipped its port placeholder verbatim. mios-unit-gen now resolves that port
     # at projection (4c38b100): no shipped .socket carries a placeholder, and
-    # dropping `socket` alone landed nowhere. Plant the T-1040 shape and show the
+    # dropping `socket` alone landed nowhere. Plant the task_977 shape and show the
     # list decides: covered with `socket`, named without it.
     printf '[Socket]\nListenStream=0.0.0.0:${MIOS_%s}\n' PORTS_COCKPIT_LINK > "$probe"
     _neg_gate check_render_extension_coverage || _rec_fail "check_render_extension_coverage refused a .socket placeholder while .socket is declared: ${_NEG_GATE_OUT}"
@@ -583,7 +583,7 @@ test_render_quadlets() {
     }
 
     # A placeholder nothing can resolve would ship literal into the image, which
-    # is the class that shipped mios-cockpit-link.socket unparseable (T-1058).
+    # is the class that shipped mios-cockpit-link.socket unparseable (task_995).
     sed -i 's|^Image=quay.io/ceph/ceph:.*|Image=quay.io/ceph/ceph:${MIOS_NOT_A_REAL_VAR}|' "$unit"
     _neg_gate check_render_quadlets && _rq_fail "check_render_quadlets passed with an unresolvable placeholder"
     cp "$ubak" "$unit"
@@ -622,7 +622,7 @@ test_toolchain_pin() {
     _neg_gate check_toolchain_pin && _tp_fail "check_toolchain_pin passed with the SSOT ahead of the generated pin"
     cp "$tbak" "$toml"
 
-    # No pin at all is the pre-T-1059 state: both workspaces lint-floating.
+    # No pin at all is the pre-task_996 state: both workspaces lint-floating.
     # Absent must never read as clean.
     rm -f "$pin"
     _neg_gate check_toolchain_pin && _tp_fail "check_toolchain_pin passed with rust-toolchain.toml absent"
@@ -712,7 +712,7 @@ test_size_ceiling() {
     _sz_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _sz_fail; die "$1"; }
 
     # Below the measured floor: the tree already exceeds its own budget, which
-    # is the state T-1051 was filed about and must not read as clean.
+    # is the state task_988 was filed about and must not read as clean.
     sed -i 's/^max_tracked_mb\( *\)= [0-9]*/max_tracked_mb\1= 1/' "$toml"
     _neg_gate check_size_ceiling && _sz_fail "check_size_ceiling passed with a ceiling below the measured floor"
     cp "$bak" "$toml"
@@ -827,7 +827,7 @@ test_module_test_coverage() {
     _neg_gate check_module_test_coverage && _mtc_fail "check_module_test_coverage passed despite an untested submodule"
     grep -q "mios_pipe/identity/temp_untested_mod.py is named by no unit test" <<<"$_NEG_GATE_OUT"         || _mtc_fail "check_module_test_coverage did not name the untested submodule: ${_NEG_GATE_OUT}"
 
-    # T-1092: a test file NAMED after the module is not the evidence -- an empty
+    # task_1006: a test file NAMED after the module is not the evidence -- an empty
     # one used to satisfy the old filename check.
     : > "$temp_sibling"
     _neg_gate check_module_test_coverage && _mtc_fail "check_module_test_coverage passed on an empty test named after the module"
@@ -995,7 +995,7 @@ test_bake_unresolved_image() {
 
     # Assert the PROPERTY -- that the check names what failed to resolve -- not
     # one producer's prose. This matched the Python generator's wording; the
-    # gate now validates the native producer (T-1057), whose message is
+    # gate now validates the native producer (task_994), whose message is
     # different and strictly better because it names the VARIABLE.
     printf '%s' "$out" | grep -q "UNRESOLVABLE_PROBE_TAG" || die "check_bake_plan failed without naming the unresolvable Image="
 
@@ -1965,7 +1965,7 @@ test_smoke_manifest() {
     }
     cp "$toml_file" "$bak_file"
 
-    # 1. An overlay naming no [packages] section can never be selected (T-1171).
+    # 1. An overlay naming no [packages] section can never be selected (task_3464).
     # Appending a NEW sub-table keeps the TOML valid, so a red result is the
     # check's verdict and not a parse error.
     printf '\n[testing.smoke_components.sections.zz-planted]\ncommands = ["x"]\n' >> "$toml_file"
@@ -2429,7 +2429,7 @@ test_law_enforcers() {
     _neg_gate check_law_enforcers && _le_fail "check_law_enforcers passed with a drift-check target that is not defined"
     cp "$tbak" "$toml"
 
-    # T-1049: the defect this check could not see. A marker that exists ONLY in
+    # task_986: the defect this check could not see. A marker that exists ONLY in
     # a comment after the script's `exit 0` is not enforcement, and the previous
     # reader matched it as a bare substring for four laws at once.
     sed -i 's|99-postcheck.sh:BOUND-IMAGES|99-postcheck.sh:item14|' "$toml"
@@ -2644,7 +2644,7 @@ test_ssot_consumer_keys() {
     _sck_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _sck_run _sck_fail; die "$1"; }
 
     # (1) Breaking a key a consumer reads must FAIL. Renaming [security]'s
-    # api_require_auth is exactly the T-325 defect, re-created.
+    # api_require_auth is exactly the task_269 defect, re-created.
     sed -i '0,/^api_require_auth /s//api_require_auth_RENAMED /' "$toml"
     _sck_run && _sck_fail "check_ssot_consumer_keys passed with api_require_auth renamed out from under its consumer"
     cp "$bak" "$toml"
@@ -2693,7 +2693,7 @@ test_unit_projection() {
     cp "$bak" "$toml"
 
     # (2) Toolchain-free half: register below its own ceiling. The renderer half
-    # is asserted by tests/projection.rs. See tasks.jsonl T-317.
+    # is asserted by tests/projection.rs. See tasks.jsonl task_267.
     python3 - "$toml" <<'PYX'
 import io, re, sys
 p = sys.argv[1]
@@ -3188,68 +3188,77 @@ test_task_store() {
     local sbak dbak; sbak="$(mktemp)"; dbak="$(mktemp)"
     cp "$store" "$sbak"; cp "$doc" "$dbak"
     _ts_restore() { cp "$sbak" "$store"; cp "$dbak" "$doc"; rm -f "${ROOT}/.devloop/tasks.jsonl"; }
-    _ts_fail() { _ts_restore; rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit; die "$1"; }
+    _ts_fail() { _ts_restore; rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit _ts_pick; die "$1"; }
     # Each plant must fail check_task_store and be named in its output.
     _ts_plant() { # $1 = what was planted, $2 = text the output must contain
         _neg_gate check_task_store && _ts_fail "check_task_store passed with $1"
         printf '%s\n' "$_NEG_GATE_OUT" | grep -qF -- "$2" || _ts_fail "check_task_store did not name $1 (wanted: $2): $_NEG_GATE_OUT"
         _ts_restore
     }
-    _neg_gate check_task_store || _ts_fail "check_task_store failed on the tree as committed: $_NEG_GATE_OUT"
-
-    # 1. A duplicate id.
-    grep -m1 '^{"id": "T-1169",' "$sbak" >> "$store"
-    _ts_plant "two records with id T-1169" "duplicate id T-1169"
-    # 2. A task line of the rendered TASKS.md hand-edited outside the overrides block.
-    sed -i '0,/^- `T-1169` /s//- `T-1169` HAND-EDITED /' "$doc"
-    _ts_plant "a hand-edited TASKS.md task line" 'HAND-EDITED'
-    # 3. A migrated record dropped: the frozen history names it.
-    local victim; victim="$(sed -n '100p' "$sbak" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-    sed -i '100d' "$store"
-    _ts_plant "record ${victim} dropped" "record ${victim} was dropped"
-    # 4. A retired store back in use.
-    mkdir -p "${ROOT}/.devloop"; printf '{"id": "T-9999"}\n' > "${ROOT}/.devloop/tasks.jsonl"
-    _ts_plant "a retired .devloop/tasks.jsonl" "retired task store present: .devloop/tasks.jsonl"
-    # 5. A retired list's frozen bytes edited.
-    _frozen_edit "MiOS:AGY-TASKS.md" '^## AGY-1 ' '## AGY-1 rewritten history ' || _ts_fail "could not plant an AGY-TASKS.md edit"
-    _ts_plant "an edited AGY-TASKS.md slice" "MiOS:AGY-TASKS.md: the slice AGY-1 owns at offset"
-    # Rewrite one record ($1 = id) through a python statement over `r`, in the canonical bytes.
+    # Rewrite the record numbered $1 through a python statement over `r` (and `by`, number -> record), in the
+    # bytes the dev-loop toolkit writes; prints whatever the statement leaves in `out`.
     _ts_edit() {
         python3 - "$store" "$1" "$2" <<'PYEOF'
 import json, sys
-p, rid, stmt = sys.argv[1:4]
+p, n, stmt = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 with open(p, encoding="utf-8", newline="") as f:
     lines = f.read().split("\n")[:-1]
-out = []
-for line in lines:
-    r = json.loads(line)
-    if r.get("id") == rid:
-        exec(stmt)
-        line = json.dumps(r, ensure_ascii=False)
-    out.append(line)
+recs = [json.loads(l) for l in lines]
+by = {r["number"]: r for r in recs}
+out = ""
+r = by[n]
+exec(stmt)
+lines[recs.index(r)] = json.dumps(r, ensure_ascii=False)
 with open(p, "w", encoding="utf-8", newline="") as f:
-    f.write("\n".join(out) + "\n")
+    f.write("\n".join(lines) + "\n")
+print(out)
 PYEOF
     }
+    # The number of the first record that `cond` (a python expression over `r`) holds for.
+    _ts_pick() { python3 -c 'import json,sys; print(next(r["number"] for r in map(json.loads, open(sys.argv[1], encoding="utf-8")) if eval(sys.argv[2])))' "$sbak" "$1" 2>/dev/null; }
+    _neg_gate check_task_store || _ts_fail "check_task_store failed on the tree as committed: $_NEG_GATE_OUT"
+
+    # 1. A duplicate id.
+    local dup; dup="$(sed -n '2p' "$sbak")"; printf '%s\n' "$dup" >> "$store"
+    _ts_plant "a record twice" "duplicate id $(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$dup")"
+    # 2. A task line of the rendered TASKS.md hand-edited outside the overrides block.
+    sed -i '0,/^- `task_1` /s//- `task_1` HAND-EDITED /' "$doc"
+    _ts_plant "a hand-edited TASKS.md task line" 'HAND-EDITED'
+    # 3. A migrated record dropped: the frozen history names it by its typed id.
+    local victim; victim="$(sed -n '100p' "$sbak" | python3 -c 'import json,sys; print("task_%d" % json.load(sys.stdin)["number"])')"
+    sed -i '100d' "$store"
+    _ts_plant "record ${victim} dropped" "record ${victim} was dropped"
+    # 4. A retired store back in use.
+    mkdir -p "${ROOT}/.devloop"; printf '{"id": "task_1"}\n' > "${ROOT}/.devloop/tasks.jsonl"
+    _ts_plant "a retired .devloop/tasks.jsonl" "retired task store present: .devloop/tasks.jsonl"
+    # 5. A retired list's frozen bytes edited: the slice names the task that owns it.
+    local head; head="$(_frozen_text MiOS:AGY-TASKS.md)"; head="$(grep -m1 -oE '^## task_[0-9]+ ' <<< "$head")" || _ts_fail "the frozen AGY-TASKS.md has no task heading"
+    _frozen_edit "MiOS:AGY-TASKS.md" "^${head}" "${head}rewritten history " || _ts_fail "could not plant an AGY-TASKS.md edit"
+    _ts_plant "an edited AGY-TASKS.md slice" "MiOS:AGY-TASKS.md: the slice ${head:3:-1} owns at offset"
     # 6. An edge the lane file archived (archived_dependencies) put back into depends_on.
-    _ts_edit T-1073 'r["depends_on"].append("T-1046")' || _ts_fail "could not plant T-1073's archived edge"
-    _ts_plant "an archived edge back in depends_on" "T-1073: depends_on T-1046 is an edge the lane file archived"
-    # 7. A count-keeping swap: AGY-1692 (no frozen slice) replaced by a slice-less record.
-    grep -m1 '^{"id": "AGY-1692",' "$sbak" > /dev/null || _ts_fail "AGY-1692 is not in ${store##*/}"
-    sed -i '/^{"id": "AGY-1692",/d' "$store"
-    grep -m1 '^{"id": "AGY-1692",' "$sbak" >> "$store"
-    _ts_edit AGY-1692 'r["id"] = r["provenance"]["key"] = "T-9998"; r["provenance"]["sources"] = []' || _ts_fail "could not plant the swap"
-    _ts_plant "AGY-1692 swapped for a record with no slices" "T-9998: a migrated record with no provenance.sources"
-    # 8. The only record of the lane rename T-1104 -> T-1104#2 erased.
-    _ts_edit 'T-1104#2' 'r["provenance"]["aliases"] = []' || _ts_fail "could not plant T-1104#2's aliases"
-    _ts_plant "T-1104#2 without its alias" "T-1104#2: a renamed id whose provenance.aliases does not name T-1104"
-    # 9. A migrated record's provenance key rewritten.
-    _ts_edit T-1169 'r["provenance"]["key"] = "T-1169-forged"' || _ts_fail "could not plant a key rewrite"
-    _ts_plant "a rewritten provenance key" "[tasks.store].migrated_sha256"
-    # 10. A carriage return on a line.
+    local n msg
+    n="$(_ts_pick 'any(x["type"] == "archived" for x in r["related"])')" || _ts_fail "no record carries an archived edge"
+    msg="$(_ts_edit "$n" 'e = next(x["id"] for x in r["related"] if x["type"] == "archived"); r["depends_on"].append(e); out = "task_%d: depends_on task_%d" % (n, next(k for k, v in by.items() if v["id"] == e))')" || _ts_fail "could not plant the archived edge"
+    _ts_plant "an archived edge back in depends_on" "$msg is an edge the lane file archived"
+    # 7. A count-keeping swap: a record whose only slices lie outside the frozen lists, made slice-less and renamed.
+    n="$(_ts_pick 'r["provenance"] and r["provenance"]["sources"] and all(not x["file"].startswith("MiOS:") for x in r["provenance"]["sources"])')" || _ts_fail "no record owns only slices outside the frozen lists"
+    _ts_edit "$n" 'r["id"] = "task_7ZZZZZZZZZZZZZZZZZZZZZZZZZ"; r["number"] = 999999; r["provenance"]["sources"] = []' >/dev/null || _ts_fail "could not plant the swap"
+    _ts_plant "task_${n} swapped for a record with no slices" "task_999999: a migrated record with no provenance.sources"
+    # 8. A number issued twice.
+    _ts_edit 6 'r["number"] = 5' >/dev/null || _ts_fail "could not plant a duplicate number"
+    _ts_plant "a duplicate number" "duplicate number 5"
+    # 9. A migrated record renumbered past the end: its identity no longer matches the frozen digest.
+    n="$(_ts_pick 'r["provenance"]')"
+    _ts_edit "$n" 'r["number"] = max(by) + 1' >/dev/null || _ts_fail "could not plant a renumbering"
+    _ts_plant "a renumbered task" "[tasks.store].migrated_sha256"
+    # 10. A purged id written back into a record (built here, so this file never carries one).
+    local old="T""-1""169"
+    _ts_edit 1 "r['notes'] = 'see $old'" >/dev/null || _ts_fail "could not plant an old id"
+    _ts_plant "an old task id in a record" "carries the purged id $old"
+    # 11. A carriage return on a line.
     sed -i '1s/$/\r/' "$store"
     _ts_plant "a CRLF line end" "tasks.jsonl:1: carriage return"
-    # 11. No sibling checkout: a copy of the task files alone, with nothing beside it, still checks green.
+    # 12. No sibling checkout: a copy of the task files alone, with nothing beside it, still checks green.
     local alone; alone="$(mktemp -d)"
     mkdir -p "$alone/MiOS/usr/share/mios" "$alone/MiOS/usr/lib/mios/schemas"
     cp "$store" "$doc" "$alone/MiOS/"; cp "${ROOT}/usr/share/mios/mios.toml" "$alone/MiOS/usr/share/mios/"
@@ -3258,9 +3267,24 @@ PYEOF
     "$bin" check --root "$alone/MiOS" >/dev/null 2>&1 || { rm -rf "$alone"; _ts_fail "mios-task check needed a sibling checkout"; }
     rm -rf "$alone"
 
-    rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit
+    rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit _ts_pick
     _neg_gate check_task_store || die "check_task_store failed after restoration: $_NEG_GATE_OUT"
     log "Test_task_store negative test passed"
+}
+
+test_task_ids() {
+    log "Testing check_task_ids"
+    # A tracked file that names a task by a purged id fails, and names the file and line; a look-alike does not.
+    local f="${ROOT}/ROADMAP.md" bak old="AGY""-1""601" line; bak="$(mktemp)"; cp "$f" "$bak"
+    printf '\nF-35, UTF-8 and SHA-256 are not task ids; task_1 is one.\n' >> "$f"
+    _neg_gate check_task_ids || { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids failed on look-alikes and a typed id: $_NEG_GATE_OUT"; }
+    printf 'see %s\n' "$old" >> "$f"; line="$(wc -l < "$f")"
+    _neg_gate check_task_ids && { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids passed with $old in ROADMAP.md"; }
+    printf '%s\n' "$_NEG_GATE_OUT" | grep -qF -- "ROADMAP.md:${line}: ${old} is a purged task id" \
+        || { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids did not name ROADMAP.md:${line}: $_NEG_GATE_OUT"; }
+    cp "$bak" "$f"; rm -f "$bak"
+    _neg_gate check_task_ids || die "check_task_ids failed after restoration: $_NEG_GATE_OUT"
+    log "Test_task_ids negative test passed"
 }
 
 test_tasks_status_parity() {
@@ -3269,7 +3293,7 @@ test_tasks_status_parity() {
     # Flip ONE frozen summary-table cell (ADR-0028) away from that task's own section status.
     local tid
     local txt; txt="$(_frozen_text MiOS:TASKS.md)"
-    tid="$(grep -m1 -oE '^\| T-[0-9]+ \| P[0-9] \| (done|done-by-code|planned|in-progress) \|' <<< "$txt" | awk '{print $2}')"
+    tid="$(grep -m1 -oE '^\| task_[0-9]+ \| P[0-9] \| (done|done-by-code|planned|in-progress) \|' <<< "$txt" | awk '{print $2}')"
     [[ -z "$tid" ]] && { rm -f "$sbak"; die "test_tasks_status_parity found no resolvable summary row to sabotage"; }
     _frozen_edit "MiOS:TASKS.md" "^\\| ${tid} \\| P[0-9] \\| [a-z/-]* \\|" "| ${tid} | P1 | pending |" || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant the ${tid} row"; }
     _neg_gate check_tasks_status_parity && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_tasks_status_parity passed while the summary table contradicted ${tid}'s own Status line"; }
@@ -3288,13 +3312,14 @@ test_agy_tasks() {
     log "Testing check_agy_tasks"
     local store="${ROOT}/tasks.jsonl" sbak; sbak="$(mktemp)"; cp "$store" "$sbak"
 
-    # Inject a duplicate task ID into the frozen AGY-TASKS.md.
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## AGY-1 -- Duplicate header test\n' || { rm -f "$sbak"; die "could not plant a duplicate AGY-1"; }
-    _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite duplicate AGY task ID"; }
+    # Inject a second heading for a task the frozen AGY-TASKS.md already heads.
+    local head; head="$(_frozen_text MiOS:AGY-TASKS.md)"; head="$(grep -m1 -oE '^## task_[0-9]+' <<< "$head")" || { rm -f "$sbak"; die "the frozen AGY-TASKS.md has no task heading"; }
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n'"${head}"$' -- Duplicate header test\n' || { rm -f "$sbak"; die "could not plant a duplicate ${head#\#\# }"; }
+    _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite a duplicate task heading"; }
     cp "$sbak" "$store"
 
-    # Inject a dangling Dep reference.
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## AGY-9999 -- Test task\n**Dep:** AGY-999999\n' || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant AGY-9999"; }
+    # Inject a Dep naming a task that does not exist.
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## task_9999999 -- Test task\n**Dep:** task_99999999\n' || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant task_9999999"; }
     _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite dangling Dep reference"; }
     cp "$sbak" "$store"; rm -f "$sbak"
 
@@ -3435,7 +3460,7 @@ test_resolved_env_lossless() {
 }
 
 test_no_duplicate_value_key() {
-    # Every case mutates the SSOT, never the tool: a new group, T-998's one exit, a joiner.
+    # Every case mutates the SSOT, never the tool: a new group, task_942's one exit, a joiner.
     log "Testing check_no_duplicate_value_key"
     local toml_file="${ROOT}/usr/share/mios/mios.toml" ledger="${ROOT}/usr/share/mios/reference/value-dup-baseline.tsv"
     local aliases="${ROOT}/usr/share/mios/reference/value-aliases.tsv" bak_file="${ROOT}/usr/share/mios/mios.toml.bak" dup_value exit_rc=0
@@ -3445,7 +3470,7 @@ test_no_duplicate_value_key() {
     # Case 1 -- a brand-new group: two SSOT keys given one novel value.
     printf '\n[negtest_value_dup]\nalpha = "ZZNEGDUPVALUE4271"\nbeta = "ZZNEGDUPVALUE4271"\n' >> "$toml_file"
     _neg_gate check_no_duplicate_value_key && { mv -f "$bak_file" "$toml_file"; mv -f "${aliases}.bak" "$aliases"; die "check_no_duplicate_value_key passed despite two SSOT keys resolving to one unlisted value"; }
-    # Case 2 -- T-998's one exit: the same plant passes once value-aliases.tsv classifies it keep-distinct.
+    # Case 2 -- task_942's one exit: the same plant passes once value-aliases.tsv classifies it keep-distinct.
     printf 'MIOS_NEGTEST_VALUE_DUP_ALPHA\tMIOS_NEGTEST_VALUE_DUP_BETA\tkeep-distinct\t# two planted settings that agree by accident\n' >> "$aliases"
     _neg_gate check_no_duplicate_value_key || exit_rc=$?; cp "$bak_file" "$toml_file"; mv -f "${aliases}.bak" "$aliases"
     (( exit_rc == 0 )) || { mv -f "$bak_file" "$toml_file"; die "check_no_duplicate_value_key rejected a keep-distinct coincidence: ${_NEG_GATE_OUT}"; }
@@ -3490,7 +3515,7 @@ test_value_aliases() {
     cp "$f" "$backup"
     printf 'MIOS_A2A_COUNCIL\tMIOS_A2A_DISCOVER_PORT\tderive\n' >> "$f"
     _neg_gate check_value_aliases && { cp "$backup" "$f"; die "Check_value_aliases passed despite a derive-pair with divergent values"; }
-    # T-998: keep-distinct needs two declarations and a reason; an alias or a bare pair fails.
+    # task_942: keep-distinct needs two declarations and a reason; an alias or a bare pair fails.
     local row; for row in 'MIOS_PORTS_RADOSGW\tMIOS_RADOSGW_PORT\tkeep-distinct\t# one port, mislabelled a coincidence' \
         'MIOS_SCHED_URGENCY_HIGH\tMIOS_SSOT_TABLES_MAX_UNCONSUMED\tkeep-distinct'; do cp "$backup" "$f"; printf "${row}\n" >> "$f"
         _neg_gate check_value_aliases && { cp "$backup" "$f"; rm -f "$backup"; die "Check_value_aliases accepted an unjustified keep-distinct row: ${row}"; }
@@ -4159,15 +4184,15 @@ test_task_schema() {
     # A task with no Verify line is a task anyone can declare done, and a Dep
     # naming a missing id is an ordering nobody can follow.
     local probe='
-## AGY-9999 -- schema probe  (WS-PROCESS | P2 | S)
+## task_9999999 -- schema probe  (WS-PROCESS | P2 | S)
 **Goal:** x
 **What+How:** x
 **Where:** x
 **Done When:** x
 **Why:** x
-**Dep:** AGY-4242
+**Dep:** task_42424242
 '
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' "$probe" || { rm -f "$sbak"; die "could not plant AGY-9999"; }
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' "$probe" || { rm -f "$sbak"; die "could not plant task_9999999"; }
     _neg_gate check_task_schema && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_task_schema passed on a task with no Verify and a dangling Dep"; }
     cp "$sbak" "$store"; rm -f "$sbak"
     _neg_gate check_task_schema || die "check_task_schema failed after restoration"
@@ -4541,7 +4566,7 @@ test_protected_refs() {
     # Remove the SUPPLY, not the reference. ExecStart still carries the bare
     # ${MIOS_FRONTIER_LANE_B_MODEL} and the unit still declares [Service] env, so the
     # renderer still protects it -- and now nothing on the host provides it.
-    # That is the shipped state T-1064 found: systemd expands the absent name to
+    # That is the shipped state task_3362 found: systemd expands the absent name to
     # "" and Lane B runs with --model ''.
     sed -i '/^Environment="\{0,1\}MIOS_FRONTIER_LANE_B_MODEL=/d' "$unit"   # any value: a literal since 491c36a2
     if cmp -s "$backup" "$unit" || ! grep -q 'MIOS_FRONTIER_LANE_B_MODEL}' "$unit"; then
@@ -4624,7 +4649,7 @@ test_doc_port_scheme() {
     rm -f "$backup"
     _neg_gate check_doc_port_scheme || die "check_doc_port_scheme failed after doc restoration"
 
-    # T-1002 (LAW5-01): planted retired port in a live code file must fail and name file + port
+    # task_946 (LAW5-01): planted retired port in a live code file must fail and name file + port
     local code_file="${ROOT}/usr/libexec/mios/mios-cron-director"
     local code_bak; code_bak="$(mktemp)"
     cp "$code_file" "$code_bak"
@@ -4964,7 +4989,7 @@ test_build_tool_dispatch() {
     # The half that proves the check RESOLVES rather than counting strings: the
     # plant, REGISTERED, is accepted; giving its binary a PATH location makes it
     # reachable, so the register must read as stale rather than staying green.
-    # (T-1018 emptied the shipped register, so the plant supplies the entry.)
+    # (task_962 emptied the shipped register, so the plant supplies the entry.)
     python3 - "$toml" "${planted#"${ROOT}"/}" <<'PYEOF'
 import re, sys
 p, rel = sys.argv[1:3]
@@ -5056,14 +5081,14 @@ test_no_inert_ssot_tables() {
 unused_key = "nothing reads this"
 ' "$tbl" >> "$toml"
     _nist_names "$tbl" || _nist_fail "check_no_inert_ssot_tables did not name the planted table with no consumer"
-    # THE FALSE-CREDIT ARM (T-1001); git add -N or the corpus cannot see the decoy.
+    # THE FALSE-CREDIT ARM (task_945); git add -N or the corpus cannot see the decoy.
     local decoy="${ROOT}/usr/libexec/mios/mios-negtest-decoy.py"
     printf '#!/usr/bin/env python3\n"""Reads usr/share/mios/mios.toml elsewhere."""\nd = compute()\nif d["%s"]:\n    pass\n' "$tbl" > "$decoy"
     git -C "$ROOT" add -N -- "$decoy" >/dev/null 2>&1
     _nist_decoy_clean() { git -C "$ROOT" rm --cached -q -- "$decoy" >/dev/null 2>&1; rm -f "$decoy"; unset -f _nist_decoy_clean; }
     if ! _nist_names "$tbl"; then
         _nist_decoy_clean
-        _nist_fail "check_no_inert_ssot_tables was SATISFIED by a local dict subscript -- the T-1001 false credit is back"
+        _nist_fail "check_no_inert_ssot_tables was SATISFIED by a local dict subscript -- the task_945 false credit is back"
     fi
     _nist_decoy_clean
     # Raising the ceiling must not absorb the plant: the ceiling has to EQUAL
@@ -5126,7 +5151,7 @@ test_bootstrap_sync() {
         || die "check_bootstrap_sync failed without naming the absent checkout: ${_NEG_GATE_OUT}"
     if [ -n "$had_root" ]; then export MIOS_BOOTSTRAP_ROOT="$saved_root"; else unset MIOS_BOOTSTRAP_ROOT; fi
 
-    # Sibling resolution as tools/sync-bootstrap.py does it (T-1033). The old
+    # Sibling resolution as tools/sync-bootstrap.py does it (task_970). The old
     # MSYS-only /c/ default skipped every local run.
     local boot="${MIOS_BOOTSTRAP_ROOT:-}"
     if [ -z "$boot" ]; then
@@ -5194,7 +5219,7 @@ test_legibility_ratchet() {
 
     # The Python arm, both ways. A tooling file must bite; a sibling unit test
     # must NOT count, or this ratchet pulls against check_module_test_coverage
-    # and the cheapest way to stay green is to not write the test (T-1044).
+    # and the cheapest way to stay green is to not write the test (task_981).
     n=$(( pycap - py0 + 1 )); (( n > 0 )) || n=1
     _lr_plant "$pytool" "$n"
     _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite $n new tooling-python lines over the floor"
@@ -5795,6 +5820,7 @@ _run_test test_leaked_fixtures
     _run_test test_firstboot_provisioners
     _run_test test_schema_consumers
     _run_test test_task_store
+    _run_test test_task_ids
     _run_test test_tasks_status_parity
     _run_test test_agy_tasks
     _run_test test_mios_toml_integrity

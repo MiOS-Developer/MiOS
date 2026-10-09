@@ -3,7 +3,7 @@
 # AI-related: src/mios-rs/mios-node/src/heartbeat.rs, src/mios-rs/mios-node/src/node.rs, tests/test-node-mesh.py, tests/test-node.py
 # AI-doc: usr/share/doc/mios/manual/node.md
 """
-MiOS Edge Node Mesh Discovery, Heartbeat Monitor & Dead-Peer Eviction Engine (T-387 / AGY-1985).
+MiOS Edge Node Mesh Discovery, Heartbeat Monitor & Dead-Peer Eviction Engine (task_331 / task_2564).
 Manages zero-conf peer announcements, periodic 5s heartbeats, 3-strike dead peer detection (15s eviction threshold),
 degraded state transitions, routing table pruning, and eviction event dispatching.
 """
@@ -102,7 +102,7 @@ class ClusterPeer:
         return f"ClusterPeer(node_id={self.node_id}, addr='{self.addr}:{self.port}', status={self.status.value}, strikes={self.missed_strikes})"
 
 class HeartbeatMonitor:
-    """Tracks peer health and executes 3-strike dead peer routing table evictions (T-387 / AGY-1985)."""
+    """Tracks peer health and executes 3-strike dead peer routing table evictions (task_331 / task_2564)."""
 
     def __init__(
         self,

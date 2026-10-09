@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 82: Multi-Node Dynamic AI Workload Partitioning and Capability-Aware Task Routing (T-537, AGY-2135). Details 2-6 bare-metal Blade mesh topology discovery, capability matrix scoring, subtask workflow decomposition, parallel dispatch over WireGuard HCI mesh, and OpenAI-compatible response gathering. -->
+<!-- AI-hint: Chapter 82: Multi-Node Dynamic AI Workload Partitioning and Capability-Aware Task Routing (task_481, task_2714). Details 2-6 bare-metal Blade mesh topology discovery, capability matrix scoring, subtask workflow decomposition, parallel dispatch over WireGuard HCI mesh, and OpenAI-compatible response gathering. -->
 
 # Chapter 82: Multi-Node Dynamic AI Workload Partitioning and Capability-Aware Task Routing
 

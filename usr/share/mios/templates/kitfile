@@ -1,5 +1,5 @@
 # AI-hint: CNCF KitOps ModelKit specification template for MiOS models, datasets, and adapters.
-# AI-related: usr/share/mios/mios.toml, ROADMAP.md (MODELOCI-01), usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md
+# AI-related: usr/share/mios/mios.toml, ROADMAP.md (task_3224), usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md
 
 manifestVersion: "1.0.0"
 package:

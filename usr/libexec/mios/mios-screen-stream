@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Hardware-accelerated PipeWire WebRTC desktop video streamer (T-788).
+# AI-hint: Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732).
 # AI-doc: usr/share/doc/mios/manual/ch15-desktop-webrtc-streaming.md
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def build_pipeline_desc(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Hardware-accelerated PipeWire WebRTC desktop video streamer (T-788)"
+        description="Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732)"
     )
     parser.add_argument("--check", action="store_true", help="Probe available encoders and display pipeline")
     parser.add_argument("--encoder", choices=["auto", "nvenc", "vaapi", "amf", "software"], default="auto")

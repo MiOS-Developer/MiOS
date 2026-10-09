@@ -28,7 +28,7 @@ fn lookup(name: &str, ssot: &BTreeMap<String, String>) -> Option<String> {
 
 /// Find the index of the `}` closing the `${` that starts at `open`, counting
 /// nested `${` ... `}` pairs. A regex cannot do this: `[^}]*` stops at the
-/// first brace, which is the whole T-1040 defect.
+/// first brace, which is the whole task_977 defect.
 fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut i = open;
@@ -104,7 +104,7 @@ pub enum Mode {
     DefaultsOnly,
 }
 
-/// Expand every `${...}`; `$$` is systemd's escape and passes through (T-1040).
+/// Expand every `${...}`; `$$` is systemd's escape and passes through (task_977).
 pub fn expand(text: &str, ssot: &BTreeMap<String, String>) -> Expansion {
     expand_mode(text, ssot, Mode::All)
 }
@@ -289,7 +289,7 @@ mod tests {
 
     /// A value that itself carries a reference must expand. This is exactly why
     /// install.env drops MIOS_AI_ENDPOINT: the resolver emitted it unexpanded,
-    /// so emit() saw a `$` and skipped the variable entirely (T-1060).
+    /// so emit() saw a `$` and skipped the variable entirely (task_997).
     #[test]
     fn a_resolved_value_that_carries_a_reference_is_expanded_too() {
         let s = ssot(&[

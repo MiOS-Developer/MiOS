@@ -87,7 +87,7 @@ impl Check for SSOTParseCheck {
         }
         match fs::read_to_string(&p) {
             Ok(content) => match content.parse::<toml::Value>() {
-                // T-1043: an EMPTY file is valid TOML, so "parses" was true of a
+                // task_980: an EMPTY file is valid TOML, so "parses" was true of a
                 // zero-byte mios.toml and this reported Pass on a tree with no
                 // SSOT in it at all. An SSOT with no tables is not an SSOT.
                 Ok(v) => match v.as_table().map(|t| t.len()).unwrap_or(0) {
@@ -201,7 +201,7 @@ impl Check for BackfillCoverageCheck {
             }
         }
 
-        // T-1043: zero embeddable tables made "all covered" vacuously true, so
+        // task_980: zero embeddable tables made "all covered" vacuously true, so
         // an empty schema-init.sql reported Pass. The shipped schema always has
         // them; finding none means the scan failed, not that the work is done.
         if emb_tables.is_empty() {

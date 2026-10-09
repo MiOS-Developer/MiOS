@@ -56,7 +56,7 @@ def t_reset():
     check("reset: allowed after reset", t.check("u", 0.6).allowed is True)
 
 def t_snapshot_restore():
-    """T-228: a principal's budget window survives a restart; a stale one does not."""
+    """task_208: a principal's budget window survives a restart; a stale one does not."""
     t = q.QuotaTracker(rpm_limit=0, daily_budget=10.0)
     t.check("alice", 100.0, cost=3.0)
     t.check("alice", 101.0, cost=2.0)

@@ -19,36 +19,36 @@ This renders into a scratch directory seeded with the committed artifact,
 then compares -- the same shape as the bash gate's kargs check.
 
 <!-- mios-src:888eee4c1089 from src/mios-rs/miosd/src/drift/regen.rs:81-93 -->
-### T-1045. This used to stat the Justfile and return Pass("BIB...
+### task_982. This used to stat the Justfile and return Pass("BIB...
 
-T-1045. This used to stat the Justfile and return Pass("BIB single
+task_982. This used to stat the Justfile and return Pass("BIB single
 config invariant verified") without opening it. Ported from the bash
 twin: every config/artifacts/*.toml must parse, and every recipe that
 invokes bootc-image-builder must mount EXACTLY ONE /config.toml --
 two mounts and the second silently wins.
 
-<!-- mios-src:6cf4514751aa from src/mios-rs/miosd/src/drift/deploy.rs:92-96 -->
+<!-- mios-src:e2b2b64cc33e from src/mios-rs/miosd/src/drift/deploy.rs:92-96 -->
 
-### T-1045. This used to stat two files and return Pass("Deploy...
+### task_982. This used to stat two files and return Pass("Deploy...
 
-T-1045. This used to stat two files and return Pass("Deploy plane
+task_982. This used to stat two files and return Pass("Deploy plane
 verified"). Stating that a file EXISTS is not verifying what is in
 it. Ported from the bash twin's content assertions -- and unlike the
 twin, an absent subject FAILS here rather than printing a WARNING and
 carrying on, because these are tracked deliverables.
 
-<!-- mios-src:28142d12570b from src/mios-rs/miosd/src/drift/deploy.rs:214-218 -->
+<!-- mios-src:fd1f10ba2aae from src/mios-rs/miosd/src/drift/deploy.rs:214-218 -->
 
-### T-1043. This used to test `p.exists()` and then return...
+### task_980. This used to test `p.exists()` and then return...
 
-T-1043. This used to test `p.exists()` and then return
+task_980. This used to test `p.exists()` and then return
 Pass("Law enforcers resolution validated clean") -- a claim about a
 file it never opened. Touching ctx.root to BUILD a path is not
 reading the tree, which is why two successive stub detectors let it
 through. CLAUDE.md calls [laws] the canonical registry; this now
 checks it.
 
-<!-- mios-src:3e7a6484feac from src/mios-rs/miosd/src/drift/laws.rs:17-22 -->
+<!-- mios-src:e2a0d945f8af from src/mios-rs/miosd/src/drift/laws.rs:17-22 -->
 
 ### `process:` is a real scheme, not a malformed entry: Law...
 
@@ -58,9 +58,9 @@ still has to SAY something, which the emptiness test above covers.
 
 <!-- mios-src:62909a3e7822 from src/mios-rs/miosd/src/drift/laws.rs:93-95 -->
 
-### T-1045. This used to test whether a DEBUG BUILD of the...
+### task_982. This used to test whether a DEBUG BUILD of the...
 
-T-1045. This used to test whether a DEBUG BUILD of the generator
+task_982. This used to test whether a DEBUG BUILD of the generator
 existed and, if so, return Pass("Names registry projection matches
 SSOT") -- without running it and without comparing anything. If the
 binary was absent it skipped instead, so on an ordinary tree the
@@ -71,23 +71,23 @@ The projection is produced by tools/generate-names-registry.py, the
 same generator sync-generated.sh runs, so regenerate and diff it the
 way every other projection check already does.
 The generator has no --check mode and the tooling-Python ratchet has
-no room to add one (T-1044), so compare in Rust: snapshot, render,
+no room to add one (task_981), so compare in Rust: snapshot, render,
 diff, restore.
 
 <!-- mios-src:e329f7bbba21 from src/mios-rs/miosd/src/drift/names.rs:19-31 -->
 
-### T-1043. This used to read ctx.in_image for the early skip...
+### task_980. This used to read ctx.in_image for the early skip...
 
-T-1043. This used to read ctx.in_image for the early skip above and
+task_980. This used to read ctx.in_image for the early skip above and
 then return a constant Pass -- "ordinals verified dense" about a tree
 it never opened. Naming the parameter `ctx` was the only thing that
 made it look implemented. Ported from the bash twin's three assertions.
 
-<!-- mios-src:3980a58c9a9e from src/mios-rs/miosd/src/drift/numbering.rs:20-23 -->
+<!-- mios-src:f38c990e8408 from src/mios-rs/miosd/src/drift/numbering.rs:20-23 -->
 
-### T-1045. This function is named regen_and_diff and it does...
+### task_982. This function is named regen_and_diff and it does...
 
-T-1045. This function is named regen_and_diff and it does not diff: it
+task_982. This function is named regen_and_diff and it does not diff: it
 runs the generator and then asserts the target EXISTS. That is only sound
 when the generator itself compares, i.e. when --check is passed and its
 exit status is the verdict. Called without it the generator WRITES --
@@ -195,25 +195,25 @@ root) are where features fold in, so they carry no line ceiling.
 
 <!-- mios-src:2535381627ae from src/mios-rs/miosd/src/drift/modules.rs:77-79 -->
 
-### T-1045. This used to test whether a DEBUG BUILD of the...
+### task_982. This used to test whether a DEBUG BUILD of the...
 
-T-1045. This used to test whether a DEBUG BUILD of the generator
+task_982. This used to test whether a DEBUG BUILD of the generator
 existed and, if so, return Pass("Names registry projection matches
 SSOT") -- without running it and without comparing anything. If the
 binary was absent it skipped instead, so on an ordinary tree the
 check was silent and on a developer's tree it lied. Both halves of
 Skip-as-Pass in one function.
 
-T-1044/T-1009 lineage: the generator was ported to the native
+task_981/task_953 lineage: the generator was ported to the native
 tools/native/generate-names-registry binary and the Python script
-strangler-deleted (AGY-1073); this caller kept the stale .py path
+strangler-deleted (task_1713); this caller kept the stale .py path
 and the python3 interpreter assumption, so Windows-invoked image
 builds failed with "Generator not found: tools/generate-names-registry.py".
 The native generator writes BOTH projections (names.generated.txt
 and referenced_names.txt), so both are snapshotted and restored --
 comparing one while leaving the other rewritten was half a verdict.
 
-<!-- mios-src:6ddc94017988 from src/mios-rs/miosd/src/drift/names.rs:19-33 -->
+<!-- mios-src:dd6be916debb from src/mios-rs/miosd/src/drift/names.rs:19-33 -->
 
 ### Retired local-lane ports (Law 5) must not survive in...
 
@@ -229,11 +229,11 @@ and echo/usage text are prose, not execution, and stay exempt as before.
 
 regen_and_compare_file (python3-interpreted regen for .py generators) was
 deleted with the last of its consumers: the names-registry Python generator
-was strangler-deleted (AGY-1073) and its miosd caller moved to
+was strangler-deleted (task_1713) and its miosd caller moved to
 regen_and_compare_native below. Every surviving drift regen check invokes a
 native binary.
 
-<!-- mios-src:dd7476463689 from src/mios-rs/miosd/src/drift/regen.rs:138-142 -->
+<!-- mios-src:0c7801a98007 from src/mios-rs/miosd/src/drift/regen.rs:138-142 -->
 
 ### The shipped twin must be byte-identical to the...
 

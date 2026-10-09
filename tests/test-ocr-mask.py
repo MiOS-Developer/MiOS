@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Integration test suite for on-device OCR regex credential masking pipeline (T-540, AGY-2138).
+# AI-hint: Integration test suite for on-device OCR regex credential masking pipeline (task_484, task_2717).
 # AI-doc: usr/share/doc/mios/manual/ch85-ocr-credential-masking.md
 """Integration test suite for mios_ocr_mask.py.
 
@@ -359,7 +359,7 @@ def test_6_mock_end_to_end_lifecycle() -> None:
 
 def main() -> int:
     print("======================================================================")
-    print("Running MiOS OCR Credential Masking Integration Test Suite (T-540)")
+    print("Running MiOS OCR Credential Masking Integration Test Suite (task_484)")
     print("======================================================================")
 
     test_1_cli_and_help()

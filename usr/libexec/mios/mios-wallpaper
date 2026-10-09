@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Unified CLI entry point and execution wrapper for the MiOS Living Wallpaper daemon (WBRAND-05 / T-778).
+# AI-hint: Unified CLI entry point and execution wrapper for the MiOS Living Wallpaper daemon (WBRAND-05 / task_722).
 # AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 set -euo pipefail
 

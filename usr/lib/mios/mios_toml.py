@@ -32,7 +32,7 @@ def _default_vendor(root=""):
 _ROOT = os.environ.get("MIOS_TOML_ROOT", "")
 
 def get_version(key: str, default: str = "") -> str:
-    """Return a SSOT component version from [versions] (AGY-1573)."""
+    """Return a SSOT component version from [versions] (task_2214)."""
     data = load_merged()
     vers = data.get("versions") or {}
     return str(vers.get(key, default))
@@ -483,7 +483,7 @@ def get_aliases(dotted_path):
     elif dotted_path.startswith("build."):
         name = dotted_path[len("build."):].upper().replace(".", "_")
         # AI_RAM_FLOOR_GB is deliberately absent: [ai].ram_floor_gb owns that
-        # name already, with a different value (T-1020; aliases.rs twin).
+        # name already, with a different value (task_964; aliases.rs twin).
         if name in {"LOCAL_TAG", "RECHUNK_MAX_LAYERS"}:
             aliases.append(f"MIOS_{name}")
         else:
@@ -529,7 +529,7 @@ def get_aliases(dotted_path):
     elif dotted_path.startswith("urls."):
         # [urls].forge -> MIOS_FORGE_URL; the two repo URLs keep their own shape.
         name = dotted_path[len("urls."):].upper()
-        # T-1013: non_addressable is a list of port KEYS, not a URL, and no
+        # task_957: non_addressable is a list of port KEYS, not a URL, and no
         # consumer reads either spelling. REPO/BOOTSTRAP_REPO matched the default.
         if name == "LOCAL_FORGE_REPO":
             aliases.append("MIOS_LOCAL_FORGE_REPO")
@@ -791,7 +791,7 @@ def process_val(dotted, v, stack_offset=0):
         # which only Python can parse and which disagreed with the Rust
         # resolver's TOML inline tables on 12 keys. That was the whole residual
         # of check_resolver_differential_parity, sitting exactly at its ceiling
-        # of 12 with no headroom (T-1063). TOML wins because it is a real
+        # of 12 with no headroom (task_3361). TOML wins because it is a real
         # format and because Rust is the destination tier.
         return ",".join(
             _toml_inline(x) if isinstance(x, (dict, list)) else str(x) for x in v
@@ -878,7 +878,7 @@ def emit_exports(data=None) -> dict[str, str]:
             # and reverted for that reason.
             #
             # It is still the ONLY one of three emitters that splits, which is
-            # T-1065's real finding: the fix is to stop emitting the redundant
+            # task_3363's real finding: the fix is to stop emitting the redundant
             # _VERSION alias in both twins, not to change how it is rendered.
             # That removes 23 keys and needs its own change.
             if alias.endswith("_VERSION") and dotted.startswith("image.sidecars."):
@@ -962,7 +962,7 @@ def resolve_cross_references(exports: dict[str, str]) -> None:
     MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORT_AGENT_PIPE}/v1 means one thing
     to bash and another to them. It is also why system-sync-env.sh DROPPED that
     variable rather than emitting it: its filter rejects any value containing
-    `$` (T-1060).
+    `$` (task_997).
 
     Do NOT apply it to the export map that renders automation/lib/globals.{sh,ps1}.
     Those are sourced by bash and PowerShell, which expand at load time, and the

@@ -17,7 +17,7 @@ impl Check for PipelineNumberingCheck {
                 "Skipping pipeline numbering check in OCI build context".to_string(),
             );
         }
-        // T-1043. This used to read ctx.in_image for the early skip above and
+        // task_980. This used to read ctx.in_image for the early skip above and
         // then return a constant Pass -- "ordinals verified dense" about a tree
         // it never opened. Naming the parameter `ctx` was the only thing that
         // made it look implemented. Ported from the bash twin's three assertions.

@@ -88,7 +88,7 @@ AI-related: usr/share/mios/mios.toml, automation/98-drift-checks.sh, tests/drift
 
 ### AI-hint
 
-AI-hint: BLE beaconing for offline local mesh bootstrap for mios-node (T-395 / AGY-1993).
+AI-hint: BLE beaconing for offline local mesh bootstrap for mios-node (task_339 / task_2572).
 AI-related: src/mios-rs/mios-node/src/crypto.rs, usr/libexec/mios/node/ble.py, tests/test-node.py
 ! MiOS BLE Beaconing & Offline Local Mesh Bootstrap Engine
 !
@@ -100,7 +100,7 @@ AI-related: src/mios-rs/mios-node/src/crypto.rs, usr/libexec/mios/node/ble.py, t
 
 ### AI-hint
 
-AI-hint: Zero-copy network buffer pooling for mios-node frames (T-393 / AGY-1991).
+AI-hint: Zero-copy network buffer pooling for mios-node frames (task_337 / task_2570).
 AI-related: src/mios-rs/mios-node/src/net.rs, usr/libexec/mios/node/buffer_pool.py, tests/test-node.py
 ! MiOS Zero-Copy Network Buffer Pool
 !
@@ -112,7 +112,7 @@ AI-related: src/mios-rs/mios-node/src/net.rs, usr/libexec/mios/node/buffer_pool.
 
 ### AI-hint
 
-AI-hint: Edge node capability advertising in Announce frames for mios-node (T-394 / AGY-1992).
+AI-hint: Edge node capability advertising in Announce frames for mios-node (task_338 / task_2571).
 AI-related: src/mios-rs/mios-node/src/protocol.rs, usr/libexec/mios/node/capabilities.py, tests/test-node.py
 ! MiOS Edge Node Capability Advertising & Telemetry Engine
 !
@@ -135,7 +135,7 @@ AI-related: src/mios-rs/mios-node/src/node.rs, usr/libexec/mios/node/cgroups.py,
 
 AI-hint: Ed25519 mutual handshake, X25519 ECDH key exchange, HKDF-SHA256 key derivation, and ChaCha20-Poly1305 wire AEAD for mios-node.
 AI-related: src/mios-rs/mios-node/src/net.rs, src/mios-rs/mios-node/src/protocol.rs, tests/test-node-crypto-handshake.py
-! MiOS Node Cryptographic Handshake & Wire Encryption Engine (T-388 / AGY-1986)
+! MiOS Node Cryptographic Handshake & Wire Encryption Engine (task_332 / task_2565)
 !
 ! Provides mutual identity authentication using Ed25519 signatures, forward secrecy via X25519
 ! ephemeral Diffie-Hellman key exchange, HKDF-SHA256 session key derivation, and ChaCha20-Poly1305
@@ -166,7 +166,7 @@ AI-related: src/mios-rs/mios-node/src/executor.rs, usr/libexec/mios/node/hardwar
 
 AI-hint: Node heartbeat monitor, 3-strike dead peer detection, and routing table eviction for mios-node.
 AI-related: src/mios-rs/mios-node/src/node.rs, src/mios-rs/mios-node/src/lib.rs, tests/test-node-heartbeat-eviction.py
-! MiOS Node Heartbeat Monitor & Dead-Peer Eviction Engine (T-387 / AGY-1985)
+! MiOS Node Heartbeat Monitor & Dead-Peer Eviction Engine (task_331 / task_2564)
 !
 ! Enforces the 5s heartbeat interval, 3-strike failure rule (15s eviction threshold),
 ! degraded status transitions at 2 strikes (10s), lock-free table pruning, and event dispatch.
@@ -186,7 +186,7 @@ AI-related: src/mios-rs/mios-node/src/protocol.rs, src/mios-rs/mios-node/src/lib
 
 ### AI-hint
 
-AI-hint: Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (T-396 / AGY-1994).
+AI-hint: Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (task_340 / task_2573).
 AI-related: src/mios-rs/mios-node/src/heartbeat.rs, usr/libexec/mios/node/overlay.py, tests/test-node.py
 ! MiOS Multi-Transport Router & LAN Partition Overlay Failover Engine
 !
@@ -213,7 +213,7 @@ AI-related: src/mios-rs/mios-node/src/node.rs
 
 ### AI-hint
 
-AI-hint: Task offloading priority queue with work-stealing scheduler for mios-node (T-392 / AGY-1990).
+AI-hint: Task offloading priority queue with work-stealing scheduler for mios-node (task_336 / task_2569).
 AI-related: src/mios-rs/mios-node/src/executor.rs, usr/libexec/mios/node/scheduler.py, tests/test-node.py
 ! MiOS Task Offloading Priority Queue & Work-Stealing Scheduler
 !

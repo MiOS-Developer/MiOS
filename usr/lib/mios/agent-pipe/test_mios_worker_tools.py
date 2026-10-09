@@ -178,9 +178,9 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_list_dir.py (T-1092)
+# Consolidated from test_mios_list_dir.py (task_1006)
 # ==============================================================================
-# AI-hint: Sibling unit test for mios-text-edit view directory depth logic (T-112).
+# AI-hint: Sibling unit test for mios-text-edit view directory depth logic (task_113).
 
 import os
 import sys

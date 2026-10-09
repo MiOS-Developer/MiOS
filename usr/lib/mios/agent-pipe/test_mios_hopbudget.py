@@ -59,7 +59,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_budget.py (T-1092)
+# Consolidated from test_mios_budget.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for mios_agent_call budget and depth limits.
 import unittest

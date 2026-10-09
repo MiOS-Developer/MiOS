@@ -97,7 +97,7 @@ fi
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so this lookup could never succeed and the
-# whole Rust dispatch below it was dead on every build ever run (T-1018).
+# whole Rust dispatch below it was dead on every build ever run (task_962).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
           /usr/libexec/mios/miosd \

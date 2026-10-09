@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative RAPL and NVML hardware energy metering and chassis power cap manager (T-633, T-634).
+# AI-hint: Declarative RAPL and NVML hardware energy metering and chassis power cap manager (task_577, task_578).
 # AI-related: usr/libexec/mios/hw/energyd.py, tests/test-hw.py, usr/share/mios/mios.toml
 """Declarative RAPL and NVML hardware energy metering and chassis power cap manager for MiOS.
 
