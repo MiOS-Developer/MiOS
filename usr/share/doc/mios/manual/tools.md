@@ -893,3 +893,12 @@ included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
 domains below partition the same listing.
 
 <!-- mios-src:adf6366d5571 from tools/drift-checks.py:279-281 -->
+### ADR-0030
+
+ADR-0030: the 500-file cap is the PLATFORM -- every tracked file of mios.git
+AND its sister repo mios-bootstrap, dependencies included (the operator: "500
+files is the target for the entire MiOS Platform"). max_tracked_files stays
+this repo's own count, which ratchet-direction compares with main's tree; the
+domains below partition the platform listing, bootstrap paths prefixed.
+
+<!-- mios-src:eaf1382f49a8 from tools/drift-checks.py:279-283 -->

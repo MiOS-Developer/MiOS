@@ -36,6 +36,6 @@
 | 0027 | [Dual-tier OCI AI artifact architecture for resident inference and daily training corpora](usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md) | accepted | 2026-09-26 | 1, 3, 5, 12, 14, 16 | `finetune.micro`, `llamacpp`, `artifacts.daily`, `image.sidecars` |
 | 0028 | [One canonical task list, tasks.jsonl, with TASKS.md as its rendered view and operator overrides](usr/share/doc/mios/adr/0028-one-canonical-task-list.md) | proposed | 2026-10-03 | 1, 7, 8, 14, 16 | `tasks.store` |
 | 0029 | [Agent succession and interop -- a coordinator lease over the MiOS-MCP relay, mapped to A2A, MCP tasks, OpenAI handoffs and OpenTelemetry GenAI](usr/share/doc/mios/adr/0029-agent-succession-and-interop.md) | proposed | 2026-10-09 | 7, 8, 9, 11, 14, 15 | `mcp.agents`, `agent_cli` |
-| 0030 | [A 500-file budget, total -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES](usr/share/doc/mios/adr/0030-source-file-budget.md) | proposed | 2026-10-09 | 8, 9, 12, 14, 16 | `legibility`, `legibility.file_budget`, `drift.generated_ceilings` |
+| 0030 | [A 500-file platform budget, total -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES](usr/share/doc/mios/adr/0030-source-file-budget.md) | proposed | 2026-10-09 | 8, 9, 12, 14, 16 | `legibility`, `legibility.file_budget`, `drift.generated_ceilings` |
 
 <!-- derived from the front-matter of 30 file(s) under usr/share/doc/mios/adr/ -->

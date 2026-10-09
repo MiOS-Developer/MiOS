@@ -28459,7 +28459,7 @@
     },
     {
       "path": "usr/share/doc/mios/adr/0030-source-file-budget.md",
-      "hint": "ADR-0030 caps MiOS at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES.",
+      "hint": "ADR-0030 caps the MiOS PLATFORM (mios.git + mios-bootstrap) at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES.",
       "related": [
         "/usr/share/mios/mios.toml [legibility]",
         "[legibility.file_budget]",
