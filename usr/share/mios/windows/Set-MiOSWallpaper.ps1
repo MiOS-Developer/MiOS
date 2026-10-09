@@ -2,17 +2,17 @@
 # AI-related: mios-common, mios-wallpaperd
 
 <#
-  Set-MiOSWallpaper.ps1 — resolve the MiOS Living Wallpaper URL from the
+  Set-MiOSWallpaper.ps1 -- resolve the MiOS Living Wallpaper URL from the
   mios.toml [colors] SSOT and write it to HKLM\SOFTWARE\MiOS\WallpaperUrl.
 
   This is the missing SSOT link: MiOS-Wallpaper-Service reads WallpaperUrl and
   passes it to the host, and living-wallpaper.html reads the 12 palette tokens
   (+ mode) from the URL query string. Without this key the page silently falls
-  back to its built-in TOKENS — a hardcode. Run this:
+  back to its built-in TOKENS -- a hardcode. Run this:
     * as the GLOBAL REFRESH after any palette / theme change, and
     * at image-build / first-boot to bake the factory default (MiOS-Xbox).
 
-  The palette is NEVER hardcoded here — it is read live from mios.toml through
+  The palette is NEVER hardcoded here -- it is read live from mios.toml through
   the standard three-layer overlay (user > host > vendor). The built-in map
   below is only a last-resort default and matches the page's own fallback, so a
   missing key can never surprise.
@@ -32,7 +32,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# The wallpaper's colours ARE the mios.toml [colors] SSOT — the FULL 16-colour systemwide set
+# The wallpaper's colours ARE the mios.toml [colors] SSOT -- the FULL 16-colour systemwide set
 # (ansi_0..ansi_15), passed to the page as a0..a15, plus bg/fg which anchor the dark/light grade.
 # $AnsiSrc maps each a{i} -> the [colors] key that feeds it; $Tokens holds the defaults, which
 # mirror mios.toml so a missing key is a no-op, never a surprise.

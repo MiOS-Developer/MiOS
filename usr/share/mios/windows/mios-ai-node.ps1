@@ -111,7 +111,7 @@ function Resolve-ModelTag($tag) {
     return $tag
 }
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# -- helpers -------------------------------------------------------------------
 
 function Get-TailscaleIP {
     try {
@@ -152,7 +152,7 @@ function Test-MachineCmd([string]$cmd) {
     return ($LASTEXITCODE -eq 0)
 }
 
-# ── uninstall ─────────────────────────────────────────────────────────────────
+# -- uninstall -----------------------------------------------------------------
 
 if ($Uninstall) {
     Info 'Stopping and removing MiOS AI Node Quadlets...'
@@ -181,7 +181,7 @@ echo "[OK] Quadlets removed"
     return
 }
 
-# ── preflight ─────────────────────────────────────────────────────────────────
+# -- preflight -----------------------------------------------------------------
 
 Info 'MiOS AI Node setup starting...'
 Info "Target machine: $MachineName"
@@ -202,7 +202,7 @@ if (-not $tsIp) {
     Ok "Tailscale IP: $tsIp"
 }
 
-# ── resize machine ─────────────────────────────────────────────────────────────
+# -- resize machine -------------------------------------------------------------
 
 if (-not $SkipResize) {
     $info   = podman machine inspect $MachineName 2>$null | ConvertFrom-Json
@@ -239,7 +239,7 @@ if ($state -ne 'running') {
     podman machine start $MachineName
 }
 
-# ── remove retired containers ──────────────────────────────────────────────────
+# -- remove retired containers --------------------------------------------------
 
 Info 'Removing retired Ollama/LLM Light containers if any...'
 Invoke-Machine @'
@@ -255,7 +255,7 @@ done
 echo "[OK] old container cleanup done"
 '@
 
-# ── NVIDIA Container Toolkit ──────────────────────────────────────────────────
+# -- NVIDIA Container Toolkit --------------------------------------------------
 
 if (-not $SkipGpu) {
     Info 'Checking NVIDIA Container Toolkit...'
@@ -314,7 +314,7 @@ echo "[OK] CDI spec ready"
     Info 'Skipping GPU setup (-SkipGpu).'
 }
 
-# ── mios.network + volume directories ─────────────────────────────────────────
+# -- mios.network + volume directories -----------------------------------------
 
 Info 'Creating mios network and volume directories...'
 Invoke-Machine @'
@@ -325,7 +325,7 @@ chmod -R 0777 /var/lib/mios/llamacpp
 echo "[OK] network + volumes ready"
 '@
 
-# ── deploy Quadlet files & config ─────────────────────────────────────────────
+# -- deploy Quadlet files & config ---------------------------------------------
 
 Info 'Deploying Quadlet files...'
 Invoke-Machine 'mkdir -p /etc/containers/systemd'
@@ -353,7 +353,7 @@ $yamlContent = Get-Content $yamlSrc -Raw
 Write-MachineFile '/var/lib/mios/llamacpp/mios-llm-light.yaml' $yamlContent
 Ok 'deployed mios-llm-light.yaml'
 
-# ── pull models ───────────────────────────────────────────────────────────────
+# -- pull models ---------------------------------------------------------------
 
 if (-not $SkipModels) {
     $modelList = $Models -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
@@ -398,7 +398,7 @@ fi
     Info 'Make sure to place weights in /var/lib/mios/llamacpp/models/ and touch .ready inside the VM.'
 }
 
-# ── start Quadlet units ───────────────────────────────────────────────────────
+# -- start Quadlet units -------------------------------------------------------
 
 Info 'Reloading systemd and starting Quadlet units...'
 Invoke-Machine @'
@@ -414,7 +414,7 @@ else
 fi
 '@
 
-# ── firewall + portproxy ───────────────────────────────────────────────────────
+# -- firewall + portproxy -------------------------------------------------------
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -460,12 +460,12 @@ if ($isAdmin) {
     Warn 'Not elevated -- firewall/portproxy skipped. Re-run as admin or run Setup-MiOSLanPortProxy.ps1.'
 }
 
-# ── summary ───────────────────────────────────────────────────────────────────
+# -- summary -------------------------------------------------------------------
 
 Write-Host ''
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Green
 Write-Host '  MiOS AI Node setup complete' -ForegroundColor Green
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Services:' -ForegroundColor Cyan
 Write-Host "    mios-llm-light  GPU  :${llmLightPort}   http://${tsIp}:${llmLightPort}/v1"

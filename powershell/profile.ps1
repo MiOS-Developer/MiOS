@@ -1,7 +1,7 @@
 # AI-hint: MiOS configuration and runtime asset for profile.ps1.
 # AI-related: /usr/libexec/mios/mios-dashboard, /usr/libexec/mios/mios-ssh-dev-cmd, mios-dashboard, mios-ssh-dev-cmd, mios-dev, mios-bootstrap, mios-build, mios-pull, mios-update, mios-config
 
-﻿
+
 if ($Global:MiosProfileLoaded) { return }
 $Global:MiosProfileLoaded = $true
 
@@ -144,7 +144,7 @@ if ($env:WT_SESSION) {
             $visible = _Strip $Line
             if ($visible.Length -gt $INNER) {
                 # Truncate with ellipsis preserving ANSI prefix.
-                $Line = $Line.Substring(0, [math]::Min($Line.Length, $INNER + ($Line.Length - $visible.Length) - 1)) + '…'
+                $Line = $Line.Substring(0, [math]::Min($Line.Length, $INNER + ($Line.Length - $visible.Length) - 1)) + [char]0x2026
                 $visible = _Strip $Line
             }
             $pad = ' ' * [math]::Max(0, $INNER - $visible.Length)
@@ -365,7 +365,7 @@ if ($env:WT_SESSION) {
                 }
                 if (-not $_val) { $_val = '' }
                 if ($_val.Length -gt $_colW) {
-                    $_val = $_val.Substring(0, [math]::Max(1, $_colW - 1)) + '…'
+                    $_val = $_val.Substring(0, [math]::Max(1, $_colW - 1)) + [char]0x2026
                 }
                 $_cells += $_val.PadRight($_colW)
             }
