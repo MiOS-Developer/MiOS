@@ -37,11 +37,11 @@ Do not rebuild any of these.
 
 **Pattern.** Backlog.md's one-file-per-task with typed YAML frontmatter and HTML section markers, plus Kubernetes' typed sidecar principle (`kep.yaml` for machine state, `README.md` for the human argument), plus beads' ready-set query semantics. Every project that outgrew a flat markdown backlog split the record in two; none scaled a single long-form prose record as both the human rationale and the machine state.
 
-**Concrete.** `usr/share/mios/tasks/T-1018.md` — under `/usr` because Law 1 puts vendor/static config there and because it bakes the queue into the image, so a deployed host's own agents can read it. (`backlog/` at repo root would land at `/backlog`, which is not FHS.)
+**Concrete.** `usr/share/mios/tasks/task_962.md` — under `/usr` because Law 1 puts vendor/static config there and because it bakes the queue into the image, so a deployed host's own agents can read it. (`backlog/` at repo root would land at `/backlog`, which is not FHS.)
 
 ```markdown
 ---
-id: T-1018                       # PRESERVED from TASKS.md; never reminted
+id: task_962                       # PRESERVED from TASKS.md; never reminted
 title: Render Quadlets from SSOT templates
 status: ready                    # draft|ready|claimed|blocked|done|expired|superseded
 priority: P0
@@ -50,16 +50,16 @@ workstream: WS-DOCGEN
 laws: [8, 16]
 ssot_keys: ["templates.quadlet"]
 adr: [ADR-0012]
-deps: [T-1002]                   # must be < this id (forward-reference ban)
+deps: [task_946]                   # must be < this id (forward-reference ban)
 discovered_from: null            # set => this is a finding, not planned work
 scope:                           # declared write-set; gate checks the diff against it
   - usr/share/mios/templates/quadlet.template
   - automation/34-render-quadlets.sh
 acceptance:
-  - id: T-1018-AC1
+  - id: task_962-AC1
     text: Every rendered Quadlet is byte-identical to its regeneration
     checks: [check_quadlet_ssot_projection]        # <- THE JOIN
-  - id: T-1018-AC2
+  - id: task_962-AC2
     text: A hand-edited Quadlet fails the gate
     checks: [check_quadlet_ssot_projection_neg]
 why: >
@@ -71,7 +71,7 @@ updated: 2026-09-14
 wait: null                       # hidden from ready-set until this date
 until: 2027-03-01                # auto-expires; a task can be designed to die
 receipt: null                    # sha256 of the closure receipt; set by `mios task close`
-external_ids: ["tasks-md:T-1018"]
+external_ids: ["tasks-md:task_962"]
 ---
 
 <!-- SECTION:PLAN:BEGIN -->  … read only by the agent that has CLAIMED this task
@@ -149,7 +149,7 @@ Cheap first version if the full receipt is too much: skip signing entirely. An *
 
 **Pattern.** beads' typed `discovered-from:` edge plus Backlog.md's four sibling lanes (`tasks/` / `drafts/` / `docs/` / `decisions/`). MiOS already has the decisions lane (ADRs) and the docs lane (`usr/share/doc/mios/`); it needs `drafts/`.
 
-**Concrete.** A finding is created as `usr/share/mios/tasks/drafts/<id>.md` with `status: draft` and `discovered_from: T-1018`. Drafts are invisible to `mios task ready`. Promotion (`mios task promote <id>`) moves the file into `tasks/` and is the only way a finding enters the work queue. Two consequences worth the trouble: the finding-to-fix ratio becomes a countable number (drafts opened vs promoted vs closed per session) that can itself be ratcheted, and the parent task closes on its own acceptance criteria without carrying the discovery.
+**Concrete.** A finding is created as `usr/share/mios/tasks/drafts/<id>.md` with `status: draft` and `discovered_from: task_962`. Drafts are invisible to `mios task ready`. Promotion (`mios task promote <id>`) moves the file into `tasks/` and is the only way a finding enters the work queue. Two consequences worth the trouble: the finding-to-fix ratio becomes a countable number (drafts opened vs promoted vs closed per session) that can itself be ratcheted, and the parent task closes on its own acceptance criteria without carrying the discovery.
 
 Also add the **admission budget** and the **expiry**: a draft with no promotion and no touch within N days moves to `archive/` with reason `stale`, mirroring `actions/stale`'s label-then-close-then-reset-on-activity timer, implemented as a drift check over `updated`. Archived, searchable, *never deleted* — the stale-bot backlash literature (pypa/virtualenv#1311, jestjs/jest#12496) is unanimous that closing an unresolved report "gives a false sense of buglessness".
 
@@ -257,10 +257,10 @@ Bind it mechanically rather than by convention: a `Stop` hook running `just drif
 │   ├── mios.toml                      CHANGE   + [tasks], [tasks.urgency], [closure], [checks],
 │   │                                           [migration.frozen], [laws].anti_dilution
 │   ├── tasks/
-│   │   ├── T-1018.md                  NEW      One file per task. Frontmatter = machine state,
+│   │   ├── task_962.md                  NEW      One file per task. Frontmatter = machine state,
 │   │   │                                       body = human rationale, read only once claimed.
 │   │   ├── drafts/D-0007.md           NEW      Findings lane. Invisible to the ready-set.
-│   │   ├── archive/2026-09-14-T-1002/ NEW      Dated archive on close/expire. Never deleted.
+│   │   ├── archive/2026-09-14-task_946/ NEW      Dated archive on close/expire. Never deleted.
 │   │   └── .migration-map.tsv         NEW      Append-only old-id → new-id, doubles as resume log.
 │   ├── templates/
 │   │   ├── task.md                    NEW      `[templates.task]` — `mios new task`.
@@ -285,7 +285,7 @@ Bind it mechanically rather than by convention: a `Stop` hook running `just drif
 
 ## The one-task selection problem
 
-**Format.** As Gap 1. One file per task under `usr/share/mios/tasks/`, filename `T-1018.md` — the id only, **never the title**, because a retitle would otherwise rename the file and break every path-based reference (this is the concrete reason to reject Backlog.md's `back-355 - Some-Title.md` scheme).
+**Format.** As Gap 1. One file per task under `usr/share/mios/tasks/`, filename `task_962.md` — the id only, **never the title**, because a retitle would otherwise rename the file and break every path-based reference (this is the concrete reason to reject Backlog.md's `back-355 - Some-Title.md` scheme).
 
 **How an agent picks exactly one task.** The session's first command is `mios task ready --json`. The ready-set is a graph query over frontmatter alone — never a document read:
 
@@ -296,20 +296,20 @@ ready = { t : t.status == "ready"
               ∧ (t.until == null ∨ t.until > today) }
 ```
 
-Ranked by an urgency polynomial whose coefficients live in `mios.toml [tasks.urgency]` (Law 7: "which task next" is operator-tunable, not agent judgement) — Taskwarrior's model, e.g. `priority = 12.0`, `blocking = 8.0`, `law_p0 = 15.0`, `age = 2.0`. Then `mios task claim T-1018` sets status + assignee in one operation and commits, so two concurrent sessions cannot take the same row. The agent reads exactly one body: the one it claimed.
+Ranked by an urgency polynomial whose coefficients live in `mios.toml [tasks.urgency]` (Law 7: "which task next" is operator-tunable, not agent judgement) — Taskwarrior's model, e.g. `priority = 12.0`, `blocking = 8.0`, `law_p0 = 15.0`, `age = 2.0`. Then `mios task claim task_962` sets status + assignee in one operation and commits, so two concurrent sessions cannot take the same row. The agent reads exactly one body: the one it claimed.
 
 `wait:` is the sharpest tool here and the most overlooked: a task that is real but not yet actionable is **invisible rather than deleted**, so the ready-set is small by construction and self-heals on a date. That is the direct answer to "the queue is too long to read."
 
 Two checkable invariants worth their own drift checks: **no forward references** (a task may only depend on ids lower than its own — Backlog.md's rule, and the cheapest guarantee that the dependency graph stays acyclic), and **one task = one context window = one reviewable diff**. MiOS's 209 gates make per-task PRs gate-heavy, so keep the existing `drift-gate` (fast, no image) / `build` (slow) split; the sizing rule only holds if the per-task gate run is fast.
 
-**How done-ness is proven.** As Gap 3. Not by the status field. `mios task close T-1018` refuses unless (a) a receipt exists for a commit that is an ancestor of HEAD, (b) nothing in `scope` changed since it, (c) `union(acceptance[].checks) ⊆ receipt.passedTests`, (d) `result == PASSED`. The status field becomes a *consequence* of the receipt, not a claim. `check_task_closure` re-verifies all of this from scratch at gate time, so a hand-flipped status is a red build.
+**How done-ness is proven.** As Gap 3. Not by the status field. `mios task close task_962` refuses unless (a) a receipt exists for a commit that is an ancestor of HEAD, (b) nothing in `scope` changed since it, (c) `union(acceptance[].checks) ⊆ receipt.passedTests`, (d) `result == PASSED`. The status field becomes a *consequence* of the receipt, not a claim. `check_task_closure` re-verifies all of this from scratch at gate time, so a hand-flipped status is a red build.
 
 **How findings are distinguished from fixes.** `discovered_from:` set ⇒ the record lives in `drafts/` and is invisible to `ready`. Promotion is an explicit, logged act. The count of open drafts, and the drafts-opened-vs-promoted ratio per session, are numbers — ratchet them. Nothing else in this corpus makes "findings outrunning fixes" measurable rather than felt.
 
 **How the two backlogs migrate losslessly.** Nine steps, in order. This is a long-horizon job and should be budgeted as one.
 
 1. **Dry run first.** `mios task import --dry-run` emits counts by source and verdict, creation order respecting `Dep:` edges, duplicate ids across the two files, unresolvable dependency targets, and every `T-\\d+` cited in ROADMAP/ADRs/commits with no matching row. "Anything that cannot map" is the single most valuable output of the whole migration — it *is* the real scope of the three-way disagreement. (Spring ran the real import first and generated "tens of millions of emails"; GitHub support had to intervene.)
-2. **Preserve ids.** `T-1018` becomes the new record's primary key. No alias table, no rewrite of existing citations. AGY rows carry `external_ids: ["agy-tasks:AGY-204"]` and, where merged, `merged_from: ["AGY-204"]`.
+2. **Preserve ids.** `task_962` becomes the new record's primary key. No alias table, no rewrite of existing citations. AGY rows carry `external_ids: ["agy-tasks:task_1255"]` and, where merged, `merged_from: ["task_1255"]`.
 3. **Map file as resume log.** `usr/share/mios/tasks/.migration-map.tsv`, append-only, written per batch so an interrupted 40k-line run resumes as a set-difference instead of duplicating.
 4. **Block, don't compare all pairs.** 3–10 blocking rules over *structured* keys, not titles: shared `ssot_keys` entry; shared law id + domain; shared referenced path; shared ADR id; normalised-title prefix. Count comparisons per rule *before* running. Title similarity alone will fail here — the two files were written by different authors, which is exactly the textually-dissimilar duplicate case where detection "performance is significantly poor" (92,854-report study, arXiv 2212.09976), and even a tuned domain system tops out around 87% precision.
 5. **Threshold, then human remainder.** Mozilla's BugBug shape: auto-apply above a confidence threshold recorded in `mios.toml` (start high, ~0.85); everything below lands in a review queue *sized and reported as a number*. Ship when the auto-tier precision clears the bar, not when the agent finishes reading.

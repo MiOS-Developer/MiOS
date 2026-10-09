@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Kdump status manager and automated zstd crash dump extractor (T-515).
+# AI-hint: Kdump status manager and automated zstd crash dump extractor (task_459).
 # AI-doc: usr/share/doc/mios/manual/ch02-architecture.md
 from __future__ import annotations
 

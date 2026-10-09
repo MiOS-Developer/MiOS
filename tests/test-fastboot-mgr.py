@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Systemd-Boot Fastboot & Emergency Rescue Fallback (T-699, T-700).
+# AI-hint: Automated unit test suite for Systemd-Boot Fastboot & Emergency Rescue Fallback (task_643, task_644).
 # AI-related: usr/libexec/mios/boot/fastboot_mgr.py, tests/test-fastboot-mgr.py
 """Automated unit test suite for MiOS Fastboot Manager."""
 

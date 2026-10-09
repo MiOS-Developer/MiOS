@@ -87,9 +87,9 @@ def main() -> int:
 
 
 # ==============================================================================
-# Consolidated from test_mios_letta.py (T-1092)
+# Consolidated from test_mios_letta.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone unit test suite for LettaMemoryClient and letta_dispatch_handler (T-077).
+# AI-hint: Standalone unit test suite for LettaMemoryClient and letta_dispatch_handler (task_55).
 
 import asyncio
 import json

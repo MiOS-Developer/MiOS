@@ -15,7 +15,7 @@ localsearch-3 fails the condition check, dbus returns
 ServiceUnknown, the GTK app null-derefs in its bookmark loader.
 
 Future: ideally the mios user gets UID 1000+ at install time
-(mios-bootstrap useradd -u 1000 per T-964 / AGY-2562) and this drop-in becomes
+(mios-bootstrap useradd -u 1000 per task_908 / task_3141) and this drop-in becomes
 unnecessary. Until then this is the live workaround.
 
-<!-- mios-src:7ad0dfb94d7e from usr/lib/systemd/user/localsearch-3.service.d/10-mios-allow-system-uid.conf:1-13 -->
+<!-- mios-src:16889981906b from usr/lib/systemd/user/localsearch-3.service.d/10-mios-allow-system-uid.conf:1-13 -->

@@ -1066,7 +1066,7 @@ check_var_closure() {
         return
     fi
     if [[ ! -f "$ledger" ]]; then
-        _violation "var-closure-baseline.tsv absent -- a gate with no ledger must never report green (T-1052)"
+        _violation "var-closure-baseline.tsv absent -- a gate with no ledger must never report green (task_989)"
         return
     fi
     local _vc_rc=0
@@ -1230,7 +1230,7 @@ check_resolver_twin_parity() {
     # [ports].agent_pipe exists so the host layer's endpoint can reference it.
     # With three plain literals this fixture could not fail on the one input
     # shape where the twins can disagree, and it ran green through the whole of
-    # 5efe9e70 -- the shell binding exporting ${MIOS_*} as literal text (T-1062).
+    # 5efe9e70 -- the shell binding exporting ${MIOS_*} as literal text (task_3360).
     printf '[ports]\nagent_pipe = 8700\n[ai]\nendpoint = "http://vendor:1000"\nmodel = "vendor-model"\nembed_model = "vendor-embed"\n' > "$fix/vendor.toml"
     printf '[ai]\nendpoint = "http://vendor-frag:1050"\n'                                                 > "$fix/vendor.d/50-frag.toml"
     # The cross-reference goes in the WINNING layer. Put on vendor it was
@@ -1801,7 +1801,7 @@ check_render_extension_coverage() {
     # A placeholder in a file type 34-render-quadlets.sh does not substitute
     # ships verbatim. mios-cockpit-link.socket carried
     # ListenStream=0.0.0.0:${MIOS_PORTS_COCKPIT_LINK} because `.socket` was
-    # missing from the renderer's find filter (T-1040).
+    # missing from the renderer's find filter (task_977).
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_render_extension_coverage could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -1844,10 +1844,23 @@ check_task_store() {
     echo "[98-drift-checks]   task list: $(printf '%s' "$out" | tail -1)"
 }
 
+check_task_ids() {
+    # ADR-0028: no purged task id ([tasks.store].purged) in any tracked path or file; a task is task_<number>.
+    local bin out rc=0
+    bin="$(native_bin mios-task)" || { _violation "mios-task is not built, so check_task_ids could not run -- build it: cd tools/native && cargo build -p mios-task"; return; }
+    out="$("$bin" check --tree --root "$ROOT" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "$out" | head -40 | sed 's/^/    /' >&2
+        _violation "a purged task id is back in the tracked tree -- name the task task_<number> (mios-task check --tree, ADR-0028)"
+        return
+    fi
+    echo "[98-drift-checks]   task ids: $(printf '%s' "$out" | tail -1)"
+}
+
 check_render_quadlets() {
     # Asserts every ${MIOS_*} in the render scope RESOLVES -- not that the tree
     # is already rendered. Stage 34 renders in place at bake; the tracked files
-    # are templates (T-1040).
+    # are templates (task_977).
     local bin
     if ! bin="$(native_bin mios-render-quadlets)"; then
         _violation "mios-render-quadlets is not built, so check_render_quadlets could not run -- build it: cd tools/native && cargo build -p mios-render-quadlets"
@@ -1863,7 +1876,7 @@ check_render_quadlets() {
 check_toolchain_pin() {
     # rust-toolchain.toml is generated, so the question is not "is a pin
     # present" but "is the committed pin still what the SSOT says". A hand
-    # edit here silently un-pins CI, which is the exact state T-1059 closed:
+    # edit here silently un-pins CI, which is the exact state task_996 closed:
     # clippy::for_kv_map fired under 1.98.0 and killed four pushes that were
     # clean under the 1.94.1 a contributor happened to have.
     local bin
@@ -1976,7 +1989,7 @@ check_target_languages() {
     fi
 }
 
-# Law 14 (TARGET-LANGUAGES) / T-1148: enforce static Linux linkage for native binaries
+# Law 14 (TARGET-LANGUAGES) / task_3441: enforce static Linux linkage for native binaries
 # --- static linkage gate: asserts absence of PT_INTERP and DT_NEEDED on Linux release binaries ---
 check_static_linkage() {
     local bin; bin="$(_gate_bin)" || bin=""
@@ -2003,7 +2016,7 @@ _run_bake_plan_check() {
     local mode="$1" out
     # Stage 85's candidates, in stage 85's order. CI builds debug only, so the
     # certified binary was one the bake can never run; debug is dropped because
-    # that tree is where the two sides diverge (T-1057).
+    # that tree is where the two sides diverge (task_994).
     local bin="" c
     if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
         bin="$(native_bin mios-bake-plan)" || {
@@ -3376,7 +3389,7 @@ check_pipeline_numbering() {
         is_bad=1
     fi
     if [[ "$is_bad" -ne 0 ]]; then
-        _violation "pipeline numbering drift (WS-NUMBER AGY-642; see reference/audit-numbering-unification.md)"
+        _violation "pipeline numbering drift (WS-NUMBER task_1577; see reference/audit-numbering-unification.md)"
     else
         echo "[98-drift-checks]   pipeline numbering: labels deleted, single progress count, dense SSOT check ordinals, stage index in sync"
     fi
@@ -3399,7 +3412,7 @@ check_value_aliases() {
     then
         echo "[98-drift-checks]   value-alias consistency verified"
     else
-        _violation "value-alias consistency drift (reference/value-aliases.tsv; WS-DEDUP AGY-858)"
+        _violation "value-alias consistency drift (reference/value-aliases.tsv; WS-DEDUP task_1591)"
     fi
 }
 
@@ -3462,7 +3475,7 @@ check_projection_coverage() {
 
 check_build_tool_dispatch() {
     # Dispatched by ABSOLUTE path, never `command -v`: this check exists
-    # because that lookup cannot resolve at bake time (T-1018), so using it
+    # because that lookup cannot resolve at bake time (task_962), so using it
     # here would make the check the first thing it detects.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
@@ -3472,7 +3485,7 @@ check_build_tool_dispatch() {
     if "$bin" build-tool-dispatch --root "$ROOT"; then
         echo "[98-drift-checks]   every bake-time tool-dispatch gate is on the shrink-only register"
     else
-        _violation "an automation stage gates its Rust path on \`command -v <binary>\` that cannot resolve at bake time, so the branch is dead -- give the binary a PATH location or dispatch by absolute path (T-1018)"
+        _violation "an automation stage gates its Rust path on \`command -v <binary>\` that cannot resolve at bake time, so the branch is dead -- give the binary a PATH location or dispatch by absolute path (task_962)"
     fi
 }
 
@@ -3485,7 +3498,7 @@ check_phase_registry() {
         return
     fi
     "$bin" phase-registry --root "$ROOT" || \
-        _violation "a phase script on disk is not in [build.phases].list, or the register describes it wrongly, so build.sh silently runs a pipeline short of a stage (T-1038)"
+        _violation "a phase script on disk is not in [build.phases].list, or the register describes it wrongly, so build.sh silently runs a pipeline short of a stage (task_975)"
 }
 
 # --- no miosd drift Check claims a verdict about a tree it never reads ---
@@ -3497,7 +3510,7 @@ check_drift_stubs() {
         return
     fi
     "$bin" drift-stubs --root "$ROOT" || \
-        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- the bake runs this suite at Containerfile:103 (T-1037)"
+        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- the bake runs this suite at Containerfile:103 (task_974)"
 }
 
 check_no_silent_tool_skips() {
@@ -3736,6 +3749,7 @@ main() {
     check_ratchet_direction
     check_size_ceiling
     check_task_store
+    check_task_ids
     check_toolchain_pin
     check_ai_config_projection
     check_artifact_prompt
@@ -4406,7 +4420,7 @@ check_protected_refs() {
     echo "[98-drift-checks] every bare \${MIOS_*} the Quadlet renderer leaves for systemd is supplied by the unit's own Environment= or by install.env"
     # The renderer decides WHETHER to protect a ref; nothing checked whether the
     # name can arrive. systemd expands an unset name to empty, so hollow
-    # protection reads exactly like working indirection (T-1064). Scope comes
+    # protection reads exactly like working indirection (task_3362). Scope comes
     # from [build.quadlet_render], the renderer's own table.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
@@ -4614,7 +4628,7 @@ check_fastfetch() {
 }
 
 check_no_inert_ssot_tables() {
-    # Ported to mios-gate (ADR-0021, Law 14); python twin deleted (T-1001).
+    # Ported to mios-gate (ADR-0021, Law 14); python twin deleted (task_945).
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_no_inert_ssot_tables could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"

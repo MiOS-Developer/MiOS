@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for PipeWire DMA-BUF WebRTC Streamer (T-625, T-626).
+# AI-hint: Automated unit test suite for PipeWire DMA-BUF WebRTC Streamer (task_569, task_570).
 # AI-related: usr/libexec/mios/ui/webrtc_stream.py, tests/test-webrtc-stream.py
 """Automated unit test suite for MiOS PipeWire DMA-BUF WebRTC Streamer."""
 

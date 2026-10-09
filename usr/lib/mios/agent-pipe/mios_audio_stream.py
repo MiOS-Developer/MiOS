@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).
+# AI-hint: Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).
 # AI-doc: usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md
 """Low-latency WebRTC streaming audio ingress and streaming Whisper speech-to-text bridge.
 
@@ -635,7 +635,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios_audio_stream.py",
-        description="Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).",
+        description="Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).",
         parents=[common_parser],
     )
 

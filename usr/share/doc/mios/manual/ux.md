@@ -16,18 +16,18 @@ Provides subtle, non-intrusive auditory cues on task transitions:
 
 ### MiOS Screen Lock Manager with Biometric & FIDO2...
 
-MiOS Screen Lock Manager with Biometric & FIDO2 Authentication (T-463).
+MiOS Screen Lock Manager with Biometric & FIDO2 Authentication (task_407).
 
 Manages biometric hardware sensor inspection (fingerprint fprintd, FIDO2/CTAP2 pam_u2f)
 and PAM configuration stack generation for swaylock, hyprlock, and gdm-password.
 Unconditionally preserves password authentication fallback (auth include system-auth)
 to guarantee the operator is never locked out.
 
-<!-- mios-src:ad6a5522c79d from usr/libexec/mios/ux/biometric_lock.py:5-12 -->
+<!-- mios-src:a37e9239ccae from usr/libexec/mios/ux/biometric_lock.py:5-12 -->
 
-### MiOS Btop System Monitor Theme Renderer (T-461). Renders...
+### MiOS Btop System Monitor Theme Renderer (task_405). Renders...
 
-MiOS Btop System Monitor Theme Renderer (T-461).
+MiOS Btop System Monitor Theme Renderer (task_405).
 
 Renders btop system monitor theme file (etc/btop/themes/mios.theme) directly
 from the mios.toml [colors] SSOT palette.
@@ -38,27 +38,27 @@ system color scheme with exact RGB hex mappings.
 
 ### MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer...
 
-MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (T-465).
+MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (task_409).
 
 Synchronizes clipboard buffers between host Wayland/X11 surfaces and guest virtual machines
 (via SPICE vdagent, socket bridge, or guest agent) with automated token redaction.
 Prevents accidental leakage of operator secrets (API keys, PAT tokens, private keys, AWS credentials)
 into untrusted guest virtual machines.
 
-<!-- mios-src:bb3f333e4c50 from usr/libexec/mios/ux/clipboard_sync.py:5-12 -->
+<!-- mios-src:230d1abd1446 from usr/libexec/mios/ux/clipboard_sync.py:5-12 -->
 
-### WS-DIFFCYCLE (T-468): Human-In-The-Loop Interactive Diff...
+### WS-DIFFCYCLE (task_412): Human-In-The-Loop Interactive Diff...
 
-WS-DIFFCYCLE (T-468): Human-In-The-Loop Interactive Diff Auditor.
+WS-DIFFCYCLE (task_412): Human-In-The-Loop Interactive Diff Auditor.
 Provides terminal CLI ('mios diff audit') and Quickshell ('DiffReview.qml') back-end
 for reviewing accrued boot-cycle diffs, approving safe/custom modifications,
 rejecting suspicious mutations, and staging approved diffs for autonomous OCI image baking.
 
-<!-- mios-src:5677a35ab0b4 from usr/libexec/mios/ux/diff_auditor.py:5-10 -->
+<!-- mios-src:17231f75610f from usr/libexec/mios/ux/diff_auditor.py:5-10 -->
 
-### MiOS Editor AI Configuration Projector & Generator (T-460)....
+### MiOS Editor AI Configuration Projector & Generator (task_404)....
 
-MiOS Editor AI Configuration Projector & Generator (T-460).
+MiOS Editor AI Configuration Projector & Generator (task_404).
 
 Automatically projects IDE configuration settings for VS Code, Cursor, and Continue:
 - Routes chat/orchestration requests to http://localhost:8700/v1 (agent-pipe / Hermes).
@@ -66,7 +66,7 @@ Automatically projects IDE configuration settings for VS Code, Cursor, and Conti
 - Preconfigures nomic-embed-text for local embeddings without cloud dependencies.
 - Guarantees 100% offline pair programming per Architectural Law 5 (UNIFIED-AI-REDIRECTS).
 
-<!-- mios-src:ddcf1787fba5 from usr/libexec/mios/ux/editor_config_gen.py:5-13 -->
+<!-- mios-src:d967224db2ea from usr/libexec/mios/ux/editor_config_gen.py:5-13 -->
 
 ### MiOS Fastfetch Configuration Generator. Projects host...
 
@@ -93,9 +93,9 @@ Guides the operator through initial system configuration upon first boot:
 
 <!-- mios-src:2bc0a4367ae8 from usr/libexec/mios/ux/firstboot_wizard.py:5-14 -->
 
-### MiOS Offline Procedural Focus Audio Synthesizer (T-464)....
+### MiOS Offline Procedural Focus Audio Synthesizer (task_408)....
 
-MiOS Offline Procedural Focus Audio Synthesizer (T-464).
+MiOS Offline Procedural Focus Audio Synthesizer (task_408).
 
 Procedurally synthesizes 100% offline ambient soundscapes for deep focus programming:
 - Pink noise (1/f spectral density via Voss-McCartney algorithm).
@@ -109,22 +109,22 @@ Procedurally synthesizes 100% offline ambient soundscapes for deep focus program
 Pure Python standard library implementation with zero cloud streaming or external dependencies.
 Streams directly to PipeWire (pw-play) or exports standard 16-bit PCM WAV files.
 
-<!-- mios-src:31f7cb1787dc from usr/libexec/mios/ux/focus_audio.py:5-19 -->
+<!-- mios-src:b46c26718678 from usr/libexec/mios/ux/focus_audio.py:5-19 -->
 
-### MiOS High-DPI Dynamic Font Size Scaler (T-462). Calculates...
+### MiOS High-DPI Dynamic Font Size Scaler (task_406). Calculates...
 
-MiOS High-DPI Dynamic Font Size Scaler (T-462).
+MiOS High-DPI Dynamic Font Size Scaler (task_406).
 
 Calculates and applies optimal typography scaling for High-DPI (4K/Retina) vs
 standard (1080p) displays across terminal and desktop surfaces.
 Avoids fractional Wayland compositor scaling that causes blurry XWayland rendering;
 instead projects crisp integer/point typography metrics into fontconfig and desktop settings.
 
-<!-- mios-src:f3b29f45795f from usr/libexec/mios/ux/font_scaler.py:5-12 -->
+<!-- mios-src:d9a9604f23d9 from usr/libexec/mios/ux/font_scaler.py:5-12 -->
 
 ### MiOS GNOME Shell Top-Panel Extension Manager & Projector...
 
-MiOS GNOME Shell Top-Panel Extension Manager & Projector (T-459).
+MiOS GNOME Shell Top-Panel Extension Manager & Projector (task_403).
 
 Generates, validates, and manages the native GNOME Shell extension package:
 `/usr/share/gnome-shell/extensions/mios-status@mios-dev.org/`
@@ -136,7 +136,7 @@ Provides:
 - stylesheet.css rendered dynamically with colors derived from mios.toml [colors] SSOT.
 - Quick-launch dropdown links to Open WebUI, Cockpit, and Code-Server.
 
-<!-- mios-src:f11f4cf7f2e7 from usr/libexec/mios/ux/gnome_extension.py:5-17 -->
+<!-- mios-src:ff702ee823c0 from usr/libexec/mios/ux/gnome_extension.py:5-17 -->
 
 ### MiOS Living Wallpaper Telemetry Modulator & Shader...
 

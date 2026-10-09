@@ -1,4 +1,4 @@
-# AI-hint: Enforces declarative nftables inter-container micro-segmentation and default-deny isolation policies at boot (T-479).
+# AI-hint: Enforces declarative nftables inter-container micro-segmentation and default-deny isolation policies at boot (task_423).
 # AI-doc: usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md
 [Unit]
 Description='MiOS': Declarative nftables container micro-segmentation firewall

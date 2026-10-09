@@ -26,32 +26,32 @@ Boot device penalty: score = 0, ineligible
 
 <!-- mios-src:bd6ce2ef7258 from usr/libexec/mios/deploy/baremetal_install.py:166-172 -->
 
-### WS-DIFFCYCLE (T-467): Boot Cycle Diff Accrual & Risk...
+### WS-DIFFCYCLE (task_411): Boot Cycle Diff Accrual & Risk...
 
-WS-DIFFCYCLE (T-467): Boot Cycle Diff Accrual & Risk Classifier.
+WS-DIFFCYCLE (task_411): Boot Cycle Diff Accrual & Risk Classifier.
 Ingests historical diff snapshots across power cycles, deduplicates entries,
 classifies file mutations into Safe vs High-Risk vs Review tiers,
 and atomically exports structured audit ledgers for operator inspection and image baking.
 
-<!-- mios-src:315d70b58baa from usr/libexec/mios/deploy/diff_accrual.py:5-10 -->
+<!-- mios-src:b4f7a62b9844 from usr/libexec/mios/deploy/diff_accrual.py:5-10 -->
 
-### WS-DIFFCYCLE (T-466): Pre-Poweroff Diff Snapshot Hook....
+### WS-DIFFCYCLE (task_410): Pre-Poweroff Diff Snapshot Hook....
 
-WS-DIFFCYCLE (T-466): Pre-Poweroff Diff Snapshot Hook.
+WS-DIFFCYCLE (task_410): Pre-Poweroff Diff Snapshot Hook.
 Captures all filesystem and configuration modifications across system root (.git == /)
 before shutdown, reboot, or kexec events with a strict sub-3s timeout SLA,
 redacting all sensitive tokens and writing immutable JSON records.
 
-<!-- mios-src:c7f9ae29c0fa from usr/libexec/mios/deploy/diff_snapshot.py:5-10 -->
+<!-- mios-src:0ba1d7f4b109 from usr/libexec/mios/deploy/diff_snapshot.py:5-10 -->
 
-### WS-DIFFCYCLE (T-469): Autonomous Background OCI Image...
+### WS-DIFFCYCLE (task_413): Autonomous Background OCI Image...
 
-WS-DIFFCYCLE (T-469): Autonomous Background OCI Image Synthesis Service.
+WS-DIFFCYCLE (task_413): Autonomous Background OCI Image Synthesis Service.
 Ingests operator-approved diffs from staged manifests, verifies against the quarantine ledger,
 creates structured git commits at repo root (.git == /), builds updated container layers
 inside podman-MiOS-DEV with low CPU/IO priority, and stages images via bootc switch --staged.
 
-<!-- mios-src:947ac60aad52 from usr/libexec/mios/deploy/image_bake.py:5-10 -->
+<!-- mios-src:a92d2540f8bc from usr/libexec/mios/deploy/image_bake.py:5-10 -->
 
 ### MiOS Bootable Live Hybrid ISO Generator. Produces hybrid...
 
@@ -86,26 +86,26 @@ and generates systemd-boot loader entries chainloading Windows Boot Manager.
 
 <!-- mios-src:bec987e028f7 from usr/libexec/mios/deploy/partition_dualboot.py:5-11 -->
 
-### quadlet_prewarm.py — T-749 WS-BUILD Build-time Quadlet...
+### quadlet_prewarm.py — task_693 WS-BUILD Build-time Quadlet...
 
-quadlet_prewarm.py — T-749 WS-BUILD
+quadlet_prewarm.py — task_693 WS-BUILD
 Build-time Quadlet container image pre-warmer and zstd chunked layer optimizer.
 
 Pulls and unpacks enabled Quadlet containers directly into /var/lib/containers/storage
 during build time, ensuring sub-100ms offline Day-0 container startup.
 
-<!-- mios-src:c6d5fb8bc641 from usr/libexec/mios/deploy/quadlet_prewarm.py:4-10 -->
+<!-- mios-src:4ec661685fc6 from usr/libexec/mios/deploy/quadlet_prewarm.py:4-10 -->
 
-### self_replicate.py — T-966 WS-HCI Autonomous...
+### self_replicate.py — task_910 WS-HCI Autonomous...
 
-self_replicate.py — T-966 WS-HCI
+self_replicate.py — task_910 WS-HCI
 Autonomous self-replication daemon and podman-MiOS-DEV build pipeline trigger.
 
 Inspects local git tree changes, triggers containerized bootc-image-builder (BIB)
 compilation in podman-MiOS-DEV, verifies cryptographic image digest signatures,
 and stages hot-swapped OCI artifacts for atomic bootc switch.
 
-<!-- mios-src:c1de9b3f8117 from usr/libexec/mios/deploy/self_replicate.py:5-12 -->
+<!-- mios-src:0c9d52dd3663 from usr/libexec/mios/deploy/self_replicate.py:5-12 -->
 
 ### MiOS Storage Health, Alignment & Integrity Verification...
 

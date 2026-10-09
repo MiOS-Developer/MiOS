@@ -8,11 +8,11 @@ positive + negative controls -- that row is the definition of done.
 
 | Task | What | Why you |
 |---|---|---|
-| T-1132 | Hermetic Windows wallpaper cross-build inside MiOS-DEV | needs a real Windows/WSL host |
-| T-1188 | Remove audited dead PowerShell in BOTH repos (mios.git + mios-bootstrap.git, Law 15) and settle the mios-node Rust parity stubs | real pwsh + Windows to run the Pester suites |
-| T-1190 | agent-pipe: one lock order for the priority gate and endpoint semaphores | isolated to agent-pipe |
-| T-1191 | agent-pipe: inject live callables into vram_scheduler.configure | isolated; you can exercise a live lane locally |
-| T-1189 | Drop stale AI-functions lines from the harvested manual | small, isolated |
+| task_3425 | Hermetic Windows wallpaper cross-build inside MiOS-DEV | needs a real Windows/WSL host |
+| task_3481 | Remove audited dead PowerShell in BOTH repos (mios.git + mios-bootstrap.git, Law 15) and settle the mios-node Rust parity stubs | real pwsh + Windows to run the Pester suites |
+| task_3483 | agent-pipe: one lock order for the priority gate and endpoint semaphores | isolated to agent-pipe |
+| task_3484 | agent-pipe: inject live callables into vram_scheduler.configure | isolated; you can exercise a live lane locally |
+| task_3482 | Drop stale AI-functions lines from the harvested manual | small, isolated |
 
 ## Do not touch (owned by running cloud lanes)
 

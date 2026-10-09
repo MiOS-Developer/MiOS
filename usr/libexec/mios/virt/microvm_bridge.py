@@ -3,7 +3,7 @@
 # AI-related: tests/test-virt.py
 # AI-functions: MicroVMConfig, MicroVMResult, VSOCKBridge, CloudHypervisorOrchestrator, main
 """
-WS-VFIO (T-569): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Agent Tool Bridge.
+WS-VFIO (task_513): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Agent Tool Bridge.
 
 Spawns hardware-isolated microVM sandboxes in <50ms for untrusted agent tool execution:
 - Launches cloud-hypervisor with direct kernel boot (--kernel, --initramfs, DAX pmem).
@@ -358,7 +358,7 @@ class CloudHypervisorOrchestrator:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="WS-VFIO (T-569): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Bridge"
+        description="WS-VFIO (task_513): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Bridge"
     )
     parser.add_argument("--exec", action="store_true", help="Execute command inside ephemeral microVM")
     parser.add_argument("--command", type=str, help="Shell command / tool payload to execute")

@@ -3,7 +3,7 @@
 # AI-related: usr/share/doc/mios/adr/0018-shutdown-diff-snapshotting-and-boot-cycle-accrual.md, usr/share/doc/mios/manual/ch63-diff-snapshotting-boot-accrual-and-hitl-rollin.md, tests/test-diff-snapshot.py
 # AI-functions: DiffSnapshotEngine, redact_secrets, classify_risk, atomic_write_json, main
 """
-WS-DIFFCYCLE (T-466): Pre-Poweroff Diff Snapshot Hook.
+WS-DIFFCYCLE (task_410): Pre-Poweroff Diff Snapshot Hook.
 Captures all filesystem and configuration modifications across system root (.git == /)
 before shutdown, reboot, or kexec events with a strict sub-3s timeout SLA,
 redacting all sensitive tokens and writing immutable JSON records.
@@ -264,7 +264,7 @@ class DiffSnapshotEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS WS-DIFFCYCLE (T-466) Pre-Poweroff Diff Snapshot Hook",
+        description="MiOS WS-DIFFCYCLE (task_410) Pre-Poweroff Diff Snapshot Hook",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

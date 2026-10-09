@@ -2,7 +2,7 @@
 // AI-related: TASKS.md, tasks.jsonl, /usr/lib/mios/schemas/task-record.schema.json, /usr/share/doc/mios/adr/0028-one-canonical-task-list.md
 // AI-functions: parse_block, validate, apply, Effective, override_value, render, empty_block, line
 
-use crate::record::{canonical_status, Schema, STATUSES};
+use crate::record::{canonical_status, Index, Schema, STATUSES};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -11,7 +11,7 @@ pub const BANNER: &str = "# TASKS";
 pub const BEGIN: &str = "<!-- overrides:begin -->";
 pub const END: &str = "<!-- overrides:end -->";
 /// Record fields an override may not set: identity and history.
-pub const FIXED: [&str; 2] = ["id", "provenance"];
+pub const FIXED: [&str; 4] = ["id", "object", "number", "provenance"];
 
 pub struct OverrideLine {
     /// 1-based line number in TASKS.md.
@@ -86,23 +86,34 @@ pub fn parse_block(doc: &str, md: &str) -> Result<Block, Vec<String>> {
     Ok(Block { inner, lines: out })
 }
 
-/// The value an override sets, as the record would hold it: a status in either dialect becomes the canonical word.
-pub fn override_value(field: &str, v: &Value) -> Value {
-    if field == "status" {
-        if let Some(c) = v.as_str().and_then(canonical_status) {
-            return Value::String(c.to_string());
-        }
+/// The value an override sets, as the record would hold it: a status in either dialect becomes the canonical word,
+/// and a task named in depends_on or epic by any spelling the index knows (typed task_<number> once migrated)
+/// becomes the record's id.
+pub fn override_value(field: &str, v: &Value, idx: &Index) -> Value {
+    let canon = |s: &str| -> Value {
+        Value::String(
+            idx.find(s)
+                .map(|i| idx.ids[i].clone())
+                .unwrap_or_else(|| s.to_string()),
+        )
+    };
+    match (field, v) {
+        ("status", Value::String(w)) => match canonical_status(w) {
+            Some(c) => Value::String(c.to_string()),
+            None => v.clone(),
+        },
+        ("epic", Value::String(e)) if !e.is_empty() => canon(e),
+        ("depends_on", Value::Array(a)) => Value::Array(
+            a.iter()
+                .map(|x| x.as_str().map(canon).unwrap_or_else(|| x.clone()))
+                .collect(),
+        ),
+        _ => v.clone(),
     }
-    v.clone()
 }
 
 /// Every refusal for the block's lines against the records; each names "<doc>:<line>".
-pub fn validate(
-    doc: &str,
-    schema: &Schema,
-    records: &HashMap<String, Value>,
-    lines: &[OverrideLine],
-) -> Vec<String> {
+pub fn validate(doc: &str, schema: &Schema, idx: &Index, lines: &[OverrideLine]) -> Vec<String> {
     let mut errs = Vec::new();
     let props = schema
         .record
@@ -120,7 +131,7 @@ pub fn validate(
             errs.push(format!("{at}: override needs an \"id\""));
             continue;
         };
-        if !records.contains_key(id) {
+        if idx.find(id).is_none() {
             errs.push(format!("{at}: override for unknown task {id:?}"));
             continue;
         }
@@ -140,14 +151,19 @@ pub fn validate(
                 continue;
             };
             let mut e = Vec::new();
-            schema.conforms(&override_value(k, x), node, &format!("{id}.{k}"), &mut e);
+            schema.conforms(
+                &override_value(k, x, idx),
+                node,
+                &format!("{id}.{k}"),
+                &mut e,
+            );
             for x in e {
                 errs.push(format!("{at}: {x}"));
             }
             if k == "depends_on" {
                 for d in x.as_array().cloned().unwrap_or_default() {
                     let d = d.as_str().unwrap_or("");
-                    if !records.contains_key(d) {
+                    if idx.find(d).is_none() {
                         errs.push(format!("{at}: {id}: depends_on unknown {d}"));
                     }
                 }
@@ -163,31 +179,27 @@ pub struct Effective {
     pub overridden: HashMap<String, BTreeSet<String>>,
 }
 
-pub fn apply(records: &[Value], lines: &[OverrideLine]) -> Effective {
-    let mut idx: HashMap<String, usize> = HashMap::new();
-    for (i, r) in records.iter().enumerate() {
-        if let Some(id) = r.get("id").and_then(|x| x.as_str()) {
-            idx.entry(id.to_string()).or_insert(i);
-        }
-    }
+pub fn apply(records: &[Value], lines: &[OverrideLine], idx: &Index) -> Effective {
     let mut recs = records.to_vec();
     let mut overridden: HashMap<String, BTreeSet<String>> = HashMap::new();
     for l in lines {
         let Some(o) = l.value.as_ref().and_then(|v| v.as_object()) else {
             continue;
         };
-        let id = o.get("id").and_then(|x| x.as_str()).unwrap_or("");
-        let Some(&i) = idx.get(id) else { continue };
+        let key = o.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        let Some(i) = idx.find(key).filter(|i| *i < recs.len()) else {
+            continue;
+        };
         for (k, x) in o {
             if FIXED.contains(&k.as_str()) {
                 continue;
             }
             overridden
-                .entry(id.to_string())
+                .entry(idx.ids[i].clone())
                 .or_default()
                 .insert(k.clone());
             if let Some(m) = recs[i].as_object_mut() {
-                m.insert(k.clone(), override_value(k, x));
+                m.insert(k.clone(), override_value(k, x, idx));
             }
         }
     }
@@ -202,11 +214,13 @@ pub fn apply(records: &[Value], lines: &[OverrideLine]) -> Effective {
 /// A group heading that sorts named groups before the unnamed one.
 type SortKey = (u8, String);
 
-/// The block a first render writes: one comment saying what a line looks like, no override.
-pub fn empty_block() -> String {
-    "<!-- One JSON object per line: {\"id\": \"T-001\", \"status\": \"incomplete\", \"owner\": \"operator\"}. \
+/// The block a first render writes: one comment saying what a line looks like, no override. `example` is how
+/// the first task is named (its typed id once the list is migrated).
+pub fn empty_block(example: &str) -> String {
+    format!(
+        "<!-- One JSON object per line: {{\"id\": \"{example}\", \"status\": \"incomplete\", \"owner\": \"operator\"}}. \
 Its fields are applied on top of the record whenever a task tool reads the list. -->\n"
-        .to_string()
+    )
 }
 
 fn s<'a>(r: &'a Value, k: &str) -> &'a str {
@@ -218,7 +232,7 @@ fn one_line(t: &str) -> String {
 }
 
 /// TASKS.md for `eff`, with `inner` (the bytes between the override markers) copied verbatim.
-pub fn render(store: &str, eff: &Effective, inner: &str) -> String {
+pub fn render(store: &str, eff: &Effective, inner: &str, idx: &Index) -> String {
     let mut o = String::new();
     o.push_str(BANNER);
     o.push_str("\n\n");
@@ -276,7 +290,7 @@ into `{store}`. Fields shown with `[override]` below come from this block.\n\n"
         let ek = if ep.is_empty() {
             (0, String::new())
         } else {
-            (1, ep.to_string())
+            (1, idx.label(ep))
         };
         groups.entry(wk).or_default().entry(ek).or_default().push(r);
     }
@@ -289,7 +303,7 @@ into `{store}`. Fields shown with `[override]` below come from this block.\n\n"
                 o.push_str(&format!("\n### Epic {ep}\n\n"));
             }
             for r in recs {
-                o.push_str(&line(r, eff));
+                o.push_str(&line(r, eff, idx));
                 o.push('\n');
             }
         }
@@ -297,7 +311,7 @@ into `{store}`. Fields shown with `[override]` below come from this block.\n\n"
     o
 }
 
-fn line(r: &Value, eff: &Effective) -> String {
+fn line(r: &Value, eff: &Effective, idx: &Index) -> String {
     let id = s(r, "id");
     let ov = eff.overridden.get(id);
     let tag = |f: &str| {
@@ -323,10 +337,15 @@ fn line(r: &Value, eff: &Effective) -> String {
     if let Some(z) = r.get("size").and_then(|x| x.as_str()) {
         parts.push(format!("size {z}{}", tag("size")));
     }
-    let deps: Vec<&str> = r
+    let deps: Vec<String> = r
         .get("depends_on")
         .and_then(|d| d.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|d| idx.label(d))
+                .collect()
+        })
         .unwrap_or_default();
     if !deps.is_empty() || !tag("depends_on").is_empty() {
         parts.push(format!(
@@ -347,7 +366,8 @@ fn line(r: &Value, eff: &Effective) -> String {
         }
     }
     format!(
-        "- `{id}` {} -- {}",
+        "- `{}` {} -- {}",
+        idx.label(id),
         one_line(s(r, "title")),
         parts.join(" · ")
     )

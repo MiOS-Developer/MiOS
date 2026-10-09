@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Ephemeral HMAC Macaroon minter and attenuated caveat verifier in agent-pipe (T-723, T-724).
+# AI-hint: Ephemeral HMAC Macaroon minter and attenuated caveat verifier in agent-pipe (task_667, task_668).
 # AI-related: usr/lib/mios/agent-pipe/macaroon_auth.py, tests/test-macaroon-auth.py, usr/lib/mios/agent-pipe/server.py
 """Ephemeral HMAC Macaroon minter and attenuated caveat verifier for MiOS agent-pipe.
 

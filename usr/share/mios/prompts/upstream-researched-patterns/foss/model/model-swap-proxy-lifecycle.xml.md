@@ -2,14 +2,14 @@
      queueing and 429 behavior during swaps, child stop and failure handling,
      residency rules, health endpoints, and whether saved inference slots are
      durable across restarts and swaps.
-     AI-related: usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/mios/mios.toml [image.sidecars] [ports], usr/share/containers/systemd/mios-llm-light.container, TASKS.jsonl T-1122, .prompts/README.md -->
+     AI-related: usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/mios/mios.toml [image.sidecars] [ports], usr/share/containers/systemd/mios-llm-light.container, TASKS.jsonl task_3415, .prompts/README.md -->
 <context>
 The primary inference lane `mios-llm-light` (port key `llm_light`) runs the
 FOSS llama-swap proxy, which starts one llama.cpp `llama-server` child per
 requested model. The tree records behavior it attributes to the proxy: a 429
 when a request needs a model swapped out while it is busy, a 429 when one
 child's slots are exhausted, residency managed by the proxy's "own LRU", and
-per-conversation KV paging to disk through `--slot-save-path`. Task T-1122
+per-conversation KV paging to disk through `--slot-save-path`. Task task_3415
 (open) asks MiOS to capture queueing, health, TTL unload and failure recovery
 and to remove any fixed kill interval or durable-KV-cache claim the upstream
 configuration does not support. The image floats a moving tag, so the
@@ -45,7 +45,7 @@ Raised by, at these revisions (re-read before relying on them):
   lines 18-26 (proxy `Exec`, health check on `/v1/models`).
 - MiOS `usr/share/doc/mios/concepts/architecture.md` at `af6de6a`: line 164
   ("per-conversation KV-paging to disk").
-- MiOS `TASKS.jsonl` at `af6de6a`: line 3414 (T-1122, open).
+- MiOS `TASKS.jsonl` at `af6de6a`: line 3414 (task_3415, open).
 </provenance>
 
 <inputs>

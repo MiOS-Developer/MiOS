@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: SSOT var-closure fitness function (drift-check 37). Proves R ⊆ E -- referenced MIOS_* variables are emitted by SSOT (AGY-1574).
+# AI-hint: SSOT var-closure fitness function (drift-check 37). Proves R ⊆ E -- referenced MIOS_* variables are emitted by SSOT (task_2215).
 # AI-doc: usr/share/doc/mios/manual/lib.md
 """MIOS_* consumer-closure gate: assert referenced ⊆ emitted."""
 from __future__ import annotations
@@ -121,7 +121,7 @@ def referenced_set(emitted: set[str] | None = None) -> dict[str, str]:
     """Every MIOS_* a non-emitter references that the resolver does not emit.
 
     EMITTER_SUFFIXES alone excludes the emitters; the path-prefix list that used
-    to sit beside it excluded the CONSUMERS and took this set to 0 (T-1052).
+    to sit beside it excluded the CONSUMERS and took this set to 0 (task_989).
     """
     refs: dict[str, str] = {}
     known_emitted = emitted or set()

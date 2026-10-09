@@ -1,4 +1,4 @@
-# AI-hint: Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug udev rules (T-495).
+# AI-hint: Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug udev rules (task_439).
 # AI-doc: usr/share/doc/mios/manual/ch14-hardware-and-drivers.md
 
 # Automatically authorize Thunderbolt/USB4 external enclosures

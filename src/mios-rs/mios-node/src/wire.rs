@@ -1,4 +1,4 @@
-// AI-hint: mios-node wire layer: the 16-byte-header binary frame protocol, the zero-copy frame buffer pool and the async Tokio TCP frame reader/writer and network actor (T-393).
+// AI-hint: mios-node wire layer: the 16-byte-header binary frame protocol, the zero-copy frame buffer pool and the async Tokio TCP frame reader/writer and network actor (task_337).
 // AI-related: usr/libexec/mios/node/buffer_pool.py, tests/test-node.py, src/mios-rs/mios-node/src/lib.rs, tests/test-node-mesh.py
 
 pub mod protocol {

@@ -286,7 +286,7 @@ def _check_scheduler_wiring(server):
     check("priority gate released every permit", gate.stats()["in_flight"] == 0,
           str(gate.stats()))
 
-    # T-1191: vram_scheduler dependency injection checks
+    # task_3484: vram_scheduler dependency injection checks
     vram_deps = [
         ("_over_blade_ceiling", True),
         ("_over_global_ceiling", True),
@@ -307,7 +307,7 @@ def _check_scheduler_wiring(server):
         check(f"vram_scheduler.{dep_name} injected and {'callable' if must_be_callable else 'non-None'}",
               ok, f"got {val!r}")
 
-    # T-1191: scheduler.vram configuration checks
+    # task_3484: scheduler.vram configuration checks
     from mios_pipe.scheduler import vram as sv
     check("scheduler.vram received host_stats via configure", sv._host_stats is server._host_stats_cached)
     check("scheduler.vram received endpoint_key via configure", sv._endpoint_key is server._endpoint_key)
@@ -320,7 +320,7 @@ def _check_scheduler_wiring(server):
     check("scheduler.vram received multiblade_enable via configure", sv.MULTIBLADE_ENABLE == server.MULTIBLADE_ENABLE)
     check("scheduler.vram received vram_reclaim_idle via configure", sv.VRAM_RECLAIM_IDLE == vs.VRAM_RECLAIM_IDLE)
 
-    # T-1191: vram_scheduler.configure fail-loud checks on missing/None dependencies
+    # task_3484: vram_scheduler.configure fail-loud checks on missing/None dependencies
     try:
         vs.configure(_over_global_ceiling=None)
         check("vram_scheduler.configure fails loudly on None callable", False, "no TypeError raised")
@@ -333,7 +333,7 @@ def _check_scheduler_wiring(server):
     except TypeError:
         check("vram_scheduler.configure fails loudly on None value", True)
 
-    # T-1191: test admission ceiling backpressure with admit_enable=True
+    # task_3484: test admission ceiling backpressure with admit_enable=True
     import time
     orig_admit_enable = vs.ADMIT_ENABLE
     orig_admit_max_wait = vs.ADMIT_MAX_WAIT

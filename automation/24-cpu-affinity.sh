@@ -19,7 +19,7 @@ command -v mios_warn &>/dev/null || mios_warn() { echo "[24-cpu-affinity] WARN: 
 
 TARGET_ROOT="${CPU_AFFINITY_TARGET_ROOT:-}"  # test seam: write into a fixture root
 
-mios_log "Starting CPU affinity and core scheduling configuration (T-858)"
+mios_log "Starting CPU affinity and core scheduling configuration (task_802)"
 
 # ---------------------------------------------------------------------------
 # 1. Audit Kernel Core Scheduling Configuration (CONFIG_SCHED_CORE)
@@ -119,7 +119,7 @@ mkdir -p "${SYSTEM_SLICE_D}" "${USER_SLICE_D}" "${SUBAGENT_SLICE_D}"
 
 # system.slice: High CPU priority for core system daemons
 cat > "${SYSTEM_SLICE_D}/20-cpu-affinity.conf" <<'EOF'
-# AI-hint: Prioritizes system infrastructure and critical background daemons over untrusted workloads (T-858).
+# AI-hint: Prioritizes system infrastructure and critical background daemons over untrusted workloads (task_802).
 # AI-related: automation/24-cpu-affinity.sh, usr/libexec/mios/mios-core-sched
 [Slice]
 CPUWeight=200
@@ -130,7 +130,7 @@ chmod 0644 "${SYSTEM_SLICE_D}/20-cpu-affinity.conf"
 
 # user.slice: Standard baseline CPU priority for interactive desktop applications
 cat > "${USER_SLICE_D}/20-cpu-affinity.conf" <<'EOF'
-# AI-hint: Interactive user session CPU weighting for responsive desktop rendering (T-858).
+# AI-hint: Interactive user session CPU weighting for responsive desktop rendering (task_802).
 # AI-related: automation/24-cpu-affinity.sh
 [Slice]
 CPUWeight=100
@@ -141,7 +141,7 @@ chmod 0644 "${USER_SLICE_D}/20-cpu-affinity.conf"
 
 # subagent.slice: Constrained CPU weight, quota, and process limits for untrusted subagents
 cat > "${SUBAGENT_SLICE_D}/20-cpu-affinity.conf" <<'EOF'
-# AI-hint: Constrains untrusted subagent and sandbox processes to prevent CPU starvation and hardware SMT abuse (T-858).
+# AI-hint: Constrains untrusted subagent and sandbox processes to prevent CPU starvation and hardware SMT abuse (task_802).
 # AI-related: usr/lib/systemd/system/subagent.slice, usr/libexec/mios/mios-core-sched
 [Slice]
 CPUWeight=50
@@ -156,7 +156,7 @@ chmod 0644 "${SUBAGENT_SLICE_D}/20-cpu-affinity.conf"
 SUBAGENT_SLICE="${TARGET_ROOT}/usr/lib/systemd/system/subagent.slice"
 if [ ! -f "${SUBAGENT_SLICE}" ]; then
     cat > "${SUBAGENT_SLICE}" <<'EOF'
-# AI-hint: MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy and CPU constraints (T-820, T-858).
+# AI-hint: MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy and CPU constraints (task_764, task_802).
 # AI-related: automation/24-cpu-affinity.sh, usr/libexec/mios/mios-core-sched
 [Unit]
 Description=MiOS Subagent Worker Slice

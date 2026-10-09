@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: bash Shell entrypoint for the A2A federation loopback smoke test (roadmap B5 / T-066).
+# AI-hint: bash Shell entrypoint for the A2A federation loopback smoke test (roadmap B5 / task_68).
 # AI-doc: usr/share/doc/mios/manual/tests.md
 set -euo pipefail
 

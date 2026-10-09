@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Entry point for mios-microvm virtualization manager (T-806).
+# AI-hint: Entry point for mios-microvm virtualization manager (task_750).
 # AI-doc: usr/share/doc/mios/manual/ch19-microvm-squashfs-nbd-overlay.md
 set -euo pipefail
 

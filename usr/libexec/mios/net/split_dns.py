@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Split-DNS systemd-resolved configurator for .mios mesh domains and strict DoT (T-697, T-698).
+# AI-hint: Split-DNS systemd-resolved configurator for .mios mesh domains and strict DoT (task_641, task_642).
 # AI-related: usr/libexec/mios/net/split_dns.py, tests/test-split-dns.py
 """Split-DNS systemd-resolved configurator for .mios mesh domains and strict DoT for MiOS.
 

@@ -1,9 +1,9 @@
-<!-- AI-hint: Chapter 84: ATSPI Accessibility Tree Sensitive Widget Coordinate Detector and Wayland Frame Blur Filter (T-539, AGY-2137). Details ATSPI role discovery, Wayland frame capture integration, bounding box coordinate mapping, blur filter algorithms, and privacy guarantees. -->
+<!-- AI-hint: Chapter 84: ATSPI Accessibility Tree Sensitive Widget Coordinate Detector and Wayland Frame Blur Filter (task_483, task_2716). Details ATSPI role discovery, Wayland frame capture integration, bounding box coordinate mapping, blur filter algorithms, and privacy guarantees. -->
 # Chapter 84: ATSPI Accessibility Tree Sensitive Widget Coordinate Detector and Wayland Frame Blur Filter
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 > System Reference: [`mios_vision_redact.py`](file:///usr/lib/mios/agent-pipe/mios_vision_redact.py), [`test-vision-redact.py`](file:///tests/test-vision-redact.py)
-> Task Reference: `T-539` / `AGY-2137`
+> Task Reference: `task_483` / `task_2716`
 
 This chapter details the architecture, accessibility tree inspection mechanics, coordinate transformation algorithms, and image redaction filters implemented in `mios_vision_redact.py`. This subsystem protects user privacy and credential boundaries by detecting on-screen password fields, secret tokens, and sensitive input widgets via the Linux Assistive Technology Service Provider Interface (AT-SPI) and applying mathematical blur filters to captured Wayland frame buffers before multimodal AI models or computer-use agents can ingest visual data.
 

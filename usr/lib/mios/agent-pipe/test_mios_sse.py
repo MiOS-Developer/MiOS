@@ -116,7 +116,7 @@ def main():
 
 
 # ==============================================================================
-# mios_pipe.streaming via configure() fakes; T-1092 had folded only a placeholder here.
+# mios_pipe.streaming via configure() fakes; task_1006 had folded only a placeholder here.
 # ==============================================================================
 from mios_pipe import streaming as _streaming
 

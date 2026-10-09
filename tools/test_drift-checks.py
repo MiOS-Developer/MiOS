@@ -501,7 +501,7 @@ class TestMonitorRegistry(unittest.TestCase):
             self.assertFalse(self.ns["load_ssot_colors"]()[1], theme)
 
 
-# The T-996 pair: a priority scale and a ceiling that must equal its register's
+# The task_940 pair: a priority scale and a ceiling that must equal its register's
 # size, both 9 once -- two facts that agreed by accident.
 T996_ENV = {"MIOS_SCHED_URGENCY_HIGH": "9", "MIOS_SSOT_TABLES_MAX_UNCONSUMED": "9"}
 T996_SOURCES = {"MIOS_SCHED_URGENCY_HIGH": "sched.urgency_high",
@@ -528,7 +528,7 @@ def _value_fixture(tmp, emitted, sources):
 
 
 class TestValueDupCoincidence(unittest.TestCase):
-    """check_no_duplicate_value_key over declarations, and T-998's one exit."""
+    """check_no_duplicate_value_key over declarations, and task_942's one exit."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-value-dup-")
@@ -637,7 +637,7 @@ class TestValueAliasRegistry(unittest.TestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("MUST be equal", r.stderr)
 
-    # T-998. keep-distinct means two declarations whose values may coincide;
+    # task_942. keep-distinct means two declarations whose values may coincide;
     # it used to mean "must differ", which left a real coincidence no exit.
     def test_the_t996_coincidence_passes_as_two_declarations(self):
         r = self._run(T996_ENV, [T996_ROW], T996_SOURCES)
@@ -723,6 +723,84 @@ class TestValueAliasRegistry(unittest.TestCase):
         # The names the pgvector Quadlet, agent-pipe pg.py and mios-pg-query read.
         for name in ("MIOS_PGVECTOR_HNSW_ITERATIVE_SCAN", "MIOS_PGVECTOR_POOL_ENABLE", "MIOS_PGVECTOR_RLS_ENABLE"):
             self.assertIn(name + " is registered", r.stderr)
+
+
+# ADR-0030's budget must fail closed. peer-lane planted a missing and a string
+# target_tracked_files and a string and a negative target_files against af498021,
+# and all four passed, because the comparison simply skipped what it could not read.
+_BUDGET_TOML = """\
+[build.ratchet]
+max_phase_scripts = 10
+
+[legibility]
+max_tracked_files = 2
+max_tracked_mb = 1
+max_shell_lines = 100
+max_ps_lines = 100
+max_libexec_verbs = 10
+max_tooling_python_lines = 100
+
+[legibility.file_budget]
+target_tracked_files = 5
+order = ["ssot", "misc"]
+
+[legibility.file_budget.domains.ssot]
+max_files = 1
+target_files = 1
+globs = ["usr/share/mios/*"]
+
+[legibility.file_budget.domains.misc]
+max_files = 1
+target_files = 1
+globs = ["*"]
+"""
+
+
+class TestFileBudgetFailsClosed(unittest.TestCase):
+    def _run(self, toml):
+        d = tempfile.mkdtemp(prefix="budget-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "usr/share/mios"))
+        with open(os.path.join(d, "usr/share/mios/mios.toml"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(toml)
+        with open(os.path.join(d, "README"), "w") as fh:
+            fh.write("x\n")
+        subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
+        return subprocess.run([sys.executable, _MOD_PATH, "legibility-ratchet"], capture_output=True,
+                              text=True, env={**os.environ, "MIOS_DRIFT_ROOT": d})
+
+    def test_a_well_formed_budget_passes(self):
+        r = self._run(_BUDGET_TOML)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+
+    def test_malformed_budgets_fail_naming_the_fault(self):
+        ssot = "[legibility.file_budget.domains.ssot]\nmax_files = 1\ntarget_files = 1\n"
+        cases = {
+            "target_tracked_files missing": (_BUDGET_TOML.replace("target_tracked_files = 5\n", ""),
+                                             "target_tracked_files must be a positive integer"),
+            "target_tracked_files a string": (_BUDGET_TOML.replace("target_tracked_files = 5", 'target_tracked_files = "5"'),
+                                              "target_tracked_files must be a positive integer"),
+            "target_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", 'target_files = "1"')),
+                                      "domains.ssot].target_files must be a non-negative integer"),
+            "target_files negative": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", "target_files = -1")),
+                                      "domains.ssot].target_files must be a non-negative integer"),
+            "max_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", 'max_files = "1"')),
+                                   "domains.ssot].max_files must be a non-negative integer"),
+            "globs empty": (_BUDGET_TOML.replace('globs = ["usr/share/mios/*"]', "globs = []"),
+                            "domains.ssot].globs must be a non-empty list"),
+            "budget table absent": (_BUDGET_TOML.split("[legibility.file_budget]")[0],
+                                    "[legibility.file_budget] is absent"),
+            "targets over the cap": (_BUDGET_TOML.replace("target_tracked_files = 5", "target_tracked_files = 1"),
+                                     "domain targets sum to 2, over target_tracked_files = 1"),
+            "a domain over its floor": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", "max_files = 0")),
+                                        "files.ssot = 1, over the floor of 0"),
+        }
+        for name, (toml, expect) in cases.items():
+            with self.subTest(name):
+                r = self._run(toml)
+                self.assertEqual(1, r.returncode, "%s passed:\n%s%s" % (name, r.stdout, r.stderr))
+                self.assertIn(expect, r.stdout)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Per-app Flatpak state subvolume snapshotter and atomic rollback manager (T-645, T-646).
+# AI-hint: Per-app Flatpak state subvolume snapshotter and atomic rollback manager (task_589, task_590).
 # AI-related: usr/libexec/mios/app/snapshot.py, tests/test-app-snapshot.py
 """Per-app Flatpak state subvolume snapshotter and atomic rollback manager for MiOS.
 

@@ -2,7 +2,7 @@
 # AI-functions: __init__, peer_router, announce_vip, trigger_bfd_failover, BGPPeer, CiliumBGPManager
 
 """
-cilium_bgp.py — T-759 WS-NODE
+cilium_bgp.py — task_703 WS-NODE
 Cilium native BGP peering and dual-stack ECMP LoadBalancer ingress manager.
 
 Configures Cilium BGP Control Plane, peers eBPF datapaths to upstream ToR routers,

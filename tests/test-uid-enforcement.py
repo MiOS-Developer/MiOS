@@ -4,7 +4,7 @@
 
 """
 Unit Test Suite for MiOS UID 1000 Enforcement & Systemd User Session Boundary.
-Implements T-965 / AGY-2563.
+Implements task_909 / task_3142.
 """
 
 import os

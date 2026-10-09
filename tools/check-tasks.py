@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-# AI-hint: Task-plane drift gates in one module: the retired TASKS.md table-vs-section parity, AGY task schema, and AGY id/dependency resolution, over the frozen lists tasks.jsonl keeps (ADR-0028).
+# AI-hint: Task-plane drift gates in one module: the retired TASKS.md table-vs-section parity, AGY task schema, and task id/dependency resolution, over the frozen lists tasks.jsonl keeps (ADR-0028).
 # AI-doc: usr/share/doc/mios/manual/tools.md
 # AI-functions: main, status_parity_main, schema_main, agy_main
-"""Task-plane drift gates. One module, one subcommand per gate."""
+"""Task-plane drift gates. One module, one subcommand per gate.
 
+The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
+"""
+
+import json
 import os
 import re
 import sys
@@ -12,37 +16,59 @@ import sys
 TASKS = "TASKS.md"
 AGY_TASKS = "AGY-TASKS.md"
 PLACEHOLDER = "?"
+# A typed task id; the number is the task's creation-order number in tasks.jsonl.
+TASK = r"task_([1-9][0-9]*)"
+
+
+def store_path(root: str):
+    try:
+        with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
+            return os.path.join(root, tomllib.load(fh)["tasks"]["store"]["path"])
+    except (FileNotFoundError, KeyError):
+        return None
 
 
 def list_text(root: str, name: str):
     """A retired task list rebuilt from its frozen slices in tasks.jsonl (ADR-0028), else the file itself."""
-    import json
-    try:
-        with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
-            store = os.path.join(root, tomllib.load(fh)["tasks"]["store"]["path"])
+    parts = []
+    store = store_path(root)
+    if store and os.path.isfile(store):
         with open(store, encoding="utf-8") as fh:
             parts = sorted((s["offset"], s["text"]) for rec in map(json.loads, fh)
                            for s in (rec.get("provenance") or {}).get("sources") or [] if s["file"] == "MiOS:" + name)
-    except FileNotFoundError:  # a fixture root with no SSOT or no store: read the file itself
-        parts = []
     if parts:
         return "".join(t for _, t in parts)
     path = os.path.join(root, name)
     return open(path, encoding="utf-8", errors="replace").read() if os.path.isfile(path) else None
+
+
+def task_numbers(root: str):
+    """Every task number tasks.jsonl holds, or None for a fixture root without one."""
+    store = store_path(root)
+    if not store or not os.path.isfile(store):
+        return None
+    with open(store, encoding="utf-8") as fh:
+        return {r["number"] for r in map(json.loads, fh) if isinstance(r.get("number"), int)}
+
+
 KNOWN = {
     "done", "done-by-code", "completed", "retired",
     "planned", "planned/unverified", "in-progress", "pending",
     "partial", "open", "blocked", "built-gated-off",
 }
 
-_SECTION_RE = re.compile(r"^## (T-\d+)\s*(?:--|:)\s*(.*?)(?=^## |\Z)", re.M | re.S)
+_SECTION_RE = re.compile(r"^## (" + TASK + r")\s*(?:--|:)\s*(.*?)(?=^## |\Z)", re.M | re.S)
 _STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*(?:\||$)", re.M)
-_ROW_RE = re.compile(r"^\|\s*(T-\d+)\s*\|\s*P\d\s*\|\s*([^|]+?)\s*\|")
+_ROW_RE = re.compile(r"^\|\s*(" + TASK + r")\s*\|\s*P\d\s*\|\s*([^|]+?)\s*\|")
+# A heading of the frozen AGY-TASKS.md: '## task_12 -- title' (a range banner is one task too).
+_HEAD_RE = re.compile(r"^#{2,3} " + TASK + r"(?=\s)", re.M)
+
 
 def status_parity_head_token(status: str) -> str:
     """The comparable head of a free-prose status: everything before the first
     ` -- ` continuation or ` (` qualifier."""
     return re.split(r"\s+--\s+|\s*\(", status, maxsplit=1)[0].strip().rstrip(".,;:").lower()
+
 
 def status_parity_detail_statuses(text: str) -> dict:
     out = {}
@@ -52,34 +78,22 @@ def status_parity_detail_statuses(text: str) -> dict:
             out[m.group(1)] = sm.group(1).strip()
     return out
 
+
 def status_parity_table_rows(text: str) -> dict:
     out = {}
     for line in text.splitlines():
         m = _ROW_RE.match(line)
         if m:
-            out[m.group(1)] = m.group(2).strip()
+            out[m.group(1)] = m.group(3).strip()
     return out
 
-def status_parity_collect_agy_task_ids(root: str) -> set[int]:
-    content = list_text(root, AGY_TASKS)
-    if content is None:
-        return set()
 
-    header_pattern = re.compile(r"^(#+)\s*AGY-(\d+)(?:\.\.(?:AGY-)?(\d+))?(?:\s+.*)?$", re.MULTILINE)
-    task_ids = set()
-    for line in content.splitlines():
-        m = header_pattern.match(line)
-        if m:
-            start_str, end_str = m.group(2), m.group(3)
-            if end_str:
-                for tid in range(int(start_str), int(end_str) + 1):
-                    task_ids.add(tid)
-            else:
-                task_ids.add(int(start_str))
-    return task_ids
+def heading_numbers(text) -> set:
+    return {int(m.group(1)) for m in _HEAD_RE.finditer(text or "")}
+
 
 def status_parity_main() -> int:
-    """Gate: TASKS.md summary table agrees with each section and AGY refs resolve."""
+    """Gate: TASKS.md summary table agrees with each section, and every task it names exists."""
     root = os.environ.get("MIOS_DRIFT_ROOT", os.environ.get("MIOS_TOML_ROOT", "."))
     text = list_text(root, TASKS)
     if text is None:
@@ -113,15 +127,14 @@ def status_parity_main() -> int:
     for tid in sorted(set(detail) - set(rows)):
         problems.append(f"{tid}: has a task section but no row in the summary table")
 
-    # Cross-file validation with AGY-TASKS.md
-    agy_ids = status_parity_collect_agy_task_ids(root)
-    if agy_ids:
-        # Find all AGY-xxx references in TASKS.md
-        referenced_agy = re.findall(r"\bAGY-(\d+)\b", text)
-        for ref in referenced_agy:
-            ref_id = int(ref)
-            if ref_id not in agy_ids:
-                problems.append(f"VIOLATION: TASKS.md references AGY-{ref_id} which does not exist in AGY-TASKS.md")
+    # Every task TASKS.md names exists: in tasks.jsonl, or (a fixture root) as a section, row or AGY heading.
+    known = task_numbers(root)
+    if known is None:
+        known = {int(t[5:]) for t in set(rows) | set(detail)} | heading_numbers(list_text(root, AGY_TASKS))
+    refs = [int(n) for n in re.findall(r"(?<![A-Za-z0-9_])" + TASK + r"(?![0-9])", text)]
+    for ref in sorted(set(refs)):
+        if ref not in known:
+            problems.append(f"VIOLATION: TASKS.md references task_{ref}, which names no task")
 
     if problems:
         for p in problems:
@@ -130,8 +143,8 @@ def status_parity_main() -> int:
 
     closed = {"done", "done-by-code", "completed", "retired"}
     open_n = sum(1 for s in rows.values() if s not in closed)
-    print(f"TASKS.md summary table matches every task section and AGY-TASKS.md references resolve "
-          f"(tasks={len(rows)} sections={len(detail)} open={open_n} agy_validations={len(agy_ids)})")
+    print(f"TASKS.md summary table matches every task section and every task it names exists "
+          f"(tasks={len(rows)} sections={len(detail)} open={open_n} references={len(refs)})")
     return 0
 
 
@@ -140,23 +153,24 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
-# The id below which the schema is not yet demanded. It lives in the SSOT as a
-# shrink-only ratchet, not as a constant here, so retro-fitting a batch of older
-# tasks is a measurable step rather than an edit nobody notices. A task marked
-# DONE is exempt whatever its id: it has already been done, so a Verify line
-# added now would be one nobody checked.
-SCHEMA_FROM_DEFAULT = 1607
 DONE_MARKER = "[DONE]"
 
 REQUIRED = ("Goal", "What+How", "Where", "Verify", "Do NOT", "Done When", "Why", "Dep")
-HEAD_RE = re.compile(r"^#{2,3} AGY-(\d+)(?:\.\.(\d+))? ", re.M)
+
+
+def typed_number(value, key: str) -> int:
+    m = re.fullmatch(TASK, str(value))
+    if not m:
+        raise ValueError(f"[tasks].{key} = {value!r} is not a typed task id (task_<number>)")
+    return int(m.group(1))
+
 
 def schema_main() -> int:
-    """Gate: every AGY task carries the full schema; a missing Verify is a task anyone can call done."""
+    """Gate: every AGY task from the schema floor on carries the full schema; a missing Verify is a task anyone can call done."""
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.getcwd()
-    text = list_text(root, "AGY-TASKS.md")
+    text = list_text(root, AGY_TASKS)
     if text is None:
-        print(f"AGY-TASKS.md unreadable: not on disk and not in tasks.jsonl")
+        print(f"{AGY_TASKS} unreadable: not on disk and not in tasks.jsonl")
         return 1
 
     try:
@@ -164,122 +178,97 @@ def schema_main() -> int:
             tasks_tbl = (tomllib.load(fh).get("tasks") or {})
     except OSError:
         tasks_tbl = {}
-    schema_from = tasks_tbl.get("schema_from")
-    if schema_from is None:
+    if tasks_tbl.get("schema_from") is None:
         print("mios.toml has no [tasks].schema_from -- without it the schema"
               " floor is a constant nobody can lower on purpose")
         return 1
-    schema_from = int(schema_from)
+    try:
+        schema_from = typed_number(tasks_tbl["schema_from"], "schema_from")
+        # Tasks created after the floor that the list files before it, so numbered below it.
+        also = {typed_number(x, "schema_also") for x in tasks_tbl.get("schema_also") or []}
+    except ValueError as e:
+        print(e)
+        return 1
 
-    blocks = re.split(r"(?=^#{2,3} AGY-\d+(?:\.\.\d+)? )", text, flags=re.M)
-    ids, covered, viol = [], set(), []
+    def demanded(tid: int, first_line: str) -> bool:
+        return (tid >= schema_from or tid in also) and DONE_MARKER not in first_line
+
+    blocks = re.split(r"(?=^#{2,3} task_[1-9][0-9]*\s)", text, flags=re.M)
+    ids, viol = [], []
     for b in blocks:
-        m = HEAD_RE.match(b)
+        m = _HEAD_RE.match(b)
         if not m:
             continue
         tid = int(m.group(1))
-        # `## AGY-106..122 -- Campaign banner` covers every id in the range, so
-        # a Dep naming one of them names a task that exists -- but the banner
-        # plus its individual children is the NORMAL shape, not a collision, so
-        # only individual headings count toward the duplicate ceiling.
-        if m.group(2):
-            covered.update(range(tid, int(m.group(2)) + 1))
-            continue
         ids.append(tid)
-        if tid < schema_from or DONE_MARKER in b.split(chr(10))[0]:
+        if not demanded(tid, b.split(chr(10))[0]):
             continue
         for field in REQUIRED:
             if f"**{field}:**" not in b:
-                viol.append(f"AGY-{tid}: missing **{field}:**")
+                viol.append(f"task_{tid}: missing **{field}:**")
 
-    known = set(ids) | covered
+    known = task_numbers(root)
+    if known is None:
+        known = set(ids)
     for b in blocks:
-        m = HEAD_RE.match(b)
-        if not m or m.group(2) or int(m.group(1)) < schema_from:
+        m = _HEAD_RE.match(b)
+        if not m or not demanded(int(m.group(1)), b.split(chr(10))[0]):
             continue
         dep = re.search(r"^\*\*Dep:\*\*\s*(.+)$", b, re.M)
         if not dep:
             continue
-        for ref in re.findall(r"AGY-(\d+)", dep.group(1)):
+        for ref in re.findall(TASK, dep.group(1)):
             if int(ref) not in known:
-                viol.append(f"AGY-{m.group(1)}: **Dep:** names AGY-{ref}, which does not exist")
+                viol.append(f"task_{m.group(1)}: **Dep:** names task_{ref}, which does not exist")
 
     dupes = sorted({i for i in ids if ids.count(i) > 1})
-    try:
-        with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
-            ceil = ((tomllib.load(fh).get("tasks") or {}).get("max_duplicate_ids"))
-    except OSError:
-        ceil = None
+    ceil = tasks_tbl.get("max_duplicate_ids")
     if ceil is None:
         viol.append("mios.toml has no [tasks].max_duplicate_ids -- absent is a broken"
                     " ceiling, not an open one")
     elif len(dupes) > int(ceil):
         viol.append(f"duplicate task ids {len(dupes)} > ceiling {ceil}: "
-                    f"{['AGY-%d' % d for d in dupes[:8]]}")
+                    f"{['task_%d' % d for d in dupes[:8]]}")
 
     print("\n".join(viol))
     if not viol:
-        n = sum(1 for i in ids if i >= schema_from)
+        n = sum(1 for i in ids if i >= schema_from or i in also)
         print(f"[check-task-schema] {n} task(s) carry the full schema; "
               f"{len(dupes)}/{ceil} duplicate ids", file=sys.stderr)
     return 1 if viol else 0
 
 
-AGY_TASKS_FILE = "AGY-TASKS.md"
+def agy_extract_dep_ids(dep_str: str) -> list:
+    """Every task a Dep line names; a span 'task_a..task_b' names its two ends."""
+    return [int(n) for n in re.findall(TASK, dep_str)]
 
-def agy_extract_dep_ids(dep_str: str) -> list[int]:
-    """Extract all AGY task IDs referenced in a Dep line, including ranges."""
-    ids = []
-    def expand_range(match):
-        start = int(match.group(1))
-        end = int(match.group(2))
-        return " ".join(f"AGY-{i}" for i in range(start, end + 1))
-
-    normalized = re.sub(r"AGY-(\d+)\.\.(?:AGY-)?(\d+)", expand_range, dep_str)
-
-    for m in re.finditer(r"\bAGY-(\d+)\b", normalized):
-        ids.append(int(m.group(1)))
-    return ids
 
 def agy_main() -> int:
-    """Gate: AGY task IDs are unique and dependency links resolve."""
+    """Gate: AGY-TASKS.md headings are unique and every Dep names a task that exists."""
     root = os.environ.get("MIOS_DRIFT_ROOT", os.environ.get("MIOS_TOML_ROOT", "."))
-    content = list_text(root, AGY_TASKS_FILE)
+    content = list_text(root, AGY_TASKS)
     if content is None:
-        print(f"VIOLATION: {AGY_TASKS_FILE} not found under {root}, on disk or in tasks.jsonl")
+        print(f"VIOLATION: {AGY_TASKS} not found under {root}, on disk or in tasks.jsonl")
         return 1
 
-    # Pattern for AGY headers: single task '## AGY-123' or range '## AGY-123..259' / '## AGY-123..AGY-259'
-    header_pattern = re.compile(r"^(#+)\s*AGY-(\d+)(?:\.\.(?:AGY-)?(\d+))?(?:\s+.*)?$", re.MULTILINE)
-
+    header_pattern = re.compile(r"^#+\s*" + TASK + r"(?:\s+.*)?$")
     task_occurrences = {}
-    task_ids = set()
-
     for line_idx, line in enumerate(content.splitlines(), 1):
         m = header_pattern.match(line)
         if m:
-            start_str, end_str = m.group(2), m.group(3)
-            if end_str:
-                start_id, end_id = int(start_str), int(end_str)
-                for tid in range(start_id, end_id + 1):
-                    task_ids.add(tid)
-            else:
-                tid = int(start_str)
-                task_ids.add(tid)
-                if tid not in task_occurrences:
-                    task_occurrences[tid] = []
-                task_occurrences[tid].append((line_idx, line))
+            task_occurrences.setdefault(int(m.group(1)), []).append(line_idx)
 
     problems = []
+    for tid, lines in task_occurrences.items():
+        if len(lines) > 1:
+            locs = ", ".join(f"line {n}" for n in lines)
+            problems.append(f"VIOLATION: task_{tid} is defined multiple times ({locs})")
 
-    # Check for duplicate standalone task IDs
-    for tid, occs in task_occurrences.items():
-        if len(occs) > 1:
-            locs = ", ".join(f"line {l}" for l, _ in occs)
-            problems.append(f"VIOLATION: AGY-{tid} is defined multiple times ({locs})")
-
-    # Check for dangling Dep references
+    known = task_numbers(root)
+    if known is None:
+        known = set(task_occurrences)
     dep_pattern = re.compile(r"\*\*Dep:\*\*\s*(.*)", re.IGNORECASE)
+    refs = 0
     for line_idx, line in enumerate(content.splitlines(), 1):
         m = dep_pattern.search(line)
         if not m:
@@ -287,12 +276,11 @@ def agy_main() -> int:
         dep_str = m.group(1).strip()
         if dep_str.lower() in ("none", "n/a", ""):
             continue
-
-        ref_ids = agy_extract_dep_ids(dep_str)
-        for ref_id in ref_ids:
-            if ref_id not in task_ids:
+        for ref_id in agy_extract_dep_ids(dep_str):
+            refs += 1
+            if ref_id not in known:
                 problems.append(
-                    f"VIOLATION: line {line_idx} has dangling dependency reference AGY-{ref_id}"
+                    f"VIOLATION: line {line_idx} has dangling dependency reference task_{ref_id}"
                 )
 
     if problems:
@@ -300,10 +288,9 @@ def agy_main() -> int:
             print(p)
         return 1
 
-    print(
-        f"AGY task ID parity check passed (tasks={len(task_ids)}, standalone_ids={len(task_occurrences)})"
-    )
+    print(f"AGY task id parity check passed (headings={len(task_occurrences)}, dep_references={refs})")
     return 0
+
 
 _GATES = {"status-parity": status_parity_main, "schema": schema_main, "agy": agy_main}
 

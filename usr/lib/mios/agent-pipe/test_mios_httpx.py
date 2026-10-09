@@ -24,12 +24,12 @@ class TestMiOSAsyncHTTPTransport(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_httpclient.py (T-1092)
+# Consolidated from test_mios_httpclient.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for mios_pipe.kernel.httpclient -- the ONE shared outbound AsyncClient and the T-226 b...
+# AI-hint: Standalone assert-script unit test for mios_pipe.kernel.httpclient -- the ONE shared outbound AsyncClient and the task_206 b...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 
-"""Unit tests for the shared http client + the T-226 coalescing chokepoint."""
+"""Unit tests for the shared http client + the task_206 coalescing chokepoint."""
 
 import asyncio
 import os

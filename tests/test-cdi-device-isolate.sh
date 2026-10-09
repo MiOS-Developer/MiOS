@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated test suite for rootless container GPU device isolation and cgroup v2 eBPF device filter (T-526, AGY-2124).
+# AI-hint: Automated test suite for rootless container GPU device isolation and cgroup v2 eBPF device filter (task_470, task_2703).
 # AI-doc: usr/share/doc/mios/manual/ch20-container-device-interface-plumbing.md
 set -euo pipefail
 
@@ -35,7 +35,7 @@ show_help() {
 Usage: tests/test-cdi-device-isolate.sh [OPTIONS]
 
 Automated test suite for rootless container GPU device isolation and cgroup v2
-eBPF device filter (T-526, AGY-2124).
+eBPF device filter (task_470, task_2703).
 
 Options:
   -v, --verbose    Enable verbose diagnostic output

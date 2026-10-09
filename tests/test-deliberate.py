@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-341: mios_deliberate — DCI structured deliberation.
+# AI-hint: Tests for task_285: mios_deliberate — DCI structured deliberation.
 # AI-related: mios_deliberate
 # AI-functions: test_decision_packet_has_required_fields, test_packet_json_serializable, test_consensus_reached
 
-"""Tests for T-341: mios_deliberate — DCI structured deliberation."""
+"""Tests for task_285: mios_deliberate — DCI structured deliberation."""
 import sys
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
 from mios_deliberate import DCISession, DecisionPacket, Act, Archetype
@@ -38,4 +38,4 @@ if __name__ == "__main__":
     test_decision_packet_has_required_fields()
     test_packet_json_serializable()
     test_consensus_reached()
-    print("All T-341 tests passed.")
+    print("All task_285 tests passed.")

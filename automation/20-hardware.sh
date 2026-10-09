@@ -68,7 +68,7 @@ fi
 
 mios_ok "GPU stack: Mesa + AMD ROCm + Intel installed; NVIDIA kmod present=$NVIDIA_PRESENT"
 
-# Folded from 24-gpu-pv-shim.sh (T-1161): Hyper-V GPU-PV (dxgkrnl) support
+# Folded from 24-gpu-pv-shim.sh (task_3454): Hyper-V GPU-PV (dxgkrnl) support
 mios_log "GPU-PV shim dirs"
 mkdir -p /usr/lib/wsl/lib
 mkdir -p /usr/lib/wsl/drivers

@@ -4,7 +4,7 @@
 # AI-doc: usr/share/doc/mios/manual/node.md
 """
 WS-NODE: Edge Micro-Mesh 16-Byte Fixed Binary Wire Protocol & Async TCP Stream Engine.
-Provides byte-for-byte wire compatibility with the Rust mios-node runtime (T-386 / AGY-1984).
+Provides byte-for-byte wire compatibility with the Rust mios-node runtime (task_330 / task_2563).
 
 Header Format (16 Bytes Fixed, Big-Endian Network Byte Order):
 +-------------------------------------------------------------------+

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Integration test suite for zero-downtime socket handoff and daemon swapper (T-542, AGY-2140).
+# AI-hint: Integration test suite for zero-downtime socket handoff and daemon swapper (task_486, task_2719).
 # AI-doc: usr/share/doc/mios/manual/ch87-socket-activation-handoff.md
 set -euo pipefail
 
@@ -7,7 +7,7 @@ ROOT="${MIOS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SWAP_BIN="${ROOT}/usr/libexec/mios/mios-socket-swap"
 SOCKET_UNIT="${ROOT}/usr/lib/systemd/system/mios-agent-pipe.socket"
 
-echo "=== MiOS Socket Handoff Swapper Test Suite (T-542, AGY-2140) ==="
+echo "=== MiOS Socket Handoff Swapper Test Suite (task_486, task_2719) ==="
 
 # Test 1: CLI and help verification
 echo "--- Test 1: CLI and help verification ---"

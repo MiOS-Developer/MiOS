@@ -2,7 +2,7 @@
 # AI-functions: __init__, open_stream, close_stream, push_token, consume_chunk, iter_sse, TokenDelta, SSEStreamer
 
 """
-sse_streamer.py — T-747 WS-AI
+sse_streamer.py — task_691 WS-AI
 Zero-copy SSE/WebSocket token streamer and TCP_NODELAY socket flusher.
 
 Streams chunked OpenAI-compatible token deltas over SSE and WebSockets with

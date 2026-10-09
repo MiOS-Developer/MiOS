@@ -1,6 +1,6 @@
-# AI-hint: OAI-04/T-225 run-template REPLAY matcher -- the reuse half of the WS-6 capture path.
+# AI-hint: OAI-04/task_205 run-template REPLAY matcher -- the reuse half of the WS-6 capture path.
 # AI-doc: usr/share/doc/mios/manual/routing.md
-"""Intent-keyed run-template matching (T-225)."""
+"""Intent-keyed run-template matching (task_205)."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 # AI-functions: __init__, compute_payload_bytes, register_split, simulate_forward_pass, PipelineNode, DistributedTensorPipeline
 
 """
-tensor_pipeline.py — T-974 WS-AI
+tensor_pipeline.py — task_918 WS-AI
 Distributed pipeline tensor dispatcher with dynamic RPC worker layer partitioning.
 
 Calculates activation tensor network payloads, splits 80-layer models (Llama-3.1-70B)

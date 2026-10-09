@@ -113,7 +113,7 @@ import mios_reputation   # noqa: E402  -- #54 zero-trust peer reputation
 import mios_quota   # noqa: E402  -- WS-6 per-user quota / rate-limit (inert until configured)
 import mios_capreg   # noqa: E402  -- WS-2 unified RBAC-filtered capability manifest
 import mios_gateway_queue
-from mios_psi import get_psi_monitor, PSIMonitor  # noqa: E402  -- T-485 Linux PSI telemetry & load shedding
+from mios_psi import get_psi_monitor, PSIMonitor  # noqa: E402  -- task_429 Linux PSI telemetry & load shedding
 _PSI_MONITOR: Optional[PSIMonitor] = None
 _PSI_MONITOR_TASK: Optional[asyncio.Task] = None
 _PSI_THROTTLED: bool = False
@@ -1115,7 +1115,7 @@ async def lora_list():
 
 @app.post("/v1/ast/diff")
 async def ast_diff_endpoint(request: Request):
-    """Compute AST structural diff across Python, Rust, Go, TypeScript, C (T-780)."""
+    """Compute AST structural diff across Python, Rust, Go, TypeScript, C (task_724)."""
     try:
         body = await request.json()
         orig = body.get("original", "")
@@ -1131,7 +1131,7 @@ async def ast_diff_endpoint(request: Request):
 
 @app.post("/v1/ast/review")
 async def ast_review_endpoint(request: Request):
-    """2-peer review merge gating on structural diffs (T-780)."""
+    """2-peer review merge gating on structural diffs (task_724)."""
     try:
         body = await request.json()
         action = body.get("action", "create")
@@ -1161,7 +1161,7 @@ async def ast_review_endpoint(request: Request):
         log.warning("AST review request failed: %s", e)
         return JSONResponse(status_code=400, content={"error": "Invalid AST review request"})
 
-from mios_pipe.kernel.httpclient import (   # noqa: E402  -- WS-A6/T-226 chokepoint
+from mios_pipe.kernel.httpclient import (   # noqa: E402  -- WS-A6/task_206 chokepoint
     _batch_request_hook, _get_client, configure as _configure_httpclient)
 
 import mios_audit   # noqa: E402
@@ -1254,7 +1254,7 @@ _orig_over_global_ceiling = _over_global_ceiling
 _orig_host_stats_cached = _host_stats_cached
 
 def _over_global_ceiling(load_ceil: Optional[float] = None) -> bool:
-    """T-485: True when host load/mem is over ceiling OR Linux PSI critical pressure is reached."""
+    """task_429: True when host load/mem is over ceiling OR Linux PSI critical pressure is reached."""
     try:
         mon = get_psi_monitor()
         if mon and mon.is_critical():
@@ -1264,7 +1264,7 @@ def _over_global_ceiling(load_ceil: Optional[float] = None) -> bool:
     return _orig_over_global_ceiling(load_ceil)
 
 def _host_stats_cached(ttl: float = 1.0) -> dict:
-    """T-485: Injects Linux PSI telemetry into host stats."""
+    """task_429: Injects Linux PSI telemetry into host stats."""
     stats = _orig_host_stats_cached(ttl)
     try:
         mon = get_psi_monitor()
@@ -2276,7 +2276,7 @@ from mios_reflect import (   # noqa: E402
     _recent_tool_history,
     _judge_answer_satisfied,
 )
-from mios_persona import (   # noqa: E402  -- T-384 Dynamic Agent Persona Synthesis
+from mios_persona import (   # noqa: E402  -- task_328 Dynamic Agent Persona Synthesis
     DomainCategory,
     PersonaClassifier,
     PersonaSynthesizer,
@@ -2284,7 +2284,7 @@ from mios_persona import (   # noqa: E402  -- T-384 Dynamic Agent Persona Synthe
     synthesize_persona_prompt,
     get_domain_guidelines,
 )
-from mios_deliberate import (   # noqa: E402  -- T-385 Bounded Reflection Loop Convergence
+from mios_deliberate import (   # noqa: E402  -- task_329 Bounded Reflection Loop Convergence
     DeliberationConfig,
     DeliberationState,
     DeliberationTurn,
@@ -2876,7 +2876,7 @@ sys.modules["mios_planner"].configure(
     agent_registry=_AGENT_REGISTRY,
     short_prompt_chars=(_toml_section("planner") or {}).get("short_prompt_chars"),
     short_prompt_words=(_toml_section("planner") or {}).get("short_prompt_words"),
-    replay_templates=load_run_templates)   # T-225 intent-keyed replay source
+    replay_templates=load_run_templates)   # task_205 intent-keyed replay source
 from mios_planner import (  # noqa: E402,F401
     _PLANNER_SYSTEM, _planner_system_for, _action_domain_verbs)
 
@@ -4374,7 +4374,7 @@ _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()
 
 @app.middleware("http")
 async def _psi_shed_load_mw(request: Request, call_next):
-    """T-485: Gracefully throttle requests with HTTP 429/503 during critical Linux PSI pressure."""
+    """task_429: Gracefully throttle requests with HTTP 429/503 during critical Linux PSI pressure."""
     try:
         mon = get_psi_monitor()
         if mon and mon.is_critical():
@@ -4629,7 +4629,7 @@ globals()["cluster_health_logic"] = sys.modules["mios_clusterhealth"].cluster_he
 globals()["scheduler_state_logic"] = sys.modules["mios_clusterhealth"].scheduler_state_logic
 globals()["health_logic"] = sys.modules["mios_clusterhealth"].health_logic
 
-# T-485: Surface Linux PSI metrics in /v1/cluster/health and provide system metrics endpoint
+# task_429: Surface Linux PSI metrics in /v1/cluster/health and provide system metrics endpoint
 _orig_cluster_health_logic = sys.modules["mios_clusterhealth"].cluster_health_logic
 async def _psi_cluster_health_logic() -> JSONResponse:
     resp = await _orig_cluster_health_logic()
@@ -4664,7 +4664,7 @@ globals()["health_logic"] = _psi_health_logic
 
 @app.get("/v1/system/psi")
 async def v1_system_psi() -> JSONResponse:
-    """T-485: Linux PSI telemetry, resource stall averages, and load-shedding status."""
+    """task_429: Linux PSI telemetry, resource stall averages, and load-shedding status."""
     return JSONResponse(get_psi_monitor().get_metrics_dict())
 
 globals()["portal_stats_logic"] = sys.modules["mios_portal"].portal_stats_logic

@@ -137,7 +137,7 @@ fn diff_tree(committed: &Path, rendered: &Path) -> Vec<String> {
 
 // regen_and_compare_file (python3-interpreted regen for .py generators) was
 // deleted with the last of its consumers: the names-registry Python generator
-// was strangler-deleted (AGY-1073) and its miosd caller moved to
+// was strangler-deleted (task_1713) and its miosd caller moved to
 // regen_and_compare_native below. Every surviving drift regen check invokes a
 // native binary.
 

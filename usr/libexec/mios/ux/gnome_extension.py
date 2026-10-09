@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, usr/share/mios/mios.toml
 # AI-functions: GnomeExtensionManager, main
 """
-MiOS GNOME Shell Top-Panel Extension Manager & Projector (T-459).
+MiOS GNOME Shell Top-Panel Extension Manager & Projector (task_403).
 
 Generates, validates, and manages the native GNOME Shell extension package:
 `/usr/share/gnome-shell/extensions/mios-status@mios-dev.org/`
@@ -477,7 +477,7 @@ export default class MiOSStatusExtension extends Extension {{
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS GNOME Shell Agent Status Extension Manager (T-459)"
+        description="MiOS GNOME Shell Agent Status Extension Manager (task_403)"
     )
     parser.add_argument("--generate", action="store_true", help="Generate extension package files")
     parser.add_argument("--validate", action="store_true", help="Validate extension package")

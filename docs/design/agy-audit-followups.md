@@ -1,20 +1,20 @@
-<!-- AI-hint: AGY Work-Audit follow-ups (11 workstreams, 70 findings, verdicts {'needs-refinement': 11}). 1. Fix AGY-89: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: "${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.
+<!-- AI-hint: AGY Work-Audit follow-ups (11 workstreams, 70 findings, verdicts {'needs-refinement': 11}). 1. Fix task_1121: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: "${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.
      AI-related: usr/share/mios/mios.toml, docs/adr/, AGY-TASKS.md -->
 # AGY Work-Audit follow-ups (11 workstreams, 70 findings, verdicts {'needs-refinement': 11})
 
-1. Fix AGY-89: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: "${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.
+1. Fix task_1121: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: "${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.
 
 2. Harden the CI/forgejo publish steps against empty MIOS_IMAGE_NAME: set MIOS_VENDOR_TOML to the checked-out repo mios.toml before sourcing userenv, or add `: "${MIOS_IMAGE_NAME:=${REGISTRY}/${IMAGE_NAME}}"` fallback; test on a runner without /usr/share/mios installed.
 
 3. Align the globals.sh/globals.ps1 twins on identical override semantics for MIOS_IMAGE_NAME and add MIOS_IMAGE_NAME/MIOS_IMAGE_REF to a twin-parity assertion so the divergence is drift-gated.
 
-4. Add the negative test AGY-89 specifies (no-creds common.sh must not downgrade MIOS_IMAGE_NAME to localhost) and a CI-context test asserting sourced userenv yields a non-empty image name.
+4. Add the negative test task_1121 specifies (no-creds common.sh must not downgrade MIOS_IMAGE_NAME to localhost) and a CI-context test asserting sourced userenv yields a non-empty image name.
 
 5. Reconcile the mios-ci.yml PUBLISH:'true' value with its own comment and the release-topology memory (intended capacity-gate) -- decide and document the actual GitHub publish state, since it governs whether the empty-image-name regression is live.
 
 6. Remove dead REGISTRY/IMAGE_NAME env from mios-ci.yml (or repurpose as the fallback) to eliminate the dual source of truth.
 
-7. Re-open T-252 in TASKS.md until the selection logic is wired to a real pull/switch consumer or explicitly de-scoped to CI-publish only.
+7. Re-open task_230 in TASKS.md until the selection logic is wired to a real pull/switch consumer or explicitly de-scoped to CI-publish only.
 
 8. Make generate-names-registry.py write referenced_names.txt with newline='\n' and have drift check 30 compare against a temp regeneration instead of overwriting the tracked file, eliminating the CRLF/dirty-tree side effect.
 
@@ -96,7 +96,7 @@
 
 47. Harden validate_config: it guards only [identity]/[ports] drops + mios_user + port ranges; consider validating that the posted config still parses under load_merged layering and that no [ports] value collides, since a bad save reseeds the DB (run_db_reseed_bg, check=True) and can brick services.
 
-48. The advertised broader 'TD-5 server.py god-module extraction (feed AGY-63..68)' is NOT present as committed code beyond to_toml/validate_config/write_user_config (into config.py) and _arg_with_synonyms/_validate_enum_args (into mios_argval); reconcile the roadmap claim with what actually shipped or file the remaining extraction waves explicitly.
+48. The advertised broader 'TD-5 server.py god-module extraction (feed task_1094..task_1099)' is NOT present as committed code beyond to_toml/validate_config/write_user_config (into config.py) and _arg_with_synonyms/_validate_enum_args (into mios_argval); reconcile the roadmap claim with what actually shipped or file the remaining extraction waves explicitly.
 
 49. Fix the quadlet (and systemd-unit) [templates.*].match patterns to point at the real estate dirs (usr/share/containers/systemd, usr/lib/systemd/system) and re-run check-template-conformance to confirm green; grandfather any genuine non-conformers uncovered.
 
@@ -138,7 +138,7 @@
 
 68. Add a CI/drift step that actually compiles tools/native (cargo build) so the Rust proof cannot silently rot; today nothing builds it.
 
-69. Verify AGY-90/AGY-91 completion the real way: after AGY runs them, confirm automation/*.sh log-string edits actually landed and the 4 concepts/*.md docs exist and pass check-46 (template conformance) with the drift-gate still green.
+69. Verify task_1122/task_1123 completion the real way: after AGY runs them, confirm automation/*.sh log-string edits actually landed and the 4 concepts/*.md docs exist and pass check-46 (template conformance) with the drift-gate still green.
 
 70. Audit the rest of AGY-TASKS.md for other feed entries whose commit subjects imply delivered work but only queue tasks, so git-log legibility is consistent across the backlog.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (T-531, AGY-2129).
+# AI-hint: Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (task_475, task_2708).
 # AI-doc: usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md
 set -euo pipefail
 

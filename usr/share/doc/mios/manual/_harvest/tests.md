@@ -11,14 +11,14 @@ AI-related: src/mios-rs/mios-node/src/crypto.rs, src/mios-rs/mios-node/src/hardw
 
 ### AI-hint
 
-AI-hint: Deep adversarial stress tests and property fuzzers for Milestone 2 (T-392 through T-396).
+AI-hint: Deep adversarial stress tests and property fuzzers for Milestone 2 (task_336 through task_340).
 AI-related: src/mios-rs/mios-node/src/scheduler.rs, src/mios-rs/mios-node/src/buffer_pool.rs, src/mios-rs/mios-node/src/capabilities.rs, src/mios-rs/mios-node/src/ble.rs, src/mios-rs/mios-node/src/overlay.rs
 
 <!-- mios-src:dbef77c6e66b from src/mios-rs/mios-node/tests/m2_deep_adversarial_stress_test.rs:1-2 -->
 
 ### AI-hint
 
-AI-hint: Comprehensive adversarial integration tests for Milestone 2 (T-392 through T-396).
+AI-hint: Comprehensive adversarial integration tests for Milestone 2 (task_336 through task_340).
 AI-related: src/mios-rs/mios-node/src/scheduler.rs, src/mios-rs/mios-node/src/buffer_pool.rs, src/mios-rs/mios-node/src/capabilities.rs, src/mios-rs/mios-node/src/ble.rs, src/mios-rs/mios-node/src/overlay.rs
 
 <!-- mios-src:0c059a3f00db from src/mios-rs/mios-node/tests/mesh_m2_adversarial_test.rs:1-2 -->
@@ -63,34 +63,34 @@ different set from its sibling.
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Consolidated unit test suite for MiOS A2A (Agent-to-Agent) federation: Ed25519 cryptographic attestation, mutual capability handshake, and identity-aware delegation (T-1021 / GATECAT-01).
+AI-hint: Consolidated unit test suite for MiOS A2A (Agent-to-Agent) federation: Ed25519 cryptographic attestation, mutual capability handshake, and identity-aware delegation (task_3353 / GATECAT-01).
 AI-related: usr/libexec/mios/a2a/attestation.py, usr/lib/mios/agent-pipe/mios_a2a_delegation.py
 
-<!-- mios-src:b975c7749819 from tests/test-a2a.py:1-3 -->
+<!-- mios-src:7ca4f0094eef from tests/test-a2a.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Adversarial testing suite...
 
 !/usr/bin/env python3
-AI-hint: Adversarial testing suite and empirical challenge harness for T-377..T-381 modules.
+AI-hint: Adversarial testing suite and empirical challenge harness for task_321..task_325 modules.
 AI-related: usr/libexec/mios/mcp/sandbox.py, usr/libexec/mios/sec/approval.py, usr/libexec/mios/graph/traversal.py, usr/libexec/mios/prompt/pruning.py, usr/libexec/mios/a2a/attestation.py
 
-<!-- mios-src:b8a7daa41810 from tests/test-adversarial-roadmap.py:1-3 -->
+<!-- mios-src:47a9f22f5b81 from tests/test-adversarial-roadmap.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Comprehensive empirical...
 
 !/usr/bin/env python3
-AI-hint: Comprehensive empirical adversarial test suite for T-401..T-406 (Database, Storage, Encryption, and Replication).
+AI-hint: Comprehensive empirical adversarial test suite for task_345..task_350 (Database, Storage, Encryption, and Replication).
 AI-related: usr/libexec/mios/db/mios-pgvector-optimize.py, usr/libexec/mios/storage/mios-ledger-sync, usr/libexec/mios/storage/mios-cephfs-quota, usr/libexec/mios/db/mios-pg-replica.py, usr/libexec/mios/db/mios-db-doctor.py, usr/libexec/mios/db/mios-db-migrate.py, usr/libexec/mios/sec/mios-luks-rotate
 
-<!-- mios-src:75bc40fdf7cd from tests/test-adversarial-t401-t406.py:1-3 -->
+<!-- mios-src:9e9888a93488 from tests/test-adversarial-t401-t406.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (T-1021 / GATECAT-01).
+AI-hint: Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (task_3353 / GATECAT-01).
 AI-related: usr/lib/mios/agent-pipe/server.py, usr/lib/mios/agent-pipe/mios_sched.py, usr/lib/mios/agent-pipe/mios_quota.py, usr/lib/mios/agent-pipe/mios_priority_sched.py
 
-<!-- mios-src:fbeca7f29633 from tests/test-agent-pipe-scheduling.py:1-3 -->
+<!-- mios-src:6bb83f4db3bc from tests/test-agent-pipe-scheduling.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Law 10 BARE-SAFE-ENV unit...
 
@@ -104,10 +104,10 @@ AI-doc: usr/share/doc/mios/manual/tests.md
 ### !/usr/bin/env python3 AI-hint: Automated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Automated unit test suite for MiOS Context & Prompt Processing domain (T-1021 / GATECAT-01).
+AI-hint: Automated unit test suite for MiOS Context & Prompt Processing domain (task_3353 / GATECAT-01).
 AI-related: usr/lib/mios/agent-pipe/context_compactor.py, usr/lib/mios/agent-pipe/mios_pipe/context/ctxpack.py, usr/libexec/mios/prompt/pruning.py, usr/lib/mios/agent-pipe/mios_pipe/routing/turn.py
 
-<!-- mios-src:9505ec1d4a48 from tests/test-context-processing.py:1-3 -->
+<!-- mios-src:d2b2b8f5c3ca from tests/test-context-processing.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Consolidated database test...
 
@@ -120,18 +120,18 @@ AI-related: usr/libexec/mios/db/, usr/lib/mios/ai/pgvector_hnsw.py, tests/test-d
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (T-1021 / GATECAT-01).
+AI-hint: Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (task_3353 / GATECAT-01).
 AI-related: usr/libexec/mios/git/merge_fuzzer.py, usr/libexec/mios/git/pre_commit.py, usr/libexec/mios/git/reconcile_dag.py
 
-<!-- mios-src:e65b5bf7fac8 from tests/test-git-ops.py:1-3 -->
+<!-- mios-src:b568ee903d4d from tests/test-git-ops.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (T-1021 / GATECAT-01).
+AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (task_3353 / GATECAT-01).
 AI-related: usr/libexec/mios/display/looking_glass.py, usr/libexec/mios/vfio/setup-looking-glass.py, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 
-<!-- mios-src:75b9eb4c2f21 from tests/test-looking-glass.py:1-3 -->
+<!-- mios-src:2f2a64e76aff from tests/test-looking-glass.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Automated unit test suite...
 
@@ -144,10 +144,10 @@ AI-related: usr/libexec/mios/display/multimonitor_sync.py, usr/share/doc/mios/ma
 ### !/usr/bin/env python3 AI-hint: Automated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Automated unit test suite for Task T-581/T-582 Nix Subsystem and Declarative Flake Projection Generator.
+AI-hint: Automated unit test suite for Task task_525/task_526 Nix Subsystem and Declarative Flake Projection Generator.
 AI-related: usr/libexec/mios/config/nix_project.py, usr/share/mios/nix/flake-template.nix, usr/share/mios/nix/nix.conf, usr/lib/tmpfiles.d/50-nix.conf, automation/59-tools.sh
 
-<!-- mios-src:b4da91fae8e1 from tests/test-nix-project.py:1-3 -->
+<!-- mios-src:594db94b34ea from tests/test-nix-project.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Consolidated unit and...
 
@@ -160,11 +160,11 @@ AI-doc: usr/share/doc/mios/manual/node.md
 
 ### AI-hint
 
-AI-hint: Tests for T-344: mios_reputation — IntrospecLOO marginal contribution.
+AI-hint: Tests for task_288: mios_reputation — IntrospecLOO marginal contribution.
 AI-related: mios_reputation
 AI-functions: _make_contributions, test_records_returned_for_all_peers, test_low_contributor_gets_low_delta, test_eval_count_increments, test_sorted_peers_descending
 
-<!-- mios-src:ef643d8ca8c5 from tests/test-reputation.py:1-3 -->
+<!-- mios-src:728319c1eeea from tests/test-reputation.py:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
@@ -185,10 +185,10 @@ AI-functions: test_generate_sysusers_remediation, test_audit_user_environment_mo
 ### !/usr/bin/env python3 AI-hint: Consolidated unit test suite...
 
 !/usr/bin/env python3
-AI-hint: Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (T-1021 / GATECAT-01).
+AI-hint: Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (task_3353 / GATECAT-01).
 AI-related: usr/libexec/mios/win/unattend_gen.py, usr/libexec/mios/win/unattend_validate.py, autounattend.xml
 
-<!-- mios-src:2393c6c5493d from tests/test-unattend.py:1-3 -->
+<!-- mios-src:d6390d1a9553 from tests/test-unattend.py:1-3 -->
 
 ### AI-hint
 

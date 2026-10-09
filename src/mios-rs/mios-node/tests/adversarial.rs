@@ -35,9 +35,16 @@ mod adversarial_m1_test {
         // The vector's key is the 32 consecutive bytes 0x80..=0x9f; deriving it
         // from that range keeps the known-answer test exact without a key literal.
         let key: [u8; 32] = std::array::from_fn(|i| 0x80 + i as u8);
-        let nonce: [u8; 12] = [
-            0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
-        ];
+        // RFC 7539 section 2.8.2: little-endian sender 7, followed by IV 0x40..=0x47.
+        // https://www.rfc-editor.org/rfc/rfc7539.html#section-2.8.2
+        let sender_id = 7u32.to_le_bytes();
+        let nonce: [u8; 12] = std::array::from_fn(|i| {
+            if i < sender_id.len() {
+                sender_id[i]
+            } else {
+                0x40 + (i - sender_id.len()) as u8
+            }
+        });
         let aad: [u8; 12] = [
             0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
         ];
@@ -51,6 +58,23 @@ mod adversarial_m1_test {
         let ciphertext_with_tag = chacha20_poly1305_encrypt(&key, &nonce, &aad, plaintext);
         assert_eq!(ciphertext_with_tag.len(), plaintext.len() + 16);
 
+        let expected_ciphertext: [u8; 114] = [
+            0xd3, 0x1a, 0x8d, 0x34, 0x64, 0x8e, 0x60, 0xdb, 0x7b, 0x86, 0xaf, 0xbc, 0x53, 0xef,
+            0x7e, 0xc2, 0xa4, 0xad, 0xed, 0x51, 0x29, 0x6e, 0x08, 0xfe, 0xa9, 0xe2, 0xb5, 0xa7,
+            0x36, 0xee, 0x62, 0xd6, 0x3d, 0xbe, 0xa4, 0x5e, 0x8c, 0xa9, 0x67, 0x12, 0x82, 0xfa,
+            0xfb, 0x69, 0xda, 0x92, 0x72, 0x8b, 0x1a, 0x71, 0xde, 0x0a, 0x9e, 0x06, 0x0b, 0x29,
+            0x05, 0xd6, 0xa5, 0xb6, 0x7e, 0xcd, 0x3b, 0x36, 0x92, 0xdd, 0xbd, 0x7f, 0x2d, 0x77,
+            0x8b, 0x8c, 0x98, 0x03, 0xae, 0xe3, 0x28, 0x09, 0x1b, 0x58, 0xfa, 0xb3, 0x24, 0xe4,
+            0xfa, 0xd6, 0x75, 0x94, 0x55, 0x85, 0x80, 0x8b, 0x48, 0x31, 0xd7, 0xbc, 0x3f, 0xf4,
+            0xde, 0xf0, 0x8e, 0x4b, 0x7a, 0x9d, 0xe5, 0x76, 0xd2, 0x65, 0x86, 0xce, 0xc6, 0x4b,
+            0x61, 0x16,
+        ];
+        assert_eq!(
+            &ciphertext_with_tag[..plaintext.len()],
+            &expected_ciphertext,
+            "Ciphertext must match RFC 7539 vector"
+        );
+
         let actual_tag = &ciphertext_with_tag[plaintext.len()..];
         assert_eq!(
             actual_tag, &expected_tag,
@@ -61,6 +85,16 @@ mod adversarial_m1_test {
         let decrypted = chacha20_poly1305_decrypt(&key, &nonce, &aad, &ciphertext_with_tag)
             .expect("Decryption must succeed");
         assert_eq!(decrypted, plaintext);
+
+        // Authentication covers every nonce byte, including the sender and IV.
+        for byte_idx in 0..nonce.len() {
+            let mut wrong_nonce = nonce;
+            wrong_nonce[byte_idx] ^= 1;
+            assert!(
+                chacha20_poly1305_decrypt(&key, &wrong_nonce, &aad, &ciphertext_with_tag).is_err(),
+                "Wrong nonce byte {byte_idx} must fail authentication"
+            );
+        }
     }
 
     #[test]
@@ -174,7 +208,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 2. ADVERSARIAL HARDWARE & WASM HAL TESTS (T-389)
+    // 2. ADVERSARIAL HARDWARE & WASM HAL TESTS (task_333)
     // ============================================================================
 
     #[test]
@@ -255,7 +289,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 3. ADVERSARIAL CPU PINNING & CGROUP BOUNDARY TESTS (T-390)
+    // 3. ADVERSARIAL CPU PINNING & CGROUP BOUNDARY TESTS (task_334)
     // ============================================================================
 
     #[test]
@@ -361,7 +395,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 4. ADVERSARIAL CRDT GC & CAUSALITY TESTS (T-391)
+    // 4. ADVERSARIAL CRDT GC & CAUSALITY TESTS (task_335)
     // ============================================================================
 
     #[test]
@@ -481,7 +515,7 @@ mod adversarial_m1_test {
     }
 
     // ============================================================================
-    // 5. ADVERSARIAL WATCHDOG TESTS (T-400)
+    // 5. ADVERSARIAL WATCHDOG TESTS (task_344)
     // ============================================================================
 
     #[test]
@@ -566,7 +600,7 @@ mod m1_stress_adversarial_test {
     use tempfile::NamedTempFile;
 
     // =========================================================================
-    // Task 1 (T-389): Hardware HAL & Wasm Sandbox Allowlist Stress Tests
+    // Task 1 (task_333): Hardware HAL & Wasm Sandbox Allowlist Stress Tests
     // =========================================================================
 
     #[test]
@@ -725,7 +759,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 2 (T-390): Dynamic CPU Pinning & Cgroups Stress Tests
+    // Task 2 (task_334): Dynamic CPU Pinning & Cgroups Stress Tests
     // =========================================================================
 
     #[test]
@@ -838,7 +872,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 3 (T-391): CRDT State Compaction & Snapshot GC Stress Tests
+    // Task 3 (task_335): CRDT State Compaction & Snapshot GC Stress Tests
     // =========================================================================
 
     #[test]
@@ -1004,7 +1038,7 @@ mod m1_stress_adversarial_test {
     }
 
     // =========================================================================
-    // Task 4 (T-400): Hardware Watchdog Supervisor & Ping Stress Tests
+    // Task 4 (task_344): Hardware Watchdog Supervisor & Ping Stress Tests
     // =========================================================================
 
     #[test]
@@ -1117,7 +1151,7 @@ mod m2_deep_adversarial_stress_test {
     use std::thread;
 
     // =========================================================================
-    // Suite 1: Scheduler & Work-Stealing Invariants (T-392)
+    // Suite 1: Scheduler & Work-Stealing Invariants (task_336)
     // =========================================================================
 
     #[test]
@@ -1298,7 +1332,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 2: Buffer Pool Zero-Copy & Recycling Invariants (T-393)
+    // Suite 2: Buffer Pool Zero-Copy & Recycling Invariants (task_337)
     // =========================================================================
 
     #[test]
@@ -1456,7 +1490,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 3: Node Capabilities & Registry Invariants (T-394)
+    // Suite 3: Node Capabilities & Registry Invariants (task_338)
     // =========================================================================
 
     #[test]
@@ -1533,7 +1567,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 4: BLE Beaconing & Offline Mesh Bootstrap (T-395)
+    // Suite 4: BLE Beaconing & Offline Mesh Bootstrap (task_339)
     // =========================================================================
 
     #[test]
@@ -1620,7 +1654,7 @@ mod m2_deep_adversarial_stress_test {
     }
 
     // =========================================================================
-    // Suite 5: Multi-Transport Router & Anti-Flap Hysteresis (T-396)
+    // Suite 5: Multi-Transport Router & Anti-Flap Hysteresis (task_340)
     // =========================================================================
 
     #[test]
@@ -1969,7 +2003,7 @@ mod mesh_m2_stress_challenger_test {
     use std::time::Duration;
 
     // =========================================================================
-    // 1. T-392: Stress & Invariant Tests for Work-Stealing Scheduler
+    // 1. task_336: Stress & Invariant Tests for Work-Stealing Scheduler
     // =========================================================================
 
     #[test]
@@ -2120,7 +2154,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+    // 2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
     // =========================================================================
 
     #[test]
@@ -2217,7 +2251,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 3. T-394: Adversarial Capability Probing, Filtering & Corrupted Payloads
+    // 3. task_338: Adversarial Capability Probing, Filtering & Corrupted Payloads
     // =========================================================================
 
     #[test]
@@ -2281,7 +2315,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 4. T-395: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
+    // 4. task_339: Adversarial BLE AEAD Bit-Flip Fuzzing & Invalid Keys
     // =========================================================================
 
     #[test]
@@ -2348,7 +2382,7 @@ mod mesh_m2_stress_challenger_test {
     }
 
     // =========================================================================
-    // 5. T-396: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
+    // 5. task_340: Stress & Boundary Tests for Multi-Transport Flapping & Hysteresis
     // =========================================================================
 
     #[test]

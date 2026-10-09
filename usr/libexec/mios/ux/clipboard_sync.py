@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, usr/share/mios/mios.toml
 # AI-functions: ClipboardSyncEngine, RedactionRule, RedactionResult, main
 """
-MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (T-465).
+MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (task_409).
 
 Synchronizes clipboard buffers between host Wayland/X11 surfaces and guest virtual machines
 (via SPICE vdagent, socket bridge, or guest agent) with automated token redaction.
@@ -205,7 +205,7 @@ class ClipboardSyncEngine:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (T-465)"
+        description="MiOS Secret-Redacting Cross-Platform Clipboard Synchronizer (task_409)"
     )
     parser.add_argument("--filter-text", help="Inspect and filter a specific text string")
     parser.add_argument("--sync", action="store_true", help="Execute clipboard synchronization cycle")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (task_3353 / GATECAT-01).
 # AI-related: usr/lib/mios/agent-pipe/server.py, usr/lib/mios/agent-pipe/mios_sched.py, usr/lib/mios/agent-pipe/mios_quota.py, usr/lib/mios/agent-pipe/mios_priority_sched.py
 """Consolidated Agent Pipe Scheduling Domain Test Suite.
 

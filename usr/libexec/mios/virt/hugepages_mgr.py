@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Hugepages automatic allocation, compaction, and teardown manager for KVM guests (T-418).
+# AI-hint: Hugepages automatic allocation, compaction, and teardown manager for KVM guests (task_362).
 # AI-related: tests/test-virt.py, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 """
 MiOS Hugepages Automatic Allocation, Memory Compaction, and Teardown Manager.

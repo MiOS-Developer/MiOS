@@ -1,4 +1,4 @@
-# AI-hint: CaMeL dual-context QUARANTINE boundary -- the deeper half of the F2/T-033 prompt-injection defense (Debenedetti et al., "Defeating Promp...
+# AI-hint: CaMeL dual-context QUARANTINE boundary -- the deeper half of the F2/task_33 prompt-injection defense (Debenedetti et al., "Defeating Promp...
 # AI-doc: usr/share/doc/mios/manual/access.md
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ _BITE_ACTION = {MODE_OFF: ACT_PROCEED, MODE_AUDIT: ACT_AUDIT, MODE_ENFORCE: ACT_
 def normalize_mode(mode) -> str:
     """Resolve the SSOT ``[security].quarantine_mode`` value to a known enum; an
     empty/unknown token -> off (degrade-open: an unrecognised mode never silently
-    enforces or audits). Delegates to the SHARED T-033 normaliser so the two
+    enforces or audits). Delegates to the SHARED task_33 normaliser so the two
     architectural-gate modes can never drift in their parsing."""
     return mios_ruleof2.normalize_mode(mode)
 

@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-741 & T-742: Netavark firewall isolation and port audit.
+# AI-hint: Tests for task_685 & task_686: Netavark firewall isolation and port audit.
 # AI-functions: test_lateral_traversal_blocked, test_zero_ports_leak_to_all_interfaces
 
-"""Tests for T-741 & T-742: Netavark firewall isolation and port audit."""
+"""Tests for task_685 & task_686: Netavark firewall isolation and port audit."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/net")
 from netavark_isolate import NetavarkIsolationManager
@@ -32,4 +32,4 @@ def test_zero_ports_leak_to_all_interfaces():
 if __name__ == "__main__":
     test_lateral_traversal_blocked()
     test_zero_ports_leak_to_all_interfaces()
-    print("All T-741/T-742 tests passed.")
+    print("All task_685/task_686 tests passed.")

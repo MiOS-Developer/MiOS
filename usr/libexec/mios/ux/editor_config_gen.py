@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, usr/share/mios/mios.toml
 # AI-functions: EditorConfigGen, main
 """
-MiOS Editor AI Configuration Projector & Generator (T-460).
+MiOS Editor AI Configuration Projector & Generator (task_404).
 
 Automatically projects IDE configuration settings for VS Code, Cursor, and Continue:
 - Routes chat/orchestration requests to http://localhost:8700/v1 (agent-pipe / Hermes).
@@ -302,7 +302,7 @@ class EditorConfigGen:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS VS Code, Cursor & Continue Editor AI Config Projector (T-460)"
+        description="MiOS VS Code, Cursor & Continue Editor AI Config Projector (task_404)"
     )
     parser.add_argument(
         "--target",

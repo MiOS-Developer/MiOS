@@ -1,4 +1,4 @@
-// AI-hint: mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (T-395).
+// AI-hint: mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (task_339).
 // AI-related: src/mios-rs/mios-node/src/crypto.rs, usr/libexec/mios/node/ble.py, tests/test-node.py, src/mios-rs/mios-node/src/heartbeat.rs, usr/libexec/mios/node/overlay.py
 
 pub mod ble {
@@ -170,6 +170,12 @@ pub mod ble {
 
         /// Starts advertising GATT service and initializes identity + ECDH characteristics.
         pub fn start(&self) -> Result<()> {
+            // Serialize lifecycle transitions with credential acceptance.
+            let mut shared = self.shared_key.lock().unwrap();
+            if self.state() == BleBootstrapState::Provisioned {
+                return Err(anyhow!("completed BLE session requires a new instance"));
+            }
+            shared.take();
             // 1. Initialize Char 1: Identity (4B node_id + 1B state)
             let mut id_buf = vec![0u8; 5];
             BigEndian::write_u32(&mut id_buf[0..4], self.node_id);
@@ -214,7 +220,13 @@ pub mod ble {
             let mut key = [0u8; 32];
             key.copy_from_slice(&derived_bytes[0..32]);
 
-            *self.shared_key.lock().unwrap() = Some(key);
+            let mut shared = self.shared_key.lock().unwrap();
+            if self.state() == BleBootstrapState::Provisioned {
+                return Err(anyhow!(
+                    "completed BLE session cannot accept another handshake"
+                ));
+            }
+            *shared = Some(key);
             *self.state.lock().unwrap() = BleBootstrapState::Handshaking;
 
             // Update Char 1 state
@@ -354,7 +366,12 @@ pub mod ble {
             let first = adapter
                 .get_characteristic_value(BLE_CHAR_PROVISION_UUID)
                 .unwrap();
+            node.handle_ecdh_exchange(&first_peer).unwrap();
             node.start().unwrap();
+            assert!(
+                node.handle_provisioning_write(&first).is_err(),
+                "restart clears an unfinished handshake"
+            );
             provision_remote_node(adapter.as_ref(), &payload).unwrap();
             let second_peer = adapter
                 .get_characteristic_value(BLE_CHAR_ECDH_UUID)
@@ -384,6 +401,16 @@ pub mod ble {
                 node.handle_provisioning_write(&second).is_err(),
                 "a consumed handshake must reject replay"
             );
+            assert!(
+                node.handle_ecdh_exchange(&second_peer).is_err(),
+                "a completed session cannot re-establish the consumed key"
+            );
+            assert!(
+                node.start().is_err(),
+                "a completed session requires a new instance with a fresh node key"
+            );
+            assert_eq!(node.state(), BleBootstrapState::Provisioned);
+            assert!(!adapter.is_advertising());
         }
 
         #[test]

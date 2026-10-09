@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Radix tree prefix hash cache manager and prompt KV warm-starter for llama-swap (T-635, T-636).
+# AI-hint: Radix tree prefix hash cache manager and prompt KV warm-starter for llama-swap (task_579, task_580).
 # AI-related: usr/libexec/mios/ai/prompt_cache.py, tests/test-ai.py, usr/share/mios/llamacpp/mios-llm-light.yaml
 """Radix tree prefix hash cache manager and prompt KV warm-starter for MiOS.
 

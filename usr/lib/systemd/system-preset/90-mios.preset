@@ -224,7 +224,7 @@ enable mios-ai-firstboot.service
 # multi-GB model download.
 enable mios-ai-firstboot.timer
 enable mios-swarm-pack-firstboot.service
-# FBM (T-200): first-boot large-model + bound-image provisioners. Both sentinel-guarded and
+# FBM (task_180): first-boot large-model + bound-image provisioners. Both sentinel-guarded and
 # degrade-open (Law 12); no-op when [ai].firstboot_models / firstboot_bound_images are empty.
 enable mios-models-firstboot.service
 enable mios-shell-session-gc.timer

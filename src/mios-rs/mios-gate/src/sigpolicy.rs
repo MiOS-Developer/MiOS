@@ -85,7 +85,7 @@ pub fn check(root: &Path) -> Report {
     }
 
     // Report the mode in the summary rather than judging it. Whether
-    // insecureAcceptEverything is the right value is T-1036's question; this
+    // insecureAcceptEverything is the right value is task_973's question; this
     // check's job is that the file and the SSOT agree.
     let ok = findings.is_empty();
     Report {

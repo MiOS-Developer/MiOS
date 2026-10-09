@@ -188,7 +188,7 @@ _url_is_local() {
 }
 
 # Auth posture per ADR-0016 D5. Emits: <verdict>\t<url>\t<detail>, where verdict
-# is local|armed|exposed|unknown. Verdict table: TASKS.md T-327.
+# is local|armed|exposed|unknown. Verdict table: TASKS.md task_271.
 _ssot_security() {
     python3 - <<'SECPY' 2>/dev/null || true
 import os

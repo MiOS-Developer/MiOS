@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: TPM 2.0 PCR 7/11 automated secret sealing and enrollment manager (T-493).
+# AI-hint: TPM 2.0 PCR 7/11 automated secret sealing and enrollment manager (task_437).
 # AI-doc: usr/share/doc/mios/manual/ch11-security-and-hardening.md
 from __future__ import annotations
 
@@ -145,7 +145,7 @@ def unseal_secrets(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="TPM 2.0 PCR 7/11 systemd-creds automated secret sealing (T-493)"
+        description="TPM 2.0 PCR 7/11 systemd-creds automated secret sealing (task_437)"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

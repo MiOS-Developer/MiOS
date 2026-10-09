@@ -2,7 +2,7 @@
 # AI-functions: current_allocated_tokens, rolling_capacity, __post_init__, __init__, append_token, StreamingKVCache, StreamingLLMManager
 
 """
-streaming_llm.py — T-755 WS-AI
+streaming_llm.py — task_699 WS-AI
 StreamingLLM attention sink pinner and rolling KV eviction manager in llama-swap.
 
 Pins initial attention sink tokens (positions 0..3) permanently while maintaining

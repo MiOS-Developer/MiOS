@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Comprehensive 4-tier E2E test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Rust Hardcode-Lint Consolidation (T-211, T-212, T-1161).
+# AI-hint: Comprehensive 4-tier E2E test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Rust Hardcode-Lint Consolidation (task_191, task_192, task_3454).
 # AI-related: usr/share/mios/windows/mios-igpu-server.ps1, usr/share/mios/mios.toml, usr/libexec/mios/mios-hardcode-lint, tests/test_hardcode_lint_parity.py
 # AI-doc: usr/share/doc/mios/manual/windows.md, usr/share/doc/mios/manual/tests.md, PROJECT.md
 """Comprehensive 4-Tier E2E Test Suite for MiOS iGPU Inference Lane & RPC Compute Fabric.

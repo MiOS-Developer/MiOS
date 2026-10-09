@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated regression test suite for kernel module signature enforcement (EKEYREJECTED 129), signed module load, and /dev/mem lockdown (EPERM) (T-916, T-917).
+# AI-hint: Automated regression test suite for kernel module signature enforcement (EKEYREJECTED 129), signed module load, and /dev/mem lockdown (EPERM) (task_860, task_861).
 # AI-doc: usr/share/doc/mios/manual/ch41-machine-owner-key-management.md
 set -euo pipefail
 
@@ -29,7 +29,7 @@ fi
 TMP_DIR="$(mktemp -d /tmp/test-modsign.XXXXXX 2>/dev/null || mktemp -d -t 'test-modsign')"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-log "Starting UKI Module Signature Enforcement and Lockdown Test Suite (T-916 & T-917)..."
+log "Starting UKI Module Signature Enforcement and Lockdown Test Suite (task_860 & task_861)..."
 
 # ==============================================================================
 # 1. UKI Bootchain Configuration SSOT & Drop-in Verification
@@ -38,7 +38,7 @@ log "Test Group 1: UKI Bootchain Security Configuration Drop-ins"
 
 KARGS_TOML="${ROOT}/usr/lib/bootc/kargs.d/30-security.toml"
 CMDLINE_CONF="${ROOT}/etc/cmdline.d/02-security.conf"
-# 02-uki-bootloader.sh was folded into the UKI cmdline render phase (T-1161).
+# 02-uki-bootloader.sh was folded into the UKI cmdline render phase (task_3454).
 AUTOMATION_SCRIPT="${ROOT}/automation/76-uki-render.sh"
 
 # 1.1 Positive Control: 30-security.toml

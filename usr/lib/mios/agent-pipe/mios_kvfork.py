@@ -1,8 +1,8 @@
-# AI-hint: T-340 SCHED-05 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended
+# AI-hint: task_284 task_3218 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended
 # AI-related: mios-llm-light, mios_kv_compact, test_mios_kvfork
 # AI-functions: slot_path, __init__, suspend, resume, erase, _llama_slot_action, list_suspended, class KVSlot, class KVForkManager
 """
-mios_kvfork.py — T-340 SCHED-05
+mios_kvfork.py — task_284 task_3218
 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot
 save/restore API (/slots endpoint).  Suspended conversations are checkpointed
 to /var/lib/mios/llamacpp/slots/ and their task row updated to `suspended`.

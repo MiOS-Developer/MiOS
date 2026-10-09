@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative systemd unit hardening generator and security audit gate (T-665, T-666).
+# AI-hint: Declarative systemd unit hardening generator and security audit gate (task_611, task_612).
 # AI-related: usr/libexec/mios/sec/systemd_harden.py, tests/test-sec.py
 """Declarative systemd unit hardening generator and security audit gate for MiOS.
 

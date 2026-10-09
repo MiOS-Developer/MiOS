@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Multi-node dynamic AI workload partitioner and capability-aware task router (T-537, AGY-2135).
+# AI-hint: Multi-node dynamic AI workload partitioner and capability-aware task router (task_481, task_2714).
 # AI-doc: usr/share/doc/mios/manual/ch82-mesh-workload-partitioning.md
 """Multi-node dynamic AI workload partitioner and capability-aware task router.
 
@@ -817,7 +817,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios_mesh_distributor.py",
-        description="Multi-node dynamic AI workload partitioner and capability-aware task router (T-537, AGY-2135).",
+        description="Multi-node dynamic AI workload partitioner and capability-aware task router (task_481, task_2714).",
         parents=[common],
     )
 

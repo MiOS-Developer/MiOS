@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for T-558 Fuzz Crash Deduplication & Bug Logger.
+# AI-hint: Automated unit test suite for task_502 Fuzz Crash Deduplication & Bug Logger.
 # AI-related: usr/libexec/mios/kernel/crash_dedupe.py, tests/test-crash-dedupe.py
-"""Automated unit test suite for Kernel Fuzz Crash Deduplication & Bug Logger (T-558)."""
+"""Automated unit test suite for Kernel Fuzz Crash Deduplication & Bug Logger (task_502)."""
 
 from __future__ import annotations
 

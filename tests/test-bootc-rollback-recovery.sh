@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for atomic bootc rollback, ostree deployment state, /var persistence guards, and greenboot health gates (T-1025).
+# AI-hint: Verification suite for atomic bootc rollback, ostree deployment state, /var persistence guards, and greenboot health gates (task_3356).
 # AI-doc: usr/share/doc/mios/manual/ch36-greenboot-health-check-and-recovery.md
 set -euo pipefail
 
@@ -63,7 +63,7 @@ assert_contains() {
     fi
 }
 
-echo "=== Running MiOS Bootc Rollback & Recovery Test Suite (T-1025) ==="
+echo "=== Running MiOS Bootc Rollback & Recovery Test Suite (task_3356) ==="
 
 # Test 1: Positive Control -- bootc-rollback --help
 echo "Test 1: bootc-rollback --help"

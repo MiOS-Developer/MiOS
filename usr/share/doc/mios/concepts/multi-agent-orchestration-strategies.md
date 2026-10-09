@@ -1,5 +1,5 @@
-<!-- AI-hint: Reality-checked landscape of multi-agent orchestration strategies (OpenAI Agents SDK / Swarm, MCP, LangGraph/CrewAI/ADK, structured deliberation, document-mutation coordination, progressive-disclosure retrieval, identity-aware delegation, contribution evaluation) mapped onto the existing MiOS agent plane, with a MiOS gap register feeding ROADMAP Part 13 / T-154..T-161. -->
-<!-- AI-related: usr/lib/mios/agent-pipe/server.py, usr/share/mios/agents/, ROADMAP.md (Part 13), TASKS.md (T-154..T-161), usr/share/doc/mios/concepts/chat-quality-and-visibility-standards.md -->
+<!-- AI-hint: Reality-checked landscape of multi-agent orchestration strategies (OpenAI Agents SDK / Swarm, MCP, LangGraph/CrewAI/ADK, structured deliberation, document-mutation coordination, progressive-disclosure retrieval, identity-aware delegation, contribution evaluation) mapped onto the existing MiOS agent plane, with a MiOS gap register feeding ROADMAP Part 13 / task_155..task_162. -->
+<!-- AI-related: usr/lib/mios/agent-pipe/server.py, usr/share/mios/agents/, ROADMAP.md (Part 13), TASKS.md (task_155..task_162), usr/share/doc/mios/concepts/chat-quality-and-visibility-standards.md -->
 
 # Multi-Agent Orchestration Strategies — Landscape, Reality-Check, and MiOS Mapping
 
@@ -82,14 +82,14 @@ Make the **topology** (pipeline / hierarchical / swarm / mesh) and **debate-prot
 
 | Gap | Roadmap item | Task | Priority |
 |---|---|---|---|
-| Typed handoffs + guardrails + tracing spans | MAO-01 | T-154 | P2 |
-| Structured deliberation (archetypes/typed acts/decision packet), model-gated | MAO-02 | T-155 | P2 |
-| Document-mutation + `LISTEN/NOTIFY` coordination lane on pgvector | MAO-03 | T-156 | P3 |
-| Manifest-guided progressive-disclosure retrieval | MAO-04 | T-157 | P3 |
-| Identity-aware delegation (extend agent-passport/A2A; attested quality) | MAO-05 | T-158 | P2 |
-| Progressive payload modes (semantic-frame delegation) | MAO-06 | T-159 | P3 |
-| Cheap contribution eval (introspective LOO) → reputation | MAO-07 | T-160 | P3 |
-| Selectable topology + debate protocol from SSOT | MAO-08 | T-161 | P2 |
+| Typed handoffs + guardrails + tracing spans | MAO-01 | task_155 | P2 |
+| Structured deliberation (archetypes/typed acts/decision packet), model-gated | MAO-02 | task_156 | P2 |
+| Document-mutation + `LISTEN/NOTIFY` coordination lane on pgvector | MAO-03 | task_157 | P3 |
+| Manifest-guided progressive-disclosure retrieval | MAO-04 | task_158 | P3 |
+| Identity-aware delegation (extend agent-passport/A2A; attested quality) | MAO-05 | task_159 | P2 |
+| Progressive payload modes (semantic-frame delegation) | MAO-06 | task_160 | P3 |
+| Cheap contribution eval (introspective LOO) → reputation | MAO-07 | task_161 | P3 |
+| Selectable topology + debate protocol from SSOT | MAO-08 | task_162 | P2 |
 
 All items: flag-gated in `mios.toml` (`[agents.orchestration]`), **model-driven triggers** (no keyword gates), degrade-open, reuse agent-pipe + pgvector + A2A. Heavy strategies (deliberation) default **off** and route only model-classified consequential tasks (the 62× token reality).
 

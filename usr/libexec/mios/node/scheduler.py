@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Task offloading priority queue with work-stealing scheduler for mios-node (T-392 / AGY-1990).
+# AI-hint: Task offloading priority queue with work-stealing scheduler for mios-node (task_336 / task_2569).
 # AI-related: usr/libexec/mios/node/wasm_sandbox.py, tests/test-node.py
 """
 MiOS Task Offloading Priority Queue & Work-Stealing Scheduler.

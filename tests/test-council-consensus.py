@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for 3-Peer Council Swarm & Byzantine Consensus (T-653, T-654).
+# AI-hint: Automated unit test suite for 3-Peer Council Swarm & Byzantine Consensus (task_599, task_600).
 # AI-related: usr/lib/mios/agent-pipe/council.py, tests/test-council-consensus.py
 """Automated unit test suite for MiOS Council Consensus Engine."""
 

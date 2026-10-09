@@ -2656,7 +2656,7 @@ if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
         echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
 fi
 
-# Render failure is fatal (exit 3, thrown by the caller): a unit started with an unrendered ${MIOS_*} reads it literally (T-1133).
+# Render failure is fatal (exit 3, thrown by the caller): a unit started with an unrendered ${MIOS_*} reads it literally (task_3426).
 [[ -x /automation/34-render-quadlets.sh ]] || { echo "[quadlet-overlay] ERROR: /automation/34-render-quadlets.sh not found"; exit 3; }
 echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/34-render-quadlets.sh"
 sudo /automation/34-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
@@ -5833,7 +5833,7 @@ $endMark
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
-    # -- mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, T-1132) --
+    # -- mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, task_3425) --
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
     $svcName = 'MiOS-Wallpaper-Service'
     $null = Install-MiosNativeWindowsArtifact -Root $MiosRepoDir -Machine $DevDistro -Binary 'mios-wallpaperd' -Destination $wallpaperd_exe -ServiceName $svcName

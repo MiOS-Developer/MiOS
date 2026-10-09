@@ -2,7 +2,7 @@
 # AI-functions: __init__, dispatch, DispatchDecision, QuantizationDispatcher
 
 """
-quant_dispatch.py — T-757 WS-AI
+quant_dispatch.py — task_701 WS-AI
 Dynamic quantization kernel auto-dispatcher (Marlin / ExLlamaV2 / GGUF).
 
 Inspects incoming model weight format (Marlin, AWQ, GPTQ, GGUF) and GPU hardware

@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-343: mios_manifest_rag — manifest-guided progressive RAG.
+# AI-hint: Tests for task_287: mios_manifest_rag — manifest-guided progressive RAG.
 # AI-related: mios_manifest_rag
 # AI-functions: _build_tree, test_keyword_retrieval_returns_relevant_docs, test_irrelevant_query_falls_back_to_all, test_top_k_respected
 
-"""Tests for T-343: mios_manifest_rag — manifest-guided progressive RAG."""
+"""Tests for task_287: mios_manifest_rag — manifest-guided progressive RAG."""
 import sys
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
 from mios_manifest_rag import ManifestRAG, ManifestNode
@@ -61,4 +61,4 @@ if __name__ == "__main__":
     test_keyword_retrieval_returns_relevant_docs()
     test_irrelevant_query_falls_back_to_all()
     test_top_k_respected()
-    print("All T-343 tests passed.")
+    print("All task_287 tests passed.")

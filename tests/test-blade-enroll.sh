@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (T-529, AGY-2127).
+# AI-hint: Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (task_473, task_2706).
 # AI-doc: usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md
 set -euo pipefail
 
@@ -8,14 +8,13 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VERBOSE=false
 DRY_RUN=false
-MOCK_MODE=false
 
 show_help() {
     cat <<'EOF'
 Usage: test-blade-enroll.sh [OPTIONS]
 
 Verification test suite for declarative SSOT blade pre-enrollment registry and
-TPM 2.0 Endorsement Key (EK) fingerprint parser (T-529, AGY-2127).
+TPM 2.0 Endorsement Key (EK) fingerprint parser (task_473, task_2706).
 
 Options:
   -v, --verbose       Enable verbose test logging
@@ -36,7 +35,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --mock)
-            MOCK_MODE=true
             shift
             ;;
         -h|--help)
@@ -81,7 +79,7 @@ trap '[[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"' EXIT
 
 ENROLL_TOOL="${ROOT_DIR}/usr/libexec/mios/mios-blade-enroll"
 
-log "=== MiOS Blade Pre-Enrollment & TPM EK Parser Test Suite (T-529, AGY-2127) ==="
+log "=== MiOS Blade Pre-Enrollment & TPM EK Parser Test Suite (task_473, task_2706) ==="
 
 # -----------------------------------------------------------------------------
 # Dry-run early exit mode
@@ -384,7 +382,7 @@ set -e
 if [[ $RET_WILD_VERIFY -ne 0 ]]; then
     assert_pass "Wildcard argument to verify-ek strictly rejected"
 else
-    assert_fail "Wildcard argument to verify-ek was permitted"
+    assert_fail "Wildcard argument to verify-ek was permitted: $WILD_VERIFY_ERR"
 fi
 
 # -----------------------------------------------------------------------------

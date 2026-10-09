@@ -321,7 +321,7 @@ class CPUGovernorManager:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS CPU Governor Manager & Libvirt Hook Handler (T-420)"
+        description="MiOS CPU Governor Manager & Libvirt Hook Handler (task_364)"
     )
     parser.add_argument(
         "--action",

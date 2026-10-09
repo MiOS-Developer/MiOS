@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: In-kernel eBPF network flow collector daemon and summary stream processor (T-511).
+# AI-hint: In-kernel eBPF network flow collector daemon and summary stream processor (task_455).
 # AI-doc: usr/share/doc/mios/manual/ch06-security.md
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ class NetflowDaemon:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MiOS eBPF Netflow Collector Daemon (T-511)")
+    parser = argparse.ArgumentParser(description="MiOS eBPF Netflow Collector Daemon (task_455)")
     parser.add_argument("--bpf-obj", default="/usr/src/bpf/mios_netflow.bpf.c", help="Path to eBPF program source/object")
     parser.add_argument("--interval", type=float, default=10.0, help="Flush interval in seconds")
     parser.add_argument("--output", help="Path to write summarized flow JSON")

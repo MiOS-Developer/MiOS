@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Deterministic /etc/subuid and /etc/subgid subordinate UID/GID allocator (T-477).
+# AI-hint: Deterministic /etc/subuid and /etc/subgid subordinate UID/GID allocator (task_421).
 # AI-doc: usr/share/doc/mios/manual/ch11-security-and-hardening.md
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def verify_no_collisions(entries: Dict[str, Tuple[int, int]]) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Deterministic /etc/subuid and /etc/subgid range generator (T-477)"
+        description="Deterministic /etc/subuid and /etc/subgid range generator (task_421)"
     )
     parser.add_argument("--sync", action="store_true", help="Synchronize subuid/subgid for all system users")
     parser.add_argument("--check", action="store_true", help="Verify existing subuid/subgid files have no collisions")

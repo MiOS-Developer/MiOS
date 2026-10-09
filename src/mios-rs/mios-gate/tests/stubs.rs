@@ -43,7 +43,7 @@ const STUB: &str =
     "fn run(&self, _ctx: &DriftCtx) -> Verdict {\n        Verdict::Skip(\"NOT IMPLEMENTED: probe\".to_string())\n    }";
 const LIAR: &str =
     "fn run(&self, _ctx: &DriftCtx) -> Verdict {\n        Verdict::Pass(\"probe verified\".to_string())\n    }";
-/// A real check OPENS something. T-1045: `ctx.root.is_dir()` and
+/// A real check OPENS something. task_982: `ctx.root.is_dir()` and
 /// `ctx.root.join(..).exists()` are not reads, and four checks claimed a verdict
 /// after doing only that.
 const REAL: &str =
@@ -77,7 +77,7 @@ fn a_check_that_cannot_look_must_not_claim() {
     assert!(out.contains("must not claim"), "{out}");
 }
 
-/// T-1043, and a bug in this gate's first predicate: naming the parameter `ctx`
+/// task_980, and a bug in this gate's first predicate: naming the parameter `ctx`
 /// instead of `_ctx` proves nothing. check_pipeline_numbering read ctx.in_image
 /// for an early skip and then returned a constant Pass, so a parameter-name test
 /// classified it as implemented and it kept claiming a verdict.
@@ -106,7 +106,7 @@ fn a_reader_whose_ctx_root_is_line_split_is_not_a_stub() {
     );
 }
 
-/// T-1045: the shape four real checks had -- build a path, stat it, claim.
+/// task_982: the shape four real checks had -- build a path, stat it, claim.
 #[test]
 fn a_stat_only_check_is_a_stub() {
     const STAT_ONLY: &str = "fn run(&self, ctx: &DriftCtx) -> Verdict {\n        if !ctx.root.join(\"x\").exists() {\n            return Verdict::Fail(\"missing\".to_string());\n        }\n        Verdict::Pass(\"probe verified\".to_string())\n    }";

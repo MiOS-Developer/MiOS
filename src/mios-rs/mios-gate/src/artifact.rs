@@ -1,5 +1,5 @@
 // AI-hint: Artifact verification gate for mios-gate: validates OCI descriptor closure, non-executing SafeTensors/GGUF headers, and OpenAI SFT/DPO JSONL datasets.
-// AI-related: src/mios-rs/mios-gate/src/main.rs, usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md, ROADMAP.md (MODELOCI-04)
+// AI-related: src/mios-rs/mios-gate/src/main.rs, usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md, ROADMAP.md (task_3227)
 
 use crate::Report;
 use std::fs::File;

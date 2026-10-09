@@ -143,7 +143,7 @@ class TestLiveAgentNames(unittest.TestCase):
         self.assertEqual(live, {"local"})
 
 class TestProbeVerifyTLS(unittest.TestCase):
-    """T-310: probes verify TLS unless the SSOT opts out. See ADR-0016."""
+    """task_254: probes verify TLS unless the SSOT opts out. See ADR-0016."""
 
     _SITES = (
         "mios_pipe/routing/turn.py",

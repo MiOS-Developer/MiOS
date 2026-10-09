@@ -65,7 +65,7 @@ ALTER TABLE knowledge    ADD COLUMN IF NOT EXISTS valid_from timestamptz DEFAULT
 ALTER TABLE knowledge    ADD COLUMN IF NOT EXISTS valid_to   timestamptz;
 CREATE INDEX IF NOT EXISTS knowledge_valid_to ON knowledge (valid_to);
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE knowledge    ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE knowledge    ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS knowledge_origin ON knowledge (origin_node);
@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS agent_memory_valid_to ON agent_memory (valid_to);
 -- MEM-05: Importance score for recall ranking
 ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS importance numeric DEFAULT 1.0;
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS agent_memory_origin ON agent_memory (origin_node);
@@ -142,7 +142,7 @@ ALTER TABLE event ADD COLUMN IF NOT EXISTS trace_id       text;
 ALTER TABLE event ADD COLUMN IF NOT EXISTS span_id        text;
 ALTER TABLE event ADD COLUMN IF NOT EXISTS parent_span_id text;
 CREATE INDEX IF NOT EXISTS event_trace   ON event (trace_id);
--- SEC-03 (T-034): SHA-256 tamper-evident hash chain over the event stream. Each
+-- SEC-03 (task_34): SHA-256 tamper-evident hash chain over the event stream. Each
 -- chained row carries its position (chain_seq, monotonic in WRITE order -- the
 -- pgvector mirror INSERT is fire-and-forget so the IDENTITY `id` can reorder, hence
 -- a write-order seq), the predecessor's chain_hash (prev_hash), and
@@ -155,7 +155,7 @@ ALTER TABLE event ADD COLUMN IF NOT EXISTS chain_seq  bigint;
 ALTER TABLE event ADD COLUMN IF NOT EXISTS prev_hash  text;
 ALTER TABLE event ADD COLUMN IF NOT EXISTS chain_hash text;
 CREATE INDEX IF NOT EXISTS event_chain_seq ON event (chain_seq);
--- DCI act analytics (T-028 / ORCH-01): the deliberation layer (mios_dci) logs each
+-- DCI act analytics (task_28 / task_3219): the deliberation layer (mios_dci) logs each
 -- typed epistemic act as an event row -- kind='dci_act' for a persona/critic act,
 -- kind='dissent' for an unresolved Challenger objection. The act name lived ONLY in
 -- the JSONB payload, so dissent + per-act analytics needed a JSONB extract on every
@@ -167,7 +167,7 @@ CREATE INDEX IF NOT EXISTS event_chain_seq ON event (chain_seq);
 ALTER TABLE event ADD COLUMN IF NOT EXISTS act_type text;
 CREATE INDEX IF NOT EXISTS event_act_type ON event (act_type) WHERE act_type IS NOT NULL;
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE event ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE event ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS event_origin ON event (origin_node);
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS session (
 );
 CREATE INDEX IF NOT EXISTS session_chat ON session (owui_chat_id);
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE session ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE session ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS session_origin ON session (origin_node);
@@ -273,7 +273,7 @@ CREATE INDEX IF NOT EXISTS skill_tool_call_tc
     ON skill_tool_call (tool_call_id);
 
 -- ── quota_ledger: per-principal budget window that survives a restart ─────────
--- KACT-03/T-228: the tracker counted per principal but only in memory, so any
+-- KACT-03/task_208: the tracker counted per principal but only in memory, so any
 -- restart -- including a `bootc` upgrade -- handed an exhausted account a fresh
 -- allowance. The RPM deque is deliberately NOT stored: a sliding minute of
 -- request timestamps is meaningless after a restart, and replaying it would
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS run_template (
 );
 CREATE INDEX IF NOT EXISTS run_template_class ON run_template (class);
 CREATE INDEX IF NOT EXISTS run_template_ts    ON run_template (ts DESC);
--- T-225: `class` is a hash of the PLAN's shape, so it can only be computed
+-- task_205: `class` is a hash of the PLAN's shape, so it can only be computed
 -- AFTER planning -- useless for deciding whether to plan at all. The intent key
 -- is derived from the TURN, which is the question asked before the planner runs.
 ALTER TABLE run_template ADD COLUMN IF NOT EXISTS intent     text;
@@ -355,7 +355,7 @@ ALTER TABLE scratch ADD COLUMN IF NOT EXISTS body   text;
 ALTER TABLE scratch ADD COLUMN IF NOT EXISTS owner_user text;
 CREATE INDEX IF NOT EXISTS scratch_owner ON scratch (owner_user);
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE scratch ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE scratch ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS scratch_origin ON scratch (origin_node);
@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS person (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS person_username ON person (username);
 
--- ── PKG: Person Graph Edges (T-057) ──────────────────────────────────────────
+-- ── PKG: Person Graph Edges (task_59) ──────────────────────────────────────────
 -- Graph edges extending the `person` node for semantic context grounding.
 CREATE TABLE IF NOT EXISTS person_pref (
     person_id  bigint REFERENCES person(id) ON DELETE CASCADE,
@@ -507,7 +507,7 @@ CREATE INDEX IF NOT EXISTS account_kind ON account (kind);
 -- DB->SAM live-sync service -- so a DB edit reflects to the live OS. Passwords
 -- are stored HASHED only (never plaintext); is_admin drives sudo/Administrators;
 -- os_targets scopes a row to linux|windows|both; enabled toggles the account
--- without deleting it. See ROADMAP WS-ACCT / TASKS T-150..T-153.
+-- without deleting it. See ROADMAP WS-ACCT / TASKS task_151..task_154.
 ALTER TABLE account ADD COLUMN IF NOT EXISTS uid           integer;
 ALTER TABLE account ADD COLUMN IF NOT EXISTS gid           integer;
 ALTER TABLE account ADD COLUMN IF NOT EXISTS groups        text;              -- CSV of supplementary groups
@@ -604,7 +604,7 @@ CREATE TABLE IF NOT EXISTS gateway_sessions (
 -- only once the app SETs the var per request (`SET LOCAL mios.owner_user = ...`).
 -- FORCE so the table-owner connection is subject to it too. Idempotent.
 --
--- T-068 WIRING (who SETs the var): the agent-pipe pg path (mios_pg.recall/insert/
+-- task_70 WIRING (who SETs the var): the agent-pipe pg path (mios_pg.recall/insert/
 -- execute) and the confined mios-pg-query CLI emit
 -- `set_config('mios.owner_user', <verified-owner>, true)` -- SET LOCAL semantics,
 -- with the owner BOUND as a parameter (never spliced) -- gated by the SSOT flag
@@ -627,7 +627,7 @@ END
 $mios_rls$;
 
 
--- ── ORCH-03 (T-030): Fact Ledger & Progress Ledger tables ────────────────────
+-- ── task_3221 (task_30): Fact Ledger & Progress Ledger tables ────────────────────
 CREATE TABLE IF NOT EXISTS fact_ledger (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id  text NOT NULL,
@@ -649,13 +649,13 @@ CREATE TABLE IF NOT EXISTS progress_ledger (
 CREATE INDEX IF NOT EXISTS progress_ledger_session ON progress_ledger (session_id);
 
 
--- ── T-040 (OBS-03): Session Hash Chain Migrations ─────────────────────────────
+-- ── task_40 (OBS-03): Session Hash Chain Migrations ─────────────────────────────
 ALTER TABLE session ADD COLUMN IF NOT EXISTS chain_seq bigint;
 ALTER TABLE session ADD COLUMN IF NOT EXISTS prev_hash text;
 ALTER TABLE session ADD COLUMN IF NOT EXISTS chain_hash text;
 
 
--- ── Consolidated Database-Driven Configurations & Verbs (T-126) ──────────────
+-- ── Consolidated Database-Driven Configurations & Verbs (task_127) ──────────────
 CREATE TABLE IF NOT EXISTS config_layer (
     rank integer PRIMARY KEY,
     name text UNIQUE NOT NULL
@@ -727,7 +727,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     logical_clock bigint NOT NULL DEFAULT 0
 );
 
--- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / AGY-1598)
+-- WS-BLADE provenance for divergence reconciliation (ADR-0017 D5 / task_2239)
 ALTER TABLE config_kv ADD COLUMN IF NOT EXISTS origin_node   text NOT NULL DEFAULT 'local';
 ALTER TABLE config_kv ADD COLUMN IF NOT EXISTS logical_clock bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS config_kv_origin ON config_kv (origin_node);
@@ -779,7 +779,7 @@ CREATE TABLE IF NOT EXISTS domain_verb (
 
 ALTER TABLE domain_verb ADD COLUMN IF NOT EXISTS description text;
 
--- ===== WS-VECTOR V2: AI-plane vectorization gaps (AGY-7) =====
+-- ===== WS-VECTOR V2: AI-plane vectorization gaps (task_1032) =====
 ALTER TABLE skill ADD COLUMN IF NOT EXISTS emb vector(768);
 ALTER TABLE skill ADD COLUMN IF NOT EXISTS emb_model varchar(128);
 ALTER TABLE skill ADD COLUMN IF NOT EXISTS emb_version varchar(64);
@@ -812,7 +812,7 @@ CREATE INDEX IF NOT EXISTS directory_entry_emb_hnsw_idx ON directory_entry USING
 CREATE INDEX IF NOT EXISTS event_emb_hnsw_idx ON event USING hnsw (emb vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS session_emb_hnsw_idx ON session USING hnsw (emb vector_cosine_ops);
 
--- ===== WS-VECTOR V3: build-catalog and xbox catalog (AGY-11) =====
+-- ===== WS-VECTOR V3: build-catalog and xbox catalog (task_1036) =====
 CREATE TABLE IF NOT EXISTS package_set (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name text UNIQUE NOT NULL,
@@ -951,7 +951,7 @@ CREATE TABLE IF NOT EXISTS preset (
 CREATE INDEX IF NOT EXISTS preset_emb_hnsw_idx ON preset USING hnsw (emb vector_cosine_ops);
 
 
--- ===== WS-VECTOR V2: event and session tables (AGY-18) =====
+-- ===== WS-VECTOR V2: event and session tables (task_1043) =====
 ALTER TABLE event ADD COLUMN IF NOT EXISTS emb vector(768);
 ALTER TABLE event ADD COLUMN IF NOT EXISTS emb_model varchar(128);
 ALTER TABLE event ADD COLUMN IF NOT EXISTS emb_version varchar(64);
@@ -963,7 +963,7 @@ ALTER TABLE session ADD COLUMN IF NOT EXISTS emb_version varchar(64);
 CREATE INDEX IF NOT EXISTS session_emb_hnsw_idx ON session USING hnsw (emb vector_cosine_ops);
 
 
--- ===== WS-VECTOR V4: accounts, sequence, functions, preferences (AGY-22) =====
+-- ===== WS-VECTOR V4: accounts, sequence, functions, preferences (task_1047) =====
 ALTER TABLE account ADD COLUMN IF NOT EXISTS home_dir text;
 ALTER TABLE account ADD COLUMN IF NOT EXISTS shell text;
 
@@ -1023,7 +1023,7 @@ CREATE TABLE IF NOT EXISTS account_preference (
 CREATE INDEX IF NOT EXISTS account_preference_emb_hnsw_idx ON account_preference USING hnsw (emb vector_cosine_ops);
 
 
--- ===== WS-VECTOR V5: config_event and audit triggers (AGY-24) =====
+-- ===== WS-VECTOR V5: config_event and audit triggers (task_1049) =====
 CREATE TABLE IF NOT EXISTS config_event (
     id bigserial PRIMARY KEY,
     ts timestamptz DEFAULT now(),
@@ -1199,7 +1199,7 @@ CREATE OR REPLACE TRIGGER domain_verb_audit_trigger
     FOR EACH ROW EXECUTE FUNCTION log_domain_verb_change();
 
 
--- ===== WS-ACCT: PostgresOS identity schema (T-150 / ACCT-01) =====
+-- ===== WS-ACCT: PostgresOS identity schema (task_151 / ACCT-01) =====
 CREATE SCHEMA IF NOT EXISTS mios_identity;
 
 CREATE TABLE IF NOT EXISTS mios_identity.canonical_users (
@@ -1233,7 +1233,7 @@ CREATE TABLE IF NOT EXISTS mios_identity.aliases (
 );
 CREATE INDEX IF NOT EXISTS idx_alias_lookup ON mios_identity.aliases (alias_username) WHERE is_active = true;
 
--- ===== WS-SEC: PostgresOS security schema (T-151 / ACCT-02) =====
+-- ===== WS-SEC: PostgresOS security schema (task_152 / ACCT-02) =====
 CREATE SCHEMA IF NOT EXISTS mios_security;
 
 CREATE TABLE IF NOT EXISTS mios_security.fido2_keys (
@@ -1288,7 +1288,7 @@ CREATE TABLE IF NOT EXISTS mios_security.keepass_vaults (
 );
 
 
--- ===== WS-ACCT: Trigger Notifications for Account Sync (T-151 / T-152) =====
+-- ===== WS-ACCT: Trigger Notifications for Account Sync (task_152 / task_153) =====
 CREATE OR REPLACE FUNCTION notify_account_changes()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -1334,7 +1334,7 @@ CREATE OR REPLACE TRIGGER alias_sync_trigger
     FOR EACH ROW EXECUTE FUNCTION notify_alias_changes();
 
 
--- ===== WS-ACCT: Database-owned Preferences (T-246) =====
+-- ===== WS-ACCT: Database-owned Preferences (task_224) =====
 CREATE TABLE IF NOT EXISTS mios_identity.account_preferences (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_id UUID REFERENCES mios_identity.canonical_users(id) ON DELETE CASCADE,
@@ -1345,7 +1345,7 @@ CREATE TABLE IF NOT EXISTS mios_identity.account_preferences (
     UNIQUE(canonical_id, pref_key)
 );
 
--- ===== Hindsight Multi-Strategy Retrieval Engine (T-055 / MEM-04) =====
+-- ===== Hindsight Multi-Strategy Retrieval Engine (task_57 / MEM-04) =====
 CREATE OR REPLACE FUNCTION hindsight_search(
     p_query text,
     p_emb vector(768),
@@ -1444,7 +1444,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── system_logs: unified journald stream with pgvector semantic indexing (T-411) ───
+-- ── system_logs: unified journald stream with pgvector semantic indexing (task_355) ───
 CREATE TABLE IF NOT EXISTS system_logs (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     unit        text NOT NULL,
@@ -1455,7 +1455,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
     ts          timestamptz DEFAULT now(),
     origin_node text NOT NULL DEFAULT 'local'
 );
--- T-1042: every table the embed backfiller covers carries emb_version; without
+-- task_979: every table the embed backfiller covers carries emb_version; without
 -- it `WHERE emb IS NULL OR emb_version IS DISTINCT FROM %(ver)s` cannot run, and
 -- system_logs could not be added to PK_MAP at all.
 ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS emb_version varchar(64);
@@ -1466,7 +1466,7 @@ CREATE INDEX IF NOT EXISTS system_logs_priority_ts ON system_logs (priority, ts 
 CREATE INDEX IF NOT EXISTS system_logs_ts ON system_logs (ts DESC);
 CREATE INDEX IF NOT EXISTS system_logs_origin ON system_logs (origin_node);
 
--- ── threat_events: security anomaly vector sink (T-512) ────────────────────────
+-- ── threat_events: security anomaly vector sink (task_456) ────────────────────────
 CREATE TABLE IF NOT EXISTS threat_events (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     event_type    text NOT NULL,                      -- e.g. 'network_anomaly', 'lateral_movement'
@@ -1487,7 +1487,7 @@ CREATE INDEX IF NOT EXISTS threat_events_divergence ON threat_events (divergence
 CREATE INDEX IF NOT EXISTS threat_events_severity ON threat_events (severity);
 CREATE INDEX IF NOT EXISTS threat_events_ts ON threat_events (ts DESC);
 
--- ── agent_inbox: HMAC-SHA256 authenticated webhook queue (T-517) ──────────────
+-- ── agent_inbox: HMAC-SHA256 authenticated webhook queue (task_461) ──────────────
 CREATE TABLE IF NOT EXISTS agent_inbox (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     idempotency_key text UNIQUE NOT NULL,             -- SHA256 payload hash to prevent duplicates

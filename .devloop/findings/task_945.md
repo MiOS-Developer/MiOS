@@ -1,6 +1,6 @@
-<!-- AI-hint: MiOS -- dev-loop finding T-1001 (GATE-05): the recorded verdict, evidence and citations from re-measuring that gate's two claims.
+<!-- AI-hint: MiOS -- dev-loop finding task_945 (GATE-05): the recorded verdict, evidence and citations from re-measuring that gate's two claims.
      AI-related: automation/98-drift-checks.sh, tools/drift-checks.py, .devloop/LEDGER.md -->
-# Finding: T-1001 (GATE-05)
+# Finding: task_945 (GATE-05)
 
 ## VERDICT
 CONFIRMED
@@ -42,7 +42,7 @@ than drop-in repairs. Measured by probe, then reverted:
   unmeasured.
 
 `[ssot_tables].max_unconsumed` is shrink-only, so neither half can be armed by
-raising it. This is the same shape as T-1000's note: arming the gate makes the
+raising it. This is the same shape as task_944's note: arming the gate makes the
 pipeline redder, and the operator chooses the timing.
 
 The PROPOSED FIX above records `NEGATIVE CONTROL: N/A`. That is a gap, not a
@@ -69,5 +69,5 @@ patch, not committed, because it cannot pass the repo's own gates:
 hand-set Law 14 ceiling would be a suppression dressed as an exemption.
 
 So the repo has already decided this: Law 14 says the check converts to Rust. Landing
-T-1001 means porting `check_no_inert_ssot_tables` to `tools/native/`, not adding
+task_945 means porting `check_no_inert_ssot_tables` to `tools/native/`, not adding
 Python. That is the real shape of this task, and it is larger than a predicate fix.

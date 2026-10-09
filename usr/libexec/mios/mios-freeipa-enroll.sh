@@ -25,7 +25,7 @@ umask 0077
 . "$CONF"
 
 # MIOS_IPA_PRINCIPAL and MIOS_IPA_PASSWORD were required here and are emitted
-# by nothing; the projection writes MIOS_IPA_ENROLL_PRINCIPAL (T-1053).
+# by nothing; the projection writes MIOS_IPA_ENROLL_PRINCIPAL (task_990).
 for v in MIOS_IPA_REALM MIOS_IPA_DOMAIN MIOS_IPA_SERVER MIOS_IPA_ENROLL_PRINCIPAL; do
     if [[ -z "${!v:-}" ]]; then
         _log "missing required var $v in $CONF"
@@ -34,7 +34,7 @@ for v in MIOS_IPA_REALM MIOS_IPA_DOMAIN MIOS_IPA_SERVER MIOS_IPA_ENROLL_PRINCIPA
 done
 
 # $CONF is 0644 and tracked, so the password is read from a 0600 file it names
-# rather than carried in it (T-1050). umask 0077 is already set above.
+# rather than carried in it (task_987). umask 0077 is already set above.
 : "${MIOS_IPA_OTP_FILE:=/etc/mios/secrets.env}"
 : "${MIOS_IPA_OTP_KEY:=MIOS_IPA_OTP}"
 # shellcheck disable=SC1090  # the secrets path is operator-chosen at runtime

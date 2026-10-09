@@ -1,5 +1,5 @@
 # var-closure-baseline.tsv -- ratcheted exemption ledger for
-# automation/98-drift-checks.sh::check_var_closure (Law 9 ONE-CANONICAL-NAME, T-1052).
+# automation/98-drift-checks.sh::check_var_closure (Law 9 ONE-CANONICAL-NAME, task_989).
 #
 # WHAT THE GATE ASSERTS
 #   Referenced is a subset of emitted: every MIOS_* a consumer reads is a name
@@ -13,14 +13,14 @@
 #   [laws.projection_registry].surfaces, because a consumer that sources one
 #   gets the var without the resolver cascade.  That makes this gate depend on
 #   check_ipa_enroll_projection, which is what proves such a file is a faithful
-#   projection of its SSOT table rather than hand-written (T-1054).
+#   projection of its SSOT table rather than hand-written (task_991).
 #
 #   VIOLATION if a name appears that is not recorded here -- a consumer would
 #   read an unset variable;
 #   VIOLATION if the count differs from the ceiling in either direction;
 #   VIOLATION if the ledger, the resolver or python3 is missing or fails.
 #
-#   Why this ledger exists at all: until T-1052 the check scanned with an
+#   Why this ledger exists at all: until task_989 the check scanned with an
 #   INTERNAL_PATHS list that skipped usr/lib/mios, usr/libexec/mios, tools,
 #   automation, config, docs, installation, usr/share/mios and var/lib/mios --
 #   between them every tree a consumer lives in.  It reported

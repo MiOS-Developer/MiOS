@@ -1,4 +1,4 @@
-# AI-hint: Boot-time composefs fs-verity root filesystem sealing (T-527)
+# AI-hint: Boot-time composefs fs-verity root filesystem sealing (task_471)
 # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
 kargs = [
   "ostree.composefs=1",

@@ -15,7 +15,7 @@ import httpx
 from mios_jsonsalvage import loads_lenient as _loads_lenient
 from mios_config import _STACK_MODEL, _LIGHT_BASE, _toml_section
 from mios_verbcatalog import _render_verb_catalog
-from mios_pipe.routing import replay as _replay   # T-225 intent-keyed replay
+from mios_pipe.routing import replay as _replay   # task_205 intent-keyed replay
 
 log = logging.getLogger("mios-agent-pipe")
 
@@ -398,7 +398,7 @@ async def decompose_intent(user_text: str) -> Optional[dict]:
             log.info("planner emitted unknown verb %r; discarding DAG",
                      n.get("tool"))
             return None
-    # T-225: the capture path keys on the TURN. Manual ch61.
+    # task_205: the capture path keys on the TURN. Manual ch61.
     parsed["intent"] = _ut[:2000]
     return parsed
 

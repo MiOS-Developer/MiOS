@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Split-DNS & Strict DoT Resolution (T-697, T-698).
+# AI-hint: Automated unit test suite for Split-DNS & Strict DoT Resolution (task_641, task_642).
 # AI-related: usr/libexec/mios/net/split_dns.py, tests/test-split-dns.py
 """Automated unit test suite for MiOS Split-DNS Configurator."""
 

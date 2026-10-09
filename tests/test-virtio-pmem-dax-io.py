@@ -3,7 +3,7 @@
 # AI-functions: _simulate_memfd_throughput_gbs, test_memfd_init_latency_under_25ms, test_dax_io_throughput_exceeds_15gbs, test_destroy_releases_memfd_no_nvme_writes, _nvme_write_sectors
 
 """
-test-virtio-pmem-dax-io.py — T-734 WS-VFIO
+test-virtio-pmem-dax-io.py — task_678 WS-VFIO
 Automated benchmark suite for virtio-pmem DAX microVM I/O.
 
 In CI (no Cloud-Hypervisor available) all benchmarks run in dry-run / memory
@@ -28,8 +28,8 @@ sys.path.insert(0, "usr/libexec/mios/virt")
 from mios_microvm import MicroVM, _VMS
 
 # ── constants ──────────────────────────────────────────────────────────────────
-BOOT_LATENCY_SLA_MS = 25.0       # T-734 requirement
-THROUGHPUT_SLA_GBS  = 15.0       # T-734 requirement (simulated via mmap)
+BOOT_LATENCY_SLA_MS = 25.0       # task_678 requirement
+THROUGHPUT_SLA_GBS  = 15.0       # task_678 requirement (simulated via mmap)
 BENCH_SIZE_MB       = 128        # size of in-memory read in simulation
 N_VMS               = 10
 
@@ -129,4 +129,4 @@ if __name__ == "__main__":
     test_memfd_init_latency_under_25ms()
     test_dax_io_throughput_exceeds_15gbs()
     test_destroy_releases_memfd_no_nvme_writes()
-    print("All T-734 tests passed.")
+    print("All task_678 tests passed.")

@@ -11,7 +11,7 @@ const CHECK: &str = "module-test-coverage";
 /// The component whose modules each need a unit test: its top-level `mios_*.py`
 /// and every module under its `[refactor].submodule_roots` packages.
 const COMPONENT: &str = "usr/lib/mios/agent-pipe";
-/// Where the unit tests that may name them live. T-1092 folded the per-module
+/// Where the unit tests that may name them live. task_1006 folded the per-module
 /// siblings into subject suites, and a module's suite may sit under tests/: what
 /// counts is that a test NAMES the module, not what the test file is called.
 const SUITE_DIRS: [&str; 2] = [COMPONENT, "tests"];
@@ -645,7 +645,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         clean(dir.path());
         write(dir.path(), &format!("{PIPE}/mios_omega.py"), "O = 1\n");
-        // The pre-T-1092 rule: a zero-byte file with the right name passed.
+        // The pre-task_1006 rule: a zero-byte file with the right name passed.
         write(dir.path(), &format!("{PIPE}/test_mios_omega.py"), "");
         assert_names(dir.path(), "mios_omega.py is named by no unit test");
     }

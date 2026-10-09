@@ -1,4 +1,4 @@
-// AI-hint: Executes every console case in tests/golden/README.md against the built mios-gen: exit code and combined output, line for line, with [..] and [CWD] (AGY-1067).
+// AI-hint: Executes every console case in tests/golden/README.md against the built mios-gen: exit code and combined output, line for line, with [..] and [CWD] (task_1707).
 // AI-related: tests/golden/README.md, tests/golden/fastfetch/mock.jsonc, tools/native/mios-gen/src/main.rs
 
 use std::io::Read;

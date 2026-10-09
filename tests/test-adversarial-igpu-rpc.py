@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Empirical adversarial stress test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Hardware Routing (T-211, T-212).
+# AI-hint: Empirical adversarial stress test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Hardware Routing (task_191, task_192).
 # AI-related: usr/share/mios/windows/mios-igpu-server.ps1, usr/share/mios/mios.toml, usr/share/mios/llamacpp/llama-swap.yaml
 # AI-doc: PROJECT.md, usr/share/doc/mios/manual/tests.md, usr/share/doc/mios/manual/thesis.md
 """Empirical Adversarial Stress Test Suite for MiOS iGPU Inference Lane & RPC Compute Fabric.

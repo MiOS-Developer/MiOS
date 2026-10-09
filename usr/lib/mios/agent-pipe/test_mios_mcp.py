@@ -234,7 +234,7 @@ def test_back_compat_negotiation_accepts_older_revision():
 
 
 # ==============================================================================
-# Consolidated from test_mios_mcp_dispatch.py (T-1092)
+# Consolidated from test_mios_mcp_dispatch.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for mios_pipe.mcp_dispatch module.
 # AI-related: mios_pipe/mcp_dispatch.py

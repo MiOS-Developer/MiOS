@@ -1,4 +1,4 @@
-// AI-hint: Rust native tool for version SSOT verification (WS-LANG / ADR-0011 / AGY-51).
+// AI-hint: Rust native tool for version SSOT verification (WS-LANG / ADR-0011 / task_1078).
 // Reads VERSION, mios.toml [meta].mios_version, and Containerfile ARG MIOS_VERSION to verify parity.
 
 use std::env;

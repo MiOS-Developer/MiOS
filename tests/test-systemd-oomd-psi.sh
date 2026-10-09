@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CI test suite for systemd-oomd PSI pressure manager, subagent worker eviction, and daemon protection (T-820, T-821).
+# AI-hint: Automated CI test suite for systemd-oomd PSI pressure manager, subagent worker eviction, and daemon protection (task_764, task_765).
 # AI-related: etc/systemd/oomd.conf, usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf, usr/libexec/mios/kernel/oomd_psi.py, tools/ci-suites.py
 set -euo pipefail
 

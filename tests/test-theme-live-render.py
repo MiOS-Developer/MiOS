@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for multi-surface live theme rendering and DBus/socket broadcast (T-499, T-500).
+# AI-hint: Automated unit test suite for multi-surface live theme rendering and DBus/socket broadcast (task_443, task_444).
 # AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 from __future__ import annotations
 

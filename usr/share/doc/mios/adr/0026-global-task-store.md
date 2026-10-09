@@ -18,48 +18,52 @@ superseded_by: [0028]
 
 ## Status
 
-Superseded by ADR-0028 (T-1169): `tasks.jsonl` at the repo root is now the only canonical task list, edited
+Superseded by ADR-0028 (task_3462): `tasks.jsonl` at the repo root is now the only canonical task list, edited
 directly; the store below and `.devloop/tasks.jsonl` are retired and live on as frozen provenance.
 
-proposed — 2026-09-26. Implements T-1023 (QUEUE-01) and the storage half of T-1029 (QUEUE-02). The four
+The id model below is retired too. ADR-0028's opaque-identity amendment gave every task an opaque
+`task_<ULID>` and a creation-order number, and purged the prefixed ids this record describes; every task id in
+this file was rewritten to its typed form, `task_<number>`. Git history keeps the record as first written.
+
+proposed — 2026-09-26. Implements task_3354 (QUEUE-01) and the storage half of task_966 (QUEUE-02). The four
 choices below were made by the operator in the question UI on 2026-09-26; the rest is the design that follows
 from them. An agent never flips this record to accepted.
 
 ## Context
 
 MiOS work is tracked in eleven lists across four repositories, and no machine can select the next task from
-them without reading all of them (T-1023). Census, read 2026-09-26 at MiOS `a67750d`:
+them without reading all of them (task_3354). Census, read 2026-09-26 at MiOS `a67750d`:
 
 | List | Records | Id space |
 |---|---|---|
-| `TASKS.md` summary table (lines 7-1088) | 1080 rows, 1079 ids | T-001..T-1111 |
+| `TASKS.md` summary table (lines 7-1088) | 1080 rows, 1079 ids | task_1..task_1025 |
 | `TASKS.md` sections (from line 1124) | 1025 headings, 1024 ids | T- |
-| `AGY-TASKS.md` | 2140 headings: 2098 ids + 42 range banners | AGY-1..AGY-2586 |
-| `.devloop/tasks.jsonl` | 35 | MON-001..MON-028, T-1070..T-1107 |
-| `usr/share/mios/agents/TASKS.md` | 24 | F-001..F-024 |
+| `AGY-TASKS.md` | 2140 headings: 2098 ids + 42 range banners | task_1026..task_3165 |
+| `.devloop/tasks.jsonl` | 35 | task_3370..task_3404, task_3396..task_1021 |
+| `usr/share/mios/agents/TASKS.md` | 24 | task_3166..task_3183 |
 | `ROADMAP.md` | 115 `CODE-NN` items under 39 `WS-*` | CODE- |
 | `usr/share/mios/docs/MIOS-GEMINI-TASKS-*.md` | 8 | G- |
-| mios-micro `ROADMAP.md` | 9 | M-01..M-09 |
+| mios-micro `ROADMAP.md` | 9 | task_3308..task_3316 |
 | -dev-loop `.devloop/tasks.jsonl` | 1641 | T-, AGY- (an import of the two lists above) |
 | -dev-loop `.devloop/backlog_archive.jsonl` | 1537 | T-, AGY- (archived import) |
 | -dev-loop `.devloop/HISTORICAL_BACKLOG.md` | 1537 | the same ids as the archive |
 
 Defects the census proved:
 
-1. **Two id meanings.** T-1104..T-1107 are KEYMAP-01/DESKTOP-02/ACTIONS-01/BRIDGE-02 in `TASKS.md`
+1. **Two id meanings.** task_1018..task_1021 are KEYMAP-01/DESKTOP-02/ACTIONS-01/BRIDGE-02 in `TASKS.md`
    (lines 1081-1084) and the model-OCI tasks in `.devloop/tasks.jsonl` and mios-micro. The -dev-loop import
-   also merged that repo's own T-001..T-005 into MiOS T-001..T-005, so two MiOS bodies were lost and three
+   also merged that repo's own task_1..task_5 into MiOS task_1..task_5, so two MiOS bodies were lost and three
    were grafted onto unrelated tasks.
 2. **Lossy structure in the existing import.** 3173 of 3178 imported negative controls and 2229 of 3178
    positive controls are placeholders. `Who` was dropped on all 885 records that carry it, 70 AGY tasks marked
    `**DONE**` were imported as open, 33 range banners were dropped, and the import's own note claims
    "3,204 ported, 0 dropped" where 3178 exist.
-3. **The table and the sections disagree.** 55 ids exist only as table rows; T-031 has two rows and two
+3. **The table and the sections disagree.** 55 ids exist only as table rows; task_31 has two rows and two
    sections with different titles; the header claims 264 tasks.
 4. **Status lives in prose.** AGY status is a heading decoration (`**[DONE]**` 916, `**DONE**` 63, bare
    `DONE` 7, `[BROKEN]` 9); T status is free text in 12 spellings.
 5. `check_tasks_status_parity` compares table cells to section status only; nothing compares T- to AGY-,
-   so AGY-1647's done-when is not met.
+   so task_2288's done-when is not met.
 
 ## Decision
 
@@ -127,7 +131,7 @@ imports because the census found the imports older than the lists they copied.
 
 ## Rationale
 
-- **One JSONL file, not one file per task.** T-1029 proposed one Markdown file per task. That shape adds about
+- **One JSONL file, not one file per task.** task_966 proposed one Markdown file per task. That shape adds about
   3,200 tracked files; `[legibility].max_tracked_files` is 3409 and the tree already tracks 3427, and the
   ratchet only falls. One file adds one path. Per-task Markdown remains available as a rendered view.
 - **Why the OpenAI pattern.** MiOS law already requires OpenAI-format schemas everywhere, with the in-tree
@@ -168,6 +172,6 @@ Costs:
   they already skip `TASKS.md` and `AGY-TASKS.md`: the unbound-port register (`tools/check-ssot.py`) and the
   schema-consumer register (`tools/check-testhygiene.py`). At the root it is also outside the port-fallback
   sweep, which only walks `automation/`, `usr/`, `etc/` and `tools/`; under `usr/` that sweep rewrote a quoted
-  `${MIOS_PORT_*:-N}` inside AGY-990's history and broke its slice hash.
+  `${MIOS_PORT_*:-N}` inside task_1630's history and broke its slice hash.
 - `ROADMAP.md` and `.devloop/tasks.jsonl` stay live sources: `check_task_store` fails `STALE` when either
   changes after the last `mios-task migrate`.
