@@ -886,3 +886,10 @@ Task-plane drift gates. One module, one subcommand per gate.
 The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
 
 <!-- mios-src:d84f2b14bb71 from tools/check-tasks.py:5-8 -->
+### ADR-0030
+
+ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
+included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
+domains below partition the same listing.
+
+<!-- mios-src:adf6366d5571 from tools/drift-checks.py:279-281 -->
