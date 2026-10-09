@@ -726,7 +726,7 @@ class TestValueAliasRegistry(unittest.TestCase):
 
 
 # ADR-0030's budget must fail closed. peer-lane planted a missing and a string
-# target_tracked_files and a string and a negative target_files against af498021,
+# target (then target_tracked_files) and a string and a negative target_files against af498021,
 # and all four passed, because the comparison simply skipped what it could not read.
 _BUDGET_TOML = """\
 [build.ratchet]
@@ -734,6 +734,7 @@ max_phase_scripts = 10
 
 [legibility]
 max_tracked_files = 2
+max_platform_files = 3
 max_tracked_mb = 1
 max_shell_lines = 100
 max_ps_lines = 100
@@ -741,8 +742,13 @@ max_libexec_verbs = 10
 max_tooling_python_lines = 100
 
 [legibility.file_budget]
-target_tracked_files = 5
-order = ["ssot", "misc"]
+target_platform_files = 6
+order = ["bootstrap", "ssot", "misc"]
+
+[legibility.file_budget.domains.bootstrap]
+max_files = 1
+target_files = 1
+globs = ["mios-bootstrap/*"]
 
 [legibility.file_budget.domains.ssot]
 max_files = 1
@@ -757,7 +763,7 @@ globs = ["*"]
 
 
 class TestFileBudgetFailsClosed(unittest.TestCase):
-    def _run(self, toml):
+    def _run(self, toml, boot=True):
         d = tempfile.mkdtemp(prefix="budget-")
         self.addCleanup(shutil.rmtree, d, True)
         os.makedirs(os.path.join(d, "usr/share/mios"))
@@ -767,8 +773,16 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
             fh.write("x\n")
         subprocess.run(["git", "-C", d, "init", "-q"], check=True)
         subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
+        # The platform budget counts the sister repo too (ADR-0030, amended).
+        b = tempfile.mkdtemp(prefix="budget-boot-")
+        self.addCleanup(shutil.rmtree, b, True)
+        with open(os.path.join(b, "build-mios.sh"), "w") as fh:
+            fh.write("x\n")
+        subprocess.run(["git", "-C", b, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", b, "add", "-A"], check=True, capture_output=True)
+        env = {**os.environ, "MIOS_DRIFT_ROOT": d, "MIOS_BOOTSTRAP_ROOT": b if boot else os.path.join(b, "absent")}
         return subprocess.run([sys.executable, _MOD_PATH, "legibility-ratchet"], capture_output=True,
-                              text=True, env={**os.environ, "MIOS_DRIFT_ROOT": d})
+                              text=True, env=env)
 
     def test_a_well_formed_budget_passes(self):
         r = self._run(_BUDGET_TOML)
@@ -777,10 +791,10 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
     def test_malformed_budgets_fail_naming_the_fault(self):
         ssot = "[legibility.file_budget.domains.ssot]\nmax_files = 1\ntarget_files = 1\n"
         cases = {
-            "target_tracked_files missing": (_BUDGET_TOML.replace("target_tracked_files = 5\n", ""),
-                                             "target_tracked_files must be a positive integer"),
-            "target_tracked_files a string": (_BUDGET_TOML.replace("target_tracked_files = 5", 'target_tracked_files = "5"'),
-                                              "target_tracked_files must be a positive integer"),
+            "target_platform_files missing": (_BUDGET_TOML.replace("target_platform_files = 6\n", ""),
+                                             "target_platform_files must be a positive integer"),
+            "target_platform_files a string": (_BUDGET_TOML.replace("target_platform_files = 6", 'target_platform_files = "6"'),
+                                              "target_platform_files must be a positive integer"),
             "target_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", 'target_files = "1"')),
                                       "domains.ssot].target_files must be a non-negative integer"),
             "target_files negative": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", "target_files = -1")),
@@ -791,11 +805,14 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
                             "domains.ssot].globs must be a non-empty list"),
             "budget table absent": (_BUDGET_TOML.split("[legibility.file_budget]")[0],
                                     "[legibility.file_budget] is absent"),
-            "targets over the cap": (_BUDGET_TOML.replace("target_tracked_files = 5", "target_tracked_files = 1"),
-                                     "domain targets sum to 2, over target_tracked_files = 1"),
+            "targets over the cap": (_BUDGET_TOML.replace("target_platform_files = 6", "target_platform_files = 2"),
+                                     "domain targets sum to 3, over target_platform_files = 2"),
             "a domain over its floor": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", "max_files = 0")),
                                         "files.ssot = 1, over the floor of 0"),
         }
+        r = self._run(_BUDGET_TOML, boot=False)
+        self.assertEqual(1, r.returncode, "an absent mios-bootstrap passed:\n" + r.stdout + r.stderr)
+        self.assertIn("mios-bootstrap is not a checkout", r.stdout)
         for name, (toml, expect) in cases.items():
             with self.subTest(name):
                 r = self._run(toml)

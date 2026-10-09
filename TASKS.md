@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1753 |
+| pending | 1755 |
 | in_progress | 50 |
 | completed | 1827 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3671 |
+| total | 3673 |
 
 0 record(s) carry at least one override.
 
@@ -1919,6 +1919,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3669` M9 F7: Automation phases become [build.phases] data run by the Rust build driver (160 files to 15) -- pending · P1 · size L
 - `task_3670` M9 F8: usr data folds into SSOT tables or one bundle per domain (435 files to 60) -- pending · P2 · size L
 - `task_3671` M9 F8: tools fold into mios-gen and mios-gate (96 files to 30) -- pending · P2 · size L
+- `task_3672` M9 F2: mios-bootstrap field/ (MiOS-Field SystemRescue assets, 137 files) folds into SSOT-rendered bundles -- pending · P1 · size L
+- `task_3673` M9 F2: mios-bootstrap root files (24) fold into one installer entry per platform -- pending · P1 · size M
 
 ## WS-GATE
 
