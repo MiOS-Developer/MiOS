@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 80: Multi-Vendor Hardware Video Encoder Discovery and DMA-BUF Capture Bridge (T-535, AGY-2133). Details hardware ASIC probing (QuickSync, NVENC, AMF), AV1 > HEVC > AVC codec priority hierarchy, Wayland PipeWire DMA-BUF zero-copy architecture, and Sunshine streaming host containerization. -->
+<!-- AI-hint: Chapter 80: Multi-Vendor Hardware Video Encoder Discovery and DMA-BUF Capture Bridge (task_479, task_2712). Details hardware ASIC probing (QuickSync, NVENC, AMF), AV1 > HEVC > AVC codec priority hierarchy, Wayland PipeWire DMA-BUF zero-copy architecture, and Sunshine streaming host containerization. -->
 
 # Chapter 80: Multi-Vendor Hardware Video Encoder Discovery and DMA-BUF Capture Bridge
 

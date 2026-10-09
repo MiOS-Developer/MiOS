@@ -3,7 +3,7 @@
 # AI-functions: __init__, transition_to, NodeProfile, DynamicTopologySwitcher
 
 """
-topology_switch.py — T-970 WS-NODE
+topology_switch.py — task_914 WS-NODE
 Dual-mode dynamic topology switcher (Seat UI vs Headless Blade) in mios-node.
 
 Dynamically transitions system state between interactive Workstation Seat mode

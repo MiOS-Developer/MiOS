@@ -1520,7 +1520,7 @@ impl PhaseRegistry {
     /// wrong working directory -- MIOS_ROOT defaults to "." -- would therefore
     /// run 01, 02, 05, 07, 98, 99 and report BUILD COMPLETE, having skipped the
     /// kernel config, GPU wiring, SELinux, services, the whole AI plane and
-    /// finalize. The registry now refuses rather than guesses (T-1018).
+    /// finalize. The registry now refuses rather than guesses (task_962).
     pub fn load_from_toml(path: &std::path::Path) -> Result<Self, RegistryError> {
         let shown = path.display().to_string();
         let content =

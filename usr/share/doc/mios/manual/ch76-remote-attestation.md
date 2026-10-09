@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 76: Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding (T-530, AGY-2128). Details cryptographic challenge-response nonces, composite PCR digest appraisal over PCRs (0, 7, 11), golden baselines, and WireGuard/CephFS credential issuance. -->
+<!-- AI-hint: Chapter 76: Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding (task_474, task_2707). Details cryptographic challenge-response nonces, composite PCR digest appraisal over PCRs (0, 7, 11), golden baselines, and WireGuard/CephFS credential issuance. -->
 
 # Chapter 76: Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the architecture, cryptographic verification engine, lifecycle workflows, and operational tooling for the **Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding Daemon** (T-530, AGY-2128).
+This chapter documents the architecture, cryptographic verification engine, lifecycle workflows, and operational tooling for the **Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding Daemon** (task_474, task_2707).
 
 ```mermaid
 flowchart TD

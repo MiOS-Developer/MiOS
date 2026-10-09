@@ -1,4 +1,4 @@
-// AI-hint: mios-node execution layer: the dual-tier Wasm/native task engine, the work-stealing offload scheduler and cgroup v2 core pinning and limits (T-392).
+// AI-hint: mios-node execution layer: the dual-tier Wasm/native task engine, the work-stealing offload scheduler and cgroup v2 core pinning and limits (task_336).
 // AI-related: src/mios-rs/mios-node/src/node.rs, usr/libexec/mios/node/cgroups.py, tests/test-node.py, usr/libexec/mios/node/scheduler.py
 
 pub mod cgroups {

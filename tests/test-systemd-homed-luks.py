@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-745 & T-746: systemd-homed LUKS2 unlock, key zeroization & migration.
+# AI-hint: Tests for task_689 & task_690: systemd-homed LUKS2 unlock, key zeroization & migration.
 # AI-functions: test_homed_unlock_sub_200ms, test_homed_lock_and_key_zeroization
 
-"""Tests for T-745 & T-746: systemd-homed LUKS2 unlock, key zeroization & migration."""
+"""Tests for task_689 & task_690: systemd-homed LUKS2 unlock, key zeroization & migration."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/sec")
 from systemd_homed import SystemdHomedManager
@@ -28,4 +28,4 @@ def test_homed_lock_and_key_zeroization():
 if __name__ == "__main__":
     test_homed_unlock_sub_200ms()
     test_homed_lock_and_key_zeroization()
-    print("All T-745/T-746 tests passed.")
+    print("All task_689/task_690 tests passed.")

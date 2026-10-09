@@ -148,7 +148,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_mcp_pool.py (T-1092)
+# Consolidated from test_mios_mcp_pool.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone assert-script unit test for MCPClientPool (CONV-13).
 # AI-related: ./mios_gateway_queue.py

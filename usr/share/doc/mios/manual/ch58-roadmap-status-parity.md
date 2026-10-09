@@ -18,9 +18,9 @@ The disagreements were not evenly harmless:
 
 * **28 rows** carried `?` in the summary table while the task's own section
   gave a real status. The roadmap could not say whether these were open.
-* **Seven rows** (T-050, T-054, T-056, T-057, T-058, T-060, T-061) said
+* **Seven rows** (task_50, task_56, task_58, task_59, task_60, task_62, task_63) said
   `done-by-code` in the table and `open` in the detail.
-* **Three P0 rows** (T-173, T-174, T-176) said `done` in the table and
+* **Three P0 rows** (task_174, task_175, task_177) said `done` in the table and
   `planned` in the detail — the highest-priority items in the file,
   disagreeing with themselves.
 

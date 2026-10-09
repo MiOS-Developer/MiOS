@@ -370,7 +370,7 @@ class BatteryPassthroughDaemon:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Guest Virtual ACPI Battery Passthrough Daemon (T-421)"
+        description="MiOS Guest Virtual ACPI Battery Passthrough Daemon (task_365)"
     )
     parser.add_argument(
         "--action",

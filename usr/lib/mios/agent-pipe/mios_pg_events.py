@@ -2,7 +2,7 @@
 # AI-functions: __init__, subscribe, inject, stop, AgentEvent, EventBus
 
 """
-mios_pg_events.py — T-342 MAO-03
+mios_pg_events.py — task_286 MAO-03
 PostgreSQL LISTEN/NOTIFY event-bus coordination.
 
 Daemon agents call `listen()` to subscribe to the `mios_agent_events` channel.

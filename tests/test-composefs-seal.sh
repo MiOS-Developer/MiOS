@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for composefs fs-verity root filesystem sealing and atomic validator (T-527, AGY-2125).
+# AI-hint: Verification suite for composefs fs-verity root filesystem sealing and atomic validator (task_471, task_2704).
 # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
 set -euo pipefail
 
@@ -14,7 +14,7 @@ show_help() {
     cat <<'EOF'
 Usage: test-composefs-seal.sh [OPTIONS]
 
-Test suite for Composefs fs-verity root filesystem sealing and atomic image descriptor validator (T-527, AGY-2125).
+Test suite for Composefs fs-verity root filesystem sealing and atomic image descriptor validator (task_471, task_2704).
 
 Options:
   -v, --verbose       Enable verbose test logging
@@ -103,7 +103,7 @@ trap _restore_sealed EXIT
 VALIDATOR="${ROOT_DIR}/usr/libexec/mios/mios-composefs-validator"
 SEAL_SCRIPT="${ROOT_DIR}/automation/93-composefs-seal.sh"
 
-log "=== MiOS Composefs fs-verity Root Sealing Test Suite (T-527, AGY-2125) ==="
+log "=== MiOS Composefs fs-verity Root Sealing Test Suite (task_471, task_2704) ==="
 
 if [[ "$DRY_RUN" == "true" ]]; then
     log "Running in dry-run mode: verifying test script syntax and dry-run sub-invocations"

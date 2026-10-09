@@ -97,11 +97,11 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_mcp_sandbox.py (T-1092)
+# Consolidated from test_mios_mcp_sandbox.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for T-032 (SEC-01 Hermetic MCP Sandboxing). Pure stdlib + asyncio, no server.py/DB/network.
+# AI-hint: Standalone assert-script unit test for task_32 (SEC-01 Hermetic MCP Sandboxing). Pure stdlib + asyncio, no server.py/DB/network.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Unit tests for T-032 SEC-01 Hermetic MCP Sandboxing."""
+"""Unit tests for task_32 SEC-01 Hermetic MCP Sandboxing."""
 
 import asyncio
 import os
@@ -159,7 +159,7 @@ def _run_preamble(paths_sh, env):
                               timeout=10, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env})
 
 def t_runner_port_contract():
-    """T-1135: the port comes only from the resolver-rendered install.env --
+    """task_3428: the port comes only from the resolver-rendered install.env --
     no Environment= literal in the unit or its mios.toml table -- and an
     unresolved port (or a missing paths.sh) is a named, non-zero failure."""
     if sys.platform == "win32":
@@ -418,7 +418,7 @@ def t_fapolicyd_rules_structure():
           lines[-1].startswith("deny_audit"), f"got: {lines[-1]}")
 
 def _main_mcp_sandbox():
-    print("=== Running T-032 Hermetic MCP Sandboxing Tests ===")
+    print("=== Running task_32 Hermetic MCP Sandboxing Tests ===")
     t_runner_port_contract()
     t_sandbox_gate_parsing()
     t_gatekeeper_traversal_blocking()
@@ -426,7 +426,7 @@ def _main_mcp_sandbox():
     t_spawn_routes_through_gatekeeper()
     t_spawn_direct_when_disabled()
     t_fapolicyd_rules_structure()
-    print(f"=== T-032 Hermetic MCP Sandboxing Tests Done ({_fails_mcp_sandbox} failures) ===")
+    print(f"=== task_32 Hermetic MCP Sandboxing Tests Done ({_fails_mcp_sandbox} failures) ===")
     sys.exit(1 if _fails_mcp_sandbox > 0 else 0)
 
 
@@ -444,12 +444,12 @@ def _run_extra_mcp_sandbox():
 
 
 # ==============================================================================
-# Consolidated from test_mios_seccomp.py (T-1092)
+# Consolidated from test_mios_seccomp.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for mios_pipe.access.seccomp (T-230).
+# AI-hint: Standalone assert-script unit test for mios_pipe.access.seccomp (task_210).
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 
-"""Unit tests for the dispatch sandbox's seccomp filter (T-230)."""
+"""Unit tests for the dispatch sandbox's seccomp filter (task_210)."""
 
 import glob
 import re

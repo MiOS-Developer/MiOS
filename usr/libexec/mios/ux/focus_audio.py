@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, usr/share/mios/mios.toml
 # AI-functions: FocusAudioSynthesizer, FocusPreset, main
 """
-MiOS Offline Procedural Focus Audio Synthesizer (T-464).
+MiOS Offline Procedural Focus Audio Synthesizer (task_408).
 
 Procedurally synthesizes 100% offline ambient soundscapes for deep focus programming:
 - Pink noise (1/f spectral density via Voss-McCartney algorithm).
@@ -343,7 +343,7 @@ class FocusAudioSynthesizer:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Offline Procedural Focus Audio Synthesizer (T-464)"
+        description="MiOS Offline Procedural Focus Audio Synthesizer (task_408)"
     )
     parser.add_argument(
         "--preset",

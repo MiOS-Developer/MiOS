@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 62: Sandbox Seccomp. Records what the risk-tier dispatch sandbox actually did before T-230 -- bwrap really was exec'd and really did jail the filesystem and the network, while the confined process reported `Seccomp: 0`, leaving mount, ptrace, keyctl and bpf reachable from inside the jail. Covers the classic-BPF filter built without libseccomp, why the syscall NUMBER table is cross-checked against the host's own kernel headers rather than trusted, why an architecture with no verified table refuses to produce a filter, why an arch mismatch in the program must fall through to deny, and why a filter that denies nothing is worse than no filter at all. -->
+<!-- AI-hint: Chapter 62: Sandbox Seccomp. Records what the risk-tier dispatch sandbox actually did before task_210 -- bwrap really was exec'd and really did jail the filesystem and the network, while the confined process reported `Seccomp: 0`, leaving mount, ptrace, keyctl and bpf reachable from inside the jail. Covers the classic-BPF filter built without libseccomp, why the syscall NUMBER table is cross-checked against the host's own kernel headers rather than trusted, why an architecture with no verified table refuses to produce a filter, why an arch mismatch in the program must fall through to deny, and why a filter that denies nothing is worse than no filter at all. -->
 
 # <a name="62_sandbox_seccomp"></a>Chapter 62: Sandbox Seccomp
 
@@ -103,6 +103,6 @@ property that makes the skip safe rather than convenient.
 confinement from the one that runs: `--unshare-all` where the wrapper unshares
 pid/ipc/uts, and no `--cap-drop ALL` or `--seccomp`. It is a reference shape,
 not the argv anything executes, and it is now labelled as such at its
-definition. Reconciling the two is recorded as T-309 rather than done here —
+definition. Reconciling the two is recorded as task_253 rather than done here —
 quietly changing the flag set of a security wrapper that cannot be VM-verified
 from this environment would be a worse outcome than a documented divergence.

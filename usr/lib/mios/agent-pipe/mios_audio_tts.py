@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).
+# AI-hint: Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).
 # AI-doc: usr/share/doc/mios/manual/ch79-streaming-tts-piper.md
 """Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder.
 
@@ -828,7 +828,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios_audio_tts.py",
-        description="Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).",
+        description="Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).",
         parents=[common],
     )
 

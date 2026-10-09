@@ -41,7 +41,7 @@ avd_virtiofs_mount_mod = avd__import_module("virtiofs_mount", os.path.join(avd__
 avd_multimonitor_sync_mod = avd__import_module("multimonitor_sync", os.path.join(avd__DISP_DIR, "multimonitor_sync.py"))
 
 class avd_TestAdversarialIOMMUParser(unittest.TestCase):
-    """Adversarial stress-testing for T-413 IOMMU Group Parser & ACS Override Topology Auditor."""
+    """Adversarial stress-testing for task_357 IOMMU Group Parser & ACS Override Topology Auditor."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_iommu_")
@@ -190,7 +190,7 @@ class avd_TestAdversarialIOMMUParser(unittest.TestCase):
         self.assertFalse(res["isolated"])
 
 class avd_TestAdversarialVFIOBinder(unittest.TestCase):
-    """Adversarial stress-testing for T-414 Dynamic Runtime VFIO Device Unbind and Rebind Utility."""
+    """Adversarial stress-testing for task_358 Dynamic Runtime VFIO Device Unbind and Rebind Utility."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_vfio_")
@@ -298,7 +298,7 @@ class avd_TestAdversarialVFIOBinder(unittest.TestCase):
         self.assertIsNone(state1_after.driver_override)
 
 class avd_TestAdversarialLookingGlass(unittest.TestCase):
-    """Adversarial stress-testing for T-415 Looking Glass B6 Direct SPICE Host Input Manager."""
+    """Adversarial stress-testing for task_359 Looking Glass B6 Direct SPICE Host Input Manager."""
 
     def test_corrupted_and_edge_ini_parsing(self) -> None:
         """Adversarial Test: Corrupted INI formatting, missing sections, custom options, case-preservation."""
@@ -359,7 +359,7 @@ class avd_TestAdversarialLookingGlass(unittest.TestCase):
         self.assertIn("--extra-flag", args)
 
 class avd_TestAdversarialPipeWireBridge(unittest.TestCase):
-    """Adversarial stress-testing for T-416 PipeWire Low-Latency Audio Bridge."""
+    """Adversarial stress-testing for task_360 PipeWire Low-Latency Audio Bridge."""
 
     def test_latency_sla_calculations_and_extreme_inputs(self) -> None:
         """Adversarial Test: Extreme sample rates and quantums with strict sub-5ms SLA validation."""
@@ -442,7 +442,7 @@ class avd_TestAdversarialPipeWireBridge(unittest.TestCase):
         self.assertIn("LimitMEMLOCK=infinity", service)
 
 class avd_TestAdversarialVTPMProvision(unittest.TestCase):
-    """Adversarial stress-testing for T-417 Virtual TPM2 Provisioning."""
+    """Adversarial stress-testing for task_361 Virtual TPM2 Provisioning."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_vtpm_")
@@ -512,7 +512,7 @@ class avd_TestAdversarialVTPMProvision(unittest.TestCase):
         self.assertIn('win11-swtpm.sock"/>', xml)
 
 class avd_TestAdversarialHugepagesManager(unittest.TestCase):
-    """Adversarial stress-testing for T-418 Hugepages Automatic Allocation & Compaction Manager."""
+    """Adversarial stress-testing for task_362 Hugepages Automatic Allocation & Compaction Manager."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_hp_")
@@ -614,7 +614,7 @@ class avd_TestAdversarialHugepagesManager(unittest.TestCase):
         self.assertEqual(rel_res2["remaining_pages"], 0)
 
 class avd_TestAdversarialVirtIOFS(unittest.TestCase):
-    """Adversarial stress-testing for T-419 VirtIO-FS Shared Directory Mount Daemon."""
+    """Adversarial stress-testing for task_363 VirtIO-FS Shared Directory Mount Daemon."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_vfs_")
@@ -686,7 +686,7 @@ class avd_TestAdversarialVirtIOFS(unittest.TestCase):
         self.assertIn('<access mode="shared"/>', xml_dax)
 
 class avd_TestAdversarialMultiMonitorSync(unittest.TestCase):
-    """Adversarial stress-testing for T-423 Multi-Monitor Looking Glass Display Geometry & Synchronizer."""
+    """Adversarial stress-testing for task_367 Multi-Monitor Looking Glass Display Geometry & Synchronizer."""
 
     def test_shm_buffer_sizing_across_resolutions(self) -> None:
         """Adversarial Test: Power-of-2 IVSHMEM sizing across standard, ultrawide, and extreme 8K displays."""
@@ -1070,7 +1070,7 @@ class ip_TestIOMMUParser(unittest.TestCase):
 # ======================================================================
 # from tests/test-virt.py
 # ======================================================================
-"""Unit and benchmark test suite for Ephemeral Cloud-Hypervisor microVM orchestrator and Virtio-VSOCK bridge (T-570)."""
+"""Unit and benchmark test suite for Ephemeral Cloud-Hypervisor microVM orchestrator and Virtio-VSOCK bridge (task_514)."""
 
 
 import importlib.util

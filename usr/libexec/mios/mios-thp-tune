@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Transparent Huge Pages (THP madvise) and proactive memory compaction tuner (T-800).
+# AI-hint: Transparent Huge Pages (THP madvise) and proactive memory compaction tuner (task_744).
 # AI-doc: usr/share/doc/mios/manual/ch12-memory-compaction-and-thp.md
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def get_current_status() -> Dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="THP madvise and proactive memory compaction manager (T-800)"
+        description="THP madvise and proactive memory compaction manager (task_744)"
     )
     parser.add_argument("--apply", action="store_true", help="Apply target THP and compaction values")
     parser.add_argument("--dry-run", action="store_true", help="Simulate apply without modifying files")

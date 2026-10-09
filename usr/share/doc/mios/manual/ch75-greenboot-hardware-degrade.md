@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 75: Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter (T-531, AGY-2129). Covers the degrade-not-refuse architectural philosophy, peripheral subsystem probes (network, audio, display), Greenboot wanted.d integration, structured event telemetry, and PostgreSQL hardware inventory persistence. -->
+<!-- AI-hint: Chapter 75: Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter (task_475, task_2708). Covers the degrade-not-refuse architectural philosophy, peripheral subsystem probes (network, audio, display), Greenboot wanted.d integration, structured event telemetry, and PostgreSQL hardware inventory persistence. -->
 
 # Chapter 75: Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the architecture, probe mechanics, and operational model for the **Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter** (T-531, AGY-2129), implemented in [`usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh`](file:///usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh).
+This chapter documents the architecture, probe mechanics, and operational model for the **Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter** (task_475, task_2708), implemented in [`usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh`](file:///usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh).
 
 ```mermaid
 flowchart TD
@@ -95,7 +95,7 @@ During boot, `greenboot-healthcheck.service` executes checks in alphanumeric ord
 │   ├── 20-podman.sh              # Container runtime verification
 │   └── 55-mios-db-check.sh       # PostgreSQL & SQLite doctor
 └── wanted.d/
-    ├── 20-hardware-degrade.sh    # Peripheral health evaluator (T-531)
+    ├── 20-hardware-degrade.sh    # Peripheral health evaluator (task_475)
     ├── 30-nvidia-cdi.sh          # NVIDIA CDI spec generator
     ├── 40-role-target.sh         # Node persona target validator
     └── 70-blade-reachability.sh  # Advisory blade interconnect check

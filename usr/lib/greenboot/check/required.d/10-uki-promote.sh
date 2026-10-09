@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated UKI A/B boot promotion and Greenboot validation gate (T-508).
+# AI-hint: Automated UKI A/B boot promotion and Greenboot validation gate (task_452).
 # AI-doc: usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md
 set -euo pipefail
 
@@ -28,7 +28,7 @@ mv -f "${NEXT_EFI}" "${DEFAULT_EFI}"
 # Ensure default loader entry exists pointing to mios.efi
 if [[ -d "${ENTRIES_DIR}" ]]; then
     cat > "${DEFAULT_CONF}" <<EOF
-# MiOS Active Default UKI Boot Entry (T-508)
+# MiOS Active Default UKI Boot Entry (task_452)
 title MiOS (Active UKI)
 linux /EFI/Linux/mios.efi
 options (baked into UKI)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (T-794).
+# AI-hint: Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (task_738).
 # AI-doc: usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (T-396 / AGY-1994).
+# AI-hint: Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (task_340 / task_2573).
 # AI-related: usr/libexec/mios/node/wire.py, tests/test-node.py
 """
 MiOS Multi-Transport Router & LAN Partition Overlay Failover Engine.

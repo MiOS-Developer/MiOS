@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Configures crashkernel memory reservation for kdump crash extraction (T-515).
+# AI-hint: Configures crashkernel memory reservation for kdump crash extraction (task_459).
 # AI-doc: usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md
 kargs = ["crashkernel=256M"]

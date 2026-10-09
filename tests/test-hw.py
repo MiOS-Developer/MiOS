@@ -35,7 +35,7 @@ ahp_usb_hot = ahp__import_module("usb_hotplug", os.path.join(ahp__HW_DIR, "usb_h
 ahp_gpu_watch = ahp__import_module("gpu_thermal_watchdog", os.path.join(ahp__HW_DIR, "gpu_thermal_watchdog.py"))
 
 class ahp_TestAdversarialCPUGovernor(unittest.TestCase):
-    """Adversarial stress-testing for T-420 CPU Governor Manager."""
+    """Adversarial stress-testing for task_364 CPU Governor Manager."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_cpu_")
@@ -191,7 +191,7 @@ class ahp_TestAdversarialCPUGovernor(unittest.TestCase):
         self.assertEqual(sorted(res_restore["restored_cpus"]), [0, 1, 4, 6])
 
 class ahp_TestAdversarialBatteryPassthrough(unittest.TestCase):
-    """Adversarial stress-testing for T-421 Battery Passthrough Daemon."""
+    """Adversarial stress-testing for task_365 Battery Passthrough Daemon."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_bat_")
@@ -309,7 +309,7 @@ class ahp_TestAdversarialBatteryPassthrough(unittest.TestCase):
         self.assertEqual(qmp_event["telemetry_payload"]["data"]["battery_level"], 0.0)
 
 class ahp_TestAdversarialUSBHotplug(unittest.TestCase):
-    """Adversarial stress-testing for T-422 USB Hotplug Manager."""
+    """Adversarial stress-testing for task_366 USB Hotplug Manager."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_usb_")
@@ -421,7 +421,7 @@ class ahp_TestAdversarialUSBHotplug(unittest.TestCase):
         self.assertIn(expected_snippet_addr, xml)
 
 class ahp_TestAdversarialGPUThermalWatchdog(unittest.TestCase):
-    """Adversarial stress-testing for T-424 GPU Thermal Watchdog."""
+    """Adversarial stress-testing for task_368 GPU Thermal Watchdog."""
 
     def setUp(self) -> None:
         self.tmp_dir = tempfile.mkdtemp(prefix="adv_test_gpu_")
@@ -530,7 +530,7 @@ def ahp_main() -> int:
 # ======================================================================
 # from tests/test-hw.py (prefix bp_)
 # ======================================================================
-"""Automated tests for MiOS Guest Virtual ACPI Battery Passthrough Daemon (T-421)."""
+"""Automated tests for MiOS Guest Virtual ACPI Battery Passthrough Daemon (task_365)."""
 
 
 import importlib.util
@@ -729,7 +729,7 @@ def bp_main() -> int:
 # ======================================================================
 # from tests/test-hw.py (prefix cg_)
 # ======================================================================
-"""Automated tests for MiOS CPU Governor Manager and Libvirt Hook Integration (T-420)."""
+"""Automated tests for MiOS CPU Governor Manager and Libvirt Hook Integration (task_364)."""
 
 
 import importlib.util
@@ -1325,7 +1325,7 @@ def gsc_main() -> int:
 # ======================================================================
 # from tests/test-hw.py (prefix gtw_)
 # ======================================================================
-"""Automated tests for MiOS GPU Thermal, Junction Temperature & Fan Watchdog (T-424)."""
+"""Automated tests for MiOS GPU Thermal, Junction Temperature & Fan Watchdog (task_368)."""
 
 
 import importlib.util
@@ -1499,7 +1499,7 @@ def gtw_main() -> int:
 # ======================================================================
 # from tests/test-hw.py (prefix hd_)
 # ======================================================================
-"""Automated unit test suite for PCIe Link Width & Speed Degradation Detector (T-564)."""
+"""Automated unit test suite for PCIe Link Width & Speed Degradation Detector (task_508)."""
 
 
 import importlib.util
@@ -1620,7 +1620,7 @@ class hd_TestHwDegrade(unittest.TestCase):
 # ======================================================================
 # from tests/test-hw.py (prefix im_)
 # ======================================================================
-"""Automated unit test suite for Hardware Netlink Inventory Monitor (T-563)."""
+"""Automated unit test suite for Hardware Netlink Inventory Monitor (task_507)."""
 
 
 import importlib.util
@@ -1738,7 +1738,7 @@ class nt_TestNCCLTune(unittest.TestCase):
 # ======================================================================
 # from tests/test-hw.py (prefix ppt_)
 # ======================================================================
-"""Automated tests for MiOS Power Profile Transitions & Inference Downscaler (T-573 / T-574)."""
+"""Automated tests for MiOS Power Profile Transitions & Inference Downscaler (task_517 / task_518)."""
 
 
 import importlib.util
@@ -2103,7 +2103,7 @@ class th_TestThermald(unittest.TestCase):
 # ======================================================================
 # from tests/test-hw.py (prefix uh_)
 # ======================================================================
-"""Automated tests for MiOS USB Controller & DAC Hotplug Passthrough Manager (T-422)."""
+"""Automated tests for MiOS USB Controller & DAC Hotplug Passthrough Manager (task_366)."""
 
 
 import importlib.util

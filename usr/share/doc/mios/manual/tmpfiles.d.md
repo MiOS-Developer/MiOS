@@ -235,9 +235,9 @@ mios-ai); 0755 so OWUI (uid 817) can read them through the read-only mount.
 
 <!-- mios-src:de2119c75df5 from usr/lib/tmpfiles.d/mios.conf:81-86 -->
 
-### F-011 war-room activity sink. Two DIFFERENT identities must...
+### task_3176 war-room activity sink. Two DIFFERENT identities must...
 
-F-011 war-room activity sink. Two DIFFERENT identities must share this file:
+task_3176 war-room activity sink. Two DIFFERENT identities must share this file:
   WRITER = the mios-agents container's war-room (mios-a2o), which runs as the
            `coder` user = host uid 1000 (== the `mios` operator; 1:1 under rootful
            podman) and appends JSONL + writes sibling .tmp files during trim.
@@ -248,4 +248,4 @@ group mios-ai + setgid (02775) so every appended line inherits the mios-ai group
 the reader reads through -- no reliance on umask/world bits. Only populated when
 [frontier].stream_to_reasoning is on; empty otherwise (OFF-by-default preserved).
 
-<!-- mios-src:3cea27d8883f from usr/lib/tmpfiles.d/mios.conf:88-97 -->
+<!-- mios-src:77da582bd347 from usr/lib/tmpfiles.d/mios.conf:88-97 -->

@@ -477,14 +477,14 @@ Run:  python test_mios_office_convert.py
 ### Reference resolution -- owned by doc_refs.rs in Rust (Law...
 
 --------------------------------------------------------------------------
-Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / MON-026)
+Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / task_3395)
 --------------------------------------------------------------------------
 
-<!-- mios-src:4fa8bbb4c604 from usr/lib/mios/mios_comments.py:188-190 -->
+<!-- mios-src:34013fc6aaec from usr/lib/mios/mios_comments.py:188-190 -->
 
 ### Stale-reference resolution is owned by doc_refs.rs in Rust...
 
-Stale-reference resolution is owned by doc_refs.rs in Rust (Law 14 / MON-026).
+Stale-reference resolution is owned by doc_refs.rs in Rust (Law 14 / task_3395).
 
     Python mios_comments remains responsible only for comment lexing and classification.
 
@@ -500,10 +500,10 @@ str(dict) gives a PYTHON REPR -- {'ordinal': '01', 'fatal': True} --
 which only Python can parse and which disagreed with the Rust
 resolver's TOML inline tables on 12 keys. That was the whole residual
 of check_resolver_differential_parity, sitting exactly at its ceiling
-of 12 with no headroom (T-1063). TOML wins because it is a real
+of 12 with no headroom (task_3361). TOML wins because it is a real
 format and because Rust is the destination tier.
 
-<!-- mios-src:737153c244c1 from usr/lib/mios/mios_toml.py:697-706 -->
+<!-- mios-src:ba4386c9db23 from usr/lib/mios/mios_toml.py:697-706 -->
 
 ### Render a value as TOML inline syntax, byte-compatible with...
 
@@ -525,11 +525,11 @@ to collapse rather than record. Dropping the split here was tried
 and reverted for that reason.
 
 It is still the ONLY one of three emitters that splits, which is
-T-1065's real finding: the fix is to stop emitting the redundant
+task_3363's real finding: the fix is to stop emitting the redundant
 _VERSION alias in both twins, not to change how it is rendered.
 That removes 23 keys and needs its own change.
 
-<!-- mios-src:133a719d6497 from usr/lib/mios/mios_toml.py:787-797 -->
+<!-- mios-src:59009b8b75b9 from usr/lib/mios/mios_toml.py:787-797 -->
 
 ### Resolve ${MIOS_*} that one emitted value makes to another....
 
@@ -543,7 +543,7 @@ Resolve ${MIOS_*} that one emitted value makes to another.
     MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1 means one thing
     to bash and another to them. It is also why system-sync-env.sh DROPPED that
     variable rather than emitting it: its filter rejects any value containing
-    `$` (T-1060).
+    `$` (task_997).
 
     Do NOT apply it to the export map that renders automation/lib/globals.{sh,ps1}.
     Those are sourced by bash and PowerShell, which expand at load time, and the
@@ -555,7 +555,7 @@ Resolve ${MIOS_*} that one emitted value makes to another.
     alone because systemd owns it, and leaves an unresolvable name verbatim
     rather than blanking it so a caller can report it.
 
-<!-- mios-src:0b6e10f68be6 from usr/lib/mios/mios_toml.py:819-840 -->
+<!-- mios-src:6d3281e8d9cf from usr/lib/mios/mios_toml.py:819-840 -->
 
 ### Law 12
 
@@ -715,7 +715,7 @@ One-shot mDNS browse for the A2A service type when [a2a].mdns_discovery is
 
 ### mios-a2a-test -- A2A federation loopback smoke test...
 
-mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / T-066).
+mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / task_68).
 
 Registers the local MiOS instance as its own A2A peer (loopback) and runs a
 full JSON-RPC 2.0 ``message/send`` -> Task -> Artifact round-trip against the
@@ -734,7 +734,7 @@ via /etc/mios/install.env at runtime) -- identical to mios-a2a-delegate; no
 literal port is baked into a decision. Unreachable endpoint => clear message +
 nonzero exit, never a traceback (degrade-open: a dev checkout has no live lane).
 
-<!-- mios-src:239ab3380a6b from usr/libexec/mios/mios-a2a-test:5-23 -->
+<!-- mios-src:fcef9d7cad23 from usr/libexec/mios/mios-a2a-test:5-23 -->
 
 ### Build an A2A Message with a single text Part (pure)....
 
@@ -2068,7 +2068,7 @@ multi-line value across several lines, and the old `grep '^MIOS_'` kept only
 the FIRST of them -- continuation lines do not start with MIOS_, so the rest
 was dropped without a word. Measured: MIOS_OWUI_SYSTEM_PROMPT_TEMPLATE is 2633
 characters over 42 lines and reached the baseline as the nine characters
-"# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (T-1066).
+"# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (task_3364).
 check_value_aliases trusts this output, so a gate was comparing mutilated
 values confidently.
 
@@ -2082,7 +2082,7 @@ is escaped first, so the transform is reversible.
 contains newlines. An awk with RS="\0" is not portable across awk
 implementations, and this script must not grow a python dependency.
 
-<!-- mios-src:e30d3c475fd5 from usr/libexec/mios/mios-env-snapshot:30-47 -->
+<!-- mios-src:514143ea70d7 from usr/libexec/mios/mios-env-snapshot:30-47 -->
 
 ### ONE resolver, always the shell twin. This snapshot is a...
 
@@ -3677,7 +3677,7 @@ Two modes:
 
 Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
         MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
-        T-068 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
         the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
         When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
         SET first so the schema RLS policies scope rows to that owner. Default-off /
@@ -4567,13 +4567,13 @@ Law 10 keeps these four out of install.env -- a space, parentheses or a
 {} placeholder, or an empty value the resolver drops -- while ExecStart
 references each BARE, which the renderer leaves for systemd to expand.
 Without a supply here systemd expanded all four to the empty string
-(T-1064). `mios-gate protected-refs` fails the build on the general case.
+(task_3362). `mios-gate protected-refs` fails the build on the general case.
 
-<!-- mios-src:d3795988e925 from usr/share/mios/mios.toml:1056-1060 -->
+<!-- mios-src:18cec70748ce from usr/share/mios/mios.toml:1056-1060 -->
 
-### T-1035. Each entry pins path:KEY=VALUE, not just path:KEY....
+### task_972. Each entry pins path:KEY=VALUE, not just path:KEY....
 
-T-1035. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
+task_972. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
 cannot tell the shipped placeholder from an operator's real password: setting
 MIOS_PGVECTOR_PASS in the build environment bakes that value into a 0644 file under
 /usr and the key-only gate stayed green. Every value below is a placeholder
@@ -4608,12 +4608,12 @@ A value carrying whitespace, a quote, `$`, a backtick or `#` cannot be written
 bare without changing what it means, so system-sync-env.sh skips it.
 
 Skipping SILENTLY is the defect: MIOS_AI_ENDPOINT was dropped this way and
-Law 5 routes every agent through it (T-1060). These keys are declared, with
+Law 5 routes every agent through it (task_997). These keys are declared, with
 the reason each value cannot be bare; ANY other unsafe value now fails the
 render instead of vanishing. Shrink-only: max_declared comes down as values
 are made bare, never up.
 
-<!-- mios-src:17a41992aa6e from usr/share/mios/mios.toml:2244-2253 -->
+<!-- mios-src:d6cb288e3660 from usr/share/mios/mios.toml:2244-2253 -->
 
 ### Law 11 SECRETS-NEVER-IN-ENV
 
@@ -4643,9 +4643,9 @@ server/agent join, corosync membership -- automatically, never by hand.
 
 <!-- mios-src:46f29ed120aa from usr/share/mios/mios.toml:9715-9717 -->
 
-### T-1037. miosd Check implementations that were never...
+### task_974. miosd Check implementations that were never...
 
-T-1037. miosd Check implementations that were never written: their `run` takes
+task_974. miosd Check implementations that were never written: their `run` takes
 `_ctx`, never reads the tree, and returned a constant Verdict::Pass with a
 message CLAIMING verification. Containerfile:103 invokes this suite at every
 bake, so the bake's own gate was certifying a tree it had not read -- pointed
@@ -4665,11 +4665,11 @@ shape renders differently in the two resolver twins, and its registered
 divergence set is a shrink-only 12 that a thirteenth key breaches
 (check_resolver_differential_parity). Law 13 costs a shape here.
 
-<!-- mios-src:f1e7f4872fe6 from usr/share/mios/mios.toml:10635-10653 -->
+<!-- mios-src:a3974980f932 from usr/share/mios/mios.toml:10635-10653 -->
 
-### T-1047. Budget keys that MUST exist in [agent_pipe] or...
+### task_984. Budget keys that MUST exist in [agent_pipe] or...
 
-T-1047. Budget keys that MUST exist in [agent_pipe] or [dispatch].
+task_984. Budget keys that MUST exist in [agent_pipe] or [dispatch].
 
 Enumerating the tables catches a key ADDED with no consumer. It cannot catch
 a key DELETED, because a deleted key is simply absent from the enumeration --
@@ -4682,7 +4682,7 @@ Seeded with exactly the nine the old constant named, so the floor is no
 weaker than what it replaced. Removing an entry here is removing a guarantee:
 do it only when the knob is genuinely retired.
 
-<!-- mios-src:2ba5ca737de3 from usr/share/mios/mios.toml:10659-10670 -->
+<!-- mios-src:79457e3dfd8e from usr/share/mios/mios.toml:10659-10670 -->
 
 ### [agent_pipe]/[dispatch] keys that SSOT declares and NOTHING...
 
@@ -4702,12 +4702,12 @@ is not consuming it, and that is exactly how they stayed dead.
 
 <!-- mios-src:93be7cd6618b from usr/share/mios/mios.toml:10683-10695 -->
 
-### T-1038. Phase scripts present in automation/ that build.sh...
+### task_975. Phase scripts present in automation/ that build.sh...
 
-T-1038. Phase scripts present in automation/ that build.sh does NOT run.
+task_975. Phase scripts present in automation/ that build.sh does NOT run.
 Shrink-only, and the ceiling may never sit above the measurement.
 
-The register is empty as of T-1018 stage 5. It previously held
+The register is empty as of task_962 stage 5. It previously held
 55-native-build.sh on the reasoning that registering it would put miosd on
 PATH -- its `ln -sf "${DEST_DIR}/${bin}" "/usr/bin/${bin}"` is the only such
 line in the tree -- and so arm the `command -v miosd` gates in every stage
@@ -4730,7 +4730,7 @@ build_phases.json), and that glob already included 55.
 
 Keys the Python and Rust resolvers do not agree on. Shrink-only.
 The parity check never ran until the binary was found in target/debug,
-so this is the first measurement, not a regression. AGY-1676 drives it
+so this is the first measurement, not a regression. task_2317 drives it
 to zero by making one implementation authoritative.
 
 <!-- mios-src:c3a6640de0d8 from usr/share/mios/mios.toml:10890-10893 -->
@@ -4739,17 +4739,17 @@ to zero by making one implementation authoritative.
 
 Values that differ for keys both resolvers emit. The remainder is
 Python's repr of nested arrays/tables, which needs preserve_order on
-the toml crate to match -- AGY-1676, with a toolchain that can link.
+the toml crate to match -- task_2317, with a toolchain that can link.
 
-<!-- mios-src:e2846b2f8e2a from usr/share/mios/mios.toml:10895-10897 -->
+<!-- mios-src:2ebc31cc089b from usr/share/mios/mios.toml:10895-10897 -->
 
 ### Itemised shrink-only register of code files retaining...
 
-Itemised shrink-only register of code files retaining retired ports (T-1002 / LAW5-01).
+Itemised shrink-only register of code files retaining retired ports (task_946 / LAW5-01).
 Strictly limited to intentional cleanup routines (e.g. Setup-MiOSLanPortProxy.ps1) and regression test fixtures.
 Any unlisted code file under usr/libexec/mios or usr/lib/mios containing a retired port FAILS the gate.
 
-<!-- mios-src:0e2172ea476c from usr/share/mios/mios.toml:11028-11030 -->
+<!-- mios-src:4908eb7a70f4 from usr/share/mios/mios.toml:11028-11030 -->
 
 ### Raised from 3032
 
@@ -4768,7 +4768,7 @@ why it is itemised in [drift.generated_ceilings] rather than silently skipped.
 The alternative considered and not taken -- exclude usr/share/mios/vendored/
 (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 the way generated globals are excluded from the shell/PowerShell counts -- is
-recorded in T-1051 with the numbers.
+recorded in task_988 with the numbers.
 
 <!-- mios-src:dc968d88eb72 from usr/share/mios/mios.toml:11355-11370 -->
 
@@ -4776,9 +4776,9 @@ recorded in T-1051 with the numbers.
 
 The allowance, and the only operator-tunable half: how far the tree may grow
 between regenerations before the gate says anything. 0 makes the ceiling exact
-and every MiB boundary a failure, which is the state T-1051 was filed about.
+and every MiB boundary a failure, which is the state task_988 was filed about.
 
-<!-- mios-src:9a66660c6132 from usr/share/mios/mios.toml:11372-11374 -->
+<!-- mios-src:a3f01f522faa from usr/share/mios/mios.toml:11372-11374 -->
 
 ### invariants/test_invariant_{hw,sec}.sh gained explicit...
 
@@ -4795,12 +4795,12 @@ bug they fix.
 
 <!-- mios-src:03d410ce0279 from usr/share/mios/mios.toml:11377-11386 -->
 
-### tooling to port, and 36% of this was test code (T-1044)....
+### tooling to port, and 36% of this was test code (task_981)....
 
 tooling to port, and 36% of this was test
-code (T-1044). Pulled to the measurement,
+code (task_981). Pulled to the measurement,
 never left as slack. Merge inheritance it
-cannot see: T-1046. Raised from 75987:
+cannot see: task_983. Raised from 75987:
 harness/verification_gates.py was rewritten
 to execute invariants/test_*.sh (PASS/SKIP/
 FAIL + redaction + fail-closed) instead of
@@ -4864,7 +4864,7 @@ already navigates the manual by directory, not by original filename.
 ### Raised from 3065 (prior raise: 3032->3065, same cycle): 56...
 
 Raised from 3065 (prior raise: 3032->3065, same cycle): 56 new tracked
-manual pages produced by resolving MON-027/MON-028 -- the pre-existing,
+manual pages produced by resolving task_3403/task_3404 -- the pre-existing,
 out-of-scope docs-ratchet and no-duplicate-value-key drift-check failures
 flagged onto /goal in the prior session. Fixing docs-ratchet REQUIRES this
 ceiling to rise: the gate's own remedy is "harvest narrative comments and
@@ -4893,7 +4893,7 @@ why it is itemised in [drift.generated_ceilings] rather than silently skipped.
 The alternative considered and not taken -- exclude usr/share/mios/vendored/
 (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 the way generated globals are excluded from the shell/PowerShell counts -- is
-recorded in T-1051 with the numbers.
+recorded in task_988 with the numbers.
 
 <!-- mios-src:406e7f65ceb5 from usr/share/mios/mios.toml:11355-11385 -->
 
@@ -4907,15 +4907,15 @@ R15: mirror the directory index into pgvector. The directory_entry
 
 <!-- mios-src:8f958af7e20c from usr/libexec/mios/mios-daemon:2450-2454 -->
 
-### T-1035. Each entry pins path:KEY=VALUE, not just path:KEY....
+### task_972. Each entry pins path:KEY=VALUE, not just path:KEY....
 
-T-1035. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
+task_972. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
 cannot tell the shipped placeholder from an operator's real password: setting
 MIOS_PGVECTOR_PASS in the build environment bakes that value into a 0644 file under
 /usr and the key-only gate stayed green. Every value below is a placeholder
 and none is a secret; changing any of them is a NEW finding by design.
 
-<!-- mios-src:9e58477e27df from usr/share/mios/mios.toml:1719-1723 -->
+<!-- mios-src:7846f980429c from usr/share/mios/mios.toml:1719-1723 -->
 
 ### Where every MiOS image keeps that toolchain, so it can...
 
@@ -5063,12 +5063,12 @@ remoteUser is projected from [identity].username: the image's own user.
 
 <!-- mios-src:b4c9aaf7ba49 from usr/share/mios/mios.toml:11232-11237 -->
 
-### T-1038. Phase scripts present in automation/ that build.sh...
+### task_975. Phase scripts present in automation/ that build.sh...
 
-T-1038. Phase scripts present in automation/ that build.sh does NOT run.
+task_975. Phase scripts present in automation/ that build.sh does NOT run.
 Shrink-only, and the ceiling may never sit above the measurement.
 
-The register is empty as of T-1018 stage 5. It previously held
+The register is empty as of task_962 stage 5. It previously held
 55-native-build.sh on the reasoning that registering it would put miosd on
 PATH -- its `ln -sf "${DEST_DIR}/${bin}" "/usr/bin/${bin}"` is the only such
 line in the tree -- and so arm the `command -v miosd` gates in every stage
@@ -5086,11 +5086,11 @@ It also cannot change which phases run: build.sh selected via the
 automation/[0-9][0-9]-*.sh glob (build_catalog_authoritative = false and no
 build_phases.json), and that glob already included 55.
 
-<!-- mios-src:8a53416d21ff from usr/share/mios/mios.toml:12139-12158 -->
+<!-- mios-src:bba7b1b1a922 from usr/share/mios/mios.toml:12139-12158 -->
 
 ### Raised to 3409 following approved merges on main...
 
-Raised to 3409 following approved merges on main: T-1104..T-1111, manual corpus,
+Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
 devcontainer, artifacts, and core OS daemons.
 GENERATED by tools/native/mios-size-ceiling; do not hand-edit. The valid band
 is round(tracked MiB) .. that + tracked_mb_headroom, and a committed value
@@ -5099,9 +5099,9 @@ why it is itemised in [drift.generated_ceilings] rather than silently skipped.
 The alternative considered and not taken -- exclude usr/share/mios/vendored/
 (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 the way generated globals are excluded from the shell/PowerShell counts -- is
-recorded in T-1051 with the numbers.
+recorded in task_988 with the numbers.
 
-<!-- mios-src:7f6d8c94928e from usr/share/mios/mios.toml:12772-12781 -->
+<!-- mios-src:56b862a6f5c5 from usr/share/mios/mios.toml:12772-12781 -->
 
 ### CI-only extras the harness needs beyond that set: sandbox...
 
@@ -5130,12 +5130,12 @@ Read by `miosd build --list --profile`; gate: check_profile_integrity.
 [rust.categories] -- ADR-0021 Function-Named Binary & Crate SSOT Registry
 ----------------------------------------------------------------------------
 Maps script domains and existing crates to destination static binaries,
-lifecycle roles, install directories, and responsible owners (T-1197).
+lifecycle roles, install directories, and responsible owners (task_3488).
 Ownership gate: mios-gate rust-categories.
 Script layer: scope= globs claim the scripts a category owns for porting;
 exempt categories (binary = "exempt") carry their reason in description=;
 universe= fixes the script roots the gate must account for, and max_unowned
-is the shrink-only ceiling for scripts no category claims yet (T-1197).
+is the shrink-only ceiling for scripts no category claims yet (task_3488).
 A replaces= entry is ported-and-deleted evidence: the named script must be
 absent from the tree in the same commit that proves parity (ADR-0021).
 
@@ -5224,7 +5224,7 @@ u8 reserved[144]
 
 ### MiOS Core Scheduling and SMT Sibling Isolation Utility...
 
-MiOS Core Scheduling and SMT Sibling Isolation Utility (T-858).
+MiOS Core Scheduling and SMT Sibling Isolation Utility (task_802).
 
 Enforces hardware execution isolation across Simultaneous Multi-Threading (SMT)
 sibling cores for untrusted subagents and sandboxed processes using the Linux
@@ -5233,7 +5233,7 @@ PR_SCHED_CORE prctl interface (Linux 5.14+).
 Prevents cross-SMT speculative execution side-channels (Spectre-v2, MDS, L1TF)
 while preserving 100% of Hyper-Threading capacity for trusted system processes.
 
-<!-- mios-src:bba5832d46de from usr/libexec/mios/mios-core-sched:6-14 -->
+<!-- mios-src:23a1297b511f from usr/libexec/mios/mios-core-sched:6-14 -->
 
 ### mios-crawl -- native CRAWL verb backend (fetch a URL ->...
 
@@ -5390,11 +5390,11 @@ is gone did land somewhere first.
 
 Verify that every function named in a harvested AI-functions line exists in its source.
 
-    Acceptance criteria (T-1189):
+    Acceptance criteria (task_3482):
     WHEN a harvested AI-functions line names a function absent from its mios-src
     source THE SYSTEM SHALL fail a check naming the doc line and the function.
 
-<!-- mios-src:59ed43c60cce from usr/libexec/mios/mios-manual:921-926 -->
+<!-- mios-src:4a042f129320 from usr/libexec/mios/mios-manual:921-926 -->
 
 ### mios-mcp-server -- Model Context Protocol stdio and...
 
@@ -5570,7 +5570,7 @@ Two modes:
 
 Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
         MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
-        T-068 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
         the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
         When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
         SET first so the schema RLS policies scope rows to that owner. Default-off /
@@ -5579,7 +5579,7 @@ Output: tab-separated columns, one row per line (psql -At shape) for BOTH modes.
         Multi-row handled; NULLs render as empty. Exit 1 on any backend
         ErrorResponse or unsupported (non-trust) auth.
 
-<!-- mios-src:e33a8076d81b from usr/libexec/mios/mios-pg-query:5-44 -->
+<!-- mios-src:f1952ac835aa from usr/libexec/mios/mios-pg-query:5-44 -->
 
 ### The owner to scope THIS invocation's rows to, or None to...
 
@@ -5772,9 +5772,9 @@ Tests all 6 task implementations:
 
 <!-- mios-src:0d6a396f76c8 from usr/libexec/mios/test_mios_buildctx.py:3-12 -->
 
-### T-1135
+### task_3428
 
-T-1135: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
+task_3428: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
 defined -- by the resolver-rendered /etc/mios/install.env, not a literal.
 
 * the exports the resolver renders from the vendor mios.toml carry
@@ -5788,11 +5788,11 @@ Negative controls: the same environment without the port names must stop
 the runner with its named error, and a planted Environment=MIOS_PORTS_MCP=<n>
 must be named by the literal check.
 
-<!-- mios-src:8e72029678f0 from usr/libexec/mios/test_mios_mcp_port.py:5-18 -->
+<!-- mios-src:3e1552f4708e from usr/libexec/mios/test_mios_mcp_port.py:5-18 -->
 
-### Two-sided verification controls for T-1139. Every expected...
+### Two-sided verification controls for task_3432. Every expected...
 
-Two-sided verification controls for T-1139.
+Two-sided verification controls for task_3432.
 
 Every expected value is read from the tree, never written here as a literal:
 
@@ -5813,7 +5813,7 @@ and after to show nothing was mutated.
 Runtime controls (firstboot across boots, EROFS in the journal) need a booted
 systemd host and are not run by this file.
 
-<!-- mios-src:328a6be60a7a from usr/libexec/mios/test_mios_unit_hardening.py:4-24 -->
+<!-- mios-src:54e523c0a61e from usr/libexec/mios/test_mios_unit_hardening.py:4-24 -->
 ### 'MiOS' Headscale mesh VPN coordinator first-boot config...
 
 'MiOS' Headscale mesh VPN coordinator first-boot config generator.
@@ -5838,7 +5838,7 @@ login user's systemd. Everything not listed is a system unit.
 [rust.categories] -- ADR-0021 Function-Named Binary & Crate SSOT Registry
 ----------------------------------------------------------------------------
 Maps script domains and existing crates to destination static binaries,
-lifecycle roles, install directories, and responsible owners (T-1197).
+lifecycle roles, install directories, and responsible owners (task_3488).
 Ownership gate: mios-gate rust-categories.
 Owner lanes and install roles are declared once each, in [rust.categories.owners]
 and [rust.categories.roles], as lists of categories (every category in exactly
@@ -5848,8 +5848,76 @@ binary=; crates= lists only the other crates folded into it.
 Script layer: scope= globs claim the scripts a category owns for porting;
 exempt categories (role exempt, no binary) carry their reason in description=;
 universe= fixes the script roots the gate must account for, and max_unowned
-is the shrink-only ceiling for scripts no category claims yet (T-1197).
+is the shrink-only ceiling for scripts no category claims yet (task_3488).
 A replaces= entry is ported-and-deleted evidence: the named script must be
 absent from the tree in the same commit that proves parity (ADR-0021).
 
-<!-- mios-src:868f1040f1ad from usr/share/mios/mios.toml:13459-13475 -->
+<!-- mios-src:d9a9204b4e94 from usr/share/mios/mios.toml:13459-13475 -->
+### mios-manual -- corpus ledger and census for the MiOS...
+
+mios-manual -- corpus ledger and census for the MiOS documentation system.
+
+Spec: docs/design/doc-generative-documentation.md sections 3.4 and 5.
+
+Subcommands:
+  ledger          rebuild usr/share/mios/reference/manual-corpus.tsv from the tree
+  audit           census as JSON (counts by class and reason)
+  coverage        the two ratchet numbers, for the gate and for humans
+  harvest         move a comment's prose into a doc and record where it landed
+  prune           delete a comment that provably landed (the only destructive path)
+  landing         verify every pruned comment still lands in a doc
+  check-functions verify harvested AI-functions lines against source
+  render          splice derived content into MIOS-GEN marker interiors
+  rehash          after an in-place rewrite (mios-task migrate-ids), move landed rows to their new hash
+
+`--root` selects the repo, and either layout resolves, so the same tools serve
+mios.git and mios-bootstrap.git without being copied across (Law 15).
+
+The ledger is the safety mechanism for the whole programme. Deletion of a
+comment is only ever permitted once a ledger row proves its knowledge reached a
+doc, so the landing columns must survive ordinary code churn: they are carried
+forward BY CONTENT HASH, never recomputed. Moving a block within a file, or
+reformatting the code around it, keeps its landing record.
+
+Rows for blocks that no longer exist but were pruned are kept as tombstones --
+that retention is what lets a gate prove, after the fact, that a comment which
+is gone did land somewhere first.
+
+<!-- mios-src:88e704cf17e5 from usr/libexec/mios/mios-manual:5-32 -->
+
+### Carry landings across a rewrite that changed only the ids...
+
+Carry landings across a rewrite that changed only the ids in comment text.
+
+    `mios-task migrate-ids` rewrites old task ids to typed ones in the comments and in the docs they landed in
+    alike. A comment's hash changes with its text, so the ledger, which carries a landing by hash, would lose
+    it and `distill` would land the prose a second time. Each changed source is lexed as it was at --from and
+    as it is now, and the two block sequences are aligned on their text with every word that holds a digit
+    masked (an old id and its typed id mask alike); an aligned pair is one comment, so its old hash moves to
+    its new one in the ledger and in every mios-src marker of the docs. A hash two different comments would
+    move to is left alone.
+
+<!-- mios-src:29140265cbba from usr/libexec/mios/mios-manual:1473-1482 -->
+
+### AGY task hygiene ratchet over the frozen AGY-TASKS.md....
+
+AGY task hygiene ratchet over the frozen AGY-TASKS.md. Duplicate task IDs make dependencies ambiguous.
+The task from which AGY tasks carry the full schema (a typed id once the ids are migrated); a DONE task
+is exempt by its marker. schema_also names the tasks created after it that the list files before it,
+so their numbers sit below it -- the schema is demanded of them too.
+
+<!-- mios-src:35f44e5ef3ae from usr/share/mios/mios.toml:12312-12315 -->
+
+### The highest task number issued (ADR-0028). Numbers are...
+
+The highest task number issued (ADR-0028). Numbers are never reissued: the list's highest may not fall
+below this, so a dropped last task cannot hand its number on. Raising it to the current highest tightens it.
+
+<!-- mios-src:78da468ea451 from usr/share/mios/mios.toml:12352-12353 -->
+### ADR-0030
+
+ADR-0030: the 500-file budget, TOTAL (dependencies included). Each tracked file counts in the
+FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
+a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
+
+<!-- mios-src:ddce63c53e8a from usr/share/mios/mios.toml:12880-12882 -->

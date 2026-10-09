@@ -1,4 +1,4 @@
-# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.
+# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.
 # Rendered by mios-unit-gen blade-dropins.
 pcs constraint location hermes-worker rule score=100 mios-cap-service-plane eq true
 pcs constraint location k3s rule score=100 mios-cap-service-plane eq true

@@ -1,10 +1,10 @@
-<!-- AI-hint: Chapter 77: Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon (T-532, AGY-2130). Covers peripheral degradation recovery, secondary NIC and USB tethering auto-failover, dynamic PipeWire null-sink binding, and desktop notifications. -->
+<!-- AI-hint: Chapter 77: Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon (task_476, task_2709). Covers peripheral degradation recovery, secondary NIC and USB tethering auto-failover, dynamic PipeWire null-sink binding, and desktop notifications. -->
 
 # Chapter 77: Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon
 
 > Part VIII: Substrate Daemons, Resilient Clustering & Hardware Acceleration of the [MiOS manual](../manual.md).
 
-This chapter documents the architecture, failover mechanisms, and alerting lifecycle of the **Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon** (T-532, AGY-2130), implemented in [`usr/libexec/mios/mios-hardware-fallback`](file:///usr/libexec/mios/mios-hardware-fallback) and managed by [`usr/lib/systemd/user/mios-hardware-fallback.service`](file:///usr/lib/systemd/user/mios-hardware-fallback.service).
+This chapter documents the architecture, failover mechanisms, and alerting lifecycle of the **Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon** (task_476, task_2709), implemented in [`usr/libexec/mios/mios-hardware-fallback`](file:///usr/libexec/mios/mios-hardware-fallback) and managed by [`usr/lib/systemd/user/mios-hardware-fallback.service`](file:///usr/lib/systemd/user/mios-hardware-fallback.service).
 
 ```mermaid
 flowchart TD
@@ -173,7 +173,7 @@ The fallback manager integrates into the user graphical session via systemd user
 
 ```ini
 # /usr/lib/systemd/user/mios-hardware-fallback.service
-# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).
+# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).
 # AI-doc: usr/share/doc/mios/manual/ch77-hardware-fallback.md
 [Unit]
 Description='MiOS' Automated Network and Audio Fallback Manager

@@ -229,12 +229,12 @@ tearDownModule()
 
 
 # ==============================================================================
-# Consolidated from test_mios_replay.py (T-1092)
+# Consolidated from test_mios_replay.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for the T-225 run-template REPLAY path -- the pure matcher (mios_pipe.routing.replay), the...
+# AI-hint: Standalone assert-script unit test for the task_205 run-template REPLAY path -- the pure matcher (mios_pipe.routing.replay), the...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 
-"""Unit tests for intent-keyed run-template replay (T-225)."""
+"""Unit tests for intent-keyed run-template replay (task_205)."""
 
 import asyncio
 import contextvars

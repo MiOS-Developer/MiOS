@@ -110,7 +110,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_bench_harness.py (T-1092)
+# Consolidated from test_mios_bench_harness.py (task_1006)
 # ==============================================================================
 # AI-hint: Verification test suite for mios-bench harness CLI option parsing, metrics reporting, a...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

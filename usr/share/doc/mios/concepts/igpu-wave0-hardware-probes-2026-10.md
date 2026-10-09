@@ -1,9 +1,9 @@
-<!-- AI-hint: Wave-0 Hardware Verification Probes (T-210) for Multi-Vendor GPU Compute (WS-IGPU). Records empirical findings from real-hardware probes across Windows host and WSL2 for iGPU compute, heavy-lane VRAM constraints, and WSL kernel baseline. Establishes the authoritative Go/No-Go decision gating T-211 and T-212.
+<!-- AI-hint: Wave-0 Hardware Verification Probes (task_190) for Multi-Vendor GPU Compute (WS-IGPU). Records empirical findings from real-hardware probes across Windows host and WSL2 for iGPU compute, heavy-lane VRAM constraints, and WSL kernel baseline. Establishes the authoritative Go/No-Go decision gating task_191 and task_192.
      AI-related: usr/share/doc/mios/concepts/living-wallpaper-engine.md, usr/share/mios/mios.toml, usr/share/mios/llamacpp/mios-llm-light.yaml, TASKS.md -->
 
 # IGPU-00 Wave-0 Hardware Probes & Gating Decision (2026-10)
 
-> **Task Reference:** [`T-210`](file:///C:/MiOS/TASKS.md#T-210) (WS-IGPU / E-19)  
+> **Task Reference:** [`task_190`](file:///C:/MiOS/TASKS.md#task_190) (WS-IGPU / E-19)  
 > **Target Environment:** Windows 11 Build 26220 + WSL2 Podman-MiOS-DEV  
 > **Hardware Target:** AMD Ryzen 9 9950X3D (Radeon 0x13C0 iGPU) + NVIDIA GeForce RTX 4090 (24 GB dGPU)  
 > **Date:** 2026-10-06  
@@ -14,8 +14,8 @@
 
 | Target Task | Objective | Decision | Binding Architectural Rationale |
 |---|---|---|---|
-| **[`T-211`](file:///C:/MiOS/TASKS.md#T-211)** | Move iGPU inference lane in-VM and delete `mios-igpu-server.ps1` | **NO-GO (in-VM ROCm)**<br>**GO (Vulkan / Host RPC)** | WSL2 kernel runs Microsoft `dxgkrnl` (`/dev/dxg`) rather than AMD KFD (`/dev/kfd` / `amdgpu.ko`). AMD has not released consumer iGPU ROCm user-mode drivers for WSL2. Retiring the Windows-native iGPU host without native KFD would break iGPU inference entirely. |
-| **[`T-212`](file:///C:/MiOS/TASKS.md#T-212)** | llama.cpp RPC fabric across lanes behind one logical endpoint + coopmat2 verify | **GO (RPC Fabric)**<br>**NO-GO (iGPU coopmat2 in-VM)** | llama.cpp RPC clustering functions transparently across Windows host and WSL VM. However, Mesa Dozen (`dzn`) over `/dev/dxg` in WSL2 exposes Vulkan 1.2.354, which does not support `VK_KHR_cooperative_matrix` (coopmat2 requires Vulkan 1.3+ and dedicated hardware cooperative matrix extensions). |
+| **[`task_191`](file:///C:/MiOS/TASKS.md#task_191)** | Move iGPU inference lane in-VM and delete `mios-igpu-server.ps1` | **NO-GO (in-VM ROCm)**<br>**GO (Vulkan / Host RPC)** | WSL2 kernel runs Microsoft `dxgkrnl` (`/dev/dxg`) rather than AMD KFD (`/dev/kfd` / `amdgpu.ko`). AMD has not released consumer iGPU ROCm user-mode drivers for WSL2. Retiring the Windows-native iGPU host without native KFD would break iGPU inference entirely. |
+| **[`task_192`](file:///C:/MiOS/TASKS.md#task_192)** | llama.cpp RPC fabric across lanes behind one logical endpoint + coopmat2 verify | **GO (RPC Fabric)**<br>**NO-GO (iGPU coopmat2 in-VM)** | llama.cpp RPC clustering functions transparently across Windows host and WSL VM. However, Mesa Dozen (`dzn`) over `/dev/dxg` in WSL2 exposes Vulkan 1.2.354, which does not support `VK_KHR_cooperative_matrix` (coopmat2 requires Vulkan 1.3+ and dedicated hardware cooperative matrix extensions). |
 
 ---
 
@@ -121,14 +121,14 @@ The host WSL substrate meets all architectural prerequisites for hybrid Windows/
 
 ---
 
-## 6. Forward Architectural Plan for T-211 & T-212
+## 6. Forward Architectural Plan for task_191 & task_192
 
-### 6.1 Path for [`T-211`](file:///C:/MiOS/TASKS.md#T-211)
+### 6.1 Path for [`task_191`](file:///C:/MiOS/TASKS.md#task_191)
 - Do **NOT** delete `mios-igpu-server.ps1` in favor of an in-VM ROCm container. An in-VM ROCm container will fail due to the lack of `/dev/kfd` in WSL2.
 - Refactor `mios-igpu-server.ps1` to expose a standard OpenAI-compatible `/v1/chat/completions` endpoint backed by native Windows Vulkan or DirectML.
 - Integrate the host-side endpoint into `[agents.*]` / `[lanes]` in `usr/share/mios/mios.toml`, eliminating hardcoded Tailscale dependencies by routing through localhost interop.
 
-### 6.2 Path for [`T-212`](file:///C:/MiOS/TASKS.md#T-212)
+### 6.2 Path for [`task_192`](file:///C:/MiOS/TASKS.md#task_192)
 - Deploy `llama-rpc-server` instances across candidate nodes (Windows host iGPU, Linux container dGPU).
 - Federate them under `llama-server --rpc <host>:<port>` so models sharding across lanes share a single logical endpoint.
 - For `coopmat2` (`VK_KHR_cooperative_matrix`):

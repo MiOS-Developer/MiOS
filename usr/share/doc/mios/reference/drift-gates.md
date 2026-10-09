@@ -16,7 +16,7 @@ a footnote (same rule as check_no_silent_tool_skips).
 
 ### Unit test suite for the mios_comments classifier...
 
-Unit test suite for the mios_comments classifier (AGY-1583).
+Unit test suite for the mios_comments classifier (task_2224).
 
 Tests 30 fixture cases covering R0..R7 classification rules,
 including boundary cases such as mios-tailscale-serve.ps1:67 (2 lines, ~28 words, why-signal -> STAY).

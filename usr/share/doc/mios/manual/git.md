@@ -4,14 +4,14 @@
 
 ### AST Semantic Merge Resolver for Multi-Agent Git Conflicts...
 
-AST Semantic Merge Resolver for Multi-Agent Git Conflicts (T-555).
+AST Semantic Merge Resolver for Multi-Agent Git Conflicts (task_499).
 
 Performs 3-way abstract syntax tree (AST) semantic merge resolution across
 concurrent agent edits in Python, TOML, JSON, and Shell scripts, avoiding
 spurious line-based git conflicts for independent additions, reordered imports,
 and disjoint function/class declarations.
 
-<!-- mios-src:f3d647d16112 from usr/libexec/mios/git/ast_merge.py:4-10 -->
+<!-- mios-src:96d0cb92f67f from usr/libexec/mios/git/ast_merge.py:4-10 -->
 
 ### MiOS Git Pre-Commit Linter & Auto-Formatter Engine....
 
@@ -28,11 +28,11 @@ Performs fast staged-file validation prior to git commit:
 
 ### Multi-Master Divergent Git DAG Reconciliation Engine...
 
-Multi-Master Divergent Git DAG Reconciliation Engine (T-561).
+Multi-Master Divergent Git DAG Reconciliation Engine (task_505).
 
 Reconciles divergent Git commit graphs and branch histories produced by offline
 peer agents or distributed cluster blades. Computes Lowest Common Ancestors (LCA),
 replays commits via AST merge resolution, creates multi-agent consensus commits
 signed with Ed25519 node identities, and pushes atomically across multiple git forges.
 
-<!-- mios-src:8d76498cb967 from usr/libexec/mios/git/reconcile_dag.py:4-10 -->
+<!-- mios-src:d41728f9c3a7 from usr/libexec/mios/git/reconcile_dag.py:4-10 -->

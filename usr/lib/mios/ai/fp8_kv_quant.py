@@ -2,7 +2,7 @@
 # AI-functions: __init__, quantize_kv, compute_fp16_bytes, QuantizedKVTensor, FP8KVQuantizer
 
 """
-fp8_kv_quant.py — T-763 WS-AI
+fp8_kv_quant.py — task_707 WS-AI
 Dynamic FP8 (E4M3) KV-cache quantizer and per-head scale manager in llama-swap.
 
 Quantizes KV tensors to 8-bit FP8 (E4M3) format with dynamic per-head scaling,

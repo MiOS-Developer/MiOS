@@ -2,7 +2,7 @@
 # AI-hint: Dynamic agent persona synthesis based on task domain classification.
 # AI-related: usr/lib/mios/agent-pipe/server.py, usr/share/mios/ai/system.md
 """
-Dynamic Agent Persona Synthesis (T-384 / AGY-1982)
+Dynamic Agent Persona Synthesis (task_328 / task_2561)
 
 Classifies user query intent across 6 specialized technical domains (Kernel/Systems,
 Database/Storage, Security/Crypto, Networking/Mesh, AI/Inference, DevOps/CI) and

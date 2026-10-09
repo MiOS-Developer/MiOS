@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Cryptographic MOK livepatch signature gate and IMA measurement logger (T-782).
+# AI-hint: Cryptographic MOK livepatch signature gate and IMA measurement logger (task_726).
 # AI-doc: usr/share/doc/mios/manual/ch17-kernel-livepatching-and-mok.md
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def log_audit_event(event_type: str, details: Dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Cryptographic MOK livepatch signature gate and IMA measurement logger (T-782)"
+        description="Cryptographic MOK livepatch signature gate and IMA measurement logger (task_726)"
     )
     parser.add_argument("--verify", type=str, help="Verify MOK signature on target kernel module")
     parser.add_argument("--apply", type=str, help="Verify MOK signature, record IMA measurement, and apply patch")

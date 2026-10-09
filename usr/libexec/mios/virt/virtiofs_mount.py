@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: VirtIO-FS shared directory mount daemon with rootless uid/gid mapping and POSIX ACL support (T-419).
+# AI-hint: VirtIO-FS shared directory mount daemon with rootless uid/gid mapping and POSIX ACL support (task_363).
 # AI-related: tests/test-virt.py, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 """
 MiOS VirtIO-FS Shared Directory Mount Daemon and Libvirt XML Generator.

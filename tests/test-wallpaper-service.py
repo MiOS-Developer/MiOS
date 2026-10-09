@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for WS-LANG mios-wallpaperd native living wallpaper service (T-1132).
+# AI-hint: Automated unit test suite for WS-LANG mios-wallpaperd native living wallpaper service (task_3425).
 # AI-related: tools/native/mios-wallpaperd/src/main.rs, usr/share/mios/branding/living-wallpaper.html, build-mios.ps1, src/mios-rs/mios-build/src/verification.rs
-"""Automated tests for WS-LANG living wallpaper Rust crate and cross-build toolchain (T-1132)."""
+"""Automated tests for WS-LANG living wallpaper Rust crate and cross-build toolchain (task_3425)."""
 
 from __future__ import annotations
 

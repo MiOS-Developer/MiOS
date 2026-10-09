@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Post-build image-audit validator asserting provisioning status (AGY / T-286).
+# AI-hint: Post-build image-audit validator asserting provisioning status (AGY / task_3332).
 # AI-related: usr/share/mios/mios.toml, tests/test-audit-image-provisioning.py, Justfile
 
 import os

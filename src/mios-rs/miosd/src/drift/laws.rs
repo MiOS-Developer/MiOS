@@ -15,7 +15,7 @@ impl Check for LawEnforcersCheck {
         "Assert all laws in mios.toml have valid enforced_by target declarations"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        // T-1043. This used to test `p.exists()` and then return
+        // task_980. This used to test `p.exists()` and then return
         // Pass("Law enforcers resolution validated clean") -- a claim about a
         // file it never opened. Touching ctx.root to BUILD a path is not
         // reading the tree, which is why two successive stub detectors let it

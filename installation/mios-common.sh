@@ -117,7 +117,7 @@ mios_ensure_rust() {
 }
 
 # ============================================================================
-#  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
+#  MiOS-Data & OCI Bulk Staging (task_239 / task_3411)
 # ============================================================================
 
 get_mios_disk_info() {
@@ -224,7 +224,7 @@ PY
         fi
 
         if [[ "$repoValid" -eq 1 && "$dataAbsent" -eq 1 ]]; then
-            log_ok "Media layout verified: small disk (${diskSizeGB} GB < ${minDiskGB} GB), valid MiOS-Repo, MiOS-Data skipped per T-261."
+            log_ok "Media layout verified: small disk (${diskSizeGB} GB < ${minDiskGB} GB), valid MiOS-Repo, MiOS-Data skipped per task_239."
             return 0
         else
             log_err "Media layout invalid: small disk must contain MiOS-Repo and omit MiOS-Data."
@@ -429,7 +429,7 @@ sys.exit(1)
         return 1
     fi
 
-    # T-260: Always create MiOS-Repo (the lightweight config brain < 16GB)
+    # task_238: Always create MiOS-Repo (the lightweight config brain < 16GB)
     local repoDir="$drive/MiOS-Repo"
     local reposDir="$repoDir/repos"
     mkdir -p "$reposDir"
@@ -461,7 +461,7 @@ sys.exit(1)
         [[ ! -d "$reposDir/mios-bootstrap" ]] && git clone https://github.com/mios-dev/mios-bootstrap.git "$reposDir/mios-bootstrap" 2>/dev/null || true
     fi
 
-    # T-261: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
+    # task_239: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
     if (( diskSizeGB >= minDiskGB )); then
         log_info "Disk >= ${minDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store..."
         local dataDir="$drive/MiOS-Data"
@@ -563,7 +563,7 @@ EOF
         log_ok "MiOS-Data bulk store staged successfully ($dataDir/manifest.json)."
     else
         log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]."
-        log_warn "Skipping separate MiOS-Data bulk store staging per T-261 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)."
+        log_warn "Skipping separate MiOS-Data bulk store staging per task_239 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)."
     fi
 
     return 0
@@ -582,7 +582,7 @@ invoke_mios_verify() {
     fi
 }
 
-# Backward Compatibility Aliases (T-1118)
+# Backward Compatibility Aliases (task_3411)
 Get_MiOS_Disk_Info() { get_mios_disk_info "$@"; }
 Test_MiOS_Media_Layout() { test_mios_media_layout "$@"; }
 New_MiOSOCIArchive() { new_mios_oci_archive "$@"; }

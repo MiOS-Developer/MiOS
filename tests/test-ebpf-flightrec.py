@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for eBPF circular flight recorder and crash parser (T-516).
+# AI-hint: Automated unit test suite for eBPF circular flight recorder and crash parser (task_460).
 # AI-doc: usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md
 from __future__ import annotations
 

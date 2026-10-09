@@ -5,7 +5,7 @@
 **Author:** MiOS Core Architecture & Antigravity Agentic Systems  
 **Date:** 2026-09-26  
 **Status:** PROPOSED / APPROVED FOR ARCHITECTURAL BASELINE  
-**Related Epics / Tasks:** T-1108 (ARTIFACT-03: Daily out-of-loop artifact follow-ups), SPIKE-20260924 (Artifact Publisher Contracts), Law 1 (FHS), Law 3 (.git IS /), Law 5 (UNIFIED-AI-REDIRECTS), Law 14 (TARGET-LANGUAGES), Law 16 (ONE-TEMPLATE-PER-TYPE)
+**Related Epics / Tasks:** task_1022 (ARTIFACT-03: Daily out-of-loop artifact follow-ups), SPIKE-20260924 (Artifact Publisher Contracts), Law 1 (FHS), Law 3 (.git IS /), Law 5 (UNIFIED-AI-REDIRECTS), Law 14 (TARGET-LANGUAGES), Law 16 (ONE-TEMPLATE-PER-TYPE)
 
 ---
 

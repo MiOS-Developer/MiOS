@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Asyncio/epoll reactive event loop and PostgreSQL LISTEN/NOTIFY dispatcher in agent-pipe (T-651, T-652).
+# AI-hint: Asyncio/epoll reactive event loop and PostgreSQL LISTEN/NOTIFY dispatcher in agent-pipe (task_597, task_598).
 # AI-related: usr/lib/mios/agent-pipe/reactive_loop.py, tests/test-reactive-loop.py, usr/lib/mios/agent-pipe/server.py
 """Asyncio/epoll reactive event loop and PostgreSQL LISTEN/NOTIFY dispatcher for MiOS agent-pipe.
 

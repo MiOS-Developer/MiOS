@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Multi-modal WebSocket Streaming & Sub-100ms Latency (T-671, T-672).
+# AI-hint: Automated unit test suite for Multi-modal WebSocket Streaming & Sub-100ms Latency (task_615, task_616).
 # AI-related: usr/lib/mios/agent-pipe/multimodal_ws.py, tests/test-multimodal-ws.py
 """Automated unit test suite for MiOS Multi-modal WebSocket Pipeline."""
 

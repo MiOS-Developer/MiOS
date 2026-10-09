@@ -680,7 +680,7 @@ pub fn check(root: &Path) -> Report {
             files.len()
         )];
         // Every one: this list is the backlog someone has to work through, and a
-        // silent cap hid 93 of 103 from the people deciding them (T-1074).
+        // silent cap hid 93 of 103 from the people deciding them (task_999).
         findings.extend(stale.iter().map(|f| with_rename_hint(root, f)));
         return report(false, String::new(), findings);
     }

@@ -224,7 +224,7 @@ for `Type=Application`, `Exec`, `TryExec`, `Terminal` and menu categories.
 The initial catalog classifies existing Rust executables. Empty `apps` and
 `services` lists retain distinct conversion destinations; they do not claim
 that the existing desktop or service programs have already been ported.
-T-1132 and T-1133 still track Windows artifact provisioning and renderer ordering.
+task_3425 and task_3426 still track Windows artifact provisioning and renderer ordering.
 Selecting a category does not prove static linking, cross-build success or
 runtime readiness; each conversion must verify those properties separately.
 The [Rust linkage reference](https://doc.rust-lang.org/reference/linkage.html)
@@ -252,7 +252,7 @@ Both declared target architectures require their own build and runtime evidence.
 fetches every platform, including the Windows GUI dependencies. The shared
 installer provisions the SSOT musl target and builds its selected Linux catalog.
 The current release focuses on x86_64; ARM64 runtime and image validation remain
-roadmapped under T-1149.
+roadmapped under task_3442.
 Rustup component downloads use a separate build cache so an interrupted fetch
 can resume on the next build. Rustup still verifies the component checksum;
 the cache is not copied into the final image.

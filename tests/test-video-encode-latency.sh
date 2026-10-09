@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# AI-hint: Adaptive bitrate and low-latency frame encoding streaming benchmark suite (T-536, AGY-2134).
+# AI-hint: Adaptive bitrate and low-latency frame encoding streaming benchmark suite (task_480, task_2713).
 # AI-doc: usr/share/doc/mios/manual/ch81-video-streaming-benchmarks.md
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VERBOSE=false
 DRY_RUN=false
@@ -14,7 +11,7 @@ show_help() {
     cat <<'EOF'
 Usage: test-video-encode-latency.sh [OPTIONS]
 
-Adaptive bitrate and low-latency frame encoding streaming benchmark suite (T-536, AGY-2134).
+Adaptive bitrate and low-latency frame encoding streaming benchmark suite (task_480, task_2713).
 
 Evaluates streaming video encoding latency under simulated network conditions (jitter,
 packet loss, bandwidth constraints), verifying adaptive bitrate throttling, sub-12ms frame
@@ -103,7 +100,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-log "=== MiOS Video Encoding Latency & Streaming Benchmark Suite (T-536, AGY-2134) ==="
+log "=== MiOS Video Encoding Latency & Streaming Benchmark Suite (task_480, task_2713) ==="
 
 # -----------------------------------------------------------------------------
 # Embedded Python Benchmark & SLA Engine

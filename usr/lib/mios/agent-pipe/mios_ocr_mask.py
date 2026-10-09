@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Lightweight on-device OCR regex credential masking pipeline for vision frames (T-540, AGY-2138).
+# AI-hint: Lightweight on-device OCR regex credential masking pipeline for vision frames (task_484, task_2717).
 # AI-doc: usr/share/doc/mios/manual/ch85-ocr-credential-masking.md
 """Lightweight on-device OCR regex credential masking pipeline for vision frames.
 
@@ -840,7 +840,7 @@ def cmd_mask(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="MiOS Lightweight On-Device OCR Regex Credential Masking Pipeline (T-540, AGY-2138)",
+        description="MiOS Lightweight On-Device OCR Regex Credential Masking Pipeline (task_484, task_2717)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose diagnostics to stderr")

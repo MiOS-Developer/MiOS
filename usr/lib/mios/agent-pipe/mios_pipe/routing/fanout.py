@@ -144,7 +144,7 @@ def _agent_card(name: str, cfg: dict) -> str:
 
 def _emit_route_event(primary_name: str, secondaries: list) -> None:
     """Best-effort: record the fan-out routing DECISION in the event table when
-    card-skills routing is active (FED-G7 / T-051). No-op when the feature is off or
+    card-skills routing is active (FED-G7 / task_51). No-op when the feature is off or
     the DB writers are not injected (standalone import / unit tests) -- so the
     default byte-identical path writes nothing new."""
     if not ROUTE_ON_CARD_SKILLS or _db_create is None:

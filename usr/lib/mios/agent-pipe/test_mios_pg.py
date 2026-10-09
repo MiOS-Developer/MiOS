@@ -428,7 +428,7 @@ def main() -> int:
 
 
 # ==============================================================================
-# mios_pipe.db transport, client and Postgres injected; T-1092 had folded only a placeholder here.
+# mios_pipe.db transport, client and Postgres injected; task_1006 had folded only a placeholder here.
 # ==============================================================================
 import time
 import unittest
@@ -562,7 +562,7 @@ def _run_extra_db():
 
 
 # ==============================================================================
-# Consolidated from test_mios_db_config.py (T-1092)
+# Consolidated from test_mios_db_config.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for mios_db_config resolver.
 import sys
@@ -580,7 +580,7 @@ import mios_db_config
 
 def _require_seeded_pgvector():
     """The live-DB guard for the integration class alone. It was a module-level
-    setUpModule, and T-1092 folded three suites into this one module, so with
+    setUpModule, and task_1006 folded three suites into this one module, so with
     no live pgvector it skipped the hermetic TestDbTransport and TestDbWrite
     too: CI ran 0 of their tests and reported OK (skipped=1)."""
     if psycopg is None:
@@ -825,7 +825,7 @@ def _run_extra_db_config():
     return _run_case(TestMiosDbConfig)
 
 # ==============================================================================
-# Consolidated from test_mios_dbwrite.py (T-1092)
+# Consolidated from test_mios_dbwrite.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.dbwrite.
 """Unit tests for database writer layer."""

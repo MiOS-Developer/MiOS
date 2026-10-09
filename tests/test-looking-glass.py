@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (task_3353 / GATECAT-01).
 # AI-related: usr/libexec/mios/display/looking_glass.py, usr/libexec/mios/vfio/setup-looking-glass.py, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 """Automated unit test suite for MiOS Looking Glass & Display domain.
 

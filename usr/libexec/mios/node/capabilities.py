@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Edge node capability advertising in Announce frames for mios-node (T-394 / AGY-1992).
+# AI-hint: Edge node capability advertising in Announce frames for mios-node (task_338 / task_2571).
 # AI-related: usr/libexec/mios/node/wire.py, tests/test-node.py
 """
 MiOS Edge Node Capability Advertising & Telemetry Engine.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-hint: GAP-5 (T-050) edge distribution wrapper
+# AI-hint: GAP-5 (task_50) edge distribution wrapper
 set -euo pipefail
 
 TOML_PATH="/usr/share/mios/mios.toml"

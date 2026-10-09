@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Git LFS Sparse Fetcher & Shared Cache (T-715, T-716).
+# AI-hint: Automated unit test suite for Git LFS Sparse Fetcher & Shared Cache (task_659, task_660).
 # AI-related: usr/libexec/mios/git/lfs_pull.py, tests/test-lfs-cache.py
 """Automated unit test suite for MiOS Git LFS Sparse Cache Manager."""
 

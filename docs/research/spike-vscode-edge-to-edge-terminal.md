@@ -6,7 +6,7 @@
 **Status:** CONCLUDED
 **Timebox:** ~45 minutes
 **Target Completion Date:** 2026-09-24
-**Related Epics / Lanes:** `.dotfiles` SSOT / devcontainer theme projection (T-532, AGY-2130)
+**Related Epics / Lanes:** `.dotfiles` SSOT / devcontainer theme projection (task_476, task_2709)
 
 ---
 

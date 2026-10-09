@@ -148,7 +148,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_k3s.py (T-1092)
+# Consolidated from test_mios_k3s.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the #61 generated k3s manifests: every committed usr/share/mios/k3s/generated/*.yaml parses, declares an apiVersion, carries ...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

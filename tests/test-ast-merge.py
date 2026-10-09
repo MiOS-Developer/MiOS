@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for T-556 AST Merge Syntax Gate & Regression Suite.
+# AI-hint: Automated unit test suite for task_500 AST Merge Syntax Gate & Regression Suite.
 # AI-related: usr/libexec/mios/git/ast_merge.py, tests/test-ast-merge.py
-"""Automated unit test suite for Tree-Sitter / AST Semantic Merge Resolver (T-556)."""
+"""Automated unit test suite for Tree-Sitter / AST Semantic Merge Resolver (task_500)."""
 
 from __future__ import annotations
 

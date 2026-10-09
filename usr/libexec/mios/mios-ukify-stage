@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: A/B UKI staging and systemd-ukify compilation pipeline with baked kargs (T-507).
+# AI-hint: A/B UKI staging and systemd-ukify compilation pipeline with baked kargs (task_451).
 # AI-doc: usr/share/doc/mios/manual/ch02-boot-and-lifecycle.md
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def stage_uki(
         try:
             os.makedirs(os.path.dirname(loader_entry_path), exist_ok=True)
             with open(loader_entry_path, "w", encoding="utf-8") as f:
-                f.write("# MiOS A/B UKI Staging Boot Entry (T-507)\n")
+                f.write("# MiOS A/B UKI Staging Boot Entry (task_451)\n")
                 f.write("title MiOS Next (Staged UKI)\n")
                 f.write(f"linux /EFI/Linux/{os.path.basename(output_efi)}\n")
                 f.write("options (baked into UKI)\n")
@@ -182,7 +182,7 @@ def stage_uki(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="A/B UKI staging and systemd-ukify compilation pipeline (T-507)"
+        description="A/B UKI staging and systemd-ukify compilation pipeline (task_451)"
     )
     parser.add_argument("--output", default=DEFAULT_OUTPUT_EFI, help="Destination UKI EFI binary")
     parser.add_argument("--loader-entry", help="Custom path for systemd-boot loader entry")

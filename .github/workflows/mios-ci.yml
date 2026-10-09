@@ -58,7 +58,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve ratchet comparison baseline
-        # Wire ratchet comparison base (T-1073).
+        # Wire ratchet comparison base (task_3398).
         # On pull_request: compare against PR base SHA.
         # On push: compare against origin/main or previous commit.
         run: |

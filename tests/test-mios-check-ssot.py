@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Test suite for T-398: Rust SSOT mios.toml validator (mios check / miosd check).
+# AI-hint: Test suite for task_342: Rust SSOT mios.toml validator (mios check / miosd check).
 # AI-related: usr/share/mios/mios.toml, src/mios-rs/mios-config/src/lib.rs
 
 import pathlib

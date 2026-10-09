@@ -1,4 +1,4 @@
-# AI-hint: Configures pstore ramoops persistent crash buffer parameters in UKI kargs (T-790).
+# AI-hint: Configures pstore ramoops persistent crash buffer parameters in UKI kargs (task_734).
 # AI-doc: usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md
 
 kargs = [

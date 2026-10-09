@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* AI-hint: In-kernel eBPF network flow aggregation probe for MiOS (T-511).
+/* AI-hint: In-kernel eBPF network flow aggregation probe for MiOS (task_455).
  * AI-doc: usr/share/doc/mios/manual/ch06-security.md
  */
 

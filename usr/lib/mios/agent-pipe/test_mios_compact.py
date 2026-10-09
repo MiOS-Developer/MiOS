@@ -132,7 +132,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_tiered_memory.py (T-1092)
+# Consolidated from test_mios_tiered_memory.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone assert-script unit test for MEM-02 (tiered memory / context warning and eviction logic). Pure stdlib + asyncio, no live Letta server required. Runs as `python3 test_mios_tiered_memory.py` (exit 0 = pass).
 

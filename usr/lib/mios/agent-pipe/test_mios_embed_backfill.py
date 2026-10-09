@@ -72,7 +72,7 @@ def main() -> int:
 
 
 # ==============================================================================
-# Consolidated from test_mios_backfill.py (T-1092)
+# Consolidated from test_mios_backfill.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_backfill functionality.
 # AI-related: mios_pipe.memory.embed_backfill

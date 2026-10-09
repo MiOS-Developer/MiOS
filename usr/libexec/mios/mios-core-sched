@@ -3,7 +3,7 @@
 # AI-related: automation/24-cpu-affinity.sh, tests/test-core-sched.sh, usr/lib/systemd/system/subagent.slice
 # AI-doc: usr/share/doc/mios/manual/ch63-core-scheduling.md
 # AI-functions: get_core_sched_status, create_cookie, share_cookie_from, share_cookie_to, tag_cgroup, main
-"""MiOS Core Scheduling and SMT Sibling Isolation Utility (T-858).
+"""MiOS Core Scheduling and SMT Sibling Isolation Utility (task_802).
 
 Enforces hardware execution isolation across Simultaneous Multi-Threading (SMT)
 sibling cores for untrusted subagents and sandboxed processes using the Linux

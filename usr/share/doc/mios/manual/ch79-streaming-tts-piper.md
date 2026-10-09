@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (T-534, AGY-2132). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization. -->
+<!-- AI-hint: Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (task_478, task_2711). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization. -->
 
 # Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder
 

@@ -496,7 +496,7 @@ atomic_writes = true
 phantom_triage = true
 ```
 
-### File: `commands/claude/dev-loop.md`
+### File: `.claude/commands/dev-loop.md`
 ```markdown
 ---
 description: Universal multi-harness engineering loop, git worktree orchestrator, and two-sided verification gate

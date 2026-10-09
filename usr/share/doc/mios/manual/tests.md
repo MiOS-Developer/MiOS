@@ -250,13 +250,13 @@ Adversarial Verification Suite (Challenger 1).
 
 Executes stress tests, edge cases, boundary conditions, fuzzing payloads,
 and security attack scenarios across the roadmap modules:
-- T-377: MCP Bubblewrap Sandbox Engine
-- T-378: HITL Interactive Approval Engine
-- T-379: Knowledge Graph Recursive CTE Traversal
-- T-380: Contextual Prompt Token Pruning Engine
-- T-381: Agent-to-Agent (A2A) Ed25519 Attestation
+- task_321: MCP Bubblewrap Sandbox Engine
+- task_322: HITL Interactive Approval Engine
+- task_323: Knowledge Graph Recursive CTE Traversal
+- task_324: Contextual Prompt Token Pruning Engine
+- task_325: Agent-to-Agent (A2A) Ed25519 Attestation
 
-<!-- mios-src:fef635956dcf from tests/test-adversarial-roadmap.py:4-14 -->
+<!-- mios-src:596496e54e7c from tests/test-adversarial-roadmap.py:4-14 -->
 
 ### Adversarial Observation
 
@@ -271,18 +271,18 @@ MiOS Empirical Adversarial Test Harness (Challenger 2).
 
 Executes stress-testing, boundary attacks, cyclic recursion tests, cryptographic
 malleability checks, AST preservation tests, and fuzzing payloads against:
-- MCP Bubblewrap Sandbox Engine (T-377 / MCP-01)
-- Interactive HITL Permission Escalation & Approval Engine (T-378 / SEC-06)
-- Recursive CTE Knowledge Graph Traversal Engine (T-379 / GRAPH-01)
-- Contextual Prompt Compression & Token Pruning Engine (T-380 / PROMPT-01)
-- A2A Cryptographic Capability Attestation Engine (T-381 / A2A-01)
+- MCP Bubblewrap Sandbox Engine (task_321 / MCP-01)
+- Interactive HITL Permission Escalation & Approval Engine (task_322 / SEC-06)
+- Recursive CTE Knowledge Graph Traversal Engine (task_323 / GRAPH-01)
+- Contextual Prompt Compression & Token Pruning Engine (task_324 / PROMPT-01)
+- A2A Cryptographic Capability Attestation Engine (task_325 / A2A-01)
 
 <!-- mios-src:2d05ccc7a701 from tests/test-empirical-challenger-2.py:4-14 -->
 
 ### Adversarial Stress Test Suite for Milestone 1: 1....
 
 Adversarial Stress Test Suite for Milestone 1:
-1. Self-Healing Circuit Breaker & Safe Remediation Engine (T-382)
+1. Self-Healing Circuit Breaker & Safe Remediation Engine (task_326)
    - Rapid bursts of failures (100 rapid events)
    - Multi-unit isolation & interleaved failure/recovery sequences
    - Circuit breaker window expiration & quarantine timing
@@ -291,7 +291,7 @@ Adversarial Stress Test Suite for Milestone 1:
    - Corrupted state JSON recovery and schema validation
    - SafeConfigEditor atomic file operations & error handling
 
-2. Synthetic Training Q&A Data Pipeline (T-383)
+2. Synthetic Training Q&A Data Pipeline (task_327)
    - Secret redactor: nested keys (JSON/YAML/TOML/Env), multi-line keys (RSA/EC/SSH), tokens, bearer auth
    - Secret redactor: multi-word passwords inside quotes
    - Secret redactor: false-positive preservation on standard prose and config keys
@@ -304,7 +304,7 @@ Adversarial Stress Test Suite for Milestone 1:
 ### Adversarial Stress Test Suite for Milestone 1 (Challenger...
 
 Adversarial Stress Test Suite for Milestone 1 (Challenger 2):
-1. Dynamic Persona Synthesis (T-384 / AGY-1982)
+1. Dynamic Persona Synthesis (task_328 / task_2561)
    - Conflicting multi-domain queries & score balancing across 6 specialized domains
    - Zero-keyword, whitespace, punctuation, and emoji-only inputs
    - Multilingual queries (Chinese, Japanese, French, German, Russian, Arabic)
@@ -312,7 +312,7 @@ Adversarial Stress Test Suite for Milestone 1 (Challenger 2):
    - Boundary confidence thresholds & synthesis idempotency
    - Long-text stress (50,000+ words) & zero degradation
 
-2. Bounded Reflection Loop Convergence (T-385 / AGY-1983)
+2. Bounded Reflection Loop Convergence (task_329 / task_2562)
    - Identical successive texts (0.0 delta) -> instant diminishing returns exit
    - Sub-5% micro-edits in realistic paragraph -> diminishing returns exit
    - Oscillating / adversarial critiques -> strict max_iteration ceiling enforcement
@@ -322,12 +322,12 @@ Adversarial Stress Test Suite for Milestone 1 (Challenger 2):
    - Critique approval pattern matching & false-positive negation analysis
    - Deliberation state tracking & dictionary serialization integrity
 
-<!-- mios-src:863b31713931 from tests/test-m1-challenger2-adversarial.py:4-23 -->
+<!-- mios-src:fdaafbbba72a from tests/test-m1-challenger2-adversarial.py:4-23 -->
 
 ### Adversarial Stress Test Suite for Milestone 2: 1. Async TCP...
 
 Adversarial Stress Test Suite for Milestone 2:
-1. Async TCP Framing & Wire Codec (T-386)
+1. Async TCP Framing & Wire Codec (task_330)
    - Byte-by-byte (1-byte chunk) stream feeding across 50 multi-opcode frames
    - Irregular/randomized chunk slicing across packet boundaries
    - High-concurrency async TCP client/server throughput (30 concurrent clients, 300 frames)
@@ -338,7 +338,7 @@ Adversarial Stress Test Suite for Milestone 2:
    - Stream buffer partial frame drainage and resume
    - NodeWireDispatcher error response generation for unhandled opcodes
 
-2. Heartbeat Monitor & Dead-Peer Eviction (T-387)
+2. Heartbeat Monitor & Dead-Peer Eviction (task_331)
    - Mathematical boundary precision (0s, 4.999s, 5.0s, 9.999s, 10.0s, 14.999s, 15.0s)
    - Rapid flapping and state churn across 20 peers for 100 timesteps
    - Mass simultaneous eviction of 100 peers in a single sweep
@@ -350,9 +350,9 @@ Adversarial Stress Test Suite for Milestone 2:
 
 <!-- mios-src:2212811d9cc6 from tests/test-m2-adversarial.py:5-27 -->
 
-### Adversarial Stress Test Suite for Milestone 2 / T-388...
+### Adversarial Stress Test Suite for Milestone 2 / task_332...
 
-Adversarial Stress Test Suite for Milestone 2 / T-388 (Challenger 2):
+Adversarial Stress Test Suite for Milestone 2 / task_332 (Challenger 2):
 1. Cryptographic Handshake Adversarial Tests:
    - Exhaustive single-bit and multi-byte signature tampering across Init and Resp packets (all 64 bytes fuzzed).
    - Signature truncation (< 64 bytes) and extension (> 64 bytes) rejection.
@@ -398,37 +398,37 @@ Unit test suite for WS-NODE: Heartbeat interval (5s), 3-strike dead peer detecti
 degraded status transitions, routing table pruning, eviction event dispatching, and re-admission.
 
 <!-- mios-src:559815f2ca99 from tests/test-node-heartbeat-eviction.py:4-7 -->
-### 1. T-392: Stress & Invariant Tests for Work-Stealing...
+### 1. task_336: Stress & Invariant Tests for Work-Stealing...
 
 =========================================================================
-1. T-392: Stress & Invariant Tests for Work-Stealing Scheduler
+1. task_336: Stress & Invariant Tests for Work-Stealing Scheduler
 =========================================================================
 
-<!-- mios-src:0862d143d1c2 from src/mios-rs/mios-node/tests/mesh_m2_stress_challenger_test.rs:23-25 -->
+<!-- mios-src:319eee22cb65 from src/mios-rs/mios-node/tests/mesh_m2_stress_challenger_test.rs:23-25 -->
 
-### 2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+### 2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
 
 =========================================================================
-2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
 =========================================================================
 
-<!-- mios-src:ea343ab95afb from src/mios-rs/mios-node/tests/mesh_m2_stress_challenger_test.rs:170-172 -->
+<!-- mios-src:dc3d1639e380 from src/mios-rs/mios-node/tests/mesh_m2_stress_challenger_test.rs:170-172 -->
 
-### 1. T-392: Stress & Invariant Tests for Work-Stealing...
-
--------------------------------------------------------------------------
-1. T-392: Stress & Invariant Tests for Work-Stealing Scheduler
--------------------------------------------------------------------------
-
-<!-- mios-src:7b8e2b29186c from tests/test-node-m2-adversarial-challenger.py:59-61 -->
-
-### 2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+### 1. task_336: Stress & Invariant Tests for Work-Stealing...
 
 -------------------------------------------------------------------------
-2. T-393: Stress & Invariant Tests for Zero-Copy Buffer Pool
+1. task_336: Stress & Invariant Tests for Work-Stealing Scheduler
 -------------------------------------------------------------------------
 
-<!-- mios-src:844288c053a9 from tests/test-node-m2-adversarial-challenger.py:155-157 -->
+<!-- mios-src:998443187b25 from tests/test-node-m2-adversarial-challenger.py:59-61 -->
+
+### 2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
+
+-------------------------------------------------------------------------
+2. task_337: Stress & Invariant Tests for Zero-Copy Buffer Pool
+-------------------------------------------------------------------------
+
+<!-- mios-src:eb3bc6b389eb from tests/test-node-m2-adversarial-challenger.py:155-157 -->
 ### The registry is whatever mios.toml says it is. This test...
 
 The registry is whatever mios.toml says it is.
@@ -448,14 +448,14 @@ reads as the same entry and the gate stays green.
 
 <!-- mios-src:742c96b615ed from src/mios-rs/mios-gate/tests/credentials.rs:57-59 -->
 
-### T-1043, and a bug in this gate's first predicate: naming...
+### task_980, and a bug in this gate's first predicate: naming...
 
-T-1043, and a bug in this gate's first predicate: naming the parameter `ctx`
+task_980, and a bug in this gate's first predicate: naming the parameter `ctx`
 instead of `_ctx` proves nothing. check_pipeline_numbering read ctx.in_image
 for an early skip and then returned a constant Pass, so a parameter-name test
 classified it as implemented and it kept claiming a verdict.
 
-<!-- mios-src:f2762f500bbf from src/mios-rs/mios-gate/tests/stubs.rs:80-83 -->
+<!-- mios-src:66403965ad91 from src/mios-rs/mios-gate/tests/stubs.rs:80-83 -->
 
 ### The regression this file exists for. The shipped drop-in...
 
@@ -498,9 +498,9 @@ without a colon, so Law 12's second target was never checked.
 
 <!-- mios-src:32d7b29b500e from tests/drift-gate-negatives.sh:2068-2070 -->
 
-### T-1035
+### task_972
 
-T-1035: the half a key-only register could not see. POSTGRES_PASSWORD is
+task_972: the half a key-only register could not see. POSTGRES_PASSWORD is
 GRANDFATHERED, so changing its value used to read as the same entry and
 the gate stayed green while an operator's real password sat in a 0644
 file under /usr.
@@ -534,9 +534,9 @@ Verifies:
 
 ### MiOS Empirical Adversarial Test Harness (Challenger 1)....
 
-MiOS Empirical Adversarial Test Harness (Challenger 1).  Adversarially tests and stress-tests: - pgvector Automated VACUUM & Concurrent HNSW Reindexing (T-401) - CephFS Transactional Ledger Replication & Integrity Hashing (T-402) - CephFS Dynamic Quota Enforcement & Subvolume Sizing (T-403) - Ceph RADOS Gateway Quadlet Isolation (T-404) - LUKS2 / dm-crypt Automated Key Rotation & Safety Rollback (T-405) - PostgreSQL Hot-Standby Streaming Replication & Fencing Coordinator (T-406) - Database Corruption Detector & Non-Destructive Repair Engine (T-407) - Database Schema Migration Runner & Rollback Safety (T-412)
+MiOS Empirical Adversarial Test Harness (Challenger 1).  Adversarially tests and stress-tests: - pgvector Automated VACUUM & Concurrent HNSW Reindexing (task_345) - CephFS Transactional Ledger Replication & Integrity Hashing (task_346) - CephFS Dynamic Quota Enforcement & Subvolume Sizing (task_347) - Ceph RADOS Gateway Quadlet Isolation (task_348) - LUKS2 / dm-crypt Automated Key Rotation & Safety Rollback (task_349) - PostgreSQL Hot-Standby Streaming Replication & Fencing Coordinator (task_350) - Database Corruption Detector & Non-Destructive Repair Engine (task_351) - Database Schema Migration Runner & Rollback Safety (task_356)
 
-<!-- mios-src:cc71563a7feb from tests/test-adversarial-t401-t406.py:4-4 -->
+<!-- mios-src:ceb5824e0157 from tests/test-adversarial-t401-t406.py:4-4 -->
 
 ### Consolidated Agent Pipe Scheduling Domain Test Suite....
 
@@ -627,13 +627,13 @@ Combines and preserves 100% test coverage across 4 core networking subsystems:
 ### Unit Test Suite for MiOS UID 1000 Enforcement & Systemd...
 
 Unit Test Suite for MiOS UID 1000 Enforcement & Systemd User Session Boundary.
-Implements T-965 / AGY-2563.
+Implements task_909 / task_3142.
 
-<!-- mios-src:c8017625fc8f from tests/test-uid-enforcement.py:5-8 -->
+<!-- mios-src:bb546d80dab3 from tests/test-uid-enforcement.py:5-8 -->
 
-### test-virtio-pmem-dax-io.py — T-734 WS-VFIO Automated...
+### test-virtio-pmem-dax-io.py — task_678 WS-VFIO Automated...
 
-test-virtio-pmem-dax-io.py — T-734 WS-VFIO
+test-virtio-pmem-dax-io.py — task_678 WS-VFIO
 Automated benchmark suite for virtio-pmem DAX microVM I/O.
 
 In CI (no Cloud-Hypervisor available) all benchmarks run in dry-run / memory
@@ -646,7 +646,7 @@ On a real MiOS host with Cloud-Hypervisor:
   - Runs in-guest fio read benchmark, asserts >15 GB/s
   - Asserts host NVMe write counters unchanged
 
-<!-- mios-src:c29bbd75736b from tests/test-virtio-pmem-dax-io.py:5-18 -->
+<!-- mios-src:20b71922d135 from tests/test-virtio-pmem-dax-io.py:5-18 -->
 
 ### The preset script is present when the tree carries it....
 
@@ -679,9 +679,9 @@ the scratch fixture.
 
 <!-- mios-src:8cb122940c72 from usr/libexec/mios/test_mios_agents_firstboot.py:5-17 -->
 
-### Two-sided verification controls for Task T-1141. WHEN...
+### Two-sided verification controls for Task task_3434. WHEN...
 
-Two-sided verification controls for Task T-1141.
+Two-sided verification controls for Task task_3434.
 
 WHEN forgejo/pgvector/psycopg are unavailable THE SYSTEM SHALL order firstboot
 seeders after them and surface the degradation instead of silently skipping.
@@ -695,11 +695,11 @@ an empty PATH where they would otherwise find host tools, ambient MIOS_*
 scrubbed, psycopg shadowed by a module that refuses to import, and pgvector
 pointed at a port nobody listens on.
 
-<!-- mios-src:d087fbdd6bad from usr/libexec/mios/test_mios_firstboot_seeders.py:5-18 -->
+<!-- mios-src:476233784f4e from usr/libexec/mios/test_mios_firstboot_seeders.py:5-18 -->
 
-### T-1135
+### task_3428
 
-T-1135: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
+task_3428: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
 defined -- by the resolver-rendered /etc/mios/install.env, not a literal.
 
 * the exports the resolver renders from the vendor mios.toml carry
@@ -725,9 +725,9 @@ image's own kernel is the input). A suite that cannot run its live tier exits
 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
 
 <!-- mios-src:da7776b618c7 from usr/share/mios/mios.toml:12330-12335 -->
-### names-registry.py is deleted (AGY-1073); the probe plants...
+### names-registry.py is deleted (task_1713); the probe plants...
 
-names-registry.py is deleted (AGY-1073); the probe plants the idiom in
+names-registry.py is deleted (task_1713); the probe plants the idiom in
 any discovered generator instead of sed-replacing an idiom the victim
 may not carry.
 
@@ -943,9 +943,9 @@ Empirically stress tests:
 
 <!-- mios-src:ee6262ade3e4 from tests/test_adversarial_gateway_stress.py:3-12 -->
 
-### Adversarial stress harness for mios-hardcode-lint (T-1161...
+### Adversarial stress harness for mios-hardcode-lint (task_3454...
 
-Adversarial stress harness for mios-hardcode-lint (T-1161 parity and defect detection).
+Adversarial stress harness for mios-hardcode-lint (task_3454 parity and defect detection).
 
 Executes four targeted challenge dimensions:
 1. Header crash-risks (stranded BOMs at various offsets, shebang displacements).
@@ -953,7 +953,7 @@ Executes four targeted challenge dimensions:
 3. IP address heuristics (IPv4 edge cases, CIDR boundaries, IPv6, port syntaxes).
 4. Error behavior & filesystem corner cases (non-existent paths, empty dirs, binary files, syntax errors).
 
-<!-- mios-src:1ec904076385 from tests/test_adversarial_hardcode_lint.py:4-11 -->
+<!-- mios-src:f2ac384f1a43 from tests/test_adversarial_hardcode_lint.py:4-11 -->
 
 ### This tree's mios-hardcode-lint, else the installed one. The...
 
@@ -1058,3 +1058,9 @@ Tier 4: Real-World Application Scenarios (5 tests)
 Total: 115 test cases.
 
 <!-- mios-src:290289b062ae from tests/test_native_static_hardening_e2e.py:5-12 -->
+### The fixture sandbox after `migrate-ids`: opaque ids...
+
+The fixture sandbox after `migrate-ids`: opaque ids, numbers, typed labels. K-404 names no task, so the
+operator decision maps it (as the real migration does for its dangling tokens).
+
+<!-- mios-src:ac5acea360d7 from tools/native/mios-task/tests/cli.rs:1393-1394 -->

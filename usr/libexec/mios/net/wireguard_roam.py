@@ -2,7 +2,7 @@
 # AI-functions: __init__, register_peer, handle_ip_change, clamp_pmtu, WireGuardPeer, WireGuardRoamingDaemon
 
 """
-wireguard_roam.py — T-753 WS-NODE
+wireguard_roam.py — task_697 WS-NODE
 Dynamic WireGuard endpoint roaming daemon and adaptive Path MTU prober.
 
 Listens for netlink RTM_NEWADDR events, updates peer endpoints in <50ms, and

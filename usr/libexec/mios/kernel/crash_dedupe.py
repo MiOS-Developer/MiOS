@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Automated kernel fuzz crash deduplication engine and PostgreSQL bug_tracker logger.
 # AI-related: usr/libexec/mios/kernel/crash_dedupe.py, tests/test-crash-dedupe.py, usr/share/mios/postgres/schema-init.sql
-"""Automated Fuzz Crash Deduplication & Bug Logger (T-558).
+"""Automated Fuzz Crash Deduplication & Bug Logger (task_502).
 
 Triages raw serial and Syzkaller execution logs, isolates KASAN backtraces,
 computes normalized callstack fingerprints (stripping runtime offsets),
@@ -258,7 +258,7 @@ class CrashTriageEngine:
         return list(self._mock_db.values())
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Kernel Fuzz Crash Deduplication & Bug Logger (T-558)")
+    parser = argparse.ArgumentParser(description="MiOS Kernel Fuzz Crash Deduplication & Bug Logger (task_502)")
     parser.add_argument("--log-file", metavar="PATH", help="Path to raw kernel serial / syzkaller log file")
     parser.add_argument("--db-url", help="PostgreSQL connection string (e.g. postgresql://user:pass@localhost:5432/mios)")
     parser.add_argument("--list", action="store_true", help="List all currently tracked bugs")

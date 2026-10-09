@@ -1,4 +1,4 @@
-# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).
+# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).
 # AI-doc: usr/share/doc/mios/manual/ch77-hardware-fallback.md
 [Unit]
 Description='MiOS' Automated Network and Audio Fallback Manager

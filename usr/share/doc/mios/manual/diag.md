@@ -2,12 +2,12 @@
 
 # diag
 
-### coredump_sanitizer.py — T-751 WS-DIAG Sanitized...
+### coredump_sanitizer.py — task_695 WS-DIAG Sanitized...
 
-coredump_sanitizer.py — T-751 WS-DIAG
+coredump_sanitizer.py — task_695 WS-DIAG
 Sanitized systemd-coredump configurator and automated minidump extractor.
 
 Extracts demangled stack minidumps into PostgreSQL bug_tracker, strips MADV_DONTDUMP
 secret memory, and immediately purges raw core files.
 
-<!-- mios-src:42ed9e28a76f from usr/libexec/mios/diag/coredump_sanitizer.py:4-10 -->
+<!-- mios-src:3b82ae896c9d from usr/libexec/mios/diag/coredump_sanitizer.py:4-10 -->

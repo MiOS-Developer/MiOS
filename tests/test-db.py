@@ -648,7 +648,7 @@ from mios_pg_events import EventBus, AgentEvent
 
 
 class TestPgEvents(unittest.TestCase):
-    """Tests for T-342: mios_pg_events -- PostgreSQL LISTEN/NOTIFY event bus."""
+    """Tests for task_286: mios_pg_events -- PostgreSQL LISTEN/NOTIFY event bus."""
 
     def test_inject_and_dispatch(self):
         """Injected events are dispatched to subscribers within SLA."""

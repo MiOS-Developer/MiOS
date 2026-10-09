@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Dynamic kernel sysctl/sysfs parameter synchronizer and udev reload daemon (T-822).
+# AI-hint: Dynamic kernel sysctl/sysfs parameter synchronizer and udev reload daemon (task_766).
 # AI-doc: usr/share/doc/mios/manual/ch18-kernel-sysctl-and-udev-synchronization.md
 from __future__ import annotations
 

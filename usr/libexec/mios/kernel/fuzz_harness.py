@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Headless QEMU Syzkaller / KASAN kernel & eBPF fuzzing test harness.
 # AI-related: usr/libexec/mios/kernel/fuzz_harness.py, tests/test-kernel-fuzz.py, usr/libexec/mios/kernel/crash_dedupe.py
-"""Headless QEMU Syzkaller / KASAN Kernel & eBPF Fuzz Harness (T-557).
+"""Headless QEMU Syzkaller / KASAN Kernel & eBPF Fuzz Harness (task_501).
 
 Orchestrates headless QEMU microVM fuzzing sessions targeting eBPF syscalls,
 virtiofs, and block storage ioctls using KASAN/KMSAN instrumented kernels,
@@ -220,7 +220,7 @@ class KernelFuzzHarness:
             )
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Headless QEMU Syzkaller / KASAN Fuzz Harness (T-557)")
+    parser = argparse.ArgumentParser(description="MiOS Headless QEMU Syzkaller / KASAN Fuzz Harness (task_501)")
     parser.add_argument("--kernel", default="/usr/share/mios/kernel/vmlinuz-kasan", help="Path to KASAN instrumented kernel")
     parser.add_argument("--initramfs", default="/usr/share/mios/kernel/initramfs-syz.img", help="Path to initramfs")
     parser.add_argument("--subsystems", default="bpf,virtiofs,storage", help="Comma-separated target kernel subsystems")

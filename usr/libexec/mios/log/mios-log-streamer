@@ -139,7 +139,7 @@ def generate_embeddings_batch(
     # satisfy the column and the HNSW index but retrieve nonsense. The caller
     # stamps emb_version only for REMOTE results, so the backfiller's
     # `emb_version IS DISTINCT FROM <ver>` finds exactly these rows and repairs
-    # them once the endpoint is back (T-1042).
+    # them once the endpoint is back (task_979).
     return [generate_deterministic_embedding(t) for t in texts]
 
 
