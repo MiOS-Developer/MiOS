@@ -5108,6 +5108,16 @@ check_btop_theme() {
     fi
 }
 
+check_fastfetch() {
+    local bin out
+    bin="$(native_bin mios-gen)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gen is missing; fastfetch artifact verification could not run"
+    elif ! out=$("$bin" render-fastfetch --root "$ROOT" --check 2>&1); then
+        _violation "fastfetch artifact verification failed: $out"
+    fi
+}
+
 check_no_inert_ssot_tables() {
     # Ported to mios-gate (ADR-0021, Law 14); python twin deleted (T-1001).
     local bin; bin="$(_gate_bin)" || bin=""

@@ -9,9 +9,9 @@ description = "MiOS native build orchestrator and phase registry"
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+object = { version = "0.37.3", default-features = false, features = ["read_core", "pe", "std"] }
 
 [dev-dependencies]
 insta = { version = "1.34", features = ["yaml"] }
 tempfile.workspace = true
 trycmd = "0.14"
-

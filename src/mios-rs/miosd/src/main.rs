@@ -19,6 +19,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Lint, cross-build and verify a Windows executable using the SSOT catalog
+    NativeWindowsBuild {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        binary: String,
+        #[arg(long)]
+        target_dir: std::path::PathBuf,
+    },
+    /// Verify SSOT-required lint tools; optionally run warning-fatal workspace lint
+    NativeToolchainCheck {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        lint: bool,
+    },
+    /// Check every installed SSOT native artifact without requiring Cargo
+    NativeRuntimeCheck {
+        #[arg(long, default_value = "/")]
+        root: String,
+        #[arg(long, default_value = std::env::consts::OS)]
+        platform: String,
+        #[arg(long, default_value = std::env::consts::ARCH)]
+        arch: String,
+        #[arg(long)]
+        bin_dir: Option<std::path::PathBuf>,
+    },
     /// Resolve the SSOT native Linux target, linker and static runtime flags
     NativeBuildSettings {
         #[arg(long, default_value = ".")]
@@ -36,6 +63,8 @@ enum Commands {
         /// Tree whose [build.native.linux] policy (e.g. pie) the artifact must meet.
         #[arg(long, default_value = ".")]
         root: String,
+        #[arg(long, default_value = "linux")]
+        platform: String,
     },
     /// List SSOT-categorized native executables using both Cargo workspaces
     NativeTargets {
@@ -922,13 +951,65 @@ async fn main() {
                 }
             }
         }
-        Commands::NativeArtifactCheck { path, arch, root } => {
-            let result = mios_build::native_linux_target(std::path::Path::new(root), arch)
-                .and_then(|policy| {
-                    std::fs::read(path)
-                        .map_err(|e| format!("cannot read artifact: {e}"))
-                        .and_then(|data| mios_build::verify_static_elf(&data, arch, policy.pie))
-                });
+        Commands::NativeWindowsBuild {
+            root,
+            binary,
+            target_dir,
+        } => {
+            match mios_build::verification::windows_build(
+                std::path::Path::new(root),
+                binary,
+                target_dir,
+            ) {
+                Ok(path) => println!("[miosd] Verified Windows artifact: {}", path.display()),
+                Err(error) => {
+                    eprintln!("[miosd] Windows build: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::NativeToolchainCheck { root, lint } => {
+            if let Err(error) =
+                mios_build::verification::toolchain_check(std::path::Path::new(root), *lint)
+            {
+                eprintln!("[miosd] Toolchain verification: {error}");
+                std::process::exit(1);
+            }
+            println!("[miosd] SSOT-required lint tools verified; workspace lint requested: {lint}");
+        }
+        Commands::NativeRuntimeCheck {
+            root,
+            platform,
+            arch,
+            bin_dir,
+        } => {
+            match mios_build::verification::runtime_check(
+                std::path::Path::new(root),
+                platform,
+                arch,
+                bin_dir.as_deref(),
+            ) {
+                Ok(count) => {
+                    println!("[miosd] {count} installed {platform} native artifacts verified")
+                }
+                Err(error) => {
+                    eprintln!("[miosd] Runtime artifact verification: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::NativeArtifactCheck {
+            path,
+            arch,
+            root,
+            platform,
+        } => {
+            let result = mios_build::verification::artifact_check(
+                std::path::Path::new(root),
+                std::path::Path::new(path),
+                platform,
+                arch,
+            );
             if let Err(error) = result {
                 eprintln!("[miosd] Artifact {path}: {error}");
                 std::process::exit(1);
@@ -2042,6 +2123,13 @@ fn run_greenboot() -> Result<(), Box<dyn std::error::Error>> {
         return Err("SSOT mios.toml not found".into());
     }
     println!("[greenboot] [ok] SSOT mios.toml accessibility verified");
+    let verified = mios_build::verification::runtime_check(
+        std::path::Path::new("/"),
+        "linux",
+        std::env::consts::ARCH,
+        None,
+    )?;
+    println!("[greenboot] [ok] {verified} SSOT native artifacts verified");
 
     // 3. Verify UKI / bootloader entries if bootloader directory exists
     let entries_dir = std::path::Path::new("/boot/loader/entries");

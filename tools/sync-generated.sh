@@ -126,6 +126,7 @@ main() {
     if [ -n "$_gen" ]; then
         "$_gen" render-tmux-theme --write-fixture "$ROOT" >/dev/null
         "$_gen" render-btop-theme --root "$ROOT" >/dev/null
+        "$_gen" render-fastfetch --root "$ROOT" >/dev/null
     else
         "$PY" usr/libexec/mios/ux/tmux_theme.py --write-fixture "$ROOT" >/dev/null
         if [ -f "usr/libexec/mios/ux/btop_theme.py" ]; then

@@ -6462,22 +6462,27 @@ $endMark
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
     # -- mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, T-1132) --
-    $wallpaperd_src = Join-Path $MiosRepoDir 'tools\native\mios-wallpaperd'
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
+    $nativeWindowsTarget = [string](Get-MiosTomlValue -Section 'build.native.windows' -Key 'target' -Default '')
+    if ($nativeWindowsTarget -ne 'x86_64-pc-windows-gnu') { throw 'Missing or unsupported SSOT native Windows target' }
+    $devDistroName = if ($script:DevDistro) { $script:DevDistro } elseif ($DevDistro) { $DevDistro } else { 'MiOS-DEV' }
+    $repoWsl = ConvertTo-WslPath $MiosRepoDir
+    $nativeVerifier = "$repoWsl/tools/native/target/verification/debug/miosd"
+    $prepareVerifier = "cargo build --locked --manifest-path `"$repoWsl/src/mios-rs/Cargo.toml`" -p miosd --target-dir `"$repoWsl/tools/native/target/verification`""
+    Invoke-DistroSh -Bash $prepareVerifier -MachineName $devDistroName -NoSudo
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot build SSOT native verifier; refusing Windows installation' }
+    Invoke-DistroSh -Bash "`"$nativeVerifier`" native-toolchain-check --root `"$repoWsl`"" -MachineName $devDistroName -NoSudo
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT lint components unavailable; refusing Windows build/install certification' }
     $builtExeCandidates = @(
-        (Join-Path $MiosRepoDir 'tools\native\target\x86_64-pc-windows-gnullvm\release\mios-wallpaperd.exe'),
-        (Join-Path $MiosRepoDir 'tools\native\target\x86_64-pc-windows-gnu\release\mios-wallpaperd.exe'),
-        (Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe')
+        (Join-Path $MiosRepoDir "tools\native\target\$nativeWindowsTarget\release\mios-wallpaperd.exe")
     )
     $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 
     # Cross-build hermetically inside MiOS-DEV if not pre-built
     if (-not $builtExe) {
-        $devDistroName = if ($script:DevDistro) { $script:DevDistro } elseif ($DevDistro) { $DevDistro } else { 'MiOS-DEV' }
-        $repoWsl = ConvertTo-WslPath $MiosRepoDir
-        $buildCmd = "CARGO_TARGET_DIR=/var/tmp/cargo-target cargo build --manifest-path `"$repoWsl/tools/native/mios-wallpaperd/Cargo.toml`" --target x86_64-pc-windows-gnu --release && mkdir -p `"$repoWsl/tools/native/target/x86_64-pc-windows-gnu/release`" && cp /var/tmp/cargo-target/x86_64-pc-windows-gnu/release/mios-wallpaperd.exe `"$repoWsl/tools/native/target/x86_64-pc-windows-gnu/release/`""
+        $buildCmd = "`"$nativeVerifier`" native-windows-build --root `"$repoWsl`" --binary mios-wallpaperd --target-dir /var/tmp/cargo-target"
 
-        Log-Info "Cross-compiling mios-wallpaperd inside $devDistroName (x86_64-pc-windows-gnu)..."
+        Log-Info "Cross-compiling mios-wallpaperd inside $devDistroName ($nativeWindowsTarget from SSOT)..."
         try {
             Invoke-DistroSh -Bash $buildCmd -MachineName $devDistroName -NoSudo
             if ($LASTEXITCODE -eq 0) {
@@ -6488,35 +6493,17 @@ $endMark
         }
     }
 
-    # Host cargo fallback if still not built
-    if (-not $builtExe -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Log-Info "Compiling mios-wallpaperd via host cargo..."
-        $targetFlag = @()
-        $installedToolchains = & rustup toolchain list 2>$null
-        if ($installedToolchains -match 'gnullvm') {
-            $targetFlag = @('--target', 'x86_64-pc-windows-gnullvm')
-        }
-        $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release @targetFlag 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-        } else {
-            Log-Warn "Host cargo build for mios-wallpaperd failed: $($cargoOut -join ' ')"
-        }
-    }
-
     # Verify and provision the built executable at SSOT destination
     if ($builtExe -and (Test-Path -LiteralPath $builtExe)) {
-        $isVerified = $false
-        try {
-            $bytes = [IO.File]::ReadAllBytes($builtExe)
-            # Must be a valid PE binary (MZ header: 0x4D, 0x5A) with non-trivial size (>100KB)
-            if ($bytes.Length -gt 102400 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
-                $isVerified = $true
-            }
-        } catch {}
+        $artifactWsl = ConvertTo-WslPath $builtExe
+        Invoke-DistroSh -Bash "`"$nativeVerifier`" native-artifact-check `"$artifactWsl`" --root `"$repoWsl`" --platform windows --arch x86_64" -MachineName $devDistroName -NoSudo
+        $isVerified = $LASTEXITCODE -eq 0
 
         if ($isVerified) {
             Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
+            $installedWsl = ConvertTo-WslPath $wallpaperd_exe
+            Invoke-DistroSh -Bash "`"$nativeVerifier`" native-artifact-check `"$installedWsl`" --root `"$repoWsl`" --platform windows --arch x86_64" -MachineName $devDistroName -NoSudo
+            if ($LASTEXITCODE -ne 0) { throw 'Installed wallpaper artifact failed SSOT verification; refusing service startup' }
             Log-Ok "mios-wallpaperd verified and staged: $wallpaperd_exe ($([math]::Round((Get-Item $wallpaperd_exe).Length / 1MB, 2)) MB)"
 
             # Register as a Windows Service only after verification
@@ -6532,10 +6519,10 @@ $endMark
                 }
             }
         } else {
-            Log-Warn "Built executable at $builtExe failed PE binary verification -- wallpaper service not registered"
+            throw "Built executable at $builtExe failed SSOT PE verification; refusing service startup"
         }
     } else {
-        Log-Warn "mios-wallpaperd executable unavailable -- wallpaper service skipped"
+        throw 'mios-wallpaperd executable unavailable; refusing uncertified service installation'
     }
 
             # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden).

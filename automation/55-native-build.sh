@@ -13,12 +13,11 @@ fi
 # The image bake reuses the rust-builder artifacts; build.sh excludes this phase.
 # A direct invocation from an incomplete source context requires prebuilt tools.
 if [[ ! -f "${ROOT_DIR}/src/mios-rs/Cargo.toml" ]]; then
-    for bin in miosd mios-gate mios-probe mios-node mios-resolver mios-unit-gen mios-agent-relay mios-render-quadlets mios-bake-plan; do
-        [[ -x "${DEST_DIR}/${bin}" ]] || {
-            echo "[55-native-build] FATAL: incomplete source context and missing prebuilt ${DEST_DIR}/${bin}" >&2
-            exit 1
-        }
-    done
+    [[ -x "${DEST_DIR}/miosd" ]] || {
+        echo "[55-native-build] FATAL: incomplete source context and missing prebuilt ${DEST_DIR}/miosd" >&2
+        exit 1
+    }
+    "${DEST_DIR}/miosd" native-runtime-check --root "$ROOT_DIR" --platform linux --bin-dir "$DEST_DIR"
     echo "[55-native-build] Image bake uses the required prebuilt native tools."
     exit 0
 fi
@@ -36,6 +35,9 @@ if command -v cargo >/dev/null 2>&1; then
     (cd "${ROOT_DIR}/src/mios-rs" && RUSTFLAGS='' cargo build --release --locked -p miosd --target "$host" --target-dir "$TARGET_DIR")
     builder="${TARGET_DIR}/${host}/release/miosd"
     [[ -x "$builder" ]] || { echo "[55-native-build] FATAL: native catalog builder missing" >&2; exit 1; }
+    # A component declaration is not evidence that the builder can lint.
+    # This Rust verifier consumes the SSOT and fails if Clippy/rustfmt is absent.
+    "$builder" native-toolchain-check --root "$ROOT_DIR" --lint
     arch="$(uname -m)"
     settings="$("$builder" native-build-settings --root "$ROOT_DIR" --arch "$arch")"
     IFS=$'\t' read -r target linker rust_flags jobs <<< "$settings"

@@ -14,6 +14,7 @@ mod ai_manifest;
 mod bib_configs;
 mod btop_theme;
 mod cargo_manifests;
+mod fastfetch;
 mod gate_index;
 mod metal_vs_hosted;
 mod pipe_boundaries;
@@ -343,6 +344,24 @@ enum Commands {
         /// Output path for btop theme file
         #[arg(long, aliases = ["output", "out"])]
         out: Option<PathBuf>,
+    },
+    /// Render the SSOT fastfetch telemetry config; mock/dry-run do not write
+    #[command(name = "render-fastfetch", aliases = ["fastfetch", "fastfetch-gen"])]
+    RenderFastfetch {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
+        #[arg(long, alias = "output")]
+        out: Option<PathBuf>,
+        #[arg(long, default_value = "small")]
+        logo_type: String,
+        #[arg(long)]
+        mock: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        generate: bool,
     },
 }
 
@@ -989,6 +1008,46 @@ fn main() -> ExitCode {
                                     res.keys_count, res.theme_len
                                 );
                                 println!("  Saved config: {}", res.target.display());
+                            }
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::RenderFastfetch {
+            root,
+            check,
+            out,
+            logo_type,
+            mock,
+            dry_run,
+            generate: _,
+        } => {
+            let r = resolve_root(root);
+            (
+                "render-fastfetch",
+                fastfetch::DEFAULT_FASTFETCH_TARGET,
+                match fastfetch::run_render_fastfetch(
+                    &r,
+                    check,
+                    out.as_deref(),
+                    Some(&logo_type),
+                    mock,
+                    dry_run,
+                ) {
+                    Ok(res) => {
+                        if cli.format != "json" {
+                            if check {
+                                println!("[fastfetch] fastfetch configuration matches projection");
+                            } else {
+                                println!("[fastfetch] SUCCESS: Generated Fastfetch config ({} lines, {} bytes)", res.lines_count, res.jsonc_len);
+                                if !mock && !dry_run {
+                                    if let Some(target) = &res.target {
+                                        println!("  Saved config: {}", target.display());
+                                    }
+                                }
                             }
                         }
                         Ok(())

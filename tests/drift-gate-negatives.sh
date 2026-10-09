@@ -5336,6 +5336,22 @@ test_btop_theme() {
     log "check_btop_theme negative test passed"
 }
 
+test_fastfetch() {
+    log "Testing check_fastfetch real persisted telemetry artifact"
+    local target="${ROOT}/usr/share/mios/fastfetch/telemetry.jsonc" bak
+    [[ -f "$target" ]] || die "fastfetch telemetry artifact is missing before negative control"
+    bak="$(mktemp)"; cp "$target" "$bak"
+    _neg_gate check_fastfetch || { rm -f "$bak"; die "fastfetch clean baseline failed: ${_NEG_GATE_OUT}"; }
+    printf '{}\n' > "$target"
+    local bad=0
+    _neg_gate check_fastfetch && bad=1
+    cp "$bak" "$target"; rm -f "$bak"
+    [[ "$bad" -eq 0 ]] || die "fastfetch checker accepted corrupted persisted output"
+    [[ "$_NEG_GATE_OUT" == *"fastfetch config drifted"* ]] || die "fastfetch negative lacked drift diagnostic: ${_NEG_GATE_OUT}"
+    _neg_gate check_fastfetch || die "fastfetch baseline failed after restoration: ${_NEG_GATE_OUT}"
+    log "check_fastfetch persisted-artifact negative control passed"
+}
+
 test_egress_firewall() {
     log "Testing check_egress_firewall"
     local nft="${ROOT}/usr/share/mios/security/egress.nft"

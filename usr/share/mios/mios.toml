@@ -1898,6 +1898,17 @@ pie = { x86_64 = true, aarch64 = false }
 target = "x86_64-pc-windows-gnu"
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = ["-C", "target-feature=+crt-static"]
+# PE imports may use OS components; third-party compiler/runtime DLLs fail.
+# Consumed by miosd native-artifact-check and native-runtime-check on every
+# install/runtime verification, independently of the build host's platform.
+system_dlls = [
+  "kernel32.dll", "ntdll.dll", "bcrypt.dll", "advapi32.dll", "user32.dll",
+  "gdi32.dll", "dwmapi.dll", "ole32.dll", "oleaut32.dll", "shell32.dll",
+  "shlwapi.dll", "comctl32.dll", "comdlg32.dll", "ws2_32.dll", "userenv.dll",
+  "iphlpapi.dll", "secur32.dll", "crypt32.dll", "winmm.dll", "version.dll",
+  "uxtheme.dll", "windowscodecs.dll", "dwrite.dll", "dxgi.dll", "d2d1.dll",
+  "d3d11.dll", "propsys.dll", "msvcrt.dll", "ucrtbase.dll",
+]
 
 [build.native.categories.cli]
 binaries = [
@@ -1906,7 +1917,7 @@ binaries = [
   "mios-resolver", "mios-size-ceiling", "mios-ssot-lint", "mios-task", "mios-toml-get",
   "mios-template-compile", "mios-template-conform", "mios-toolchain-pin",
   "mios-unit-gen", "mios-version-check", "xtask", "mios-gate", "mios-probe", "miosd",
-  "mios-install",
+  "mios-install", "mios-gen",
 ]
 install_dir = "/usr/bin"
 expose_bin = false
@@ -8515,6 +8526,7 @@ show_fastfetch      = true
 show_logo           = true
 
 [theme.fastfetch]
+telemetry_target = "usr/share/mios/fastfetch/telemetry.jsonc"
 logo_color   = "blue"
 logo_padding_top   = 1   # fastfetch logo.padding.top
 logo_padding_right = 0   # fastfetch logo.padding.right
@@ -13487,4 +13499,3 @@ description = "Test suites port only with the surface they guard; tools/test_*.p
 replaces = []
 crates = []
 scope = ["tests/**", "tools/test_*.py"]
-

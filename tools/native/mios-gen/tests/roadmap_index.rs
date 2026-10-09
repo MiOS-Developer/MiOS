@@ -20,6 +20,15 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_mios-gen")
 }
 
+fn isolated_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("GIT_"))
+    {
+        command.env_remove(key);
+    }
+    command
+}
+
 /// A throwaway root whose ROADMAP.md is a self-consistent copy of the real
 /// one: render once against the fixture so its index agrees with its body,
 /// then every --check below measures the binary, not the working tree.
@@ -29,11 +38,8 @@ fn fixture_root() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("Failed to create fixture tempdir");
     let repo = get_repo_root();
 
-    fs::copy(
-        repo.join("ROADMAP.md"),
-        dir.path().join("ROADMAP.md"),
-    )
-    .expect("Failed to write fixture ROADMAP.md");
+    fs::copy(repo.join("ROADMAP.md"), dir.path().join("ROADMAP.md"))
+        .expect("Failed to write fixture ROADMAP.md");
 
     let ssot_dest = dir.path().join("usr/share/mios");
     fs::create_dir_all(&ssot_dest).expect("Failed to create fixture SSOT dir");
@@ -62,7 +68,7 @@ fn fixture_root() -> tempfile::TempDir {
         ["config", "user.name", "t"].as_slice(),
         ["add", "-A"].as_slice(),
     ] {
-        let out = Command::new("git")
+        let out = isolated_command("git")
             .arg("-C")
             .arg(dir.path())
             .args(args)
@@ -75,7 +81,7 @@ fn fixture_root() -> tempfile::TempDir {
         );
     }
 
-    let out = Command::new(bin())
+    let out = isolated_command(bin())
         .args(["roadmap-index", "--root"])
         .arg(dir.path())
         .output()
@@ -94,7 +100,7 @@ fn test_roadmap_index_render_and_check() {
     let roadmap_path = fixture.path().join("ROADMAP.md");
 
     // 1. Positive check on the self-consistent fixture
-    let output = Command::new(bin())
+    let output = isolated_command(bin())
         .args(["roadmap-index", "--root"])
         .arg(fixture.path())
         .arg("--check")
@@ -121,7 +127,7 @@ fn test_roadmap_index_render_and_check() {
     assert_ne!(original, mutated, "Mutation must change content");
     fs::write(&roadmap_path, mutated).expect("Failed to write mutated ROADMAP.md");
 
-    let output_neg = Command::new(bin())
+    let output_neg = isolated_command(bin())
         .args(["roadmap-index", "--root"])
         .arg(fixture.path())
         .arg("--check")
@@ -143,7 +149,7 @@ fn test_roadmap_index_render_and_check() {
 fn test_roadmap_index_json_format() {
     let fixture = fixture_root();
 
-    let output = Command::new(bin())
+    let output = isolated_command(bin())
         .args(["--format", "json", "roadmap-index", "--root"])
         .arg(fixture.path())
         .arg("--check")
@@ -170,7 +176,7 @@ fn test_roadmap_index_json_format() {
 fn test_roadmap_index_negative_missing_root() {
     let temp_empty = tempfile::tempdir().expect("Failed to create empty tempdir");
 
-    let output = Command::new(bin())
+    let output = isolated_command(bin())
         .args(["roadmap-index", "--root"])
         .arg(temp_empty.path())
         .arg("--check")

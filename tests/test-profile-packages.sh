@@ -195,6 +195,12 @@ if [[ "$1" == build ]]; then
         cat > "$out/release/miosd" <<'PLAN'
 #!/bin/bash
 case "$1" in
+native-toolchain-check)
+    if [[ "${MIOS_TEST_NATIVE_MODE:-}" == missing-clippy ]]; then echo 'required clippy component unavailable' >&2; exit 1; fi
+    exit 0 ;;
+native-runtime-check)
+    if [[ "${MIOS_TEST_NATIVE_MODE:-}" == dynamic ]]; then echo 'static policy rejects ELF interpreter (PT_INTERP)' >&2; exit 1; fi
+    exit 0 ;;
 native-build-settings) printf 'fixture-musl\trust-lld\t-C target-feature=+crt-static\t2\n'; exit 0 ;;
 native-artifact-check)
     case "${MIOS_TEST_NATIVE_MODE:-}" in
@@ -248,10 +254,10 @@ EOF
        [[ "$(readlink "$fixture/stage/usr/bin/mios-test-system")" == /usr/libexec/mios/mios-test-system ]]; then
         pass "FHS staging replaces legacy symlinks and excludes staging prefixes from aliases"
     else fail "FHS staging created a cycle or leaked a staging path"; fi
-    for mode in foreign missing dynamic missing-std missing-linker; do
+    for mode in foreign missing dynamic missing-std missing-linker missing-clippy; do
         rm -f "$fixture/tools/native/target/fixture-musl/release/mios-test-native"
         if MIOS_TEST_NATIVE_MODE="$mode" run_native > "$TMP/native.log" 2>&1; then fail "native build accepted $mode artifact";
-        elif grep -Eq 'ELF64 executable|build did not produce|PT_INTERP|missing Rust target standard library|linker.*unavailable' "$TMP/native.log"; then pass "native build rejects $mode artifact with named diagnostics";
+        elif grep -Eq 'ELF64 executable|build did not produce|PT_INTERP|missing Rust target standard library|linker.*unavailable|required clippy' "$TMP/native.log"; then pass "native build rejects $mode artifact with named diagnostics";
         else fail "native $mode failure lacked expected diagnostics"; fi
     done
     mv "$fixture/src/mios-rs/Cargo.toml" "$fixture/src/mios-rs/Cargo.toml.saved"
@@ -259,9 +265,14 @@ EOF
     elif grep -q 'missing prebuilt' "$TMP/native.log"; then pass "partial bake context requires installed native tools";
     else fail "partial bake failure lacked expected diagnostics"; fi
     for name in miosd mios-gate mios-probe mios-node mios-resolver mios-unit-gen mios-agent-relay mios-render-quadlets mios-bake-plan; do
-        printf '\177ELFfixture' > "$fixture/out/$name"; chmod +x "$fixture/out/$name"
+        if [[ "$name" == miosd ]]; then cp "$fixture/tools/native/target/fixture-host/release/miosd" "$fixture/out/$name";
+        else printf '\177ELFfixture' > "$fixture/out/$name"; fi
+        chmod +x "$fixture/out/$name"
     done
     if run_native > "$TMP/native.log" 2>&1 && grep -q 'required prebuilt' "$TMP/native.log"; then pass "partial bake context uses prebuilt native tools without rebuilding"; else fail "prebuilt bake context was rejected"; fi
+    if MIOS_TEST_NATIVE_MODE=dynamic run_native > "$TMP/native.log" 2>&1; then fail "partial bake accepted a dynamic prebuilt artifact";
+    elif grep -q PT_INTERP "$TMP/native.log"; then pass "partial bake context verifies prebuilt linkage";
+    else fail "partial bake rejection lacked linkage diagnostic"; fi
     unset -f run_native
 }
 

@@ -247,6 +247,44 @@ tables. Installation uses this check for every selected release artifact;
 executable permissions and ELF magic alone do not certify static linkage.
 Both declared target architectures require their own build and runtime evidence.
 
+The native verifier also covers Windows PE64 artifacts. `[build.native.windows]`
+selects the target, linker, static runtime flags and exact `system_dlls` policy.
+OS DLL imports are permitted; undeclared compiler or third-party runtime DLLs,
+foreign architectures, truncated headers, invalid entry points and unsupported
+delay imports fail. This is linkage evidence, not Authenticode or service health.
+The PE format follows the [Microsoft specification](https://learn.microsoft.com/windows/win32/debug/pe-format).
+
+Build preparation must execute `miosd native-toolchain-check --root . --lint`.
+It checks the actual SSOT-required Clippy/rustfmt commands and runs warning-fatal
+Clippy for host-applicable workspace packages. Windows cross-builds use
+`miosd native-windows-build --root . --binary NAME --target-dir DIRECTORY`;
+that command lints the selected target, builds with SSOT flags and validates PE
+before staging. `build-mios.ps1` validates both the candidate and installed
+wallpaper executable before service startup. Missing checks fail installation.
+Clippy installation follows the [upstream component instructions](https://doc.rust-lang.org/stable/clippy/installation.html).
+
+Runtime artifact checks use the shipped catalog without Cargo or a compiler:
+
+```bash
+miosd native-runtime-check --root / --platform linux --arch x86_64
+miosd native-runtime-check --root / --platform linux --arch aarch64
+miosd native-runtime-check --root SOURCE_OR_STAGED_ROOT --platform windows --arch x86_64 --bin-dir WINDOWS_BIN_DIRECTORY
+```
+
+Linux greenboot invokes this same verifier before reporting core health. A
+Windows caller can run the verifier in MiOS-DEV against the mounted bin directory.
+These checks require every selected artifact to exist and satisfy the applicable
+SSOT linkage policy; they do not certify GPU, network, UKI or service readiness.
+Runtime verification does not require build-only lint tools to remain installed.
+
+Historical finding, recorded during the 2026-10-07 AGY continuity handoff:
+“The actual fastfetch release binary also fails the static-linkage gate because
+it requires glibc. Clippy is unavailable in the Linux builder, so lint verification
+remains open.” Installing the declared toolchain components and rebuilding for
+the SSOT musl target addresses the cause; every actual installed artifact and
+platform still needs its own executed receipt. Never certify a debug binary
+copied into a release directory or infer Windows/ARM64 readiness from x86_64 Linux.
+
 `Containerfile` prefetches both locked workspaces with `--target host-tuple`.
 [Cargo fetch](https://doc.rust-lang.org/cargo/commands/cargo-fetch.html) otherwise
 fetches every platform, including the Windows GUI dependencies. The shared

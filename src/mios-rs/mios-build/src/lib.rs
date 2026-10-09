@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod verification;
+
 /// Executable roles are distinct from Cargo libraries and from their shared
 /// implementation modules. The SSOT assigns each executable exactly once.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -34,6 +36,7 @@ pub struct NativeWindows {
     pub target: String,
     pub linker: String,
     pub rustflags: Vec<String>,
+    pub system_dlls: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
