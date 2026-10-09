@@ -23,6 +23,16 @@ if SENTINEL.exists():
 if os.name == 'nt':
     SENTINEL = pathlib.Path("C:/var/lib/mios/.bound-images-firstboot-done")
 
+
+# [ai].firstboot_pulls from the LAYERED SSOT (default true): a cloud or container
+# deployment's [deployment.cloud] host drop-in sets it false. No sentinel is written,
+# so removing the drop-in resumes the pulls on the next boot.
+_TOML_GET = os.environ.get("MIOS_TOML_GET", "/usr/libexec/mios/mios-toml-get")
+if os.access(_TOML_GET, os.X_OK) and subprocess.run(
+        [_TOML_GET, "ai", "firstboot_pulls", "true"], capture_output=True, text=True).stdout.strip() == "false":
+    print("[ai].firstboot_pulls is false (cloud/container deployment): no bound image is pulled")
+    sys.exit(0)
+
 TOML_PATH = os.environ.get("MIOS_TOML", "C:/MiOS/usr/share/mios/mios.toml" if os.name == 'nt' else "/usr/share/mios/mios.toml")
 
 try:

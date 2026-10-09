@@ -294,11 +294,10 @@ def cmd_check(root: str, ci: dict) -> int:
                         job.group(1), re.M) if job else None
         if not got or got.group(1).strip("'\"") != want:
             viol.append("drift-gate container differs from [ci.fedora].image")
-        dev = os.path.join(root, ".devcontainer/Containerfile")
-        body = Path(dev).read_text(encoding="utf-8") if os.path.isfile(dev) else ""
-        frm = re.search(r"^FROM\s+(\S+)", body, re.M)
-        if not frm or frm.group(1) != want:
-            viol.append("devcontainer FROM differs from [ci.fedora].image")
+    # main() reads [ci] from this same file, so on the real gate path it exists;
+    # only a unit fixture handing cmd_check a bare [ci] dict lacks it.
+    if os.path.isfile(os.path.join(root, "usr/share/mios/mios.toml")):
+        viol.extend(devcontainer_check(root))
 
     if suite_timeout(ci) is None:
         viol.append("[ci].suite_timeout_s must be a positive integer -- without it"
@@ -317,6 +316,81 @@ def cmd_check(root: str, ci: dict) -> int:
               f"{len(set(reg.values()))} tier(s); {len(exempt)}/{ceiling} exempt",
               file=sys.stderr)
     return 1 if viol else 0
+
+# The dev container IS the MiOS image plus container wiring, so anything that
+# would make it a different image is refused: a second stage, a FROM other than
+# the ARG, an ARG default other than [image].ref, a file brought in from the
+# build context, or a RUN that installs a package, toolchain or payload. A
+# component the devcontainer lacks belongs in the OS pipeline instead.
+DEV_CONTAINERFILE = ".devcontainer/Containerfile"
+_DEV_INSTALL = re.compile(
+    r"\b(?:dnf5?|microdnf|yum|apt-get|apt|apk|zypper|rpm-ostree|flatpak)\s+(?:-\S+\s+)*"
+    r"(?:install|in|reinstall|upgrade|update|groupinstall|add)\b"
+    r"|\brpm\s+-[A-Za-z]*[iUF]"
+    r"|\bpip[0-9.]*\s+install\b|-m\s+pip\s+install\b|\b(?:pipx|uv\s+tool|uv\s+pip)\s+install\b"
+    r"|\b(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add)\b"
+    r"|\brustup(?:-init)?\b|\bcargo\s+(?:install|build)\b"
+    r"|\b(?:curl|wget)\b|\bgit\s+clone\b"
+    r"|\bmios-mcp-server\b|\b[0-9]{2}-[a-z0-9-]+\.sh\b")
+
+
+def devcontainer_violations(text: str, image_ref: str) -> list:
+    """Every way `text` (a dev Containerfile) stops being [image].ref plus wiring."""
+    logical, buf = [], ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not buf and (not line or line.startswith("#")):
+            continue
+        if buf and line.startswith("#"):
+            continue  # a comment inside a continued instruction
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        logical.append(buf + line)
+        buf = ""
+    if buf:
+        logical.append(buf)
+    viol = []
+    froms = [i for i, ln in enumerate(logical) if ln.split(None, 1)[0].upper() == "FROM"]
+    if len(froms) != 1:
+        viol.append(f"devcontainer Containerfile has {len(froms)} FROM lines; it must be one stage, FROM ${{MIOS_IMAGE}}")
+    elif logical[froms[0]].split()[1:] != ["${MIOS_IMAGE}"]:
+        viol.append(f"devcontainer {logical[froms[0]]!r} is not FROM ${{MIOS_IMAGE}}")
+    first = froms[0] if froms else len(logical)
+    args = [ln for ln in logical[:first] if re.match(r"ARG\s+MIOS_IMAGE(?:=|\s|$)", ln, re.I)]
+    default = args[0].split("=", 1)[1].strip().strip("'\"") if args and "=" in args[0] else None
+    if default != image_ref:
+        viol.append(f"devcontainer ARG MIOS_IMAGE default {default!r} differs from [image].ref {image_ref!r}")
+    for ln in logical:
+        op = ln.split(None, 1)[0].upper()
+        if op in ("COPY", "ADD"):
+            viol.append(f"devcontainer brings files into the image ({ln[:60]!r}); it adds only wiring")
+        elif op == "RUN":
+            hit = _DEV_INSTALL.search(ln)
+            if hit:
+                viol.append(f"devcontainer RUN installs {hit.group(0)!r}; install it in the OS image pipeline")
+    return viol
+
+
+def devcontainer_check(root: str) -> list:
+    """The repo's dev Containerfile against the SSOT, and the local build's layering."""
+    with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
+        data = tomllib.load(fh)
+    ref = (data.get("image") or {}).get("ref")
+    if not ref:
+        return ["[image].ref is empty -- the dev container has no image to be"]
+    path = os.path.join(root, DEV_CONTAINERFILE)
+    if not os.path.isfile(path):
+        return [f"{DEV_CONTAINERFILE} is missing"]
+    viol = devcontainer_violations(Path(path).read_text(encoding="utf-8"), ref)
+    images = (data.get("build") or {}).get("images") or {}
+    os_tag = (images.get("os") or {}).get("tag_key")
+    dev_arg = ((images.get("devcontainer") or {}).get("build_args") or {}).get("MIOS_IMAGE")
+    if not os_tag or dev_arg != os_tag:
+        viol.append(f"[build.images.devcontainer].build_args.MIOS_IMAGE {dev_arg!r} is not the os"
+                    f" target's tag_key {os_tag!r}: a local dev build would not layer on the image it built")
+    return viol
+
 
 def suite_timeout(ci: dict):
     """[ci].suite_timeout_s as a positive int, else None (bool is not a count)."""

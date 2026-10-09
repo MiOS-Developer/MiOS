@@ -443,5 +443,19 @@ else
     fi
 fi
 
+# The global agent CLI catalog ([agent_cli].tools) under [agent_cli].linux_prefix
+# with its /usr/bin wrappers -- the payload `mios agents --install` installs. Every
+# MiOS image carries it, so the devcontainer and the cloud sessions (which run this
+# image) start with every catalogued CLI. A failed install fails the build.
+_ac_src="$(cd "$(dirname "$0")/.." && pwd)"
+_ac_enabled="$(MIOS_TOML_ROOT="$_ac_src" python3 "$_ac_src/usr/libexec/mios/mios-toml-get" --vendor agent_cli enabled)"
+if [[ "$_ac_enabled" == true ]]; then
+    mios_log "Install the [agent_cli].tools catalog"
+    /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install \
+        || { mios_err "Agent CLI catalog install failed"; exit 1; }
+else
+    mios_skip "[agent_cli].enabled is '${_ac_enabled}'; agent CLIs not installed"
+fi
+
 mios_ok "Done"
 exit 0

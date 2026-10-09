@@ -76,10 +76,11 @@ main() {
         fail "core is not clean"
     fi
 
-    if run 0 --profile dev && grep -q 'section:devcontainer ' "$TMP/out"; then
-        pass "dev lists its overlay: $(grep -o 'overlays: [^;]*' "$TMP/out")"
+    # Every image kind, the devcontainer included, is the full profile.
+    if run 0 --profile full && grep -q 'section:devcontainer ' "$TMP/out"; then
+        pass "full lists the devcontainer overlay: $(grep -o 'overlays: [^;]*' "$TMP/out" | cut -c1-120)"
     else
-        fail "dev did not list the devcontainer overlay"
+        fail "full did not list the devcontainer overlay"
     fi
 
     if run 0 --profile core --format json && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1]))["status"] != "clean")' "$TMP/out"; then

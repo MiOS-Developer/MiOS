@@ -57,9 +57,12 @@ WORKSPACE = (
     'devcontainer = ".devcontainer/devcontainer.json"\n'
     'repos = [{ name = "MiOS", url = "https://github.com/mios-dev/MiOS.git" }]\n'
 )
+HOST = '{ cpus = 8, memory = "32gb", storage = "64gb" }'
+IDENTITY = '[identity]\nusername = "fx-user"\n'
 
 
-def _toml(desktop_only, fwd_keys=FWD_KEYS, ports=PORTS, env_keys=ENV_KEYS, edge=EDGE, workspace=WORKSPACE):
+def _toml(desktop_only, fwd_keys=FWD_KEYS, ports=PORTS, env_keys=ENV_KEYS, edge=EDGE, workspace=WORKSPACE,
+          host=HOST, identity=IDENTITY):
     keys = "".join(f'    "{k}",\n' for k in desktop_only)
     unreg = "".join(f'    "{k}",\n' for k in UNREGISTERED)
     return ("[dotfiles.vscode]\n"
@@ -71,7 +74,8 @@ def _toml(desktop_only, fwd_keys=FWD_KEYS, ports=PORTS, env_keys=ENV_KEYS, edge=
             + "[dotfiles.devcontainer]\n"
             + (f"forward_port_keys = {fwd_keys}\n" if fwd_keys is not None else "")
             + (f"container_env_keys = {env_keys}\n" if env_keys is not None else "")
-            + ports + edge + workspace)
+            + (f"host_requirements = {host}\n" if host is not None else "")
+            + ports + edge + workspace + (identity or ""))
 
 
 def _write(path, text):
@@ -299,6 +303,44 @@ def test_container_env_projection():
         check("env: an absent list is exit 3", _run(root, boot, "--check", "--client-surfaces")[0], 3)
 
 
+def test_user_and_host_projection():
+    """The devcontainer runs the MiOS image, so remoteUser is its [identity].username and hostRequirements
+    is [dotfiles.devcontainer].host_requirements, on every devcontainer.json; a stale literal is drift,
+    an absent or malformed source is exit 3."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "MiOS")
+        boot = _fixture(root)
+        rc, out = _run(root, boot, "--check", "--client-surfaces")
+        check("user: an unprojected surface is drift", rc, 1)
+        check("user: the missing user is named",
+              "DRIFT MiOS/.devcontainer/devcontainer.json: remoteUser None differs from the "
+              "[identity].username projection 'fx-user'" in out, True)
+        check("host: the missing requirement is named on bootstrap too",
+              "DRIFT mios-bootstrap/.devcontainer/devcontainer.json: hostRequirements None differs" in out, True)
+        check("user: projection succeeds", _run(root, boot, "--client-surfaces")[0], 0)
+        for label, repo in (("MiOS", root), ("bootstrap", boot)):
+            dev = json.load(open(os.path.join(repo, ".devcontainer/devcontainer.json"), encoding="utf-8"))
+            check(f"user: {label} remoteUser", dev.get("remoteUser"), "fx-user")
+            check(f"host: {label} hostRequirements", dev.get("hostRequirements"),
+                  {"cpus": 8, "memory": "32gb", "storage": "64gb"})
+        ws = json.load(open(os.path.join(root, "x.code-workspace"), encoding="utf-8"))
+        check("user: a workspace file gets none", "remoteUser" in ws or "hostRequirements" in ws, False)
+        check("user: green after projection", _run(root, boot, "--check", "--client-surfaces")[0], 0)
+        # A planted literal (the retired mios-dev user, the old 32 GB host) is drift again.
+        p = os.path.join(root, ".devcontainer/devcontainer.json")
+        dev = json.load(open(p, encoding="utf-8"))
+        dev["remoteUser"], dev["hostRequirements"]["storage"] = "mios-dev", "32gb"
+        _write(p, json.dumps(dev, indent=2) + "\n")
+        rc, out = _run(root, boot, "--check", "--client-surfaces")
+        check("user: a planted literal user is drift", rc == 1 and "remoteUser 'mios-dev' differs" in out, True)
+        check("host: a planted small disk is drift", "'storage': '32gb'} differs" in out, True)
+        for bad in (dict(host=None), dict(host='{ cpus = 8, memory = "32", storage = "64gb" }'),
+                    dict(host='{ cpus = 0, memory = "32gb", storage = "64gb" }'), dict(identity=None),
+                    dict(identity='[identity]\nusername = "Not A User"\n')):
+            _write(os.path.join(root, "usr/share/mios/mios.toml"), _toml(DESKTOP_ONLY, **bad))
+            check(f"user/host: {bad} is exit 3", _run(root, boot, "--check", "--client-surfaces")[0], 3)
+
+
 def test_stale_stylesheet_copy_refused():
     """The code-server stylesheet is rendered in one place; a returning byte copy is drift and write mode deletes it."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -349,7 +391,8 @@ def test_edge_settings_projected():
 def main() -> int:
     for fn in (test_prune_then_check_both_ways, test_unregistered_key_refused_at_the_source,
                test_rewrite_keeps_surface_mode, test_new_surface_gets_umask_mode, test_empty_partition_fails_loud,
-               test_forward_ports_projection, test_container_env_projection, test_stale_stylesheet_copy_refused,
+               test_forward_ports_projection, test_container_env_projection, test_user_and_host_projection,
+               test_stale_stylesheet_copy_refused,
                test_edge_settings_projected):
         fn()
     for f in FAILED:

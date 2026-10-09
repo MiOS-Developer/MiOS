@@ -4846,11 +4846,14 @@ PY
         cp "$bak" "$toml"
     }
     _pi_plant '"cleanup", "ssot-lint"' '"cleanup", "devloop-planted-phase", "ssot-lint"' "devloop-planted-phase"
-    _pi_plant 'extends          = ["core"]' 'extends          = ["devloop-planted-profile"]' "devloop-planted-profile"
+    _pi_plant 'all     = true' 'all     = true
+extends = ["devloop-planted-profile"]' "devloop-planted-profile"
     _pi_plant 'all     = true' 'all     = true
 floor   = true' "more than one profile declares floor"
-    _pi_plant 'extends          = ["core"]
-package_sections = ["devcontainer"]' 'package_sections = ["devcontainer"]' "does not contain the floor"
+    _pi_plant '[profiles.full]' '[profiles.devloop-planted-partial]
+package_sections = ["devcontainer"]
+
+[profiles.full]' "does not contain the floor"
     rm -f "$bak"; unset -f _pi_plant
     _neg_gate check_profile_integrity || die "check_profile_integrity failed after restoration: $_NEG_GATE_OUT"
     log "check_profile_integrity negative test passed"

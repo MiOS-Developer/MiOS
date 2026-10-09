@@ -1,6 +1,6 @@
-# AI-hint: Hermetic two-sided tests for the code-server workbench bake (mios-vscode-custom-css patch/verify), the dev-image wiring that runs it, and the mios-agents image and builders that bake it.
-# AI-related: /usr/libexec/mios/mios-vscode-custom-css, /.devcontainer/Containerfile, /.devcontainer/setup-devcontainer.sh, /.devcontainer/boot-mios-systems.sh, /usr/share/mios/agents/Containerfile, /usr/libexec/mios/mios-agents-firstboot.sh, /src/mios-rs/miosd/src/main.rs
-# AI-functions: TestCodeServerBake, TestDevcontainerLifecycle, TestDevImageWiring, TestAgentsContainerfile, TestBuilders
+# AI-hint: Hermetic two-sided tests for the code-server workbench bake (mios-vscode-custom-css patch/verify), the OS-pipeline phases that bake it and the toolchain, the dev container that is the MiOS image, and the mios-agents image and builders.
+# AI-related: /usr/libexec/mios/mios-vscode-custom-css, /.devcontainer/Containerfile, /automation/59-tools.sh, /automation/55-native-build.sh, /tools/ci-suites.py, /.devcontainer/setup-devcontainer.sh, /.devcontainer/boot-mios-systems.sh, /usr/share/mios/agents/Containerfile, /usr/libexec/mios/mios-agents-firstboot.sh, /src/mios-rs/miosd/src/main.rs
+# AI-functions: TestCodeServerBake, TestDevcontainerLifecycle, TestDevImageWiring, TestOsImageProvides, TestAgentsContainerfile, TestBuilders
 
 import hashlib
 import importlib.machinery
@@ -322,23 +322,48 @@ class TestExtensionDirs(unittest.TestCase):
         self.assertTrue(self.tool.install_extension(dirs), dirs)
 
 
-class TestDevImageWiring(unittest.TestCase):
+def _load_ci_suites():
+    loader = importlib.machinery.SourceFileLoader("ci_suites", os.path.join(ROOT, "tools/ci-suites.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
 
-    def test_containerfile_bakes_pinned_release(self):
-        cf = _read(os.path.join(ROOT, ".devcontainer/Containerfile"))
-        runs = [r for r in re.split(r"\n(?=[A-Z]+ )", cf) if r.startswith("RUN") and ".rpm" in r]
-        self.assertEqual(len(runs), 1, "exactly one RUN installs and bakes code-server")
-        run = runs[0]
-        self.assertIn("set -euo pipefail", run)
-        self.assertNotIn("|| true", run)
-        for key in ("image.sidecars code_server", "theme.edge code_server_scrollbar_px", "theme.edge code_server_perimeter_px"):
-            self.assertIn(key, run)
-        self.assertRegex(run, r"code-server-\$\{v\}-\$\{arch\}\.rpm")
-        self.assertRegex(run, r"\bpatch\b[\s\S]*\bverify\b")
-        for f in ("usr/libexec/mios/mios-vscode-custom-css", "usr/libexec/mios/mios-toml-get",
-                  "usr/lib/mios/mios_toml.py", "usr/share/mios/themes/code-server-terminal.css"):
-            self.assertIn(f, cf)
-        self.assertIsNone(re.search(r"code-server[-:]v?\d+\.\d+\.\d+", cf), "a version literal in the Containerfile")
+
+DEV_CF = os.path.join(ROOT, ".devcontainer/Containerfile")
+TOOLS_PHASE = os.path.join(ROOT, "automation/59-tools.sh")
+NATIVE_PHASE = os.path.join(ROOT, "automation/55-native-build.sh")
+AGENT_PHASE = os.path.join(ROOT, "automation/72-hermes-agent.sh")
+OS_CF = os.path.join(ROOT, "Containerfile")
+
+
+class TestDevImageWiring(unittest.TestCase):
+    """The dev container IS [image].ref: its Containerfile adds wiring only, so every
+    component it used to install by hand must come from the OS image pipeline."""
+
+    def setUp(self):
+        with open(TOML, "rb") as f:
+            self.ref = tomllib.load(f)["image"]["ref"]
+        self.ci = _load_ci_suites()
+
+    def test_dev_containerfile_is_the_image(self):
+        self.assertEqual(self.ci.devcontainer_violations(_read(DEV_CF), self.ref), [])
+
+    def test_dev_containerfile_mutants_fail(self):
+        cf = _read(DEV_CF)
+        mutants = {
+            "an install": cf + "RUN dnf install -y htop\n",
+            "a hand-built code-server": cf + "RUN rpm -Uvh https://example.invalid/code-server-4.0.0-amd64.rpm\n",
+            "a toolchain": cf + "RUN rustup-init -y\n",
+            "a hardcoded image": cf.replace("FROM ${MIOS_IMAGE}", "FROM " + self.ref),
+            "the CI harness": cf.replace("FROM ${MIOS_IMAGE}", "FROM ghcr.io/mios-dev/machine-os:6.1"),
+            "a stale default": cf.replace("MIOS_IMAGE=" + self.ref, "MIOS_IMAGE=ghcr.io/mios-dev/mios:0.2.4"),
+            "files from the context": cf + "COPY usr/ /usr/\n",
+        }
+        for name, text in mutants.items():
+            with self.subTest(name):
+                self.assertNotEqual(text, cf, name)
+                self.assertNotEqual(self.ci.devcontainer_violations(text, self.ref), [], name)
 
     def test_setup_verify_is_fatal_and_install_is_reported(self):
         sh = _read(os.path.join(ROOT, ".devcontainer/setup-devcontainer.sh"))
@@ -348,57 +373,157 @@ class TestDevImageWiring(unittest.TestCase):
         self.assertNotIn("install --all || true", sh)
         self.assertIn("custom-css extension install failed (exit", sh)
 
-    def test_containerfile_provisions_native_toolchain(self):
-        cf = _read(os.path.join(ROOT, ".devcontainer/Containerfile"))
-        self.assertEqual(rust_toolchain_violations(cf), [])
-
-    def test_toolchain_check_rejects_each_defect(self):
-        cf = _read(os.path.join(ROOT, ".devcontainer/Containerfile"))
-        run = next(r for r in _runs(cf) if "rustup-init" in r)
-        mutants = {
-            "no rustup step": cf.replace(run, "RUN true"),
-            "literal target": cf.replace('"$(get build.native.linux.targets "$(uname -m)")"',
-                                         '"x86_64-unknown-linux-musl"'),
-            "unverified std": cf.replace("libstd-*.rlib", "libcore-*.rlib"),
-            "after staging removed": cf.replace(run + "\n", "") + "\n" + run + "\n",
-        }
-        for name, text in mutants.items():
-            with self.subTest(name):
-                self.assertNotEqual(rust_toolchain_violations(text), [], name)
-
     def test_post_start_binds_loopback_from_ports(self):
         sh = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
         self.assertIn("ports code_server", sh)
         self.assertIn("127.0.0.1", sh)
         self.assertIsNone(re.search(r"\b8900\b|\b8080\b", sh), "a code-server port literal in boot-mios-systems.sh")
 
+    def test_lifecycle_uses_checkout_helpers(self):
+        """The helpers live in the workspace checkout now; nothing installs them into /usr/local/bin."""
+        for rel in (".devcontainer/boot-mios-systems.sh", ".devcontainer/setup-devcontainer.sh"):
+            sh = _read(os.path.join(ROOT, rel))
+            self.assertNotIn("/usr/local/bin/mios-root-overlay", sh, rel)
+            self.assertIsNone(re.search(r"(?m)^\s*mios-agent-pipe-dev\b", sh), f"{rel} relies on an installed helper")
 
-def _runs(text):
-    # A chunk ends at its blank line, so the next step's comment is not part of it.
-    return [r.split("\n\n", 1)[0] for r in re.split(r"\n(?=[A-Z]+ )", text) if r.startswith("RUN")]
+
+class TestOsImageProvides(unittest.TestCase):
+    """Where the OS image pipeline now provides what the old dev Containerfile installed by hand."""
+
+    def test_code_server_is_baked_by_the_tools_phase(self):
+        self.assertEqual(code_server_violations(_read(TOOLS_PHASE)), [])
+
+    def test_code_server_mutants_fail(self):
+        sh = _read(TOOLS_PHASE)
+        mutants = {
+            "no verify": sh.replace('mios-vscode-custom-css" verify "${_cs_bake[@]}"', 'mios-vscode-custom-css" true'),
+            "masked patch": sh.replace('patch "${_cs_bake[@]}"', 'patch "${_cs_bake[@]}" || true'),
+            "a version literal": sh.replace("download/v${_cs_version}/code-server-${_cs_version}",
+                                            "download/v4.139.1/code-server-4.139.1"),
+            "no SSOT pin": sh.replace("_toml_get image.sidecars code_server", "echo ghcr.io/coder/code-server:latest"),
+        }
+        for name, text in mutants.items():
+            with self.subTest(name):
+                self.assertNotEqual(text, sh, name)
+                self.assertNotEqual(code_server_violations(text), [], name)
+
+    def test_tools_phase_runs_in_every_profile(self):
+        with open(TOML, "rb") as f:
+            data = tomllib.load(f)
+        names = {p["name"]: p for p in data["build"]["phases"]["list"]}
+        self.assertTrue(names["tools"]["fatal"])
+        self.assertIn("tools", data["profiles"]["core"]["phases"])
+        self.assertTrue(data["profiles"]["full"]["all"])
+
+    def test_native_toolchain_is_provisioned_by_the_os_build(self):
+        self.assertEqual(rust_toolchain_violations(_read(NATIVE_PHASE), _read(OS_CF)), [])
+
+    def test_toolchain_mutants_fail(self):
+        sh, cf = _read(NATIVE_PHASE), _read(OS_CF)
+        call = "    bash /tmp/build/automation/55-native-build.sh --toolchain; \\\n"
+        self.assertIn(call, cf)
+        mutants = {
+            "never called": (sh, cf.replace(call, "")),
+            "called before rustup-init is installed": (sh, cf.replace(call, "").replace(
+                "    install_packages_strict base; \\\n", "    install_packages_strict base; \\\n" + call)),
+            "literal target": (sh.replace('"$(get build.native.linux.targets "$(uname -m)")"',
+                                          '"x86_64-unknown-linux-musl"'), cf),
+            "literal home": (sh.replace('"$(get build.toolchain rustup_home)"', '"/usr/lib/mios/rustup"'), cf),
+            "unverified std": (sh.replace("libstd-*.rlib", "libcore-*.rlib"), cf),
+            "unverified linker": (sh.replace("/bin/${linker}", "/bin/ld"), cf),
+        }
+        for name, (s, c) in mutants.items():
+            with self.subTest(name):
+                self.assertNotEqual((s, c), (sh, cf), name)
+                self.assertNotEqual(rust_toolchain_violations(s, c), [], name)
+
+    def test_login_env_puts_the_image_toolchain_first(self):
+        """etc/profile.d/mios-env.sh: RUSTUP_HOME and the proxies' PATH come from the SSOT
+        homes only when that toolchain exists; otherwise the environment is untouched."""
+        if not shutil.which("sh"):
+            self.skipTest("POSIX sh is required")
+        src = _read(os.path.join(ROOT, "etc/profile.d/mios-env.sh"))
+        fn = re.search(r"(?ms)^_mios_rust_env\(\) \{.*?^\}", src).group(0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _bash_directory(tmp)
+            os.makedirs(os.path.join(tmp, "rustup/toolchains"))
+            os.makedirs(os.path.join(tmp, "cargo/bin"))
+            rustup = os.path.join(tmp, "cargo/bin/rustup")
+            with open(rustup, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(rustup, 0o755)
+            probe = fn + '\n_mios_rust_env\nprintf "%s|%s\\n" "${RUSTUP_HOME:-}" "${PATH%%:*}"\n'
+            for home, want in ((f"{root}/rustup", f"{root}/rustup|{root}/cargo/bin"), (f"{root}/missing", "|/usr/bin")):
+                with self.subTest(home=home):
+                    env = {"PATH": "/usr/bin:/bin", "MIOS_BUILD_TOOLCHAIN_RUSTUP_HOME": home,
+                           "MIOS_BUILD_TOOLCHAIN_CARGO_HOME": f"{root}/cargo"}
+                    out = subprocess.run(["sh", "-c", probe], capture_output=True, text=True, env=env).stdout.strip()
+                    self.assertEqual(out, want)
+
+    def test_agent_clis_are_installed_by_the_agent_phase(self):
+        sh = _read(AGENT_PHASE)
+        self.assertIn("mios-mcp-server --agent-cli --install", sh)
+        self.assertRegex(sh, r"--agent-cli --install \\\n\s+\|\| \{ mios_err [^}]*exit 1; \}",
+                         "a failed agent CLI install must fail the build")
+        self.assertIn("agent_cli enabled", sh)
+
+    def test_package_and_mcp_sets_are_os_sections(self):
+        self.assertRegex(_read(os.path.join(ROOT, "automation/05-repos.sh")),
+                         r"for _build_section in [^;]*\bdevcontainer\b")
+        cf = _read(OS_CF)
+        self.assertIn("install_packages_strict mcp", cf)
+        self.assertIn("mios-mcp-server --install-native", cf)
 
 
-def rust_toolchain_violations(text):
-    """Every way the dev image fails to provision the SSOT native toolchain 55-native-build.sh needs."""
+def code_server_violations(text):
+    """Every way the tools phase fails to bake the SSOT-pinned, patched and verified code-server."""
     errs = []
-    runs = [r for r in _runs(text) if "rustup-init" in r]
-    if len(runs) != 1:
-        return [f"dev Containerfile: {len(runs)} RUN steps call rustup-init, expected 1"]
-    run = runs[0]
-    for key in ("build.toolchain channel", "build.toolchain components",
-                'build.native.linux.targets "$(uname -m)"', "build.native.linux linker"):
-        if key not in run:
-            errs.append(f"dev Containerfile: rustup step does not read {key} from the SSOT")
-    if re.search(r"\b(x86_64|aarch64)-unknown-linux-\w+\b|\b1\.\d+\.\d+\b", run):
-        errs.append("dev Containerfile: rustup step names a target or version literal")
-    if "libstd-*.rlib" not in run or "/bin/${linker}" not in run:
-        errs.append("dev Containerfile: rustup step does not verify the target std and linker")
-    for var in ("RUSTUP_HOME=", "CARGO_HOME=", "PATH=/usr/local/cargo/bin:"):
-        if var not in text:
-            errs.append(f"dev Containerfile: ENV {var} missing")
-    staged_gone = text.find("rm -rf /usr/src/mios-ssot")
-    if staged_gone != -1 and text.find(run) > staged_gone:
-        errs.append("dev Containerfile: rustup step runs after the staged SSOT is removed")
+    if "set -euo pipefail" not in text:
+        errs.append("59-tools.sh: not set -euo pipefail")
+    installs = [ln for ln in text.splitlines() if "dnf install" in ln and ".rpm" in ln]
+    if len(installs) != 1:
+        errs.append(f"59-tools.sh: {len(installs)} code-server RPM installs, expected 1")
+    elif not re.search(r"code-server-\$\{_cs_version\}-\$\{_cs_arch\}\.rpm", installs[0]):
+        errs.append("59-tools.sh: the RPM is not named from the SSOT version")
+    for key in ("image.sidecars code_server", "theme.edge code_server_scrollbar_px", "theme.edge code_server_perimeter_px"):
+        if key not in text:
+            errs.append(f"59-tools.sh: no read of {key}")
+    lines = text.splitlines()
+    patch = [i for i, ln in enumerate(lines) if 'mios-vscode-custom-css" patch "${_cs_bake[@]}"' in ln]
+    verify = [i for i, ln in enumerate(lines) if 'mios-vscode-custom-css" verify "${_cs_bake[@]}"' in ln]
+    if len(patch) != 1 or len(verify) != 1 or patch[0] > verify[0]:
+        errs.append("59-tools.sh: the workbench is not patched, then verified, once each")
+    for i in patch + verify:
+        if "||" in lines[i]:
+            errs.append("59-tools.sh: a bake step's failure is masked")
+    if re.search(r"code-server[-:/]v?\d+\.\d+\.\d+", text):
+        errs.append("59-tools.sh: a code-server version literal")
+    return errs
+
+
+def rust_toolchain_violations(script, containerfile):
+    """Every way the OS build fails to provision the SSOT Rust toolchain into the image."""
+    errs = []
+    m = re.search(r'(?ms)^if \[\[ "\$\{1:-\}" == --toolchain \]\]; then\n(.*?)^fi\n', script)
+    if not m:
+        return ["55-native-build.sh: no --toolchain mode"]
+    block = m.group(1)
+    for key in ("build.toolchain channel", "build.toolchain components", 'build.native.linux.targets "$(uname -m)"',
+                "build.native.linux linker", "build.toolchain rustup_home", "build.toolchain cargo_home"):
+        if key not in block:
+            errs.append(f"55-native-build.sh --toolchain does not read {key} from the SSOT")
+    if re.search(r"\b(x86_64|aarch64)-unknown-linux-\w+\b|\b1\.\d+\.\d+\b|/usr/lib/mios/(rustup|cargo)", block):
+        errs.append("55-native-build.sh --toolchain names a target, version or home literal")
+    if "rustup-init" not in block:
+        errs.append("55-native-build.sh --toolchain never runs rustup-init")
+    if "libstd-*.rlib" not in block or "/bin/${linker}" not in block:
+        errs.append("55-native-build.sh --toolchain does not verify the target std and the linker")
+    call = containerfile.find("55-native-build.sh --toolchain")
+    packages = containerfile.find("install_packages_strict self-build;")
+    if call == -1:
+        errs.append("Containerfile never provisions the toolchain")
+    elif packages == -1 or call < packages:
+        errs.append("Containerfile provisions the toolchain before [packages.self-build] installs rustup-init")
     return errs
 
 

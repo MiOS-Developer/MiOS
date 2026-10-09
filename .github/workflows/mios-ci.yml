@@ -27,10 +27,11 @@ jobs:
   # are the same set .forgejo/workflows/build-mios.yml runs.
   drift-gate:
     runs-on: ubuntu-24.04
-    # The gate runs on the podman machine OS (Fedora CoreOS) that MiOS-DEV boots
-    # and the dev image is built FROM, not on the runner's Ubuntu. A literal because container: is
+    # The gate runs on the podman machine OS (Fedora CoreOS) that MiOS-DEV boots,
+    # the lean CI harness, not on the runner's Ubuntu. (The dev container is the
+    # full MiOS image, FROM [image].ref.) A literal because container: is
     # resolved before any step can read the SSOT; tools/ci-suites.py --check
-    # holds it equal to [ci.fedora].image and to .devcontainer/Containerfile.
+    # holds it equal to [ci.fedora].image.
     container:
       image: ghcr.io/mios-dev/machine-os:6.1
       # tests/test-sandbox-seccomp.sh's live tier runs bwrap, which needs user
@@ -84,8 +85,8 @@ jobs:
           fi
 
       - name: Provision the analysis toolchain
-        # Everything comes from the SSOT: [ci.fedora] names the dnf set (the dev
-        # image's [packages.devcontainer] plus CI-only extras, pwsh from its repo), and
+        # Everything comes from the SSOT: [ci.fedora] names the dnf set (MiOS's
+        # [packages.devcontainer] plus CI-only extras, pwsh from its repo), and
         # [ci.python] the pip set. pyflakes backs lint-python.sh's undefined-name
         # pass and the rest make agent-pipe/server.py importable; both fail
         # closed under MIOS_DRIFT_REQUIRE_TOOLS=1, so a failed install fails here.

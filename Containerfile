@@ -76,6 +76,8 @@ ARG MIOS_PROFILES_DEFAULT
 # The drift gate lints with the self-build toolchain ([drift.lint]: ShellCheck,
 # python3). Every profile installs [packages.self-build], so this only moves it
 # ahead of the gate; a missing compiler fails the gate instead of skipping it.
+# The SSOT Rust toolchain (channel, components, musl target, rust-lld) follows it
+# into [build.toolchain].rustup_home, so every image can rebuild its own catalog.
 RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     --mount=type=cache,dst=/var/cache/dnf5,sharing=locked \
@@ -109,6 +111,7 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     ${DNF_BIN:-dnf5} clean metadata 2>/dev/null || ${DNF_BIN:-dnf} clean metadata 2>/dev/null || true; \
     install_packages_strict base; \
     install_packages_strict self-build; \
+    bash /tmp/build/automation/55-native-build.sh --toolchain; \
     git -C /tmp/build ls-files --deleted -z | git -C /tmp/build checkout-index -z --stdin; \
     if [[ -n "${MIOS_DESKTOP_FLATPAKS}" ]]; then \
         echo "${MIOS_DESKTOP_FLATPAKS}" | tr "," "\n" > /tmp/build/usr/share/mios/flatpak-list; \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Provisioning script that installs the hermes-agent Python venv and extracts llama.cpp GGUF models to enable AI services, creating a sentinel file to gate network-less boot retries.
+# AI-hint: Provisioning script that installs the hermes-agent Python venv and fetches llama.cpp GGUF models, vLLM weights and firstboot-tier images (unless [ai].firstboot_pulls is false), creating a sentinel file to gate retries.
 # AI-related: /usr/share/mios/llamacpp/mios-llm-light.yaml, /usr/lib/mios/agents/.venv, /usr/share/mios/llamacpp/models, /usr/libexec/mios/72-hermes-agent.sh, /etc/mios/containers/coderun-sandbox, mios-coderun-sandbox, mios-coderun-session, mios-ai, mios-agent-pipe, mios-llm-light
 # AI-functions: log
 set +eu
@@ -13,6 +13,17 @@ fi
 
 VENV=/usr/lib/mios/agents/.venv
 MODELS=/usr/share/mios/llamacpp/models
+
+# [ai].firstboot_pulls from the LAYERED SSOT (default true). A cloud or container
+# deployment's [deployment.cloud] host drop-in sets it false: no GGUF or vLLM weight
+# and no firstboot-tier inference image is downloaded. That leaves the done-sentinel
+# unwritten, so removing the drop-in resumes the pulls at the next timer run.
+MIOS_TOML_GET="${MIOS_TOML_GET:-/usr/libexec/mios/mios-toml-get}"
+PULLS=true
+[ -x "$MIOS_TOML_GET" ] && PULLS="$("$MIOS_TOML_GET" ai firstboot_pulls true 2>/dev/null)"
+if [ "$PULLS" = false ]; then
+    log "[ai].firstboot_pulls is false (cloud/container deployment): skipping model and inference-image pulls"
+fi
 
 if [ "$(systemd-detect-virt 2>/dev/null)" = "wsl" ]; then
     install -d -m 0755 /var/lib/mios/llamacpp/models /var/lib/mios/vllm/model 2>/dev/null
@@ -75,7 +86,7 @@ if [ ! -x "${VENV}/bin/hermes" ]; then
     if [ -x "${VENV}/bin/hermes" ]; then log "agent venv ready: ${VENV}"; else log "WARN: agent venv still missing"; fi
 fi
 
-if [ ! -f "${MODELS}/.ready" ]; then
+if [ "$PULLS" != false ] && [ ! -f "${MODELS}/.ready" ]; then
     install -d -m 0755 "${MODELS}" /var/lib/mios/llamacpp/slots 2>/dev/null
     SPEC="${MIOS_LLAMACPP_BAKE_MODELS:-}"
     if [ -z "$SPEC" ]; then
@@ -157,7 +168,7 @@ if [ -z "$VLLM_MODEL" ] && [ -x /usr/libexec/mios/mios-toml-get ]; then
     fi
 fi
 VLLM_DIR="/usr/share/mios/vllm/model"
-if [ -n "$VLLM_MODEL" ] && [ ! -f "/var/lib/mios/.vllm-firstboot-done" ]; then
+if [ "$PULLS" != false ] && [ -n "$VLLM_MODEL" ] && [ ! -f "/var/lib/mios/.vllm-firstboot-done" ]; then
     install -d -m 0755 "$VLLM_DIR" 2>/dev/null
     if [ -x "${VENV}/bin/python3" ]; then
         log "Fetching vLLM model weights for ${VLLM_MODEL} -> ${VLLM_DIR} via agent venv"
@@ -548,7 +559,7 @@ if [ -f "/usr/libexec/mios/seed-db-config.py" ]; then
 fi
 
 FBLIST="/usr/lib/mios/bake/plan.d/firstboot.list"
-if [ -f "$FBLIST" ] && command -v podman >/dev/null 2>&1; then
+if [ "$PULLS" != false ] && [ -f "$FBLIST" ] && command -v podman >/dev/null 2>&1; then
     log "Pre-staging firstboot-tier images from $FBLIST"
     STORE="${STORE:-/usr/lib/containers/storage}"
     while IFS= read -r fb_img; do

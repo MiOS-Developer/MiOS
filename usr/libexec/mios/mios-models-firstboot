@@ -28,6 +28,17 @@ if SENTINEL.exists():
     print(f"Sentinel {SENTINEL} exists. FBM provisioner already completed.")
     sys.exit(0)
 
+
+# [ai].firstboot_pulls from the LAYERED SSOT (default true): a cloud or container
+# deployment's [deployment.cloud] host drop-in sets it false. No sentinel is written,
+# so removing the drop-in resumes the pulls on the next boot.
+_TOML_GET = os.environ.get("MIOS_TOML_GET", "/usr/libexec/mios/mios-toml-get")
+if os.access(_TOML_GET, os.X_OK) and subprocess.run(
+        [_TOML_GET, "ai", "firstboot_pulls", "true"], capture_output=True, text=True).stdout.strip() == "false":
+    print("[ai].firstboot_pulls is false (cloud/container deployment): no first-boot model is downloaded")
+    sys.exit(0)
+
+
 def _sha256_file(path, chunk=1024 * 1024):
     """Stream a file through sha256. Returns the hex digest, or None if the
     file cannot be read. Chunked so a multi-GB GGUF never lands in memory."""

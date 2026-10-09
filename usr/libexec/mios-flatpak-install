@@ -7,6 +7,15 @@ set -uo pipefail
 LOG_TAG="mios-flatpak-install"
 log() { logger -t "$LOG_TAG" -- "$*"; printf '[%s] %s\n' "$LOG_TAG" "$*"; }
 
+# [desktop].runtime_installs from the LAYERED SSOT (default true). A cloud or
+# container deployment's [deployment.cloud] host drop-in sets it false: apps
+# baked into the image stay, and nothing is installed at runtime.
+MIOS_TOML_GET="${MIOS_TOML_GET:-/usr/libexec/mios/mios-toml-get}"
+if [[ -x "$MIOS_TOML_GET" && "$("$MIOS_TOML_GET" desktop runtime_installs true 2>/dev/null)" == false ]]; then
+    log "[desktop].runtime_installs is false (cloud/container deployment): no runtime flatpak install"
+    exit 0
+fi
+
 if ! command -v flatpak >/dev/null 2>&1; then
     log "Flatpak not installed"
     exit 0

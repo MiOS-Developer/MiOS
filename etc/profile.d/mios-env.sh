@@ -1,6 +1,19 @@
 # AI-hint: Resolves and exports MiOS environment variables (MIOS_*) by merging layered TOML configs and .env files to provide a unified configuration for CLI tools, agents, and...
 # AI-doc: usr/share/doc/mios/manual/profile.d.md
 
+# The image's own Rust toolchain ([build.toolchain].rustup_home/cargo_home, from
+# 55-native-build.sh --toolchain): its rustup proxies go first on PATH. CARGO_HOME
+# is left unset, so cargo's registry stays per user and /usr can stay read-only.
+_mios_rust_env() {
+    _mios_rh="${MIOS_BUILD_TOOLCHAIN_RUSTUP_HOME:-}"
+    _mios_cb="${MIOS_BUILD_TOOLCHAIN_CARGO_HOME:-}/bin"
+    if [ -n "$_mios_rh" ] && [ -d "$_mios_rh/toolchains" ] && [ -x "$_mios_cb/rustup" ]; then
+        export RUSTUP_HOME="${RUSTUP_HOME:-$_mios_rh}"
+        case ":${PATH}:" in *":${_mios_cb}:"*) ;; *) export PATH="${_mios_cb}:${PATH}" ;; esac
+    fi
+    unset _mios_rh _mios_cb
+}
+
 case "$-" in
     *i*) ;;
     *)
@@ -12,7 +25,9 @@ case "$-" in
                 fi
             done
             export MIOS_AI_ENDPOINT MIOS_AI_MODEL MIOS_AI_KEY BROWSER="${BROWSER:-/usr/libexec/mios/mios-open-url}" MIOS_BROWSER="${MIOS_BROWSER:-/usr/libexec/mios/mios-open-url}"
+            _mios_rust_env
         fi
+        unset -f _mios_rust_env
         return 0 2>/dev/null || exit 0
         ;;
 esac
@@ -62,5 +77,6 @@ export MIOS_AI_SCRATCH_DIR="${MIOS_AI_SCRATCH_DIR:-/var/lib/mios/ai/scratch}"
 export MIOS_AI_MEMORY_DIR="${MIOS_AI_MEMORY_DIR:-/var/lib/mios/ai/memory}"
 export BROWSER="${BROWSER:-/usr/libexec/mios/mios-open-url}"
 export MIOS_BROWSER="${MIOS_BROWSER:-/usr/libexec/mios/mios-open-url}"
+_mios_rust_env
 
-unset -f _mios_source_if_readable
+unset -f _mios_source_if_readable _mios_rust_env

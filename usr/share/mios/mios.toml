@@ -1881,6 +1881,15 @@ runtime_ref_directives = [
 # current stable, so they still agree, and nothing freezes on an old release.
 channel = "stable"
 components = ["clippy", "rustfmt"]
+# Where every MiOS image keeps that toolchain, so it can rebuild its own native
+# catalog: the channel, components and [build.native.linux] target with its
+# linker, provisioned by `automation/55-native-build.sh --toolchain` in the image
+# build. Under /usr because /var and /usr/local reset on an ostree image.
+# etc/profile.d/mios-env.sh exports RUSTUP_HOME and puts the rustup proxies in
+# cargo_home/bin first on PATH; CARGO_HOME itself stays per user (~/.cargo), so
+# registry downloads never need a writable /usr.
+rustup_home = "/usr/lib/mios/rustup"
+cargo_home = "/usr/lib/mios/cargo"
 
 # One native entry point for current-source builds on every builder platform.
 [build.images]
@@ -1895,9 +1904,12 @@ containerfile = "Containerfile"
 tag_key = "image.local_tag"
 build_args = { BASE_IMAGE = "image.base" }
 
+# The dev container is the OS image plus container wiring: it layers on the
+# image this run has just built, never on a registry copy of an older one.
 [build.images.devcontainer]
 containerfile = ".devcontainer/Containerfile"
 tag_key = "image.dev_local_tag"
+build_args = { MIOS_IMAGE = "image.local_tag" }
 
 # Native executable roles are distinct; libraries remain shared workspace code.
 # Category membership and installation are consumed by miosd native-targets.
@@ -6074,6 +6086,14 @@ gdk_backend        = "x11"        # x11 = route flatpak GTK through XWayland.
 xcursor_path = "~/.local/share/icons:~/.icons:/run/host/user-share/icons:/run/host/share/icons:/usr/share/icons:/usr/share/pixmaps"
 
 [ai]
+# Heavy first-boot pulls: the GGUF and vLLM weights and the firstboot-tier
+# inference images (mios-ai-firstboot), [ai].firstboot_models
+# (mios-models-firstboot) and [ai].firstboot_bound_images
+# (mios-bound-images-firstboot). Each reads the LAYERED SSOT, so a cloud or
+# container deployment turns them off with the [deployment.cloud] host drop-in;
+# the image is unchanged. false skips without writing a done-sentinel, so
+# removing the drop-in resumes them at the next run.
+firstboot_pulls = true
 vision_grounding_enable = true
 vision_grounding_model = "qwen3-vl:4b"
 kernel_dispatch = true
@@ -6238,6 +6258,10 @@ micro_keep_alive_seconds = -1
 # desktop.flatpaks -> MIOS_DESKTOP_FLATPAKS (comma-joined for the Containerfile arg).
 # ----------------------------------------------------------------------------
 [desktop]
+# Runtime desktop-application installs at boot (/usr/libexec/mios-flatpak-install,
+# [desktop].flatpaks). false is what the [deployment.cloud] drop-in sets: apps
+# baked into the image stay, nothing is installed at runtime.
+runtime_installs = true
 session       = "gnome"
 color_scheme  = "prefer-dark"   # libadwaita / dconf color-scheme
 flatpaks      = [
@@ -6395,6 +6419,43 @@ target_ova          = false  # vSphere OVA (needs ovftool)
 target_gce          = false  # Google Compute Engine
 target_pxe_tar_xz   = false  # PXE network boot tarball
 
+# Cloud and container deployments of the ONE image: the devcontainer, Codespaces,
+# the Claude Code and Codex cloud environments, Cloud Shell and a GCE VM all run
+# [image].ref. They differ from a booted install by configuration only: every
+# cloud entry point (.devcontainer/cloud-shell/bootstrap.sh, the devcontainer
+# lifecycle) writes [deployment.cloud.overlay] as the host drop-in `dropin`, which
+# the layered resolver merges over the vendor SSOT, turning off the heavy runtime
+# model pulls, runtime desktop installs and the desktop session.
+[deployment.cloud]
+dropin        = "/etc/mios/mios.d/50-cloud.toml"
+# Free space the container store needs before pulling [image].ref: ~23 GB of
+# compressed layers unpack to ~49 GB, with headroom. A nested `podman build` of the
+# root Containerfile with MIOS_BAKE_BOUND_IMAGES=0 (the CI validation build) needs
+# build_free_gb more; the full bake with bound images needs a self-managed host.
+min_free_gb   = 80
+build_free_gb = 50
+
+[deployment.cloud.overlay.ai]
+firstboot_pulls = false
+[deployment.cloud.overlay.desktop]
+runtime_installs = false
+# The role engine then targets the headless archetype: no desktop session starts.
+[deployment.cloud.overlay.blade]
+type = "headless"
+
+# `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
+# podman container booting its own systemd. The boot disk holds the image and a
+# nested build; Ubuntu LTS ships the guest agent that runs the startup script.
+[deployment.cloud.gce]
+instance       = "mios"
+zone           = "us-central1-a"
+machine_type   = "n2-standard-8"
+boot_disk_gb   = 250
+boot_disk_type = "pd-balanced"
+image_family   = "ubuntu-2404-lts-amd64"
+image_project  = "ubuntu-os-cloud"
+container      = "mios"
+
 [hwcaps]
 level = "v1"
 ld_so_hwcaps_autoselect = true
@@ -6548,16 +6609,12 @@ pkgs = [
     "bash-completion",     # tab-complete in interactive shells
 ]
 
-# The ONE development userspace. .devcontainer/Containerfile resolves this list
-# through automation/lib/packages.sh at image build, and every MiOS dev
-# environment builds that same Containerfile: the MiOS devcontainer, the
-# mios-bootstrap and -dev-loop devcontainers (byte-identical mirrors, gated by
-# [bootstrap.sync].mirror_files here and tests/test_devcontainer_mirror.py in
-# -dev-loop), Codespaces, Cloud Shell (cloud-shell/bootstrap.sh) and the hosted
-# cloud-session projection. Built from a context that is not a MiOS checkout,
-# the Containerfile shallow-clones MiOS and reads this list from the clone.
-# The dev profile and a full build also install its declared dependency closure
-# through the repos phase; the core profile selects self-build without editor extras.
+# The ONE development userspace, part of every full MiOS image: the repos phase
+# (automation/05-repos.sh) installs it with its declared dependency closure, so
+# the devcontainer, Codespaces and the cloud environments, which all run
+# [image].ref (.devcontainer/Containerfile adds only container wiring), carry it
+# because MiOS does. [ci.fedora].package_sets also provisions the lean CI harness
+# from it. The core profile selects self-build without these editor extras.
 [packages.devcontainer]
 enable = true
 # The development image shares the self-build dependency closure with MiOS.
@@ -11186,6 +11243,13 @@ repos = [
 [dotfiles.devcontainer]
 forward_port_keys  = ["code_server", "agent_pipe", "llm_light", "pgvector"]
 container_env_keys = ["MIOS_AI_ENDPOINT"]
+# hostRequirements of every devcontainer.json above. The devcontainer runs
+# [image].ref itself: ~23 GB compressed and ~49 GB unpacked, and Codespaces'
+# containerd keeps both, so the pull alone needs ~72 GB before the workspace or a
+# nested build of the image. Codespaces offers 128 GB of storage only on its
+# 16-core / 64 GB machine, which is also what a rebuild of MiOS inside it needs.
+# remoteUser is projected from [identity].username: the image's own user.
+host_requirements = { cpus = 16, memory = "64gb", storage = "128gb" }
 
 [dotfiles.registry.btop]
 template = "usr/share/mios/theme/templates/btop-mios.theme.tmpl"
@@ -11805,7 +11869,7 @@ commands = ["podman", "bootc", "rpm-ostree"]
 paths = ["usr/lib/mios/agents/.venv/bin/python3"]
 rpm_sections = ["critical"]
 
-# The development userspace the dev profile adds over core.
+# The development userspace a full image adds over core.
 [testing.smoke_components.sections.devcontainer]
 commands = ["just", "git", "gh"]
 
@@ -12795,17 +12859,18 @@ requirements = ["usr/lib/mios/agent-pipe/requirements.txt"]
 packages = ["pyflakes"]
 
 [ci.fedora]
-# The drift-gate job runs in this container and the one MiOS dev image
-# (.devcontainer/Containerfile) is built FROM it: the podman machine OS MiOS-DEV
-# boots ([bootstrap.dev_vm].base_image), through [image].machine_os_mirror --
-# the same image digests without the disk-image entries Codespaces cannot read.
+# The lean CI harness: the drift-gate job runs in this container, the podman
+# machine OS MiOS-DEV boots ([bootstrap.dev_vm].base_image), through
+# [image].machine_os_mirror -- the same image digests without the disk-image
+# entries older containerd cannot read. The dev container is NOT built from it:
+# .devcontainer/Containerfile is FROM [image].ref, the full MiOS image.
 image = "ghcr.io/mios-dev/machine-os:6.1"
-# [packages.<set>] lists installed first; devcontainer is the dev image's own set.
+# [packages.<set>] lists installed first; devcontainer is MiOS's development userspace.
 package_sets = ["devcontainer"]
 # Repo-config RPMs installed before any package. Fedora does not package
 # PowerShell; Microsoft's repository does, floating, as it documents for Fedora.
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
-# CI-only extras the dev image does not carry: sandbox tests (bubblewrap),
+# CI-only extras the harness needs beyond that set: sandbox tests (bubblewrap),
 # composefs sealing (mkcomposefs, composefs-info), unit verification
 # (systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
 # test-ukify-stage's real-compiler tier (ukify + the systemd-boot EFI stub; the
@@ -12860,6 +12925,7 @@ unit = [
     "tests/test-bootc-rollback-recovery.sh",
     "tests/test-vscode-custom-css.sh",
     "tests/test-code-server-bake.py",
+    "tests/test-cloud-overlay.py",
     "tests/test-quadlet-state-mounts.py",
     "tests/test-swarm-pack-arming.sh",
     "tests/test-hardware-target-profiling.sh",
@@ -13216,16 +13282,15 @@ phases           = ["system-files-overlay", "materialize-build-ctx", "repos", "l
                     "render-ports", "services", "mios-dropin-fanout", "tools", "finalize",
                     "cleanup", "ssot-lint", "drift-checks", "postcheck"]
 
-[profiles.dev]
-summary          = "core plus the development userspace"
-extends          = ["core"]
-package_sections = ["devcontainer"]
-targets          = ["wsl2", "devcontainer", "cloud", "codespace"]
-
+# Every image kind is the full image: a devcontainer, Codespace or cloud
+# environment runs [image].ref itself (.devcontainer/Containerfile adds only
+# container wiring), so no kind gets a subset. A cloud deployment skips runtime
+# model pulls and desktop installs by configuration ([deployment.cloud]), not by
+# a different build.
 [profiles.full]
 summary = "every enabled section and every registered phase"
 all     = true
-targets = ["oci", "wsl2"]
+targets = ["oci", "wsl2", "devcontainer", "cloud", "codespace"]
 
 # Every way MiOS can be deployed, named once. The targets and recipes existed;
 # what did not exist was a statement of the matrix, so [deploy].artifacts listed

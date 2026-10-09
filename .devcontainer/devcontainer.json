@@ -3,17 +3,9 @@
   "name": "MiOS Agentic AIOS & CI/CD Builder Harness",
   "build": {
     "dockerfile": "Containerfile",
-    "context": ".."
+    "context": "."
   },
   "init": true,
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:latest": {
-      "username": "mios-dev",
-      "userUid": "1000",
-      "userGid": "1000",
-      "upgradePackages": false
-    }
-  },
   "containerEnv": {
     "MIOS_AI_ENDPOINT": "http://localhost:8700/v1",
     "MIOS_AI_ROLE": "builder",
@@ -207,12 +199,12 @@
   ],
   "postCreateCommand": "bash MiOS/.devcontainer/boot-mios-systems.sh create",
   "postStartCommand": "bash MiOS/.devcontainer/boot-mios-systems.sh start",
-  "remoteUser": "mios-dev",
+  "remoteUser": "user",
   "workspaceFolder": "/workspaces",
   "hostRequirements": {
-    "cpus": 4,
-    "memory": "16gb",
-    "storage": "32gb"
+    "cpus": 16,
+    "memory": "64gb",
+    "storage": "128gb"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/MiOS,type=bind"
 }

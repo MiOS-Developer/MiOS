@@ -196,7 +196,9 @@ class TestFedoraProvisioning(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertNotEqual(0, MOD.cmd_check(_ROOT, ci))
         self.assertIn("drift-gate container differs", out.getvalue())
-        self.assertIn("devcontainer FROM differs", out.getvalue())
+        # The dev container is the MiOS image, not the CI harness: [ci.fedora]
+        # no longer names its base, so a harness change says nothing about it.
+        self.assertNotIn("devcontainer", out.getvalue())
 
     @unittest.skipIf(os.name == "nt", "POSIX provisioning shell control")
     def test_empty_repos_skip_repo_install_and_packages_still_install(self):
@@ -246,6 +248,83 @@ class TestFedoraProvisioning(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertIn("exporter refused", result.stderr)
             self.assertFalse(os.path.exists(marker))
+
+class TestDevcontainerIsTheImage(unittest.TestCase):
+    """.devcontainer/Containerfile is [image].ref plus wiring; each mutant must be named."""
+
+    REF = "registry.example/mios:latest"
+    GOOD = ("# comment: dnf install in a comment is fine\n"
+            "ARG MIOS_IMAGE=registry.example/mios:latest\n"
+            "FROM ${MIOS_IMAGE}\n"
+            "RUN set -eu; \\\n    systemd-tmpfiles --create --prefix=/var/home; \\\n"
+            "    install -d -m 0755 /workspaces\n"
+            "ENV MIOS_DEVCONTAINER=1\n")
+
+    def v(self, text):
+        return MOD.devcontainer_violations(text, self.REF)
+
+    def test_wiring_only_is_clean(self):
+        self.assertEqual([], self.v(self.GOOD))
+
+    def test_repo_containerfile_is_clean(self):
+        self.assertEqual([], MOD.devcontainer_check(_ROOT))
+
+    def test_hardcoded_from_is_named(self):
+        for frm in ("FROM registry.example/mios:latest", "FROM ghcr.io/mios-dev/machine-os:6.1",
+                    "FROM $MIOS_IMAGE"):
+            with self.subTest(frm):
+                out = self.v(self.GOOD.replace("FROM ${MIOS_IMAGE}", frm))
+                self.assertTrue(any("is not FROM ${MIOS_IMAGE}" in e for e in out), out)
+
+    def test_arg_default_must_be_the_ssot_ref(self):
+        out = self.v(self.GOOD.replace("MIOS_IMAGE=registry.example/mios:latest",
+                                       "MIOS_IMAGE=registry.example/mios:stale"))
+        self.assertTrue(any("differs from [image].ref" in e for e in out), out)
+        out = self.v(self.GOOD.replace("ARG MIOS_IMAGE=registry.example/mios:latest\n", ""))
+        self.assertTrue(any("ARG MIOS_IMAGE default None" in e for e in out), out)
+
+    def test_second_stage_is_named(self):
+        out = self.v("FROM registry.example/builder AS b\nRUN true\n" + self.GOOD)
+        self.assertTrue(any("2 FROM lines" in e for e in out), out)
+
+    def test_each_install_is_named(self):
+        for run in ("dnf install -y git", "dnf5 -y install ripgrep", "rpm -Uvh x.rpm",
+                    "python3 -m pip install fastapi", "pip3 install x", "npm install -g x",
+                    "rustup-init -y", "cargo install just", "curl -fsSL https://x -o x",
+                    "git clone https://x", "flatpak install -y x",
+                    "bash automation/55-native-build.sh",
+                    "/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install"):
+            with self.subTest(run):
+                out = self.v(self.GOOD.replace("install -d -m 0755 /workspaces", run))
+                self.assertTrue(any("RUN installs" in e for e in out), (run, out))
+
+    def test_copy_from_the_context_is_named(self):
+        out = self.v(self.GOOD + "COPY usr/ /usr/\n")
+        self.assertTrue(any("brings files into the image" in e for e in out), out)
+
+    def test_local_build_must_layer_on_the_os_tag(self):
+        src = Path(_ROOT, "usr/share/mios/mios.toml").read_text(encoding="utf-8")
+        line = 'build_args = { MIOS_IMAGE = "image.local_tag" }'
+        self.assertEqual(1, src.count(line))
+        with tempfile.TemporaryDirectory() as d:
+            for rel in ("usr/share/mios", ".devcontainer"):
+                os.makedirs(os.path.join(d, rel))
+            shutil.copyfile(os.path.join(_ROOT, MOD.DEV_CONTAINERFILE), os.path.join(d, MOD.DEV_CONTAINERFILE))
+            toml = os.path.join(d, "usr/share/mios/mios.toml")
+            Path(toml).write_text(src, encoding="utf-8")
+            self.assertEqual([], MOD.devcontainer_check(d))
+            Path(toml).write_text(src.replace(line, 'build_args = { MIOS_IMAGE = "image.ref" }'), encoding="utf-8")
+            self.assertTrue(any("would not layer on the image it built" in e for e in MOD.devcontainer_check(d)))
+
+    def test_check_reports_a_planted_devcontainer_install(self):
+        """End to end through cmd_check: the gate the CI job runs goes red."""
+        with tempfile.TemporaryDirectory() as d:
+            for rel in ("usr/share/mios", ".devcontainer"):
+                os.makedirs(os.path.join(d, rel))
+            shutil.copyfile(os.path.join(_ROOT, "usr/share/mios/mios.toml"), os.path.join(d, "usr/share/mios/mios.toml"))
+            cf = Path(_ROOT, MOD.DEV_CONTAINERFILE).read_text(encoding="utf-8")
+            Path(d, MOD.DEV_CONTAINERFILE).write_text(cf + "RUN dnf install -y htop\n", encoding="utf-8")
+            self.assertTrue(any("RUN installs" in e for e in MOD.devcontainer_check(d)))
 
 class TestSuiteTimeout(unittest.TestCase):
     """[ci].suite_timeout_s: one hung suite must fail by name, not wedge the tier."""

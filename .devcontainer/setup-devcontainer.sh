@@ -43,11 +43,12 @@ for repo_dir in "${WORKSPACE_DIR}"/*; do
 done
 
 echo "=== [2/6] Initializing Root Overlay (MiOS System Repo) ==="
-if [ -x "${WORKSPACE_DIR}/MiOS/.devcontainer/install-root-overlay.sh" ]; then
-    sudo bash "${WORKSPACE_DIR}/MiOS/.devcontainer/install-root-overlay.sh" || echo "  [WARN] Overlay init completed with warnings"
-elif [ -x "/usr/local/bin/mios-root-overlay" ]; then
-    sudo bash "/usr/local/bin/mios-root-overlay" || echo "  [WARN] Overlay init completed with warnings"
-fi
+# The devcontainer helpers stay in the checkout (the image carries only MiOS);
+# mios-agent-pipe-dev is also on the user's PATH as a command.
+sudo bash "${WORKSPACE_DIR}/MiOS/.devcontainer/install-root-overlay.sh" || echo "  [WARN] Overlay init completed with warnings"
+install -d -m 0755 "$HOME/.local/bin"
+printf '#!/bin/sh\nexec bash %s/MiOS/.devcontainer/mios-agent-pipe-dev "$@"\n' "$WORKSPACE_DIR" > "$HOME/.local/bin/mios-agent-pipe-dev"
+chmod 0755 "$HOME/.local/bin/mios-agent-pipe-dev"
 
 echo "=== [3/6] Configuring Antigravity Keyring & Shims ==="
 # The image bakes agy, so this must NOT be gated on agy being absent: the
