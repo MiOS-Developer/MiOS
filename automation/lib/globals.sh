@@ -1450,8 +1450,8 @@ is *also* a local, self-hosted, agentic AI operating system.
 [ -n "${MIOS_DOCS_SANITIZE_REDACT_PATTERNS+x}" ] || MIOS_DOCS_SANITIZE_REDACT_PATTERNS='(?i)[A-Za-z0-9_]*(?:api[_-]?key|secret|passwd|password|token)[A-Za-z0-9_]*\s*[:=]+\s*(?![>\s])[^\s"'"'"']{4,},\bsha256:[0-9a-f]{64}\b,(?i)\bBearer\s+[A-Za-z0-9._-]{16,}'
 : "${MIOS_DOCS_SANITIZE_REDACT_WITH:=[redacted]}"
 [ -n "${MIOS_DOCS_SIGNALS_CODE+x}" ] || MIOS_DOCS_SIGNALS_CODE='^\s*(if|for|while|def|class|function|export|set|return|elif|else|fi|done|esac|end)\b|[;{]\s*$|^\s*[\w.]+\s*=[^=]'
-[ -n "${MIOS_DOCS_SIGNALS_FACT+x}" ] || MIOS_DOCS_SIGNALS_FACT='\b(broken|deprecated|removed|disabled|not supported|only on|requires|since|as of|WS-[A-Z]+|AGY-[0-9]+|ADR-[0-9]+|Law [0-9]+)\b'
-[ -n "${MIOS_DOCS_SIGNALS_NARRATIVE+x}" ] || MIOS_DOCS_SIGNALS_NARRATIVE='\b(operator|used to|no longer|previously|regression|root cause|incident|reverted|scrapped|rejected|instead of|alternative|rationale|invariant|degrade|ADR-[0-9]+|Law [0-9]+|AGY-[0-9]+|WS-[A-Z]+|[0-9]{4}-[0-9]{2}-[0-9]{2})\b'
+[ -n "${MIOS_DOCS_SIGNALS_FACT+x}" ] || MIOS_DOCS_SIGNALS_FACT='\b(broken|deprecated|removed|disabled|not supported|only on|requires|since|as of|WS-[A-Z]+|ADR-[0-9]+|Law [0-9]+)\b'
+[ -n "${MIOS_DOCS_SIGNALS_NARRATIVE+x}" ] || MIOS_DOCS_SIGNALS_NARRATIVE='\b(operator|used to|no longer|previously|regression|root cause|incident|reverted|scrapped|rejected|instead of|alternative|rationale|invariant|degrade|ADR-[0-9]+|Law [0-9]+|WS-[A-Z]+|[0-9]{4}-[0-9]{2}-[0-9]{2})\b'
 [ -n "${MIOS_DOCS_SIGNALS_WHY+x}" ] || MIOS_DOCS_SIGNALS_WHY='\b(because|so that|otherwise|avoid|prevents?|must not|never|do not|fail-open|fail-closed|deliberately|intentionally|noqa|workaround|upstream bug|race|deadlock)\b'
 : "${MIOS_DOCS_STAY_MAX_LINES:=2}"
 : "${MIOS_DOCS_STAY_MAX_WORDS:=25}"
