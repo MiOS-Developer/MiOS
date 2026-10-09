@@ -320,7 +320,7 @@ mod parity_stubs_test {
     fn test_parity_ble_and_scheduler_stubs() {
         // Parity twin: usr/libexec/mios/node/ble.py (get_credentials)
         let adapter = Arc::new(MockBleAdapter::new());
-        let ble_session = BleMeshBootstrap::new(101, adapter);
+        let ble_session = BleMeshBootstrap::new(101, adapter).unwrap();
         assert!(ble_session.get_credentials().is_none());
 
         // Parity twin: usr/libexec/mios/node/scheduler.py (TaskPriority.as_u8)

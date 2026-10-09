@@ -8,10 +8,17 @@
 
 use crate::protocol::Frame;
 use anyhow::{anyhow, Result};
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
+use byteorder::{ByteOrder, LittleEndian};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+/// Fill cryptographic keys/nonces from the operating system; failure has no deterministic fallback.
+pub fn random_bytes<const N: usize>() -> Result<[u8; N]> {
+    let mut bytes = [0u8; N];
+    getrandom::getrandom(&mut bytes).map_err(|e| anyhow!("OS randomness unavailable: {e}"))?;
+    Ok(bytes)
+}
 
 pub const TAG_SIZE: usize = 16;
 pub const KEY_SIZE: usize = 32;
@@ -505,10 +512,13 @@ impl NodeCryptoSession {
     }
 
     fn make_nonce(counter: u64, node_id: u32) -> [u8; 12] {
-        let mut nonce = [0u8; 12];
-        LittleEndian::write_u64(&mut nonce[0..8], counter);
-        BigEndian::write_u32(&mut nonce[8..12], node_id);
-        nonce
+        [
+            counter.to_le_bytes().as_slice(),
+            node_id.to_be_bytes().as_slice(),
+        ]
+        .concat()
+        .try_into()
+        .expect("eight counter bytes and four node-id bytes")
     }
 
     pub fn encrypt_payload(&mut self, plaintext: &[u8]) -> Vec<u8> {
@@ -661,7 +671,7 @@ mod tests {
     #[test]
     fn test_chacha20_poly1305_roundtrip() {
         let key = [0x55u8; 32];
-        let nonce = [0x11u8; 12];
+        let nonce = random_bytes::<12>().unwrap();
         let aad = b"header_data";
         let plaintext = b"Sensitive payload for edge compute";
 
@@ -675,7 +685,7 @@ mod tests {
     #[test]
     fn test_tamper_detection_mac_failure() {
         let key = [0x77u8; 32];
-        let nonce = [0x22u8; 12];
+        let nonce = random_bytes::<12>().unwrap();
         let aad = b"aad";
         let plaintext = b"Secret bytes";
 

@@ -893,6 +893,7 @@ dependencies = [
  "crc32fast",
  "curve25519-dalek",
  "ed25519-dalek",
+ "getrandom 0.2.17",
  "mios-resolver",
  "serde",
  "serde_json",

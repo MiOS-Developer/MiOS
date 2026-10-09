@@ -9,12 +9,13 @@ pub mod ble {
     //! ChaCha20-Poly1305 AEAD encrypted credential provisioning, and mockable hardware adapter.
 
     use crate::crypto::{
-        chacha20_poly1305_decrypt, chacha20_poly1305_encrypt, hkdf_sha256, x25519,
+        chacha20_poly1305_decrypt, chacha20_poly1305_encrypt, hkdf_sha256, random_bytes, x25519,
         x25519_public_key,
     };
     use anyhow::{anyhow, Result};
     use byteorder::{BigEndian, ByteOrder};
     use serde::{Deserialize, Serialize};
+    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -23,10 +24,8 @@ pub mod ble {
     pub const BLE_CHAR_ECDH_UUID: &str = "4D494F53-0003-1000-8000-00805F9B34FB";
     pub const BLE_CHAR_PROVISION_UUID: &str = "4D494F53-0004-1000-8000-00805F9B34FB";
 
-    pub const BLE_HKDF_SALT: &[u8] = b"mios-ble-bootstrap";
     pub const BLE_HKDF_INFO: &[u8] = b"wifi-provisioning";
-    pub const BLE_AEAD_AAD: &[u8] = b"mios-ble-v1";
-    pub const BLE_NONCE: &[u8; 12] = b"mios-ble-n01";
+    pub const BLE_AEAD_AAD: &[u8] = b"mios-ble-v2";
 
     /// Bootstrap lifecycle states for headless edge blades.
     #[repr(u8)]
@@ -153,19 +152,12 @@ pub mod ble {
     }
 
     impl BleMeshBootstrap {
-        pub fn new(node_id: u32, adapter: Arc<dyn BleAdapter>) -> Self {
-            let mut seed = [0u8; 32];
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(123456789);
-            BigEndian::write_u32(&mut seed[0..4], node_id);
-            BigEndian::write_u128(&mut seed[4..20], now);
-            seed[20..32].copy_from_slice(b"mios-ble-rnd");
+        pub fn new(node_id: u32, adapter: Arc<dyn BleAdapter>) -> Result<Self> {
+            let seed = random_bytes::<32>()?;
 
             let pub_key = x25519_public_key(&seed);
 
-            Self {
+            Ok(Self {
                 node_id,
                 adapter,
                 state: Arc::new(Mutex::new(BleBootstrapState::Unprovisioned)),
@@ -173,7 +165,7 @@ pub mod ble {
                 local_pub_key: pub_key,
                 shared_key: Arc::new(Mutex::new(None)),
                 provisioned_credentials: Arc::new(Mutex::new(None)),
-            }
+            })
         }
 
         /// Starts advertising GATT service and initializes identity + ECDH characteristics.
@@ -212,8 +204,13 @@ pub mod ble {
             // Compute X25519 shared secret
             let shared_secret = x25519(&self.local_priv_key, &peer_pub);
 
-            // Derive AEAD symmetric key via HKDF-SHA256
-            let derived_bytes = hkdf_sha256(BLE_HKDF_SALT, &shared_secret, BLE_HKDF_INFO, 32);
+            if shared_secret.iter().all(|b| *b == 0) {
+                return Err(anyhow!("non-contributory X25519 peer key"));
+            }
+            // Bind the key to both fresh public keys in node/provisioner order (RFC 5869 §3.1).
+            let salt =
+                Sha256::digest([self.local_pub_key.as_slice(), peer_pub.as_slice()].concat());
+            let derived_bytes = hkdf_sha256(&salt, &shared_secret, BLE_HKDF_INFO, 32);
             let mut key = [0u8; 32];
             key.copy_from_slice(&derived_bytes[0..32]);
 
@@ -235,14 +232,20 @@ pub mod ble {
             &self,
             encrypted_payload: &[u8],
         ) -> Result<ProvisioningPayload> {
-            let key = self.shared_key.lock().unwrap().ok_or_else(|| {
-                anyhow!("ECDH handshake not completed prior to provisioning write")
-            })?;
-
-            // Decrypt payload using ChaCha20-Poly1305
+            if encrypted_payload.len() < 12 + crate::crypto::TAG_SIZE {
+                return Err(anyhow!(
+                    "provisioning packet must contain a nonce and authentication tag"
+                ));
+            }
+            let mut shared = self.shared_key.lock().unwrap();
+            let key = shared
+                .as_ref()
+                .ok_or_else(|| anyhow!("ECDH handshake not completed or already consumed"))?;
+            let nonce: &[u8; 12] = encrypted_payload[..12].try_into().expect("length checked");
             let decrypted_bytes =
-                chacha20_poly1305_decrypt(&key, BLE_NONCE, BLE_AEAD_AAD, encrypted_payload)?;
+                chacha20_poly1305_decrypt(key, nonce, BLE_AEAD_AAD, &encrypted_payload[12..])?;
             let creds: ProvisioningPayload = serde_json::from_slice(&decrypted_bytes)?;
+            shared.take();
 
             *self.provisioned_credentials.lock().unwrap() = Some(creds.clone());
             *self.state.lock().unwrap() = BleBootstrapState::Provisioned;
@@ -292,7 +295,7 @@ pub mod ble {
         node_pub.copy_from_slice(&node_pub_bytes);
 
         // 3. Generate provisioner ephemeral key
-        let priv_key = [0x55u8; 32];
+        let priv_key = random_bytes::<32>()?;
         let prov_pub = x25519_public_key(&priv_key);
 
         // 4. Write provisioner public key to Char 2
@@ -300,13 +303,24 @@ pub mod ble {
 
         // 5. Compute shared key
         let ss = x25519(&priv_key, &node_pub);
-        let derived = hkdf_sha256(BLE_HKDF_SALT, &ss, BLE_HKDF_INFO, 32);
+        if ss.iter().all(|b| *b == 0) {
+            return Err(anyhow!("non-contributory X25519 node key"));
+        }
+        let salt = Sha256::digest([node_pub.as_slice(), prov_pub.as_slice()].concat());
+        let derived = hkdf_sha256(&salt, &ss, BLE_HKDF_INFO, 32);
         let mut key = [0u8; 32];
         key.copy_from_slice(&derived[0..32]);
 
         // 6. Encrypt credentials
         let json_bytes = serde_json::to_vec(payload)?;
-        let encrypted = chacha20_poly1305_encrypt(&key, BLE_NONCE, BLE_AEAD_AAD, &json_bytes);
+        let nonce = random_bytes::<12>()?;
+        let mut encrypted = nonce.to_vec();
+        encrypted.extend(chacha20_poly1305_encrypt(
+            &key,
+            &nonce,
+            BLE_AEAD_AAD,
+            &json_bytes,
+        ));
 
         // 7. Write encrypted payload to Char 3
         adapter.set_characteristic_value(BLE_CHAR_PROVISION_UUID, encrypted)?;
@@ -319,9 +333,63 @@ pub mod ble {
         use super::*;
 
         #[test]
+        fn fresh_keys_nonce_packets_tamper_and_replay() {
+            let adapter: Arc<dyn BleAdapter> = Arc::new(MockBleAdapter::new());
+            let node = BleMeshBootstrap::new(42, Arc::clone(&adapter)).unwrap();
+            let other = BleMeshBootstrap::new(42, Arc::new(MockBleAdapter::new())).unwrap();
+            assert_ne!(node.local_public_key(), other.local_public_key());
+            node.start().unwrap();
+            assert!(node.handle_ecdh_exchange(&[0; 32]).is_err());
+            assert!(node.handle_provisioning_write(&[0; 27]).is_err());
+            let payload = ProvisioningPayload::new(
+                "ssid".into(),
+                "psk".into(),
+                "join".into(),
+                "endpoint".into(),
+            );
+            provision_remote_node(adapter.as_ref(), &payload).unwrap();
+            let first_peer = adapter
+                .get_characteristic_value(BLE_CHAR_ECDH_UUID)
+                .unwrap();
+            let first = adapter
+                .get_characteristic_value(BLE_CHAR_PROVISION_UUID)
+                .unwrap();
+            node.start().unwrap();
+            provision_remote_node(adapter.as_ref(), &payload).unwrap();
+            let second_peer = adapter
+                .get_characteristic_value(BLE_CHAR_ECDH_UUID)
+                .unwrap();
+            let second = adapter
+                .get_characteristic_value(BLE_CHAR_PROVISION_UUID)
+                .unwrap();
+            assert_ne!(first_peer, second_peer, "provisioner keys must be fresh");
+            assert_ne!(
+                first[..12],
+                second[..12],
+                "each packet carries a fresh nonce"
+            );
+            node.handle_ecdh_exchange(&second_peer).unwrap();
+            assert!(
+                node.handle_provisioning_write(&first).is_err(),
+                "a different handshake must not decrypt"
+            );
+            let mut tampered = second.clone();
+            tampered[0] ^= 1;
+            assert!(
+                node.handle_provisioning_write(&tampered).is_err(),
+                "nonce tampering must be authenticated"
+            );
+            assert_eq!(node.handle_provisioning_write(&second).unwrap(), payload);
+            assert!(
+                node.handle_provisioning_write(&second).is_err(),
+                "a consumed handshake must reject replay"
+            );
+        }
+
+        #[test]
         fn test_ble_bootstrap_full_encrypted_provisioning_flow() {
             let adapter: Arc<dyn BleAdapter> = Arc::new(MockBleAdapter::new());
-            let bootstrap = BleMeshBootstrap::new(42, Arc::clone(&adapter));
+            let bootstrap = BleMeshBootstrap::new(42, Arc::clone(&adapter)).unwrap();
 
             // 1. Start offline node BLE beaconing
             bootstrap.start().unwrap();

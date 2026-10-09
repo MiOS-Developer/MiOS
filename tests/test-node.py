@@ -1488,14 +1488,16 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=m2da_ble_mod.BLE_HKDF_SALT,
+            salt=m2da_ble_mod.hashlib.sha256(bootstrap.public_bytes + client_pub).digest(),
             info=m2da_ble_mod.BLE_HKDF_INFO,
         )
         session_key = hkdf.derive(shared_secret)
 
         aead = ChaCha20Poly1305(session_key)
         json_bytes = json.dumps(creds.to_dict()).encode("utf-8")
-        ciphertext = bytearray(aead.encrypt(m2da_ble_mod.BLE_NONCE, json_bytes, m2da_ble_mod.BLE_AEAD_AAD))
+        nonce = os.urandom(12)
+        untampered = nonce + aead.encrypt(nonce, json_bytes, m2da_ble_mod.BLE_AEAD_AAD)
+        ciphertext = bytearray(untampered)
 
         # Tamper ciphertext
         ciphertext[len(ciphertext) // 2] ^= 0xFF
@@ -1505,9 +1507,10 @@ class m2da_TestM2DeepAdversarial(unittest.TestCase):
         self.assertNotEqual(bootstrap.state, m2da_ble_mod.BleBootstrapState.PROVISIONED)
 
         # Untampered write succeeds
-        untampered = aead.encrypt(m2da_ble_mod.BLE_NONCE, json_bytes, m2da_ble_mod.BLE_AEAD_AAD)
         prov = bootstrap.handle_provisioning_write(untampered)
         self.assertEqual(prov.ssid, "AdvSSID")
+        with self.assertRaisesRegex(RuntimeError, "already consumed"):
+            bootstrap.handle_provisioning_write(untampered)
         self.assertEqual(bootstrap.state, m2da_ble_mod.BleBootstrapState.PROVISIONED)
         self.assertFalse(adapter.is_advertising())
 

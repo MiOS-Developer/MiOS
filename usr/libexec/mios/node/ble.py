@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
+import hashlib
 import json
 import os
 import struct
@@ -34,10 +35,8 @@ BLE_CHAR_IDENTITY_UUID = "4D494F53-0002-1000-8000-00805F9B34FB"
 BLE_CHAR_ECDH_UUID = "4D494F53-0003-1000-8000-00805F9B34FB"
 BLE_CHAR_PROVISION_UUID = "4D494F53-0004-1000-8000-00805F9B34FB"
 
-BLE_HKDF_SALT = b"mios-ble-bootstrap"
 BLE_HKDF_INFO = b"wifi-provisioning"
-BLE_AEAD_AAD = b"mios-ble-v1"
-BLE_NONCE = b"mios-ble-n01"
+BLE_AEAD_AAD = b"mios-ble-v2"
 
 class BleBootstrapState(IntEnum):
     UNPROVISIONED = 0
@@ -166,7 +165,7 @@ class BleMeshBootstrap:
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=BLE_HKDF_SALT,
+            salt=hashlib.sha256(self.public_bytes + peer_public_bytes).digest(),
             info=BLE_HKDF_INFO,
         )
         self._shared_key = hkdf.derive(shared_secret)
@@ -177,23 +176,20 @@ class BleMeshBootstrap:
             self.adapter.set_characteristic_value(BLE_CHAR_IDENTITY_UUID, id_val)
 
     def handle_provisioning_write(self, encrypted_payload: bytes) -> ProvisioningPayload:
-        if self._shared_key is None:
-            raise RuntimeError("ECDH handshake not completed prior to provisioning write")
-
-        # Decrypt payload using ChaCha20-Poly1305
-        aead = ChaCha20Poly1305(self._shared_key)
-        decrypted_bytes = aead.decrypt(BLE_NONCE, encrypted_payload, BLE_AEAD_AAD)
-
-        data = json.loads(decrypted_bytes.decode("utf-8"))
-        creds = ProvisioningPayload.from_dict(data)
-
+        if len(encrypted_payload) < 12 + 16:
+            raise ValueError("Provisioning packet must contain a nonce and authentication tag")
         with self._lock:
+            if self._shared_key is None:
+                raise RuntimeError("ECDH handshake not completed or already consumed")
+            aead = ChaCha20Poly1305(self._shared_key)
+            decrypted_bytes = aead.decrypt(encrypted_payload[:12], encrypted_payload[12:], BLE_AEAD_AAD)
+            creds = ProvisioningPayload.from_dict(json.loads(decrypted_bytes.decode("utf-8")))
+            self._shared_key = None
             self._credentials = creds
             self._state = BleBootstrapState.PROVISIONED
             id_val = struct.pack(">IB", self.node_id, BleBootstrapState.PROVISIONED)
             self.adapter.set_characteristic_value(BLE_CHAR_IDENTITY_UUID, id_val)
             self.adapter.stop_advertising()
-
         return creds
 
     def get_credentials(self) -> Optional[ProvisioningPayload]:
@@ -230,7 +226,7 @@ def provision_remote_node(
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=BLE_HKDF_SALT,
+        salt=hashlib.sha256(node_pub_bytes + prov_pub_bytes).digest(),
         info=BLE_HKDF_INFO,
     )
     shared_key = hkdf.derive(shared_secret)
@@ -238,7 +234,8 @@ def provision_remote_node(
     # 5. Encrypt credentials with ChaCha20-Poly1305
     payload_json = json.dumps(payload.to_dict()).encode("utf-8")
     aead = ChaCha20Poly1305(shared_key)
-    encrypted = aead.encrypt(BLE_NONCE, payload_json, BLE_AEAD_AAD)
+    nonce = os.urandom(12)
+    encrypted = nonce + aead.encrypt(nonce, payload_json, BLE_AEAD_AAD)
 
     # 6. Write encrypted credentials to Char 3
     adapter.set_characteristic_value(BLE_CHAR_PROVISION_UUID, encrypted)

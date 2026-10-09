@@ -69,7 +69,7 @@ mod adversarial_m1_test {
     fn test_adversarial_crypto_bit_flip_tamper_fuzzing() {
         let _tree = super::tree_lock();
         let key = [0x33u8; 32];
-        let nonce = [0x77u8; 12];
+        let nonce = mios_node::crypto::random_bytes::<12>().unwrap();
         let aad = b"authenticated_header_bytes_v1";
         let plaintext = b"Adversarial payload containing confidential operational state.";
 
@@ -1553,7 +1553,7 @@ mod m2_deep_adversarial_stress_test {
     fn test_ble_bootstrap_handshake_violation_and_tamper_fuzzing() {
         let _tree = super::tree_lock();
         let adapter: Arc<dyn BleAdapter> = Arc::new(MockBleAdapter::new());
-        let bootstrap = BleMeshBootstrap::new(88, Arc::clone(&adapter));
+        let bootstrap = BleMeshBootstrap::new(88, Arc::clone(&adapter)).unwrap();
         bootstrap.start().unwrap();
 
         // 1. Invariant: Writing provisioning credentials BEFORE ECDH handshake must fail
@@ -1580,12 +1580,9 @@ mod m2_deep_adversarial_stress_test {
         // 4. Derive correct shared key and generate encrypted payload
         let node_pub = bootstrap.local_public_key();
         let ss = mios_node::crypto::x25519(&client_priv, &node_pub);
-        let key = mios_node::crypto::hkdf_sha256(
-            mios_node::ble::BLE_HKDF_SALT,
-            &ss,
-            mios_node::ble::BLE_HKDF_INFO,
-            32,
-        );
+        use sha2::{Digest, Sha256};
+        let salt = Sha256::digest([node_pub.as_slice(), client_pub.as_slice()].concat());
+        let key = mios_node::crypto::hkdf_sha256(&salt, &ss, mios_node::ble::BLE_HKDF_INFO, 32);
         let mut derived_key = [0u8; 32];
         derived_key.copy_from_slice(&key[0..32]);
 
@@ -1596,12 +1593,14 @@ mod m2_deep_adversarial_stress_test {
             "10.200.0.1:8650".to_string(),
         );
         let creds_json = serde_json::to_vec(&creds).unwrap();
-        let ciphertext = mios_node::crypto::chacha20_poly1305_encrypt(
+        let nonce = mios_node::crypto::random_bytes::<12>().unwrap();
+        let mut ciphertext = nonce.to_vec();
+        ciphertext.extend(mios_node::crypto::chacha20_poly1305_encrypt(
             &derived_key,
-            mios_node::ble::BLE_NONCE,
+            &nonce,
             mios_node::ble::BLE_AEAD_AAD,
             &creds_json,
-        );
+        ));
 
         // 5. Tamper fuzzing: flip every byte in ciphertext and ensure AEAD verification rejects it
         for i in 0..ciphertext.len() {
@@ -1865,7 +1864,7 @@ mod mesh_m2_adversarial_test {
     fn test_adversarial_ble_mesh_bootstrap_handshake_tamper() {
         let _tree = super::tree_lock();
         let adapter: Arc<dyn BleAdapter> = Arc::new(MockBleAdapter::new());
-        let bootstrap = BleMeshBootstrap::new(77, Arc::clone(&adapter));
+        let bootstrap = BleMeshBootstrap::new(77, Arc::clone(&adapter)).unwrap();
         bootstrap.start().unwrap();
 
         let creds = ProvisioningPayload::new(
@@ -2291,7 +2290,7 @@ mod mesh_m2_stress_challenger_test {
     fn test_adversarial_ble_bit_flip_fuzzing_and_key_validation() {
         let _tree = super::tree_lock();
         let adapter: Arc<dyn BleAdapter> = Arc::new(MockBleAdapter::new());
-        let bootstrap = BleMeshBootstrap::new(88, Arc::clone(&adapter));
+        let bootstrap = BleMeshBootstrap::new(88, Arc::clone(&adapter)).unwrap();
         bootstrap.start().unwrap();
 
         // 1. Invalid ECDH public key lengths
