@@ -1,21 +1,13 @@
 #!/usr/bin/env bash
-# AI-hint: Probes the MiOS Windows OS-control plane (in-session executor :11437 via the
+# AI-hint: Probes the SSOT Windows OS-control executor and the WSL shell interop plane.
 # AI-related: mios-pc-control, mios-os-recipe, mios-oscontrol-server, mios-powershell
 # AI-functions: (probe-only)
 set -uo pipefail
 
-if [ -r /etc/mios/install.env ]; then
-    _mios_had_u=0; case "$-" in *u*) _mios_had_u=1;; esac
-    set +u; set -a; . /etc/mios/install.env 2>/dev/null || true; set +a
-    [ "$_mios_had_u" = 1 ] && set -u
-fi
-PORT="${MIOS_PORT_OSCONTROL:-${MIOS_OSCONTROL_PORT:-11437}}"
-GW="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
-
+_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../lib/mios" && pwd)"
 exec_status="down"; exec_url=""
-if [ -n "$GW" ]; then
-  exec_url="http://${GW}:${PORT}"
-  curl -fsS -m 3 -o /dev/null "${exec_url}/health" 2>/dev/null && exec_status="up"
+if exec_url="$(python3 "$_lib/mios_oscontrol_client.py" endpoint 2>/dev/null)"; then
+  python3 "$_lib/mios_oscontrol_client.py" health >/dev/null 2>&1 && exec_status="up"
 fi
 
 interop="down"
@@ -30,7 +22,7 @@ if [ "$exec_status" = "down" ] && [ "$interop" = "down" ]; then
   blind="true"
   reason="Windows control plane OFFLINE: start the in-session OS-control executor on the host (log into the desktop session)."
 elif [ "$exec_status" = "down" ]; then
-  reason="In-session executor (:${PORT}) offline; WSL-interop powershell.exe fallback is available for shell-class Windows actions only (no GUI/window control)."
+  reason="In-session executor (${exec_url:-invalid SSOT endpoint}) offline; WSL-interop powershell.exe fallback is available for shell-class Windows actions only (no GUI/window control)."
 fi
 
 _r="${reason//\\/\\\\}"; _r="${_r//\"/\\\"}"

@@ -59,7 +59,7 @@
     pwsh -File mios-oscontrol-server.ps1                 # run in foreground
     pwsh -File mios-oscontrol-server.ps1 -Install        # logon scheduled task (hidden, elevated)
     pwsh -File mios-oscontrol-server.ps1 -Uninstall      # remove the task
-    pwsh -File mios-oscontrol-server.ps1 -Port 11437
+    pwsh -File mios-oscontrol-server.ps1 -ConfigPath <runtime-SSOT.json>
 
   5.1-compatible (the scheduled task runs Windows PowerShell 5.1 for a stable
   interpreter path -- the MSIX pwsh alias is unresolvable by Task Scheduler;
@@ -67,7 +67,8 @@
 #>
 [CmdletBinding()]
 param(
-    [int]    $Port    = 11437,
+    [int]    $Port    = 0,
+    [string] $ConfigPath = (Join-Path $env:LOCALAPPDATA 'MiOS\themes\ssot.json'),
     [double] $VerifySettleSeconds   = 1.5,
     [int]    $VerifyAttempts        = 6,
     [double] $VerifyIntervalSeconds = 2.5,
@@ -77,18 +78,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Float $Port from SSOT [ports].oscontrol ($env:MIOS_OSCONTROL_PORT) when -Port
-# was not passed explicitly; the 11437 param default is the last-resort fallback.
-if (-not $PSBoundParameters.ContainsKey('Port') -and $env:MIOS_OSCONTROL_PORT) {
-    $Port = [int]$env:MIOS_OSCONTROL_PORT
+function Read-MiosOscontrolPort([string]$Path) {
+    $projection = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    $value = $projection.ports.oscontrol
+    if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 1 -or $value -gt 65535) {
+        throw 'Runtime SSOT must contain an integer [ports].oscontrol from 1 to 65535'
+    }
+    return [int]$value
+}
+if (-not $Uninstall) {
+    if (-not $PSBoundParameters.ContainsKey('Port')) { $Port = Read-MiosOscontrolPort $ConfigPath }
+    if ($Port -lt 1 -or $Port -gt 65535) { throw 'Invalid OS-control port' }
 }
 $taskName = 'MiOS-OSControl-Server'
 $fwName   = "MiOS - oscontrol ($Port/tcp)"
-# Firewall remote scope: tailnet peers (Tailscale CGNAT) PLUS the local WSL NAT
-# subnet, so the in-WSL MiOS VM reaches this executor over its host gateway even
-# when Tailscale is down. 172.16.0.0/12 covers every WSL
-# Hyper-V-assigned 172.x gateway; both ranges are local-only (same machine).
-$fwRemote = @('100.64.0.0/10', '172.16.0.0/12')
 $logDir   = Join-Path $env:LOCALAPPDATA 'mios\oscontrol\logs'
 
 function Info($m){ Write-Host "  [*] $m" -ForegroundColor Cyan }
@@ -109,68 +112,37 @@ if ($Install) {
             '-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Install','-Port',$Port)
         return
     }
-    $argline = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Port $Port"
+    $argline = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -ConfigPath `"$ConfigPath`""
+    if ($PSBoundParameters.ContainsKey('Port')) { $argline += " -Port $Port" }
     # Resolve a CONCRETE interpreter path: NOT the bare 'pwsh.exe' MSIX alias
     # (Task Scheduler can't resolve it -> 0x80070002). Prefer a real pwsh under
     # Program Files, else Windows PowerShell 5.1 at its fixed System32 path
     # (this script is 5.1-compatible).
-    $psExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
-    if (-not $psExe -or $psExe -like '*\WindowsApps\*' -or -not (Test-Path $psExe)) {
-        $psExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    }
-    $toolExe = Join-Path $PSScriptRoot 'MiosServiceTool.exe'
-    $action  = New-ScheduledTaskAction  -Execute $toolExe -Argument "-Run `"$psExe`" $argline"
-    $trigger = New-ScheduledTaskTrigger -AtLogon
-    $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    $psExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $psExe)) { throw 'The desktop executor requires the installed Windows PowerShell interpreter' }
+    $action  = New-ScheduledTaskAction -Execute $psExe -Argument $argline
+    $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $trigger = New-ScheduledTaskTrigger -AtLogon -User $account
+    $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
     # Interactive Logon: runs elevated in the logged-on user's interactive session
     # (so it has access to WinSta0\Default and can enumerate / focus GUI windows)
-    $prin    = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Administrators" -RunLevel Highest
+    $prin    = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Highest
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $set -Principal $prin -Force | Out-Null
     Ok "registered logon scheduled task '$taskName' (port $Port)"
-    # Tailnet-scoped firewall: only Tailscale peers (100.64.0.0/10) reach it.
-    if (-not (Get-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName $fwName -Direction Inbound -Action Allow -Protocol TCP `
-            -LocalPort $Port -RemoteAddress $fwRemote -Profile Any -ErrorAction SilentlyContinue | Out-Null
-        Ok "firewall: allow tailnet + local WSL -> :$Port"
-    } else {
-        # Reconcile an existing rule's scope so a widened $fwRemote (adding the
-        # local WSL subnet) applies to installs created before this change --
-        # create-if-missing alone left old rules tailnet-only.
-        Set-NetFirewallRule -DisplayName $fwName -RemoteAddress $fwRemote -ErrorAction SilentlyContinue | Out-Null
-        Ok "firewall: reconciled scope -> tailnet + local WSL on :$Port"
-    }
+    # The executor is loopback-only. Remote clients use an authenticated SSH
+    # tunnel; an old broad inbound rule must not survive reconciliation.
+    Get-NetFirewallRule -DisplayName 'MiOS - oscontrol (*)' -ErrorAction SilentlyContinue |
+        Disable-NetFirewallRule -ErrorAction SilentlyContinue | Out-Null
     Info 'starting it now...'
     Start-ScheduledTask -TaskName $taskName
     return
 }
 
-# Strangler check: if compiled binary exists and toggle is enabled, delegate to it
-$compiledExe = Join-Path $PSScriptRoot '..\..\..\src\mios-oscontrol\mios-oscontrol.exe'
-if (-not (Test-Path $compiledExe)) {
-    $compiledExe = 'C:\MiOS\src\mios-oscontrol\mios-oscontrol.exe'
-}
-
-$useCompiled = $env:MIOS_MIGRATION_USE_COMPILED_OSCONTROL
-if ($null -eq $useCompiled -or $useCompiled -eq '') {
-    $useCompiled = 'true'
-}
-
-if (($useCompiled -eq 'true' -or $useCompiled -eq '1') -and (Test-Path $compiledExe)) {
-    Write-Host "[mios-oscontrol-server] launching compiled binary: $compiledExe $Port"
-    & $compiledExe $Port
-    exit $LASTEXITCODE
-}
+# The previous compiled stub acknowledged requests without performing them.
+# Keep the real route implementation until a native replacement has parity.
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-# Foreground run also ensures the firewall rule exists + has the current scope.
-if (-not (Get-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName $fwName -Direction Inbound -Action Allow -Protocol TCP `
-        -LocalPort $Port -RemoteAddress $fwRemote -Profile Any -ErrorAction SilentlyContinue | Out-Null
-} else {
-    # Reconcile existing rule scope (a widened $fwRemote applies to old installs).
-    Set-NetFirewallRule -DisplayName $fwName -RemoteAddress $fwRemote -ErrorAction SilentlyContinue | Out-Null
-}
 
 # ---- Win32 surface for window enumeration ------------------------------------
 $Win32Sig = @"
@@ -212,8 +184,11 @@ public class OSCW32 {
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
     public const uint MOUSEEVENTF_LEFTDOWN  = 0x0002;
     public const uint MOUSEEVENTF_LEFTUP    = 0x0004;
     public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
@@ -315,6 +290,38 @@ function Resolve-TargetWindows($hwnd, $title) {
 # Perform a window op on the matching window(s). op = close|focus|move|resize|
 # state. close is a GRACEFUL WM_CLOSE (operator binding: never force-kill /
 # Stop-Process a window). Returns {ok, op, count, matched:[...]}.
+function Test-MiosWindowReadback($Op, $Actual, $Expected) {
+    if ($Op -eq 'close') { return ($Actual.exists -eq $false) }
+    if ($Actual.exists -ne $true) { return $false }
+    switch ($Op) {
+        'focus' { return ($Actual.foreground -eq $true) }
+        'state' {
+            switch ($Expected.state) {
+                'minimize' { return ($Actual.iconic -eq $true) }
+                'maximize' { return ($Actual.zoomed -eq $true) }
+                'restore' { return ($Actual.iconic -eq $false -and $Actual.zoomed -eq $false) }
+                default { return $false }
+            }
+        }
+    }
+    if ($Actual.rect_valid -ne $true) { return $false }
+    if ($Op -eq 'move') { return ($Actual.x -eq $Expected.x -and $Actual.y -eq $Expected.y) }
+    if ($Op -eq 'resize') { return ($Actual.width -eq $Expected.width -and $Actual.height -eq $Expected.height) }
+    if ($Op -in @('center','position')) {
+        return ($Actual.x -eq $Expected.x -and $Actual.y -eq $Expected.y -and $Actual.width -eq $Expected.width -and $Actual.height -eq $Expected.height)
+    }
+    return $false
+}
+
+function Get-MiosWindowReadback([IntPtr]$Hwnd) {
+    $exists = [OSCW32]::IsWindow($Hwnd)
+    $rect = New-Object OSCW32+RECT
+    $valid = $exists -and [OSCW32]::GetWindowRect($Hwnd, [ref]$rect)
+    return @{ exists=$exists; foreground=([OSCW32]::GetForegroundWindow() -eq $Hwnd);
+        iconic=[OSCW32]::IsIconic($Hwnd); zoomed=[OSCW32]::IsZoomed($Hwnd); rect_valid=$valid;
+        x=$rect.Left; y=$rect.Top; width=($rect.Right-$rect.Left); height=($rect.Bottom-$rect.Top) }
+}
+
 function Invoke-WindowOp($op, $hwnd, $title, $x, $y, $w, $h, $state, $monitor = -1) {
     $WM_CLOSE = 0x0010
     $targets = Resolve-TargetWindows $hwnd $title
@@ -323,6 +330,7 @@ function Invoke-WindowOp($op, $hwnd, $title, $x, $y, $w, $h, $state, $monitor = 
                   error = "no visible window matches" }
     }
     $done = New-Object System.Collections.ArrayList
+    $verifiedAll = $true
     foreach ($wnd in $targets) {
         $p = [IntPtr]([int64]$wnd.hwnd)
         if ($op -in @('move', 'resize', 'center', 'position')) {
@@ -501,9 +509,26 @@ function Invoke-WindowOp($op, $hwnd, $title, $x, $y, $w, $h, $state, $monitor = 
                 [void][OSCW32]::ShowWindow($p, $n)
             }
         }
-        [void]$done.Add(@{ hwnd = $wnd.hwnd; title = $wnd.title; proc = $wnd.proc })
+        $expected = @{ x=$x; y=$y; width=$w; height=$h; state=$state }
+        $readbackOp = $op
+        if ($op -eq 'center') { $expected = @{x=$cx;y=$cy;width=$cw;height=$ch} }
+        if ($op -eq 'position') {
+            if ($pos -eq 'maximize') { $readbackOp = 'state'; $expected = @{state='maximize'} }
+            else { $expected = @{x=$nx;y=$ny;width=$nw;height=$nh} }
+        }
+        $verified = $false
+        for ($attempt=0; $attempt -lt 10; $attempt++) {
+            $actual = Get-MiosWindowReadback $p
+            $verified = Test-MiosWindowReadback $readbackOp $actual $expected
+            if ($verified) { break }
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not $verified) { $verifiedAll = $false }
+        [void]$done.Add(@{ hwnd = $wnd.hwnd; title = $wnd.title; proc = $wnd.proc; verified=$verified; readback=$actual })
     }
-    return @{ ok = $true; op = $op; count = $done.Count; matched = $done }
+    $verifiedAll = $verifiedAll -and $done.Count -eq $targets.Count
+    return @{ ok=$verifiedAll; verified=$verifiedAll; op=$op; count=$done.Count; matched=$done;
+        reason=$(if ($verifiedAll) {'readback confirmed'} else {'requested window state was not observed'}) }
 }
 
 # ---- input (SendInput-equivalent) + capture on the interactive desktop -------
@@ -511,12 +536,14 @@ function Invoke-WindowOp($op, $hwnd, $title, $x, $y, $w, $h, $state, $monitor = 
 # so SetCursorPos / mouse_event / SendKeys hit WinSta0\Default (the operator's
 # real desktop), not a blind service window station.
 function Invoke-MouseMove($x, $y) {
-    [void][OSCW32]::SetCursorPos([int]$x, [int]$y)
-    return @{ ok = $true; op = 'mouse-move'; x = [int]$x; y = [int]$y }
+    $point = New-Object OSCW32+POINT
+    $verified = [OSCW32]::SetCursorPos([int]$x, [int]$y) -and [OSCW32]::GetCursorPos([ref]$point) -and $point.X -eq [int]$x -and $point.Y -eq [int]$y
+    return @{ ok=$verified; verified=$verified; op='mouse-move'; x=[int]$x; y=[int]$y }
 }
 
 function Invoke-Click($x, $y, $button) {
-    [void][OSCW32]::SetCursorPos([int]$x, [int]$y)
+    $move = Invoke-MouseMove $x $y
+    if (-not $move.verified) { return @{ok=$false;error='cursor position was not observed'} }
     Start-Sleep -Milliseconds 50
     $btn = "$button"; if (-not $btn) { $btn = 'left' }
     switch ($btn) {
@@ -525,16 +552,17 @@ function Invoke-Click($x, $y, $button) {
         'middle' { [OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_MIDDLEDOWN,0,0,0,[IntPtr]::Zero);[OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_MIDDLEUP,0,0,0,[IntPtr]::Zero) }
         default  { return @{ ok = $false; error = "unknown button '$btn'" } }
     }
-    return @{ ok = $true; op = 'click'; button = $btn; x = [int]$x; y = [int]$y }
+    return @{ ok=$true; injected=$true; op='click'; button=$btn; x=[int]$x; y=[int]$y }
 }
 
 function Invoke-DoubleClick($x, $y) {
-    [void][OSCW32]::SetCursorPos([int]$x, [int]$y)
+    $move = Invoke-MouseMove $x $y
+    if (-not $move.verified) { return @{ok=$false;error='cursor position was not observed'} }
     Start-Sleep -Milliseconds 50
     [OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_LEFTDOWN,0,0,0,[IntPtr]::Zero); [OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_LEFTUP,0,0,0,[IntPtr]::Zero)
     Start-Sleep -Milliseconds 50
     [OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_LEFTDOWN,0,0,0,[IntPtr]::Zero); [OSCW32]::mouse_event([OSCW32]::MOUSEEVENTF_LEFTUP,0,0,0,[IntPtr]::Zero)
-    return @{ ok = $true; op = 'double-click'; x = [int]$x; y = [int]$y }
+    return @{ ok=$true; injected=$true; op='double-click'; x=[int]$x; y=[int]$y }
 }
 
 # ── UIA semantic element targeting (the #1 Windows gap --
@@ -1177,16 +1205,14 @@ function Write-JsonResponse($ctx, $code, $obj) {
 
 # ---- HttpListener loop -------------------------------------------------------
 $listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://+:$Port/")
+$listener.Prefixes.Add("http://127.0.0.1:$Port/")
 try {
     $listener.Start()
 } catch {
-    Warn "HttpListener could not bind '+:$Port' (need elevation or a urlacl)."
-    Warn "Fix: run elevated, or: netsh http add urlacl url=http://+:$Port/ user=$env:USERNAME"
+    Warn "HttpListener could not bind loopback port $Port (need elevation or a loopback urlacl)."
     throw
 }
-$tsIp = (Get-NetIPAddress -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like '100.*' } | Select-Object -First 1).IPAddress
-Ok "MiOS OS-control executor listening on http://+:$Port/  (tailnet -> http://$tsIp`:$Port)"
+Ok "MiOS OS-control executor listening on http://127.0.0.1:$Port/"
 $logFile = Join-Path $logDir ("oscontrol-{0:yyyyMMdd}.log" -f (Get-Date))
 
 while ($listener.IsListening) {
@@ -1198,7 +1224,7 @@ while ($listener.IsListening) {
         if ($path -eq '') { $path = '/' }
 
         if ($method -eq 'GET' -and $path -eq '/health') {
-            Write-JsonResponse $ctx 200 @{ ok = $true; host = $env:COMPUTERNAME;
+            Write-JsonResponse $ctx 200 @{ ok = $true; implementation = 'powershell-win32'; capabilities = @('windows','launch','window','input','screenshot','screen-layout','ui'); host = $env:COMPUTERNAME;
                                            ts = [int][double]::Parse((Get-Date -UFormat %s)) }
         }
         elseif ($method -eq 'GET' -and $path -eq '/verify') {
@@ -1334,9 +1360,9 @@ while ($listener.IsListening) {
                 }
                 else {
                     $e = $els[0]
-                    [void](Invoke-Click $e.cx $e.cy 'left')
+                    $click = Invoke-Click $e.cx $e.cy 'left'
                     ("{0}  ui-click name='{1}' -> ({2},{3})" -f (Get-Date -Format s), $name, $e.cx, $e.cy) | Out-File -FilePath $logFile -Append -Encoding utf8
-                    Write-JsonResponse $ctx 200 @{ ok = $true; clicked = $true; element = $e; host = $env:COMPUTERNAME }
+                    Write-JsonResponse $ctx 200 @{ ok=($click.ok -eq $true); injected=($click.injected -eq $true); element=$e; host=$env:COMPUTERNAME }
                 }
             }
         }

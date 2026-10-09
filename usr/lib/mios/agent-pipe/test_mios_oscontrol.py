@@ -255,11 +255,200 @@ def _run_extra_launch():
 
 
 
+# ==============================================================================
+# Linux clients: real entrypoints with hermetic HTTP responses and layered SSOT.
+# ==============================================================================
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import MagicMock, patch
+import urllib.error
+
+_CLIENT_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(_CLIENT_ROOT / "usr/lib/mios"))
+import mios_oscontrol_client as client
+
+
+class ClientContracts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader(
+            "mios_pc_control_contract", str(_CLIENT_ROOT / "usr/libexec/mios/mios-pc-control"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        cls.pc = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.pc)
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.dict(os.environ, {"MIOS_OSCONTROL_EXECUTOR": ""}))
+        self.config_patch = patch.object(client.mios_toml, "load_merged",
+            return_value={"ports": {"oscontrol": 9659}, "os_control": {}})
+        self.config = self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
+
+    def test_endpoint_uses_derived_port_without_router_discovery(self):
+        with patch.object(subprocess, "check_output", side_effect=AssertionError("router discovery")):
+            self.assertEqual(client.executor_endpoint(), "http://127.0.0.1:9659")
+            self.config.return_value["os_control"]["executor_endpoint"] = "http://localhost:9660/"
+            self.assertEqual(client.executor_endpoint(), "http://localhost:9660")
+        with patch.dict(os.environ, {"MIOS_OSCONTROL_EXECUTOR": "http://192.0.2.10:9661"}):
+            self.assertEqual(client.executor_endpoint(), "http://192.0.2.10:9661")
+
+    def test_invalid_endpoint_and_port_fail(self):
+        for value in (False, 0, 65536, "8950", None):
+            self.config.return_value["ports"]["oscontrol"] = value
+            with self.subTest(port=value), self.assertRaises(ValueError):
+                client.executor_endpoint()
+        for value in ("file:///tmp/executor", "http://localhost:0", "http://localhost:70000",
+                      "http://user:password@localhost:9659", 'http://localhost:9659/"',
+                      "http://localhost:9659/?secret=x"):
+            with patch.dict(os.environ, {"MIOS_OSCONTROL_EXECUTOR": value}), self.subTest(url=value), self.assertRaises(ValueError):
+                client.executor_endpoint()
+
+    def test_actual_layered_fragments_and_port_allocation(self):
+        self.config_patch.stop()
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            vendor, host, user = [directory / name for name in ("vendor.toml", "host.toml", "user.toml")]
+            vendor.write_text('[ports.categories.control]\nbase=9650\nstride=1\nmembers=["oscontrol"]\n')
+            host.write_text('[ports.categories.control]\nbase=9651\n')
+            fragments = directory / "host.d"
+            fragments.mkdir()
+            (fragments / "99-local.toml").write_text('[ports.categories.control]\nbase=9652\n')
+            user.write_text('[os_control]\nexecutor_endpoint="http://localhost:9662"\n')
+            empty_fragments = str(directory / "absent")
+            with patch.dict(os.environ, {"MIOS_RESOLVER_NATIVE": "0", "MIOS_VENDOR_TOML": str(vendor),
+                    "MIOS_HOST_TOML": str(host), "MIOS_USER_TOML": str(user),
+                    "MIOS_VENDOR_TOML_D": empty_fragments, "MIOS_HOST_TOML_D": str(fragments),
+                    "MIOS_USER_TOML_D": empty_fragments}):
+                client.mios_toml.clear_cache()
+                self.assertEqual(client.executor_endpoint(), "http://localhost:9662")
+                user.unlink()
+                client.mios_toml.clear_cache()
+                self.assertEqual(client.executor_endpoint(), "http://127.0.0.1:9652")
+            client.mios_toml.clear_cache()
+
+    def test_success_requires_literal_consistent_verdicts(self):
+        positive = {"ok": True, "verified": True}
+        self.assertEqual(client.require_verdict(positive), positive)
+        self.assertEqual(client.require_verdict({"fired": True, "launched": True}, "launched")["launched"], True)
+        negative = [{"received": True}, {"status": "ok", "windows": []},
+                    {"fired": True, "launched": False}, {"ok": "false"}, {"ok": 1},
+                    {"ok": True, "verified": False}, {"ok": True, "success": False},
+                    {"ok": True, "fired": False}, {"ok": True, "error": "failed"},
+                    {"launched": True, "verdict": {"launched": False}}, [], None]
+        for body in negative:
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                client.require_verdict(body)
+
+    def response(self, body, status=200):
+        response = MagicMock(status=status)
+        response.__enter__.return_value = response
+        response.read.return_value = body if isinstance(body, bytes) else json.dumps(body).encode()
+        return response
+
+    def test_http_errors_and_malformed_bodies_never_become_success(self):
+        failure = urllib.error.HTTPError("http://localhost/test", 500, "failure", {}, io.BytesIO(b'{"ok":true}'))
+        with patch.object(client.urllib.request, "urlopen", side_effect=failure), self.assertRaises(urllib.error.HTTPError):
+            client.request_json("http://localhost/test")
+        for reply in (self.response({"ok": True}, status=500), self.response(b"not-json"),
+                      self.response({"received": True}), self.response({"ok": "false"})):
+            with patch.object(client.urllib.request, "urlopen", return_value=reply), self.assertRaises(ValueError):
+                client.request_json("http://localhost/test")
+
+    def test_health_requires_executor_verdict_instead_of_status_code(self):
+        for body, valid in (({"ok": True, "implementation": "powershell-win32"}, True),
+                            ({"ok": True, "backend": "portal"}, True),
+                            ({"status": "ok"}, False), ({"ok": "false"}, False),
+                            ({"ok": True, "verified": False}, False)):
+            with self.subTest(body=body), patch.object(sys, "argv", ["client", "health"]), \
+                    patch.object(client.urllib.request, "urlopen", return_value=self.response(body)):
+                if valid:
+                    client.main()
+                else:
+                    with self.assertRaises(ValueError):
+                        client.main()
+
+    def run_pc(self, command, body):
+        def response(request, **kwargs):
+            return self.response({"ok": True} if request.full_url.endswith("/health") else body)
+        with patch.object(client.urllib.request, "urlopen", side_effect=response), \
+                patch.object(sys, "argv", ["mios-pc-control"] + command), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as result:
+                self.pc.main()
+        return result.exception.code
+
+    def test_pc_reads_and_mouse_routes_require_real_verdict(self):
+        for command, body in ((["window-list", "--json"], {"ok": True, "windows": []}),
+                              (["ui-list"], {"ok": True, "elements": []}),
+                              (["ui-tree"], {"ok": True, "tree": {}}),
+                              (["screen-layout"], {"ok": True, "screens": []}),
+                              (["mouse-move", "1", "2"], {"ok": True})):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_pc(command, body), 0)
+                self.assertEqual(self.run_pc(command, {"ok": False}), 1)
+                self.assertEqual(self.run_pc(command, {"status": "ok"}), 1)
+
+    def test_pc_launch_rejects_receipt_and_fired_without_launch(self):
+        self.assertEqual(self.run_pc(["launch", "test-app"], {"launched": True, "fired": True}), 0)
+        for body in ({"received": True}, {"fired": True, "launched": False},
+                     {"ok": True}, {"launched": "false"}):
+            with self.subTest(body=body):
+                self.assertEqual(self.run_pc(["launch", "test-app"], body), 1)
+
+    def test_shell_launch_rejects_invalid_verdict_without_interop_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            fixture = directory / "mios.toml"
+            fixture.write_text('[ports]\noscontrol=9659\n')
+            # Patch Python's HTTP transport in the subprocess; no listener or desktop action.
+            (directory / "sitecustomize.py").write_text('''import json, os, urllib.request
+class Response:
+    status = int(os.environ.get("MIOS_TEST_HTTP_STATUS", "200"))
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def read(self): return b'{"ok":true}' if self.health else os.environ["MIOS_TEST_RESPONSE"].encode()
+def open_response(request, **kwargs):
+    response = Response()
+    response.health = request.full_url.endswith("/health")
+    return response
+urllib.request.urlopen = open_response
+''')
+            environment = dict(os.environ, PYTHONPATH=str(directory), MIOS_RESOLVER_NATIVE="0",
+                MIOS_VENDOR_TOML=str(fixture), MIOS_HOST_TOML=str(directory / "none-host"),
+                MIOS_USER_TOML=str(directory / "none-user"), MIOS_VENDOR_TOML_D=str(directory / "none"),
+                MIOS_HOST_TOML_D=str(directory / "none"), MIOS_USER_TOML_D=str(directory / "none"))
+            script = str(_CLIENT_ROOT / "usr/libexec/mios/mios-windows")
+            for body, expected in (({"launched": True, "fired": True}, 0), ({"received": True}, 1),
+                                   ({"fired": True, "launched": False}, 1), ({"launched": "false"}, 1)):
+                environment["MIOS_TEST_RESPONSE"] = json.dumps(body)
+                result = subprocess.run(["bash", script, "launch", "https://example.invalid"],
+                    env=environment, capture_output=True, text=True, timeout=15)
+                with self.subTest(body=body):
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    self.assertEqual("launched via" in result.stdout, expected == 0)
+            environment["MIOS_TEST_RESPONSE"] = '{"launched":true}'
+            environment["MIOS_TEST_HTTP_STATUS"] = "500"
+            result = subprocess.run(["bash", script, "launch", "https://example.invalid"],
+                env=environment, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 1, result.stderr)
+
+
 def _run_all_folded_oscontrol_suites():
     rc = _run_extra_launch()
     if rc not in (None, 0):
-        import sys
         sys.exit(f"Folded test suite failed: exit code {rc}")
+    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ClientContracts))
+    if not result.wasSuccessful():
+        sys.exit(1)
 
 if __name__ == "__main__":
     _rc_main = main()

@@ -51,28 +51,14 @@ if(\$a){ 'shell:appsFolder\\' + \$a.AppID }
     return 1
 }
 
-# MIOS_OSCONTROL_EXECUTOR env override first, else [os_control].executor_endpoint
+# One layered endpoint contract for health, desktop actions and launch verification.
+_mios_client_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../lib/mios" && pwd)"
 _mios_executor_endpoint() {
-    _ep="${MIOS_OSCONTROL_EXECUTOR:-}"
-    if [ -z "$_ep" ]; then
-        for _t in /etc/mios/mios.toml /usr/share/mios/mios.toml; do
-            [ -r "$_t" ] || continue
-            _ep="$(awk -F\" '/^[[:space:]]*executor_endpoint[[:space:]]*=/{print $2; exit}' "$_t" 2>/dev/null)"
-            [ -n "$_ep" ] && break
-        done
-    fi
-    if [ -z "$_ep" ] && grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null; then
-        _gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')"
-        [ -n "$_gw" ] && _ep="http://${_gw}:${MIOS_PORT_OSCONTROL:-8950}"
-    fi
-    printf '%s' "${_ep%/}"
+    python3 "$_mios_client_lib/mios_oscontrol_client.py" endpoint
 }
 
 _mios_launch_via_executor() {  # <app-name-or-windows-path> [args...]
-    command -v curl >/dev/null 2>&1 || return 1
-    _xe="$(_mios_executor_endpoint)"
-    [ -z "$_xe" ] && return 1
-    curl -fsS -m 2 "$_xe/health" >/dev/null 2>&1 || return 1
+    _xe="$(_mios_executor_endpoint)" || exit 1
     _app="$1"
     shift
     _args="$*"
@@ -101,25 +87,22 @@ _mios_launch_via_executor() {  # <app-name-or-windows-path> [args...]
                 ;;
         esac
     fi
-    _resp="$(python3 - "$_app" "$_xe" "$_args" "$_hint" <<'PYEOF'
-import sys, os, json, urllib.request
+    _resp="$(PYTHONPATH="$_mios_client_lib${PYTHONPATH:+:$PYTHONPATH}" python3 - "$_app" "$_xe" "$_args" "$_hint" <<'PYEOF'
+import sys, json
+from mios_oscontrol_client import request_json
 try:
-    payload = json.dumps({"app": sys.argv[1], "args": sys.argv[3], "center": True, "verify": sys.argv[4]}).encode()
-    req = urllib.request.Request(sys.argv[2] + "/launch", data=payload, headers={'Content-Type': 'application/json'}, method="POST")
-    with urllib.request.urlopen(req, timeout=45) as r:
-        print(r.read().decode())
-except Exception:
-    pass
+    request_json(sys.argv[2] + "/health", timeout=3, required="ok")
+    payload = {"app": sys.argv[1], "args": sys.argv[3], "center": True, "verify": sys.argv[4]}
+    result = request_json(sys.argv[2] + "/launch", method="POST", data=payload,
+                          timeout=45, required="launched")
+    print(json.dumps(result))
+except Exception as error:
+    print(f"mios-windows: executor launch unconfirmed ({type(error).__name__})", file=sys.stderr)
+    sys.exit(1)
 PYEOF
-    )"
-    [ -z "$_resp" ] && return 1
-    case "$_resp" in
-        *'"launched": true'*|*'"launched":true'*|*'"fired": true'*|*'"fired":true'*)
-            echo "[mios-windows] launched via in-session executor: $_resp"
-            return 0 ;;
-    esac
-    echo "[mios-windows] executor launch did not confirm" >&2
-    return 1
+    )" || exit 1
+    echo "[mios-windows] launched via in-session executor: $_resp"
+    return 0
 }
 
 _mios_arm_autocenter() {
@@ -128,16 +111,16 @@ _mios_arm_autocenter() {
     command -v python3 >/dev/null 2>&1 || return 0
     _ace="$(_mios_executor_endpoint)"
     [ -z "$_ace" ] && return 0
-    _before="$(python3 - "$_ace" <<'PYEOF'
-import sys, json, urllib.request
+    _before="$(PYTHONPATH="$_mios_client_lib${PYTHONPATH:+:$PYTHONPATH}" python3 - "$_ace" <<'PYEOF'
+import sys
+from mios_oscontrol_client import request_json
 try:
-    with urllib.request.urlopen(sys.argv[1] + "/windows", timeout=5) as r:
-        d = json.loads(r.read().decode())
+    d = request_json(sys.argv[1] + "/windows", timeout=5, required="ok")
     print(",".join(str(w.get("hwnd")) for w in d.get("windows", [])))
 except Exception:
-    pass
+    sys.exit(1)
 PYEOF
-    )"
+    )" || return 0
     setsid /usr/libexec/mios/mios-autocenter "$_ace" "$_before" >/dev/null 2>&1 &
 }
 
@@ -145,7 +128,7 @@ usage() {
     cat <<'USAGE'
 usage: mios-windows <subcommand> [args...]
 
-  launch <app>          Launch a Windows GUI app (interop, detached).
+  launch <app>          Launch and verify a Windows GUI app through the desktop executor.
                         Known: notepad, explorer, calc, mspaint,
                         snipping-tool, taskmgr, regedit, control, cmd,
                         powershell, pwsh; or pass a full .exe path.
@@ -165,8 +148,8 @@ usage: mios-windows <subcommand> [args...]
   list                  Print short-name -> .exe mappings.
   help                  This message.
 
-WSL interop is the default backend (no setup; /init handles the cross-
-environment exec). Tailscale SSH stays available as `ssh-ps` for
+WSL interop handles shell commands; GUI launches require the reachable
+SSOT desktop executor. Tailscale SSH stays available as `ssh-ps` for
 elevated commands and reaching other tailnet hosts.
 USAGE
 }

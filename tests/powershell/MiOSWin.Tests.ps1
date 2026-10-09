@@ -71,3 +71,24 @@ Describe 'MiOS global Terminal transparency projection' {
         $appearance.opacity | Should -Be 43
     }
 }
+
+Describe 'MiOS OS-control SSOT port projection' {
+    BeforeAll {
+        $source = Join-Path $PSScriptRoot '../../usr/share/mios/windows/mios-oscontrol-server.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$null, [ref]$null)
+        $functionAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Read-MiosOscontrolPort' }, $true)
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+    }
+    It 'reads a changed port from the runtime projection' {
+        $path = Join-Path $TestDrive 'ssot.json'
+        '{"ports":{"oscontrol":23123}}' | Set-Content -LiteralPath $path
+        Read-MiosOscontrolPort $path | Should -Be 23123
+    }
+    It 'rejects missing or invalid SSOT without a port literal fallback' {
+        $path = Join-Path $TestDrive 'bad.json'
+        foreach ($payload in @('{"ports":{}}','{"ports":{"oscontrol":"23123"}}','{"ports":{"oscontrol":0}}','{"ports":{"oscontrol":65536}}','{"ports":{"oscontrol":23123.5}}')) {
+            $payload | Set-Content -LiteralPath $path
+            { Read-MiosOscontrolPort $path } | Should -Throw
+        }
+    }
+}
