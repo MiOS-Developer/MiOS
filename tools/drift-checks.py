@@ -297,7 +297,7 @@ def check_legibility_ratchet() -> int:
         homeless = []
         for rel in source:
             home = next((d for d in order if d in domains and any(
-                fnmatch.fnmatch(rel, g) for g in domains[d].get("globs") or ())), None)
+                fnmatch.fnmatchcase(rel, g) for g in domains[d].get("globs") or ())), None)
             if home is None:
                 homeless.append(rel)
             else:
