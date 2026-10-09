@@ -3727,6 +3727,15 @@ refresh_s = 2
 max_rows = 32
 window_name = "MiOS Agents"
 
+[mcp.agents.succession]
+lease_duration_s = 5400
+renew_interval_s = 1800
+probe_interval_s = 600
+min_outage_s = 900
+tail_lines = 80
+preferred_holder = "claude-code"
+successors = ["antigravity"]
+
 [agent_cli]
 enabled = true
 linux_prefix = "/usr/lib/mios/agent-cli"

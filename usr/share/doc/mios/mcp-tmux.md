@@ -88,8 +88,14 @@ Use `mios_agent_list` for live session discovery, `mios_agent_send` for addresse
 tasks or replies, `mios_agent_receive` to read the recipient's inbox, and
 `mios_agent_ack` after reading. Reusing a message ID makes retries idempotent and
 returns its current receipt. A queued message is not delivery, and a received
-receipt is not completion. `mios_agent_unregister` marks a session offline.
-Presence expires without transferring mailbox ownership. With
+`mios_agent_unregister` marks a session offline.
+Presence expires without transferring mailbox ownership or appointing a new coordinator.
+Ephemeral presence leases (`[mcp.agents].lease_s`) govern mailbox presence only. In contrast,
+the coordinator lease (`agent.lease`, ADR-0029, configured in `[mcp.agents.succession]`)
+manages leader succession across CLIs using Kubernetes Lease semantics. Tools `mios_agent_lease`,
+`mios_agent_status`, and `mios_agent_probe` enable standby agents to monitor holder health
+(evaluating verdicts: `released`, `exhausted`, `exhausted_briefly`, `silent`, `waiting`, `alive`)
+and transition coordination authority cleanly without races. With
 `[mcp.agents].queue_offline`, registered dormant sessions retain bounded queued
 work and resume `receive` with their original private token. Explicitly closed
 sessions reject new messages. Registration preserves both identities referenced
