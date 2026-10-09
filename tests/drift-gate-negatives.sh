@@ -1083,6 +1083,40 @@ test_nested_podman_retry() {
     log "Test_nested_podman_retry negative test passed"
 }
 
+test_dead_lane() (
+    log "Testing check_dead_lane"
+    local wrapper="${ROOT}/automation/98-drift-checks.sh"
+    local fixture; fixture="$(mktemp -d)"
+    trap 'rm -rf -- "$fixture"' EXIT
+    local dir="$fixture/usr/share/containers/systemd/nested"
+    local retired expected suffix probe
+    retired="$(printf '%s%s' 114 34)"
+    expected="$(printf 'retired :%s' "$retired")"
+    mkdir -p "$dir"
+    MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "$wrapper" check_dead_lane >"$fixture/out" 2>&1 \
+        || die "check_dead_lane is red before any plant"
+    for suffix in container service conf json toml yaml yml; do
+        probe="$dir/mios-dead-lane.$suffix"
+        printf '# Endpoint=http://127.0.0.1:%s\n' "$retired" > "$probe"
+        MIOS_DRIFT_CHECK_ROOT="$fixture" bash "$wrapper" check_dead_lane >"$fixture/out" 2>&1 \
+            || die "check_dead_lane treated a full-line comment as active in .$suffix"
+        printf 'Endpoint=http://127.0.0.1:%s\n' "$retired" > "$probe"
+        MIOS_DRIFT_CHECK_ROOT="$fixture" bash "$wrapper" check_dead_lane >"$fixture/out" 2>&1 \
+            && die "check_dead_lane accepted an active retired endpoint in .$suffix"
+        grep -Fq "$probe" "$fixture/out" \
+            || die "check_dead_lane did not name the planted .$suffix file"
+        grep -Fq "$expected" "$fixture/out" \
+            || die "check_dead_lane did not name the retired endpoint"
+        printf '# Endpoint=http://127.0.0.1:%s\n' "$retired" > "$probe"
+        MIOS_DRIFT_CHECK_ROOT="$fixture" bash "$wrapper" check_dead_lane >"$fixture/out" 2>&1 \
+            || die "check_dead_lane failed after .$suffix restoration"
+        rm -- "$probe"
+    done
+    MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "$wrapper" check_dead_lane >"$fixture/out" 2>&1 \
+        || die "check_dead_lane repository failed after temporary controls"
+    log "test_dead_lane negative test passed"
+)
+
 test_gate_registry() (
     log "Testing check_gate_registry"
     local wrapper="${ROOT}/automation/98-drift-checks.sh"
@@ -5712,6 +5746,7 @@ _run_test test_leaked_fixtures
     _run_test test_rechunk_budget
     _run_test test_bake_core_reconcile
     _run_test test_nested_podman_retry
+    _run_test test_dead_lane
     _run_test test_gate_registry
     _run_test test_adhoc_toml_parsers
     _run_test test_install_uninstall_symmetry
