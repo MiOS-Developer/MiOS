@@ -2,8 +2,8 @@
 // AI-related: tasks.jsonl, TASKS.md, /usr/lib/mios/schemas/task-record.schema.json, /usr/share/mios/mios.toml [tasks.store], automation/98-drift-checks.sh
 // AI-functions: State::load, check, numbers, purged_in_list, hygiene, cycles, retired_stores, first_difference, sha, Slice, slices, rebuild, verify, cr_problem, migrated_shape, identity, archived_edges, former_ids, notes
 
-use crate::ids::{Ids, Shapes};
 use crate::overrides::{self, Block, Effective};
+use crate::record::ids::{Ids, Shapes};
 use crate::record::{dumps, lane_word, Frozen, Index, Line, Schema, Store};
 use regex::Regex;
 use serde_json::Value;
@@ -780,7 +780,8 @@ pub fn purged_in_list(st: &Store, state: &State) -> Vec<String> {
     };
     let mut p = Vec::new();
     let mut found = |at: String, text: &str| {
-        for h in crate::ids::scan(text.as_bytes(), &mut |t| shapes.matches(t).then_some(())) {
+        for h in crate::record::ids::scan(text.as_bytes(), &mut |t| shapes.matches(t).then_some(()))
+        {
             p.push(format!(
                 "{at} carries the purged id {} -- name the task by its typed id {}_<number> (ADR-0028)",
                 h.token, state.ids.object

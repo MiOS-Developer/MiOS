@@ -762,3 +762,9 @@ an ordinary write or final validation error restores all touched paths. Backups 
 if restoration fails, so the error names recoverable evidence instead of claiming success.
 
 <!-- mios-src:068a99d42b74 from tools/native/mios-task/src/purge.rs:1064-1066 -->
+### Task ids after the purge (ADR-0028): the opaque...
+
+Task ids after the purge (ADR-0028): the opaque task_<ULID>, the typed task_<number>, the legacy record
+schema a list not yet migrated is read with, and the token scanner the rewrite and the old-id gate share.
+
+<!-- mios-src:f3fbdd306c6b from tools/native/mios-task/src/record.rs:642-643 -->

@@ -1,11 +1,11 @@
 // AI-hint: `mios-task migrate-ids` (one-shot) assigns each task an opaque task_<ULID> id and creation-order number, purging old ids from list, history, overrides, and tracked files.
-// AI-related: tasks.jsonl, TASKS.md, /usr/share/mios/mios.toml [tasks.store], /usr/lib/mios/schemas/task-record.schema.json, tools/native/mios-task/src/ids.rs, /usr/share/doc/mios/adr/0028-one-canonical-task-list.md
+// AI-related: tasks.jsonl, TASKS.md, /usr/share/mios/mios.toml [tasks.store], /usr/lib/mios/schemas/task-record.schema.json, tools/native/mios-task/src/record.rs, /usr/share/doc/mios/adr/0028-one-canonical-task-list.md
 // AI-functions: Resolver::new, Resolver::text, Resolver::structured, rewrite, cmd, plan, tree, ssot_section, prefix_of, publish
 
 use crate::check::{self, sha, Slice, State};
 use crate::cli::Args;
-use crate::ids::{self, Ids, Shapes};
 use crate::overrides;
+use crate::record::ids::{self, Ids, Shapes};
 use crate::record::{dumps, write_atomic, Index, Schema, Store};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};

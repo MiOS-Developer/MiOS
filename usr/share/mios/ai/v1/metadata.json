@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3663,
-  "total_metadata_entries": 3022,
-  "total_hints": 3012,
-  "total_functions_indexed": 1487,
-  "total_related_links": 5088,
+  "total_files_scanned": 3662,
+  "total_metadata_entries": 3021,
+  "total_hints": 3011,
+  "total_functions_indexed": 1481,
+  "total_related_links": 5084,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -10184,36 +10184,6 @@
       "has_shebang": false
     },
     {
-      "path": "tools/native/mios-task/src/ids.rs",
-      "hint": "Post-purge task ids (ADR-0028) -- opaque task_<ULID> id, typed task_<number> form, legacy schema reader, and token scanner for tree rewrites and the old-id gate.",
-      "related": [
-        "/usr/lib/mios/schemas/task-record.schema.json",
-        "/usr/share/mios/mios.toml [tasks.store]",
-        "tools/native/mios-task/src/purge.rs",
-        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md"
-      ],
-      "functions": [
-        "ulid",
-        "ulid_ms",
-        "day_ms",
-        "Ids::from_schema",
-        "Ids::typed",
-        "Ids::opaque",
-        "Ids::ms_of",
-        "legacy_record_schema",
-        "Shapes::from_ids",
-        "Shapes::from_list",
-        "Shapes::matches",
-        "scan",
-        "Hit",
-        "tracked_files",
-        "is_text"
-      ],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
       "path": "tools/native/mios-task/src/main.rs",
       "hint": "mios-task -- validates, renders and edits tasks.jsonl, the one canonical MiOS task list (ADR-0028); rebuilds the retired lists from their frozen provenance.",
       "related": [
@@ -10285,7 +10255,7 @@
         "TASKS.md",
         "/usr/share/mios/mios.toml [tasks.store]",
         "/usr/lib/mios/schemas/task-record.schema.json",
-        "tools/native/mios-task/src/ids.rs",
+        "tools/native/mios-task/src/record.rs",
         "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md"
       ],
       "functions": [
@@ -10336,7 +10306,16 @@
         "canonical_status",
         "lane_word",
         "today",
-        "is_iso_date"
+        "is_iso_date",
+        "ids::ulid",
+        "ids::ulid_ms",
+        "ids::day_ms",
+        "ids::Ids",
+        "ids::legacy_record_schema",
+        "ids::Shapes",
+        "ids::scan",
+        "ids::tracked_files",
+        "ids::is_text"
       ],
       "doc": null,
       "comment_style": "slash",
