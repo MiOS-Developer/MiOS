@@ -162,30 +162,30 @@ class TestMiosManualComments(unittest.TestCase):
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(text)
-            write("tool.sh", "#!/bin/bash\n# Closes K-001 by folding the parser into the gate.\necho a\n\n"
+            write("tool.sh", "# Closes K-001 by folding the parser into the gate.\necho a\n\n"
                              "# The second note explains the retry budget.\necho b\n")
             old = {b.start_line: b.sha12 for b in lex(src)}
-            write("doc.md", f"<!-- mios-src:{old[2]} -->\nCloses K-001.\n<!-- mios-src:{old[5]} -->\nRetry.\n")
+            write("doc.md", f"<!-- mios-src:{old[1]} -->\nCloses K-001.\n<!-- mios-src:{old[4]} -->\nRetry.\n")
             row = lambda line, sha: "\t".join(["tool.sh", str(line), str(line), "1", "8", sha, "MIGRATE", "x",
                                                 "", "0", "doc.md", "a", "8", "0"])
-            write(mm.LEDGER_REL, "# " + "\t".join(mm.COLUMNS) + "\n" + row(2, old[2]) + "\n" + row(5, old[5]) + "\n")
+            write(mm.LEDGER_REL, "# " + "\t".join(mm.COLUMNS) + "\n" + row(1, old[1]) + "\n" + row(4, old[4]) + "\n")
             git("add", "-A")
             git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "before")
-            write("tool.sh", "#!/bin/bash\n# Closes task_1 by folding the parser into the gate.\necho a\n\n"
+            write("tool.sh", "# Closes task_1 by folding the parser into the gate.\necho a\n\n"
                              "# The second note explains the timeout budget instead.\necho b\n")
             new = {b.start_line: b.sha12 for b in lex(src)}
-            self.assertNotEqual(new[2], old[2])
+            self.assertNotEqual(new[1], old[1])
             rc = mm.cmd_rehash(types.SimpleNamespace(root=root, rev="HEAD", dry_run=False))
             self.assertEqual(rc, 0)
             with open(os.path.join(root, mm.LEDGER_REL), encoding="utf-8") as fh:
                 ledger = fh.read()
             with open(os.path.join(root, "doc.md"), encoding="utf-8") as fh:
                 doc = fh.read()
-            self.assertIn(new[2], ledger)
-            self.assertIn(f"mios-src:{new[2]}", doc)
-            self.assertNotIn(old[2], ledger + doc)
-            self.assertIn(old[5], ledger, "a comment whose words changed keeps its old hash")
-            self.assertIn(f"mios-src:{old[5]}", doc)
+            self.assertIn(new[1], ledger)
+            self.assertIn(f"mios-src:{new[1]}", doc)
+            self.assertNotIn(old[1], ledger + doc)
+            self.assertIn(old[4], ledger, "a comment whose words changed keeps its old hash")
+            self.assertIn(f"mios-src:{old[4]}", doc)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
