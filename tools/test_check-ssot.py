@@ -1005,7 +1005,7 @@ def tnp_data(nodes, blades=None, vocab=tnp_VOCAB):
         d["blades"] = dict(blades)
     return d
 
-tnp_GPU = {"endpoint": "http://localhost:${MIOS_PORTS_SGLANG}/v1",
+tnp_GPU = {"endpoint": "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1",
        "model": "mios-heavy", "lane": "gpu"}
 
 class tnp_TestAliases(unittest.TestCase):
@@ -1060,16 +1060,16 @@ class tnp_TestBlades(unittest.TestCase):
 
 class tnp_TestOffloadability(unittest.TestCase):
     def test_a_baked_local_port_fails(self):
-        n = {"endpoint": "http://localhost:8530/v1", "model": "m", "lane": "gpu"}
+        n = {"endpoint": "http://localhost:8520/v1", "model": "m", "lane": "gpu"}
         out = tnp_mod.np_unmovable_endpoints(tnp_data({"a": n}))
         self.assertTrue(out)
-        self.assertIn("8530", out[0])
+        self.assertIn("8520", out[0])
 
     def test_a_templated_local_port_is_clean(self):
         self.assertEqual(tnp_mod.np_unmovable_endpoints(tnp_data({"a": dict(tnp_GPU)})), [])
 
     def test_a_remote_host_is_clean(self):
-        n = {"endpoint": "http://blade-01.mesh:8530/v1", "model": "m", "lane": "gpu"}
+        n = {"endpoint": "http://blade-01.mesh:8520/v1", "model": "m", "lane": "gpu"}
         self.assertEqual(tnp_mod.np_unmovable_endpoints(tnp_data({"a": n})), [])
 
 class tnp_TestRealTree(unittest.TestCase):
@@ -1193,7 +1193,7 @@ class tbc_TestShippedTree(unittest.TestCase):
 
     def test_the_gpu_lanes_are_capability_gated(self):
         req = tbc_mod.bc_requires(self.real)
-        for svc in ("mios-llm-heavy", "mios-llm-heavy-alt", "mios-llm-worker@"):
+        for svc in ("mios-llm-heavy", "mios-llm-worker@"):
             self.assertIn("gpu-serving", req.get(svc, []), svc)
 
     def test_the_seat_archetype_grants_nothing(self):

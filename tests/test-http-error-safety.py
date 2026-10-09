@@ -60,12 +60,13 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
 
     async def test_lora_failure_and_success(self):
         client = SimpleNamespace(post=AsyncMock(side_effect=RuntimeError(MARKER)))
-        scope = handlers(PIPE, ["lora_load"], _TOOL_BACKEND_HEAVY="unused", _get_client=AsyncMock(return_value=client))
+        vllm_lane = lambda section: {"heavy_engine": "vllm"} if section == "ai" else {}
+        scope = handlers(PIPE, ["lora_load"], _TOOL_BACKEND_HEAVY="unused", _toml_section=vllm_lane,
+                         _get_client=AsyncMock(return_value=client))
         request = SimpleNamespace(json=AsyncMock(return_value={"lora_name": "adapter", "lora_path": "/adapter"}))
-        with patch.dict(os.environ, {"MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE": "single"}):
-            self.assert_redacted(await scope["lora_load"](request), 500)
-            client.post = AsyncMock(return_value=SimpleNamespace(content=b"ok", status_code=201, headers={}))
-            result = await scope["lora_load"](request)
+        self.assert_redacted(await scope["lora_load"](request), 500)
+        client.post = AsyncMock(return_value=SimpleNamespace(content=b"ok", status_code=201, headers={}))
+        result = await scope["lora_load"](request)
         self.assertEqual((result.status_code, result.content), (201, b"ok"))
 
     async def test_ast_diff_and_review(self):

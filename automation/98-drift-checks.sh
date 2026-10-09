@@ -621,10 +621,9 @@ check_converge_ssot() {
     # MIOS_CONV_* -- not globals.sh, not run-suites.sh, not this script -- so the
     # check validated its own hardcoded defaults on every run and never opened
     # mios.toml at all. The defaults had already drifted from the SSOT:
-    # retire_heavy_alt is true in [converge.inference] but defaulted to false
-    # here, which permanently skipped the one assertion that inspects a real
-    # systemd unit; cold_retention_days is 90 against an asserted 30; and
-    # cold_zstd_level is 10 against an asserted 3.
+    # cold_retention_days is 90 against an asserted 30, and cold_zstd_level is
+    # 10 against an asserted 3. (The heavy-alt retirement branch went with the
+    # lane itself: the one heavy lane carries its engine as [ai].heavy_engine.)
     #
     # Read the SSOT. An env var may still override for testing, but the FALLBACK
     # is now the SSOT value rather than a literal, so the check cannot silently
@@ -634,11 +633,13 @@ check_converge_ssot() {
     ssot="$(python3 -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as fh:
-    c = tomllib.load(fh).get("converge", {})
+    d = tomllib.load(fh)
+c = d.get("converge", {})
 inf, mem = c.get("inference", {}), c.get("memory", {})
 def emit(name, value):
     print("%s=%s" % (name, value))
-emit("SSOT_RETIRE_ALT", str(inf.get("retire_heavy_alt", False)).lower())
+emit("SSOT_HEAVY_ENGINE", d.get("ai", {}).get("heavy_engine", ""))
+emit("SSOT_RUNTIME_LORA", str(inf.get("vllm_allow_runtime_lora", False)).lower())
 emit("SSOT_COLD_DIR", mem.get("cold_storage_dir", "/var/lib/mios/history/"))
 emit("SSOT_COLD_DAYS", mem.get("cold_retention_days", 30))
 emit("SSOT_COLD_ZSTD", mem.get("cold_zstd_level", 3))
@@ -648,17 +649,14 @@ emit("SSOT_SQLITE_VEC", str(mem.get("sqlite_vec_enable", False)).lower())
         return
     }
 
-    local SSOT_RETIRE_ALT SSOT_COLD_DIR SSOT_COLD_DAYS SSOT_COLD_ZSTD SSOT_SQLITE_VEC
+    local SSOT_HEAVY_ENGINE SSOT_RUNTIME_LORA SSOT_COLD_DIR SSOT_COLD_DAYS SSOT_COLD_ZSTD SSOT_SQLITE_VEC
     eval "$ssot"
 
-    local retire_alt="${MIOS_CONVERGE_INFERENCE_RETIRE_HEAVY_ALT:-$SSOT_RETIRE_ALT}"
-    if [[ "$retire_alt" == "true" ]]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            if systemctl is-enabled mios-llm-heavy-alt.service >/dev/null 2>&1; then
-                _violation "[converge].retire_heavy_alt=true but mios-llm-heavy-alt.service is still enabled"
-                return
-            fi
-        fi
+    # Runtime LoRA is a vLLM feature of the ONE heavy lane: it binds the engine.
+    local runtime_lora="${MIOS_CONVERGE_INFERENCE_VLLM_ALLOW_RUNTIME_LORA:-$SSOT_RUNTIME_LORA}"
+    if [[ "$runtime_lora" == "true" && "$SSOT_HEAVY_ENGINE" != "vllm" ]]; then
+        _violation "[converge.inference].vllm_allow_runtime_lora=true but [ai].heavy_engine is '${SSOT_HEAVY_ENGINE}', not 'vllm'"
+        return
     fi
 
     local cold_storage_dir="${MIOS_CONVERGE_MEMORY_COLD_STORAGE_DIR:-$SSOT_COLD_DIR}"
@@ -689,7 +687,7 @@ emit("SSOT_SQLITE_VEC", str(mem.get("sqlite_vec_enable", False)).lower())
         fi
     fi
 
-    echo "[98-drift-checks]   [converge] SSOT values validated (retention=${cold_retention_days}d zstd=${cold_zstd_level} retire_alt=${retire_alt})"
+    echo "[98-drift-checks]   [converge] SSOT values validated (retention=${cold_retention_days}d zstd=${cold_zstd_level} heavy_engine=${SSOT_HEAVY_ENGINE} runtime_lora=${runtime_lora})"
 }
 
 # --- Hummingbird distroless Containerfile and Quadlet conform when the feature is enabled ---

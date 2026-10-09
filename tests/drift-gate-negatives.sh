@@ -2563,13 +2563,13 @@ test_node_pool() {
     cp "$toml" "$backup"
 
     # (1) An exact alias must FAIL -- four of six shipped nodes were byte-identical
-    # copies of the SGLang endpoint, so the fan-out counted one backend as four.
+    # copies of one heavy endpoint, so the fan-out counted one backend as four.
     python3 -c 'import io,re,sys
 p=sys.argv[1]
 s=io.open(p,encoding="utf-8").read()
-m=re.search(r"^\[nodes\.local-sglang\]\n(?:[^\[]*\n)", s, re.M)
+m=re.search(r"^\[nodes\.local-heavy\]\n(?:[^\[]*\n)", s, re.M)
 assert m, "node anchor moved"
-blk=m.group(0).replace("local-sglang","local-negtest-alias",1)
+blk=m.group(0).replace("local-heavy","local-negtest-alias",1)
 io.open(p,"w",encoding="utf-8",newline="\n").write(s[:m.end()] + blk + s[m.end():])' "$toml"
     MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_node_pool >/dev/null 2>&1 && die "check_node_pool passed with two nodes on one (endpoint, model, lane)"
     cp "$backup" "$toml"
@@ -2590,7 +2590,7 @@ io.open(p,"w",encoding="utf-8",newline="\n").write(
     python3 -c 'import io,re,sys
 p=sys.argv[1]
 s=io.open(p,encoding="utf-8").read()
-m=re.search(r"^endpoint    = \"http://localhost:\$\{MIOS_PORTS_VLLM\}/v1\"$", s, re.M)
+m=re.search(r"^endpoint    = \"http://localhost:\$\{MIOS_PORTS_LLM_HEAVY\}/v1\"$", s, re.M)
 assert m, "endpoint anchor moved"
 io.open(p,"w",encoding="utf-8",newline="\n").write(
     s[:m.start()] + "endpoint    = \"http://localhost:8520/v1\"" + s[m.end():])' "$toml"
@@ -2857,7 +2857,7 @@ test_service_urls() {
     log "Testing check_service_urls"
     local toml="${ROOT}/usr/share/mios/mios.toml"
     local backup="${toml}.negbak"
-    local reg_tail='"sglang", "ssh", "ttyd_bash", "ttyd_powershell", "vllm",'
+    local reg_tail='"ssh", "ttyd_bash", "ttyd_powershell", "whisper",'
     local reg_head='  "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",'
     cp "$toml" "$backup"
 
@@ -2868,7 +2868,7 @@ p,old,new=sys.argv[1],sys.argv[2],sys.argv[3]
 s=io.open(p,encoding="utf-8").read()
 assert s.count(old)==1,"non_addressable tail anchor moved"
 io.open(p,"w",encoding="utf-8",newline="\n").write(s.replace(old,new))' \
-        "$toml" "$reg_tail" '"sglang", "ssh", "ttyd_bash", "ttyd_powershell",'
+        "$toml" "$reg_tail" '"ssh", "ttyd_bash", "ttyd_powershell",'
     MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_service_urls >/dev/null 2>&1 && die "check_service_urls passed with a port in neither [urls] nor the register"
     cp "$backup" "$toml"
 

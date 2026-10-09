@@ -39,8 +39,7 @@ open_ports = [
   "adguard_ui",
   "ssh",
   "forge_ssh",
-  "vllm",
-  "sglang",
+  "llm_heavy",
   "cpu_node",
 ]
 
@@ -424,8 +423,7 @@ ExecStart = '''/bin/bash -c '\
         "${MIOS_PORTS_ADGUARD_UI:-8050}" \
         "${MIOS_PORTS_SSH:-8100}" \
         "${MIOS_PORTS_FORGE_SSH:-8410}" \
-        "${MIOS_PORTS_VLLM:-8520}" \
-        "${MIOS_PORTS_SGLANG:-8530}" \
+        "${MIOS_PORTS_LLM_HEAVY:-8520}" \
         "${MIOS_PORTS_CPU_NODE:-8510}" \
         53 \
     ); \
@@ -1021,7 +1019,7 @@ Environment = [
   "FIRECRAWL_API_URL=http://127.0.0.1:${MIOS_PORTS_FIRECRAWL}",
   "PORT=${MIOS_PORTS_HERMES}",
   "API_SERVER_PORT=${MIOS_PORTS_HERMES}",
-  "HERMES_BACKEND_BASE_URL=http://localhost:${MIOS_PORTS_VLLM}",
+  "HERMES_BACKEND_BASE_URL=http://localhost:${MIOS_PORTS_LLM_HEAVY}",
   "HERMES_MAX_TOKENS=8192",
   "BROWSER_CDP_URL=http://localhost:${MIOS_PORTS_CHROME_CDP_WORKER:-9223}",
 ]
@@ -2478,8 +2476,7 @@ root = [
   "mios-webtools-firecrawl-api.container",  # webtools pod -- upstream image runs as 0
   "mios-webtools-firecrawl-worker.container", # webtools pod -- upstream image runs as 0
   "mios-webtools-redis.container",          # webtools pod -- upstream image runs as 0
-  "mios-llm-heavy.container",               # PyTorch/vLLM GPU serving -- upstream image runs as 0
-  "mios-llm-heavy-alt.container",           # SGLang GPU serving -- upstream image runs as 0
+  "mios-llm-heavy.container",               # GPU serving, vLLM or SGLang per [ai].heavy_engine -- both upstream images run as 0
   "mios-coderun-sandbox@.container",        # user-scope sandbox -- Network=none + ReadOnly + DropCapability=ALL
 ]
 # Units legitimately without Group=/Delegate=yes (Law 6 exempt from those two keys only).
@@ -2709,12 +2706,12 @@ job      = "General orchestration of multi-step, tool-driven tasks -- decide loc
 fanout   = false
 default  = false
 # Inference lane ("self-delegate to CPU concurrently
-# to pending/future GPU operations"). gpu = the heavy dGPU lane (${MIOS_PORTS_SGLANG});
+# to pending/future GPU operations"). gpu = the heavy dGPU lane (${MIOS_PORTS_LLM_HEAVY});
 # cpu = the light iGPU/CPU lane. The fan-out pairs a GPU primary with a
 # CPU secondary so both lanes work in parallel -- and so Hermes is never
 # the ONLY dispatched agent.
 lane     = "gpu"
-cpu_endpoint = "http://localhost:${MIOS_PORTS_SGLANG}/v1"
+cpu_endpoint = "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1"
 cpu_model    = "mios-heavy"
 # Tools Hermes is good at -- the refine pass surfaces these
 # as hint_tools when the intent matches.
@@ -2747,7 +2744,7 @@ strengths = ["file_edit", "code_review", "git", "test_running",
 failover_agents = ["hermes"]
 
 [agents.mios-daemon-agent]
-endpoint = "http://localhost:${MIOS_PORTS_SGLANG}/v1"
+endpoint = "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1"
 model    = "mios-heavy"
 # REASONING now (was "telemetry"): a real CPU second opinion, grounded in --
 # not limited to -- system telemetry.
@@ -2850,20 +2847,16 @@ model       = "mios-igpu"         # llama.cpp + Vulkan alias served on the host
 lane        = "igpu"
 api         = "llamacpp"
 health_gate = true
-[nodes.local-vllm]
-endpoint    = "http://localhost:${MIOS_PORTS_VLLM}/v1"
-model       = "mios-heavy"     # = [ai.vllm].served_name; the heavy reasoner vLLM serves
-lane        = "gpu"            # shares the dGPU lane semaphore (VRAM-admission governs co-load)
-api         = "openai"
-health_gate = true             # inert until the gated mios-llm-heavy-alt.service is enabled + reachable
-# Local SGLang heavy lane ("continue with SGLang") -- the
-# mios-llm-heavy.container on :11441 (see [ai.sglang]). HiCache spills inactive KV to
-# CPU RAM. health_gate=true => AUTO-JOINS only when reachable; gated off until a
-# model is baked + the service enabled. api=openai (SGLang speaks /v1 + honours
-# tool_choice=required). Mutually exclusive with local-vllm (both serve "mios-heavy").
-[nodes.local-sglang]
-endpoint    = "http://localhost:${MIOS_PORTS_SGLANG}/v1"
-model       = "mios-heavy"     # = [ai.sglang].served_name; the heavy reasoner SGLang serves
+# The ONE local heavy dGPU lane: mios-llm-heavy.container on ${MIOS_PORTS_LLM_HEAVY},
+# running the engine [ai].heavy_engine selects -- vLLM (PagedAttention + APC,
+# runtime LoRA) or SGLang (HiCache spills inactive KV to CPU RAM for the native
+# 256k context); the tunables are [ai.vllm] / [ai.sglang]. Either engine serves
+# "mios-heavy" over OpenAI /v1 and honours tool_choice=required, so the node does
+# not change when the engine does. health_gate=true => AUTO-JOINS only when
+# reachable; gated off until a model is baked + the service is enabled.
+[nodes.local-heavy]
+endpoint    = "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1"
+model       = "mios-heavy"     # = served_name of the selected engine ([ai.vllm] / [ai.sglang])
 lane        = "gpu"            # shares the dGPU lane semaphore (VRAM-admission governs co-load)
 api         = "openai"
 health_gate = true             # inert until the gated mios-llm-heavy.service is enabled + reachable
@@ -2881,6 +2874,9 @@ tool_call_parser = "hermes"
 reasoning_parser = "qwen3"
 constrained_tools = true
 
+# The heavy lane's surface settings are per ENGINE: the one mios-llm-heavy lane
+# uses [lanes.<[ai].heavy_engine>], so both tables stay while either engine can
+# be selected.
 [lanes.sglang]
 stream_thinking  = true
 tool_call_parser = "qwen25"
@@ -3141,7 +3137,7 @@ native_loop_math_hint         = true
 dag_node_max_tokens      = 800
 dag_node_slow_max_tokens = 350
 dag_node_retry           = 1     # empty-result retries (read-only -> safe); 0 = none
-dag_node_deadline_s      = 140   # seconds; runaway backstop for a FAST-lane node. Raised 75->140 ("ALL AGENTS USE SGLANG"): with every agent on the ONE SGLang lane (lane_concurrency_gpu=2, the VRAM-safe ceiling), nodes past the 2nd QUEUE for a slot, so the per-node deadline (measured from DISPATCH, not from slot-acquire) must absorb that queue wait + the node's own web-research+gen, or back-of-queue nodes get guillotined at 0 chars (grounded_nodes=0). 140 = ~queue + ~40s research + gen.
+dag_node_deadline_s      = 140   # seconds; runaway backstop for a FAST-lane node. Raised 75->140 ("ALL AGENTS USE SGLANG"): with every agent on the ONE heavy lane (lane_concurrency_gpu=2, the VRAM-safe ceiling), nodes past the 2nd QUEUE for a slot, so the per-node deadline (measured from DISPATCH, not from slot-acquire) must absorb that queue wait + the node's own web-research+gen, or back-of-queue nodes get guillotined at 0 chars (grounded_nodes=0). 140 = ~queue + ~40s research + gen.
 dag_node_deadline_slow_s = 150   # seconds; slow-lane (cpu/igpu/mobile) per-node deadline
 # WORK-STEAL (deepen) LANES: only these FAST lanes do extra coverage passes until the barrier; a slow lane does its ONE grounded pass and waits (it can't afford a second). CSV of lane categories.
 deepen_lanes         = "gpu,accelerator"
@@ -3198,7 +3194,7 @@ council_max          = 4      # max council SECONDARIES per turn (0 = all; was u
 # SWARM/DAG width cap ("16-agent explosion"): the swarm/DAG
 # fan-out had NO cap (council_max only bounds the council path). Bound the swarm
 # to at most this many DISTINCT (endpoint,model) targets AFTER de-dup. 0=uncapped.
-swarm_max_width      = 3      # "ALL AGENTS USE SGLANG": every agent now targets the ONE SGLang heavy lane, whose VRAM only safely runs lane_concurrency_gpu=2 concurrent 14B gens. Fanning out 8 nodes onto a 2-wide lane just QUEUES 6 of them past their deadline -> all time out (grounded_nodes=0). Size the fan-out to the REAL concurrency: 3 facets (2 run immediately + 1 short queue), each grounded, finishing inside dag_node_deadline_s. Work-steal/deepen still loops the 2-3 live nodes across extra coverage facets until the barrier, so coverage stays broad without a wide cold fan-out. Raise again only when SGLang gets more concurrency headroom (more VRAM / a 2nd engine).
+swarm_max_width      = 3      # "ALL AGENTS USE SGLANG": every agent now targets the ONE heavy lane, whose VRAM only safely runs lane_concurrency_gpu=2 concurrent 14B gens. Fanning out 8 nodes onto a 2-wide lane just QUEUES 6 of them past their deadline -> all time out (grounded_nodes=0). Size the fan-out to the REAL concurrency: 3 facets (2 run immediately + 1 short queue), each grounded, finishing inside dag_node_deadline_s. Work-steal/deepen still loops the 2-3 live nodes across extra coverage facets until the barrier, so coverage stays broad without a wide cold fan-out. Raise again only when the heavy lane gets more concurrency headroom (more VRAM).
 # SLOW-LANE fan-out CEILING (runaway fix j): GPU/fast nodes fan out
 # unbounded, but CPU/iGPU lanes are where stacked ~100s gens pile up. Cap how many
 # slow-lane nodes a DAG BACKFILLS (primary facets never dropped). Default 2 = the
@@ -3249,7 +3245,7 @@ offload_cpu          = false
 lane_tool_cap        = "igpu:12,mobile:12"
 default_tool_cap     = 16
 no_tool_choice_hints = "8540,11436"          # host:port substrings whose llama.cpp rejects tool_choice=required
-parallel_tools_hints = "8520,8530"               # host:port substrings whose model reliably emits PARALLEL tool calls -> OpenAI-default parallel_tool_calls=True (capable heavy lane); everything else stays sequential (small models malform parallel calls). MIOS_PARALLEL_TOOLS_HINTS overrides.
+parallel_tools_hints = "8520"                    # host:port substrings whose model reliably emits PARALLEL tool calls -> OpenAI-default parallel_tool_calls=True (capable heavy lane); everything else stays sequential (small models malform parallel calls). MIOS_PARALLEL_TOOLS_HINTS overrides.
 worker_mcp_tools     = true                  # surface external MCP client tools to fan-out workers
 kv_paging_enable  = true     # master switch; only ACTS on llama.cpp /slots endpoints
 kv_paging_hints   = "8540,11436"  # host:port substrings that speak llama.cpp /slots (default the iGPU lane)
@@ -3281,7 +3277,7 @@ slo_shed_enable   = false       # off => admission never sheds (capacity-only, a
 batch_enable        = false
 batch_interval_s    = 0.05      # window for a NON-native endpoint (seconds)
 batch_max_size      = 8         # flush a window at this many pending calls
-batch_native_hints  = "8530,8520,8500"  # SGLang / vLLM / llama-swap -> bypass coalescing
+batch_native_hints  = "8520,8500"  # heavy lane (vLLM or SGLang) / llama-swap -> bypass coalescing
 trace_enable          = true   # 0/false disables span recording (near-zero cost when off)
 trace_max_traces      = 256    # LRU cap on retained traces in the buffer
 trace_max_spans_per_trace = 128  # cap on stored spans per trace (further spans counted, not stored)
@@ -6125,6 +6121,12 @@ effort              = "max"
 smartroute_enable   = false
 smartroute_budget   = 0.0       # per-day cost cap for paid remote escalation (0 = unlimited)
 package_registry    = false
+# THE engine of the ONE heavy dGPU lane, mios-llm-heavy: "vllm" | "sglang".
+# mios-gen renders [containers.mios-llm-heavy.engine.<this>] (and the .image
+# twin) into the lane's Quadlet; the engine tunables are [ai.vllm] / [ai.sglang]
+# and the per-engine surface settings [lanes.<this>]. Runtime LoRA
+# ([converge.inference].vllm_*) needs "vllm". Env MIOS_AGENT_PIPE_HEAVY_ENGINE
+# may still set the agent-pipe route to "light" (skip the heavy lane).
 heavy_engine        = "vllm"
 # WS-A16 remote-core escalation: when "on", any REMOTE [nodes.*] endpoint becomes
 # a first-class TRAILING lane in the resolver -- local lanes are still preferred
@@ -6218,7 +6220,7 @@ vision_grounding_model    = ""
 vision_grounding_endpoint = "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1"   # mios-llm-light (needs a vision GGUF in the map to activate)
 chat_vision_model         = "qwen3-vl:4b"
 
-grounding_endpoint = "http://localhost:${MIOS_PORTS_VLLM}/v1"
+grounding_endpoint = "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1"
 grounding_model    = "mios-grounding"
 
 micro_model              = "lfm2:700m"   # Liquid AI LFM2-700M (dense 'lfm2' arch merged mainline llama.cpp; ~0.7-1.0GB resident, ~2x faster CPU decode than Qwen; beats Qwen3-0.6B on MMLU/GSM8K/IFEval). Family-diversity off Qwen. Background classify/expand/gate only (Pythonic tool-call format, not JSON-tool agent). Served by mios-llm-light :11450; the qwen3:1.7b alias still resolves.
@@ -6398,21 +6400,25 @@ ld_so_hwcaps_autoselect = true
 native_rebuild = false
 
 
+# Engine options of the ONE heavy lane when [ai].heavy_engine = "vllm" (rendered into
+# [containers.mios-llm-heavy.engine.vllm]). mios.html keeps them under Advanced.
 [ai.vllm]
 enable         = false          # documents intent; the systemd unit is the real gate (disabled by default)
-served_name    = "mios-heavy"   # OpenAI served-model-name the lane advertises (= [nodes.local-vllm].model)
+served_name    = "mios-heavy"   # OpenAI served-model-name the lane advertises (= [nodes.local-heavy].model)
 gpu_util       = 0.85           # --gpu-memory-utilization: the ~16GB AWQ weights need >0.66; 0.85=~20.4GB leaves ~4GB KV. Heavy lane is gated OFF by default -> only claims the GPU when explicitly enabled (near-exclusive 4090 then).
-max_model_len  = 262144        # 256k native. On the shared 24GB 4090 vLLM's ~4GB fp8-KV budget admits well short of a full 256k sequence -> for the FULL 256k use the SGLang lane below (HiCache CPU KV-offload). vLLM PagedAttention admits up to this ceiling as KV allows.
+max_model_len  = 262144        # 256k native. On the shared 24GB 4090 vLLM's ~4GB fp8-KV budget admits well short of a full 256k sequence -> for the FULL 256k select the SGLang engine below (HiCache CPU KV-offload). vLLM PagedAttention admits up to this ceiling as KV allows.
 kv_cache_dtype = "fp8"          # --kv-cache-dtype fp8 (e5m2 on Ada): ~2x KV capacity; REQUIRED to approach the ceiling on 24GB.
 quantization   = ""              # quantization format (empty = vLLM auto-detects from model weights config.json)
 tool_call_parser = "hermes"     # Qwen3 emits Hermes-style <tool_call> blocks -> OpenAI tool_calls[]
 prefix_caching = true           # --enable-prefix-caching (APC): reuse the shared swarm prompt prefix across agents
 v1_engine      = true            # V1 engine (default since vLLM 0.8, V0 removed in 0.11 -> MUST be true on current images). Chunked-prefill by default.
 
+# Engine options of the ONE heavy lane when [ai].heavy_engine = "sglang" (rendered into
+# [containers.mios-llm-heavy.engine.sglang]). mios.html keeps them under Advanced.
 [ai.sglang]
 enable             = false          # documents intent; the systemd unit is the real gate (disabled by default)
-bake_model         = "stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ"   # same model as [ai.vllm], served from /usr/share/mios/vllm/model. THIS is the lane for the FULL 256k (HiCache CPU KV-offload makes it fit the partial 4090).
-served_name        = "mios-heavy"   # OpenAI served-model-name (= [nodes.local-sglang].model); shared heavy-lane name with vLLM
+bake_model         = "stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ"   # same model as [ai.vllm], served from /usr/share/mios/vllm/model. SGLang is the engine for the FULL 256k (HiCache CPU KV-offload makes it fit the partial 4090).
+served_name        = "mios-heavy"   # OpenAI served-model-name (= [nodes.local-heavy].model); the same lane name vLLM serves
 mem_fraction       = 0.85           # --mem-fraction-static: the ~16GB AWQ weights need >0.66; HiCache spills the rest of the 256k KV to CPU RAM.
 tool_parser        = "qwen25"       # --tool-call-parser: Qwen3-2507 emits Qwen <tool_call> blocks (qwen25 parser handles them); SGLang's qwen25 parser fits the Qwen3 family.
 reasoning_parser   = ""             # Qwen3-30B-A3B-INSTRUCT-2507 is NON-thinking (no <think>) -> no reasoning parser. For CoT, bake Qwen/Qwen3-30B-A3B-Thinking-2507 and set reasoning_parser = "qwen3".
@@ -7372,8 +7378,7 @@ adguard_dns        = 53       # AdGuard Home DNS resolver (ad/tracker/malware si
 adguard_ui         = 8050     # AdGuard Home web UI + REST API (3000 is forge_http; 3053 is mnemonic for :53)
 headscale          = 8085     # Headscale mesh VPN control plane coordinator (HTTP / gRPC)
 opencode_gateway   = 8780     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
-vllm               = 8520    # vLLM heavy dGPU lane (re-scoped mios-llm-heavy Quadlet; OpenAI /v1, PagedAttention+APC). Off the iGPU's :11436 + finetune-serve :11438. GATED/disabled by default (VRAM). [ai.vllm] + [nodes.local-vllm].
-sglang             = 8530    # SGLang heavy dGPU lane (OpenAI /v1, HiCache CPU KV-offload). GATED/disabled by default (VRAM). [ai.sglang] + [nodes.local-sglang].
+llm_heavy          = 8520    # mios-llm-heavy: THE heavy dGPU lane (OpenAI /v1), whichever engine [ai].heavy_engine selects (vLLM or SGLang bind this one port). GATED/disabled by default (VRAM). [nodes.local-heavy].
 llm_igpu           = 8540    # mios-igpu: local iGPU inference lane (llama.cpp + Vulkan on Windows host)
 rpc_igpu           = 8550    # mios-rpc-igpu: cross-lane llama.cpp RPC server on iGPU
 prefilter          = 8710    # mios-delegation-prefilter: conversational-bypass classifier + delegation gate (OpenAI /v1 shim in front of hermes). LOOPBACK only.
@@ -7447,8 +7452,8 @@ doc     = "Cluster orchestration and storage control planes."
 [ports.categories.inference]
 base    = 8500
 stride  = 10
-members = ["llm_light", "cpu_node", "vllm", "sglang", "llm_igpu", "rpc_igpu"]
-doc     = "Model-serving lanes. Ordered cheapest-to-heaviest: always-on llama.cpp, CPU lane, then the GATED dGPU lanes."
+members = ["llm_light", "cpu_node", "llm_heavy", "", "llm_igpu", "rpc_igpu"]
+doc     = "Model-serving lanes. Ordered cheapest-to-heaviest: always-on llama.cpp, CPU lane, then the GATED dGPU lane. The empty slot (8530) is the retired second heavy lane, folded into llm_heavy as an engine choice; it stays empty so the iGPU lanes keep their ports."
 
 [ports.categories.data]
 base    = 8600
@@ -7546,13 +7551,13 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # [observability].otel_endpoint.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
-  "crawl4ai", "field_live_chat", "hermes", "llm_light", "node", "pgvector", "pgvector_internal",
+  "crawl4ai", "field_live_chat", "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
   "firecrawl",
   "forge_ssh", "guacamole_web", "guacd", "hermes_dashboard",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
   "otelcol_otlp", "piper", "prefilter", "pxe_hub_api", "radosgw", "rdp", "redis",
-  "searxng_internal", "sglang", "ssh", "ttyd_bash", "ttyd_powershell", "vllm", "whisper",
+  "searxng_internal", "ssh", "ttyd_bash", "ttyd_powershell", "whisper",
 ]
 
 # ----------------------------------------------------------------------------
@@ -7737,7 +7742,6 @@ members     = [
   "mios-cpu-node",
   "mios-llm-worker@",
   "mios-llm-heavy",
-  "mios-llm-heavy-alt",
   "mios-pgvector",
   "mios-open-webui",
   "mios-piper",
@@ -9495,16 +9499,13 @@ worker_concurrency = 4            # parallel GatewayWorker coroutines
 fallback_http   = "http://localhost:${MIOS_PORTS_HERMES}/v1"   # used when mode="http" or worker fails
 
 [converge.inference]
-heavy_engine_mode = "single"        # "dual" = SGLang + vLLM; "single" = vLLM multi-LoRA
+# One heavy lane; its engine is [ai].heavy_engine. The vllm_* keys are vLLM
+# multi-LoRA and apply when that engine is "vllm" (check_converge_ssot fails
+# vllm_allow_runtime_lora = true under any other engine).
 vllm_lora_adapters_dir = "/var/lib/mios/lora-adapters/"
 vllm_allow_runtime_lora = false   # set true + VLLM_ALLOW_RUNTIME_LORA_UPDATING=true
 llama_cache_reuse_tokens = 0      # 0 = disabled; 256 = enable shared prefix caching
 llama_parallel_slots     = 1      # increase to 4 with cache-reuse enabled
-# true = retire the heavy-alt lane. Read by check_converge_ssot, which fails while
-# any tree surface still enables it ([containers.mios-llm-heavy-alt.Install],
-# [pods.mios-ai].members). Nothing implements the retirement yet and the GPU
-# archetypes still start the lane, so the honest value is false.
-retire_heavy_alt         = false
 
 [converge.memory]
 sqlite_vec_enable      = false    # true = per-session sqlite-vec scratchpad
@@ -9542,11 +9543,18 @@ Image = "quay.io/centos-bootc/bootc-image-builder:latest"
 [images.bootc-image-builder.Service]
 TimeoutStartSec = 3600
 
-[images.mios-llm-heavy.Image]
-Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
-
+# The heavy lane's image pull follows the same engine choice as its .container.
 [images.mios-llm-heavy.Service]
 TimeoutStartSec = 3600
+
+[images.mios-llm-heavy.engine]
+select = "ai.heavy_engine"
+
+[images.mios-llm-heavy.engine.vllm.Image]
+Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
+
+[images.mios-llm-heavy.engine.sglang.Image]
+Image = "${MIOS_SGLANG_IMAGE:-docker.io/lmsysorg/sglang:latest}"
 
 [images.mios-micro.Image]
 Image = "ghcr.io/mios-dev/mios-micro:latest"
@@ -10010,36 +10018,32 @@ ConditionVirtualization = [
 Description = "'MiOS' K3s Service (Podman-native)"
 Wants = "network-online.target"
 
+# THE heavy dGPU lane. ONE spec, two engines: the base below is engine-neutral, and
+# mios-gen merges [containers.mios-llm-heavy.engine.<[ai].heavy_engine>] onto it
+# (a list adds, a scalar sets) to render the vLLM or the SGLang Quadlet. Either
+# engine binds ${MIOS_PORTS_LLM_HEAVY}, serves "mios-heavy" from the same
+# /var/lib/mios/vllm/model weights, and stays gated on that model existing.
 [containers.mios-llm-heavy.Container]
 AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE:-nvidia.com/gpu=all}"
 ContainerName = "mios-llm-heavy"
 Environment = [
   "HF_HUB_OFFLINE=1",
   "TRANSFORMERS_OFFLINE=1",
-  "VLLM_NO_USAGE_STATS=1",
   "DO_NOT_TRACK=1",
-  "VLLM_WSL2_ENABLE_PIN_MEMORY=1",
-  "VLLM_USE_V2_MODEL_RUNNER=0",
   "HF_HOME=/tmp/.cache",
   "XDG_CACHE_HOME=/tmp/.cache",
-  "VLLM_CACHE_DIR=/tmp/.cache",
-  "FLASHINFER_WORKSPACE_DIR=/tmp/.cache",
-  "TRITON_CACHE_DIR=/tmp/.cache",
-  "VLLM_HOST_IP=127.0.0.1",
   "GLOO_SOCKET_IFNAME=lo",
   "NCCL_SOCKET_IFNAME=lo",
   "HOME=/tmp"
 ]
-Exec = "--model /models --served-model-name ${MIOS_VLLM_SERVED_NAME:-mios-heavy} --host 0.0.0.0 --port ${MIOS_PORTS_VLLM:-8520} --gpu-memory-utilization ${MIOS_VLLM_GPU_UTIL:-0.80} --max-model-len ${MIOS_VLLM_MAX_MODEL_LEN:-8192} --kv-cache-dtype ${MIOS_VLLM_KV_CACHE_DTYPE:-fp8} --load-format ${MIOS_VLLM_LOAD_FORMAT:-dummy} --enable-prefix-caching --enforce-eager"
-Group = "${MIOS_VLLM_GID:-815}"
-Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
+Group = "${MIOS_LLM_HEAVY_GID:-815}"
 Label = [
   "org.opencontainers.image.title=mios-llm-heavy",
-  "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_VLLM:-8520}/v1/models",
-  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_VLLM:-8520}/v1/models"
+  "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_LLM_HEAVY:-8520}/v1/models",
+  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_LLM_HEAVY:-8520}/v1/models"
 ]
 Pod = "mios-ai.pod"
-User = "${MIOS_VLLM_UID:-0}"
+User = "${MIOS_LLM_HEAVY_UID:-0}"
 Volume = "/var/lib/mios/vllm/model:/models:ro,Z"
 
 [containers.mios-llm-heavy.Install]
@@ -10058,49 +10062,35 @@ TimeoutStartSec = "600s"
 [containers.mios-llm-heavy.Unit]
 After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
 ConditionPathExists = "/var/lib/mios/vllm/model/config.json"
-Description = "'MiOS' vLLM heavy lane (OpenAI /v1, PagedAttention + APC; gated)"
 Wants = "network-online.target"
 
-[containers.mios-llm-heavy-alt.Container]
-AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE:-nvidia.com/gpu=all}"
-ContainerName = "mios-llm-heavy-alt"
+[containers.mios-llm-heavy.engine]
+select = "ai.heavy_engine"
+
+# vLLM: PagedAttention + automatic prefix caching, multi-LoRA; options [ai.vllm].
+[containers.mios-llm-heavy.engine.vllm.Container]
 Environment = [
-  "HF_HUB_OFFLINE=1",
-  "TRANSFORMERS_OFFLINE=1",
-  "DO_NOT_TRACK=1",
-  "HF_HOME=/tmp/.cache",
-  "XDG_CACHE_HOME=/tmp/.cache",
-  "GLOO_SOCKET_IFNAME=lo",
-  "NCCL_SOCKET_IFNAME=lo",
-  "HOME=/tmp"
+  "VLLM_NO_USAGE_STATS=1",
+  "VLLM_WSL2_ENABLE_PIN_MEMORY=1",
+  "VLLM_USE_V2_MODEL_RUNNER=0",
+  "VLLM_CACHE_DIR=/tmp/.cache",
+  "FLASHINFER_WORKSPACE_DIR=/tmp/.cache",
+  "TRITON_CACHE_DIR=/tmp/.cache",
+  "VLLM_HOST_IP=127.0.0.1"
 ]
-Exec = "python3 -m sglang.launch_server --model /models --served-model-name ${MIOS_SGLANG_SERVED_NAME:-mios-heavy} --host 0.0.0.0 --port ${MIOS_PORTS_SGLANG:-8530} --mem-fraction-static ${MIOS_SGLANG_MEM_FRACTION:-0.85} --context-length ${MIOS_SGLANG_MAX_MODEL_LEN:-262144} --load-format ${MIOS_SGLANG_LOAD_FORMAT:-dummy} --kv-cache-dtype ${MIOS_SGLANG_KV_CACHE_DTYPE:-fp8_e5m2} --tool-call-parser ${MIOS_SGLANG_TOOL_PARSER:-qwen25} --enable-hierarchical-cache --trust-remote-code"
-Group = "${MIOS_VLLM_GID:-815}"
+Exec = "--model /models --served-model-name ${MIOS_VLLM_SERVED_NAME:-mios-heavy} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY:-8520} --gpu-memory-utilization ${MIOS_VLLM_GPU_UTIL:-0.80} --max-model-len ${MIOS_VLLM_MAX_MODEL_LEN:-8192} --kv-cache-dtype ${MIOS_VLLM_KV_CACHE_DTYPE:-fp8} --load-format ${MIOS_VLLM_LOAD_FORMAT:-dummy} --enable-prefix-caching --enforce-eager"
+Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
+
+[containers.mios-llm-heavy.engine.vllm.Unit]
+Description = "'MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated)"
+
+# SGLang: HiCache spills inactive KV to CPU RAM for the native 256k context; options [ai.sglang].
+[containers.mios-llm-heavy.engine.sglang.Container]
+Exec = "python3 -m sglang.launch_server --model /models --served-model-name ${MIOS_SGLANG_SERVED_NAME:-mios-heavy} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY:-8520} --mem-fraction-static ${MIOS_SGLANG_MEM_FRACTION:-0.85} --context-length ${MIOS_SGLANG_MAX_MODEL_LEN:-262144} --load-format ${MIOS_SGLANG_LOAD_FORMAT:-dummy} --kv-cache-dtype ${MIOS_SGLANG_KV_CACHE_DTYPE:-fp8_e5m2} --tool-call-parser ${MIOS_SGLANG_TOOL_PARSER:-qwen25} --enable-hierarchical-cache --trust-remote-code"
 Image = "${MIOS_SGLANG_IMAGE:-docker.io/lmsysorg/sglang:latest}"
-Label = [
-  "org.opencontainers.image.title=mios-llm-heavy-alt",
-  "org.opencontainers.image.url=http://localhost:11442/v1/models",
-  "io.podman_desktop.openInBrowser=http://localhost:11442/v1/models"
-]
-Pod = "mios-ai.pod"
-User = "${MIOS_SGLANG_UID:-0}"
-Volume = "/var/lib/mios/vllm/model:/models:ro,Z"
 
-[containers.mios-llm-heavy-alt.Install]
-WantedBy = "multi-user.target default.target"
-
-[containers.mios-llm-heavy-alt.Service]
-Delegate = "yes"
-EnvironmentFile = "/etc/mios/install.env"
-Restart = "on-failure"
-RestartSec = "15"
-TimeoutStartSec = "600s"
-
-[containers.mios-llm-heavy-alt.Unit]
-After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
-ConditionPathExists = "/var/lib/mios/vllm/model/config.json"
-Description = "'MiOS' SGLang heavy lane (OpenAI /v1, HiCache CPU KV-offload; native 256k context)"
-Wants = "network-online.target"
+[containers.mios-llm-heavy.engine.sglang.Unit]
+Description = "'MiOS' heavy lane, SGLang engine (OpenAI /v1, HiCache CPU KV-offload; native 256k context)"
 
 [containers.mios-llm-light.Container]
 AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE:-nvidia.com/gpu=all}"
@@ -10981,7 +10971,6 @@ ha  = "ha-node"
 [blade.requires]
 # GPU lanes: gpu-serving AND service-plane (repeated ConditionPathExists is AND).
 mios-llm-heavy     = ["gpu-serving", "service-plane"]
-mios-llm-heavy-alt = ["gpu-serving", "service-plane"]
 "mios-llm-worker@" = ["gpu-serving", "service-plane"]
 # The rest of the service plane: offloaded wholesale on a seat.
 mios-adguard                   = ["service-plane"]
@@ -11048,7 +11037,6 @@ mios-userdb-render             = ["service-plane"]
 [blade.cpu_fallbacks]
 # GPU-gated service -> CPU lane, same /v1 contract. ADR-0017 D2, AGY-1596.
 mios-llm-heavy     = "mios-llm-light"
-mios-llm-heavy-alt = "mios-llm-light"
 "mios-llm-worker@" = "mios-llm-light"
 
 [field]

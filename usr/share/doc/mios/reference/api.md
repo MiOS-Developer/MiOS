@@ -86,8 +86,7 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 |---|---|---|
 | inference | llm_light | 8500 |
 | inference | cpu_node | 8510 |
-| inference | vllm | 8520 |
-| inference | sglang | 8530 |
+| inference | llm_heavy | 8520 |
 | inference | llm_igpu | 8540 |
 | inference | rpc_igpu | 8550 |
 

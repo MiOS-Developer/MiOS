@@ -1,10 +1,10 @@
 // AI-hint: Convergence and cross-subsystem consistency checks for miosd drift runner.
-// AI-related: usr/share/mios/mios.toml, usr/lib/systemd/system-preset, usr/share/containers/systemd/mios-llm-heavy-alt.container, usr/lib/mios/agent-pipe/test_mios_router_parity.py, usr/lib/mios/agent-pipe/tests/router_corpus.json
+// AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/pod_quadlets.rs, usr/lib/mios/agent-pipe/test_mios_router_parity.py, usr/lib/mios/agent-pipe/tests/router_corpus.json
 
 use super::audit::{self, Audit};
 use super::{Check, DriftCtx, Verdict};
 use regex::Regex;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::process::Command;
 
@@ -48,14 +48,8 @@ impl Check for RouterParityCheck {
 }
 
 const SSOT: &str = "usr/share/mios/mios.toml";
-// The lane [converge.inference].retire_heavy_alt retires (the legacy check named it too).
-const HEAVY_ALT: &str = "mios-llm-heavy-alt";
-const INSTALL_KEYS: [&str; 3] = ["WantedBy", "RequiredBy", "UpheldBy"];
-const QUADLET_DIRS: [&str; 3] = [
-    "usr/share/containers/systemd",
-    "usr/lib/containers/systemd",
-    "etc/containers/systemd",
-];
+// The selector the ONE heavy lane's engine overlay names (mios-gen pod_quadlets).
+const HEAVY_ENGINE: &str = "ai.heavy_engine";
 
 /// 1-based line of `key =` inside `[section]` (else the header) for path:line diagnostics.
 fn ssot_line(text: &str, section: &str, key: &str) -> usize {
@@ -90,24 +84,28 @@ fn field<'a>(
     Ok((value, at))
 }
 
-fn declared(value: &toml::Value) -> bool {
-    value
-        .as_str()
-        .map(|s| !s.trim().is_empty())
-        .or_else(|| value.as_array().map(|a| !a.is_empty()))
-        .unwrap_or(true)
-}
-
 // Every value used to come from ${MIOS_CONV_*:-literal}, which nothing exports, so the
 // legacy check graded its own drifted defaults. Read the SSOT only; a missing key fails.
 fn converge(ctx: &DriftCtx) -> Audit {
     let text = audit::read(&ctx.root, SSOT)?;
     let doc: toml::Value = text.parse().map_err(|e| format!("{SSOT}: {e}"))?;
     let mut errors = Vec::new();
-    let (retire, at) = field(&doc, &text, "converge.inference", "retire_heavy_alt")?;
-    let retire = retire
-        .as_bool()
-        .ok_or_else(|| format!("{at}: [converge.inference].retire_heavy_alt must be a boolean"))?;
+    let (engine, engine_at) = field(&doc, &text, "ai", "heavy_engine")?;
+    let engine = engine
+        .as_str()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .ok_or_else(|| {
+            format!("{engine_at}: [ai].heavy_engine must name the heavy lane's engine")
+        })?;
+    let lanes = heavy_engine_lanes(&doc, engine, &engine_at, &mut errors);
+    let (lora, lora_at) = field(&doc, &text, "converge.inference", "vllm_allow_runtime_lora")?;
+    let lora = lora.as_bool().ok_or_else(|| {
+        format!("{lora_at}: [converge.inference].vllm_allow_runtime_lora must be a boolean")
+    })?;
+    if lora && engine != "vllm" {
+        errors.push(format!("{lora_at}: [converge.inference].vllm_allow_runtime_lora = true, but runtime LoRA is a vLLM feature and [ai].heavy_engine = {engine:?} ({engine_at}); select \"vllm\" or turn runtime LoRA off"));
+    }
     let (dir, at) = field(&doc, &text, "converge.memory", "cold_storage_dir")?;
     let dir = dir
         .as_str()
@@ -131,10 +129,7 @@ fn converge(ctx: &DriftCtx) -> Audit {
     let vec = vec.as_bool().ok_or_else(|| {
         format!("{vec_at}: [converge.memory].sqlite_vec_enable must be a boolean")
     })?;
-    let mut subjects = 5;
-    if retire {
-        subjects += heavy_alt_enablement(ctx, &doc, &text, &mut errors)?;
-    }
+    let mut subjects = 6 + lanes;
     if vec {
         subjects += sqlite_vec_installed(ctx, &doc, &vec_at, &mut errors)?;
     }
@@ -145,224 +140,42 @@ fn converge(ctx: &DriftCtx) -> Audit {
     )
 }
 
-/// `[Section]` / `key=value` entries of a systemd or Quadlet unit, with 1-based lines.
-fn unit_entries(text: &str) -> Vec<(usize, String, String, String)> {
-    let (mut section, mut out) = (String::new(), Vec::new());
-    for (index, raw) in text.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if line.starts_with('[') {
-            section = line.trim_matches(|c| c == '[' || c == ']').to_owned();
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            out.push((
-                index + 1,
-                section.clone(),
-                key.trim().to_owned(),
-                value.trim().to_owned(),
-            ));
-        }
-    }
-    out
-}
-
-/// fnmatch(3) as systemd presets use it: `*`, `?` and `[...]` classes.
-fn glob(pattern: &[u8], name: &[u8]) -> bool {
-    match (pattern.first(), name.first()) {
-        (None, None) => true,
-        (Some(b'*'), _) => {
-            glob(&pattern[1..], name) || (!name.is_empty() && glob(pattern, &name[1..]))
-        }
-        (Some(b'?'), Some(_)) => glob(&pattern[1..], &name[1..]),
-        (Some(b'['), Some(c)) => {
-            let Some(end) = pattern
-                .iter()
-                .skip(2)
-                .position(|b| *b == b']')
-                .map(|i| i + 2)
-            else {
-                return *c == b'[' && glob(&pattern[1..], &name[1..]);
-            };
-            let class = &pattern[1..end];
-            let (negate, class) = match class.first() {
-                Some(b'!' | b'^') => (true, &class[1..]),
-                _ => (false, class),
-            };
-            let (mut hit, mut i) = (false, 0);
-            while i < class.len() {
-                if i + 2 < class.len() && class[i + 1] == b'-' {
-                    hit |= (class[i]..=class[i + 2]).contains(c);
-                    i += 3;
-                } else {
-                    hit |= class[i] == *c;
-                    i += 1;
-                }
-            }
-            hit != negate && glob(&pattern[end + 1..], &name[1..])
-        }
-        (Some(p), Some(c)) if p == c => glob(&pattern[1..], &name[1..]),
-        _ => false,
-    }
-}
-
-/// The legacy check asked the LIVE host (`systemctl is-enabled`), which says nothing about
-/// the image and was silently skipped wherever systemctl was absent. Retirement is asserted
-/// on every surface the TREE enables a unit through: presets, .wants/.requires/.upholds
-/// links, the Quadlet's [Install], its Pod= membership (the generated pod service Wants=
-/// every member), and the SSOT [containers.*]/[pods.*] tables those Quadlets project from.
-fn heavy_alt_enablement(
-    ctx: &DriftCtx,
+/// The heavy lane is ONE unit whose engine is an overlay of its spec, selected by
+/// [ai].heavy_engine. The selector must name an overlay of every spec that reads it,
+/// and at least one spec must read it, or the key selects nothing. Returns the
+/// number of specs examined.
+fn heavy_engine_lanes(
     doc: &toml::Value,
-    text: &str,
+    engine: &str,
+    engine_at: &str,
     errors: &mut Vec<String>,
-) -> Result<usize, String> {
-    let unit = format!("{HEAVY_ALT}.service");
-    let why = "although [converge.inference].retire_heavy_alt = true";
-    // Presets: the first matching line wins across files ordered by name; /etc shadows /usr/lib.
-    let mut presets = BTreeMap::new();
-    for dir in ["usr/lib/systemd/system-preset", "etc/systemd/system-preset"] {
-        if dir.starts_with("etc/") && !ctx.root.join(dir).is_dir() {
-            continue;
-        }
-        for path in audit::files(&ctx.root, dir)? {
-            if let Some(name) = path
-                .strip_prefix(&format!("{dir}/"))
-                .filter(|n| n.ends_with(".preset") && !n.contains('/'))
-            {
-                presets.insert(name.to_owned(), path.clone());
-            }
-        }
-    }
-    if presets.is_empty() {
-        return Err(format!("usr/lib/systemd/system-preset: no *.preset files; cannot tell whether {unit} is enabled"));
-    }
-    let mut surfaces = presets.len();
-    'presets: for path in presets.values() {
-        for (index, line) in audit::read(&ctx.root, path)?.lines().enumerate() {
-            let mut words = line.split_whitespace();
-            let (Some(verb), Some(pattern)) = (words.next(), words.next()) else {
+) -> usize {
+    let mut lanes = 0;
+    for kind in ["containers", "images"] {
+        for (name, spec) in doc.get(kind).and_then(toml::Value::as_table).into_iter().flatten() {
+            let Some(engines) = spec.get("engine").and_then(toml::Value::as_table) else {
                 continue;
             };
-            if verb.starts_with('#')
-                || verb.starts_with(';')
-                || !glob(pattern.as_bytes(), unit.as_bytes())
-            {
+            if engines.get("select").and_then(toml::Value::as_str) != Some(HEAVY_ENGINE) {
                 continue;
             }
-            if verb == "enable" {
-                errors.push(format!(
-                    "{path}:{}: '{}' enables {unit} {why}; put 'disable {unit}' ahead of it",
-                    index + 1,
-                    line.trim()
-                ));
-            }
-            break 'presets;
-        }
-    }
-    for dir in ["usr/lib/systemd/system", "etc/systemd/system"] {
-        let entries = match fs::read_dir(ctx.root.join(dir)) {
-            Ok(entries) => entries,
-            Err(_) if dir.starts_with("etc/") => continue,
-            Err(e) => {
-                return Err(format!(
-                    "{dir}: {e}; the unit directory is a required subject"
-                ))
-            }
-        };
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("{dir}: {e}"))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if ![".wants", ".requires", ".upholds"]
-                .iter()
-                .any(|s| name.ends_with(s))
-                || !entry.path().is_dir()
-            {
-                continue;
-            }
-            surfaces += 1;
-            // symlink_metadata: a dangling link still enables the unit once it is installed.
-            if fs::symlink_metadata(entry.path().join(&unit)).is_ok() {
-                errors.push(format!(
-                    "{dir}/{name}/{unit}:1: links {unit} into {name} {why}; remove the link"
-                ));
-            }
-        }
-    }
-    let mut quadlets = Vec::new();
-    for dir in QUADLET_DIRS {
-        if ctx.root.join(dir).is_dir() {
-            quadlets.extend(audit::files(&ctx.root, dir)?);
-        }
-    }
-    let base = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
-    let (own, dropins) = (
-        format!("{HEAVY_ALT}.container"),
-        format!("/{HEAVY_ALT}.container.d/"),
-    );
-    let mut pods = Vec::new();
-    for path in quadlets
-        .iter()
-        .filter(|p| base(p) == own || (p.contains(&dropins) && p.ends_with(".conf")))
-    {
-        surfaces += 1;
-        for (line, section, key, value) in unit_entries(&audit::read(&ctx.root, path)?) {
-            if section == "Install" && INSTALL_KEYS.contains(&key.as_str()) && !value.is_empty() {
-                errors.push(format!("{path}:{line}: [Install] {key}={value} enables {unit} {why}; drop [containers.{HEAVY_ALT}.Install] and regenerate the Quadlet"));
-            }
-            if section == "Container" && key == "Pod" {
-                pods.push((path.clone(), line, value));
-            }
-        }
-    }
-    for (path, line, pod) in pods {
-        // An unresolvable Pod= makes Quadlet refuse the member: broken, but not enabled.
-        let Some(pod_path) = quadlets.iter().find(|p| base(p) == pod) else {
-            continue;
-        };
-        let enabled = unit_entries(&audit::read(&ctx.root, pod_path)?).iter().any(
-            |(_, section, key, value)| {
-                section == "Install" && INSTALL_KEYS.contains(&key.as_str()) && !value.is_empty()
-            },
-        );
-        if enabled {
-            errors.push(format!("{path}:{line}: Pod={pod} joins {pod_path}, an enabled pod whose service Wants= every member, so {unit} starts {why}; remove {HEAVY_ALT} from the pod"));
-        }
-    }
-    surfaces += 1;
-    let section = format!("containers.{HEAVY_ALT}.Install");
-    if let Some(install) = doc
-        .get("containers")
-        .and_then(|c| c.get(HEAVY_ALT))
-        .and_then(|c| c.get("Install"))
-        .and_then(toml::Value::as_table)
-    {
-        for key in INSTALL_KEYS {
-            if install.get(key).is_some_and(declared) {
-                errors.push(format!("{SSOT}:{}: [{section}].{key} enables {unit} {why}; delete [{section}] and regenerate the Quadlet", ssot_line(text, &section, key)));
-            }
-        }
-    }
-    if let Some(table) = doc.get("pods").and_then(toml::Value::as_table) {
-        for (name, pod) in table {
-            surfaces += 1;
-            let member = pod
-                .get("members")
-                .and_then(toml::Value::as_array)
-                .is_some_and(|m| m.iter().any(|v| v.as_str() == Some(HEAVY_ALT)));
-            if member
-                && ["wanted_by", "required_by", "upheld_by"]
+            lanes += 1;
+            if !engines.get(engine).is_some_and(toml::Value::is_table) {
+                let section = format!("{kind}.{name}.engine");
+                let mut declared: Vec<&str> = engines
                     .iter()
-                    .any(|k| pod.get(*k).is_some_and(declared))
-            {
-                let section = format!("pods.{name}");
-                errors.push(format!("{SSOT}:{}: [{section}].members includes {HEAVY_ALT} in an enabled pod (its service Wants= every member) {why}; remove it from members", ssot_line(text, &section, "members")));
+                    .filter(|(_, overlay)| overlay.is_table())
+                    .map(|(key, _)| key.as_str())
+                    .collect();
+                declared.sort_unstable();
+                errors.push(format!("{engine_at}: [ai].heavy_engine = {engine:?} names no overlay of [{section}] (declared: {}); select one of those or declare [{section}.{engine}]", declared.join(", ")));
             }
         }
     }
-    Ok(surfaces)
+    if lanes == 0 {
+        errors.push(format!("{engine_at}: [ai].heavy_engine selects nothing: no [containers.*.engine] or [images.*.engine] table has select = \"{HEAVY_ENGINE}\""));
+    }
+    lanes
 }
 
 /// PEP 503-normalised project name a requirements.txt line declares, if any.
@@ -587,7 +400,8 @@ mod tests {
         Ok(())
     }
 
-    const CONVERGE: &str = "[converge.inference]\nretire_heavy_alt = false\n[converge.memory]\nsqlite_vec_enable = false\ncold_storage_dir = \"/var/lib/mios/history/\"\ncold_retention_days = 90\ncold_zstd_level = 10\n";
+    const LANE: &str = "[containers.mios-llm-heavy.engine]\nselect = \"ai.heavy_engine\"\n[containers.mios-llm-heavy.engine.vllm.Container]\nImage = \"v\"\n[containers.mios-llm-heavy.engine.sglang.Container]\nImage = \"s\"\n";
+    const CONVERGE: &str = "[ai]\nheavy_engine = \"vllm\"\n[converge.inference]\nvllm_allow_runtime_lora = false\n[converge.memory]\nsqlite_vec_enable = false\ncold_storage_dir = \"/var/lib/mios/history/\"\ncold_retention_days = 90\ncold_zstd_level = 10\n";
 
     #[test]
     fn converge_reads_ssot_bounds_and_fails_on_missing_or_illegal_values(
@@ -597,103 +411,60 @@ mod tests {
         let ctx = DriftCtx::new(root.into(), false);
         assert!(converge(&ctx).is_err());
         write(root, SSOT, "[other]\nx = 1\n")?;
-        assert!(converge(&ctx)
-            .is_err_and(|e| e.contains("converge.inference.retire_heavy_alt is missing")));
-        write(root, SSOT, CONVERGE)?;
-        assert!(converge(&ctx).is_ok_and(|m| m.contains("5 subject")));
+        assert!(converge(&ctx).is_err_and(|e| e.contains("ai.heavy_engine is missing")));
+        write(root, SSOT, &format!("{CONVERGE}{LANE}"))?;
+        assert!(converge(&ctx).is_ok_and(|m| m.contains("7 subject")));
         write(
             root,
             SSOT,
-            &CONVERGE.replace("/var/lib/mios/history/", "/mnt/ceph/tenants/a/"),
+            &format!("{}{LANE}", CONVERGE.replace("/var/lib/mios/history/", "/mnt/ceph/tenants/a/")),
         )?;
         assert!(converge(&ctx).is_err_and(|e| e
-            .contains("mios.toml:5: [converge.memory].cold_storage_dir")
+            .contains("mios.toml:7: [converge.memory].cold_storage_dir")
             && e.contains("tenants mount")));
-        write(root, SSOT, &CONVERGE.replace("= 90", "= 0"))?;
+        write(root, SSOT, &format!("{}{LANE}", CONVERGE.replace("= 90", "= 0")))?;
         assert!(converge(&ctx)
-            .is_err_and(|e| e.contains("mios.toml:6:") && e.contains("integer >= 1, got 0")));
-        write(root, SSOT, &CONVERGE.replace("= 90", "= \"90\""))?;
+            .is_err_and(|e| e.contains("mios.toml:8:") && e.contains("integer >= 1, got 0")));
+        write(root, SSOT, &format!("{}{LANE}", CONVERGE.replace("= 90", "= \"90\"")))?;
         assert!(converge(&ctx).is_err_and(|e| e.contains("cold_retention_days must be an integer")));
-        write(root, SSOT, &CONVERGE.replace("= 10", "= 20"))?;
+        write(root, SSOT, &format!("{}{LANE}", CONVERGE.replace("= 10", "= 20")))?;
         assert!(converge(&ctx)
-            .is_err_and(|e| e.contains("mios.toml:7:") && e.contains("1..19, got 20")));
+            .is_err_and(|e| e.contains("mios.toml:9:") && e.contains("1..19, got 20")));
         write(
             root,
             SSOT,
-            &CONVERGE.replace("retire_heavy_alt = false", "retire_heavy_alt = \"no\""),
+            &format!("{}{LANE}", CONVERGE.replace("runtime_lora = false", "runtime_lora = \"no\"")),
         )?;
         assert!(converge(&ctx).is_err_and(|e| e.contains("must be a boolean")));
         Ok(())
     }
 
     #[test]
-    fn retired_heavy_alt_must_not_be_enabled_by_any_tree_surface(
+    fn the_heavy_engine_must_select_a_declared_overlay_and_bind_runtime_lora(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let root = temp.path();
         let ctx = DriftCtx::new(root.into(), false);
-        let config = CONVERGE.replace("retire_heavy_alt = false", "retire_heavy_alt = true");
-        write(root, SSOT, &config)?;
-        assert!(converge(&ctx).is_err_and(|e| e.contains("system-preset")));
-        let preset = "usr/lib/systemd/system-preset/90-mios.preset";
-        write(root, preset, "# enable mios-llm-heavy-alt.service\ndisable mios-llm-heavy-alt.service\nenable mios-*\n")?;
-        assert!(converge(&ctx).is_err_and(|e| e.contains("unit directory is a required subject")));
-        fs::create_dir_all(root.join("usr/lib/systemd/system/multi-user.target.wants"))?;
-        let quadlet = "usr/share/containers/systemd/mios-llm-heavy-alt.container";
-        write(root, quadlet, "[Container]\nImage=x\nPod=mios-ai.pod\n")?;
-        write(
-            root,
-            "usr/share/containers/systemd/mios-ai.pod",
-            "[Pod]\nPodName=mios-ai\n",
-        )?;
-        write(
-            root,
-            SSOT,
-            &format!(
-                "{config}[pods.mios-ai]\nmembers = [\"mios-llm-heavy-alt\"]\nwanted_by = []\n"
-            ),
-        )?;
+        // Either declared engine passes; the selector reads both overlays.
+        let sglang = CONVERGE.replace("\"vllm\"", "\"sglang\"");
+        write(root, SSOT, &format!("{sglang}{LANE}"))?;
         assert!(converge(&ctx).is_ok());
-        write(
-            root,
-            preset,
-            "enable mios-llm-heavy-*.service\ndisable mios-llm-heavy-alt.service\n",
-        )?;
-        assert!(converge(&ctx).is_err_and(
-            |e| e.contains("90-mios.preset:1: 'enable mios-llm-heavy-*.service' enables")
-        ));
-        write(root, preset, "disable *\n")?;
-        write(
-            root,
-            "usr/lib/systemd/system/multi-user.target.wants/mios-llm-heavy-alt.service",
-            "",
-        )?;
-        assert!(converge(&ctx).is_err_and(
-            |e| e.contains("multi-user.target.wants/mios-llm-heavy-alt.service:1: links")
-        ));
-        fs::remove_file(
-            root.join("usr/lib/systemd/system/multi-user.target.wants/mios-llm-heavy-alt.service"),
-        )?;
-        write(root, quadlet, "[Container]\nImage=x\nPod=mios-ai.pod\n\n[Install]\nWantedBy=multi-user.target default.target\n")?;
-        assert!(converge(&ctx)
-            .is_err_and(|e| e.contains("mios-llm-heavy-alt.container:6: [Install] WantedBy=")));
-        write(root, quadlet, "[Container]\nImage=x\nPod=mios-ai.pod\n")?;
-        write(
-            root,
-            "usr/share/containers/systemd/mios-ai.pod",
-            "[Pod]\nPodName=mios-ai\n[Install]\nWantedBy=multi-user.target\n",
-        )?;
-        assert!(converge(&ctx)
-            .is_err_and(|e| e.contains("mios-llm-heavy-alt.container:3: Pod=mios-ai.pod joins")));
-        write(
-            root,
-            "usr/share/containers/systemd/mios-ai.pod",
-            "[Pod]\nPodName=mios-ai\n",
-        )?;
-        write(root, SSOT, &format!("{config}[containers.mios-llm-heavy-alt.Install]\nWantedBy = \"multi-user.target\"\n[pods.mios-ai]\nmembers = [\"mios-llm-heavy-alt\"]\nwanted_by = [\"multi-user.target\"]\n"))?;
+        // An engine no overlay declares fails, naming the ones that exist.
+        write(root, SSOT, &format!("{}{LANE}", CONVERGE.replace("\"vllm\"", "\"tgi\"")))?;
+        assert!(converge(&ctx).is_err_and(|e| e.contains("mios.toml:2: [ai].heavy_engine = \"tgi\"")
+            && e.contains("[containers.mios-llm-heavy.engine] (declared: sglang, vllm)")));
+        // A selector no lane reads is a dead key.
+        write(root, SSOT, CONVERGE)?;
+        assert!(converge(&ctx).is_err_and(|e| e.contains("[ai].heavy_engine selects nothing")));
+        // Runtime LoRA is vLLM-only: it passes on vllm and fails on sglang.
+        let lora = CONVERGE.replace("runtime_lora = false", "runtime_lora = true");
+        write(root, SSOT, &format!("{lora}{LANE}"))?;
+        assert!(converge(&ctx).is_ok());
+        let lora = lora.replace("\"vllm\"", "\"sglang\"");
+        write(root, SSOT, &format!("{lora}{LANE}"))?;
         assert!(converge(&ctx).is_err_and(|e| e
-            .contains("mios.toml:9: [containers.mios-llm-heavy-alt.Install].WantedBy")
-            && e.contains("mios.toml:11: [pods.mios-ai].members")));
+            .contains("mios.toml:4: [converge.inference].vllm_allow_runtime_lora = true")
+            && e.contains("[ai].heavy_engine = \"sglang\"")));
         Ok(())
     }
 
@@ -808,26 +579,5 @@ mod tests {
         )?;
         assert!(router(&ctx).is_err_and(|e| e.contains("cannot run SSOT drift.lint.python")));
         Ok(())
-    }
-
-    #[test]
-    fn preset_globs_follow_fnmatch() {
-        assert!(glob(b"mios-*", b"mios-llm-heavy-alt.service"));
-        assert!(glob(
-            b"mios-llm-heavy-?lt.service",
-            b"mios-llm-heavy-alt.service"
-        ));
-        assert!(glob(
-            b"mios-llm-heavy-[a-c]lt.*",
-            b"mios-llm-heavy-alt.service"
-        ));
-        assert!(!glob(
-            b"mios-llm-heavy-[!a]lt.*",
-            b"mios-llm-heavy-alt.service"
-        ));
-        assert!(!glob(
-            b"mios-llm-heavy.service",
-            b"mios-llm-heavy-alt.service"
-        ));
     }
 }

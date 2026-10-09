@@ -641,8 +641,8 @@ pub fn render_nested_quadlet(
     lines.push(format!(
         "# /usr/share/containers/systemd/{name}.{unit_type}"
     ));
-    if name == "mios-llm-heavy-alt" && unit_type == "container" {
-        lines.push("# DEPRECATED (Part 10): retire by setting [converge.inference].retire_heavy_alt = true and running the migration guide at usr/share/doc/mios/guides/inference-consolidation.md.".to_string());
+    if let Some(engine) = spec.get(ENGINE_KEY).and_then(|v| v.as_str()) {
+        lines.push(format!("# Engine: {engine}."));
     }
 
     let main_section = match unit_type {
@@ -775,6 +775,135 @@ pub fn render_nested_quadlet(
     }
 
     Ok(lines.join("\n").trim().to_string() + "\n")
+}
+
+/// Reserved spec key: `[<kind>s.<name>.engine]` holds `select` -- a dotted SSOT path
+/// whose string value names the engine -- and one overlay per engine,
+/// `[<kind>s.<name>.engine.<engine>.<Section>]`. One lane spec therefore renders
+/// whichever engine the SSOT selects (the heavy lane: vLLM or SGLang). After
+/// selection the table is replaced by a scalar describing the choice, which the
+/// renderer prints as a header comment and never as a section.
+pub const ENGINE_KEY: &str = "engine";
+
+/// The value at a dotted SSOT path (`ai.heavy_engine`), if every segment exists.
+pub fn ssot_lookup<'a>(doc: &'a toml::Value, dotted: &str) -> Option<&'a toml::Value> {
+    dotted
+        .split('.')
+        .try_fold(doc, |node, segment| node.as_table()?.get(segment))
+}
+
+/// Merge one engine overlay onto a unit spec: a list ADDS to the section's key
+/// (base entries first, exact duplicates dropped), a scalar SETS it, and a
+/// section the base lacks is created.
+pub fn merge_engine_overlay(
+    base: &mut toml::map::Map<String, toml::Value>,
+    overlay: &toml::map::Map<String, toml::Value>,
+    at: &str,
+) -> Result<(), String> {
+    for (section, values) in overlay {
+        let values = values
+            .as_table()
+            .ok_or_else(|| format!("[{at}.{section}] must be a Quadlet [Section] table"))?;
+        let target = base
+            .entry(section.clone())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| format!("[{at}] overlays {section}, which the spec declares as a scalar"))?;
+        for (key, value) in values {
+            match (target.get_mut(key), value) {
+                (Some(existing), toml::Value::Array(more)) => {
+                    let mut list = match &*existing {
+                        toml::Value::Array(items) => items.clone(),
+                        other => vec![other.clone()],
+                    };
+                    for item in more {
+                        if !list.contains(item) {
+                            list.push(item.clone());
+                        }
+                    }
+                    *existing = toml::Value::Array(list);
+                }
+                _ => {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve every spec's engine overlay against the merged SSOT `doc`. A spec
+/// without an `engine` table is untouched; a selector that is missing, not a
+/// string, or names no declared overlay fails the projection.
+pub fn apply_engine_overlays(
+    specs: &mut toml::map::Map<String, toml::Value>,
+    doc: &toml::Value,
+    kind: &str,
+) -> Result<(), String> {
+    for (name, spec_val) in specs.iter_mut() {
+        let Some(spec) = spec_val.as_table_mut() else {
+            continue;
+        };
+        let Some(engines) = spec.remove(ENGINE_KEY) else {
+            continue;
+        };
+        let at = format!("{kind}.{name}.{ENGINE_KEY}");
+        let mut engines = match engines {
+            toml::Value::Table(t) => t,
+            _ => return Err(format!("[{at}] must be a table of engine overlays")),
+        };
+        let select = match engines.remove("select") {
+            Some(toml::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                return Err(format!(
+                    "[{at}].select must name the SSOT key that selects the engine"
+                ))
+            }
+        };
+        // Sorted: the table's key order depends on toml's preserve_order feature.
+        let mut declared: Vec<String> = engines.keys().cloned().collect();
+        declared.sort();
+        if declared.is_empty() {
+            return Err(format!("[{at}] declares no engine overlay"));
+        }
+        let chosen = match ssot_lookup(doc, &select) {
+            Some(toml::Value::String(s)) => s.trim().to_string(),
+            Some(other) => {
+                return Err(format!(
+                    "[{at}].select = {select:?}: the SSOT value {other} is not an engine name"
+                ))
+            }
+            None => {
+                return Err(format!(
+                    "[{at}].select = {select:?}: that SSOT key is not declared"
+                ))
+            }
+        };
+        let overlay = engines.get(&chosen).and_then(toml::Value::as_table).ok_or_else(|| {
+            format!(
+                "[{at}].select = {select:?} chose {chosen:?}, which is not a declared overlay table ({})",
+                declared.join(", ")
+            )
+        })?;
+        for engine in &declared {
+            if !engines[engine].is_table() {
+                return Err(format!("[{at}.{engine}] must be a table of Quadlet sections"));
+            }
+        }
+        merge_engine_overlay(spec, overlay, &format!("{at}.{chosen}"))?;
+        let selector = match select.rsplit_once('.') {
+            Some((table, key)) => format!("[{table}].{key}"),
+            None => select.clone(),
+        };
+        spec.insert(
+            ENGINE_KEY.to_string(),
+            toml::Value::String(format!(
+                "{chosen} (selected by {selector}; declared engines: {})",
+                declared.join(", ")
+            )),
+        );
+    }
+    Ok(())
 }
 
 pub fn apply_bound_image_store(
@@ -948,24 +1077,33 @@ pub fn run_pod_quadlets(
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
-    let networks = doc
+    let mut networks = doc
         .get("networks")
         .or_else(|| doc.get("network"))
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
-    let volumes = doc
+    let mut volumes = doc
         .get("volumes")
         .or_else(|| doc.get("volume"))
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
-    let images = doc
+    let mut images = doc
         .get("images")
         .or_else(|| doc.get("image"))
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
+    // Engine choice is SSOT data: each spec renders the overlay its selector names.
+    for (specs, kind) in [
+        (&mut containers, "containers"),
+        (&mut networks, "networks"),
+        (&mut volumes, "volumes"),
+        (&mut images, "images"),
+    ] {
+        apply_engine_overlays(specs, &doc, kind)?;
+    }
 
     for name in enabled_map.keys() {
         if !containers.contains_key(name) {
@@ -1569,6 +1707,126 @@ mod tests {
         );
         assert!(err.is_err(), "Non-placeholder password literal must fail");
         assert!(err.unwrap_err().contains("Law 11"));
+    }
+
+    /// One lane spec with two engine overlays, the shape [containers.mios-llm-heavy] uses.
+    fn engine_lane() -> toml::map::Map<String, toml::Value> {
+        let mut specs = toml::map::Map::new();
+        specs.insert(
+            "lane".to_string(),
+            toml::from_str(
+                r#"
+            [Container]
+            ContainerName = "lane"
+            Environment = ["HOME=/tmp"]
+            User = "826"
+            [Service]
+            EnvironmentFile = "/etc/mios/install.env"
+            [engine]
+            select = "ai.heavy_engine"
+            [engine.vllm.Container]
+            Environment = ["VLLM_NO_USAGE_STATS=1", "HOME=/tmp"]
+            Exec = "--model /models"
+            Image = "docker.io/vllm/vllm-openai:latest"
+            [engine.vllm.Service]
+            EnvironmentFile = ["-/run/mios/gpu-numa.env"]
+            [engine.sglang.Container]
+            Exec = "python3 -m sglang.launch_server --model /models"
+            Image = "docker.io/lmsysorg/sglang:latest"
+            [engine.sglang.Unit]
+            Description = "sglang lane"
+        "#,
+            )
+            .unwrap(),
+        );
+        specs
+    }
+
+    fn render_lane(specs: &toml::map::Map<String, toml::Value>) -> String {
+        render_nested_quadlet(
+            "lane",
+            &specs["lane"],
+            "container",
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn engine_overlay_renders_the_selected_engine_only() {
+        let doc: toml::Value = toml::from_str("[ai]\nheavy_engine = \"vllm\"\n").unwrap();
+        let mut specs = engine_lane();
+        apply_engine_overlays(&mut specs, &doc, "containers").unwrap();
+        let text = render_lane(&specs);
+        assert!(text.contains(
+            "# Engine: vllm (selected by [ai].heavy_engine; declared engines: sglang, vllm)."
+        ));
+        // A list adds after the base entries, without repeating one the base has.
+        assert!(text.contains("Environment=HOME=/tmp\nEnvironment=VLLM_NO_USAGE_STATS=1\nExec="));
+        assert_eq!(text.matches("Environment=HOME=/tmp").count(), 1);
+        // A list overlay onto a scalar base key keeps the base value first.
+        assert!(text.contains(
+            "EnvironmentFile=/etc/mios/install.env\nEnvironmentFile=-/run/mios/gpu-numa.env"
+        ));
+        assert!(text.contains("Image=docker.io/vllm/vllm-openai:latest"));
+        assert!(!text.contains("sglang.launch_server"));
+        assert!(!text.contains("[engine"), "the overlay table never renders: {text}");
+
+        let doc: toml::Value = toml::from_str("[ai]\nheavy_engine = \"sglang\"\n").unwrap();
+        let mut specs = engine_lane();
+        apply_engine_overlays(&mut specs, &doc, "containers").unwrap();
+        let text = render_lane(&specs);
+        assert!(text.contains("Exec=python3 -m sglang.launch_server --model /models"));
+        assert!(text.contains("Image=docker.io/lmsysorg/sglang:latest"));
+        // A section only the overlay declares is created.
+        assert!(text.starts_with("# AI-hint") && text.contains("[Unit]\nDescription=sglang lane"));
+        assert!(!text.contains("VLLM_NO_USAGE_STATS") && !text.contains("gpu-numa"));
+    }
+
+    #[test]
+    fn engine_overlay_fails_on_an_unresolvable_selection() {
+        let cases = [
+            ("[ai]\nheavy_engine = \"tgi\"\n", "\"tgi\", which is not a declared overlay table (sglang, vllm)"),
+            ("[ai]\n", "that SSOT key is not declared"),
+            ("[ai]\nheavy_engine = 3\n", "is not an engine name"),
+        ];
+        for (ssot, want) in cases {
+            let doc: toml::Value = toml::from_str(ssot).unwrap();
+            let mut specs = engine_lane();
+            let err = apply_engine_overlays(&mut specs, &doc, "containers").unwrap_err();
+            assert!(err.contains("[containers.lane.engine]") && err.contains(want), "{err}");
+        }
+        let doc: toml::Value = toml::from_str("[ai]\nheavy_engine = \"vllm\"\n").unwrap();
+        let mut specs = engine_lane();
+        specs["lane"]["engine"]
+            .as_table_mut()
+            .unwrap()
+            .remove("select");
+        let err = apply_engine_overlays(&mut specs, &doc, "containers").unwrap_err();
+        assert!(err.contains(".select must name the SSOT key"), "{err}");
+    }
+
+    #[test]
+    fn a_spec_without_an_engine_table_is_untouched() {
+        let doc: toml::Value = toml::from_str("[ai]\nheavy_engine = \"vllm\"\n").unwrap();
+        let mut specs = toml::map::Map::new();
+        specs.insert(
+            "plain".to_string(),
+            toml::from_str("[Container]\nImage = \"x/y:1\"\nUser = \"826\"\n").unwrap(),
+        );
+        let before = specs.clone();
+        apply_engine_overlays(&mut specs, &doc, "containers").unwrap();
+        assert_eq!(specs, before);
+        assert_eq!(
+            ssot_lookup(&doc, "ai.heavy_engine").and_then(|v| v.as_str()),
+            Some("vllm")
+        );
+        assert!(ssot_lookup(&doc, "ai.missing").is_none());
     }
 
     #[test]

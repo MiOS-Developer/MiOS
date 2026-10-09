@@ -202,17 +202,6 @@ services:
       - key: "mios.capability/service-plane"
         operator: "Exists"
         effect: "NoSchedule"
-  mios-llm-heavy-alt:
-    nodeSelector:
-      mios.capability/gpu-serving: "true"
-      mios.capability/service-plane: "true"
-    tolerations:
-      - key: "mios.capability/gpu-serving"
-        operator: "Exists"
-        effect: "NoSchedule"
-      - key: "mios.capability/service-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
   mios-llm-light:
     nodeSelector:
       mios.capability/service-plane: "true"

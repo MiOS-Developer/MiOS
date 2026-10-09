@@ -27,7 +27,6 @@ pcs constraint location mios-hermes-browser-worker rule score=100 mios-cap-servi
 pcs constraint location mios-k3s rule score=100 mios-cap-controller eq true and mios-cap-service-plane eq true
 pcs constraint location mios-k3s-master rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-llm-heavy rule score=100 mios-cap-gpu-serving eq true and mios-cap-service-plane eq true
-pcs constraint location mios-llm-heavy-alt rule score=100 mios-cap-gpu-serving eq true and mios-cap-service-plane eq true
 pcs constraint location mios-llm-light rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-llm-worker@ rule score=100 mios-cap-gpu-serving eq true and mios-cap-service-plane eq true
 pcs constraint location mios-log-archiver rule score=100 mios-cap-service-plane eq true

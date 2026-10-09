@@ -627,7 +627,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/run_tests.py` | Unit and regression test suite for run_tests functionality. |
 | `usr/lib/mios/agent-pipe/server.py` | FastAPI gateway service on the `agent_pipe` port that routes, dispatches, and proxies chat/embedding requests from external interfaces (Discord, Slack) to th... |
 | `usr/lib/mios/agent-pipe/sse_streamer.py` | MiOS system and orchestration module providing sse streamer capabilities. |
-| `usr/lib/mios/agent-pipe/test_lora_endpoints.py` | Standalone assert-script unit test for LoRA list/load endpoints (CONV-06). |
+| `usr/lib/mios/agent-pipe/test_lora_endpoints.py` | Standalone assert-script unit test for LoRA list/load endpoints (CONV-06): enabled only when [ai].heavy_engine = vllm. |
 | `usr/lib/mios/agent-pipe/test_mios_a2a.py` | Stdlib unit test for the extracted A2A federation publish surface (mios_a2a). |
 | `usr/lib/mios/agent-pipe/test_mios_a2a_client.py` | Stdlib unit test for the extracted A2A peer-client consumer half (mios_a2a_client). |
 | `usr/lib/mios/agent-pipe/test_mios_a2a_delegation.py` | Unit test for mios_a2a_delegation.py |

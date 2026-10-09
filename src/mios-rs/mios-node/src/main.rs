@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
             println!(
                 "  Inference Lanes     : mios-llm-light (:{}), mios-llm-heavy (:{})",
                 show("MIOS_PORTS_LLM_LIGHT"),
-                show("MIOS_PORTS_VLLM")
+                show("MIOS_PORTS_LLM_HEAVY")
             );
             println!("  Registered Sub-Agent: mios-node (role: edge_execution)");
             println!("====================================================");

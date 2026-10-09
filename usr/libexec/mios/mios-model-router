@@ -63,7 +63,7 @@ _DEFAULT_DEPLOYMENTS = [
     {"name": "cpu",   "base": f"http://localhost:{os.environ.get('MIOS_PORTS_CPU_NODE', '8510')}/v1", "model": "mios-cpu"},
     {"name": "light", "base": f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}/v1", "model": "qwen3:1.7b"},
     {"name": "igpu",  "base": f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_LLM_IGPU', '8540')}/v1", "model": "mios-igpu"},
-    {"name": "heavy", "base": f"http://localhost:{os.environ.get('MIOS_PORTS_SGLANG', '8530')}/v1", "model": "mios-heavy"},
+    {"name": "heavy", "base": f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_HEAVY', '8520')}/v1", "model": "mios-heavy"},
 ]
 try:
     DEPLOYMENTS = json.loads(os.environ.get("MIOS_ROUTER_DEPLOYMENTS", "")) or _DEFAULT_DEPLOYMENTS

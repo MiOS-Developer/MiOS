@@ -113,8 +113,8 @@ _TOOL_BACKEND = os.environ.get(
 _TOOL_BACKEND_MODEL = os.environ.get(
     "MIOS_AGENT_PIPE_TOOL_BACKEND_MODEL", "granite4.1:8b")
 _TOOL_BACKEND_HEAVY = (os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_HEAVY")
-                       or _toml_section("nodes").get("local-sglang", {}).get("endpoint")
-                       or f"http://localhost:{os.environ.get('MIOS_PORTS_SGLANG', '8530')}/v1").rstrip("/")
+                       or _toml_section("nodes").get("local-heavy", {}).get("endpoint")
+                       or f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_HEAVY', '8520')}/v1").rstrip("/")
 _TOOL_BACKEND_HEAVY_MODEL = os.environ.get(
     "MIOS_AGENT_PIPE_TOOL_BACKEND_HEAVY_MODEL", "mios-heavy")
 _HEAVY_PROBE_TTL = float(os.environ.get("MIOS_AGENT_PIPE_HEAVY_PROBE_TTL", "30"))

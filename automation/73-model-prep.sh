@@ -84,8 +84,8 @@ else
     exit 1
 fi
 
-# AI-hint: Bakes vLLM model weights into the image at /usr/share/mios/vllm/model if MIOS_VLLM_BAKE_MODEL is set, enabling offline serving via the mios-llm-heavy-alt Quadlet for air-gapped environments.
-# AI-related: /usr/share/mios/vllm/model, mios-llm-heavy-alt, mios-grounding, mios-llm-heavy-alt.container
+# AI-hint: Bakes vLLM model weights into the image at /usr/share/mios/vllm/model if MIOS_VLLM_BAKE_MODEL is set, enabling offline serving via the mios-llm-heavy Quadlet (vLLM or SGLang per [ai].heavy_engine) for air-gapped environments.
+# AI-related: /usr/share/mios/vllm/model, mios-llm-heavy, mios-grounding, mios-llm-heavy.container
 
 MODEL="${MIOS_VLLM_BAKE_MODEL:-}"
 SEED_DIR="/usr/share/mios/vllm/model"

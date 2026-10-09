@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
   "total_files_scanned": 3835,
-  "total_metadata_entries": 3142,
-  "total_hints": 3132,
+  "total_metadata_entries": 3141,
+  "total_hints": 3131,
   "total_functions_indexed": 1458,
-  "total_related_links": 5190,
+  "total_related_links": 5188,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -5407,8 +5407,7 @@
       "hint": "Convergence and cross-subsystem consistency checks for miosd drift runner.",
       "related": [
         "usr/share/mios/mios.toml",
-        "usr/lib/systemd/system-preset",
-        "usr/share/containers/systemd/mios-llm-heavy-alt.container",
+        "tools/native/mios-gen/src/pod_quadlets.rs",
         "usr/lib/mios/agent-pipe/test_mios_router_parity.py",
         "usr/lib/mios/agent-pipe/tests/router_corpus.json"
       ],
@@ -15850,7 +15849,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_lora_endpoints.py",
-      "hint": "Standalone assert-script unit test for LoRA list/load endpoints (CONV-06).",
+      "hint": "Standalone assert-script unit test for LoRA list/load endpoints (CONV-06): enabled only when [ai].heavy_engine = vllm.",
       "related": [
         "./server.py"
       ],
@@ -24263,7 +24262,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-gpu-passthrough",
-      "hint": "Syncs Quadlet container configurations with live CDI specifications in /run/cdi/ to automatically map the GPU vendors declared in mios.toml [gpu.cdi] onto background AI service Quadlets (mios-llm-light, vLLM heavy lanes) based on detected hardware; holds no vendor literal of its own.",
+      "hint": "Syncs Quadlet container configurations with live CDI specifications in /run/cdi/ to automatically map the GPU vendors declared in mios.toml [gpu.cdi] onto background AI service Quadlets (mios-llm-light, the vLLM/SGLang heavy lane) based on detected hardware; holds no vendor literal of its own.",
       "related": [
         "/usr/libexec/mios/mios-gpu-passthrough",
         "/usr/libexec/mios/mios-toml-get",
@@ -28898,7 +28897,7 @@
     },
     {
       "path": "usr/share/containers/systemd/mios-ai.pod",
-      "hint": "GENERATED Quadlet pod for the co-resident group 'mios-ai' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-ai] in mios.toml. Members (9): mios-llm-light, mios-cpu-node, mios-llm-worker@, mios-llm-heavy, mios-llm-heavy-alt, mios-pgvector, mios-open-webui, mios-piper, mios-whisper.",
+      "hint": "GENERATED Quadlet pod for the co-resident group 'mios-ai' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-ai] in mios.toml. Members (8): mios-llm-light, mios-cpu-node, mios-llm-worker@, mios-llm-heavy, mios-pgvector, mios-open-webui, mios-piper, mios-whisper.",
       "related": [
         "usr/share/mios/mios.toml",
         "tools/generate-pod-quadlets.py",
@@ -28906,7 +28905,6 @@
         "mios-cpu-node.container",
         "mios-llm-worker@.container",
         "mios-llm-heavy.container",
-        "mios-llm-heavy-alt.container",
         "mios-pgvector.container",
         "mios-open-webui.container",
         "mios-piper.container",
@@ -28992,15 +28990,6 @@
     {
       "path": "usr/share/containers/systemd/mios-k3s.container",
       "hint": "MiOS mios-k3s container. (WS-7 pods-as-SSOT).",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/containers/systemd/mios-llm-heavy-alt.container",
-      "hint": "MiOS mios-llm-heavy-alt container. (WS-7 pods-as-SSOT).",
       "related": [],
       "functions": [],
       "doc": null,

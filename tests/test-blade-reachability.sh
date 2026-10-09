@@ -91,7 +91,7 @@ run_status() {
     MIOS_USER_TOML=/dev/null \
     MIOS_BLADE_PROBE_TIMEOUT=2 \
     MIOS_PORTS_CPU_NODE=8510 MIOS_PORTS_LLM_LIGHT=8500 \
-    MIOS_PORTS_SGLANG=8530 MIOS_PORTS_VLLM=8520 \
+    MIOS_PORTS_LLM_HEAVY=8520 \
         bash "${ROOT}/usr/libexec/mios/mios-blade" status 2>&1
 }
 
@@ -115,7 +115,7 @@ grep -qE "^  search +REMOTE +UNREACHABLE " <<<"$OUT" \
 $OUT"
 ok "an offloaded target that does not answer reads REMOTE UNREACHABLE"
 
-grep -qE "^  node:local-sglang +local " <<<"$OUT" \
+grep -qE "^  node:local-heavy +local " <<<"$OUT" \
     || die "a target the overlay does not name must stay local:
 $OUT"
 ok "targets the overlay does not name stay local"
@@ -124,7 +124,7 @@ ok "targets the overlay does not name stay local"
 OUT_LOCAL="$(MIOS_USR_DIR="${ROOT}/usr/lib/mios" MIOS_ETC_DIR="$FIXTURE" \
     MIOS_HOST_TOML=/dev/null MIOS_USER_TOML=/dev/null MIOS_BLADE_PROBE_TIMEOUT=1 \
     MIOS_PORTS_AGENT_PIPE=8700 MIOS_PORTS_SEARXNG=8800 MIOS_PORTS_CPU_NODE=8510 \
-    MIOS_PORTS_LLM_LIGHT=8500 MIOS_PORTS_SGLANG=8530 MIOS_PORTS_VLLM=8520 \
+    MIOS_PORTS_LLM_LIGHT=8500 MIOS_PORTS_LLM_HEAVY=8520 \
     bash "${ROOT}/usr/libexec/mios/mios-blade" status 2>&1)"
 grep -q 'REMOTE' <<<"$OUT_LOCAL" \
     && die "with no overlay nothing should be REMOTE:

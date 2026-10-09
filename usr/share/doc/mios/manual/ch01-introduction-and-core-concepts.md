@@ -126,7 +126,6 @@ Law 6 (UNPRIVILEGED-QUADLETS) permits root only for the units registered in
 | `mios-webtools-firecrawl-worker.container` | see `[security.privileged_quadlets]` |
 | `mios-webtools-redis.container` | see `[security.privileged_quadlets]` |
 | `mios-llm-heavy.container` | see `[security.privileged_quadlets]` |
-| `mios-llm-heavy-alt.container` | see `[security.privileged_quadlets]` |
 | `mios-coderun-sandbox@.container` | see `[security.privileged_quadlets]` |
 
 <!-- derived from usr/share/mios/mios.toml [security.privileged_quadlets].root -->

@@ -58,11 +58,11 @@ models:
   # quant @ b8970; Unsloth uses stock llama-server) -> sidesteps the qwen35 trap that
   # BLOCKS qwen3.5:4b and forced the gemma4:12b fallback. Granite is natively 131K-capable,
   # but the SERVED --ctx-size is 32768 (model-placement decision): the
-  # always-on SGLang heavy lane ([ai.sglang], mem_fraction 0.45 ~= 11GB RESERVED up front) +
+  # heavy lane on its SGLang engine ([ai.sglang], mem_fraction 0.45 ~= 11GB RESERVED up front) +
   # granite weights (~5GB) + a full 128k q8_0 KV (~8GB) CANNOT co-fit the shared 24GB 4090 ->
   # granite's load spilled to CPU = 67-100s refine (the chat-slowness root cause). A 32k q8_0
-  # KV (~2-3GB) co-fits SGLang on the GPU (refine drops to ~2-5s) and is ample for chat/refine.
-  # Raise back toward 131072 ONLY if the SGLang heavy lane is disabled or moved off this card
+  # KV (~2-3GB) co-fits the heavy lane on the GPU (refine drops to ~2-5s) and is ample for chat/refine.
+  # Raise back toward 131072 ONLY if the heavy lane is disabled or moved off this card
   # (then granite has the whole 4090). Apache-2.0; first non-Qwen brain (family mix).
   # DO NOT pull the '-h'/granitehybrid GGUF (newer arch = qwen35-style trap). Build
   # note: avoid CUDA 13.2 (gibberish-output bug). --jinja MANDATORY for tool_calls.

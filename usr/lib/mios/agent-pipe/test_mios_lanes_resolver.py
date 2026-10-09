@@ -4,7 +4,7 @@
 
 Drives the moved lane-resolver cluster with a fake httpx client + stubbed
 config -- NO network, NO DB. Asserts: lane selection prefers the heavy lane when
-its probe is up, falls back to the always-on light lane when the heavy lanes are
+its probe is up, falls back to the always-on light lane when the heavy lane is
 down, the legacy heavy/light probe is used when the resolver path raises, and the
 _heavy_lane_up probe caches + degrades closed. Run: ``python test_mios_lanes_resolver.py``.
 """
@@ -88,7 +88,9 @@ class LaneResolverTests(unittest.TestCase):
         self.assertIs(M._lane_resolver_current(), res)
         snap = res.snapshot()
         self.assertIn("lanes", snap)
-        self.assertIn("light", snap["lanes"])
+        # ONE heavy lane beside the light floor, whichever engine serves it.
+        self.assertEqual(set(snap["lanes"]), {"light", "heavy"})
+        self.assertEqual(snap["lanes"]["heavy"]["url"], _TOOL_BACKEND_HEAVY)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

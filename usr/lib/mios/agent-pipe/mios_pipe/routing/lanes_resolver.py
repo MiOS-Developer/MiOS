@@ -40,7 +40,7 @@ def configure(**deps) -> None:
 _heavy_probe = {"ok": False, "ts": -1e9}
 
 async def _heavy_lane_up() -> bool:
-    """Is the SGLang heavy lane serving right now? Cached for _HEAVY_PROBE_TTL s so we
+    """Is the heavy lane (either engine) serving right now? Cached for _HEAVY_PROBE_TTL s so we
     probe at most once per window, never per request."""
     import time as _t
     now = _t.monotonic()
@@ -67,17 +67,14 @@ def _lane_resolver():
         _ai = _toml_section("ai")
     except Exception:  # noqa: BLE001 -- degrade to env/defaults
         _ai = {}
+    # ONE heavy lane ([nodes.local-heavy]); [ai].heavy_engine picks the engine that
+    # serves it, so the engine name never adds a second lane here.
     heavy_engine = (os.environ.get("MIOS_AGENT_PIPE_HEAVY_ENGINE")
-                    or str(_ai.get("heavy_engine", "sglang"))).strip()
-    _vllm_url = (os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM")
-                 or _toml_section("nodes").get("local-vllm", {}).get("endpoint")
-                 or f"http://localhost:{os.environ.get('MIOS_PORTS_VLLM', '8520')}/v1").rstrip("/")
-    _vllm_model = os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM_MODEL",
-                                 _TOOL_BACKEND_HEAVY_MODEL)
+                    or str(_ai.get("heavy_engine", ""))).strip()
     lanes = {
-        "light":  mios_lanes.Lane("light",  _TOOL_BACKEND,       _TOOL_BACKEND_MODEL),
-        "sglang": mios_lanes.Lane("sglang", _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL),
-        "vllm":   mios_lanes.Lane("vllm",   _vllm_url,           _vllm_model),
+        "light": mios_lanes.Lane("light", _TOOL_BACKEND, _TOOL_BACKEND_MODEL),
+        mios_lanes.HEAVY: mios_lanes.Lane(
+            mios_lanes.HEAVY, _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL),
     }
     chain = mios_lanes.build_chain(heavy_engine, lanes.keys())
     try:
@@ -112,9 +109,8 @@ def _lane_resolver():
 
 async def _pick_tool_backend() -> tuple:
     """(url, model) for the client-tools loop -- delegated to the WS-1 unified lane
-    resolver: the preferred heavy reasoner when reachable, else the other heavy lane,
-    else the always-on light lane (with per-lane cooldown so a dead lane fails over,
-    never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
+    resolver: the heavy lane when reachable, else the always-on light lane (with
+    per-lane cooldown so a dead lane fails over, never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
     probe so the agentic surface never hard-fails."""
     try:
         lane = await _lane_resolver().pick("tool")

@@ -1019,6 +1019,23 @@
     </div>
 
     <div class="card">
+      <h3>Heavy AI lane</h3>
+      <p style="color: var(--muted); font-size: 11px; margin: 0 0 10px;">
+        The ONE heavy dGPU lane (<code>mios-llm-heavy</code>) runs the engine
+        picked here; the image renders its Quadlet from it. Each engine's
+        tunables are under Advanced settings &rarr; AI endpoints &amp; models.
+      </p>
+      <label for="f-ai-heavy-engine">engine ([ai].heavy_engine)</label>
+      <!-- Options are re-listed from the loaded SSOT: every [containers.*.engine]
+           table whose select names ai.heavy_engine contributes its overlay names.
+           The static two mirror the vendor overlays for file:// use. -->
+      <select id="f-ai-heavy-engine" data-key="ai.heavy_engine" data-engine-select>
+        <option value="vllm">vllm (PagedAttention + prefix caching, runtime LoRA)</option>
+        <option value="sglang">sglang (HiCache CPU KV offload, native 256k context)</option>
+      </select>
+    </div>
+
+    <div class="card">
       <h3>Locale &amp; language</h3>
       <label for="f-tz">timezone</label>
       <input type="text" id="f-tz" data-key="locale.timezone" placeholder="UTC">
@@ -1233,7 +1250,7 @@
       <summary>Resource Convergence &middot; queue, LoRA, scratchpad <span class="phase-badge">Part 10 &middot; converge</span></summary>
       <div class="section-body">
         <p style="color: var(--muted); font-size: 12px; margin: 0 0 12px;">
-          Configure the converged-resource settings to optimize gateway queues, engine multiplexing (vLLM multi-LoRA), memory tiering, and distroless builds.
+          Configure the converged-resource settings to optimize gateway queues, engine multiplexing (vLLM multi-LoRA: the <code>vllm_*</code> keys apply when the heavy lane's engine, <code>[ai].heavy_engine</code>, is vllm), memory tiering, and distroless builds.
         </p>
 
         <div class="form-grid">
@@ -1254,9 +1271,6 @@
 
           <fieldset>
             <legend>[converge.inference] — Phase 2</legend>
-            <label for="f-conv-inference-heavy-engine-mode">heavy_engine_mode ("dual" or "single")</label>
-            <input type="text" id="f-conv-inference-heavy-engine-mode" data-key="converge.inference.heavy_engine_mode" placeholder="dual">
-
             <label for="f-conv-inference-vllm-lora-adapters-dir">vllm_lora_adapters_dir</label>
             <input type="text" id="f-conv-inference-vllm-lora-adapters-dir" data-key="converge.inference.vllm_lora_adapters_dir" placeholder="/var/lib/mios/lora-adapters/">
 
@@ -1268,9 +1282,6 @@
 
             <label for="f-conv-inference-llama-parallel-slots">llama_parallel_slots</label>
             <input type="text" id="f-conv-inference-llama-parallel-slots" data-key="converge.inference.llama_parallel_slots" data-type="int" placeholder="1">
-
-            <label for="f-conv-inference-retire-heavy-alt">retire_heavy_alt</label>
-            <input type="text" id="f-conv-inference-retire-heavy-alt" data-key="converge.inference.retire_heavy_alt" data-type="bool" placeholder="false">
           </fieldset>
 
           <fieldset>
@@ -1338,30 +1349,34 @@
         </p>
         <div class="grid">
           <fieldset>
-            <legend>[nodes.local-dgpu] — discrete GPU node</legend>
-            <label for="f-node-dgpu-endpoint">endpoint (where this node's engine serves /v1)</label>
-            <input type="text" id="f-node-dgpu-endpoint" data-key="nodes.local-dgpu.endpoint" placeholder="http://localhost:${MIOS_PORTS_SGLANG}/v1">
-            <label for="f-node-dgpu-model">model (canonical MiOS model tag this node serves)</label>
-            <input type="text" id="f-node-dgpu-model" data-key="nodes.local-dgpu.model" placeholder="mios-heavy">
-            <label for="f-node-dgpu-lane">lane (compute bucket: gpu | cpu | igpu | npu | accelerator | mobile)</label>
-            <input type="text" id="f-node-dgpu-lane" data-key="nodes.local-dgpu.lane" placeholder="gpu">
-            <label for="f-node-dgpu-api">api (engine protocol: openai | llamacpp | vllm | sglang)</label>
-            <input type="text" id="f-node-dgpu-api" data-key="nodes.local-dgpu.api" placeholder="openai">
-            <label for="f-node-dgpu-hg">health_gate (probe + auto-join/drop)</label>
-            <input type="text" id="f-node-dgpu-hg" data-key="nodes.local-dgpu.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-dgpu-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-dgpu-blade" data-key="nodes.local-dgpu.blade" placeholder="(empty — local blade)">
+            <legend>[nodes.local-heavy] — discrete GPU node: the ONE heavy lane</legend>
+            <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+              Whichever engine <code>[ai].heavy_engine</code> selects (vLLM or
+              SGLang) serves this node on the same port and model name.
+            </p>
+            <label for="f-node-heavy-endpoint">endpoint (where this node's engine serves /v1)</label>
+            <input type="text" id="f-node-heavy-endpoint" data-key="nodes.local-heavy.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1">
+            <label for="f-node-heavy-model">model (canonical MiOS model tag this node serves)</label>
+            <input type="text" id="f-node-heavy-model" data-key="nodes.local-heavy.model" placeholder="mios-heavy">
+            <label for="f-node-heavy-lane">lane (compute bucket: gpu | cpu | igpu | npu | accelerator | mobile)</label>
+            <input type="text" id="f-node-heavy-lane" data-key="nodes.local-heavy.lane" placeholder="gpu">
+            <label for="f-node-heavy-api">api (engine protocol: openai | llamacpp | vllm | sglang)</label>
+            <input type="text" id="f-node-heavy-api" data-key="nodes.local-heavy.api" placeholder="openai">
+            <label for="f-node-heavy-hg">health_gate (inert until the gated lane is enabled + reachable)</label>
+            <input type="text" id="f-node-heavy-hg" data-key="nodes.local-heavy.health_gate" data-type="bool" placeholder="true">
+            <label for="f-node-heavy-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
+            <input type="text" id="f-node-heavy-blade" data-key="nodes.local-heavy.blade" placeholder="(empty — local blade)">
           </fieldset>
           <fieldset>
             <legend>[nodes.local-cpu] — CPU node</legend>
             <label for="f-node-cpu-endpoint">endpoint</label>
-            <input type="text" id="f-node-cpu-endpoint" data-key="nodes.local-cpu.endpoint" placeholder="http://localhost:${MIOS_PORTS_SGLANG}/v1">
+            <input type="text" id="f-node-cpu-endpoint" data-key="nodes.local-cpu.endpoint" placeholder="http://localhost:${MIOS_PORTS_CPU_NODE}/v1">
             <label for="f-node-cpu-model">model</label>
-            <input type="text" id="f-node-cpu-model" data-key="nodes.local-cpu.model" placeholder="mios-heavy">
+            <input type="text" id="f-node-cpu-model" data-key="nodes.local-cpu.model" placeholder="mios-agent-cpu">
             <label for="f-node-cpu-lane">lane</label>
-            <input type="text" id="f-node-cpu-lane" data-key="nodes.local-cpu.lane" placeholder="gpu">
+            <input type="text" id="f-node-cpu-lane" data-key="nodes.local-cpu.lane" placeholder="cpu">
             <label for="f-node-cpu-api">api</label>
-            <input type="text" id="f-node-cpu-api" data-key="nodes.local-cpu.api" placeholder="openai">
+            <input type="text" id="f-node-cpu-api" data-key="nodes.local-cpu.api" placeholder="llamacpp">
             <label for="f-node-cpu-hg">health_gate</label>
             <input type="text" id="f-node-cpu-hg" data-key="nodes.local-cpu.health_gate" data-type="bool" placeholder="true">
             <label for="f-node-cpu-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
@@ -1386,45 +1401,15 @@
             <input type="text" id="f-node-igpu-blade" data-key="nodes.local-igpu.blade" placeholder="(empty — local blade)">
           </fieldset>
           <fieldset>
-            <legend>[nodes.local-vllm] — heavy vLLM lane</legend>
-            <label for="f-node-vllm-endpoint">endpoint</label>
-            <input type="text" id="f-node-vllm-endpoint" data-key="nodes.local-vllm.endpoint" placeholder="http://localhost:${MIOS_PORTS_VLLM}/v1">
-            <label for="f-node-vllm-model">model</label>
-            <input type="text" id="f-node-vllm-model" data-key="nodes.local-vllm.model" placeholder="mios-heavy">
-            <label for="f-node-vllm-lane">lane</label>
-            <input type="text" id="f-node-vllm-lane" data-key="nodes.local-vllm.lane" placeholder="gpu">
-            <label for="f-node-vllm-api">api</label>
-            <input type="text" id="f-node-vllm-api" data-key="nodes.local-vllm.api" placeholder="openai">
-            <label for="f-node-vllm-hg">health_gate (inert until the gated lane is enabled + reachable)</label>
-            <input type="text" id="f-node-vllm-hg" data-key="nodes.local-vllm.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-vllm-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-vllm-blade" data-key="nodes.local-vllm.blade" placeholder="(empty — local blade)">
-          </fieldset>
-          <fieldset>
-            <legend>[nodes.local-sglang] — heavy SGLang lane</legend>
-            <label for="f-node-sglang-endpoint">endpoint</label>
-            <input type="text" id="f-node-sglang-endpoint" data-key="nodes.local-sglang.endpoint" placeholder="http://localhost:${MIOS_PORTS_SGLANG}/v1">
-            <label for="f-node-sglang-model">model</label>
-            <input type="text" id="f-node-sglang-model" data-key="nodes.local-sglang.model" placeholder="mios-heavy">
-            <label for="f-node-sglang-lane">lane</label>
-            <input type="text" id="f-node-sglang-lane" data-key="nodes.local-sglang.lane" placeholder="gpu">
-            <label for="f-node-sglang-api">api</label>
-            <input type="text" id="f-node-sglang-api" data-key="nodes.local-sglang.api" placeholder="openai">
-            <label for="f-node-sglang-hg">health_gate</label>
-            <input type="text" id="f-node-sglang-hg" data-key="nodes.local-sglang.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-sglang-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-sglang-blade" data-key="nodes.local-sglang.blade" placeholder="(empty — local blade)">
-          </fieldset>
-          <fieldset>
             <legend>[nodes.local-llamaswap] — llama.cpp multi-model lane</legend>
             <label for="f-node-ls-endpoint">endpoint</label>
-            <input type="text" id="f-node-ls-endpoint" data-key="nodes.local-llamaswap.endpoint" placeholder="http://localhost:${MIOS_PORTS_SGLANG}/v1">
+            <input type="text" id="f-node-ls-endpoint" data-key="nodes.local-llamaswap.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1">
             <label for="f-node-ls-model">model</label>
-            <input type="text" id="f-node-ls-model" data-key="nodes.local-llamaswap.model" placeholder="mios-heavy">
+            <input type="text" id="f-node-ls-model" data-key="nodes.local-llamaswap.model" placeholder="mios-agent-cpu">
             <label for="f-node-ls-lane">lane</label>
-            <input type="text" id="f-node-ls-lane" data-key="nodes.local-llamaswap.lane" placeholder="gpu">
+            <input type="text" id="f-node-ls-lane" data-key="nodes.local-llamaswap.lane" placeholder="cpu">
             <label for="f-node-ls-api">api</label>
-            <input type="text" id="f-node-ls-api" data-key="nodes.local-llamaswap.api" placeholder="openai">
+            <input type="text" id="f-node-ls-api" data-key="nodes.local-llamaswap.api" placeholder="llamacpp">
             <label for="f-node-ls-hg">health_gate</label>
             <input type="text" id="f-node-ls-hg" data-key="nodes.local-llamaswap.health_gate" data-type="bool" placeholder="true">
             <label for="f-node-ls-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
@@ -1626,7 +1611,7 @@
             <label for="f-pod-aiheavy-net">network</label>
             <input type="text" id="f-pod-aiheavy-net" data-key="pods.mios-ai-heavy.network" placeholder="host">
             <label for="f-pod-aiheavy-members">members (CSV)</label>
-            <input type="text" id="f-pod-aiheavy-members" data-key="pods.mios-ai-heavy.members" data-array="csv" placeholder="mios-llm-heavy,mios-llm-heavy-alt">
+            <input type="text" id="f-pod-aiheavy-members" data-key="pods.mios-ai-heavy.members" data-array="csv" placeholder="mios-llm-heavy">
           </fieldset>
           <fieldset>
             <legend>[pods.mios-ai-data]</legend>
@@ -1971,8 +1956,6 @@
           </p>
           <label for="f-ai-effort">effort (reasoning-effort ceiling; default shown)</label>
           <input type="text" id="f-ai-effort" data-key="ai.effort" placeholder="max">
-          <label for="f-ai-heavy-engine">heavy_engine (preferred gated heavy lane: sglang | vllm)</label>
-          <input type="text" id="f-ai-heavy-engine" data-key="ai.heavy_engine" placeholder="sglang">
           <label for="f-ai-ask-run">ask_to_run (propose a high-tier action, then wait for a yes before dispatching)</label>
           <input type="text" id="f-ai-ask-run" data-key="ai.ask_to_run" data-type="bool" placeholder="true">
           <label for="f-ai-ask-run-ttl">ask_to_run_ttl_s (per-action approval-bypass window after a yes, seconds)</label>
@@ -1989,6 +1972,56 @@
           <input type="text" id="f-ai-smartroute" data-key="ai.smartroute_enable" data-type="bool" placeholder="false">
           <label for="f-ai-tokbackend">tokenizer_backend (token-accounting backend; default shown)</label>
           <input type="text" id="f-ai-tokbackend" data-key="ai.tokenizer_backend" placeholder="tiktoken">
+        </fieldset>
+        <fieldset>
+          <legend>[ai.vllm] — heavy lane engine options: vLLM</legend>
+          <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+            Used when <code>[ai].heavy_engine</code> = vllm (the selector is in the
+            Personal zone). Placeholders are the SSOT defaults.
+          </p>
+          <label for="f-vllm-enable">enable (documents intent; the unit is the real gate)</label>
+          <input type="text" id="f-vllm-enable" data-key="ai.vllm.enable" data-type="bool" placeholder="false">
+          <label for="f-vllm-served">served_name (= [nodes.local-heavy].model)</label>
+          <input type="text" id="f-vllm-served" data-key="ai.vllm.served_name" placeholder="mios-heavy">
+          <label for="f-vllm-gpu-util">gpu_util (--gpu-memory-utilization)</label>
+          <input type="text" id="f-vllm-gpu-util" data-key="ai.vllm.gpu_util" data-type="float" placeholder="0.85">
+          <label for="f-vllm-max-len">max_model_len (--max-model-len)</label>
+          <input type="text" id="f-vllm-max-len" data-key="ai.vllm.max_model_len" data-type="int" placeholder="262144">
+          <label for="f-vllm-kv">kv_cache_dtype (--kv-cache-dtype)</label>
+          <input type="text" id="f-vllm-kv" data-key="ai.vllm.kv_cache_dtype" placeholder="fp8">
+          <label for="f-vllm-quant">quantization (empty = auto-detect from the weights)</label>
+          <input type="text" id="f-vllm-quant" data-key="ai.vllm.quantization" placeholder="">
+          <label for="f-vllm-tool-parser">tool_call_parser</label>
+          <input type="text" id="f-vllm-tool-parser" data-key="ai.vllm.tool_call_parser" placeholder="hermes">
+          <label for="f-vllm-apc">prefix_caching (--enable-prefix-caching)</label>
+          <input type="text" id="f-vllm-apc" data-key="ai.vllm.prefix_caching" data-type="bool" placeholder="true">
+          <label for="f-vllm-v1">v1_engine</label>
+          <input type="text" id="f-vllm-v1" data-key="ai.vllm.v1_engine" data-type="bool" placeholder="true">
+        </fieldset>
+        <fieldset>
+          <legend>[ai.sglang] — heavy lane engine options: SGLang</legend>
+          <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+            Used when <code>[ai].heavy_engine</code> = sglang. HiCache spills inactive
+            KV to CPU RAM, which is what lets the full 256k context fit the GPU.
+          </p>
+          <label for="f-sglang-enable">enable (documents intent; the unit is the real gate)</label>
+          <input type="text" id="f-sglang-enable" data-key="ai.sglang.enable" data-type="bool" placeholder="false">
+          <label for="f-sglang-bake">bake_model (HF repo of the heavy lane's weights)</label>
+          <input type="text" id="f-sglang-bake" data-key="ai.sglang.bake_model" placeholder="stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ">
+          <label for="f-sglang-served">served_name (= [nodes.local-heavy].model)</label>
+          <input type="text" id="f-sglang-served" data-key="ai.sglang.served_name" placeholder="mios-heavy">
+          <label for="f-sglang-mem">mem_fraction (--mem-fraction-static)</label>
+          <input type="text" id="f-sglang-mem" data-key="ai.sglang.mem_fraction" data-type="float" placeholder="0.85">
+          <label for="f-sglang-tool-parser">tool_parser (--tool-call-parser)</label>
+          <input type="text" id="f-sglang-tool-parser" data-key="ai.sglang.tool_parser" placeholder="qwen25">
+          <label for="f-sglang-reasoning">reasoning_parser (empty = non-thinking model)</label>
+          <input type="text" id="f-sglang-reasoning" data-key="ai.sglang.reasoning_parser" placeholder="">
+          <label for="f-sglang-kv">kv_cache_dtype (--kv-cache-dtype)</label>
+          <input type="text" id="f-sglang-kv" data-key="ai.sglang.kv_cache_dtype" placeholder="fp8_e5m2">
+          <label for="f-sglang-hicache">hierarchical_cache (--enable-hierarchical-cache)</label>
+          <input type="text" id="f-sglang-hicache" data-key="ai.sglang.hierarchical_cache" data-type="bool" placeholder="true">
+          <label for="f-sglang-radix">unified_radix_tree (--enable-unified-radix-tree)</label>
+          <input type="text" id="f-sglang-radix" data-key="ai.sglang.unified_radix_tree" data-type="bool" placeholder="true">
         </fieldset>
       </div>
     </details>
@@ -2365,10 +2398,8 @@
         <input type="text" id="f-port-llm-light" data-key="ports.llm_light" data-type="int" placeholder="11450">
         <label for="f-port-cpu-node">cpu_node (always-on / gaming-immune CPU llama-server lane)</label>
         <input type="text" id="f-port-cpu-node" data-key="ports.cpu_node" data-type="int" placeholder="11451">
-        <label for="f-port-sglang">sglang (heavy local LLM backend)</label>
-        <input type="text" id="f-port-sglang" data-key="ports.sglang" data-type="int" placeholder="11441">
-        <label for="f-port-vllm">vllm (alternate heavy local LLM backend)</label>
-        <input type="text" id="f-port-vllm" data-key="ports.vllm" data-type="int" placeholder="11440">
+        <label for="f-port-llm-heavy">llm_heavy (THE heavy dGPU lane; vLLM or SGLang per [ai].heavy_engine)</label>
+        <input type="text" id="f-port-llm-heavy" data-key="ports.llm_heavy" data-type="int" placeholder="8520">
         <label for="f-port-k3s">k3s_api (Kubernetes API)</label>
         <input type="text" id="f-port-k3s" data-key="ports.k3s_api" data-type="int" placeholder="6443">
         <label for="f-port-stack-id">stack_id (multiplier offset for port collision avoidance)</label>
@@ -4344,7 +4375,27 @@ function splitDataKey(k) {
   return i < 0 ? ["", k] : [k.substring(0, i), k.substring(i + 1)];
 }
 
+// An engine selector (data-engine-select) offers exactly the overlays the loaded
+// SSOT declares: every [<kind>.<name>.engine] table whose `select` names this
+// control's key contributes the names of its [<...>.engine.<engine>.*] tables.
+// With no such table loaded (file:// defaults) the static options stay.
+function populateEngineSelects() {
+  document.querySelectorAll("select[data-engine-select]").forEach(sel => {
+    const names = new Set();
+    for (const [sec, tbl] of Object.entries(DATA)) {
+      if (!sec.endsWith(".engine") || tbl?.select !== sel.dataset.key) continue;
+      for (const other of Object.keys(DATA)) {
+        if (other.startsWith(sec + ".")) names.add(other.slice(sec.length + 1).split(".")[0]);
+      }
+    }
+    if (!names.size) return;
+    const labels = new Map(Array.from(sel.options).map(o => [o.value, o.textContent]));
+    sel.replaceChildren(...[...names].sort().map(n => new Option(labels.get(n) || n, n)));
+  });
+}
+
 function refreshFromData() {
+  populateEngineSelects();
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);
     const v = DATA[sec]?.[key];

@@ -30,7 +30,7 @@ import uuid
 # Role Definitions & Architectural Constants
 # ==============================================================================
 
-ROLE_HEAVY_REASONING = "heavy_reasoning"    # vLLM / SGLang (mios-llm-heavy, [ports].vllm/.sglang, dGPU VFIO)
+ROLE_HEAVY_REASONING = "heavy_reasoning"    # mios-llm-heavy, vLLM or SGLang per [ai].heavy_engine ([ports].llm_heavy, dGPU VFIO)
 ROLE_CODING = "coding"                      # mios-opencode (served by [ports].llm_light)
 ROLE_EMBEDDINGS = "embeddings"              # nomic-embed-text (served by [ports].llm_light)
 ROLE_TOOL_SANDBOX = "tool_sandbox"          # bwrap / seccomp isolated execution
@@ -50,6 +50,7 @@ STATUS_OFFLINE = "offline"
 
 DEFAULT_CLUSTER_NODES_PATH = "/run/mios/cluster/nodes.json"
 _LIGHT_PORT = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")
+_HEAVY_PORT = os.environ.get("MIOS_PORTS_LLM_HEAVY", "8520")
 
 
 # ==============================================================================
@@ -287,7 +288,7 @@ class MeshTopology:
                 gpu_vram_total_mb=24576,
                 cpu_load_pct=22.4,
             ),
-            endpoint_url=f"http://10.244.0.1:{os.environ.get('MIOS_PORTS_VLLM', '8520')}/v1",
+            endpoint_url=f"http://10.244.0.1:{_HEAVY_PORT}/v1",
         )
 
         # Blade 02: Light inference, coding, and fast vector embeddings
@@ -323,7 +324,7 @@ class MeshTopology:
                 gpu_vram_total_mb=24576,
                 cpu_load_pct=68.5,
             ),
-            endpoint_url=f"http://10.244.0.3:{os.environ.get('MIOS_PORTS_SGLANG', '8530')}/v1",
+            endpoint_url=f"http://10.244.0.3:{_HEAVY_PORT}/v1",
         )
 
         # Blade 04: Dedicated sandbox & embeddings node (Degraded network latency)

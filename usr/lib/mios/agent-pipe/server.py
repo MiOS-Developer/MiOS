@@ -1062,11 +1062,11 @@ async def cephfs_health():
 
 @app.post("/v1/inference/lora/load")
 async def lora_load(request: Request):
-    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
-    if heavy_mode != "single":
+    heavy_engine = str(_toml_section("ai").get("heavy_engine") or "").strip().lower()
+    if heavy_engine != "vllm":   # multi-LoRA is a vLLM engine feature of the heavy lane
         return JSONResponse(
             status_code=400,
-            content={"error": "LoRA loading is only supported when heavy_engine_mode is 'single'"}
+            content={"error": "LoRA loading is only supported when [ai].heavy_engine is 'vllm'"}
         )
     try:
         body = await request.json()
@@ -1089,8 +1089,8 @@ async def lora_load(request: Request):
 
 @app.get("/v1/inference/lora/list")
 async def lora_list():
-    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
-    if heavy_mode != "single":
+    heavy_engine = str(_toml_section("ai").get("heavy_engine") or "").strip().lower()
+    if heavy_engine != "vllm":
         return {"adapters": [], "enabled": False}
 
     url = f"{_TOOL_BACKEND_HEAVY}/models"

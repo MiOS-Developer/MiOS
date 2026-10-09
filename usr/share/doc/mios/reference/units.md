@@ -108,8 +108,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-libexec-perms.path` | `usr/lib/systemd/system` | MiOS': watch /usr/libexec/mios for perm changes; retrigger chmod |
 | `mios-libexec-perms.service` | `usr/lib/systemd/system` | MiOS': enforce exec perms (go+rX) on /usr/libexec/mios |
 | `mios-libvirtd-setup.service` | `usr/lib/systemd/system` | MiOS' first-boot libvirtd wiring |
-| `mios-llm-heavy-alt.container` | `usr/share/containers/systemd` | MiOS' SGLang heavy lane (OpenAI /v1, HiCache CPU KV-offload; native 256k context) |
-| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' vLLM heavy lane (OpenAI /v1, PagedAttention + APC; gated) |
+| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated) |
 | `mios-llm-light.container` | `usr/share/containers/systemd` | MiOS' LLM-Light (llama.cpp multi-model + KV-paging lane, served via the upstream llama-swap proxy, FOSS) |
 | `mios-llm-worker@.container` | `usr/share/containers/systemd` | MiOS' swarm worker %i (single-model llama-server, FOSS) |
 | `mios-log-archiver.service` | `usr/lib/systemd/system` | MiOS Structured Parquet Log Archiver and Vector Indexer |
@@ -207,5 +206,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-machines.mount` | `usr/lib/systemd/system` | Virtual Machine and Container Storage (Compatibility) |
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 
-<!-- derived from tracked unit files (199 unit(s)) -->
+<!-- derived from tracked unit files (198 unit(s)) -->
 <!-- /MIOS-GEN:units -->

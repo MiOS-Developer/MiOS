@@ -822,7 +822,7 @@ class mma_TestModelMatrixAlloc(unittest.TestCase):
         self.assertEqual(alloc["models"]["default"]["name"], "qwen2.5-coder-32b")
         self.assertEqual(alloc["models"]["reasoning"]["name"], "deepseek-r1-distill-llama-70b")
         self.assertTrue(alloc["heavy_lane"]["enabled"])
-        self.assertEqual(alloc["heavy_lane"]["port_key"], "vllm")
+        self.assertEqual(alloc["heavy_lane"]["port_key"], "llm_heavy")
 
     def test_vram_headroom_reservation(self):
         allocator = mma_model_matrix_alloc.ModelMatrixAllocator(headroom_ratio=0.90, mock=True)

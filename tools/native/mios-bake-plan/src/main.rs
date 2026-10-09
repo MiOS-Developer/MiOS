@@ -101,6 +101,30 @@ fn resolve_image_val(
     s2.trim().to_string()
 }
 
+/// Every `Image=` an engine overlay declares, `[<kind>s.<name>.engine.<engine>.<Section>].Image`.
+/// mios-gen renders only the overlay its selector names (the heavy lane: vLLM or
+/// SGLang), so an unselected engine's image has no Quadlet. It stays in
+/// [build.bake].core so switching engines is one SSOT edit, never two.
+fn engine_overlay_images(parsed: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for kind in ["containers", "images"] {
+        let specs = parsed.get(kind).and_then(Value::as_table);
+        for spec in specs.into_iter().flat_map(|t| t.values()) {
+            let Some(engines) = spec.get("engine").and_then(Value::as_table) else {
+                continue;
+            };
+            for overlay in engines.values().filter_map(Value::as_table) {
+                for section in overlay.values().filter_map(Value::as_table) {
+                    if let Some(img) = section.get("Image").and_then(Value::as_str) {
+                        out.push(img.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn classify(img: &str, groups: &[String], group_members: &BTreeMap<String, Vec<String>>) -> String {
     for g in groups {
         if let Some(members) = group_members.get(g) {
@@ -407,7 +431,23 @@ fn main() {
             img
         ));
     }
+    let mut engine_images: BTreeSet<String> = BTreeSet::new();
+    for raw in engine_overlay_images(&parsed) {
+        let img = resolve_image_val(&raw, &sidecars, &ssot_vars);
+        if img.is_empty() || img.starts_with("localhost/") {
+            continue;
+        }
+        if !core.contains(&img) {
+            errors.push(format!(
+                "Engine overlay image '{img}' is missing from [build.bake].core, so selecting that engine would fail the bake"
+            ));
+        }
+        engine_images.insert(img);
+    }
     for img in core_non_localhost.difference(&discovered_non_localhost) {
+        if engine_images.contains(img) {
+            continue; // an unselected engine's image: referenced by its overlay
+        }
         errors.push(format!(
             "Core image '{}' is not referenced by any Quadlet",
             img
@@ -665,6 +705,38 @@ mod tests {
         let got = resolve_image_val("x/y:${MIOS_VERSION_PARITY_PROBE}", &sidecars, &ssot);
         unsafe { env::remove_var("MIOS_VERSION_PARITY_PROBE") };
         assert_eq!(got, "x/y:from-env");
+    }
+
+    #[test]
+    fn every_engine_overlay_image_is_collected_selected_or_not() {
+        let parsed: Value = toml::from_str(
+            r#"
+            [containers.lane.Container]
+            Image = "ignored/base:1"
+            [containers.lane.engine]
+            select = "ai.heavy_engine"
+            [containers.lane.engine.vllm.Container]
+            Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
+            [containers.lane.engine.sglang.Container]
+            Image = "docker.io/lmsysorg/sglang:latest"
+            [images.lane.engine.sglang.Image]
+            Image = "docker.io/lmsysorg/sglang:latest"
+            [containers.plain.Container]
+            Image = "docker.io/library/redis:alpine"
+        "#,
+        )
+        .unwrap();
+        let mut got = engine_overlay_images(&parsed);
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}",
+                "docker.io/lmsysorg/sglang:latest",
+                "docker.io/lmsysorg/sglang:latest",
+            ]
+        );
+        assert!(engine_overlay_images(&toml::from_str("[containers]\n").unwrap()).is_empty());
     }
 
     #[test]

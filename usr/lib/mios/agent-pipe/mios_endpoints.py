@@ -41,7 +41,7 @@ def _endpoint_supports_tool_choice(ep: str, cfg: dict,
 
 _PARALLEL_TOOLS_HINTS = tuple(
     h.strip() for h in str(os.environ.get("MIOS_PARALLEL_TOOLS_HINTS")
-                           or _DISPATCH_TOML.get("parallel_tools_hints", "8520,8530")).split(",")
+                           or _DISPATCH_TOML.get("parallel_tools_hints", "8520")).split(",")
     if h.strip())
 
 def _endpoint_supports_parallel_tools(ep: str) -> bool:

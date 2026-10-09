@@ -225,7 +225,7 @@ class ModelMatrixAllocator:
             },
             "heavy_lane": {
                 "enabled": tier == TIER_POWERUSER,
-                "port_key": "vllm" if tier == TIER_POWERUSER else None,
+                "port_key": "llm_heavy" if tier == TIER_POWERUSER else None,
                 "reason": "Off by default on VRAM grounds" if tier != TIER_POWERUSER else "Enabled for multi-GPU power tier",
             },
             "endpoint_contract": "MIOS_AI_ENDPOINT (Law 5 UNIFIED-AI-REDIRECTS)",
