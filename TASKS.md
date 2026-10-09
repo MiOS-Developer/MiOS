@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1733 |
+| pending | 1734 |
 | in_progress | 50 |
 | completed | 1827 |
 | incomplete | 20 |
 | cancelled | 20 |
-| total | 3650 |
+| total | 3651 |
 
 0 record(s) carry at least one override.
 
@@ -1443,6 +1443,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2242` Ratchet the 150 stale AI-related references down to zero -- completed · P2 · size M
 - `task_3409` Drop .devloop/foreign-srf-libexec.patch and land its unlanded seed-db-config.py header hunk -- completed · P2 · size S
 - `task_3482` Drop stale AI-functions lines naming removed functions from the harvested manual -- pending · owner antigravity · P3 · size S
+- `task_3651` Decide whether a task_<n> citation is a [docs.signals] narrative/fact signal -- pending · owner claude-code · P3 · size S
 
 ### Epic task_3596
 
