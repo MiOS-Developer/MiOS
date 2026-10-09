@@ -5476,6 +5476,15 @@ test_pod_quadlets() {
 
     _pq_restore
     _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoration: ${_NEG_GATE_OUT}"
+
+    # Planted MIOS_PG_PASS negative control (Law 11)
+    MIOS_PG_PASS="planted-secret-123" _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_PG_PASS"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_PG_PASS: ${_NEG_GATE_OUT}"
+
+    # Planted MIOS_ADGUARD_UID=0 negative control (Law 6)
+    MIOS_ADGUARD_UID=0 _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_ADGUARD_UID=0"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_ADGUARD_UID: ${_NEG_GATE_OUT}"
+
     log "check_pod_quadlets negative test passed"
 }
 
