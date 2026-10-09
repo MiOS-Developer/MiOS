@@ -12881,7 +12881,7 @@ max_tooling_python_lines = 80483   # module-test-coverage + static-linkage censu
 # FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
 # a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
 [legibility.file_budget]
-target_tracked_files = 500   # operator directive 2026-10-09: "500 disparate files -- TOTAL/OVERALL"
+target_tracked_files = 500   # operator directive: "500 disparate files -- TOTAL/OVERALL"
 order = ["dependency", "projections", "agent_pipe", "modules", "docs", "tests", "rust", "automation", "etc", "harness", "data", "tools", "misc"]
 
 [legibility.file_budget.domains.dependency]  # vendored wheels and archives fold into one bundle per kind (Law 12 still bakes them); one Cargo.lock
