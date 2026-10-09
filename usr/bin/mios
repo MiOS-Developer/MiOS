@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: The primary CLI entry point for the MiOS system, providing an OpenAI-compatible agent shell that handles tool-calling, system prompt resolution, and streaming responses from the Hermes-Agent gateway.
-# AI-related: /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard.sh, /usr/libexec/mios/mios-configurator-launch
+# AI-related: /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard, /usr/libexec/mios/mios-configurator-launch
 
 from __future__ import annotations
 
@@ -310,11 +310,11 @@ KNOWN_VERBS = {
     "ai-terminal": ["/usr/libexec/mios/mios-ai-terminal"],
     "mcp": ["/usr/lib/mios/mcp/.venv/bin/python3", "/usr/libexec/mios/mios-mcp-server"],
     "build":  ["/usr/libexec/mios/mios-build-driver"],
-    "dash":   ["/usr/libexec/mios/mios-dashboard.sh", "--dash"],
-    "mini":   ["/usr/libexec/mios/mios-dashboard.sh", "--mini"],
-    "mon":    ["/usr/libexec/mios/mios-dashboard.sh", "--monitor"],
-    "monitor":["/usr/libexec/mios/mios-dashboard.sh", "--monitor"],
-    "shell":  ["/usr/libexec/mios/mios-dashboard.sh", "--monitor"],
+    "dash":   ["/usr/libexec/mios/mios-dashboard", "--dash", "--once"],
+    "mini":   ["/usr/libexec/mios/mios-dashboard", "--mini", "--once"],
+    "mon":    ["/usr/libexec/mios/mios-dashboard", "--monitor"],
+    "monitor":["/usr/libexec/mios/mios-dashboard", "--monitor"],
+    "shell":  ["/usr/libexec/mios/mios-dashboard", "--monitor"],
     "config": ["/usr/libexec/mios/mios-configurator-launch"],
     "code":   ["/usr/libexec/mios/mios-open-url", "http://localhost:8080/"],
     "ai":     ["/usr/libexec/mios/mios-terminal", "--workspace"],
@@ -565,7 +565,7 @@ def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[1] == "daemon":
         return _daemon_main(argv[2:])
     if (len(argv) < 2 or (len(argv) >= 2 and argv[1] in ("mon", "monitor"))) and sys.stdin.isatty() and sys.stdout.isatty():
-        mon_bin = "/usr/libexec/mios/mios-dashboard.sh"
+        mon_bin = "/usr/libexec/mios/mios-dashboard"
         mon_py = "/usr/libexec/mios/mios-mon.py"
         extra_args = argv[2:] if len(argv) >= 2 and argv[1] in ("mon", "monitor") else []
         root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or (
@@ -740,7 +740,7 @@ def main(argv: list[str]) -> int:
     if first in KNOWN_VERBS and KNOWN_VERBS[first] is not None:
         cmd = KNOWN_VERBS[first]
         target = cmd[0]
-        if target.endswith("mios-dashboard.sh"):
+        if sys.platform == "win32" and target.endswith("mios-dashboard"):
             for cand in [
                 os.path.join(root, "usr/libexec/mios/mios-mon.py") if root else None,
                 os.path.join(root, "installation/mios-mon.py") if root else None,
@@ -771,6 +771,9 @@ def main(argv: list[str]) -> int:
         ).returncode == 0:
             exec_target = target if pathlib.Path(target).is_file() else (resolved_target if root and pathlib.Path(resolved_target).is_file() else target)
             os.execvp(exec_target, [exec_target] + cmd[1:] + argv[2:])
+
+        sys.stderr.write(f"mios: required entrypoint is unavailable: {target}\n")
+        return 127
 
     # Dynamic plugin dispatch (T-514)
     try:

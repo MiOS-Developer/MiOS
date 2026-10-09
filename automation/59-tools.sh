@@ -27,7 +27,7 @@ for tool in "${TOOLS[@]}"; do
     fi
 done
 
-[[ -f "/usr/bin/mios-dash" ]] || ln -sf /usr/libexec/mios/mios-dashboard.sh /usr/bin/mios-dash 2>/dev/null || true
+[[ -f "/usr/bin/mios-dash" ]] || ln -sf /usr/libexec/mios/mios-dashboard /usr/bin/mios-dash 2>/dev/null || true
 if [ -f "/usr/libexec/mios/mios-vscode-custom-css" ]; then
     chmod +x "/usr/libexec/mios/mios-vscode-custom-css"
     ln -sf "/usr/libexec/mios/mios-vscode-custom-css" "/usr/bin/mios-vscode-custom-css" 2>/dev/null || true

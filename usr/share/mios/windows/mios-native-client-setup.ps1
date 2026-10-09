@@ -10,9 +10,11 @@ param(
     [switch]$SkipClients,
     [switch]$SkipAgentInstall,
     [switch]$RuntimeOnly,
+    [switch]$RepairRuntime,
     [switch]$EmitConfig
 )
 $ErrorActionPreference = 'Stop'
+if ($RepairRuntime) { $RuntimeOnly = $true }
 function Test-MiosGuestDefaultRoute([string[]]$Json) { return @(($Json -join "`n") | ConvertFrom-Json).Count -gt 0 }
 function Set-MiosTerminalTransparency([Collections.IDictionary]$Appearance, [Collections.IDictionary]$Theme) {
     foreach ($key in @('opacity','unfocused_opacity')) {
@@ -118,10 +120,21 @@ if (-not $LinuxUser) {
     $LinuxUser = (& wsl.exe -d $Distro -u root -- python3 -c 'import pwd; print(pwd.getpwuid(1000).pw_name)').Trim()
     if ($LASTEXITCODE -ne 0 -or -not $LinuxUser) { throw 'No UID 1000 MiOS user; pass an unprivileged -LinuxUser explicitly' }
 }
-$resolve = 'import sys,json; sys.path.insert(0,"/usr/lib/mios"); import mios_toml; d=mios_toml.load_merged(); print(json.dumps({"apps":d["apps"],"font":d["theme"]["font"],"theme":d["theme"],"terminal":d["terminal"],"colors":mios_toml.colors(d),"keybindings":d["keybindings"],"mcp":d["mcp"],"agent_cli":d["agent_cli"],"ports":d["ports"],"os_control":d["os_control"],"nativeWindows":d["build"]["native"]["windows"],"clinkPackage":d["bootstrap"]["prereqs"]["clink_pkg"]}))'
+$resolve = 'import sys,json; sys.path.insert(0,"/usr/lib/mios"); import mios_toml; d=mios_toml.load_merged(); print(json.dumps({"apps":d["apps"],"font":d["theme"]["font"],"theme":d["theme"],"terminal":d["terminal"],"colors":mios_toml.colors(d),"keybindings":d["keybindings"],"mcp":d["mcp"],"agent_cli":d["agent_cli"],"ports":d["ports"],"os_control":d["os_control"],"nativeWindows":d["build"]["native"]["windows"],"nativeToolchain":d["build"]["toolchain"],"windowsCrossPackages":d["packages"]["windows-cross-build"]["pkgs"],"clinkPackage":d["bootstrap"]["prereqs"]["clink_pkg"],"runtimePackages":d["packages"]["mcp"]["pkgs"],"runtimeProbes":d["packages"]["mcp"]["verify_probes"]}))'
 $configJson = & wsl.exe -d $Distro -u $LinuxUser -- python3 -c $resolve
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve native MiOS theme SSOT' }
 $config = $configJson | ConvertFrom-Json -AsHashtable
+if (-not $config['runtimePackages'].Count -or -not $config['runtimeProbes'].Count) { throw 'SSOT [packages.mcp] runtime packages/probes must not be empty' }
+$runtimeProbe = 'import shutil,sys; missing=[c for c in sys.argv[1:] if not shutil.which(c)]; print("\n".join(missing)); sys.exit(bool(missing))'
+$missingRuntime = @(& wsl.exe -d $Distro -u $LinuxUser -- python3 -c $runtimeProbe @($config['runtimeProbes']))
+if ($LASTEXITCODE -ne 0) {
+    if ($RuntimeOnly -and -not $RepairRuntime) { throw "Missing SSOT runtime commands: $($missingRuntime -join ', '). Run mios repair to install the declared package set." }
+    foreach ($package in $config['runtimePackages']) { if ($package -notmatch '^[A-Za-z0-9][A-Za-z0-9+_.-]*$') { throw 'Invalid SSOT runtime package name' } }
+    & wsl.exe -d $Distro -u root -- dnf -y install @($config['runtimePackages'])
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT runtime package installation failed' }
+    & wsl.exe -d $Distro -u $LinuxUser -- python3 -c $runtimeProbe @($config['runtimeProbes'])
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT runtime commands still missing after package installation' }
+}
 if ($config['terminal']['start_directory'] -isnot [string] -or -not $config['terminal']['start_directory'].StartsWith('/')) { throw '[terminal].start_directory must be an absolute MiOS path' }
 $mcpPython = $config['mcp']['python']
 $check = & wsl.exe -d $Distro -u $LinuxUser -- $mcpPython -c 'import os; from mcp import Client; assert os.getuid()!=0; assert os.access("/usr/libexec/mios/tmux-mcp",os.X_OK); print("native-ready")'
@@ -177,6 +190,14 @@ if ($legacyHub -and (Test-Path -LiteralPath $legacyHub) -and (Test-Path -Literal
 $existingProfile = if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' } else { [string]$PROFILE.CurrentUserAllHosts }
 if (Test-Path -LiteralPath $existingProfile) {
     $existingText = [IO.File]::ReadAllText($existingProfile)
+    # Retired shell dashboard calls survive in already-installed profile bodies.
+    # Keep the body and operator edits, migrating only this MiOS entrypoint.
+    $migratedText = $existingText.Replace('bash /usr/libexec/mios/mios-dashboard.sh', 'python3 /usr/libexec/mios/mios-dashboard')
+    $migratedText = $migratedText.Replace('-- /usr/libexec/mios/mios-dashboard.sh --mini', '-- python3 /usr/libexec/mios/mios-dashboard --mini --once')
+    if ($migratedText -cne $existingText) {
+        Write-MiosFile $existingProfile $migratedText
+        $existingText = $migratedText
+    }
     if ($existingText -match '# >>> MiOS native SSOT runtime >>>' -and $existingText -notmatch 'mios-native-shell.ps1') {
         $shellHook = ". (Join-Path `$_miosNativeBin 'mios-native-shell.ps1') -BinDirectory `$_miosNativeBin"
         Write-MiosFile $existingProfile ($existingText.Replace('# <<< MiOS native SSOT runtime <<<', "$shellHook`n# <<< MiOS native SSOT runtime <<<"))
@@ -263,6 +284,7 @@ $binding = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'native-bindin
 $verb = if ($Arguments.Count) { $Arguments[0] } else { 'terminal' }
 [string[]]$rest = @()
 if ($Arguments.Count -gt 1) { $rest = $Arguments[1..($Arguments.Count-1)] }
+if ($verb -eq 'repair') { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RepairRuntime -BinDirectory $PSScriptRoot; exit 0 }
 if ($verb -notin @('mcp','ssh')) { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RuntimeOnly -BinDirectory $PSScriptRoot }
 $userBinding = Join-Path $env:LOCALAPPDATA 'MiOS\native-binding.json'
 if (Test-Path -LiteralPath $userBinding) { $binding = Get-Content -Raw -LiteralPath $userBinding | ConvertFrom-Json }
@@ -277,6 +299,9 @@ $remote = @('/usr/bin/env','MIOS_TERMINAL_DIRECTORY=.')
 if ($env:SSH_CONNECTION -or $env:SSH_CLIENT -or $env:SSH_TTY) { $remote += 'MIOS_REMOTE_TERMINAL=1' }
 switch ($verb) {
     'project' { exit 0 }
+    'btop' { & wsl.exe -d $binding.distro -u $binding.linuxUser -- btop @rest; exit $LASTEXITCODE }
+    'mini' { & wsl.exe -d $binding.distro -u $binding.linuxUser -- python3 /usr/libexec/mios/mios-dashboard --mini --once @rest; exit $LASTEXITCODE }
+    'dash' { & wsl.exe -d $binding.distro -u $binding.linuxUser -- python3 /usr/libexec/mios/mios-dashboard --dash --once @rest; exit $LASTEXITCODE }
     'mon' { & wsl.exe -d $binding.distro -u $binding.linuxUser -- /usr/bin/mios mon @rest; exit $LASTEXITCODE }
     'monitor' { & wsl.exe -d $binding.distro -u $binding.linuxUser -- /usr/bin/mios mon @rest; exit $LASTEXITCODE }
     'terminal' { & wsl.exe -d $binding.distro -u $binding.linuxUser --cd $directory -- @remote /usr/libexec/mios/mios-terminal @rest; exit $LASTEXITCODE }
@@ -352,7 +377,26 @@ $nativeExe = Join-Path $SourceRoot "tools\native\target\$($windowsBuild['target'
     $sourceLinux = (& wsl.exe -d $builder -u root -- wslpath -a -u $SourceRoot.Replace('\','/')) -join ''
     if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the system source in MiOS-DEV' }
     $flags = (@($windowsBuild['rustflags']) + @('-C',"linker=$($windowsBuild['linker'])")) -join ' '
-    & wsl.exe -d $builder -u root -- env CARGO_TARGET_DIR=/var/tmp/mios-native-build "RUSTFLAGS=$flags" cargo build --locked --release --manifest-path "$sourceLinux/tools/native/Cargo.toml" -p mios-launch --target $windowsBuild['target']
+    $crossPackages = @($config['windowsCrossPackages'])
+    if (-not $crossPackages.Count) { throw 'SSOT Windows cross-build package closure is empty' }
+    foreach ($package in $crossPackages) { if ($package -notmatch '^[A-Za-z0-9][A-Za-z0-9+_.-]*$') { throw 'Invalid SSOT cross-build package name' } }
+    & wsl.exe -d $builder -u root -- dnf -y install @crossPackages
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT Windows cross-build packages could not be installed' }
+    $channel = $config['nativeToolchain']['channel']
+    if (-not $channel -or -not $config['nativeToolchain']['components'].Count) { throw 'SSOT toolchain channel/components are required' }
+    $toolchainEnv = @('CARGO_HOME=/usr/local/cargo','RUSTUP_HOME=/usr/local/rustup','PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
+    & wsl.exe -d $builder -u root -- test -x /usr/local/cargo/bin/rustup
+    if ($LASTEXITCODE -ne 0) {
+        & wsl.exe -d $builder -u root -- env @toolchainEnv rustup-init -y --no-modify-path --profile minimal --default-toolchain $channel
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the SSOT Rust toolchain' }
+    }
+    & wsl.exe -d $builder -u root -- env @toolchainEnv rustup toolchain install $channel --profile minimal
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT Rust channel installation failed' }
+    & wsl.exe -d $builder -u root -- env @toolchainEnv rustup component add --toolchain $channel @($config['nativeToolchain']['components'])
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT Rust lint/format components are unavailable' }
+    & wsl.exe -d $builder -u root -- env @toolchainEnv rustup target add --toolchain $channel $windowsBuild['target']
+    if ($LASTEXITCODE -ne 0) { throw 'SSOT Windows Rust target is unavailable' }
+    & wsl.exe -d $builder -u root -- env @toolchainEnv CARGO_TARGET_DIR=/var/tmp/mios-native-build "RUSTFLAGS=$flags" cargo "+$channel" build --locked --release --manifest-path "$sourceLinux/tools/native/Cargo.toml" -p mios-launch --target $windowsBuild['target']
     if ($LASTEXITCODE -ne 0) { throw 'Native Windows launcher build failed inside MiOS-DEV' }
     & wsl.exe -d $builder -u root -- install -D -m 0755 "/var/tmp/mios-native-build/$($windowsBuild['target'])/release/mios-launch.exe" "$sourceLinux/tools/native/target/$($windowsBuild['target'])/release/mios-launch.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Cannot stage the verified native Windows launcher' }

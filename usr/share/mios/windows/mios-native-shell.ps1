@@ -14,12 +14,17 @@ function global:mios {
     [CmdletBinding()]
     param([Parameter(Position=0)][string]$Verb,
           [Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+    if ($null -eq $Arguments) { $Arguments = @() }
     if (-not $Verb) { $Verb = 'terminal' }
-    if ($Verb.ToLowerInvariant() -in @('terminal','ai','ai-terminal','agent','agents','mcp','ssh','mon','monitor')) {
+    if ($Verb.ToLowerInvariant() -in @('terminal','ai','ai-terminal','agent','agents','mcp','ssh','mon','monitor','mini','dash','btop','repair')) {
         & $global:MiosNativeEntry $Verb @Arguments
     } elseif ($global:MiosLegacyDispatcher) {
         & $global:MiosLegacyDispatcher $Verb @Arguments
     } else {
         & $global:MiosNativeEntry $Verb @Arguments
     }
+}
+function global:btop {
+    # Use the installed binding's unprivileged user, including from Xbox Mode.
+    & $global:MiosNativeEntry btop @args
 }

@@ -4,6 +4,8 @@
 param(
     [switch]$BootstrapOnly,
     [switch]$BuildOnly,
+    [string]$SourceRoot = '',
+    [string]$BuildDistro = '',
     [switch]$FullBuild,
     [switch]$DeployPipeline,
 
@@ -20,6 +22,72 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
+
+function Resolve-MiosBuilderDistribution([string]$Machine) {
+    $registered = @(& wsl.exe --list --quiet 2>$null) |
+        ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ }
+    foreach ($candidate in @($Machine, "podman-$Machine")) {
+        if ($registered -contains $candidate) { return $candidate }
+    }
+    throw "No registered WSL distribution for MiOS builder '$Machine'; existing machines are preserved."
+}
+
+function Invoke-MiosNativeImageBuild([string]$Root, [string]$Machine) {
+    $Root = (Resolve-Path -LiteralPath $Root -ErrorAction Stop).Path
+    foreach ($required in @('usr\share\mios\mios.toml','Containerfile','.devcontainer\Containerfile','automation\55-native-build.sh')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Root $required) -PathType Leaf)) {
+            throw "Current-source build input missing: $required"
+        }
+    }
+    $distribution = Resolve-MiosBuilderDistribution $Machine
+    $linuxRoot = (& wsl.exe -d $distribution -u root -- wslpath -a -u $Root.Replace('\','/')) -join ''
+    if ($LASTEXITCODE -ne 0 -or -not $linuxRoot) { throw 'Current source is not accessible in the MiOS builder' }
+    # Bootstrap only the native management executable, then let its SSOT engine
+    # build/lint/install the catalog. Use persistent builder output, not the source.
+    & wsl.exe -d $distribution -u root -- env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CARGO_TARGET_DIR=/var/tmp/mios-native-build MIOS_NATIVE_INSTALL_ROOT=/ bash "$linuxRoot/automation/55-native-build.sh" | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) { throw "Native SSOT build/install failed (exit $LASTEXITCODE)" }
+    & wsl.exe -d $distribution -u root -- /usr/bin/miosd image-build --root $linuxRoot --target all | ForEach-Object { Write-Host $_ }
+    return $LASTEXITCODE
+}
+
+function Ensure-MiosBuilder([string]$Machine, [hashtable]$Hardware) {
+    $registered = @(& wsl.exe --list --quiet 2>$null) |
+        ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ }
+    foreach ($candidate in @($Machine, "podman-$Machine")) {
+        if ($registered -contains $candidate) {
+            & wsl.exe -d $candidate -u root -- /bin/true | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Existing builder '$candidate' is not responsive; its persistent state is preserved." }
+            return $candidate
+        }
+    }
+    $machines = @(& podman machine list --format '{{.Name}}' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Podman machines; refusing to recreate an unknown builder.' }
+    if ($machines -contains $Machine) {
+        & podman machine start $Machine | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { throw "Cannot start existing machine '$Machine'; its persistent state is preserved." }
+    } else {
+        New-BuilderDistro -HW $Hardware
+    }
+    return Resolve-MiosBuilderDistribution $Machine
+}
+
+# Build the current checkout without entering the provisioning/reset phases.
+# The native engine reads layered SSOT, builds both declared images and verifies
+# their runtime commands. It never fetches, resets, overlays or reaps the source.
+if ($BuildOnly) {
+    if (-not $SourceRoot) { $SourceRoot = $PSScriptRoot }
+    $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
+    foreach ($required in @('usr\share\mios\mios.toml','Containerfile','.devcontainer\Containerfile')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot $required) -PathType Leaf)) { throw "Current-source build input missing: $required" }
+    }
+    if (-not $BuildDistro) {
+        $binding = Get-Content -Raw -LiteralPath (Join-Path $env:ProgramData 'MiOS\bin\native-binding.json') -ErrorAction Stop | ConvertFrom-Json
+        $BuildDistro = $binding.distro
+    }
+    if (-not $BuildDistro) { throw 'A provisioned MiOS builder distribution is required' }
+    $nativeExit = Invoke-MiosNativeImageBuild -Root $SourceRoot -Machine $BuildDistro
+    exit $nativeExit
+}
 
 function Disable-ConsoleQuickEdit {
     try {
@@ -2384,98 +2452,7 @@ function New-BuilderDistro([hashtable]$HW) {
                 Log-Ok "$BuilderDistro is already running"
             } elseif ($LASTEXITCODE -eq 0) {
                 Log-Ok "$BuilderDistro started"
-            } else {
-                Log-Warn "$BuilderDistro start failed after init-already-exists (exit $LASTEXITCODE) -- force-removing and retrying init"
-                Write-Log "podman-recover-rm-output: $startJoined"
-
-                & {
-                    $ErrorActionPreference = 'Continue'
-                    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-                        $PSNativeCommandUseErrorActionPreference = $false
-                    }
-                    foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
-                        & wsl.exe --unregister $_wslName 2>&1 |
-                            ForEach-Object { Write-Log "podman-recover-wsl-unregister-pre: $_" }
-                    }
-                    Start-Sleep -Seconds 2
-                    & podman machine rm --force $BuilderDistro 2>&1 |
-                        ForEach-Object { Write-Log "podman-recover-rm: $_" }
-                    foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
-                        & wsl.exe --unregister $_wslName 2>&1 |
-                            ForEach-Object { Write-Log "podman-recover-wsl-unregister-post: $_" }
-                    }
-                    # Shut down the WSL2 lifeboot so retry-init's
-                    # `wsl --import` lands on a clean service state.
-                    & wsl.exe --shutdown 2>&1 |
-                        ForEach-Object { Write-Log "podman-recover-wsl-shutdown: $_" }
-                    Start-Sleep -Seconds 4
-                }
-
-                $podmanMachineCands = @(
-                    (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
-                    (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
-                    (Join-Path $env:PROGRAMDATA  'containers\podman\machine')
-                )
-                foreach ($p in $podmanMachineCands) {
-                    $info = $null
-                    try { $info = New-Object System.IO.DirectoryInfo $p } catch { continue }
-                    if (-not $info) { continue }
-                    $isLink   = $false
-                    $linkOnly = $false
-                    try {
-                        if ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                            $isLink   = $true
-                            $linkOnly = $true
-                        }
-                    } catch {
-                        # Attributes throws for dangling symlinks on
-                        # PS 7+; we know it's a link if .Exists is
-                        # false but the parent has a child with the
-                        # same name. Treat as link.
-                        $isLink   = $true
-                        $linkOnly = $true
-                    }
-                    $realDirExists = $false
-                    try { $realDirExists = $info.Exists -and -not $isLink } catch {}
-                    if (-not ($isLink -or $realDirExists)) { continue }
-
-                    if ($linkOnly) {
-                        Log-Warn "podman-recover: removing reparse-point at $p (link, no follow)"
-                        & {
-                            $ErrorActionPreference = 'Continue'
-                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-                                $PSNativeCommandUseErrorActionPreference = $false
-                            }
-                            cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
-                        }
-                    } else {
-                        Log-Warn "podman-recover: removing stale podman-machine state at $p"
-                        Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
-                    }
-                }
-
-                # Retry init from a clean slate. Same EAP=Continue wrap as
-                # the primary init invocation above so podman's chatty
-                # post-start stderr doesn't trip $ErrorActionPreference=Stop.
-                $retryOut = [System.Collections.Generic.List[string]]::new()
-                & {
-                    $ErrorActionPreference = 'Continue'
-                    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-                        $PSNativeCommandUseErrorActionPreference = $false
-                    }
-                    & podman @initArgs 2>&1 | ForEach-Object {
-                        Write-Log "podman-init-retry: $_"
-                        $retryOut.Add([string]$_) | Out-Null
-                        $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
-                        if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
-                        Show-Dashboard
-                    }
-                }
-                if ($LASTEXITCODE -ne 0) {
-                    throw "podman machine init retry failed (exit $LASTEXITCODE) after force-rm: $(($retryOut | Select-Object -Last 5) -join ' / ')"
-                }
-                Log-Ok "$BuilderDistro re-initialized after force-rm"
-            }
+            } else { throw "Existing builder start failed (exit $LASTEXITCODE); preserving machine registration, distribution and storage. $startJoined" }
         } else {
             throw "podman machine init failed (exit $initRc): $(($initOut | Select-Object -Last 3) -join ' / ')"
         }
@@ -2853,6 +2830,19 @@ else
     fi
 fi
 
+# Preserve locally edited deployed files. The verified image pipeline performs
+# the whole-system update; this optional live overlay must never discard them.
+if sudo git -C / rev-parse --verify HEAD >/dev/null 2>&1; then
+    if ! root_changes=$(sudo git -C / status --porcelain --untracked-files=no 2>&1); then
+        echo "[overlay] ERROR: cannot inspect existing root checkout" >&2
+        exit 1
+    fi
+    if [[ -n "$root_changes" ]]; then
+        echo "[overlay] preserving modified root overlay; full image build remains required"
+        exit 0
+    fi
+fi
+
 # -- Phase B: ensure / is a git working tree pointing at the native cache -----
 echo "[overlay] making / a git working tree of mios.git ($CACHE_DIR)"
 sudo git -C / init -b "$ORIGIN_BRANCH" 2>&1 | head -1 || true
@@ -2862,7 +2852,7 @@ sudo git -C / config --bool core.symlinks true
 sudo git -C / remote remove origin 2>/dev/null || true
 sudo git -C / remote add origin "$CACHE_DIR"
 
-# -- Phase C: fetch + reset --hard (operates entirely on native ext4) ---------
+# -- Phase C: fast-forward an existing clean root; preserve all local edits -----
 echo "[overlay] git -C / fetch origin $ORIGIN_BRANCH (from native cache) ..."
 fetch_out=$(sudo git -C / fetch --depth=1 origin "$ORIGIN_BRANCH" 2>&1)
 fetch_rc=$?
@@ -2870,22 +2860,11 @@ echo "$fetch_out" | tail -3
 if [[ $fetch_rc -ne 0 ]]; then
     echo "[overlay] ERROR: git fetch failed (rc=$fetch_rc)"
 fi
-echo "[overlay] git -C / reset --hard FETCH_HEAD ..."
-reset_out=$(sudo git -C / reset --hard FETCH_HEAD 2>&1)
-reset_rc=$?
-echo "$reset_out" | tail -3
-if [[ $reset_rc -ne 0 ]]; then
-    echo "[overlay] ERROR: git reset failed (rc=$reset_rc)"
-    # Most common cause: /usr is read-only on ostree-managed bootc /
-    # FCOS deploys. Enable a writable overlay and retry once. This
-    # branch is a no-op on non-bootc shapes (rpm-ostree absent).
-    if echo "$reset_out" | grep -qiE 'read-only|ostree'; then
-        echo "[overlay] /usr appears read-only -- enabling rpm-ostree usroverlay"
-        sudo rpm-ostree usroverlay 2>&1 | tail -2 || true
-        echo "[overlay] retrying git reset --hard FETCH_HEAD"
-        sudo git -C / reset --hard FETCH_HEAD 2>&1 | tail -3
-        reset_rc=$?
-    fi
+if [[ $fetch_rc -ne 0 ]]; then exit "$fetch_rc"; fi
+if sudo git -C / rev-parse --verify HEAD >/dev/null 2>&1; then
+    sudo git -C / merge --ff-only FETCH_HEAD || exit 1
+else
+    sudo git -C / checkout --detach FETCH_HEAD || exit 1
 fi
 
 count=$(sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | wc -l)
@@ -3598,168 +3577,15 @@ function Invoke-GhcrLogin([string]$Token) {
 }
 
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
-                                   [string]$AiModel = "qwen3.5:2b",
-                                   [string]$EmbedModel = "nomic-embed-text",
-                                   [string]$BakeModels = "qwen3.5:2b,nomic-embed-text") {
-    # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
-    # directive. The build context IS the overlay root.
-    $repoPath = $MiosRepoDir
-
-    $bootstrapPath = $MiosBootstrapShadow
-    $seedScript    = Join-Path $bootstrapPath "seed-merge.ps1"
-    if (Test-Path $seedScript) {
-        Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto mios.git"
-        try {
-            & $seedScript -MiosDir $repoPath -BootstrapDir $bootstrapPath
-            Log-Ok "Bootstrap overlay merged into build context (mios.git tree)"
-        } catch {
-            Log-Warn "seed-merge failed: $_"
-            Log-Warn "Build will proceed with mios.git tree only -- bootstrap files (skel, mios.toml, agent .md) will NOT be in the OCI image"
-        }
-    } else {
-        Log-Warn "seed-merge.ps1 not found at $seedScript -- skipping Universal SEED merge"
-    }
-
-    Set-Step "podman build (Windows client -> $BuilderDistro)"
-    Write-Log "BUILD START (Windows API build)  base=$BaseImage  user=$MiosUser  host=$MiosHostname  ai=$AiModel"
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = "cmd.exe"
-    $psi.Arguments = ("/c podman build --progress=plain --no-cache " +
-                      "--build-arg `"BASE_IMAGE=$BaseImage`" " +
-                      "--build-arg `"MIOS_USER=$MiosUser`" " +
-                      "--build-arg `"MIOS_HOSTNAME=$MiosHostname`" " +
-                      "--build-arg `"MIOS_FLATPAKS=`" " +
-                      "--build-arg `"MIOS_AI_MODEL=$AiModel`" " +
-                      "--build-arg `"MIOS_AI_EMBED_MODEL=$EmbedModel`" " +
-                      "-t localhost/mios:latest . 2>&1")
-    $psi.WorkingDirectory       = $repoPath
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $false
-    $psi.UseShellExecute        = $false
-    $psi.CreateNoWindow         = $false
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $sw   = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not $proc.StandardOutput.EndOfStream) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($null -eq $line) { break }
-        # Write to detail log only -- no Write-Host here.
-        # Printing raw build lines to the console scrolls the terminal buffer
-        # and drifts the dashboard position on every tick.
-        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
-        Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
-    }
-    $proc.WaitForExit()
-    Write-Log "BUILD END (Windows)  exit=$($proc.ExitCode)  lines=$($script:LineCount)"
-    return $proc.ExitCode
+                                   [string]$AiModel = '', [string]$EmbedModel = '', [string]$BakeModels = '') {
+    # Preserve the public call signature; image settings come from layered SSOT.
+    return Invoke-MiosNativeImageBuild -Root $MiosRepoDir -Machine $BuilderDistro
 }
 
 function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
-                          [string]$MiosUser = "mios", [string]$MiosHostname = "mios",
-                          [string]$EmbedModel = "nomic-embed-text",
-                          [string]$BakeModels = "") {
-    if ([string]::IsNullOrWhiteSpace($BakeModels)) {
-        $BakeModels = "$AiModel,$EmbedModel"
-    }
-    # Authenticate to ghcr.io before any pull/build.  GHCR now returns 403 on
-    # anonymous bearer-token requests for ublue-os images; a GitHub PAT is required.
-    $tok = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
-           elseif ($env:GITHUB_TOKEN)  { $env:GITHUB_TOKEN }
-           else                         { $script:GhcrToken }
-    Invoke-GhcrLogin -Token $tok
-
-    # Detect access method: wsl.exe > podman machine ssh > Windows podman build
-    $useWsl      = $false
-    $useSsh      = $false
-    $useWinBuild = $false
-    try {
-        $r = (& wsl.exe -d $Distro --exec bash -c "echo ok" 2>$null) -join ""
-        if ($r.Trim() -eq "ok") { $useWsl = $true }
-    } catch {}
-    if (-not $useWsl) {
-        try {
-            $r = (& podman machine ssh $Distro -- bash -c "echo ok" 2>$null) -join ""
-            if ($r.Trim() -eq "ok") { $useSsh = $true }
-        } catch {}
-    }
-    if (-not $useWsl -and -not $useSsh) { $useWinBuild = $true }
-
-    if ($useWinBuild) {
-        return Invoke-WindowsPodmanBuild -BaseImage $BaseImage -MiosUser $MiosUser -MiosHostname $MiosHostname `
-                                          -AiModel $AiModel -EmbedModel $EmbedModel -BakeModels $BakeModels
-    }
-
-    $justCheck = "command -v just &>/dev/null || dnf install -y just"
-    if ($useSsh) {
-        & podman machine ssh $Distro -- bash -c $justCheck 2>$null | Out-Null
-    } else {
-        & wsl.exe -d $Distro --user root --exec bash -c $justCheck 2>$null | Out-Null
-    }
-
-    Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto / inside $Distro"
-    $bootstrapRepoUrl = if ($env:MIOS_BOOTSTRAP_REPO) { $env:MIOS_BOOTSTRAP_REPO } else { $MiosBootstrapUrl }
-    # Version pinning SSOT: env override wins, else mios.toml [bootstrap].bootstrap_ref
-    # (pin to a tag or SHA for a reproducible install), else "main".
-    $bootstrapRef     = if ($env:MIOS_BOOTSTRAP_REF) { $env:MIOS_BOOTSTRAP_REF } else { Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' -Default 'main' }
-    $seedScript = @"
-if [ ! -d /tmp/mios-bootstrap/.git ]; then
-    for i in 1 2 3; do
-        rm -rf /tmp/mios-bootstrap
-        git clone --depth=1 --branch '$bootstrapRef' '$bootstrapRepoUrl' /tmp/mios-bootstrap && break
-        [ `$i -lt 3 ] && sleep `$((i*5))
-    done
-fi
-if [ -x /tmp/mios-bootstrap/seed-merge.sh ]; then
-    /tmp/mios-bootstrap/seed-merge.sh / /tmp/mios-bootstrap
-else
-    echo '[seed-merge] WARN: /tmp/mios-bootstrap/seed-merge.sh not found (clone may have failed) -- bootstrap overlay skipped' >&2
-fi
-"@
-    if ($useSsh) {
-        & podman machine ssh $Distro -- bash -c $seedScript 2>&1 | ForEach-Object { Write-Log "seed-merge: $_" }
-    } else {
-        & wsl.exe -d $Distro --user root --exec bash -c $seedScript 2>&1 | ForEach-Object { Write-Log "seed-merge: $_" }
-    }
-    if ($LASTEXITCODE -eq 0) {
-        Log-Ok "Bootstrap overlay merged into WSL distro / (Universal MiOS-SEED)"
-    } else {
-        Log-Warn "seed-merge inside ${Distro} returned non-zero -- build will proceed; bootstrap files may be missing from the image"
-    }
-
-    Set-Step "Launching: just build (inside $Distro)"
-    Write-Log "BUILD START  base=$BaseImage  model=$AiModel"
-
-    $bashScript = "cd / && MIOS_BASE_IMAGE='$BaseImage' MIOS_AI_MODEL='$AiModel' just build 2>&1"
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    if ($useSsh) {
-        $psi.FileName  = "podman"
-        $psi.Arguments = "machine ssh $Distro -- bash -c `"$bashScript`""
-    } else {
-        $psi.FileName  = "wsl.exe"
-        $psi.Arguments = "-d $Distro --user root --cd / --exec bash -c `"$bashScript`""
-    }
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $false
-    $psi.UseShellExecute        = $false
-    $psi.CreateNoWindow         = $false
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $sw   = [System.Diagnostics.Stopwatch]::StartNew()
-
-    while (-not $proc.StandardOutput.EndOfStream) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($null -eq $line) { break }
-        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
-        Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
-    }
-
-    $proc.WaitForExit()
-    $rc = $proc.ExitCode
-    Write-Log "BUILD END (WSL/SSH)  exit=$rc  lines=$($script:LineCount)"
-    return $rc
+                          [string]$MiosUser = '', [string]$MiosHostname = '',
+                          [string]$EmbedModel = '', [string]$BakeModels = '') {
+    return Invoke-MiosNativeImageBuild -Root $MiosRepoDir -Machine $Distro
 }
 
 function Export-WslTar([string]$OutFile, [string]$Image = '') {
@@ -3946,17 +3772,9 @@ function Import-MiosWsl {
         }
     }
 
-    # If distro already exists, check running state and terminate cleanly before unregister or import
     $distroExists = $distros.ContainsKey($targetDistro)
     if ($distroExists) {
-        $existingState = $distros[$targetDistro].State
-        Write-Log "Found pre-existing WSL distro '$targetDistro' (State: $existingState)." "INFO"
-        if ($existingState -ieq 'Running') {
-            Set-Step "Terminating running WSL distro '$targetDistro'..."
-            Write-Log "Terminating running WSL distro '$targetDistro' with wsl.exe --terminate..." "INFO"
-            & wsl.exe --terminate $targetDistro 2>&1 | ForEach-Object { Write-Log "wsl-terminate: $_" }
-            Start-Sleep -Milliseconds 500
-        }
+        throw "WSL runtime '$targetDistro' already exists; preserve /var and upgrade through bootc instead of unregistering it."
     }
 
     # Ensure target InstallDir exists
@@ -3987,20 +3805,6 @@ function Import-MiosWsl {
                 Write-Log "Remove-Item failed: $($_.Exception.Message). Moving file..." "WARN"
                 Move-Item -LiteralPath $existingVhdx -Destination $backupVhdxTimestamped -Force
             }
-        }
-    }
-
-    # If distro is registered in WSL, unregister the registration after safe backup and termination
-    if ($distroExists) {
-        Write-Log "Unregistering existing WSL distro '$targetDistro' registration..." "INFO"
-        & wsl.exe --unregister $targetDistro 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
-        Start-Sleep -Milliseconds 500
-
-        # Verify no orphaned ext4.vhdx remains after unregistering to prevent 0x80070050
-        if (Test-Path -LiteralPath $existingVhdx) {
-            $orphanedBak = Join-Path $InstallDir "ext4.vhdx.orphaned_$((Get-Date).ToString('yyyyMMdd_HHmmss'))"
-            Write-Log "Orphaned ext4.vhdx remained after unregister. Moving to $orphanedBak..." "WARN"
-            Move-Item -LiteralPath $existingVhdx -Destination $orphanedBak -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -5633,7 +5437,7 @@ if (Test-Path (Join-Path `$shadow '.git')) {
     # 2. Re-overlay shadow onto M:\ so the build-mios.ps1 we run is
     #    the fresh one. /XD .git keeps mios.git's .git intact.
     Write-Host '  [mios update] Re-overlaying mios-bootstrap files onto M:\...' -ForegroundColor Cyan
-    & robocopy `$shadow `$repoDir /E /XD .git /NJH /NJS /NFL /NDL /NP 2>&1 | Out-Null
+    & robocopy `$shadow `$repoDir /E /XD .git /XF mios.toml /NJH /NJS /NFL /NDL /NP 2>&1 | Out-Null
 } else {
     Write-Host "  [mios update] No mios-bootstrap shadow at `$shadow -- running local build-mios.ps1 as-is." -ForegroundColor Yellow
 }
@@ -7251,6 +7055,19 @@ function Invoke-GitFetchWithRetry {
     return $exitCode
 }
 
+function Update-MiosCheckout([string]$RepoPath, [string]$Ref) {
+    $changes = @(& git -C $RepoPath status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { throw "Cannot inspect checkout $RepoPath; refusing to update it." }
+    if ($changes.Count) {
+        Log-Warn "Preserving local contributions at $RepoPath; remote update deferred."
+        return
+    }
+    $fetchExit = Invoke-GitFetchWithRetry -RepoPath $RepoPath -Ref $Ref
+    if ($fetchExit -ne 0) { throw "Cannot fetch $Ref at $RepoPath (exit $fetchExit)" }
+    & git -C $RepoPath merge --ff-only FETCH_HEAD | ForEach-Object { Write-Log "git-update: $_" }
+    if ($LASTEXITCODE -ne 0) { throw "Cannot fast-forward $RepoPath to $Ref; local commits are preserved." }
+}
+
 # -- Phase 1 -- Detecting existing build environment --------------------------
 Start-Phase 1
 Start-MiosBuildMonitor
@@ -7261,29 +7078,13 @@ if ($activeDistro) {
 }
 
 # mios.git is overlaid AT $MiosRepoDir root (M:\). Per.
+if ($SourceRoot) {
+    $script:MiosRepoDir = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
+    $MiosRepoDir = $script:MiosRepoDir
+}
 $miosRepo = $MiosRepoDir
     if (Test-Path (Join-Path $MiosRepoDir ".git")) {
-        Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_update' -Default "Updating mios.git (fetch + hard reset @ $MiosRepoDir)")
-        Push-Location $MiosRepoDir
-        try {
-            $null = Invoke-NativeQuiet { git remote set-url origin $MiosRepoUrl }
-        } finally { Pop-Location }
-        $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosRepoDir -Ref $MiosRef
-        if ($fetchExit -eq 0) {
-            Push-Location $MiosRepoDir
-            try {
-                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
-                if ($resetExit -ne 0) { Log-Warn "mios.git: git reset --hard returned $resetExit" }
-                if ($MiosRef -match '^[0-9a-fA-F]{7,40}$') {
-                    $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
-                } else {
-                    $null = Invoke-NativeQuiet { git branch -f $MiosRef FETCH_HEAD }
-                    $null = Invoke-NativeQuiet { git checkout -q $MiosRef }
-                }
-            } finally { Pop-Location }
-        } else {
-            Log-Warn "mios.git: git fetch returned $fetchExit -- working tree may be stale"
-        }
+        if (-not $SourceRoot) { Update-MiosCheckout -RepoPath $MiosRepoDir -Ref $MiosRef }
     } else {
         Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_init' -Default "Initializing mios.git as the $MiosRepoDir working tree")
         & git config --global --add safe.directory '*' 2>&1 | ForEach-Object { Write-Log "git-safe-dir: $_" }
@@ -7298,11 +7099,11 @@ $miosRepo = $MiosRepoDir
             if ($fetchExit -ne 0) {
                 throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir"
             }
-            $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+            $null = Invoke-NativeQuiet { git checkout --detach FETCH_HEAD }
             if ($MiosRef -match '^[0-9a-fA-F]{7,40}$') {
                 $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
             } else {
-                $null = Invoke-NativeQuiet { git branch -f $MiosRef FETCH_HEAD }
+                $null = Invoke-NativeQuiet { git branch $MiosRef FETCH_HEAD }
                 $null = Invoke-NativeQuiet { git checkout -q $MiosRef }
             }
         } finally { Pop-Location }
@@ -7319,27 +7120,7 @@ $miosRepo = $MiosRepoDir
 
     # -- Step 2: mios-bootstrap.git in shadow checkout, files overlaid ------
     if (Test-Path (Join-Path $MiosBootstrapShadow ".git")) {
-        Set-Step "Updating mios-bootstrap.git shadow (fetch + hard reset)"
-        Push-Location $MiosBootstrapShadow
-        try {
-            $null = Invoke-NativeQuiet { git remote set-url origin $MiosBootstrapUrl }
-        } finally { Pop-Location }
-        $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosBootstrapShadow -Ref $MiosBootstrapRef
-        if ($fetchExit -eq 0) {
-            Push-Location $MiosBootstrapShadow
-            try {
-                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
-                if ($resetExit -ne 0) { Log-Warn "mios-bootstrap.git: git reset --hard returned $resetExit" }
-                if ($MiosBootstrapRef -match '^[0-9a-fA-F]{7,40}$') {
-                    $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
-                } else {
-                    $null = Invoke-NativeQuiet { git branch -f $MiosBootstrapRef FETCH_HEAD }
-                    $null = Invoke-NativeQuiet { git checkout -q $MiosBootstrapRef }
-                }
-            } finally { Pop-Location }
-        } else {
-            Log-Warn "mios-bootstrap.git: git fetch returned $fetchExit -- shadow may be stale"
-        }
+        Update-MiosCheckout -RepoPath $MiosBootstrapShadow -Ref $MiosBootstrapRef
     } else {
         if (-not (Test-Path $MiosBootstrapShadow)) {
             New-Item -ItemType Directory -Path $MiosBootstrapShadow -Force | Out-Null
@@ -7353,11 +7134,11 @@ $miosRepo = $MiosRepoDir
             if ($fetchExit -ne 0) {
                 throw "mios-bootstrap.git: git fetch from $MiosBootstrapUrl failed (exit $fetchExit) at $MiosBootstrapShadow"
             }
-            $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+            $null = Invoke-NativeQuiet { git checkout --detach FETCH_HEAD }
             if ($MiosBootstrapRef -match '^[0-9a-fA-F]{7,40}$') {
                 $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
             } else {
-                $null = Invoke-NativeQuiet { git branch -f $MiosBootstrapRef FETCH_HEAD }
+                $null = Invoke-NativeQuiet { git branch $MiosBootstrapRef FETCH_HEAD }
                 $null = Invoke-NativeQuiet { git checkout -q $MiosBootstrapRef }
             }
         } finally { Pop-Location }
@@ -7366,10 +7147,10 @@ $miosRepo = $MiosRepoDir
     Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_overlay' -Default "Overlaying mios-bootstrap files onto $MiosRepoDir")
     $robocopyExit = Invoke-NativeQuiet {
         robocopy $MiosBootstrapShadow $MiosRepoDir `
-            /E /XD .git /NJH /NJS /NFL /NDL /NP
+            /E /XD .git /XF mios.toml /NJH /NJS /NFL /NDL /NP
     }
     if ($robocopyExit -ge 8) {
-        Log-Warn "mios-bootstrap overlay: robocopy exit $robocopyExit (>=8 means error)"
+        throw "mios-bootstrap overlay failed: robocopy exit $robocopyExit"
     }
     Log-Ok "mios-bootstrap files overlaid at $MiosRepoDir (shadow at $MiosBootstrapShadow)"
 
@@ -7397,90 +7178,12 @@ $miosRepo = $MiosRepoDir
     Start-Phase 3
 
     try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (pre-Phase-3): $($_.Exception.Message)" }
-    & wsl.exe --shutdown 2>&1 | ForEach-Object { Write-Log "wsl-shutdown-pre-phase3: $_" }
-
-    $machineRunning = $false
-    try {
-        $names = @($DevDistro, $LegacyDevName)
-        foreach ($n in $names) {
-            $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-                  Where-Object { $_ -match "(?i)^$([regex]::Escape($n))\s+true" }
-            if ($ml) {
-                if ($n -eq $LegacyDevName) {
-                    Log-Warn "Detected legacy machine '$LegacyDevName' -- reusing in place. Rename: 'podman machine rm $LegacyDevName' then re-run."
-                    $script:BuilderDistro = $n
-                }
-                $machineRunning = $true
-                break
-            }
-        }
-    } catch {}
-    # Also accept a stopped machine and start it. The pattern is
-    # case-insensitive so podman builds that print `True`/`False`
-    # don't slip past as "no entry" and fall into init (which then
-    # crashes on "vm already exists").
-    if (-not $machineRunning) {
-        try {
-            $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-                  Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s" }
-            if ($ml) {
-                Set-Step "Starting existing $BuilderDistro machine..."
-                $startOut = @(& podman machine start $BuilderDistro 2>&1)
-                $startOut | ForEach-Object { Write-Log "podman-start: $_" }
-                $startJoined = ($startOut -join " ")
-                if ($LASTEXITCODE -eq 0) {
-                    $machineRunning = $true; Log-Ok "$BuilderDistro started"
-                } elseif ($startJoined -match '(?i)already running') {
-                    # Non-zero exit + 'already running' message: machine
-                    # IS running, podman is just being noisy. Treat as OK.
-                    $machineRunning = $true
-                    Log-Ok "$BuilderDistro already running (podman reported the state non-fatally)"
-                } elseif ($startJoined -match "(?i)DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
-                    # Stale Podman machine metadata -- WSL distro was deleted but Podman registry entry remains.
-                    # Force-remove the stale entry so New-BuilderDistro can re-init cleanly.
-                    Write-Log "podman-start: stale machine registration detected -- removing $BuilderDistro" "WARN"
-                    & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
-                } else {
-                    Log-Warn "podman machine start $BuilderDistro failed -- force-removing stale registration so init can re-create it"
-                    & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
-                }
-            }
-        } catch {}
-    }
-    # Legacy: accept wsl.exe-accessible distro too ('MiOS' already applied)
-    if (-not $machineRunning) {
-        try {
-            $r = (& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join ""
-            if ($r.Trim() -eq "ok") { $machineRunning = $true }
-        } catch {}
-    }
-
-    if ($machineRunning) {
-        Log-Ok "$BuilderDistro already running"
-    } else {
-        try {
-            $registered = (& podman machine ls --format "{{.Name}}" 2>$null) |
-                          Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s*$" }
-            if ($registered) {
-                Log-Warn "Stale $BuilderDistro registration detected (not running, not startable) -- force-removing before re-init"
-                & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm-prepurge: $_" }
-            }
-            $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
-                       ForEach-Object { ($_ -replace [char]0,'').Trim() } |
-                       Where-Object { $_ }
-            foreach ($cand in @("podman-$BuilderDistro", $BuilderDistro)) {
-                if ($wslList -contains $cand) {
-                    Log-Warn "Stale WSL distro '$cand' detected -- unregistering before init"
-                    & wsl.exe --unregister $cand 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
-                }
-            }
-        } catch {}
-        New-BuilderDistro -HW $HW
-    }
+    $script:ResolvedBuilderDistribution = Ensure-MiosBuilder -Machine $BuilderDistro -Hardware $HW
+    Log-Ok "Using preserved MiOS builder $script:ResolvedBuilderDistribution"
 
     Invoke-MiosQuadletOverlay
 
-    $_wslDistroForTerm = "podman-$BuilderDistro"
+    $_wslDistroForTerm = $script:ResolvedBuilderDistribution
     Set-Step "Layering MiOS build essentials onto $_wslDistroForTerm..."
     $devVmTomlCands = @(
         'M:\etc\mios\mios.toml',

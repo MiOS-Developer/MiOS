@@ -19,6 +19,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Build current source image targets and verify their SSOT runtime commands
+    ImageBuild {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "all")]
+        target: String,
+        #[arg(long)]
+        plan: bool,
+    },
     /// Resolve the SSOT native Linux target, linker and static runtime flags
     NativeBuildSettings {
         #[arg(long, default_value = ".")]
@@ -894,6 +903,29 @@ async fn main() {
         } => {
             if let Err(e) = run_scaffold(template_type, name) {
                 eprintln!("[miosd] Scaffold error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::ImageBuild { root, target, plan } => {
+            let root = std::path::Path::new(root);
+            let result = mios_resolver::resolve_merged(Some(root), false)
+                .map_err(|e| e.to_string())
+                .and_then(|config| mios_build::images::image_plan(root, &config, target))
+                .and_then(|commands| {
+                    if *plan {
+                        println!("{}", serde_json::to_string_pretty(&commands).map_err(|e| e.to_string())?);
+                        return Ok(());
+                    }
+                    mios_build::images::execute_images(&commands, |command| {
+                        println!("[miosd] {} from {}", command.target, command.root.display());
+                        let status = std::process::Command::new(&command.engine)
+                            .current_dir(&command.root).args(&command.args).status()
+                            .map_err(|e| e.to_string())?;
+                        if status.success() { Ok(()) } else { Err(status.to_string()) }
+                    })
+                });
+            if let Err(error) = result {
+                eprintln!("[miosd] Image build: {error}");
                 std::process::exit(1);
             }
         }

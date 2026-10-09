@@ -1876,6 +1876,23 @@ runtime_ref_directives = [
 channel = "stable"
 components = ["clippy", "rustfmt"]
 
+# One native entry point for current-source builds on every builder platform.
+[build.images]
+engine = "podman"
+order = ["os", "devcontainer"]
+network = "host"
+retries = 5
+retry_delay = "3s"
+
+[build.images.os]
+containerfile = "Containerfile"
+tag_key = "image.local_tag"
+build_args = { BASE_IMAGE = "image.base" }
+
+[build.images.devcontainer]
+containerfile = ".devcontainer/Containerfile"
+tag_key = "image.dev_local_tag"
+
 # Native executable roles are distinct; libraries remain shared workspace code.
 # Category membership and installation are consumed by miosd native-targets.
 [build.native]
@@ -1906,7 +1923,7 @@ binaries = [
   "mios-resolver", "mios-size-ceiling", "mios-ssot-lint", "mios-task", "mios-toml-get",
   "mios-template-compile", "mios-template-conform", "mios-toolchain-pin",
   "mios-unit-gen", "mios-version-check", "xtask", "mios-gate", "mios-probe", "miosd",
-  "mios-install",
+  "mios-install", "mios-gen",
 ]
 install_dir = "/usr/bin"
 expose_bin = false
@@ -6264,6 +6281,7 @@ bib            = "quay.io/centos-bootc/bootc-image-builder:latest"
 name           = "ghcr.io/mios-dev/mios"
 tag            = "latest"
 local_tag      = "localhost/mios:latest"
+dev_local_tag  = "localhost/mios-devcontainer:latest"
 machine_os_repo = "quay.io/podman/machine-os"
 machine_os_tag  = "6.1"
 # The container images of machine_os_repo:machine_os_tag, digest-identical,
@@ -6446,6 +6464,8 @@ pkgs = [
     "iptables",            # netavark backend (binary; firewall_driver=none)
     "nftables",            # netavark alternative backend
     "fastfetch",           # MiOS dashboard / motd
+    "btop",                # required by the global Windows/WSL monitor entry
+    "tmux",                # human terminal and peer workspaces
     "oh-my-posh",          # MiOS themed prompt
     "python3-rich",        # MiOS TUI dashboard (mios-mon.py)
     "python3-textual",     # MiOS TUI dashboard full monitor
@@ -6539,7 +6559,8 @@ pkgs = [
 [packages.mcp]
 enable = true
 requires_sections = ["agent_cli"]
-pkgs = ["tmux", "bash", "coreutils", "python3.13", "python3-pip", "fontconfig", "oh-my-posh", "python3-rich", "python3-textual", "python3-psutil"]
+pkgs = ["tmux", "bash", "coreutils", "python3.13", "python3-pip", "fontconfig", "oh-my-posh", "btop", "fastfetch", "python3-rich", "python3-textual", "python3-psutil"]
+verify_probes = ["tmux", "bash", "python3", "oh-my-posh", "btop", "fastfetch"]
 
 [packages.agent_cli]
 enable = true
@@ -6799,7 +6820,7 @@ pkgs = [
 
 [packages.self-build]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
-requires_sections = ["build-toolchain"]
+requires_sections = ["build-toolchain", "windows-cross-build"]
 # Default MiOS keeps its full build dependencies so it can rebuild itself.
 # Set false only for an intentionally stripped deployment image.
 retain_toolchain = true
@@ -6822,6 +6843,11 @@ pkgs = [
     "ShellCheck", "python3-pytest", "python3-jsonschema", "python3-pyyaml",
     "python3-pyflakes", "python3-cryptography", "python3-aiohttp", "python3-pydantic",
 ]
+
+[packages.windows-cross-build]
+enable = true
+# The SSOT Windows target needs both its Rust standard library and a real linker.
+pkgs = ["mingw64-gcc", "mingw64-crt", "mingw64-headers"]
 
 [packages.boot]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
@@ -13300,11 +13326,12 @@ replaces = [
   "tools/generate-pod-quadlets.py",
   "usr/libexec/mios/ux/tmux_theme.py",
   "usr/libexec/mios/ux/btop_theme.py",
+  "usr/libexec/mios/ux/fastfetch_gen.py",
 ]
 scope = [
   "tools/generate-*.sh", "tools/generate-*.ps1",
   "usr/libexec/mios/win/*.py",
-  "usr/libexec/mios/ux/fastfetch_gen.py", "usr/libexec/mios/ux/theme_sync.py",
+  "usr/libexec/mios/ux/theme_sync.py",
   "usr/libexec/mios/ux/editor_config_gen.py", "usr/libexec/mios/ux/wm_config_gen.py",
 ]
 crates = [
@@ -13487,4 +13514,3 @@ description = "Test suites port only with the surface they guard; tools/test_*.p
 replaces = []
 crates = []
 scope = ["tests/**", "tools/test_*.py"]
-

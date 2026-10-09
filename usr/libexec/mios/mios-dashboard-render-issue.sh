@@ -5,7 +5,7 @@ set -uo pipefail
 
 ISSUE_DIR=/etc/issue.d
 ISSUE_FILE="${ISSUE_DIR}/30-mios.issue"
-DASHBOARD=/usr/libexec/mios/mios-dashboard.sh
+DASHBOARD=/usr/libexec/mios/mios-dashboard
 
 mkdir -p "$ISSUE_DIR" 2>/dev/null || true
 
@@ -21,7 +21,7 @@ if [[ ! -x "$DASHBOARD" ]]; then
     exit 0
 fi
 
-if TERM=linux timeout -k 3 10 env -i PATH="$PATH" TERM=linux bash "$DASHBOARD" \
+if TERM=linux timeout -k 3 10 env -i PATH="$PATH" TERM=linux python3 "$DASHBOARD" \
         --no-color --services-only > "$ISSUE_FILE.new" 2>/dev/null \
    && [[ -s "$ISSUE_FILE.new" ]]; then
     chmod 0644 "$ISSUE_FILE.new"

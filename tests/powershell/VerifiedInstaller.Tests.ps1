@@ -36,6 +36,7 @@ Describe 'MiOS in-terminal Windows dispatch' {
         $script:savedLegacy = $global:MiosLegacyDispatcher
         $script:savedEntry = $global:MiosNativeEntry
         $script:savedBin = $env:MIOS_NATIVE_BIN
+        $script:savedBtop = Get-Command btop -CommandType Function -ErrorAction SilentlyContinue
         $global:MiosDispatchReceipt = $null
         function global:mios { param($Verb, [Parameter(ValueFromRemainingArguments=$true)]$Arguments) $global:MiosDispatchReceipt = @('legacy',$Verb) + $Arguments }
         Set-Content -LiteralPath (Join-Path $TestDrive 'mios-native-entry.ps1') -Value 'param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments) $global:MiosDispatchReceipt = @("native") + $Arguments'
@@ -47,6 +48,8 @@ Describe 'MiOS in-terminal Windows dispatch' {
         $global:MiosNativeEntry = $script:savedEntry
         $env:MIOS_NATIVE_BIN = $script:savedBin
         Remove-Variable MiosDispatchReceipt -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item Function:\btop -ErrorAction SilentlyContinue
+        if ($script:savedBtop) { Set-Item Function:\global:btop $script:savedBtop.ScriptBlock }
     }
     It 'replaces the web route with the native entry while preserving literal arguments' {
         mios ai
@@ -60,6 +63,23 @@ Describe 'MiOS in-terminal Windows dispatch' {
         . $shellSource -BinDirectory $TestDrive
         mios config 'kept argument'
         ($global:MiosDispatchReceipt -join '|') | Should -Be 'legacy|config|kept argument'
+    }
+    It 'routes compact and full dashboards through the installed binding' {
+        . $shellSource -BinDirectory $TestDrive
+        foreach ($verb in @('mini','dash')) {
+            mios $verb --no-color
+            ($global:MiosDispatchReceipt -join '|') | Should -Be "native|$verb|--no-color"
+        }
+    }
+    It 'routes btop without a Windows Terminal resize or a fixed Linux user' {
+        . $shellSource -BinDirectory $TestDrive
+        btop --version
+        ($global:MiosDispatchReceipt -join '|') | Should -Be 'native|btop|--version'
+    }
+    It 'allows repair even when the normal runtime preflight would fail' {
+        . $shellSource -BinDirectory $TestDrive
+        mios repair
+        ($global:MiosDispatchReceipt -join '|') | Should -Be 'native|repair'
     }
     It 'repairs the old per-verb wrapper without starting a separate window' {
         $env:MIOS_NATIVE_BIN = $TestDrive

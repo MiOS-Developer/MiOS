@@ -13,13 +13,11 @@
       2. Resizes the host window to ~100x40 so the build dashboard
          frame (80 cols + breathing room) fits without wrapping.
       3. Verifies Git + Podman are present.
-      4. Force-cleans + fresh-clones the mios-bootstrap repo into
-         $env:TEMP\mios-bootstrap. Every run is fresh; no persistent
-         working tree, no fetch/pull update branch.
-      5. Hands off to bootstrap.ps1 -- the new split-bootstrap entry
-         (default: -BootstrapOnly = preflight + dev VM + Windows
-         install; the deployable OCI image is built later via the
-         "Build MiOS" Start Menu shortcut bootstrap.ps1 drops).
+      4. Updates a clean bootstrap checkout while preserving local edits,
+         existing WSL distributions and persistent installation state.
+      5. Hands off to bootstrap.ps1 using the layered SSOT selection
+         [bootstrap].windows_install_mode (default: full), including the
+         OCI build and deployment phases.
 
     Pre-v0.2.4 this script wrapped the run in Start-Transcript --
     that captured the dashboard's cursor escapes and broke the
@@ -27,7 +25,7 @@
     log directly via [IO.File]::AppendAllText (no transcript needed).
 
     Pass -FullBuild to chain the OCI image build immediately
-    (legacy one-shot behavior).
+    regardless of the SSOT bootstrap-only selection.
 
 .PARAMETER RepoUrl
     git URL for mios-bootstrap (default: GitHub upstream).
@@ -36,17 +34,8 @@
     Branch to clone (default: main).
 
 .PARAMETER RepoDir
-    Temp clone target. Default: $env:TEMP\mios-bootstrap-<random8>.
-    Each invocation gets a fresh GUID-suffixed dir so a locked
-    leftover from a previous run never blocks a new start. Operators
-    who genuinely want to point at a local checkout (e.g. for
-    development) can pass an explicit -RepoDir; the script will
-    refuse to delete it if it's outside %TEMP%. There is NO update /
-    fetch / pull branch here -- always fresh-clone. A persistent path
-    like $env:USERPROFILE\MiOS-bootstrap is FORBIDDEN as the bootstrap
-    working tree (it accumulates stale state across runs and was the
-    root cause of every "FATAL: From https://...", "FATAL: Cloning
-    into ...", and "FATAL: vm already exists" surface we kept fixing).
+    Bootstrap checkout. Existing local changes are preserved. Clean checkouts
+    update to the selected branch; installation never deletes the checkout.
 
 .PARAMETER FullBuild
     Run the full pipeline in one shot (preflight + dev VM + Windows
@@ -4725,381 +4714,9 @@ function Ensure-PodmanDesktop {
 
 function Invoke-MiOSFullReap {
     param([switch]$Quiet)
-    $reapEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-
-    $_msgBanner   = Get-MiosTomlValue -Section 'messages.reap' -Key 'banner'   -Default '[*] Phase 0: Reaping all prior MiOS state (zero-carry-over contract)...'
-    $_msgComplete = Get-MiosTomlValue -Section 'messages.reap' -Key 'complete' -Default '[+] Phase 0 reap complete -- proceeding with fresh install.'
-    $_lookupReap = {
-        param([string]$Key, [string]$Default)
-        $v = Get-MiosTomlValue -Section 'messages.reap' -Key $Key -Default $Default
-        if ([string]::IsNullOrWhiteSpace($v)) { return $Default }
-        return $v
-    }
-
-    $_log = {
-        param([string]$msg, [string]$color = 'DarkGray')
-        if (-not $Quiet) { Write-Host "    $msg" -ForegroundColor $color }
-    }
-
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host "  $_msgBanner" -ForegroundColor Cyan
-    }
-
-    # 1. Podman machines
-    & $_log (& $_lookupReap 'category_1' '[1/13] podman machine stop + rm (MiOS-DEV, MiOS-BUILDER) ...')
-    foreach ($mch in @('MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER')) {
-        try { & podman machine stop $mch *>$null } catch {}
-        try { & podman machine rm -f $mch *>$null } catch {}
-    }
-    try { & podman system reset --force *>$null } catch {}
-
-    # 2. WSL distros (every variant the install pipeline has used)
-    & $_log (& $_lookupReap 'category_2' '[2/13] wsl --unregister (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER) ...')
-    foreach ($d in @('MiOS','MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
-        try { & wsl.exe --unregister $d 2>$null | Out-Null } catch {}
-    }
-    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
-
-    # 3. Hyper-V VMs matching MiOS-*
-    & $_log (& $_lookupReap 'category_3' '[3/13] Hyper-V VMs (MiOS-*) ...')
-    try {
-        if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
-            Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
-                try { Stop-VM -Name $_.Name -TurnOff -Force -ErrorAction SilentlyContinue } catch {}
-                try { Remove-VM -Name $_.Name -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    } catch {}
-
-    & $_log (& $_lookupReap 'category_4' '[4/13] Install dirs (%PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS) -- skipping C:\MiOS + C:\mios-bootstrap ...')
-    foreach ($p in @(
-        (Join-Path $env:ProgramData    'MiOS'),
-        (Join-Path $env:LOCALAPPDATA   'MiOS'),
-        (Join-Path $env:APPDATA        'MiOS')
-    )) {
-        if ([string]::IsNullOrWhiteSpace($p)) { continue }
-        if (Test-Path -LiteralPath $p) {
-            try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
-    # M:\ contents -- wipe everything at the drive root (the partition itself
-    # stays; Initialize-DataDisk's idempotent check sees M:\ exists with
-    # label=MIOS-DEV and skips re-creation). MiOS owns this entire volume.
-    if (Test-Path -LiteralPath 'M:\') {
-        try {
-            Get-ChildItem -LiteralPath 'M:\' -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne 'System Volume Information' -and $_.Name -ne '$RECYCLE.BIN' } |
-                ForEach-Object {
-                    try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-                }
-        } catch {}
-    }
-
-    # 5. WT settings.json -- remove only MiOS-set keys, preserve everything else
-    & $_log (& $_lookupReap 'category_5' '[5/13] Windows Terminal settings.json (MiOS scheme + profiles + defaults) ...')
-    foreach ($wtPath in @(
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
-    )) {
-        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
-        try {
-            $raw = Get-Content -LiteralPath $wtPath -Raw
-            $stripped = [regex]::Replace($raw, '(?ms)/\*.*?\*/', '')
-            $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
-            $stripped = [regex]::Replace($stripped, ',(\s*[\}\]])', '$1')
-            $j = $stripped | ConvertFrom-Json -ErrorAction Stop
-            $changed = $false
-            if ($j.PSObject.Properties['launchMode'] -and $j.launchMode -in @('focus','maximizedFocus','focusFullscreen')) {
-                $j.PSObject.Properties.Remove('launchMode'); $changed = $true
-            }
-            if ($j.profiles -and $j.profiles.defaults) {
-                foreach ($k in @('scrollbarState','padding','useAcrylic','opacity','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
-                    if ($j.profiles.defaults.PSObject.Properties[$k]) {
-                        $j.profiles.defaults.PSObject.Properties.Remove($k); $changed = $true
-                    }
-                }
-            }
-            if ($j.schemes) {
-                $keepSchemes = @($j.schemes | Where-Object { $_.name -ne 'MiOS' })
-                if ($keepSchemes.Count -ne $j.schemes.Count) { $j.schemes = [object[]]$keepSchemes; $changed = $true }
-            }
-            if ($j.profiles -and $j.profiles.list) {
-                $keepProfiles = @($j.profiles.list | Where-Object {
-                    $_.name -ne 'MiOS' -and $_.name -ne 'MiOS-WIN' -and $_.name -ne 'MiOS-DEV' -and $_.name -ne 'MiOS-Bootstrap' -and $_.name -notmatch '^podman-MiOS-' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
-                })
-                if ($keepProfiles.Count -ne $j.profiles.list.Count) { $j.profiles.list = [object[]]$keepProfiles; $changed = $true }
-            }
-            if ($changed) {
-                ($j | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $wtPath -Encoding UTF8
-            }
-        } catch {}
-    }
-
-    # 6. PowerShell profile redirector blocks (marker-delimited removal)
-    & $_log (& $_lookupReap 'category_6' '[6/13] PowerShell profile redirector blocks (MiOS markers) ...')
-    function script:Remove-MiosMarkerBlock {
-        param([string]$Text, [string]$StartMarker, [string]$EndMarker)
-        while ($true) {
-            $si = $Text.IndexOf($StartMarker)
-            if ($si -lt 0) { return $Text }
-            $ei = $Text.IndexOf($EndMarker, $si)
-            if ($ei -lt 0) { return $Text }
-            $endPos = $ei + $EndMarker.Length
-            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`r") { $endPos++ }
-            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`n") { $endPos++ }
-            $Text = $Text.Substring(0, $si) + $Text.Substring($endPos)
-        }
-    }
-    $pwshProfileCandidates = @(
-        (Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
-    ) | Where-Object { $_ } | Sort-Object -Unique
-    foreach ($pp in $pwshProfileCandidates) {
-        if (-not (Test-Path -LiteralPath $pp)) { continue }
-        try {
-            $body = Get-Content -LiteralPath $pp -Raw
-            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS oh-my-posh init >>>' -EndMarker '# <<< MiOS oh-my-posh init <<<'
-            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS dash function >>>'   -EndMarker '# <<< MiOS dash function <<<'
-            $body = $body.Trim()
-            if ([string]::IsNullOrWhiteSpace($body)) {
-                Remove-Item -LiteralPath $pp -Force -ErrorAction SilentlyContinue
-            } else {
-                Set-Content -LiteralPath $pp -Value $body -Encoding UTF8 -NoNewline
-            }
-        } catch {}
-    }
-
-    # 7. Fonts (Geist + Symbols-Only Nerd Font + matching HKCU reg entries)
-    & $_log (& $_lookupReap 'category_7' '[7/13] Fonts (Geist*, *NerdFont*, SymbolsOnly*) + HKCU font reg ...')
-    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-    $fontReg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    if (Test-Path -LiteralPath $fontDir) {
-        Get-ChildItem -LiteralPath $fontDir -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(Geist|.*NerdFontMono|.*NerdFontPropo|.*NerdFont|SymbolsOnly|.*Symbols.*)' } |
-            ForEach-Object {
-                $fname = $_.Name
-                try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
-                if (Test-Path -LiteralPath $fontReg) {
-                    $face = [System.IO.Path]::GetFileNameWithoutExtension($fname)
-                    foreach ($suffix in @(' (TrueType)',' (OpenType)')) {
-                        $regName = "$face$suffix"
-                        try { Remove-ItemProperty -LiteralPath $fontReg -Name $regName -ErrorAction SilentlyContinue } catch {}
-                    }
-                }
-            }
-    }
-
-    # 8. PATH env (HKCU + HKLM if admin) -- strip M:\MiOS\bin entries
-    & $_log (& $_lookupReap 'category_8' '[8/13] PATH env entries (M:\MiOS\bin from HKCU + HKLM) ...')
-    foreach ($scope in @('User','Machine')) {
-        try {
-            $cur = [Environment]::GetEnvironmentVariable('Path', $scope)
-            if (-not $cur) { continue }
-            $parts = $cur -split ';' | Where-Object {
-                $_ -and ($_ -notmatch '[Mm]:\\\\?MiOS\\\\bin') -and ($_ -notmatch '[Mm]:\\MiOS\\bin')
-            }
-            $new = ($parts -join ';')
-            if ($new -ne $cur) {
-                [Environment]::SetEnvironmentVariable('Path', $new, $scope)
-            }
-        } catch {}
-    }
-
-    # 9. HKCU uninstall reg key
-    & $_log (& $_lookupReap 'category_9' '[9/13] HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS ...')
-    $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
-    if (Test-Path -LiteralPath $uninstKey) {
-        try { Remove-Item -LiteralPath $uninstKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    }
-
-    # 10. Start Menu folder + Desktop .lnk shortcuts (every legacy name)
-    & $_log (& $_lookupReap 'category_10' '[10/13] Start Menu folder + Desktop .lnk shortcuts ...')
-    $lnkNames = @(
-        'MiOS.lnk','MiOS-WIN.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
-        'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
-        'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
-        'MiOS Update.lnk','MiOS Pull.lnk'
-    )
-    $shortcutDirs = @(
-        [Environment]::GetFolderPath('Desktop'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
-        'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
-        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique
-    foreach ($dir in $shortcutDirs) {
-        if ($dir -match 'Desktop$') {
-            try {
-                Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -like '.tmp.*' -or $_.Name -like '*.tmp.driveu*' } |
-                    ForEach-Object {
-                        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-                    }
-            } catch {}
-        }
-        foreach ($ln in $lnkNames) {
-            $lp = Join-Path $dir $ln
-            if (Test-Path -LiteralPath $lp) {
-                try { Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
-            $linuxAppsSub = Join-Path $dir 'Linux Apps'
-            if (Test-Path -LiteralPath $linuxAppsSub) {
-                try { Remove-Item -LiteralPath $linuxAppsSub -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
-            if ((Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
-                try { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    }
-
-    # 11. AppUserModelID HKCU/HKLM registrations
-    & $_log (& $_lookupReap 'category_11' '[11/13] AppUserModelID (MiOS.Workstation) HKCU + HKLM ...')
-    foreach ($aumKey in @(
-        'HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
-        'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation'
-    )) {
-        if (Test-Path -LiteralPath $aumKey) {
-            try { Remove-Item -LiteralPath $aumKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
-
-    # 12. podman-machine state symlinks (3 candidate paths)
-    & $_log (& $_lookupReap 'category_12' '[12/13] podman-machine state symlinks (LOCALAPPDATA / .local\\share / ProgramData) ...')
-    foreach ($pmLink in @(
-        (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
-        (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
-        'C:\ProgramData\containers\podman\machine'
-    )) {
-        if (Test-Path -LiteralPath $pmLink) {
-            try {
-                $item = Get-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
-                if ($item -and ($item.LinkType -eq 'SymbolicLink' -or $item.LinkType -eq 'Junction' -or $item.Target)) {
-                    Remove-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
-                } elseif ($item) {
-                    Remove-Item -LiteralPath $pmLink -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } catch {}
-        }
-    }
-
-    # 13. MIOS_*/MiOS_*/BTOP_CONFIG_DIR environment variables (HKCU + HKLM)
-    & $_log (& $_lookupReap 'category_13' '[13/17] MIOS_* + BTOP_CONFIG_DIR environment variables ...')
-    foreach ($scope in @('User','Machine')) {
-        try {
-            $envKey = if ($scope -eq 'User') { 'HKCU:\Environment' }
-                       else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
-            if (Test-Path -LiteralPath $envKey) {
-                (Get-Item -LiteralPath $envKey).Property | Where-Object { $_ -match '^(MIOS_|MiOS_|BTOP_CONFIG_DIR$)' } |
-                    ForEach-Object { try { Remove-ItemProperty -LiteralPath $envKey -Name $_ -ErrorAction SilentlyContinue } catch {} }
-            }
-        } catch {}
-    }
-
-    # 14. HKCU\Run autostart + kill mios-gui-watch.ps1 daemon
-    & $_log '[14/17] HKCU\Run autostart entries + mios-gui-watch daemon + scheduled tasks ...'
-    foreach ($runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch','MiOS-Autostart')) {
-        try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $runVal -ErrorAction SilentlyContinue } catch {}
-    }
-    try {
-        Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'mios-gui-watch' } |
-            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
-    } catch {}
-    try {
-        if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
-            Unregister-ScheduledTask -TaskName 'MiOS-Autostart' -Confirm:$false -ErrorAction SilentlyContinue
-        }
-    } catch {}
-    try {
-        $stagedAutostart = Join-Path $env:ProgramData 'MiOS\mios-autostart.ps1'
-        if (Test-Path $stagedAutostart) {
-            Remove-Item -Path $stagedAutostart -Force -ErrorAction SilentlyContinue
-        }
-    } catch {}
-
-    # 15. Windows Defender exclusions (paired with Add-MiosDefenderExclusions)
-    & $_log '[15/17] Windows Defender exclusions (paths + processes) ...'
-    try {
-        if (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue) {
-            foreach ($excPath in @('M:\','M:\MiOS','M:\MiOS\bin','M:\MiOS\repo',(Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet'),$env:TEMP)) {
-                try { Remove-MpPreference -ExclusionPath $excPath -ErrorAction SilentlyContinue } catch {}
-            }
-            foreach ($excProc in @('pwsh.exe','wsl.exe','wslservice.exe','podman.exe','msrdc.exe')) {
-                try { Remove-MpPreference -ExclusionProcess $excProc -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    } catch {}
-
-    & $_log '[16a/17] Windows Firewall rules (DisplayName "MiOS - *") ...'
-    try {
-        if (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue) {
-            Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue |
-                ForEach-Object {
-                    try { Remove-NetFirewallRule -InputObject $_ -ErrorAction SilentlyContinue } catch {}
-                }
-        }
-    } catch {}
-
-    # 16. WSL service host caches + any in-flight wslhost/msrdc procs
-    & $_log '[16/17] Killing in-flight wslhost / msrdc / mios-gui-watch host processes ...'
-    foreach ($pn in @('wslhost','msrdc','wsl','vmmemWSL')) {
-        try { Get-Process -Name $pn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
-    }
-    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
-
-    & $_log '[17/17] Preparing M:\ (format if dedicated MiOS volume, else clean MiOS dirs) ...'
-    try {
-        $mVol = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue
-        if ($mVol -and $mVol.FileSystemLabel -match '^MIOS') {
-            # KEEP  = never delete (pagefile + system/volume metadata + genuine user data).
-            # PURGE = disposable junk cleared for a fresh MiOS state (Windows UUP staging).
-            # MIOS_DIRS = the FHS/repo/runtime tree MiOS itself lays down on M:\.
-            $_keep  = @('$RECYCLE.BIN','System Volume Information','pagefile.sys','swapfile.sys',
-                        'hiberfil.sys','DumpStack.log.tmp','SteamLibrary','winget','images','research','config')
-            $_purge = @('W10UIuup','MountUUP')
-            $_miosDirs = @('.devcontainer','.forgejo','.git','.github','automation','etc','MiOS',
-                           'podman','root','src','tests','tools','usr','var','powershell')
-            $_hasPagefile = [bool](Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
-                                   Where-Object { $_.Name -match '^M:' })
-            $_foreign = @(Get-ChildItem 'M:\' -Force -ErrorAction SilentlyContinue |
-                          Where-Object { $_keep -notcontains $_.Name -and $_purge -notcontains $_.Name -and $_miosDirs -notcontains $_.Name })
-            if (-not $_hasPagefile -and $_foreign.Count -eq 0) {
-                Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:$false -ErrorAction Stop | Out-Null
-                & $_log '  [+] M:\ reformatted (dedicated MiOS volume, NTFS, label MIOS-DEV, empty)'
-            } else {
-                $_why = if ($_hasPagefile) { 'active pagefile on M:\' } else { "non-MiOS data present ($(($_foreign.Name) -join ', '))" }
-                & $_log "  M:\ is a SHARED volume ($_why); preserving pagefile/user data -- clearing MiOS tree + UUP staging."
-                foreach ($_d in ($_miosDirs + $_purge)) {
-                    $_p = Join-Path 'M:\' $_d
-                    if (Test-Path -LiteralPath $_p) {
-                        try { Remove-Item -LiteralPath $_p -Recurse -Force -ErrorAction Stop; & $_log "    [removed] M:\$_d" }
-                        catch { & $_log "    [!] could not remove M:\$_d -- $($_.Exception.Message)" }
-                    }
-                }
-            }
-        } else {
-            & $_log '  M:\ not present or label != MIOS-DEV; skipping (safety guard)'
-        }
-    } catch {
-        & $_log ("  [!] M:\ prepare failed: " + $_.Exception.Message)
-    }
-
-    if (-not $Quiet) {
-        Write-Host "  $_msgComplete" -ForegroundColor Green
-        Write-Host ''
-    }
-    $ErrorActionPreference = $reapEAP
+    # Compatibility entry: installation and error recovery preserve persistent
+    # guest state and operator source. Destructive cleanup belongs to uninstall.
+    if (-not $Quiet) { Write-Host '  [MiOS] Existing distributions, persistent state and source checkouts preserved.' -ForegroundColor Cyan }
 }
 
 function Initialize-DataDisk {
@@ -5377,21 +4994,12 @@ if (-not $_freshVendorToml -or
 try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 $_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
-$_trapAutoReap  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'auto_reaping' -Default '[*]  Auto-reaping all MiOS state to leave Windows zero-state...'
-$_trapReapDone  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_complete' -Default '[+]  Reap complete -- re-run irm|iex one-liner to retry from clean state.'
-$_trapReapFail  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_on_failure_failed_template' -Default '[!] Reap-on-failure also failed: {0}'
 trap {
     Write-Host ''
     Write-Host ('  ' + ($_trapFmtFailed -f $_.Exception.Message)) -ForegroundColor Red
-    Write-Host "  $_trapAutoReap" -ForegroundColor Yellow
-    try { Invoke-MiOSFullReap } catch {
-        Write-Host ('  ' + ($_trapReapFail -f $_.Exception.Message)) -ForegroundColor Yellow
-    }
-    Write-Host "  $_trapReapDone" -ForegroundColor Green
-    Write-Host ''
+    Write-Host '  [MiOS] Installation failed; existing distributions, persistent state and source checkouts are preserved.' -ForegroundColor Yellow
     exit 1
 }
-
 # SSOT: every Step N banner resolves through mios.toml [messages.steps].
 # Per feedback_mios_messages_section_ssot: no Write-Host literals in code;
 # vendor defaults via -Default arg of Get-MiosTomlValue.
@@ -5865,6 +5473,11 @@ function Invoke-GitProc {
 
 if (Test-Path $RepoDir) {
     if (Test-Path (Join-Path $RepoDir '.git')) {
+        $sourceState = Invoke-GitProc -ArgList @('status','--porcelain','--untracked-files=normal') -Cwd $RepoDir
+        if ($sourceState.ExitCode -ne 0) { throw 'Could not inspect bootstrap working tree; source update refused' }
+        if ($sourceState.Stdout.Trim()) {
+            Write-Info "Preserving current bootstrap checkout at $RepoDir (local changes present)."
+        } else {
         Write-Info "Updating existing bootstrap clone at $RepoDir (fetch + hard reset to origin/$Branch) ..."
         $fr = Invoke-GitProc -ArgList @('fetch','--depth=1','origin',$Branch) -Cwd $RepoDir
         if ($fr.ExitCode -ne 0) {
@@ -5878,6 +5491,7 @@ if (Test-Path $RepoDir) {
                 exit 1
             }
             Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
+        }
         }
     } elseif (@(Get-ChildItem -LiteralPath $RepoDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
         # Exists but EMPTY: a prior uninstall emptied it, yet a lingering WSL2 /
@@ -5937,8 +5551,7 @@ if (Test-Path $RepoDir) {
 }
 
 # 6. Hand off to bootstrap.ps1 (canonical split-bootstrap entry).
-# Defaults to -BootstrapOnly: stops after dev VM + Windows install.
-# The "Build MiOS" Start Menu shortcut drives the OCI build.
+# The published one-liner follows the operator's SSOT installation mode.
 $entry = Join-Path $RepoDir "bootstrap.ps1"
 if (-not (Test-Path $entry)) {
     Write-Err "bootstrap.ps1 not found in $RepoDir (cloned with wrong branch?)"
@@ -5948,7 +5561,10 @@ if (-not (Test-Path $entry)) {
 if ($Workflow) { $env:MIOS_WORKFLOW = $Workflow }
 
 $forwardArgs = @()
-if ($FullBuild)  { $forwardArgs += '-FullBuild' }
+$installMode = Get-MiosTomlValue -Section 'bootstrap' -Key 'windows_install_mode' -Default 'full'
+if ($installMode -notin @('full','bootstrap')) { throw 'SSOT bootstrap.windows_install_mode must be full or bootstrap' }
+if ($FullBuild -or $installMode -eq 'full') { $forwardArgs += '-FullBuild' }
+else { $forwardArgs += '-BootstrapOnly' }
 if ($Unattended) { $forwardArgs += '-Unattended' }
 
 Write-Info "Handing off to bootstrap.ps1 ..."

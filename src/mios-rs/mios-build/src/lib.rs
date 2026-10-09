@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod images;
+
 /// Executable roles are distinct from Cargo libraries and from their shared
 /// implementation modules. The SSOT assigns each executable exactly once.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
