@@ -43,14 +43,32 @@ BASENAMES = {
     "Modelfile", "Kitfile", ".gitignore", ".gitattributes", ".dockerignore",
     ".editorconfig", ".bashrc", ".profile",
 }
+# Files that stay header-free are not taggable, rather than counted against
+# [ai_tag].max_untagged: a header would leak into an agent-harness prompt, make a
+# vendored or Law 15 mirrored copy differ from its source, be overwritten by the
+# generator that owns the file, or corrupt a format with no comment syntax.
+# Multi-component and (^|/)-anchored, so a code dir that only shares a name
+# (usr/lib/mios/agents) stays taggable, on root-relative and absolute paths alike.
 SKIP_DIR = re.compile(
     r"(^|/)(\.git|\.venv|venv|node_modules|site-packages|__pycache__|web_dist|"
     r"dist|assets|\.cache|\.mypy_cache|\.pytest_cache|\.ruff_cache|target|"
     r"base-qwen[^/]*|\.idea|\.vscode-test|finetune/venv|\.gemini|\.rustup|"
-    r"\.tmp\.driveupload|tr_clone|tr_remote|shellcheck-v[0-9.]+)(/|$)")
+    r"\.tmp\.driveupload|tr_clone|tr_remote|shellcheck-v[0-9.]+|"
+    # agent-harness prompts
+    r"\.agents|\.claude/commands|\.github/agents|commands/(claude|codex|copilot|spark)|"
+    # vendored upstream, applied migrations, template-compiler snapshots,
+    # verbatim reference snippets
+    r"usr/share/mios/(vendored|extensions|postgres/migrations)|tests/templates/golden|"
+    r"docs/agy/w10-live-boot)(/|$)")
 SKIP_SUFFIX = re.compile(
     r"\.(gguf|safetensors|bin|pt|pth|onnx|png|jpg|jpeg|gif|ico|webp|svg|woff2?|"
-    r"ttf|otf|so|o|a|zip|gz|xz|zst|tar|whl|pyc|wasm|pdf|mp4|mp3|lock)$", re.I)
+    r"ttf|otf|so|o|a|zip|gz|xz|zst|tar|whl|pyc|wasm|pdf|mp4|mp3|lock)$|"
+    # JSON has no comment syntax
+    r"\.json\.tmpl$|"
+    # prompts, generator outputs, the Law 15 mirror, MiosServiceTool configs
+    r"(^|/)(\.mios/system-prompt\.md|\.prompt\.md|TASKS\.md|automation/lib/globals\.(sh|ps1)|"
+    r"usr/share/mios/(names\.generated\.txt|referenced_names\.txt|reference/env-baseline\.txt)|"
+    r"\.devcontainer/Containerfile|usr/share/mios/windows/MiOS-[^/]*\.cfg)$", re.I)
 JSON_EXT = {".json", ".jsonl", ".map", ".csv", ".tsv"}
 
 AI_LINE_RE = re.compile(r"^[#/<!;\-*\s]*AI-(?:hint|related|functions):.*?(-->)?\s*$", re.I)
@@ -310,7 +328,7 @@ def _has_shebang(path):
 
 
 def indexable(path):
-    if SKIP_SUFFIX.search(path):
+    if SKIP_SUFFIX.search(path.replace(os.sep, "/")):
         return False
     base = os.path.basename(path)
     _, ext = os.path.splitext(base)
@@ -395,7 +413,17 @@ def run_selftest() -> int:
     assert b"second part" not in res5, f"Region strip failed to remove continuation: {res5!r}"
     assert b"# AI-hint: updated\n# AI-related: bar\ncode()\n" in res5, f"Retag output unexpected: {res5!r}"
 
-    print("mios-ai-tag: --selftest passed (5/5 tests green)", file=sys.stderr)
+    # 6. Header-free paths are not taggable, relative or absolute; code dirs
+    #    that only share a name stay taggable.
+    for p in (".agents/skills/x/SKILL.md", "/srv/MiOS/commands/codex/goal.md",
+              "usr/share/mios/vendored/k3s/k3s-install.sh", ".prompt.MD",
+              "/srv/MiOS/automation/lib/globals.sh", "tests/templates/golden/bash.snap"):
+        assert not indexable(p) or SKIP_DIR.search(p), f"{p} must not be taggable"
+    for p in ("usr/lib/mios/agents/router.py", "/srv/MiOS/usr/share/mios/agents/run.sh",
+              "automation/lib/common.sh", "docs/design/w10-live-boot/notes.md"):
+        assert indexable(p) and not SKIP_DIR.search(p), f"{p} must stay taggable"
+
+    print("mios-ai-tag: --selftest passed (6/6 tests green)", file=sys.stderr)
     return 0
 
 
