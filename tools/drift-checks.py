@@ -276,7 +276,50 @@ def check_legibility_ratchet() -> int:
                                   and r.count("/") == 3
                                   and not _TEST_BASENAME.match(r.rsplit("/", 1)[-1])]),
     }
+    # ADR-0030: the file ceiling counts SOURCE files. Dependency files (vendored
+    # wheels, lockfiles) leave the count by an SSOT glob, never by a list baked in
+    # here; they still count toward max_tracked_mb, which Law 12 sizes.
+    import fnmatch
+    budget = lim.get("file_budget") or {}
+    dep_globs = tuple(budget.get("dependency_globs") or ())
+    source = [r for r in rels if not any(fnmatch.fnmatch(r, g) for g in dep_globs)]
+    measured["max_tracked_files"] = len(source)
+
     viol = []
+    # Each source file lands in the FIRST domain (in [legibility.file_budget].order)
+    # whose glob matches it, so a file is never budgeted twice or not at all.
+    order = list(budget.get("order") or ())
+    domains = budget.get("domains") or {}
+    per_domain = {}
+    if budget:
+        missing = [d for d in order if d not in domains] + [d for d in domains if d not in order]
+        if missing:
+            viol.append("[legibility.file_budget] order and domains disagree on: %s" % ", ".join(missing))
+        counts = dict.fromkeys(order, 0)
+        homeless = []
+        for rel in source:
+            home = next((d for d in order if d in domains and any(
+                fnmatch.fnmatch(rel, g) for g in domains[d].get("globs") or ())), None)
+            if home is None:
+                homeless.append(rel)
+            else:
+                counts[home] += 1
+        if homeless:
+            viol.append("%d source file(s) belong to no [legibility.file_budget] domain (first: %s)"
+                        % (len(homeless), homeless[0]))
+        for d in order:
+            cap = (domains.get(d) or {}).get("max_files")
+            per_domain[d] = (counts.get(d, 0), cap, (domains.get(d) or {}).get("target_files"))
+            if type(cap) is not int:
+                viol.append("[legibility.file_budget.domains.%s].max_files must be an integer" % d)
+            elif counts.get(d, 0) > cap:
+                viol.append("files.%s = %d, over the floor of %d. This ratchet only comes DOWN: "
+                            "fold or delete, do not raise it." % (d, counts[d], cap))
+        target = budget.get("target_source_files")
+        planned = sum(t for _, _, t in per_domain.values() if type(t) is int)
+        if type(target) is int and planned > target:
+            viol.append("[legibility.file_budget] domain targets sum to %d, over target_source_files = %d"
+                        % (planned, target))
     for k, got in sorted(measured.items()):
         cap = lim.get(k)
         if cap is None:
@@ -286,6 +329,10 @@ def check_legibility_ratchet() -> int:
                         "fold or delete, do not raise it." % (k.replace("max_", ""), got, cap))
     print("[legibility] " + "  ".join("%s=%d/%s" % (k.replace("max_", ""), v, lim.get(k, "-"))
                                       for k, v in sorted(measured.items())), file=sys.stderr)
+    if per_domain:
+        print("[legibility] files toward target %s: " % budget.get("target_source_files", "-")
+              + "  ".join("files.%s=%d/%s(->%s)" % (d, n, cap, t) for d, (n, cap, t) in per_domain.items()),
+              file=sys.stderr)
     print("\n".join(viol))
     sys.exit(1 if viol else 0)
 
