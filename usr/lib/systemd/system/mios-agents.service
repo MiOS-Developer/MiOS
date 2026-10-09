@@ -18,7 +18,7 @@ Environment=MIOS_IDENTITY_DEFAULT_PASSWORD=mios
 # install.env is bare KEY=value; these four values carry a space, parentheses
 # or a {} placeholder, so they never reach it. ExecStart references each one
 # bare and the renderer leaves a bare ref for systemd, which expands an unset
-# name to empty. Declaring them here is the supply (T-1064).
+# name to empty. Declaring them here is the supply (task_3362).
 Environment="MIOS_FRONTIER_LANE_B_MODEL=Gemini 3.5 Flash (High)"
 Environment="MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=--effort {e}"
 Environment="MIOS_A2O_AGY_EFFORT_FLAG="
@@ -61,7 +61,7 @@ PrivateTmp=true
 # and podman write is listed here. /var/lib/mios/agents is NOT a StateDirectory=:
 # this unit runs as root, and StateDirectory= would recursively chown the
 # coder home to root on every start. Its owner and mode belong to
-# usr/lib/tmpfiles.d/mios-agents.conf alone (T-1139).
+# usr/lib/tmpfiles.d/mios-agents.conf alone (task_3432).
 ReadWritePaths=/var/lib/mios/agents /var/lib/containers /run
 
 [Install]

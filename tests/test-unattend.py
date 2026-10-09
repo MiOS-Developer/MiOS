@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (task_3353 / GATECAT-01).
 # AI-related: usr/libexec/mios/win/unattend_gen.py, usr/libexec/mios/win/unattend_validate.py, autounattend.xml
 """Consolidated Windows Unattended Domain Test Suite.
 

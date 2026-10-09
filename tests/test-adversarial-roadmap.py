@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Adversarial testing suite and empirical challenge harness for T-377..T-381 modules.
+# AI-hint: Adversarial testing suite and empirical challenge harness for task_321..task_325 modules.
 # AI-related: usr/libexec/mios/mcp/sandbox.py, usr/libexec/mios/sec/approval.py, usr/libexec/mios/graph/traversal.py, usr/libexec/mios/prompt/pruning.py, usr/libexec/mios/a2a/attestation.py
-"""Adversarial Verification Suite (Challenger 1).  Executes stress tests, edge cases, boundary conditions, fuzzing payloads, and security attack scenarios across the roadmap modules: - T-377: MCP Bubblewrap Sandbox Engine - T-378: HITL Interactive Approval Engine - T-379: Knowledge Graph Recursive CTE Traversal - T-380: Contextual Prompt Token Pruning Engine - T-381: Agent-to-Agent (A2A) Ed25519 Attestation"""
+"""Adversarial Verification Suite (Challenger 1).  Executes stress tests, edge cases, boundary conditions, fuzzing payloads, and security attack scenarios across the roadmap modules: - task_321: MCP Bubblewrap Sandbox Engine - task_322: HITL Interactive Approval Engine - task_323: Knowledge Graph Recursive CTE Traversal - task_324: Contextual Prompt Token Pruning Engine - task_325: Agent-to-Agent (A2A) Ed25519 Attestation"""
 
 import base64
 import copy

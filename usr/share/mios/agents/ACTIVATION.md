@@ -122,5 +122,5 @@ empty stdout because the backing Gemini account has hit its quota (HTTP 429
 `RESOURCE_EXHAUSTED`, "Individual quota reached"; resets ~2026-07-07). Operator
 options: wait for the reset, or upgrade the `agy`/Gemini subscription. Until
 resolved, Lane-B finalize work runs on the `claude` fallback engine. See
-`tasks.jsonl` F-022 (root cause) and F-023 (hardening the `mios-a2o` dispatch so a
+`tasks.jsonl` task_3188 (root cause) and task_3189 (hardening the `mios-a2o` dispatch so a
 silent agy failure is never reported as DONE).

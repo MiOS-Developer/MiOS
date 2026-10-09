@@ -105,7 +105,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_approutes.py (T-1092)
+# Consolidated from test_mios_approutes.py (task_1006)
 # ==============================================================================
 # AI-hint: Runtime route-parity gate for the agent-pipe strangler-fig refactor (WS R13 Step 2b) -- the LIVE-FastAPI complement to the...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

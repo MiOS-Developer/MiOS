@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-747 & T-748: 100-stream concurrent token streaming & backpressure.
+# AI-hint: Tests for task_691 & task_692: 100-stream concurrent token streaming & backpressure.
 # AI-functions: test_100_concurrent_streams
 
-"""Tests for T-747 & T-748: 100-stream concurrent token streaming & backpressure."""
+"""Tests for task_691 & task_692: 100-stream concurrent token streaming & backpressure."""
 import asyncio, sys
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
 from sse_streamer import SSEStreamer
@@ -38,4 +38,4 @@ def test_100_concurrent_streams():
 
 if __name__ == "__main__":
     test_100_concurrent_streams()
-    print("All T-747/T-748 tests passed.")
+    print("All task_691/task_692 tests passed.")

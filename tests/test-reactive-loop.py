@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Reactive Event Loop & Subagent Wakeups (T-651, T-652).
+# AI-hint: Automated unit test suite for Reactive Event Loop & Subagent Wakeups (task_597, task_598).
 # AI-related: usr/lib/mios/agent-pipe/reactive_loop.py, tests/test-reactive-loop.py
 """Automated unit test suite for MiOS Reactive Event Dispatcher."""
 
@@ -20,13 +20,13 @@ class TestReactiveLoop(unittest.IsolatedAsyncioTestCase):
         """Test event emission wakes sleeping coroutine in <5ms."""
         q = self.dispatcher.subscribe("agent_inbox_test")
         emit_task = asyncio.create_task(
-            self.dispatcher.emit_notify("agent_inbox_test", {"task_id": "T-100", "action": "wake"})
+            self.dispatcher.emit_notify("agent_inbox_test", {"task_id": "task_100", "action": "wake"})
         )
         ev = await self.dispatcher.wait_for_wakeup(q, timeout=1.0)
         await emit_task
 
         self.assertIsNotNone(ev)
-        self.assertEqual(ev.payload["task_id"], "T-100")
+        self.assertEqual(ev.payload["task_id"], "task_100")
         self.assertLess(ev.latency_ms, MAX_WAKEUP_LATENCY_MS)
 
     async def test_multi_subscriber_broadcast(self):

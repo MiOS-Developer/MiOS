@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Automated unit test suite for WS-STRG automated tmpfs spillover to NVMe storage under memory pressure.
 # AI-related: usr/libexec/mios/mem/mios-tmpfs-spill, usr/lib/systemd/system/mios-tmpfs-spill.service
-"""Automated tests for WS-STRG tmpfs spill-to-NVMe manager (T-410 / AGY-2008)."""
+"""Automated tests for WS-STRG tmpfs spill-to-NVMe manager (task_354 / task_2587)."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: PCIe ASPM L1.2 and runtime D3cold GPU power manager (T-683, T-684).
+# AI-hint: PCIe ASPM L1.2 and runtime D3cold GPU power manager (task_627, task_628).
 # AI-related: usr/libexec/mios/hw/gpu_powerd.py, tests/test-hw.py
 """PCIe ASPM L1.2 and runtime D3cold GPU power manager for MiOS.
 

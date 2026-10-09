@@ -405,7 +405,7 @@ WS-A9 dispatch-time Policy Decision Point. Re-checks the per-AGENT
 
 ### mios_quarantine -- the CaMeL dual-context quarantine gate...
 
-mios_quarantine -- the CaMeL dual-context quarantine gate (F2/T-033 deeper half).
+mios_quarantine -- the CaMeL dual-context quarantine gate (F2/task_33 deeper half).
 
 Pure stdlib (+ the pure mios_ruleof2 sibling for the shared mode enum and the
 tier->side-effect derivation). The CaMeL design (Debenedetti et al., "Defeating
@@ -452,10 +452,10 @@ STUBBED (degrade-open to None) as the documented next increment.
 
 Resolve the SSOT ``[security].quarantine_mode`` value to a known enum; an
     empty/unknown token -> off (degrade-open: an unrecognised mode never silently
-    enforces or audits). Delegates to the SHARED T-033 normaliser so the two
+    enforces or audits). Delegates to the SHARED task_33 normaliser so the two
     architectural-gate modes can never drift in their parsing.
 
-<!-- mios-src:18e6b11e275d from usr/lib/mios/agent-pipe/mios_pipe/access/quarantine.py:63-66 -->
+<!-- mios-src:894d17edc683 from usr/lib/mios/agent-pipe/mios_pipe/access/quarantine.py:63-66 -->
 
 ### Evaluate the quarantine boundary for one verb dispatch....
 
@@ -464,7 +464,7 @@ Evaluate the quarantine boundary for one verb dispatch. Inputs:
       session_tainted -- axis A, the EXISTING provenance-taint signal (bool;
                          mios_firewall owns it -- not re-derived here).
       permission_tier -- the verb's SSOT ``[verbs.*].permission`` (drives axis C via
-                         the SAME ``mios_ruleof2.is_state_change`` derivation T-033 uses).
+                         the SAME ``mios_ruleof2.is_state_change`` derivation task_33 uses).
       sensitive       -- the verb's SSOT ``[verbs.*].sensitive`` flag (axis B).
       mode            -- the SSOT ``[security].quarantine_mode`` in force.
 
@@ -600,9 +600,9 @@ WS-A13 REFERENCE argv for a resolved SandboxProfile.
 
     NOT what runs. The executor is `usr/libexec/mios/mios-seccomp-filter` +
     `usr/libexec/mios/mios-sandbox-exec`, which builds its own flag set (narrower
-    namespace unsharing, plus --cap-drop ALL and the T-230 --seccomp filter this
+    namespace unsharing, plus --cap-drop ALL and the task_210 --seccomp filter this
     function does not model). Read the wrapper, not this, for what a confined
-    verb actually gets; reconciling the two is T-309. `cmd` is the verb's argv.
+    verb actually gets; reconciling the two is task_253. `cmd` is the verb's argv.
     Flags verified against bubblewrap docs (ArchWiki Bubblewrap/Examples):
 
       mechanism 'none'  -> NO wrapper: returns cmd unchanged (run direct).

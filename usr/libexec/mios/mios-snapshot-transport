@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Zero-Knowledge untrusted remote snapshot transport protocol client (T-522, AGY-2120).
+# AI-hint: Zero-Knowledge untrusted remote snapshot transport protocol client (task_466, task_2699).
 # AI-doc: usr/share/doc/mios/manual/ch11-storage-and-persistence.md
 from __future__ import annotations
 

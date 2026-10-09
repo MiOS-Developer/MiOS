@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 78: Low-Latency WebRTC Streaming Audio Ingress and Streaming Whisper Speech-to-Text Bridge (T-533, AGY-2131). Details WebRTC ingress protocol, 16kHz PCM framing, sub-150ms VAD ring buffering, local whisper.cpp Quadlet streaming container, and real-time token dispatch to agent-pipe / Hermes gateway. -->
+<!-- AI-hint: Chapter 78: Low-Latency WebRTC Streaming Audio Ingress and Streaming Whisper Speech-to-Text Bridge (task_477, task_2710). Details WebRTC ingress protocol, 16kHz PCM framing, sub-150ms VAD ring buffering, local whisper.cpp Quadlet streaming container, and real-time token dispatch to agent-pipe / Hermes gateway. -->
 
 # Chapter 78: Low-Latency WebRTC Streaming Audio Ingress and Streaming Whisper Speech-to-Text Bridge
 
@@ -177,9 +177,9 @@ usr/lib/mios/agent-pipe/mios_audio_stream.py serve --mock --dry-run -v
 usr/lib/mios/agent-pipe/mios_audio_stream.py transcribe sample.wav --mock -v
 ```
 
-### T-1140
+### task_3433
 
-T-1140: the speech engines bound a host model store nothing populated.
+task_3433: the speech engines bound a host model store nothing populated.
 Read-only vendor models are image content (Law 12); nothing seeds /var, so a
 host store plus AssertPathExists failed every stock boot.
 
@@ -199,4 +199,4 @@ shipped tree must hold:
 Each negative control plants one defect in a scratch copy and requires the
 same check to name it.
 
-<!-- mios-src:83a55d19ec28 from usr/libexec/mios/test_mios_speech_storage.py:5-24 -->
+<!-- mios-src:4af74721ab76 from usr/libexec/mios/test_mios_speech_storage.py:5-24 -->

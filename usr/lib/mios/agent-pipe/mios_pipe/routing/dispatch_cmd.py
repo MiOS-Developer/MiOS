@@ -1,4 +1,4 @@
-# AI-hint: Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (T-273).
+# AI-hint: Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (task_251).
 # AI-doc: usr/share/doc/mios/manual/routing.md
 """Verb -> bash command builder (extracted from the dispatch chokepoint)."""
 
@@ -99,7 +99,7 @@ def normalize_container_exec(script: str) -> str:
     script = re.sub(
         # A flag's ARGUMENT may not start with '-'; that would be the next flag.
         # With [^\s]+ both parses were legal and the group backtracked
-        # exponentially on model-controlled input (~1.64^n). See tasks.jsonl T-336.
+        # exponentially on model-controlled input (~1.64^n). See tasks.jsonl task_280.
         r'\b(podman\s+exec\s+(?:-[a-zA-Z\d\-]+(?:\s+[^-\s]\S*)?\s+)*[\w\-\.]+)\s+(bash|sh|zsh|/bin/bash|/bin/sh|/bin/zsh)(\s+-[a-zA-Z\d\-]+)*\s*$',
         r'\1 true',
         script,

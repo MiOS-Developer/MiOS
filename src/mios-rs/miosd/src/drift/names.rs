@@ -16,16 +16,16 @@ impl Check for NamesRegistryCheck {
             return Verdict::Skip("Incomplete git work tree".to_string());
         }
 
-        // T-1045. This used to test whether a DEBUG BUILD of the generator
+        // task_982. This used to test whether a DEBUG BUILD of the generator
         // existed and, if so, return Pass("Names registry projection matches
         // SSOT") -- without running it and without comparing anything. If the
         // binary was absent it skipped instead, so on an ordinary tree the
         // check was silent and on a developer's tree it lied. Both halves of
         // Skip-as-Pass in one function.
         //
-        // T-1044/T-1009 lineage: the generator was ported to the native
+        // task_981/task_953 lineage: the generator was ported to the native
         // tools/native/generate-names-registry binary and the Python script
-        // strangler-deleted (AGY-1073); this caller kept the stale .py path
+        // strangler-deleted (task_1713); this caller kept the stale .py path
         // and the python3 interpreter assumption, so Windows-invoked image
         // builds failed with "Generator not found: tools/generate-names-registry.py".
         // The native generator writes BOTH projections (names.generated.txt

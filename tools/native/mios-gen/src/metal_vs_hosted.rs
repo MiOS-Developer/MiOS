@@ -650,7 +650,7 @@ pub fn render(data: &Value, root: &Path) -> String {
             lines.push("".to_string());
         }
 
-        lines.push("**Read the two right-hand columns narrowly.** *Baked* means every marker package is in `[packages]` — Law 12 satisfied, nothing to fetch at boot. *Wired* means the named file exists in the tree. Neither claims the plane is finished: `router` is baked and its forwarding sysctl is applied, and it still has no NAT ruleset or client DHCP (T-337). A plane is only complete when a gate proves it end to end.".to_string());
+        lines.push("**Read the two right-hand columns narrowly.** *Baked* means every marker package is in `[packages]` — Law 12 satisfied, nothing to fetch at boot. *Wired* means the named file exists in the tree. Neither claims the plane is finished: `router` is baked and its forwarding sysctl is applied, and it still has no NAT ruleset or client DHCP (task_281). A plane is only complete when a gate proves it end to end.".to_string());
         lines.push("".to_string());
 
         let unbaked: Vec<&PlaneRow> = planes
@@ -849,7 +849,7 @@ pub fn render(data: &Value, root: &Path) -> String {
             .unwrap_or(false);
         if !bake_model.is_empty() && !vllm_enabled {
             lines.push("".to_string());
-            lines.push("The vLLM snapshot is baked while `[ai.vllm].enable = false`: it ships on every image, seat and blade alike, and no archetype starts the lane that would load it. That is an unreviewed default rather than Law 12 discipline — see T-330.".to_string());
+            lines.push("The vLLM snapshot is baked while `[ai.vllm].enable = false`: it ships on every image, seat and blade alike, and no archetype starts the lane that would load it. That is an unreviewed default rather than Law 12 discipline — see task_274.".to_string());
         }
     }
 

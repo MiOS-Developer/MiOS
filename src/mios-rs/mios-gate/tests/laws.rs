@@ -59,7 +59,7 @@ fn live_enforcement_on_both_sides_is_clean() {
     assert!(text.contains("1 postcheck marker(s)"), "{text}");
 }
 
-/// The exact shape T-1049 found: the marker exists in the file, but only in a
+/// The exact shape task_986 found: the marker exists in the file, but only in a
 /// comment placed after the script's terminating `exit 0`.
 #[test]
 fn a_marker_only_in_a_comment_after_exit_fails() {

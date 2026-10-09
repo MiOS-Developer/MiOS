@@ -22,7 +22,7 @@ accepted — 2026-09-16
 
 Refines ADR-0011 §2 (language-per-domain) rather than superseding it: the
 language contract stands, and this ADR fixes the *shape* of the native tier that
-ADR-0011 left open. It **reverses one commitment** — ADR-0011 / WS-LANG LANG-01
+ADR-0011 left open. It **reverses one commitment** — ADR-0011 / WS-LANG task_3200
 proposed "subcommands `build|drift|verb|resolve|render|cat|scaffold|fmt` → one
 `miosd` static musl binary", a multicall design. See Rationale §1.
 
@@ -112,20 +112,20 @@ to exist, would trade a parity risk for a boot risk.
 >
 > **And it partly contradicts an accepted decision.** `ADR-0023`
 > (originally recorded as `docs/adr/0005-unified-native-resolver.md` and promoted
-> under T-1014) — formerly invisible because `docs/adr/` was a *second* ADR
+> under task_958) — formerly invisible because `docs/adr/` was a *second* ADR
 > namespace with its own 0004/0005 colliding with the canonical ones, outside
 > the ADR template, the ADR index and `check_template_conformance` — decided:
 > "Collapse all SSOT resolver surfaces into a single compiled Rust crate:
 > `tools/native/mios-resolver`", with a strangler cutover sequence (shell →
 > PowerShell → Python → install.env → names registry) and `[migration]` rollback
 > toggles. That is *replacement*, which this ADR refines to library consolidation
-> (ADR-0023 is now marked superseded by ADR-0021 §5). The reconciliation is T-1014.
+> (ADR-0023 is now marked superseded by ADR-0021 §5). The reconciliation is task_958.
 >
 > Measured, and this is the part that matters: `[migration]` declares
 > `use_rust_resolver_shell`, `_powershell`, `_python` and `_install_env` all
 > **`true`**, and **nothing reads any of them**. The cutover ADR-0005 accepted
 > was never wired; the toggles that claim it is live are inert, and so is the
-> rollback safety they were the mechanism for. T-1015.
+> rollback safety they were the mechanism for. task_959.
 
 **6 — Output contract.** Human text on stdout by default, with today's exit
 codes preserved exactly — `0` clean, `1` violations, `2` could-not-run — so the
@@ -170,7 +170,7 @@ draining.
 **12 — Tracking.** WS-LANG is extended; no new workstream. One `T-####` per
 category binary, each carrying its own parity DoD.
 
-**13 — Order.** `mios-probe` first (T-1003, the `[preflight]` host probe). It is
+**13 — Order.** `mios-probe` first (task_947, the `[preflight]` host probe). It is
 greenfield, so the first attempt carries no parity risk while the shared crate,
 the cross-compile, the builder stage and `--format json` are all being invented
 at once.
@@ -223,7 +223,7 @@ shrink-only register also makes a deliberate exception visible instead of silent
   host-side surface is built, not interpreted, so a change there needs a
   compile. Fully static rules out NSS, so any tool that wanted `getpwnam` must
   be rewritten to read SSOT or `/etc/passwd`.
-- **Reversed:** ADR-0011 §2 / WS-LANG LANG-01's single-`miosd`-multicall shape.
+- **Reversed:** ADR-0011 §2 / WS-LANG task_3200's single-`miosd`-multicall shape.
   `miosd` remains as a daemon and keeps the subcommands it already serves; it
   does not become the container for the whole native tier.
 - **Open:** whether the resolver crate eventually *replaces* the Python and bash

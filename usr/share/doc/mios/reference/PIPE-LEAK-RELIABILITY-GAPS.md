@@ -14,7 +14,7 @@
 
 ---
 
-## LEAK-1 (CQ2 / tracked as T-111) — literal `<tool_call>`/```json``` text leaks in the final answer
+## LEAK-1 (CQ2 / tracked as task_112) — literal `<tool_call>`/```json``` text leaks in the final answer
 
 ### Root cause
 
@@ -58,7 +58,7 @@ reaches the user. `toolexec.py:184-190` shows the *only* place the
 tools-bound loop, not a sanitizer for a tools-unbound completion, so it's
 structurally the wrong tool for this call site even if it were wired in.
 
-This is already tracked verbatim in `TASKS.md:2611-2623` (T-111/CQ2), which
+This is already tracked verbatim in `TASKS.md:2611-2623` (task_112/CQ2), which
 independently names the same `native_loop.py:780-782` line and the same
 "tools-on-final" + "constrained decoding" fix shape — corroborating this
 root-cause read.
@@ -123,11 +123,11 @@ longer-term fix is a *structured* final envelope
 but that changes the OpenAI streaming contract (content must still be prose,
 not JSON) so it's out of scope for a flag-gated degrade-open patch; (a)+(b)
 are the load-bearing fix, (c) is the durable follow-on already scoped by
-T-111/T-119 (native typed-arg richness).
+task_112/task_120 (native typed-arg richness).
 
 ---
 
-## LEAK-2 (CQ1 / tracked as T-115, extends T-109) — refine scaffold leaks to `content` + duplicate "Refining intent" status
+## LEAK-2 (CQ1 / tracked as task_116, extends task_110) — refine scaffold leaks to `content` + duplicate "Refining intent" status
 
 ### Root cause 1 — the refine pass drops `response_format:json_schema` specifically when streaming
 
@@ -190,7 +190,7 @@ whole pipeline observable live" — `mios.toml:2927-2932`). So on the CLI, EVERY
 `_sse_reasoning()` call — including the raw, unconstrained refine token stream
 from Root cause 1 — lands in `delta.content`, not `reasoning_content`. This is
 literally the "surface-aware `_sse_reasoning` fix... authored but undeployed"
-gap `TASKS.md:2674-2679` (T-115) already names.
+gap `TASKS.md:2674-2679` (task_116) already names.
 
 **A third, orphaned SSOT knob compounds this**: `mios.toml:2933` declares
 `surface_default = "clean"   # clean = reasoning-channel; "inline" only via
@@ -490,7 +490,7 @@ mios.toml:4473  max_result_chars = 4000   # ...fit the full container list whole
 treatment, so the model sees only Linux flatpaks, correctly has "no data" for
 Windows games, and — per the exact anti-fabrication failure class the other
 three verbs above were already patched against — invents them instead
-(consistent with the sibling T-113/T-114 fabrication findings covering the
+(consistent with the sibling task_114/task_115 fabrication findings covering the
 same live session).
 
 ### Design fix

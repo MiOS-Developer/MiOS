@@ -4,9 +4,9 @@
 
 ### Declarative Nix Flake Projection Generator and Generation...
 
-Declarative Nix Flake Projection Generator and Generation Manager (T-582 / AGY-2180).
+Declarative Nix Flake Projection Generator and Generation Manager (task_526 / task_2759).
 
 Parses [dotfiles], [packages], and [shell] sections from mios.toml and renders pure
 Nix flakes (/etc/mios/flake.nix) managing atomic user profile and dotfile generations.
 
-<!-- mios-src:1577a1135467 from usr/libexec/mios/config/nix_project.py:5-9 -->
+<!-- mios-src:56b1550ff4ea from usr/libexec/mios/config/nix_project.py:5-9 -->

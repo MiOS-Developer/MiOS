@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for OverlayFS Workspace Provisioning & Isolation (T-691, T-692).
+# AI-hint: Automated unit test suite for OverlayFS Workspace Provisioning & Isolation (task_635, task_636).
 # AI-related: usr/lib/mios/agent-pipe/overlay_workspace.py, tests/test-overlay-workspace.py
 """Automated unit test suite for MiOS OverlayFS Workspace Manager."""
 

@@ -2,7 +2,7 @@
 # AI-hint: Emits the compiled seccomp cBPF program that mios-sandbox-exec hands bwrap on --seccomp FD. Reads the denylist and action from mios.toml [sandbox] through the layered resolver, builds the program with the pure mios_pipe.access.seccomp core, and writes it to --out (or stdout). Exits NON-ZERO on any architecture with no verified syscall table or on a denylist that resolves to nothing, so the caller can refuse to run rather than confining a verb with a filter that denies nothing -- which would read as protection while being none.
 # AI-related: usr/lib/mios/agent-pipe/mios_pipe/access/seccomp.py, /usr/libexec/mios/mios-sandbox-exec, /usr/share/mios/mios.toml, usr/share/doc/mios/manual/ch62-sandbox-seccomp.md
 # AI-functions: _cfg, main
-"""Emit the dispatch sandbox's seccomp filter (T-230)."""
+"""Emit the dispatch sandbox's seccomp filter (task_210)."""
 
 import argparse
 import os

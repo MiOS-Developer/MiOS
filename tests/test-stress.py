@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated empirical stress/boundary tests (T-339..T-345, T-573..T-774, T-966..T-975) for MiOS agent-pipe, ai, hw, net, sec, storage and kernel helpers.
+# AI-hint: Consolidated empirical stress/boundary tests (task_283..task_289, task_517..task_718, task_910..task_919) for MiOS agent-pipe, ai, hw, net, sec, storage and kernel helpers.
 """Empirical stress tests for MiOS, folded from the former tests/test-empirical-stress-*.py files."""
 from __future__ import annotations
 import sys
@@ -9,8 +9,8 @@ import unittest
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-339, T-340, T-341, T-342, T-343, T-344,
-T-345, T-733, T-734.
+Empirical stress tests for batch task_283, task_284, task_285, task_286, task_287, task_288,
+task_289, task_677, task_678.
 """
 import sys, time
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
@@ -113,7 +113,7 @@ def es339_main() -> int:
 # ======================================================================
 # from tests/test-stress.py
 # ======================================================================
-"""Empirical Stress & Boundary Testing Suite for MiOS T-573 to T-582: - hw/powerd.py (T-573/T-574) - ux/wallpaperd.py (T-575/T-576) - agent-pipe/mios_mcp.py (T-577/T-578) - audio/wakeword.py (T-579/T-580) - config/nix_project.py (T-581/T-582)"""
+"""Empirical Stress & Boundary Testing Suite for MiOS task_517 to task_526: - hw/powerd.py (task_517/task_518) - ux/wallpaperd.py (task_519/task_520) - agent-pipe/mios_mcp.py (task_521/task_522) - audio/wakeword.py (task_523/task_524) - config/nix_project.py (task_525/task_526)"""
 
 
 import asyncio
@@ -937,7 +937,7 @@ class es573_TestNixProjectStressAndBoundaries(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 """
-Multi-Perspective Empirical Stress Harness for MiOS Workstream Batch T-583..T-592.
+Multi-Perspective Empirical Stress Harness for MiOS Workstream Batch task_527..task_536.
 
 Covers adversarial boundary tests across:
 1. Git Pre-Commit: Multi-line syntax mutations, boundary regex bypasses, nested brackets.
@@ -1358,7 +1358,7 @@ class es613_TestEmpiricalStressT613T622(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Fan Control, WebRTC Streamer, Secret Enclave, VRAM Swapper, and GPU Priority Scheduler.
-"""Empirical adversarial stress test suite for tasks T-623 through T-632."""
+"""Empirical adversarial stress test suite for tasks task_567 through task_576."""
 
 import os
 import sys
@@ -1504,7 +1504,7 @@ class es623_TestEmpiricalStressT623T632(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Energy Capping, Prompt Cache, PagedAttention, S.M.A.R.T. Evacuation, and Crash Triage.
-"""Empirical adversarial stress test suite for tasks T-633 through T-642."""
+"""Empirical adversarial stress test suite for tasks task_577 through task_586."""
 
 import json
 import os
@@ -1668,7 +1668,7 @@ class es633_TestEmpiricalStressT633T642(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across USBGuard, Flatpak Snapshot, Live ISO, Tensor Kernels, and Reactive Loop.
-"""Empirical adversarial stress test suite for tasks T-643 through T-652."""
+"""Empirical adversarial stress test suite for tasks task_587 through task_598."""
 
 import asyncio
 import os
@@ -1776,7 +1776,7 @@ class es643_TestEmpiricalStressT643T652(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Council Consensus, Speculative Decoding, CPU Topology, Mesh Logs, and CVE Scanner.
-"""Empirical adversarial stress test suite for tasks T-653 through T-662."""
+"""Empirical adversarial stress test suite for tasks task_599 through task_608."""
 
 import asyncio
 import os
@@ -1867,7 +1867,7 @@ class es653_TestEmpiricalStressT653T662(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across GPU Heatmap, Systemd Harden, OOMD PSI, Elastic Training, and Multi-modal WS.
-"""Empirical adversarial stress test suite for tasks T-663 through T-672."""
+"""Empirical adversarial stress test suite for tasks task_609 through task_616."""
 
 import asyncio
 import os
@@ -1954,7 +1954,7 @@ class es663_TestEmpiricalStressT663T672(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across MicroVM Sandbox, Context Compactor, USB Surge, TRNG Entropy, and Kernel Livepatch.
-"""Empirical adversarial stress test suite for tasks T-673 through T-682."""
+"""Empirical adversarial stress test suite for tasks task_617 through task_626."""
 
 import os
 import sys
@@ -2027,7 +2027,7 @@ class es673_TestEmpiricalStressT673T682(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across GPU Power, GBNF Grammar, Streaming TTS, CCID Multiplexer, and OverlayFS.
-"""Empirical adversarial stress test suite for tasks T-683 through T-692."""
+"""Empirical adversarial stress test suite for tasks task_627 through task_636."""
 
 import json
 import os
@@ -2121,7 +2121,7 @@ class es683_TestEmpiricalStressT683T692(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Accelerator Router, Medusa Tree, Split-DNS, Fastboot, and KASLR.
-"""Empirical adversarial stress test suite for tasks T-693 through T-702."""
+"""Empirical adversarial stress test suite for tasks task_637 through task_646."""
 
 import os
 import sys
@@ -2200,7 +2200,7 @@ class es693_TestEmpiricalStressT693T702(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Bit-Perfect Audio, Native Storage, Journal FSS, CUDA Graphs, and SBOM Generator.
-"""Empirical adversarial stress test suite for tasks T-703 through T-712."""
+"""Empirical adversarial stress test suite for tasks task_647 through task_656."""
 
 import os
 import sys
@@ -2270,7 +2270,7 @@ class es703_TestEmpiricalStressT703T712(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across NCCL Tuner, LFS Cache, Storage Scrubber, eBPF Tracer, and Thermal Governor.
-"""Empirical adversarial stress test suite for tasks T-713 through T-722."""
+"""Empirical adversarial stress test suite for tasks task_657 through task_666."""
 
 import os
 import shutil
@@ -2348,7 +2348,7 @@ class es713_TestEmpiricalStressT713T722(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 # Tests boundary conditions across Macaroon Auth, PgVector HNSW, GPU Terminal, Ceph Heal, and ROCm PagedAttention.
-"""Empirical adversarial stress test suite for tasks T-723 through T-732."""
+"""Empirical adversarial stress test suite for tasks task_667 through task_676."""
 
 import os
 import sys
@@ -2417,7 +2417,7 @@ class es723_TestEmpiricalStressT723T732(unittest.TestCase):
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-735 through T-744.
+Empirical stress tests for batch task_679 through task_688.
 """
 import sys, time, json
 sys.path.insert(0, "usr/lib/mios/ai")
@@ -2481,7 +2481,7 @@ def es735_main() -> int:
         traceback.print_exc()
         print("FAILED: test-stress.py")
         return 1
-    print("All empirical stress tests for T-735..T-744 passed.")
+    print("All empirical stress tests for task_679..task_688 passed.")
     return 0
 
 
@@ -2489,7 +2489,7 @@ def es735_main() -> int:
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-745 through T-754.
+Empirical stress tests for batch task_689 through task_698.
 """
 import sys, asyncio
 sys.path.insert(0, "usr/libexec/mios/sec")
@@ -2552,7 +2552,7 @@ def es745_main() -> int:
         traceback.print_exc()
         print("FAILED: test-stress.py")
         return 1
-    print("All empirical stress tests for T-745..T-754 passed.")
+    print("All empirical stress tests for task_689..task_698 passed.")
     return 0
 
 
@@ -2560,7 +2560,7 @@ def es745_main() -> int:
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-755 through T-764.
+Empirical stress tests for batch task_699 through task_708.
 """
 import sys
 sys.path.insert(0, "usr/lib/mios/ai")
@@ -2617,7 +2617,7 @@ def es755_main() -> int:
         traceback.print_exc()
         print("FAILED: test-stress.py")
         return 1
-    print("All empirical stress tests for T-755..T-764 passed.")
+    print("All empirical stress tests for task_699..task_708 passed.")
     return 0
 
 
@@ -2625,7 +2625,7 @@ def es755_main() -> int:
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-765 through T-774.
+Empirical stress tests for batch task_709 through task_718.
 """
 import sys
 sys.path.insert(0, "usr/libexec/mios/kernel")
@@ -2677,7 +2677,7 @@ def es765_main() -> int:
         traceback.print_exc()
         print("FAILED: test-stress.py")
         return 1
-    print("All empirical stress tests for T-765..T-774 passed.")
+    print("All empirical stress tests for task_709..task_718 passed.")
     return 0
 
 
@@ -2685,7 +2685,7 @@ def es765_main() -> int:
 # from tests/test-stress.py
 # ======================================================================
 """
-Empirical stress tests for batch T-966 through T-975 (Sovereign HCI & AIOS).
+Empirical stress tests for batch task_910 through task_919 (Sovereign HCI & AIOS).
 """
 import sys
 sys.path.insert(0, "usr/libexec/mios/deploy")
@@ -2741,7 +2741,7 @@ def es966_main() -> int:
         traceback.print_exc()
         print("FAILED: test-stress.py")
         return 1
-    print("All empirical stress tests for T-966..T-975 passed.")
+    print("All empirical stress tests for task_910..task_919 passed.")
     return 0
 
 def main() -> int:

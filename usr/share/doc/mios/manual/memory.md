@@ -158,9 +158,9 @@ One K-LRU + TTL eviction sweep. DRY-RUN (evict_enable off) only COUNTS +
 
 <!-- mios-src:a3f0971490c4 from usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py:761-766 -->
 
-### T-068
+### task_70
 
-T-068: the owner fed to the DB-side `SET LOCAL mios.owner_user` -- the
+task_70: the owner fed to the DB-side `SET LOCAL mios.owner_user` -- the
     principal the chat surface forwarded for THIS request. This is the V2 owner only
     RECONCILED against the token-bound account when [security].principal_bind_mode=
     enforce; under the default 'off' (or 'verify') it is the raw, SPOOFABLE forwarded
@@ -382,7 +382,7 @@ Best-effort async query via psycopg v3. Returns rows (list[dict]) when
     fetch=True, else None. Degrade-open: any error -> None (mirrors _db_post),
     so a DB hiccup never breaks a turn.
 
-    ``rls_owner`` (T-068): when _owner_scope emits a scope (DB-side RLS enabled AND an
+    ``rls_owner`` (task_70): when _owner_scope emits a scope (DB-side RLS enabled AND an
     enforce-verified owner -- see its P2-1 gate), the per-request owner GUC is bound +
     SET LOCAL inside the SAME transaction as the query, so the schema RLS policies scope
     rows to that owner. Default (None / RLS off / unverified) emits NO extra statement
@@ -404,7 +404,7 @@ Cached set of a table's column names (information_schema). Lets insert()
 Build + run a parameterized INSERT (WS-9c dual-write mirror). Filters the
     fields to the live table's columns first (drift-tolerant -- a code field the
     schema lacks is dropped, not fatal). Degrade-open -> None (psycopg/PG absent
-    or error never breaks the caller). ``rls_owner`` (T-068) is forwarded to
+    or error never breaks the caller). ``rls_owner`` (task_70) is forwarded to
     execute(): with RLS enabled AND an enforce-verified principal it SET-LOCALs the
     owner GUC in the insert's transaction so FORCE row-level security validates the new
     row (owner_user is written == this owner); default None / RLS off / unverified ->
@@ -425,7 +425,7 @@ Native pgvector HNSW cosine recall on ONE connection (SET hnsw.ef_search
     the emb_version-bearing tables; None = no filter, byte-identical. The caller
     passes the SSOT [pgvector].emb_version (degrade-open if unset).
 
-    `rls_owner` (T-068, the DB-side defense-in-depth layer, DISTINCT from the
+    `rls_owner` (task_70, the DB-side defense-in-depth layer, DISTINCT from the
     app-side `owner` WHERE-filter above): with RLS enabled AND an enforce-verified
     principal it SET-LOCALs the owner GUC in the recall transaction so the schema
     policies enforce owner isolation IN THE DATABASE -- even if the app-side filter is

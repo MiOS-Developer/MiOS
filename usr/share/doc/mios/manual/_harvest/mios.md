@@ -814,11 +814,11 @@ AI-functions: usage, _filter_results
 ### !/usr/bin/env bash AI-hint: Resolves the DB-driven LOGIN...
 
 !/usr/bin/env bash
-AI-hint: Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (T-150..T-153).
+AI-hint: Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (task_151..task_154).
 AI-related: /usr/libexec/mios/mios-dashboard.sh, powershell/profile.ps1, mios-pg-query, account (pgvector table)
 AI-functions: _db_name, main
 
-<!-- mios-src:a7ccd1c6f5de from usr/libexec/mios/mios-login-account:1-4 -->
+<!-- mios-src:eb1f21d74488 from usr/libexec/mios/mios-login-account:1-4 -->
 
 ### !/usr/bin/env python3 AI-hint: The generative documentation...
 
@@ -1103,11 +1103,11 @@ AI-functions: usage
 ### !/bin/bash AI-hint: Executes agent-generated code within a...
 
 !/bin/bash
-AI-hint: Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (T-230) a SECCOMP syscall filter based on specified security levels. Before T-230 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.
+AI-hint: Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (task_210) a SECCOMP syscall filter based on specified security levels. Before task_210 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.
 AI-related: /usr/libexec/mios/mios-sandbox-exec, /usr/libexec/mios/mios-seccomp-filter, usr/lib/mios/agent-pipe/mios_pipe/access/seccomp.py, /usr/share/mios/mios.toml, mios-ai
 AI-functions: _log, _seccomp_arm, run_bwrap
 
-<!-- mios-src:9348bd28570d from usr/libexec/mios/mios-sandbox-exec:1-4 -->
+<!-- mios-src:9ef6f9b9a9dd from usr/libexec/mios/mios-sandbox-exec:1-4 -->
 
 ### !/usr/bin/env python3 AI-hint: Executes scheduled research...
 

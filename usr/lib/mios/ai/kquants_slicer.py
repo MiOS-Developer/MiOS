@@ -2,7 +2,7 @@
 # AI-functions: __init__, slice_model, slice_32b_model, SlicedLayerConfig, KQuantsSlicer
 
 """
-kquants_slicer.py — T-773 WS-AI
+kquants_slicer.py — task_717 WS-AI
 Dynamic K-Quants mixed-precision layer slicer (Q4_K_M / Q5_K_M / Q6_K) in llama-swap.
 
 Retains Q5_K_M/Q6_K precision for attention heads and slices FFN matrices to Q4_K_M,

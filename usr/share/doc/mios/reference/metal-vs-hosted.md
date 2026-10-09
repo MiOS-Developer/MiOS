@@ -62,7 +62,7 @@ The axes the operator settled, as the SSOT now carries them (ADR-0016 D11 and D1
 | `[blade.mesh].federate` | `native` | peers join by each system's OWN mechanism, never by hand |
 | `[blade.hardware].max_radios` | `1` | radios a Mini uses; 0 is a supported build |
 
-**Read the two right-hand columns narrowly.** *Baked* means every marker package is in `[packages]` — Law 12 satisfied, nothing to fetch at boot. *Wired* means the named file exists in the tree. Neither claims the plane is finished: `router` is baked and its forwarding sysctl is applied, and it still has no NAT ruleset or client DHCP (T-337). A plane is only complete when a gate proves it end to end.
+**Read the two right-hand columns narrowly.** *Baked* means every marker package is in `[packages]` — Law 12 satisfied, nothing to fetch at boot. *Wired* means the named file exists in the tree. Neither claims the plane is finished: `router` is baked and its forwarding sysctl is applied, and it still has no NAT ruleset or client DHCP (task_281). A plane is only complete when a gate proves it end to end.
 
 What that leaves open right now, derived rather than asserted:
 

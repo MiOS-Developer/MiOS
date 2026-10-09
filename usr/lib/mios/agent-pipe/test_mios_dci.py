@@ -157,7 +157,7 @@ def t_dissent_threshold_ssot():
         e.DCI_FLOW_TRIGGER_CONF = orig_conf
 
 def t_dissent_acts_ssot():
-    """T-029 NO-HARDCODE: the dissent/objection act set is DERIVED from the
+    """task_29 NO-HARDCODE: the dissent/objection act set is DERIVED from the
     persona-allowed SSOT (the Challenger's acts), not a restated ("challenge",
     "ask") literal -- so it tracks the vocabulary if the persona changes."""
     check("dissent-acts: derived from the challenger persona SSOT",
@@ -167,7 +167,7 @@ def t_dissent_acts_ssot():
     check("dissent-acts: non-empty", len(e._DCI_DISSENT_ACTS) >= 1)
 
 def t_act_type_emitted():
-    """T-028: every DCI act event carries a top-level `act_type` column (not only
+    """task_28: every DCI act event carries a top-level `act_type` column (not only
     the JSONB payload), so dissent + per-act analytics are first-class queryable.
     Capture the event rows _db_create builds while run_dci_flow executes (stubbed
     persona calls, no network) and assert act_type is set + matches the act on the
@@ -226,7 +226,7 @@ def t_act_type_emitted():
           bool(dissents) and all(f.get("act_type") == "challenge" for f in dissents))
 
 def t_flow_gate():
-    """T-029: the heavy B.2 convergent flow is GATED on DCI_FLOW_ENABLED. With a
+    """task_29: the heavy B.2 convergent flow is GATED on DCI_FLOW_ENABLED. With a
     high-confidence Challenger objection from the (stubbed) B.1 critic:
       - default / disabled -> run_dci_flow is NOT invoked (no-op B.2);
       - flow enabled       -> run_dci_flow IS invoked.

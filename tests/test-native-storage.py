@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Native Kernel Rootless Overlay Storage (T-705, T-706).
+# AI-hint: Automated unit test suite for Native Kernel Rootless Overlay Storage (task_649, task_650).
 # AI-related: usr/libexec/mios/containers/native_storage.py, tests/test-native-storage.py
 """Automated unit test suite for MiOS Podman Native Storage Configurator."""
 

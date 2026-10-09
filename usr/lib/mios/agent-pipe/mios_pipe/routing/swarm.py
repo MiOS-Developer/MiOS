@@ -412,12 +412,12 @@ async def _respond_agent_dag(dag: dict, refined: Optional[dict], *,
             if _bypass is not None:
                 _bypass_main = _strip_think_tags(
                     str((_bypass.get("node") or {}).get("output") or "")).strip()
-                log.info("council: aggregator BYPASSED (T-048) -- council_size=%d "
+                log.info("council: aggregator BYPASSED (task_48) -- council_size=%d "
                          "mean_similarity=%.4f -> shipping medoid response",
                          _bypass.get("council_size", 0),
                          _bypass.get("mean_similarity", 0.0))
             elif COUNCIL_DIVERSITY_GATE and len(_selected) < len(_use_nodes):
-                log.info("council: diversity gate (T-047) pruned %d -> %d input(s)",
+                log.info("council: diversity gate (task_47) pruned %d -> %d input(s)",
                          len(_use_nodes), len(_selected))
                 _use_nodes = _selected
         node_lookup = {gn.get("id"): gn for gn in (dag.get("nodes") or [])}

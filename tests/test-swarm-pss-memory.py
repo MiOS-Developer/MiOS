@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-972 & T-973: Swarm PSS memory bounding (>1,500 tasks in <16GB).
+# AI-hint: Tests for task_916 & task_917: Swarm PSS memory bounding (>1,500 tasks in <16GB).
 # AI-functions: test_1500_tasks_within_16gb_budget
 
-"""Tests for T-972 & T-973: Swarm PSS memory bounding (>1,500 tasks in <16GB)."""
+"""Tests for task_916 & task_917: Swarm PSS memory bounding (>1,500 tasks in <16GB)."""
 import sys
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
 from pss_regulator import PSSMemoryRegulator
@@ -24,4 +24,4 @@ def test_1500_tasks_within_16gb_budget():
 
 if __name__ == "__main__":
     test_1500_tasks_within_16gb_budget()
-    print("All T-972/T-973 tests passed.")
+    print("All task_916/task_917 tests passed.")

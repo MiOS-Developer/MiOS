@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-344: mios_reputation — IntrospecLOO marginal contribution.
+# AI-hint: Tests for task_288: mios_reputation — IntrospecLOO marginal contribution.
 # AI-related: mios_reputation
 # AI-functions: _make_contributions, test_records_returned_for_all_peers, test_low_contributor_gets_low_delta, test_eval_count_increments, test_sorted_peers_descending
 
-"""Tests for T-344: mios_reputation — IntrospecLOO marginal contribution."""
+"""Tests for task_288: mios_reputation — IntrospecLOO marginal contribution."""
 import sys
 sys.path.insert(0, "usr/lib/mios/agent-pipe")
 from mios_reputation import ReputationEngine, PeerContribution
@@ -54,4 +54,4 @@ if __name__ == "__main__":
     test_low_contributor_gets_low_delta()
     test_eval_count_increments()
     test_sorted_peers_descending()
-    print("All T-344 tests passed.")
+    print("All task_288 tests passed.")

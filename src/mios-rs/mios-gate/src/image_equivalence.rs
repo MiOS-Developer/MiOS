@@ -10,7 +10,7 @@ use std::process::Command;
 
 const CHECK: &str = "image-equivalence";
 const SSOT: &str = "usr/share/mios/mios.toml";
-/// Where the image records the profile it was built as (T-1172 writes both).
+/// Where the image records the profile it was built as (task_3465 writes both).
 const RECORDS: [&str; 2] = ["usr/lib/mios/version", "usr/lib/os-release"];
 const RECORD_KEY: &str = "MIOS_PROFILES_DEFAULT";
 /// The directories a login PATH searches, relative to the asserted root.

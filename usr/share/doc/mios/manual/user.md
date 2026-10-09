@@ -252,9 +252,9 @@ GPU capacity for local AI inference lanes.
 
 <!-- mios-src:30931545ab6a from usr/lib/systemd/user/mios-wallpaper.service:4-9 -->
 
-### WS-USER (T-559): Network-Wide Roaming Multi-Seat Session...
+### WS-USER (task_503): Network-Wide Roaming Multi-Seat Session...
 
-WS-USER (T-559): Network-Wide Roaming Multi-Seat Session Orchestrator & GPU Assignment Manager.
+WS-USER (task_503): Network-Wide Roaming Multi-Seat Session Orchestrator & GPU Assignment Manager.
 
 Orchestrates multi-seat hardware assignment dynamically for roaming users across cluster blades:
 - Authenticates users against PostgreSQL users_registry or local encrypted credential store.
@@ -263,11 +263,11 @@ Orchestrates multi-seat hardware assignment dynamically for roaming users across
 - Balances GPU allocations across concurrent local physical and remote streaming (Sunshine/Moonlight) users.
 - Enforces strict hardware de-allocation and seat cleanup on logout.
 
-<!-- mios-src:636ff0cd4002 from usr/libexec/mios/user/roaming_seat.py:5-14 -->
+<!-- mios-src:8c7e38d46262 from usr/libexec/mios/user/roaming_seat.py:5-14 -->
 
-### WS-USER (T-560): Dynamic Cross-Node Wayland Session...
+### WS-USER (task_504): Dynamic Cross-Node Wayland Session...
 
-WS-USER (T-560): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol.
+WS-USER (task_504): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol.
 
 Migrates active Wayland desktop sessions and application states seamlessly across cluster blades:
 - Checkpoints running user container/Wayland state via headless compositor bridge (hyprland/sway/gnome).
@@ -275,15 +275,15 @@ Migrates active Wayland desktop sessions and application states seamlessly acros
 - Synchronizes window geometry, workspace layout, and session state to CephFS (/var/lib/mios/sessions/).
 - Restores and re-attaches desktop session to a new physical seat or remote streaming bridge on the target node.
 
-<!-- mios-src:b91217aec0d0 from usr/libexec/mios/user/session_migrate.py:5-13 -->
+<!-- mios-src:1b762bfeede4 from usr/libexec/mios/user/session_migrate.py:5-13 -->
 
 ### MiOS Standard Non-System UID 1000 Enforcement & Migration...
 
 MiOS Standard Non-System UID 1000 Enforcement & Migration Engine.
-Implements T-964 / AGY-2562: Validates and enforces that primary user 'mios'
+Implements task_908 / task_3141: Validates and enforces that primary user 'mios'
 has UID 1000 and GID 1000, aligning with systemd user session requirements.
 
-<!-- mios-src:4b712c70a198 from usr/libexec/mios/user/uid_enforce.py:5-9 -->
+<!-- mios-src:b17b89060039 from usr/libexec/mios/user/uid_enforce.py:5-9 -->
 ### Run ONLY in the OPERATOR's user manager. The broker binds...
 
 Run ONLY in the OPERATOR's user manager. The broker binds the shared

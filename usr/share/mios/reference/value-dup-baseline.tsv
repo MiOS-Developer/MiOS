@@ -1,5 +1,5 @@
 # value-dup-baseline.tsv -- ratcheted exemption ledger for
-# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP AGY-1422).
+# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP task_2063).
 #
 # WHAT THE GATE ASSERTS
 #   One value, one DECLARATION, across the resolved MIOS_* environment that
@@ -26,7 +26,7 @@
 #   every consumer reading it (a `${MIOS_X}` reference is one declaration).
 #   If the two keys really are DISTINCT FACTS that share a value by
 #   coincidence -- either can change without the other becoming wrong -- that
-#   has exactly one representation (T-998): a keep-distinct row in
+#   has exactly one representation (task_942): a keep-distinct row in
 #   usr/share/mios/reference/value-aliases.tsv, canonical column = a key
 #   already in the group, alias column = the newcomer, and the reason.
 #   check_value_aliases proves the two are separate declarations and that the

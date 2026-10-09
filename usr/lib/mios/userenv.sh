@@ -48,7 +48,7 @@ _mios_load_unified() {
     fi
 
     # 2. Daemon resolver fallback
-    if command -v miosd >/dev/null 2>&1; then
+    if [[ "$_use_rust" -eq 1 ]] && command -v miosd >/dev/null 2>&1; then
         local _d_exports=""
         if _d_exports=$(miosd resolve --shell 2>/dev/null | tr -d '\r') && [[ -n "$_d_exports" ]] && [[ $(wc -l <<< "$_d_exports") -gt 50 ]]; then
             eval "$_d_exports" && return 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Ephemeral OverlayFS workspace provisioner and bubblewrap sandbox in agent-pipe (T-691, T-692).
+# AI-hint: Ephemeral OverlayFS workspace provisioner and bubblewrap sandbox in agent-pipe (task_635, task_636).
 # AI-related: usr/lib/mios/agent-pipe/overlay_workspace.py, tests/test-overlay-workspace.py, usr/lib/mios/agent-pipe/server.py
 """Ephemeral OverlayFS workspace provisioner and bubblewrap sandbox for MiOS agent-pipe.
 

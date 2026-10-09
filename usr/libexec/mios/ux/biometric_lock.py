@@ -3,7 +3,7 @@
 # AI-related: tests/test-ux.py, /etc/pam.d/swaylock, /etc/pam.d/gdm-password
 # AI-functions: BiometricLockManager, BiometricSensor, main
 """
-MiOS Screen Lock Manager with Biometric & FIDO2 Authentication (T-463).
+MiOS Screen Lock Manager with Biometric & FIDO2 Authentication (task_407).
 
 Manages biometric hardware sensor inspection (fingerprint fprintd, FIDO2/CTAP2 pam_u2f)
 and PAM configuration stack generation for swaylock, hyprlock, and gdm-password.
@@ -161,7 +161,7 @@ class BiometricLockManager:
         """Render PAM configuration stack with biometric auth and unconditional password fallback."""
         return f"""#%PAM-1.0
 # MiOS Biometric & FIDO2 Authentication Stack for {service_name}
-# Generated automatically by biometric_lock.py (T-463)
+# Generated automatically by biometric_lock.py (task_407)
 # Invariant: Password authentication fallback (system-auth) is unconditionally preserved.
 
 auth        sufficient    pam_fprintd.so
@@ -269,7 +269,7 @@ session     include       system-auth
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Biometric & FIDO2 Screen Lock Manager (T-463)"
+        description="MiOS Biometric & FIDO2 Screen Lock Manager (task_407)"
     )
     parser.add_argument("--check-sensors", action="store_true", help="Inspect attached biometric hardware sensors")
     parser.add_argument("--generate-pam", action="store_true", help="Generate PAM configuration stack files")

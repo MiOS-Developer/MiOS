@@ -76,7 +76,7 @@ NEW: `verb.emb` (native tool-search, retires the in-process BM25/cosine rebuild)
 
 Cross-refs: theme-ssot-projection (projection engine + check 25), mios-flatten-consolidation
 (shared `mios_toml.py`, drift-gates 25-28, load-bearing-verb caution). New drift-gates
-land in `automation/98-drift-checks.sh` (29+). Tasks: **T-242–T-247** (V0–V5).
+land in `automation/98-drift-checks.sh` (29+). Tasks: **task_221–task_225** (V0–V5).
 
 ## V1 Config read-path Flip & Rollback Runbook
 

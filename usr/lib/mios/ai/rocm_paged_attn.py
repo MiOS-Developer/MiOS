@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: ROCm / HIP PagedAttention virtual block manager and async stream compaction engine (T-731, T-732).
+# AI-hint: ROCm / HIP PagedAttention virtual block manager and async stream compaction engine (task_675, task_676).
 # AI-related: usr/lib/mios/ai/rocm_paged_attn.py, tests/test-ai-acceleration.py, usr/share/mios/llamacpp/mios-llm-light.yaml
 """ROCm / HIP PagedAttention virtual block manager and async stream compaction engine for MiOS.
 

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3662,
-  "total_metadata_entries": 3021,
-  "total_hints": 3011,
-  "total_functions_indexed": 1452,
-  "total_related_links": 5091,
+  "total_files_scanned": 3654,
+  "total_metadata_entries": 3022,
+  "total_hints": 3012,
+  "total_functions_indexed": 1481,
+  "total_related_links": 5101,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -206,32 +206,6 @@
       "has_shebang": false
     },
     {
-      "path": ".devloop/findings/T-1000.md",
-      "hint": "MiOS -- dev-loop finding T-1000 (GATE-04): the recorded verdict, evidence and citations from re-measuring whether that gate can be driven red.",
-      "related": [
-        "automation/98-drift-checks.sh",
-        "tests/drift-gate-negatives.sh",
-        ".devloop/LEDGER.md"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
-      "path": ".devloop/findings/T-1001.md",
-      "hint": "MiOS -- dev-loop finding T-1001 (GATE-05): the recorded verdict, evidence and citations from re-measuring that gate's two claims.",
-      "related": [
-        "automation/98-drift-checks.sh",
-        "tools/drift-checks.py",
-        ".devloop/LEDGER.md"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
       "path": ".devloop/findings/ccn-docs-report.md",
       "hint": "MiOS -- dev-loop finding: the ccn-docs lane's audit of whether the",
       "related": [
@@ -249,6 +223,32 @@
       "related": [
         "automation/98-drift-checks.sh",
         "tests/drift-gate-negatives.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/findings/task_944.md",
+      "hint": "MiOS -- dev-loop finding task_944 (GATE-04): the recorded verdict, evidence and citations from re-measuring whether that gate can be driven red.",
+      "related": [
+        "automation/98-drift-checks.sh",
+        "tests/drift-gate-negatives.sh",
+        ".devloop/LEDGER.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/findings/task_945.md",
+      "hint": "MiOS -- dev-loop finding task_945 (GATE-05): the recorded verdict, evidence and citations from re-measuring that gate's two claims.",
+      "related": [
+        "automation/98-drift-checks.sh",
+        "tools/drift-checks.py",
+        ".devloop/LEDGER.md"
       ],
       "functions": [],
       "doc": null,
@@ -972,7 +972,7 @@
     },
     {
       "path": "automation/28-kdump-config.sh",
-      "hint": "Configures kdump crash dump capture and reserved crashkernel memory (T-515).",
+      "hint": "Configures kdump crash dump capture and reserved crashkernel memory (task_459).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
@@ -981,7 +981,7 @@
     },
     {
       "path": "automation/30-dns-config.sh",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing configurator (T-497).",
+      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing configurator (task_441).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -990,7 +990,7 @@
     },
     {
       "path": "automation/31-subuid-alloc.sh",
-      "hint": "Deterministic /etc/subuid and /etc/subgid range generator for rootless container execution (T-477).",
+      "hint": "Deterministic /etc/subuid and /etc/subgid range generator for rootless container execution (task_421).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -1466,7 +1466,7 @@
     },
     {
       "path": "automation/92-export-sbom.sh",
-      "hint": "Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (T-509).",
+      "hint": "Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (task_453).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md",
@@ -1475,7 +1475,7 @@
     },
     {
       "path": "automation/93-composefs-seal.sh",
-      "hint": "Composefs fs-verity root filesystem sealing and atomic image descriptor validator (T-527, AGY-2125).",
+      "hint": "Composefs fs-verity root filesystem sealing and atomic image descriptor validator (task_471, task_2704).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch71-composefs-sealing.md",
@@ -1879,7 +1879,7 @@
     },
     {
       "path": "automation/lib/mios_var_closure.py",
-      "hint": "SSOT var-closure fitness function (drift-check 37). Proves R \u2286 E -- referenced MIOS_* variables are emitted by SSOT (AGY-1574).",
+      "hint": "SSOT var-closure fitness function (drift-check 37). Proves R \u2286 E -- referenced MIOS_* variables are emitted by SSOT (task_2215).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/lib.md",
@@ -2534,7 +2534,7 @@
     },
     {
       "path": "docs/design/agy-audit-followups.md",
-      "hint": "AGY Work-Audit follow-ups (11 workstreams, 70 findings, verdicts {'needs-refinement': 11}). 1. Fix AGY-89: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: \"${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}\"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.",
+      "hint": "AGY Work-Audit follow-ups (11 workstreams, 70 findings, verdicts {'needs-refinement': 11}). 1. Fix task_1121: replace globals.sh:101-113 _has_registry_creds if/else with non-clobbering `: \"${MIOS_IMAGE_NAME:=ghcr.io/mios-dev/mios}\"`; verify a no-creds common.sh load keeps MIOS_IMAGE_NAME=ghcr and a consistent NAME/REF pair.",
       "related": [
         "usr/share/mios/mios.toml",
         "docs/adr/",
@@ -2547,7 +2547,7 @@
     },
     {
       "path": "docs/design/dedup-campaign.md",
-      "hint": "Full De-duplication Campaign Tracking & Architecture (AGY-856..930). The **Full De-duplication Campaign** (\"one value, one name, everywhere\") enforces single-sourcing across the entire MiOS environment and derived surfaces. Every configuration value is declared exactly once in `usr/share/mios/mios.",
+      "hint": "Full De-duplication Campaign Tracking & Architecture (task_1591..task_1598). The **Full De-duplication Campaign** (\"one value, one name, everywhere\") enforces single-sourcing across the entire MiOS environment and derived surfaces. Every configuration value is declared exactly once in `usr/share/mios/mios.",
       "related": [
         "usr/share/mios/mios.toml",
         "docs/adr/",
@@ -2618,7 +2618,7 @@
     },
     {
       "path": "docs/design/doc-install-family.md",
-      "hint": "MiOS Installer Script Family Disambiguation (AGY-156). This document defines the roles and scope of each `install.sh` script in the MiOS repository to prevent dangerous confusion between disk-wiping bare-metal installers and non-destructive FHS overlay scripts.",
+      "hint": "MiOS Installer Script Family Disambiguation (task_1207). This document defines the roles and scope of each `install.sh` script in the MiOS repository to prevent dangerous confusion between disk-wiping bare-metal installers and non-destructive FHS overlay scripts.",
       "related": [
         "usr/share/mios/mios.toml",
         "docs/adr/",
@@ -2869,13 +2869,13 @@
     },
     {
       "path": "docs/research/UPSTREAM_AUDIT-envfile-three-parsers.md",
-      "hint": "Upstream audit behind T-1060 -- what systemd, bash and podman each do with the five characters Law 10 forbids, and what the real install.env render actually carries. Measured, not inferred.",
+      "hint": "Upstream audit behind task_997 -- what systemd, bash and podman each do with the five characters Law 10 forbids, and what the real install.env render actually carries. Measured, not inferred.",
       "related": [
         "automation/99-postcheck.sh",
         "usr/libexec/mios/system-sync-env.sh",
         "usr/lib/mios/userenv.sh",
-        "TASKS.md T-1060",
-        "T-1054"
+        "TASKS.md task_997",
+        "task_991"
       ],
       "functions": [],
       "doc": null,
@@ -2884,12 +2884,12 @@
     },
     {
       "path": "docs/research/UPSTREAM_AUDIT-envsubst-stage34.md",
-      "hint": "Upstream audit behind T-1040 -- why stage 34's placeholder substitution must become a parser, not a regex. Measured, not inferred.",
+      "hint": "Upstream audit behind task_977 -- why stage 34's placeholder substitution must become a parser, not a regex. Measured, not inferred.",
       "related": [
         "automation/34-render-quadlets.sh",
         "src/mios-rs/miosd/src/main.rs",
-        "TASKS.md T-1040",
-        "T-1060"
+        "TASKS.md task_977",
+        "task_997"
       ],
       "functions": [],
       "doc": null,
@@ -2912,7 +2912,7 @@
         "/workspaces/MiOS/.devloop/tasks.jsonl",
         "/home/mios-dev/.dev-loop/skills/dev-loop/SKILL.md",
         "/usr/share/mios/ai/system.md",
-        "MON-001..MON-018"
+        "task_3370..task_3387"
       ],
       "functions": [],
       "doc": null,
@@ -3031,7 +3031,7 @@
     },
     {
       "path": "etc/cmdline.d/02-security.conf",
-      "hint": "Kernel security command-line parameters enforcing module signature verification and confidentiality lockdown mode in UKI bootchain (T-916, T-917).",
+      "hint": "Kernel security command-line parameters enforcing module signature verification and confidentiality lockdown mode in UKI bootchain (task_860, task_861).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/kargs.d.md",
@@ -3094,7 +3094,7 @@
     },
     {
       "path": "etc/greenboot/check/required.d/10-uki-promote.sh",
-      "hint": "Automated UKI A/B boot promotion and Greenboot validation gate (T-508).",
+      "hint": "Automated UKI A/B boot promotion and Greenboot validation gate (task_452).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md",
@@ -3170,7 +3170,7 @@
     },
     {
       "path": "etc/kdump.conf",
-      "hint": "Kdump configuration for automated zstd crash dump extraction (T-515).",
+      "hint": "Kdump configuration for automated zstd crash dump extraction (task_459).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -3280,7 +3280,7 @@
     },
     {
       "path": "etc/pipewire/pipewire.conf.d/20-aec-loopback.conf",
-      "hint": "PipeWire WebRTC acoustic echo cancellation filter and virtual loopback sink (T-786).",
+      "hint": "PipeWire WebRTC acoustic echo cancellation filter and virtual loopback sink (task_730).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/audio.md",
@@ -3612,7 +3612,7 @@
     },
     {
       "path": "etc/skel/.bashrc.d/mios",
-      "hint": "System shell aliases derived from mios.toml [shell] SSOT (AGY-62).",
+      "hint": "System shell aliases derived from mios.toml [shell] SSOT (task_1093).",
       "related": [
         "usr/share/mios/theme/templates/shell-aliases.tmpl",
         "etc/skel/.bashrc.d/mios"
@@ -3651,7 +3651,7 @@
     },
     {
       "path": "etc/skel/.config/gtk-4.0/gtk.css",
-      "hint": "Global GTK4 theme stylesheet generated from MiOS SSOT color palette (T-499). */",
+      "hint": "Global GTK4 theme stylesheet generated from MiOS SSOT color palette (task_443). */",
       "related": [],
       "functions": [],
       "doc": null,
@@ -3720,7 +3720,7 @@
     },
     {
       "path": "etc/sysctl.d/20-memory.conf",
-      "hint": "Host override configuration for proactive memory compaction (T-800).",
+      "hint": "Host override configuration for proactive memory compaction (task_744).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -3729,7 +3729,7 @@
     },
     {
       "path": "etc/systemd/oomd.conf",
-      "hint": "Declarative systemd-oomd memory pressure configuration with 50% PSI threshold and 5s duration (T-820).",
+      "hint": "Declarative systemd-oomd memory pressure configuration with 50% PSI threshold and 5s duration (task_764).",
       "related": [
         "usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -3742,7 +3742,7 @@
     },
     {
       "path": "etc/systemd/resolved.conf.d/10-adguard.conf",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (T-497).",
+      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (task_441).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -3796,7 +3796,7 @@
     },
     {
       "path": "etc/udisks2/mount_options.conf",
-      "hint": "Configures udisks2 declarative mount options to enforce read-only untrusted storage mounts (T-798).",
+      "hint": "Configures udisks2 declarative mount options to enforce read-only untrusted storage mounts (task_742).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -4283,7 +4283,7 @@
     },
     {
       "path": "src/mios-rs/mios-build/tests/golden_harness.rs",
-      "hint": "Golden capture harness (insta + trycmd) for build phase artifacts (AGY-963).",
+      "hint": "Golden capture harness (insta + trycmd) for build phase artifacts (task_1603).",
       "related": [
         "src/mios-rs/mios-build/src/lib.rs",
         "automation/34-render-quadlets.sh",
@@ -4341,7 +4341,7 @@
       "related": [
         "src/mios-rs/mios-gate/src/main.rs",
         "usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md",
-        "ROADMAP.md (MODELOCI-04)"
+        "ROADMAP.md (task_3227)"
       ],
       "functions": [],
       "doc": null,
@@ -4730,7 +4730,7 @@
     },
     {
       "path": "src/mios-rs/mios-gate/tests/canonical_bools.rs",
-      "hint": "Integration tests for mios-gate's canonical-bools check -- exit-code and diagnostic contract over fixture trees (T-1009 unit 2).",
+      "hint": "Integration tests for mios-gate's canonical-bools check -- exit-code and diagnostic contract over fixture trees (task_953 unit 2).",
       "related": [
         "src/mios-rs/mios-gate/src/canonical_bools.rs",
         "tools/drift-checks.py",
@@ -4781,7 +4781,7 @@
     },
     {
       "path": "src/mios-rs/mios-gate/tests/negative_coverage.rs",
-      "hint": "Integration tests for mios-gate's negative-coverage check -- the exit-code and diagnostic contract over fixture trees, per the tests/<check>.rs convention (T-1009 unit 1).",
+      "hint": "Integration tests for mios-gate's negative-coverage check -- the exit-code and diagnostic contract over fixture trees, per the tests/<check>.rs convention (task_953 unit 1).",
       "related": [
         "src/mios-rs/mios-gate/src/negative_coverage.rs",
         "tools/drift-checks.py",
@@ -4895,7 +4895,7 @@
     },
     {
       "path": "src/mios-rs/mios-node/src/device.rs",
-      "hint": "mios-node device layer: GPIO/I2C hardware abstraction with allowlists, capability advertising in Announce frames, and the /dev/watchdog integration (T-394).",
+      "hint": "mios-node device layer: GPIO/I2C hardware abstraction with allowlists, capability advertising in Announce frames, and the /dev/watchdog integration (task_338).",
       "related": [
         "src/mios-rs/mios-node/src/wire.rs",
         "usr/libexec/mios/node/capabilities.py",
@@ -4913,7 +4913,7 @@
     },
     {
       "path": "src/mios-rs/mios-node/src/exec.rs",
-      "hint": "mios-node execution layer: the dual-tier Wasm/native task engine, the work-stealing offload scheduler and cgroup v2 core pinning and limits (T-392).",
+      "hint": "mios-node execution layer: the dual-tier Wasm/native task engine, the work-stealing offload scheduler and cgroup v2 core pinning and limits (task_336).",
       "related": [
         "src/mios-rs/mios-node/src/node.rs",
         "usr/libexec/mios/node/cgroups.py",
@@ -4965,7 +4965,7 @@
     },
     {
       "path": "src/mios-rs/mios-node/src/mesh.rs",
-      "hint": "mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (T-395).",
+      "hint": "mios-node mesh transports: BLE offline bootstrap and the Tailscale/WireGuard overlay fallback when LAN broadcast is partitioned (task_339).",
       "related": [
         "src/mios-rs/mios-node/src/crypto.rs",
         "usr/libexec/mios/node/ble.py",
@@ -5003,7 +5003,7 @@
     },
     {
       "path": "src/mios-rs/mios-node/src/wire.rs",
-      "hint": "mios-node wire layer: the 16-byte-header binary frame protocol, the zero-copy frame buffer pool and the async Tokio TCP frame reader/writer and network actor (T-393).",
+      "hint": "mios-node wire layer: the 16-byte-header binary frame protocol, the zero-copy frame buffer pool and the async Tokio TCP frame reader/writer and network actor (task_337).",
       "related": [
         "usr/libexec/mios/node/buffer_pool.py",
         "tests/test-node.py",
@@ -5033,7 +5033,7 @@
     },
     {
       "path": "src/mios-rs/mios-node/tests/mesh.rs",
-      "hint": "Integration tests for the mios-node wire protocol, dual-tier executor and CRDT state sync, plus parity with the usr/libexec/mios/node Python twins (T-1188).",
+      "hint": "Integration tests for the mios-node wire protocol, dual-tier executor and CRDT state sync, plus parity with the usr/libexec/mios/node Python twins (task_3481).",
       "related": [
         "src/mios-rs/mios-node/src/lib.rs",
         "src/mios-rs/mios-node/src/node.rs",
@@ -5563,7 +5563,7 @@
     },
     {
       "path": "tests/golden/README.md",
-      "hint": "Golden-master CLI cases for the native mios-gen verbs (AGY-1067 / ADR-0021); every console block below is executed by tools/native/mios-gen/tests/golden.rs.",
+      "hint": "Golden-master CLI cases for the native mios-gen verbs (task_1707 / ADR-0021); every console block below is executed by tools/native/mios-gen/tests/golden.rs.",
       "related": [
         "usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md",
         "docs/design/doc-rust-static-port.md",
@@ -5792,7 +5792,7 @@
     },
     {
       "path": "tests/test-a2a.py",
-      "hint": "Consolidated unit test suite for MiOS A2A (Agent-to-Agent) federation: Ed25519 cryptographic attestation, mutual capability handshake, and identity-aware delegation (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS A2A (Agent-to-Agent) federation: Ed25519 cryptographic attestation, mutual capability handshake, and identity-aware delegation (task_3353 / GATECAT-01).",
       "related": [
         "usr/libexec/mios/a2a/attestation.py",
         "usr/lib/mios/agent-pipe/mios_a2a_delegation.py"
@@ -5804,7 +5804,7 @@
     },
     {
       "path": "tests/test-a2o-fallback.sh",
-      "hint": "Unit test for mios-a2o reactive fallback logic on quota exhaustion (F-024).",
+      "hint": "Unit test for mios-a2o reactive fallback logic on quota exhaustion (task_3183).",
       "related": [
         "usr/share/mios/agents/mios-a2o",
         "tests/test-a2o-fallback.sh"
@@ -5819,7 +5819,7 @@
     },
     {
       "path": "tests/test-acoustic-wakeword-pipeline.py",
-      "hint": "Automated benchmark and unit test suite for Three-Stage Acoustic Wake-Word Engine (T-579 / T-580).",
+      "hint": "Automated benchmark and unit test suite for Three-Stage Acoustic Wake-Word Engine (task_523 / task_524).",
       "related": [
         "usr/libexec/mios/audio/wakeword.py",
         "usr/lib/systemd/user/mios-wakeword.service",
@@ -5832,7 +5832,7 @@
     },
     {
       "path": "tests/test-adguard-dns.py",
-      "hint": "Automated unit test suite for systemd-resolved to mios-adguard split-horizon DNS routing (T-497).",
+      "hint": "Automated unit test suite for systemd-resolved to mios-adguard split-horizon DNS routing (task_441).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -5841,7 +5841,7 @@
     },
     {
       "path": "tests/test-adversarial-igpu-rpc.py",
-      "hint": "Empirical adversarial stress test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Hardware Routing (T-211, T-212).",
+      "hint": "Empirical adversarial stress test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Hardware Routing (task_191, task_192).",
       "related": [
         "usr/share/mios/windows/mios-igpu-server.ps1",
         "usr/share/mios/mios.toml",
@@ -5854,7 +5854,7 @@
     },
     {
       "path": "tests/test-adversarial-roadmap.py",
-      "hint": "Adversarial testing suite and empirical challenge harness for T-377..T-381 modules.",
+      "hint": "Adversarial testing suite and empirical challenge harness for task_321..task_325 modules.",
       "related": [
         "usr/libexec/mios/mcp/sandbox.py",
         "usr/libexec/mios/sec/approval.py",
@@ -5869,7 +5869,7 @@
     },
     {
       "path": "tests/test-adversarial-t401-t406.py",
-      "hint": "Comprehensive empirical adversarial test suite for T-401..T-406 (Database, Storage, Encryption, and Replication).",
+      "hint": "Comprehensive empirical adversarial test suite for task_345..task_350 (Database, Storage, Encryption, and Replication).",
       "related": [
         "usr/libexec/mios/db/mios-pgvector-optimize.py",
         "usr/libexec/mios/storage/mios-ledger-sync",
@@ -5899,7 +5899,7 @@
     },
     {
       "path": "tests/test-agent-persona.py",
-      "hint": "Automated unit test suite for T-384 Dynamic Agent Persona Synthesis.",
+      "hint": "Automated unit test suite for task_328 Dynamic Agent Persona Synthesis.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_persona.py",
         "usr/lib/mios/agent-pipe/server.py"
@@ -5911,7 +5911,7 @@
     },
     {
       "path": "tests/test-agent-pipe-scheduling.py",
-      "hint": "Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS Agent Pipe Scheduling domain: continuous batch preemption, quantum slicing, token-bucket quotas, and engine-level priority routing (task_3353 / GATECAT-01).",
       "related": [
         "usr/lib/mios/agent-pipe/server.py",
         "usr/lib/mios/agent-pipe/mios_sched.py",
@@ -5965,7 +5965,7 @@
     },
     {
       "path": "tests/test-app-snapshot.py",
-      "hint": "Automated unit test suite for Flatpak Application State Snapshotter (T-645, T-646).",
+      "hint": "Automated unit test suite for Flatpak Application State Snapshotter (task_589, task_590).",
       "related": [
         "usr/libexec/mios/app/snapshot.py",
         "tests/test-app-snapshot.py"
@@ -5977,7 +5977,7 @@
     },
     {
       "path": "tests/test-ast-diff-peer-review.sh",
-      "hint": "Automated CI test suite for AST structural diff calculation and 2-peer review merge gating (T-780 / T-781).",
+      "hint": "Automated CI test suite for AST structural diff calculation and 2-peer review merge gating (task_724 / task_725).",
       "related": [
         "usr/lib/mios/agent-pipe/mios_ast_diff.py",
         "usr/lib/mios/agent-pipe/server.py",
@@ -5990,7 +5990,7 @@
     },
     {
       "path": "tests/test-ast-merge.py",
-      "hint": "Automated unit test suite for T-556 AST Merge Syntax Gate & Regression Suite.",
+      "hint": "Automated unit test suite for task_500 AST Merge Syntax Gate & Regression Suite.",
       "related": [
         "usr/libexec/mios/git/ast_merge.py",
         "tests/test-ast-merge.py"
@@ -6011,7 +6011,7 @@
     },
     {
       "path": "tests/test-attest-server.sh",
-      "hint": "Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and onboarding daemon (T-530, AGY-2128).",
+      "hint": "Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and onboarding daemon (task_474, task_2707).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch76-remote-attestation.md",
@@ -6020,7 +6020,7 @@
     },
     {
       "path": "tests/test-audio-stream-whisper.py",
-      "hint": "Verification suite for WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).",
+      "hint": "Verification suite for WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md",
@@ -6029,7 +6029,7 @@
     },
     {
       "path": "tests/test-audio-stream-whisper.sh",
-      "hint": "Verification wrapper for WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).",
+      "hint": "Verification wrapper for WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md",
@@ -6038,7 +6038,7 @@
     },
     {
       "path": "tests/test-audio-tts-piper.py",
-      "hint": "Verification suite for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).",
+      "hint": "Verification suite for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch79-streaming-tts-piper.md",
@@ -6047,7 +6047,7 @@
     },
     {
       "path": "tests/test-audio-tts-piper.sh",
-      "hint": "Verification wrapper for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).",
+      "hint": "Verification wrapper for concurrent streaming Piper/Kokoro TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch79-streaming-tts-piper.md",
@@ -6103,7 +6103,7 @@
     },
     {
       "path": "tests/test-bitperfect-audio.py",
-      "hint": "Automated unit test suite for Bit-Perfect PipeWire Audio & Dynamic Sample Rates (T-703, T-704).",
+      "hint": "Automated unit test suite for Bit-Perfect PipeWire Audio & Dynamic Sample Rates (task_647, task_648).",
       "related": [
         "usr/libexec/mios/audio/bitperfect_mgr.py",
         "tests/test-bitperfect-audio.py"
@@ -6115,7 +6115,7 @@
     },
     {
       "path": "tests/test-blade-enroll.sh",
-      "hint": "Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (T-529, AGY-2127).",
+      "hint": "Verification suite for declarative SSOT blade pre-enrollment registry and TPM EK parser (task_473, task_2706).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md",
@@ -6133,7 +6133,7 @@
     },
     {
       "path": "tests/test-bootc-rollback-recovery.sh",
-      "hint": "Verification suite for atomic bootc rollback, ostree deployment state, /var persistence guards, and greenboot health gates (T-1025).",
+      "hint": "Verification suite for atomic bootc rollback, ostree deployment state, /var persistence guards, and greenboot health gates (task_3356).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch36-greenboot-health-check-and-recovery.md",
@@ -6151,7 +6151,7 @@
     },
     {
       "path": "tests/test-bounded-reflection.py",
-      "hint": "Automated unit test suite for T-385 Bounded Reflection Loop Convergence.",
+      "hint": "Automated unit test suite for task_329 Bounded Reflection Loop Convergence.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_deliberate.py",
         "usr/lib/mios/agent-pipe/server.py"
@@ -6188,7 +6188,7 @@
     },
     {
       "path": "tests/test-cdi-device-isolate.sh",
-      "hint": "Automated test suite for rootless container GPU device isolation and cgroup v2 eBPF device filter (T-526, AGY-2124).",
+      "hint": "Automated test suite for rootless container GPU device isolation and cgroup v2 eBPF device filter (task_470, task_2703).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch20-container-device-interface-plumbing.md",
@@ -6197,7 +6197,7 @@
     },
     {
       "path": "tests/test-cdi-gen.py",
-      "hint": "Automated unit test suite for scoped CDI specification generator (T-525).",
+      "hint": "Automated unit test suite for scoped CDI specification generator (task_469).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch20-container-device-interface-plumbing.md",
@@ -6206,7 +6206,7 @@
     },
     {
       "path": "tests/test-ceph-snapshot-rollback.sh",
-      "hint": "Automated CephFS snapshot creation (<10ms), retention rotation, and rollback test suite (T-795).",
+      "hint": "Automated CephFS snapshot creation (<10ms), retention rotation, and rollback test suite (task_739).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md",
@@ -6215,7 +6215,7 @@
     },
     {
       "path": "tests/test-cilium-bgp-ecmp.py",
-      "hint": "Tests for T-759 & T-760: Cilium BGP VIP announcement & sub-100ms BFD failover.",
+      "hint": "Tests for task_703 & task_704: Cilium BGP VIP announcement & sub-100ms BFD failover.",
       "related": [],
       "functions": [
         "test_bgp_vip_announcement",
@@ -6227,7 +6227,7 @@
     },
     {
       "path": "tests/test-cli-engine.py",
-      "hint": "Automated unit test suite for unified mios CLI engine and output formatting (T-513).",
+      "hint": "Automated unit test suite for unified mios CLI engine and output formatting (task_457).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -6284,7 +6284,7 @@
     },
     {
       "path": "tests/test-composefs-seal.sh",
-      "hint": "Verification suite for composefs fs-verity root filesystem sealing and atomic validator (T-527, AGY-2125).",
+      "hint": "Verification suite for composefs fs-verity root filesystem sealing and atomic validator (task_471, task_2704).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch71-composefs-sealing.md",
@@ -6306,7 +6306,7 @@
     },
     {
       "path": "tests/test-context-processing.py",
-      "hint": "Automated unit test suite for MiOS Context & Prompt Processing domain (T-1021 / GATECAT-01).",
+      "hint": "Automated unit test suite for MiOS Context & Prompt Processing domain (task_3353 / GATECAT-01).",
       "related": [
         "usr/lib/mios/agent-pipe/context_compactor.py",
         "usr/lib/mios/agent-pipe/mios_pipe/context/ctxpack.py",
@@ -6320,7 +6320,7 @@
     },
     {
       "path": "tests/test-core-sched.sh",
-      "hint": "Automated unit and integration test suite for Linux Core Scheduling cookie tagger, SMT isolation, and CPU affinity (T-858).",
+      "hint": "Automated unit and integration test suite for Linux Core Scheduling cookie tagger, SMT isolation, and CPU affinity (task_802).",
       "related": [
         "usr/libexec/mios/mios-core-sched",
         "automation/24-cpu-affinity.sh",
@@ -6333,7 +6333,7 @@
     },
     {
       "path": "tests/test-coredump-sanitization.py",
-      "hint": "Tests for T-751 & T-752: crash minidump extraction and raw core purge.",
+      "hint": "Tests for task_695 & task_696: crash minidump extraction and raw core purge.",
       "related": [
         "mios-node"
       ],
@@ -6346,7 +6346,7 @@
     },
     {
       "path": "tests/test-cosign-publish.py",
-      "hint": "Automated unit test suite for local Cosign image signing and registry push gate (T-510).",
+      "hint": "Automated unit test suite for local Cosign image signing and registry push gate (task_454).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md",
@@ -6355,7 +6355,7 @@
     },
     {
       "path": "tests/test-council-consensus.py",
-      "hint": "Automated unit test suite for 3-Peer Council Swarm & Byzantine Consensus (T-653, T-654).",
+      "hint": "Automated unit test suite for 3-Peer Council Swarm & Byzantine Consensus (task_599, task_600).",
       "related": [
         "usr/lib/mios/agent-pipe/council.py",
         "tests/test-council-consensus.py"
@@ -6367,7 +6367,7 @@
     },
     {
       "path": "tests/test-cpu-gemm-vectorization.sh",
-      "hint": "Automated CI verification test suite for CPU vectorized GEMM throughput and SIMD dispatch (T-785).",
+      "hint": "Automated CI verification test suite for CPU vectorized GEMM throughput and SIMD dispatch (task_729).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -6376,7 +6376,7 @@
     },
     {
       "path": "tests/test-crash-dedupe.py",
-      "hint": "Automated unit test suite for T-558 Fuzz Crash Deduplication & Bug Logger.",
+      "hint": "Automated unit test suite for task_502 Fuzz Crash Deduplication & Bug Logger.",
       "related": [
         "usr/libexec/mios/kernel/crash_dedupe.py",
         "tests/test-crash-dedupe.py"
@@ -6401,7 +6401,7 @@
     },
     {
       "path": "tests/test-deliberate.py",
-      "hint": "Tests for T-341: mios_deliberate \u2014 DCI structured deliberation.",
+      "hint": "Tests for task_285: mios_deliberate \u2014 DCI structured deliberation.",
       "related": [
         "mios_deliberate"
       ],
@@ -6458,7 +6458,7 @@
     },
     {
       "path": "tests/test-dkms-container-build.py",
-      "hint": "Tests for T-765 & T-766: DKMS container build (<15s) and MOK signing.",
+      "hint": "Tests for task_709 & task_710: DKMS container build (<15s) and MOK signing.",
       "related": [],
       "functions": [
         "test_dkms_build_and_sign_sub_15s",
@@ -6470,7 +6470,7 @@
     },
     {
       "path": "tests/test-dnf5-pipeline.sh",
-      "hint": "Verification suite for atomic DNF5 package pipeline, local cache staging, and mirror retry (T-503).",
+      "hint": "Verification suite for atomic DNF5 package pipeline, local cache staging, and mirror retry (task_447).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch44-host-package-overrides-and-dnf5.md",
@@ -6525,7 +6525,7 @@
     },
     {
       "path": "tests/test-ebpf-flightrec.py",
-      "hint": "Automated unit test suite for eBPF circular flight recorder and crash parser (T-516).",
+      "hint": "Automated unit test suite for eBPF circular flight recorder and crash parser (task_460).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -6534,7 +6534,7 @@
     },
     {
       "path": "tests/test-ebpf-netflow.py",
-      "hint": "Automated unit test suite for in-kernel eBPF network flow probe and collector daemon (T-511).",
+      "hint": "Automated unit test suite for in-kernel eBPF network flow probe and collector daemon (task_455).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -6543,7 +6543,7 @@
     },
     {
       "path": "tests/test-ebpf-trace.py",
-      "hint": "Automated unit test suite for eBPF Probe Attachment & Tracing Overhead (T-719, T-720).",
+      "hint": "Automated unit test suite for eBPF Probe Attachment & Tracing Overhead (task_663, task_664).",
       "related": [
         "usr/lib/mios/agent-pipe/mios_trace.py",
         "tests/test-ebpf-trace.py"
@@ -6555,7 +6555,7 @@
     },
     {
       "path": "tests/test-egpu-hotplug.py",
-      "hint": "Automated unit test suite for Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler (T-495).",
+      "hint": "Automated unit test suite for Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler (task_439).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch37-gpu-capability-detection-and-passthrough-shims.md",
@@ -6582,7 +6582,7 @@
     },
     {
       "path": "tests/test-events-websocket.py",
-      "hint": "Automated unit test suite for authenticated WebSocket real-time agent execution token stream (T-518).",
+      "hint": "Automated unit test suite for authenticated WebSocket real-time agent execution token stream (task_462).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -6600,7 +6600,7 @@
     },
     {
       "path": "tests/test-fastboot-mgr.py",
-      "hint": "Automated unit test suite for Systemd-Boot Fastboot & Emergency Rescue Fallback (T-699, T-700).",
+      "hint": "Automated unit test suite for Systemd-Boot Fastboot & Emergency Rescue Fallback (task_643, task_644).",
       "related": [
         "usr/libexec/mios/boot/fastboot_mgr.py",
         "tests/test-fastboot-mgr.py"
@@ -6612,7 +6612,7 @@
     },
     {
       "path": "tests/test-firewall-nftables.py",
-      "hint": "Automated unit test suite for declarative nftables inter-container firewall rule generator (T-479).",
+      "hint": "Automated unit test suite for declarative nftables inter-container firewall rule generator (task_423).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -6643,7 +6643,7 @@
     },
     {
       "path": "tests/test-flatpak-overrides.py",
-      "hint": "Automated unit test suite for declarative Flatpak permission lockdown profiles (T-489).",
+      "hint": "Automated unit test suite for declarative Flatpak permission lockdown profiles (task_433).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
@@ -6652,7 +6652,7 @@
     },
     {
       "path": "tests/test-git-ops.py",
-      "hint": "Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS Git Operations domain (AST merge fuzzing, pre-commit lint hooks, and multi-master DAG reconciliation) (task_3353 / GATECAT-01).",
       "related": [
         "usr/libexec/mios/git/merge_fuzzer.py",
         "usr/libexec/mios/git/pre_commit.py",
@@ -6665,7 +6665,7 @@
     },
     {
       "path": "tests/test-gpu-numa.py",
-      "hint": "Automated unit test suite for multi-GPU PCIe/NVLink topology discovery and NUMA affinity generator (T-519).",
+      "hint": "Automated unit test suite for multi-GPU PCIe/NVLink topology discovery and NUMA affinity generator (task_463).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -6674,7 +6674,7 @@
     },
     {
       "path": "tests/test-gpu-p2p-bandwidth.sh",
-      "hint": "Automated inter-GPU P2P bandwidth and memory latency validation benchmark (T-520, AGY-2118).",
+      "hint": "Automated inter-GPU P2P bandwidth and memory latency validation benchmark (task_464, task_2697).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch37-gpu-capability-detection-and-passthrough-shims.md",
@@ -6683,7 +6683,7 @@
     },
     {
       "path": "tests/test-gpu-terminal.py",
-      "hint": "Automated unit test suite for GPU Terminal Rendering & Sub-5ms Keystroke Latency (T-727, T-728).",
+      "hint": "Automated unit test suite for GPU Terminal Rendering & Sub-5ms Keystroke Latency (task_671, task_672).",
       "related": [
         "usr/libexec/mios/desktop/gpu_terminal.py",
         "tests/test-gpu-terminal.py",
@@ -6705,7 +6705,7 @@
     },
     {
       "path": "tests/test-greenboot-hardware-degrade.sh",
-      "hint": "Verification suite for peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (T-531, AGY-2129).",
+      "hint": "Verification suite for peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (task_475, task_2708).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md",
@@ -6723,7 +6723,7 @@
     },
     {
       "path": "tests/test-hardware-fallback.sh",
-      "hint": "Verification suite for automated network and audio fallback manager and alert daemon (T-532, AGY-2130).",
+      "hint": "Verification suite for automated network and audio fallback manager and alert daemon (task_476, task_2709).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch77-hardware-fallback.md",
@@ -6777,7 +6777,7 @@
     },
     {
       "path": "tests/test-hyprland-direct-scanout.sh",
-      "hint": "Automated CI verification suite for Hyprland direct scanout, Quickshell initialization, and living wallpaper occlusion engine (T-777, T-778, T-779).",
+      "hint": "Automated CI verification suite for Hyprland direct scanout, Quickshell initialization, and living wallpaper occlusion engine (task_721, task_722, task_723).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
@@ -6786,7 +6786,7 @@
     },
     {
       "path": "tests/test-igpu-rpc-rust-e2e.py",
-      "hint": "Comprehensive 4-tier E2E test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Rust Hardcode-Lint Consolidation (T-211, T-212, T-1161).",
+      "hint": "Comprehensive 4-tier E2E test suite for MiOS iGPU Inference Lane, RPC Compute Fabric, and Rust Hardcode-Lint Consolidation (task_191, task_192, task_3454).",
       "related": [
         "usr/share/mios/windows/mios-igpu-server.ps1",
         "usr/share/mios/mios.toml",
@@ -6846,7 +6846,7 @@
     },
     {
       "path": "tests/test-ipkvm-manager.py",
-      "hint": "Automated unit test suite for Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (T-524, AGY-2122).",
+      "hint": "Automated unit test suite for Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (task_468, task_2701).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -6888,7 +6888,7 @@
     },
     {
       "path": "tests/test-kdump-crash.py",
-      "hint": "Automated unit test suite for reserved memory kdump and zstd crash dump extraction (T-515).",
+      "hint": "Automated unit test suite for reserved memory kdump and zstd crash dump extraction (task_459).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -6897,7 +6897,7 @@
     },
     {
       "path": "tests/test-kernel-crash-triage.py",
-      "hint": "Automated unit test suite for Kernel Crash Dump Triage Engine (T-641, T-642).",
+      "hint": "Automated unit test suite for Kernel Crash Dump Triage Engine (task_585, task_586).",
       "related": [
         "usr/libexec/mios/kernel/crash_triage.py",
         "tests/test-kernel-crash-triage.py"
@@ -6909,7 +6909,7 @@
     },
     {
       "path": "tests/test-kernel-fuzz.py",
-      "hint": "Automated unit test suite for T-557 Headless QEMU Syzkaller / KASAN Fuzz Harness.",
+      "hint": "Automated unit test suite for task_501 Headless QEMU Syzkaller / KASAN Fuzz Harness.",
       "related": [
         "usr/libexec/mios/kernel/fuzz_harness.py",
         "tests/test-kernel-fuzz.py"
@@ -6921,7 +6921,7 @@
     },
     {
       "path": "tests/test-kernel-module-signature-enforce.sh",
-      "hint": "Automated regression test suite for kernel module signature enforcement (EKEYREJECTED 129), signed module load, and /dev/mem lockdown (EPERM) (T-916, T-917).",
+      "hint": "Automated regression test suite for kernel module signature enforcement (EKEYREJECTED 129), signed module load, and /dev/mem lockdown (EPERM) (task_860, task_861).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch41-machine-owner-key-management.md",
@@ -6942,7 +6942,7 @@
     },
     {
       "path": "tests/test-kpatch-mgr.py",
-      "hint": "Automated unit test suite for Kernel Livepatching & MOK Signature Verification (T-681, T-682).",
+      "hint": "Automated unit test suite for Kernel Livepatching & MOK Signature Verification (task_625, task_626).",
       "related": [
         "usr/libexec/mios/kernel/kpatch_mgr.py",
         "tests/test-kpatch-mgr.py"
@@ -6954,7 +6954,7 @@
     },
     {
       "path": "tests/test-kvfork.py",
-      "hint": "Tests for T-340: mios_kvfork \u2014 KV snapshot-suspend-resume.",
+      "hint": "Tests for task_284: mios_kvfork \u2014 KV snapshot-suspend-resume.",
       "related": [
         "mios_kvfork"
       ],
@@ -6980,7 +6980,7 @@
     },
     {
       "path": "tests/test-lfs-cache.py",
-      "hint": "Automated unit test suite for Git LFS Sparse Fetcher & Shared Cache (T-715, T-716).",
+      "hint": "Automated unit test suite for Git LFS Sparse Fetcher & Shared Cache (task_659, task_660).",
       "related": [
         "usr/libexec/mios/git/lfs_pull.py",
         "tests/test-lfs-cache.py"
@@ -7010,7 +7010,7 @@
     },
     {
       "path": "tests/test-liveiso-build.py",
-      "hint": "Automated unit test suite for Hybrid Live ISO and iPXE Netboot Pipeline (T-647, T-648).",
+      "hint": "Automated unit test suite for Hybrid Live ISO and iPXE Netboot Pipeline (task_591, task_592).",
       "related": [
         "usr/libexec/mios/build/liveiso.py",
         "tests/test-liveiso-build.py"
@@ -7022,7 +7022,7 @@
     },
     {
       "path": "tests/test-livepatch-mok.py",
-      "hint": "Automated unit test suite for MOK livepatch signature gate and IMA logger (T-782, T-783).",
+      "hint": "Automated unit test suite for MOK livepatch signature gate and IMA logger (task_726, task_727).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch41-machine-owner-key-management.md",
@@ -7052,7 +7052,7 @@
     },
     {
       "path": "tests/test-looking-glass.py",
-      "hint": "Consolidated unit test suite for MiOS Looking Glass & Display domain (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS Looking Glass & Display domain (task_3353 / GATECAT-01).",
       "related": [
         "usr/libexec/mios/display/looking_glass.py",
         "usr/libexec/mios/vfio/setup-looking-glass.py",
@@ -7065,7 +7065,7 @@
     },
     {
       "path": "tests/test-m1-challenger2-adversarial.py",
-      "hint": "Adversarial stress test harness for Milestone 1 (T-384 Persona Synthesis & T-385 Bounded Reflection).",
+      "hint": "Adversarial stress test harness for Milestone 1 (task_328 Persona Synthesis & task_329 Bounded Reflection).",
       "related": [
         "usr/lib/mios/agent-pipe/mios_persona.py",
         "usr/lib/mios/agent-pipe/mios_deliberate.py"
@@ -7077,7 +7077,7 @@
     },
     {
       "path": "tests/test-macaroon-auth.py",
-      "hint": "Automated unit test suite for Attenuated Macaroon Tokens & Replay Prevention (T-723, T-724).",
+      "hint": "Automated unit test suite for Attenuated Macaroon Tokens & Replay Prevention (task_667, task_668).",
       "related": [
         "usr/lib/mios/agent-pipe/macaroon_auth.py",
         "tests/test-macaroon-auth.py"
@@ -7089,7 +7089,7 @@
     },
     {
       "path": "tests/test-manifest-rag.py",
-      "hint": "Tests for T-343: mios_manifest_rag \u2014 manifest-guided progressive RAG.",
+      "hint": "Tests for task_287: mios_manifest_rag \u2014 manifest-guided progressive RAG.",
       "related": [
         "mios_manifest_rag"
       ],
@@ -7105,7 +7105,7 @@
     },
     {
       "path": "tests/test-mcp.py",
-      "hint": "Consolidated unit test suite for MiOS Model Context Protocol (MCP) domain (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS Model Context Protocol (MCP) domain (task_3353 / GATECAT-01).",
       "related": [
         "usr/lib/mios/agent-pipe/mios_mcp.py",
         "usr/libexec/mios/mcp/sandbox.py",
@@ -7118,7 +7118,7 @@
     },
     {
       "path": "tests/test-mdns-wireguard-mesh.py",
-      "hint": "Unit test suite for MiOS mDNS peer discovery and WireGuard mesh daemon (T-588 / AGY-2186).",
+      "hint": "Unit test suite for MiOS mDNS peer discovery and WireGuard mesh daemon (task_532 / task_2765).",
       "related": [
         "usr/libexec/mios/net/mdns_mesh.py"
       ],
@@ -7140,7 +7140,7 @@
     },
     {
       "path": "tests/test-mesh-distributor.py",
-      "hint": "Verification suite for multi-node dynamic AI workload partitioner and capability-aware task router (T-537, AGY-2135).",
+      "hint": "Verification suite for multi-node dynamic AI workload partitioner and capability-aware task router (task_481, task_2714).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch82-mesh-workload-partitioning.md",
@@ -7149,7 +7149,7 @@
     },
     {
       "path": "tests/test-microvm-live-migration.py",
-      "hint": "Tests for T-968 & T-969: MicroVM live state migration (<50ms handover).",
+      "hint": "Tests for task_912 & task_913: MicroVM live state migration (<50ms handover).",
       "related": [],
       "functions": [
         "test_microvm_live_handover_sub_50ms"
@@ -7160,7 +7160,7 @@
     },
     {
       "path": "tests/test-microvm-squashfs-nbd.py",
-      "hint": "Automated unit test suite for SquashFS template streaming over Unix-socket NBD with RAM overlay (T-806, T-807).",
+      "hint": "Automated unit test suite for SquashFS template streaming over Unix-socket NBD with RAM overlay (task_750, task_751).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/virt.md",
@@ -7169,7 +7169,7 @@
     },
     {
       "path": "tests/test-microvm.py",
-      "hint": "Tests for T-733: mios_microvm \u2014 virtio-pmem DAX memory storage manager.",
+      "hint": "Tests for task_677: mios_microvm \u2014 virtio-pmem DAX memory storage manager.",
       "related": [
         "usr/libexec/mios/virt/mios_microvm.py"
       ],
@@ -7183,7 +7183,7 @@
     },
     {
       "path": "tests/test-mios-check-ssot.py",
-      "hint": "Test suite for T-398: Rust SSOT mios.toml validator (mios check / miosd check).",
+      "hint": "Test suite for task_342: Rust SSOT mios.toml validator (mios check / miosd check).",
       "related": [
         "usr/share/mios/mios.toml",
         "src/mios-rs/mios-config/src/lib.rs"
@@ -7195,7 +7195,7 @@
     },
     {
       "path": "tests/test-mios-cli-dispatcher.py",
-      "hint": "Test suite for T-399: Compiled binary CLI dispatcher (/usr/bin/mios).",
+      "hint": "Test suite for task_343: Compiled binary CLI dispatcher (/usr/bin/mios).",
       "related": [
         "usr/bin/mios",
         "src/mios-rs/miosd/src/cli.rs"
@@ -7240,7 +7240,7 @@
     },
     {
       "path": "tests/test-miosd-supervisor.py",
-      "hint": "Test suite for T-397: Native Rust miosd daemon supervisor and state manager.",
+      "hint": "Test suite for task_341: Native Rust miosd daemon supervisor and state manager.",
       "related": [
         "usr/lib/systemd/system/miosd.service",
         "src/mios-rs/miosd/src/daemon.rs"
@@ -7264,7 +7264,7 @@
     },
     {
       "path": "tests/test-multimodal-ws.py",
-      "hint": "Automated unit test suite for Multi-modal WebSocket Streaming & Sub-100ms Latency (T-671, T-672).",
+      "hint": "Automated unit test suite for Multi-modal WebSocket Streaming & Sub-100ms Latency (task_615, task_616).",
       "related": [
         "usr/lib/mios/agent-pipe/multimodal_ws.py",
         "tests/test-multimodal-ws.py"
@@ -7297,7 +7297,7 @@
     },
     {
       "path": "tests/test-native-storage.py",
-      "hint": "Automated unit test suite for Native Kernel Rootless Overlay Storage (T-705, T-706).",
+      "hint": "Automated unit test suite for Native Kernel Rootless Overlay Storage (task_649, task_650).",
       "related": [
         "usr/libexec/mios/containers/native_storage.py",
         "tests/test-native-storage.py"
@@ -7309,7 +7309,7 @@
     },
     {
       "path": "tests/test-net-anomaly.py",
-      "hint": "Automated unit test suite for Jensen-Shannon divergence anomaly alarm and PostgreSQL threat_events vector sink (T-512).",
+      "hint": "Automated unit test suite for Jensen-Shannon divergence anomaly alarm and PostgreSQL threat_events vector sink (task_456).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -7318,7 +7318,7 @@
     },
     {
       "path": "tests/test-netavark-firewall-isolation.py",
-      "hint": "Tests for T-741 & T-742: Netavark firewall isolation and port audit.",
+      "hint": "Tests for task_685 & task_686: Netavark firewall isolation and port audit.",
       "related": [],
       "functions": [
         "test_lateral_traversal_blocked",
@@ -7330,7 +7330,7 @@
     },
     {
       "path": "tests/test-nix-project.py",
-      "hint": "Automated unit test suite for Task T-581/T-582 Nix Subsystem and Declarative Flake Projection Generator.",
+      "hint": "Automated unit test suite for Task task_525/task_526 Nix Subsystem and Declarative Flake Projection Generator.",
       "related": [
         "usr/libexec/mios/config/nix_project.py",
         "usr/share/mios/nix/flake-template.nix",
@@ -7407,7 +7407,7 @@
     },
     {
       "path": "tests/test-ocr-mask.py",
-      "hint": "Integration test suite for on-device OCR regex credential masking pipeline (T-540, AGY-2138).",
+      "hint": "Integration test suite for on-device OCR regex credential masking pipeline (task_484, task_2717).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch85-ocr-credential-masking.md",
@@ -7425,7 +7425,7 @@
     },
     {
       "path": "tests/test-oomd-psi.py",
-      "hint": "Automated unit test suite for Systemd OOMD PSI Memory Pressure & Service Protection (T-667, T-668).",
+      "hint": "Automated unit test suite for Systemd OOMD PSI Memory Pressure & Service Protection (task_595, task_596).",
       "related": [
         "usr/libexec/mios/kernel/oomd_psi.py",
         "tests/test-oomd-psi.py"
@@ -7437,7 +7437,7 @@
     },
     {
       "path": "tests/test-overlay-workspace.py",
-      "hint": "Automated unit test suite for OverlayFS Workspace Provisioning & Isolation (T-691, T-692).",
+      "hint": "Automated unit test suite for OverlayFS Workspace Provisioning & Isolation (task_635, task_636).",
       "related": [
         "usr/lib/mios/agent-pipe/overlay_workspace.py",
         "tests/test-overlay-workspace.py"
@@ -7498,7 +7498,7 @@
     },
     {
       "path": "tests/test-pipewire-aec.py",
-      "hint": "Automated unit test suite for PipeWire AEC filter and loopback manager (T-786, T-787).",
+      "hint": "Automated unit test suite for PipeWire AEC filter and loopback manager (task_730, task_731).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/audio.md",
@@ -7516,7 +7516,7 @@
     },
     {
       "path": "tests/test-plugin-loader.py",
-      "hint": "Automated unit test suite for dynamic plugin loader and subcommand discovery (T-514).",
+      "hint": "Automated unit test suite for dynamic plugin loader and subcommand discovery (task_458).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -7572,7 +7572,7 @@
     },
     {
       "path": "tests/test-pstore-crash.py",
-      "hint": "Automated unit test suite for pstore ramoops kernel crash buffer manager and extractor (T-790).",
+      "hint": "Automated unit test suite for pstore ramoops kernel crash buffer manager and extractor (task_734).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -7593,7 +7593,7 @@
     },
     {
       "path": "tests/test-quadlet-prewarm-offline.py",
-      "hint": "Tests for T-749 & T-750: Quadlet pre-warm and Day-0 offline start.",
+      "hint": "Tests for task_693 & task_694: Quadlet pre-warm and Day-0 offline start.",
       "related": [],
       "functions": [
         "test_offline_container_startup_speed"
@@ -7657,7 +7657,7 @@
     },
     {
       "path": "tests/test-reactive-loop.py",
-      "hint": "Automated unit test suite for Reactive Event Loop & Subagent Wakeups (T-651, T-652).",
+      "hint": "Automated unit test suite for Reactive Event Loop & Subagent Wakeups (task_597, task_598).",
       "related": [
         "usr/lib/mios/agent-pipe/reactive_loop.py",
         "tests/test-reactive-loop.py"
@@ -7696,7 +7696,7 @@
     },
     {
       "path": "tests/test-reputation.py",
-      "hint": "Tests for T-344: mios_reputation \u2014 IntrospecLOO marginal contribution.",
+      "hint": "Tests for task_288: mios_reputation \u2014 IntrospecLOO marginal contribution.",
       "related": [
         "mios_reputation"
       ],
@@ -7756,7 +7756,7 @@
     },
     {
       "path": "tests/test-sandbox-seccomp.sh",
-      "hint": "bash Guards the T-230 syscall filter on usr/libexec/mios/mios-sandbox-exec.",
+      "hint": "bash Guards the task_210 syscall filter on usr/libexec/mios/mios-sandbox-exec.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -7765,7 +7765,7 @@
     },
     {
       "path": "tests/test-sbom-export.py",
-      "hint": "Automated unit test suite for Hermetic Podman OCI image synthesis and Syft SBOM generation (T-509).",
+      "hint": "Automated unit test suite for Hermetic Podman OCI image synthesis and Syft SBOM generation (task_453).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md",
@@ -7792,7 +7792,7 @@
     },
     {
       "path": "tests/test-seat-blade-transition.py",
-      "hint": "Tests for T-970 & T-971: Seat-to-Blade profile transition and zero resource leaks.",
+      "hint": "Tests for task_914 & task_915: Seat-to-Blade profile transition and zero resource leaks.",
       "related": [
         "llama-rpc-server.service"
       ],
@@ -7814,7 +7814,7 @@
     },
     {
       "path": "tests/test-self-replicate-build.py",
-      "hint": "Tests for T-966 & T-967: autonomous self-replication build trigger and digest verification.",
+      "hint": "Tests for task_910 & task_911: autonomous self-replication build trigger and digest verification.",
       "related": [],
       "functions": [
         "test_build_context_ignores_generated_artifacts",
@@ -7848,7 +7848,7 @@
     },
     {
       "path": "tests/test-shadow-test.sh",
-      "hint": "Integration test suite for shadow candidate daemon validator and query mirroring harness (T-541, AGY-2139).",
+      "hint": "Integration test suite for shadow candidate daemon validator and query mirroring harness (task_485, task_2718).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md",
@@ -7869,7 +7869,7 @@
     },
     {
       "path": "tests/test-snapshot-transport-restore.py",
-      "hint": "Automated unit test suite for zero-knowledge remote snapshot transport and offline restore (T-522, AGY-2120).",
+      "hint": "Automated unit test suite for zero-knowledge remote snapshot transport and offline restore (task_466, task_2699).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/storage.md",
@@ -7878,7 +7878,7 @@
     },
     {
       "path": "tests/test-socket-swap.sh",
-      "hint": "Integration test suite for zero-downtime socket handoff and daemon swapper (T-542, AGY-2140).",
+      "hint": "Integration test suite for zero-downtime socket handoff and daemon swapper (task_486, task_2719).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch87-socket-activation-handoff.md",
@@ -7899,7 +7899,7 @@
     },
     {
       "path": "tests/test-split-dns.py",
-      "hint": "Automated unit test suite for Split-DNS & Strict DoT Resolution (T-697, T-698).",
+      "hint": "Automated unit test suite for Split-DNS & Strict DoT Resolution (task_641, task_642).",
       "related": [
         "usr/libexec/mios/net/split_dns.py",
         "tests/test-split-dns.py"
@@ -7911,7 +7911,7 @@
     },
     {
       "path": "tests/test-sse-token-streaming.py",
-      "hint": "Tests for T-747 & T-748: 100-stream concurrent token streaming & backpressure.",
+      "hint": "Tests for task_691 & task_692: 100-stream concurrent token streaming & backpressure.",
       "related": [],
       "functions": [
         "test_100_concurrent_streams"
@@ -7935,7 +7935,7 @@
     },
     {
       "path": "tests/test-storage-segregate.py",
-      "hint": "Automated unit test suite for multi-domain storage segregater and inert snapshot export (T-521, AGY-2119).",
+      "hint": "Automated unit test suite for multi-domain storage segregater and inert snapshot export (task_465, task_2698).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/storage.md",
@@ -7966,7 +7966,7 @@
     },
     {
       "path": "tests/test-streaming-asr-latency.py",
-      "hint": "Tests for T-737 & T-738: streaming ASR latency (<100ms) and WER benchmark.",
+      "hint": "Tests for task_681 & task_682: streaming ASR latency (<100ms) and WER benchmark.",
       "related": [
         "mios_asr"
       ],
@@ -7980,7 +7980,7 @@
     },
     {
       "path": "tests/test-stress.py",
-      "hint": "Consolidated empirical stress/boundary tests (T-339..T-345, T-573..T-774, T-966..T-975) for MiOS agent-pipe, ai, hw, net, sec, storage and kernel helpers.",
+      "hint": "Consolidated empirical stress/boundary tests (task_283..task_289, task_517..task_718, task_910..task_919) for MiOS agent-pipe, ai, hw, net, sec, storage and kernel helpers.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -8001,7 +8001,7 @@
     },
     {
       "path": "tests/test-subuid-alloc.py",
-      "hint": "Automated unit test suite for deterministic /etc/subuid and /etc/subgid range generator (T-477).",
+      "hint": "Automated unit test suite for deterministic /etc/subuid and /etc/subgid range generator (task_421).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -8019,7 +8019,7 @@
     },
     {
       "path": "tests/test-swarm-pss-memory.py",
-      "hint": "Tests for T-972 & T-973: Swarm PSS memory bounding (>1,500 tasks in <16GB).",
+      "hint": "Tests for task_916 & task_917: Swarm PSS memory bounding (>1,500 tasks in <16GB).",
       "related": [],
       "functions": [
         "test_1500_tasks_within_16gb_budget"
@@ -8030,7 +8030,7 @@
     },
     {
       "path": "tests/test-sys-sync-live-reload.sh",
-      "hint": "Automated zero-reboot sysctl parameter application (<50ms) and live udev test suite (T-823).",
+      "hint": "Automated zero-reboot sysctl parameter application (<50ms) and live udev test suite (task_767).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/kernel.md",
@@ -8039,7 +8039,7 @@
     },
     {
       "path": "tests/test-systemd-homed-luks.py",
-      "hint": "Tests for T-745 & T-746: systemd-homed LUKS2 unlock, key zeroization & migration.",
+      "hint": "Tests for task_689 & task_690: systemd-homed LUKS2 unlock, key zeroization & migration.",
       "related": [],
       "functions": [
         "test_homed_unlock_sub_200ms",
@@ -8051,7 +8051,7 @@
     },
     {
       "path": "tests/test-systemd-oomd-psi.sh",
-      "hint": "Automated CI test suite for systemd-oomd PSI pressure manager, subagent worker eviction, and daemon protection (T-820, T-821).",
+      "hint": "Automated CI test suite for systemd-oomd PSI pressure manager, subagent worker eviction, and daemon protection (task_764, task_765).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf",
@@ -8065,7 +8065,7 @@
     },
     {
       "path": "tests/test-task-failover.py",
-      "hint": "Verification suite for automated node failure detection and zero-loss dynamic task re-distribution engine (T-538, AGY-2136).",
+      "hint": "Verification suite for automated node failure detection and zero-loss dynamic task re-distribution engine (task_482, task_2715).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
@@ -8096,7 +8096,7 @@
     },
     {
       "path": "tests/test-theme-live-render.py",
-      "hint": "Automated unit test suite for multi-surface live theme rendering and DBus/socket broadcast (T-499, T-500).",
+      "hint": "Automated unit test suite for multi-surface live theme rendering and DBus/socket broadcast (task_443, task_444).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
@@ -8128,7 +8128,7 @@
     },
     {
       "path": "tests/test-thermal-governor-recovery.sh",
-      "hint": "Continuous thermal stress and proactive governor modulation recovery test suite (T-544, AGY-2142).",
+      "hint": "Continuous thermal stress and proactive governor modulation recovery test suite (task_488, task_2721).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md",
@@ -8137,7 +8137,7 @@
     },
     {
       "path": "tests/test-thp-compaction.py",
-      "hint": "Automated unit test suite for THP madvise and memory compaction tuning (T-800).",
+      "hint": "Automated unit test suite for THP madvise and memory compaction tuning (task_744).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -8181,7 +8181,7 @@
     },
     {
       "path": "tests/test-tpm2-seal.py",
-      "hint": "Automated unit test suite for TPM 2.0 PCR 7/11 secret sealing and unsealing (T-493).",
+      "hint": "Automated unit test suite for TPM 2.0 PCR 7/11 secret sealing and unsealing (task_437).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -8205,7 +8205,7 @@
     },
     {
       "path": "tests/test-uki-promote.py",
-      "hint": "Automated unit test suite for automated UKI A/B boot promotion and Greenboot validation gate (T-508).",
+      "hint": "Automated unit test suite for automated UKI A/B boot promotion and Greenboot validation gate (task_452).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md",
@@ -8214,7 +8214,7 @@
     },
     {
       "path": "tests/test-ukify-stage.py",
-      "hint": "Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (T-507).",
+      "hint": "Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (task_451).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md",
@@ -8223,7 +8223,7 @@
     },
     {
       "path": "tests/test-unattend.py",
-      "hint": "Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (T-1021 / GATECAT-01).",
+      "hint": "Consolidated unit test suite for MiOS Windows Unattended domain (autounattend.xml generation, hardware bypass injection, and schema validation) (task_3353 / GATECAT-01).",
       "related": [
         "usr/libexec/mios/win/unattend_gen.py",
         "usr/libexec/mios/win/unattend_validate.py",
@@ -8249,7 +8249,7 @@
     },
     {
       "path": "tests/test-usbguard-sec.py",
-      "hint": "Automated unit test suite for USBGuard declarative authorization and udisks2 read-only mount policies (T-798).",
+      "hint": "Automated unit test suite for USBGuard declarative authorization and udisks2 read-only mount policies (task_742).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -8258,7 +8258,7 @@
     },
     {
       "path": "tests/test-user-cephfs.sh",
-      "hint": "Test suite for Global per-user encrypted CephFS subvolume manager (T-528, AGY-2126).",
+      "hint": "Test suite for Global per-user encrypted CephFS subvolume manager (task_472, task_2705).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch73-cephfs-user-subvolumes.md",
@@ -8276,7 +8276,7 @@
     },
     {
       "path": "tests/test-varlink-socket-activation.py",
-      "hint": "Tests for T-743 & T-744: Varlink schema validation and sub-1ms RPC.",
+      "hint": "Tests for task_687 & task_688: Varlink schema validation and sub-1ms RPC.",
       "related": [
         "usr/lib/mios/ipc/varlink_activator.py"
       ],
@@ -8291,7 +8291,7 @@
     },
     {
       "path": "tests/test-video-encode-latency.sh",
-      "hint": "Adaptive bitrate and low-latency frame encoding streaming benchmark suite (T-536, AGY-2134).",
+      "hint": "Adaptive bitrate and low-latency frame encoding streaming benchmark suite (task_480, task_2713).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch81-video-streaming-benchmarks.md",
@@ -8300,7 +8300,7 @@
     },
     {
       "path": "tests/test-video-encoder-probe.sh",
-      "hint": "Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (T-535, AGY-2133).",
+      "hint": "Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (task_479, task_2712).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch80-hardware-video-encoding.md",
@@ -8335,7 +8335,7 @@
     },
     {
       "path": "tests/test-vision-redact.py",
-      "hint": "Verification suite for ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (T-539, AGY-2137).",
+      "hint": "Verification suite for ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (task_483, task_2716).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch84-vision-redaction.md",
@@ -8362,7 +8362,7 @@
     },
     {
       "path": "tests/test-wallpaper-service.py",
-      "hint": "Automated unit test suite for WS-LANG mios-wallpaperd native living wallpaper service (T-1132).",
+      "hint": "Automated unit test suite for WS-LANG mios-wallpaperd native living wallpaper service (task_3425).",
       "related": [
         "tools/native/mios-wallpaperd/src/main.rs",
         "usr/share/mios/branding/living-wallpaper.html",
@@ -8385,7 +8385,7 @@
     },
     {
       "path": "tests/test-webhook-receiver.py",
-      "hint": "Automated unit test suite for HMAC-SHA256 authenticated webhook receiver and agent_inbox queue (T-517).",
+      "hint": "Automated unit test suite for HMAC-SHA256 authenticated webhook receiver and agent_inbox queue (task_461).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -8394,7 +8394,7 @@
     },
     {
       "path": "tests/test-webrtc-screen-stream.py",
-      "hint": "Automated unit test suite for PipeWire WebRTC desktop video streamer (T-788, T-789).",
+      "hint": "Automated unit test suite for PipeWire WebRTC desktop video streamer (task_732, task_733).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch38-remote-desktop-and-gnome-grd.md",
@@ -8403,7 +8403,7 @@
     },
     {
       "path": "tests/test-webrtc-stream.py",
-      "hint": "Automated unit test suite for PipeWire DMA-BUF WebRTC Streamer (T-625, T-626).",
+      "hint": "Automated unit test suite for PipeWire DMA-BUF WebRTC Streamer (task_569, task_570).",
       "related": [
         "usr/libexec/mios/ui/webrtc_stream.py",
         "tests/test-webrtc-stream.py"
@@ -8426,7 +8426,7 @@
     },
     {
       "path": "tests/test-wireguard-endpoint-roaming.py",
-      "hint": "Tests for T-753 & T-754: WireGuard endpoint roaming (<50ms) and PMTU clamping.",
+      "hint": "Tests for task_697 & task_698: WireGuard endpoint roaming (<50ms) and PMTU clamping.",
       "related": [],
       "functions": [
         "test_endpoint_roaming_sub_50ms",
@@ -8447,7 +8447,7 @@
     },
     {
       "path": "tests/test-wol-proxy.py",
-      "hint": "Automated unit test suite for signed proxy WoL with SecureON payload and peer wake daemon (T-523, AGY-2121).",
+      "hint": "Automated unit test suite for signed proxy WoL with SecureON payload and peer wake daemon (task_467, task_2700).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -8471,7 +8471,7 @@
     },
     {
       "path": "tests/test-xdp-fastpath.py",
-      "hint": "Automated unit test suite for native eBPF XDP network fastpath and WireGuard router (T-802, T-803).",
+      "hint": "Automated unit test suite for native eBPF XDP network fastpath and WireGuard router (task_746, task_747).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -8561,7 +8561,7 @@
     },
     {
       "path": "tests/test_native_static_hardening_e2e.py",
-      "hint": "Comprehensive E2E test suite for MiOS Native Static Binaries Hardening and Consolidation (T-1148, T-1161, T-1162).",
+      "hint": "Comprehensive E2E test suite for MiOS Native Static Binaries Hardening and Consolidation (task_3441, task_3454, task_3455).",
       "related": [
         "usr/share/mios/mios.toml",
         "src/mios-rs/mios-gate",
@@ -8609,7 +8609,7 @@
     },
     {
       "path": "tools/audit-image-provisioning.py",
-      "hint": "Post-build image-audit validator asserting provisioning status (AGY / T-286).",
+      "hint": "Post-build image-audit validator asserting provisioning status (AGY / task_3332).",
       "related": [
         "usr/share/mios/mios.toml",
         "tests/test-audit-image-provisioning.py",
@@ -8675,7 +8675,7 @@
     },
     {
       "path": "tools/check-tasks.py",
-      "hint": "Task-plane drift gates in one module: the retired TASKS.md table-vs-section parity, AGY task schema, and AGY id/dependency resolution, over the frozen lists tasks.jsonl keeps (ADR-0028).",
+      "hint": "Task-plane drift gates in one module: the retired TASKS.md table-vs-section parity, AGY task schema, and task id/dependency resolution, over the frozen lists tasks.jsonl keeps (ADR-0028).",
       "related": [],
       "functions": [
         "main",
@@ -8970,7 +8970,7 @@
     },
     {
       "path": "tools/mios-dup-report",
-      "hint": "AGY-856 MIOS_* value-de-dup measurement CLI: resolves the env via mios-env-snapshot, groups keys by VALUE, classifies every >=2-key group {true-alias|distinct-fact|intentional-many-to-one|unset-default}, and emits NEW canonical<TAB>alias<TAB>derive candidate rows for value-aliases.tsv from the 13 systematic prefix-alias families (skipping already-mapped pairs). Prints by default; --write-tsv regenerates value-dup-report.tsv.",
+      "hint": "task_1591 MIOS_* value-de-dup measurement CLI: resolves the env via mios-env-snapshot, groups keys by VALUE, classifies every >=2-key group {true-alias|distinct-fact|intentional-many-to-one|unset-default}, and emits NEW canonical<TAB>alias<TAB>derive candidate rows for value-aliases.tsv from the 13 systematic prefix-alias families (skipping already-mapped pairs). Prints by default; --write-tsv regenerates value-dup-report.tsv.",
       "related": [
         "usr/libexec/mios/mios-env-snapshot",
         "usr/share/mios/reference/value-aliases.tsv",
@@ -9258,7 +9258,7 @@
     },
     {
       "path": "tools/native/mios-bake-plan/src/main.rs",
-      "hint": "Rust bake-plan generator (AGY-139 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).",
+      "hint": "Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -9267,7 +9267,7 @@
     },
     {
       "path": "tools/native/mios-browser/Cargo.toml",
-      "hint": "Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (T-1004).",
+      "hint": "Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (task_948).",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/libexec/mios/mios-open-url"
@@ -9279,7 +9279,7 @@
     },
     {
       "path": "tools/native/mios-browser/src/main.rs",
-      "hint": "Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (T-1004).",
+      "hint": "Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (task_948).",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/libexec/mios/mios-open-url"
@@ -9596,7 +9596,7 @@
     },
     {
       "path": "tools/native/mios-gen/tests/golden.rs",
-      "hint": "Executes every console case in tests/golden/README.md against the built mios-gen: exit code and combined output, line for line, with [..] and [CWD] (AGY-1067).",
+      "hint": "Executes every console case in tests/golden/README.md against the built mios-gen: exit code and combined output, line for line, with [..] and [CWD] (task_1707).",
       "related": [
         "tests/golden/README.md",
         "tests/golden/fastfetch/mock.jsonc",
@@ -10125,7 +10125,7 @@
     },
     {
       "path": "tools/native/mios-task/src/check.rs",
-      "hint": "`mios-task check` -- every rule of ADR-0028 over tasks.jsonl, its frozen provenance slices, its overrides and TASKS.md == render.",
+      "hint": "`mios-task check` -- every rule of ADR-0028 over tasks.jsonl, its frozen provenance slices, its overrides and TASKS.md == render; once migrated also the number rules (unique, creation order, never reissued) and no purged id anywhere in the list.",
       "related": [
         "tasks.jsonl",
         "TASKS.md",
@@ -10136,6 +10136,8 @@
       "functions": [
         "State::load",
         "check",
+        "numbers",
+        "purged_in_list",
         "hygiene",
         "cycles",
         "retired_stores",
@@ -10158,7 +10160,7 @@
     },
     {
       "path": "tools/native/mios-task/src/cli.rs",
-      "hint": "mios-task verbs over tasks.jsonl -- check, fmt, render, ready/next, set, claim, release, add, overrides fold, source (rebuild a frozen retired list) and the one-shot migrate-canonical.",
+      "hint": "mios-task verbs over tasks.jsonl -- check/gate, fmt, render, ready/next, set, claim, release, add (mints task_<ULID> once migrated), fold, source, and migration one-shots.",
       "related": [
         "tasks.jsonl",
         "TASKS.md",
@@ -10177,6 +10179,7 @@
         "cmd_set",
         "cmd_claim",
         "cmd_add",
+        "mint",
         "cmd_fold",
         "cmd_source",
         "cmd_migrate"
@@ -10204,11 +10207,14 @@
     },
     {
       "path": "tools/native/mios-task/src/migrate.rs",
-      "hint": "One-shot `mios-task migrate-canonical` -- folds the retired TASKS.jsonl store and the lane file into tasks.jsonl, keeping each record's id, status and every byte it owned (provenance.sources), counting every input both ways.",
+      "hint": "One-shot task-list migrations: `migrate-canonical` folds the retired TASKS.jsonl store and lane file into tasks.jsonl byte-for-byte; `migrate-ids` (mod purge) mints task_<ULID> ids and numbers and purges old ids.",
       "related": [
         "tasks.jsonl",
         "/usr/lib/mios/schemas/task-record.schema.json",
-        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md"
+        "/usr/share/doc/mios/adr/0028-one-canonical-task-list.md",
+        "TASKS.md",
+        "/usr/share/mios/mios.toml [tasks.store]",
+        "tools/native/mios-task/src/record.rs"
       ],
       "functions": [
         "Inputs",
@@ -10220,7 +10226,17 @@
         "lane_deps",
         "kept_sources",
         "chain_after",
-        "frozen_table"
+        "frozen_table",
+        "purge::Resolver::new",
+        "purge::Resolver::text",
+        "purge::Resolver::structured",
+        "purge::rewrite",
+        "purge::cmd",
+        "purge::plan",
+        "purge::tree",
+        "purge::ssot_section",
+        "purge::prefix_of",
+        "purge::publish"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -10251,7 +10267,7 @@
     },
     {
       "path": "tools/native/mios-task/src/record.rs",
-      "hint": "tasks.jsonl access and records -- [tasks.store], locked writes, the schema checker, the Python-identical serializer, status words.",
+      "hint": "tasks.jsonl access and records -- [tasks.store], locked writes, the schema checker, the Python-identical serializer, status words, and the index every reader resolves a task id through (opaque or typed once migrated, verbatim before).",
       "related": [
         "/usr/share/mios/mios.toml [tasks.store]",
         "/usr/lib/mios/schemas/task-record.schema.json",
@@ -10264,18 +10280,33 @@
         "Store::read",
         "Store::write_lines",
         "Store::locked",
+        "Store::is_purged",
+        "Store::load_schema",
         "find_root",
         "read_lines",
         "lock_file",
         "write_atomic",
         "Schema::load",
+        "Schema::from_record",
         "Schema::canon",
         "Schema::conforms",
+        "Index::new",
+        "Index::find",
+        "Index::label",
         "dumps",
         "canonical_status",
         "lane_word",
         "today",
-        "is_iso_date"
+        "is_iso_date",
+        "ids::ulid",
+        "ids::ulid_ms",
+        "ids::day_ms",
+        "ids::Ids",
+        "ids::legacy_record_schema",
+        "ids::Shapes",
+        "ids::scan",
+        "ids::tracked_files",
+        "ids::is_text"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -10474,7 +10505,7 @@
     },
     {
       "path": "tools/native/mios-version-check/src/main.rs",
-      "hint": "Rust native tool for version SSOT verification (WS-LANG / ADR-0011 / AGY-51).",
+      "hint": "Rust native tool for version SSOT verification (WS-LANG / ADR-0011 / task_1078).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -11336,7 +11367,7 @@
     },
     {
       "path": "usr/lib/bootc/kargs.d/30-security.toml",
-      "hint": "Defines boot-time kernel arguments for security hardening, specifically enforcing slab_nomerge, module.sig_enforce=1, and lockdown=confidentiality (T-916, T-917).",
+      "hint": "Defines boot-time kernel arguments for security hardening, specifically enforcing slab_nomerge, module.sig_enforce=1, and lockdown=confidentiality (task_860, task_861).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/kargs.d.md",
@@ -11363,7 +11394,7 @@
     },
     {
       "path": "usr/lib/bootc/kargs.d/40-mios-ramoops.toml",
-      "hint": "Configures pstore ramoops persistent crash buffer parameters in UKI kargs (T-790).",
+      "hint": "Configures pstore ramoops persistent crash buffer parameters in UKI kargs (task_734).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -11372,7 +11403,7 @@
     },
     {
       "path": "usr/lib/bootc/kargs.d/41-mios-kdump.toml",
-      "hint": "Configures crashkernel memory reservation for kdump crash extraction (T-515).",
+      "hint": "Configures crashkernel memory reservation for kdump crash extraction (task_459).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -11381,7 +11412,7 @@
     },
     {
       "path": "usr/lib/bootc/kargs.d/50-composefs.toml",
-      "hint": "Boot-time composefs fs-verity root filesystem sealing (T-527)",
+      "hint": "Boot-time composefs fs-verity root filesystem sealing (task_471)",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch71-composefs-sealing.md",
@@ -11590,7 +11621,7 @@
     },
     {
       "path": "usr/lib/greenboot/check/required.d/10-uki-promote.sh",
-      "hint": "Automated UKI A/B boot promotion and Greenboot validation gate (T-508).",
+      "hint": "Automated UKI A/B boot promotion and Greenboot validation gate (task_452).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md",
@@ -11651,7 +11682,7 @@
     },
     {
       "path": "usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh",
-      "hint": "Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (T-531, AGY-2129).",
+      "hint": "Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (task_475, task_2708).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md",
@@ -11712,7 +11743,7 @@
     },
     {
       "path": "usr/lib/greenboot/check/wanted.d/70-blade-reachability.sh",
-      "hint": "Non-critical greenboot check that probes blade reachability per ADR-0016 \u00a78 / AGY-1600. Records reachability state without triggering a rollback unless blade_reachability_critical = true.",
+      "hint": "Non-critical greenboot check that probes blade reachability per ADR-0016 \u00a78 / task_2241. Records reachability state without triggering a rollback unless blade_reachability_critical = true.",
       "related": [
         "/usr/share/mios/mios.toml",
         "/etc/mios/mios.toml",
@@ -11770,7 +11801,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/context_compactor.py",
-      "hint": "Hierarchical semantic context compactor and invariant pinning manager in agent-pipe (T-675, T-676).",
+      "hint": "Hierarchical semantic context compactor and invariant pinning manager in agent-pipe (task_619, task_620).",
       "related": [
         "usr/lib/mios/agent-pipe/context_compactor.py",
         "tests/test-context-processing.py",
@@ -11783,7 +11814,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/council.py",
-      "hint": "Multi-agent 3-peer council swarm and weighted Byzantine consensus engine in agent-pipe (T-653, T-654).",
+      "hint": "Multi-agent 3-peer council swarm and weighted Byzantine consensus engine in agent-pipe (task_599, task_600).",
       "related": [
         "usr/lib/mios/agent-pipe/council.py",
         "tests/test-council-consensus.py",
@@ -11796,7 +11827,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/macaroon_auth.py",
-      "hint": "Ephemeral HMAC Macaroon minter and attenuated caveat verifier in agent-pipe (T-723, T-724).",
+      "hint": "Ephemeral HMAC Macaroon minter and attenuated caveat verifier in agent-pipe (task_667, task_668).",
       "related": [
         "usr/lib/mios/agent-pipe/macaroon_auth.py",
         "tests/test-macaroon-auth.py",
@@ -11894,7 +11925,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_argval.py",
-      "hint": "Verb argument validation and synonym mapping helper (WS-DEBT / TD-5 / T-273). Extracted from mios_dispatch.py. Pure helper, must NOT import server.py or...",
+      "hint": "Verb argument validation and synonym mapping helper (WS-DEBT / TD-5 / task_251). Extracted from mios_dispatch.py. Pure helper, must NOT import server.py or...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -11916,7 +11947,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_audio_stream.py",
-      "hint": "Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).",
+      "hint": "Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md",
@@ -11925,7 +11956,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_audio_tts.py",
-      "hint": "Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (T-534, AGY-2132).",
+      "hint": "Concurrent streaming Piper TTS audio synthesis and PipeWire buffer feeder (task_478, task_2711).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch79-streaming-tts-piper.md",
@@ -12184,7 +12215,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_events.py",
-      "hint": "Authenticated WebSocket real-time agent execution token stream hub (T-518).",
+      "hint": "Authenticated WebSocket real-time agent execution token stream hub (task_462).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -12362,7 +12393,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_kvfork.py",
-      "hint": "T-340 SCHED-05 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended",
+      "hint": "task_284 task_3218 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended",
       "related": [
         "mios-llm-light",
         "mios_kv_compact",
@@ -12492,7 +12523,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_mesh_distributor.py",
-      "hint": "Multi-node dynamic AI workload partitioner and capability-aware task router (T-537, AGY-2135).",
+      "hint": "Multi-node dynamic AI workload partitioner and capability-aware task router (task_481, task_2714).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch82-mesh-workload-partitioning.md",
@@ -12510,7 +12541,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_net_anomaly.py",
-      "hint": "Jensen-Shannon divergence network anomaly detector and PostgreSQL threat_events vector sink (T-512).",
+      "hint": "Jensen-Shannon divergence network anomaly detector and PostgreSQL threat_events vector sink (task_456).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
@@ -12519,7 +12550,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_ocr_mask.py",
-      "hint": "Lightweight on-device OCR regex credential masking pipeline for vision frames (T-540, AGY-2138).",
+      "hint": "Lightweight on-device OCR regex credential masking pipeline for vision frames (task_484, task_2717).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch85-ocr-credential-masking.md",
@@ -12690,7 +12721,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/access/quarantine.py",
-      "hint": "CaMeL dual-context QUARANTINE boundary -- the deeper half of the F2/T-033 prompt-injection defense (Debenedetti et al., \"Defeating Promp...",
+      "hint": "CaMeL dual-context QUARANTINE boundary -- the deeper half of the F2/task_33 prompt-injection defense (Debenedetti et al., \"Defeating Promp...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/access.md",
@@ -12717,7 +12748,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/access/seccomp.py",
-      "hint": "T-230 seccomp filter builder for the risk-tier dispatch sandbox.",
+      "hint": "task_210 seccomp filter builder for the risk-tier dispatch sandbox.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/access.md",
@@ -13005,7 +13036,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/kernel/httpclient.py",
-      "hint": "The ONE shared outbound httpx.AsyncClient for the whole pipe, extracted verbatim from server.py, plus the WS-A6/T-226 batch-coalescing c...",
+      "hint": "The ONE shared outbound httpx.AsyncClient for the whole pipe, extracted verbatim from server.py, plus the WS-A6/task_206 batch-coalescing c...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/kernel.md",
@@ -13066,7 +13097,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/lifecycle/selfimprove_act.py",
-      "hint": "Pure self-improvement ACT-half decision core (T-062 ACT + T-064 proof-of-utility).",
+      "hint": "Pure self-improvement ACT-half decision core (task_64 ACT + task_66 proof-of-utility).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/lifecycle.md",
@@ -13320,7 +13351,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/council_diversity.py",
-      "hint": "Council input-diversity gate + confidence-aware aggregation bypass (T-047 RouteMoA GAP-1 / T-048 MOSAIC GAP-2).",
+      "hint": "Council input-diversity gate + confidence-aware aggregation bypass (task_47 RouteMoA GAP-1 / task_48 MOSAIC GAP-2).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/routing.md",
@@ -13368,7 +13399,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/dispatch_cmd.py",
-      "hint": "Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (T-273).",
+      "hint": "Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (task_251).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/routing.md",
@@ -13586,7 +13617,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/replay.py",
-      "hint": "OAI-04/T-225 run-template REPLAY matcher -- the reuse half of the WS-6 capture path.",
+      "hint": "OAI-04/task_205 run-template REPLAY matcher -- the reuse half of the WS-6 capture path.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/routing.md",
@@ -13622,7 +13653,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/run_template.py",
-      "hint": "WS-6 run-template CAPTURE + the T-225 replay source, extracted out of dag_exec so the two halves of one feature live together.",
+      "hint": "WS-6 run-template CAPTURE + the task_205 replay source, extracted out of dag_exec so the two halves of one feature live together.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/routing.md",
@@ -13813,7 +13844,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/scheduler/preempt.py",
-      "hint": "WS-A12 round-robin preemption state machine + generation-snapshot contract, PLUS the T-019/SCHED-01 TURN-boundary preemption seam AND th...",
+      "hint": "WS-A12 round-robin preemption state machine + generation-snapshot contract, PLUS the task_19/task_19 TURN-boundary preemption seam AND th...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/scheduler.md",
@@ -13966,7 +13997,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_psi.py",
-      "hint": "Continuous Linux PSI (Pressure Stall Information) sampler and throttling monitor (T-485).",
+      "hint": "Continuous Linux PSI (Pressure Stall Information) sampler and throttling monitor (task_429).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -14256,7 +14287,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_task_failover.py",
-      "hint": "Automated node failure detection and zero-loss dynamic task re-distribution engine (T-538, AGY-2136).",
+      "hint": "Automated node failure detection and zero-loss dynamic task re-distribution engine (task_482, task_2715).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
@@ -14408,7 +14439,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_vision_redact.py",
-      "hint": "ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (T-539, AGY-2137).",
+      "hint": "ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (task_483, task_2716).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch84-vision-redaction.md",
@@ -14426,7 +14457,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_webhook.py",
-      "hint": "HMAC-SHA256 authenticated webhook receiver and idempotent agent_inbox queue (T-517).",
+      "hint": "HMAC-SHA256 authenticated webhook receiver and idempotent agent_inbox queue (task_461).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -14453,7 +14484,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/multimodal_ws.py",
-      "hint": "Duplex multi-modal WebSocket streaming pipeline (audio, vision, TTS, tools) in agent-pipe (T-671, T-672).",
+      "hint": "Duplex multi-modal WebSocket streaming pipeline (audio, vision, TTS, tools) in agent-pipe (task_615, task_616).",
       "related": [
         "usr/lib/mios/agent-pipe/multimodal_ws.py",
         "tests/test-multimodal-ws.py",
@@ -14466,7 +14497,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/overlay_workspace.py",
-      "hint": "Ephemeral OverlayFS workspace provisioner and bubblewrap sandbox in agent-pipe (T-691, T-692).",
+      "hint": "Ephemeral OverlayFS workspace provisioner and bubblewrap sandbox in agent-pipe (task_635, task_636).",
       "related": [
         "usr/lib/mios/agent-pipe/overlay_workspace.py",
         "tests/test-overlay-workspace.py",
@@ -14495,7 +14526,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/reactive_loop.py",
-      "hint": "Asyncio/epoll reactive event loop and PostgreSQL LISTEN/NOTIFY dispatcher in agent-pipe (T-651, T-652).",
+      "hint": "Asyncio/epoll reactive event loop and PostgreSQL LISTEN/NOTIFY dispatcher in agent-pipe (task_597, task_598).",
       "related": [
         "usr/lib/mios/agent-pipe/reactive_loop.py",
         "tests/test-reactive-loop.py",
@@ -14832,7 +14863,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_council_diversity.py",
-      "hint": "Stdlib offline unit tests for mios_council_diversity -- the council input-diversity gate (T-047 RouteMoA GAP-1) + confidence-aware aggre...",
+      "hint": "Stdlib offline unit tests for mios_council_diversity -- the council input-diversity gate (task_47 RouteMoA GAP-1) + confidence-aware aggre...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -15255,7 +15286,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_ocr_mask.py",
-      "hint": "CI agent-pipe unit test runner for mios_ocr_mask (T-540, AGY-2138).",
+      "hint": "CI agent-pipe unit test runner for mios_ocr_mask (task_484, task_2717).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch85-ocr-credential-masking.md",
@@ -15368,7 +15399,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_preempt.py",
-      "hint": "Standalone assert-script unit test for mios_preempt (WS-A12 RR-preemption state machine + snapshot contract, PLUS the T-019/...",
+      "hint": "Standalone assert-script unit test for mios_preempt (WS-A12 RR-preemption state machine + snapshot contract, PLUS the task_19/...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -15421,7 +15452,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_psi.py",
-      "hint": "Comprehensive unit test suite for mios_psi (T-485 PSI monitor).",
+      "hint": "Comprehensive unit test suite for mios_psi (task_429 PSI monitor).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md",
@@ -15430,7 +15461,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_quarantine.py",
-      "hint": "Offline stdlib-assert test for the F2 CaMeL dual-context QUARANTINE gate (the deeper half of T-033, mios_quarantine).",
+      "hint": "Offline stdlib-assert test for the F2 CaMeL dual-context QUARANTINE gate (the deeper half of task_33, mios_quarantine).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -15529,7 +15560,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_ruleof2.py",
-      "hint": "Offline stdlib-assert test for the F2/T-033 Rule-of-Two architectural prompt-injection gate.",
+      "hint": "Offline stdlib-assert test for the F2/task_33 Rule-of-Two architectural prompt-injection gate.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -15606,7 +15637,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_selfimprove_act.py",
-      "hint": "Standalone unit test for mios_selfimprove_act (T-062 ACT + T-064 proof-of-utility decision core): structural anti-reward-hacking isolation...",
+      "hint": "Standalone unit test for mios_selfimprove_act (task_64 ACT + task_66 proof-of-utility decision core): structural anti-reward-hacking isolation...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -15911,7 +15942,7 @@
     },
     {
       "path": "usr/lib/mios/ai/cuda_graphs.py",
-      "hint": "Static CUDA Graph capture manager and multi-batch hardware replay buffer (T-709, T-710).",
+      "hint": "Static CUDA Graph capture manager and multi-batch hardware replay buffer (task_653, task_654).",
       "related": [
         "usr/lib/mios/ai/cuda_graphs.py",
         "tests/test-ai-acceleration.py",
@@ -15939,7 +15970,7 @@
     },
     {
       "path": "usr/lib/mios/ai/grammar_decode.py",
-      "hint": "Logit-level GBNF grammar constrained decoder and JSON schema compiler in llama-swap (T-685, T-686).",
+      "hint": "Logit-level GBNF grammar constrained decoder and JSON schema compiler in llama-swap (task_629, task_630).",
       "related": [
         "usr/lib/mios/ai/grammar_decode.py",
         "tests/test-ai-acceleration.py",
@@ -15982,7 +16013,7 @@
     },
     {
       "path": "usr/lib/mios/ai/medusa_tree.py",
-      "hint": "Medusa / EAGLE multi-head token tree speculative engine and Tree-Attention kernels (T-695, T-696).",
+      "hint": "Medusa / EAGLE multi-head token tree speculative engine and Tree-Attention kernels (task_639, task_640).",
       "related": [
         "usr/lib/mios/ai/medusa_tree.py",
         "tests/test-ai-acceleration.py",
@@ -16010,7 +16041,7 @@
     },
     {
       "path": "usr/lib/mios/ai/pgvector_hnsw.py",
-      "hint": "Quantized halfvec HNSW vector indexer and workspace table partitioner in pgvector (T-725, T-726).",
+      "hint": "Quantized halfvec HNSW vector indexer and workspace table partitioner in pgvector (task_669, task_670).",
       "related": [
         "usr/lib/mios/ai/pgvector_hnsw.py",
         "tests/test-db.py",
@@ -16023,7 +16054,7 @@
     },
     {
       "path": "usr/lib/mios/ai/rocm_paged_attn.py",
-      "hint": "ROCm / HIP PagedAttention virtual block manager and async stream compaction engine (T-731, T-732).",
+      "hint": "ROCm / HIP PagedAttention virtual block manager and async stream compaction engine (task_675, task_676).",
       "related": [
         "usr/lib/mios/ai/rocm_paged_attn.py",
         "tests/test-ai-acceleration.py",
@@ -16083,7 +16114,7 @@
     },
     {
       "path": "usr/lib/mios/ai/train_elastic.py",
-      "hint": "Asynchronous non-blocking PyTorch checkpoint engine and TorchElastic preemption manager (T-669, T-670).",
+      "hint": "Asynchronous non-blocking PyTorch checkpoint engine and TorchElastic preemption manager (task_613, task_614).",
       "related": [
         "usr/lib/mios/ai/train_elastic.py",
         "tests/test-ai-acceleration.py"
@@ -16122,7 +16153,7 @@
     },
     {
       "path": "usr/lib/mios/cli/formatter.py",
-      "hint": "Dynamic TTY / Rich / JSON / YAML output formatter and adaptive CLI engine (T-513).",
+      "hint": "Dynamic TTY / Rich / JSON / YAML output formatter and adaptive CLI engine (task_457).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -16131,7 +16162,7 @@
     },
     {
       "path": "usr/lib/mios/cli/plugin_loader.py",
-      "hint": "Dynamic plugin loader and subcommand discovery for MiOS CLI (T-514).",
+      "hint": "Dynamic plugin loader and subcommand discovery for MiOS CLI (task_458).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -16149,7 +16180,7 @@
     },
     {
       "path": "usr/lib/mios/ebpf/xdp_router.c",
-      "hint": "Native eBPF XDP network fastpath and WireGuard packet router (T-802).",
+      "hint": "Native eBPF XDP network fastpath and WireGuard packet router (task_746).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-ebpf-xdp-wireguard-fastpath.md",
@@ -16313,7 +16344,7 @@
     },
     {
       "path": "usr/lib/mios/mios_db_config.py",
-      "hint": "Peer of mios_toml.py resolving configuration settings from PostgreSQL config tables (WS-VECTOR V1 / T-243).",
+      "hint": "Peer of mios_toml.py resolving configuration settings from PostgreSQL config tables (WS-VECTOR V1 / task_222).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -16583,7 +16614,7 @@
     },
     {
       "path": "usr/lib/sysctl.d/20-memory.conf",
-      "hint": "Configures proactive memory compaction and memory parameters for AI workloads (T-800).",
+      "hint": "Configures proactive memory compaction and memory parameters for AI workloads (task_744).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -16646,7 +16677,7 @@
     },
     {
       "path": "usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf",
-      "hint": "Declarative vendor systemd-oomd memory pressure configuration with 50% PSI threshold and 5s duration (T-820).",
+      "hint": "Declarative vendor systemd-oomd memory pressure configuration with 50% PSI threshold and 5s duration (task_764).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -16659,7 +16690,7 @@
     },
     {
       "path": "usr/lib/systemd/resolved.conf.d/10-adguard.conf",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (T-497).",
+      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (task_441).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -16898,7 +16929,7 @@
     },
     {
       "path": "usr/lib/systemd/system/init.scope.d/10-oom-protect.conf",
-      "hint": "Protect init.scope services from OOM killing via systemd-oomd (T-820).",
+      "hint": "Protect init.scope services from OOM killing via systemd-oomd (task_764).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -17022,7 +17053,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-agent-pipe.socket",
-      "hint": "Systemd socket activation unit for agent-pipe zero-downtime handoff (T-542, AGY-2140)",
+      "hint": "Systemd socket activation unit for agent-pipe zero-downtime handoff (task_486, task_2719)",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch87-socket-activation-handoff.md",
@@ -17067,7 +17098,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-ai.target",
-      "hint": "systemd target grouping all MiOS AI plane services (T-076).",
+      "hint": "systemd target grouping all MiOS AI plane services (task_54).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -17230,7 +17261,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-ceph-snap.service",
-      "hint": "Systemd service for periodic CephFS atomic subvolume snapshotting and retention management (T-794).",
+      "hint": "Systemd service for periodic CephFS atomic subvolume snapshotting and retention management (task_738).",
       "related": [
         "usr/lib/systemd/system/mios-ceph-snap.timer",
         "usr/libexec/mios/mios-ceph-snap"
@@ -17242,7 +17273,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-ceph-snap.timer",
-      "hint": "Systemd timer for hourly CephFS atomic subvolume snapshotting and retention management (T-794).",
+      "hint": "Systemd timer for hourly CephFS atomic subvolume snapshotting and retention management (task_738).",
       "related": [
         "usr/lib/systemd/system/mios-ceph-snap.service",
         "usr/libexec/mios/mios-ceph-snap"
@@ -17496,7 +17527,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-firewall.service",
-      "hint": "Enforces declarative nftables inter-container micro-segmentation and default-deny isolation policies at boot (T-479).",
+      "hint": "Enforces declarative nftables inter-container micro-segmentation and default-deny isolation policies at boot (task_423).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -18149,7 +18180,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-registry.service",
-      "hint": "Systemd service unit running the local OCI distribution registry on loopback for image staging (T-510).",
+      "hint": "Systemd service unit running the local OCI distribution registry on loopback for image staging (task_454).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch43-local-registry-and-oci-distribution.md",
@@ -18305,7 +18336,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-thermald.service",
-      "hint": "Systemd service unit for proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (T-543, AGY-2141).",
+      "hint": "Systemd service unit for proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (task_487, task_2720).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md",
@@ -18470,7 +18501,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-wol-proxy.service",
-      "hint": "Systemd service unit for signed proxy WoL with SecureON payload and peer wake daemon (T-523, AGY-2121).",
+      "hint": "Systemd service unit for signed proxy WoL with SecureON payload and peer wake daemon (task_467, task_2700).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -18666,7 +18697,7 @@
     },
     {
       "path": "usr/lib/systemd/system/subagent.slice",
-      "hint": "MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy (T-820).",
+      "hint": "MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy (task_764).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -18679,7 +18710,7 @@
     },
     {
       "path": "usr/lib/systemd/system/system.slice.d/10-oom-protect.conf",
-      "hint": "Protect core system.slice services from OOM killing via systemd-oomd (T-820).",
+      "hint": "Protect core system.slice services from OOM killing via systemd-oomd (task_764).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -18845,7 +18876,7 @@
     },
     {
       "path": "usr/lib/systemd/system/user@.service.d/10-oom-kill.conf",
-      "hint": "Configure user@.service with ManagedOOMMemoryPressure=kill and ManagedOOMPreference=avoid (T-820).",
+      "hint": "Configure user@.service with ManagedOOMMemoryPressure=kill and ManagedOOMPreference=avoid (task_764).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
@@ -18972,7 +19003,7 @@
     },
     {
       "path": "usr/lib/systemd/user/mios-hardware-fallback.service",
-      "hint": "Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).",
+      "hint": "Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch77-hardware-fallback.md",
@@ -19155,7 +19186,7 @@
     },
     {
       "path": "usr/lib/sysusers.d/50-mios-users.conf",
-      "hint": "Defines deterministic user accounts for MiOS multi-user and subordinate UID/GID mappings (T-477).",
+      "hint": "Defines deterministic user accounts for MiOS multi-user and subordinate UID/GID mappings (task_421).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/sysusers.d.md",
@@ -19432,7 +19463,7 @@
     },
     {
       "path": "usr/lib/tmpfiles.d/mios-kdump.conf",
-      "hint": "Declarative tmpfiles configuration for persistent /var/crash (T-515, Law 2).",
+      "hint": "Declarative tmpfiles configuration for persistent /var/crash (task_459, Law 2).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
@@ -19576,7 +19607,7 @@
     },
     {
       "path": "usr/lib/tmpfiles.d/mios-thp.conf",
-      "hint": "Configures Transparent Huge Pages (THP) in madvise mode with asynchronous khugepaged defragmentation (T-800).",
+      "hint": "Configures Transparent Huge Pages (THP) in madvise mode with asynchronous khugepaged defragmentation (task_744).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
@@ -19668,7 +19699,7 @@
     },
     {
       "path": "usr/lib/udev/rules.d/99-mios-egpu.rules",
-      "hint": "Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug udev rules (T-495).",
+      "hint": "Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug udev rules (task_439).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch14-hardware-and-drivers.md",
@@ -19922,7 +19953,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/accelerator_router.py",
-      "hint": "Hierarchical accelerator router with NPU priority and CPU vector fallback (T-693, T-694).",
+      "hint": "Hierarchical accelerator router with NPU priority and CPU vector fallback (task_637, task_638).",
       "related": [
         "usr/libexec/mios/ai/accelerator_router.py",
         "tests/test-ai.py"
@@ -19950,7 +19981,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/gpu_sched.py",
-      "hint": "CUDA/ROCm compute stream priority scheduler and background preemption manager (T-631, T-632).",
+      "hint": "CUDA/ROCm compute stream priority scheduler and background preemption manager (task_575, task_576).",
       "related": [
         "usr/libexec/mios/ai/gpu_sched.py",
         "tests/test-ai.py",
@@ -19999,7 +20030,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/paged_attention.py",
-      "hint": "PagedAttention virtual block memory manager and asynchronous KV defragmenter (T-637, T-638).",
+      "hint": "PagedAttention virtual block memory manager and asynchronous KV defragmenter (task_581, task_582).",
       "related": [
         "usr/libexec/mios/ai/paged_attn.py",
         "usr/libexec/mios/ai/paged_attention.py",
@@ -20012,7 +20043,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/paged_attn.py",
-      "hint": "PagedAttention virtual block memory manager and asynchronous KV defragmenter (T-637, T-638).",
+      "hint": "PagedAttention virtual block memory manager and asynchronous KV defragmenter (task_581, task_582).",
       "related": [
         "usr/libexec/mios/ai/paged_attn.py",
         "usr/libexec/mios/ai/paged_attention.py",
@@ -20025,7 +20056,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/prompt_cache.py",
-      "hint": "Radix tree prefix hash cache manager and prompt KV warm-starter for llama-swap (T-635, T-636).",
+      "hint": "Radix tree prefix hash cache manager and prompt KV warm-starter for llama-swap (task_579, task_580).",
       "related": [
         "usr/libexec/mios/ai/prompt_cache.py",
         "tests/test-ai.py",
@@ -20076,7 +20107,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/speculative.py",
-      "hint": "Dynamic speculative decoding draft pairing and adaptive draft-length manager in llama-swap (T-655, T-656).",
+      "hint": "Dynamic speculative decoding draft pairing and adaptive draft-length manager in llama-swap (task_601, task_602).",
       "related": [
         "usr/libexec/mios/ai/speculative.py",
         "tests/test-ai.py",
@@ -20102,7 +20133,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/tensor_kernels.py",
-      "hint": "GPU compute capability detector and FlashAttention-3 / CUTLASS kernel dispatcher (T-649, T-650).",
+      "hint": "GPU compute capability detector and FlashAttention-3 / CUTLASS kernel dispatcher (task_593, task_594).",
       "related": [
         "usr/libexec/mios/ai/tensor_kernels.py",
         "tests/test-ai.py",
@@ -20115,7 +20146,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/tts_stream.py",
-      "hint": "Streaming Kokoro / Piper ONNX speech synthesis engine and PipeWire ring buffer feeder (T-687, T-688).",
+      "hint": "Streaming Kokoro / Piper ONNX speech synthesis engine and PipeWire ring buffer feeder (task_631, task_632).",
       "related": [
         "usr/libexec/mios/ai/tts_stream.py",
         "tests/test-ai.py"
@@ -20151,7 +20182,7 @@
     },
     {
       "path": "usr/libexec/mios/ai/vram_swap.py",
-      "hint": "Dynamic VRAM layer swapping and LRU KV-cache paging manager for llama-swap (T-629, T-630).",
+      "hint": "Dynamic VRAM layer swapping and LRU KV-cache paging manager for llama-swap (task_573, task_574).",
       "related": [
         "usr/libexec/mios/ai/vram_swap.py",
         "tests/test-ai.py",
@@ -20164,7 +20195,7 @@
     },
     {
       "path": "usr/libexec/mios/app/snapshot.py",
-      "hint": "Per-app Flatpak state subvolume snapshotter and atomic rollback manager (T-645, T-646).",
+      "hint": "Per-app Flatpak state subvolume snapshotter and atomic rollback manager (task_589, task_590).",
       "related": [
         "usr/libexec/mios/app/snapshot.py",
         "tests/test-app-snapshot.py"
@@ -20176,7 +20207,7 @@
     },
     {
       "path": "usr/libexec/mios/audio/bitperfect_mgr.py",
-      "hint": "Dynamic PipeWire bit-perfect sample rate adapter and hardware DAC pass-through manager (T-703, T-704).",
+      "hint": "Dynamic PipeWire bit-perfect sample rate adapter and hardware DAC pass-through manager (task_647, task_648).",
       "related": [
         "usr/libexec/mios/audio/bitperfect_mgr.py",
         "tests/test-bitperfect-audio.py"
@@ -20227,7 +20258,7 @@
     },
     {
       "path": "usr/libexec/mios/boot/fastboot_mgr.py",
-      "hint": "Zero-timeout systemd-boot silent fastboot configurator and baked UKI kargs manager (T-699, T-700).",
+      "hint": "Zero-timeout systemd-boot silent fastboot configurator and baked UKI kargs manager (task_643, task_644).",
       "related": [
         "usr/libexec/mios/boot/fastboot_mgr.py",
         "tests/test-fastboot-mgr.py"
@@ -20248,7 +20279,7 @@
     },
     {
       "path": "usr/libexec/mios/build/liveiso.py",
-      "hint": "Hybrid live ISO and iPXE netboot artifact synthesis pipeline using BIB (T-647, T-648).",
+      "hint": "Hybrid live ISO and iPXE netboot artifact synthesis pipeline using BIB (task_591, task_592).",
       "related": [
         "usr/libexec/mios/build/liveiso.py",
         "tests/test-liveiso-build.py"
@@ -20338,7 +20369,7 @@
     },
     {
       "path": "usr/libexec/mios/containers/native_storage.py",
-      "hint": "Native in-kernel ID-mapped OverlayFS storage configurator for rootless Podman (T-705, T-706).",
+      "hint": "Native in-kernel ID-mapped OverlayFS storage configurator for rootless Podman (task_649, task_650).",
       "related": [
         "usr/libexec/mios/containers/native_storage.py",
         "tests/test-native-storage.py"
@@ -20650,7 +20681,7 @@
     },
     {
       "path": "usr/libexec/mios/desktop/gpu_terminal.py",
-      "hint": "GPU-accelerated terminal configuration and Wayland zero-copy DMA-BUF presentation manager (T-727, T-728).",
+      "hint": "GPU-accelerated terminal configuration and Wayland zero-copy DMA-BUF presentation manager (task_671, task_672).",
       "related": [
         "usr/libexec/mios/desktop/gpu_terminal.py",
         "tests/test-gpu-terminal.py",
@@ -20678,7 +20709,7 @@
     },
     {
       "path": "usr/libexec/mios/diag/ebpf_trace.py",
-      "hint": "Declarative eBPF kernel tracing suite and bpftrace histogram recorder (T-719, T-720).",
+      "hint": "Declarative eBPF kernel tracing suite and bpftrace histogram recorder (task_663, task_664).",
       "related": [
         "usr/lib/mios/agent-pipe/mios_trace.py",
         "tests/test-ebpf-trace.py"
@@ -20786,7 +20817,7 @@
     },
     {
       "path": "usr/libexec/mios/git/lfs_pull.py",
-      "hint": "Declarative Git LFS sparse fetcher and shared content-addressed blob cache manager (T-715, T-716).",
+      "hint": "Declarative Git LFS sparse fetcher and shared content-addressed blob cache manager (task_659, task_660).",
       "related": [
         "usr/libexec/mios/git/lfs_pull.py",
         "tests/test-lfs-cache.py"
@@ -20949,7 +20980,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/cpu_topology.py",
-      "hint": "Vendor-agnostic boot-time CPU topology discovery and dynamic NUMA/core partition allocator (T-657, T-658).",
+      "hint": "Vendor-agnostic boot-time CPU topology discovery and dynamic NUMA/core partition allocator (task_603, task_604).",
       "related": [
         "usr/libexec/mios/hw/cpu_topology.py",
         "tests/test-hw.py"
@@ -20961,7 +20992,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/energyd.py",
-      "hint": "Declarative RAPL and NVML hardware energy metering and chassis power cap manager (T-633, T-634).",
+      "hint": "Declarative RAPL and NVML hardware energy metering and chassis power cap manager (task_577, task_578).",
       "related": [
         "usr/libexec/mios/hw/energyd.py",
         "tests/test-hw.py",
@@ -20987,7 +21018,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/gpu_heatd.py",
-      "hint": "Multi-GPU NVLink / PCIe interconnect profiler and P2P bandwidth heatmap daemon (T-663, T-664).",
+      "hint": "Multi-GPU NVLink / PCIe interconnect profiler and P2P bandwidth heatmap daemon (task_609, task_610).",
       "related": [
         "usr/libexec/mios/hw/gpu_heatd.py",
         "tests/test-hw.py"
@@ -20999,7 +21030,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/gpu_powerd.py",
-      "hint": "PCIe ASPM L1.2 and runtime D3cold GPU power manager (T-683, T-684).",
+      "hint": "PCIe ASPM L1.2 and runtime D3cold GPU power manager (task_627, task_628).",
       "related": [
         "usr/libexec/mios/hw/gpu_powerd.py",
         "tests/test-hw.py"
@@ -21056,7 +21087,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/nccl_tune.py",
-      "hint": "Automated NCCL topology discovery and NVLink/PCIe parameter optimizer (T-713, T-714).",
+      "hint": "Automated NCCL topology discovery and NVLink/PCIe parameter optimizer (task_657, task_658).",
       "related": [
         "usr/libexec/mios/hw/nccl_tune.py",
         "tests/test-hw.py",
@@ -21082,7 +21113,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/thermald.py",
-      "hint": "Proactive PID thermal frequency governor and dynamic EPP stepping daemon (T-721, T-722).",
+      "hint": "Proactive PID thermal frequency governor and dynamic EPP stepping daemon (task_665, task_666).",
       "related": [
         "usr/libexec/mios/hw/thermald.py",
         "tests/test-hw.py"
@@ -21106,7 +21137,7 @@
     },
     {
       "path": "usr/libexec/mios/hw/usb_surge.py",
-      "hint": "Udev USB over-current event handler and port power cycling daemon (T-677, T-678).",
+      "hint": "Udev USB over-current event handler and port power cycling daemon (task_621, task_622).",
       "related": [
         "usr/libexec/mios/hw/usb_surge.py",
         "tests/test-hw.py",
@@ -21182,7 +21213,7 @@
     },
     {
       "path": "usr/libexec/mios/kernel/crash_triage.py",
-      "hint": "Headless kernel crash dump triage engine and PostgreSQL bug ticket creator (T-641, T-642).",
+      "hint": "Headless kernel crash dump triage engine and PostgreSQL bug ticket creator (task_585, task_586).",
       "related": [
         "usr/libexec/mios/kernel/crash_triage.py",
         "tests/test-kernel-crash-triage.py"
@@ -21221,7 +21252,7 @@
     },
     {
       "path": "usr/libexec/mios/kernel/kpatch_mgr.py",
-      "hint": "Declarative kernel kpatch/livepatch manager and MOK signature validator (T-681, T-682).",
+      "hint": "Declarative kernel kpatch/livepatch manager and MOK signature validator (task_625, task_626).",
       "related": [
         "usr/libexec/mios/kernel/kpatch_mgr.py",
         "tests/test-kpatch-mgr.py"
@@ -21233,7 +21264,7 @@
     },
     {
       "path": "usr/libexec/mios/kernel/oomd_psi.py",
-      "hint": "Declarative systemd-oomd memory pressure configuration, PSI thresholds, and subagent worker eviction (T-820, T-821).",
+      "hint": "Declarative systemd-oomd memory pressure configuration, PSI thresholds, and subagent worker eviction (task_764, task_765).",
       "related": [
         "etc/systemd/oomd.conf",
         "usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf",
@@ -21376,7 +21407,7 @@
     },
     {
       "path": "usr/libexec/mios/mcp/sandbox.py",
-      "hint": "Bubblewrap namespace and filesystem sandboxing engine for Model Context Protocol (MCP) servers (T-377 / AGY-1975).",
+      "hint": "Bubblewrap namespace and filesystem sandboxing engine for Model Context Protocol (MCP) servers (task_321 / task_2554).",
       "related": [
         "usr/lib/mios/agent-pipe/server.py",
         "usr/lib/mios/agent-pipe/mios_pipe/federation/mcp.py",
@@ -21770,7 +21801,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-attest-server",
-      "hint": "Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (T-530, AGY-2128).",
+      "hint": "Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (task_474, task_2707).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch76-remote-attestation.md",
@@ -21779,7 +21810,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-audio-aec",
-      "hint": "PipeWire virtual loopback manager and WebRTC AEC echo cancellation filter utility (T-786).",
+      "hint": "PipeWire virtual loopback manager and WebRTC AEC echo cancellation filter utility (task_730).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch16-audio-loopback-and-webrtc-aec.md",
@@ -21859,7 +21890,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-blade-enroll",
-      "hint": "Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (T-529, AGY-2127).",
+      "hint": "Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md",
@@ -21971,7 +22002,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-cdi-gen",
-      "hint": "Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (T-525).",
+      "hint": "Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch14-cdi-gpu-passthrough-and-isolation.md",
@@ -22011,7 +22042,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-ceph-snap",
-      "hint": "Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (T-794).",
+      "hint": "Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (task_738).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md",
@@ -22182,7 +22213,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-composefs-validator",
-      "hint": "Atomic composefs image descriptor validator and fs-verity digest verifier (T-527, AGY-2125).",
+      "hint": "Atomic composefs image descriptor validator and fs-verity digest verifier (task_471, task_2704).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch71-composefs-sealing.md",
@@ -22276,7 +22307,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-cosign-publish",
-      "hint": "Local Cosign image signing, registry push, and signature validation gate (T-510).",
+      "hint": "Local Cosign image signing, registry push, and signature validation gate (task_454).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch05-build-and-pipeline.md",
@@ -22285,7 +22316,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-cpu-gemm",
-      "hint": "Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (T-784).",
+      "hint": "Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (task_728).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch69-cpu-vectorized-gemm-and-simd-tuning.md",
@@ -22294,7 +22325,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-crash-parse",
-      "hint": "Crash diagnostic parser and pre-panic timeline reconstruction (T-516).",
+      "hint": "Crash diagnostic parser and pre-panic timeline reconstruction (task_460).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch02-architecture.md",
@@ -22623,7 +22654,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-egpu-hotplug",
-      "hint": "Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler and CDI refresher (T-495).",
+      "hint": "Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler and CDI refresher (task_439).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch14-hardware-and-drivers.md",
@@ -22778,7 +22809,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-firewall-isolate",
-      "hint": "Declarative nftables inter-container firewall rule generator and micro-segmentation enforcer (T-479).",
+      "hint": "Declarative nftables inter-container firewall rule generator and micro-segmentation enforcer (task_423).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch20-firewall-nftables-microsegmentation.md",
@@ -22871,7 +22902,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-flatpak-lockdown",
-      "hint": "Flatpak permission lockdown profile validator and manager (T-489).",
+      "hint": "Flatpak permission lockdown profile validator and manager (task_433).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
@@ -22957,7 +22988,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-gpu-numa",
-      "hint": "Multi-GPU PCIe/NVLink topology discovery and NUMA node affinity generator (T-519).",
+      "hint": "Multi-GPU PCIe/NVLink topology discovery and NUMA node affinity generator (task_463).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch02-architecture.md",
@@ -23065,7 +23096,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-hardware-fallback",
-      "hint": "Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).",
+      "hint": "Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch77-hardware-fallback.md",
@@ -23284,7 +23315,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-ipkvm-manager",
-      "hint": "Dedicated Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (T-524, AGY-2122).",
+      "hint": "Dedicated Out-of-Band IP-KVM management mesh and Redfish/PiKVM virtual media provisioner (task_468, task_2701).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch12-networking-and-mesh.md",
@@ -23293,7 +23324,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-kdump",
-      "hint": "Kdump status manager and automated zstd crash dump extractor (T-515).",
+      "hint": "Kdump status manager and automated zstd crash dump extractor (task_459).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch02-architecture.md",
@@ -23424,7 +23455,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-livepatch",
-      "hint": "Cryptographic MOK livepatch signature gate and IMA measurement logger (T-782).",
+      "hint": "Cryptographic MOK livepatch signature gate and IMA measurement logger (task_726).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-kernel-livepatching-and-mok.md",
@@ -23468,7 +23499,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-login-account",
-      "hint": "Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (T-150..T-153).",
+      "hint": "Resolves the DB-driven LOGIN account the dashboards advertise -- the globally-controlled account SSOT (pgvector), NOT the operator DISPLAY name ([user].name). Shared by the Linux dashboard and the Windows dashboard (via wsl) so the two never drift. Interim consumer ahead of the full WS-ACCT control plane (task_151..task_154).",
       "related": [
         "/usr/libexec/mios/mios-dashboard.sh",
         "powershell/profile.ps1",
@@ -23522,6 +23553,7 @@
         "cmd_landing",
         "cmd_check_functions",
         "cmd_render",
+        "cmd_rehash",
         "check_harvested_functions",
         "landed",
         "main"
@@ -23631,7 +23663,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-microvm",
-      "hint": "Entry point for mios-microvm virtualization manager (T-806).",
+      "hint": "Entry point for mios-microvm virtualization manager (task_750).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch19-microvm-squashfs-nbd-overlay.md",
@@ -23706,7 +23738,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-netflowd",
-      "hint": "In-kernel eBPF network flow collector daemon and summary stream processor (T-511).",
+      "hint": "In-kernel eBPF network flow collector daemon and summary stream processor (task_455).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch06-security.md",
@@ -23756,7 +23788,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-oci-delta-service.sh",
-      "hint": "GAP-5 (T-050) edge distribution wrapper",
+      "hint": "GAP-5 (task_50) edge distribution wrapper",
       "related": [],
       "functions": [],
       "doc": null,
@@ -24139,7 +24171,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-pstore",
-      "hint": "Persistent pstore ramoops kernel crash buffer manager and post-mortem extractor (T-790).",
+      "hint": "Persistent pstore ramoops kernel crash buffer manager and post-mortem extractor (task_734).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch13-kernel-panics-and-pstore-forensics.md",
@@ -24271,7 +24303,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-sandbox-exec",
-      "hint": "Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (T-230) a SECCOMP syscall filter based on specified security levels. Before T-230 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.",
+      "hint": "Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (task_210) a SECCOMP syscall filter based on specified security levels. Before task_210 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.",
       "related": [
         "/usr/libexec/mios/mios-sandbox-exec",
         "/usr/libexec/mios/mios-seccomp-filter",
@@ -24302,7 +24334,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-screen-stream",
-      "hint": "Hardware-accelerated PipeWire WebRTC desktop video streamer (T-788).",
+      "hint": "Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch15-desktop-webrtc-streaming.md",
@@ -24346,7 +24378,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-shadow-test",
-      "hint": "Shadow dual-process candidate daemon validator and query mirroring harness (T-541, AGY-2139).",
+      "hint": "Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md",
@@ -24464,7 +24496,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-snapshot-restore",
-      "hint": "Zero-Knowledge untrusted remote snapshot offline recovery validator (T-522, AGY-2120).",
+      "hint": "Zero-Knowledge untrusted remote snapshot offline recovery validator (task_466, task_2699).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch11-storage-and-persistence.md",
@@ -24473,7 +24505,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-snapshot-transport",
-      "hint": "Zero-Knowledge untrusted remote snapshot transport protocol client (T-522, AGY-2120).",
+      "hint": "Zero-Knowledge untrusted remote snapshot transport protocol client (task_466, task_2699).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch11-storage-and-persistence.md",
@@ -24482,7 +24514,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-socket-swap",
-      "hint": "Zero-downtime systemd socket handoff daemon swapper for agent-pipe (T-542, AGY-2140).",
+      "hint": "Zero-downtime systemd socket handoff daemon swapper for agent-pipe (task_486, task_2719).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch87-socket-activation-handoff.md",
@@ -24533,7 +24565,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-stage-oci-archive",
-      "hint": "Stages built mios oci-archive tarball to /mnt/mios-repo/mios-latest.tar for tools/install.sh (AGY-152)",
+      "hint": "Stages built mios oci-archive tarball to /mnt/mios-repo/mios-latest.tar for tools/install.sh (task_1203)",
       "related": [],
       "functions": [],
       "doc": null,
@@ -24568,7 +24600,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-storage-segregate",
-      "hint": "Multi-domain independent LUKS2/fscrypt partition segregater and inert snapshot export tool (T-521, AGY-2119).",
+      "hint": "Multi-domain independent LUKS2/fscrypt partition segregater and inert snapshot export tool (task_465, task_2698).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch11-storage-and-persistence.md",
@@ -24590,7 +24622,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-subuid-alloc",
-      "hint": "Deterministic /etc/subuid and /etc/subgid subordinate UID/GID allocator (T-477).",
+      "hint": "Deterministic /etc/subuid and /etc/subgid subordinate UID/GID allocator (task_421).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch11-security-and-hardening.md",
@@ -24706,7 +24738,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-sys-sync",
-      "hint": "Dynamic kernel sysctl/sysfs parameter synchronizer and udev reload daemon (T-822).",
+      "hint": "Dynamic kernel sysctl/sysfs parameter synchronizer and udev reload daemon (task_766).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-kernel-sysctl-and-udev-synchronization.md",
@@ -24800,7 +24832,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-theme-broadcast",
-      "hint": "Theme event emitter synchronizing GNOME settings and living wallpaper via DBus and Unix domain sockets (T-500).",
+      "hint": "Theme event emitter synchronizing GNOME settings and living wallpaper via DBus and Unix domain sockets (task_444).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
@@ -24809,7 +24841,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-theme-render",
-      "hint": "Multi-surface live theme renderer with ANSI OSC 4/10/11 PTY injector and GTK/QT CSS generator (T-499).",
+      "hint": "Multi-surface live theme renderer with ANSI OSC 4/10/11 PTY injector and GTK/QT CSS generator (task_443).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
@@ -24818,7 +24850,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-thermald",
-      "hint": "Proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (T-543, AGY-2141).",
+      "hint": "Proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (task_487, task_2720).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md",
@@ -24827,7 +24859,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-thp-tune",
-      "hint": "Transparent Huge Pages (THP madvise) and proactive memory compaction tuner (T-800).",
+      "hint": "Transparent Huge Pages (THP madvise) and proactive memory compaction tuner (task_744).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch12-memory-compaction-and-thp.md",
@@ -24877,7 +24909,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-tpm-seal",
-      "hint": "TPM 2.0 PCR 7/11 automated secret sealing and enrollment manager (T-493).",
+      "hint": "TPM 2.0 PCR 7/11 automated secret sealing and enrollment manager (task_437).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch11-security-and-hardening.md",
@@ -24922,7 +24954,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-ukify-stage",
-      "hint": "A/B UKI staging and systemd-ukify compilation pipeline with baked kargs (T-507).",
+      "hint": "A/B UKI staging and systemd-ukify compilation pipeline with baked kargs (task_451).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch02-boot-and-lifecycle.md",
@@ -24931,7 +24963,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-usbguard",
-      "hint": "Declarative USBGuard device authorization daemon and read-only storage mounter (T-798).",
+      "hint": "Declarative USBGuard device authorization daemon and read-only storage mounter (task_742).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch14-usbguard-and-badusb-mitigation.md",
@@ -24940,7 +24972,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-user-cephfs",
-      "hint": "Global per-user encrypted CephFS subvolume manager with remote snapshot replication (T-528, AGY-2126).",
+      "hint": "Global per-user encrypted CephFS subvolume manager with remote snapshot replication (task_472, task_2705).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch73-cephfs-user-subvolumes.md",
@@ -25014,7 +25046,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-video-encoder-probe",
-      "hint": "Multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (T-535, AGY-2133).",
+      "hint": "Multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (task_479, task_2712).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch80-hardware-video-encoding.md",
@@ -25046,7 +25078,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-wallpaper",
-      "hint": "Unified CLI entry point and execution wrapper for the MiOS Living Wallpaper daemon (WBRAND-05 / T-778).",
+      "hint": "Unified CLI entry point and execution wrapper for the MiOS Living Wallpaper daemon (WBRAND-05 / task_722).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
@@ -25206,7 +25238,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-wol-proxy",
-      "hint": "Signed Proxy WoL with SecureON payload and peer wake daemon (T-523, AGY-2121).",
+      "hint": "Signed Proxy WoL with SecureON payload and peer wake daemon (task_467, task_2700).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch12-networking-and-mesh.md",
@@ -25257,7 +25289,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-xdp",
-      "hint": "Native eBPF XDP network fastpath and WireGuard packet router manager (T-802).",
+      "hint": "Native eBPF XDP network fastpath and WireGuard packet router manager (task_746).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-ebpf-xdp-wireguard-fastpath.md",
@@ -25371,7 +25403,7 @@
     },
     {
       "path": "usr/libexec/mios/net/split_dns.py",
-      "hint": "Split-DNS systemd-resolved configurator for .mios mesh domains and strict DoT (T-697, T-698).",
+      "hint": "Split-DNS systemd-resolved configurator for .mios mesh domains and strict DoT (task_641, task_642).",
       "related": [
         "usr/libexec/mios/net/split_dns.py",
         "tests/test-split-dns.py"
@@ -25408,7 +25440,7 @@
     },
     {
       "path": "usr/libexec/mios/node/ble.py",
-      "hint": "BLE beaconing for offline local mesh bootstrap for mios-node (T-395 / AGY-1993).",
+      "hint": "BLE beaconing for offline local mesh bootstrap for mios-node (task_339 / task_2572).",
       "related": [
         "usr/libexec/mios/node/crypto.py",
         "tests/test-node.py"
@@ -25420,7 +25452,7 @@
     },
     {
       "path": "usr/libexec/mios/node/buffer_pool.py",
-      "hint": "Zero-copy network buffer pooling for mios-node frames (T-393 / AGY-1991).",
+      "hint": "Zero-copy network buffer pooling for mios-node frames (task_337 / task_2570).",
       "related": [
         "usr/libexec/mios/node/wire.py",
         "tests/test-node.py"
@@ -25432,7 +25464,7 @@
     },
     {
       "path": "usr/libexec/mios/node/capabilities.py",
-      "hint": "Edge node capability advertising in Announce frames for mios-node (T-394 / AGY-1992).",
+      "hint": "Edge node capability advertising in Announce frames for mios-node (task_338 / task_2571).",
       "related": [
         "usr/libexec/mios/node/wire.py",
         "tests/test-node.py"
@@ -25509,7 +25541,7 @@
     },
     {
       "path": "usr/libexec/mios/node/mesh_logs.py",
-      "hint": "Fluent Bit encrypted mesh log forwarder and central PostgreSQL cluster sink (T-659, T-660).",
+      "hint": "Fluent Bit encrypted mesh log forwarder and central PostgreSQL cluster sink (task_605, task_606).",
       "related": [
         "usr/libexec/mios/node/mesh_logs.py",
         "tests/test-node.py"
@@ -25533,7 +25565,7 @@
     },
     {
       "path": "usr/libexec/mios/node/overlay.py",
-      "hint": "Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (T-396 / AGY-1994).",
+      "hint": "Automated fallback to Tailscale and WireGuard overlay when LAN broadcast is partitioned (task_340 / task_2573).",
       "related": [
         "usr/libexec/mios/node/wire.py",
         "tests/test-node.py"
@@ -25545,7 +25577,7 @@
     },
     {
       "path": "usr/libexec/mios/node/scheduler.py",
-      "hint": "Task offloading priority queue with work-stealing scheduler for mios-node (T-392 / AGY-1990).",
+      "hint": "Task offloading priority queue with work-stealing scheduler for mios-node (task_336 / task_2569).",
       "related": [
         "usr/libexec/mios/node/wasm_sandbox.py",
         "tests/test-node.py"
@@ -25618,7 +25650,7 @@
     },
     {
       "path": "usr/libexec/mios/plugins/hello.py",
-      "hint": "Sample dynamic plugin demonstrating plugin loader discovery and execution (T-514).",
+      "hint": "Sample dynamic plugin demonstrating plugin loader discovery and execution (task_458).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -25754,7 +25786,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/cve_scan.py",
-      "hint": "Automated Trivy / Grype OCI image vulnerability scanner and CVE report generator (T-661, T-662).",
+      "hint": "Automated Trivy / Grype OCI image vulnerability scanner and CVE report generator (task_607, task_608).",
       "related": [
         "usr/libexec/mios/sec/cve_scan.py",
         "tests/test-sec.py"
@@ -25766,7 +25798,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/entropy_seed.py",
-      "hint": "Multi-source hardware TRNG conditioning daemon and early-boot entropy seeder in automation (T-679, T-680).",
+      "hint": "Multi-source hardware TRNG conditioning daemon and early-boot entropy seeder in automation (task_623, task_624).",
       "related": [
         "usr/libexec/mios/sec/entropy_seed.py",
         "tests/test-sec.py"
@@ -25839,7 +25871,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/journal_fss.py",
-      "hint": "Forward-Secure Sealed (FSS) journald logger and TPM key enrollment manager (T-707, T-708).",
+      "hint": "Forward-Secure Sealed (FSS) journald logger and TPM key enrollment manager (task_651, task_652).",
       "related": [
         "usr/libexec/mios/sec/journal_fss.py",
         "tests/test-sec.py"
@@ -25851,7 +25883,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/kaslr_mgr.py",
-      "hint": "Early EFI_RNG_PROTOCOL KASLR entropy collector and kernel memory randomizer (T-701, T-702).",
+      "hint": "Early EFI_RNG_PROTOCOL KASLR entropy collector and kernel memory randomizer (task_645, task_646).",
       "related": [
         "usr/libexec/mios/sec/kaslr_mgr.py",
         "tests/test-sec.py"
@@ -25956,7 +25988,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/sbom_gen.py",
-      "hint": "Automated Syft CycloneDX/SPDX SBOM generator and Cosign attestation attacher (T-711, T-712).",
+      "hint": "Automated Syft CycloneDX/SPDX SBOM generator and Cosign attestation attacher (task_655, task_656).",
       "related": [
         "usr/libexec/mios/sec/sbom_gen.py",
         "tests/test-sec.py",
@@ -26006,7 +26038,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/smartcard_mux.py",
-      "hint": "Global MiOS-USB graduated hardware key runtime and virtual CCID PC/SC multiplexer (T-689, T-690).",
+      "hint": "Global MiOS-USB graduated hardware key runtime and virtual CCID PC/SC multiplexer (task_633, task_634).",
       "related": [
         "usr/libexec/mios/sec/smartcard_mux.py",
         "tests/test-sec.py"
@@ -26033,7 +26065,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/systemd_harden.py",
-      "hint": "Declarative systemd unit hardening generator and security audit gate (T-665, T-666).",
+      "hint": "Declarative systemd unit hardening generator and security audit gate (task_611, task_612).",
       "related": [
         "usr/libexec/mios/sec/systemd_harden.py",
         "tests/test-sec.py"
@@ -26073,7 +26105,7 @@
     },
     {
       "path": "usr/libexec/mios/sec/usbguard.py",
-      "hint": "Declarative USBGuard policy generator and desktop authorization notifier (T-643, T-644).",
+      "hint": "Declarative USBGuard policy generator and desktop authorization notifier (task_587, task_588).",
       "related": [
         "usr/libexec/mios/sec/usbguard.py",
         "tests/test-sec.py",
@@ -26162,7 +26194,7 @@
     },
     {
       "path": "usr/libexec/mios/storage/ceph_heal.py",
-      "hint": "Bandwidth-throttled Ceph self-healing daemon and PG rebalance orchestrator (T-729, T-730).",
+      "hint": "Bandwidth-throttled Ceph self-healing daemon and PG rebalance orchestrator (task_673, task_674).",
       "related": [
         "usr/libexec/mios/storage/ceph_heal.py",
         "tests/test-storage.py"
@@ -26213,7 +26245,7 @@
     },
     {
       "path": "usr/libexec/mios/storage/disk_health.py",
-      "hint": "Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (T-639, T-640).",
+      "hint": "Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (task_583, task_584).",
       "related": [
         "usr/libexec/mios/storage/disk_health.py",
         "usr/libexec/mios/storage/smart_health.py",
@@ -26323,7 +26355,7 @@
     },
     {
       "path": "usr/libexec/mios/storage/scrubd.py",
-      "hint": "Storage integrity scrubber daemon with idle I/O priority and PSI pressure throttling (T-717, T-718).",
+      "hint": "Storage integrity scrubber daemon with idle I/O priority and PSI pressure throttling (task_661, task_662).",
       "related": [
         "usr/libexec/mios/storage/scrubd.py",
         "tests/test-storage.py"
@@ -26335,7 +26367,7 @@
     },
     {
       "path": "usr/libexec/mios/storage/smart_health.py",
-      "hint": "Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (T-639, T-640).",
+      "hint": "Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (task_583, task_584).",
       "related": [
         "usr/libexec/mios/storage/disk_health.py",
         "usr/libexec/mios/storage/smart_health.py",
@@ -26393,7 +26425,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_agents_firstboot.py",
-      "hint": "Two-sided controls for T-1139's second half -- mios-agents-firstboot.sh runs as root but must seed the coder home as that home's owner, never root.",
+      "hint": "Two-sided controls for task_3432's second half -- mios-agents-firstboot.sh runs as root but must seed the coder home as that home's owner, never root.",
       "related": [
         "usr/libexec/mios/mios-agents-firstboot.sh",
         "usr/lib/tmpfiles.d/mios-agents.conf",
@@ -26491,7 +26523,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_firstboot_seeders.py",
-      "hint": "Two-sided verification test suite for firstboot seeder ordering and degradation reporting (T-1141).",
+      "hint": "Two-sided verification test suite for firstboot seeder ordering and degradation reporting (task_3434).",
       "related": [
         "usr/lib/systemd/system/mios-ai-firstboot.service",
         "usr/lib/systemd/system/mios-forgejo-runner-firstboot.service",
@@ -26512,7 +26544,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_manual.py",
-      "hint": "30-fixture unit test suite for the mios_comments comment classifier (AGY-1583).",
+      "hint": "30-fixture unit test suite for the mios_comments comment classifier (task_2224).",
       "related": [
         "usr/lib/mios/mios_comments.py",
         "usr/share/mios/mios.toml",
@@ -26525,7 +26557,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_mcp_port.py",
-      "hint": "Two-sided controls for T-1135 -- mios-mcp.service gets its MCP port from the resolver-rendered install.env, never a unit literal (Law 7).",
+      "hint": "Two-sided controls for task_3428 -- mios-mcp.service gets its MCP port from the resolver-rendered install.env, never a unit literal (Law 7).",
       "related": [
         "usr/lib/systemd/system/mios-mcp.service",
         "usr/libexec/mios/mcp-server-runner",
@@ -26544,7 +26576,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_models.py",
-      "hint": "Stdlib offline tests for the FBM model plane (T-201).",
+      "hint": "Stdlib offline tests for the FBM model plane (task_181).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -26620,7 +26652,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_skills_passk.py",
-      "hint": "Standalone unit test for the T-049 (GAP-3) hard pass^k skill-promotion gate embedded in the hyphenated `mios-skills` CLI.",
+      "hint": "Standalone unit test for the task_49 (GAP-3) hard pass^k skill-promotion gate embedded in the hyphenated `mios-skills` CLI.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -26629,7 +26661,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_speech_storage.py",
-      "hint": "Two-sided controls for T-1140 -- both speech engines (piper, whisper) load a model baked into their bound image: no host model-store Volume, no [services] model_dir, no /var store in tmpfiles, no AssertPathExists on one.",
+      "hint": "Two-sided controls for task_3433 -- both speech engines (piper, whisper) load a model baked into their bound image: no host model-store Volume, no [services] model_dir, no /var store in tmpfiles, no AssertPathExists on one.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/mios/piper/Containerfile",
@@ -26656,7 +26688,7 @@
     },
     {
       "path": "usr/libexec/mios/test_mios_unit_hardening.py",
-      "hint": "Two-sided test for write paths of ProtectSystem=strict units (T-1139); checks the state dirs are writable and that any StateDirectory= owner/mode agrees with tmpfiles.d.",
+      "hint": "Two-sided test for write paths of ProtectSystem=strict units (task_3432); checks the state dirs are writable and that any StateDirectory= owner/mode agrees with tmpfiles.d.",
       "related": [
         "usr/lib/systemd/system/mios-agents.service",
         "usr/lib/systemd/system/mios-cron-director.service",
@@ -27151,7 +27183,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/hugepages_mgr.py",
-      "hint": "Hugepages automatic allocation, compaction, and teardown manager for KVM guests (T-418).",
+      "hint": "Hugepages automatic allocation, compaction, and teardown manager for KVM guests (task_362).",
       "related": [
         "tests/test-virt.py",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
@@ -27163,7 +27195,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/iommu_parser.py",
-      "hint": "Automated IOMMU group parser and PCIe ACS override topology recommendation tool (T-413).",
+      "hint": "Automated IOMMU group parser and PCIe ACS override topology recommendation tool (task_357).",
       "related": [
         "tests/test-virt.py",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
@@ -27207,7 +27239,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/microvm_sandbox.py",
-      "hint": "Ephemeral Firecracker / Cloud-Hypervisor microVM sandbox manager and vsock IPC bridge (T-673, T-674).",
+      "hint": "Ephemeral Firecracker / Cloud-Hypervisor microVM sandbox manager and vsock IPC bridge (task_617, task_618).",
       "related": [
         "usr/libexec/mios/virt/microvm_sandbox.py",
         "tests/test-virt.py"
@@ -27219,7 +27251,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/mios_microvm.py",
-      "hint": "MiOS system and orchestration module providing mios microvm capabilities with SquashFS NBD streaming (T-733, T-806).",
+      "hint": "MiOS system and orchestration module providing mios microvm capabilities with SquashFS NBD streaming (task_677, task_750).",
       "related": [
         "usr/libexec/mios/mios-microvm"
       ],
@@ -27242,7 +27274,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/vfio_bind.py",
-      "hint": "Dynamic runtime VFIO device unbind from host drivers and rebind to vfio-pci (T-414).",
+      "hint": "Dynamic runtime VFIO device unbind from host drivers and rebind to vfio-pci (task_358).",
       "related": [
         "tests/test-virt.py",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
@@ -27254,7 +27286,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/virtiofs_mount.py",
-      "hint": "VirtIO-FS shared directory mount daemon with rootless uid/gid mapping and POSIX ACL support (T-419).",
+      "hint": "VirtIO-FS shared directory mount daemon with rootless uid/gid mapping and POSIX ACL support (task_363).",
       "related": [
         "tests/test-virt.py",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
@@ -27266,7 +27298,7 @@
     },
     {
       "path": "usr/libexec/mios/virt/vtpm_provision.py",
-      "hint": "Virtual TPM2 (swtpm) ephemeral socket provisioning for Secure Boot Windows 11 guests (T-417).",
+      "hint": "Virtual TPM2 (swtpm) ephemeral socket provisioning for Secure Boot Windows 11 guests (task_361).",
       "related": [
         "tests/test-virt.py",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
@@ -28378,7 +28410,7 @@
       "hint": "Dual-tier OCI AI artifact architecture: standard OCI ModelCars for resident inference lanes via Podman Quadlet image mounts and composefs; CNCF KitOps ModelKits for development, training corpora, SFT/DPO datasets, and LoRA adapters. Read before packaging or deploying any AI model or fine-tuning dataset.",
       "related": [
         "usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md",
-        "ROADMAP.md (MODELOCI-01..04)",
+        "ROADMAP.md (task_3224..task_3227)",
         "usr/share/mios/mios.toml [artifacts.daily]",
         "[finetune.micro]",
         "usr/share/containers/systemd/mios-llm-light.container",
@@ -28426,6 +28458,23 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/adr/0030-source-file-budget.md",
+      "hint": "ADR-0030 caps MiOS at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build outputs, and code folds into few MiOS-MODULES.",
+      "related": [
+        "/usr/share/mios/mios.toml [legibility]",
+        "[legibility.file_budget]",
+        "[drift.generated_ceilings]",
+        "tools/drift-checks.py",
+        "tests/drift-gate-negatives.sh",
+        "/usr/share/doc/mios/adr/0010-ssot-as-system-dotfiles.md",
+        "/usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/adr/README.md",
       "hint": "Index + process spec for MiOS Architecture Decision Records; read this first to learn the ADR format, status lifecycle, and which ADR governs the workstream you are implementing.",
       "related": [
@@ -28441,7 +28490,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/AIOS-GAP-IMPLEMENTATION-PLAN-2026-06-14.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28450,7 +28499,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/AIOS-MIOS-MASTER-PLAN-2026-06-14.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28459,7 +28508,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-AIOS-MULTIAGENT-EXECUTION-PLAN-2026-06-14.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28468,7 +28517,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-AWARENESS-GROUNDING-PLAN-2026-06-15.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28477,7 +28526,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-COMPLETION-PLAN-2026-06-15.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28486,7 +28535,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-FRESH-CONTEXT-EXECUTION-PLAN.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28495,7 +28544,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-MASTER-PLAN-2026-06-15.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28504,7 +28553,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-NATIVE-OPENAI-PATTERNS-PLAN-2026-06-15.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28513,7 +28562,7 @@
     },
     {
       "path": "usr/share/doc/mios/archive/absorbed-plans-2026-06/MIOS-TOOL-CONSOLIDATION-PLAN-2026-06-15.md",
-      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / T-167-T-177.",
+      "hint": "Historical archived planning document from 2026-06. Absorbed into ROADMAP.md Part 17 / task_168-task_178.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -28721,7 +28770,7 @@
     },
     {
       "path": "usr/share/doc/mios/concepts/dism-native-windows-iso-2026-07-04.md",
-      "hint": "Verified, source-cited research on building a DISM-native custom Windows 11 ISO that carries MiOS (the Windows-side layer + a WSL2 podman machine). Two synthesized 5-angle research passes: (A) per-MiOS-component -> DISM offline mechanism table + the must-be-first-logon list; (B) reference build patterns (tiny11/winutil DISM sequences), the definitive WSL2-offline verdict, the oscdimg dual-boot recipe, headless GitHub-Actions CI, and LabConfig hardware-bypass. Feeds ROADMAP Part 12 WS-WISO (T-137/T-138) + the mios-bootstrap/field/autounattend suite.",
+      "hint": "Verified, source-cited research on building a DISM-native custom Windows 11 ISO that carries MiOS (the Windows-side layer + a WSL2 podman machine). Two synthesized 5-angle research passes: (A) per-MiOS-component -> DISM offline mechanism table + the must-be-first-logon list; (B) reference build patterns (tiny11/winutil DISM sequences), the definitive WSL2-offline verdict, the oscdimg dual-boot recipe, headless GitHub-Actions CI, and LabConfig hardware-bypass. Feeds ROADMAP Part 12 WS-WISO (task_138/task_139) + the mios-bootstrap/field/autounattend suite.",
       "related": [
         "https://github.com/mios-dev/mios-bootstrap/tree/main/field/autounattend",
         "ROADMAP.md Part 12",
@@ -28764,7 +28813,7 @@
     },
     {
       "path": "usr/share/doc/mios/concepts/igpu-wave0-hardware-probes-2026-10.md",
-      "hint": "Wave-0 Hardware Verification Probes (T-210) for Multi-Vendor GPU Compute (WS-IGPU). Records empirical findings from real-hardware probes across Windows host and WSL2 for iGPU compute, heavy-lane VRAM constraints, and WSL kernel baseline. Establishes the authoritative Go/No-Go decision gating T-211 and T-212.",
+      "hint": "Wave-0 Hardware Verification Probes (task_190) for Multi-Vendor GPU Compute (WS-IGPU). Records empirical findings from real-hardware probes across Windows host and WSL2 for iGPU compute, heavy-lane VRAM constraints, and WSL kernel baseline. Establishes the authoritative Go/No-Go decision gating task_191 and task_192.",
       "related": [
         "usr/share/doc/mios/concepts/living-wallpaper-engine.md",
         "usr/share/mios/mios.toml",
@@ -28787,7 +28836,7 @@
     },
     {
       "path": "usr/share/doc/mios/concepts/living-wallpaper-engine.md",
-      "hint": "Research for a MiOS \"living wallpaper\" -- a GPU-accelerated animated mesh-gradient background derived from the SSOT [colors] palette, cross-surface (Windows + Linux GNOME/Wayland + optional Hyprland/Quickshell), with a permissive-license triage (MiOS ships as a distributable OS, so Commons Clause / non-OSI deps are disqualifying). Feeds ROADMAP WS-WBRAND (WBRAND-04..06) / TASKS T-162..T-164.",
+      "hint": "Research for a MiOS \"living wallpaper\" -- a GPU-accelerated animated mesh-gradient background derived from the SSOT [colors] palette, cross-surface (Windows + Linux GNOME/Wayland + optional Hyprland/Quickshell), with a permissive-license triage (MiOS ships as a distributable OS, so Commons Clause / non-OSI deps are disqualifying). Feeds ROADMAP WS-WBRAND (WBRAND-04..06) / TASKS task_163..task_165.",
       "related": [
         "usr/share/mios/mios.toml ([colors]/[branding]/[theme])",
         "ROADMAP.md (WS-WBRAND)",
@@ -28872,12 +28921,12 @@
     },
     {
       "path": "usr/share/doc/mios/concepts/multi-agent-orchestration-strategies.md",
-      "hint": "Reality-checked landscape of multi-agent orchestration strategies (OpenAI Agents SDK / Swarm, MCP, LangGraph/CrewAI/ADK, structured deliberation, document-mutation coordination, progressive-disclosure retrieval, identity-aware delegation, contribution evaluation) mapped onto the existing MiOS agent plane, with a MiOS gap register feeding ROADMAP Part 13 / T-154..T-161.",
+      "hint": "Reality-checked landscape of multi-agent orchestration strategies (OpenAI Agents SDK / Swarm, MCP, LangGraph/CrewAI/ADK, structured deliberation, document-mutation coordination, progressive-disclosure retrieval, identity-aware delegation, contribution evaluation) mapped onto the existing MiOS agent plane, with a MiOS gap register feeding ROADMAP Part 13 / task_155..task_162.",
       "related": [
         "usr/lib/mios/agent-pipe/server.py",
         "usr/share/mios/agents/",
         "ROADMAP.md (Part 13)",
-        "TASKS.md (T-154..T-161)",
+        "TASKS.md (task_155..task_162)",
         "usr/share/doc/mios/concepts/chat-quality-and-visibility-standards.md"
       ],
       "functions": [],
@@ -29260,7 +29309,7 @@
     },
     {
       "path": "usr/share/doc/mios/guides/edge-node-join.md",
-      "hint": "Operator guide for joining a Raspberry Pi / edge node to a MiOS council over the single outbound-dial port (agent-pipe, port key `agent_pipe`, MIOS_PORTS_AGENT_PIPE), using the three-layer mios.toml overlay and the [agents.<name>] remote-http template. Covers the optional federated pgvector path ([pgvector].listen_loopback=false) and the least-privilege posture for untrusted edge peers. Fulfils roadmap T-070 (WS-D2); depends on the D1 remote/edge agent template ([agents._defaults]).",
+      "hint": "Operator guide for joining a Raspberry Pi / edge node to a MiOS council over the single outbound-dial port (agent-pipe, port key `agent_pipe`, MIOS_PORTS_AGENT_PIPE), using the three-layer mios.toml overlay and the [agents.<name>] remote-http template. Covers the optional federated pgvector path ([pgvector].listen_loopback=false) and the least-privilege posture for untrusted edge peers. Fulfils roadmap task_72 (WS-D2); depends on the D1 remote/edge agent template ([agents._defaults]).",
       "related": [
         "../../mios/mios.toml ([agents]",
         "[pgvector]",
@@ -30623,7 +30672,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch62-sandbox-seccomp.md",
-      "hint": "Chapter 62: Sandbox Seccomp. Records what the risk-tier dispatch sandbox actually did before T-230 -- bwrap really was exec'd and really did jail the filesystem and the network, while the confined process reported `Seccomp: 0`, leaving mount, ptrace, keyctl and bpf reachable from inside the jail. Covers the classic-BPF filter built without libseccomp, why the syscall NUMBER table is cross-checked against the host's own kernel headers rather than trusted, why an architecture with no verified table refuses to produce a filter, why an arch mismatch in the program must fall through to deny, and why a filter that denies nothing is worse than no filter at all.",
+      "hint": "Chapter 62: Sandbox Seccomp. Records what the risk-tier dispatch sandbox actually did before task_210 -- bwrap really was exec'd and really did jail the filesystem and the network, while the confined process reported `Seccomp: 0`, leaving mount, ptrace, keyctl and bpf reachable from inside the jail. Covers the classic-BPF filter built without libseccomp, why the syscall NUMBER table is cross-checked against the host's own kernel headers rather than trusted, why an architecture with no verified table refuses to produce a filter, why an arch mismatch in the program must fall through to deny, and why a filter that denies nothing is worse than no filter at all.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30704,7 +30753,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch71-composefs-sealing.md",
-      "hint": "Chapter 71: Composefs fs-verity Root Filesystem Sealing and Atomic Validation (T-527, AGY-2125). Details kernel-level fs-verity digest verification, prepare-root composefs mount execution, descriptor integrity validation, and bootc kargs drop-in configuration.",
+      "hint": "Chapter 71: Composefs fs-verity Root Filesystem Sealing and Atomic Validation (task_471, task_2704). Details kernel-level fs-verity digest verification, prepare-root composefs mount execution, descriptor integrity validation, and bootc kargs drop-in configuration.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30731,7 +30780,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md",
-      "hint": "Chapter 74: Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser (T-529, AGY-2127). Details TPM 2.0 Endorsement Key validation, SSOT schema for [cluster.blades], zero-touch admission workflow, and cryptographic rejection of wildcard/unverified keys.",
+      "hint": "Chapter 74: Declarative SSOT Blade Pre-Enrollment Registry and TPM EK Fingerprint Parser (task_473, task_2706). Details TPM 2.0 Endorsement Key validation, SSOT schema for [cluster.blades], zero-touch admission workflow, and cryptographic rejection of wildcard/unverified keys.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30740,7 +30789,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md",
-      "hint": "Chapter 75: Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter (T-531, AGY-2129). Covers the degrade-not-refuse architectural philosophy, peripheral subsystem probes (network, audio, display), Greenboot wanted.d integration, structured event telemetry, and PostgreSQL hardware inventory persistence.",
+      "hint": "Chapter 75: Peripheral Hardware Health Evaluator and Non-Fatal Greenboot Degradation Reporter (task_475, task_2708). Covers the degrade-not-refuse architectural philosophy, peripheral subsystem probes (network, audio, display), Greenboot wanted.d integration, structured event telemetry, and PostgreSQL hardware inventory persistence.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30749,7 +30798,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch76-remote-attestation.md",
-      "hint": "Chapter 76: Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding (T-530, AGY-2128). Details cryptographic challenge-response nonces, composite PCR digest appraisal over PCRs (0, 7, 11), golden baselines, and WireGuard/CephFS credential issuance.",
+      "hint": "Chapter 76: Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding (task_474, task_2707). Details cryptographic challenge-response nonces, composite PCR digest appraisal over PCRs (0, 7, 11), golden baselines, and WireGuard/CephFS credential issuance.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30758,7 +30807,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch77-hardware-fallback.md",
-      "hint": "Chapter 77: Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon (T-532, AGY-2130). Covers peripheral degradation recovery, secondary NIC and USB tethering auto-failover, dynamic PipeWire null-sink binding, and desktop notifications.",
+      "hint": "Chapter 77: Automated Network and Audio Fallback Manager with Operator Desktop Alert Daemon (task_476, task_2709). Covers peripheral degradation recovery, secondary NIC and USB tethering auto-failover, dynamic PipeWire null-sink binding, and desktop notifications.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30767,7 +30816,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md",
-      "hint": "Chapter 78: Low-Latency WebRTC Streaming Audio Ingress and Streaming Whisper Speech-to-Text Bridge (T-533, AGY-2131). Details WebRTC ingress protocol, 16kHz PCM framing, sub-150ms VAD ring buffering, local whisper.cpp Quadlet streaming container, and real-time token dispatch to agent-pipe / Hermes gateway.",
+      "hint": "Chapter 78: Low-Latency WebRTC Streaming Audio Ingress and Streaming Whisper Speech-to-Text Bridge (task_477, task_2710). Details WebRTC ingress protocol, 16kHz PCM framing, sub-150ms VAD ring buffering, local whisper.cpp Quadlet streaming container, and real-time token dispatch to agent-pipe / Hermes gateway.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30776,7 +30825,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch79-streaming-tts-piper.md",
-      "hint": "Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (T-534, AGY-2132). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization.",
+      "hint": "Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (task_478, task_2711). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30785,7 +30834,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch80-hardware-video-encoding.md",
-      "hint": "Chapter 80: Multi-Vendor Hardware Video Encoder Discovery and DMA-BUF Capture Bridge (T-535, AGY-2133). Details hardware ASIC probing (QuickSync, NVENC, AMF), AV1 > HEVC > AVC codec priority hierarchy, Wayland PipeWire DMA-BUF zero-copy architecture, and Sunshine streaming host containerization.",
+      "hint": "Chapter 80: Multi-Vendor Hardware Video Encoder Discovery and DMA-BUF Capture Bridge (task_479, task_2712). Details hardware ASIC probing (QuickSync, NVENC, AMF), AV1 > HEVC > AVC codec priority hierarchy, Wayland PipeWire DMA-BUF zero-copy architecture, and Sunshine streaming host containerization.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30794,7 +30843,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch81-video-streaming-benchmarks.md",
-      "hint": "Chapter 81: Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite (T-536, AGY-2134). Details remote desktop video streaming benchmarks, sub-12ms frame encoding SLA for 60 FPS, adaptive bitrate (ABR) control loops, tc-netem network simulation, packet loss IDR recovery, and two-sided verification controls.",
+      "hint": "Chapter 81: Adaptive Bitrate and Low-Latency Frame Encoding Streaming Benchmark Suite (task_480, task_2713). Details remote desktop video streaming benchmarks, sub-12ms frame encoding SLA for 60 FPS, adaptive bitrate (ABR) control loops, tc-netem network simulation, packet loss IDR recovery, and two-sided verification controls.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30803,7 +30852,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch82-mesh-workload-partitioning.md",
-      "hint": "Chapter 82: Multi-Node Dynamic AI Workload Partitioning and Capability-Aware Task Routing (T-537, AGY-2135). Details 2-6 bare-metal Blade mesh topology discovery, capability matrix scoring, subtask workflow decomposition, parallel dispatch over WireGuard HCI mesh, and OpenAI-compatible response gathering.",
+      "hint": "Chapter 82: Multi-Node Dynamic AI Workload Partitioning and Capability-Aware Task Routing (task_481, task_2714). Details 2-6 bare-metal Blade mesh topology discovery, capability matrix scoring, subtask workflow decomposition, parallel dispatch over WireGuard HCI mesh, and OpenAI-compatible response gathering.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30812,7 +30861,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
-      "hint": "Chapter 83: Automated Node Failure Detection and Zero-Loss Dynamic Task Re-Distribution Engine (T-538, AGY-2136). Details mesh heartbeat auditing, in-flight task leasing protocols, zero-loss prompt recovery, and PostgreSQL/SQLite state synchronization across the agent plane.",
+      "hint": "Chapter 83: Automated Node Failure Detection and Zero-Loss Dynamic Task Re-Distribution Engine (task_482, task_2715). Details mesh heartbeat auditing, in-flight task leasing protocols, zero-loss prompt recovery, and PostgreSQL/SQLite state synchronization across the agent plane.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30821,7 +30870,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch84-vision-redaction.md",
-      "hint": "Chapter 84: ATSPI Accessibility Tree Sensitive Widget Coordinate Detector and Wayland Frame Blur Filter (T-539, AGY-2137). Details ATSPI role discovery, Wayland frame capture integration, bounding box coordinate mapping, blur filter algorithms, and privacy guarantees.",
+      "hint": "Chapter 84: ATSPI Accessibility Tree Sensitive Widget Coordinate Detector and Wayland Frame Blur Filter (task_483, task_2716). Details ATSPI role discovery, Wayland frame capture integration, bounding box coordinate mapping, blur filter algorithms, and privacy guarantees.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30830,7 +30879,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch85-ocr-credential-masking.md",
-      "hint": "Chapter 85: Lightweight On-Device OCR Regex Credential Masking Pipeline for Vision Frames (T-540, AGY-2138). Details on-device OCR engine integration (Tesseract/PaddleOCR), zero-trust credential auditing, regex catalog, solid bounding box redaction, and sub-50ms vision frame latency benchmarks.",
+      "hint": "Chapter 85: Lightweight On-Device OCR Regex Credential Masking Pipeline for Vision Frames (task_484, task_2717). Details on-device OCR engine integration (Tesseract/PaddleOCR), zero-trust credential auditing, regex catalog, solid bounding box redaction, and sub-50ms vision frame latency benchmarks.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30839,7 +30888,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md",
-      "hint": "Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (T-541, AGY-2139). Covers shadow execution mechanics, query mirroring architecture, mutation guarding, divergence scoring, and safe promotion gates for OpenAI-compatible inference daemons.",
+      "hint": "Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (task_485, task_2718). Covers shadow execution mechanics, query mirroring architecture, mutation guarding, divergence scoring, and safe promotion gates for OpenAI-compatible inference daemons.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30848,7 +30897,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch87-socket-activation-handoff.md",
-      "hint": "Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (T-542, AGY-2140). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD transfer, graceful connection draining, and automated rollback upon candidate failure.",
+      "hint": "Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (task_486, task_2719). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD transfer, graceful connection draining, and automated rollback upon candidate failure.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -30857,7 +30906,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md",
-      "hint": "Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (T-543, AGY-2141, T-544, AGY-2142). Details proactive PID thermal regulation, sysfs telemetry, rate-of-rise (dT/dt) early intervention before silicon throttling (80\u00b0C vs 95\u00b0C), dynamic EPP and GPU TDP modulation, and automated 10s hysteresis cooldown recovery.",
+      "hint": "Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (task_487, task_2720, task_488, task_2721). Details proactive PID thermal regulation, sysfs telemetry, rate-of-rise (dT/dt) early intervention before silicon throttling (80\u00b0C vs 95\u00b0C), dynamic EPP and GPU TDP modulation, and automated 10s hysteresis cooldown recovery.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -31523,7 +31572,7 @@
     },
     {
       "path": "usr/share/doc/mios/reference/GLOBAL-UNIFICATION-PLAN.md",
-      "hint": "The staged, lossless-diff-gated plan to collapse the duplicated/proliferated MIOS_* SSOT keys (measured 2523 keys, 79 version/image pairs, dead+alias dupes, one value copy-pasted across ~35 places) into one-value-declared-once-derived-everywhere. 6 phases; the invariant is a byte-identical resolved-env diff (mios-env-snapshot). AGY-479..730 execute it.",
+      "hint": "The staged, lossless-diff-gated plan to collapse the duplicated/proliferated MIOS_* SSOT keys (measured 2523 keys, 79 version/image pairs, dead+alias dupes, one value copy-pasted across ~35 places) into one-value-declared-once-derived-everywhere. 6 phases; the invariant is a byte-identical resolved-env diff (mios-env-snapshot). task_1530..task_1582 execute it.",
       "related": [
         "usr/lib/mios/mios_toml.py",
         "tools/lib/userenv.sh",
@@ -32568,7 +32617,7 @@
     },
     {
       "path": "usr/share/flatpak/overrides/global",
-      "hint": "Global Flatpak permission lockdown profile enforcing least-privilege sandbox boundaries across all desktop apps (T-489).",
+      "hint": "Global Flatpak permission lockdown profile enforcing least-privilege sandbox boundaries across all desktop apps (task_433).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
@@ -33450,7 +33499,7 @@
     },
     {
       "path": "usr/share/mios/dropins/k3s-node-selectors.yaml",
-      "hint": "GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.",
+      "hint": "GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -33479,7 +33528,7 @@
     },
     {
       "path": "usr/share/mios/dropins/pcs-location-rules.pcs",
-      "hint": "GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.",
+      "hint": "GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -34196,7 +34245,7 @@
         "usr/share/mios/mios.toml [image.sidecars] [containers.mios-pgvector]",
         "usr/share/mios/postgres/schema-init.sql",
         "usr/share/mios/prompts/upstream-research.xml.md",
-        "TASKS.jsonl T-1124",
+        "TASKS.jsonl task_3417",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34212,7 +34261,7 @@
         "usr/share/containers/storage.conf",
         "automation/01-system-files-overlay.sh",
         "automation/99-postcheck.sh",
-        "TASKS.jsonl T-1120",
+        "TASKS.jsonl task_3413",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34222,9 +34271,9 @@
     },
     {
       "path": "usr/share/mios/prompts/upstream-researched-patterns/foss/mesh/self-hosted-mesh-coordinator.xml.md",
-      "hint": "Primary-source prompt for the self-hosted mesh-VPN coordinator that T-986",
+      "hint": "Primary-source prompt for the self-hosted mesh-VPN coordinator that task_930",
       "related": [
-        "TASKS.md T-986",
+        "TASKS.md task_930",
         "usr/share/mios/mios.toml [metal.mesh]",
         ".prompts/README.md"
       ],
@@ -34238,7 +34287,7 @@
       "hint": "Primary-source prompt for settling which mesh-VPN client features work in",
       "related": [
         "usr/share/mios/mios.toml",
-        "TASKS.md T-986",
+        "TASKS.md task_930",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34262,7 +34311,7 @@
         "usr/share/mios/mios.toml [ai.firstboot_models]",
         "usr/libexec/mios/mios-models-firstboot",
         "usr/share/mios/llamacpp/mios-llm-light.yaml",
-        "TASKS.md T-200 T-201"
+        "TASKS.md task_180 task_181"
       ],
       "functions": [],
       "doc": null,
@@ -34294,7 +34343,7 @@
         "usr/share/mios/llamacpp/mios-llm-light.yaml",
         "usr/share/mios/mios.toml [image.sidecars] [ports]",
         "usr/share/containers/systemd/mios-llm-light.container",
-        "TASKS.jsonl T-1122",
+        "TASKS.jsonl task_3415",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34333,7 +34382,7 @@
         "usr/libexec/mios/install-nvidia-wsl-userland.sh",
         "usr/libexec/mios/automation/35-xrdp-enhanced-session.sh",
         "usr/share/doc/mios/manual/root.md",
-        "TASKS.jsonl T-1143",
+        "TASKS.jsonl task_3436",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34349,7 +34398,7 @@
         "usr/libexec/mios/mios-mcp-server",
         "usr/lib/mios/agent-pipe/mios_mcp_transport.py",
         "usr/lib/mios/agent-pipe/mios_mcp_schema.py",
-        "TASKS.jsonl T-1123",
+        "TASKS.jsonl task_3416",
         ".prompts/README.md"
       ],
       "functions": [],
@@ -34682,7 +34731,7 @@
       "hint": "CNCF KitOps ModelKit specification template for MiOS models, datasets, and adapters.",
       "related": [
         "usr/share/mios/mios.toml",
-        "ROADMAP.md (MODELOCI-01)",
+        "ROADMAP.md (task_3224)",
         "usr/share/doc/mios/adr/0027-dual-tier-oci-ai-artifacts.md"
       ],
       "functions": [],
@@ -34949,7 +34998,7 @@
     },
     {
       "path": "usr/share/mios/tests/test-a2a-loopback.sh",
-      "hint": "bash Shell entrypoint for the A2A federation loopback smoke test (roadmap B5 / T-066).",
+      "hint": "bash Shell entrypoint for the A2A federation loopback smoke test (roadmap B5 / task_68).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -35079,7 +35128,7 @@
     },
     {
       "path": "usr/share/mios/theme/templates/shell-aliases.tmpl",
-      "hint": "System shell aliases derived from mios.toml [shell] SSOT (AGY-62).",
+      "hint": "System shell aliases derived from mios.toml [shell] SSOT (task_1093).",
       "related": [
         "usr/share/mios/theme/templates/shell-aliases.tmpl",
         "etc/skel/.bashrc.d/mios"
@@ -35453,7 +35502,7 @@
     },
     {
       "path": "usr/src/bpf/mios_flightrec.bpf.c",
-      "hint": "In-kernel eBPF circular flight recorder probe for MiOS (T-516).",
+      "hint": "In-kernel eBPF circular flight recorder probe for MiOS (task_460).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch02-architecture.md",
@@ -35462,7 +35511,7 @@
     },
     {
       "path": "usr/src/bpf/mios_netflow.bpf.c",
-      "hint": "In-kernel eBPF network flow aggregation probe for MiOS (T-511).",
+      "hint": "In-kernel eBPF network flow aggregation probe for MiOS (task_455).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch06-security.md",

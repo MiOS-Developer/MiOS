@@ -1,4 +1,4 @@
-# AI-hint: Defines boot-time kernel arguments for security hardening, specifically enforcing slab_nomerge, module.sig_enforce=1, and lockdown=confidentiality (T-916, T-917).
+# AI-hint: Defines boot-time kernel arguments for security hardening, specifically enforcing slab_nomerge, module.sig_enforce=1, and lockdown=confidentiality (task_860, task_861).
 # AI-doc: usr/share/doc/mios/manual/kargs.d.md
 kargs = [
   "slab_nomerge",

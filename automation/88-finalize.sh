@@ -42,7 +42,7 @@ OSR=/usr/lib/os-release
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for _c in "${MIOS_MIOSD_BIN:-}" \

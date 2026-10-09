@@ -15,7 +15,7 @@ acceptance: |
 -->
 *Description of WS-IMAGE*
 
-### WS-IMAGE-01 — Task 1 for WS-IMAGE  **[P2]**  (→ T-999)
+### WS-IMAGE-01 — Task 1 for WS-IMAGE  **[P2]**  (→ task_999)
 - **What:** Detail the task description.
 - **Why:** Explain the rationale.
 - **Files:** List of modified/new files.

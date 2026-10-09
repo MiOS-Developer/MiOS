@@ -207,7 +207,7 @@ class Policy:
         return bool(rx and rx.search(text))
 
 # --------------------------------------------------------------------------
-# Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / MON-026)
+# Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / task_3395)
 # --------------------------------------------------------------------------
 class RefIndex:
     """Client of `mios-gate doc-refs-headers`, which resolves every AI header

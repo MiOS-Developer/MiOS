@@ -43,7 +43,7 @@ class ar_TestAcceleratorRouter(unittest.TestCase):
 
 
 # ===== merged from tests/test-ai.py (prefix ac_) =====
-"""Unit and integration test suite for AuditChainRecorder and audit_chain CLI (T-554)."""
+"""Unit and integration test suite for AuditChainRecorder and audit_chain CLI (task_498)."""
 
 
 import copy
@@ -300,7 +300,7 @@ class gs_TestGPUSched(unittest.TestCase):
 
 
 # ===== merged from tests/test-ai.py (prefix ma_) =====
-"""Adversarial Stress Test Suite for Milestone 1: 1. Self-Healing Circuit Breaker & Safe Remediation Engine (T-382)    - Rapid bursts of failures (100 rapid events)    - Multi-unit isolation & interleaved failure/recovery sequences    - Circuit breaker window expiration & quarantine timing    - Invalid / binary / corrupted journal logs    - Malformed & traversal /usr immutability attack paths    - Corrupted state JSON recovery and schema validation    - SafeConfigEditor atomic file operations & error handling  2. Synthetic Training Q&A Data Pipeline (T-383)    - Secret redactor: nested keys (JSON/YAML/TOML/Env), multi-line keys (RSA/EC/SSH), tokens, bearer auth    - Secret redactor: multi-word passwords inside quotes    - Secret redactor: false-positive preservation on standard prose and config keys    - Hierarchical markdown parser: 6-level deep headers, header level jumping, headers inside code blocks    - Unclosed code fences, malformed tables, empty sections, unicode/emoji handling    - Q&A synthesis schema adherence & JSONL single-line validation"""
+"""Adversarial Stress Test Suite for Milestone 1: 1. Self-Healing Circuit Breaker & Safe Remediation Engine (task_326)    - Rapid bursts of failures (100 rapid events)    - Multi-unit isolation & interleaved failure/recovery sequences    - Circuit breaker window expiration & quarantine timing    - Invalid / binary / corrupted journal logs    - Malformed & traversal /usr immutability attack paths    - Corrupted state JSON recovery and schema validation    - SafeConfigEditor atomic file operations & error handling  2. Synthetic Training Q&A Data Pipeline (task_327)    - Secret redactor: nested keys (JSON/YAML/TOML/Env), multi-line keys (RSA/EC/SSH), tokens, bearer auth    - Secret redactor: multi-word passwords inside quotes    - Secret redactor: false-positive preservation on standard prose and config keys    - Hierarchical markdown parser: 6-level deep headers, header level jumping, headers inside code blocks    - Unclosed code fences, malformed tables, empty sections, unicode/emoji handling    - Q&A synthesis schema adherence & JSONL single-line validation"""
 
 
 import importlib.util
@@ -336,7 +336,7 @@ else:
     raise ImportError(f"Cannot load synthetic_qa from {ma__SYNTH_QA_PATH}")
 
 class ma_TestSelfHealAdversarial(unittest.TestCase):
-    """Adversarial stress testing for T-382 Self-Healing Code Remediation."""
+    """Adversarial stress testing for task_326 Self-Healing Code Remediation."""
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="mios_adv_selfheal_")
@@ -524,7 +524,7 @@ class ma_TestSelfHealAdversarial(unittest.TestCase):
         self.assertEqual(len(bak_files), 1)
 
 class ma_TestSyntheticQAAdversarial(unittest.TestCase):
-    """Adversarial stress testing for T-383 Synthetic Training Q&A Data Pipeline."""
+    """Adversarial stress testing for task_327 Synthetic Training Q&A Data Pipeline."""
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="mios_adv_synqa_")
@@ -748,7 +748,7 @@ def ma_main() -> int:
 
 
 # ===== merged from tests/test-ai.py (prefix mma_) =====
-"""Unit and integration test suite for ModelMatrixAllocator and model_matrix_alloc CLI (T-572)."""
+"""Unit and integration test suite for ModelMatrixAllocator and model_matrix_alloc CLI (task_516)."""
 
 
 import importlib.util

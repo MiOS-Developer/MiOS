@@ -125,7 +125,7 @@ fn build_exports(
         // common.sh sources userenv.sh BEFORE globals.sh and globals.sh guards
         // its assignments, so the value comes from userenv.sh -- whose preferred
         // tier is this binary. Without the split a bake gets
-        // docker.io/rancher/k3s:v1.36.3+k3s1 as a release tag (T-1065).
+        // docker.io/rancher/k3s:v1.36.3+k3s1 as a release tag (task_3363).
         for leg in get_aliases(&path) {
             let v = if leg.ends_with("_VERSION") && path.starts_with("image.sidecars.") {
                 match val_processed.rsplit_once(':') {
@@ -207,7 +207,7 @@ fn build_exports(
 /// so an emitted `MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1`
 /// means two different things depending on who reads it. It is also why
 /// `system-sync-env.sh` DROPPED that variable rather than emitting it: its
-/// filter rejects any value containing `$` (T-1060).
+/// filter rejects any value containing `$` (task_997).
 ///
 /// Expansion reads a snapshot, so the result does not depend on map order, and
 /// a name that resolves to nothing is left verbatim rather than blanked -- the
@@ -510,7 +510,7 @@ pub mod emit_install_env {
         // After the [env] merge, so an [env] value can both reference an
         // exported key and be referenced by one. Unresolved values still carry
         // `$` and are dropped by the bare-safe filter below (Law 10) -- which is
-        // exactly how MIOS_AI_ENDPOINT went missing before T-1060.
+        // exactly how MIOS_AI_ENDPOINT went missing before task_997.
         resolve_cross_references(&mut exports);
 
         let mut lines = Vec::new();

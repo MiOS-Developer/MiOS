@@ -2,7 +2,7 @@
 # AI-functions: __init__, create_user_enclave, unlock_enclave, lock_and_zeroize, HomeEnclave, SystemdHomedManager
 
 """
-systemd_homed.py — T-745 WS-SEC
+systemd_homed.py — task_689 WS-SEC
 Declarative systemd-homed LUKS2 user enclave configurator and TPM2/FIDO2 key manager.
 
 Provisions /home/mios as a systemd-homed LUKS2 Btrfs container bound to TPM 2.0

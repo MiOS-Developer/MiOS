@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Kernel Crash Dump Triage Engine (T-641, T-642).
+# AI-hint: Automated unit test suite for Kernel Crash Dump Triage Engine (task_585, task_586).
 # AI-related: usr/libexec/mios/kernel/crash_triage.py, tests/test-kernel-crash-triage.py
 """Automated unit test suite for MiOS Kernel Crash Dump Triage Engine."""
 

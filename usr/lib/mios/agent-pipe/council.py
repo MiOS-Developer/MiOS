@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Multi-agent 3-peer council swarm and weighted Byzantine consensus engine in agent-pipe (T-653, T-654).
+# AI-hint: Multi-agent 3-peer council swarm and weighted Byzantine consensus engine in agent-pipe (task_599, task_600).
 # AI-related: usr/lib/mios/agent-pipe/council.py, tests/test-council-consensus.py, usr/lib/mios/agent-pipe/server.py
 """Multi-agent 3-peer council swarm and weighted Byzantine consensus engine for MiOS agent-pipe.
 

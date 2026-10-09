@@ -327,4 +327,4 @@ Use the configured private networking path to connect cloud sessions to MiOS-Xbo
 
 **Validation before publishing:** run the installation and Start skill in the environment editor. Verify Fedora userspace, all catalog CLIs, the projected prompt/tmux theme, gateway readiness, MCP tool/resource preservation and a real two-session message/acknowledgement. Save a draft if a check fails; publish only a verified environment. These blocks configure an environment when pasted and run; this README edit alone does not create or publish one. See [cloud setup details](.devcontainer/cloud-shell/README.md).
 
-The image equivalence work is still in progress. One Containerfile with one stage per profile, plus a gate that proves every image carries the same floor, is tracked as T-1164 and T-1170 to T-1181.
+The image equivalence work is still in progress. One Containerfile with one stage per profile, plus a gate that proves every image carries the same floor, is tracked as task_3457 and task_3463 to task_3474.

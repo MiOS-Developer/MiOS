@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).
+# AI-hint: Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).
 # AI-doc: usr/share/doc/mios/manual/ch77-hardware-fallback.md
 """
 Automated network and audio fallback manager with operator desktop alert daemon.
@@ -325,7 +325,7 @@ class HardwareFallbackManager:
             try:
                 PIPEWIRE_CONF_USER_DIR.mkdir(parents=True, exist_ok=True)
                 conf_file = PIPEWIRE_CONF_USER_DIR / "99-fallback-null-sink.conf"
-                conf_content = f"""# AI-hint: MiOS fallback null-sink configuration (T-532).
+                conf_content = f"""# AI-hint: MiOS fallback null-sink configuration (task_476).
 context.objects = [
     {{ factory = adapter
       args = {{
@@ -653,7 +653,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="mios-hardware-fallback",
-        description="Automated network and audio fallback manager with operator desktop alert daemon (T-532, AGY-2130).",
+        description="Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[common_parser],
     )

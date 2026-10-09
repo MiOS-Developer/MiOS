@@ -2,7 +2,7 @@
 # AI-functions: __init__, push_frame, pop_frame, SHMFrame, LockFreeSHMRing
 
 """
-shm_ring.py — T-767 WS-NODE
+shm_ring.py — task_711 WS-NODE
 Lock-free POSIX shared memory circular ring IPC engine.
 
 Allocates POSIX shared memory (/dev/shm) with atomic lock-free SPSC circular rings

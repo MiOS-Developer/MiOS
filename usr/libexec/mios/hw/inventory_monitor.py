@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: In-kernel udev netlink hardware change monitor and PostgreSQL hardware inventory recorder.
 # AI-related: usr/libexec/mios/hw/inventory_monitor.py, tests/test-hw.py
-"""In-Kernel Udev Netlink Hardware Monitor & Inventory Engine (T-563).
+"""In-Kernel Udev Netlink Hardware Monitor & Inventory Engine (task_507).
 
 Captures NETLINK_KOBJECT_UEVENT hardware lifecycle events (PCIe, NVMe, GPU, USB,
 memory topology), evaluates PCIe lane width and link speed degradation, and
@@ -337,7 +337,7 @@ class HardwareInventoryMonitor:
             conn.close()
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Netlink Hardware Monitor & Inventory (T-563)")
+    parser = argparse.ArgumentParser(description="MiOS Netlink Hardware Monitor & Inventory (task_507)")
     parser.add_argument("--scan", action="store_true", help="Scan sysfs for physical hardware devices")
     parser.add_argument("--check-degraded", action="store_true", help="Assert PCIe lane width and speed health")
     parser.add_argument("--listen", action="store_true", help="Listen for netlink hardware uevents")

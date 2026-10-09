@@ -209,12 +209,12 @@ def configure(*, verb_catalog=None, verb_arg_synonyms=None,
         _db_create = db_create
 
     # The builder holds its own copies of these three; forward them so ONE
-    # configure() call still configures the whole chokepoint (T-273).
+    # configure() call still configures the whole chokepoint (task_251).
     _dispatch_cmd.configure(verb_catalog=verb_catalog,
                             sandbox_enforce=sandbox_enforce,
                             sandbox_self_confined=sandbox_self_confined)
 
-# The command BUILDER moved to mios_pipe/routing/dispatch_cmd.py (T-273); the
+# The command BUILDER moved to mios_pipe/routing/dispatch_cmd.py (task_251); the
 # names are re-imported so this module's surface is byte-identical.
 from mios_pipe.routing import dispatch_cmd as _dispatch_cmd   # noqa: E402
 from mios_pipe.routing.dispatch_cmd import (   # noqa: E402,F401

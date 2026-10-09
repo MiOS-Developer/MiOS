@@ -387,7 +387,7 @@ class GPUThermalWatchdog:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS GPU Thermal, Junction Temperature & Fan Watchdog (T-424)"
+        description="MiOS GPU Thermal, Junction Temperature & Fan Watchdog (task_368)"
     )
     parser.add_argument(
         "--action",

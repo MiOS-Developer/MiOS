@@ -5,7 +5,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export MIOS_SSOT_LINT_ROOT="${MIOS_SSOT_LINT_ROOT:-$here}"
-# Absolute paths, never `command -v` (T-1018): MIOS_NATIVE_BIN_DIR, else this checkout's
+# Absolute paths, never `command -v` (task_962): MIOS_NATIVE_BIN_DIR, else this checkout's
 # build, else the SSOT install and compat dirs of [build.native.categories.cli].
 . "$here/automation/lib/globals.sh"; x=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) x=.exe;; esac
 IFS=, read -ra dirs <<< "${MIOS_NATIVE_BIN_DIR:-$here/tools/native/target/release,$here/tools/native/target/debug,$MIOS_BUILD_NATIVE_CATEGORIES_CLI_INSTALL_DIR,$MIOS_BUILD_NATIVE_CATEGORIES_CLI_COMPAT_DIRS}"

@@ -34,8 +34,8 @@
     }
   ],
   "non_goals": [
-    "Bare-metal/bootc boot verification (T-1119/T-1120, needs hardware)",
-    "Publishing a new ghcr.io/mios-dev/mios:latest before the drift-gate backlog T-1158..T-1163 clears",
+    "Bare-metal/bootc boot verification (task_3412/task_3413, needs hardware)",
+    "Publishing a new ghcr.io/mios-dev/mios:latest before the drift-gate backlog task_3451..task_3456 clears",
     "Turning -dev-loop's generic Fedora projection into a MiOS-specific tool"
   ],
   "ratchet_history": []

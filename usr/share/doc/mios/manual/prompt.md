@@ -4,13 +4,13 @@
 
 ### MiOS Contextual Prompt Compression & Token Pruning Engine...
 
-MiOS Contextual Prompt Compression & Token Pruning Engine (PROMPT-01 / T-380 / AGY-1978).
+MiOS Contextual Prompt Compression & Token Pruning Engine (PROMPT-01 / task_324 / task_2557).
 
 Prunes conversational boilerplate, pleasantries, redundant markdown headers/spacers,
 and low-information syntactic filler while strictly preserving code syntax, code blocks,
 and semantic clarity.
 
-<!-- mios-src:d45a5a282340 from usr/libexec/mios/prompt/pruning.py:4-10 -->
+<!-- mios-src:86a8f82e5120 from usr/libexec/mios/prompt/pruning.py:4-10 -->
 
 ### Compresses input text through linguistic pruning and...
 

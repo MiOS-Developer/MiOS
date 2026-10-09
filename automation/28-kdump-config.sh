@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Configures kdump crash dump capture and reserved crashkernel memory (T-515).
+# AI-hint: Configures kdump crash dump capture and reserved crashkernel memory (task_459).
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 # shellcheck disable=SC1090

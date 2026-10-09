@@ -77,5 +77,5 @@ MiOS has its own tracking; this maps onto it rather than duplicating it.
 | Goals / north star | `docs/design/operating-agreement.md` §2 |
 | Roadmap | `ROADMAP.md` (workstreams `WS-*`) |
 | Decisions | `usr/share/doc/mios/adr/` |
-| Tasks | `TASKS.md` (machine-readable source: **T-1023, not yet built**) |
+| Tasks | `TASKS.md` (machine-readable source: **task_3354, not yet built**) |
 | Handoff | `.devloop/LEDGER.md` |

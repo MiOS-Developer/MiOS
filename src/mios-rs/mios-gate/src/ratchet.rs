@@ -18,7 +18,7 @@ const SSOT: &str = "usr/share/mios/mios.toml";
 /// `security.privileged_quadlets` -- dotted names the comparison can never
 /// match, since `section` is the text before the first dot. `gates` went the
 /// other way: a real-looking name for a table mios.toml does not have. The test
-/// below now rejects both shapes (T-1055).
+/// below now rejects both shapes (task_992).
 const RATCHET_SECTIONS: [&str; 14] = [
     "docs",
     "legibility",
@@ -150,7 +150,7 @@ fn resolve_baseline(root: &Path) -> String {
 fn describe_baseline(b: &str) -> String {
     if b == "HEAD" {
         "HEAD (NO merge base found -- this compares the worktree against its own \
-         parent, so a committed raise passes; see T-1046)"
+         parent, so a committed raise passes; see task_983)"
             .to_string()
     } else if b.len() >= 12 {
         format!("the merge base {}", &b[..12])
@@ -199,7 +199,7 @@ pub fn check(root: &Path) -> Report {
     }
 
     // WHICH commit to compare against is the whole gate: HEAD is the worktree's
-    // own parent, so a clean checkout compares a file with itself (T-1046).
+    // own parent, so a clean checkout compares a file with itself (task_983).
     let baseline = resolve_baseline(root);
     let compared_to = baseline.clone();
 
@@ -327,7 +327,7 @@ mod tests {
         let d = describe_baseline("HEAD");
         assert!(d.contains("NO merge base"), "got: {d}");
         assert!(
-            d.contains("T-1046"),
+            d.contains("task_983"),
             "the finding must be findable from the line"
         );
         let m = describe_baseline("2cd01afdcd77ff7e496c1c2878d00f0decf94961");
@@ -370,7 +370,7 @@ mod tests {
         // Contains-only matches are section-scoped, not global.
         assert!(is_ceiling_key("soft_max_lines", "legibility"));
         assert!(!is_ceiling_key("soft_max_lines", "branding"));
-        // T-1071: `build` is in RATCHET_SECTIONS, capturing `rechunk_max_layers`.
+        // task_3397: `build` is in RATCHET_SECTIONS, capturing `rechunk_max_layers`.
         assert!(is_ceiling_key("rechunk_max_layers", "build"));
         assert!(!is_ceiling_key("enabled", "legibility"));
     }

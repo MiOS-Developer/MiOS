@@ -347,7 +347,7 @@ async def _store_knowledge_task(q: str, a: str,
                 row["emb_model"] = EMB_MODEL       # WS-A2 embedding-version hygiene
                 row["emb_version"] = EMB_VERSION
         _pg_mirror("knowledge", {**row, "session_id": session_id},
-                   rls_owner=(_ou or None))  # WS-9c + T-068 DB-side RLS
+                   rls_owner=(_ou or None))  # WS-9c + task_70 DB-side RLS
         sql = _db_create(KNOWLEDGE_TABLE, row, now_fields=("ts",), _mirror=False)
         if session_id:
             sql = sql.rstrip(";") + f", session = {session_id};"
@@ -369,7 +369,7 @@ async def _recall_knowledge_pg(query: str) -> "Optional[str]":
             qv, table=KNOWLEDGE_TABLE,
             k=max(KNOWLEDGE_RECALL_K, KNOWLEDGE_RECALL_CANDIDATES),
             owner=_rls_owner(),  # WS-A15 seam (app-side WHERE-filter, gated by rls_mode)
-            rls_owner=_request_principal(),  # T-068 DB-side SET LOCAL (gated in mios_pg by rls_enable)
+            rls_owner=_request_principal(),  # task_70 DB-side SET LOCAL (gated in mios_pg by rls_enable)
             emb_version=EMB_VERSION,  # A3: scope recall to the active embedding space
             query_text=query,
             hybrid=KNOWLEDGE_RAG_HYBRID,
@@ -726,7 +726,7 @@ async def _recall_agent_memory(query: str) -> str:
                                       k=max(AGENT_MEMORY_RECALL_K,
                                             KNOWLEDGE_RECALL_CANDIDATES),
                                       owner=_rls_owner(),  # WS-A15 seam / WS-5 RLS (app-side filter)
-                                      rls_owner=_request_principal(),  # T-068 DB-side SET LOCAL
+                                      rls_owner=_request_principal(),  # task_70 DB-side SET LOCAL
                                       emb_version=EMB_VERSION)  # A3: active emb space
         if not rows:
             return ""

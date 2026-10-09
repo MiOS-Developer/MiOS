@@ -1,4 +1,4 @@
-// AI-hint: Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (T-1004).
+// AI-hint: Fast native static CLI launcher for browser dispatch based on [browser.family] and [browser.flags] (task_948).
 // AI-related: usr/share/mios/mios.toml, usr/libexec/mios/mios-open-url
 // AI-functions: main, resolve_family, resolve_flags, build_browser_command
 
@@ -11,7 +11,7 @@ use toml::Value;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "mios-browser",
-    about = "Browser launcher resolving browser families and flags from MiOS SSOT (T-1004)",
+    about = "Browser launcher resolving browser families and flags from MiOS SSOT (task_948)",
     version
 )]
 pub struct Cli {
@@ -333,7 +333,7 @@ private      = "--incognito-mode"
 
     #[test]
     fn test_planted_browser_in_ssot() {
-        // T-1004 positive control:
+        // task_948 positive control:
         // Adding a browser binary name to [browser.family.<f>] makes the launcher
         // recognise it with NO code change.
         let mut ssot = sample_ssot();

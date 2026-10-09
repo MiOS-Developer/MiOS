@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 85: Lightweight On-Device OCR Regex Credential Masking Pipeline for Vision Frames (T-540, AGY-2138). Details on-device OCR engine integration (Tesseract/PaddleOCR), zero-trust credential auditing, regex catalog, solid bounding box redaction, and sub-50ms vision frame latency benchmarks. -->
+<!-- AI-hint: Chapter 85: Lightweight On-Device OCR Regex Credential Masking Pipeline for Vision Frames (task_484, task_2717). Details on-device OCR engine integration (Tesseract/PaddleOCR), zero-trust credential auditing, regex catalog, solid bounding box redaction, and sub-50ms vision frame latency benchmarks. -->
 
 # Chapter 85: Lightweight On-Device OCR Regex Credential Masking Pipeline for Vision Frames
 

@@ -49,7 +49,7 @@ passes on the real tree or system) and a negative control (a planted defect make
     - Seven lanes are merged: mcp-aio, gate-ledger, gate-tests, gate-docs, gate-neg, docs-ratchet-1 and gate-reg.
     - Still open:
       - gate-legib: shell_lines is 492 over;
-      - value-dup: T-998/T-1013;
+      - value-dup: task_942/task_957;
       - Hyper-V VHDX (P0-9 Phase A).
     - ETA: local replay green in about 3–5 h; GitHub CI green 2–5 h after that, since the smoke bake has not been green since 08-21; then merge on the operator's go-ahead.
 - **M0.5, before the merge that publishes `:latest`** (from `docs/research/upstream-prior-art-gaps-2026-10.md`):
@@ -371,13 +371,35 @@ passes on the real tree or system) and a negative control (a planted defect make
       - mios-dashboard has no tracked source (fixed in U6).
       - `[rust.categories.serve]` names `mios-serve`, which no crate builds.
   - **Links:**
-    - AGY-1038 closes with the mios-dashboard retirement.
-    - The dispatch table is the desktop subset of the verb-dispatcher task (AGY-1018).
+    - task_1678 closes with the mios-dashboard retirement.
+    - The dispatch table is the desktop subset of the verb-dispatcher task (task_1658).
     - The keybinding fold relates to KEYMAP-01.
     - The mobile-keys and MCP-convergence tasks stay with their agent-plane owners.
     - M7's L1 TUI task builds on U2 and U5.
   - **To confirm with the operator:** U4 routes `ai` to the desktop's AI workspace, as `usr/bin/mios`
     and the design doc already do, and gives Open WebUI its own verb.
+- **M9: 500 tracked files, total (ADR-0030).**
+  - **Goal:** the operator's cap is "500 disparate files—TOTAL/OVERALL", dependencies included. On 2026-10-09 the tree had 3,654 files after F0.
+    - Every domain has a shrink-only `max_files` in `[legibility.file_budget]` and a `target_files`; the targets sum to 405.
+    - `max_tracked_files` counts everything and is no longer exempt in `[drift.generated_ceilings]`.
+    - No commit adds a file without folding one away in the same commit.
+  - **Sources:** `usr/share/doc/mios/adr/0030-source-file-budget.md`; the M9 epic in `tasks.jsonl`.
+  - **Every fold lane proves it changed nothing at runtime:** the rendered root-overlay manifest (path + sha256 of every file the build installs) is identical before and after, except for differences the lane names. Each lane moves code in one commit and edits in another, and lowers its domain's `max_files` in the commit that folds.
+  - **Phases.** "+" is the positive control (must pass); "-" is the planted defect (must fail).
+    - **F0 (landed):** the budget gate, ADR-0030, the epic, and the 9 duplicate `commands/claude` copies deleted.
+      - +: `check_legibility_ratchet` passes at 3654/3654.
+      - -: one planted file is charged to its domain and to the total.
+    - **F1:** projections become build outputs, and exact duplicates and empty markers go. That covers man pages, Quadlets, systemd units, `tmpfiles`/`sysusers`/`sysctl`/`modprobe`, desktop entries, drop-ins and generated indexes. Target: ~3,080.
+      - +: the build renders them byte-identically twice.
+      - -: a deleted projection that the registry declares fails the render check.
+    - **F2:** `etc/profile.d` becomes one file per shell; `kargs.d`/`dracut`/`modprobe` fold; harness shims are rendered at dev setup; the 99 vendored files become one bundle per kind; root misc is cleared. Target: ~2,700.
+    - **F3:** tests become one suite per domain. Target: ~2,450.
+    - **F4:** docs become manual volumes and one ADR log. Target: ~1,850.
+    - **F5:** agent-pipe becomes domain modules, superseding the 800-line module ceiling. Target: ~1,480.
+    - **F6:** libexec and bin verbs become multicall MiOS-MODULES. Target: ~980.
+    - **F7:** one Rust workspace, and automation phases as data. Target: ~700.
+    - **F8:** usr data and tools become SSOT tables and Rust. Target: ≤ 500.
+  - **Sequencing with the lanes in flight:** a fold never takes a file that a claimed assignment owns. F3 (tests) waits for the wave-1 and wave-2 lanes to merge, because they add tests.
 
 ## Operator rulings, 2026-10-09 (/loop-grill, 20 spec questions)
 

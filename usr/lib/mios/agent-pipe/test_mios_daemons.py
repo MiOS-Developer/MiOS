@@ -252,7 +252,7 @@ class KvGcLoopTest(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
 
 class SelfImproveActPassTest(unittest.TestCase):
-    """The T-062/T-064 ACT pass: propose -> prove utility -> QUEUE for human approval,
+    """The task_64/task_66 ACT pass: propose -> prove utility -> QUEUE for human approval,
     never auto-apply. Synthetic non-dictionary surfaces/ids + stubbed solver scores
     (no live models / DB) -- the structure is what is validated offline."""
 
@@ -445,7 +445,7 @@ class SelfImproveProposalsReadTest(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_account_sync.py (T-1092)
+# Consolidated from test_mios_account_sync.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for mios-account-sync daemon.
 # AI-related: usr/libexec/mios/mios-account-sync
@@ -600,7 +600,7 @@ def _run_extra_account_sync(): return 0
 
 
 # ==============================================================================
-# Consolidated from test_mios_conductor.py (T-1092)
+# Consolidated from test_mios_conductor.py (task_1006)
 # ==============================================================================
 # AI-hint: stub
 # AI-related: stub
@@ -681,7 +681,7 @@ class TestFolded_conductor(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_daemon.py (T-1092)
+# Consolidated from test_mios_daemon.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for mios_agent_call daemon runaway controls.
 import unittest

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative nftables inter-container firewall rule generator and micro-segmentation enforcer (T-479).
+# AI-hint: Declarative nftables inter-container firewall rule generator and micro-segmentation enforcer (task_423).
 # AI-doc: usr/share/doc/mios/manual/ch20-firewall-nftables-microsegmentation.md
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def generate_nftables_ruleset(matrix: Dict[str, Any]) -> str:
     """Generates declarative nftables configuration with default-deny policy."""
     lines = [
         "#!/usr/sbin/nft -f",
-        "# AI-hint: Auto-generated declarative nftables container micro-segmentation table (T-479)",
+        "# AI-hint: Auto-generated declarative nftables container micro-segmentation table (task_423)",
         "",
         "table inet mios_container_isolate {",
         "    chain forward {",
@@ -80,7 +80,7 @@ def generate_nftables_ruleset(matrix: Dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Declarative nftables inter-container firewall rule generator (T-479)"
+        description="Declarative nftables inter-container firewall rule generator (task_423)"
     )
     parser.add_argument("--toml", default=DEFAULT_TOML_PATH, help="Path to mios.toml")
     parser.add_argument("--generate", action="store_true", help="Generate nftables ruleset to stdout")

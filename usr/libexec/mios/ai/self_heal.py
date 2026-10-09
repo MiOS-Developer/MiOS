@@ -2,7 +2,7 @@
 # AI-hint: Autonomous self-healing code remediation agent triggered on systemd unit failures.
 # AI-related: usr/lib/systemd/system/mios-self-heal.service, /var/log/mios/self-heal.log
 """
-Autonomous Self-Healing Code Remediation Agent (T-382 / AGY-1980)
+Autonomous Self-Healing Code Remediation Agent (task_326 / task_2559)
 
 Listens for and detects systemd unit failure events, harvests recent journald error logs,
 formulates structured root cause diagnoses, enforces circuit breaker rate limiting

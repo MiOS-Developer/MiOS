@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Medusa / EAGLE multi-head token tree speculative engine and Tree-Attention kernels (T-695, T-696).
+# AI-hint: Medusa / EAGLE multi-head token tree speculative engine and Tree-Attention kernels (task_639, task_640).
 # AI-related: usr/lib/mios/ai/medusa_tree.py, tests/test-ai-acceleration.py, usr/share/mios/llamacpp/mios-llm-light.yaml
 """Medusa / EAGLE multi-head token tree speculative engine for MiOS llama-swap.
 

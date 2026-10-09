@@ -22,7 +22,7 @@ fi
 
 mios_log "Render Quadlet placeholders from mios.toml"
 
-# No `command -v miosd` branch: unreachable at bake (T-1018). Dispatch is by
+# No `command -v miosd` branch: unreachable at bake (task_962). Dispatch is by
 # absolute path only, so which renderer runs is not a function of PATH.
 _renderer=""
 for _c in /usr/libexec/mios/mios-render-quadlets \
@@ -33,7 +33,7 @@ done
 
 if [ -z "$_renderer" ]; then
     # No bash fallback on purpose. The two it replaced disagreed by fourteen
-    # variable names, could not nest, and destroyed systemd's $$ escape (T-1040).
+    # variable names, could not nest, and destroyed systemd's $$ escape (task_977).
     mios_err "mios-render-quadlets is not available -- refusing to render with a substitute that corrupts \$\$ and cannot nest"
     exit 1
 fi

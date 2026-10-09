@@ -159,11 +159,11 @@ class TestEventChain(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_dual_ledger.py (T-1092)
+# Consolidated from test_mios_dual_ledger.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone assert-script unit test for T-030 (Dual-Ledger + Typed-Output Synthesis). Pure stdlib + asyncio, no server.py/DB/network.
+# AI-hint: Standalone assert-script unit test for task_30 (Dual-Ledger + Typed-Output Synthesis). Pure stdlib + asyncio, no server.py/DB/network.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Unit tests for T-030 Dual-Ledger + Typed-Output Synthesis."""
+"""Unit tests for task_30 Dual-Ledger + Typed-Output Synthesis."""
 
 import asyncio
 import sys
@@ -421,14 +421,14 @@ def t_replan_stall_trigger():
           any("stall count is 3" in e.get("summary", "") for e in created_events))
 
 def _main_dual_ledger():
-    print("=== Running T-030 Dual-Ledger Tests ===")
+    print("=== Running task_30 Dual-Ledger Tests ===")
     setup_test_stubs()
     t_both_intent_deps()
     t_parse_research_claims()
     t_execute_dag_node_ledger_writes()
     t_synthesis_reducer()
     t_replan_stall_trigger()
-    print("=== T-030 Dual-Ledger Tests Done ===")
+    print("=== task_30 Dual-Ledger Tests Done ===")
     sys.exit(1 if _fails_dual_ledger > 0 else 0)
 
 
@@ -446,9 +446,9 @@ class TestFolded_dual_ledger(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_record_replay.py (T-1092)
+# Consolidated from test_mios_record_replay.py (task_1006)
 # ==============================================================================
-# AI-hint: Unit tests for T-040 (OBS-03 record-and-replay determinism + session hash chaining).
+# AI-hint: Unit tests for task_40 (OBS-03 record-and-replay determinism + session hash chaining).
 import copy
 import json
 import unittest

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Hardware OPAL 2.0 SED / LUKS2 automated disk partitioning and TPM 2.0 enrollment engine.
 # AI-related: usr/libexec/mios/storage/opal_luks_partition.py, tests/test-storage.py, /etc/crypttab
-"""Hardware OPAL 2.0 SED / LUKS2 Automated Disk Partitioning Engine (T-549).
+"""Hardware OPAL 2.0 SED / LUKS2 Automated Disk Partitioning Engine (task_493).
 
 Discovers NVMe/SATA storage drives, detects TCG OPAL 2.0 Self-Encrypting Drive (SED)
 hardware capabilities via sedutil-cli/sysfs, activates hardware Locking Range 0,
@@ -407,7 +407,7 @@ class OpalLuksPartitionEngine:
         }
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Hardware OPAL 2.0 SED & LUKS2 TPM Partitioning Engine (T-549)")
+    parser = argparse.ArgumentParser(description="MiOS Hardware OPAL 2.0 SED & LUKS2 TPM Partitioning Engine (task_493)")
     parser.add_argument("--scan", action="store_true", help="Scan and list storage devices with SED and LUKS status")
     parser.add_argument("--setup-opal", metavar="DEVICE", help="Initialize OPAL 2.0 SED hardware encryption on target disk")
     parser.add_argument("--setup-luks", metavar="PARTITION", help="Format LUKS2 with TPM 2.0 PCR 7+11 binding on target partition")

@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-753 & T-754: WireGuard endpoint roaming (<50ms) and PMTU clamping.
+# AI-hint: Tests for task_697 & task_698: WireGuard endpoint roaming (<50ms) and PMTU clamping.
 # AI-functions: test_endpoint_roaming_sub_50ms, test_pmtu_clamping
 
-"""Tests for T-753 & T-754: WireGuard endpoint roaming (<50ms) and PMTU clamping."""
+"""Tests for task_697 & task_698: WireGuard endpoint roaming (<50ms) and PMTU clamping."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/net")
 from wireguard_roam import WireGuardRoamingDaemon
@@ -29,4 +29,4 @@ def test_pmtu_clamping():
 if __name__ == "__main__":
     test_endpoint_roaming_sub_50ms()
     test_pmtu_clamping()
-    print("All T-753/T-754 tests passed.")
+    print("All task_697/task_698 tests passed.")

@@ -169,15 +169,15 @@ Keep only the DISCRIMINATIVE held-out eval candidates (Autodata curation).
 The pass^k reliability score over a held-out eval, via :mod:`mios_bench`.
     ``tasks`` = ``[(n_trials, c_correct), ...]`` per task. pass^k ("ALL k repeats
     succeed", tau-bench) is the worst-case reliability number production needs --
-    the same metric the skill-promotion gate (T-049) uses, here applied to score a
+    the same metric the skill-promotion gate (task_49) uses, here applied to score a
     variant rather than to promote a skill. Thin wrapper so the ACT module names its
     scoring in its own domain; the math lives in mios_bench (single source).
 
 <!-- mios-src:9035aa3695ff from usr/lib/mios/agent-pipe/mios_pipe/lifecycle/selfimprove_act.py:125-130 -->
 
-### T-064 accept criterion. Returns ``(accept, delta)`` where...
+### task_66 accept criterion. Returns ``(accept, delta)`` where...
 
-T-064 accept criterion. Returns ``(accept, delta)`` where
+task_66 accept criterion. Returns ``(accept, delta)`` where
     ``delta = proposed - baseline``.
 
     ACCEPT iff the proposed variant does not regress the baseline beyond ``margin``

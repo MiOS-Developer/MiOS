@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-733: mios_microvm — virtio-pmem DAX memory storage manager.
+# AI-hint: Tests for task_677: mios_microvm — virtio-pmem DAX memory storage manager.
 # AI-related: usr/libexec/mios/virt/mios_microvm.py
 # AI-functions: test_launch_dry_run_creates_entry, test_destroy_releases_entry
 
-"""Tests for T-733: mios_microvm — virtio-pmem DAX memory storage manager."""
+"""Tests for task_677: mios_microvm — virtio-pmem DAX memory storage manager."""
 import sys, os, json, types, pathlib
 sys.path.insert(0, "usr/libexec/mios/virt")
 
@@ -37,4 +37,4 @@ def test_destroy_releases_entry():
 if __name__ == "__main__":
     test_launch_dry_run_creates_entry()
     test_destroy_releases_entry()
-    print("All T-733 tests passed.")
+    print("All task_677 tests passed.")

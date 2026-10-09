@@ -2,7 +2,7 @@
 # AI-hint: Knowledge Graph triple storage and recursive CTE traversal engine for MiOS RAG and dependency resolution.
 # AI-related: tests/test-knowledge-graph.py, usr/share/mios/postgres/schema-init.sql, usr/share/doc/mios/manual/graph.md
 """
-MiOS Knowledge Graph Traversal Engine (GRAPH-01 / T-379 / AGY-1977).
+MiOS Knowledge Graph Traversal Engine (GRAPH-01 / task_323 / task_2556).
 Implements triple ingestion (subject-predicate-object), metadata properties,
 recursive CTE multi-hop dependency resolution, cycle detection, and SQL generation.
 """

@@ -309,7 +309,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_vector.py (T-1092)
+# Consolidated from test_mios_vector.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for pgvector schema and cosine similarity matching.
 import os

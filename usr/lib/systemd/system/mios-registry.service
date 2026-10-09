@@ -1,8 +1,8 @@
-# AI-hint: Systemd service unit running the local OCI distribution registry on loopback for image staging (T-510).
+# AI-hint: Systemd service unit running the local OCI distribution registry on loopback for image staging (task_454).
 # AI-doc: usr/share/doc/mios/manual/ch43-local-registry-and-oci-distribution.md
 
 [Unit]
-Description=MiOS Local OCI Distribution Registry (T-510)
+Description=MiOS Local OCI Distribution Registry (task_454)
 Documentation=https://github.com/mios-dev/mios
 After=network-online.target podman.service
 Wants=network-online.target

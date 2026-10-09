@@ -3,7 +3,7 @@
 # AI-related: tests/test-subagent-cgroups.py
 # AI-functions: SubagentSandbox, validate_workspace_path, build_sandbox_command, main
 """
-WS-AI (T-551): Ephemeral Bubblewrap Subagent Isolation Engine with Scoped Bind-Mounts.
+WS-AI (task_495): Ephemeral Bubblewrap Subagent Isolation Engine with Scoped Bind-Mounts.
 Wraps subagent tool executions inside an ephemeral bwrap + systemd-run container scope.
 Enforces read-only host mounts (/usr, /etc, /bin, /lib), isolated proc/dev/tmp namespaces,
 designated workspace read-write sandboxes, and strict cgroup resource constraints
@@ -257,7 +257,7 @@ class SubagentSandbox:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Ephemeral Bubblewrap Subagent Sandbox (T-551)"
+        description="MiOS Ephemeral Bubblewrap Subagent Sandbox (task_495)"
     )
     parser.add_argument("--run", nargs=argparse.REMAINDER, help="Command and arguments to execute inside sandbox")
     parser.add_argument("--workspace", metavar="DIR", help="Subagent workspace directory path")

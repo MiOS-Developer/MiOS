@@ -3,7 +3,7 @@
 # AI-related: tests/test-ptp-time.py, automation/42-chrony-render.sh
 # AI-functions: PTPCapabilityProbe, PTPConfigGenerator, PTPStatusMonitor, PTPTimeSyncDaemon, main
 """
-WS-NODE (T-565): PTP IEEE 1588 Hardware Timestamping & Chrony NTS Smooth Clock Synchronization Daemon.
+WS-NODE (task_509): PTP IEEE 1588 Hardware Timestamping & Chrony NTS Smooth Clock Synchronization Daemon.
 
 Maintains sub-microsecond cluster clock synchronization and monotonic ordering:
 - Probes network interfaces via ethtool -T for PTP HW timestamping (SOF_TIMESTAMPING_TX/RX_HARDWARE, PHC).
@@ -403,7 +403,7 @@ class PTPTimeSyncDaemon:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="WS-NODE (T-565): PTP IEEE 1588 Hardware Timestamping & Chrony NTS Smooth Clock Sync Daemon"
+        description="WS-NODE (task_509): PTP IEEE 1588 Hardware Timestamping & Chrony NTS Smooth Clock Sync Daemon"
     )
     parser.add_argument("--status", action="store_true", help="Print clock offset, jitter, and PTP/Chrony lock status")
     parser.add_argument("--probe-interfaces", action="store_true", help="Probe NICs for PTP hardware timestamping")

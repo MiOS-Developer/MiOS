@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Duplex multi-modal WebSocket streaming pipeline (audio, vision, TTS, tools) in agent-pipe (T-671, T-672).
+# AI-hint: Duplex multi-modal WebSocket streaming pipeline (audio, vision, TTS, tools) in agent-pipe (task_615, task_616).
 # AI-related: usr/lib/mios/agent-pipe/multimodal_ws.py, tests/test-multimodal-ws.py, usr/lib/mios/agent-pipe/server.py
 """Duplex multi-modal WebSocket streaming pipeline for MiOS agent-pipe.
 

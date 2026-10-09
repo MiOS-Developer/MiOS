@@ -583,7 +583,7 @@ enum Commands {
         #[arg(long, default_value = "/var/lib/mios/forge-runner/last-build.txt")]
         sentinel: String,
     },
-    /// Inspect, dry-run, or execute atomic bootc rollback with recovery verification (T-1025)
+    /// Inspect, dry-run, or execute atomic bootc rollback with recovery verification (task_3356)
     BootcRollback {
         /// Validate rollback target without switching
         #[arg(long)]
@@ -1209,7 +1209,7 @@ fn run_render_ports(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std::
     // line containing '=' inside [ports] as a key/value pair, so a COMMENT
     // became an environment variable name -- including one carrying a backtick
     // pair, which `bash source` reads as command substitution. install.env is
-    // the file Law 10 (BARE-SAFE-ENV) governs. T-1018.
+    // the file Law 10 (BARE-SAFE-ENV) governs. task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-ports: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content
@@ -1992,7 +1992,7 @@ fn run_overlay_bind_images(
     // array across lines would yield an EMPTY token set -- and an empty set binds
     // every image, including the two heavy GPU lanes the register exists to keep
     // out of the image. Same defect class as render-chrony's silent hardcoded
-    // fallback (T-1018).
+    // fallback (task_962).
     let mios_toml_path =
         std::env::var("MIOS_TOML").unwrap_or_else(|_| "/usr/share/mios/mios.toml".to_string());
     let mut fb_tokens: Vec<String> = Vec::new();
@@ -2190,7 +2190,7 @@ ip_resolve=4
 /// an unconditional success line -- "[miosd] enabled usbguard.service" printed
 /// whether or not the symlink was created. A hardening step that reports
 /// success it did not achieve is worse than one that fails: the failure is
-/// recoverable, the false report is not visible at all (T-1018).
+/// recoverable, the false report is not visible at all (task_962).
 fn run_harden(root: &str) -> Result<(), Box<dyn std::error::Error>> {
     let at = |p: &str| std::path::Path::new(root).join(p.trim_start_matches('/'));
     let usb_conf = at("/usr/lib/usbguard/usbguard-daemon.conf");
@@ -2544,7 +2544,7 @@ fn run_bootc_rollback(
     dry_run: bool,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("[miosd] Initiating bootc rollback evaluation (T-1025)...");
+    println!("[miosd] Initiating bootc rollback evaluation (task_3356)...");
 
     // Invariant 1: Ensure /var persistence is intact before and during rollback operations
     let hist_dir = &mios_state_dir();
@@ -2691,7 +2691,7 @@ fn run_bootc_rollback(
 }
 
 fn run_greenboot() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[greenboot] Running native greenboot health check (T-508 / T-1025)...");
+    println!("[greenboot] Running native greenboot health check (task_452 / task_3356)...");
 
     // 1. Verify Invariant 1: /var persistence & writability
     let var_dir = &mios_state_dir();
@@ -2798,7 +2798,7 @@ fn run_finalize_osrelease(
     // of that exit code -- so a missing file or an unresolved version reported a
     // projection that had not occurred. The bash leg it shadows prints nothing
     // in the same situation, because its success log sits inside the branch
-    // that did the work (T-1018).
+    // that did the work (task_962).
     let p = std::path::Path::new(path);
     if !p.exists() {
         println!("[miosd] os-release: {path} does not exist -- nothing projected");
@@ -2893,7 +2893,7 @@ fn run_render_nut(toml_path: &str, conf_dir: &str) -> Result<(), Box<dyn std::er
     // comment containing '=' or a multi-line value would break it exactly as it
     // broke [ports] and [network.ntp]. And unwrap_or_default() meant a
     // NONEXISTENT manifest rendered four default config files and exited 0.
-    // T-1018.
+    // task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-nut: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content
@@ -2959,7 +2959,7 @@ fn run_render_chrony(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std:
     // Law 7, and a sovereignty question on a machine whose SSOT named a pool.
     // There is no hardcoded fallback now: an absent table yields no servers,
     // which is what the Python renderer this must match byte-for-byte does.
-    // T-1018.
+    // task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-chrony: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content

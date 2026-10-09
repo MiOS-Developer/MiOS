@@ -12,7 +12,7 @@ mios_log "Configuring firewalld ports for 'MiOS' services"
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # is not on PATH at bake time, so the lookup this replaced could never succeed
-# and the branch below it was dead on every build (T-1018).
+# and the branch below it was dead on every build (task_962).
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \

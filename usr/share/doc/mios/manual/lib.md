@@ -126,7 +126,7 @@ AI-functions: add_mask, register_common_masks, mask_filter, scurl
 ### !/usr/bin/env python3 AI-hint: SSOT var-closure fitness...
 
 !/usr/bin/env python3
-AI-hint: SSOT var-closure fitness function (drift-check 37 `check_drift_projection`). Proves R ⊆ E -- referenced MIOS_* variables are emitted by SSOT (AGY-1574).
+AI-hint: SSOT var-closure fitness function (drift-check 37 `check_drift_projection`). Proves R ⊆ E -- referenced MIOS_* variables are emitted by SSOT (task_2215).
 AI-related: ../../usr/lib/mios/userenv.sh, ../../tools/lib/userenv.sh, ../../usr/libexec/mios/system-sync-env.sh, ../97-ssot-lint.sh
 AI-functions: emitted_set, referenced_set, main
 
@@ -258,7 +258,7 @@ Allowlisting a name that does not exist blinds the staleness
 measurement to precisely the references it exists to find, which
 lowers the count without making anything truer. Names that are
 legitimate but unresolvable belong in [docs].ref_allowlist with a
-recorded reason (AGY-1608), not hardcoded here.
+recorded reason (task_2249), not hardcoded here.
 
 <!-- mios-src:89c739e01b60 from usr/lib/mios/mios_comments.py:363-371 -->
 

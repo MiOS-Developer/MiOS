@@ -273,7 +273,7 @@ up_UNIT_DIR = "usr/lib/systemd/system"
 
 def up_declared_units(data: dict) -> set:
     """Unit filenames [units.*] projects. Table-valued keys only -- the
-    string-valued half is name aliases, not units. See tasks.jsonl T-317."""
+    string-valued half is name aliases, not units. See tasks.jsonl task_267."""
     return {k for k, v in (data.get("units") or {}).items() if isinstance(v, dict)}
 
 def up_unit_aliases(data: dict) -> set:
@@ -372,7 +372,7 @@ def up_binary_path(root: str, build: bool = True):
     """A built mios-unit-gen, building it once if cargo is available.
 
     Without this the gate SKIPS its rendering comparison wherever nobody has run
-    cargo -- which is every CI checkout, the one place it matters. See T-317.
+    cargo -- which is every CI checkout, the one place it matters. See task_267.
     """
     found = up__built(root)
     if found or not build:
@@ -1570,7 +1570,7 @@ def bc_classify(data: dict, root: str = ".") -> list:
             viol.append("[blade.requires].%s lists no capability -- an empty list "
                         "gates nothing, so say so in [blade].seat_side instead" % svc)
         if "gpu-serving" in caps and (svc not in fallbacks or not fallbacks[svc]):
-            viol.append("unit '%s' requires 'gpu-serving' but declares no fallback in [blade.cpu_fallbacks] (AGY-1596)" % svc)
+            viol.append("unit '%s' requires 'gpu-serving' but declares no fallback in [blade.cpu_fallbacks] (task_2237)" % svc)
         for cap in caps:
             if cap not in granted:
                 viol.append("capability '%s' (required by %s) is granted by NO "

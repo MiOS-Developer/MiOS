@@ -18,7 +18,7 @@ superseded_by: []
 
 ## Status
 Accepted — 2026-07-16 (Laws 5, 7, 8). The decision is in force; the folding of
-`mios.html` into the Portal is PLANNED (WS-CONFIG / CONFIG-01) — see Consequences
+`mios.html` into the Portal is PLANNED (WS-CONFIG / task_3235) — see Consequences
 for the honest DONE-vs-PLANNED split. This ADR converges with ADR-0006 (the single
 OpenAI front door on the `agent_pipe` port) and ADR-0007 (governance): the same
 port is now the single **web** front door (Portal + configurator) *and* the single
@@ -128,7 +128,7 @@ DONE vs PLANNED (honest):
   port (`mios_portal.py` + `server.py`); the OpenAI `/v1` API is served on that
   same port (ADR-0006); `[portal]` config (login, `public_host`, session TTL) is
   in the SSOT; a native Android Portal client exists (`tools/mios-portal-app/`).
-- **PLANNED (WS-CONFIG / CONFIG-01):** fold `mios.html`
+- **PLANNED (WS-CONFIG / task_3235):** fold `mios.html`
   (`usr/share/mios/configurator/`) into the Portal as a configurator view so the
   standalone page is retired; wire read/write of `mios.toml` from that view through
   `mios_portal.py`; confirm every deployment type's config flows through it. Until

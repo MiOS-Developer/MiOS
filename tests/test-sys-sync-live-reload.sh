@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated zero-reboot sysctl parameter application (<50ms) and live udev test suite (T-823).
+# AI-hint: Automated zero-reboot sysctl parameter application (<50ms) and live udev test suite (task_767).
 # AI-doc: usr/share/doc/mios/manual/kernel.md
 set -euo pipefail
 

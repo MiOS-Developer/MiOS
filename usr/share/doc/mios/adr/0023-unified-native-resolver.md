@@ -18,7 +18,7 @@ superseded_by: [0021]
 
 ## Status
 
-superseded — 2026-08-05. Originally recorded as `docs/adr/0005-unified-native-resolver.md`; promoted to canonical ADR namespace under T-1014. Reconciled with and superseded by ADR-0021 §5 (consolidation into `tools/native/mios-resolver` library crate rather than full replacement of bootstrap readers).
+superseded — 2026-08-05. Originally recorded as `docs/adr/0005-unified-native-resolver.md`; promoted to canonical ADR namespace under task_958. Reconciled with and superseded by ADR-0021 §5 (consolidation into `tools/native/mios-resolver` library crate rather than full replacement of bootstrap readers).
 
 ## Context
 

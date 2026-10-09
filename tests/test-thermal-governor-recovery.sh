@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Continuous thermal stress and proactive governor modulation recovery test suite (T-544, AGY-2142).
+# AI-hint: Continuous thermal stress and proactive governor modulation recovery test suite (task_488, task_2721).
 # AI-doc: usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md
 set -euo pipefail
 
@@ -16,7 +16,7 @@ show_help() {
     cat <<'EOF'
 Usage: test-thermal-governor-recovery.sh [OPTIONS]
 
-Continuous thermal stress and governor modulation recovery test suite (T-544, AGY-2142).
+Continuous thermal stress and governor modulation recovery test suite (task_488, task_2721).
 
 Validates proactive PID thermal regulation, sysfs sensor telemetry, EPP modulation,
 GPU power limit capping before hardware throttle (80°C vs 95°C), and automated hysteresis
@@ -72,7 +72,7 @@ _fail() {
     fail_count=$((fail_count + 1))
 }
 
-echo "=== MiOS Thermal Governor & Recovery Test Suite (T-544, AGY-2142) ==="
+echo "=== MiOS Thermal Governor & Recovery Test Suite (task_488, task_2721) ==="
 echo "sysfs: synthetic fixture (--mock requested: ${MOCK_MODE})"
 
 if [[ "$DRY_RUN" == "true" ]]; then

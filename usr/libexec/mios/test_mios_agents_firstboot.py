@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided controls for T-1139's second half -- mios-agents-firstboot.sh runs as root but must seed the coder home as that home's owner, never root.
+# AI-hint: Two-sided controls for task_3432's second half -- mios-agents-firstboot.sh runs as root but must seed the coder home as that home's owner, never root.
 # AI-related: usr/libexec/mios/mios-agents-firstboot.sh, usr/lib/tmpfiles.d/mios-agents.conf, usr/lib/systemd/system/mios-agents.service
 # AI-functions: run_firstboot_seeders, verify_seeded_ownership, TestAgentsFirstbootOwnership
 """mios-agents.service runs its ExecStartPre (mios-agents-firstboot.sh) as root,

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Dynamic plugin loader and subcommand discovery for MiOS CLI (T-514).
+# AI-hint: Dynamic plugin loader and subcommand discovery for MiOS CLI (task_458).
 # AI-doc: usr/share/doc/mios/manual/mios.md
 from __future__ import annotations
 

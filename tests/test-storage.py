@@ -7,7 +7,7 @@ from __future__ import annotations
 # ======================================================================
 # from tests/test-storage.py
 # ======================================================================
-"""Automated tests for WS-DURA remote delta backup synchronization (T-408 / AGY-2006)."""
+"""Automated tests for WS-DURA remote delta backup synchronization (task_352 / task_2585)."""
 
 
 import importlib.machinery
@@ -563,7 +563,7 @@ def br_main() -> int:
 # ======================================================================
 # from tests/test-storage.py
 # ======================================================================
-"""Automated tests for WS-STRG storage benchmark tool (T-409 / AGY-2007)."""
+"""Automated tests for WS-STRG storage benchmark tool (task_353 / task_2586)."""
 
 
 import importlib.machinery
@@ -871,7 +871,7 @@ def cq_main() -> int:
 # ======================================================================
 # from tests/test-storage.py
 # ======================================================================
-"""Automated tests for Cockpit CephFS & Storage Telemetry Backend (T-550)."""
+"""Automated tests for Cockpit CephFS & Storage Telemetry Backend (task_494)."""
 
 
 import importlib.util
@@ -1070,7 +1070,7 @@ def cgl_main() -> int:
 # ======================================================================
 # from tests/test-storage.py
 # ======================================================================
-"""MiOS Empirical Adversarial Test Harness (Challenger 2).  Executes stress-testing, boundary attacks, simulated memory pressure, fuzzing payloads, security exclusions, SQL injection defense, and zero-downtime safety checks against: - T-404: Ceph RADOS Gateway Quadlet S3 Container - T-405: LUKS2 Zero-Downtime Key Rotation Engine (mios-luks-rotate) - T-407: SQLite / PostgreSQL Database Doctor (mios-db-doctor) - T-408: Remote Delta Snapshot Backup Synchronizer (mios-backup-remote) - T-409: Storage Performance Benchmark Harness (mios-bench-storage) - T-410: Automated tmpfs Spill-to-NVMe Manager (mios-tmpfs-spill) - T-411: Unified Journald Log Aggregation & pgvector Streamer (mios-log-streamer) - T-412: Zero-Downtime Database Migration Runner (mios-db-migrate)"""
+"""MiOS Empirical Adversarial Test Harness (Challenger 2).  Executes stress-testing, boundary attacks, simulated memory pressure, fuzzing payloads, security exclusions, SQL injection defense, and zero-downtime safety checks against: - task_348: Ceph RADOS Gateway Quadlet S3 Container - task_349: LUKS2 Zero-Downtime Key Rotation Engine (mios-luks-rotate) - task_351: SQLite / PostgreSQL Database Doctor (mios-db-doctor) - task_352: Remote Delta Snapshot Backup Synchronizer (mios-backup-remote) - task_353: Storage Performance Benchmark Harness (mios-bench-storage) - task_354: Automated tmpfs Spill-to-NVMe Manager (mios-tmpfs-spill) - task_355: Unified Journald Log Aggregation & pgvector Streamer (mios-log-streamer) - task_356: Zero-Downtime Database Migration Runner (mios-db-migrate)"""
 
 
 import importlib.util
@@ -1749,7 +1749,7 @@ def ls_main() -> int:
 # ======================================================================
 # from tests/test-storage.py
 # ======================================================================
-"""Automated tests for Hardware OPAL 2.0 SED / LUKS2 Partitioning Engine (T-549)."""
+"""Automated tests for Hardware OPAL 2.0 SED / LUKS2 Partitioning Engine (task_493)."""
 
 
 import importlib.util

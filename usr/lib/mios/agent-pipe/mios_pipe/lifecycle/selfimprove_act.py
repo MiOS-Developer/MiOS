@@ -1,4 +1,4 @@
-# AI-hint: Pure self-improvement ACT-half decision core (T-062 ACT + T-064 proof-of-utility).
+# AI-hint: Pure self-improvement ACT-half decision core (task_64 ACT + task_66 proof-of-utility).
 # AI-doc: usr/share/doc/mios/manual/lifecycle.md
 
 from __future__ import annotations

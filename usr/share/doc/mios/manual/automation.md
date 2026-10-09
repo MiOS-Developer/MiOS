@@ -715,7 +715,7 @@ not one. The enable stays exactly where it was, after either leg.
 
 Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 nothing puts on PATH at bake time, so the lookup this replaced could never
-succeed (T-1018). Note the elif below is dead too: SYSFILES is
+succeed (task_962). Note the elif below is dead too: SYSFILES is
 /ctx/system_files, and the Containerfile builds /ctx from automation/, usr/,
 etc/, tools/ and VERSION -- it never creates a system_files/ directory, and
 the repo has none. Both non-default branches were unreachable, so policy.json
@@ -734,9 +734,9 @@ than relying on the caller's cwd.
 
 <!-- mios-src:cb2dc2e83237 from automation/76-uki-render.sh:41-46 -->
 
-### T-1032. Windows-only shim
+### task_969. Windows-only shim
 
-T-1032. Windows-only shim: where a host ships `python` but no `python3`,
+task_969. Windows-only shim: where a host ships `python` but no `python3`,
 materialise one under that name so the checks below can call it. Two rules
 make it safe, and BOTH were missing:
   1. Never when a real python3 already resolves. On Linux it always does, so
@@ -770,7 +770,7 @@ grade a file it never read.
 The lint prints its own tally -- N of M consumed, K registered unconsumed.
 This wrapper used to answer it with "all ... have code consumers", which
 was the overclaim the lint itself was making when it walked a hardcoded
-nine of 128 keys (T-1047). Do not reintroduce a summary here that asserts
+nine of 128 keys (task_984). Do not reintroduce a summary here that asserts
 more than the tool it wraps just measured.
 
 <!-- mios-src:7ea252901d10 from automation/98-drift-checks.sh:836-840 -->
@@ -793,7 +793,7 @@ mios-resolver, miosd, then the Python fallback -- and under `env -i` with
 no binary on PATH it reached tier 3, so mutating mios_toml.py changed BOTH
 legs and they went on agreeing. Proven by mutation: disabling
 resolve_cross_references in mios_toml.py left the bash leg emitting
-${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (T-1062).
+${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (task_3360).
 
 Locate the native resolver and put it on the fixture's PATH so tier 1
 fires. Absent, the comparison is vacuous: fail where the environment
@@ -873,7 +873,7 @@ enforcer in a comma list and any unrecognised enforcer kind.
 ### Law 8 for the container signature policy....
 
 Law 8 for the container signature policy. usr/lib/containers/policy.json
-is projected from [security.sigstore] and, until T-1047's sweep, was the
+is projected from [security.sigstore] and, until task_984's sweep, was the
 ONE generator in the tree with neither half of the law: no regenerate step
 and no drift check. Its own generator's --check compared parsed JSON, so
 it could not see the tracked file drifting in bytes from what the writer
@@ -905,13 +905,13 @@ that same plant rc=1.
 
 Ported to mios-gate per ADR-0021; the python twin is deleted in the same
 commit. The register now pins path:KEY=VALUE, so a grandfathered KEY whose
-VALUE becomes an operator's real password is a NEW finding (T-1035).
+VALUE becomes an operator's real password is a NEW finding (task_972).
 
 <!-- mios-src:f78fa7ea982c from automation/98-drift-checks.sh:4502-4504 -->
 
 ### Header integrity
 
-Header integrity: a tagger must never absorb line 1. See AGY-1607.
+Header integrity: a tagger must never absorb line 1. See task_2248.
 --- no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1 ---
 
 <!-- mios-src:b6768304192e from automation/98-drift-checks.sh:4836-4837 -->
@@ -920,7 +920,7 @@ Header integrity: a tagger must never absorb line 1. See AGY-1607.
 
 stderr carried the only record of a dropped variable and was discarded
 here, so MIOS_AI_ENDPOINT going missing from install.env was invisible at
-bake while Law 5 routed every agent through it (T-1060). It is captured
+bake while Law 5 routed every agent through it (task_997). It is captured
 and echoed now -- on failure AND on success, because a declared
 [security.non_bare_env] skip is a thing a reader should still see.
 
@@ -960,9 +960,9 @@ after it never reached the operator (or a negative test reading why).
 
 <!-- mios-src:bd8a7c2a418f from automation/98-drift-checks.sh:784-786 -->
 
-### Ported to mios-gate per ADR-0021 / T-1009 unit 2; the...
+### Ported to mios-gate per ADR-0021 / task_953 unit 2; the...
 
-Ported to mios-gate per ADR-0021 / T-1009 unit 2; the Python twin is
+Ported to mios-gate per ADR-0021 / task_953 unit 2; the Python twin is
 deleted in the same commit. Parity proved on the real tree: both sides
 verify 131 verbs clean.
 
@@ -976,7 +976,7 @@ mios-resolver, miosd, then the Python fallback -- and under `env -i` with
 no binary on PATH it reached tier 3, so mutating mios_toml.py changed BOTH
 legs and they went on agreeing. Proven by mutation: disabling
 resolve_cross_references in mios_toml.py left the bash leg emitting
-${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (T-1062).
+${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (task_3360).
 
 Locate the native resolver and put it on the fixture's PATH so tier 1
 fires. Absent, the comparison is vacuous: fail where the environment
@@ -984,18 +984,18 @@ declares tools mandatory, and say plainly what went unverified otherwise.
 
 <!-- mios-src:d4ade8ef15b7 from automation/98-drift-checks.sh:1300-1310 -->
 
-### T-1197 / ADR-0021
+### task_3488 / ADR-0021
 
-T-1197 / ADR-0021: the [rust.categories] registry is the port plan -- this
+task_3488 / ADR-0021: the [rust.categories] registry is the port plan -- this
 gate fails it the moment a category loses its owner, a crate vanishes from
 disk while still cataloged, a replaces= claim outlives its script, or a
 universe script stops being owned by exactly one porting category.
 
 <!-- mios-src:a119d7969c11 from automation/98-drift-checks.sh:2097-2100 -->
 
-### Ported to mios-gate per ADR-0021 / T-1009 unit 1; the...
+### Ported to mios-gate per ADR-0021 / task_953 unit 1; the...
 
-Ported to mios-gate per ADR-0021 / T-1009 unit 1; the Python twin is
+Ported to mios-gate per ADR-0021 / task_953 unit 1; the Python twin is
 deleted in the same commit. Parity proved on the real tree: both sides
 flagged check_static_linkage identically before the exemption landed,
 and both pass after it.

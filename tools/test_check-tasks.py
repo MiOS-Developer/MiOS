@@ -51,47 +51,47 @@ def sp_run(root):
 def sp_main():
     roots = []
 
-    r = sp_mkrepo([("T-001", "P1", "done"), ("T-002", "P2", "planned")],
-               [("T-001", "--", "done"), ("T-002", ":", "planned")])
+    r = sp_mkrepo([("task_1", "P1", "done"), ("task_2", "P2", "planned")],
+               [("task_1", "--", "done"), ("task_2", ":", "planned")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("agreeing surfaces pass (both heading styles)", rc == 0, out)
     sp_check("the pass line reports the open count", "open=1" in out, out)
 
-    r = sp_mkrepo([("T-001", "P1", "done")], [("T-001", "--", "planned")])
+    r = sp_mkrepo([("task_1", "P1", "done")], [("task_1", "--", "planned")])
     roots.append(r)
     rc, out = sp_run(r)
-    sp_check("a disagreeing cell fails", rc == 1 and "T-001" in out, out)
+    sp_check("a disagreeing cell fails", rc == 1 and "task_1" in out, out)
 
-    r = sp_mkrepo([("T-001", "P1", "?")], [("T-001", "--", "in-progress")])
+    r = sp_mkrepo([("task_1", "P1", "?")], [("task_1", "--", "in-progress")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("'?' fails when a section can answer it", rc == 1 and "'?'" in out, out)
 
-    r = sp_mkrepo([("T-001", "P1", "done")],
-               [("T-001", "--", "done -- a long explanation with -- dashes in it")])
+    r = sp_mkrepo([("task_1", "P1", "done")],
+               [("task_1", "--", "done -- a long explanation with -- dashes in it")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("free prose after ' -- ' is ignored", rc == 0, out)
 
-    r = sp_mkrepo([("T-001", "P1", "in-progress")],
-               [("T-001", "--", "in-progress (built-gated)")])
+    r = sp_mkrepo([("task_1", "P1", "in-progress")],
+               [("task_1", "--", "in-progress (built-gated)")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("a ' (qualifier)' is ignored", rc == 0, out)
 
-    r = sp_mkrepo([("T-001", "P1", "finished")], [("T-001", "--", "finished")])
+    r = sp_mkrepo([("task_1", "P1", "finished")], [("task_1", "--", "finished")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("an unknown status word fails even when both agree",
           rc == 1 and "unknown status" in out, out)
 
-    r = sp_mkrepo([("T-001", "P1", "done")],
-               [("T-001", "--", "done"), ("T-002", "--", "done")])
+    r = sp_mkrepo([("task_1", "P1", "done")],
+               [("task_1", "--", "done"), ("task_2", "--", "done")])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("a section with no summary row fails",
-          rc == 1 and "T-002" in out and "no row in the summary table" in out, out)
+          rc == 1 and "task_2" in out and "no row in the summary table" in out, out)
 
     r = sp_mkrepo([], [])
     roots.append(r)
@@ -99,16 +99,22 @@ def sp_main():
     sp_check("an unparseable summary table fails rather than passing vacuously",
           rc == 1 and "no parseable rows" in out, out)
 
-    r = sp_mkrepo([("T-001", "P1", "?")], [])
+    r = sp_mkrepo([("task_1", "P1", "?")], [])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("'?' with no section to resolve it still fails", rc == 1, out)
 
-    r = sp_mkrepo([("T-001", "P1", "done")], [])
+    r = sp_mkrepo([("task_1", "P1", "done")], [])
     roots.append(r)
     rc, out = sp_run(r)
     sp_check("a row with no section is allowed when it carries a real status",
           rc == 0, out)
+
+    r = sp_mkrepo([("task_1", "P1", "done")], [("task_1", "--", "done -- see task_404")])
+    roots.append(r)
+    rc, out = sp_run(r)
+    sp_check("a task the list names but nothing holds fails",
+          rc == 1 and "references task_404, which names no task" in out, out)
 
     sp_check("head_token strips the continuation", sp_M.status_parity_head_token("done -- x") == "done")
     sp_check("head_token strips the qualifier", sp_M.status_parity_head_token("planned (decision)") == "planned")
@@ -140,6 +146,20 @@ def sch_run_tool(root):
     )
     return p.returncode, p.stdout + p.stderr
 
+def sch_plant(store, text):
+    """Append `text` to the last slice of the frozen AGY-TASKS.md in a copy of tasks.jsonl."""
+    import json
+    lines = open(store, encoding="utf-8").read().split("\n")[:-1]
+    last = None
+    for i, line in enumerate(lines):
+        for j, sl in enumerate((json.loads(line).get("provenance") or {}).get("sources") or []):
+            if sl["file"] == "MiOS:AGY-TASKS.md" and (last is None or sl["offset"] > last[2]):
+                last = (i, j, sl["offset"])
+    rec = json.loads(lines[last[0]])
+    rec["provenance"]["sources"][last[1]]["text"] += text
+    lines[last[0]] = json.dumps(rec, ensure_ascii=False)
+    open(store, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+
 def sch_main():
     root = tempfile.mkdtemp(prefix="task-schema-test-")
     try:
@@ -148,28 +168,26 @@ def sch_main():
             os.path.join(sch__HERE, "../usr/share/mios/mios.toml"),
             os.path.join(root, "usr/share/mios/mios.toml"),
         )
-        # The retired AGY-TASKS.md, rebuilt from the frozen slices in tasks.jsonl (ADR-0028).
-        with open(os.path.join(root, "AGY-TASKS.md"), "w", encoding="utf-8") as fh:
-            fh.write(sp_M.list_text(os.path.join(sch__HERE, ".."), "AGY-TASKS.md"))
+        # The retired AGY-TASKS.md lives on as frozen slices in tasks.jsonl (ADR-0028).
+        shutil.copy(os.path.join(sch__HERE, "../tasks.jsonl"), os.path.join(root, "tasks.jsonl"))
 
         rc, out = sch_run_tool(root)
         sch_check("valid AGY-TASKS.md passes task schema check", rc == 0, f"rc={rc} out={out}")
 
-        # Test missing field failure on a schema-governed task
-        bad_task = """
-## AGY-1608 -- Test task  (WS-TEST | P0 | S)
+        # A task past the schema floor without Verify / Do NOT, naming a task that does not exist.
+        sch_plant(os.path.join(root, "tasks.jsonl"), """
+## task_999999 -- Test task  (WS-TEST | P0 | S)
 **Goal:** test
 **What+How:** test
 **Where:** test
 **Done When:** test
 **Why:** test
-**Dep:** none
-"""
-        with open(os.path.join(root, "AGY-TASKS.md"), "a", encoding="utf-8") as f:
-            f.write(bad_task)
-
+**Dep:** task_9999999
+""")
         rc, out = sch_run_tool(root)
-        sch_check("missing required field (Verify / Do NOT) fails", rc != 0, f"rc={rc} out={out}")
+        sch_check("missing required field (Verify / Do NOT) fails",
+                  rc != 0 and "task_999999: missing **Verify:**" in out, f"rc={rc} out={out}")
+        sch_check("a Dep naming no task fails", "names task_9999999, which does not exist" in out, out)
 
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -202,11 +220,11 @@ def agy_main():
     root = tempfile.mkdtemp(prefix="agy-tasks-test-")
     try:
         content_clean = """
-## AGY-1 -- First task
+## task_1 -- First task
 **Dep:** none
 
-## AGY-2 -- Second task
-**Dep:** AGY-1
+## task_2 -- Second task
+**Dep:** task_1
 """
         with open(os.path.join(root, "AGY-TASKS.md"), "w", encoding="utf-8") as f:
             f.write(content_clean)
@@ -214,19 +232,21 @@ def agy_main():
         rc, out = agy_run_tool(root)
         agy_check("clean AGY tasks passes", rc == 0, f"rc={rc} out={out}")
 
-        content_dup = content_clean + "\n## AGY-1 -- Duplicate task\n"
+        content_dup = content_clean + "\n## task_1 -- Duplicate task\n"
         with open(os.path.join(root, "AGY-TASKS.md"), "w", encoding="utf-8") as f:
             f.write(content_dup)
 
         rc, out = agy_run_tool(root)
-        agy_check("duplicate AGY task ID fails", rc != 0, f"rc={rc} out={out}")
+        agy_check("duplicate AGY task ID fails", rc != 0 and "task_1 is defined multiple times" in out,
+                  f"rc={rc} out={out}")
 
-        content_dangling = content_clean + "\n## AGY-3 -- Task\n**Dep:** AGY-99999\n"
+        content_dangling = content_clean + "\n## task_3 -- Task\n**Dep:** task_99999\n"
         with open(os.path.join(root, "AGY-TASKS.md"), "w", encoding="utf-8") as f:
             f.write(content_dangling)
 
         rc, out = agy_run_tool(root)
-        agy_check("dangling dependency reference fails", rc != 0, f"rc={rc} out={out}")
+        agy_check("dangling dependency reference fails",
+                  rc != 0 and "dangling dependency reference task_99999" in out, f"rc={rc} out={out}")
 
     finally:
         shutil.rmtree(root, ignore_errors=True)
