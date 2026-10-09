@@ -19,6 +19,32 @@ pub enum UnitGenError {
 
 pub const BLADE_KARG: &str = "usr/lib/bootc/kargs.d/05-mios-blade.toml";
 pub const UKI_CMDLINE: &str = "usr/lib/kernel/cmdline";
+pub const REQUIRED_CPU_MITIGATIONS: &[&str] = &[
+    "randomize_kstack_offset=on",
+    "pti=on",
+    "vsyscall=none",
+    "spectre_v2=on",
+    "spectre_bhi=on",
+    "spec_store_bypass_disable=on",
+    "l1tf=full,force",
+    "gather_data_sampling=force",
+    "tsx=off",
+    "kvm.nx_huge_pages=force",
+];
+pub const FORBIDDEN_CPU_ARGUMENTS: &[&str] = &[
+    "pti=off",
+    "nopti",
+    "spectre_v2=off",
+    "spectre_bhi=off",
+    "spec_store_bypass_disable=off",
+    "l1tf=off",
+    "gather_data_sampling=off",
+    "tsx=on",
+    "kvm.nx_huge_pages=off",
+    "randomize_kstack_offset=off",
+    "norandomize_kstack_offset",
+    "mitigations=off",
+];
 pub const COCKPIT_CONF: &str = "etc/cockpit/cockpit.conf";
 pub const IPA_ENROLL_ENV: &str = "etc/mios/ipa-enroll.env";
 pub const BOOTC_INSTALL_CONF: &str = "usr/lib/bootc/install/00-mios.toml";
@@ -468,16 +494,19 @@ pub fn render_uki_cmdline(root: &Path) -> Result<String, UnitGenError> {
                 ))
             })?;
             for arg in args {
-                tokens.push(
-                    arg.as_str()
-                        .ok_or_else(|| {
-                            UnitGenError::GoldenMaster(format!(
-                                "{}: kargs must contain strings",
-                                file.display()
-                            ))
-                        })?
-                        .to_owned(),
-                );
+                let token = arg.as_str().ok_or_else(|| {
+                    UnitGenError::GoldenMaster(format!(
+                        "{}: kargs must contain strings",
+                        file.display()
+                    ))
+                })?;
+                if FORBIDDEN_CPU_ARGUMENTS.contains(&token) {
+                    return Err(UnitGenError::GoldenMaster(format!(
+                        "{}: contradictory CPU mitigation argument forbidden: {token}",
+                        file.display()
+                    )));
+                }
+                tokens.push(token.to_owned());
             }
         }
     }
@@ -533,8 +562,28 @@ pub fn project_deployment(
         let path = root.join(relative);
         if check {
             match fs::read_to_string(&path) {
-                Ok(have) if have.replace("\r\n", "\n") == *body => {}
-                Ok(_) => drift.push(format!("{relative}: drifted from SSOT")),
+                Ok(have) => {
+                    if matches!(kind, DeploymentKind::UkiCmdline) {
+                        let tokens: BTreeSet<&str> = have.split_whitespace().collect();
+                        for forbidden in FORBIDDEN_CPU_ARGUMENTS {
+                            if tokens.contains(forbidden) {
+                                drift.push(format!(
+                                    "{relative}: contradictory CPU mitigation argument forbidden: {forbidden}"
+                                ));
+                            }
+                        }
+                        for mitigation in REQUIRED_CPU_MITIGATIONS {
+                            if !tokens.contains(mitigation) {
+                                drift.push(format!(
+                                    "{relative}: missing required CPU mitigation: {mitigation}"
+                                ));
+                            }
+                        }
+                    }
+                    if have.replace("\r\n", "\n") != *body {
+                        drift.push(format!("{relative}: drifted from SSOT"));
+                    }
+                }
                 Err(e) => drift.push(format!("{relative}: cannot read projection: {e}")),
             }
         } else {
