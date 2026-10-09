@@ -574,10 +574,7 @@ usr/lib/environment.d/*
 
 !/usr/lib/modprobe.d/
 usr/lib/modprobe.d/*
-!/usr/lib/modprobe.d/blacklist-*
-!/usr/lib/modprobe.d/kvmfr.conf
-!/usr/lib/modprobe.d/*mios*
-!/usr/lib/modprobe.d/nvidia*
+!/usr/lib/modprobe.d/50-mios.conf
 
 !/usr/lib/modules-load.d/
 usr/lib/modules-load.d/*
@@ -594,9 +591,7 @@ usr/lib/pam.d/*
 
 !/usr/lib/sysctl.d/
 usr/lib/sysctl.d/*
-!/usr/lib/sysctl.d/*mios*
-!/usr/lib/sysctl.d/20-memory.conf
-!/usr/lib/sysctl.d/20-mios-memory.conf
+!/usr/lib/sysctl.d/99-mios.conf
 
 !/usr/lib/systemd/
 usr/lib/systemd/*
@@ -660,13 +655,11 @@ usr/lib/systemd/system/user@0.service.d/*
 
 !/usr/lib/sysusers.d/
 usr/lib/sysusers.d/*
-!/usr/lib/sysusers.d/*mios*
-!/usr/lib/sysusers.d/20-podman-machine.conf
+!/usr/lib/sysusers.d/50-mios.conf
 
 !/usr/lib/tmpfiles.d/
 usr/lib/tmpfiles.d/*
-!/usr/lib/tmpfiles.d/*mios*
-!/usr/lib/tmpfiles.d/50-nix.conf
+!/usr/lib/tmpfiles.d/50-mios.conf
 
 !/usr/lib/udev/
 usr/lib/udev/*

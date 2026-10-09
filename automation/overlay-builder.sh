@@ -58,12 +58,7 @@ chmod +x /usr/bin/mios 2>/dev/null || true
 echo "[overlay-builder] Setting up MiOS sysusers"
 install -d -m 0755 /etc/sysusers.d
 _sysusers_added=0
-for sf in usr/lib/sysusers.d/10-mios.conf \
-          usr/lib/sysusers.d/30-mios-tmpfiles-prereq.conf \
-          usr/lib/sysusers.d/50-mios.conf \
-          usr/lib/sysusers.d/50-mios-gpu.conf \
-          usr/lib/sysusers.d/50-mios-services.conf \
-; do
+for sf in usr/lib/sysusers.d/*.conf; do
     [[ -f "$sf" ]] || continue
     install -m 0644 "$sf" "/etc/sysusers.d/$(basename "$sf")"
     echo "[overlay-builder]  /etc/sysusers.d/$(basename "$sf")"
@@ -76,15 +71,7 @@ fi
 echo "[overlay-builder] Setting up MiOS tmpfiles.d"
 install -d -m 0755 /etc/tmpfiles.d
 _tmpfiles_added=0
-for tf in usr/lib/tmpfiles.d/mios.conf \
-          usr/lib/tmpfiles.d/mios-services.conf \
-          usr/lib/tmpfiles.d/mios-forge.conf \
-          usr/lib/tmpfiles.d/mios-forge-runner.conf \
-          usr/lib/tmpfiles.d/mios-pxe-hub.conf \
-          usr/lib/tmpfiles.d/mios-guacamole.conf \
-          usr/lib/tmpfiles.d/mios-infra.conf \
-          usr/lib/tmpfiles.d/mios-user.conf \
-; do
+for tf in usr/lib/tmpfiles.d/*.conf; do
     [[ -f "$tf" ]] || continue
     install -m 0644 "$tf" "/etc/tmpfiles.d/$(basename "$tf")"
     echo "[overlay-builder]  /etc/tmpfiles.d/$(basename "$tf")"
