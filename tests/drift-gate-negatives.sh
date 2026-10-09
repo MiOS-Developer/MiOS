@@ -3111,14 +3111,16 @@ test_greenboot() {
     local script="${ROOT}/usr/lib/greenboot/check/required.d/40-mios-ai-plane.sh" script_bak="${ROOT}/usr/lib/greenboot/check/40-mios-ai-plane.sh.negbak"
     local gb_sh="${ROOT}/automation/78-greenboot.sh" gb_bak="${ROOT}/automation/78-greenboot.sh.negbak"
     local old='critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes"]' neg_rc=0
-    _mut() { python3 -c "import io,sys; s=io.open(sys.argv[1],encoding='utf-8').read(); io.open(sys.argv[1],'w',encoding='utf-8').write(s.replace(sys.argv[2],sys.argv[3]))" "$@"; }
+    _mut() { python3 -c "import io,sys; s=io.open(sys.argv[1],encoding='utf-8').read(); io.open(sys.argv[1],'w',encoding='utf-8',newline='\n').write(s.replace(sys.argv[2],sys.argv[3]))" "$@"; }
     cp "$toml" "$backup"
     # (1) Missing health-check script for critical service must FAIL.
     _mut "$toml" "$old" 'critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes", "mios-negtest-absent"]'
     MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed with uncovered critical service"
+    cp "$backup" "$toml"
     # (2) Empty critical set must FAIL.
     _mut "$toml" "$old" 'critical_services = []'
     MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed on empty critical set"
+    cp "$backup" "$toml"
     # (3) Omitting hermes from critical_services must FAIL.
     _mut "$toml" "$old" 'critical_services = ["agent-pipe", "llm-light", "pgvector"]'
     MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed without hermes"
