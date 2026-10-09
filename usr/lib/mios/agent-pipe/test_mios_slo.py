@@ -107,7 +107,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_quality_gate.py (T-1092)
+# Consolidated from test_mios_quality_gate.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for quality_gate.py and smartroute escalation integration.
 # AI-related: mios_pipe/routing/quality_gate.py, mios_pipe/routing/smartroute.py

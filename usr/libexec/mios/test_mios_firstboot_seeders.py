@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided verification test suite for firstboot seeder ordering and degradation reporting (T-1141).
+# AI-hint: Two-sided verification test suite for firstboot seeder ordering and degradation reporting (task_3434).
 # AI-related: usr/lib/systemd/system/mios-ai-firstboot.service, usr/lib/systemd/system/mios-forgejo-runner-firstboot.service, usr/libexec/mios/seed-db-config.py, usr/libexec/mios/mios-ai-firstboot, usr/libexec/mios/mios-forgejo-runner-firstboot.sh
 # AI-functions: check_ordering, check_seed_db_config, check_runner, check_ai_firstboot, TestFirstbootSeedersTwoSided
-"""Two-sided verification controls for Task T-1141.
+"""Two-sided verification controls for Task task_3434.
 
 WHEN forgejo/pgvector/psycopg are unavailable THE SYSTEM SHALL order firstboot
 seeders after them and surface the degradation instead of silently skipping.
@@ -88,7 +88,7 @@ def _no_psycopg(scratch: str) -> str:
     """A module dir whose psycopg refuses to import, as on a host without it."""
     d = os.path.join(scratch, "nopsycopg")
     os.makedirs(d, exist_ok=True)
-    _write(os.path.join(d, "psycopg.py"), 'raise ImportError("psycopg shadowed by the T-1141 fixture")\n')
+    _write(os.path.join(d, "psycopg.py"), 'raise ImportError("psycopg shadowed by the task_3434 fixture")\n')
     return d
 
 

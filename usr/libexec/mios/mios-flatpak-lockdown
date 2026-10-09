@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Flatpak permission lockdown profile validator and manager (T-489).
+# AI-hint: Flatpak permission lockdown profile validator and manager (task_433).
 # AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def verify_boundaries(path: str) -> Dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Flatpak permission lockdown profile manager (T-489, T-490)")
+    parser = argparse.ArgumentParser(description="Flatpak permission lockdown profile manager (task_433, task_434)")
     parser.add_argument("--profile", default=DEFAULT_GLOBAL_OVERRIDE, help="Path to global override file")
     parser.add_argument("--check", action="store_true", help="Check compliance of global override profile")
     parser.add_argument("--verify-boundaries", action="store_true", help="Verify XDG desktop portal and sandbox boundary containment")

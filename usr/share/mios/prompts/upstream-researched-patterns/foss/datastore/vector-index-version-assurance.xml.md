@@ -2,7 +2,7 @@
      image tag resolves to, PostgreSQL major-version data-directory rules,
      extension advisories, and the documented HNSW build, memory, WAL and
      scan parameters MiOS sets or should set.
-     AI-related: usr/share/mios/mios.toml [image.sidecars] [containers.mios-pgvector], usr/share/mios/postgres/schema-init.sql, usr/share/mios/prompts/upstream-research.xml.md, TASKS.jsonl T-1124, .prompts/README.md -->
+     AI-related: usr/share/mios/mios.toml [image.sidecars] [containers.mios-pgvector], usr/share/mios/postgres/schema-init.sql, usr/share/mios/prompts/upstream-research.xml.md, TASKS.jsonl task_3417, .prompts/README.md -->
 <context>
 `mios-pgvector` (port key `pgvector`) is the unified agent datastore: memory,
 events, sessions, skills and a `knowledge` table with HNSW vector recall. Its
@@ -13,7 +13,7 @@ deliberate exact-pin exception with a PostgreSQL-major suffix. The HNSW
 scan parameters are passed on the server command line from `[pgvector]`
 (`MIOS_PG_HNSW_*`); at `af6de6a` their keys sat under `[offline]`, whose
 emitted names the Quadlet does not read, and they have since moved back.
-Task T-1124 (open) asks for HNSW and WAL sizing from the deployed image
+Task task_3417 (open) asks for HNSW and WAL sizing from the deployed image
 without copying a stale PostgreSQL 16 example. These are upstream facts;
 MiOS must not tune or re-pin until they are settled.
 </context>
@@ -48,7 +48,7 @@ Raised by, at these revisions (re-read before relying on them):
 - MiOS `docs/research/architecture-gap-audit-2026-09-29.md` at `af6de6a`: the
   "pgvector version assurance" row (cites an advisory for parallel HNSW
   builds fixed in 0.8.2 and upstream metadata reporting 0.8.6).
-- MiOS `TASKS.jsonl` at `af6de6a`: line 3416 (T-1124, open).
+- MiOS `TASKS.jsonl` at `af6de6a`: line 3416 (task_3417, open).
 </provenance>
 
 <inputs>

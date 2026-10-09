@@ -310,7 +310,7 @@ class PgVectorOptimizer:
             idx_type = idx.get("index_type", "hnsw")
 
             start = time.perf_counter()
-            # CRITICAL: Always CONCURRENTLY to avoid read locks (AGY-1999 Invariant)
+            # CRITICAL: Always CONCURRENTLY to avoid read locks (task_2578 Invariant)
             sql = f"REINDEX INDEX CONCURRENTLY {idx_name};"
             error = None
             try:

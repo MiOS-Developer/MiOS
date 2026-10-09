@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-737 & T-738: streaming ASR latency (<100ms) and WER benchmark.
+# AI-hint: Tests for task_681 & task_682: streaming ASR latency (<100ms) and WER benchmark.
 # AI-related: mios_asr
 # AI-functions: test_silero_vad_detection, test_streaming_token_emission_latency
 
-"""Tests for T-737 & T-738: streaming ASR latency (<100ms) and WER benchmark."""
+"""Tests for task_681 & task_682: streaming ASR latency (<100ms) and WER benchmark."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/ai")
 from mios_asr import StreamingASREngine, SileroVAD
@@ -36,4 +36,4 @@ def test_streaming_token_emission_latency():
 if __name__ == "__main__":
     test_silero_vad_detection()
     test_streaming_token_emission_latency()
-    print("All T-737/T-738 tests passed.")
+    print("All task_681/task_682 tests passed.")

@@ -1,4 +1,4 @@
-# AI-hint: Global Flatpak permission lockdown profile enforcing least-privilege sandbox boundaries across all desktop apps (T-489).
+# AI-hint: Global Flatpak permission lockdown profile enforcing least-privilege sandbox boundaries across all desktop apps (task_433).
 # AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
 
 [Context]

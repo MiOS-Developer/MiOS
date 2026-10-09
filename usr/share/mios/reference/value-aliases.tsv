@@ -1,6 +1,6 @@
 # value-aliases.tsv -- canonical<TAB>alias<TAB>disposition{derive|delete|keep-distinct}[<TAB># reason]
-# Enforced by automation/98-drift-checks.sh::check_value_aliases (WS-DEDUP AGY-858); the
-# keep-distinct rows are also what check_no_duplicate_value_key honours (T-998):
+# Enforced by automation/98-drift-checks.sh::check_value_aliases (WS-DEDUP task_1591); the
+# keep-distinct rows are also what check_no_duplicate_value_key honours (task_942):
 #   * derive / delete : the two keys MUST resolve to the SAME value (a divergence is a
 #                       silent SSOT bug the de-dup campaign must fix, not hide).
 #   * keep-distinct   : the two keys are DISTINCT FACTS -- two SSOT declarations, never to
@@ -16,7 +16,7 @@
 #                       becoming wrong. If they must change together they are ONE fact:
 #                       collapse them instead. A row whose values differ still pins an
 #                       alias-shaped false-friend against a name-based collapse.
-# Seeded from reference/audit-value-dup-report.md (measured). Grows via mios-dup-report (AGY-856).
+# Seeded from reference/audit-value-dup-report.md (measured). Grows via mios-dup-report (task_1591).
 # Every name in a row MUST be emitted by the resolver; an unemitted name is a violation that
 # names it. (Skipping such rows hid 14 of the 15 [pgvector] keys a lost table header stranded
 # under [offline].) A name ending in "_" declares a naming family, not a variable.
@@ -186,7 +186,7 @@ MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE	MIOS_VLLM_IMAGE	derive	# vLLM
 MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_SGLANG_IMAGE_IMAGE	MIOS_SGLANG_IMAGE	derive	# SGLang overlay of the single heavy lane and its upstream image alias
 MIOS_PORTS_RADOSGW	MIOS_PORT_RADOSGW	derive	# port alias family: [ports].radosgw under both spellings
 MIOS_RADOSGW_PORT	MIOS_PORT_RADOSGW	derive	# port alias family: service-prefixed spelling of the same port
-# -- T-998 coincidences: the alias column is a distinct fact that shares the canonical's value --
+# -- task_942 coincidences: the alias column is a distinct fact that shares the canonical's value --
 MIOS_DISPATCH_TRACE_MAX_SPANS_PER_TRACE	MIOS_RUST_CATEGORIES_MAX_UNOWNED	keep-distinct	# a per-trace span storage cap vs a shrink-only ceiling that must equal the census of unowned scripts; the ceiling moves with every port
 MIOS_DAEMON_INDEX_SUMMARY_MAX_BYTES	MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S	keep-distinct	# bytes of a file kept as its index summary vs seconds a cloud session may spend on setup
 MIOS_DASHBOARD_PROBE_TIMEOUT_MS	MIOS_DEPLOYMENT_CLOUD_GCE_BOOT_DISK_GB	keep-distinct	# a loopback probe timeout in milliseconds vs a Compute Engine boot disk size in GB
@@ -228,3 +228,19 @@ MIOS_BLADE_REQUIRES_K3S	MIOS_BLADE_REQUIRES_MIOS_HEADSCALE	keep-distinct	# each 
 MIOS_AGENT_PIPE_NO_PROGRESS_WINDOW	MIOS_DEPLOY_FORMATS_VHDX_VM_GENERATION	keep-distinct	# turns before agent progress intervention vs the Hyper-V firmware generation; changing a progress budget cannot select a VM firmware interface
 MIOS_CONVERGE_GATEWAY_WORKER_CONCURRENCY	MIOS_DEPLOY_FORMATS_VHDX_VM_PROCESSORS	keep-distinct	# gateway request workers vs virtual CPUs assigned to a boot-test VM; either workload can be resized independently
 MIOS_BUILD_RATCHET_MAX_PHASE_SCRIPTS	MIOS_LEGIBILITY_MAX_AUTOMATION_PHASES	derive	# both bound the same automation/NN-*.sh population; phase consolidation changes both together
+MIOS_ACI_MAX_LINES	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AUTOMATION_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; it only comes down as that domain folds, independent of the canonical key
+MIOS_DAEMON_INDEX_INTERVAL_MIN	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AUTOMATION_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_TERMINAL_ROWS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_HARNESS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_TERMINAL_ROWS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_WEB_RESEARCH_ANCHOR_MIN_LEN	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ETC_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_GATEWAY_MAX_STEPS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TOOLS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_DISPATCH_COUNCIL_MAX	MIOS_DEPLOY_FORMATS_VHDX_VM_PROCESSORS	keep-distinct	# a VHDX guest's vCPU count and the council size are unrelated facts that coincide at four
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AGENT_PIPE_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DOCS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TESTS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_TIMEOUT_S	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MODULES_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DEPENDENCY_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_PROJECTIONS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_KNOWLEDGE_EVICT_BATCH	MIOS_LEGIBILITY_FILE_BUDGET_TARGET_TRACKED_FILES	keep-distinct	# the repo-wide ADR-0030 file target and a knowledge eviction batch size are unrelated facts
+MIOS_PLANNER_SHORT_PROMPT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DATA_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_PLANNER_SHORT_PROMPT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_RUST_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong

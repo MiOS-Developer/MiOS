@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (T-529, AGY-2127).
+# AI-hint: Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706).
 # AI-doc: usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md
 """
 Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser.
@@ -732,7 +732,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="mios-blade-enroll",
-        description="Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (T-529, AGY-2127).",
+        description="Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # Global top-level arguments

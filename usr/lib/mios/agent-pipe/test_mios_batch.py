@@ -113,7 +113,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_compound.py (T-1092)
+# Consolidated from test_mios_compound.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the #49 read-tool-enrich domain-filter fix: a compound that spans domains must keep verbs refine EXPLICITLY hinted (and,...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

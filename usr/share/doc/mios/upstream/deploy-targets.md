@@ -138,7 +138,7 @@ align with the remote `:latest` tag, so the installed host immediately tracks
 the published image.
 
 > [!WARNING]
-> **Bare-Metal & USB Deployment Status Notice (AGY-1888)**:
+> **Bare-Metal & USB Deployment Status Notice (task_2457)**:
 > Automated USB/Ventoy installer media generation is functional for WinPE live sessions and standard Fedora recovery, but automated bare-metal deployment of the MiOS bootc image is disconnected: the kickstart scripts deploy standard Fedora rather than installing MiOS.
 > From a live environment with network access, install with `mios-install disk --target-disk DEV --yes` (or `--auto-select`), which runs the image's own `bootc install to-disk` in podman (ADR-0014; `upstream/bootc.md` §Installing a bootc image).
 > Offline, `tools/install.sh --target-disk DEV` installs the staged `oci-archive:` from the MiOS-Repo partition through `mios-install disk --source oci-archive:PATH`, which sets `--target-imgref` so the installed host upgrades from the published image.

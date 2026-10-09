@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided controls for T-1140 -- both speech engines (piper, whisper) load a model baked into their bound image: no host model-store Volume, no [services] model_dir, no /var store in tmpfiles, no AssertPathExists on one.
+# AI-hint: Two-sided controls for task_3433 -- both speech engines (piper, whisper) load a model baked into their bound image: no host model-store Volume, no [services] model_dir, no /var store in tmpfiles, no AssertPathExists on one.
 # AI-related: usr/share/mios/mios.toml, usr/share/mios/piper/Containerfile, usr/share/containers/systemd/mios-whisper.container, usr/share/containers/systemd/mios-piper.container
 # AI-functions: speech_engines, check_engine, TestSpeechStorage
-"""T-1140: the speech engines bound a host model store nothing populated.
+"""task_3433: the speech engines bound a host model store nothing populated.
 Read-only vendor models are image content (Law 12); nothing seeds /var, so a
 host store plus AssertPathExists failed every stock boot.
 

@@ -33,7 +33,7 @@ Two modes:
 
 Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
         MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
-        T-068 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
         the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
         When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
         SET first so the schema RLS policies scope rows to that owner. Default-off /

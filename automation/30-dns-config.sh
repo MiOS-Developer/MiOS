@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: systemd-resolved to mios-adguard split-horizon DNS routing configurator (T-497).
+# AI-hint: systemd-resolved to mios-adguard split-horizon DNS routing configurator (task_441).
 # AI-doc: usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md
 set -euo pipefail
 # shellcheck source=/dev/null
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 source "$(dirname "$0")/lib/common.sh"
 
-mios_log "Configuring systemd-resolved split-horizon routing to mios-adguard (T-497)"
+mios_log "Configuring systemd-resolved split-horizon routing to mios-adguard (task_441)"
 
 install -d -m 0755 /etc/systemd/resolved.conf.d
 install -d -m 0755 /usr/lib/systemd/resolved.conf.d
 
 cat > /usr/lib/systemd/resolved.conf.d/10-adguard.conf <<'EOF'
-# AI-hint: systemd-resolved to mios-adguard split-horizon DNS routing drop-in (T-497).
+# AI-hint: systemd-resolved to mios-adguard split-horizon DNS routing drop-in (task_441).
 # AI-doc: usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md
 
 [Resolve]

@@ -470,7 +470,7 @@ class USBHotplugManager:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS USB Controller & DAC Hotplug Passthrough Manager (T-422)"
+        description="MiOS USB Controller & DAC Hotplug Passthrough Manager (task_366)"
     )
     parser.add_argument(
         "--action",

@@ -1,4 +1,4 @@
-# AI-hint: MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy (T-820).
+# AI-hint: MiOS Subagent Worker Slice with active ManagedOOMMemoryPressure=kill policy (task_764).
 # AI-related: etc/systemd/oomd.conf, usr/libexec/mios/kernel/oomd_psi.py, tests/test-systemd-oomd-psi.sh
 
 [Unit]

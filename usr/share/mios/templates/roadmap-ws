@@ -15,7 +15,7 @@ acceptance: |
 -->
 *{{description}}*
 
-### {{id}}-01 — {{task_title}}  **[{{priority}}]**  (→ T-{{task_id}})
+### {{id}}-01 — {{task_title}}  **[{{priority}}]**  (→ task_{{task_id}})
 - **What:** Detail the task description.
 - **Why:** Explain the rationale.
 - **Files:** List of modified/new files.

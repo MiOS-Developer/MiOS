@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (T-507).
+# AI-hint: Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (task_451).
 # AI-doc: usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md
 from __future__ import annotations
 

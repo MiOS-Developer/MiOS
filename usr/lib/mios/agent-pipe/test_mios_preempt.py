@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Standalone assert-script unit test for mios_preempt (WS-A12 RR-preemption state machine + snapshot contract, PLUS the T-019/...
+# AI-hint: Standalone assert-script unit test for mios_preempt (WS-A12 RR-preemption state machine + snapshot contract, PLUS the task_19/...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Unit tests for mios_preempt (WS-A12 RR primitives + T-019/SCHED-01 turn seam)."""
+"""Unit tests for mios_preempt (WS-A12 RR primitives + task_19/task_19 turn seam)."""
 
 import asyncio
 import sys
@@ -606,7 +606,7 @@ def t_slice_boundary_degrade_open():
 
 def t_turn_boundary_default_off_ignores_queue():
     """Regression guard: with queue_enable OFF, _higher_priority_waiting is byte-
-    identical to the T-019 probe-only path even if the queue holds a higher-priority
+    identical to the task_19 probe-only path even if the queue holds a higher-priority
     turn -- so the queue can never silently change default-off preemption."""
     snap = _snapshot_state()
     try:

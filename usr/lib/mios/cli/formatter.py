@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# AI-hint: Dynamic TTY / Rich / JSON / YAML output formatter and adaptive CLI engine (T-513).
+# AI-hint: Dynamic TTY / Rich / JSON / YAML output formatter and adaptive CLI engine (task_457).
 # AI-doc: usr/share/doc/mios/manual/mios.md
 from __future__ import annotations
 

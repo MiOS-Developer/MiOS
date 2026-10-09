@@ -159,7 +159,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_mtls.py (T-1092)
+# Consolidated from test_mios_mtls.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for tools/provision-agent-mtls (#54 mTLS PKI): the agent leaf cert is signed by the CA, carries clientAuth+serverAuth EKU, and r...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

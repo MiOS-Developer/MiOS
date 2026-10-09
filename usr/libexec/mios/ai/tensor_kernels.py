@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: GPU compute capability detector and FlashAttention-3 / CUTLASS kernel dispatcher (T-649, T-650).
+# AI-hint: GPU compute capability detector and FlashAttention-3 / CUTLASS kernel dispatcher (task_593, task_594).
 # AI-related: usr/libexec/mios/ai/tensor_kernels.py, tests/test-ai.py, automation/20-hardware.sh
 """GPU compute capability detector and FlashAttention-3 / CUTLASS kernel dispatcher for MiOS.
 

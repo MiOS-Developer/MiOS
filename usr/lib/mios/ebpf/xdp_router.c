@@ -1,4 +1,4 @@
-// AI-hint: Native eBPF XDP network fastpath and WireGuard packet router (T-802).
+// AI-hint: Native eBPF XDP network fastpath and WireGuard packet router (task_746).
 // AI-doc: usr/share/doc/mios/manual/ch18-ebpf-xdp-wireguard-fastpath.md
 
 #ifndef __KERNEL__

@@ -3,7 +3,7 @@
 # AI-functions: __init__, trigger_self_build, verify_image_signature, ReplicationBuildResult, SelfReplicationDaemon
 
 """
-self_replicate.py — T-966 WS-HCI
+self_replicate.py — task_910 WS-HCI
 Autonomous self-replication daemon and podman-MiOS-DEV build pipeline trigger.
 
 Inspects local git tree changes, triggers containerized bootc-image-builder (BIB)

@@ -2,7 +2,7 @@
 # AI-functions: __init__, serialize_vm_state, restore_vm_state, MicroVMStateSnapshot, MicroVMLiveMigrator
 
 """
-microvm_migrate.py — T-968 WS-HCI
+microvm_migrate.py — task_912 WS-HCI
 Zero-downtime MicroVM state serialization and live migration handover engine.
 
 Serializes Cloud-Hypervisor/QEMU microVM CPU registers, dirty memory pages,

@@ -93,7 +93,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_audit.py (T-1092)
+# Consolidated from test_mios_config_audit.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_config_audit functionality.
 # AI-related: localhost:8432
@@ -320,7 +320,7 @@ def _run_extra_config_audit():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_validate.py (T-1092)
+# Consolidated from test_mios_config_validate.py (task_1006)
 # ==============================================================================
 # AI-hint: Hermetic unit tests for the WS-CONFIG server-side SAFETY validator
 # AI-related: ./mios_pipe/kernel/config.py, ./mios_pipe/routing/portal.py
@@ -451,7 +451,7 @@ def _run_extra_config_validate():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_write.py (T-1092)
+# Consolidated from test_mios_config_write.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the /portal/config read/write routes to ensure correct auth, TOML parsing, and background DB re-seeding.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
@@ -618,7 +618,7 @@ def _run_extra_config_write():
 
 
 # ==============================================================================
-# Consolidated from test_mios_toml.py (T-1092)
+# Consolidated from test_mios_toml.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for mios_toml.py overlay and DB authoritative fallbacks.
 # AI-related: /usr/lib/mios/mios_toml.py
@@ -718,7 +718,7 @@ def _run_extra_toml():
 
 
 # ==============================================================================
-# Consolidated from test_mios_user_config.py (T-1092)
+# Consolidated from test_mios_user_config.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_user_config functionality.
 # AI-functions: test_parse_simple_toml_tomllib, test_path_escape_guard, TestMiosUserConfig

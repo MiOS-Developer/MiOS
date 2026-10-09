@@ -1,4 +1,4 @@
-# AI-hint: Peer of mios_toml.py resolving configuration settings from PostgreSQL config tables (WS-VECTOR V1 / T-243).
+# AI-hint: Peer of mios_toml.py resolving configuration settings from PostgreSQL config tables (WS-VECTOR V1 / task_222).
 from __future__ import annotations
 
 import os

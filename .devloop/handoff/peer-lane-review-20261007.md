@@ -72,7 +72,7 @@ Implement the editor projector in the existing `mios-gen` category. The integrat
 | Isolation | Tests own unique temporary directories and sanitized resolver inputs. | Run tests concurrently and verify no shared filenames or host metadata affect them. |
 | Release | Actual release binary passes static-linkage for the declared target. | A known dynamic binary fails that gate for its interpreter/dependency. |
 
-## T-1009 Unit 4 status
+## task_953 Unit 4 status
 
 No native value-aliases implementation or completed path-join change was present in the searched `src/mios-rs/mios-gate` tree. Review of that future code remains pending; Linux success does not certify Windows path handling.
 

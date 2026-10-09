@@ -985,7 +985,7 @@ async def _rr_run(client, ep: str, model, messages, *, conv: str,
     _GLOBAL_PRIORITY_GATE -> endpoint semaphore -> lane semaphore.
     Across preemption, releases lane + endpoint semaphores before yielding the
     priority gate, ensuring no dispatch holds an endpoint permit while waiting
-    on the gate (T-1190). Returns the full assistant text. Degrade-open: ANY failure
+    on the gate (task_3483). Returns the full assistant text. Degrade-open: ANY failure
     falls back to one completion of the whole budget; the partial is never lost."""
     held = False
     partial, produced = "", 0

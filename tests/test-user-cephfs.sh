@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Test suite for Global per-user encrypted CephFS subvolume manager (T-528, AGY-2126).
+# AI-hint: Test suite for Global per-user encrypted CephFS subvolume manager (task_472, task_2705).
 # AI-doc: usr/share/doc/mios/manual/ch73-cephfs-user-subvolumes.md
 
 set -euo pipefail
@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[test-user-cephfs] === MiOS User CephFS Subvolume Manager Test Suite (T-528) ==="
+echo "[test-user-cephfs] === MiOS User CephFS Subvolume Manager Test Suite (task_472) ==="
 
 # Test 1: Tooling and CLI validation
 echo "[test-user-cephfs] Test 1: Tooling and CLI verification"

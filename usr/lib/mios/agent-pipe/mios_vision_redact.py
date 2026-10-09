@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (T-539, AGY-2137).
+# AI-hint: ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (task_483, task_2716).
 # AI-doc: usr/share/doc/mios/manual/ch84-vision-redaction.md
 """ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter.
 
@@ -1003,7 +1003,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="mios_vision_redact",
         description=(
             "ATSPI accessibility tree sensitive widget coordinate detector "
-            "and Wayland frame blur filter (T-539, AGY-2137)."
+            "and Wayland frame blur filter (task_483, task_2716)."
         ),
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")

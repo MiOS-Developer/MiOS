@@ -8,9 +8,9 @@ Frees previously allocated hugepages upon VM shutdown/teardown.
 
 <!-- mios-src:0efdf137cfc8 from usr/libexec/mios/virt/hugepages_mgr.py:212-214 -->
 
-### WS-VFIO (T-569): Ephemeral Cloud-Hypervisor MicroVM...
+### WS-VFIO (task_513): Ephemeral Cloud-Hypervisor MicroVM...
 
-WS-VFIO (T-569): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Agent Tool Bridge.
+WS-VFIO (task_513): Ephemeral Cloud-Hypervisor MicroVM Orchestrator & Virtio-VSOCK Agent Tool Bridge.
 
 Spawns hardware-isolated microVM sandboxes in <50ms for untrusted agent tool execution:
 - Launches cloud-hypervisor with direct kernel boot (--kernel, --initramfs, DAX pmem).
@@ -18,21 +18,21 @@ Spawns hardware-isolated microVM sandboxes in <50ms for untrusted agent tool exe
 - Mounts scoped transient virtiofs workspace directories.
 - Completely zeros and destroys microVM guest memory immediately upon tool completion.
 
-<!-- mios-src:1eb37adc451e from usr/libexec/mios/virt/microvm_bridge.py:5-13 -->
+<!-- mios-src:d339fe30b79c from usr/libexec/mios/virt/microvm_bridge.py:5-13 -->
 
-### microvm_migrate.py — T-968 WS-HCI Zero-downtime MicroVM...
+### microvm_migrate.py — task_912 WS-HCI Zero-downtime MicroVM...
 
-microvm_migrate.py — T-968 WS-HCI
+microvm_migrate.py — task_912 WS-HCI
 Zero-downtime MicroVM state serialization and live migration handover engine.
 
 Serializes Cloud-Hypervisor/QEMU microVM CPU registers, dirty memory pages,
 and virtio-pmem DAX file descriptors to achieve <50ms live handover latency.
 
-<!-- mios-src:c07d30241390 from usr/libexec/mios/virt/microvm_migrate.py:4-10 -->
+<!-- mios-src:a42f759368fd from usr/libexec/mios/virt/microvm_migrate.py:4-10 -->
 
-### mios_microvm.py — T-733 WS-VFIO Virtio-PMEM direct DAX...
+### mios_microvm.py — task_677 WS-VFIO Virtio-PMEM direct DAX...
 
-mios_microvm.py — T-733 WS-VFIO
+mios_microvm.py — task_677 WS-VFIO
 Virtio-PMEM direct DAX memory storage manager for ephemeral microVM
 sandboxes.  Allocates anonymous host memfd buffers, populates them with a
 base rootfs image, and passes them to Cloud-Hypervisor via --pmem dax=on.
@@ -95,9 +95,9 @@ Enforces strict state directory isolation (never sharing state between VM instan
 state retention across bootc OS updates adhering to Architectural Invariant 1 (/var persists by default).
 
 <!-- mios-src:cf2acdc0ea80 from usr/libexec/mios/virt/vtpm_provision.py:4-10 -->
-### mios_microvm.py — T-733 / T-806 WS-VFIO SquashFS template...
+### mios_microvm.py — task_677 / task_750 WS-VFIO SquashFS template...
 
-mios_microvm.py — T-733 / T-806 WS-VFIO
+mios_microvm.py — task_677 / task_750 WS-VFIO
 SquashFS template streaming over Unix-socket NBD with ephemeral RAM overlay
 and Virtio-PMEM direct DAX memory storage manager for ephemeral microVM sandboxes.
 
@@ -107,4 +107,4 @@ Launches Cloud-Hypervisor microVM attaching virtual block device mapped to NBD s
 in guest initramfs, mounts NBD read-only and overlays tmpfs RAM upperdir.
 Enables massive concurrency (>100 VMs sharing a single 800MB template) with sub-15ms boot.
 
-<!-- mios-src:24eb45761e96 from usr/libexec/mios/virt/mios_microvm.py:5-15 -->
+<!-- mios-src:f707131221c5 from usr/libexec/mios/virt/mios_microvm.py:5-15 -->

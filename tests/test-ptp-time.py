@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Clock offset jitter and monotonic timestamp ordering validation test suite.
 # AI-related: usr/libexec/mios/net/ptp_time_sync.py, usr/share/mios/mios.toml
-"""Unit test suite for PTP IEEE 1588 time sync, Chrony smooth slewing, and clock monotonicity (T-566)."""
+"""Unit test suite for PTP IEEE 1588 time sync, Chrony smooth slewing, and clock monotonicity (task_510)."""
 
 from __future__ import annotations
 

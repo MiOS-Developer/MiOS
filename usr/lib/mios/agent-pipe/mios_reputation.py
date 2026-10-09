@@ -2,7 +2,7 @@
 # AI-functions: _default_quality, __init__, evaluate_session, get_reputation, sorted_peers, _persist, PeerContribution, ReputationRecord, ReputationEngine
 
 """
-mios_reputation.py — T-344 MAO-07
+mios_reputation.py — task_288 MAO-07
 IntrospecLOO (Introspective Leave-One-Out) marginal contribution evaluation
 for swarm/council agent sessions.
 
@@ -134,7 +134,7 @@ class ReputationEngine:
 
 # PeerReputation is a DIFFERENT contract from ReputationEngine, not an alias for
 # it: the A2A daemons call .score()/.restore()/.rows() on the object bound here,
-# and ReputationEngine (session evaluation, T-344) has none of those. Aliasing the
+# and ReputationEngine (session evaluation, task_288) has none of those. Aliasing the
 # two silently removed that API from the federation path. Re-export the real
 # implementation, which is what this module forwarded to before.
 from mios_pipe.identity.reputation import (  # noqa: E402,F401 -- re-export

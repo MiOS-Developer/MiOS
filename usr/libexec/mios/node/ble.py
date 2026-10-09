@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: BLE beaconing for offline local mesh bootstrap for mios-node (T-395 / AGY-1993).
+# AI-hint: BLE beaconing for offline local mesh bootstrap for mios-node (task_339 / task_2572).
 # AI-related: usr/libexec/mios/node/crypto.py, tests/test-node.py
 """
 MiOS BLE Beaconing & Offline Local Mesh Bootstrap Engine.
@@ -143,6 +143,9 @@ class BleMeshBootstrap:
 
     def start(self) -> None:
         with self._lock:
+            if self._state == BleBootstrapState.PROVISIONED:
+                raise RuntimeError("completed BLE session requires a new instance")
+            self._shared_key = None
             # 1. Identity characteristic: 4-byte node_id + 1-byte state
             id_val = struct.pack(">IB", self.node_id, BleBootstrapState.UNPROVISIONED)
             self.adapter.set_characteristic_value(BLE_CHAR_IDENTITY_UUID, id_val)
@@ -168,9 +171,12 @@ class BleMeshBootstrap:
             salt=hashlib.sha256(self.public_bytes + peer_public_bytes).digest(),
             info=BLE_HKDF_INFO,
         )
-        self._shared_key = hkdf.derive(shared_secret)
+        shared_key = hkdf.derive(shared_secret)
 
         with self._lock:
+            if self._state == BleBootstrapState.PROVISIONED:
+                raise RuntimeError("completed BLE session cannot accept another handshake")
+            self._shared_key = shared_key
             self._state = BleBootstrapState.HANDSHAKING
             id_val = struct.pack(">IB", self.node_id, BleBootstrapState.HANDSHAKING)
             self.adapter.set_characteristic_value(BLE_CHAR_IDENTITY_UUID, id_val)

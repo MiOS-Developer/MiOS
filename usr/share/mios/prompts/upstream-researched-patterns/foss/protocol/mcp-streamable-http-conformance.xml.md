@@ -2,7 +2,7 @@
      declared protocol revision, the stateless Streamable HTTP relay, the
      legacy SSE client path and the MCP-to-strict-function schema boundary
      match the published specification and the FOSS Python SDK 2.x.
-     AI-related: usr/share/mios/mios.toml [mcp], usr/libexec/mios/mios-mcp-server, usr/lib/mios/agent-pipe/mios_mcp_transport.py, usr/lib/mios/agent-pipe/mios_mcp_schema.py, TASKS.jsonl T-1123, .prompts/README.md -->
+     AI-related: usr/share/mios/mios.toml [mcp], usr/libexec/mios/mios-mcp-server, usr/lib/mios/agent-pipe/mios_mcp_transport.py, usr/lib/mios/agent-pipe/mios_mcp_schema.py, TASKS.jsonl task_3416, .prompts/README.md -->
 <context>
 MiOS exposes its verb catalog over the Model Context Protocol and consumes
 other MCP servers from agent-pipe. The SSOT key `[mcp].protocol_version`
@@ -10,7 +10,7 @@ declares one specification revision; the server relays through the FOSS
 Python SDK 2.x as a stateless Streamable HTTP endpoint that answers with JSON
 rather than an event stream; the client keeps a legacy HTTP+SSE path; and a
 converter rewrites every MCP tool `inputSchema` into a strict OpenAI-format
-function schema. Task T-1123 (open) asks that each endpoint be inventoried
+function schema. Task task_3416 (open) asks that each endpoint be inventoried
 against the current Streamable HTTP contract, including session metadata,
 cancellation and response behavior, and that legacy SSE survive only where a
 caller needs it. A research record in the tree still cites an older revision
@@ -49,7 +49,7 @@ Raised by, at these revisions (re-read before relying on them):
 - MiOS `usr/lib/mios/agent-pipe/mios_mcp_schema.py` at `af6de6a`: lines 17-24
   (strict conversion: root object, every property required, optional
   properties widened with `null`, `additionalProperties: false`).
-- MiOS `TASKS.jsonl` at `af6de6a`: line 3415 (T-1123, open).
+- MiOS `TASKS.jsonl` at `af6de6a`: line 3415 (task_3416, open).
 - MiOS `docs/research/architecture-gap-audit-2026-09-29.md` at `af6de6a`: line
   10 (cites revision `2025-11-25` at `mios.toml:3516` and server lines 495 and
   554-567 publishing a session header; stale against the lines above).

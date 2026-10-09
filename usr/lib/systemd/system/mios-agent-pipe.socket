@@ -1,4 +1,4 @@
-# AI-hint: Systemd socket activation unit for agent-pipe zero-downtime handoff (T-542, AGY-2140)
+# AI-hint: Systemd socket activation unit for agent-pipe zero-downtime handoff (task_486, task_2719)
 # AI-doc: usr/share/doc/mios/manual/ch87-socket-activation-handoff.md
 [Unit]
 Description=MiOS Agent-Pipe Zero-Downtime Socket Activation

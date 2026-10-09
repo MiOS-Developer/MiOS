@@ -429,16 +429,16 @@ Stage-1 of the domain router: classify the query into ONE [routing.domains]
 
 <!-- mios-src:073a9eccad06 from usr/lib/mios/agent-pipe/mios_pipe/routing/classify.py:129-134 -->
 
-### Council diversity gate + aggregation bypass (T-047 GAP-1 /...
+### Council diversity gate + aggregation bypass (task_47 GAP-1 /...
 
-Council diversity gate + aggregation bypass (T-047 GAP-1 / T-048 GAP-2).
+Council diversity gate + aggregation bypass (task_47 GAP-1 / task_48 GAP-2).
 
 The council/swarm fan-out produces ``k`` responses that are then handed to a
 final aggregator LLM (``polish_response`` in :mod:`mios_pipe.routing.swarm`).
 Two failure modes this module addresses, BOTH riding the 768-d nomic embeddings
 that already exist on that path (no extra model calls, no per-pair calls):
 
-* **T-047 (RouteMoA input diversity).** An echo-chamber council -- several
+* **task_47 (RouteMoA input diversity).** An echo-chamber council -- several
   near-identical responses -- wastes the aggregator's context and degrades
   synthesis. :func:`select_diverse` prunes the inputs to a semantically diverse
   subset: a lowest-mean-similarity seed, then minimax-orthogonal expansion; any
@@ -446,7 +446,7 @@ that already exist on that path (no extra model calls, no per-pair calls):
   is redundant and is replaced by the next most-orthogonal candidate (dropped
   when even the most-orthogonal remaining candidate is over threshold).
 
-* **T-048 (MOSAIC confidence-aware bypass).** When the whole council converges
+* **task_48 (MOSAIC confidence-aware bypass).** When the whole council converges
   (every pairwise cosine exceeds ``aggregator_bypass_threshold``) the expensive
   aggregator call adds nothing. :func:`should_bypass` detects that; the caller
   then ships the highest-confidence individual response (:func:`medoid_index`,
@@ -460,9 +460,9 @@ with the verb-retrieval cache in :mod:`mios_toolsearch`.
 
 <!-- mios-src:786379e6ddc5 from usr/lib/mios/agent-pipe/mios_pipe/routing/council_diversity.py:4-30 -->
 
-### T-047 RouteMoA input-diversity selection. Returns the...
+### task_47 RouteMoA input-diversity selection. Returns the...
 
-T-047 RouteMoA input-diversity selection. Returns the SELECTED indices
+task_47 RouteMoA input-diversity selection. Returns the SELECTED indices
     (a subset of ``range(len(vectors))``) of the council responses to hand the
     aggregator:
 
@@ -490,9 +490,9 @@ Index of the highest-confidence individual response: the medoid -- the
 
 <!-- mios-src:b8c5bbf3aa40 from usr/lib/mios/agent-pipe/mios_pipe/routing/council_diversity.py:138-142 -->
 
-### Apply the T-047 diversity gate + T-048 aggregation bypass...
+### Apply the task_47 diversity gate + task_48 aggregation bypass...
 
-Apply the T-047 diversity gate + T-048 aggregation bypass over the council
+Apply the task_47 diversity gate + task_48 aggregation bypass over the council
     response ``nodes`` (each a dict carrying ``output_key`` text). Embeds every
     response's text ONCE via ``embed_one`` (the 768-d nomic vectors) and REUSES
     those vectors for both gates -- zero per-pair model calls.
@@ -501,7 +501,7 @@ Apply the T-047 diversity gate + T-048 aggregation bypass over the council
       * ``selected_nodes`` -- the (possibly diversity-pruned) nodes for the
         aggregator (unchanged when the diversity gate is off / nothing pruned);
       * ``bypass`` -- ``None``, or ``{"node", "mean_similarity", "council_size"}``
-        when the council converged and the aggregator LLM must be SKIPPED (T-048).
+        when the council converged and the aggregator LLM must be SKIPPED (task_48).
 
     Convergence (bypass) takes precedence over diversity pruning -- a converged
     council needs neither aggregation nor trimming. Degrades OPEN: with both gates
@@ -981,7 +981,7 @@ A compact, SSOT-sourced card for the relevance model: the agent's OWN
     AgentCard the peer publishes). No hardcoded topic text -- the card IS the
     capability surface the model reasons over.
 
-    FED-G7 (T-051, flag-gated): when ROUTE_ON_CARD_SKILLS is set, a federated peer's
+    FED-G7 (task_51, flag-gated): when ROUTE_ON_CARD_SKILLS is set, a federated peer's
     FULL published skills[] (name/description/tags) are folded in alongside the
     strength tokens so the model routes on the advertised skill, not just the token
     proximity. OFF -> byte-identical to the strength-token-only card.
@@ -2161,9 +2161,9 @@ Yield the final answer in small character-exact chunks so OWUI renders
 
 <!-- mios-src:5806fe0e99a1 from usr/lib/mios/agent-pipe/mios_pipe/routing/sse.py:244-248 -->
 
-### Best-effort read of the war-room activity sink (F-011): a...
+### Best-effort read of the war-room activity sink (task_3176): a...
 
-Best-effort read of the war-room activity sink (F-011): a JSONL sibling of
+Best-effort read of the war-room activity sink (task_3176): a JSONL sibling of
     the hermes-tail state file into which mios-a2o appends per-task start/finish
     transitions when `[frontier].stream_to_reasoning` is on. Returns event dicts
     newer than seen_ts (may be empty). Degrade-open: when the flag is off the file
@@ -2917,10 +2917,10 @@ Interruptible chunked decode (WS-A12). Enforces unified lock order
     _GLOBAL_PRIORITY_GATE -> endpoint semaphore -> lane semaphore.
     Across preemption, releases lane + endpoint semaphores before yielding the
     priority gate, ensuring no dispatch holds an endpoint permit while waiting
-    on the gate (T-1190). Returns the full assistant text. Degrade-open: ANY failure
+    on the gate (task_3483). Returns the full assistant text. Degrade-open: ANY failure
     falls back to one completion of the whole budget; the partial is never lost.
 
-<!-- mios-src:caa0c2491dc4 from usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py:984-989 -->
+<!-- mios-src:4358e2ec6536 from usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py:984-989 -->
 
 ### Ordered lane ids for a route. The heavy lane is one lane...
 

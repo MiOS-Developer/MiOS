@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Persistent pstore ramoops kernel crash buffer manager and post-mortem extractor (T-790).
+# AI-hint: Persistent pstore ramoops kernel crash buffer manager and post-mortem extractor (task_734).
 # AI-doc: usr/share/doc/mios/manual/ch13-kernel-panics-and-pstore-forensics.md
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def extract_pstore(pstore_dir: str, archive_dir: str, purge: bool = False, dry_r
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Persistent pstore ramoops crash buffer manager and post-mortem extractor (T-790)"
+        description="Persistent pstore ramoops crash buffer manager and post-mortem extractor (task_734)"
     )
     parser.add_argument("--pstore-dir", default=DEFAULT_PSTORE_DIR, help="Path to mounted pstore filesystem")
     parser.add_argument("--archive-dir", default=DEFAULT_ARCHIVE_DIR, help="Path to archive panic logs")

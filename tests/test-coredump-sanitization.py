@@ -1,8 +1,8 @@
-# AI-hint: Tests for T-751 & T-752: crash minidump extraction and raw core purge.
+# AI-hint: Tests for task_695 & task_696: crash minidump extraction and raw core purge.
 # AI-related: mios-node
 # AI-functions: test_minidump_extraction_and_purge
 
-"""Tests for T-751 & T-752: crash minidump extraction and raw core purge."""
+"""Tests for task_695 & task_696: crash minidump extraction and raw core purge."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/diag")
 from coredump_sanitizer import CoredumpSanitizer
@@ -20,4 +20,4 @@ def test_minidump_extraction_and_purge():
 
 if __name__ == "__main__":
     test_minidump_extraction_and_purge()
-    print("All T-751/T-752 tests passed.")
+    print("All task_695/task_696 tests passed.")

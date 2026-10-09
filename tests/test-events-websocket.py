@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for authenticated WebSocket real-time agent execution token stream (T-518).
+# AI-hint: Automated unit test suite for authenticated WebSocket real-time agent execution token stream (task_462).
 # AI-doc: usr/share/doc/mios/manual/ch04-the-agentic-ai-stack.md
 from __future__ import annotations
 

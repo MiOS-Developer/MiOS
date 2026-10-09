@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Bit-Perfect PipeWire Audio & Dynamic Sample Rates (T-703, T-704).
+# AI-hint: Automated unit test suite for Bit-Perfect PipeWire Audio & Dynamic Sample Rates (task_647, task_648).
 # AI-related: usr/libexec/mios/audio/bitperfect_mgr.py, tests/test-bitperfect-audio.py
 """Automated unit test suite for MiOS Bit-Perfect Audio Adapter."""
 

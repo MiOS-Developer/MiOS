@@ -1,4 +1,4 @@
-// AI-hint: Rust bake-plan generator (AGY-139 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).
+// AI-hint: Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).
 mod latest;
 
 use regex::Regex;
@@ -42,7 +42,7 @@ fn get_root() -> PathBuf {
 }
 
 /// Resolve `${VAR}` in an `Image=` line: env, then SSOT, then sidecars, then
-/// the literal fallback. The SSOT layer is the one this binary lacked (T-1057).
+/// the literal fallback. The SSOT layer is the one this binary lacked (task_994).
 fn resolve_image_val(
     val: &str,
     sidecars: &BTreeMap<String, String>,
@@ -425,7 +425,7 @@ fn main() {
         }
     }
 
-    // T-1039. The Quadlet scan above skips every `localhost/*` image, because a
+    // task_976. The Quadlet scan above skips every `localhost/*` image, because a
     // locally built image is not discovered from a Quadlet's Image= line. The
     // python generator then RE-ADDS every localhost image declared in `core`;
     // this port never did, so every `localhost/*` entry of `[build.bake].core`
@@ -618,7 +618,7 @@ fn main() {
         }
 
         let mut seen_images: BTreeSet<String> = BTreeSet::new();
-        // T-1039: the size_gb column. Omitting it made `drift-checks.py
+        // task_976: the size_gb column. Omitting it made `drift-checks.py
         // bake-budget` print "bound-images.tsv missing size_gb column" -- and
         // exit 0, so the day-0 size budget was never actually computed.
         let mut sbom_content = String::from("image\tdigest\tgroup\tsize_gb\n");

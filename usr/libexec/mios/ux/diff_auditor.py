@@ -3,7 +3,7 @@
 # AI-related: usr/share/doc/mios/adr/0018-shutdown-diff-snapshotting-and-boot-cycle-accrual.md, usr/share/doc/mios/manual/ch63-diff-snapshotting-boot-accrual-and-hitl-rollin.md, tests/test-ux.py
 # AI-functions: DiffAuditorEngine, atomic_write_json, main
 """
-WS-DIFFCYCLE (T-468): Human-In-The-Loop Interactive Diff Auditor.
+WS-DIFFCYCLE (task_412): Human-In-The-Loop Interactive Diff Auditor.
 Provides terminal CLI ('mios diff audit') and Quickshell ('DiffReview.qml') back-end
 for reviewing accrued boot-cycle diffs, approving safe/custom modifications,
 rejecting suspicious mutations, and staging approved diffs for autonomous OCI image baking.
@@ -253,7 +253,7 @@ class DiffAuditorEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS WS-DIFFCYCLE (T-468) Human-In-The-Loop Interactive Diff Auditor",
+        description="MiOS WS-DIFFCYCLE (task_412) Human-In-The-Loop Interactive Diff Auditor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

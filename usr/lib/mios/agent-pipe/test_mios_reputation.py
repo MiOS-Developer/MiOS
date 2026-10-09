@@ -101,7 +101,7 @@ def t_persistence() -> None:
 def t_federation_reexport() -> None:
     """Every check above runs on mios_pipe.identity.reputation's PeerReputation:
     mios_reputation re-exports it for the A2A daemons, which call .score(),
-    .restore() and .rows() on it. Aliasing it to the T-344 session
+    .restore() and .rows() on it. Aliasing it to the task_288 session
     ReputationEngine once removed that API from the federation path."""
     _check("reexport: PeerReputation is identity.reputation's class",
            R.PeerReputation is identity_reputation.PeerReputation)

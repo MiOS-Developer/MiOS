@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Early EFI_RNG_PROTOCOL KASLR entropy collector and kernel memory randomizer (T-701, T-702).
+# AI-hint: Early EFI_RNG_PROTOCOL KASLR entropy collector and kernel memory randomizer (task_645, task_646).
 # AI-related: usr/libexec/mios/sec/kaslr_mgr.py, tests/test-sec.py
 """Early EFI_RNG_PROTOCOL KASLR entropy collector and kernel memory randomizer for MiOS.
 

@@ -4,7 +4,7 @@
 
 **Status:** proposed (2026-10-06) · **Implements:** ADR-0021 (Rust static binary consolidation),
 ADR-0011 (language-per-domain), ADR-0014 (image-native install) · **Task epic:** WS-LANG
-(T-1007…T-1018, T-1197, T-1198, T-1199, T-1207, T-1212; backlog AGY-1067…AGY-1102, AGY-1626) ·
+(task_951…task_962, task_3488, task_3489, task_3490, task_3496, task_3505; backlog task_1707…task_1742, task_2267) ·
 **Owner:** port lane (see `[rust.categories]`, §7.2)
 
 ---
@@ -36,9 +36,9 @@ in `usr/libexec/mios/` that extension-only censuses miss) — across `mios.git` 
 
 - Five-to-eight **function-named** binaries over one shared SSOT crate — `mios-gate`, `mios-gen`,
   `mios-resolver`, `mios-serve`, `mios-probe` — plus the already-existing `mios-install`,
-  `mios-build`, `mios-task`. **Not** a multicall `miosd`; per T-1212, `miosd` demotes to a thin
+  `mios-build`, `mios-task`. **Not** a multicall `miosd`; per task_3505, `miosd` demotes to a thin
   exec shim and its render verbs move into `mios-gen`.
-- `tools/native/` is absorbed into `src/mios-rs` as modules (T-1007) with `tmpfiles.d L+` symlink
+- `tools/native/` is absorbed into `src/mios-rs` as modules (task_951) with `tmpfiles.d L+` symlink
   shims preserving legacy call sites.
 - "Static" means **portable across operating systems**: `x86_64-unknown-linux-musl` (static-PIE)
   and `aarch64-unknown-linux-musl` (static, non-PIE until upstream supports PIE) for the image
@@ -127,7 +127,7 @@ fallback), `cargo fmt --check`, `clippy -D warnings`, tests.
    `55-native-build.sh` plans `--platform linux` only. Existing `.exe` artifacts were host-built.
 4. **No crate-level scaffold template**: `templates/rust` emits a single `.rs` file; nothing
    scaffolds `Cargo.toml` + `src/main.rs` + workspace registration (Law 16 gap).
-5. **`[rust.categories]` does not exist** (T-1197): the port plan is tracked only in TASKS.md,
+5. **`[rust.categories]` does not exist** (task_3488): the port plan is tracked only in TASKS.md,
    not in SSOT.
 6. No `.cargo/config.toml`; cross-compile flags are ad hoc `RUSTFLAGS` in `55-native-build.sh`.
 7. Host-built release ELFs in `tools/native/target/release` are glibc-dynamic and (by design)
@@ -141,13 +141,13 @@ fallback), `cargo fmt --check`, `clippy -D warnings`, tests.
 |---|---|---|---|
 | `mios-resolver` (+ lib crate) | cli | `/usr/bin` | `mios_toml.py` (demoted to shim), `userenv.sh` emit path, `globals.*` generation, `/etc/mios/install.env` |
 | `mios-gate` | cli | `/usr/bin` | every `check-*`: `tools/drift-checks.py`, `97-ssot-lint.sh`, `98-drift-checks.sh` families |
-| `mios-gen` | cli | `/usr/bin` | every `generate-*` / `render-*` projector; `miosd` render verbs (T-1207); `mios-gen apply` re-projects after save and at boot (T-1198) |
+| `mios-gen` | cli | `/usr/bin` | every `generate-*` / `render-*` projector; `miosd` render verbs (task_3496); `mios-gen apply` re-projects after save and at boot (task_3489) |
 | `mios-serve` | services | `/usr/libexec/mios` | non-AI-plane daemons: MCP runner, self-heal, policy-arbiter, account-sync, log-streamer, tmpfs-spill, cron-director, killswitch |
 | `mios-probe` | cli | `/usr/bin` | host-readiness probing (exists) |
 | `mios-install` | cli | `/usr/bin` | `deploy/baremetal_install.py`, `Get-MiOS.ps1` core, the two grandfathered `.cs` tools |
 | `mios-build` | cli | `/usr/bin` | build-driver logic out of `build-mios.ps1` / root PS monoliths |
 | `mios-task` | cli | `/usr/bin` | exists (tasks.jsonl, ADR-0028) |
-| `miosd` | — | `/usr/bin` | thin exec shim over the above (T-1212); daemon duties move to `mios-serve` |
+| `miosd` | — | `/usr/bin` | thin exec shim over the above (task_3505); daemon duties move to `mios-serve` |
 | `mios-node`, `mios-launch`, `mios-wallpaperd` | daemons/apps | `/usr/libexec/mios` (+expose) | edge node; Windows terminal launcher; Windows wallpaper service |
 
 Shared crates (no bin): `mios-resolver` lib (the ONE SSOT reader), `mios-ssot-walk`,
@@ -187,7 +187,7 @@ time a port skipped it, the twin-drift incident (doc-unified-pipeline.md §1: th
 `34-render-quadlets` renumber left the hand-ported `mios-ssot-lint` opening `15-…` and
 red-baked the pipeline at 1m18s) burned a full CI cycle.
 
-1. **Golden master FIRST** (AGY-1067). Before writing any Rust: capture the script's real-tree
+1. **Golden master FIRST** (task_1707). Before writing any Rust: capture the script's real-tree
    outputs into `tests/golden/<surface>/`, and **plant negative controls** — malformed inputs
    that must fail *for the planted reason*. Two-sided, per the dev-loop definition of done:
    - *Positive control:* valid input → expected stdout/stderr/exit 0, byte-identical.
@@ -219,7 +219,7 @@ red-baked the pipeline at 1m18s) burned a full CI cycle.
 9. **Record**: commit message cites the task ID, the deleted script paths, and before/after
    line counts.
 
-### 5.1 Worked example — porting `tools/generate-cosign-policy.py` (AGY-1080)
+### 5.1 Worked example — porting `tools/generate-cosign-policy.py` (task_1720)
 
 1. Golden master: `tests/golden/README.md` gets a `cosign-policy` console block for the real tree
    (positive: projected policy matches `usr/share/mios/policy/…`; negative: missing
@@ -232,7 +232,7 @@ red-baked the pipeline at 1m18s) burned a full CI cycle.
 4. Register under `[rust.categories]` with `replaces = ["tools/generate-cosign-policy.py"]`.
 5. Parity: byte-diff golden outputs script vs binary on the real tree; negatives fail verbatim.
 6. `tools/sync-generated.sh` step flips to `mios-gen cosign-policy` native-only; CI line added.
-7. Gates green; delete the `.py`; ceilings fall; commit cites AGY-1080 + counts.
+7. Gates green; delete the `.py`; ceilings fall; commit cites task_1720 + counts.
 
 ## 6. The phase plan
 
@@ -253,12 +253,12 @@ run first or in parallel. Within a phase, items are sequenced; the sequence colu
 | # | Action | Task | DoD |
 |---|---|---|---|
 | 1.1 | Crate scaffold template: extend `[templates.rust]` → a `rust-crate` type scaffolding `Cargo.toml` + `src/main.rs` + workspace regen; golden-test it like every template | Law 16 | `mios new rust-crate foo` produces a compiling, gate-passing crate skeleton |
-| 1.2 | `[rust.categories]` registry + ownership gate: category → owner → `replaces` script list; a `mios-gate` check flags any script both alive and listed `replaced` (or listed with no owner) | T-1197 | registry in `mios.toml`; gate green on the real tree with the current 33 binaries registered |
-| 1.3 | Golden-master trycmd harness: fixture layout under `tests/golden/`, runner wired into CI before any port | AGY-1067 | harness runs script-or-binary from one fixture set; CI leg exists |
-| 1.4 | Resolver cutover: `mios-resolver` becomes the ONE reader; `mios_toml.py` fully demoted to shim; `globals.{sh,ps1}` generated by `render-globals.py` **from `mios-resolver --emit`**; cutover toggles all-true then removed | T-1008, T-1015 | zero first-class SSOT readers besides the Rust resolver |
+| 1.2 | `[rust.categories]` registry + ownership gate: category → owner → `replaces` script list; a `mios-gate` check flags any script both alive and listed `replaced` (or listed with no owner) | task_3488 | registry in `mios.toml`; gate green on the real tree with the current 33 binaries registered |
+| 1.3 | Golden-master trycmd harness: fixture layout under `tests/golden/`, runner wired into CI before any port | task_1707 | harness runs script-or-binary from one fixture set; CI leg exists |
+| 1.4 | Resolver cutover: `mios-resolver` becomes the ONE reader; `mios_toml.py` fully demoted to shim; `globals.{sh,ps1}` generated by `render-globals.py` **from `mios-resolver --emit`**; cutover toggles all-true then removed | task_952, task_959 | zero first-class SSOT readers besides the Rust resolver |
 | 1.5 | Check in `.cargo/config.toml` codifying the §4.2 matrix; `55-native-build.sh` consumes it instead of ad hoc `RUSTFLAGS` | — | config drives both workspaces; musl + windows targets build from clean |
 
-### Phase 2 — `mios-gate` strangler (XL; T-1009)
+### Phase 2 — `mios-gate` strangler (XL; task_953)
 
 Port drift checks check-by-check into `mios-gate` (18 already there). **Order matters:**
 
@@ -277,31 +277,31 @@ dispatcher; its final state is deletion when the last check moves (Phase 8).
 DoD: `python tools/ci-suites.py --check` census updated; `mios-gate --format json` is the sole
 gate entry point; `tools/drift-checks.py` deleted or reduced to a shim.
 
-### Phase 3 — `mios-gen` batch (L; T-1010, T-1198)
+### Phase 3 — `mios-gen` batch (L; task_954, task_3489)
 
-Stand up `mios-gen` as a verb dispatcher (absorbing `miosd` render verbs per T-1207), then port
+Stand up `mios-gen` as a verb dispatcher (absorbing `miosd` render verbs per task_3496), then port
 projectors in risk order:
 
-1. The four small projectors (AGY-1089): `generate-names-registry` (Rust exists; delete the
-   `.py` fallback — AGY-1073), `generate-cosign-policy.py` (AGY-1080, §5.1 worked example),
-   `generate-uki-cmdline.py` (AGY-1081), `generate-egress-firewall.py` (AGY-1082 — note the
-   Rust generator already exists from AGY-195; finish parity and delete).
-2. `generate-ai-manifest.py` (AGY-1102) — also deletes the manifest-regeneration Python that
+1. The four small projectors (task_1729): `generate-names-registry` (Rust exists; delete the
+   `.py` fallback — task_1713), `generate-cosign-policy.py` (task_1720, §5.1 worked example),
+   `generate-uki-cmdline.py` (task_1721), `generate-egress-firewall.py` (task_1722 — note the
+   Rust generator already exists from task_1246; finish parity and delete).
+2. `generate-ai-manifest.py` (task_1742) — also deletes the manifest-regeneration Python that
    `tools/manifest.json` / `automation/manifest.json` depend on (they are generated indexes,
    not porting registries).
 3. Renderers: `render-manpages.py`, `render-globals.py` (post-1.4 it emits from the resolver),
    `standardize-docs.py`, `roadmap-index.py`, `generate-adr-index.py`, `sync-wiki.py`.
-4. Gate/pipeline index generators (AGY-1088): `generate-gate-index.py` and kin — the "fourth
+4. Gate/pipeline index generators (task_1728): `generate-gate-index.py` and kin — the "fourth
    numbering namespace" from doc-unified-pipeline; folding them into `mios-gen` completes the
    one-number contract.
-5. **`generate-pod-quadlets.py` LAST** (AGY-1083, XL): highest blast radius (116 `[containers]`
+5. **`generate-pod-quadlets.py` LAST** (task_1723, XL): highest blast radius (116 `[containers]`
    projections); requires the deepest golden-master set.
 
-Then T-1198: `mios-gen apply` re-projects after configurator save and at boot (Firstboot path).
+Then task_3489: `mios-gen apply` re-projects after configurator save and at boot (Firstboot path).
 DoD: every `generate-*`/`render-*` in `tools/` is a `mios-gen` verb; `tools/sync-generated.sh`
 steps are native-only.
 
-### Phase 4 — Windows lane + dual-pair collapse (L; T-1012, AGY-1626)
+### Phase 4 — Windows lane + dual-pair collapse (L; task_956, task_2267)
 
 1. **Implement the windows-gnu cross lane**: `miosd native-targets --platform windows` returns
    the install plan from `[build.native.windows]`; `55-native-build.sh` (or its successor
@@ -317,11 +317,11 @@ steps are native-only.
    DoD per pair: one binary, zero mirrors, `[legibility]` falls by the pair's combined lines.
 3. **Port the Windows host surface** (`usr/share/mios/windows/*.ps1`, ~20): keepalive, port
    proxy, shortcut updater, AI node launcher (fixing the retired-port violation, §7), wallpaper
-   (already `mios-wallpaperd`), MCP setup. AGY-1626's ratio inversion (Rust > PowerShell "for
+   (already `mios-wallpaperd`), MCP setup. task_2267's ratio inversion (Rust > PowerShell "for
    anything that is a program") lands here.
    DoD: `max_ps_lines` ceiling dominated by genuine shell-one-liners only.
 
-### Phase 5 — `mios-serve` daemon tier (L; T-1011)
+### Phase 5 — `mios-serve` daemon tier (L; task_955)
 
 Port non-AI-plane daemons, ordered by dependency value and risk:
 
@@ -371,12 +371,12 @@ PowerShell wrapper reduces to a shim that execs the binary and exits.
 DoD: the grandfathered list is empty; `build-mios.ps1` < ~100 lines; Law 14's done-when clause
 is satisfiable.
 
-### Phase 8 — Consolidation (M; T-1007, T-1212, T-1188)
+### Phase 8 — Consolidation (M; task_951, task_3505, task_3481)
 
 Absorb `tools/native/*` crates into `src/mios-rs` as modules; keep `tmpfiles.d L+` shims;
-`miosd` becomes the thin exec shim (T-1212); `mios-gen apply` owns boot-time re-projection
-(T-1198); one config server (T-1199). Delete the compat symlink layer when no caller remains
-(T-1188 audits dead PowerShell). Final audit against §2.1's done-when: ceilings at floor,
+`miosd` becomes the thin exec shim (task_3505); `mios-gen apply` owns boot-time re-projection
+(task_3489); one config server (task_3490). Delete the compat symlink layer when no caller remains
+(task_3481 audits dead PowerShell). Final audit against §2.1's done-when: ceilings at floor,
 `tools/native/` empty of crates, every `check/generate/render/resolve` surface a binary.
 
 ## 7. Parallel SSOT remediation track (runs alongside, not sequenced)
@@ -442,14 +442,14 @@ cannot fail is a phantom and is removed, not kept.
 | Phase | Tasks consumed | Tasks produced |
 |---|---|---|
 | 0 | (handshake findings, 2026-10-06) | live-repair tasks (units/binary staging/agent shims) |
-| 1 | T-1008, T-1015, AGY-1067, T-1197 | crate-template task; `.cargo/config.toml` task |
-| 2 | T-1009, T-1018 (P0, in_progress) | per-check port tasks |
-| 3 | T-1010, T-1198, T-1207, AGY-1073/1080/1081/1082/1083/1088/1089/1102 | — |
-| 4 | T-1012, T-1188 (dead-PS audit), AGY-1626 | pair-collapse checklist tasks |
-| 5 | T-1011 | per-daemon flip tasks |
+| 1 | task_952, task_959, task_1707, task_3488 | crate-template task; `.cargo/config.toml` task |
+| 2 | task_953, task_962 (P0, in_progress) | per-check port tasks |
+| 3 | task_954, task_3489, task_3496, task_1713/1080/1081/1082/1083/1088/1089/1102 | — |
+| 4 | task_956, task_3481 (dead-PS audit), task_2267 | pair-collapse checklist tasks |
+| 5 | task_955 | per-daemon flip tasks |
 | 6 | (census-driven) | `[rust.categories]` entries, one per tool |
 | 7 | ADR-0014 remainder, C# fold-in | grandfathered_cs removal |
-| 8 | T-1007, T-1199, T-1212 | done-when audit |
+| 8 | task_951, task_3490, task_3505 | done-when audit |
 
 ## 11. References
 

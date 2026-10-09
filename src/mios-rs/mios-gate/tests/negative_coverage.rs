@@ -1,4 +1,4 @@
-// AI-hint: Integration tests for mios-gate's negative-coverage check -- the exit-code and diagnostic contract over fixture trees, per the tests/<check>.rs convention (T-1009 unit 1).
+// AI-hint: Integration tests for mios-gate's negative-coverage check -- the exit-code and diagnostic contract over fixture trees, per the tests/<check>.rs convention (task_953 unit 1).
 // AI-related: src/mios-rs/mios-gate/src/negative_coverage.rs, tools/drift-checks.py, tests/drift-gate-negatives.sh
 
 use std::fs;

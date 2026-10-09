@@ -1,10 +1,10 @@
-<!-- AI-hint: Upstream audit behind T-1060 -- what systemd, bash and podman each do with the five characters Law 10 forbids, and what the real install.env render actually carries. Measured, not inferred. -->
-<!-- AI-related: automation/99-postcheck.sh, usr/libexec/mios/system-sync-env.sh, usr/lib/mios/userenv.sh, TASKS.md T-1060, T-1054 -->
+<!-- AI-hint: Upstream audit behind task_997 -- what systemd, bash and podman each do with the five characters Law 10 forbids, and what the real install.env render actually carries. Measured, not inferred. -->
+<!-- AI-related: automation/99-postcheck.sh, usr/libexec/mios/system-sync-env.sh, usr/lib/mios/userenv.sh, TASKS.md task_997, task_991 -->
 
 # Upstream Audit — the three env-file parsers Law 10 exists to reconcile
 
 **Audit ID:** `UPSTREAM-envfile-three-parsers`
-**Component:** Law 10 BARE-SAFE-ENV enforcer, `automation/99-postcheck.sh:515-543` (T-1060)
+**Component:** Law 10 BARE-SAFE-ENV enforcer, `automation/99-postcheck.sh:515-543` (task_997)
 **Parsers audited:** systemd `EnvironmentFile=` (v255), `bash source` (5.2.21), podman `--env-file` (undocumented format)
 **Producer audited:** `usr/libexec/mios/system-sync-env.sh` → `/etc/mios/install.env`
 **Auditor:** research pass, no code changed
@@ -13,10 +13,10 @@
 
 ## 1. Executive summary & recommendation
 
-- **Verdict:** `REFRAME` — the enforcer gap T-1060 records is real, but the defect it predicts cannot
+- **Verdict:** `REFRAME` — the enforcer gap task_997 records is real, but the defect it predicts cannot
   occur, and a **different, live defect** sits behind it.
 - **Risk level:** HIGH (Law 5's contract variable is absent from the file 29 consumers read it from)
-- **Summary:** T-1060 assumes non-bare values reach `install.env` and are then read differently by
+- **Summary:** task_997 assumes non-bare values reach `install.env` and are then read differently by
   three parsers. **They cannot.** The producer's `emit()` already filters **all six** characters —
   whitespace, `"`, `'`, `$`, backtick, `#` — and the real render is clean, measured at **0**
   occurrences. But `emit()` handles a rejected value by **silently dropping the whole variable** and
@@ -117,7 +117,7 @@ units in total read this file.
 
 ## 3. What the real render actually contains — measured
 
-T-1060 records this as unmeasured because `system-sync-env.sh --dry-run` exits 1 in a build container.
+task_997 records this as unmeasured because `system-sync-env.sh --dry-run` exits 1 in a build container.
 **The cause is a single path lookup**, not an environmental impossibility:
 
 ```
@@ -148,7 +148,7 @@ Decoded against each character, the class rejects **space, `"`, `'`, `$`, backti
 ordinary text. That is Law 10's five **plus** single-quote — a superset of what the law names and a
 strict superset of what the enforcer tests.
 
-**Measured on the real render: `0` values carry any forbidden character.** T-1060's central
+**Measured on the real render: `0` values carry any forbidden character.** task_997's central
 unmeasured question is now answered, and the answer is the opposite of the assumption: `install.env`
 is bare, structurally, by construction.
 
@@ -169,7 +169,7 @@ consumers — `mios-node.service`, `mios-node.container`, `agent-pipe`'s `server
 `mios_persona.py`, `mios_gateway_queue.py`, `gateway-agent`, `mios_toml.py` — and it is **absent from
 the file they read it from**. Not wrong. Absent.
 
-This is strictly worse than the non-bare value T-1060 predicted: a literal `${MIOS_PORT_AGENT_PIPE}`
+This is strictly worse than the non-bare value task_997 predicted: a literal `${MIOS_PORT_AGENT_PIPE}`
 at least fails loudly at the first API call. An absent variable falls through to whatever default
 each of the 29 consumers happens to carry, independently.
 
@@ -192,7 +192,7 @@ throws away.
 
 ## 4. Corrections to the task record
 
-| T-1060 claim | Status |
+| task_997 claim | Status |
 |---|---|
 | The enforcer tests 2 of the 5 characters named by the law | **confirmed** — only `="` and the `set -u` probe; no `'`, whitespace, backtick or `#` test |
 | The `set -u` probe discriminates on ordering, not bareness | **confirmed** — reproduced exactly (rc=0 dep-first, rc=127 dep-last) |
@@ -206,7 +206,7 @@ throws away.
 filter is what keeps this unreachable today — the gate has no defence of its own.
 
 **New:** a whitespace value that is *not* the last line is masked entirely — `source` returns the last
-command's status, so `K=two words` followed by any valid line yields rc=0. T-1060 measured the
+command's status, so `K=two words` followed by any valid line yields rc=0. task_997 measured the
 ordering effect for `$`; it applies to whitespace too, for a different reason.
 
 ---
@@ -220,7 +220,7 @@ producer's actual failure. Four changes, in priority order:
    the WARN stream, and **fail the stage on any `WARN skip`**. This alone turns the live
    `MIOS_AI_ENDPOINT` drop from invisible to fatal, and needs no new logic.
 2. **Make `emit()` fail instead of returning 0.** A value that cannot be represented in a bare env
-   file is a resolver bug, not a value to discard. This is the root fix; it belongs with T-1054/the
+   file is a resolver bug, not a value to discard. This is the root fix; it belongs with task_991/the
    resolver's unexpanded cross-references, since `${MIOS_PORT_AGENT_PIPE}` should have been expanded
    before `emit()` ever saw it.
 3. **Add a closure assertion:** every `MIOS_*` name a tracked consumer reads from `install.env` must

@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-hint: Non-critical greenboot check that probes blade reachability per ADR-0016 §8 / AGY-1600. Records reachability state without triggering a rollback unless blade_reachability_critical = true.
+# AI-hint: Non-critical greenboot check that probes blade reachability per ADR-0016 §8 / task_2241. Records reachability state without triggering a rollback unless blade_reachability_critical = true.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /usr/lib/greenboot/check/required.d/40-mios-ai-plane.sh
 set -euo pipefail
 

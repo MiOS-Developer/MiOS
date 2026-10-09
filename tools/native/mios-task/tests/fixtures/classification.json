@@ -1,16 +1,16 @@
 [
  {
-  "key": "T-050",
+  "key": "K-050",
   "class": "mios",
   "why": "lane record"
  },
  {
-  "key": "AGY-9",
+  "key": "KAG-9",
   "class": "mios",
   "why": "a MiOS task kept only in the toolkit backlog"
  },
  {
-  "key": "-dev-loop:.devloop/tasks.jsonl#T-001",
+  "key": "-dev-loop:.devloop/tasks.jsonl#K-001",
   "class": "toolkit",
   "why": "toolkit work"
  }

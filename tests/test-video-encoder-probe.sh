@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (T-535, AGY-2133).
+# AI-hint: Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (task_479, task_2712).
 # AI-doc: usr/share/doc/mios/manual/ch80-hardware-video-encoding.md
 set -euo pipefail
 
@@ -21,7 +21,7 @@ show_help() {
 Usage: tests/test-video-encoder-probe.sh [OPTIONS]
 
 Integration test suite for multi-vendor hardware video encoder discovery and
-DMA-BUF capture bridge (T-535, AGY-2133).
+DMA-BUF capture bridge (task_479, task_2712).
 
 Tests:
   Test 1: CLI and help verification.

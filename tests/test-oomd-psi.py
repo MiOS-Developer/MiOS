@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Systemd OOMD PSI Memory Pressure & Service Protection (T-667, T-668).
+# AI-hint: Automated unit test suite for Systemd OOMD PSI Memory Pressure & Service Protection (task_595, task_596).
 # AI-related: usr/libexec/mios/kernel/oomd_psi.py, tests/test-oomd-psi.py
 """Automated unit test suite for MiOS Systemd OOMD PSI Manager."""
 

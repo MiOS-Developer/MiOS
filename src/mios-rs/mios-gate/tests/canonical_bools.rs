@@ -1,4 +1,4 @@
-// AI-hint: Integration tests for mios-gate's canonical-bools check -- exit-code and diagnostic contract over fixture trees (T-1009 unit 2).
+// AI-hint: Integration tests for mios-gate's canonical-bools check -- exit-code and diagnostic contract over fixture trees (task_953 unit 2).
 // AI-related: src/mios-rs/mios-gate/src/canonical_bools.rs, tools/drift-checks.py, automation/98-drift-checks.sh
 
 use std::fs;

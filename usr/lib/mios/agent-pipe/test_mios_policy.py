@@ -89,7 +89,7 @@ finally:
 print("ok  _hitl_block_reason blocks interactive / passes read in block-mode")
 
 # ---------------------------------------------------------------------------
-# T-228: the durable quota ledger. Two principals accrue separately, the window
+# task_208: the durable quota ledger. Two principals accrue separately, the window
 # is written through, and a RESTART (a fresh module state seeded from the same
 # rows) leaves both balances -- and the enforcement -- intact.
 # ---------------------------------------------------------------------------

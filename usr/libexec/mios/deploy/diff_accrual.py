@@ -3,7 +3,7 @@
 # AI-related: usr/share/doc/mios/adr/0018-shutdown-diff-snapshotting-and-boot-cycle-accrual.md, usr/share/doc/mios/manual/ch63-diff-snapshotting-boot-accrual-and-hitl-rollin.md, tests/test-diff-accrual.py
 # AI-functions: DiffAccrualEngine, classify_risk, classify_path, redact_secrets, atomic_write_json, snapshot_diffs, accrue_diffs, main
 """
-WS-DIFFCYCLE (T-467): Boot Cycle Diff Accrual & Risk Classifier.
+WS-DIFFCYCLE (task_411): Boot Cycle Diff Accrual & Risk Classifier.
 Ingests historical diff snapshots across power cycles, deduplicates entries,
 classifies file mutations into Safe vs High-Risk vs Review tiers,
 and atomically exports structured audit ledgers for operator inspection and image baking.
@@ -355,7 +355,7 @@ class DiffAccrualEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS WS-DIFFCYCLE (T-467) Boot Cycle Diff Accrual & Risk Classifier",
+        description="MiOS WS-DIFFCYCLE (task_411) Boot Cycle Diff Accrual & Risk Classifier",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")

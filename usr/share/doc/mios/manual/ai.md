@@ -2,9 +2,9 @@
 
 # ai
 
-### Autonomous Self-Healing Code Remediation Agent (T-382 /...
+### Autonomous Self-Healing Code Remediation Agent (task_326 /...
 
-Autonomous Self-Healing Code Remediation Agent (T-382 / AGY-1980)
+Autonomous Self-Healing Code Remediation Agent (task_326 / task_2559)
 
 Listens for and detects systemd unit failure events, harvests recent journald error logs,
 formulates structured root cause diagnoses, enforces circuit breaker rate limiting
@@ -12,7 +12,7 @@ formulates structured root cause diagnoses, enforces circuit breaker rate limiti
 applies safe `/etc` configuration patches and `/var` repairs, and logs RCA records
 to `/var/log/mios/self-heal.log`.
 
-<!-- mios-src:06486356871f from usr/libexec/mios/ai/self_heal.py:4-12 -->
+<!-- mios-src:729c98cd7e63 from usr/libexec/mios/ai/self_heal.py:4-12 -->
 
 ### Enforces Architectural Law 1 (USR-OVER-ETC) & bootc...
 
@@ -28,9 +28,9 @@ Formulates structured root cause diagnosis from failure event and journal logs.
 
 <!-- mios-src:5a5c0476a80a from usr/libexec/mios/ai/self_heal.py:351-353 -->
 
-### Synthetic Training Q&A Data Pipeline (T-383 / AGY-1981)...
+### Synthetic Training Q&A Data Pipeline (task_327 / task_2560)...
 
-Synthetic Training Q&A Data Pipeline (T-383 / AGY-1981)
+Synthetic Training Q&A Data Pipeline (task_327 / task_2560)
 
 Harvests architectural chapters, user guides, manual pages, and ADRs from `/usr/share/doc/mios/`
 and `field/`, performs hierarchical markdown parsing with context preservation, synthesizes
@@ -38,35 +38,35 @@ multi-turn reasoning and domain-specific Q&A pairs for `mios-opencode` fine-tuni
 enforces secret/token redaction (Rule 14), and emits JSONL datasets to `/var/lib/mios/ai/dataset/`.
 
 <!-- mios-src:33fe7e6e8b1a from usr/libexec/mios/ai/synthetic_qa.py:4-11 -->
-### fp8_kv_quant.py — T-763 WS-AI Dynamic FP8 (E4M3) KV-cache...
+### fp8_kv_quant.py — task_707 WS-AI Dynamic FP8 (E4M3) KV-cache...
 
-fp8_kv_quant.py — T-763 WS-AI
+fp8_kv_quant.py — task_707 WS-AI
 Dynamic FP8 (E4M3) KV-cache quantizer and per-head scale manager in llama-swap.
 
 Quantizes KV tensors to 8-bit FP8 (E4M3) format with dynamic per-head scaling,
 halving VRAM consumption while preserving needle retrieval accuracy.
 
-<!-- mios-src:89b1469386a0 from usr/lib/mios/ai/fp8_kv_quant.py:4-10 -->
+<!-- mios-src:c26b4eb993e5 from usr/lib/mios/ai/fp8_kv_quant.py:4-10 -->
 
-### intel_paged_attn.py — T-769 WS-VFIO Intel oneAPI Level Zero...
+### intel_paged_attn.py — task_713 WS-VFIO Intel oneAPI Level Zero...
 
-intel_paged_attn.py — T-769 WS-VFIO
+intel_paged_attn.py — task_713 WS-VFIO
 Intel oneAPI Level Zero PagedAttention engine and XMX SYCL matrix kernels in IPEX.
 
 Configures Level Zero runtime (ZE_ENABLE_PCI_ID_DEVICE_ORDER=1) and 16-token
 PagedAttention virtual blocks on Intel Arc/Battlemage GPUs (>90% VRAM efficiency).
 
-<!-- mios-src:368f1b67eb40 from usr/lib/mios/ai/intel_paged_attn.py:4-10 -->
+<!-- mios-src:dcfc8ac4dd4e from usr/lib/mios/ai/intel_paged_attn.py:4-10 -->
 
-### kquants_slicer.py — T-773 WS-AI Dynamic K-Quants...
+### kquants_slicer.py — task_717 WS-AI Dynamic K-Quants...
 
-kquants_slicer.py — T-773 WS-AI
+kquants_slicer.py — task_717 WS-AI
 Dynamic K-Quants mixed-precision layer slicer (Q4_K_M / Q5_K_M / Q6_K) in llama-swap.
 
 Retains Q5_K_M/Q6_K precision for attention heads and slices FFN matrices to Q4_K_M,
 fitting 32B models into <16GB VRAM budgets with <0.03 perplexity delta.
 
-<!-- mios-src:4dac791e7361 from usr/lib/mios/ai/kquants_slicer.py:4-10 -->
+<!-- mios-src:959026e1ce98 from usr/lib/mios/ai/kquants_slicer.py:4-10 -->
 
 ### Slice plan
 
@@ -81,37 +81,37 @@ built for a 7B or a 70B still reported the 32B budget.
 
 <!-- mios-src:ccda7a246451 from usr/lib/mios/ai/kquants_slicer.py:19-26 -->
 
-### mxfp4_kv_quant.py — T-771 WS-AI Microscaling MXFP4 (E2M1)...
+### mxfp4_kv_quant.py — task_715 WS-AI Microscaling MXFP4 (E2M1)...
 
-mxfp4_kv_quant.py — T-771 WS-AI
+mxfp4_kv_quant.py — task_715 WS-AI
 Microscaling MXFP4 (E2M1) KV-cache quantizer and block-32 scale vector manager.
 
 Groups vector elements into 32-value blocks with shared 8-bit scale factor (E8M0),
 reducing KV-cache VRAM allocation to <=27% of uncompressed FP16 (4x density).
 
-<!-- mios-src:c8250cb95edd from usr/lib/mios/ai/mxfp4_kv_quant.py:4-10 -->
+<!-- mios-src:c29210af3cd3 from usr/lib/mios/ai/mxfp4_kv_quant.py:4-10 -->
 
-### speculative_prune.py — T-735 WS-AI In-place tree branch...
+### speculative_prune.py — task_679 WS-AI In-place tree branch...
 
-speculative_prune.py — T-735 WS-AI
+speculative_prune.py — task_679 WS-AI
 In-place tree branch bitmask pruner and speculative KV compaction kernel.
 
 Applies a 16-bit branch mask to reset unaccepted KV block pointers in the
 virtual page table and advance active sequence length counter in-place with
 zero host-GPU synchronization stalls.
 
-<!-- mios-src:58526e0303ac from usr/lib/mios/ai/speculative_prune.py:4-11 -->
+<!-- mios-src:9167244a85ea from usr/lib/mios/ai/speculative_prune.py:4-11 -->
 
-### streaming_llm.py — T-755 WS-AI StreamingLLM attention sink...
+### streaming_llm.py — task_699 WS-AI StreamingLLM attention sink...
 
-streaming_llm.py — T-755 WS-AI
+streaming_llm.py — task_699 WS-AI
 StreamingLLM attention sink pinner and rolling KV eviction manager in llama-swap.
 
 Pins initial attention sink tokens (positions 0..3) permanently while maintaining
 a rolling FIFO circular buffer for positions >= 4, bounding memory consumption
 and enabling perpetual infinite generation with zero OOM crashes.
 
-<!-- mios-src:fcc2980b9750 from usr/lib/mios/ai/streaming_llm.py:4-11 -->
+<!-- mios-src:dcec017579a0 from usr/lib/mios/ai/streaming_llm.py:4-11 -->
 
 ### Eviction is per-token on an infinite generation, so it has...
 
@@ -123,25 +123,25 @@ of the one call site that remembers to trim.
 
 <!-- mios-src:1357f284086c from usr/lib/mios/ai/streaming_llm.py:35-39 -->
 
-### tensor_pipeline.py — T-974 WS-AI Distributed pipeline...
+### tensor_pipeline.py — task_918 WS-AI Distributed pipeline...
 
-tensor_pipeline.py — T-974 WS-AI
+tensor_pipeline.py — task_918 WS-AI
 Distributed pipeline tensor dispatcher with dynamic RPC worker layer partitioning.
 
 Calculates activation tensor network payloads, splits 80-layer models (Llama-3.1-70B)
 across local GPUs and remote RPC worker blades, and manages mid-inference failover.
 
-<!-- mios-src:7e9cbbb80005 from usr/lib/mios/ai/tensor_pipeline.py:4-10 -->
+<!-- mios-src:d776fcb9447d from usr/lib/mios/ai/tensor_pipeline.py:4-10 -->
 
-### WS-AI (T-553): Cryptographic Merkle-Tree Agent Audit Chain...
+### WS-AI (task_497): Cryptographic Merkle-Tree Agent Audit Chain...
 
-WS-AI (T-553): Cryptographic Merkle-Tree Agent Audit Chain Recorder & Ed25519 Block Signer.
+WS-AI (task_497): Cryptographic Merkle-Tree Agent Audit Chain Recorder & Ed25519 Block Signer.
 Maintains an immutable, append-only cryptographic audit chain for all agent decisions,
 tool invocations, and filesystem modifications. Each block cryptographically binds to its predecessor
 via SHA-256 hash chains, signs the block hash using the host node's Ed25519 key, and constructs
 periodic Merkle tree roots for lightweight inclusion proof verification and tamper detection.
 
-<!-- mios-src:4253fe478ce8 from usr/libexec/mios/ai/audit_chain.py:5-11 -->
+<!-- mios-src:e2460fc9be3e from usr/libexec/mios/ai/audit_chain.py:5-11 -->
 
 ### Verify complete cryptographic chain continuity: 1. Genesis...
 
@@ -154,43 +154,43 @@ Verify complete cryptographic chain continuity:
 
 <!-- mios-src:6abb440c042d from usr/libexec/mios/ai/audit_chain.py:326-333 -->
 
-### mios_asr.py — T-737 WS-AI Streaming CTC / Conformer ONNX...
+### mios_asr.py — task_681 WS-AI Streaming CTC / Conformer ONNX...
 
-mios_asr.py — T-737 WS-AI
+mios_asr.py — task_681 WS-AI
 Streaming CTC / Conformer ONNX speech recognition daemon and VAD chunker.
 
 Processes 30ms audio windows through quantized Silero VAD, streams voiced PCM
 chunks into quantized Conformer ONNX encoder, and emits streaming partial text
 tokens over socket with sub-100ms latency.
 
-<!-- mios-src:ddd542fcd949 from usr/libexec/mios/ai/mios_asr.py:5-12 -->
+<!-- mios-src:4e382e754534 from usr/libexec/mios/ai/mios_asr.py:5-12 -->
 
-### WS-AI (T-571): Hardware-Tiered Modern Model Matrix...
+### WS-AI (task_515): Hardware-Tiered Modern Model Matrix...
 
-WS-AI (T-571): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
+WS-AI (task_515): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
 Dynamically detects host GPU VRAM and System RAM to assign modern open-weight models
 (Qwen2.5-Coder, DeepSeek-R1-Distill, nomic-embed-text) across function-named inference lanes
 (mios-llm-light, mios-llm-heavy). Enforces strict VRAM headroom reservation (<=90%) and projects
 configurations into llama-swap.yaml for zero-downtime multi-model auto-swapping.
 
-<!-- mios-src:bd27c4d011ce from usr/libexec/mios/ai/model_matrix_alloc.py:5-11 -->
+<!-- mios-src:ca7edf7210b3 from usr/libexec/mios/ai/model_matrix_alloc.py:5-11 -->
 
-### quant_dispatch.py — T-757 WS-AI Dynamic quantization kernel...
+### quant_dispatch.py — task_701 WS-AI Dynamic quantization kernel...
 
-quant_dispatch.py — T-757 WS-AI
+quant_dispatch.py — task_701 WS-AI
 Dynamic quantization kernel auto-dispatcher (Marlin / ExLlamaV2 / GGUF).
 
 Inspects incoming model weight format (Marlin, AWQ, GPTQ, GGUF) and GPU hardware
 architecture, dynamically binding the fastest engine for >3.5x token decoding speedup.
 
-<!-- mios-src:6d563434f774 from usr/libexec/mios/ai/quant_dispatch.py:4-10 -->
-### Synthetic Training Q&A Data Pipeline (T-383 / AGY-1981)...
+<!-- mios-src:62e9cd34be78 from usr/libexec/mios/ai/quant_dispatch.py:4-10 -->
+### Synthetic Training Q&A Data Pipeline (task_327 / task_2560)...
 
-Synthetic Training Q&A Data Pipeline (T-383 / AGY-1981)
+Synthetic Training Q&A Data Pipeline (task_327 / task_2560)
 
 Harvests architectural chapters, user guides, manual pages, and ADRs from `/usr/share/doc/mios/`
 including its `adr/` records, performs hierarchical markdown parsing with context preservation, synthesizes
 multi-turn reasoning and domain-specific Q&A pairs for `mios-opencode` fine-tuning,
 enforces secret/token redaction (Rule 14), and emits JSONL datasets to `/var/lib/mios/ai/dataset/`.
 
-<!-- mios-src:e3fc2c98b972 from usr/libexec/mios/ai/synthetic_qa.py:4-11 -->
+<!-- mios-src:27a8e4e1bc88 from usr/libexec/mios/ai/synthetic_qa.py:4-11 -->

@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-966 & T-967: autonomous self-replication build trigger and digest verification.
+# AI-hint: Tests for task_910 & task_911: autonomous self-replication build trigger and digest verification.
 # AI-functions: test_build_context_ignores_generated_artifacts, test_build_context_preserves_tracked_sources, test_self_replication_build_and_digest
 
-"""Tests for T-966 & T-967: autonomous self-replication build trigger and digest verification."""
+"""Tests for task_910 & task_911: autonomous self-replication build trigger and digest verification."""
 import re
 import sys
 import subprocess
@@ -94,4 +94,4 @@ if __name__ == "__main__":
     test_build_context_ignores_generated_artifacts()
     test_build_context_preserves_tracked_sources()
     test_self_replication_build_and_digest()
-    print("All T-966/T-967 tests passed.")
+    print("All task_910/task_911 tests passed.")

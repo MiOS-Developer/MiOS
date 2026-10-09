@@ -31,7 +31,7 @@ per-surface `kind` axis + the `json-merge` mode **landed 2026-07-17** (the
 settings.json, foreign keys preserved). The `mios-dotfiles-render` fork
 (arbitrary-key `@MIOS:<section>.<key>@` tokens; the `ini-merge`/`registry`
 kinds), the Windows runtime gate, and the new `[shell]`/`[editor]`/`[git]`/`[ssh]`
-content domains remain **PLANNED** (WS-DOTFILES / T-270). This ADR builds on ADR-0009
+content domains remain **PLANNED** (WS-DOTFILES / task_248). This ADR builds on ADR-0009
 (the Portal is the surface that edits `mios.toml`) and carries across every
 deployment via ADR-0005 (M: VHDX) and ADR-0008 (MiOS-Repo shadow-config).
 
@@ -223,7 +223,7 @@ DONE vs PLANNED (honest):
   surface missing its fixture ⇒ exit 3; an unparseable base ⇒ exit 2, writes
   nothing. `capture` stays template-only. `registry`/`skip` are declared-valid
   but land later.
-- **DONE 2026-07-17 (`ini-merge` mode + `gitconfig-live` surface, AGY-58):** a
+- **DONE 2026-07-17 (`ini-merge` mode + `gitconfig-live` surface, task_1087):** a
   third `kind` that UPSERTS the MiOS-owned git-config keys (exactly what
   `gitconfig.tmpl` emits: `user.name`/`email`, `core.editor`,
   `init.defaultBranch`, `pull.rebase`, `alias.{co,br,ci,st}`) into a foreign
@@ -263,7 +263,7 @@ DONE vs PLANNED (honest):
   from the `ansi_0..15` slots) + `profiles.defaults.colorScheme`; its
   `fixture.base` carries a FOREIGN `"Campbell"` scheme and foreign top-level keys
   (`copyOnSelect`, `launchMode`, `profiles.list`) that all survive the merge.
-- **PLANNED (WS-DOTFILES / T-270):** the `mios-dotfiles-render` fork + the
+- **PLANNED (WS-DOTFILES / task_248):** the `mios-dotfiles-render` fork + the
   `check 25 → check_dotfiles_projection` rename (deliberately NOT done here —
   larger, higher-risk, out of scope for the byte-preserving transcription);
   arbitrary-key `@MIOS:<section>.<key>@` tokens; the `registry`/`skip` merge

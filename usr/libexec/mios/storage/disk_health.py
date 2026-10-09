@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (T-639, T-640).
+# AI-hint: Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager (task_583, task_584).
 # AI-related: usr/libexec/mios/storage/disk_health.py, usr/libexec/mios/storage/smart_health.py, tests/test-storage.py
 """Predictive S.M.A.R.T. drive health monitor and automated CephFS evacuation manager for MiOS.
 

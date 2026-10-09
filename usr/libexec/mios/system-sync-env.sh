@@ -41,7 +41,7 @@ fi
 _ENV_UNSAFE='[[:space:]"'"'"'$`#]'
 
 # Law 10 declares install.env bare KEY=value. Keys that legitimately cannot be bare
-# are declared in SSOT [security.non_bare_env]; anything else is fatal (T-1060).
+# are declared in SSOT [security.non_bare_env]; anything else is fatal (task_997).
 _NON_BARE_OK=",$(_read_security_array "non_bare_env" | tr '\n' ',')"
 emit() {
     local _k="$1" _v="$2"
@@ -131,7 +131,7 @@ EOF
     # Every MIOS_PORT_* the resolver produced, enumerated rather than re-typed.
     # The hand-typed list here named 20 of 46; stage 35 writes all of them and
     # this script replaces that whole file at deploy, so 26 vanished -- one the
-    # port hermes-dashboard.service reads bare (T-1067). The three legacy
+    # port hermes-dashboard.service reads bare (task_3365). The three legacy
     # *_PORT aliases carry no prefix, so they stay named.
     _port_names="$( { compgen -v MIOS_PORTS_ || true; compgen -v MIOS_PORT_ || true; } | sort -u )"
     for _pk in ${_port_names} MIOS_PORTS_FORGE_HTTP MIOS_PORTS_FORGE_SSH MIOS_PORTS_SEARXNG; do

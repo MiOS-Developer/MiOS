@@ -5087,7 +5087,7 @@ function applyEmbedContext() {
 
 // STEP 5 -- seed the form from the live layered mios.toml when embedded.
 // GET /portal/config (relative to location.origin; no hardcoded host).
-// INERT until AGY builds the route (AGY-50): any non-2xx / network error /
+// INERT until AGY builds the route (task_1077): any non-2xx / network error /
 // empty body degrades SILENTLY to the inline DEFAULTS_TOML already loaded
 // at boot. NEVER attempted under file:// (offline USB fallback, ADR-0008).
 function seedFromServer() {
@@ -5124,7 +5124,7 @@ function seedFromServer() {
       snapshotLoaded();   // WS-CONFIG diff baseline = the live Portal config
       showStatus("Loaded the live mios.toml from the Portal.", "ok");
     })
-    .catch(() => { /* route not live yet (AGY-50) -> keep inline defaults */ });
+    .catch(() => { /* route not live yet (task_1077) -> keep inline defaults */ });
 }
 
 function detectPlatform() {
@@ -5535,7 +5535,7 @@ renderPathBanner();
 applyEmbedContext();
 
 // STEP 5 -- when embedded, seed the form from the live layered mios.toml
-// (GET /portal/config). Inert/degrades-to-defaults until AGY-50; never
+// (GET /portal/config). Inert/degrades-to-defaults until task_1077; never
 // runs under file://.
 seedFromServer();
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# AI-hint: MiOS system and orchestration module providing mios microvm capabilities with SquashFS NBD streaming (T-733, T-806).
+# AI-hint: MiOS system and orchestration module providing mios microvm capabilities with SquashFS NBD streaming (task_677, task_750).
 # AI-doc: usr/share/doc/mios/manual/virt.md
 # AI-related: usr/libexec/mios/mios-microvm
 """
-mios_microvm.py — T-733 / T-806 WS-VFIO
+mios_microvm.py — task_677 / task_750 WS-VFIO
 SquashFS template streaming over Unix-socket NBD with ephemeral RAM overlay
 and Virtio-PMEM direct DAX memory storage manager for ephemeral microVM sandboxes.
 

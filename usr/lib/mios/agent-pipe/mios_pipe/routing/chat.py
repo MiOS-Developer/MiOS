@@ -90,7 +90,7 @@ from mios_knowledge import _recall_knowledge, _store_knowledge
 from mios_native_loop import _respond_local_state, _respond_native_loop_direct
 from mios_oscontrol import _respond_os_control
 from mios_planner import decompose_intent
-import mios_preempt   # T-019/SCHED-01: turn-boundary preemption seam (flag-gated, degrade-open)
+import mios_preempt   # task_19/task_19: turn-boundary preemption seam (flag-gated, degrade-open)
 from mios_refine import refine_intent
 from mios_routing import _deterministic_action_route
 from mios_sse import _sse_chunk, _sse_status, _stream_answer

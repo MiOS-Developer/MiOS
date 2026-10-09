@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for T-385 Bounded Reflection Loop Convergence.
+# AI-hint: Automated unit test suite for task_329 Bounded Reflection Loop Convergence.
 # AI-related: usr/lib/mios/agent-pipe/mios_deliberate.py, usr/lib/mios/agent-pipe/server.py
 """
 Automated unit tests for semantic delta calculation, diminishing-returns exit criteria,

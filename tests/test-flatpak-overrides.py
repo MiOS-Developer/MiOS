@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for declarative Flatpak permission lockdown profiles (T-489).
+# AI-hint: Automated unit test suite for declarative Flatpak permission lockdown profiles (task_433).
 # AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
 from __future__ import annotations
 

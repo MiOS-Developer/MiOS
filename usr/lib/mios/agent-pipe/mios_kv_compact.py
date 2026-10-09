@@ -3,7 +3,7 @@
 # AI-related: usr/lib/mios/agent-pipe/mios_compact.py, tests/test-sec.py
 # AI-functions: KVCompactEngine, estimate_tokens, summarize_turns, main
 """
-WS-AI (T-547): Semantic KV-Cache Context Compaction Engine & Episodic Summary Generator.
+WS-AI (task_491): Semantic KV-Cache Context Compaction Engine & Episodic Summary Generator.
 Integrated into agent-pipe to prevent context overflow while preserving agent reasoning integrity.
 Monitors multi-turn conversation token usage; when capacity exceeds 75%, condenses intermediate tool
 executions and verbose historical logs into structured milestones while strictly preserving system/developer
@@ -57,8 +57,8 @@ def estimate_tokens(text_or_messages: str | List[Dict[str, Any]] | Dict[str, Any
 def extract_factual_anchors(text: str) -> List[str]:
     """Extract key file paths, function names, task IDs, and technical terms to retain in summary."""
     anchors = set()
-    # Task / CVE IDs (T-545, AGY-2145, CVE-2026-1001)
-    for match in re.finditer(r'\b(?:T-\d+|AGY-\d+|CVE-\d+-\d+)\b', text):
+    # Task / CVE IDs (task_545, CVE-2026-1001); a task is named by its typed id (ADR-0028)
+    for match in re.finditer(r'\b(?:task_\d+|CVE-\d+-\d+)\b', text):
         anchors.add(match.group(0))
     # File paths (Unix & Windows)
     for match in re.finditer(r'(?:[a-zA-Z]:\\|[/\w\.-]+/)[a-zA-Z0-9_\.-]+\.[a-zA-Z0-9]+', text):
@@ -271,7 +271,7 @@ class KVCompactEngine:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS KV-Cache Context Compaction Engine (T-547)"
+        description="MiOS KV-Cache Context Compaction Engine (task_491)"
     )
     parser.add_argument("--compact", action="store_true", help="Execute context compaction")
     parser.add_argument("--input", metavar="FILE", help="Input messages JSON file")
@@ -303,7 +303,7 @@ def main() -> int:
         # Synthetic multi-turn conversation for demonstration / mock
         messages = [
             {"role": "system", "content": "You are MiOS Assistant under canonical prompt AGENTS.md."},
-            {"role": "user", "content": "Please implement feature T-547 in usr/lib/mios/agent-pipe/mios_kv_compact.py."},
+            {"role": "user", "content": "Please implement feature task_491 in usr/lib/mios/agent-pipe/mios_kv_compact.py."},
             {"role": "assistant", "content": "Running find_by_name...", "tool_calls": [{"id": "c1", "function": {"name": "find_by_name"}}]},
             {"role": "tool", "name": "find_by_name", "content": "Found 120 matching python files in directory " * 30},
             {"role": "assistant", "content": "Inspecting codebase logs and verifying ratchet limits " * 25},

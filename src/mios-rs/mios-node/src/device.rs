@@ -1,4 +1,4 @@
-// AI-hint: mios-node device layer: GPIO/I2C hardware abstraction with allowlists, capability advertising in Announce frames, and the /dev/watchdog integration (T-394).
+// AI-hint: mios-node device layer: GPIO/I2C hardware abstraction with allowlists, capability advertising in Announce frames, and the /dev/watchdog integration (task_338).
 // AI-related: src/mios-rs/mios-node/src/wire.rs, usr/libexec/mios/node/capabilities.py, tests/test-node.py, src/mios-rs/mios-node/src/exec.rs, usr/libexec/mios/node/hardware.py, usr/libexec/mios/node/wasm_sandbox.py, src/mios-rs/mios-node/src/node.rs, usr/libexec/mios/node/watchdog.py
 
 pub mod capabilities {

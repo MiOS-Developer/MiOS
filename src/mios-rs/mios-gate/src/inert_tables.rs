@@ -11,7 +11,7 @@ const CHECK: &str = "no-inert-ssot-tables";
 const SSOT: &str = "usr/share/mios/mios.toml";
 const CODE_EXT: [&str; 7] = [".py", ".sh", ".ps1", ".rs", ".js", ".ts", ".mjs"];
 const NON_CONSUMER_DIRS: [&str; 3] = ["docs/", "usr/share/doc/", "usr/share/mios/reference/"];
-/// concat! so the contiguous marker never appears here (T-1001).
+/// concat! so the contiguous marker never appears here (task_945).
 const GENERATED: &str = concat!("# GENERATED IN FULL", " from usr/share/mios/mios.toml");
 
 fn report(ok: bool, summary: String, findings: Vec<String>) -> Report {
@@ -48,7 +48,7 @@ fn key_tokens(v: &toml::Value, out: &mut BTreeSet<String>) {
     }
 }
 
-/// Names holding the parsed SSOT, closed transitively (T-1001).
+/// Names holding the parsed SSOT, closed transitively (task_945).
 fn ssot_names(text: &str, re: &Res) -> BTreeSet<String> {
     let loaders: Vec<String> = re
         .def
@@ -120,7 +120,7 @@ fn word_in(hay: &str, needle: &str) -> bool {
 }
 
 /// Table names this file reads OUT OF the SSOT: a subscript counts only when what
-/// it indexes IS the parse, or a name bound from one (T-1001).
+/// it indexes IS the parse, or a name bound from one (task_945).
 fn ssot_keys(text: &str, re: &Res) -> BTreeSet<String> {
     let names = ssot_names(text, re);
     let mut keys = BTreeSet::new();
@@ -169,7 +169,7 @@ struct Res {
 fn build_res() -> Option<Res> {
     // .ok()? not expect(): CI runs clippy -D warnings.
     Some(Res {
-        // Seeds for "yields the SSOT"; full path only (T-1001). resolve_merged is
+        // Seeds for "yields the SSOT"; full path only (task_945). resolve_merged is
         // the native resolver's twin of load_merged.
         load: Regex::new(
             r"(?:tomllib|toml|rtoml|tomlkit)\.loads?\(|toml::from_str|(?:load|resolve)_merged|_toml_section|mios_toml\.(?:load|resolve)|load_mios_toml|MIOS_TOML|usr/share/mios/mios\.toml|\b_?ssot(?:_root)?\s*\(|\bload_ssot\s*\(",
@@ -478,7 +478,7 @@ mod tests {
         ssot_keys(src, &build_res().unwrap_or_else(|| unreachable!()))
     }
 
-    /// THE DEFECT (T-1001): a local dict must not credit a table.
+    /// THE DEFECT (task_945): a local dict must not credit a table.
     #[test]
     fn local_dict_subscript_is_not_ssot_evidence() {
         let src = "# reads usr/share/mios/mios.toml elsewhere\np = _offline_posture()\nif p[\"offline\"]:\n    pass\n";
@@ -548,7 +548,7 @@ mod tests {
         );
     }
 
-    /// REGRESSION: the binder must not cross newlines (T-1001).
+    /// REGRESSION: the binder must not cross newlines (task_945).
     #[test]
     fn the_binder_does_not_cross_newlines() {
         let src = "try:\n    with open(p, 'rb') as f:\n        data = tomllib.load(f)\n    x = data[\"kargs\"]\n";

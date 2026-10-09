@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Stages built mios oci-archive tarball to /mnt/mios-repo/mios-latest.tar for tools/install.sh (AGY-152)
+# AI-hint: Stages built mios oci-archive tarball to /mnt/mios-repo/mios-latest.tar for tools/install.sh (task_1203)
 set -euo pipefail
 
 _self="${BASH_SOURCE[0]}"

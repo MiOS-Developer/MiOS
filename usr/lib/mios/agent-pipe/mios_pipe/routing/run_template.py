@@ -1,13 +1,13 @@
-# AI-hint: WS-6 run-template CAPTURE + the T-225 replay source, extracted out of dag_exec so the two halves of one feature live together.
+# AI-hint: WS-6 run-template CAPTURE + the task_205 replay source, extracted out of dag_exec so the two halves of one feature live together.
 # AI-doc: usr/share/doc/mios/manual/routing.md
-"""Run-template capture + the replay read side (WS-6 / T-225)."""
+"""Run-template capture + the replay read side (WS-6 / task_205)."""
 
 from __future__ import annotations
 
 import hashlib
 from typing import Optional
 
-from mios_pipe.routing import replay as _replay   # T-225 intent keying
+from mios_pipe.routing import replay as _replay   # task_205 intent keying
 
 RUN_TEMPLATE_ENABLE = True
 _MAX_ROWS = 500        # hard read cap; the caller's limit slices the result

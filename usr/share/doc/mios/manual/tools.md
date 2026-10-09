@@ -71,7 +71,7 @@ never one holding git-tracked files.
 
 tools/generate-pipeline-index.py
 Generates usr/share/mios/reference/pipeline-index.tsv from automation/[0-9][0-9]-*.sh scripts.
-Enforces 1:1 mapping for stage identity coordinates (ADR-0012, WS-NUMBER AGY-644).
+Enforces 1:1 mapping for stage identity coordinates (ADR-0012, WS-NUMBER task_1577).
 
 <!-- mios-src:f43995ec2b39 from tools/generate-pipeline-index.py:2-6 -->
 
@@ -607,9 +607,9 @@ added now would be one nobody checked.
 
 <!-- mios-src:3c264cead283 from tools/check-task-schema.py:22-26 -->
 
-### `## AGY-106..122 -- Campaign banner` covers every id in the...
+### `## task_1139 -- Campaign banner` covers every id in the...
 
-`## AGY-106..122 -- Campaign banner` covers every id in the range, so
+`## task_1139 -- Campaign banner` covers every id in the range, so
 a Dep naming one of them names a task that exists -- but the banner
 plus its individual children is the NORMAL shape, not a collision, so
 only individual headings count toward the duplicate ceiling.
@@ -756,9 +756,9 @@ prefix from SSOT rather than by a list baked in here.
 A sibling unit test is not tooling to port. Counting them made this
 ratchet pull against check_module_test_coverage the same way
 max_libexec_verbs did below, and 36% of what it measured was test
-code. Floor re-baselined down by what the exclusion removes (T-1044).
+code. Floor re-baselined down by what the exclusion removes (task_981).
 
-<!-- mios-src:320398d89ba2 from tools/drift-checks.py:234-239 -->
+<!-- mios-src:7c8c73010910 from tools/drift-checks.py:234-239 -->
 
 ### A test's OWN name is not evidence that it invokes anything...
 
@@ -879,3 +879,17 @@ Merge the CLIENT-PORTABLE subset of the SSOT settings into every
     --check names exactly what is wrong where.
 
 <!-- mios-src:dde5b5ab080e from tools/sync-dotfiles.py:268-274 -->
+### Task-plane drift gates. One module, one subcommand per...
+
+Task-plane drift gates. One module, one subcommand per gate.
+
+The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
+
+<!-- mios-src:d84f2b14bb71 from tools/check-tasks.py:5-8 -->
+### ADR-0030
+
+ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
+included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
+domains below partition the same listing.
+
+<!-- mios-src:adf6366d5571 from tools/drift-checks.py:279-281 -->

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Zero-timeout systemd-boot silent fastboot configurator and baked UKI kargs manager (T-699, T-700).
+# AI-hint: Zero-timeout systemd-boot silent fastboot configurator and baked UKI kargs manager (task_643, task_644).
 # AI-related: usr/libexec/mios/boot/fastboot_mgr.py, tests/test-fastboot-mgr.py
 """Zero-timeout systemd-boot silent fastboot configurator and baked UKI kargs manager for MiOS.
 

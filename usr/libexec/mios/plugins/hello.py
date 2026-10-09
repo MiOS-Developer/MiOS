@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Sample dynamic plugin demonstrating plugin loader discovery and execution (T-514).
+# AI-hint: Sample dynamic plugin demonstrating plugin loader discovery and execution (task_458).
 import json
 import sys
 

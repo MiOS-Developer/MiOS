@@ -3,7 +3,7 @@
 # AI-functions: age_s, inject_headers, to_request_body_extra, _priority_name, __init__, wrap, augment_headers, sorted_queue, drain, classify_turn, PriorityRequest, PriorityGate
 
 """
-mios_priority_sched.py — T-339 SCHED-04
+mios_priority_sched.py — task_283 task_3217
 Engine-level priority scheduling: forward x-priority header to heavy inference
 lanes (vLLM, SGLang, llama-swap) so foreground user turns preempt background
 autonomous-agent batches at the engine level.

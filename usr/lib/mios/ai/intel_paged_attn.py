@@ -2,7 +2,7 @@
 # AI-functions: __init__, allocate_stream_blocks, calculate_vram_efficiency, IntelKVBlock, IntelLevelZeroPagedAttention
 
 """
-intel_paged_attn.py — T-769 WS-VFIO
+intel_paged_attn.py — task_713 WS-VFIO
 Intel oneAPI Level Zero PagedAttention engine and XMX SYCL matrix kernels in IPEX.
 
 Configures Level Zero runtime (ZE_ENABLE_PCI_ID_DEVICE_ORDER=1) and 16-token

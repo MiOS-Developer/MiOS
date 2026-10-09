@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CI verification test suite for CPU vectorized GEMM throughput and SIMD dispatch (T-785).
+# AI-hint: Automated CI verification test suite for CPU vectorized GEMM throughput and SIMD dispatch (task_729).
 # AI-doc: usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md
 set -euo pipefail
 

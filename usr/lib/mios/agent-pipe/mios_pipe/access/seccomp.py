@@ -1,6 +1,6 @@
-# AI-hint: T-230 seccomp filter builder for the risk-tier dispatch sandbox.
+# AI-hint: task_210 seccomp filter builder for the risk-tier dispatch sandbox.
 # AI-doc: usr/share/doc/mios/manual/access.md
-"""Classic-BPF seccomp filters for the dispatch sandbox (T-230)."""
+"""Classic-BPF seccomp filters for the dispatch sandbox (task_210)."""
 
 from __future__ import annotations
 

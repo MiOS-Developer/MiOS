@@ -411,7 +411,7 @@ if ($Mode -eq 'Rpc') {
     Info "mode:     Rpc (llama.cpp rpc-server fabric)"
     Info "binding:  127.0.0.1:$Port (localhost loopback per Law 5)"
     Info "GPU:      Vulkan device $Device (AMD iGPU, coopmat disabled)"
-    # T-212 / WSL2 Mesa Dozen interop: disable coopmat for Vulkan RPC
+    # task_192 / WSL2 Mesa Dozen interop: disable coopmat for Vulkan RPC
     $env:GGML_VK_DISABLE_COOPMAT = '1'
 
     & $rpcExe `

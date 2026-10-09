@@ -1,10 +1,10 @@
-<!-- AI-hint: Upstream audit behind T-1040 -- why stage 34's placeholder substitution must become a parser, not a regex. Measured, not inferred. -->
-<!-- AI-related: automation/34-render-quadlets.sh, src/mios-rs/miosd/src/main.rs, TASKS.md T-1040, T-1060 -->
+<!-- AI-hint: Upstream audit behind task_977 -- why stage 34's placeholder substitution must become a parser, not a regex. Measured, not inferred. -->
+<!-- AI-related: automation/34-render-quadlets.sh, src/mios-rs/miosd/src/main.rs, TASKS.md task_977, task_997 -->
 
 # Upstream Audit — GNU `envsubst` as stage 34's substitution engine
 
 **Audit ID:** `UPSTREAM-gettext-envsubst-stage34`
-**Component:** `automation/34-render-quadlets.sh` placeholder renderer (T-1040)
+**Component:** `automation/34-render-quadlets.sh` placeholder renderer (task_977)
 **Installed:** `envsubst (GNU gettext-runtime) 0.21` at `/usr/bin/envsubst`
 **Upstream current:** GNU gettext **1.0** (released 2026-01-29; man page dated January 2026)
 **Consumers of the rendered output:** systemd 255 unit parser, `/bin/sh`, podman/Quadlet
@@ -16,7 +16,7 @@
 
 - **Verdict:** `BLOCK_UPGRADE` — upgrading gettext does **not** fix this. Replace the engine.
 - **Risk level:** HIGH (one live silent data defect in the shipped image; one Law 5 breach)
-- **Summary:** Every defect T-1040 attributes to `envsubst` is **documented upstream behaviour that
+- **Summary:** Every defect task_977 attributes to `envsubst` is **documented upstream behaviour that
   is still present in the newest release**, not a bug in the pinned 0.21. `envsubst`'s contract is
   "substitute `$VAR` and `${VAR}`, nothing else" — it has no escape for a literal `$`, and it
   explicitly does not implement `${VAR:-default}`. MiOS needs both. The conversion is therefore
@@ -118,13 +118,13 @@ All four of these are the same bug:
 | `MIOS_AI_ENDPOINT` set, no `/v1` | `"http://localhost:8700/v1}"` | stray brace |
 | `MIOS_AI_ENDPOINT` set with `/v1` | `"http://localhost:8700/v1/v1}"` | doubled + stray brace |
 
-This reconciles the two different symptoms recorded in T-1040 and in commit `e7860820`: **both are
+This reconciles the two different symptoms recorded in task_977 and in commit `e7860820`: **both are
 real**, in different environments. The task should record the matrix, not a single symptom.
 
 A well-formed wrong URL is the dangerous case — it fails at the first API call, not at render.
 This is Law 5's single endpoint contract.
 
-### 3.3 Compounding risk from T-1060
+### 3.3 Compounding risk from task_997
 
 `usr/share/mios/reference/env-baseline.txt` emits `MIOS_AI_ENDPOINT` at line 148 as
 `http://localhost:${MIOS_PORT_AGENT_PIPE}/v1`, while `MIOS_PORT_AGENT_PIPE=8700` is emitted at line
@@ -212,7 +212,7 @@ stage.
 
 ## 7. Corrections to the task record
 
-| T-1040 claim | Status |
+| task_977 claim | Status |
 |---|---|
 | `$$` mangling, `case "$true"`, `DIR="$/var/..."`, `KEEP="$7"` | **confirmed** verbatim |
 | `PORT="$8432"` | confirmed — and the runtime value is **`432`**, not recorded anywhere |
@@ -231,7 +231,7 @@ stage.
   page is silent on `$` followed by a digit. The shell-level outcome (`432`) is measured and holds
   regardless, since either reading yields a wrong, non-empty port.
 - **Which §3.2 row actually ships** depends on the bake environment, which could not be produced
-  here (`system-sync-env.sh --dry-run` exits 1 in a build container — the same blocker T-1060
+  here (`system-sync-env.sh --dry-run` exits 1 in a build container — the same blocker task_997
   records). Measure this on a host that can render `install.env`.
 - `mios-bootstrap.git` was checked for a mirrored renderer (Law 15): **none** — it uses `MIOS_*`
   variables but no `envsubst` and no `:-` expansion loop. No cross-repo update is owed.

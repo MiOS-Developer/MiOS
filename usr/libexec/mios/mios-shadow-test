@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Shadow dual-process candidate daemon validator and query mirroring harness (T-541, AGY-2139).
+# AI-hint: Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718).
 # AI-doc: usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md
 """
 MiOS Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness.
@@ -1000,7 +1000,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios-shadow-test",
-        description="Shadow dual-process candidate daemon validator and query mirroring harness (T-541, AGY-2139).",
+        description="Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718).",
         parents=[common],
     )
 

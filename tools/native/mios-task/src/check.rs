@@ -1,9 +1,10 @@
-// AI-hint: `mios-task check` -- every rule of ADR-0028 over tasks.jsonl, its frozen provenance slices, its overrides and TASKS.md == render.
+// AI-hint: `mios-task check` -- every rule of ADR-0028 over tasks.jsonl, its frozen provenance slices, its overrides and TASKS.md == render; once migrated also the number rules (unique, creation order, never reissued) and no purged id anywhere in the list.
 // AI-related: tasks.jsonl, TASKS.md, /usr/lib/mios/schemas/task-record.schema.json, /usr/share/mios/mios.toml [tasks.store], automation/98-drift-checks.sh
-// AI-functions: State::load, check, hygiene, cycles, retired_stores, first_difference, sha, Slice, slices, rebuild, verify, cr_problem, migrated_shape, identity, archived_edges, former_ids, notes
+// AI-functions: State::load, check, numbers, purged_in_list, hygiene, cycles, retired_stores, first_difference, sha, Slice, slices, rebuild, verify, cr_problem, migrated_shape, identity, archived_edges, former_ids, notes
 
 use crate::overrides::{self, Block, Effective};
-use crate::record::{dumps, lane_word, Frozen, Line, Schema, Store};
+use crate::record::ids::{Ids, Shapes};
+use crate::record::{dumps, lane_word, Frozen, Index, Line, Schema, Store};
 use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -20,20 +21,30 @@ pub fn is_marker(v: &Value) -> bool {
         .is_some_and(|o| o.len() == 1 && o.contains_key(DIALECT_KEY))
 }
 
-/// Everything a reader needs: the lines, their parses, the schema, and TASKS.md with its block.
+/// Everything a reader needs: the lines, their parses, the schema, the id index, and TASKS.md with its block.
 pub struct State {
     pub lines: Vec<Line>,
     pub records: Vec<Value>,
     pub schema: Schema,
     pub md: Option<String>,
     pub block: Result<Block, Vec<String>>,
+    /// The id spellings; `purged` once `mios-task migrate-ids` has run.
+    pub ids: Ids,
+    pub purged: bool,
+    pub idx: Index,
 }
 
 impl State {
     pub fn load(st: &Store) -> Result<State, String> {
-        let schema = Schema::load(&st.schema_file())?;
+        let file = Schema::load(&st.schema_file())?;
+        let ids = Ids::from_schema(&file.record);
+        let schema = if st.is_purged() {
+            file
+        } else {
+            st.load_schema()?
+        };
         let lines = st.read()?;
-        let records = lines
+        let records: Vec<Value> = lines
             .iter()
             .filter_map(|l| l.value.clone())
             .filter(|v| !is_marker(v))
@@ -46,13 +57,23 @@ impl State {
                 st.doc
             )]),
         };
+        let purged = st.is_purged();
+        let idx = Index::new(&records, purged.then_some(&ids));
         Ok(State {
             lines,
             records,
             schema,
             md,
             block,
+            ids,
+            purged,
+            idx,
         })
+    }
+
+    /// How a record is named to people: its typed id once migrated, its verbatim id before.
+    pub fn label(&self, r: &Value) -> String {
+        self.idx.label(id_of(r))
     }
 
     pub fn override_lines(&self) -> &[overrides::OverrideLine] {
@@ -63,24 +84,20 @@ impl State {
     }
 
     pub fn effective(&self) -> Effective {
-        overrides::apply(&self.records, self.override_lines())
-    }
-
-    pub fn by_id(&self) -> HashMap<String, Value> {
-        let mut m = HashMap::new();
-        for r in &self.records {
-            if let Some(id) = r.get("id").and_then(|x| x.as_str()) {
-                m.entry(id.to_string()).or_insert_with(|| r.clone());
-            }
-        }
-        m
+        overrides::apply(&self.records, self.override_lines(), &self.idx)
     }
 
     /// The bytes render keeps between the markers: the existing block, or the one-comment default.
     pub fn inner(&self) -> String {
         match &self.block {
             Ok(b) => b.inner.clone(),
-            _ => overrides::empty_block(),
+            _ => overrides::empty_block(
+                self.idx
+                    .labels
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("task"),
+            ),
         }
     }
 }
@@ -138,7 +155,7 @@ pub fn hygiene(state: &State, doc: &str) -> Vec<String> {
             if let Some(m) = rx.find(&s) {
                 out.push(format!(
                     "{}: {p} contains an AppData/Temp path or session id ({:?})",
-                    id_of(r),
+                    state.label(r),
                     m.as_str()
                 ));
             }
@@ -207,7 +224,12 @@ pub fn retired_stores(st: &Store) -> Vec<String> {
             .collect();
         hits.sort();
         for p in hits {
-            let rel = p.strip_prefix(&st.root).unwrap_or(&p).display().to_string();
+            let rel = p
+                .strip_prefix(&st.root)
+                .unwrap_or(&p)
+                .display()
+                .to_string()
+                .replace('\\', "/");
             out.push(format!(
                 "second task store present: {rel} -- {} is the only task list (ADR-0028); delete it",
                 st.path
@@ -343,7 +365,8 @@ fn migrated_shape(id: &str, prov: &Value) -> Vec<String> {
     p
 }
 
-/// The migrated set as one digest: per record its provenance key, id, aliases and slice set, sorted.
+/// The migrated set as one digest: per record its provenance key, id, aliases and slice set (once migrated:
+/// its number, opaque id and slice set), sorted.
 /// [tasks.store].migrated_sha256 freezes it, so a swap that keeps the count, a rewritten key, a dropped alias
 /// or a stripped slice outside the frozen lists all fail.
 pub fn identity(records: &[Value]) -> (usize, String) {
@@ -380,13 +403,17 @@ pub fn identity(records: &[Value]) -> (usize, String) {
             })
             .unwrap_or_default();
         sl.sort();
-        rows.push(format!(
-            "{}\t{}\t{}\t{}",
-            s(p, "key"),
-            id_of(r),
-            aliases.join(","),
-            sl.join(",")
-        ));
+        rows.push(match r.get("number").and_then(|x| x.as_u64()) {
+            // A migrated list: the number and the opaque id are the identity; the old key and aliases are purged.
+            Some(n) => format!("{n}\t{}\t{}", id_of(r), sl.join(",")),
+            None => format!(
+                "{}\t{}\t{}\t{}",
+                s(p, "key"),
+                id_of(r),
+                aliases.join(","),
+                sl.join(",")
+            ),
+        });
     }
     rows.sort();
     (rows.len(), sha(&rows.join("\n")))
@@ -394,7 +421,7 @@ pub fn identity(records: &[Value]) -> (usize, String) {
 
 /// Each migrated lane line's archived_dependencies (edges the toolkit took out of depends_on because the target
 /// was archived) must not be back in the record's depends_on.
-fn archived_edges(records: &[Value]) -> Vec<String> {
+fn archived_edges(records: &[Value], idx: &Index) -> Vec<String> {
     // A lane id the migration renamed: the record keyed "<lane file>#<lane id>" answers to it.
     let mut renamed: HashMap<String, String> = HashMap::new();
     for r in records {
@@ -436,13 +463,18 @@ fn archived_edges(records: &[Value]) -> Vec<String> {
                 .unwrap_or_default()
             {
                 let d = d.as_str().unwrap_or("");
+                // Before the migration a renamed lane id answers through its key; after it, the frozen lane line
+                // names the task by its typed id, which the index resolves.
                 let now = renamed
                     .get(&format!("{file}#{d}"))
-                    .map(String::as_str)
-                    .unwrap_or(d);
-                if deps.contains(now) {
+                    .cloned()
+                    .or_else(|| idx.find(d).map(|i| idx.ids[i].clone()))
+                    .unwrap_or_else(|| d.to_string());
+                if deps.contains(now.as_str()) {
                     out.push(format!(
-                        "{id}: depends_on {now} is an edge the lane file archived (archived_dependencies) -- it is history, a related entry of type \"archived\", never a block (ADR-0028)"
+                        "{}: depends_on {} is an edge the lane file archived (archived_dependencies) -- it is history, a related entry of type \"archived\", never a block (ADR-0028)",
+                        idx.label(id),
+                        idx.label(&now)
                     ));
                 }
             }
@@ -534,7 +566,7 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
             }
             continue;
         }
-        let id = id_of(v).to_string();
+        let id = state.label(v);
         let mut errs = Vec::new();
         state.schema.conforms(v, node, &id, &mut errs);
         p.extend(errs);
@@ -554,8 +586,8 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
                 st.path, l.n
             ));
         }
-        if !seen.insert(id.clone()) {
-            p.push(format!("duplicate id {id}"));
+        if !seen.insert(id_of(v).to_string()) {
+            p.push(format!("duplicate id {}", id_of(v)));
         }
         match v.get("provenance") {
             Some(x) if x.is_object() => {
@@ -619,24 +651,24 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
         )),
         None => {}
     }
-    p.extend(verify(&state.records, &st.frozen));
-    p.extend(archived_edges(&state.records));
+    p.extend(verify(&state.records, &st.frozen, &state.idx));
+    p.extend(archived_edges(&state.records, &state.idx));
     p.extend(born_aliases(&state.records));
+    if state.purged {
+        p.extend(numbers(st, state));
+        p.extend(purged_in_list(st, state));
+    }
     // Overrides: block structure and every line.
-    let by_id = state.by_id();
+    let idx = &state.idx;
     match &state.block {
-        Ok(b) => p.extend(overrides::validate(
-            &st.doc,
-            &state.schema,
-            &by_id,
-            &b.lines,
-        )),
+        Ok(b) => p.extend(overrides::validate(&st.doc, &state.schema, idx, &b.lines)),
         Err(e) => p.extend(e.iter().cloned()),
     }
     // Effective view: evidence, resolution, cycles.
     let eff = state.effective();
     for r in &eff.records {
-        let id = id_of(r);
+        let id = state.label(r);
+        let id = id.as_str();
         if r.get("status").and_then(|x| x.as_str()) == Some("completed")
             && r.get("verification_evidence")
                 .and_then(|x| x.as_str())
@@ -651,23 +683,38 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
             .unwrap_or_default()
         {
             let d = d.as_str().unwrap_or("");
-            if !by_id.contains_key(d) {
+            if idx.find(d).is_none() {
                 p.push(format!("{id}: depends_on unknown {d}"));
             }
         }
         let ep = r.get("epic").and_then(|x| x.as_str()).unwrap_or("");
-        if !ep.is_empty() && !by_id.contains_key(ep) {
+        if !ep.is_empty() && idx.find(ep).is_none() {
             p.push(format!("{id}: epic unknown {ep}"));
+        }
+        if state.purged {
+            for x in r
+                .get("related")
+                .and_then(|x| x.as_array())
+                .cloned()
+                .unwrap_or_default()
+            {
+                let d = x.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if idx.find(d).is_none() {
+                    p.push(format!("{id}: related unknown {d}"));
+                }
+            }
         }
     }
     for c in cycles(&eff.records) {
+        let mut c: Vec<String> = c.iter().map(|x| idx.label(x)).collect();
+        c.sort();
         p.push(format!("depends_on cycle among [{}]", c.join(", ")));
     }
     p.extend(hygiene(state, &st.doc));
     // The doc is a projection: it must equal the render byte for byte.
     if let Some(md) = &state.md {
         if state.block.is_ok() {
-            let want = overrides::render(&st.path, &eff, &state.inner());
+            let want = overrides::render(&st.path, &eff, &state.inner(), &state.idx);
             if let Some((n, got)) = first_difference(md, &want) {
                 p.push(format!(
                     "{}:{n} differs from the render of {} (a stale render, or a hand edit outside the overrides block): {:?} -- run: mios-task render",
@@ -677,6 +724,79 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
                 ));
             }
         }
+    }
+    p
+}
+
+/// The number rules of a migrated list: every number unique, numbers in creation order (the opaque ids, which
+/// begin with their creation time, sort the way the numbers do), and the highest never below
+/// [tasks.store].numbered, so a dropped last task cannot hand its number to the next one.
+pub fn numbers(st: &Store, state: &State) -> Vec<String> {
+    let mut p = Vec::new();
+    let mut by_n: Vec<(u64, &str)> = Vec::new();
+    let mut seen: HashMap<u64, &str> = HashMap::new();
+    for r in &state.records {
+        let Some(n) = r.get("number").and_then(|x| x.as_u64()) else {
+            continue; // the schema names the missing field
+        };
+        let id = id_of(r);
+        if let Some(prev) = seen.insert(n, id) {
+            p.push(format!(
+                "duplicate number {n}: {prev} and {id} are both {} -- a number names one task, ever",
+                state.ids.typed(n)
+            ));
+        }
+        by_n.push((n, id));
+    }
+    by_n.sort();
+    for w in by_n.windows(2) {
+        let ((a, ia), (b, ib)) = (w[0], w[1]);
+        if a != b && ia >= ib {
+            p.push(format!(
+                "{}: its id {ib} sorts before {}'s {ia} though its number is higher -- numbers follow creation order; {} was reissued or hand-assigned",
+                state.ids.typed(b),
+                state.ids.typed(a),
+                state.ids.typed(b)
+            ));
+        }
+    }
+    let high = by_n.last().map(|x| x.0).unwrap_or(0);
+    if let Some(floor) = st.numbered {
+        if high < floor {
+            p.push(format!(
+                "the highest task number is {high} but [tasks.store].numbered is {floor} -- {} was dropped, and its number would be issued again",
+                state.ids.typed(floor)
+            ));
+        }
+    }
+    p
+}
+
+/// No purged id in the list itself: not in a record (frozen slices included) and not in an override line.
+pub fn purged_in_list(st: &Store, state: &State) -> Vec<String> {
+    let shapes = match Shapes::from_list(st.purged.clone()) {
+        Ok(s) => s,
+        Err(e) => return vec![e],
+    };
+    let mut p = Vec::new();
+    let mut found = |at: String, text: &str| {
+        for h in crate::record::ids::scan(text.as_bytes(), &mut |t| shapes.matches(t).then_some(()))
+        {
+            p.push(format!(
+                "{at} carries the purged id {} -- name the task by its typed id {}_<number> (ADR-0028)",
+                h.token, state.ids.object
+            ));
+        }
+    };
+    for r in &state.records {
+        let mut strs = Vec::new();
+        walk_strings(r, "", &mut strs);
+        for (path, s) in strs {
+            found(format!("{}: {path}", state.label(r)), &s);
+        }
+    }
+    for l in state.override_lines() {
+        found(format!("{}:{}: override line", st.doc, l.n), &l.raw);
     }
     p
 }
@@ -695,11 +815,11 @@ pub struct Slice {
     pub text: String,
 }
 
-/// Every slice of every record, grouped by file and sorted by offset.
-pub fn slices(records: &[Value]) -> BTreeMap<String, Vec<Slice>> {
+/// Every slice of every record, grouped by file and sorted by offset; each names its owner by `idx`'s label.
+pub fn slices(records: &[Value], idx: &Index) -> BTreeMap<String, Vec<Slice>> {
     let mut out: BTreeMap<String, Vec<Slice>> = BTreeMap::new();
-    for r in records {
-        let owner = r.get("id").and_then(|x| x.as_str()).unwrap_or("?");
+    for (i, r) in records.iter().enumerate() {
+        let owner = idx.labels.get(i).map(String::as_str).unwrap_or("?");
         let Some(a) = r
             .get("provenance")
             .and_then(|p| p.get("sources"))
@@ -777,8 +897,8 @@ pub fn rebuild(file: &str, sl: &[Slice], want: Option<&Frozen>) -> Result<String
 }
 
 /// Every problem with the frozen history: each declared list rebuilds to its digest, every other slice is intact.
-pub fn verify(records: &[Value], frozen: &[Frozen]) -> Vec<String> {
-    let all = slices(records);
+pub fn verify(records: &[Value], frozen: &[Frozen], idx: &Index) -> Vec<String> {
+    let all = slices(records, idx);
     let mut errs = Vec::new();
     for f in frozen {
         match all.get(&f.source) {

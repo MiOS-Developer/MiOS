@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Kernel Livepatching & MOK Signature Verification (T-681, T-682).
+# AI-hint: Automated unit test suite for Kernel Livepatching & MOK Signature Verification (task_625, task_626).
 # AI-related: usr/libexec/mios/kernel/kpatch_mgr.py, tests/test-kpatch-mgr.py
 """Automated unit test suite for MiOS Kernel Livepatch Manager."""
 
