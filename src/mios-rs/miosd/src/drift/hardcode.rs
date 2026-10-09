@@ -25,6 +25,11 @@ impl Check for HardcodeVersionCheck {
         "Assert no hardcoded Fedora version literals exist outside SSOT"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
+        if !ctx.root.join("usr/share/mios/mios.toml").is_file() {
+            return Verdict::Fail(
+                "usr/share/mios/mios.toml: No such file or directory (os error 2)".into(),
+            );
+        }
         super::audit::native(ctx, "mios-gate", &["version-literals-ssot"])
     }
 }

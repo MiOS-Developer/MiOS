@@ -12,6 +12,11 @@ impl Check for TemplateConformanceCheck {
         "Assert file template conformance per Law 14 (ONE-TEMPLATE-PER-TYPE)"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
+        if !ctx.root.join("usr/share/mios/templates").is_dir() {
+            return Verdict::Fail(
+                "required source directory usr/share/mios/templates is missing".into(),
+            );
+        }
         super::audit::native(ctx, "mios-template-conform", &[])
     }
 }
