@@ -280,14 +280,35 @@ def check_legibility_ratchet() -> int:
     # included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
     # domains below partition the same listing.
     import fnmatch
-    budget = lim.get("file_budget") or {}
     source = rels
 
     viol = []
+    # The budget fails closed: an absent table, a missing or non-integer target, or a
+    # malformed domain is a violation, never a skipped comparison (peer-lane review of
+    # af498021 planted all four and each passed).
+    budget = lim.get("file_budget")
+    if not isinstance(budget, dict) or not budget:
+        viol.append("[legibility.file_budget] is absent -- ADR-0030's 500-file budget is then bounded by nothing")
+        budget = {}
+    target = budget.get("target_tracked_files")
+    if budget and (type(target) is not int or target <= 0):
+        viol.append("[legibility.file_budget].target_tracked_files must be a positive integer (got %r)" % (target,))
+    order, domains = budget.get("order"), budget.get("domains")
+    if budget and (not isinstance(order, list) or not order or not isinstance(domains, dict) or not domains):
+        viol.append("[legibility.file_budget] needs a non-empty order list and domains table")
+    order = order if isinstance(order, list) else []
+    domains = domains if isinstance(domains, dict) else {}
+    for d in order:
+        spec = domains.get(d) if isinstance(domains.get(d), dict) else {}
+        for key in ("max_files", "target_files"):
+            v = spec.get(key)
+            if type(v) is not int or v < 0:
+                viol.append("[legibility.file_budget.domains.%s].%s must be a non-negative integer (got %r)" % (d, key, v))
+        g = spec.get("globs")
+        if not isinstance(g, list) or not g or not all(isinstance(x, str) and x for x in g):
+            viol.append("[legibility.file_budget.domains.%s].globs must be a non-empty list of strings" % d)
     # Each source file lands in the FIRST domain (in [legibility.file_budget].order)
     # whose glob matches it, so a file is never budgeted twice or not at all.
-    order = list(budget.get("order") or ())
-    domains = budget.get("domains") or {}
     per_domain = {}
     if budget:
         missing = [d for d in order if d not in domains] + [d for d in domains if d not in order]
@@ -306,14 +327,13 @@ def check_legibility_ratchet() -> int:
             viol.append("%d tracked file(s) belong to no [legibility.file_budget] domain (first: %s)"
                         % (len(homeless), homeless[0]))
         for d in order:
-            cap = (domains.get(d) or {}).get("max_files")
-            per_domain[d] = (counts.get(d, 0), cap, (domains.get(d) or {}).get("target_files"))
-            if type(cap) is not int:
-                viol.append("[legibility.file_budget.domains.%s].max_files must be an integer" % d)
-            elif counts.get(d, 0) > cap:
+            spec = domains.get(d) if isinstance(domains.get(d), dict) else {}
+            cap = spec.get("max_files")
+            per_domain[d] = (counts.get(d, 0), cap, spec.get("target_files"))
+            if type(cap) is int and counts.get(d, 0) > cap:
                 viol.append("files.%s = %d, over the floor of %d. This ratchet only comes DOWN: "
                             "fold or delete, do not raise it." % (d, counts[d], cap))
-        target = budget.get("target_tracked_files")
+        # Only reached with every target an int (malformed ones were reported above).
         planned = sum(t for _, _, t in per_domain.values() if type(t) is int)
         if type(target) is int and planned > target:
             viol.append("[legibility.file_budget] domain targets sum to %d, over target_tracked_files = %d"
