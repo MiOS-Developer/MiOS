@@ -6,7 +6,6 @@ mod check;
 mod cli;
 mod migrate;
 mod overrides;
-mod purge;
 mod record;
 
 use std::process::ExitCode;

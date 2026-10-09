@@ -3,9 +3,9 @@
 // AI-functions: run, Args, cmd_check, cmd_fmt, cmd_render, cmd_ready, resolve, cmd_set, cmd_claim, cmd_add, mint, cmd_fold, cmd_source, cmd_migrate
 
 use crate::check::{self, State};
+use crate::migrate::purge;
 use crate::migrate::{self, Inputs};
 use crate::overrides;
-use crate::purge;
 use crate::record::{
     self, canonical_status, dumps, find_root, ids, today, write_atomic, Index, Schema, Store,
 };
