@@ -59,6 +59,15 @@ enum Commands {
         #[arg(long)]
         lint: bool,
     },
+    /// Validate and transactionally install every declared Windows executable.
+    NativeWindowsInstall {
+        #[arg(long)]
+        root: std::path::PathBuf,
+        #[arg(long)]
+        source: std::path::PathBuf,
+        #[arg(long)]
+        bin_dir: std::path::PathBuf,
+    },
     /// Check every installed SSOT native artifact without requiring Cargo
     NativeRuntimeCheck {
         #[arg(long, default_value = "/")]
@@ -1075,6 +1084,19 @@ async fn main() {
             }
             println!("[miosd] SSOT-required lint tools verified; workspace lint requested: {lint}");
         }
+        Commands::NativeWindowsInstall {
+            root,
+            source,
+            bin_dir,
+        } => match mios_build::verification::windows_install(root, source, bin_dir) {
+            Ok(count) => {
+                println!("[miosd] {count} Windows native release artifacts installed and verified")
+            }
+            Err(error) => {
+                eprintln!("[miosd] Windows installation: {error}");
+                std::process::exit(1);
+            }
+        },
         Commands::NativeRuntimeCheck {
             root,
             platform,
