@@ -1124,7 +1124,7 @@ so long. Let a run finish.
   - Regenerated and verified manual corpus ledger: usr/share/mios/reference/manual-corpus.tsv up to date (19,523 rows, 718 tombstones).
   - Ratcheted max_tooling_python_lines in usr/share/mios/mios.toml down to 77088 (shrink-only, commit 53130f0b).
   - Updated TASKS.md parity for T-1080 (done), T-1081 (done), T-1082 (done), T-1083 (done), T-1101 (done). Both check-tasks.py status-parity and schema exit 0.
-- next: T-1084 (HARVEST narrative blocks), T-1085 (DOCS-REFS), T-1091 (fold tests into subject modules)
+- next: HARVEST narrative blocks and DOCS-REFS (planned, never recorded as tasks), T-1091 (fold tests into subject modules)
 - blockers: -
 - unverified: none; all controls verified with positive & negative sentinels (DEVLOOP-PLANTED-SRF-LIB: 122->123 rc 1, DEVLOOP-PLANTED-SRF-TESTS: 114->115 rc 1, DEVLOOP-PLANTED-SRF-NATIVE: 124->125 rc 1, DEVLOOP-PLANTED-SRF-LIBEXEC: 61->62 rc 1), drift-checks legibility-ratchet exit 0, test_mios_comments 31/31 passed.
 

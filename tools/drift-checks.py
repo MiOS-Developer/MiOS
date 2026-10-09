@@ -1616,6 +1616,7 @@ def check_negative_test_coverage() -> int:
         "check_schema_consumers",
         "check_tasks_status_parity",
         "check_agy_tasks",
+        "check_task_ids",
         "check_mios_toml_integrity",
         "check_privileged_quadlets_minimal",
         "check_container_names",

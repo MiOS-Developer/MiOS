@@ -380,10 +380,11 @@ class cc_TestContextCompact(unittest.TestCase):
         self.assertGreater(total_tokens, tokens)
 
     def test_extract_factual_anchors(self):
-        text = "Modified file usr/libexec/mios/sec/livepatch_mgr.py and completed task T-545."
+        text = "Modified file usr/libexec/mios/sec/livepatch_mgr.py and completed task_545; see CVE-2026-1001."
         anchors = mios_kv_compact.extract_factual_anchors(text)
         self.assertTrue(any("livepatch_mgr.py" in a for a in anchors))
-        self.assertIn("T-545", anchors)
+        self.assertIn("task_545", anchors)
+        self.assertIn("CVE-2026-1001", anchors)
 
     def test_should_compact_threshold(self):
         engine = mios_kv_compact.KVCompactEngine(max_tokens=1000, compact_threshold=0.75, mock=True)

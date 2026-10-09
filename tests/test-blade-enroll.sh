@@ -8,7 +8,6 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VERBOSE=false
 DRY_RUN=false
-MOCK_MODE=false
 
 show_help() {
     cat <<'EOF'
@@ -36,7 +35,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --mock)
-            MOCK_MODE=true
             shift
             ;;
         -h|--help)
@@ -384,7 +382,7 @@ set -e
 if [[ $RET_WILD_VERIFY -ne 0 ]]; then
     assert_pass "Wildcard argument to verify-ek strictly rejected"
 else
-    assert_fail "Wildcard argument to verify-ek was permitted"
+    assert_fail "Wildcard argument to verify-ek was permitted: $WILD_VERIFY_ERR"
 fi
 
 # -----------------------------------------------------------------------------

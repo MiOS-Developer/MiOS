@@ -57,8 +57,8 @@ def estimate_tokens(text_or_messages: str | List[Dict[str, Any]] | Dict[str, Any
 def extract_factual_anchors(text: str) -> List[str]:
     """Extract key file paths, function names, task IDs, and technical terms to retain in summary."""
     anchors = set()
-    # Task / CVE IDs (T-545, AGY-2145, CVE-2026-1001)
-    for match in re.finditer(r'\b(?:T-\d+|AGY-\d+|CVE-\d+-\d+)\b', text):
+    # Task / CVE IDs (task_545, CVE-2026-1001); a task is named by its typed id (ADR-0028)
+    for match in re.finditer(r'\b(?:task_\d+|CVE-\d+-\d+)\b', text):
         anchors.add(match.group(0))
     # File paths (Unix & Windows)
     for match in re.finditer(r'(?:[a-zA-Z]:\\|[/\w\.-]+/)[a-zA-Z0-9_\.-]+\.[a-zA-Z0-9]+', text):

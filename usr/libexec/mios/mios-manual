@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: The generative documentation CLI: builds the comment corpus ledger that makes "this comment's knowledge landed in a doc" machine-checkable and reports the census behind the documentation ratchet. Only `prune` edits source, only for landed knowledge.
 # AI-related: usr/lib/mios/mios_comments.py, usr/share/mios/reference/manual-corpus.tsv, automation/98-drift-checks.sh, docs/design/doc-generative-documentation.md
-# AI-functions: cmd_ledger, cmd_audit, cmd_coverage, cmd_harvest, cmd_prune, cmd_landing, cmd_check_functions, cmd_render, check_harvested_functions, landed, main
+# AI-functions: cmd_ledger, cmd_audit, cmd_coverage, cmd_harvest, cmd_prune, cmd_landing, cmd_check_functions, cmd_render, cmd_rehash, check_harvested_functions, landed, main
 """mios-manual -- corpus ledger and census for the MiOS documentation system.
 
 Spec: docs/design/doc-generative-documentation.md sections 3.4 and 5.
@@ -15,6 +15,7 @@ Subcommands:
   landing         verify every pruned comment still lands in a doc
   check-functions verify harvested AI-functions lines against source
   render          splice derived content into MIOS-GEN marker interiors
+  rehash          after an in-place rewrite (mios-task migrate-ids), move landed rows to their new hash
 
 `--root` selects the repo, and either layout resolves, so the same tools serve
 mios.git and mios-bootstrap.git without being copied across (Law 15).
@@ -1468,6 +1469,84 @@ def _derive(gen_id: str, ssot: dict) -> str | None:
     return None if fn is None else fn(ssot, arg)
 
 
+def cmd_rehash(args) -> int:
+    """Carry landings across a rewrite that changed only the ids in comment text.
+
+    `mios-task migrate-ids` rewrites old task ids to typed ones in the comments and in the docs they landed in
+    alike. A comment's hash changes with its text, so the ledger, which carries a landing by hash, would lose
+    it and `distill` would land the prose a second time. Each changed source is lexed as it was at --from and
+    as it is now, and the two block sequences are aligned on their text with every word that holds a digit
+    masked (an old id and its typed id mask alike); an aligned pair is one comment, so its old hash moves to
+    its new one in the ledger and in every mios-src marker of the docs. A hash two different comments would
+    move to is left alone.
+    """
+    import difflib
+    import subprocess
+    root, rev = args.root, args.rev
+    masked = re.compile(r"[a-z0-9_#.-]*[0-9][a-z0-9_#.-]*")
+    git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True)
+    diff = git("diff", "--name-only", "--no-renames", rev)
+    if diff.returncode != 0:
+        print(f"rehash: git diff against {rev} failed: {diff.stderr.decode(errors='replace').strip()}",
+              file=sys.stderr)
+        return 1
+    changed = set(diff.stdout.decode().split())
+    moves, clash = {}, set()
+    for rel, full in mc.iter_source_files(root):
+        if rel not in changed:
+            continue
+        old = git("show", f"{rev}:{rel}")
+        if old.returncode != 0:
+            continue
+        try:
+            before, after = mc.lex(full, raw=old.stdout), mc.lex(full)
+        except Exception:
+            continue
+        key = lambda blocks: [masked.sub("#", x.norm) for x in blocks]
+        sm = difflib.SequenceMatcher(None, key(before), key(after), autojunk=False)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag != "equal":
+                continue
+            for x, y in zip(before[i1:i2], after[j1:j2]):
+                if y.sha12 != x.sha12 and moves.setdefault(x.sha12, y.sha12) != y.sha12:
+                    clash.add(x.sha12)
+    if _refuse_if_degraded():
+        return 1
+    for c in clash:
+        moves.pop(c, None)
+    dest = os.path.join(root, LEDGER_REL.replace("/", os.sep))
+    rows = list(_read_ledger(dest)._all)
+    moved = 0
+    for row in rows:
+        new = moves.get(row["sha12"])
+        if new:
+            row["sha12"] = new
+            moved += 1
+    marker = re.compile(r"mios-src:([0-9a-f]{12})")
+    docs = {}
+    for rel in git("ls-files", "-z", "--", "*.md").stdout.decode().split("\0"):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        if not rel or not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+        new = marker.sub(lambda m: "mios-src:" + moves.get(m.group(1), m.group(1)), text)
+        if new != text:
+            docs[path] = new
+    if args.dry_run:
+        print(f"rehash: {len(moves)} hash(es) would move: {moved} ledger row(s), {len(docs)} doc(s) (dry run)")
+        return 0
+    for path, text in docs.items():
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    body = ["# " + "\t".join(COLUMNS)] + ["\t".join(r[c] for c in COLUMNS) for r in rows]
+    with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(body) + "\n")
+    print(f"rehash: {len(moves)} hash(es) moved: {moved} ledger row(s), {len(docs)} doc(s); "
+          f"{len(clash)} ambiguous hash(es) left alone")
+    return 0
+
+
 def cmd_render(args) -> int:
     """Splice derived content into marker pairs. Writes NOWHERE else.
 
@@ -1603,6 +1682,11 @@ def main(argv=None) -> int:
     p = sub.add_parser("landing", help="verify every pruned block still lands in a doc")
     p.add_argument("--check", action="store_true")
     p.set_defaults(fn=cmd_landing)
+
+    p = sub.add_parser("rehash", help="carry landings across an in-place comment rewrite")
+    p.add_argument("--from", dest="rev", default="HEAD", help="the revision before the rewrite")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_rehash)
 
     p = sub.add_parser("render", help="splice derived sections into MIOS-GEN markers")
     p.add_argument("--check", action="store_true",

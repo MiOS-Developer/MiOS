@@ -3188,68 +3188,77 @@ test_task_store() {
     local sbak dbak; sbak="$(mktemp)"; dbak="$(mktemp)"
     cp "$store" "$sbak"; cp "$doc" "$dbak"
     _ts_restore() { cp "$sbak" "$store"; cp "$dbak" "$doc"; rm -f "${ROOT}/.devloop/tasks.jsonl"; }
-    _ts_fail() { _ts_restore; rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit; die "$1"; }
+    _ts_fail() { _ts_restore; rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit _ts_pick; die "$1"; }
     # Each plant must fail check_task_store and be named in its output.
     _ts_plant() { # $1 = what was planted, $2 = text the output must contain
         _neg_gate check_task_store && _ts_fail "check_task_store passed with $1"
         printf '%s\n' "$_NEG_GATE_OUT" | grep -qF -- "$2" || _ts_fail "check_task_store did not name $1 (wanted: $2): $_NEG_GATE_OUT"
         _ts_restore
     }
-    _neg_gate check_task_store || _ts_fail "check_task_store failed on the tree as committed: $_NEG_GATE_OUT"
-
-    # 1. A duplicate id.
-    grep -m1 '^{"id": "T-1169",' "$sbak" >> "$store"
-    _ts_plant "two records with id T-1169" "duplicate id T-1169"
-    # 2. A task line of the rendered TASKS.md hand-edited outside the overrides block.
-    sed -i '0,/^- `T-1169` /s//- `T-1169` HAND-EDITED /' "$doc"
-    _ts_plant "a hand-edited TASKS.md task line" 'HAND-EDITED'
-    # 3. A migrated record dropped: the frozen history names it.
-    local victim; victim="$(sed -n '100p' "$sbak" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-    sed -i '100d' "$store"
-    _ts_plant "record ${victim} dropped" "record ${victim} was dropped"
-    # 4. A retired store back in use.
-    mkdir -p "${ROOT}/.devloop"; printf '{"id": "T-9999"}\n' > "${ROOT}/.devloop/tasks.jsonl"
-    _ts_plant "a retired .devloop/tasks.jsonl" "retired task store present: .devloop/tasks.jsonl"
-    # 5. A retired list's frozen bytes edited.
-    _frozen_edit "MiOS:AGY-TASKS.md" '^## AGY-1 ' '## AGY-1 rewritten history ' || _ts_fail "could not plant an AGY-TASKS.md edit"
-    _ts_plant "an edited AGY-TASKS.md slice" "MiOS:AGY-TASKS.md: the slice AGY-1 owns at offset"
-    # Rewrite one record ($1 = id) through a python statement over `r`, in the canonical bytes.
+    # Rewrite the record numbered $1 through a python statement over `r` (and `by`, number -> record), in the
+    # bytes the dev-loop toolkit writes; prints whatever the statement leaves in `out`.
     _ts_edit() {
         python3 - "$store" "$1" "$2" <<'PYEOF'
 import json, sys
-p, rid, stmt = sys.argv[1:4]
+p, n, stmt = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 with open(p, encoding="utf-8", newline="") as f:
     lines = f.read().split("\n")[:-1]
-out = []
-for line in lines:
-    r = json.loads(line)
-    if r.get("id") == rid:
-        exec(stmt)
-        line = json.dumps(r, ensure_ascii=False)
-    out.append(line)
+recs = [json.loads(l) for l in lines]
+by = {r["number"]: r for r in recs}
+out = ""
+r = by[n]
+exec(stmt)
+lines[recs.index(r)] = json.dumps(r, ensure_ascii=False)
 with open(p, "w", encoding="utf-8", newline="") as f:
-    f.write("\n".join(out) + "\n")
+    f.write("\n".join(lines) + "\n")
+print(out)
 PYEOF
     }
+    # The number of the first record that `cond` (a python expression over `r`) holds for.
+    _ts_pick() { python3 -c 'import json,sys; print(next(r["number"] for r in map(json.loads, open(sys.argv[1], encoding="utf-8")) if eval(sys.argv[2])))' "$sbak" "$1" 2>/dev/null; }
+    _neg_gate check_task_store || _ts_fail "check_task_store failed on the tree as committed: $_NEG_GATE_OUT"
+
+    # 1. A duplicate id.
+    local dup; dup="$(sed -n '2p' "$sbak")"; printf '%s\n' "$dup" >> "$store"
+    _ts_plant "a record twice" "duplicate id $(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$dup")"
+    # 2. A task line of the rendered TASKS.md hand-edited outside the overrides block.
+    sed -i '0,/^- `task_1` /s//- `task_1` HAND-EDITED /' "$doc"
+    _ts_plant "a hand-edited TASKS.md task line" 'HAND-EDITED'
+    # 3. A migrated record dropped: the frozen history names it by its typed id.
+    local victim; victim="$(sed -n '100p' "$sbak" | python3 -c 'import json,sys; print("task_%d" % json.load(sys.stdin)["number"])')"
+    sed -i '100d' "$store"
+    _ts_plant "record ${victim} dropped" "record ${victim} was dropped"
+    # 4. A retired store back in use.
+    mkdir -p "${ROOT}/.devloop"; printf '{"id": "task_1"}\n' > "${ROOT}/.devloop/tasks.jsonl"
+    _ts_plant "a retired .devloop/tasks.jsonl" "retired task store present: .devloop/tasks.jsonl"
+    # 5. A retired list's frozen bytes edited: the slice names the task that owns it.
+    local head; head="$(_frozen_text MiOS:AGY-TASKS.md)"; head="$(grep -m1 -oE '^## task_[0-9]+ ' <<< "$head")" || _ts_fail "the frozen AGY-TASKS.md has no task heading"
+    _frozen_edit "MiOS:AGY-TASKS.md" "^${head}" "${head}rewritten history " || _ts_fail "could not plant an AGY-TASKS.md edit"
+    _ts_plant "an edited AGY-TASKS.md slice" "MiOS:AGY-TASKS.md: the slice ${head:3:-1} owns at offset"
     # 6. An edge the lane file archived (archived_dependencies) put back into depends_on.
-    _ts_edit T-1073 'r["depends_on"].append("T-1046")' || _ts_fail "could not plant T-1073's archived edge"
-    _ts_plant "an archived edge back in depends_on" "T-1073: depends_on T-1046 is an edge the lane file archived"
-    # 7. A count-keeping swap: AGY-1692 (no frozen slice) replaced by a slice-less record.
-    grep -m1 '^{"id": "AGY-1692",' "$sbak" > /dev/null || _ts_fail "AGY-1692 is not in ${store##*/}"
-    sed -i '/^{"id": "AGY-1692",/d' "$store"
-    grep -m1 '^{"id": "AGY-1692",' "$sbak" >> "$store"
-    _ts_edit AGY-1692 'r["id"] = r["provenance"]["key"] = "T-9998"; r["provenance"]["sources"] = []' || _ts_fail "could not plant the swap"
-    _ts_plant "AGY-1692 swapped for a record with no slices" "T-9998: a migrated record with no provenance.sources"
-    # 8. The only record of the lane rename T-1104 -> T-1104#2 erased.
-    _ts_edit 'T-1104#2' 'r["provenance"]["aliases"] = []' || _ts_fail "could not plant T-1104#2's aliases"
-    _ts_plant "T-1104#2 without its alias" "T-1104#2: a renamed id whose provenance.aliases does not name T-1104"
-    # 9. A migrated record's provenance key rewritten.
-    _ts_edit T-1169 'r["provenance"]["key"] = "T-1169-forged"' || _ts_fail "could not plant a key rewrite"
-    _ts_plant "a rewritten provenance key" "[tasks.store].migrated_sha256"
-    # 10. A carriage return on a line.
+    local n msg
+    n="$(_ts_pick 'any(x["type"] == "archived" for x in r["related"])')" || _ts_fail "no record carries an archived edge"
+    msg="$(_ts_edit "$n" 'e = next(x["id"] for x in r["related"] if x["type"] == "archived"); r["depends_on"].append(e); out = "task_%d: depends_on task_%d" % (n, next(k for k, v in by.items() if v["id"] == e))')" || _ts_fail "could not plant the archived edge"
+    _ts_plant "an archived edge back in depends_on" "$msg is an edge the lane file archived"
+    # 7. A count-keeping swap: a record whose only slices lie outside the frozen lists, made slice-less and renamed.
+    n="$(_ts_pick 'r["provenance"] and r["provenance"]["sources"] and all(not x["file"].startswith("MiOS:") for x in r["provenance"]["sources"])')" || _ts_fail "no record owns only slices outside the frozen lists"
+    _ts_edit "$n" 'r["id"] = "task_7ZZZZZZZZZZZZZZZZZZZZZZZZZ"; r["number"] = 999999; r["provenance"]["sources"] = []' >/dev/null || _ts_fail "could not plant the swap"
+    _ts_plant "task_${n} swapped for a record with no slices" "task_999999: a migrated record with no provenance.sources"
+    # 8. A number issued twice.
+    _ts_edit 6 'r["number"] = 5' >/dev/null || _ts_fail "could not plant a duplicate number"
+    _ts_plant "a duplicate number" "duplicate number 5"
+    # 9. A migrated record renumbered past the end: its identity no longer matches the frozen digest.
+    n="$(_ts_pick 'r["provenance"]')"
+    _ts_edit "$n" 'r["number"] = max(by) + 1' >/dev/null || _ts_fail "could not plant a renumbering"
+    _ts_plant "a renumbered task" "[tasks.store].migrated_sha256"
+    # 10. A purged id written back into a record (built here, so this file never carries one).
+    local old="T""-1""169"
+    _ts_edit 1 "r['notes'] = 'see $old'" >/dev/null || _ts_fail "could not plant an old id"
+    _ts_plant "an old task id in a record" "carries the purged id $old"
+    # 11. A carriage return on a line.
     sed -i '1s/$/\r/' "$store"
     _ts_plant "a CRLF line end" "tasks.jsonl:1: carriage return"
-    # 11. No sibling checkout: a copy of the task files alone, with nothing beside it, still checks green.
+    # 12. No sibling checkout: a copy of the task files alone, with nothing beside it, still checks green.
     local alone; alone="$(mktemp -d)"
     mkdir -p "$alone/MiOS/usr/share/mios" "$alone/MiOS/usr/lib/mios/schemas"
     cp "$store" "$doc" "$alone/MiOS/"; cp "${ROOT}/usr/share/mios/mios.toml" "$alone/MiOS/usr/share/mios/"
@@ -3258,9 +3267,24 @@ PYEOF
     "$bin" check --root "$alone/MiOS" >/dev/null 2>&1 || { rm -rf "$alone"; _ts_fail "mios-task check needed a sibling checkout"; }
     rm -rf "$alone"
 
-    rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit
+    rm -f "$sbak" "$dbak"; unset -f _ts_fail _ts_restore _ts_plant _ts_edit _ts_pick
     _neg_gate check_task_store || die "check_task_store failed after restoration: $_NEG_GATE_OUT"
     log "Test_task_store negative test passed"
+}
+
+test_task_ids() {
+    log "Testing check_task_ids"
+    # A tracked file that names a task by a purged id fails, and names the file and line; a look-alike does not.
+    local f="${ROOT}/ROADMAP.md" bak old="AGY""-1""601" line; bak="$(mktemp)"; cp "$f" "$bak"
+    printf '\nF-35, UTF-8 and SHA-256 are not task ids; task_1 is one.\n' >> "$f"
+    _neg_gate check_task_ids || { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids failed on look-alikes and a typed id: $_NEG_GATE_OUT"; }
+    printf 'see %s\n' "$old" >> "$f"; line="$(wc -l < "$f")"
+    _neg_gate check_task_ids && { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids passed with $old in ROADMAP.md"; }
+    printf '%s\n' "$_NEG_GATE_OUT" | grep -qF -- "ROADMAP.md:${line}: ${old} is a purged task id" \
+        || { cp "$bak" "$f"; rm -f "$bak"; die "check_task_ids did not name ROADMAP.md:${line}: $_NEG_GATE_OUT"; }
+    cp "$bak" "$f"; rm -f "$bak"
+    _neg_gate check_task_ids || die "check_task_ids failed after restoration: $_NEG_GATE_OUT"
+    log "Test_task_ids negative test passed"
 }
 
 test_tasks_status_parity() {
@@ -3269,7 +3293,7 @@ test_tasks_status_parity() {
     # Flip ONE frozen summary-table cell (ADR-0028) away from that task's own section status.
     local tid
     local txt; txt="$(_frozen_text MiOS:TASKS.md)"
-    tid="$(grep -m1 -oE '^\| T-[0-9]+ \| P[0-9] \| (done|done-by-code|planned|in-progress) \|' <<< "$txt" | awk '{print $2}')"
+    tid="$(grep -m1 -oE '^\| task_[0-9]+ \| P[0-9] \| (done|done-by-code|planned|in-progress) \|' <<< "$txt" | awk '{print $2}')"
     [[ -z "$tid" ]] && { rm -f "$sbak"; die "test_tasks_status_parity found no resolvable summary row to sabotage"; }
     _frozen_edit "MiOS:TASKS.md" "^\\| ${tid} \\| P[0-9] \\| [a-z/-]* \\|" "| ${tid} | P1 | pending |" || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant the ${tid} row"; }
     _neg_gate check_tasks_status_parity && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_tasks_status_parity passed while the summary table contradicted ${tid}'s own Status line"; }
@@ -3288,13 +3312,14 @@ test_agy_tasks() {
     log "Testing check_agy_tasks"
     local store="${ROOT}/tasks.jsonl" sbak; sbak="$(mktemp)"; cp "$store" "$sbak"
 
-    # Inject a duplicate task ID into the frozen AGY-TASKS.md.
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## AGY-1 -- Duplicate header test\n' || { rm -f "$sbak"; die "could not plant a duplicate AGY-1"; }
-    _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite duplicate AGY task ID"; }
+    # Inject a second heading for a task the frozen AGY-TASKS.md already heads.
+    local head; head="$(_frozen_text MiOS:AGY-TASKS.md)"; head="$(grep -m1 -oE '^## task_[0-9]+' <<< "$head")" || { rm -f "$sbak"; die "the frozen AGY-TASKS.md has no task heading"; }
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n'"${head}"$' -- Duplicate header test\n' || { rm -f "$sbak"; die "could not plant a duplicate ${head#\#\# }"; }
+    _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite a duplicate task heading"; }
     cp "$sbak" "$store"
 
-    # Inject a dangling Dep reference.
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## AGY-9999 -- Test task\n**Dep:** AGY-999999\n' || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant AGY-9999"; }
+    # Inject a Dep naming a task that does not exist.
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' $'\n## task_9999999 -- Test task\n**Dep:** task_99999999\n' || { cp "$sbak" "$store"; rm -f "$sbak"; die "could not plant task_9999999"; }
     _neg_gate check_agy_tasks && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_agy_tasks passed despite dangling Dep reference"; }
     cp "$sbak" "$store"; rm -f "$sbak"
 
@@ -4159,15 +4184,15 @@ test_task_schema() {
     # A task with no Verify line is a task anyone can declare done, and a Dep
     # naming a missing id is an ordering nobody can follow.
     local probe='
-## AGY-9999 -- schema probe  (WS-PROCESS | P2 | S)
+## task_9999999 -- schema probe  (WS-PROCESS | P2 | S)
 **Goal:** x
 **What+How:** x
 **Where:** x
 **Done When:** x
 **Why:** x
-**Dep:** AGY-4242
+**Dep:** task_42424242
 '
-    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' "$probe" || { rm -f "$sbak"; die "could not plant AGY-9999"; }
+    _frozen_edit "MiOS:AGY-TASKS.md" '\Z' "$probe" || { rm -f "$sbak"; die "could not plant task_9999999"; }
     _neg_gate check_task_schema && { cp "$sbak" "$store"; rm -f "$sbak"; die "check_task_schema passed on a task with no Verify and a dangling Dep"; }
     cp "$sbak" "$store"; rm -f "$sbak"
     _neg_gate check_task_schema || die "check_task_schema failed after restoration"
@@ -5795,6 +5820,7 @@ _run_test test_leaked_fixtures
     _run_test test_firstboot_provisioners
     _run_test test_schema_consumers
     _run_test test_task_store
+    _run_test test_task_ids
     _run_test test_tasks_status_parity
     _run_test test_agy_tasks
     _run_test test_mios_toml_integrity

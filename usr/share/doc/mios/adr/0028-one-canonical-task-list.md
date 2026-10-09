@@ -108,6 +108,39 @@ It does not authorize changing Git history or silently accepting new frozen dige
   Rehearse the migration in an isolated worktree, inspect its diff and run the gates before integrating
   a repository-wide rewrite. Positive, planted-negative, idempotence and no-write controls cover the tool.
 
+How the rewrite decides a token, and what it keeps:
+
+- **The opaque id.** The ULID's 48-bit time is the record's `created` day at 00:00 UTC plus its rank among
+  the records of that day (an undated record counts from 1970-01-01), so ids sort the way numbers do. Its 80
+  random bits are the first 80 bits of SHA-256 over the old id, so the migration is reproducible from git
+  history byte for byte. `mios-task add` takes the current millisecond (or one past the newest id) and
+  hashed randomness, and the next number above both the list's highest and `[tasks.store].numbered`.
+- **A token.** It follows the old id grammar, starts after a non-word character and ends before one; the
+  longest candidate wins, so `X..Y` range ids and `X#2` renames are one token. It is rewritten when it is a
+  task's id; a former id (`provenance.aliases`) inside its own task's text names that task, elsewhere the
+  live task of the same id; a task whose title opens with it (`NAME: ...`) answers to it; a member of a
+  range a banner task covers names the banner; a bare range end (`X-5..9`) is rewritten with its start.
+  Anything else of an old shape refuses the whole migration until the text is fixed or `--map` decides it.
+- **Kept on purpose.** An id that is also a workstream name (`WS-...`, the 14 workstream records of the
+  hardening campaign) names the workstream in text and stays; the record's own id is purged and the name
+  moves into its `workstream`. Look-alikes that are not old ids (aircraft, encodings, CVEs, port and line
+  numbers) are untouched. Test fixtures of the two one-shot migrators model the legacy shape with prefixes
+  no real task ever had, so neither the rewrite nor the gate touches them.
+- **What is gone.** Every old id in `tasks.jsonl` (records, frozen slices, `after` labels), `provenance.key`
+  and `provenance.aliases`, the overrides block, every tracked file and path. Commit messages and the rest
+  of git history keep the old ids; that history is immutable and the operator accepted it.
+- **Beyond the list.** `--mapping-out FILE` writes every token the migration resolves, with its typed id,
+  outside the tree; `mios-task rewrite-ids --mapping FILE --root DIR` applies the same rewrite to a sibling
+  repository with no task list of its own, so the Law 15 mirrors in mios-bootstrap match again. The comment
+  corpus carries a landing by the comment's hash, which the rewrite changes: `mios-manual rehash` moves each
+  rewritten comment's ledger rows and `mios-src` doc markers to its new hash, so `distill` does not land the
+  same prose twice.
+- **The frozen-list gates.** `tools/check-tasks.py` reads the rewritten frozen lists: TASKS.md rows and
+  sections by `task_<number>`; AGY-TASKS.md headings by `task_<number>` (a range banner is one task now).
+  `[tasks].schema_from` names the first task the schema is demanded of and `schema_also` the ones created
+  after it but filed before it, so the demanded set is exactly the one the AGY number floor described.
+  Every task a Dep line or the TASKS.md text names must be a task in `tasks.jsonl`.
+
 ### The migration (one shot, `mios-task migrate-canonical`)
 
 Counted both ways from `TASKS.jsonl` (3491 records) and `.devloop/tasks.jsonl` (115 lines):

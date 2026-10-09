@@ -140,7 +140,9 @@ impl Shapes {
                 .count();
             let prefix = &base[..base.len() - digits];
             if digits == 0 || prefix.is_empty() {
-                literal.push(esc(base));
+                // A literal id with its hyphens escaped: the shape list in the SSOT must not spell the id it
+                // forbids, or the gate would find it there.
+                literal.push(esc(base).replace('-', "\\-"));
                 continue;
             }
             let w = widths.entry(prefix.to_string()).or_insert((digits, digits));
@@ -371,7 +373,7 @@ mod tests {
         assert_eq!(ids.typed(12), "task_12");
         let o = ids.opaque(&ulid(5, &[1; 10]));
         assert_eq!(ids.ms_of(&o), Some(5));
-        for bad in ["task_12", "tasks_00000000000000000000000000", "T-001"] {
+        for bad in ["task_12", "tasks_00000000000000000000000000", "K-001"] {
             assert_eq!(ids.ms_of(bad), None, "{bad}");
         }
     }
@@ -379,68 +381,71 @@ mod tests {
     #[test]
     fn shapes_cover_their_prefixes_and_leave_look_alikes() {
         let ids = [
-            "T-001",
-            "T-1215",
-            "T-031#2",
-            "F-001",
-            "M-01",
-            "AGY-9",
-            "AGY-1692",
-            "AGY-40..44",
-            "G-TASK 1",
-            "CATREPO-FIX",
+            "K-001",
+            "K-1215",
+            "K-031#2",
+            "Q-001",
+            "QM-01",
+            "KAG-9",
+            "KAG-1692",
+            "KAG-40..44",
+            "QG-TASK 1",
+            "QREPO-FIX",
             "WS-GUP",
         ];
         let s = Shapes::from_ids(ids.iter().copied(), &|i| i.starts_with("WS-"));
         for hit in [
-            "T-002",
-            "T-1104#2",
-            "F-035",
-            "M-16",
-            "AGY-1",
-            "AGY-12345"[..8].as_ref(),
-            "G-TASK 4",
-            "CATREPO-FIX",
+            "K-002",
+            "K-1104#2",
+            "Q-035",
+            "QM-16",
+            "KAG-1",
+            "KAG-12345"[..8].as_ref(),
+            "QG-TASK 4",
+            "QREPO-FIX",
         ] {
             assert!(s.matches(hit), "{hit}");
         }
         for miss in [
-            "F-35",
-            "M-2",
+            "Q-35",
+            "QM-2",
             "UTF-8",
-            "T-12345",
+            "K-12345",
             "CVE-2024-1234",
             "WS-GUP",
             "SHA-256",
-            "T-31",
+            "K-31",
         ] {
             assert!(!s.matches(miss), "{miss}");
         }
+        // The list itself never spells an id it forbids: a literal id is kept with its hyphens escaped.
+        assert!(s.list.contains(&"QREPO\\-FIX".to_string()), "{:?}", s.list);
+        assert!(!s.list.iter().any(|x| x.contains("QREPO-FIX")));
     }
 
     #[test]
     fn the_scanner_takes_the_longest_candidate_at_a_word_start() {
         let known = [
-            "T-1104",
-            "T-1104#2",
-            "AGY-503..AGY-510",
-            "AGY-503",
-            "G-TASK 1",
-            "AGY-961",
-            "AGY-1560",
+            "K-1104",
+            "K-1104#2",
+            "KAG-503..KAG-510",
+            "KAG-503",
+            "QG-TASK 1",
+            "KAG-961",
+            "KAG-1560",
         ];
-        let text = "see T-1104#2, (T-1104) AGY-503..AGY-510 and G-TASK 1; xT-1104 T-1104x T-1104#3 AGY-961..1560 pre-T-1104";
+        let text = "see K-1104#2, (K-1104) KAG-503..KAG-510 and QG-TASK 1; xK-1104 K-1104x K-1104#3 KAG-961..1560 pre-K-1104";
         let hits = scan(text.as_bytes(), &mut |t| known.contains(&t).then_some(()));
         let got: Vec<&str> = hits.iter().map(|h| h.token.as_str()).collect();
         assert_eq!(
             got,
             [
-                "T-1104#2",
-                "T-1104",
-                "AGY-503..AGY-510",
-                "G-TASK 1",
-                "AGY-961",
-                "T-1104"
+                "K-1104#2",
+                "K-1104",
+                "KAG-503..KAG-510",
+                "QG-TASK 1",
+                "KAG-961",
+                "K-1104"
             ]
         );
     }

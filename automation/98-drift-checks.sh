@@ -1844,6 +1844,19 @@ check_task_store() {
     echo "[98-drift-checks]   task list: $(printf '%s' "$out" | tail -1)"
 }
 
+check_task_ids() {
+    # ADR-0028: no purged task id ([tasks.store].purged) in any tracked path or file; a task is task_<number>.
+    local bin out rc=0
+    bin="$(native_bin mios-task)" || { _violation "mios-task is not built, so check_task_ids could not run -- build it: cd tools/native && cargo build -p mios-task"; return; }
+    out="$("$bin" check --tree --root "$ROOT" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "$out" | head -40 | sed 's/^/    /' >&2
+        _violation "a purged task id is back in the tracked tree -- name the task task_<number> (mios-task check --tree, ADR-0028)"
+        return
+    fi
+    echo "[98-drift-checks]   task ids: $(printf '%s' "$out" | tail -1)"
+}
+
 check_render_quadlets() {
     # Asserts every ${MIOS_*} in the render scope RESOLVES -- not that the tree
     # is already rendered. Stage 34 renders in place at bake; the tracked files
@@ -3736,6 +3749,7 @@ main() {
     check_ratchet_direction
     check_size_ceiling
     check_task_store
+    check_task_ids
     check_toolchain_pin
     check_ai_config_projection
     check_artifact_prompt

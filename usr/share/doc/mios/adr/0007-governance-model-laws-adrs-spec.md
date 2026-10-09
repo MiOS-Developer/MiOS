@@ -50,12 +50,12 @@ Net stack: **Spec (rules) ← ADRs (decisions) ← drift-checks (evals)** — al
 
 ## Consequences
 - **Zero churn to the enforcement path** — the drift-checks are unchanged; laws keep working exactly as they do.
-- Adds one generated artifact (the MiOS Spec), one SSOT registry (`[conventions]`), and one generator + drift-check — tracked as **WS-DOCS / DOCS-06 / T-255**.
+- Adds one generated artifact (the MiOS Spec), one SSOT registry (`[conventions]`), and one generator + drift-check — tracked as **WS-DOCS / T-255** (the roadmap item that preceded it was never recorded on its own).
 - The lifecycle is now explicit: **establishing a new law** = an ADR (the decision) + a `[laws]` registry row + a drift-check (the enforcement) → it appears in the generated Spec automatically. **Amending a law** = a new ADR + a registry/enforcement edit; the old ADR is superseded, but the law itself is edited in place (it is an invariant, not a historical record).
 
 ## Implementation
 - **Exists:** `usr/share/mios/mios.toml [laws]` (registry); `automation/98-drift-checks.sh` + `99-postcheck.sh` + `bootc container lint` (enforcement); `usr/share/doc/mios/adr/README.md` record table + `laws[]` cross-links (ADR↔law).
-- **PLANNED (WS-DOCS / DOCS-06):** `usr/share/mios/mios.toml [conventions]` (soft-defaults SSOT); `tools/generate-mios-spec.py` → `usr/share/doc/mios/spec/README.md` (Model-Spec-style, generated); a regenerate-and-diff drift-check in `98-drift-checks.sh`. `CLAUDE.md`/`AGENTS.md` then link to the generated Spec instead of re-stating the laws inline.
+- **PLANNED (WS-DOCS / T-255):** `usr/share/mios/mios.toml [conventions]` (soft-defaults SSOT); `tools/generate-mios-spec.py` → `usr/share/doc/mios/spec/README.md` (Model-Spec-style, generated); a regenerate-and-diff drift-check in `98-drift-checks.sh`. `CLAUDE.md`/`AGENTS.md` then link to the generated Spec instead of re-stating the laws inline.
 
 ## References
 - OpenAI **Model Spec** — a hierarchical objectives/rules/defaults governing-rules document; the pattern for the MiOS Spec.

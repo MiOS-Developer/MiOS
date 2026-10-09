@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub const VERBS: [&str; 13] = [
+pub const VERBS: [&str; 14] = [
     "check",
     "fmt",
     "render",
@@ -30,6 +30,7 @@ pub const VERBS: [&str; 13] = [
     "source",
     "migrate-canonical",
     "migrate-ids",
+    "rewrite-ids",
 ];
 
 pub const USAGE: &str = "usage: mios-task <verb> [--root DIR] ...
@@ -40,22 +41,26 @@ pub const USAGE: &str = "usage: mios-task <verb> [--root DIR] ...
   fmt [--check]                        rewrite every line canonically (fills missing fields, legacy -> OpenAI words)
   render                               write TASKS.md from tasks.jsonl, keeping the overrides block
   ready|next [--json] [--limit N]      pending and unblocked (overrides applied); next sorts by priority
-  set ID [--status S] [--owner O] [--evidence E] [--exact]
+  set ID [--status S] [--owner O] [--evidence E] [--note TEXT] [--related ID[:TYPE]]... [--exact]
   claim ID LANE [--exact]              compare-and-set owner; exit 2 if another lane owns ID
   release ID LANE [--exact]            (an ID that is also a former id of another task needs --exact;
                                         an ID that is only a former id resolves to the renamed task)
   add --title T --ac TEXT... --positive CMD --negative CMD [--expect E] [--type T]
       (once migrated add mints task_<ULID> and the next number; before it, --id ID is required)
       [--priority P] [--size S] [--workstream W] [--domain D] [--epic E] [--goal G]
-      [--depends-on ID]... [--owner O]
+      [--depends-on ID]... [--related ID[:TYPE]]... [--note TEXT] [--owner O]
+      (--related TYPE: related (default), converted_to, converted_from, references, archived)
   overrides fold ID                    bake ID's override values into tasks.jsonl, delete its lines
   source REPO:PATH                     print a retired list rebuilt byte for byte from the provenance slices
   migrate-canonical --store F --lane F --classification F... --out F --report F
       [--schema F] [--lane-origin MiOS:PATH] [--dry-run]
-  migrate-ids [--rewrite-tree] [--map OLD=OLD2]... [--report F] [--dry-run]
+  migrate-ids [--rewrite-tree] [--map OLD=OLD2]... [--report F] [--mapping-out F] [--dry-run]
                                        give every task an opaque task_<ULID> and a number, purge the old ids
                                         from the list, its frozen history and overrides, and with --rewrite-tree
-                                        from every tracked file (ADR-0028); a migrated list is left as it is";
+                                        from every tracked file (ADR-0028); a migrated list is left as it is
+  rewrite-ids --mapping F --root DIR [--dry-run]
+                                       the same tree rewrite over a sibling repository, from migrate-ids'
+                                        --mapping-out (written outside both trees)";
 
 /// Flags with values (repeatable), bare switches and positionals.
 pub struct Args {
@@ -166,6 +171,9 @@ fn root_of(a: &Args) -> Result<PathBuf, Fail> {
 fn dispatch(verb: &str, a: &Args) -> Result<(), Fail> {
     if verb == "migrate-canonical" {
         return cmd_migrate(a);
+    }
+    if verb == "rewrite-ids" {
+        return purge::cmd_rewrite(a).map_err(Fail::Bad);
     }
     let root = root_of(a)?;
     let st = Store::open(&root)?;
@@ -595,15 +603,44 @@ fn resolve(state: &State, recs: &[Value], id: &str, exact: bool) -> Result<usize
     }
 }
 
+/// The --related ID[:TYPE] edges, each naming a task by any spelling the index knows and linked by its id.
+fn related_edges(a: &Args, idx: &Index) -> Result<Vec<Value>, Fail> {
+    const TYPES: [&str; 5] = [
+        "related",
+        "converted_to",
+        "converted_from",
+        "references",
+        "archived",
+    ];
+    let mut out = Vec::new();
+    for x in a.all("related") {
+        let (key, ty) = match x.rsplit_once(':') {
+            Some((k, t)) if TYPES.contains(&t) => (k, t),
+            _ => (x.as_str(), "related"),
+        };
+        let i = idx
+            .find(key)
+            .ok_or(Fail::Bad(format!("related unknown {key}")))?;
+        let e = json!({"id": idx.ids[i], "type": ty});
+        if !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    Ok(out)
+}
+
 fn cmd_set(st: &Store, a: &Args) -> Result<(), Fail> {
     let id = a
         .pos
         .first()
         .cloned()
         .ok_or(Fail::Usage("set needs an ID".into()))?;
-    if a.one("status").is_none() && a.one("owner").is_none() && a.one("evidence").is_none() {
+    if ["status", "owner", "evidence", "note", "related"]
+        .iter()
+        .all(|k| a.one(k).is_none())
+    {
         return Err(Fail::Usage(
-            "set needs --status, --owner or --evidence".into(),
+            "set needs --status, --owner, --evidence, --note or --related".into(),
         ));
     }
     let status = match a.one("status") {
@@ -616,10 +653,27 @@ fn cmd_set(st: &Store, a: &Args) -> Result<(), Fail> {
     let mut name = id.clone();
     mutate(st, |state, recs, touched| {
         let i = resolve(state, recs, &id, exact)?;
-        name = Index::new(recs, state.purged.then_some(&state.ids)).labels[i].clone();
+        let idx = Index::new(recs, state.purged.then_some(&state.ids));
+        name = idx.labels[i].clone();
+        let edges = related_edges(a, &idx)?;
         let r = recs[i]
             .as_object_mut()
             .ok_or(Fail::Bad(format!("{id} is not an object")))?;
+        if let Some(n) = a.one("note") {
+            r.insert("notes".into(), json!(n));
+        }
+        if !edges.is_empty() {
+            let rel = r
+                .entry("related")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .ok_or(Fail::Bad(format!("{id}: related is not a list")))?;
+            for e in edges {
+                if !rel.contains(&e) {
+                    rel.push(e);
+                }
+            }
+        }
         if let Some(s) = status {
             r.insert("status".into(), json!(s));
         }
@@ -776,6 +830,13 @@ fn cmd_add(st: &Store, a: &Args) -> Result<(), Fail> {
             Some(e) if !e.is_empty() => link(e, "epic"),
             _ => String::new(),
         };
+        let related = match related_edges(a, &idx) {
+            Ok(r) => r,
+            Err(Fail::Bad(e)) | Err(Fail::Usage(e)) | Err(Fail::Owned(e)) => {
+                errs.push(e);
+                vec![]
+            }
+        };
         let (id, number) = match &given {
             Some(id) => (id.clone(), None),
             None => {
@@ -803,12 +864,13 @@ fn cmd_add(st: &Store, a: &Args) -> Result<(), Fail> {
             "owner": a.one("owner").unwrap_or(""), "epic": epic,
             "goal": a.one("goal").unwrap_or(""), "priority": o("priority"), "size": o("size"),
             "workstream": o("workstream"), "domain": o("domain"), "depends_on": deps,
-            "related": [], "acceptance_criteria": ac,
+            "related": related, "acceptance_criteria": ac,
             "verification": {"positive_cmd": positive, "negative_control_cmd": negative,
                              "negative_expect": o("expect"), "statements": []},
             "verification_evidence": a.one("evidence").unwrap_or(""),
             "details": {"what_how": null, "where": null, "why": null, "do_not": null},
-            "links": [], "notes": "", "extra": [], "created": day, "updated": day, "provenance": null,
+            "links": [], "notes": a.one("note").unwrap_or(""), "extra": [], "created": day,
+            "updated": day, "provenance": null,
         });
         if let (Some(n), Some(m)) = (number, rec.as_object_mut()) {
             m.insert("object".into(), json!(state.ids.object));

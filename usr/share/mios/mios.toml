@@ -12309,11 +12309,12 @@ max_key_divergence = 0
 max_value_divergence = 0
 
 [tasks]
-# AGY task hygiene ratchet. Duplicate task IDs make dependencies ambiguous.
-# Shrink-only. The id below which AGY tasks need not carry the full
-# schema; lowering it is how the 482 open older tasks become
-# falsifiable, a batch at a time. A DONE task is exempt by its marker.
-schema_from = 1607
+# AGY task hygiene ratchet over the frozen AGY-TASKS.md. Duplicate task IDs make dependencies ambiguous.
+# The task from which AGY tasks carry the full schema (a typed id once the ids are migrated); a DONE task
+# is exempt by its marker. schema_also names the tasks created after it that the list files before it,
+# so their numbers sit below it -- the schema is demanded of them too.
+schema_from = "AGY-1607"
+schema_also = ["AGY-1694", "AGY-1697", "AGY-1698", "AGY-1699", "AGY-1700", "AGY-1701", "AGY-1702", "AGY-1703", "AGY-1704", "AGY-1705", "AGY-1706", "AGY-1707", "AGY-1708", "AGY-1709", "AGY-1710", "AGY-1711", "AGY-1712", "AGY-1714"]
 max_duplicate_ids = 0
 
 [tasks.store]

@@ -21,6 +21,10 @@ superseded_by: [0028]
 Superseded by ADR-0028 (T-1169): `tasks.jsonl` at the repo root is now the only canonical task list, edited
 directly; the store below and `.devloop/tasks.jsonl` are retired and live on as frozen provenance.
 
+The id model below is retired too. ADR-0028's opaque-identity amendment gave every task an opaque
+`task_<ULID>` and a creation-order number, and purged the prefixed ids this record describes; every task id in
+this file was rewritten to its typed form, `task_<number>`. Git history keeps the record as first written.
+
 proposed — 2026-09-26. Implements T-1023 (QUEUE-01) and the storage half of T-1029 (QUEUE-02). The four
 choices below were made by the operator in the question UI on 2026-09-26; the rest is the design that follows
 from them. An agent never flips this record to accepted.

@@ -85,6 +85,7 @@ run_test_fallback_disabled() {
 
     if [ "$_is_quota" = 1 ] && [ -n "$EXEC_FALLBACK" ]; then
       printf '%s\n' "=== [mios-a2o] agy quota failure detected -- retrying on fallback engine '$LANE_B_FALLBACK_ENGINE' ===" | tee -a "$LOGS/$name.log"
+      # shellcheck disable=SC2034  # read by the eval'd fallback command
       PROMPT="$(cat "$PROMPTS/$name.txt")"
       eval "$EXEC_FALLBACK" 2>&1 | tee -a "$LOGS/$name.log"
       rc=0

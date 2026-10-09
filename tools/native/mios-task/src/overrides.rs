@@ -11,7 +11,7 @@ pub const BANNER: &str = "# TASKS";
 pub const BEGIN: &str = "<!-- overrides:begin -->";
 pub const END: &str = "<!-- overrides:end -->";
 /// Record fields an override may not set: identity and history.
-pub const FIXED: [&str; 2] = ["id", "provenance"];
+pub const FIXED: [&str; 4] = ["id", "object", "number", "provenance"];
 
 pub struct OverrideLine {
     /// 1-based line number in TASKS.md.

@@ -22,9 +22,9 @@ pub enum Via {
     Alias,
     /// An operator decision on the command line (--map OLD=OLD2).
     Map,
-    /// A task whose title opens with the token ("SCHED-01: ...") answers to it.
+    /// A task whose title opens with the token ("QSCH-01: ...") answers to it.
     Title,
-    /// A member of a range a task covers ("AGY-123" in the "AGY-123..259" banner) names that banner task.
+    /// A member of a range a task covers ("KAG-123" in the "KAG-123..259" banner) names that banner task.
     Range,
 }
 
@@ -119,7 +119,7 @@ impl Resolver {
                 ranges.push((p, a, b, i));
             }
         }
-        // A title that opens with an old token not otherwise a task ("SCHED-01: ...") answers to it.
+        // A title that opens with an old token not otherwise a task ("QSCH-01: ...") answers to it.
         let mut titles: HashMap<String, Option<usize>> = HashMap::new();
         for (i, r) in recs.iter().enumerate() {
             let t = s(r, "title");
@@ -174,7 +174,9 @@ impl Resolver {
             .map(|x| x.3)
     }
 
-    /// A token in a structured field (depends_on, epic, related): every way but the title's.
+    /// A token in a structured field (depends_on, epic, related), most specific first: a task's id, a former
+    /// id, an operator decision, the task whose title opens with it, then the banner whose range covers it
+    /// (so "QCAT-01" names the task titled "QCAT-01: ...", not the "QCAT-01..04" banner).
     pub fn structured(&self, tok: &str) -> Option<(usize, Via)> {
         if let Some(&i) = self.exact.get(tok) {
             return Some((i, Via::Id));
@@ -184,6 +186,9 @@ impl Resolver {
         }
         if let Some(&i) = self.maps.get(tok) {
             return Some((i, Via::Map));
+        }
+        if let Some(i) = self.titles.get(tok).copied().flatten() {
+            return Some((i, Via::Title));
         }
         self.cover(tok).map(|i| (i, Via::Range))
     }
@@ -197,17 +202,7 @@ impl Resolver {
         if let Some(i) = owner.filter(|i| self.own.get(i).is_some_and(|a| a.contains(tok))) {
             return Some((i, Via::Alias));
         }
-        if let Some(x) = self.structured(tok) {
-            return Some(x);
-        }
-        if !self.shapes.matches(tok) {
-            return None;
-        }
-        self.titles
-            .get(tok)
-            .copied()
-            .flatten()
-            .map(|i| (i, Via::Title))
+        self.structured(tok)
     }
 }
 
@@ -434,6 +429,7 @@ struct Plan {
     renames: Vec<(String, String)>,
     tree: Tally,
     labels: Vec<String>,
+    mapping: Value,
 }
 
 fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> {
@@ -621,68 +617,19 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
     );
     // The tracked tree, when asked.
     let mut tree = Tally::default();
-    let mut files = Vec::new();
-    let mut renames = Vec::new();
+    let mut files: Vec<(String, Vec<u8>, usize)> = Vec::new();
+    let mut renames: Vec<(String, String)> = Vec::new();
     if a.has("--rewrite-tree") {
-        for f in ids::tracked_files(&st.root)? {
-            if f == st.path || f == st.doc {
-                continue;
-            }
-            let p = st.root.join(&f);
-            let md = fs::symlink_metadata(&p)
-                .map_err(|e| format!("tracked source {f} cannot be read: {e}"))?;
-            if !md.is_file() {
-                let renamed = rewrite(
-                    f.as_bytes(),
-                    None,
-                    &r,
-                    &names,
-                    &mut tree,
-                    &format!("path {f}"),
-                );
-                let linked = if md.file_type().is_symlink() {
-                    let link = fs::read_link(&p).map_err(|e| format!("{f}: {e}"))?;
-                    let text = link
-                        .to_str()
-                        .ok_or_else(|| format!("{f}: non-UTF-8 symlink target"))?;
-                    rewrite(
-                        text.as_bytes(),
-                        None,
-                        &r,
-                        &names,
-                        &mut tree,
-                        &format!("symlink {f}"),
-                    ) != text.as_bytes()
-                } else {
-                    false
-                };
-                if renamed != f.as_bytes() || linked {
-                    errs.push(format!("{f}: a non-regular tracked source needs a task rewrite; handle it explicitly"));
-                }
-                continue;
-            }
-            let b = fs::read(&p).map_err(|e| format!("{f}: {e}"))?;
-            if ids::is_text(&b) {
-                let before = tree.by_prefix.values().sum::<usize>();
-                let nb = rewrite(&b, None, &r, &names, &mut tree, &f);
-                if nb != b {
-                    let n = tree.by_prefix.values().sum::<usize>() - before;
-                    files.push((f.clone(), nb, n));
-                }
-            }
-            let np = rewrite(
-                f.as_bytes(),
-                None,
-                &r,
-                &names,
-                &mut tree,
-                &format!("path {f}"),
-            );
-            if np != f.as_bytes() {
-                renames.push((f.clone(), String::from_utf8_lossy(&np).into_owned()));
-            }
-        }
-        errs.extend(tree.unresolved.iter().map(|u| format!("{u} names no task")));
+        let (f, n) = rewrite_tree(
+            &st.root,
+            &[&st.path, &st.doc],
+            &r,
+            &names,
+            &mut tree,
+            &mut errs,
+        )?;
+        files = f;
+        renames = n;
     }
     if !errs.is_empty() {
         let n = errs.len();
@@ -694,6 +641,7 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
     }
     let mut labels: Vec<String> = r.labels.iter().cloned().collect();
     labels.sort();
+    let mapping = mapping(&r, &numbers, ids);
     Ok(Plan {
         digest: check::identity(&out).1,
         lines,
@@ -707,7 +655,226 @@ fn plan(st: &Store, state: &State, a: &Args, ids: &Ids) -> Result<Plan, String> 
         renames,
         tree,
         labels,
+        mapping,
     })
+}
+
+/// Every tracked file under `root` but `skip`, rewritten in memory: the changed contents (with their counts)
+/// and the paths that name an old id. A symlink or other non-regular entry that would need a rewrite is a
+/// problem for a person, never a silent skip.
+#[allow(clippy::type_complexity)]
+fn rewrite_tree(
+    root: &Path,
+    skip: &[&str],
+    r: &Resolver,
+    names: &Names,
+    tree: &mut Tally,
+    errs: &mut Vec<String>,
+) -> Result<(Vec<(String, Vec<u8>, usize)>, Vec<(String, String)>), String> {
+    let (mut files, mut renames) = (Vec::new(), Vec::new());
+    for f in ids::tracked_files(root)? {
+        if skip.contains(&f.as_str()) {
+            continue;
+        }
+        let p = root.join(&f);
+        let md = fs::symlink_metadata(&p)
+            .map_err(|e| format!("tracked source {f} cannot be read: {e}"))?;
+        if !md.is_file() {
+            let renamed = rewrite(f.as_bytes(), None, r, names, tree, &format!("path {f}"));
+            let linked = if md.file_type().is_symlink() {
+                let link = fs::read_link(&p).map_err(|e| format!("{f}: {e}"))?;
+                let text = link
+                    .to_str()
+                    .ok_or_else(|| format!("{f}: non-UTF-8 symlink target"))?;
+                rewrite(
+                    text.as_bytes(),
+                    None,
+                    r,
+                    names,
+                    tree,
+                    &format!("symlink {f}"),
+                ) != text.as_bytes()
+            } else {
+                false
+            };
+            if renamed != f.as_bytes() || linked {
+                errs.push(format!(
+                    "{f}: a non-regular tracked source needs a task rewrite; handle it explicitly"
+                ));
+            }
+            continue;
+        }
+        let b = fs::read(&p).map_err(|e| format!("{f}: {e}"))?;
+        if ids::is_text(&b) {
+            let before = tree.by_prefix.values().sum::<usize>();
+            let nb = rewrite(&b, None, r, names, tree, &f);
+            if nb != b {
+                let n = tree.by_prefix.values().sum::<usize>() - before;
+                files.push((f.clone(), nb, n));
+            }
+        }
+        let np = rewrite(f.as_bytes(), None, r, names, tree, &format!("path {f}"));
+        if np != f.as_bytes() {
+            renames.push((f.clone(), String::from_utf8_lossy(&np).into_owned()));
+        }
+    }
+    errs.extend(tree.unresolved.iter().map(|u| format!("{u} names no task")));
+    Ok((files, renames))
+}
+
+/// Every token the migration resolves, with the typed id it becomes: task ids, former ids, operator
+/// decisions, title names and the members of every range banner, in the order `structured` prefers them.
+/// `--mapping-out` writes it outside the tree so a sibling repository can apply the same rewrite
+/// (`mios-task rewrite-ids`); the tree itself keeps none of it.
+fn mapping(r: &Resolver, numbers: &[u64], ids: &Ids) -> Value {
+    let mut m: BTreeMap<String, String> = BTreeMap::new();
+    let mut put = |k: &str, i: usize| {
+        m.entry(k.to_string())
+            .or_insert_with(|| ids.typed(numbers[i]));
+    };
+    for (k, &i) in &r.exact {
+        if !r.labels.contains(k) {
+            put(k, i);
+        }
+    }
+    for (k, &i) in &r.former {
+        put(k, i);
+    }
+    for (k, &i) in &r.maps {
+        put(k, i);
+    }
+    for (k, i) in &r.titles {
+        if let Some(i) = i {
+            put(k, *i);
+        }
+    }
+    for (k, &i) in &r.exact {
+        let Some((p, a, b)) = range_of(k) else {
+            continue;
+        };
+        let w = k.split("..").next().unwrap_or("").len() - p.len();
+        for n in a..=b {
+            let tok = format!("{p}{n:0w$}");
+            if r.shapes.matches(&tok) {
+                put(&tok, i);
+            }
+        }
+    }
+    let mut keep: Vec<&String> = r.labels.iter().collect();
+    keep.sort();
+    json!({"object": ids.object, "map": m, "purged": r.shapes.list, "keep": keep})
+}
+
+/// `mios-task rewrite-ids --mapping FILE --root DIR`: the tree rewrite of migrate-ids, from a mapping it wrote,
+/// over a repository that has no task list of its own (mios-bootstrap mirrors MiOS files, Law 15).
+pub fn cmd_rewrite(a: &Args) -> Result<(), String> {
+    let root = std::path::PathBuf::from(a.one("root").ok_or("rewrite-ids needs --root DIR")?);
+    let mf = a
+        .one("mapping")
+        .ok_or("rewrite-ids needs --mapping FILE (migrate-ids --mapping-out)")?;
+    let v: Value = serde_json::from_str(&fs::read_to_string(mf).map_err(|e| format!("{mf}: {e}"))?)
+        .map_err(|e| format!("{mf}: {e}"))?;
+    let ids = Ids {
+        object: v["object"]
+            .as_str()
+            .ok_or(format!("{mf}: no object"))?
+            .to_string(),
+    };
+    let map = v["map"].as_object().ok_or(format!("{mf}: no map"))?;
+    let mut numbers: Vec<u64> = Vec::new();
+    let mut index: HashMap<u64, usize> = HashMap::new();
+    let mut exact = HashMap::new();
+    for (tok, typed) in map {
+        let n: u64 = typed
+            .as_str()
+            .and_then(|t| t.strip_prefix(&format!("{}_", ids.object)))
+            .and_then(|d| d.parse().ok())
+            .ok_or(format!("{mf}: {tok} maps to {typed}, not a typed id"))?;
+        let i = *index.entry(n).or_insert_with(|| {
+            numbers.push(n);
+            numbers.len() - 1
+        });
+        exact.insert(tok.clone(), i);
+    }
+    let strs = |k: &str| -> Vec<String> {
+        v[k].as_array()
+            .map(|x| {
+                x.iter()
+                    .filter_map(|y| y.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let r = Resolver {
+        exact,
+        former: HashMap::new(),
+        own: HashMap::new(),
+        labels: strs("keep").into_iter().collect(),
+        maps: HashMap::new(),
+        titles: HashMap::new(),
+        ranges: Vec::new(),
+        shapes: Shapes::from_list(strs("purged"))?,
+    };
+    let by_number: HashMap<u64, usize> = index.clone();
+    let names = Names {
+        numbers: &numbers,
+        ids: &ids,
+        by_number: &by_number,
+    };
+    let (mut tree, mut errs) = (Tally::default(), Vec::new());
+    let (files, renames) = rewrite_tree(&root, &[], &r, &names, &mut tree, &mut errs)?;
+    if !errs.is_empty() {
+        let n = errs.len();
+        errs.truncate(60);
+        return Err(format!(
+            "rewrite-ids refused, nothing written -- {n} problem(s); fix the text or extend the mapping:\n{}",
+            errs.join("\n")
+        ));
+    }
+    println!(
+        "rewrite-ids: {} reference(s) in {} tracked file(s), {} path(s) renamed{}",
+        tree.by_prefix.values().sum::<usize>(),
+        files.len(),
+        renames.len(),
+        if a.has("--dry-run") {
+            " (dry run: nothing written)"
+        } else {
+            ""
+        }
+    );
+    for (k, v) in &tree.by_prefix {
+        println!("  {k}: {v}");
+    }
+    if a.has("--dry-run") {
+        return Ok(());
+    }
+    let mut writes = BTreeMap::new();
+    for (f, b, _) in files {
+        let mode = fs::metadata(root.join(&f))
+            .map_err(|e| e.to_string())?
+            .permissions();
+        writes.insert(f, (b, mode));
+    }
+    let mut removes = Vec::new();
+    for (from, to) in &renames {
+        if fs::symlink_metadata(root.join(to)).is_ok() || writes.contains_key(to) {
+            return Err(format!(
+                "rename {from} -> {to}: destination already exists; nothing written"
+            ));
+        }
+        let data = match writes.remove(from) {
+            Some(d) => d,
+            None => (
+                fs::read(root.join(from)).map_err(|e| e.to_string())?,
+                fs::metadata(root.join(from))
+                    .map_err(|e| e.to_string())?
+                    .permissions(),
+            ),
+        };
+        writes.insert(to.clone(), data);
+        removes.push(from.clone());
+    }
+    publish(&root, &writes, &removes, || Ok(()))
 }
 
 /// mios.toml with [tasks.store]'s migration keys rewritten: the identity digest, the frozen digests, and the
@@ -1097,6 +1264,21 @@ pub fn cmd(st: &Store, a: &Args) -> Result<(), String> {
             &(serde_json::to_string_pretty(&report).map_err(|e| e.to_string())? + "\n"),
         )?;
     }
+    if let Some(f) = a.one("mapping-out") {
+        // The old ids live on only here, outside the tree: the tree keeps none of them.
+        let out = std::path::absolute(f).map_err(|e| e.to_string())?;
+        let source_root = fs::canonicalize(&st.root).map_err(|e| e.to_string())?;
+        let parent = out.parent().and_then(|d| fs::canonicalize(d).ok());
+        if parent.is_some_and(|d| d.starts_with(&source_root)) {
+            return Err(
+                "--mapping-out must lie outside the tree it purges; nothing written".into(),
+            );
+        }
+        write_atomic(
+            Path::new(f),
+            &(serde_json::to_string_pretty(&p.mapping).map_err(|e| e.to_string())? + "\n"),
+        )?;
+    }
     if a.has("--dry-run") {
         return Ok(());
     }
@@ -1270,17 +1452,17 @@ mod tests {
 
     #[test]
     fn ranges_parse_both_spellings_and_refuse_backwards_ones() {
-        assert_eq!(range_of("AGY-40..44"), Some(("AGY-".into(), 40, 44)));
+        assert_eq!(range_of("KAG-40..44"), Some(("KAG-".into(), 40, 44)));
         assert_eq!(
-            range_of("AGY-503..AGY-510"),
-            Some(("AGY-".into(), 503, 510))
+            range_of("KAG-503..KAG-510"),
+            Some(("KAG-".into(), 503, 510))
         );
-        assert_eq!(range_of("CAT-01..04"), Some(("CAT-".into(), 1, 4)));
-        assert_eq!(range_of("AGY-1692..60"), None);
-        assert_eq!(range_of("T-001"), None);
-        assert_eq!(prefix_of("DEDUP-COLOR-01"), "DEDUP");
-        assert_eq!(prefix_of("G-TASK 1"), "G");
-        assert_eq!(prefix_of("T-031#2"), "T");
+        assert_eq!(range_of("QCAT-01..04"), Some(("QCAT-".into(), 1, 4)));
+        assert_eq!(range_of("KAG-1692..60"), None);
+        assert_eq!(range_of("K-001"), None);
+        assert_eq!(prefix_of("QDUP-COLOR-01"), "QDUP");
+        assert_eq!(prefix_of("QG-TASK 1"), "QG");
+        assert_eq!(prefix_of("K-031#2"), "K");
     }
 
     #[test]
