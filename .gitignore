@@ -62,7 +62,6 @@
 !/.devcontainer/cloud-shell/README.md
 !/.devcontainer/cloud-shell/claude-code-cloud.sh
 !/.devcontainer/cloud-shell/codex-cloud.sh
-!/usr/share/man/man5/
 !/harness/
 !/harness/**
 !/invariants/
@@ -111,8 +110,9 @@
 !/images/**
 !/.forgejo/
 !/.forgejo/**
-!/usr/share/man/
-!/usr/share/man/**/mios*
+# ADR-0030 Decision 4: /usr/share/man/ rendered from SSOT as build output
+/usr/share/man/
+/usr/share/man/**
 # The block-all `/*` rule never un-ignored tests/. Files already tracked there
 # (drift-gate-negatives.sh) survived only because tracking predates the rule --
 # any NEW test was silently unstageable, which is how tests/powershell/ came to
