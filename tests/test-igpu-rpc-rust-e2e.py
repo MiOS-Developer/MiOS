@@ -46,6 +46,18 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 
+def _rpc_launch_block() -> str:
+    """The Rpc branch of the script's run section, from its `if` to its `else`."""
+    with open(_IGPU_SCRIPT_PATH, "r", encoding="utf-8", errors="ignore") as fh:
+        content = fh.read()
+    run = content.find("# ---- run server")
+    start = content.find("if ($Mode -eq 'Rpc') {", run)
+    end = content.find("} else {", start)
+    if run == -1 or start == -1 or end == -1:
+        raise AssertionError("mios-igpu-server.ps1 has no Rpc launch branch in its run section")
+    return content[start:end]
+
+
 # ============================================================================
 # Ephemeral Test Harness: Mock OpenAI-Compatible & RPC Servers
 # ============================================================================
@@ -578,8 +590,15 @@ class TestTier1FeatureCoverage(unittest.TestCase):
             output = res.stdout + res.stderr
             self.assertIn("matrix cores:", output)
         else:
-            with open(_IGPU_SCRIPT_PATH, "r", encoding="utf-8", errors="ignore") as fh:
-                self.assertIn("matrix cores", fh.read())
+            # No rpc-server on this host: assert the script launches it with
+            # coopmat already disabled in its environment, so llama.cpp takes
+            # the fallback (non-cooperative-matrix) shader pipeline.
+            block = _rpc_launch_block()
+            assign = block.find("$env:GGML_VK_DISABLE_COOPMAT = '1'")
+            launch = block.find("& $rpcExe")
+            self.assertNotEqual(assign, -1, "Rpc launch must disable coopmat")
+            self.assertNotEqual(launch, -1, "Rpc branch must launch rpc-server")
+            self.assertLess(assign, launch, "coopmat must be disabled BEFORE rpc-server starts")
 
     def test_f5_04_matrix_multiplication_numerical_consistency(self):
         """F5.4: Verifies AMD Radeon hardware lacks cooperative matrix cores, requiring fallback shader."""
@@ -594,8 +613,17 @@ class TestTier1FeatureCoverage(unittest.TestCase):
             else:
                 self.assertIn("ggml_vulkan", output)
         else:
+            # No rpc-server on this host: assert the coopmat-less fallback runs
+            # on the AMD iGPU -- the Rpc launch is pinned to the device the
+            # auto-resolver selects by NAME (AMD/Radeon, never NVIDIA/RTX).
+            block = _rpc_launch_block()
+            launch = block[block.find("& $rpcExe"):].split("Tee-Object")[0]
+            self.assertIn("& $rpcExe", launch, "Rpc branch must launch rpc-server")
+            self.assertRegex(launch, r"--device \$Device\b", "rpc-server must be pinned to the resolved -Device")
             with open(_IGPU_SCRIPT_PATH, "r", encoding="utf-8", errors="ignore") as fh:
-                self.assertIn("matrix", fh.read())
+                content = fh.read()
+            self.assertIn("-match '(?i)AMD|Radeon'", content, "auto device must select the AMD/Radeon iGPU")
+            self.assertIn("-notmatch '(?i)NVIDIA|GeForce|RTX'", content, "auto device must never select the NVIDIA dGPU")
 
     def test_f5_05_mesa_dozen_vulkan_12_compatibility(self):
         """F5.5: Handles Vulkan 1.2 Mesa Dozen drivers safely with cooperative matrix fallback."""

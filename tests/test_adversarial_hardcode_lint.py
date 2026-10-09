@@ -13,11 +13,17 @@ Executes four targeted challenge dimensions:
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -25,12 +31,43 @@ _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 # source carries no date literal of its own; the fixtures it writes are unchanged.
 _D = "-".join(("2026", "10", "06"))
 _ORACLE_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-hardcode-lint")
-_RUST_BIN = os.path.join(_ROOT, "tools", "native", "target", "debug", "mios-hardcode-lint.exe")
+_SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
+_EXE_SUFFIX = ".exe" if os.name == "nt" else ""
+
+
+def _locate_rust_bin() -> str | None:
+    """This tree's mios-hardcode-lint, else the installed one.
+
+    The native engine writes release builds under the SSOT target triple
+    ([build.native.linux].targets / [build.native.windows].target); a plain
+    cargo build writes target/{release,debug}. The native install puts the
+    binary on PATH, which is what CI has after its native stage.
+    """
+    name = "mios-hardcode-lint" + _EXE_SUFFIX
+    target = os.path.join(_ROOT, "tools", "native", "target")
+    with open(_SSOT_PATH, "rb") as fh:
+        native = tomllib.load(fh)["build"]["native"]
+    triple = (native["windows"]["target"] if os.name == "nt"
+              else native["linux"]["targets"].get(platform.machine()))
+    candidates = [os.path.join(target, triple, "release", name)] if triple else []
+    candidates += [os.path.join(target, profile, name) for profile in ("release", "debug")]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return shutil.which(name)
+
+
+_RUST_BIN = _locate_rust_bin()
 
 
 def run_oracle(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    # The oracle hands off to a native binary whenever it finds one, which
+    # made every parity case compare the Rust binary with itself. Pin it to
+    # its own Python implementation.
+    oracle_env = dict(os.environ if env is None else env)
+    oracle_env["MIOS_HARDCODE_LINT_NO_NATIVE"] = "1"
     cmd = [sys.executable, _ORACLE_PATH] + args
-    return subprocess.run(cmd, capture_output=True, text=True, env=env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=oracle_env)
 
 
 def run_rust(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -39,6 +76,13 @@ def run_rust(args: list[str], env: dict[str, str] | None = None) -> subprocess.C
 
 
 class HardcodeLintAdversarialTestBase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # A missing binary is a failure, not a skip: parity is this suite's subject.
+        if _RUST_BIN is None:
+            raise AssertionError("mios-hardcode-lint is not built or installed; "
+                                 "build it with automation/55-native-build.sh")
+
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="adv_hardcode_")
 

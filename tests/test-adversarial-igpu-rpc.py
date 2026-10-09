@@ -32,6 +32,7 @@ import http.client
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -40,9 +41,13 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-import winreg
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -51,6 +56,21 @@ _IGPU_SCRIPT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "windows", "mios
 _SERVICE_CFG_PATH = os.path.join(_ROOT, "usr", "share", "mios", "windows", "MiOS-iGPU-Server.cfg")
 _LLAMA_EXE = r"C:\ProgramData\mios\igpu\bin\llama-server.exe"
 _RPC_EXE = r"C:\ProgramData\mios\igpu\bin\ggml-rpc-server.exe"
+# The iGPU lane runs on the Windows host. Its live state (the listening service,
+# the process table, HKCU) exists only there; on the Linux CI runner the same
+# contract is asserted statically against the script that produces that state.
+_ON_WINDOWS_HOST = sys.platform == "win32"
+_WINDOWS_HOST_ONLY = "live Windows-host state; the script contract is asserted by the static twin"
+
+
+def _ssot_igpu_port() -> int:
+    with open(_SSOT_PATH, "rb") as fh:
+        return int(tomllib.load(fh)["ports"]["llm_igpu"])
+
+
+def _igpu_script() -> str:
+    with open(_IGPU_SCRIPT_PATH, "r", encoding="utf-8") as fh:
+        return fh.read()
 
 
 # ============================================================================
@@ -202,25 +222,33 @@ class TestChallenge1LocalhostIsolation(unittest.TestCase):
         # Tailscale firewall rule should not be added
         self.assertNotIn("New-NetFirewallRule", content, "Script must not open external firewall ports")
 
-    def test_c1_02_detect_live_port_8540_and_service_state(self):
-        """Empirically inspects live port 8540 vs stale service configuration."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        port_8540_open = False
-        try:
-            sock.connect(("127.0.0.1", 8540))
-            port_8540_open = True
-            sock.close()
-        except (socket.timeout, ConnectionRefusedError):
-            port_8540_open = False
-
-        # Check service config file
+    def test_c1_02_service_launch_serves_ssot_port(self):
+        """The script's default port and the service launch line are the SSOT [ports].llm_igpu, never the stale 11436."""
+        port = _ssot_igpu_port()
+        default = re.search(r"\[int\]\s*\$Port\s*=\s*(\d+)", _igpu_script())
+        self.assertIsNotNone(default, "mios-igpu-server.ps1 must declare an [int] $Port default")
+        self.assertEqual(int(default.group(1)), port, "Script default port must be the SSOT [ports].llm_igpu")
         if os.path.exists(_SERVICE_CFG_PATH):
             with open(_SERVICE_CFG_PATH, "r", encoding="utf-8") as f:
                 cfg_content = f.read()
-            stale_11436_in_cfg = "11436" in cfg_content
-        else:
-            stale_11436_in_cfg = False
+            self.assertNotIn("11436", cfg_content, "Stale port 11436 must not be present in MiOS-iGPU-Server.cfg")
+            launch = re.search(r"-Port\s+(\d+)", cfg_content)
+            self.assertIsNotNone(launch, "MiOS-iGPU-Server.cfg must pass -Port to the script")
+            self.assertEqual(int(launch.group(1)), port, "Service must listen on the SSOT [ports].llm_igpu")
+
+    @unittest.skipUnless(_ON_WINDOWS_HOST, _WINDOWS_HOST_ONLY)
+    def test_c1_02_live_service_state(self):
+        """Empirically inspects the live iGPU listener and the retired mios-ainode process on the Windows host."""
+        port = _ssot_igpu_port()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        port_open = False
+        try:
+            sock.connect(("127.0.0.1", port))
+            port_open = True
+            sock.close()
+        except (socket.timeout, ConnectionRefusedError):
+            port_open = False
 
         # Check if mios-ainode process is running
         ainode_running = False
@@ -228,11 +256,9 @@ class TestChallenge1LocalhostIsolation(unittest.TestCase):
         if "mios-ainode.exe" in res.stdout:
             ainode_running = True
 
-        # Document empirical facts:
-        # After remediation, port 8540 must be open, 11436 purged from config, and ainode terminated.
-        self.assertFalse(stale_11436_in_cfg, "Stale port 11436 must not be present in MiOS-iGPU-Server.cfg")
+        # After remediation the SSOT port is open and ainode is terminated.
         self.assertFalse(ainode_running, "Deprecated mios-ainode process must not be running")
-        self.assertTrue(port_8540_open, "Port 8540 must be listening on localhost")
+        self.assertTrue(port_open, f"Port {port} must be listening on localhost")
 
     def test_c1_03_non_localhost_connection_refused(self):
         """Spins up a server on 127.0.0.1 and verifies connection to non-loopback IP is refused."""
@@ -430,8 +456,23 @@ class TestChallenge2ProtocolPayloadStress(unittest.TestCase):
 class TestChallenge3HardwareRoutingIntegrity(unittest.TestCase):
     """Adversarial challenge 3: DirectX UserGpuPreferences, Vulkan device routing, dGPU isolation."""
 
+    def test_c3_01_script_registers_low_power_preference_for_every_server(self):
+        """The script writes GpuPreference=1; to UserGpuPreferences for llama-server, rpc-server and ggml-rpc-server."""
+        content = _igpu_script()
+        self.assertIn(r"\Software\Microsoft\DirectX\UserGpuPreferences", content)
+        self.assertIn("-Value 'GpuPreference=1;'", content, "Preference value must be the low-power GpuPreference=1;")
+        self.assertRegex(content, r"\$exe\s*=\s*Join-Path \$binDir 'llama-server\.exe'")
+        self.assertRegex(content, r"\$rpcExe\s*=\s*Join-Path \$binDir 'rpc-server\.exe'")
+        call = re.search(r"^Ensure-MiosGpuPreferences\s+@\((.*)\)\s*$", content, re.MULTILINE)
+        self.assertIsNotNone(call, "Script must apply the GPU preference to its server binaries")
+        for target in ("$exe", "$rpcExe", "'ggml-rpc-server.exe'"):
+            self.assertIn(target, call.group(1), f"{target} missing from the GPU preference registration")
+
+    @unittest.skipUnless(_ON_WINDOWS_HOST, _WINDOWS_HOST_ONLY)
     def test_c3_01_directx_user_gpu_preferences_registry_value(self):
         """Queries HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences for GpuPreference=1;."""
+        import winreg
+
         reg_path = r"Software\Microsoft\DirectX\UserGpuPreferences"
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_READ) as key:
@@ -496,6 +537,8 @@ class TestChallenge3HardwareRoutingIntegrity(unittest.TestCase):
 
     def test_c3_04_rtx_4090_dgpu_vram_isolation(self):
         """Verifies via nvidia-smi that no llama-server or rpc-server process is on the RTX 4090."""
+        if shutil.which("nvidia-smi") is None:  # absent raised FileNotFoundError, not the skip intended
+            self.skipTest("nvidia-smi not available")
         res = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5.0)
         if res.returncode != 0:
             self.skipTest("nvidia-smi not available")

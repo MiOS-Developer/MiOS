@@ -4,7 +4,7 @@
   "total_metadata_entries": 3142,
   "total_hints": 3132,
   "total_functions_indexed": 1458,
-  "total_related_links": 5190,
+  "total_related_links": 5191,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -9120,7 +9120,8 @@
       "related": [
         "tools/native/mios-wallpaperd/src/main.rs",
         "usr/share/mios/branding/living-wallpaper.html",
-        "build-mios.ps1"
+        "build-mios.ps1",
+        "src/mios-rs/mios-build/src/verification.rs"
       ],
       "functions": [],
       "doc": null,

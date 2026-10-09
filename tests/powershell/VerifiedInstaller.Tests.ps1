@@ -98,6 +98,32 @@ Describe 'MiOS native terminal projection' {
             . ([scriptblock]::Create($functionAst.Extent.Text))
         }
         $stamp = 'projection-proof'
+        # The projection takes its shell as a parameter and uses only
+        # CreateShortcut (load an existing link, or a blank one with
+        # WindowStyle 1) and Save. Windows exercises the real WScript.Shell;
+        # pwsh on the Linux CI runner has no COM, so it gets a stand-in with the
+        # same surface that persists those properties to the link file. Both
+        # write only on Save, so the hash and timestamp assertions below still
+        # prove an identical projection is left untouched.
+        $script:isWin = if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) { $IsWindows } else { $true }
+        function New-MiosShortcutShell {
+            if ($script:isWin) { return New-Object -ComObject WScript.Shell }
+            $shell = [pscustomobject]@{}
+            $shell | Add-Member -MemberType ScriptMethod -Name CreateShortcut -Value {
+                param([string]$Path)
+                $link = [pscustomobject]@{ FullName = $Path; TargetPath = ''; Arguments = ''; WorkingDirectory = ''; WindowStyle = 1; Description = '' }
+                if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                    $saved = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+                    foreach ($field in @('TargetPath', 'Arguments', 'WorkingDirectory', 'WindowStyle', 'Description')) { $link.$field = $saved.$field }
+                }
+                $link | Add-Member -MemberType ScriptMethod -Name Save -Value {
+                    $this | Select-Object TargetPath, Arguments, WorkingDirectory, WindowStyle, Description |
+                        ConvertTo-Json -Compress | Set-Content -LiteralPath $this.FullName -NoNewline
+                }
+                return $link
+            }
+            return $shell
+        }
     }
     It 'replaces persisted pixel placement with SSOT centering and dimensions' {
         $terminal = @{initialPosition='-1900,400'; unrelated='preserved'}
@@ -114,7 +140,7 @@ Describe 'MiOS native terminal projection' {
         { Set-MiosTerminalStartup @{} @{theme=@{terminal=@{center_on_launch='yes'}}} } | Should -Throw '*must be a boolean*'
     }
     It 'repairs an existing legacy shortcut and leaves an identical projection untouched' {
-        $shell = New-Object -ComObject WScript.Shell
+        $shell = New-MiosShortcutShell
         $path = Join-Path $TestDrive 'MiOS.lnk'
         $old = $shell.CreateShortcut($path)
         $old.TargetPath = 'C:\old-mios\mios-launch.exe'
@@ -134,7 +160,7 @@ Describe 'MiOS native terminal projection' {
         (Get-Item -LiteralPath $path).LastWriteTimeUtc | Should -Be $written
     }
     It 'consolidates personal and common entrypoints with backups and preserves unrelated apps' {
-        $shell = New-Object -ComObject WScript.Shell
+        $shell = New-MiosShortcutShell
         $bundle = Join-Path $TestDrive 'consolidation'
         $desktop = Join-Path $bundle 'desktop'
         $programs = Join-Path $bundle 'common-programs'

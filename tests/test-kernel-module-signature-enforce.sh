@@ -38,7 +38,8 @@ log "Test Group 1: UKI Bootchain Security Configuration Drop-ins"
 
 KARGS_TOML="${ROOT}/usr/lib/bootc/kargs.d/30-security.toml"
 CMDLINE_CONF="${ROOT}/etc/cmdline.d/02-security.conf"
-AUTOMATION_SCRIPT="${ROOT}/automation/02-uki-bootloader.sh"
+# 02-uki-bootloader.sh was folded into the UKI cmdline render phase (T-1161).
+AUTOMATION_SCRIPT="${ROOT}/automation/76-uki-render.sh"
 
 # 1.1 Positive Control: 30-security.toml
 if [[ -f "$KARGS_TOML" ]]; then
@@ -62,15 +63,15 @@ else
     fail "etc/cmdline.d/02-security.conf not found"
 fi
 
-# 1.3 Positive Control: automation/02-uki-bootloader.sh
+# 1.3 Positive Control: automation/76-uki-render.sh materializes the drop-in
 if [[ -f "$AUTOMATION_SCRIPT" ]]; then
-    if grep -q "module.sig_enforce=1" "$AUTOMATION_SCRIPT" && grep -q "lockdown=confidentiality" "$AUTOMATION_SCRIPT"; then
-        ok "automation/02-uki-bootloader.sh configures bootloader security parameters"
+    if grep -q "module.sig_enforce=1" "$AUTOMATION_SCRIPT" && grep -q "lockdown=confidentiality" "$AUTOMATION_SCRIPT"         && grep -q "etc/cmdline.d/02-security.conf" "$AUTOMATION_SCRIPT"; then
+        ok "automation/76-uki-render.sh configures bootloader security parameters"
     else
-        fail "automation/02-uki-bootloader.sh missing required configuration logic"
+        fail "automation/76-uki-render.sh missing required configuration logic"
     fi
 else
-    fail "automation/02-uki-bootloader.sh not found"
+    fail "automation/76-uki-render.sh not found"
 fi
 
 # 1.4 Negative Control: Perturbed configuration detection

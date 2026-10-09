@@ -32,7 +32,8 @@
     pwsh -File mios-igpu-server.ps1 -Model C:\path\to\model.gguf
 
   First run needs internet ONCE if binaries need fetching; local GGUF models in
-  WSL (\\wsl$\podman-MiOS-DEV\var\lib\mios\llamacpp\models\) are detected and
+  the MiOS WSL distro (\\wsl$\<distro>\var\lib\mios\llamacpp\models\, the
+  distro resolved from the Lxss registry or passed as -Distro) are detected and
   used automatically without downloading.
 #>
 [CmdletBinding()]
@@ -81,6 +82,9 @@ param(
     [string] $Device      = 'auto',
     [switch] $ShowDevices,
     [string] $LlamaTag    = 'latest',      # llama.cpp release tag, or 'latest'
+    # MiOS WSL distro whose /var/lib/mios/llamacpp/models is the local GGUF
+    # fallback. Empty = resolved below, never assumed by name.
+    [string] $Distro      = '',
     [switch] $Install,
     [switch] $Uninstall
 )
@@ -112,6 +116,22 @@ $taskName  = 'MiOS-iGPU-Server'
 function Info($m){ Write-Host "  [*] $m" -ForegroundColor Cyan }
 function Ok($m)  { Write-Host "  [+] $m" -ForegroundColor Green }
 function Warn($m){ Write-Host "  [!] $m" -ForegroundColor Yellow }
+
+# ---- resolve the MiOS WSL distro generatively ---------------------------------
+# The shared Resolve-MiosDistro when the MiOS globals are loaded; otherwise the
+# Lxss registry walk it was lifted from (wsl.exe -l emits UTF-16 that mangles
+# under the default console encoding), preferring a distro that carries the
+# MiOS product. Resolved here, in the operator's session, so -Install can pin it
+# for the service, whose own HKCU is not the operator's.
+if (-not $Distro) {
+    if (Get-Command Resolve-MiosDistro -ErrorAction SilentlyContinue) {
+        $Distro = Resolve-MiosDistro
+    } else {
+        $Distro = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue |
+            ForEach-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DistributionName } |
+            Where-Object { $_ -match 'MiOS' }) | Select-Object -First 1
+    }
+}
 
 # ---- low-power GPU routing (DirectX UserGpuPreferences) ----------------------
 function Ensure-MiosGpuPreferences {
@@ -163,9 +183,11 @@ if ($Install) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         Warn 'Not elevated -- re-launching via UAC to register the service...'
-        Start-Process -FilePath 'pwsh.exe' -Verb RunAs -ArgumentList @(
+        $elevatedArgs = @(
             '-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Install',
             '-Mode',$Mode,'-Port',$Port,'-ContextSize',$ContextSize,'-GpuLayers',$GpuLayers,'-Device',$Device)
+        if ($Distro) { $elevatedArgs += @('-Distro',$Distro) }
+        Start-Process -FilePath 'pwsh.exe' -Verb RunAs -ArgumentList $elevatedArgs
         return
     }
 
@@ -179,6 +201,7 @@ if ($Install) {
     }
     $argsStr = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode -Port $Port -ContextSize $ContextSize -GpuLayers $GpuLayers -Device $Device"
     if ($Model -and $Mode -ne 'Rpc') { $argsStr += " -Model `"$Model`"" }
+    if ($Distro -and $Mode -ne 'Rpc') { $argsStr += " -Distro `"$Distro`"" }
 
     $targetExeWrapper = Join-Path $PSScriptRoot "$taskName.exe"
     $targetCfg = Join-Path $PSScriptRoot "$taskName.cfg"
@@ -297,12 +320,13 @@ if ($ShowDevices) {
 }
 
 # ---- ensure a model (Server mode only) --------------------------------------
-$wslModelsDir = '\\wsl$\podman-MiOS-DEV\var\lib\mios\llamacpp\models'
+# No MiOS distro registered: the WSL fallback is skipped, never guessed.
+$wslModelsDir = if ($Distro) { "\\wsl$\$Distro\var\lib\mios\llamacpp\models" } else { $null }
 if ($Mode -ne 'Rpc') {
     if ($Model -and -not (Test-Path $Model)) {
         if (Test-Path (Join-Path $modelsDir $Model)) {
             $Model = Join-Path $modelsDir $Model
-        } elseif (Test-Path (Join-Path $wslModelsDir $Model)) {
+        } elseif ($wslModelsDir -and (Test-Path (Join-Path $wslModelsDir $Model))) {
             $Model = Join-Path $wslModelsDir $Model
         }
     }
@@ -314,7 +338,7 @@ if ($Mode -ne 'Rpc') {
         if ($existing) {
             $Model = $existing.FullName
             Ok "using existing model in models dir: $Model"
-        } elseif (Test-Path $wslModelsDir) {
+        } elseif ($wslModelsDir -and (Test-Path $wslModelsDir)) {
             # 2. Local WSL models fallback (granite-4.1-8b.gguf, lfm2-700m.gguf)
             $wslCandidates = @('lfm2-700m.gguf', 'granite-4.1-8b.gguf')
             foreach ($c in $wslCandidates) {

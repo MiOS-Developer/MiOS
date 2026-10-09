@@ -9,6 +9,13 @@ Describe 'MiOS full install build lifecycle' {
             . ([scriptblock]::Create($fn.Extent.Text))
         }
         function New-BuilderDistro { param($HW) }
+        # Pester can only mock a command that resolves. wsl.exe exists only on
+        # Windows and podman only where it is installed, while this suite also
+        # runs under pwsh on the Linux CI runner. Stand-ins make both resolvable
+        # everywhere, and throw so a path a test forgot to mock fails instead of
+        # reaching a real builder.
+        function wsl.exe { throw 'Unmocked wsl.exe call' }
+        function podman { throw 'Unmocked podman call' }
         function Invoke-GitFetchWithRetry { param($RepoPath,$Ref) }
         function Write-Log { param($Message) }
         function Log-Warn { param($Message) }
