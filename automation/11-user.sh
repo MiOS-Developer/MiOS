@@ -19,8 +19,10 @@ fi
 C_USER="${MIOS_IDENTITY_USERNAME:-mios}"
 
 mios_log "Creating user ${C_USER} via sysusers"
-if [[ "${C_USER}" != "mios" ]]; then
     rm -f /usr/lib/sysusers.d/10-mios.conf /usr/lib/sysusers.d/50-mios-users.conf /etc/sysusers.d/10-mios.conf /etc/sysusers.d/50-mios-users.conf 2>/dev/null || true
+    for _f in /usr/lib/sysusers.d/50-mios.conf /etc/sysusers.d/50-mios.conf; do
+        [[ -f "$_f" ]] && sed -i -E '/^[gum][[:space:]]+mios[[:space:]]/d' "$_f"
+    done
     if getent passwd mios >/dev/null 2>&1; then
         userdel -f mios 2>/dev/null || true
     fi

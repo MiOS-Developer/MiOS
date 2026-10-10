@@ -14,7 +14,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 _ALLOC_BIN = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-subuid-alloc")
 _AUTO_SCRIPT = os.path.join(_ROOT, "automation", "31-subuid-alloc.sh")
-_SYSUSERS_CONF = os.path.join(_ROOT, "usr", "lib", "sysusers.d", "50-mios-users.conf")
+_SYSUSERS_CONF = os.path.join(_ROOT, "usr", "lib", "sysusers.d", "50-mios.conf")
 
 
 class TestSubuidAlloc(unittest.TestCase):

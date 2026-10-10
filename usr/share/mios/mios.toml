@@ -10986,7 +10986,7 @@ min_ap_capable = 0
 role     = "runs the VMs and containers every other plane lands in"
 owner    = "mini"
 markers  = ["libvirt", "qemu-kvm"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.radio]
 role     = "serves WiFi clients as an access point. OPTIONAL: MiOS boots on hardware with no radio at all"
@@ -10998,7 +10998,7 @@ wired_by = ""
 role     = "the uplink: forwards, NATs and filters. The LAN is both uplink and downlink, so one interface suffices"
 owner    = "mini"
 markers  = ["firewalld", "dnsmasq"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.mesh]
 role     = "joins every node and service into one addressable overlay"
@@ -12888,7 +12888,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3622
+max_tracked_files = 3555
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12929,7 +12929,7 @@ target_files = 5
 globs = ["usr/share/mios/vendored/*", "*Cargo.lock"]
 
 [legibility.file_budget.domains.projections]  # rendered by the build from SSOT, not tracked; human views (ROADMAP/TASKS/ADR index) stay
-max_files = 524
+max_files = 455
 target_files = 5
 globs = ["usr/share/man/*", "usr/share/containers/systemd/*", "usr/share/applications/*.desktop", "usr/share/mios/dropins/*", "usr/lib/systemd/system/*", "usr/lib/systemd/user/*", "usr/lib/tmpfiles.d/*", "usr/lib/sysusers.d/*", "usr/lib/sysctl.d/*", "usr/lib/modprobe.d/*", "usr/share/mios/ai/v1/*", "usr/share/mios/reference/*", "ADR.md", "ROADMAP.md", "TASKS.md", "ARTIFACT-PROMPT.md", "automation/manifest.json", "usr/share/mios/pipe-boundaries.manifest.json"]
 

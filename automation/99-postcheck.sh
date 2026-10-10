@@ -269,7 +269,10 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
         done | sort -u
     )
     _bad_tmpfiles=$(
-        for f in /usr/lib/tmpfiles.d/mios-*.conf; do
+        shopt -s nullglob
+        _tf=(/usr/lib/tmpfiles.d/*mios*.conf)
+        (( ${#_tf[@]} )) || die "no MiOS tmpfiles.d config found -- syntax check would parse nothing"
+        for f in "${_tf[@]}"; do
             [[ -f "$f" ]] || continue
             out=$(systemd-tmpfiles --dry-run --create "$f" 2>&1 || true)
             echo "$out" | awk -v f="$f" -v decl="$_sysusers_declared" -v sq="'" '
