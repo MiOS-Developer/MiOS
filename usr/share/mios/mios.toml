@@ -1637,14 +1637,14 @@ composefs_mode = "verity"
 mask_systemd_remount_fs = true
 
 
-rule_of_two_mode = "off"
+rule_of_two_mode = "audit"
 
-quarantine_mode = "off"
+quarantine_mode = "audit"
 
 api_require_auth     = false
 api_caller_keys_path = "/etc/mios/ai/v1/caller-keys.json"
 
-principal_bind_mode  = "off"
+principal_bind_mode  = "audit"
 
 firewall_high_privilege_verbs = [
     "service_restart",
@@ -1710,7 +1710,8 @@ allowlist_hosts = [
     "mios-code-server",
 ]
 
-provenance_taint = false
+provenance_taint = true
+# Follow-up: promote rule_of_two_mode, quarantine_mode, principal_bind_mode from "audit" to "enforce" after one release.
 
 # [security.credential_literals] -- Law-11 extension: default credentials still
 # baked into world-readable units. SHRINK-ONLY; task_176 rotates them to

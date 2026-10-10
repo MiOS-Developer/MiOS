@@ -14,11 +14,30 @@ _AUTH_OPEN_PATHS = ()
 _AUTH_GATED_PREFIXES = ()
 _check_inbound_principal = None
 
+_ALLOWLIST_HOSTS: set[str] = set()
+
+def _is_allowed_host(host_hdr: str) -> bool:
+    if not host_hdr:
+        return True
+    h = host_hdr.split(":")[0].strip().lower()
+    return h in _ALLOWLIST_HOSTS
+
+def _is_allowed_origin(origin_hdr: str) -> bool:
+    if not origin_hdr:
+        return True
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(origin_hdr)
+        h = (parsed.hostname or "").strip().lower()
+        return not h or h in _ALLOWLIST_HOSTS
+    except Exception:
+        return False
+
 def configure(*, loads_lenient=None, usage_estimate=None, council_mode_var=None,
               api_require_auth=None, auth_open_paths=None, auth_gated_prefixes=None,
-              check_inbound_principal=None):
+              check_inbound_principal=None, allowlist_hosts=None):
     global _loads_lenient, _usage_estimate, _council_mode_var, _API_REQUIRE_AUTH
-    global _AUTH_OPEN_PATHS, _AUTH_GATED_PREFIXES, _check_inbound_principal
+    global _AUTH_OPEN_PATHS, _AUTH_GATED_PREFIXES, _check_inbound_principal, _ALLOWLIST_HOSTS
     if loads_lenient is not None: _loads_lenient = loads_lenient
     if usage_estimate is not None: _usage_estimate = usage_estimate
     if council_mode_var is not None: _council_mode_var = council_mode_var
@@ -26,6 +45,27 @@ def configure(*, loads_lenient=None, usage_estimate=None, council_mode_var=None,
     if auth_open_paths is not None: _AUTH_OPEN_PATHS = auth_open_paths
     if auth_gated_prefixes is not None: _AUTH_GATED_PREFIXES = auth_gated_prefixes
     if check_inbound_principal is not None: _check_inbound_principal = check_inbound_principal
+    if allowlist_hosts is not None:
+        _ALLOWLIST_HOSTS = {h.strip().lower() for h in allowlist_hosts if h and str(h).strip()}
+
+async def host_origin_validation_mw(request, call_next):
+    """P1-15 (task_3562): reject a Host or Origin outside [security].allowlist_hosts (DNS rebinding / CSRF protection)."""
+    if _ALLOWLIST_HOSTS:
+        host = request.headers.get("host")
+        if host and not _is_allowed_host(host):
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"message": f"403: Host '{host}' outside allowlist_hosts",
+                                   "type": "invalid_host", "code": 403}}
+            )
+        origin = request.headers.get("origin")
+        if origin and not _is_allowed_origin(origin):
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"message": f"403: Origin '{origin}' outside allowlist_hosts",
+                                   "type": "invalid_origin", "code": 403}}
+            )
+    return await call_next(request)
 
 async def usage_completeness_mw(request, call_next):
     """Tier-0 conformance: guarantee EVERY non-streaming /v1/chat/completions JSON
