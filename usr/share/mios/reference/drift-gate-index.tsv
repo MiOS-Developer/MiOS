@@ -234,3 +234,4 @@
 233	check_negatives_registered	every drift check has a corresponding negative test registered
 234	check_tracked_readable	every tracked file is present and readable, so no corpus-scanning gate drops one in silence
 235	check_leaked_fixtures	no transient test fixtures or dump files are committed in git
+236	check_native_twinless	every native miosd drift Check with no bash twin in main() runs in this gate

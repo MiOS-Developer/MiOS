@@ -3871,7 +3871,7 @@ def check_pipefail_grep_lint() -> int:
     return 0
 
 def check_skip_list_covered() -> int:
-    import os, sys
+    import fnmatch, os, sys
     import tomllib
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -3887,13 +3887,22 @@ def check_skip_list_covered() -> int:
     with open(toml_path, "rb") as fh:
         globs = ((tomllib.load(fh).get("ci") or {}).get("globs") or {})
 
-    spec = globs.get("agent-pipe") or {}
+    # Nothing skipped is the goal, so an empty list passes. Every entry that is
+    # there must say why, and must name an agent-pipe suite that exists.
+    spec = globs.get("agent-pipe")
+    if not isinstance(spec, dict) or not spec.get("dir") or not spec.get("glob"):
+        viol.append("[ci.globs.agent-pipe] is absent or names no dir/glob -- the "
+                    "agent-pipe suites would run in no tier")
+        spec = {}
     skip = spec.get("skip") or []
-    if not skip:
-        viol.append("[ci.globs.agent-pipe].skip is empty or absent -- the suites that "
-                    "need a database would run and fail on every runner")
     if skip and not str(spec.get("skip_reason", "")).strip():
         viol.append("[ci.globs.agent-pipe].skip carries no skip_reason")
+    d, pat = spec.get("dir", ""), spec.get("glob", "")
+    for fn in skip:
+        if not (isinstance(fn, str) and fnmatch.fnmatchcase(fn, pat)
+                and os.path.isfile(os.path.join(root, d, fn))):
+            viol.append(f"[ci.globs.agent-pipe].skip names {fn!r}, which is no {d}/{pat} "
+                        f"suite -- a stale skip would exempt the next suite given that name")
 
     for wf in (".github/workflows/mios-ci.yml", ".forgejo/workflows/build-mios.yml"):
         path = os.path.join(root, wf)
