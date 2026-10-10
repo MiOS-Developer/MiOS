@@ -74,6 +74,25 @@ mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (
 5. **Every fold proves it changed nothing at runtime.** A fold lane records the rendered root-overlay manifest, path + sha256 of every file the build would install, before and after. The two must be identical except for differences the lane names, and behaviour tests pass unchanged.
 6. **Size versus count.** This budget supersedes any per-file line ceiling proposed for the same code, such as the 800-line agent-pipe module ceiling. A large module with an AI-hint and a section index is preferred to many small files, so each folded file keeps a one-line AI-hint and a table of contents.
 
+7. **Every dropped file is kept, in `.archive/`, in git's own format (operator directive 2026-10-09: "retain all dropped files as archive in '.archive' folder as a legacy artifact(s)"; "git overlays to root / .git is a dotfile/folder / repo is root -- THAT is the format").**
+   - **One tree.** MiOS's repo root, its `.git`, the FHS root, the OCI image, the bootc bootable image and the AI images are the same root tree. Git overlays to root, and `.git` is just a dotfolder in it. The archive follows the same form.
+   - **`.archive/` is a bare git repository beside `.git`:** sha256 object format, compressed packfiles, one branch `legacy`. Each commit records dropped files at their real root-relative paths, at their last content and mode, with the dropping commit and source repo in the message. Restoring is an overlay onto root: `git --git-dir=/.archive --work-tree=/ checkout legacy -- <path>`.
+   - **It is maintained by `mios-gen archive`, never by hand.** The tool computes the dropped set from first-parent history since `[legibility.archive].since`, appends one commit per update, and repacks to a single pack. Only a handful of tracked files result: `HEAD`, `config`, `refs/heads/legacy` and `objects/pack/pack-*.{pack,idx,rev}`. These are marked binary in `.gitattributes`, so no line-ending conversion can touch them.
+   - **`mios-gen archive --check` fails** when:
+     - a dropped file is missing from `legacy`'s tree;
+     - an archived file's content differs from its last version;
+     - the store fails `git fsck --strict`;
+     - history is shallow.
+     It compares content, not pack bytes, because packs are not byte-reproducible across git versions.
+   - **The `archive` domain holds those few files.** The lane that creates the store pays for them by dropping, and archiving, at least as many files in the same commit.
+   - **mios-bootstrap gets its own `.archive/`** in the same form when it first drops a file. Each repo is its own root.
+8. **There are no tracked bundle tarballs; the tree is the format (operator: "organize and compress these bundles in an OpenAI/Open Source Ai model's format(s); to OCI standards ... that is mios-micro"; "MiOS's root/.git/FHS/OCI/Bootc Bootable images/Ai images are all aligned in the same root/repo tree").**
+   - **Content-addressed and compressed:** git stores already are, like OCI layouts, with sha256 digests in `.archive`. OCI and AI-model packaging happens at publish time, from the tree, not as tarballs committed into it:
+     - the bootc/OCI image is built from the root tree;
+     - **MiOS AI**, mios-micro, the model derived from MiOS itself, packages its artifacts as CNCF ModelPack v0.0.7 plus a KitOps Kitfile 1.0.0 (ADR-0027 Tier 2).
+   - **Lineage: MiOS → MiOS AI.** The `legacy` history in `.archive/` is a corpus source for MiOS AI. When mios-micro packages it, it does so with the `mios-ai` descriptor family and an OpenAI chat fine-tuning JSONL `dataset` layer: path and last commit in the user turn, content in the assistant turn. The index rows are OpenAI-shaped `{"object": ...}` objects, per the ruling that all schemas are OpenAI formats.
+   - **The fold-map bundles follow the same rule.** The vendored dependencies, field assets and theme assets in the fold map are kept as root-tree content (fewer, larger files, or git-native stores like `.archive`), not as tarballs. Their OCI forms are produced when the image or artifact is published.
+
 ## Milestones
 
 Each milestone lowers `max_tracked_files` and the affected domains.
@@ -89,6 +108,57 @@ Each milestone lowers `max_tracked_files` and the affected domains.
 | F6 | MiOS-MODULES: libexec verbs into multicall modules | ~980 |
 | F7 | One Rust workspace; automation phases as data | ~700 |
 | F8 | Data and tools into SSOT tables and Rust | ≤ 500 |
+
+## Fold map (survey of 2026-10-09)
+
+The operator asked: "survey where and what files can be folded lossless into itself … no loss of functionalities, features, systems … porting to rust static binaries as the primary goal … keeping the flow from hosted html -> rust -> toml".
+
+Six read-only surveys mapped every tracked file, measured with `git ls-files` at `d7e84986`–`ef2cdeb4`. Each fold below states its mechanism and its proof that nothing is lost.
+
+| Area | Now | After | Main mechanism |
+|---|---:|---:|---|
+| projections + etc + usr data + dependency | 1,183 | ~30 | **Render at build:** man pages, Quadlets, units, sysconf, indexes. Hand-written bodies become verbatim bundles in `usr/lib/mios/mios.d/` fragments, rendered back to the same FHS paths. Tunable values become `mios.toml` tables edited through `mios.html` → Rust `toml_edit` → `mios.toml`. The 99 vendored files become ≤ 95 MB tar bundles that the build unpacks to the same paths (Law 12). |
+| libexec + usr/bin + tools + installation | 632 | 5 | **Port into Rust MiOS-MODULES** (ruling Q19), one lane per module: gate, gen, resolver, probe, serve, install, build, launch, node, wallpaperd. Verb paths become argv[0] links rendered at build. 4 non-Rust writers of `mios.toml` become `toml_edit` key patches. |
+| Rust (`src/mios-rs` + `tools/native`) | 210 | 59 (24 inline) | One workspace and one lock. Six modules: `mios-core` (lib), `mios-gate`, `mios-gen`, `miosd`, `mios-serve`, `mios-desk`. Former binaries survive as applets. |
+| automation | 160 | 15 → 11 | 30 data phases and 18 call phases become `[build.phases]` rows. 27 logic phases go to `phases.sh`, then to Rust. `build.sh` becomes `miosd build --run`. |
+| AI plane (agent-pipe + `usr/lib/mios` + `libexec/ai`) | 501 | 55 | 16 sectioned domain modules (Law 14 keeps Python here). The 87 shims become one alias table plus a module finder, so every old import path keeps resolving. Tests become 17 suites, run per section in a subprocess. |
+| docs | 650 | 117 → 40 | One volume per domain, holding verbatim page blocks keyed by original path. `mios-gen sync` renders each page back to its path, untracked and byte-identical, so the 1,089 doc references and all runtime readers stay valid. |
+| tests + harness + misc | 392 | 51 | One suite per domain, one case per former file run in its own process, so test IDs and verdicts stay identical. Harness shims are rendered at dev setup, and projections tracked as source are rendered. |
+| **mios.git** | **3,654** | **≈ 280–360** | Under the 500 cap with margin. |
+| **mios-bootstrap** | **201** | **≈ 57** | `field/` assets become one tar. autorun, ventoy and i18n move into one module plus SSOT. The autounattend set is rendered at ISO build (Q12). Every published `irm\|iex` / `curl\|sh` path and every path deployed images read keeps working. |
+
+### Foundations
+
+These land first; every fold lane's proof depends on them.
+
+1. **Root-overlay manifest.** A deterministic path, mode, sha256 and link listing of what the build installs, covering the Containerfile overlay and the git-checkout root. Without it, a fold has no proof that its runtime is unchanged.
+2. **Render-twice projection gate with `MIOS_RENDER_ROOT`.**
+   - The CI "generated artifacts match" step compares `git status`. Once projections are untracked it can no longer fail.
+   - The Containerfile runs `miosd drift-check` before `mios-gen sync`.
+   - Every scanner must read the rendered tree, or it scans nothing and passes.
+3. **Verb-parity corpus.** Record each verb's argv, environment, exit code, stdout sha256 and stderr class, before any module fold.
+4. **The Rust-categories gate sees every executable.** It must detect scripts by shebang, not extension: 267 verbs without an extension are invisible to it today.
+5. **The docs volume engine and the virtual-corpus consumers.**
+6. **The agent-pipe compatibility layer and section/AI-hint gate contract.** This also retires the line ceiling, per Decision 6.
+7. **Test case-runner.** `ci-suites` and `run-suites` learn `path::case`.
+8. **Rust dependency unification and one workspace.**
+9. **mios-bootstrap renders after checkout** (Law 15). Hosts that update with `git pull` must get the rendered files too.
+
+Domain order also changed. `harness` now precedes `docs`, so harness markdown is budgeted as harness.
+
+### Open operator decisions
+
+None of these blocks a fold; each fold keeps the behaviour until the operator decides.
+
+- Law 16 templates live under `templates/`; may their bodies move into SSOT (`[templates.<t>].body`)?
+- ADRs become one decision log (one page per ADR, bytes intact). This changes the ADR README's governance text.
+- Code with no runtime caller: 146 verbs (93 reached only by tests, 26 only by docs, 27 by nothing), 35 agent-pipe root modules and 30 accelerator simulators. Port each as-is or retire it?
+- `gateway-agent` has drop-ins but no base unit. Is it retired?
+- The `.agents/workflows` command copies would be rendered at dev setup. Antigravity sessions that never run setup would lose them.
+- MediCat leftovers in mios-bootstrap have no reader in either repo. Are they dead?
+- Vendored dependencies: keep them as root-tree content or move them to a git-native store like `.archive`. Their OCI form is produced at publish time.
+
+The per-area survey reports, with lane-sized tasks, planted negatives and risks, travel with the M9 fold assignments.
 
 ## Consequences
 

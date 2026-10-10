@@ -8664,11 +8664,12 @@ tests/test-ukify-stage.py	37	37	1	6	57c6b5a93981	STAY	inline-scoped		0				0
 tests/test-ukify-stage.py	50	51	2	25	8359be3e1a69	STAY	local-scoped		0				0
 tests/test-ukify-stage.py	53	53	1	12	c543cc6d5406	STAY	local-scoped		0				0
 tests/test-ukify-stage.py	146	146	1	15	e548b8fcbf9d	STAY	local-scoped		0				0
-tests/test-ukify-stage.py	168	168	1	13	a92e3572f5f7	STAY	local-scoped		0				0
-tests/test-ukify-stage.py	194	194	1	8	6b90ea875796	STAY	local-scoped		0				0
-tests/test-ukify-stage.py	212	212	1	11	c52500434b95	STAY	local-scoped		0				0
-tests/test-ukify-stage.py	241	241	1	16	8807ba786a54	STAY	local-scoped		0				0
-tests/test-ukify-stage.py	253	254	2	21	5922ee30c9c6	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	158	158	1	16	df278e503eb8	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	184	184	1	13	a92e3572f5f7	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	210	210	1	8	6b90ea875796	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	228	228	1	11	c52500434b95	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	257	257	1	16	8807ba786a54	STAY	local-scoped		0				0
+tests/test-ukify-stage.py	269	270	2	21	5922ee30c9c6	STAY	local-scoped		0				0
 tests/test-unattend.py	1	3	3	26	d6390d1a9553	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tests.md	mios-src:2393c6c5493d	26	0
 tests/test-unattend.py	4	9	5	26	366e395f2af1	STAY	midsize-why		0				0
 tests/test-unattend.py	26	26	1	4	26f930979b0e	STAY	local-scoped		0				0
@@ -20890,9 +20891,10 @@ usr/libexec/mios/mios-ukify-stage	30	30	1	4	8bbd88dce613	STAY	local-scoped		0			
 usr/libexec/mios/mios-ukify-stage	47	47	1	6	05cb16fc9b40	STAY	local-scoped		0				0
 usr/libexec/mios/mios-ukify-stage	90	90	1	12	92a2236fade8	STAY	local-scoped		0				0
 usr/libexec/mios/mios-ukify-stage	110	111	2	26	7b705f1806cc	STAY	midsize-why		0				0
-usr/libexec/mios/mios-ukify-stage	140	140	1	8	439f4e9bb81d	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ukify-stage	146	146	1	4	7a868ecb7a60	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ukify-stage	155	155	1	8	631cf9856729	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ukify-stage	140	141	2	20	17bb707c1b7a	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ukify-stage	146	146	1	8	439f4e9bb81d	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ukify-stage	152	152	1	4	7a868ecb7a60	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ukify-stage	161	161	1	8	631cf9856729	STAY	local-scoped		0				0
 usr/libexec/mios/mios-usbguard	1	3	3	15	29e0aa9c1660	STAY	ai-header		0				0
 usr/libexec/mios/mios-usbguard	33	33	1	7	21aeb947620d	STAY	local-scoped		0				0
 usr/libexec/mios/mios-usbguard	52	52	1	3	ac66a7b9864c	STAY	local-scoped		0				0
