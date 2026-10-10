@@ -1633,13 +1633,8 @@ mod projection_evidence {
     }
 }
 
-// `archive`: the git-native legacy store beside .git (ADR-0030 Decision 7). Every path the
-// `since` tree or a first-parent commit since then held, and the index no longer tracks, is
-// kept at its last content and mode on one branch of a bare sha256 repository at the root.
-// Every value comes from [legibility.archive]; packs are not byte-reproducible, so --check
-// compares paths, modes and the sha256 of the bytes, never pack files.
-//
-// Sections: config | git plumbing | history replay | dropped set | layout | compare | build
+// `archive`: the ADR-0030 Decision 7 legacy store, a bare sha256 repo beside .git, from [legibility.archive].
+// Sections: config, git, replay, dropped set, layout, compare, build.
 mod archive {
     use sha2::{Digest, Sha256};
     use std::collections::{BTreeMap, BTreeSet};

@@ -19,11 +19,10 @@ jobs:
       - name: Checkout
         # The repository is the deployed root. Checkout fetches the pushed
         # state into the job workspace, and the Containerfile there is what
-        # podman builds. Full history: check_legacy_archive (ADR-0030
-        # Decision 7) replays it, and a shallow clone fails that gate.
+        # podman builds.
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # full history: check_legacy_archive (ADR-0030 Decision 7) fails a shallow clone
 
       - name: Resolve ratchet comparison baseline
         # Wire ratchet comparison base (task_3398).
