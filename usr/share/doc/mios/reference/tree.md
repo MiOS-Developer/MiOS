@@ -379,8 +379,6 @@ deployed `/` IS a git working tree of `mios.git` (`mios_root_git`).
 │   └─ training/                     SFT/DPO JSONL training data (fine-tune subsystem)
 │
 ├─ Day-0 OS-side helpers  ────────────────────────────────────────────
-│   ├─ .clinerules                  Cline AI agent rules
-│   ├─ .cursorrules                 Cursor AI agent rules
 │   ├─ .editorconfig                editor defaults
 │   ├─ .env.mios                    legacy per-user env overlay (deprecated)
 │   ├─ .devcontainer/               VS Code devcontainer (Dockerfile + install-root-overlay.sh)
@@ -615,7 +613,6 @@ artifacts have been renamed or removed in the live tree).
 |  |  `- zz-mios-motd.sh
 |  +- sysusers.d/
 |  |  `- cephadm.conf
-|  +- .keep
 |  `- wsl.conf
 +- tools/
 |  +- lib/
@@ -919,121 +916,120 @@ artifacts have been renamed or removed in the live tree).
 |  |  +- mios-grd-setup
 |  |  +- mios-hyperv-enhanced
 |  |  `- mios-verify
-|  +- share/
-|  |  +- applications/
-|  |  |  +- mios-ai.desktop
-|  |  |  `- mios-configurator.desktop
-|  |  +- containers/
-|  |  |  +- containers.conf.d/
-|  |  |  |  `- 99-mios-network.conf
-|  |  |  `- systemd/
-|  |  |     +- mios-adguard.container
-|  |  |     +- mios-ceph.container
-|  |  |     +- mios-cockpit-link.container
-|  |  |     +- mios-code-server.container
-|  |  |     +- mios-cpu-node.container
-|  |  |     +- mios-crowdsec-dashboard.container
-|  |  |     +- mios-forge.container
-|  |  |     +- mios-forgejo-runner.container
-|  |  |     +- mios-guacamole.container
-|  |  |     +- mios-guacamole-postgres.container
-|  |  |     +- mios-guacd.container
-|  |  |     +- mios-k3s.container
-|  |  |     +- mios-llm-heavy.container
-|  |  |     +- mios-llm-light.container
-|  |  |     +- mios-llm-worker@.container
-|  |  |     +- mios-open-webui.container
-|  |  |     +- mios-pgvector.container
-|  |  |     +- mios-pxe-hub.container
-|  |  |     +- mios-searxng.container
-|  |  |     +- mios-webtools.pod
-|  |  |     +- mios-webtools-crawl4ai.container
-|  |  |     +- mios-webtools-firecrawl-api.container
-|  |  |     +- mios-webtools-firecrawl-worker.container
-|  |  |     +- mios-webtools-redis.container
-|  |  |     `- mios.network
-|  |  +- doc/
-|  |  |  `- mios/
-|  |  |     +- upstream/
-|  |  |     |  +- bib.md
-|  |  |     |  +- bootc.md
-|  |  |     |  +- cdi.md
-|  |  |     |  +- composefs.md
-|  |  |     |  +- cosign.md
-|  |  |     |  +- crowdsec-fapolicyd-usbguard.md
-|  |  |     |  +- deploy-targets.md
-|  |  |     |  +- dnf5.md
-|  |  |     |  +- fedora-bootc.md
-|  |  |     |  +- ghcr.md
-|  |  |     |  +- greenboot.md
-|  |  |     |  +- k3s-cockpit.md
-|  |  |     |  +- mios-llm-light.md
-|  |  |     |  +- looking-glass-kvmfr.md
-|  |  |     |  +- nvidia.md
-|  |  |     |  +- ostree.md
-|  |  |     |  +- podman.md
-|  |  |     |  +- rechunk.md
-|  |  |     |  +- related-distros.md
-|  |  |     |  +- secureblue.md
-|  |  |     |  +- selinux.md
-|  |  |     |  `- ucore-hci.md
-|  |  |     +- concepts/
-|  |  |     +- guides/
-|  |  |     +- reference/
-|  |  |     `- audits/
-|  |  +- fontconfig/
-|  |  |  `- conf.avail/
-|  |  |     `- 30-mios-geist.conf
-|  |  `- mios/
-|  |     +- ai/
-|  |     |  +- v1/
-|  |     |  |  +- mcp.json
-|  |     |  |  `- models.json
-|  |     |  +- INDEX.md
-|  |     |  `- system.md
-|  |     +- api/
-|  |     |  +- batch.requests.jsonl
-|  |     |  +- chat.example.json
-|  |     |  +- chat.local.example.json
-|  |     |  +- embeddings.example.json
-|  |     |  +- mcp.tool.json
-|  |     |  `- responses.example.json
-|  |     +- branding/
-|  |     |  `- mios.txt
-|  |     +- configurator/
-|  |     |  `- mios.html
-|  |     +- cookbooks/
-|  |     |  +- finetune-flow.md
-|  |     |  +- ingest-kb.md
-|  |     |  `- local-rag-day0.md
-|  |     +- fastfetch/
-|  |     |  `- config.jsonc
-|  |     +- finetune/                       (hardware-agnostic LoRA/SFT subsystem)
-|  |     +- hermes/ hermes-agent/           (MiOS-Hermes gateway assets)
-|  |     +- kb/
-|  |     |  `- manifest.json
-|  |     +- llamacpp/
-|  |     |  `- mios-llm-light.yaml
-|  |     +- oh-my-posh/
-|  |     |  `- mios.omp.json
-|  |     +- opencode/                        (opencode coder-peer assets)
-|  |     +- openwebui/ open-webui/ owui/     (Open WebUI front-end + MiOS pipe)
-|  |     +- portal/                          (MiOS Portal web-app assets)
-|  |     +- postgres/
-|  |     |  `- schema-init.sql
-|  |     +- prompts/
-|  |     |  +- build-review.xml.md
-|  |     |  +- kargs-author.xml.md
-|  |     |  `- troubleshoot.xml.md
-|  |     +- searxng/                         (SearXNG settings)
-|  |     +- skills/                          (agent skills catalog)
-|  |     +- webtools/ crawl4ai/              (fetch/crawl tool assets)
-|  |     +- PACKAGES.md
-|  |     +- env.defaults
-|  |     +- mios.toml
-|  |     +- mios.toml.example
-|  |     `- profile.toml
-|  `- .keep
+|  `- share/
+|     +- applications/
+|     |  +- mios-ai.desktop
+|     |  `- mios-configurator.desktop
+|     +- containers/
+|     |  +- containers.conf.d/
+|     |  |  `- 99-mios-network.conf
+|     |  `- systemd/
+|     |     +- mios-adguard.container
+|     |     +- mios-ceph.container
+|     |     +- mios-cockpit-link.container
+|     |     +- mios-code-server.container
+|     |     +- mios-cpu-node.container
+|     |     +- mios-crowdsec-dashboard.container
+|     |     +- mios-forge.container
+|     |     +- mios-forgejo-runner.container
+|     |     +- mios-guacamole.container
+|     |     +- mios-guacamole-postgres.container
+|     |     +- mios-guacd.container
+|     |     +- mios-k3s.container
+|     |     +- mios-llm-heavy.container
+|     |     +- mios-llm-light.container
+|     |     +- mios-llm-worker@.container
+|     |     +- mios-open-webui.container
+|     |     +- mios-pgvector.container
+|     |     +- mios-pxe-hub.container
+|     |     +- mios-searxng.container
+|     |     +- mios-webtools.pod
+|     |     +- mios-webtools-crawl4ai.container
+|     |     +- mios-webtools-firecrawl-api.container
+|     |     +- mios-webtools-firecrawl-worker.container
+|     |     +- mios-webtools-redis.container
+|     |     `- mios.network
+|     +- doc/
+|     |  `- mios/
+|     |     +- upstream/
+|     |     |  +- bib.md
+|     |     |  +- bootc.md
+|     |     |  +- cdi.md
+|     |     |  +- composefs.md
+|     |     |  +- cosign.md
+|     |     |  +- crowdsec-fapolicyd-usbguard.md
+|     |     |  +- deploy-targets.md
+|     |     |  +- dnf5.md
+|     |     |  +- fedora-bootc.md
+|     |     |  +- ghcr.md
+|     |     |  +- greenboot.md
+|     |     |  +- k3s-cockpit.md
+|     |     |  +- mios-llm-light.md
+|     |     |  +- looking-glass-kvmfr.md
+|     |     |  +- nvidia.md
+|     |     |  +- ostree.md
+|     |     |  +- podman.md
+|     |     |  +- rechunk.md
+|     |     |  +- related-distros.md
+|     |     |  +- secureblue.md
+|     |     |  +- selinux.md
+|     |     |  `- ucore-hci.md
+|     |     +- concepts/
+|     |     +- guides/
+|     |     +- reference/
+|     |     `- audits/
+|     +- fontconfig/
+|     |  `- conf.avail/
+|     |     `- 30-mios-geist.conf
+|     `- mios/
+|        +- ai/
+|        |  +- v1/
+|        |  |  +- mcp.json
+|        |  |  `- models.json
+|        |  +- INDEX.md
+|        |  `- system.md
+|        +- api/
+|        |  +- batch.requests.jsonl
+|        |  +- chat.example.json
+|        |  +- chat.local.example.json
+|        |  +- embeddings.example.json
+|        |  +- mcp.tool.json
+|        |  `- responses.example.json
+|        +- branding/
+|        |  `- mios.txt
+|        +- configurator/
+|        |  `- mios.html
+|        +- cookbooks/
+|        |  +- finetune-flow.md
+|        |  +- ingest-kb.md
+|        |  `- local-rag-day0.md
+|        +- fastfetch/
+|        |  `- config.jsonc
+|        +- finetune/                       (hardware-agnostic LoRA/SFT subsystem)
+|        +- hermes/ hermes-agent/           (MiOS-Hermes gateway assets)
+|        +- kb/
+|        |  `- manifest.json
+|        +- llamacpp/
+|        |  `- mios-llm-light.yaml
+|        +- oh-my-posh/
+|        |  `- mios.omp.json
+|        +- opencode/                        (opencode coder-peer assets)
+|        +- openwebui/ open-webui/ owui/     (Open WebUI front-end + MiOS pipe)
+|        +- portal/                          (MiOS Portal web-app assets)
+|        +- postgres/
+|        |  `- schema-init.sql
+|        +- prompts/
+|        |  +- build-review.xml.md
+|        |  +- kargs-author.xml.md
+|        |  `- troubleshoot.xml.md
+|        +- searxng/                         (SearXNG settings)
+|        +- skills/                          (agent skills catalog)
+|        +- webtools/ crawl4ai/              (fetch/crawl tool assets)
+|        +- PACKAGES.md
+|        +- env.defaults
+|        +- mios.toml
+|        +- mios.toml.example
+|        `- profile.toml
 +- v1/                                       (deployed OpenAI-compat API mount points)
 |  +- chat/
 |  |  `- completions
@@ -1056,8 +1052,6 @@ artifacts have been renamed or removed in the live tree).
 |        `- training/
 |           +- dpo.jsonl
 |           `- sft.jsonl
-+- .clinerules
-+- .cursorrules
 +- .editorconfig
 +- .env.mios
 +- .gitattributes
