@@ -557,12 +557,42 @@ mod render_manpages {
         let _tree = super::tree_lock();
         let root = get_repo_root();
 
+        let td = tempfile::tempdir().expect("create tempdir");
+        let td_root = td.path();
+
+        let toml_src = root.join("usr/share/mios/mios.toml");
+        let toml_dst = td_root.join("usr/share/mios/mios.toml");
+        fs::create_dir_all(toml_dst.parent().unwrap()).unwrap();
+        fs::copy(&toml_src, &toml_dst).unwrap();
+
+        let ver_src = root.join("VERSION");
+        let ver_dst = td_root.join("VERSION");
+        fs::copy(&ver_src, &ver_dst).unwrap();
+
+        let ch01_src = root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
+        let ch01_dst = td_root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
+        fs::create_dir_all(ch01_dst.parent().unwrap()).unwrap();
+        if ch01_src.exists() {
+            fs::copy(&ch01_src, &ch01_dst).unwrap();
+        }
+
+        // Initial render into temp root
+        let render_init = Command::new(bin())
+            .args(["render-manpages", "--root", &td_root.to_string_lossy()])
+            .output()
+            .expect("Failed to execute mios-gen render-manpages");
+        assert!(
+            render_init.status.success(),
+            "Initial render failed: {}",
+            String::from_utf8_lossy(&render_init.stderr)
+        );
+
         // 1. Positive control: check clean repository with --check and --validate
         let output = Command::new(bin())
             .args([
                 "render-manpages",
                 "--root",
-                &root.to_string_lossy(),
+                &td_root.to_string_lossy(),
                 "--check",
                 "--validate",
             ])
@@ -573,13 +603,13 @@ mod render_manpages {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         assert!(
-        output.status.success(),
-        "Expected exit 0 for render-manpages --check --validate on clean tree, got: {:?}\nstderr: {}",
-        output.status.code(),
-        stderr
-    );
+            output.status.success(),
+            "Expected exit 0 for render-manpages --check --validate on clean tree, got: {:?}\nstderr: {}",
+            output.status.code(),
+            stderr
+        );
         assert!(
-            stdout.contains("page(s) validated"),
+            stdout.contains("page(s) rendered and validated") || stdout.contains("page(s) validated"),
             "Expected validation confirmation message in stdout, got:\n{stdout}"
         );
         assert!(
@@ -594,7 +624,7 @@ mod render_manpages {
                 "json",
                 "render-manpages",
                 "--root",
-                &root.to_string_lossy(),
+                &td_root.to_string_lossy(),
                 "--check",
                 "--validate",
             ])
@@ -613,7 +643,7 @@ mod render_manpages {
         assert_eq!(parsed_json["violations"], 0);
 
         // 3. Negative control: inject content mutation into an existing manpage
-        let target_manpage = root.join("usr/share/man/man1/mios.1");
+        let target_manpage = td_root.join("usr/share/man/man1/mios.1");
         assert!(
             target_manpage.exists(),
             "Expected usr/share/man/man1/mios.1 to exist at {:?}",
@@ -631,7 +661,7 @@ mod render_manpages {
                 .args([
                     "render-manpages",
                     "--root",
-                    &root.to_string_lossy(),
+                    &td_root.to_string_lossy(),
                     "--check",
                 ])
                 .output()
@@ -641,9 +671,9 @@ mod render_manpages {
             let stdout_neg = String::from_utf8_lossy(&output_neg.stdout);
 
             assert!(
-            !output_neg.status.success(),
-            "Expected failure on mutated manpage, but succeeded:\nstdout: {stdout_neg}\nstderr: {stderr_neg}"
-        );
+                !output_neg.status.success(),
+                "Expected failure on mutated manpage, but succeeded:\nstdout: {stdout_neg}\nstderr: {stderr_neg}"
+            );
             assert!(
                 stderr_neg.contains("man pages out of sync")
                     || stderr_neg.contains("usr/share/man/man1/mios.1"),
@@ -652,17 +682,20 @@ mod render_manpages {
         }
 
         // 4. Negative control: inject an orphan manpage
-        let orphan_manpage = root.join("usr/share/man/man1/mios-rogue-orphan-test.1");
+        let orphan_manpage = td_root.join("usr/share/man/man1/mios-rogue-orphan-test.1");
         {
             let _deleter = FileDeleter::new(&orphan_manpage);
-            fs::write(&orphan_manpage, ".TH MIOS-ROGUE 1 \"\" \"MiOS 0.3.0\" \"MiOS Verbs\"\n.SH NAME\nmios-rogue\n.SH DESCRIPTION\nRogue\n")
+            fs::write(
+                &orphan_manpage,
+                ".TH MIOS-ROGUE 1 \"\" \"MiOS 0.3.0\" \"MiOS Verbs\"\n.SH NAME\nmios-rogue\n.SH DESCRIPTION\nRogue\n",
+            )
             .expect("Write orphan manpage");
 
             let output_orphan = Command::new(bin())
                 .args([
                     "render-manpages",
                     "--root",
-                    &root.to_string_lossy(),
+                    &td_root.to_string_lossy(),
                     "--check",
                 ])
                 .output()
@@ -672,13 +705,78 @@ mod render_manpages {
             let stdout_orp = String::from_utf8_lossy(&output_orphan.stdout);
 
             assert!(
-            !output_orphan.status.success(),
-            "Expected failure on orphan manpage, but succeeded:\nstdout: {stdout_orp}\nstderr: {stderr_orp}"
-        );
+                !output_orphan.status.success(),
+                "Expected failure on orphan manpage, but succeeded:\nstdout: {stdout_orp}\nstderr: {stderr_orp}"
+            );
             assert!(
                 stderr_orp.contains("no verb declares it")
                     || stderr_orp.contains("man pages out of sync"),
                 "Expected orphan error in stderr, got:\n{stderr_orp}"
+            );
+        }
+
+        // 5. Positive control for Finding 2: foreign manpage survives check and write mode
+        let foreign_manpage = td_root.join("usr/share/man/man1/ls.1");
+        {
+            let _deleter = FileDeleter::new(&foreign_manpage);
+            fs::write(&foreign_manpage, ".TH LS 1 \"\" \"Linux\" \"Linux Manual\"\n.SH NAME\nls\n.SH DESCRIPTION\nList directory\n")
+                .expect("Write foreign manpage");
+
+            let check_foreign = Command::new(bin())
+                .args([
+                    "render-manpages",
+                    "--root",
+                    &td_root.to_string_lossy(),
+                    "--check",
+                ])
+                .output()
+                .expect("Failed to execute mios-gen check on foreign manpage tree");
+
+            assert!(
+                check_foreign.status.success(),
+                "Foreign manpage must not cause --check to fail: {}",
+                String::from_utf8_lossy(&check_foreign.stderr)
+            );
+
+            let write_foreign = Command::new(bin())
+                .args([
+                    "render-manpages",
+                    "--root",
+                    &td_root.to_string_lossy(),
+                ])
+                .output()
+                .expect("Failed to execute mios-gen write on foreign manpage tree");
+
+            assert!(
+                write_foreign.status.success(),
+                "Foreign manpage write mode must succeed: {}",
+                String::from_utf8_lossy(&write_foreign.stderr)
+            );
+            assert!(
+                foreign_manpage.exists(),
+                "Foreign manpage must survive write mode without being deleted as an orphan"
+            );
+        }
+
+        // 6. Negative control for Finding 3: planted date header must fail --check
+        {
+            let _restorer = Restorer::new(&target_manpage);
+            let date_content = ".TH MIOS 1 \"2026-10-10\" \"MiOS 0.3.0\" \"MiOS Manual\"\n.SH NAME\nmios \\- dispatcher\n.SH DESCRIPTION\nPlanted date\n";
+            fs::write(&target_manpage, date_content).expect("Write planted date manpage");
+
+            let output_date = Command::new(bin())
+                .args([
+                    "render-manpages",
+                    "--root",
+                    &td_root.to_string_lossy(),
+                    "--check",
+                ])
+                .output()
+                .expect("Failed to execute mios-gen check on planted date");
+
+            assert!(
+                !output_date.status.success(),
+                "Expected planted date to fail --check, but it succeeded"
             );
         }
     }

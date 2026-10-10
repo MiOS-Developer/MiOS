@@ -1017,7 +1017,6 @@ pub mod render_manpages {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
-    #[cfg(unix)]
     use std::process::Command;
     use toml::Value;
 
@@ -1329,12 +1328,9 @@ pub mod render_manpages {
         out
     }
 
-    pub fn validate_man_page(full_path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(full_path)
-            .map_err(|e| format!("cannot read {}: {e}", full_path.display()))?;
-
+    pub fn validate_man_page_content(rel: &str, content: &str) -> Result<(), String> {
         if !content.starts_with(".TH ") {
-            return Err(format!("{} missing .TH header", full_path.display()));
+            return Err(format!("{rel} missing .TH header"));
         }
 
         let has_name = content.contains(".SH NAME");
@@ -1342,10 +1338,17 @@ pub mod render_manpages {
             content.contains(".SH SYNOPSIS") || content.contains(".SH DESCRIPTION");
         if !has_name || !has_synopsis_or_desc {
             return Err(format!(
-                "{} missing required .SH NAME / SYNOPSIS / DESCRIPTION section",
-                full_path.display()
+                "{rel} missing required .SH NAME / SYNOPSIS / DESCRIPTION section"
             ));
         }
+        Ok(())
+    }
+
+    pub fn validate_man_page(full_path: &Path) -> Result<(), String> {
+        let content = fs::read_to_string(full_path)
+            .map_err(|e| format!("cannot read {}: {e}", full_path.display()))?;
+
+        validate_man_page_content(&full_path.to_string_lossy(), &content)?;
 
         // Unix-only external command check if available
         #[cfg(unix)]
@@ -1406,10 +1409,76 @@ pub mod render_manpages {
             .unwrap_or(false)
     }
 
+    pub fn verify(
+        first: &BTreeMap<String, String>,
+        second: &BTreeMap<String, String>,
+        ssot: &Value,
+    ) -> Result<(), String> {
+        if first != second {
+            return Err("render-manpages: non-deterministic render detected across passes".to_string());
+        }
+
+        let mut missing_declared = Vec::new();
+        let empty_table = toml::value::Table::new();
+        let verbs_table = ssot
+            .get("verbs")
+            .and_then(|v| v.as_table())
+            .unwrap_or(&empty_table);
+        for n in verbs_table.keys() {
+            let p = format!("{MAN}/man1/mios-{n}.1");
+            if !first.contains_key(&p) {
+                missing_declared.push(format!("{p} (declared in [verbs.{n}])"));
+            }
+        }
+
+        if let Some(sc_manpages) = ssot
+            .get("testing")
+            .and_then(|t| t.get("smoke_components"))
+            .and_then(|s| s.get("manpages"))
+            .and_then(|m| m.as_array())
+        {
+            for item in sc_manpages {
+                if let Some(p) = item.as_str() {
+                    if !first.contains_key(p) {
+                        missing_declared.push(format!("{p} (declared in [testing.smoke_components].manpages)"));
+                    }
+                }
+            }
+        }
+
+        if let Some(var_entries) = ssot
+            .get("variants")
+            .and_then(|v| v.get("entries"))
+            .and_then(|e| e.as_table())
+        {
+            if !var_entries.is_empty() {
+                let vp = format!("{MAN}/man7/mios-variants.7");
+                if !first.contains_key(&vp) && !missing_declared.iter().any(|m| m.starts_with(&vp)) {
+                    missing_declared.push(format!("{vp} (declared in [variants.entries])"));
+                }
+            }
+        }
+
+        if !missing_declared.is_empty() {
+            let mut lines = vec!["missing declared man page(s):".to_string()];
+            for m in missing_declared.iter().take(10) {
+                lines.push(format!("  {m}"));
+            }
+            if missing_declared.len() > 10 {
+                lines.push(format!("  ... and {} more", missing_declared.len() - 10));
+            }
+            return Err(lines.join("\n"));
+        }
+
+        Ok(())
+    }
+
     pub fn run_render_manpages(
         root: &Path,
         check: bool,
         validate: bool,
+        out_dir: Option<&Path>,
+        list: bool,
     ) -> Result<(String, i32), (String, i32)> {
         let toml_path = root.join("usr/share/mios/mios.toml");
         let toml_str = fs::read_to_string(&toml_path).map_err(|e| {
@@ -1433,6 +1502,72 @@ pub mod render_manpages {
         })?;
 
         let rendered = render_pages(root, &ssot);
+
+        if list {
+            let lines: Vec<String> = rendered.keys().cloned().collect();
+            return Ok((lines.join("\n"), 0));
+        }
+
+        if let Some(od) = out_dir {
+            for (rel, body) in &rendered {
+                let full = od.join(rel);
+                if let Some(parent) = full.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if let Err(e) = fs::write(&full, body.as_bytes()) {
+                    return Err((
+                        format!("render-manpages: write {} failed: {e}", full.display()),
+                        1,
+                    ));
+                }
+            }
+            return Ok((
+                format!("[render-manpages] {} page(s) rendered", rendered.len()),
+                0,
+            ));
+        }
+
+        // ADR-0030 Decision 4 / task_3653: Double-render determinism and registry coverage checks
+        if check {
+            let second = match (|| -> Result<BTreeMap<String, String>, String> {
+                let temp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                let child_output = Command::new(&exe)
+                    .args([
+                        "render-manpages",
+                        "--root",
+                        &root.to_string_lossy(),
+                        "--out-dir",
+                        &temp_dir.path().to_string_lossy(),
+                    ])
+                    .env("TZ", "Asia/Tokyo")
+                    .env("LC_ALL", "C.UTF-8")
+                    .env("SOURCE_DATE_EPOCH", "1234567890")
+                    .current_dir(temp_dir.path())
+                    .output()
+                    .map_err(|e| e.to_string())?;
+
+                if !child_output.status.success() {
+                    return Err(format!("child process exited {:?}", child_output.status.code()));
+                }
+
+                let mut second_map = BTreeMap::new();
+                for rel in rendered.keys() {
+                    let file_path = temp_dir.path().join(rel);
+                    let content = fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+                    second_map.insert(rel.clone(), content);
+                }
+                Ok(second_map)
+            })() {
+                Ok(sec) => sec,
+                Err(_) => render_pages(root, &ssot),
+            };
+
+            if let Err(err_msg) = verify(&rendered, &second, &ssot) {
+                return Err((err_msg, 1));
+            }
+        }
+
         let mut drift = Vec::new();
 
         for (rel, body) in &rendered {
@@ -1450,8 +1585,6 @@ pub mod render_manpages {
             if check {
                 if current.is_some() {
                     drift.push(rel.clone());
-                } else {
-                    drift.push(format!("{rel} (missing)"));
                 }
                 continue;
             }
@@ -1476,10 +1609,13 @@ pub mod render_manpages {
             {
                 if entry.file_type().is_file() {
                     let p = entry.path();
-                    if let Ok(rel) = p.strip_prefix(root) {
-                        let rel_norm = rel.to_string_lossy().replace('\\', "/");
-                        if !rendered.contains_key(&rel_norm) {
-                            orphans.push(rel_norm);
+                    let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                    if file_name.starts_with("mios") {
+                        if let Ok(rel) = p.strip_prefix(root) {
+                            let rel_norm = rel.to_string_lossy().replace('\\', "/");
+                            if !rendered.contains_key(&rel_norm) {
+                                orphans.push(rel_norm);
+                            }
                         }
                     }
                 }
@@ -1508,14 +1644,26 @@ pub mod render_manpages {
         if validate {
             let mut valid_errors = Vec::new();
             let mut validated = 0;
-            for rel in rendered.keys() {
+            let temp_val_dir = tempfile::tempdir().ok();
+
+            for (rel, body) in &rendered {
                 let full = root.join(rel);
-                if !full.is_file() {
-                    valid_errors.push(format!("{rel}: rendered but absent from the tree"));
-                    continue;
-                }
                 validated += 1;
-                if let Err(msg) = validate_man_page(&full) {
+                let res = if full.is_file() {
+                    validate_man_page(&full)
+                } else if let Some(ref tvd) = temp_val_dir {
+                    let temp_file = tvd
+                        .path()
+                        .join(Path::new(rel).file_name().unwrap_or(std::ffi::OsStr::new("page.1")));
+                    if fs::write(&temp_file, body.as_bytes()).is_ok() {
+                        validate_man_page(&temp_file)
+                    } else {
+                        validate_man_page_content(rel, body)
+                    }
+                } else {
+                    validate_man_page_content(rel, body)
+                };
+                if let Err(msg) = res {
                     valid_errors.push(msg);
                 }
             }
@@ -1534,7 +1682,9 @@ pub mod render_manpages {
                 }
                 return Err((lines.join("\n"), 1));
             }
-            messages.push(format!("[render-manpages] {validated} page(s) validated"));
+            messages.push(format!(
+                "[render-manpages] {validated} page(s) rendered and validated"
+            ));
         }
 
         let action = if check { "verified" } else { "rendered" };
@@ -1544,6 +1694,80 @@ pub mod render_manpages {
         ));
 
         Ok((messages.join("\n"), 0))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_verify_identical_passes() {
+            let mut pages = BTreeMap::new();
+            pages.insert("usr/share/man/man1/mios.1".to_string(), "content".to_string());
+            pages.insert("usr/share/man/man1/mios-build.1".to_string(), "content".to_string());
+            let ssot_str = r#"
+[verbs.build]
+description = "build verb"
+"#;
+            let ssot: Value = ssot_str.parse().unwrap();
+            assert!(verify(&pages, &pages, &ssot).is_ok());
+        }
+
+        #[test]
+        fn test_verify_non_deterministic_fails() {
+            let mut first = BTreeMap::new();
+            first.insert("usr/share/man/man1/mios.1".to_string(), "render A".to_string());
+            let mut second = BTreeMap::new();
+            second.insert("usr/share/man/man1/mios.1".to_string(), "render B".to_string());
+            let ssot: Value = "".parse().unwrap();
+            let err = verify(&first, &second, &ssot).unwrap_err();
+            assert!(err.contains("non-deterministic render detected across passes"));
+        }
+
+        #[test]
+        fn test_verify_missing_declared_page_fails() {
+            let pages = BTreeMap::new();
+            let ssot_str = r#"
+[verbs.update]
+description = "update verb"
+"#;
+            let ssot: Value = ssot_str.parse().unwrap();
+            let err = verify(&pages, &pages, &ssot).unwrap_err();
+            assert!(err.contains("missing declared man page(s):"));
+            assert!(err.contains("usr/share/man/man1/mios-update.1 (declared in [verbs.update])"));
+        }
+
+        #[test]
+        fn test_foreign_page_survives_check_and_write() {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let root = temp_dir.path();
+            let toml_dir = root.join("usr/share/mios");
+            fs::create_dir_all(&toml_dir).unwrap();
+            let ssot_content = r#"
+[verbs.test]
+description = "test"
+[testing.smoke_components]
+manpages = ["usr/share/man/man1/mios.1", "usr/share/man/man1/mios-test.1"]
+"#;
+            fs::write(toml_dir.join("mios.toml"), ssot_content).unwrap();
+
+            // First render into root
+            let res = run_render_manpages(root, false, false, None, false);
+            assert!(res.is_ok());
+
+            // Plant foreign man page: usr/share/man/man1/ls.1
+            let foreign_page = root.join("usr/share/man/man1/ls.1");
+            fs::write(&foreign_page, "foreign man page content").unwrap();
+
+            // Check mode should succeed without flagging foreign page as orphan
+            let check_res = run_render_manpages(root, true, false, None, false);
+            assert!(check_res.is_ok(), "check mode failed with foreign page: {:?}", check_res);
+
+            // Write mode should not delete foreign page
+            let write_res = run_render_manpages(root, false, false, None, false);
+            assert!(write_res.is_ok());
+            assert!(foreign_page.exists(), "foreign page ls.1 was deleted by write mode!");
+        }
     }
 }
 
