@@ -154,6 +154,22 @@ class TestUkifyStage(unittest.TestCase):
         self.assertFalse(os.path.exists(out_efi), "a placeholder EFI was staged")
         self.assertFalse(os.path.exists(entry), "a loader entry points at no real UKI")
 
+    def test_negative_unrunnable_ukify_is_an_error(self):
+        """A ukify that is on PATH but cannot execute is an error result, not a traceback."""
+        bad = os.path.join(self.tmpdir.name, "badbin")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "ukify"), "wb") as fh:
+            fh.write(b"\x00\x01not-an-executable")
+        os.chmod(os.path.join(bad, "ukify"), 0o755)
+        out_efi = os.path.join(self.tmpdir.name, "boot", "EFI", "Linux", "mios-bad.efi")
+        mock_kernel, mock_initrd = self._mock_inputs("bad")
+        entry = os.path.join(self.tmpdir.name, "loader", "entries", "mios-bad.conf")
+        data = self._run_stage(bad + os.pathsep + self._no_ukify_path(), out_efi, entry, mock_kernel,
+                               mock_initrd, "console=tty0 rw", want_rc=1)
+        self.assertEqual(data.get("status"), "error")
+        self.assertIn("ukify could not run", data.get("error", ""))
+        self.assertFalse(os.path.exists(out_efi), "a placeholder EFI was staged")
+
     def test_negative_missing_kernel_is_an_error(self):
         out_efi = os.path.join(self.tmpdir.name, "boot", "EFI", "Linux", "mios-nok.efi")
         _, mock_initrd = self._mock_inputs("nok")

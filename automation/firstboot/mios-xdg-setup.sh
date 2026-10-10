@@ -28,7 +28,7 @@ else
 
     mkdir -p "$_user_systemd_dir/default.target.wants"
 
-    cp /usr/share/mios/systemd/mios-xdg-userdir-init.service "$_user_systemd_dir/mios-xdg-userdir-init.service"
+    cp /usr/lib/systemd/system/mios-xdg-userdir-init.service "$_user_systemd_dir/mios-xdg-userdir-init.service"
 
     ln -sf "../mios-xdg-userdir-init.service" "$_user_systemd_dir/default.target.wants/mios-xdg-userdir-init.service"
 

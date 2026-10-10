@@ -276,13 +276,24 @@ def check_legibility_ratchet() -> int:
                                   and r.count("/") == 3
                                   and not _TEST_BASENAME.match(r.rsplit("/", 1)[-1])]),
     }
-    # ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
-    # included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
-    # domains below partition the same listing.
+    # ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+    # operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+    # partitioned into the domains below; its sister repo mios-bootstrap has its
+    # own shrink-only ceiling and target. max_tracked_files is this repo's count,
+    # which ratchet-direction also compares with main's tree.
     import fnmatch
-    source = rels
-
     viol = []
+    source = rels
+    bs_root = os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(root, "..", "mios-bootstrap")
+    bs_rels, _bs_rc = _tracked(bs_root) if os.path.isdir(bs_root) else (None, 1)
+    if bs_rels is None:
+        # Without the sister repo its budget is unmeasured, which is a violation,
+        # never a zero that happens to pass.
+        viol.append("mios-bootstrap is not a checkout at %s (set MIOS_BOOTSTRAP_ROOT): "
+                    "its file budget cannot be measured" % bs_root)
+    else:
+        measured["max_bootstrap_files"] = len(bs_rels)
+
     # The budget fails closed: an absent table, a missing or non-integer target, or a
     # malformed domain is a violation, never a skipped comparison (peer-lane review of
     # af498021 planted all four and each passed).
@@ -291,8 +302,12 @@ def check_legibility_ratchet() -> int:
         viol.append("[legibility.file_budget] is absent -- ADR-0030's 500-file budget is then bounded by nothing")
         budget = {}
     target = budget.get("target_tracked_files")
-    if budget and (type(target) is not int or target <= 0):
-        viol.append("[legibility.file_budget].target_tracked_files must be a positive integer (got %r)" % (target,))
+    for key in ("target_tracked_files", "target_bootstrap_files"):
+        v = budget.get(key)
+        if budget and (type(v) is not int or v <= 0):
+            viol.append("[legibility.file_budget].%s must be a positive integer (got %r)" % (key, v))
+    if "max_bootstrap_files" not in lim:
+        viol.append("[legibility].max_bootstrap_files is absent -- the sister repo's ceiling is then bounded by nothing")
     order, domains = budget.get("order"), budget.get("domains")
     if budget and (not isinstance(order, list) or not order or not isinstance(domains, dict) or not domains):
         viol.append("[legibility.file_budget] needs a non-empty order list and domains table")
@@ -3711,9 +3726,11 @@ def check_value_aliases() -> int:
         return 1
 
     env = {}
-    sub_env = dict(os.environ, MIOS_ROOT=root, MIOS_DRIFT_ROOT=root, MIOS_VENDOR_TOML=os.path.join(root, "usr/share/mios/mios.toml"), MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
+    snap_rel = os.path.relpath(snap, root).replace("\\", "/")
+    vendor_rel = os.path.relpath(os.path.join(root, "usr/share/mios/mios.toml"), root).replace("\\", "/")
+    sub_env = dict(os.environ, MIOS_ROOT=".", MIOS_DRIFT_ROOT=".", MIOS_VENDOR_TOML=vendor_rel, MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
     try:
-        proc = subprocess.run(["bash", snap], capture_output=True, text=True, env=sub_env)
+        proc = subprocess.run(["bash", snap_rel], cwd=root, capture_output=True, text=True, env=sub_env)
     except OSError as exc:
         print("mios-env-snapshot could not be run: %s" % exc)
         return 1

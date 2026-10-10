@@ -768,3 +768,10 @@ Task ids after the purge (ADR-0028): the opaque task_<ULID>, the typed task_<num
 schema a list not yet migrated is read with, and the token scanner the rewrite and the old-id gate share.
 
 <!-- mios-src:f3fbdd306c6b from tools/native/mios-task/src/record.rs:642-643 -->
+### ADR-0030 counts generated files too. The old...
+
+ADR-0030 counts generated files too. The old generated-budget number
+measured a different set; compare the immutable baseline tree's TOTAL
+instead. Never use the current tree or its proposed ceiling as the base.
+
+<!-- mios-src:38472356d37f from src/mios-rs/mios-gate/src/ratchet.rs:270-272 -->
