@@ -2201,7 +2201,7 @@ assess = { description = "Comprehensive system capability report",              
 iommu  = { description = "Pretty-print hardware IOMMU topology",                                 surface = "dev_vm" }
 theme  = { description = "Sync bibata/GTK/Qt themes",                                            surface = "dev_vm" }
 user   = { description = "Initialize user space (dotfiles/XDG)",                                 surface = "dev_vm" }
-pull   = { description = "Sync M:\\ overlay to origin/main",                                      surface = "windows" }
+pull   = { description = "Sync root overlay to origin/main",                                      surface = "windows" }
 update = { description = "Check and perform OS updates via bootc", surface = "all", cmd = "/usr/bin/mios-update" }
 help   = { description = "List every verb",                                                       surface = "windows" }
 
@@ -2259,9 +2259,9 @@ lines = [
     "  By invoking any MiOS entry point you acknowledge:",
     "    * MiOS is provided AS IS, NO WARRANTY (MIT license).",
     "    * Build/install scripts can modify your system globally",
-    "      (registry, env vars, fonts, WT settings, WSL distros, M:\\ partition).",
+    "      (registry, env vars, fonts, WT settings, WSL distros, root overlay).",
     "    * Telemetry: NONE (no data leaves the host without explicit operator action).",
-    "    * Full text: M:\\AGREEMENTS.md  +  M:\\LICENSE",
+    "    * Full text: C:\\AGREEMENTS.md  +  C:\\LICENSE",
     "",
     "  Continued use of this terminal is treated as acknowledgment.",
     "",
@@ -2274,31 +2274,31 @@ linear_log_note = "Note: console doesn't support in-place repaint -- running in 
 linear_log_hint = "      Phase transitions + throttled step updates print sequentially below."
 
 [messages.elevation]
-admin_required   = "  [*] MiOS bootstrap requires admin (M:\\ partition + Podman + dev VM)."
+admin_required   = "  [*] MiOS bootstrap requires admin (Windows features + Podman + dev VM)."
 uac_trigger_line = "  [*] Triggering UAC -- accept to continue. The install will then run"
 uac_trigger_hint = "      in the elevated window, single prompt only."
 
 [messages.pass2_exit]
 exited_code_prefix = "  [!] Bootstrap exited with code "
 failure_detail     = "      Output above is the failure detail (Pass-1 has no separate log)."
-build_log_hint     = "      build-mios.ps1's own log at M:\\MiOS\\logs\\mios-install-*.log only kicks in on Pass-2 success."
+build_log_hint     = "      build-mios.ps1's own log at C:\\MiOS\\logs\\mios-install-*.log only kicks in on Pass-2 success."
 fetch_run_failed   = "  [!] Bootstrap fetch/run failed: "
 press_enter_close  = "  Press Enter to close this elevated bootstrap window..."
 success_transition  = "  [+] Bootstrap complete. Loading MiOS terminal in this window..."
 profile_load_failed = "  [!] MiOS profile load failed: "
 profile_load_hint   = "      Open a fresh MiOS shortcut to retry."
-profile_missing     = "  [!] M:\\MiOS\\powershell\\profile.ps1 not found -- open the MiOS shortcut to launch the app window."
+profile_missing     = "  [!] C:\\MiOS\\powershell\\profile.ps1 not found -- open the MiOS shortcut to launch the app window."
 
 [messages.steps]
 disk_sizing_template       = "Sizing MiOS data disk ({mb} MB on {drive}:)..."
 disk_already_template      = "MiOS data disk already on {drive}: ({size_gb} GB, NTFS)"
-mios_git_init              = "Initializing mios.git as the M:\\ working tree"
-mios_git_update            = "Updating mios.git (fetch + hard reset @ M:\\)"
-mios_git_overlaid          = "mios.git overlaid at M:\\"
-mios_bootstrap_clone       = "Cloning mios-bootstrap.git -> shadow M:\\MiOS\\bootstrap-shadow"
+mios_git_init              = "Initializing mios.git as the root working tree"
+mios_git_update            = "Updating mios.git (fetch + hard reset @ root overlay)"
+mios_git_overlaid          = "mios.git overlaid at C:\\"
+mios_bootstrap_clone       = "Cloning mios-bootstrap.git -> shadow C:\\MiOS\\bootstrap-shadow"
 mios_bootstrap_update      = "Updating mios-bootstrap.git shadow (fetch + hard reset)"
-mios_bootstrap_overlay     = "Overlaying mios-bootstrap files onto M:\\"
-entry_scripts_staged       = "Entry scripts staged at M:\\MiOS\\bin"
+mios_bootstrap_overlay     = "Overlaying mios-bootstrap files onto C:\\"
+entry_scripts_staged       = "Entry scripts staged at C:\\MiOS\\bin"
 miosdev_init_template      = "Initializing MiOS-DEV ({cpus} CPUs / {ram_gb}GB / {disk_gb}GB disk)"
 smoke_header_template      = "Smoke-testing {distro} before rename..."
 smoke_responsive_template  = "smoke 1/4: {name} is responsive"
@@ -2314,9 +2314,9 @@ hub_hint       = "    The MiOS hub shortcut is in your Start Menu / Desktop / Wi
 # Bullets accept {disk_gb} substitution at render time so the
 # storage-size value stays current per host.
 bullets = [
-    "M:\\ partition ({disk_gb} GB NTFS, label MIOS-DEV)",
+    "Root overlay on C:\\ (converged Windows/Linux layout)",
     "Podman Desktop + podman-MiOS-DEV machine",
-    "mios.git + mios-bootstrap overlaid at M:\\",
+    "mios.git + mios-bootstrap nested at C:\\",
     "MiOS terminal essentials layered into MiOS-DEV",
     "Native Windows app: Start Menu + Desktop + per-verb shortcuts",
     "MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)",
@@ -6598,7 +6598,7 @@ bin_map = [
 # stages the SSOT-rendered btop.conf + themes/mios.theme here and points the
 # User-scope BTOP_CONFIG_DIR at it. Defaults to the MiOS-owned data drive
 # ([bootstrap.host_storage].drive_letter) rather than %APPDATA%.
-btop_config_dir = "M:\\MiOS\\btop"
+btop_config_dir = "C:\\MiOS\\btop"
 
 [browser_ai]
 enable       = true
@@ -8381,7 +8381,7 @@ install_packages = true   # run dnf install on PACKAGES.md after FHS overlay
 reboot_on_finish = true   # interactive y/N prompt at end of install
 
 [bootstrap.host_storage]
-drive_letter        = "M"
+drive_letter        = "C"
 volume_label        = "MIOS-DEV"
 shrink_mb           = 262656     # produces "256 GB" in Windows Explorer
 display_size_gb     = 256        # what the operator should see (informational)
@@ -8462,7 +8462,7 @@ cpu_pct             = 15      # reserve 15% of logical CPUs for Windows host
 cpu_min             = 2       # always reserve at least 2 cores
 memory_pct          = 50      # reserve 50% of host RAM for Windows host (WSL2 gets ~50%)
 memory_gb           = 8       # always reserve at least 8 GB
-disk_gb             = 32      # always keep 32 GB free on M:\ for Windows-side
+disk_gb             = 32      # always keep 32 GB free on C:\ for Windows-side
                               # artifacts (build outputs, podman cache, etc.)
 
 [bootstrap.prereqs]
@@ -8490,14 +8490,14 @@ vmp                 = "VirtualMachinePlatform"              # WSL2 + Hyper-V hyp
 hyperv              = "Microsoft-Hyper-V"                   # Hyper-V Manager + VMs (Pro/Ent only)
 require_reboot_to_continue = true
 
-# Repo URLs cloned to M:\MiOS\repo\{mios,mios-bootstrap} during Pass-2.
+# Repo URLs cloned to C:\ during Pass-2.
 # Branch defaults to main; pin to a tag/SHA for reproducible installs.
 [bootstrap.prereqs.repos]
 mios_url            = "https://github.com/mios-dev/mios.git"
 mios_branch         = "main"
 bootstrap_url       = "https://github.com/mios-dev/mios-bootstrap.git"
 bootstrap_branch    = "main"
-clone_root          = "M:\\MiOS\\repo"
+clone_root          = "C:\\"
 
 [terminal]
 windows_tmux_backend = "wsl" # native Rust launcher uses the authenticated Linux namespace
@@ -8694,7 +8694,7 @@ git_commit = "@"
 # ----------------------------------------------------------------------------
 # [branding] -- assets the dashboard / fastfetch / splash screens use.
 # Paths resolve relative to /usr/share/mios on Linux and to the
-# corresponding M:\MiOS\usr\share\mios on Windows.
+# corresponding C:\MiOS\usr\share\mios on Windows.
 # ----------------------------------------------------------------------------
 [branding]
 logo_ascii          = "fastfetch/mios.txt"

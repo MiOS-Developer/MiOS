@@ -156,12 +156,15 @@ $script:_MiosTomlCache = @{}
 function Resolve-MiosTomlLayers {
     if ($script:_MiosTomlCache.ContainsKey('_layers')) { return $script:_MiosTomlCache['_layers'] }
     $layers = @()
+    $sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
     foreach ($p in @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         (Join-Path $env:APPDATA 'MiOS\mios.toml'),
+        (Join-Path $sysDrive 'etc\mios\mios.toml'),
+        (Join-Path $sysDrive 'usr\share\mios\mios.toml'),
+        (Join-Path $sysDrive 'MiOS\usr\share\mios\mios.toml'),
         'M:\etc\mios\mios.toml',
         'M:\usr\share\mios\mios.toml'
-        # C:\MiOS deliberately excluded -- dev working tree, not a consumer install path
     )) {
         if ($p -and (Test-Path -LiteralPath $p)) {
             try {
@@ -173,7 +176,9 @@ function Resolve-MiosTomlLayers {
             }
         }
     }
-    if (-not (Test-Path -LiteralPath 'M:\usr\share\mios\mios.toml')) {
+    $primaryVendor = Join-Path $sysDrive 'usr\share\mios\mios.toml'
+    $altVendor = Join-Path $sysDrive 'MiOS\usr\share\mios\mios.toml'
+    if (-not (Test-Path -LiteralPath $primaryVendor) -and -not (Test-Path -LiteralPath $altVendor) -and -not (Test-Path -LiteralPath 'M:\usr\share\mios\mios.toml')) {
         try {
             $cb  = [int][double]::Parse((Get-Date -UFormat %s))
             $ref = if ($null -ne $MiosRef) { $MiosRef } else { 'main' }
@@ -375,8 +380,8 @@ if ($script:IsAdmin) {
     # application rather than a hidden Program Files entry.
     $MiosInstallDir   = Join-Path ${env:SystemDrive} "MiOS"             # C:\MiOS
     $MiosProgramData  = Join-Path ${env:ProgramData}  "MiOS"            # C:\ProgramData\MiOS
-    $MiosRepoDir      = Join-Path $MiosInstallDir   "repo"              # boot-time default; Update-MiosInstallPaths swaps to M:\ on data disk
-    $MiosBootstrapShadow = Join-Path $MiosRepoDir 'mios-bootstrap'      # boot-time default; data-disk variant goes to M:\MiOS\bootstrap-shadow
+    $MiosRepoDir      = Join-Path ${env:SystemDrive} "MiOS"             # C:\MiOS (sub-repo nested at root)
+    $MiosBootstrapShadow = Join-Path ${env:SystemDrive} 'mios-bootstrap' # C:\mios-bootstrap (sub-repo nested at root)
     $MiosBinDir       = Join-Path $MiosInstallDir   "bin"               # entry-point scripts + oh-my-posh
     $MiosShareDir     = Join-Path $MiosInstallDir   "share"             # mios-bootstrap etc/usr trees
     $MiosIconsDir     = Join-Path $MiosInstallDir   "icons"             # per-verb .ico files
@@ -420,61 +425,62 @@ $script:MiosDistroDir      = $MiosDistroDir
 $script:MiosImagesDir      = $MiosImagesDir
 $script:MiosMachineCfg     = $MiosMachineCfg
 
-$_miosDataLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { 'M' }
-try {
-    $_miosVol = Get-Volume -DriveLetter $_miosDataLetter -ErrorAction SilentlyContinue
-    if ($_miosVol -and $_miosVol.FileSystemLabel -eq 'MIOS-DEV') {
-        $_miosNewRoot = Join-Path "${_miosDataLetter}:\" 'MiOS'
-        if (-not (Test-Path $_miosNewRoot)) { New-Item -ItemType Directory -Path $_miosNewRoot -Force | Out-Null }
-        # Update-MiosInstallPaths is defined below; do an inline
-        # equivalent here so the redirect lands BEFORE Phase 0 runs.
-        $script:MiosInstallDir      = $_miosNewRoot
-        $script:MiosBinDir          = Join-Path $_miosNewRoot 'bin'
-        $script:MiosShareDir        = Join-Path $_miosNewRoot 'share'
-        $script:MiosIconsDir        = Join-Path $_miosNewRoot 'icons'
-        $script:MiosThemesDir       = Join-Path $_miosNewRoot 'themes'
-        $script:MiosFontsDir        = Join-Path $_miosNewRoot 'fonts'
-        $script:MiosProgramData     = Join-Path $_miosNewRoot 'machine-state'
-        $script:MiosDistroDir       = Join-Path $script:MiosProgramData 'distros'
-        $script:MiosImagesDir       = Join-Path $script:MiosProgramData 'images'
-        $script:MiosMachineCfg      = Join-Path $script:MiosProgramData 'config'
-        # M:\ root IS the mios.git working tree per the
-        # directive ("M:\ IS git"). Repo lives at the drive root,
-        # mios-bootstrap shadow at M:\MiOS\bootstrap-shadow.
-        $script:MiosRepoDir         = "${_miosDataLetter}:\"
-        $script:MiosBootstrapShadow = Join-Path $_miosNewRoot 'bootstrap-shadow'
-        # Mirror the locals so any later code that still reads $MiosInstallDir
-        # (without $script: prefix) gets the same redirect.
-        $MiosInstallDir      = $script:MiosInstallDir
-        $MiosBinDir          = $script:MiosBinDir
-        $MiosShareDir        = $script:MiosShareDir
-        $MiosIconsDir        = $script:MiosIconsDir
-        $MiosThemesDir       = $script:MiosThemesDir
-        $MiosFontsDir        = $script:MiosFontsDir
-        $MiosProgramData     = $script:MiosProgramData
-        $MiosDistroDir       = $script:MiosDistroDir
-        $MiosImagesDir       = $script:MiosImagesDir
-        $MiosMachineCfg      = $script:MiosMachineCfg
-        $MiosRepoDir         = $script:MiosRepoDir
-        $MiosBootstrapShadow = $script:MiosBootstrapShadow
-        Write-Host "  [+] M:\ MIOS-DEV partition detected -- ALL install paths redirected to M:\" -ForegroundColor Green
-    }
-} catch {}
+$_miosDataLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { $null }
+if ($_miosDataLetter -and $_miosDataLetter -ne (${env:SystemDrive}.TrimEnd(':'))) {
+    try {
+        $_miosVol = Get-Volume -DriveLetter $_miosDataLetter -ErrorAction SilentlyContinue
+        if ($_miosVol -and $_miosVol.FileSystemLabel -eq 'MIOS-DEV') {
+            $_miosNewRoot = Join-Path "${_miosDataLetter}:\" 'MiOS'
+            if (-not (Test-Path $_miosNewRoot)) { New-Item -ItemType Directory -Path $_miosNewRoot -Force | Out-Null }
+            # Update-MiosInstallPaths is defined below; do an inline
+            # equivalent here so the redirect lands BEFORE Phase 0 runs.
+            $script:MiosInstallDir      = $_miosNewRoot
+            $script:MiosBinDir          = Join-Path $_miosNewRoot 'bin'
+            $script:MiosShareDir        = Join-Path $_miosNewRoot 'share'
+            $script:MiosIconsDir        = Join-Path $_miosNewRoot 'icons'
+            $script:MiosThemesDir       = Join-Path $_miosNewRoot 'themes'
+            $script:MiosFontsDir        = Join-Path $_miosNewRoot 'fonts'
+            $script:MiosProgramData     = Join-Path $_miosNewRoot 'machine-state'
+            $script:MiosDistroDir       = Join-Path $script:MiosProgramData 'distros'
+            $script:MiosImagesDir       = Join-Path $script:MiosProgramData 'images'
+            $script:MiosMachineCfg      = Join-Path $script:MiosProgramData 'config'
+            $script:MiosRepoDir         = "${_miosDataLetter}:\"
+            $script:MiosBootstrapShadow = Join-Path $_miosNewRoot 'bootstrap-shadow'
+            # Mirror the locals so any later code that still reads $MiosInstallDir
+            # (without $script: prefix) gets the same redirect.
+            $MiosInstallDir      = $script:MiosInstallDir
+            $MiosBinDir          = $script:MiosBinDir
+            $MiosShareDir        = $script:MiosShareDir
+            $MiosIconsDir        = $script:MiosIconsDir
+            $MiosThemesDir       = $script:MiosThemesDir
+            $MiosFontsDir        = $script:MiosFontsDir
+            $MiosProgramData     = $script:MiosProgramData
+            $MiosDistroDir       = $script:MiosDistroDir
+            $MiosImagesDir       = $script:MiosImagesDir
+            $MiosMachineCfg      = $script:MiosMachineCfg
+            $MiosRepoDir         = $script:MiosRepoDir
+            $MiosBootstrapShadow = $script:MiosBootstrapShadow
+            Write-Host "  [+] Explicit MIOS_DATA_DISK_LETTER $_miosDataLetter detected -- install paths redirected to ${_miosDataLetter}:\" -ForegroundColor Green
+        }
+    } catch {}
+}
 
-$MiosDataDir      = if ($script:MiosInstallDir) { $script:MiosInstallDir } else { 'M:\MiOS' }
+$MiosDataDir      = if ($script:MiosInstallDir) { $script:MiosInstallDir } else { Join-Path ${env:SystemDrive} 'MiOS' }
 $MiosLogDir       = Join-Path $MiosDataDir 'logs'
 $MiosConfigDir    = Join-Path $MiosDataDir 'config'   # was %APPDATA%\MiOS
 # Make the log dir bulletproof: ensure it exists the moment it's derived
 # (well before $LogFile is first written by [IO.File]::AppendAllText), so a
-# non-admin run never trips over a missing M:\ root.
+# non-admin run never trips over a missing root.
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
 
 function Resolve-MiosInstallRoot {
     param([string]$Default = $script:MiosInstallDir)
-    $letter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { 'M' }
-    $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
-    if ($vol -and $vol.FileSystemLabel -eq 'MIOS-DEV') {
-        return Join-Path "${letter}:\" 'MiOS'
+    if ($env:MIOS_DATA_DISK_LETTER -and $env:MIOS_DATA_DISK_LETTER -ne (${env:SystemDrive}.TrimEnd(':'))) {
+        $letter = $env:MIOS_DATA_DISK_LETTER
+        $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+        if ($vol -and $vol.FileSystemLabel -eq 'MIOS-DEV') {
+            return Join-Path "${letter}:\" 'MiOS'
+        }
     }
     return $Default
 }
@@ -508,8 +514,8 @@ function Update-MiosInstallPaths {
         $script:MiosRepoDir         = $_drive                                  # 'M:\'
         $script:MiosBootstrapShadow = Join-Path $NewRoot 'bootstrap-shadow'    # 'M:\MiOS\bootstrap-shadow'
     } else {
-        $script:MiosRepoDir         = Join-Path $NewRoot 'repo'                # legacy fallback
-        $script:MiosBootstrapShadow = Join-Path $script:MiosRepoDir 'mios-bootstrap'
+        $script:MiosRepoDir         = $NewRoot
+        $script:MiosBootstrapShadow = Join-Path (Split-Path $NewRoot -Parent) 'mios-bootstrap'
     }
     $script:MiosDistroDir   = Join-Path $NewRoot 'distros'
     $script:MiosImagesDir   = Join-Path $NewRoot 'images'
@@ -1680,7 +1686,14 @@ function Initialize-MiosDataDisk {
     # (SSOT). {placeholder} substitution at render time.
     Set-Step ((Get-MiosTomlValue -Section 'messages.steps' -Key 'disk_sizing_template' -Default 'Sizing MiOS data disk ({mb} MB on {drive}:)...') -replace '\{mb\}', $ShrinkMB -replace '\{drive\}', $DriveLetter)
 
-    # 0. Already-initialized? Skip.
+    # 0. Single converged root on system drive? Skip partitioning.
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    if ($DriveLetter -eq $sysLetter) {
+        Log-Ok "Using system drive ${sysLetter}:\ as MiOS root (converged single root; no partitioning required)."
+        return "${sysLetter}:\"
+    }
+
+    # Already-initialized dedicated volume? Skip.
     $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
     if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
         $_sgb = [math]::Round($existing.Size/1GB,1)
@@ -1777,7 +1790,7 @@ function Set-PodmanMachineStorageOn {
     )
 
     foreach ($defaultDir in $candidates) {
-        if (-not $defaultDir) { continue }
+        if (-not $defaultDir -or $defaultDir -ieq $targetDir) { continue }
         if (Test-Path $defaultDir) {
             $item = Get-Item $defaultDir -Force -ErrorAction SilentlyContinue
             if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -5051,6 +5064,8 @@ if (Test-Path `$bootstrapBs) {
     $_legacyCfg = (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html') -replace '\\','\\'
     $cfgScript = @"
 `$_candidates = @(
+    'C:\usr\share\mios\configurator\mios.html',
+    'C:\MiOS\usr\share\mios\configurator\mios.html',
     'M:\usr\share\mios\configurator\mios.html',
     "$_shadowCfg",
     "$_legacyCfg"
@@ -5061,7 +5076,7 @@ if (`$_html) { Start-Process `$_html }
 else {
     Write-Host "MiOS configurator HTML not found. Tried:" -ForegroundColor Yellow
     foreach (`$_c in `$_candidates) { Write-Host "  `$_c" -ForegroundColor DarkGray }
-    Write-Host "Run 'mios update' to refresh the M:\ overlay." -ForegroundColor DarkGray
+    Write-Host "Run 'mios update' to refresh the overlay." -ForegroundColor DarkGray
 }
 "@
     Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
@@ -5109,8 +5124,7 @@ Write-Host "  $([char]0x2502)                   MiOS  --  Help / Verb Reference 
 # Tagline resolves through mios.toml [branding].tagline_long at runtime
 # (SSOT). No hardcoding -- per operator: "no hardcoding ANYWHERE".
 $_helpTagline = 'Immutable Fedora AI Workstation  --  Self-replicating bootc OS'
-foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
-    # C:\MiOS deliberately excluded -- dev working tree, not consumer path
+foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
     if (Test-Path -LiteralPath $_tcand) {
         try {
             $_tt = [IO.File]::ReadAllText($_tcand, (New-Object System.Text.UTF8Encoding($false)))
@@ -5134,7 +5148,7 @@ Verb 'mios config'  'Open the HTML configurator (mios.toml editor) in your brows
 Note '               Edit identity, AI, packages, ports, services, theme, etc.'
 Verb 'mios dash'    'Render the framed MiOS dashboard (banner + fastfetch + verbs).'
 Verb 'mios dev'     'Drop into the MiOS-DEV podman machine as user `mios` at /.'
-Verb 'mios pull'    'git fetch + hard reset M:\ overlay to origin/main (no rebuild).'
+Verb 'mios pull'    'git fetch + hard reset root overlay to origin/main (no rebuild).'
 Verb 'mios update'  'Re-run the bootstrap (cache-busted) -- refresh terminal + dev VM.'
 Verb 'mios help'    'This list.'
 Note ''
@@ -5151,31 +5165,34 @@ Verb 'MiOS-DEV'     'Drops you into the MiOS-DEV podman machine immediately.'
 Verb 'MiOS Config'  'Opens mios.html (the configurator) in the default browser.'
 Note '                Edit identity, AI, packages, ports, services, theme. Save'
 Note '                writes mios.toml to %USERPROFILE%\Downloads; `mios build`'
-Note '                step 2 promotes it into the M:\ overlay automatically.'
+Note '                step 2 promotes it into the root overlay automatically.'
 Verb 'MiOS Help'    'This help screen, as a clickable app.'
 Verb 'Uninstall MiOS' 'Remove MiOS (preserves per-user config).'
 
 Header 'How MiOS is laid out' 'Every operator-tunable value lives in mios.toml.'
-Note '   M:\                            Data partition (256 GB NTFS, label MIOS-DEV)'
-Note '   M:\MiOS\bin\                   Verb scripts (mios-build, mios-dev, mios-help, ...)'
-Note '   M:\MiOS\repo\mios              The mios.git working tree (`.git IS /` on deploy)'
-Note '   M:\MiOS\repo\mios-bootstrap    The mios-bootstrap.git working tree'
-Note '   M:\etc\mios\mios.toml          Host overlay (operator overrides)'
-Note '   M:\usr\share\mios\mios.toml    Vendor SSOT (default values)'
-Note '   M:\MiOS\themes\mios.omp.json   oh-my-posh theme (MiOS palette)'
-Note '   M:\MiOS\powershell\profile.ps1 PowerShell profile (dashboard + oh-my-posh init)'
-Note '   M:\MiOS\fastfetch\config.jsonc fastfetch theme (banner + system info)'
+Note '   C:\                            System drive (MiOS root overlay)'
+Note '   C:\MiOS                        The mios.git sub-repo tree (`.git IS /` on deploy)'
+Note '   C:\mios-bootstrap              The mios-bootstrap.git sub-repo tree'
+Note '   C:\mios-micro                  The mios-micro.git sub-repo tree'
+Note '   C:\MiOS-RnD                    The MiOS-RnD.git sub-repo tree'
+Note '   C:\-dev-loop                   The -dev-loop.git sub-repo tree'
+Note '   C:\etc\mios\mios.toml          Host overlay (operator overrides)'
+Note '   C:\usr\share\mios\mios.toml    Vendor SSOT (default values)'
+Note '   C:\MiOS\bin\                   Verb scripts (mios-build, mios-dev, mios-help, ...)'
+Note '   C:\MiOS\themes\mios.omp.json   oh-my-posh theme (MiOS palette)'
+Note '   C:\MiOS\powershell\profile.ps1 PowerShell profile (dashboard + oh-my-posh init)'
+Note '   C:\MiOS\fastfetch\config.jsonc fastfetch theme (banner + system info)'
 
 Header 'The Day-0 -> Day-N self-replication flow'
 Note '   Day-0 (Windows host): irm | iex Get-MiOS.ps1'
-Note '          -> ack + M:\ provision + Podman Desktop + MiOS-DEV machine'
+Note '          -> ack + Podman Desktop + MiOS-DEV machine'
 Note '          -> install Windows Terminal + pwsh 7 + Geist Mono + oh-my-posh'
 Note '          -> register MiOS as a native Windows app (Start Menu + Desktop)'
 Note '          -> STOP. Operator opens the MiOS app and types `mios build`.'
 Note ''
 Note '   `mios build` (operator-typed) -- triggers the full build pipeline:'
-Note '          -> promote Downloads/mios.toml edits to M:\etc\mios\mios.toml'
-Note '          -> mios-pull (sync M:\ to origin/main)'
+Note '          -> promote Downloads/mios.toml edits to C:\etc\mios\mios.toml'
+Note '          -> mios-pull (sync root overlay to origin/main)'
 Note '          -> SSH into MiOS-DEV -> /usr/libexec/mios/mios-build-driver'
 Note '          -> overlay -> account -> install -> smoketest -> build -> deploy'
 Note '          -> bootc switch + reboot -> MiOS-DEV IS MiOS (full parity)'
@@ -5196,8 +5213,8 @@ Note '   6. UNPRIVILEGED-QUADLETS every Quadlet declares User=, Group=, Delegate
 
 Header 'Where to dig deeper'
 Note '   mios.html    /usr/share/mios/configurator/mios.html   (HTML editor for mios.toml)'
-Note '   AGENTS.md    M:\MiOS\repo\mios\AGENTS.md              (canonical agents.md doc)'
-Note '   README.md    M:\MiOS\repo\mios\README.md              (project overview)'
+Note '   AGENTS.md    C:\MiOS\AGENTS.md                        (canonical agents.md doc)'
+Note '   README.md    C:\MiOS\README.md                        (project overview)'
 Note "   GitHub       $($MiosRepoUrl -replace '\.git$','')"
 Note ''
 Note '   Press any key to close...'
@@ -5239,27 +5256,28 @@ if (-not `$promoted) {
     Write-Host '  [promote] no mios*.toml / *mios*.html in Downloads -- proceeding with current overlay' -ForegroundColor DarkGray
 }
 
-`$miosRoot = 'M:\'
+`$sysLetter = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+`$miosRoot = if (Test-Path "`$sysLetter\.git") { "`$sysLetter\" } elseif (Test-Path "`$sysLetter\MiOS\.git") { "`$sysLetter\MiOS" } elseif (Test-Path 'M:\.git') { 'M:\' } else { "`$sysLetter\" }
 if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host '  [pull] Windows-side: git fetch + reset --hard origin/main on M:\...' -ForegroundColor Cyan
+    Write-Host ("  [pull] Windows-side: git fetch + reset --hard origin/main on {0}..." -f `$miosRoot) -ForegroundColor Cyan
     try {
         & git -C `$miosRoot fetch --depth=1 origin main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
         if (`$LASTEXITCODE -eq 0) {
             & git -C `$miosRoot reset --hard origin/main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
             if (`$LASTEXITCODE -eq 0) {
                 `$_head = (& git -C `$miosRoot rev-parse --short HEAD 2>`$null)
-                Write-Host ('  [pull] M:\ now at origin/main HEAD = ' + `$_head) -ForegroundColor Green
+                Write-Host ("  [pull] {0} now at origin/main HEAD = {1}" -f `$miosRoot, `$_head) -ForegroundColor Green
             } else {
-                Write-Host '  [pull] M:\ git reset --hard failed -- build will run against possibly-stale overlay' -ForegroundColor Yellow
+                Write-Host ("  [pull] {0} git reset --hard failed -- build will run against possibly-stale overlay" -f `$miosRoot) -ForegroundColor Yellow
             }
         } else {
-            Write-Host '  [pull] M:\ git fetch failed (offline?) -- build will run against possibly-stale overlay' -ForegroundColor Yellow
+            Write-Host ("  [pull] {0} git fetch failed (offline?) -- build will run against possibly-stale overlay" -f `$miosRoot) -ForegroundColor Yellow
         }
     } catch {
-        Write-Host ('  [pull] M:\ git refresh threw: ' + `$_.Exception.Message) -ForegroundColor Yellow
+        Write-Host ("  [pull] {0} git refresh threw: {1}" -f `$miosRoot, `$_.Exception.Message) -ForegroundColor Yellow
     }
 } else {
-    Write-Host '  [pull] M:\ is not a git working tree OR git is missing -- skipping Windows-side refresh' -ForegroundColor Yellow
+    Write-Host ("  [pull] {0} is not a git working tree OR git is missing -- skipping Windows-side refresh" -f `$miosRoot) -ForegroundColor Yellow
 }
 
 # Now refresh the dev VM root (/) via mios-pull.ps1.
@@ -5307,7 +5325,12 @@ try {
 # build driver's first `podman ...` invocation.
 Start-Sleep -Milliseconds 800
 
-`$driverSrc = '/mnt/m/usr/libexec/mios/mios-build-driver'
+`$driverSrc = '/mnt/c/usr/libexec/mios/mios-build-driver'
+if (Test-Path 'C:\MiOS\usr\libexec\mios\mios-build-driver') {
+    `$driverSrc = '/mnt/c/MiOS/usr/libexec/mios/mios-build-driver'
+} elseif (-not (Test-Path 'C:\usr\libexec\mios\mios-build-driver') -and (Test-Path 'M:\usr\libexec\mios\mios-build-driver')) {
+    `$driverSrc = '/mnt/m/usr/libexec/mios/mios-build-driver'
+}
 Write-Host ('  [build] staging mios-build-driver into {0}:/usr/libexec/mios/' -f `$distro) -ForegroundColor DarkGray
 & wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- falling back to curl'; curl -fsSL -o /usr/libexec/mios/mios-build-driver '$MiosRawBase/usr/libexec/mios/mios-build-driver' && chmod +x /usr/libexec/mios/mios-build-driver; fi"
 
@@ -5327,13 +5350,18 @@ Write-Host '  [build] OCI image build completed OK.' -ForegroundColor Green
 # never wired in, so the AI-plane "is it operational?" check never executed. The
 # smoke is best-effort here (non-fatal): a still-warming AI plane warns rather
 # than failing the build verb; `mios smoke` re-runs it on demand.
-`$_smoke = '/mnt/m/tests/post-bootstrap-smoke.sh'
+`$_smoke = '/mnt/c/tests/post-bootstrap-smoke.sh'
+if (Test-Path 'C:\MiOS\tests\post-bootstrap-smoke.sh') {
+    `$_smoke = '/mnt/c/MiOS/tests/post-bootstrap-smoke.sh'
+} elseif (-not (Test-Path 'C:\tests\post-bootstrap-smoke.sh') -and (Test-Path 'M:\tests\post-bootstrap-smoke.sh')) {
+    `$_smoke = '/mnt/m/tests/post-bootstrap-smoke.sh'
+}
 if ((& wsl.exe -d `$distro --user root -- bash -lc "test -f `$_smoke && echo y" 2>`$null) -eq 'y') {
     Write-Host '  [build] running post-bootstrap acceptance smoke (AI-plane + parity)...' -ForegroundColor Cyan
     & wsl.exe -d `$distro --user root -- bash `$_smoke
     if (`$LASTEXITCODE -ne 0) { Write-Host '  [build] smoke reported issues (see above) -- re-run with: mios smoke' -ForegroundColor Yellow }
 } else {
-    Write-Host '  [build] smoke script not found at M:\tests -- skipping (run: mios smoke)' -ForegroundColor DarkGray
+    Write-Host '  [build] smoke script not found at tests -- skipping (run: mios smoke)' -ForegroundColor DarkGray
 }
 "@
     Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
@@ -5390,7 +5418,7 @@ if ($args.Count -gt 0) {
 param([Parameter(ValueFromRemainingArguments)] $Args)
 $ErrorActionPreference = 'SilentlyContinue'
 $port = 8800
-foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
     if (Test-Path -LiteralPath $_t) {
         try {
             $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
@@ -5424,7 +5452,7 @@ if (-not (Test-Path -LiteralPath $entry)) { throw 'MiOS native terminal entrypoi
 # <MiOSRoot>\bin\mios-mon.ps1 -- the `mios mon` verb.
 param([Parameter(ValueFromRemainingArguments)] $Args)
 $py = if (Get-Command python.exe -ErrorAction SilentlyContinue) { 'python.exe' } else { 'python3' }
-$mon = @('M:\usr\libexec\mios\mios-mon.py','C:\MiOS\usr\libexec\mios\mios-mon.py','M:\MiOS\repo\mios\usr\libexec\mios\mios-mon.py') | Where-Object { Test-Path $_ } | Select-Object -First 1
+$mon = @('C:\usr\libexec\mios\mios-mon.py','C:\MiOS\usr\libexec\mios\mios-mon.py','M:\usr\libexec\mios\mios-mon.py','M:\MiOS\repo\mios\usr\libexec\mios\mios-mon.py') | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($mon) {
     if ($Args.Count -eq 0) {
         & $py $mon --monitor
@@ -5432,7 +5460,7 @@ if ($mon) {
         & $py $mon @Args
     }
 } else {
-    Write-Host "  [!] mios mon: mios-mon.py not found on M:\ or C:\" -ForegroundColor Yellow
+    Write-Host "  [!] mios mon: mios-mon.py not found on C:\ or M:\" -ForegroundColor Yellow
 }
 '@
     Set-Content -Path $monPath -Value $monScript -Encoding UTF8
@@ -5488,7 +5516,7 @@ if (-not $query) { return }
 # -- so an unset env never pins a stale model id. Key: MIOS_AI_KEY env, else
 # install.env. Endpoint: MIOS_AI_ENDPOINT env, else resolved from mios.toml [ports].hermes.
 $hermesPort = 8642
-foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
     if (Test-Path -LiteralPath $_t) {
         try {
             $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
@@ -5505,7 +5533,7 @@ $apiKey   = if ($env:MIOS_AI_KEY)      { $env:MIOS_AI_KEY }      else { '' }
 # default chat model). Mirrors the open_webui port scrape in the mios app verb;
 # the literal is only the bottom-of-stack fallback if every layer is unreadable.
 if (-not $model) {
-    foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
         if (Test-Path -LiteralPath $_t) {
             try {
                 $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
@@ -5517,9 +5545,9 @@ if (-not $model) {
 }
 if (-not $model) { $model = 'qwen3.5:2b' }
 
-# If no env key, scrape /etc/mios/install.env on M:\ for the key.
+# If no env key, scrape /etc/mios/install.env on C:\ or M:\ for the key.
 if (-not $apiKey) {
-    foreach ($_e in @('M:\etc\mios\install.env','M:\etc\mios\hermes\api.env')) {
+    foreach ($_e in @('C:\etc\mios\install.env','C:\etc\mios\hermes\api.env','M:\etc\mios\install.env','M:\etc\mios\hermes\api.env')) {
         if (Test-Path -LiteralPath $_e) {
             try {
                 $_txt = [IO.File]::ReadAllText($_e, (New-Object System.Text.UTF8Encoding($false)))
@@ -5592,7 +5620,7 @@ function Set-MiosWindow {
     # Read dims from mios.toml (host overlay > vendor SSOT > hardcoded).
     `$_cols = 80; `$_rows = 20
     if (`$Mode -eq 'reading') { `$_cols = 100; `$_rows = 50 }
-    foreach (`$_t in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    foreach (`$_t in @('C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
         if (-not (Test-Path -LiteralPath `$_t)) { continue }
         try {
             `$_txt  = [IO.File]::ReadAllText(`$_t, (New-Object System.Text.UTF8Encoding(`$false)))
@@ -5611,7 +5639,7 @@ function Set-MiosWindow {
     # the Geist Mono Nerd Font 12pt baseline if the toml is unreadable
     # at this point).
     `$_cellW = 10; `$_cellH = 20; `$_chromeW = 20; `$_chromeH = 12
-    foreach (`$_t in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    foreach (`$_t in @('C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
         if (-not (Test-Path -LiteralPath `$_t)) { continue }
         try {
             `$_txt = [IO.File]::ReadAllText(`$_t, (New-Object System.Text.UTF8Encoding(`$false)))
@@ -5694,7 +5722,7 @@ function btop {
     `$_native = (Get-Command btop.exe -CommandType Application -ErrorAction SilentlyContinue)
     if (`$_native) {
         if (-not `$env:BTOP_CONFIG_DIR) {
-            foreach (`$_bDir in @('M:\MiOS\btop', (Join-Path `$env:LOCALAPPDATA 'btop'))) {
+            foreach (`$_bDir in @('C:\MiOS\btop', 'M:\MiOS\btop', (Join-Path `$env:LOCALAPPDATA 'btop'))) {
                 if (Test-Path -LiteralPath `$_bDir) { `$env:BTOP_CONFIG_DIR = `$_bDir; break }
             }
         }
@@ -6233,8 +6261,9 @@ End If
     Log-Ok "MiOS launcher binaries staged at $MiosBinDir (mios-launch.ps1 + mios-launch.exe). Shortcut creation deferred to FINAL STEP of Get-MiOS.ps1 after bootstrap completes successfully."
 
     $_getMiosCandidates = @(
-        Join-Path $MiosRepoDir 'Get-MiOS.ps1'
-        Join-Path $MiosBootstrapShadow 'Get-MiOS.ps1'
+        (Join-Path ${env:SystemDrive} 'Get-MiOS.ps1')
+        (Join-Path $MiosRepoDir 'Get-MiOS.ps1')
+        (Join-Path $MiosBootstrapShadow 'Get-MiOS.ps1')
         'M:\Get-MiOS.ps1'
     )
     $_getMios = $_getMiosCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
@@ -6247,7 +6276,7 @@ End If
             Remove-Item env:\MIOS_GETMIOS_FUNCTIONS_ONLY -ErrorAction SilentlyContinue
             if (Get-Command Install-MiOSPowerShellProfile -ErrorAction SilentlyContinue) {
                 Install-MiOSPowerShellProfile | Out-Null
-                Log-Ok "Get-MiOS Install-MiOSPowerShellProfile re-substituted (M:\MiOS\powershell\profile.ps1 from current mios.toml)"
+                Log-Ok "Get-MiOS Install-MiOSPowerShellProfile re-substituted (powershell\profile.ps1 from current mios.toml)"
             } else {
                 Log-Warn "Install-MiOSPowerShellProfile not defined after Get-MiOS.ps1 dot-source -- gate may have triggered too early"
             }
@@ -7107,10 +7136,14 @@ if [ -d /mnt/m/MiOS/btop ]; then
             _uhome=$(getent passwd "$_u" | cut -d: -f6)
             if [ -n "$_uhome" ] && [ -d "$_uhome" ]; then
                 mkdir -p "$_uhome/.config/btop/themes"
-                if [ -f /mnt/m/MiOS/btop/btop.conf ]; then
+                if [ -f /mnt/c/MiOS/btop/btop.conf ]; then
+                    cp -f /mnt/c/MiOS/btop/btop.conf "$_uhome/.config/btop/btop.conf"
+                elif [ -f /mnt/m/MiOS/btop/btop.conf ]; then
                     cp -f /mnt/m/MiOS/btop/btop.conf "$_uhome/.config/btop/btop.conf"
                 fi
-                if [ -f /mnt/m/MiOS/btop/themes/mios.theme ]; then
+                if [ -f /mnt/c/MiOS/btop/themes/mios.theme ]; then
+                    cp -f /mnt/c/MiOS/btop/themes/mios.theme "$_uhome/.config/btop/themes/mios.theme"
+                elif [ -f /mnt/m/MiOS/btop/themes/mios.theme ]; then
                     cp -f /mnt/m/MiOS/btop/themes/mios.theme "$_uhome/.config/btop/themes/mios.theme"
                 fi
                 chown -R "$_u":"$_u" "$_uhome/.config/btop" 2>/dev/null || true
@@ -7140,17 +7173,21 @@ code|com.vscodium.codium
 EOFLATPAK
 fi
 '@
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDriveUpper = $sysLetter.ToUpper()
+    $sysDriveLower = $sysLetter.ToLower()
     $seedTmpWin = Join-Path $env:TEMP 'mios-seed.sh'
-    $seedTmpWsl = '/mnt/m/MiOS/.tmp-seed.sh'
+    $miosTmpDir = Join-Path "${sysDriveUpper}:\" 'MiOS'
+    $seedTmpFileWin = Join-Path $miosTmpDir '.tmp-seed.sh'
+    $seedTmpWsl = "/mnt/${sysDriveLower}/MiOS/.tmp-seed.sh"
     # Write LF-only via [System.IO.File]::WriteAllText with no-BOM UTF-8;
-    # also drop a copy at /mnt/m/MiOS/.tmp-seed.sh so bash inside the
+    # also drop a copy at /mnt/c/MiOS/.tmp-seed.sh so bash inside the
     # dev VM has a known automounted path.
     $utf8NoBom    = New-Object System.Text.UTF8Encoding($false)
     $miosSeedLF   = $miosSeedScript -replace "`r`n", "`n"
-    $miosTmpDir   = 'M:\MiOS'
     if (-not (Test-Path -LiteralPath $miosTmpDir)) { New-Item -ItemType Directory -Path $miosTmpDir -Force | Out-Null }
-    [System.IO.File]::WriteAllText('M:\MiOS\.tmp-seed.sh', $miosSeedLF, $utf8NoBom)
-    [System.IO.File]::WriteAllText($seedTmpWin,            $miosSeedLF, $utf8NoBom)
+    [System.IO.File]::WriteAllText($seedTmpFileWin, $miosSeedLF, $utf8NoBom)
+    [System.IO.File]::WriteAllText($seedTmpWin,     $miosSeedLF, $utf8NoBom)
     & {
         $ErrorActionPreference = 'Continue'
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
@@ -7160,7 +7197,7 @@ fi
             ForEach-Object { Write-Log "mios-seed: $_" }
         $script:_seedRc = $LASTEXITCODE
     }
-    Remove-Item -LiteralPath 'M:\MiOS\.tmp-seed.sh' -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $seedTmpFileWin -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $seedTmpWin -Force -ErrorAction SilentlyContinue
     if ($script:_seedRc -eq 0) {
         Log-Ok "MiOS terminal experience seeded onto $_wslDistroForTerm"
@@ -7313,9 +7350,9 @@ exit 0
         try { $v = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue; if ($v) { $_dispGb = [math]::Round($v.Size/1GB,0) } } catch {}
         $_completeTitle = Get-MiosTomlValue -Section 'messages.install_complete' -Key 'title' -Default 'MiOS Windows-side install complete'
         $_completeBullets = @(Get-MiosTomlValue -Section 'messages.install_complete' -Key 'bullets' -Default @(
-            ('M:\ partition ({0} GB NTFS, label MIOS-DEV)' -f $_dispGb),
+            'Root overlay on C:\ (converged Windows/Linux layout)',
             'Podman Desktop + podman-MiOS-DEV machine',
-            'mios.git + mios-bootstrap overlaid at M:\',
+            'mios.git + mios-bootstrap nested at C:\',
             'MiOS terminal essentials layered into MiOS-DEV',
             'Native Windows app: Start Menu + Desktop + per-verb shortcuts',
             'MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)'
@@ -7355,12 +7392,12 @@ exit 0
             @{ name = 'config'; desc = 'edit mios.toml in the HTML configurator (no build)' },
             @{ name = 'dash';   desc = 'show the MiOS dashboard (framed banner + fastfetch)' },
             @{ name = 'dev';    desc = 'enter the MiOS-DEV podman machine' },
-            @{ name = 'pull';   desc = 'sync M:\ overlay to origin/main' },
+            @{ name = 'pull';   desc = 'sync root overlay to origin/main' },
             @{ name = 'update'; desc = 're-run the bootstrap (cache-busted)' },
             @{ name = 'help';   desc = 'list every verb' }
         )
         $_tomlText = $null
-        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
+        foreach ($_cand in @('C:\etc\mios\mios.toml','C:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml','M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
             if (Test-Path -LiteralPath $_cand) { try { $_tomlText = [IO.File]::ReadAllText($_cand, (New-Object System.Text.UTF8Encoding($false))); break } catch {} }
         }
         if ($_tomlText) {
@@ -8005,9 +8042,9 @@ if (`$Purge) {
             if (-not (Test-Path -LiteralPath $localDriver)) {
                 Write-Log "auto-chain: ABORT -- mios-build-driver not found" "WARN"
                 Write-Host "  [!] mios-build-driver not found at $localDriver" -ForegroundColor Yellow
-                Write-Host "      Re-run the bootstrap; Phase 2 should have cloned mios.git to M:\." -ForegroundColor DarkGray
+                Write-Host "      Re-run the bootstrap; Phase 2 should have cloned mios.git." -ForegroundColor DarkGray
             } else {
-                # Convert M:\path\to\file -> /mnt/m/path/to/file (WSL automount).
+                # Convert drive:\path\to\file -> /mnt/<drive>/path/to/file (WSL automount).
                 $wslDriver = '/mnt/' + $localDriver.Substring(0, 1).ToLower() + ($localDriver.Substring(2) -replace '\\','/')
                 $automountOk = $false
                 try {
