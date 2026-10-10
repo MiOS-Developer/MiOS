@@ -106,14 +106,28 @@ if [ -f "$DB" ]; then
     else
         python3 - "$DB" <<'PYEOF'
 import sqlite3, sys
+sys.path.insert(0, "/usr/lib/mios")
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    def safe_ident(ident, allowlist):
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+        if ident not in allowlist:
+            raise ValueError(f"SQL identifier {ident!r} not in schema allowlist")
+        return ident
+
 p = sys.argv[1]
 c = sqlite3.connect(p); cur = c.cursor()
 cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
 tables = sorted(r[0] for r in cur.fetchall())
-to_clear = [t for t in tables if t in (
+CLEAR_ALLOWLIST = frozenset((
     'chat','chats','message','messages','chatidtag','tag','tags',
     'memory','feedback','file','files','folder','folders',
-)]
+))
+to_clear = [t for t in tables if t in CLEAR_ALLOWLIST]
 keep = [t for t in tables if t in (
     'user','users','auth','config','model','models',
     'function','functions','tool','tools','prompt','prompts',
@@ -122,9 +136,10 @@ keep = [t for t in tables if t in (
 print(f"  OWUI: clearing {to_clear}; keeping {keep}")
 for t in to_clear:
     try:
-        n = cur.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-        cur.execute(f'DELETE FROM "{t}"')
-        if n: print(f"    cleared {t} ({n} rows)")
+        safe_t = safe_ident(t, CLEAR_ALLOWLIST)
+        n = cur.execute(f'SELECT COUNT(*) FROM "{safe_t}"').fetchone()[0]
+        cur.execute(f'DELETE FROM "{safe_t}"')
+        if n: print(f"    cleared {safe_t} ({n} rows)")
     except Exception as e:
         print(f"    skip {t}: {e}")
 c.commit(); cur.execute('VACUUM'); c.commit(); c.close()

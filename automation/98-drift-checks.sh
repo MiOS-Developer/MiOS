@@ -400,21 +400,28 @@ check_cli_sql_safety() {
         return
     fi
     local allow=" "   # empty: all libexec tools cut over to parameterized pg
-    local pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
+    local legacy_pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
     local hits="" f base active
     while IFS= read -r f; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
         case "$base" in test_*|*.pyc) continue ;; esac
         [[ "$allow" == *" $base "* ]] && continue
+        grep -qI . "$f" || continue
         active=$(sed -E '/^[[:space:]]*#/d' "$f")
-        if printf '%s\n' "$active" | grep -qE "$pattern"; then
-            hits+="    $f"$'\n'
+        if printf '%s\n' "$active" | grep -qE "$legacy_pattern"; then
+            hits+="    $f (legacy DB transport or escaping)"$'\n'
+        fi
+        # Flag raw unwhitelisted f-string SQL identifier interpolation in execute()
+        local unsafe_fstrings
+        unsafe_fstrings=$(printf '%s\n' "$active" | grep -E 'execute\(f["'"'"'].*\{' | grep -vE '\{(safe_|ph_)' || true)
+        if [[ -n "$unsafe_fstrings" ]]; then
+            hits+="    $f (unwhitelisted f-string SQL interpolation: $unsafe_fstrings)"$'\n'
         fi
     done < <(find "$dir" -maxdepth 1 -type f 2>/dev/null)
     if [[ -n "$hits" ]]; then
         printf '%s' "$hits" >&2
-        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql) or hand-rolled SQL escaping (_pgesc/_pgq) -- use parameterized pg via mios-pg-query --exec-json / mios-db --pg-json "
+        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql), hand-rolled SQL escaping (_pgesc/_pgq), or raw unwhitelisted f-string SQL interpolation -- use parameterized pg or safe_ident() for SQLite identifiers"
     else
         echo "[98-drift-checks]   libexec CLIs SQL-safe"
     fi

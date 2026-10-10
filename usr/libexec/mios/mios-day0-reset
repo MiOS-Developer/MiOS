@@ -82,17 +82,31 @@ echo "==> OWUI chat history"
 OWUI_DB=/var/lib/mios/open-webui/webui.db
 if [[ -f $OWUI_DB ]]; then
   python3 -c "
-import sqlite3
+import sqlite3, sys
+sys.path.insert(0, '/usr/lib/mios')
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+    def safe_ident(ident, allowlist):
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f'Invalid SQL identifier format: {ident!r}')
+        if ident not in allowlist:
+            raise ValueError(f'SQL identifier {ident!r} not in schema allowlist')
+        return ident
 c=sqlite3.connect('$OWUI_DB'); cur=c.cursor()
 cur.execute('SELECT name FROM sqlite_master WHERE type=\"table\";')
 tables={r[0] for r in cur.fetchall()}
-targets=[t for t in ('chat','message','chat_message','chat_file','chatidtag',
-                     'shared_chat','message_reaction','memory','feedback',
-                     'prompt_history','automation_run') if t in tables]
+DAY0_ALLOWLIST=frozenset(('chat','message','chat_message','chat_file','chatidtag',
+                         'shared_chat','message_reaction','memory','feedback',
+                         'prompt_history','automation_run'))
+targets=[t for t in DAY0_ALLOWLIST if t in tables]
 for t in targets:
-    cur.execute(f'SELECT count(*) FROM {t};'); pre=cur.fetchone()[0]
-    cur.execute(f'DELETE FROM {t};')
-    if pre: print(f'   owui.{t}: {pre} -> 0')
+    safe_t = safe_ident(t, DAY0_ALLOWLIST)
+    cur.execute(f'SELECT count(*) FROM {safe_t};'); pre=cur.fetchone()[0]
+    cur.execute(f'DELETE FROM {safe_t};')
+    if pre: print(f'   owui.{safe_t}: {pre} -> 0')
 c.commit(); c.execute('VACUUM;'); c.close()"
 fi
 
