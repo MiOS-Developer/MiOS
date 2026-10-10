@@ -21,9 +21,7 @@ resolve_icon() {
     for f in "/usr/share/pixmaps/$name.png" "/usr/share/pixmaps/$name.svg" "/usr/share/pixmaps/$name"; do
         [ -e "$f" ] && { echo "$f"; return; }
     done
-    for fallback in /usr/share/mios/branding/icon.png; do
-        [ -e "$fallback" ] && { echo "$fallback"; return; }
-    done
+    [ -e /usr/share/mios/branding/icon.png ] && { echo /usr/share/mios/branding/icon.png; return; }
     return 1
 }
 
