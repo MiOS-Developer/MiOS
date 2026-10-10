@@ -4797,6 +4797,29 @@ test_drift_stubs() {
     log "check_drift_stubs negative test passed"
 }
 
+test_native_twinless() {
+    log "Testing check_native_twinless"
+    local sql="${ROOT}/usr/share/mios/postgres/schema-init.sql"
+    local bak; bak="$(mktemp)"; cp "$sql" "$bak"
+    local empty; empty="$(mktemp -d)"
+    _nt_fail() { cp "$bak" "$sql"; rm -rf "$bak" "$empty"; unset -f _nt_fail; die "$1"; }
+    _neg_gate check_native_twinless || _nt_fail "check_native_twinless red on the CLEAN tree: $_NEG_GATE_OUT"
+    [[ "$_NEG_GATE_OUT" == *"twinless native Check(s) ran here"* ]] || _nt_fail "check_native_twinless did not report what it ran"
+    # check_backfill_coverage has no bash twin, so only this gate runs it: a
+    # vector table the backfill does not know must fail here, named.
+    printf '\nCREATE TABLE IF NOT EXISTS neg_twinless_probe (id bigint PRIMARY KEY, emb vector(768));\n' >> "$sql"
+    _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with an emb table no backfill covers"
+    [[ "$_NEG_GATE_OUT" == *"check_backfill_coverage"*"neg_twinless_probe"* ]] \
+        || _nt_fail "check_native_twinless failed without naming check_backfill_coverage and the planted table"
+    cp "$bak" "$sql"
+    # No miosd to run is a violation, never a skip.
+    MIOS_NATIVE_BIN_DIR="$empty" _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with no miosd to run"
+    [[ "$_NEG_GATE_OUT" == *"miosd is not built"* ]] || _nt_fail "check_native_twinless failed without saying miosd is missing"
+    rm -rf "$bak" "$empty"; unset -f _nt_fail
+    _neg_gate check_native_twinless || die "check_native_twinless failed after restoration: $_NEG_GATE_OUT"
+    log "check_native_twinless negative test passed"
+}
+
 test_phase_registry() {
     log "Testing check_phase_registry"
     local toml="${ROOT}/usr/share/mios/mios.toml"
@@ -5745,6 +5768,7 @@ _run_test test_leaked_fixtures
     _run_test test_signature_policy
     _run_test test_projection_coverage
     _run_test test_drift_stubs
+    _run_test test_native_twinless
     _run_test test_doc_refs_resolve
     _run_test test_desktop_launchers
     _run_test test_blade_reconcile_schema

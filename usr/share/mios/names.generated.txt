@@ -6226,8 +6226,6 @@ ci.globs.tools.tier  MIOS_CI_GLOBS_TOOLS_TIER
 ci.globs.agent-pipe.dir  MIOS_CI_GLOBS_AGENT_PIPE_DIR
 ci.globs.agent-pipe.glob  MIOS_CI_GLOBS_AGENT_PIPE_GLOB
 ci.globs.agent-pipe.tier  MIOS_CI_GLOBS_AGENT_PIPE_TIER
-ci.globs.agent-pipe.skip  MIOS_CI_GLOBS_AGENT_PIPE_SKIP
-ci.globs.agent-pipe.skip_reason  MIOS_CI_GLOBS_AGENT_PIPE_SKIP_REASON
 ci.globs.libexec.dir  MIOS_CI_GLOBS_LIBEXEC_DIR
 ci.globs.libexec.glob  MIOS_CI_GLOBS_LIBEXEC_GLOB
 ci.globs.libexec.tier  MIOS_CI_GLOBS_LIBEXEC_TIER

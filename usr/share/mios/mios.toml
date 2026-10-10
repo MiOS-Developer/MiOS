@@ -13308,10 +13308,9 @@ tier = "unit"
 dir  = "usr/lib/mios/agent-pipe"
 glob = "test_mios_*.py"
 tier = "unit"
-skip = [
-    "test_mios_gateway_queue.py",
-]
-skip_reason = "needs a live database or a heavy dependency; covered by the build job's virtualenv gate"
+# No skips. test_mios_gateway_queue.py was skipped as "covered by the build job's
+# virtualenv gate", the bake's post-agent-tests; ruling Q8 moved that gate out of
+# the bake, and its heavy dependency (smolagents) is in [ci.python].requirements.
 
 [ci.globs.libexec]
 dir  = "usr/libexec/mios"
