@@ -12052,13 +12052,12 @@ import_roots = ["usr/lib/mios/agent-pipe", "usr/libexec/mios", "tools"]
 [pipeline.console]
 width = 100
 bar_width = 24
+# Ruling Q8: 97-ssot-lint, 98-drift-checks and the agent-pipe suites are
+# source-tree gates, so they run in the CI gate job, not here.
 post_steps = [
     { name = "post-bloat", action = "bloat" },
     { name = "post-package-health", action = "package_health" },
     { name = "99-postcheck.sh", action = "invariants" },
-    { name = "97-ssot-lint.sh", action = "ssot" },
-    { name = "98-drift-checks.sh", action = "drift" },
-    { name = "post-agent-tests", action = "agent_tests" },
     { name = "post-libexec-tests", action = "libexec_tests" },
     { name = "post-image-digests", action = "image_digests" },
     { name = "post-log-chain", action = "log_chain" },

@@ -75,13 +75,12 @@ ARG MIOS_BAKE_BOUND_IMAGES=1
 
 # Every SSOT projection the image ships is rendered inside this RUN from the
 # build's own mios.toml by tools/sync-generated.sh, the entry point CI's
-# generated-artifacts step runs. The drift check runs before it, so a derived
-# surface edited by hand still fails the build (Law 8) before it is overwritten.
-# Source drift checks need every tracked consumer, including tests and CI.
-# Restore omitted index entries after provisioning; retain copied edits and exclude caches.
-# The drift gate lints with the self-build toolchain ([drift.lint]: ShellCheck,
-# python3). Every profile installs [packages.self-build], so this only moves it
-# ahead of the gate; a missing compiler fails the gate instead of skipping it.
+# generated-artifacts step runs. A derived surface edited by hand fails that CI
+# gate (Law 8); ruling Q8 keeps source-tree gates out of the bake, so no drift
+# check runs here. The renderers read tracked inputs this copy omits (tests, CI):
+# restore omitted index entries after provisioning; retain copied edits and exclude caches.
+# [packages.self-build] is installed first: every profile carries it, and
+# 55-native-build.sh --toolchain builds with it.
 # The SSOT Rust toolchain (channel, components, musl target, rust-lld) follows it
 # into [build.toolchain].rustup_home, so every image can rebuild its own catalog.
 RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
@@ -132,7 +131,6 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     done; \
     export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT MIOS_BAKE_BOUND_IMAGES; \
     echo "[build] MIOS_BAKE_BOUND_IMAGES=${MIOS_BAKE_BOUND_IMAGES}"; \
-    /usr/libexec/mios/miosd drift-check --root /tmp/build; \
     mios-gen sync --root /tmp/build; \
     bash /tmp/build/automation/01-system-files-overlay.sh; \
     install_packages_strict mcp; \

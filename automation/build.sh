@@ -136,6 +136,8 @@ while IFS=: read -r _name _fatal _extra; do
     [[ "$_name" =~ ^[a-zA-Z0-9_-]+\.sh$ && ( "$_fatal" == true || "$_fatal" == false ) && -z "$_extra" ]] || { printf '[FAIL] Invalid native build phase: %s\n' "$_name" >&2; exit 1; }
     [[ -z "${PHASE_FATAL[$_name]+present}" ]] || { printf '[FAIL] Duplicate native build phase: %s\n' "$_name" >&2; exit 1; }
     PHASE_FATAL[$_name]=$_fatal
+    # 01 and 55 ran in the Containerfile; 99 runs as a post-step. 97 and 98 are
+    # source-tree gates, which ruling Q8 runs in the CI gate job only.
     case " $_name " in
         ' 01-system-files-overlay.sh '|' 55-native-build.sh '|' 97-ssot-lint.sh '|' 98-drift-checks.sh '|' 99-postcheck.sh ') continue ;;
     esac
@@ -205,81 +207,6 @@ if [[ -f "${SCRIPT_DIR}/99-postcheck.sh" ]]; then
     bash "${SCRIPT_DIR}/99-postcheck.sh"
 else
     _finding missing "Required build gate 99-postcheck.sh is missing"
-    return 125
-fi
-    return 0
-}
-
-_post_ssot() {
-if [[ -f "${SCRIPT_DIR}/97-ssot-lint.sh" ]]; then
-    bash "${SCRIPT_DIR}/97-ssot-lint.sh"
-else
-    _finding missing "Required build gate 97-ssot-lint.sh is missing"
-    return 125
-fi
-    return 0
-}
-
-_post_drift() {
-if [[ -f "${SCRIPT_DIR}/98-drift-checks.sh" ]]; then
-    _drift_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
-    git config --global --add safe.directory "${_drift_root}" 2>/dev/null || true
-    git config --global --add safe.directory '*' 2>/dev/null || true
-    if git -C "${_drift_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git -C "${_drift_root}" config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
-    fi
-    for _projection in uki-cmdline ipa-enroll cockpit; do
-        mios_project_config "$_drift_root" "$_projection"
-    done
-    if command -v python3 >/dev/null 2>&1; then
-        # The edge goldens follow the build SSOT like the image surfaces 65-bake-hyprland.sh rendered.
-        for _gen in ux/wm_config_gen.py desktop/gpu_terminal.py win/wt_profile_inject.py; do
-            python3 "${_drift_root}/usr/libexec/mios/${_gen}" --write-fixture "${_drift_root}"
-        done
-        /usr/libexec/mios/mios-gen render-tmux-theme --write-fixture "${_drift_root}"
-    else
-        echo "[reproject] WARN: python3 unavailable"
-    fi
-    bash "${SCRIPT_DIR}/98-drift-checks.sh"
-else
-    _finding missing "Required build gate 98-drift-checks.sh is missing"
-    return 125
-fi
-    return 0
-}
-
-_post_agent_tests() {
-_agent_pipe_dir="$(cd "${SCRIPT_DIR}/.." && pwd)/usr/lib/mios/agent-pipe"
-_test_py="/usr/lib/mios/agents/.venv/bin/python3"
-if [[ -d "$_agent_pipe_dir" ]] && [[ -x "$_test_py" ]]; then
-    _test_fails=0
-    _test_count=0
-    _DB_INTEGRATION_TESTS=" test_mios_db_config.py test_mios_build_catalog.py test_mios_config_audit.py test_mios_redact.py test_mios_vector.py "
-    shopt -s nullglob
-    for _t in "$_agent_pipe_dir"/test_mios_*.py; do
-        _tb="$(basename "$_t")"
-        _test_count=$((_test_count + 1))
-        if [[ "$_DB_INTEGRATION_TESTS" == *" $_tb "* ]]; then
-            _finding skip "$_tb: DB integration requires live pgvector; not certified by image build"
-            continue
-        fi
-        # shellcheck disable=SC2046  # compgen emits one name per line; unset needs them split
-        if _tout="$( cd "$_agent_pipe_dir" && { unset $(compgen -v MIOS_ 2>/dev/null); "$_test_py" "$_tb"; } 2>&1 | tr -d '\0' )"; then
-            _row "  [ OK ] $_tb"
-        else
-            _row "  [FAIL] $_tb"
-            printf '%s\n' "$_tout" | sed 's/^/      /' >&2
-            _test_fails=$((_test_fails + 1))
-        fi
-    done
-    shopt -u nullglob
-    if [[ "$_test_fails" -gt 0 ]]; then
-        die "Agent-pipe unit tests: ${_test_fails} test script failed"
-    fi
-    [[ "$_test_count" -gt 0 ]] || { _finding missing "No agent-pipe test subjects discovered"; return 125; }
-    _row "  Agent-pipe test scripts examined: $_test_count; DB exclusions recorded separately"
-else
-    _finding missing "Required agent test environment or agent-pipe source missing"
     return 125
 fi
     return 0
@@ -479,7 +406,7 @@ _post_plan="$(MIOS_ROOT="$_mios_root" "$_miosd" build --post-list)"
 while IFS=: read -r _name _action _extra; do
     [[ -n "$_name" && -z "$_extra" && -z "${POST_SEEN[$_name]+present}" ]] || { printf '[FAIL] Invalid or duplicate post-build identity: %s\n' "$_name" >&2; exit 1; }
     case "$_action" in
-        bloat|package_health|invariants|ssot|drift|agent_tests|libexec_tests|image_digests|log_chain|finalize) ;;
+        bloat|package_health|invariants|libexec_tests|image_digests|log_chain|finalize) ;;
         *) printf '[FAIL] Unknown post-build action: %s\n' "$_action" >&2; exit 1 ;;
     esac
     POST_NAMES+=("$_name")

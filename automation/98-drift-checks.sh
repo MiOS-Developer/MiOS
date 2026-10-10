@@ -3510,7 +3510,7 @@ check_drift_stubs() {
         return
     fi
     "$bin" drift-stubs --root "$ROOT" || \
-        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- the bake runs this suite at Containerfile:103 (task_974)"
+        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- check_native_twinless runs this suite's Checks in the gate (task_974)"
 }
 
 # --- every native miosd drift Check with no bash twin in main() runs in this gate ---
