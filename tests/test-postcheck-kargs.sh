@@ -58,11 +58,13 @@ if gate "$fix/type"; then die "case 5: file without kargs passed"; fi
 log "Case 6: a valid expired password (lastchg = 0) passes"
 mkdir -p "$fix/good_pw/etc"
 printf 'mios:$6$fakehash:0:0:99999:7:::\n' > "$fix/good_pw/etc/shadow"
+# shellcheck source=/dev/null
 ( source "$PC" && mios_postcheck_expired_password "$fix/good_pw" ) >"$fix/out_pw" 2>&1 || { cat "$fix/out_pw" >&2; die "case 6: valid expired password was rejected"; }
 
 log "Case 7: a non-expired password (lastchg != 0) fails"
 mkdir -p "$fix/bad_pw/etc"
 printf 'mios:$6$fakehash:19800:0:99999:7:::\n' > "$fix/bad_pw/etc/shadow"
+# shellcheck source=/dev/null
 if ( source "$PC" && mios_postcheck_expired_password "$fix/bad_pw" ) >"$fix/out_pw" 2>&1; then
     die "case 7: non-expired password passed";
 fi

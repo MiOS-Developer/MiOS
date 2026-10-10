@@ -2547,6 +2547,14 @@ check_python_lint() {
     bash "$lint_script" >/dev/null 2>&1 || res=$?
     if [[ "$res" -eq 1 ]]; then
         _violation "python linting reported compilation/syntax error(s)"
+    elif [[ "$res" -eq 2 ]]; then
+        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
+            _violation "python linting could not run (python3 missing under MIOS_DRIFT_REQUIRE_TOOLS=1)"
+        else
+            echo "[98-drift-checks]   WARNING: python linting could not run (python3 missing)" >&2
+        fi
+    elif [[ "$res" -ne 0 ]]; then
+        _violation "python linting failed with exit code $res"
     fi
 }
 
@@ -3942,6 +3950,7 @@ main() {
     check_no_hardcoded_ssot_literal
     check_bash_phase_ratchet
     check_no_silent_tool_skips
+    check_memory_poisoning_scan
     check_build_tool_dispatch
     check_signature_policy
     check_phase_registry

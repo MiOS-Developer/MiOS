@@ -8,6 +8,7 @@ DEFAULT_HOST="user"
 DEFAULT_USER_FULLNAME="User"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
+# shellcheck disable=SC2034
 DEFAULT_SSH_KEY_TYPE="ed25519"
 DEFAULT_BRANCH="main"
 
@@ -19,6 +20,7 @@ MIOS_REPO="https://github.com/mios-dev/MiOS.git"
 : "${MIOS_ETC_DIR:=/etc/mios}"
 : "${MIOS_VAR_DIR:=/var/lib/mios}"
 PROFILE_DIR="${MIOS_ETC_DIR}"
+# shellcheck disable=SC2034
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 
 _BOLD=$(tput bold 2>/dev/null || echo "")
