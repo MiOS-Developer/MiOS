@@ -92,15 +92,73 @@ def test_negative_control_detects_plant():
             break
     check("negative control: os.system regex matches planted string", detected)
 
+def test_no_unattested_eval_in_libexec():
+    attested = re.compile(r"^#\s*TD-1:\s*eval-safe,\s*input=.+,\s*not agent-controlled")
+    viol = []
+    for dirpath, dirnames, filenames in os.walk(_HERE):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules")]
+        for fn in filenames:
+            path = os.path.join(dirpath, fn)
+            if not os.path.isfile(path) or fn.startswith("test_") or fn.endswith((".py", ".pyc", ".json", ".generated")):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    first_line = fh.readline()
+                    if not ("bash" in first_line or "sh" in first_line):
+                        continue
+                    fh.seek(0)
+                    lines = fh.readlines()
+            except OSError:
+                continue
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                code_part = line.split("#")[0].strip()
+                if re.search(r'\beval\b', code_part):
+                    if idx > 0 and attested.match(lines[idx - 1].strip()):
+                        continue
+                    rel = os.path.relpath(path, _HERE).replace(os.sep, "/")
+                    viol.append(f"{rel}:{idx+1}: {line.strip()}")
+    check("libexec: zero unattested eval invocations", len(viol) == 0, f"violations: {viol}")
+
+def test_negative_control_detects_unattested_eval():
+    attested = re.compile(r"^#\s*TD-1:\s*eval-safe,\s*input=.+,\s*not agent-controlled")
+    sample_bad = 'eval "$agent_input"\n'
+    sample_good = '# TD-1: eval-safe, input=mios-resolver, not agent-controlled\neval "$_inputs"\n'
+    
+    # Assert bad is detected
+    bad_lines = sample_bad.splitlines()
+    detected_bad = False
+    for idx, line in enumerate(bad_lines):
+        code_part = line.split("#")[0].strip()
+        if re.search(r'\beval\b', code_part):
+            if idx == 0 or not attested.match(bad_lines[idx - 1].strip()):
+                detected_bad = True
+    check("negative control: unattested eval flagged as violation", detected_bad)
+    
+    # Assert good is accepted
+    good_lines = sample_good.splitlines()
+    flagged_good = False
+    for idx, line in enumerate(good_lines):
+        code_part = line.split("#")[0].strip()
+        if re.search(r'\beval\b', code_part):
+            if idx == 0 or not attested.match(good_lines[idx - 1].strip()):
+                flagged_good = True
+    check("negative control: attested eval passes check", not flagged_good)
+
 def main():
     test_no_os_system_in_libexec()
     test_no_shell_true_in_libexec()
+    test_no_unattested_eval_in_libexec()
     test_mios_models_subprocess()
     test_mios_v2v_import_subprocess()
     test_mios_v2v_import_dry_run()
     test_negative_control_detects_plant()
+    test_negative_control_detects_unattested_eval()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 
 if __name__ == "__main__":
     sys.exit(main())
+
