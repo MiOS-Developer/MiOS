@@ -36,10 +36,8 @@ def _binding_api(cfg: dict, engine: Optional[str]) -> str:
     return str(cfg.get("api") or "").strip().lower()
 
 _NO_TOOL_CHOICE_API = {"llamacpp", "llama.cpp", "llama-server", "vulkan"}
-_NO_TOOL_CHOICE_HINTS = tuple(
-    h.strip() for h in str(os.environ.get("MIOS_NO_TOOL_CHOICE_HINTS")
-                           or _DISPATCH_TOML.get("no_tool_choice_hints", "8450,8458,11436")).split(",")
-    if h.strip())
+_NO_TOOL_CHOICE_HINTS = _port_hints(os.environ.get("MIOS_NO_TOOL_CHOICE_HINTS")
+                                  or _DISPATCH_TOML.get("no_tool_choice_hints", "llm_igpu"))
 
 def _endpoint_supports_tool_choice(ep: str, cfg: dict,
                                    engine: Optional[str] = None) -> bool:
@@ -65,10 +63,8 @@ def _endpoint_supports_parallel_tools(ep: str) -> bool:
     return any(h and h in (ep or "") for h in _PARALLEL_TOOLS_HINTS)
 
 _LLAMACPP_API = {"llamacpp", "llama.cpp", "llama-server", "vulkan"}
-_KV_PAGING_HINTS = tuple(
-    h.strip() for h in str(os.environ.get("MIOS_KV_PAGING_HINTS")
-                           or _DISPATCH_TOML.get("kv_paging_hints", "8450,8458,11436")).split(",")
-    if h.strip())
+_KV_PAGING_HINTS = _port_hints(os.environ.get("MIOS_KV_PAGING_HINTS")
+                             or _DISPATCH_TOML.get("kv_paging_hints", "llm_igpu"))
 
 def _endpoint_is_llamacpp(ep: str, cfg: dict, engine: Optional[str] = None) -> bool:
     """True when `ep` is a llama.cpp llama-server that can do /slots KV paging.

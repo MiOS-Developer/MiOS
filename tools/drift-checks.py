@@ -369,6 +369,44 @@ def check_legibility_ratchet() -> int:
     print("\n".join(viol))
     sys.exit(1 if viol else 0)
 
+def check_legacy_archive() -> int:
+    """ADR-0030 Decision 7: `mios-gen archive --check` compares .archive with the dropped set;
+    its cannot-run exit (2) stays a failure."""
+    import subprocess
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    if os.environ.get("CTX") or root.rstrip("/") == "/tmp/build":
+        # Gates are out of the bake; the drift-gate job runs this on full history.
+        print("legacy archive: SKIPPED in-image OCI build (the drift-gate job enforces it on full history)")
+        return 0
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        gen = os.path.join(catalog, "mios-gen" + exe)
+        if not os.path.isfile(gen) or not os.access(gen, os.X_OK):
+            print("configured mios-gen is missing or not executable: %s" % gen)
+            return 1
+    else:
+        found = [c for c in [os.path.join(root, "tools/native/target", p, "mios-gen" + exe)
+                             for p in ("release", "debug")]
+                 + ["/usr/libexec/mios/mios-gen", "/usr/bin/mios-gen"] if os.path.isfile(c)]
+        if not found:
+            print("mios-gen is not built, so the legacy archive was never compared -- "
+                  "build it: cd tools/native && cargo build -p mios-gen")
+            return 1
+        gen = found[0]
+    try:
+        proc = subprocess.run([gen, "archive", "--check", "--root", root],
+                              capture_output=True, text=True)
+    except OSError as exc:
+        print("%s archive --check could not run: %s" % (gen, exc))
+        return 1
+    out = "\n".join(s for s in (proc.stdout.strip(), proc.stderr.strip()) if s)
+    if proc.returncode == 0 and out:
+        print(out)
+        return 0
+    print(out or "%s archive --check exited %d with no output" % (gen, proc.returncode))
+    return proc.returncode if proc.returncode in (1, 2) else 1
+
 def _value_sources(root: str):
     """(name -> declaring SSOT key path, None) from `mios-resolver --emit=names`,
     run sealed like mios-env-snapshot; else (None, why)."""
@@ -2957,10 +2995,15 @@ def check_greenboot() -> int:
     if not critical:
         print("(54) [greenboot].critical_services is empty or absent -- greenboot coverage would pass vacuously over an empty set")
         return 1
+    if "hermes" not in critical:
+        print("(54) [greenboot].critical_services must list 'hermes' as a critical service")
+        return 1
 
     bodies, probed, ssot_driven = {}, set(), False
     if os.path.isdir(gb_dir):
         for name in sorted(os.listdir(gb_dir)):
+            if not name.endswith(".sh"):
+                continue
             fp = os.path.join(gb_dir, name)
             if not os.path.isfile(fp):
                 continue
@@ -3726,9 +3769,11 @@ def check_value_aliases() -> int:
         return 1
 
     env = {}
-    sub_env = dict(os.environ, MIOS_ROOT=root, MIOS_DRIFT_ROOT=root, MIOS_VENDOR_TOML=os.path.join(root, "usr/share/mios/mios.toml"), MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
+    snap_rel = os.path.relpath(snap, root).replace("\\", "/")
+    vendor_rel = os.path.relpath(os.path.join(root, "usr/share/mios/mios.toml"), root).replace("\\", "/")
+    sub_env = dict(os.environ, MIOS_ROOT=".", MIOS_DRIFT_ROOT=".", MIOS_VENDOR_TOML=vendor_rel, MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
     try:
-        proc = subprocess.run(["bash", snap], capture_output=True, text=True, env=sub_env)
+        proc = subprocess.run(["bash", snap_rel], cwd=root, capture_output=True, text=True, env=sub_env)
     except OSError as exc:
         print("mios-env-snapshot could not be run: %s" % exc)
         return 1
@@ -3869,7 +3914,7 @@ def check_pipefail_grep_lint() -> int:
     return 0
 
 def check_skip_list_covered() -> int:
-    import os, sys
+    import fnmatch, os, sys
     import tomllib
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -3885,13 +3930,22 @@ def check_skip_list_covered() -> int:
     with open(toml_path, "rb") as fh:
         globs = ((tomllib.load(fh).get("ci") or {}).get("globs") or {})
 
-    spec = globs.get("agent-pipe") or {}
+    # Nothing skipped is the goal, so an empty list passes. Every entry that is
+    # there must say why, and must name an agent-pipe suite that exists.
+    spec = globs.get("agent-pipe")
+    if not isinstance(spec, dict) or not spec.get("dir") or not spec.get("glob"):
+        viol.append("[ci.globs.agent-pipe] is absent or names no dir/glob -- the "
+                    "agent-pipe suites would run in no tier")
+        spec = {}
     skip = spec.get("skip") or []
-    if not skip:
-        viol.append("[ci.globs.agent-pipe].skip is empty or absent -- the suites that "
-                    "need a database would run and fail on every runner")
     if skip and not str(spec.get("skip_reason", "")).strip():
         viol.append("[ci.globs.agent-pipe].skip carries no skip_reason")
+    d, pat = spec.get("dir", ""), spec.get("glob", "")
+    for fn in skip:
+        if not (isinstance(fn, str) and fnmatch.fnmatchcase(fn, pat)
+                and os.path.isfile(os.path.join(root, d, fn))):
+            viol.append(f"[ci.globs.agent-pipe].skip names {fn!r}, which is no {d}/{pat} "
+                        f"suite -- a stale skip would exempt the next suite given that name")
 
     for wf in (".github/workflows/mios-ci.yml", ".forgejo/workflows/build-mios.yml"):
         path = os.path.join(root, wf)
@@ -4646,6 +4700,7 @@ _SUBCOMMAND_NAMES = (
     "globals-image-parity", "bake-plan-integrity", "negative-test-coverage",
     "structured", "drift-build-catalog", "drift-projection", "unwired-modules",
     "no-duplicate-value-key", "resolver-differential-parity", "legibility-ratchet",
+    "legacy-archive",
     "header-integrity", "rbac-tiers", "ai-manifest", "capability-manifest",
     "surface-parity", "container-ports", "agent-pipe-budgets", "verb-backends",
     "dag-integrity",

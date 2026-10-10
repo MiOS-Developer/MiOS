@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3654,
-  "total_metadata_entries": 3022,
-  "total_hints": 3012,
+  "total_files_scanned": 3622,
+  "total_metadata_entries": 3016,
+  "total_hints": 3006,
   "total_functions_indexed": 1481,
-  "total_related_links": 5101,
+  "total_related_links": 5100,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3750,33 +3750,6 @@
       "has_shebang": false
     },
     {
-      "path": "etc/systemd/user/localsearch-3.service.d/10-mios-allow-system-uid.conf",
-      "hint": "Overrides the ConditionUser=!@system check for localsearch-3 to allow the service to run for the mios system user (UID 992), preventing GNOME file manager crashes caused by missing Tracker3.Miner.Files dbus activation.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/systemd/user/localsearch-control-3.service.d/10-mios-allow-system-uid.conf",
-      "hint": "Overrides the ConditionUser=!@system check for localsearch-3 to allow the service to run for the mios system user (UID 992), preventing GNOME file manager bookmark loading failures.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/systemd/user/localsearch-writeback-3.service.d/10-mios-allow-system-uid.conf",
-      "hint": "Overrides the ConditionUser=!@system check for localsearch-3 to allow the service to run for the mios system user (UID 992), preventing GNOME file manager bookmark loading failures.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "etc/sysusers.d/cephadm.conf",
       "hint": "Systemd sysusers override to force cephadm account to use nologin shell, securing it from dbus user session initialization issues.",
       "related": [],
@@ -3907,15 +3880,6 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "images/coderun-sandbox/Containerfile",
-      "hint": "MiOS configuration and runtime asset for Containerfile.",
-      "related": [],
-      "functions": [],
-      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -33453,15 +33417,6 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/mios/dotfiles/README.md",
-      "hint": "Boundary for the mios-bootstrap-owned operator dotfiles layer: the three-repository model and why no secret value is ever tracked here.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
       "path": "usr/share/mios/dropins/bare-metal-only.conf",
       "hint": "Configures the MiOS service to execute exclusively on physical hardware by enforcing a ConditionVirtualization=no check, preventing deployment in VM or container environments.",
       "related": [],
@@ -34609,17 +34564,6 @@
       "hint": "systemd mount template for user home directories backed by CephFS subvolumes.",
       "related": [
         "/etc/systemd/system/home-@.mount",
-        "[storage.cephfs]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/mios/systemd/mios-xdg-userdir-init.service",
-      "hint": "systemd user unit to dynamically update XDG directories when a CephFS network home is mounted.",
-      "related": [
         "[storage.cephfs]"
       ],
       "functions": [],

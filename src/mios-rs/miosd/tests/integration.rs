@@ -124,7 +124,7 @@ mod build_progress {
             "{}",
             String::from_utf8_lossy(&baseline.stderr)
         );
-        assert_eq!(String::from_utf8(baseline.stdout)?.lines().count(), 10);
+        assert_eq!(String::from_utf8(baseline.stdout)?.lines().count(), 7);
         std::fs::write(
             &path,
             source.replace(
@@ -138,13 +138,43 @@ mod build_progress {
             String::from_utf8(changed.stdout)?.contains("operator-package-health:package_health")
         );
         for modified in [
-            source.replace("{ name = \"98-drift-checks.sh\", action = \"drift\" },", ""),
-            source.replace("action = \"drift\"", "action = \"drift; touch injected\""),
+            source.replace(
+                "{ name = \"99-postcheck.sh\", action = \"invariants\" },",
+                "",
+            ),
+            source.replace(
+                "action = \"invariants\"",
+                "action = \"invariants; touch injected\"",
+            ),
             source.replace("name = \"post-package-health\"", "name = \"bad:identity\""),
-            source.replace("action = \"drift\"", "action = \"ssot\""),
+            source.replace("action = \"image_digests\"", "action = \"invariants\""),
         ] {
+            assert_ne!(
+                modified, source,
+                "a mutation that changes nothing proves nothing"
+            );
             std::fs::write(&path, modified)?;
             assert!(!invoke()?.status.success());
+        }
+        // Ruling Q8: a source-tree gate put back into the bake fails the plan.
+        let anchor = "{ name = \"99-postcheck.sh\", action = \"invariants\" },";
+        for (name, action) in [
+            ("97-ssot-lint.sh", "ssot"),
+            ("98-drift-checks.sh", "drift"),
+            ("post-agent-tests", "agent_tests"),
+        ] {
+            let readded = source.replace(
+                anchor,
+                &format!("{anchor}\n    {{ name = \"{name}\", action = \"{action}\" }},"),
+            );
+            assert_ne!(readded, source, "the Q8 plant must land");
+            std::fs::write(&path, readded)?;
+            let refused = invoke()?;
+            assert!(
+                !refused.status.success(),
+                "{action} re-added to the bake was accepted"
+            );
+            assert!(String::from_utf8_lossy(&refused.stderr).contains("ruling Q8"));
         }
         Ok(())
     }
@@ -269,6 +299,145 @@ mod registry_integration {
             matches!(verdict, Verdict::Pass(_)),
             "Live SSOT parse check failed: {:?}",
             verdict
+        );
+    }
+
+    #[test]
+    fn test_drift_check_nonexistent_root_reports_zero_pass() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let nonexistent = temp.path().join("definitely_nonexistent_root");
+
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--root"])
+            .arg(&nonexistent)
+            .output()
+            .expect("execute miosd drift-check on nonexistent root");
+
+        // The process exits non-zero (exit code 1)
+        assert!(
+            !output.status.success(),
+            "drift-check on nonexistent root must not succeed"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "drift-check on nonexistent root must exit with code 1"
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        // Exactly 0 checks report PASS (no hollow constant-pass stubs)
+        assert!(
+            stdout.contains("PASS 0 "),
+            "Summary must explicitly report PASS 0 on nonexistent root: {stdout}"
+        );
+        assert!(
+            !stdout.contains(" PASS +"),
+            "No individual check may report PASS on a nonexistent root: {stdout}"
+        );
+
+        // Fails with explicit error diagnostic
+        assert!(
+            combined.contains("INCOMPLETE/FAILED"),
+            "Summary status must be INCOMPLETE/FAILED: {combined}"
+        );
+        assert!(
+            stderr.contains("No such file or directory")
+                || stderr.contains("missing")
+                || stderr.contains("absent"),
+            "Must contain explicit error diagnostics for missing targets: {stderr}"
+        );
+
+        // Also verify on an existing empty directory to guarantee existence alone does not trigger passes
+        let empty_dir = temp.path().join("empty_dir");
+        std::fs::create_dir_all(&empty_dir).expect("create empty dir");
+        let output_empty = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--root"])
+            .arg(&empty_dir)
+            .output()
+            .expect("execute miosd drift-check on empty dir");
+
+        assert_eq!(
+            output_empty.status.code(),
+            Some(1),
+            "empty dir must exit with code 1"
+        );
+        let stdout_empty = String::from_utf8_lossy(&output_empty.stdout);
+        assert!(
+            stdout_empty.contains("PASS 0 "),
+            "Summary on empty dir must report PASS 0: {stdout_empty}"
+        );
+        assert!(
+            !stdout_empty.contains(" PASS +"),
+            "No check may report PASS on empty root: {stdout_empty}"
+        );
+
+        // In-process verification: running registry directly against nonexistent root must also fail
+        let ctx = DriftCtx::new(nonexistent, false);
+        let reg = Registry::new();
+        assert!(
+            !reg.run_all(&ctx, None),
+            "Registry::run_all must return false on nonexistent root"
+        );
+    }
+
+    #[test]
+    fn test_drift_check_template_conformance_and_version_literals_fail_closed() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+
+        // T2 negative: with [templates.*] renamed to [xtemplates.*]
+        let ssot_dir = root.join("usr/share/mios");
+        std::fs::create_dir_all(&ssot_dir).expect("create ssot dir");
+        std::fs::write(
+            ssot_dir.join("mios.toml"),
+            "[meta]\nmios_version = \"0.3.0\"\n[xtemplates.test]\nmatch = '.*\\.sh'\n",
+        )
+        .expect("write mios.toml");
+
+        let output_t2 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--only", "check_template_conformance", "--root"])
+            .arg(root)
+            .output()
+            .expect("execute miosd drift-check check_template_conformance");
+
+        assert!(
+            !output_t2.status.success(),
+            "check_template_conformance must fail when [templates] is renamed to [xtemplates]"
+        );
+        let out_t2 = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output_t2.stdout),
+            String::from_utf8_lossy(&output_t2.stderr)
+        );
+        assert!(
+            !out_t2.contains(" PASS +"),
+            "check_template_conformance must not report PASS when [templates] is missing: {out_t2}"
+        );
+
+        // T5 negative: with .git absent, check_no_hardcode_version must fail (cannot_run, not pass)
+        let output_t5 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--only", "check_no_hardcode_version", "--root"])
+            .arg(root)
+            .output()
+            .expect("execute miosd drift-check check_no_hardcode_version");
+
+        assert!(
+            !output_t5.status.success(),
+            "check_no_hardcode_version must fail when .git is absent"
+        );
+        let out_t5 = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output_t5.stdout),
+            String::from_utf8_lossy(&output_t5.stderr)
+        );
+        assert!(
+            !out_t5.contains(" PASS +"),
+            "check_no_hardcode_version must not report PASS when .git is absent: {out_t5}"
         );
     }
 }
