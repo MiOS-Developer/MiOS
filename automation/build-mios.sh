@@ -311,11 +311,13 @@ create_user_account() {
     if id "$MIOS_USERNAME" &>/dev/null; then
         log_warn "User ${MIOS_USERNAME} already exists, updating password..."
         echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
     else
         EXTRA_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
         if getent group docker >/dev/null 2>&1; then EXTRA_GROUPS="$EXTRA_GROUPS,docker"; fi
         useradd -u 1000 -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME" 2>/dev/null || useradd -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME"
         echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
 
         install -d -m 0750 /etc/sudoers.d
         echo "${MIOS_USERNAME} ALL= NOPASSWD:ALL" > "/etc/sudoers.d/${MIOS_USERNAME}"

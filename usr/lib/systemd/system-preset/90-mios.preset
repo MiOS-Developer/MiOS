@@ -269,3 +269,7 @@ disable osbuild-worker@1.service
 disable multipathd.service
 disable cloud-init-local.service
 disable cloud-config.service
+
+# Ruling Q7 (task_3539): mios-attest-server is conditioned off until Keylime replaces it
+disable mios-attest.service
+disable mios-attest-server.service

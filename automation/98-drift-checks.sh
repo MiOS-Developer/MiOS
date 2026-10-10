@@ -4349,9 +4349,9 @@ check_unit_security() {
         return 0
     fi
     local out
-    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security)"; then
-        echo "[98-drift-checks]   WARNING: systemd unit security check flagged unconfined services" >&2
-        return 0
+    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security 2>&1)"; then
+        _violations_from "check_unit_security: " "$out"
+        return
     fi
     if [[ -n "$out" ]]; then
         echo "[98-drift-checks]   NOTE: legacy unconfined units pending migration (roster active)"

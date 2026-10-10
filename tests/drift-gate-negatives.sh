@@ -4346,6 +4346,41 @@ test_wsl_distro_resolution() {
     log "check_wsl_distro_resolution negative test passed"
 }
 
+test_unit_security() {
+    log "Testing check_unit_security"
+    local attest_file="${ROOT}/usr/lib/systemd/system/mios-attest.service"
+    local bak; bak="$(mktemp)"; cp "$attest_file" "$bak"
+
+    # Ruling Q7: WantedBy= in mios-attest.service must be rejected
+    printf '\n[Install]\nWantedBy=multi-user.target\n' >> "$attest_file"
+    if _neg_gate check_unit_security; then
+        cp "$bak" "$attest_file"; rm -f "$bak"
+        die "check_unit_security passed despite WantedBy in mios-attest.service"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-attest"* ]]; then
+        cp "$bak" "$attest_file"; rm -f "$bak"
+        die "check_unit_security failed without naming mios-attest: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$attest_file"; rm -f "$bak"
+
+    # Ruling Q7: preset enable must also be rejected
+    local preset_file="${ROOT}/usr/lib/systemd/system-preset/90-mios.preset"
+    local pbak; pbak="$(mktemp)"; cp "$preset_file" "$pbak"
+    printf '\nenable mios-attest.service\n' >> "$preset_file"
+    if _neg_gate check_unit_security; then
+        cp "$pbak" "$preset_file"; rm -f "$pbak"
+        die "check_unit_security passed despite enable mios-attest.service in preset"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-attest"* ]]; then
+        cp "$pbak" "$preset_file"; rm -f "$pbak"
+        die "check_unit_security failed without naming mios-attest in preset: $_NEG_GATE_OUT"
+    fi
+    cp "$pbak" "$preset_file"; rm -f "$pbak"
+
+    _neg_gate check_unit_security || die "check_unit_security failed after restoration: $_NEG_GATE_OUT"
+    log "check_unit_security negative test passed"
+}
+
 test_unit_dependency_closure() {
     log "Testing check_unit_dependency_closure"
     local probe="${ROOT}/usr/lib/systemd/system/mios-negtest-dangling.service"
@@ -5807,6 +5842,7 @@ _run_test test_leaked_fixtures
     _run_test test_manual_links
     _run_test test_doc_port_scheme
     _run_test test_unit_dependency_closure
+    _run_test test_unit_security
     _run_test test_test_hermeticity
     _run_test test_no_mkdir_in_var
     _run_test test_quadlet_privilege
