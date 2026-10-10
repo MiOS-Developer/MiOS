@@ -506,10 +506,7 @@ class TestA2ADelegation(unittest.TestCase):
         self.assertEqual(frame_hop2.target_agent, "agent-eval")
         self.assertEqual(frame_hop2.mode, PayloadMode.TEXT)  # agent-text-only only supports text
 
-# ============================================================================
-# Domain 1.3: ADR-0029 Standards Mapping, Receipt Invariant, Credential Refusal,
-#             and Signed AgentCard Projection (task_198 / assign_002)
-# ============================================================================
+# Domain 1.3: ADR-0029 interop and the signed AgentCard projection (task_198).
 
 _LIB_MIOS = os.path.join(_ROOT, "usr", "lib", "mios")
 if _LIB_MIOS not in sys.path:
