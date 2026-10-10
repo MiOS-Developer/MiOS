@@ -1075,7 +1075,7 @@ class TestAgentCliCatalog(unittest.TestCase):
         """Verify [agent_cli] is enabled and specifies default cloud branch rule."""
         cfg = self.server_mod._agent_cli_config()
         self.assertTrue(cfg.get("enabled"))
-        self.assertEqual(cfg.get("branch_rule"), "^cloud/")
+        self.assertEqual(cfg.get("branch_rule"), "^cloud/[a-zA-Z0-9._-]+$")
 
     def test_all_adr0029_verified_tools_present(self):
         """Verify all verified local and cloud agent CLIs from ADR-0029 are catalogued."""
@@ -1134,9 +1134,10 @@ class TestAgentCliCatalog(unittest.TestCase):
         for tool in cloud_tools:
             self.assertEqual(
                 tool.get("branch_rule"),
-                "^cloud/",
-                f"Cloud tool '{tool['name']}' must define branch_rule = '^cloud/'",
+                "^cloud/[a-zA-Z0-9._-]+$",
+                f"Cloud tool '{tool['name']}' must define branch_rule = '^cloud/[a-zA-Z0-9._-]+$'",
             )
+
 
     def test_experimental_capabilities(self):
         """Verify experimental tools are tagged as experimental in SSOT per ADR-0029."""
@@ -1304,7 +1305,7 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
                 "task": "do task",
                 "branch": "main",
             })
-        self.assertIn("requires an isolated branch matching '^cloud/'", str(ctx.exception))
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
 
         with self.assertRaises(ValueError) as ctx:
             await self.bridge.nested_workflow({
@@ -1312,7 +1313,33 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
                 "task": "do task",
                 "branch": "feat/my-feature",
             })
-        self.assertIn("requires an isolated branch matching '^cloud/'", str(ctx.exception))
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_agent_branch_rule_requires_purpose(self):
+        """Negative control: 'cloud/' with empty purpose must be rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.bridge.nested_workflow({
+                "agent": "codex-cloud",
+                "task": "do task",
+                "branch": "cloud/",
+            })
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_agent_rejects_missing_branch_without_server_fallback(self):
+        """Negative control: cloud agent without branch must fail, never falling back to server cwd."""
+        with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0, stdout="cloud/fallback")):
+            with self.assertRaises(ValueError) as ctx:
+                await self.bridge.nested_workflow({
+                    "agent": "codex-cloud",
+                    "task": "do task",
+                })
+            self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_branch_reaches_launched_command(self):
+        """Verify the specified cloud branch reaches the launched command in the tmux slot."""
+        cmd = await self._get_dispatched_command("codex-cloud", "do task", branch="cloud/purpose-123")
+        self.assertIn("cloud/purpose-123", cmd)
+        self.assertIn("GIT_BRANCH=", cmd)
 
 
 class TestPlantedNegativeControls(unittest.TestCase):

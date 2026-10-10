@@ -3741,20 +3741,21 @@ aider_package = "aider-chat"
 antigravity_linux_installer = "https://antigravity.google/cli/install.sh"
 antigravity_windows_installer = "https://antigravity.google/cli/install.ps1"
 antigravity_windows_installer_sha256 = "51c2cb4fada22ce0228da71b9506370383d6544bfebcec85fe7616a52b805344"
-branch_rule = "^cloud/"
+branch_rule = "^cloud/[a-zA-Z0-9._-]+$"
 tools = [
   { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true, experimental = false, launch_template = "claude -p {task}", required_credentials = ["ANTHROPIC_API_KEY"] },
-  { name = "claude-cloud", package = "@anthropic-ai/claude-code", kind = "cloud", mcp = true, experimental = false, launch_template = "claude --cloud {task}", status_template = "claude -p \"msg\" --cloud {session} --output-format json", result_template = "claude --teleport {id}", branch_rule = "^cloud/", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "claude-cloud", package = "@anthropic-ai/claude-code", kind = "cloud", mcp = true, experimental = false, launch_template = "claude --cloud {task}", status_template = "claude -p \"msg\" --cloud {session} --output-format json", result_template = "claude --teleport {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["ANTHROPIC_API_KEY"] },
   { name = "codex", package = "@openai/codex", kind = "npm", mcp = true, experimental = false, launch_template = "codex exec {task}", required_credentials = ["OPENAI_API_KEY"] },
-  { name = "codex-cloud", package = "@openai/codex", kind = "cloud", mcp = true, experimental = true, launch_template = "codex cloud exec --env {env_id} {task}", status_template = "codex cloud list --json", result_template = "codex apply {task_id}", branch_rule = "^cloud/", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "codex-cloud", package = "@openai/codex", kind = "cloud", mcp = true, experimental = true, launch_template = "codex cloud exec --env {env_id} {task}", status_template = "codex cloud list --json", result_template = "codex apply {task_id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["OPENAI_API_KEY"] },
   { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true, experimental = false, launch_template = "gemini -p {task} -o json --approval-mode default", required_credentials = ["GEMINI_API_KEY"] },
   { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true, experimental = false, launch_template = "copilot --exec {task}", required_credentials = ["GITHUB_TOKEN"] },
   { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true, experimental = false, launch_template = "opencode run {task}", required_credentials = [] },
   { name = "agy", kind = "native", mcp = true, experimental = false, launch_template = "agy -p {task} --output-format json", required_credentials = ["ANTIGRAVITY_API_KEY"] },
   { name = "aider", kind = "python", mcp = false, experimental = false, launch_template = "aider --message {task}", required_credentials = ["OPENAI_API_KEY"] },
-  { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --repo {repo} --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
-  { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task} -b {base} -R {repo}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/", required_credentials = ["GITHUB_TOKEN"] },
+  { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --repo {repo} --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task} -b {base} -R {repo}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GITHUB_TOKEN"] },
 ]
+
 
 
 # Native terminal tools are served by the SAME MiOS MCP endpoint. Each MCP

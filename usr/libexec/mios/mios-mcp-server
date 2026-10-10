@@ -1143,19 +1143,9 @@ class _TmuxBridge:
 
         # Enforce branch isolation rule if defined on the tool or global catalog
         branch_rule = tool_row.get("branch_rule") or (cfg_cli.get("branch_rule") if tool_row.get("kind") == "cloud" else None)
+        target_branch = args.get("branch")
         if branch_rule:
-            target_branch = args.get("branch")
-            if not target_branch:
-                try:
-                    res = subprocess.run(
-                        ["git", "branch", "--show-current"],
-                        capture_output=True, text=True, timeout=3
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        target_branch = res.stdout.strip()
-                except Exception:
-                    pass
-            if not target_branch or not re.search(branch_rule, target_branch):
+            if not target_branch or not re.fullmatch(branch_rule, target_branch):
                 raise ValueError(
                     f"Cloud agent '{agent}' requires an isolated branch matching '{branch_rule}'; "
                     f"got '{target_branch or 'none'}'"
@@ -1202,8 +1192,16 @@ class _TmuxBridge:
         # The dispatcher refreshes the private caller's MCP configuration.
         # No auth/profile files or leases are copied into this worker HOME.
         cmd = shlex.quote(dispatcher) + " agent " + cmd
+        branch_prep = ""
+        if target_branch:
+            quoted_b = shlex.quote(target_branch)
+            branch_prep = (
+                f"if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+                f"git checkout {quoted_b} 2>/dev/null || git checkout -b {quoted_b}; fi && "
+                f"export GIT_BRANCH={quoted_b} MIOS_BRANCH={quoted_b} && "
+            )
         # Publish only the catalog kind while the child runs; preserve its exit.
-        cmd = "( trap 'tmux set-option -pu @mios-agent-kind' EXIT; tmux set-option -p @mios-agent-kind " + shlex.quote(agent) + " && " + cmd + " )"
+        cmd = "( trap 'tmux set-option -pu @mios-agent-kind' EXIT; tmux set-option -p @mios-agent-kind " + shlex.quote(agent) + " && " + branch_prep + cmd + " )"
         slot = await self._reserve_nested_slot(args.get("slot"))
         try:
             upstream, command_args, _ = self.arguments("mios_tmux_execute_command", {
