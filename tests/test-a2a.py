@@ -1095,6 +1095,27 @@ class TestA2AProjectedCard(unittest.TestCase):
                 _mcp_server_mod._agent_cli_main(["--card", "proof-head"])
             self.assertEqual(output.getvalue(), "")
 
+    def test_card_projects_without_agent_pipe_on_the_path(self):
+        # `mios agents --card` runs the server with only usr/lib/mios on sys.path.
+        probe = (
+            "import sys\n"
+            "from importlib.machinery import SourceFileLoader\n"
+            "from unittest.mock import patch\n"
+            "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\n"
+            "assert not any('agent-pipe' in entry for entry in sys.path)\n"
+            "server = SourceFileLoader('mios_mcp_server', sys.argv[1]).load_module()\n"
+            "key = Ed25519PrivateKey.generate()\n"
+            "listing = {'agents': [{'agent_id': 'proof-head', 'kind': 'generic'}]}\n"
+            "with patch.object(server, '_agent_relay_call', return_value=listing), \\\n"
+            "        patch.object(server, '_load_card_signing_key',\n"
+            "                     return_value=(key, 'fixture-kid', key.public_key())):\n"
+            "    print(len(server._project_agent_card('proof-head')['signatures']))\n"
+        )
+        result = subprocess.run([sys.executable, "-I", "-c", probe, _SERVER_PATH],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1")
+
     def test_unknown_registration_rejected_even_if_cli_catalogued(self):
         with self.assertRaisesRegex(ValueError, "Unknown agent"):
             _project_agent_card("catalogue-only", {"tools": [{"name": "catalogue-only"}]})

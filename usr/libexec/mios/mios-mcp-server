@@ -1827,20 +1827,25 @@ def _load_card_signing_key(agent_id: str):
     return priv, kid, priv.public_key()
 
 
-def _project_agent_card(agent_id: str, cfg: Optional[dict] = None) -> dict:
+def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
     """Project a registered relay participant, signed by its provisioned passport."""
     data = mios_toml.load_merged()
     registration = next((row for row in _agent_relay_call("mios_agent_list", {})["agents"]
                          if row["agent_id"] == agent_id), None)
     if registration is None:
         raise ValueError(f"Unknown agent: {agent_id}")
+    # mios_pipe ships beside this server, not on the interpreter path.
+    agent_pipe = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios", "agent-pipe"))
+    if agent_pipe not in sys.path:
+        sys.path.insert(0, agent_pipe)
     from mios_pipe.federation.agentcard_sign import _agent_card_signature
 
     priv, kid, _ = _load_card_signing_key(agent_id)
     base = _agent_pipe_url()
     label = registration.get("label") or agent_id
     kind = registration["kind"]
-    card: Dict[str, Any] = {
+    card: dict = {
         "name": label,
         "description": f"MiOS relay participant {agent_id}",
         "version": data["meta"]["mios_version"],
