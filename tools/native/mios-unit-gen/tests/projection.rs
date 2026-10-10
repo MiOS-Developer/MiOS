@@ -332,7 +332,8 @@ match-architectures = ["x86_64"]
         hardening,
     );
     let rendered = render_uki_cmdline(temp.path()).unwrap();
-    for mitigation in mios_unit_gen::REQUIRED_CPU_MITIGATIONS {
+    let policy = mios_unit_gen::load_cpu_mitigations_policy(temp.path(), None).unwrap();
+    for mitigation in &policy.required {
         assert!(
             rendered.contains(mitigation),
             "expected rendered cmdline to contain mitigation argument {mitigation}"
@@ -444,6 +445,55 @@ fn override_dropin_with_contradictory_mitigation_fails_closed() {
         .to_string();
     assert!(check_err.contains("spectre_v2=off"), "{check_err}");
 }
+
+#[test]
+fn dropin_with_nospectre_v2_alias_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        "kargs = [\"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"]\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/99-override.toml",
+        "kargs = [\"nospectre_v2\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("contradictory CPU mitigation argument forbidden: nospectre_v2"),
+        "{err}"
+    );
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("nospectre_v2"), "{check_err}");
+}
+
+#[test]
+fn override_dropin_with_last_value_tampering_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        "kargs = [\"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"]\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/99-override.toml",
+        "kargs = [\"spectre_v2=auto\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("contradictory CPU mitigation argument forbidden: spectre_v2=auto"),
+        "{err}"
+    );
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("spectre_v2=auto"), "{check_err}");
+}
+
 
 #[test]
 fn deployment_cli_writes_then_checks_the_requested_root() {
