@@ -647,7 +647,8 @@ pub mod server {
                 .or_else(|| std::env::var("MIOS_PORTAL_SESSION_TOKEN").ok())
                 .or_else(|| std::env::var("MIOS_PORTAL_TOKEN").ok())
                 .or_else(|| {
-                    token_file.and_then(|p| fs::read_to_string(p).ok().map(|s| s.trim().to_string()))
+                    token_file
+                        .and_then(|p| fs::read_to_string(p).ok().map(|s| s.trim().to_string()))
                 })
                 .or_else(|| {
                     let runtime_dir =
@@ -1224,21 +1225,25 @@ pub mod server {
                     }
                 };
                 if !validate_origin(origin, host_hdr, &config.allowlist_hosts) {
-                    return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
-                        "text/plain",
-                        format!("Forbidden: Cross-origin request from '{origin}' rejected").into_bytes(),
-                    ));
+                    return sec_resp(
+                        HttpResponse::new(403, "Forbidden").with_body(
+                            "text/plain",
+                            format!("Forbidden: Cross-origin request from '{origin}' rejected")
+                                .into_bytes(),
+                        ),
+                    );
                 }
 
-                let content_type = match req.headers.get("content-type") {
-                    Some(ct) => ct.to_ascii_lowercase(),
-                    _ => {
-                        return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
-                            "text/plain",
-                            b"Forbidden: Missing Content-Type".to_vec(),
-                        ));
-                    }
-                };
+                let content_type =
+                    match req.headers.get("content-type") {
+                        Some(ct) => ct.to_ascii_lowercase(),
+                        _ => {
+                            return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                                "text/plain",
+                                b"Forbidden: Missing Content-Type".to_vec(),
+                            ));
+                        }
+                    };
                 if !content_type.starts_with("application/json") {
                     return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
                         "text/plain",
@@ -1270,7 +1275,8 @@ pub mod server {
                         return sec_resp(HttpResponse::json(
                             422,
                             "Unprocessable Entity",
-                            serde_json::json!({ "errors": [format!("Invalid JSON: {e}")] }).to_string(),
+                            serde_json::json!({ "errors": [format!("Invalid JSON: {e}")] })
+                                .to_string(),
                         ));
                     }
                 };
@@ -1856,7 +1862,8 @@ agent_pipe = 8700
             };
             let post_resp = handle_request(&post_req, &config);
             assert_eq!(
-                post_resp.status_code, 200,
+                post_resp.status_code,
+                200,
                 "POST failed: {}",
                 String::from_utf8_lossy(&post_resp.body)
             );
@@ -1975,10 +1982,7 @@ agent_pipe = 8700
                 headers.insert("host".to_string(), "localhost:8700".to_string());
                 headers.insert("origin".to_string(), "http://localhost:8700".to_string());
                 headers.insert("content-type".to_string(), "application/json".to_string());
-                headers.insert(
-                    "cookie".to_string(),
-                    "mios_portal=wrong-token".to_string(),
-                );
+                headers.insert("cookie".to_string(), "mios_portal=wrong-token".to_string());
 
                 let req = HttpRequest {
                     method: "POST".to_string(),
@@ -2091,6 +2095,89 @@ agent_pipe = 8700
             assert!(cookie_val.contains("mios_portal=my-launch-token-99"));
             assert!(cookie_val.contains("HttpOnly"));
             assert!(cookie_val.contains("SameSite=Strict"));
+        }
+
+        #[test]
+        fn config_server_negative_missing_or_invalid_token() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            let html_file = root.join("mios.html");
+            fs::write(&html_file, "<html><body>Settings</body></html>").unwrap();
+
+            let config = ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: html_file,
+                user_toml_path: root.join("user.toml"),
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string()],
+                require_login: true,
+                session_token: Some("expected-token-123".to_string()),
+            };
+
+            // Negative 1: GET /configure with no token and no cookie -> 403 Forbidden
+            let mut headers = HashMap::new();
+            headers.insert("host".to_string(), "localhost:8700".to_string());
+            let req_no_tok = HttpRequest {
+                method: "GET".to_string(),
+                path: "/configure".to_string(),
+                query: None,
+                headers: headers.clone(),
+                body: Vec::new(),
+            };
+            let resp_no_tok = handle_request(&req_no_tok, &config);
+            assert_eq!(
+                resp_no_tok.status_code, 403,
+                "Missing token must be 403 Forbidden"
+            );
+
+            // Negative 2: GET /configure with wrong token -> 403 Forbidden
+            let req_bad_tok = HttpRequest {
+                method: "GET".to_string(),
+                path: "/configure".to_string(),
+                query: Some("token=wrong-token-999".to_string()),
+                headers,
+                body: Vec::new(),
+            };
+            let resp_bad_tok = handle_request(&req_bad_tok, &config);
+            assert_eq!(
+                resp_bad_tok.status_code, 403,
+                "Invalid token must be 403 Forbidden"
+            );
+        }
+
+        #[test]
+        fn config_server_resolve_with_auth_cli_token_and_file() {
+            std::env::set_var("MIOS_PORTAL_CONFIG_MAX_BODY_BYTES", "1048576");
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let token_path = tmp_dir.path().join("test-token-file");
+            fs::write(&token_path, "token-from-file-456\n").unwrap();
+
+            // 1. Direct CLI token argument takes highest precedence
+            let cfg_token = ConfigServerConfig::resolve_with_auth(
+                Some("127.0.0.1:8700".to_string()),
+                Some(8700),
+                Some("token-from-cli-123".to_string()),
+                Some(token_path.clone()),
+            )
+            .unwrap();
+            assert_eq!(
+                cfg_token.session_token.as_deref(),
+                Some("token-from-cli-123")
+            );
+
+            // 2. Token from token-file argument
+            let cfg_file = ConfigServerConfig::resolve_with_auth(
+                Some("127.0.0.1:8700".to_string()),
+                Some(8700),
+                None,
+                Some(token_path),
+            )
+            .unwrap();
+            assert_eq!(
+                cfg_file.session_token.as_deref(),
+                Some("token-from-file-456")
+            );
         }
     }
 }
