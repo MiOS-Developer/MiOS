@@ -57,9 +57,8 @@ class TestAuditVersionLiterals(unittest.TestCase):
             command = [binary, "version-literals-ssot", "--root", directory, "--format", "json"]
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
-            report = json.loads(result.stdout)
-            self.assertFalse(report["ok"])
-            self.assertIn("not a git checkout", report.get("could_not_run", ""))
+            self.assertEqual(report["status"], "could_not_run")
+            self.assertIn("not a git checkout", report.get("summary", ""))
 
 if __name__ == "__main__":
     unittest.main()
