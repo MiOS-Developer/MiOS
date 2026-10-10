@@ -450,6 +450,16 @@ class TestA2AAttestation(unittest.TestCase):
             self.assertEqual(code, 1, out)
             code, out = cli("verify-card", "--card", genuine, "--agent", "../passports/proof-agent")
             self.assertEqual(code, 1, out)
+            # A symlinked public.key is not a provisioned key
+            os.makedirs(os.path.join(key_dir, "linked"))
+            try:
+                os.symlink(os.path.join(key_dir, "proof-agent", "public.key"),
+                           os.path.join(key_dir, "linked", "public.key"))
+            except (OSError, NotImplementedError):
+                pass  # no symlink privilege (Windows): covered on Linux
+            else:
+                code, out = cli("verify-card", "--card", genuine, "--agent", "linked")
+                self.assertEqual(code, 1, out)
 
 
 # ============================================================================
