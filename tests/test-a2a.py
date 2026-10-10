@@ -139,8 +139,8 @@ class TestA2AAttestation(unittest.TestCase):
         self.assertTrue(attestation.A2AAuthenticator.verify_card(card, self.auth.public_key_bytes))
         # Verify via module-level convenience function
         self.assertTrue(attestation.verify_card(card, self.auth.public_key_hex))
-        # Verify with self-embedded public key when trusted_key is omitted
-        self.assertTrue(attestation.A2AAuthenticator.verify_card(card))
+        # No trusted key -> unverified: the card's own embedded key is never trusted
+        self.assertFalse(attestation.A2AAuthenticator.verify_card(card))
 
     def test_wrong_trusted_key_rejected(self):
         card = self.auth.create_card(
@@ -402,6 +402,54 @@ class TestA2AAttestation(unittest.TestCase):
                 ])
             self.assertEqual(code, 1)
             self.assertIn('"authenticated": false', stdout.getvalue())
+
+    def test_cli_trusts_only_a_provisioned_key(self):
+        """The CLI caller: no --key/--agent means unverified; --agent resolves the
+        provisioned passport public key from the [passport].key_dir SSOT."""
+        import subprocess
+        attacker = attestation.A2AAuthenticator.generate_keypair(node_id=666)
+        with tempfile.TemporaryDirectory(prefix="mios-a2a-trust-") as tmp:
+            key_dir = os.path.join(tmp, "passports")
+            os.makedirs(os.path.join(key_dir, "proof-agent"))
+            with open(os.path.join(key_dir, "proof-agent", "public.key"), "wb") as f:
+                f.write(self.auth.public_key.public_bytes(
+                    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+            host_toml = os.path.join(tmp, "host.toml")
+            with open(host_toml, "w", encoding="utf-8") as f:
+                f.write(f"[passport]\nenable = true\nkey_dir = '{key_dir}'\n")
+            absent = os.path.join(tmp, "absent")
+            env = dict(os.environ, MIOS_HOST_TOML=host_toml, MIOS_USER_TOML=os.path.join(absent, "u.toml"),
+                       MIOS_HOST_TOML_D=absent, MIOS_USER_TOML_D=absent, MIOS_VENDOR_TOML_D=absent,
+                       MIOS_RESOLVER_NATIVE="0", MIOS_DB_AUTHORITATIVE="0")
+            genuine = os.path.join(tmp, "genuine.json")
+            forged = os.path.join(tmp, "forged.json")
+            with open(genuine, "w", encoding="utf-8") as f:
+                json.dump(self.auth.create_card("proof-agent", ["code_exec"]), f)
+            with open(forged, "w", encoding="utf-8") as f:
+                json.dump(attacker.create_card("proof-agent", ["code_exec"]), f)
+
+            def cli(*argv):
+                res = subprocess.run([sys.executable, _ATTESTATION_PATH, *argv], env=env,
+                                     capture_output=True, text=True, timeout=60)
+                return res.returncode, res.stdout + res.stderr
+
+            # Self-signed card, no trusted key -> unverified (was: trusted its own key)
+            code, out = cli("verify-card", "--card", forged)
+            self.assertEqual(code, 1, out)
+            self.assertIn('"valid": false', out)
+            code, out = cli("negotiate", "--card", forged, "--required", "code_exec")
+            self.assertEqual(code, 1, out)
+            # Provisioned identity: the genuine card verifies, the forged one does not
+            code, out = cli("verify-card", "--card", genuine, "--agent", "proof-agent")
+            self.assertEqual(code, 0, out)
+            self.assertIn('"valid": true', out)
+            code, out = cli("verify-card", "--card", forged, "--agent", "proof-agent")
+            self.assertEqual(code, 1, out)
+            # Nothing provisioned for the identity, or a path-shaped identity -> unverified
+            code, out = cli("verify-card", "--card", genuine, "--agent", "nobody")
+            self.assertEqual(code, 1, out)
+            code, out = cli("verify-card", "--card", genuine, "--agent", "../passports/proof-agent")
+            self.assertEqual(code, 1, out)
 
 
 # ============================================================================

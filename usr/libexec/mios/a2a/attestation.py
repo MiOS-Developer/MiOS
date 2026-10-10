@@ -14,6 +14,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -42,15 +43,16 @@ def _b64u_decode(s: str) -> bytes:
     raw = str(s or "").strip()
     return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
 
-def _load_pub_key(key_input: Union[bytes, str, Ed25519PublicKey]) -> Ed25519PublicKey:
-    """Loads an Ed25519PublicKey from an object, raw bytes, hex string, PEM, or base64."""
+def _load_pub_key(key_input: Union[bytes, str, Ed25519PublicKey], allow_path: bool = True) -> Ed25519PublicKey:
+    """Loads an Ed25519PublicKey from an object, raw bytes, hex string, PEM, or base64.
+    ``allow_path=False`` for card-supplied input, which must never name a file to read."""
     if isinstance(key_input, Ed25519PublicKey):
         return key_input
     if isinstance(key_input, str):
         key_str = key_input.strip()
         if key_str.startswith("-----BEGIN"):
             return serialization.load_pem_public_key(key_str.encode("utf-8"))  # type: ignore[return-value]
-        if os.path.isfile(key_str):
+        if allow_path and os.path.isfile(key_str):
             with open(key_str, "rb") as f:
                 content = f.read().strip()
             if content.startswith(b"-----BEGIN"):
@@ -236,8 +238,10 @@ class A2AAuthenticator:
         """
         Validates AgentCard authenticity, signature, timestamps, and clock skew.
 
-        Returns True only if the cryptographic signature is valid over the canonical payload,
-        timestamps are within acceptable clock skew bounds, and expiration has not occurred.
+        Returns True only if the cryptographic signature is valid over the canonical payload
+        under ``trusted_public_key`` (resolved by the caller from provisioning -- see
+        :func:`resolve_trusted_key`), timestamps are within acceptable clock skew bounds,
+        and expiration has not occurred. With no trusted key the card is unverified: False.
         """
         if not isinstance(card, dict):
             return False
@@ -294,22 +298,21 @@ class A2AAuthenticator:
         if exp <= iat:
             return False
 
+        # Fail closed without a trusted key. The key a card embeds is the
+        # signer's own claim: anyone can sign a card with a fresh key and embed
+        # it, so it is only ever compared against the trusted key, never used.
+        if trusted_public_key is None:
+            return False
         try:
-            if trusted_public_key is not None:
-                pub_key = _load_pub_key(trusted_public_key)
-                card_pub = card.get("public_key")
-                if card_pub is not None:
-                    card_pub_key = _load_pub_key(card_pub)
-                    if (
-                        card_pub_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-                        != pub_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-                    ):
-                        return False
-            else:
-                card_pub = card.get("public_key")
-                if not card_pub:
+            pub_key = _load_pub_key(trusted_public_key)
+            card_pub = card.get("public_key")
+            if card_pub is not None:
+                card_pub_key = _load_pub_key(card_pub, allow_path=False)
+                if (
+                    card_pub_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+                    != pub_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+                ):
                     return False
-                pub_key = _load_pub_key(card_pub)
         except Exception:
             return False
 
@@ -383,6 +386,51 @@ def negotiate_capabilities(
         max_clock_skew=max_clock_skew,
     )
 
+_AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*")
+
+
+def resolve_trusted_key(agent_id: str) -> Optional[Ed25519PublicKey]:
+    """The provisioned passport public key of a REGISTERED identity, or None.
+
+    The same trust anchor the AgentCard projection binds its signing key to:
+    ``[passport].key_dir/<agent_id>/public.key`` from the mios.toml SSOT, written
+    by mios-passport and served by the shared ``_passport_load_public`` resolver.
+    The identity is the operator's choice (never the card's claim). None -- no
+    passport, or nothing provisioned for that identity -- means unverified.
+    """
+    if not _AGENT_ID_RE.fullmatch(agent_id or "") or ".." in agent_id:
+        raise ValueError(f"Invalid agent identifier: {agent_id!r}")
+    lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib", "mios"))
+    for path in (os.path.join(lib, "agent-pipe"), lib):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    import mios_toml
+    from mios_pipe.identity import principal
+
+    passport = mios_toml.section(mios_toml.load_merged(), "passport")
+    if not passport.get("enable") or not passport.get("key_dir"):
+        return None
+    principal.configure(passport_key_dir=str(passport["key_dir"]))
+    key = principal._passport_load_public(agent_id)
+    return key if isinstance(key, Ed25519PublicKey) else None
+
+
+def _cli_trusted_key(args: argparse.Namespace) -> Tuple[Any, str]:
+    """(trusted key, "") from --key (explicit) or --agent (provisioned identity);
+    (None, reason) when there is none, so the card stays unverified."""
+    if args.key:
+        return args.key, ""
+    if args.agent:
+        try:
+            key = resolve_trusted_key(args.agent)
+        except ValueError as exc:
+            return None, f"unverified: {exc}"
+        if key is None:
+            return None, f"unverified: no provisioned passport public key for {args.agent!r}"
+        return key, ""
+    return None, "unverified: no trusted key (pass --key or a provisioned --agent)"
+
+
 def _parse_card_input(raw: str) -> dict:
     """Parses a card from a raw JSON string or file path."""
     raw_str = raw.strip()
@@ -415,6 +463,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_verify = subparsers.add_parser("verify-card", help="Verify an AgentCard")
     p_verify.add_argument("--card", required=True, help="Card JSON string or path to JSON file")
     p_verify.add_argument("--key", type=str, help="Trusted public key (hex or file path)")
+    p_verify.add_argument("--agent", type=str, help="Trust the provisioned passport key of this identity")
     p_verify.add_argument("--clock-skew", type=int, default=60, help="Max clock skew seconds (default: 60)")
 
     # Negotiate
@@ -422,6 +471,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_neg.add_argument("--card", required=True, help="Card JSON string or path to JSON file")
     p_neg.add_argument("--required", required=True, help="Comma-separated required capabilities")
     p_neg.add_argument("--key", type=str, help="Trusted public key (hex or file path)")
+    p_neg.add_argument("--agent", type=str, help="Trust the provisioned passport key of this identity")
     p_neg.add_argument("--clock-skew", type=int, default=60, help="Max clock skew seconds (default: 60)")
 
     args = parser.parse_args(argv)
@@ -468,7 +518,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as e:
             print(json.dumps({"valid": False, "error": f"Invalid card input: {e}"}))
             return 1
-        valid = A2AAuthenticator.verify_card(card, trusted_public_key=args.key, max_clock_skew=args.clock_skew)
+        trusted, why = _cli_trusted_key(args)
+        if trusted is None:
+            print(json.dumps({"valid": False, "error": why}))
+            return 1
+        valid = A2AAuthenticator.verify_card(card, trusted_public_key=trusted, max_clock_skew=args.clock_skew)
         print(json.dumps({"valid": valid}))
         return 0 if valid else 1
 
@@ -479,7 +533,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(json.dumps({"authenticated": False, "error": f"Invalid card input: {e}"}))
             return 1
         reqs = [c.strip() for c in args.required.split(",") if c.strip()]
-        ok, caps = A2AAuthenticator.negotiate_capabilities(card, required_capabilities=reqs, trusted_key=args.key, max_clock_skew=args.clock_skew)
+        trusted, why = _cli_trusted_key(args)
+        if trusted is None:
+            print(json.dumps({"authenticated": False, "error": why}))
+            return 1
+        ok, caps = A2AAuthenticator.negotiate_capabilities(card, required_capabilities=reqs, trusted_key=trusted, max_clock_skew=args.clock_skew)
         print(json.dumps({"authenticated": ok, "granted" if ok else "missing": caps}))
         return 0 if ok else 1
 
