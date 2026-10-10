@@ -5346,6 +5346,35 @@ test_resolver_differential_parity() {
     log "check_resolver_differential_parity negative test passed"
 }
 
+test_resolver_twin_parity() {
+    log "Testing check_resolver_twin_parity negative control"
+    _neg_gate check_resolver_twin_parity || die "check_resolver_twin_parity baseline failed"
+
+    # Negative control 1: missing configured resolver fails hard
+    local missing out rc=0
+    missing="$(mktemp -d)" || die "cannot make missing-tool catalog"
+    out="$(MIOS_NATIVE_BIN_DIR="$missing" \
+        bash "${ROOT}/automation/98-drift-checks.sh" check_resolver_twin_parity 2>&1)" || rc=$?
+    rmdir "$missing" || die "missing-tool catalog was unexpectedly written"
+    [ "$rc" -ne 0 ] || die "check_resolver_twin_parity accepted a missing configured resolver"
+    grep -q 'configured resolver is missing' <<< "$out" \
+        || die "check_resolver_twin_parity failed for a different reason: $out"
+
+    # Negative control 2: resolver divergence on endpoint
+    local userenv="${ROOT}/usr/lib/mios/userenv.sh"
+    local ubak="${userenv}.bak"
+    cp "$userenv" "$ubak"
+    echo 'export MIOS_AI_ENDPOINT="corrupted-drift-endpoint"' >> "$userenv"
+    if bash "${ROOT}/automation/98-drift-checks.sh" check_resolver_twin_parity >/dev/null 2>&1; then
+        cp "$ubak" "$userenv"; rm -f "$ubak"
+        die "check_resolver_twin_parity passed despite divergence in exported endpoint"
+    fi
+    cp "$ubak" "$userenv"; rm -f "$ubak"
+
+    _neg_gate check_resolver_twin_parity || die "check_resolver_twin_parity failed after restoration"
+    log "check_resolver_twin_parity negative test passed"
+}
+
 test_no_generated_prose_in_resolvers() {
     log "Testing check_no_generated_prose_in_resolvers"
     local sh_file="${ROOT}/automation/lib/globals.sh"
@@ -5815,6 +5844,7 @@ _run_test test_leaked_fixtures
     _run_test test_header_integrity
     _run_test test_header_integrity_unreadable_corpus
     _run_test test_resolver_differential_parity
+    _run_test test_resolver_twin_parity
     _run_test test_generator_host_parity
     _run_test test_generator_host_parity_unreadable_corpus
     _run_test test_legibility_ratchet

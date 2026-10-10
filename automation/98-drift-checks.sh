@@ -1201,21 +1201,27 @@ check_resolver_twin_parity() {
         return
     fi
     local _nat="" _c
-    # debug BEFORE release, matching check_resolver_differential_parity and what
-    # CI step 3 actually builds. Preferring release picked up a binary older
-    # than the fix under test and reported its staleness as a twin mismatch.
-    for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
-              "$ROOT/tools/native/target/release/mios-resolver" \
-              /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
-        [[ -x "$_c" ]] && { _nat="$_c"; break; }
-    done
-    if [[ -z "$_nat" ]]; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
-        else
-            echo "[98-drift-checks]   mios-resolver not built -- twin parity NOT verified (both legs would be mios_toml.py); advisory skip"
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        for _c in "$MIOS_NATIVE_BIN_DIR/mios-resolver" "$MIOS_NATIVE_BIN_DIR/mios-resolver.exe"; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "configured resolver is missing or not executable: $MIOS_NATIVE_BIN_DIR/mios-resolver"
+            return
         fi
-        return
+    else
+        # debug BEFORE release, matching check_resolver_differential_parity and what
+        # CI step 3 actually builds. Preferring release picked up a binary older
+        # than the fix under test and reported its staleness as a twin mismatch.
+        for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
+                  "$ROOT/tools/native/target/release/mios-resolver" \
+                  /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
+            return
+        fi
     fi
 
     # `local fix="$(...)"` returns the status of `local`, not of mktemp, so this
@@ -1238,7 +1244,7 @@ check_resolver_twin_parity() {
     # overridden by host and never reached the resolved value, so the fixture
     # still could not fail -- a repaired check that is still vacuous.
     printf '[ai]\nendpoint = "http://host:${MIOS_PORTS_AGENT_PIPE}"\nmodel = "host-model"\n'                 > "$fix/host.toml"
-    printf '[ai]\nmodel = "user-model"\n'                                                                 > "$fix/.config/mios/mios.toml"
+    printf '[ai]\nendpoint = ""\nmodel = "user-model"\n'                                                  > "$fix/.config/mios/mios.toml"
     local sel='^MIOS_AI_(ENDPOINT|MODEL|EMBED_MODEL)=' bash_out py_out
     mkdir -p "$fix/bin" && ln -sf "$_nat" "$fix/bin/mios-resolver"
     bash_out="$(env -i PATH="$fix/bin:$PATH" HOME="$fix" XDG_CONFIG_HOME="$fix/.config" \
