@@ -757,7 +757,91 @@ def _run_extra_dispatch_redos():
 
 
 
+def test_host_origin_middleware():
+    from mios_pipe.auth import host_origin_validation_mw, configure as configure_auth
+    from starlette.requests import Request
+    from starlette.responses import Response
+    import asyncio
+
+    configure_auth(allowlist_hosts=["localhost", "127.0.0.1", "host.containers.internal"])
+
+    async def call_next(req):
+        return Response("ok", status_code=200)
+
+    # 1. Allowed host & origin pass
+    scope_good = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/dispatch",
+        "headers": [
+            (b"host", b"localhost:8700"),
+            (b"origin", b"http://localhost:3000")
+        ]
+    }
+    resp_good = asyncio.run(host_origin_validation_mw(Request(scope_good), call_next))
+    assert resp_good.status_code == 200, f"expected 200, got {resp_good.status_code}"
+
+    # 2. Negative: Disallowed Host -> 403
+    scope_evil_host = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/dispatch",
+        "headers": [
+            (b"host", b"evil.example"),
+            (b"origin", b"http://localhost:3000")
+        ]
+    }
+    resp_evil_host = asyncio.run(host_origin_validation_mw(Request(scope_evil_host), call_next))
+    assert resp_evil_host.status_code == 403, f"expected 403, got {resp_evil_host.status_code}"
+    assert b"Host" in resp_evil_host.body, "expected Host in error body"
+
+    # 3. Negative: Disallowed Origin -> 403
+    scope_evil_origin = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/dispatch",
+        "headers": [
+            (b"host", b"localhost:8700"),
+            (b"origin", b"http://evil.example")
+        ]
+    }
+    resp_evil_origin = asyncio.run(host_origin_validation_mw(Request(scope_evil_origin), call_next))
+    assert resp_evil_origin.status_code == 403, f"expected 403, got {resp_evil_origin.status_code}"
+    assert b"Origin" in resp_evil_origin.body, "expected Origin in error body"
+
+    print("[PASS] Host and Origin header validation rejects evil.example with 403 (P1-15 / task_3562)")
+
+def test_socket_unit_loopback_only():
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    sock_path = os.path.normpath(os.path.join(here, "..", "..", "..", "lib", "systemd", "system", "mios-agent-pipe.socket"))
+    with open(sock_path, "r", encoding="utf-8") as fh:
+        content = fh.read()
+    assert "ListenStream=127.0.0.1:8700" in content, "ListenStream must be 127.0.0.1:8700 (loopback only)"
+    assert "\nListenStream=8700\n" not in content, "bare 8700 (0.0.0.0) prohibited"
+    print("[PASS] mios-agent-pipe.socket binds TCP to loopback only (task_3562)")
+
+def test_prompt_injection_ssot_defaults():
+    import os
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    here = os.path.dirname(os.path.abspath(__file__))
+    toml_path = os.path.normpath(os.path.join(here, "..", "..", "..", "share", "mios", "mios.toml"))
+    with open(toml_path, "rb") as fh:
+        data = tomllib.load(fh)
+    sec = data.get("security", {})
+    assert sec.get("rule_of_two_mode") == "audit", f"expected audit, got {sec.get('rule_of_two_mode')}"
+    assert sec.get("quarantine_mode") == "audit", f"expected audit, got {sec.get('quarantine_mode')}"
+    assert sec.get("principal_bind_mode") == "audit", f"expected audit, got {sec.get('principal_bind_mode')}"
+    assert sec.get("provenance_taint") is True, f"expected true, got {sec.get('provenance_taint')}"
+    print("[PASS] prompt-injection defenses ship in audit mode with provenance_taint = true (task_3563 / Q17)")
+
 def _run_all_folded_dispatch_suites():
+    test_host_origin_middleware()
+    test_socket_unit_loopback_only()
+    test_prompt_injection_ssot_defaults()
     rc = _run_extra_dispatch_cmd()
     if rc not in (None, 0):
         import sys
@@ -768,3 +852,4 @@ def _run_all_folded_dispatch_suites():
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
 _run_all_folded_dispatch_suites()
+
