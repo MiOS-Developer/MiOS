@@ -12889,7 +12889,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3323
+max_tracked_files = 3277
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12965,7 +12965,7 @@ target_files = 15
 globs = ["automation/*", "Justfile", "Containerfile*"]
 
 [legibility.file_budget.domains.etc]  # profile.d one file per shell; skel rendered by the dotfiles registry (ADR-0010)
-max_files = 119
+max_files = 73
 target_files = 25
 globs = ["etc/*"]
 
