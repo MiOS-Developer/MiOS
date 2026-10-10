@@ -80,7 +80,7 @@ ARG MIOS_BAKE_BOUND_IMAGES=1
 # check runs here. The renderers read tracked inputs this copy omits (tests, CI):
 # restore omitted index entries after provisioning; retain copied edits and exclude caches.
 # [packages.self-build] is installed first: every profile carries it, and
-# 55-native-build.sh --toolchain builds with it.
+# 55-native-build.sh in toolchain mode builds with it.
 # The SSOT Rust toolchain (channel, components, musl target, rust-lld) follows it
 # into [build.toolchain].rustup_home, so every image can rebuild its own catalog.
 RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
