@@ -816,18 +816,20 @@ fn handle_lease(
                     probe["reason"].as_str().unwrap_or("")
                 ));
             }
-            let prev = lease["holder_identity"].as_str().unwrap_or("").to_string();
+            // A fresh lease has no previous holder.
+            let prev: Option<String> = lease["holder_identity"].as_str().map(str::to_owned);
             let transitions = lease["lease_transitions"].as_u64().unwrap_or(0) + 1;
             // The previous holder becomes the first successor.
-            let successors: Vec<Value> = std::iter::once(prev.as_str())
-                .filter(|p| !p.is_empty())
+            let successors: Vec<Value> = prev
+                .iter()
+                .map(String::as_str)
                 .chain(
                     lease["successors"]
                         .as_array()
                         .into_iter()
                         .flatten()
                         .filter_map(Value::as_str)
-                        .filter(|x| *x != prev && *x != caller),
+                        .filter(|x| Some(*x) != prev.as_deref() && *x != caller),
                 )
                 .map(|x| json!(x))
                 .collect();
@@ -3547,6 +3549,7 @@ mod succession {
         )
         .unwrap();
         assert_eq!(first["lease"]["successors"], json!(["codex"]));
+        assert_eq!(first["from"], Value::Null);
         assert_eq!(holder_of(&dir), "antigravity");
         let alive = call_with(
             &dir,
