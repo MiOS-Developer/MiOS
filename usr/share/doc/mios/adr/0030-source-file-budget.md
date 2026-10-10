@@ -93,6 +93,16 @@ mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (
    - **Lineage: MiOS → MiOS AI.** The `legacy` history in `.archive/` is a corpus source for MiOS AI. When mios-micro packages it, it does so with the `mios-ai` descriptor family and an OpenAI chat fine-tuning JSONL `dataset` layer: path and last commit in the user turn, content in the assistant turn. The index rows are OpenAI-shaped `{"object": ...}` objects, per the ruling that all schemas are OpenAI formats.
    - **The fold-map bundles follow the same rule.** The vendored dependencies, field assets and theme assets in the fold map are kept as root-tree content (fewer, larger files, or git-native stores like `.archive`), not as tarballs. Their OCI forms are produced when the image or artifact is published.
 
+### Operating the legacy archive
+
+`[legibility.archive]` in `mios.toml` holds every value: the path, the branch, the object format, the `since` commit, the author and the `exclude` globs.
+
+- **Dropping files.** In the commit that drops them, after `git rm`, run `mios-gen archive`. It reads the index, so the drop and the archive land together. Stage `.archive/` by explicit path: the old pack's removal and the new pack. A store that is already current is left alone.
+- **What a rebuild writes.** One commit, rebuilt from history each time rather than appended. It has a fixed author and a date from `SOURCE_DATE_EPOCH` or the `since` commit, so its id is reproducible, and its message names the newest first-parent commit that held each path. The pack is written without a bitmap or `.rev`, so the store is five files.
+- **Checking.** `mios-gen archive --check` is drift check `legacy-archive`. It needs full history (`fetch-depth: 0`); both publishers' drift-gate checkouts have it. It is skipped inside the image bake, because gates are out of the bake.
+- **Restoring a file** is an overlay onto root: `git --git-dir=/.archive --work-tree=/ restore --source=legacy -- <path>`. It writes no index into the store. `checkout legacy -- <path>` works too, but it leaves `/.archive/index`, which the check rejects as a stray file, so delete it afterwards. Bytes are exact where `core.autocrlf` is unset, as on every MiOS host.
+- **A merge conflict in `.archive/*`:** take either side (`git checkout --ours -- .archive` or `--theirs`), run `mios-gen archive`, and stage the result. The store is derived from history, so neither side's bytes matter.
+
 ## Milestones
 
 Each milestone lowers `max_tracked_files` and the affected domains.
