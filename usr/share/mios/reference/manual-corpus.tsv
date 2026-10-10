@@ -1272,15 +1272,16 @@ automation/99-postcheck.sh	6	6	1	3	ee573bae3b99	STAY	local-scoped		0				0
 automation/99-postcheck.sh	10	11	2	22	52ee538b7fb9	STAY	local-scoped		0				0
 automation/99-postcheck.sh	212	212	1	2	bd3a3e388485	STAY	inline-scoped		0				0
 automation/99-postcheck.sh	214	214	1	4	a745dfc28176	STAY	inline-scoped		0				0
-automation/99-postcheck.sh	318	318	1	2	032136219875	DROP	banner		0				0
-automation/99-postcheck.sh	339	339	1	2	032136219875	DROP	banner		0				0
-automation/99-postcheck.sh	544	547	4	36	de750e59885f	STAY	midsize-why		0				0
-automation/99-postcheck.sh	566	566	1	5	43d20e42c8f2	STAY	inline-scoped		0				0
-automation/99-postcheck.sh	591	591	1	9	ae3d3c1e8a8e	STAY	local-scoped		0				0
-automation/99-postcheck.sh	601	601	1	8	dbe71493794d	STAY	inline-scoped		0				0
-automation/99-postcheck.sh	640	640	1	0	75a3dedb3323	DROP	banner		0				0
-automation/99-postcheck.sh	641	641	1	0	37f952327d54	DROP	banner		0				0
-automation/99-postcheck.sh	647	647	1	2	2785e2ac1246	STAY	inline-scoped		0				0
+automation/99-postcheck.sh	274	274	1	12	2e5d700cb1da	STAY	inline-scoped		0				0
+automation/99-postcheck.sh	321	321	1	2	032136219875	DROP	banner		0				0
+automation/99-postcheck.sh	342	342	1	2	032136219875	DROP	banner		0				0
+automation/99-postcheck.sh	547	550	4	36	de750e59885f	STAY	midsize-why		0				0
+automation/99-postcheck.sh	569	569	1	5	43d20e42c8f2	STAY	inline-scoped		0				0
+automation/99-postcheck.sh	594	594	1	9	ae3d3c1e8a8e	STAY	local-scoped		0				0
+automation/99-postcheck.sh	604	604	1	8	dbe71493794d	STAY	inline-scoped		0				0
+automation/99-postcheck.sh	643	643	1	0	75a3dedb3323	DROP	banner		0				0
+automation/99-postcheck.sh	644	644	1	0	37f952327d54	DROP	banner		0				0
+automation/99-postcheck.sh	650	650	1	2	2785e2ac1246	STAY	inline-scoped		0				0
 automation/ai-bootstrap.sh	1	3	3	32	ee577b697419	STAY	ai-header		0				0
 automation/bcvk-wrapper.sh	1	4	4	35	98083188bd51	STAY	ai-header		0				0
 automation/bootstrap.sh	1	3	3	24	b9191df7d112	STAY	ai-header		0				0
@@ -7071,7 +7072,7 @@ tests/test-netavark-firewall-isolation.py	10	10	1	10	7c5405a06ae3	STAY	local-sco
 tests/test-netavark-firewall-isolation.py	16	16	1	5	3168d553a272	STAY	local-scoped		0				0
 tests/test-netavark-firewall-isolation.py	19	19	1	3	42caddc1847b	STAY	local-scoped		0				0
 tests/test-netavark-firewall-isolation.py	23	23	1	12	ca5e07dd3ac5	STAY	local-scoped		0				0
-tests/test-nix-project.py	1	3	3	23	594db94b34ea	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tests.md	mios-src:b4da91fae8e1	23	0
+tests/test-nix-project.py	1	3	3	23	1c484bded81b	STAY	ai-header		0				0
 tests/test-nix-project.py	4	4	1	11	4a3ab645eafb	STAY	local-scoped		0				0
 tests/test-nix-project.py	33	33	1	10	93d1335717de	STAY	local-scoped		0				0
 tests/test-nix-project.py	42	42	1	3	7a0b4f94ba0b	STAY	local-scoped		0				0
@@ -7094,7 +7095,7 @@ tests/test-nix-project.py	189	189	1	4	a6f5e2d757ea	STAY	local-scoped		0				0
 tests/test-nix-project.py	194	194	1	7	5623adcc48b3	STAY	local-scoped		0				0
 tests/test-nix-project.py	199	199	1	9	4e18be429f18	STAY	local-scoped		0				0
 tests/test-nix-project.py	218	218	1	3	6b3e0d4f9b7d	STAY	local-scoped		0				0
-tests/test-nix-project.py	228	228	1	10	f608beb24427	STAY	local-scoped		0				0
+tests/test-nix-project.py	228	228	1	10	9db809f4393d	STAY	local-scoped		0				0
 tests/test-nix-project.py	241	241	1	8	f0e0ad1661bd	STAY	local-scoped		0				0
 tests/test-nix-project.py	254	254	1	12	57b261f89bd4	STAY	local-scoped		0				0
 tests/test-nix-project.py	264	264	1	11	cfc78123b6ab	STAY	local-scoped		0				0
@@ -8770,8 +8771,8 @@ tests/test-tpm2-seal.py	64	64	1	1	1d9a1ac27f4d	DROP	banner		0				0
 tests/test-uid-enforcement.py	1	3	3	17	c1cbe808e13d	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tests.md	mios-src:c1cbe808e13d	17	0
 tests/test-uid-enforcement.py	5	8	3	15	bb546d80dab3	STAY	midsize-why		0	usr/share/doc/mios/manual/tests.md	mios-src:c8017625fc8f	15	0
 tests/test-uid-enforcement.py	19	19	1	3	ca77ff62722c	STAY	local-scoped		0				0
-tests/test-uid-enforcement.py	76	76	1	7	28e83eb8d7e8	STAY	local-scoped		0				0
-tests/test-uid-enforcement.py	81	81	1	7	e6b2ba1de2c8	STAY	local-scoped		0				0
+tests/test-uid-enforcement.py	72	72	1	5	8aa35b86e460	STAY	local-scoped		0				0
+tests/test-uid-enforcement.py	76	76	1	6	423861c33f1b	STAY	local-scoped		0				0
 tests/test-uki-promote.py	1	3	3	20	6d839761e0c8	STAY	ai-header		0				0
 tests/test-uki-promote.py	19	19	1	5	e4e742b504b5	STAY	local-scoped		0				0
 tests/test-uki-promote.py	64	64	1	4	0df71d5f8e85	STAY	local-scoped		0				0
@@ -16973,14 +16974,15 @@ usr/lib/mios/userenv.sh	28	28	1	11	770a15ab1b1f	STAY	local-scoped		0				0
 usr/lib/mios/userenv.sh	50	50	1	4	fa00558fccc4	STAY	local-scoped		0				0
 usr/lib/mios/userenv.sh	58	58	1	5	978f6a2b1664	STAY	local-scoped		0				0
 usr/lib/mios/userenv.sh	121	121	1	6	e8febde2fd74	STAY	inline-scoped		0				0
-usr/lib/modprobe.d/blacklist-nouveau.conf	1	1	1	21	06d1cfbe706d	STAY	ai-header		0				0
-usr/lib/modprobe.d/blacklist-vmw_vsock.conf	1	1	1	30	049acbff2efd	STAY	ai-header		0				0
-usr/lib/modprobe.d/kvmfr.conf	1	1	1	35	7680fc9dbc2b	STAY	ai-header		0				0
-usr/lib/modprobe.d/mios-nvidia-blacklist.conf	1	1	1	29	310ca6eed868	STAY	ai-header		0				0
-usr/lib/modprobe.d/nvidia-open.conf	1	1	1	28	09636d5f48f9	STAY	ai-header		0				0
-usr/lib/modprobe.d/nvidia-open.conf	3	3	1	10	54605cd070a6	STAY	local-scoped		0				0
-usr/lib/modprobe.d/nvidia-open.conf	5	5	1	8	a2bd0ab16f97	STAY	local-scoped		0				0
-usr/lib/modprobe.d/nvidia.conf	1	1	1	24	dea39cf90aa7	STAY	ai-header		0				0
+usr/lib/modprobe.d/50-mios.conf	1	3	3	24	38c599d34ffb	STAY	ai-header		0				0
+usr/lib/modprobe.d/50-mios.conf	6	6	1	2	504fd666da1f	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	10	10	1	2	d50aef46d185	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	13	13	1	2	9873e46ad7f2	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	16	16	1	2	13bb35fd0340	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	22	22	1	2	75cee72b811f	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	24	24	1	10	54605cd070a6	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	26	26	1	8	a2bd0ab16f97	STAY	local-scoped		0				0
+usr/lib/modprobe.d/50-mios.conf	29	29	1	2	58bf09017da0	STAY	local-scoped		0				0
 usr/lib/modules-load.d/mios-vfio.conf	1	1	1	29	0e37a55c1435	STAY	ai-header		0				0
 usr/lib/modules-load.d/mios.conf	1	1	1	26	c6adf9b2eb7c	STAY	ai-header		0				0
 usr/lib/multipath.conf	1	1	1	24	2d2969ca14f7	STAY	ai-header		0				0
@@ -16992,22 +16994,23 @@ usr/lib/repart.d/50-root.conf	4	4	1	7	f6fdca4a4057	STAY	local-scoped		0				0
 usr/lib/ssh/sshd_config.d/10-mios.conf	1	2	2	22	da1999eaf821	STAY	ai-header		0				0
 usr/lib/ssh/sshd_config.d/50-mios-hardened.conf	1	1	1	29	58f7b40aaef9	STAY	ai-header		0				0
 usr/lib/sssd/conf.d/10-mios.conf	1	2	2	27	7bd232e80446	STAY	ai-header		0				0
-usr/lib/sysctl.d/20-memory.conf	1	2	2	14	9c4568803e8c	STAY	ai-header		0				0
-usr/lib/sysctl.d/90-mios-le9uo.conf	1	2	2	31	e3e2c438e076	STAY	ai-header		0				0
-usr/lib/sysctl.d/90-mios-le9uo.conf	7	10	4	38	d1c11a72ac91	STAY	midsize-why		0				0
-usr/lib/sysctl.d/90-mios-overlayfs.conf	1	5	5	42	8d5582898694	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/sysctl.d.md	mios-src:8d5582898694	42	0
-usr/lib/sysctl.d/90-mios-overlayfs.conf	7	8	2	11	0e31d7f0184f	STAY	local-scoped		0				0
-usr/lib/sysctl.d/90-mios-overlayfs.conf	13	13	1	6	128d361b5d1f	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	1	2	2	27	51254d8c8920	STAY	ai-header		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	6	6	1	5	51138ff8da1f	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	9	11	3	28	a4b67f11dafc	STAY	midsize-why		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	14	14	1	2	8b2e42a7109a	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	26	26	1	3	ce65308c6768	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	33	34	2	21	121fe6611fb9	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	36	39	4	37	17dea6117d43	STAY	midsize-why		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	43	43	1	9	cf9f819a284a	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-hardening.conf	46	47	2	17	885813a38350	STAY	local-scoped		0				0
-usr/lib/sysctl.d/99-mios-vmhost.conf	1	1	1	25	ac0fbc999ebf	STAY	ai-header		0				0
+usr/lib/sysctl.d/99-mios.conf	1	3	3	26	c8370d213258	STAY	ai-header		0				0
+usr/lib/sysctl.d/99-mios.conf	6	6	1	2	10482336a7b8	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	10	11	2	9	83c76e181db4	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	16	19	4	38	d1c11a72ac91	STAY	midsize-why		0				0
+usr/lib/sysctl.d/99-mios.conf	26	30	5	32	1d506cd73dcc	STAY	midsize-why		0				0
+usr/lib/sysctl.d/99-mios.conf	32	33	2	11	0e31d7f0184f	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	38	38	1	6	128d361b5d1f	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	43	44	2	7	fb8c9b273bf8	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	48	48	1	5	51138ff8da1f	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	51	53	3	28	a4b67f11dafc	STAY	midsize-why		0				0
+usr/lib/sysctl.d/99-mios.conf	56	56	1	2	8b2e42a7109a	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	68	68	1	3	ce65308c6768	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	75	76	2	21	121fe6611fb9	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	78	81	4	37	17dea6117d43	STAY	midsize-why		0				0
+usr/lib/sysctl.d/99-mios.conf	85	85	1	9	cf9f819a284a	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	88	89	2	17	885813a38350	STAY	local-scoped		0				0
+usr/lib/sysctl.d/99-mios.conf	92	92	1	2	57312db58de7	STAY	local-scoped		0				0
 usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf	1	1	1	25	ce1855baec2a	STAY	ai-header		0				0
 usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf	3	3	1	10	5cd23e5e9362	STAY	local-scoped		0				0
 usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf	5	5	1	11	f6eadff550cd	STAY	local-scoped		0				0
@@ -17509,176 +17512,178 @@ usr/lib/systemd/zram-generator.conf.d/10-mios.conf	3	5	3	25	ad009664173f	STAY	mi
 usr/lib/systemd/zram-generator.conf.d/mios.conf	1	1	1	27	a0c5ca28b0c2	STAY	ai-header		0				0
 usr/lib/sysupdate.d/50-mios.conf	1	1	1	28	85202e2bae92	STAY	ai-header		0				0
 usr/lib/sysupdate.d/50-mios.conf	13	13	1	6	8d1f79b8dd95	STAY	local-scoped		0				0
-usr/lib/sysusers.d/10-mios.conf	1	2	2	31	9e4303bfc2d6	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/sysusers.d.md	mios-src:9e4303bfc2d6	31	0
-usr/lib/sysusers.d/10-mios.conf	7	9	3	29	38e0e6c251c2	STAY	midsize-why		0				0
-usr/lib/sysusers.d/10-mios.conf	22	26	5	41	1d9d02229959	STAY	midsize-why		0				0
-usr/lib/sysusers.d/10-mios.conf	28	33	6	55	1bc5b9b20d19	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:1bc5b9b20d19	55	0
-usr/lib/sysusers.d/20-podman-machine.conf	1	2	2	31	1cdbfd89376c	STAY	ai-header		0				0
-usr/lib/sysusers.d/30-mios-tmpfiles-prereq.conf	1	6	6	50	b00db0d52371	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/sysusers.d.md	mios-src:b00db0d52371	50	0
-usr/lib/sysusers.d/50-mios-cockpit.conf	1	3	3	31	3b0ca4e5049d	STAY	ai-header		0				0
-usr/lib/sysusers.d/50-mios-cockpit.conf	7	8	2	14	7fc88835133a	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-cockpit.conf	12	13	2	7	d96016708ef7	DROP	commented-out-code		0				0
-usr/lib/sysusers.d/50-mios-cockpit.conf	20	20	1	3	a25cb9a2f0e9	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-cockpit.conf	24	30	7	54	b5539dcf2e12	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:b5539dcf2e12	54	0
-usr/lib/sysusers.d/50-mios-cockpit.conf	34	47	14	83	e6a8d9319d52	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:e6a8d9319d52	83	0
-usr/lib/sysusers.d/50-mios-cockpit.conf	52	58	7	59	8a8bbac22260	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:8a8bbac22260	59	0
-usr/lib/sysusers.d/50-mios-gpu.conf	1	2	2	32	8834432b71bd	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/sysusers.d.md	mios-src:8834432b71bd	32	0
-usr/lib/sysusers.d/50-mios-services.conf	1	2	2	30	474450753d12	STAY	ai-header		0				0
-usr/lib/sysusers.d/50-mios-services.conf	5	16	12	110	27259b586c6b	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:27259b586c6b	110	0
-usr/lib/sysusers.d/50-mios-services.conf	32	36	5	37	495e4ffddb81	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:495e4ffddb81	37	0
-usr/lib/sysusers.d/50-mios-services.conf	42	42	1	13	a39cec3801e1	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-services.conf	44	53	10	74	95700909e9e0	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:95700909e9e0	74	0
-usr/lib/sysusers.d/50-mios-services.conf	55	61	7	71	b51935d3f2a4	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:b51935d3f2a4	71	0
-usr/lib/sysusers.d/50-mios-services.conf	65	70	6	47	5afdcc4027d9	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:5afdcc4027d9	47	0
-usr/lib/sysusers.d/50-mios-services.conf	73	85	13	105	dabb7198c478	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:dabb7198c478	105	0
-usr/lib/sysusers.d/50-mios-services.conf	88	92	5	53	88f870236154	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	95	99	5	42	9c3d3d525d91	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	102	105	4	34	22a57a765b11	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	108	112	5	48	cc8d735cda56	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	115	115	1	5	046bd9e623cf	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-services.conf	118	121	4	38	2df6e80b6e27	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	126	127	2	18	76f0c4d598d1	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-services.conf	130	132	3	20	69b205569aaa	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	135	140	6	47	5642bd93c268	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:5642bd93c268	47	0
-usr/lib/sysusers.d/50-mios-services.conf	143	146	4	21	4f66662e51d4	STAY	midsize-why		0				0
-usr/lib/sysusers.d/50-mios-services.conf	158	158	1	6	19481e342200	STAY	local-scoped		0				0
-usr/lib/sysusers.d/50-mios-users.conf	1	2	2	15	a170fe21c8a3	STAY	ai-header		0				0
-usr/lib/sysusers.d/50-mios.conf	1	3	3	34	6c8fe777999e	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/sysusers.d.md	mios-src:6c8fe777999e	34	0
-usr/lib/tmpfiles.d/50-nix.conf	1	3	3	27	6d28bc64ecf3	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/50-nix.conf	5	5	1	8	be5456db151b	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/50-nix.conf	8	8	1	7	da32387a2055	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-adguard.conf	1	2	2	29	d90f6d498341	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-agent-pipe.conf	1	2	2	29	93e8a8532ba5	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-agents.conf	1	2	2	33	eb9fe332a267	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:eb9fe332a267	33	0
-usr/lib/tmpfiles.d/mios-backup.conf	1	1	1	23	b3e9e07651a5	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-backups.conf	1	2	2	25	8eec545d9af6	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-ceph.conf	1	2	2	26	634e1243b62b	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:634e1243b62b	26	0
-usr/lib/tmpfiles.d/mios-ceph.conf	7	8	2	16	52613a86d040	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-cephfs.conf	1	2	2	16	7ba178529052	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-codemode.conf	1	2	2	29	f32d62def7e5	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-cpu.conf	1	2	2	31	fe264ee85249	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-crawl4ai.conf	1	2	2	32	edca36662a68	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:edca36662a68	32	0
-usr/lib/tmpfiles.d/mios-cron-director.conf	1	2	2	31	3217f5899e41	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:3217f5899e41	31	0
-usr/lib/tmpfiles.d/mios-crowdsec.conf	1	2	2	25	f66e91154e40	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-fastfetch.conf	1	2	2	22	da04ef7ac400	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-fontconfig.conf	1	2	2	27	cae2d30779a7	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-forge-runner.conf	1	5	5	48	1160e039286c	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:1160e039286c	48	0
-usr/lib/tmpfiles.d/mios-forge-runner.conf	8	13	6	50	a3a681b03e44	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:a3a681b03e44	50	0
-usr/lib/tmpfiles.d/mios-forge.conf	1	5	5	59	6faf025a2675	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:6faf025a2675	59	0
-usr/lib/tmpfiles.d/mios-forge.conf	8	9	2	20	a2a9a2167ec5	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-forge.conf	13	17	5	42	49f51587ad0c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:49f51587ad0c	42	0
-usr/lib/tmpfiles.d/mios-freeipa.conf	1	3	3	26	7e7141d02190	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:7e7141d02190	26	0
-usr/lib/tmpfiles.d/mios-freeipa.conf	9	9	1	1	414a350acbad	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-freeipa.conf	14	14	1	3	16b21619b6ad	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-freeipa.conf	22	22	1	4	69a33a7cda2f	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-freeipa.conf	25	25	1	8	749a0fd1faaa	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-freeipa.conf	30	33	4	31	337d99f60360	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-gateway-agent.conf	1	4	4	19	19c01bff20c9	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-gateway-agent.conf	10	10	1	3	7db5e543ee16	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-gpu.conf	1	2	2	32	72ed803dde1a	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:72ed803dde1a	32	0
-usr/lib/tmpfiles.d/mios-gpu.conf	8	10	3	23	8e8c96dd902a	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-grd.conf	1	2	2	28	0432b413225e	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:0432b413225e	28	0
-usr/lib/tmpfiles.d/mios-headscale.conf	1	2	2	28	8b286369e09f	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-hermes-browser.conf	1	2	2	32	fcc7fe18070d	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:fcc7fe18070d	32	0
-usr/lib/tmpfiles.d/mios-hermes-worker.conf	1	2	2	34	133450529685	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:133450529685	34	0
-usr/lib/tmpfiles.d/mios-hermes-worker.conf	8	9	2	16	095ce8c9d4e3	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-hermes-worker.conf	11	15	5	41	5b70a604c4ae	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:5b70a604c4ae	41	0
-usr/lib/tmpfiles.d/mios-infra.conf	1	3	3	24	a3e3bcd374be	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:a3e3bcd374be	24	0
-usr/lib/tmpfiles.d/mios-infra.conf	8	8	1	2	e001c6c7f75c	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	15	15	1	5	946f6feb6886	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	18	21	4	29	0a4d6f159023	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	24	28	5	28	03454dcb03c9	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	31	31	1	3	597a0223b7a8	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	35	35	1	12	5915b8b7b353	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	38	40	3	29	b8a2baba9704	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:b8a2baba9704	29	0
-usr/lib/tmpfiles.d/mios-infra.conf	46	50	5	48	8fdd1edae862	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:8fdd1edae862	48	0
-usr/lib/tmpfiles.d/mios-infra.conf	55	57	3	23	af06eaac88be	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:af06eaac88be	23	0
-usr/lib/tmpfiles.d/mios-infra.conf	60	60	1	2	b249e110a348	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	66	66	1	2	14e3c49c92d3	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	69	71	3	23	42e9c0c65bbc	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	74	74	1	2	921caef9caa2	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	79	79	1	2	01222a899d88	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	88	88	1	2	4cf30fcc9572	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	92	92	1	2	f0b1ad468a62	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-infra.conf	97	97	1	2	9242d1512f90	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-iommu.conf	1	1	1	25	9d6ba125105f	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-ipa.conf	1	2	2	26	8a1725f472ec	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-k3s.conf	1	2	2	31	fdfdad596ead	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:fdfdad596ead	31	0
-usr/lib/tmpfiles.d/mios-k3s.conf	7	8	2	17	0d47e5c840bc	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-kdump.conf	1	3	3	14	fc2c62fc2385	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-launcher.conf	1	2	2	31	aaad258832c3	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:aaad258832c3	31	0
-usr/lib/tmpfiles.d/mios-llamacpp.conf	1	2	2	24	b95563621aa5	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-llamacpp.conf	5	6	2	20	e5601088ece0	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-llamacpp.conf	8	12	5	64	16d6fa749c5a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:16d6fa749c5a	64	0
-usr/lib/tmpfiles.d/mios-nfs.conf	1	2	2	27	ae57a202d267	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-open-webui.conf	1	2	2	27	dee005d14f6b	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-opencode-gateway.conf	1	2	2	27	8f461376b871	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-opencode-gateway.conf	5	9	5	44	bba9f2c36d1c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:bba9f2c36d1c	44	0
-usr/lib/tmpfiles.d/mios-opencode-gateway.conf	11	17	7	68	2fd336135b13	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:2fd336135b13	68	0
-usr/lib/tmpfiles.d/mios-passports.conf	1	6	6	65	9481f2af15af	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:9481f2af15af	65	0
-usr/lib/tmpfiles.d/mios-pgvector.conf	1	2	2	25	84be8ee48724	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-pgvector.conf	5	6	2	22	88e3e584025d	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-podman-sock.conf	1	2	2	28	529bf14ecafb	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-pxe.conf	1	2	2	27	b7992cb17715	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-scratch.conf	1	2	2	30	f14131991a33	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-scratch.conf	4	4	1	8	1c38881ecdd2	DROP	banner		0				0
-usr/lib/tmpfiles.d/mios-searxng.conf	1	2	2	33	acd5cb34b4f6	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:acd5cb34b4f6	33	0
-usr/lib/tmpfiles.d/mios-searxng.conf	5	8	4	36	15ad1de4fe14	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:15ad1de4fe14	36	0
-usr/lib/tmpfiles.d/mios-shell-sessions.conf	1	2	2	29	bde5651db31d	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	1	4	4	38	fe115f53a58d	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:fe115f53a58d	38	0
-usr/lib/tmpfiles.d/mios-shim-links.conf	6	6	1	2	eb1d3ea25717	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	38	39	2	21	9428556dff2e	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	50	51	2	17	20dab665583b	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	55	58	4	31	7282d4c01933	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	61	62	2	17	6df151e5f365	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	66	66	1	2	bd9c7738abab	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	75	79	5	55	962cb7fda343	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	82	85	4	40	1620fa9734f6	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	91	91	1	3	7ceeef055780	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	111	111	1	10	d49e0367bdd2	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	115	115	1	2	37efb77c4257	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	121	121	1	2	5cdada895c48	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	129	132	4	31	1abfca3c7541	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	138	138	1	2	5c0fc62ef6f2	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	179	182	4	40	e13807b2c7b4	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	185	187	3	29	0a3ac8edcb21	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	190	193	4	34	6f1ae7d3600f	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	196	198	3	25	2c37afd873b5	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	201	203	3	29	0a97426c5446	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	206	210	5	52	3dab2a0cf70f	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	213	215	3	32	a4a2f063d340	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	218	220	3	35	6bbde363a2f6	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	223	225	3	28	3abf694e63b4	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-shim-links.conf	236	237	2	17	2b206ab8f992	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios-skills.conf	1	8	8	89	db9b5d58eb7e	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:db9b5d58eb7e	89	0
-usr/lib/tmpfiles.d/mios-theme.conf	1	2	2	33	ab714b960648	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:ab714b960648	33	0
-usr/lib/tmpfiles.d/mios-thp.conf	1	2	2	16	48b829b23850	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-tmp-perms.conf	1	4	4	41	b55cb2dda17b	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-user.conf	1	3	3	38	473a98a584ae	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:473a98a584ae	38	0
-usr/lib/tmpfiles.d/mios-user.conf	13	26	14	131	638f15bbbd1b	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:638f15bbbd1b	131	0
-usr/lib/tmpfiles.d/mios-user.conf	30	35	6	46	fe0efea57622	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:fe0efea57622	46	0
-usr/lib/tmpfiles.d/mios-user.conf	37	41	5	43	de1992f28d11	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios-virtio.conf	1	2	2	27	0c80a5582f41	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-vllm.conf	1	2	2	15	7bd767435016	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-wsl2-hacks.conf	1	2	2	24	431b32917b35	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-wslg-wants.conf	1	2	2	21	4b8dd0ab88a6	STAY	ai-header		0				0
-usr/lib/tmpfiles.d/mios-wslg.conf	1	3	3	36	8d3c70b6e9d7	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:8d3c70b6e9d7	36	0
-usr/lib/tmpfiles.d/mios.conf	1	2	2	33	b9db78c413d1	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/tmpfiles.d.md	mios-src:b9db78c413d1	33	0
-usr/lib/tmpfiles.d/mios.conf	4	5	2	16	371ae751be76	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios.conf	7	13	7	65	5ea141d9ad1c	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:5ea141d9ad1c	65	0
-usr/lib/tmpfiles.d/mios.conf	15	19	5	45	a91500914799	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:a91500914799	45	0
-usr/lib/tmpfiles.d/mios.conf	21	25	5	45	2865d8a91653	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios.conf	28	35	8	90	91f148a8d502	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:91f148a8d502	90	0
-usr/lib/tmpfiles.d/mios.conf	37	41	5	48	e22c39fdb40b	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:e22c39fdb40b	48	0
-usr/lib/tmpfiles.d/mios.conf	44	49	6	59	837569963cb6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:837569963cb6	59	0
-usr/lib/tmpfiles.d/mios.conf	51	58	8	71	08c8099618c6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:08c8099618c6	71	0
-usr/lib/tmpfiles.d/mios.conf	68	76	9	88	215fbe133435	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:215fbe133435	88	0
-usr/lib/tmpfiles.d/mios.conf	78	83	6	63	de2119c75df5	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:de2119c75df5	63	0
-usr/lib/tmpfiles.d/mios.conf	85	94	10	109	77da582bd347	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:3cea27d8883f	109	0
-usr/lib/tmpfiles.d/mios.conf	99	99	1	14	b64545106bef	STAY	local-scoped		0				0
-usr/lib/tmpfiles.d/mios.conf	104	106	3	26	579f29ef21fe	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios.conf	111	115	5	42	7c95f35ad802	STAY	midsize-why		0				0
-usr/lib/tmpfiles.d/mios.conf	117	117	1	5	3f75cbad7932	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	1	3	3	25	984b242d1f84	STAY	ai-header		0				0
+usr/lib/sysusers.d/50-mios.conf	6	6	1	2	87dbd9bf8e65	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	11	13	3	29	38e0e6c251c2	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	26	30	5	41	1d9d02229959	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	32	37	6	55	1bc5b9b20d19	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:1bc5b9b20d19	55	0
+usr/lib/sysusers.d/50-mios.conf	41	41	1	2	eeb9fabd7722	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	53	57	5	24	e199bc5a117f	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	60	61	2	6	3daf81e08011	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	65	66	2	14	7fc88835133a	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	70	71	2	7	d96016708ef7	DROP	commented-out-code		0				0
+usr/lib/sysusers.d/50-mios.conf	78	78	1	3	a25cb9a2f0e9	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	82	88	7	54	b5539dcf2e12	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:b5539dcf2e12	54	0
+usr/lib/sysusers.d/50-mios.conf	92	105	14	83	e6a8d9319d52	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:e6a8d9319d52	83	0
+usr/lib/sysusers.d/50-mios.conf	110	116	7	59	8a8bbac22260	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:8a8bbac22260	59	0
+usr/lib/sysusers.d/50-mios.conf	123	123	1	2	169a59a3c27d	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	127	127	1	2	5035b25d6ab5	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	130	141	12	110	27259b586c6b	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:27259b586c6b	110	0
+usr/lib/sysusers.d/50-mios.conf	157	161	5	37	495e4ffddb81	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:495e4ffddb81	37	0
+usr/lib/sysusers.d/50-mios.conf	167	167	1	13	a39cec3801e1	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	169	178	10	74	95700909e9e0	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:95700909e9e0	74	0
+usr/lib/sysusers.d/50-mios.conf	180	186	7	71	b51935d3f2a4	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:b51935d3f2a4	71	0
+usr/lib/sysusers.d/50-mios.conf	190	195	6	47	5afdcc4027d9	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:5afdcc4027d9	47	0
+usr/lib/sysusers.d/50-mios.conf	198	210	13	105	dabb7198c478	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:dabb7198c478	105	0
+usr/lib/sysusers.d/50-mios.conf	213	217	5	53	88f870236154	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	220	224	5	42	9c3d3d525d91	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	227	230	4	34	22a57a765b11	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	233	237	5	48	cc8d735cda56	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	240	240	1	5	046bd9e623cf	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	243	246	4	38	2df6e80b6e27	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	251	252	2	18	76f0c4d598d1	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	255	257	3	20	69b205569aaa	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	260	265	6	47	5642bd93c268	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/sysusers.d.md	mios-src:5642bd93c268	47	0
+usr/lib/sysusers.d/50-mios.conf	268	271	4	21	4f66662e51d4	STAY	midsize-why		0				0
+usr/lib/sysusers.d/50-mios.conf	283	283	1	6	19481e342200	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	293	293	1	2	892c69e9d90c	STAY	local-scoped		0				0
+usr/lib/sysusers.d/50-mios.conf	308	309	2	10	ecad0aa0d81f	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	1	3	3	26	237cca13b40a	STAY	ai-header		0				0
+usr/lib/tmpfiles.d/50-mios.conf	6	7	2	15	ef7ba6b23064	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	9	9	1	8	be5456db151b	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	12	12	1	7	da32387a2055	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	26	26	1	2	23fddf891522	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	30	30	1	2	dbdaee4b9b77	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	33	33	1	2	a02c21fa0486	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	36	36	1	2	416c234103b7	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	39	39	1	2	01335f80af5c	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	44	45	2	16	52613a86d040	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	48	49	2	5	e9a973bdc69e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	52	52	1	2	3c77598c4f93	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	55	56	2	8	64505f7e83e7	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	60	60	1	2	d944373c654e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	64	64	1	2	4d7f17485f4d	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	68	68	1	2	f4f2d50a7e7d	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	74	74	1	2	7383680df841	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	78	78	1	2	c1cf8d2a197e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	81	84	4	24	713bde56b2c6	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	87	92	6	50	a3a681b03e44	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:a3a681b03e44	50	0
+usr/lib/tmpfiles.d/50-mios.conf	95	98	4	31	7b202089e1b7	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	101	102	2	20	a2a9a2167ec5	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	106	110	5	42	49f51587ad0c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:49f51587ad0c	42	0
+usr/lib/tmpfiles.d/50-mios.conf	113	114	2	3	6f152b97482b	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	120	120	1	1	414a350acbad	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	125	125	1	3	16b21619b6ad	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	133	133	1	4	69a33a7cda2f	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	136	136	1	8	749a0fd1faaa	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	141	144	4	31	337d99f60360	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	146	149	4	11	6b985b719cf6	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	155	155	1	3	7db5e543ee16	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	158	158	1	2	785478b3d306	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	164	166	3	23	8e8c96dd902a	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	170	170	1	2	c2cf4fabf91a	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	173	173	1	2	eb0a26f59b2d	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	178	178	1	2	8fc7d58bd3b1	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	182	182	1	2	f1723e377286	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	188	189	2	16	095ce8c9d4e3	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	191	195	5	41	5b70a604c4ae	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:5b70a604c4ae	41	0
+usr/lib/tmpfiles.d/50-mios.conf	198	199	2	3	032b8903eef8	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	204	204	1	2	e001c6c7f75c	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	211	211	1	5	946f6feb6886	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	214	217	4	29	0a4d6f159023	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	220	224	5	28	03454dcb03c9	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	227	227	1	3	597a0223b7a8	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	231	231	1	12	5915b8b7b353	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	234	236	3	29	b8a2baba9704	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:b8a2baba9704	29	0
+usr/lib/tmpfiles.d/50-mios.conf	242	246	5	48	8fdd1edae862	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:8fdd1edae862	48	0
+usr/lib/tmpfiles.d/50-mios.conf	251	253	3	23	af06eaac88be	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:af06eaac88be	23	0
+usr/lib/tmpfiles.d/50-mios.conf	256	256	1	2	b249e110a348	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	262	262	1	2	14e3c49c92d3	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	265	267	3	23	42e9c0c65bbc	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	270	270	1	2	921caef9caa2	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	275	275	1	2	01222a899d88	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	284	284	1	2	4cf30fcc9572	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	288	288	1	2	f0b1ad468a62	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	293	293	1	2	9242d1512f90	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	297	297	1	2	6903a5b158f0	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	300	300	1	2	58145b6963b5	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	302	302	1	2	696fac0e0a7b	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	307	308	2	17	0d47e5c840bc	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	310	311	2	4	abbb5e17e560	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	314	314	1	2	6e3dcf568376	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	317	317	1	2	97322fa4fe5c	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	320	321	2	20	e5601088ece0	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	323	327	5	64	16d6fa749c5a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:16d6fa749c5a	64	0
+usr/lib/tmpfiles.d/50-mios.conf	330	330	1	2	4d072b5e6cb3	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	336	336	1	2	ee0a71a7edf9	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	339	339	1	2	2a9e5bdfd742	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	342	346	5	44	bba9f2c36d1c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:bba9f2c36d1c	44	0
+usr/lib/tmpfiles.d/50-mios.conf	348	354	7	68	2fd336135b13	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:2fd336135b13	68	0
+usr/lib/tmpfiles.d/50-mios.conf	356	360	5	38	1c331c2bd21c	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	363	363	1	2	4a0342403ca0	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	366	367	2	22	88e3e584025d	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	370	370	1	2	16faa5a334df	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	373	373	1	2	f4563082b92e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	378	378	1	2	bc3acb847dd7	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	380	380	1	8	1c38881ecdd2	DROP	banner		0				0
+usr/lib/tmpfiles.d/50-mios.conf	385	385	1	2	5c037f3656b7	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	388	391	4	36	15ad1de4fe14	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:15ad1de4fe14	36	0
+usr/lib/tmpfiles.d/50-mios.conf	394	394	1	2	7a7965f87598	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	397	399	3	15	4a26df1f6a42	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	401	401	1	2	eb1d3ea25717	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	433	434	2	21	9428556dff2e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	445	446	2	17	20dab665583b	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	450	453	4	31	7282d4c01933	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	456	457	2	17	6df151e5f365	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	461	461	1	2	bd9c7738abab	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	470	474	5	55	962cb7fda343	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	477	480	4	40	1620fa9734f6	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	486	486	1	3	7ceeef055780	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	506	506	1	10	d49e0367bdd2	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	510	510	1	2	37efb77c4257	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	516	516	1	2	5cdada895c48	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	524	527	4	31	1abfca3c7541	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	533	533	1	2	5c0fc62ef6f2	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	574	577	4	40	e13807b2c7b4	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	580	582	3	29	0a3ac8edcb21	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	585	588	4	34	6f1ae7d3600f	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	591	593	3	25	2c37afd873b5	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	596	598	3	29	0a97426c5446	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	601	605	5	52	3dab2a0cf70f	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	608	610	3	32	a4a2f063d340	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	613	615	3	35	6bbde363a2f6	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	618	620	3	28	3abf694e63b4	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	631	632	2	17	2b206ab8f992	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	646	646	1	2	63e2887dc39f	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	648	653	6	55	b62d5b2e3de3	MIGRATE	narrative-history		0				0
+usr/lib/tmpfiles.d/50-mios.conf	656	656	1	2	707a9df31c8e	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	659	659	1	2	cc9204cc9b96	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	664	666	3	20	0bfbfae854af	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	670	671	2	10	ed903e165207	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	681	694	14	131	638f15bbbd1b	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:638f15bbbd1b	131	0
+usr/lib/tmpfiles.d/50-mios.conf	698	703	6	46	fe0efea57622	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:fe0efea57622	46	0
+usr/lib/tmpfiles.d/50-mios.conf	705	709	5	43	de1992f28d11	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	713	714	2	4	978a1c2800ea	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	717	718	2	3	8f652a6c32dc	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	727	727	1	2	925ea691de91	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	730	730	1	2	3c6c69e73abc	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	736	737	2	10	142ffbde0054	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	740	740	1	2	1606cd07bd20	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	742	743	2	16	371ae751be76	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	745	751	7	65	5ea141d9ad1c	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:5ea141d9ad1c	65	0
+usr/lib/tmpfiles.d/50-mios.conf	753	757	5	45	a91500914799	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:a91500914799	45	0
+usr/lib/tmpfiles.d/50-mios.conf	759	763	5	45	2865d8a91653	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	766	773	8	90	91f148a8d502	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:91f148a8d502	90	0
+usr/lib/tmpfiles.d/50-mios.conf	775	779	5	48	e22c39fdb40b	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:e22c39fdb40b	48	0
+usr/lib/tmpfiles.d/50-mios.conf	782	787	6	59	837569963cb6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:837569963cb6	59	0
+usr/lib/tmpfiles.d/50-mios.conf	789	796	8	71	08c8099618c6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:08c8099618c6	71	0
+usr/lib/tmpfiles.d/50-mios.conf	806	814	9	88	215fbe133435	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:215fbe133435	88	0
+usr/lib/tmpfiles.d/50-mios.conf	816	821	6	63	de2119c75df5	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:de2119c75df5	63	0
+usr/lib/tmpfiles.d/50-mios.conf	823	832	10	109	77da582bd347	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/tmpfiles.d.md	mios-src:3cea27d8883f	109	0
+usr/lib/tmpfiles.d/50-mios.conf	837	837	1	14	b64545106bef	STAY	local-scoped		0				0
+usr/lib/tmpfiles.d/50-mios.conf	842	844	3	26	579f29ef21fe	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	849	853	5	42	7c95f35ad802	STAY	midsize-why		0				0
+usr/lib/tmpfiles.d/50-mios.conf	855	855	1	5	3f75cbad7932	STAY	local-scoped		0				0
 usr/lib/usbguard/usbguard-daemon.conf	1	1	1	27	dd554d7fb2e5	STAY	ai-header		0				0
 usr/lib/wsl-distribution.conf	1	1	1	23	ba770b81fc5f	STAY	ai-header		0				0
 usr/lib/wsl.conf	1	2	2	29	8791245adc81	STAY	ai-header		0				0
@@ -18113,7 +18118,7 @@ usr/libexec/mios/cluster/raft_coordinator.py	1	2	2	16	607cc1d25c1c	STAY	ai-heade
 usr/libexec/mios/cluster/raft_coordinator.py	11	11	1	12	c80bafc5e634	STAY	local-scoped		0				0
 usr/libexec/mios/cluster/raft_coordinator.py	28	28	1	8	d68678103259	STAY	local-scoped		0				0
 usr/libexec/mios/cluster/raft_coordinator.py	58	58	1	9	e04452d85cab	STAY	local-scoped		0				0
-usr/libexec/mios/config/nix_project.py	1	3	3	19	9098f03934d1	STAY	ai-header		0				0
+usr/libexec/mios/config/nix_project.py	1	3	3	19	cbff2030f62f	STAY	ai-header		0				0
 usr/libexec/mios/config/nix_project.py	5	9	4	31	56b1550ff4ea	STAY	midsize-why		0	usr/share/doc/mios/manual/config.md	mios-src:1577a1135467	31	0
 usr/libexec/mios/config/nix_project.py	31	31	1	6	efa198aae66a	STAY	local-scoped		0				0
 usr/libexec/mios/config/nix_project.py	94	94	1	10	d1e5b45fa389	STAY	local-scoped		0				0
@@ -22336,7 +22341,7 @@ usr/libexec/mios/telemetry/log_archiver.py	78	78	1	4	8231c2aa26ac	STAY	local-sco
 usr/libexec/mios/telemetry/log_archiver.py	91	91	1	5	3c80f288b87d	STAY	local-scoped		0				0
 usr/libexec/mios/telemetry/log_archiver.py	104	104	1	5	b5589d42fe17	STAY	local-scoped		0				0
 usr/libexec/mios/telemetry/log_archiver.py	120	120	1	9	50c53150c80a	STAY	local-scoped		0				0
-usr/libexec/mios/test_mios_agents_firstboot.py	1	4	4	35	385847f395a9	STAY	ai-header		0				0
+usr/libexec/mios/test_mios_agents_firstboot.py	1	4	4	35	497babb37bf4	STAY	ai-header		0				0
 usr/libexec/mios/test_mios_agents_firstboot.py	5	17	12	116	8cb122940c72	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:8cb122940c72	116	0
 usr/libexec/mios/test_mios_agents_firstboot.py	33	33	1	13	a0b3f16f5aba	STAY	local-scoped		0				0
 usr/libexec/mios/test_mios_agents_firstboot.py	44	44	1	10	02f93bd33017	STAY	local-scoped		0				0
@@ -22487,7 +22492,7 @@ usr/libexec/mios/test_mios_speech_storage.py	282	283	2	17	02ddf97830da	STAY	loca
 usr/libexec/mios/test_mios_speech_storage.py	302	302	1	10	07ed783a7355	STAY	local-scoped		0				0
 usr/libexec/mios/test_mios_subprocess_safety.py	1	3	3	27	1125a9b0ae72	STAY	ai-header		0				0
 usr/libexec/mios/test_mios_subprocess_safety.py	4	4	1	9	aaab12f3f329	STAY	local-scoped		0				0
-usr/libexec/mios/test_mios_unit_hardening.py	1	3	3	33	fbccbc431d7d	STAY	ai-header		0				0
+usr/libexec/mios/test_mios_unit_hardening.py	1	3	3	32	8535cf88c149	STAY	ai-header		0				0
 usr/libexec/mios/test_mios_unit_hardening.py	4	24	20	163	54e523c0a61e	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/mios.md	mios-src:328a6be60a7a	163	0
 usr/libexec/mios/test_mios_unit_hardening.py	42	42	1	13	a3d4d057e785	STAY	local-scoped		0				0
 usr/libexec/mios/test_mios_unit_hardening.py	45	45	1	11	6d1bb013c78c	STAY	local-scoped		0				0
@@ -24999,7 +25004,7 @@ usr/share/mios/mios.toml	13650	13666	17	153	d9a9204b4e94	MIGRATE	narrative-histo
 usr/share/mios/mios.toml	13854	13854	1	8	1c131daa503e	STAY	local-scoped		0				0
 usr/share/mios/mios.toml	13877	13878	2	23	16556ed28206	STAY	local-scoped		0				0
 usr/share/mios/mios.toml	13885	13885	1	10	26c9c1c6c264	STAY	local-scoped		0				0
-usr/share/mios/nix/nix.conf	1	2	2	13	27ffd5dc0fa9	STAY	ai-header		0				0
+usr/share/mios/nix/nix.conf	1	2	2	13	7c193470630a	STAY	ai-header		0				0
 usr/share/mios/nix/nix.conf	4	4	1	7	49f68b33b675	STAY	local-scoped		0				0
 usr/share/mios/nix/nix.conf	7	7	1	5	95ad535dfeaf	STAY	local-scoped		0				0
 usr/share/mios/nix/nix.conf	14	14	1	7	754ef741a6f9	STAY	local-scoped		0				0
