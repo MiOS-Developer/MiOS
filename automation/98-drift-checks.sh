@@ -3515,9 +3515,8 @@ check_drift_stubs() {
 
 # --- every native miosd drift Check with no bash twin in main() runs in this gate ---
 check_native_twinless() {
-    # Ruling Q8: source-tree gates run in the CI gate job, never in the bake. A
-    # native Check named like a check main() dispatches runs here as that twin;
-    # every other one runs here natively, so none is left behind in the bake.
+    # Ruling Q8 keeps source-tree gates out of the bake. A native Check named like
+    # a check main() dispatches runs as that twin; the rest run here, natively.
     echo "[98-drift-checks] every native miosd drift Check with no bash twin in main() runs in this gate"
     local bin; bin="$(native_bin miosd "${MIOS_MIOSD_BIN:-}")" || {
         _violation "miosd is not built, so the native drift Checks with no bash twin could not run -- build it: cd src/mios-rs && cargo build -p miosd"

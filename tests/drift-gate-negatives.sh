@@ -3623,9 +3623,7 @@ test_pipefail_grep_lint() {
 test_check_skip_list_covered() {
     log "Testing check_skip_list_covered"
     local toml="${ROOT}/usr/share/mios/mios.toml" wf="${ROOT}/.github/workflows/mios-ci.yml"
-    local tbak; tbak="$(mktemp)"; cp "$toml" "$tbak"
-    local wbak; wbak="$(mktemp)"; cp "$wf" "$wbak"
-    local plant; plant="$(mktemp)"
+    local tbak wbak plant; tbak="$(mktemp)"; wbak="$(mktemp)"; plant="$(mktemp)"; cp "$toml" "$tbak"; cp "$wf" "$wbak"
     _sl_fail() { cp "$tbak" "$toml"; cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant; die "$1"; }
     # $1: keys added under [ci.globs.agent-pipe]; $2: what the violation must name.
     _sl_plant() {
@@ -3635,12 +3633,10 @@ test_check_skip_list_covered() {
         _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with $2 planted"
         [[ "$_NEG_GATE_OUT" == *"$2"* ]] || _sl_fail "check_skip_list_covered failed without naming $2: $_NEG_GATE_OUT"
     }
-    # Nothing skipped is the clean state, and it passes.
     _neg_gate check_skip_list_covered || _sl_fail "check_skip_list_covered red on the CLEAN tree: $_NEG_GATE_OUT"
     _sl_plant 'skip = ["test_mios_gateway_queue.py"]' "skip_reason"
     _sl_plant $'skip = ["test_mios_no_such_suite.py"]\nskip_reason = "negative probe"' "test_mios_no_such_suite.py"
-    cp "$tbak" "$toml"
-    printf '      # SKIP=negative-probe\n' >> "$wf"
+    cp "$tbak" "$toml"; printf '      # SKIP=negative-probe\n' >> "$wf"
     _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with an inline SKIP= in a workflow"
     [[ "$_NEG_GATE_OUT" == *"inline SKIP="* ]] || _sl_fail "check_skip_list_covered failed without naming the inline SKIP="
     cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant
@@ -4819,8 +4815,7 @@ test_drift_stubs() {
 test_native_twinless() {
     log "Testing check_native_twinless"
     local sql="${ROOT}/usr/share/mios/postgres/schema-init.sql"
-    local bak; bak="$(mktemp)"; cp "$sql" "$bak"
-    local empty; empty="$(mktemp -d)"
+    local bak empty; bak="$(mktemp)"; empty="$(mktemp -d)"; cp "$sql" "$bak"
     _nt_fail() { cp "$bak" "$sql"; rm -rf "$bak" "$empty"; unset -f _nt_fail; die "$1"; }
     _neg_gate check_native_twinless || _nt_fail "check_native_twinless red on the CLEAN tree: $_NEG_GATE_OUT"
     [[ "$_NEG_GATE_OUT" == *"twinless native Check(s) ran here"* ]] || _nt_fail "check_native_twinless did not report what it ran"
