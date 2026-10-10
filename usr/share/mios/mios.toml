@@ -1793,7 +1793,7 @@ exempt = [
 policy_mode = "matchRepository"
 
 [security.windows_binaries]
-source_exempt = ["MiOS-iGPU-Server.exe"]
+source_exempt = []
 
 [security.powershell_signing]
 # Certificate PATH or thumbprint only. There is deliberately no password key
@@ -3274,11 +3274,11 @@ offload_cpu          = false
 # capped REAL subset, never zero) + endpoints that 400 on tool_choice=required.
 lane_tool_cap        = "igpu:12,mobile:12"
 default_tool_cap     = 16
-no_tool_choice_hints = "8540,11436"          # host:port substrings whose llama.cpp rejects tool_choice=required
+no_tool_choice_hints = "llm_igpu"           # [ports] keys or host:port substrings whose llama.cpp rejects tool_choice=required
 parallel_tools_hints = "llm_heavy"               # [ports] keys (or host:port substrings) whose model reliably emits PARALLEL tool calls -> OpenAI-default parallel_tool_calls=True (capable heavy lane); everything else stays sequential (small models malform parallel calls). MIOS_PARALLEL_TOOLS_HINTS overrides.
 worker_mcp_tools     = true                  # surface external MCP client tools to fan-out workers
 kv_paging_enable  = true     # master switch; only ACTS on llama.cpp /slots endpoints
-kv_paging_hints   = "8540,11436"  # host:port substrings that speak llama.cpp /slots (default the iGPU lane)
+kv_paging_hints   = "llm_igpu"   # [ports] keys or host:port substrings that speak llama.cpp /slots (default the iGPU lane)
 kv_paging_slot    = 0        # llama-server slot id the light lane pages (single resident frame)
 kv_paging_timeout = 12.0     # seconds for one save/restore POST (best-effort; never fails the turn)
 kv_fork_enable       = false  # master switch (only ACTS when kv_paging is on AND the endpoint speaks llama.cpp /slots)
@@ -3741,15 +3741,22 @@ aider_package = "aider-chat"
 antigravity_linux_installer = "https://antigravity.google/cli/install.sh"
 antigravity_windows_installer = "https://antigravity.google/cli/install.ps1"
 antigravity_windows_installer_sha256 = "51c2cb4fada22ce0228da71b9506370383d6544bfebcec85fe7616a52b805344"
+branch_rule = "^cloud/[a-zA-Z0-9._-]+$"
 tools = [
-  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true },
-  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true },
-  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true },
-  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true },
-  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true },
-  { name = "agy", kind = "native", mcp = true },
-  { name = "aider", kind = "python", mcp = false },
+  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true, experimental = false, launch_template = "claude -p {task}", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "claude-cloud", package = "@anthropic-ai/claude-code", kind = "cloud", mcp = true, experimental = false, launch_template = "claude --cloud {task}", status_template = "claude -p \"msg\" --cloud {session} --output-format json", result_template = "claude --teleport {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true, experimental = false, launch_template = "codex exec {task}", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "codex-cloud", package = "@openai/codex", kind = "cloud", mcp = true, experimental = true, launch_template = "codex cloud exec --env {env_id} {task}", status_template = "codex cloud list --json", result_template = "codex apply {task_id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true, experimental = false, launch_template = "gemini -p {task} -o json --approval-mode default", required_credentials = ["GEMINI_API_KEY"] },
+  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true, experimental = false, launch_template = "copilot --exec {task}", required_credentials = ["GITHUB_TOKEN"] },
+  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true, experimental = false, launch_template = "opencode run {task}", required_credentials = [] },
+  { name = "agy", kind = "native", mcp = true, experimental = false, launch_template = "agy -p {task} --output-format json", required_credentials = ["ANTIGRAVITY_API_KEY"] },
+  { name = "aider", kind = "python", mcp = false, experimental = false, launch_template = "aider --message {task}", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --repo {repo} --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task} -b {base} -R {repo}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GITHUB_TOKEN"] },
 ]
+
+
 
 # Native terminal tools are served by the SAME MiOS MCP endpoint. Each MCP
 # Unbound/HTTP sessions own private servers; native CLI heads bind verified human panes.
@@ -11805,6 +11812,38 @@ nohz_full      = ""                        # CPUs for adaptive-ticks (empty to d
 rcu_nocbs      = ""                        # CPUs to offload RCU callbacks (empty to disable)
 THP            = ""                        # Transparent Huge Pages configuration: "always", "madvise", "never" or empty
 
+[kargs.cpu_mitigations]
+required = [
+  "randomize_kstack_offset=on",
+  "pti=on",
+  "vsyscall=none",
+  "spectre_v2=on",
+  "spectre_bhi=on",
+  "spec_store_bypass_disable=on",
+  "l1tf=full,force",
+  "gather_data_sampling=force",
+  "tsx=off",
+  "kvm.nx_huge_pages=force",
+]
+forbidden = [
+  "pti=off",
+  "nopti",
+  "spectre_v2=off",
+  "nospectre_v2",
+  "spectre_bhi=off",
+  "spec_store_bypass_disable=off",
+  "nospec_store_bypass_disable",
+  "l1tf=off",
+  "gather_data_sampling=off",
+  "tsx=on",
+  "kvm.nx_huge_pages=off",
+  "kvm.nx_huge_pages=never",
+  "randomize_kstack_offset=off",
+  "norandomize_kstack_offset",
+  "nospectre_v1",
+  "mitigations=off",
+]
+
 
 [testing]
 # Grow-only, the inverse of the other ratchets: the smoke test asserted six
@@ -12052,13 +12091,12 @@ import_roots = ["usr/lib/mios/agent-pipe", "usr/libexec/mios", "tools"]
 [pipeline.console]
 width = 100
 bar_width = 24
+# Ruling Q8: 97-ssot-lint, 98-drift-checks and the agent-pipe suites are
+# source-tree gates, so they run in the CI gate job, not here.
 post_steps = [
     { name = "post-bloat", action = "bloat" },
     { name = "post-package-health", action = "package_health" },
     { name = "99-postcheck.sh", action = "invariants" },
-    { name = "97-ssot-lint.sh", action = "ssot" },
-    { name = "98-drift-checks.sh", action = "drift" },
-    { name = "post-agent-tests", action = "agent_tests" },
     { name = "post-libexec-tests", action = "libexec_tests" },
     { name = "post-image-digests", action = "image_digests" },
     { name = "post-log-chain", action = "log_chain" },
@@ -12835,8 +12873,6 @@ not_mirrored = [
   "bootstrap.sh", "bootstrap.ps1",
   "README.md", "CLAUDE.md", "AGENTS.md",
   "GEMINI.md", ".gitignore",
-  ".clinerules",
-  ".cursorrules",
   ".devcontainer/Dockerfile",
   ".devcontainer/devcontainer.json",
   ".editorconfig",
@@ -12852,7 +12888,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3585
+max_tracked_files = 3555
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12885,10 +12921,10 @@ max_tooling_python_lines = 80483   # module-test-coverage + static-linkage censu
 [legibility.file_budget]
 target_tracked_files = 500     # operator: "500 total files EACH per MiOS repo" -- this repo (the domains below sum under it)
 target_bootstrap_files = 500   # the same cap for the sister repo mios-bootstrap ([legibility].max_bootstrap_files)
-order = ["dependency", "projections", "agent_pipe", "modules", "docs", "tests", "rust", "automation", "etc", "harness", "data", "tools", "misc"]
+order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "archive", "misc"]
 
 [legibility.file_budget.domains.dependency]  # vendored wheels and archives fold into one bundle per kind (Law 12 still bakes them); one Cargo.lock
-max_files = 101
+max_files = 100
 target_files = 5
 globs = ["usr/share/mios/vendored/*", "*Cargo.lock"]
 
@@ -12908,7 +12944,7 @@ target_files = 45
 globs = ["usr/libexec/*", "usr/bin/*"]
 
 [legibility.file_budget.domains.docs]  # one manual volume per domain; one ADR log
-max_files = 650
+max_files = 543
 target_files = 40
 globs = ["usr/share/doc/*", "docs/*", ".research/*", ".devloop/*", "*.md"]
 
@@ -12928,17 +12964,17 @@ target_files = 15
 globs = ["automation/*", "Justfile", "Containerfile*"]
 
 [legibility.file_budget.domains.etc]  # profile.d one file per shell; skel rendered by the dotfiles registry (ADR-0010)
-max_files = 123
+max_files = 119
 target_files = 25
 globs = ["etc/*"]
 
 [legibility.file_budget.domains.harness]  # per-harness shims rendered from one source at dev setup
-max_files = 49
+max_files = 140
 target_files = 20
 globs = [".agents/*", "commands/*", ".claude/*", ".github/*", ".forgejo/*", ".devcontainer/*", ".mios/*", ".dotfiles/*"]
 
 [legibility.file_budget.domains.data]  # usr data as SSOT tables or one bundle per domain
-max_files = 435
+max_files = 428
 target_files = 60
 globs = ["usr/*"]
 
@@ -12947,10 +12983,27 @@ max_files = 96
 target_files = 30
 globs = ["tools/*", "installation/*"]
 
+[legibility.file_budget.domains.archive]  # Decision 7: the git-native legacy store -- HEAD, config, the branch, one pack (.pack + .idx)
+max_files = 5
+target_files = 5
+globs = [".archive/**"]
+
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 62
+max_files = 53
 target_files = 20
 globs = ["*"]
+
+# ADR-0030 Decision 7: dropped files kept in a bare git store beside .git; built by `mios-gen archive`,
+# verified by drift check legacy-archive.
+[legibility.archive]
+path = ".archive"            # the store, at the root beside .git; only HEAD, config, the branch and one pack are tracked
+ref = "legacy"               # its one branch
+object_format = "sha256"     # git's sha256 object format; content is compared by the sha256 of the bytes
+since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-budget campaign began; first-parent history from here
+author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
+# Dropped paths never re-tracked (keys, tokens, credentials, valued .env, leaks), as globs with a reason each.
+# Screening all 315 dropped paths found none.
+exclude = []
 
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]
@@ -13308,10 +13361,9 @@ tier = "unit"
 dir  = "usr/lib/mios/agent-pipe"
 glob = "test_mios_*.py"
 tier = "unit"
-skip = [
-    "test_mios_gateway_queue.py",
-]
-skip_reason = "needs a live database or a heavy dependency; covered by the build job's virtualenv gate"
+# No skips. test_mios_gateway_queue.py was skipped as "covered by the build job's
+# virtualenv gate", the bake's post-agent-tests; ruling Q8 moved that gate out of
+# the bake, and its heavy dependency (smolagents) is in [ci.python].requirements.
 
 [ci.globs.libexec]
 dir  = "usr/libexec/mios"

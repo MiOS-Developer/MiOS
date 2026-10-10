@@ -5,8 +5,8 @@
 > Canonical agent entry point for `mios-bootstrap.git` — the interactive
 > installer + user-editable layer for MiOS. Follows the [agents.md][1]
 > standard and is the SSOT for any agent CLI that arrives at this repo.
-> Per-tool stubs (`CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.clinerules`,
-> `system-prompt.md`) are thin redirectors that defer here.
+> Per-tool stubs (`CLAUDE.md`, `GEMINI.md`, `system-prompt.md`) are thin
+> redirectors that defer here.
 >
 > **Strict OpenAI API standards and patterns ONLY.** Every interface is
 > OpenAI-API-compatible verb-for-verb. No vendor-native protocols, no
