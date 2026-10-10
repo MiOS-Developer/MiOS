@@ -163,6 +163,8 @@ if [[ ! -x /usr/lib/mios/agents/.venv/bin/python3 ]]; then
     for _c in /var/lib/mios/build/mios-bootstrap/automation/72-hermes-agent.sh \
               /opt/mios-bootstrap/automation/72-hermes-agent.sh \
               "${MIOS_BOOTSTRAP_REPO:-}/automation/72-hermes-agent.sh" \
+              /mnt/c/mios-bootstrap/automation/72-hermes-agent.sh \
+              /mnt/c/MiOS/automation/72-hermes-agent.sh \
               /mnt/m/automation/72-hermes-agent.sh; do
         [[ -n "$_c" && -x "$_c" ]] && { _hermes_installer="$_c"; break; }
     done
@@ -977,6 +979,8 @@ _cephfs_setup=""
 for _c in /var/lib/mios/build/mios-bootstrap/automation/firstboot/mios-cephfs-mount-setup.sh \
           /opt/mios-bootstrap/automation/firstboot/mios-cephfs-mount-setup.sh \
           "${MIOS_BOOTSTRAP_REPO:-}/automation/firstboot/mios-cephfs-mount-setup.sh" \
+          /mnt/c/mios-bootstrap/automation/firstboot/mios-cephfs-mount-setup.sh \
+          /mnt/c/MiOS/automation/firstboot/mios-cephfs-mount-setup.sh \
           /mnt/m/automation/firstboot/mios-cephfs-mount-setup.sh \
           /usr/share/mios/automation/firstboot/mios-cephfs-mount-setup.sh; do
     if [[ -x "$_c" ]]; then
@@ -1000,6 +1004,8 @@ _xdg_setup=""
 for _c in /var/lib/mios/build/mios-bootstrap/automation/firstboot/mios-xdg-setup.sh \
           /opt/mios-bootstrap/automation/firstboot/mios-xdg-setup.sh \
           "${MIOS_BOOTSTRAP_REPO:-}/automation/firstboot/mios-xdg-setup.sh" \
+          /mnt/c/mios-bootstrap/automation/firstboot/mios-xdg-setup.sh \
+          /mnt/c/MiOS/automation/firstboot/mios-xdg-setup.sh \
           /mnt/m/automation/firstboot/mios-xdg-setup.sh \
           /usr/share/mios/automation/firstboot/mios-xdg-setup.sh; do
     if [[ -x "$_c" ]]; then
