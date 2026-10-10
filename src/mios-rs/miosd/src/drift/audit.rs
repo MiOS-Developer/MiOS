@@ -139,10 +139,24 @@ pub fn native(ctx: &DriftCtx, name: &str, args: &[&str]) -> Verdict {
                 if let Some(parent) = executable.parent() {
                     candidates.push(parent.join(&filename));
                 }
+                let mut cur = executable.parent();
+                while let Some(dir) = cur {
+                    if dir.join("tools/native").is_dir() {
+                        candidates.push(dir.join("tools/native/target/debug").join(&filename));
+                        candidates.push(dir.join("tools/native/target/release").join(&filename));
+                        candidates.push(dir.join("src/mios-rs/target/debug").join(&filename));
+                        candidates.push(dir.join("src/mios-rs/target/release").join(&filename));
+                        break;
+                    }
+                    cur = dir.parent();
+                }
             }
+            candidates.push(Path::new("/var/tmp/mios-merge-tools").join(&filename));
             for directory in [
                 "tools/native/target/release",
+                "tools/native/target/debug",
                 "src/mios-rs/target/release",
+                "src/mios-rs/target/debug",
                 "usr/bin",
                 "usr/libexec/mios",
             ] {

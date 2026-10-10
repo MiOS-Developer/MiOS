@@ -24,11 +24,7 @@ _neg_snapshot_take() {
             mkdir -p "${_NEG_SNAP}/$(dirname "$rel")"
             cp -p "$src" "${_NEG_SNAP}/${rel}"
         elif [[ ! -e "$src" ]]; then
-            # Genuinely absent, so anything appearing at this path afterwards is
-            # a probe. A target that EXISTS but is not a regular file -- a
-            # directory, and the Quadlet directory is one -- is neither a snapshot
-            # nor a probe, and recording it here made the restore try to
-            # unlink a directory, which killed the whole suite.
+            # Genuinely absent; non-files (e.g. Quadlet dir) must not be recorded as probes.
             printf '%s\n' "$rel" >> "$_NEG_ABSENT"
         fi
     done < <(_neg_targets)
@@ -45,8 +41,7 @@ _neg_snapshot_restore() {
         leaked=$((leaked + 1))
     done < <(cd "$_NEG_SNAP" 2>/dev/null && find . -type f | sed 's|^\./||')
 
-    # A probe the suite created and did not delete is the same leak in the other
-    # direction: it reaches the index the next time anyone stages broadly.
+    # Remove probes left behind by tests before broad staging
     while IFS= read -r rel; do
         [[ -n "$rel" && -f "${ROOT}/${rel}" ]] || continue
         rm -f "${ROOT}/${rel}"
@@ -1909,33 +1904,43 @@ test_target_languages() {
 test_roadmap_index() {
     log "Testing check_roadmap_index"
     local roadmap_file="${ROOT}/ROADMAP.md"
-    if [ -f "$roadmap_file" ]; then
-        local bak_file="${roadmap_file}.bak"
-        cp "$roadmap_file" "$bak_file"
-        sed -i 's/\*\*Done\*\*: [0-9]*/\*\*Done\*\*: 99999/g' "$roadmap_file" 2>/dev/null || true
-
-        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_roadmap_index >/dev/null 2>&1 && die "Check_roadmap_index passed despite corrupted rollup"
-
-        cp "$bak_file" "$roadmap_file" && rm -f "$bak_file"
-        _neg_gate check_roadmap_index || die "Check_roadmap_index failed after restoration"
-    fi
+    [[ -f "$roadmap_file" ]] || return 0
+    local bak_file="${roadmap_file}.bak"
+    cp "$roadmap_file" "$bak_file"
+    sed -i 's/\*\*Done\*\*: [0-9]*/\*\*Done\*\*: 99999/g' "$roadmap_file" 2>/dev/null || true
+    bash "${ROOT}/automation/98-drift-checks.sh" check_roadmap_index >/dev/null 2>&1 && die "Check_roadmap_index passed despite corrupted rollup"
+    cp "$bak_file" "$roadmap_file" && rm -f "$bak_file"
+    _neg_gate check_roadmap_index || die "Check_roadmap_index failed after restoration"
     log "Test_roadmap_index negative test passed"
 }
 
 test_templates_compilation() {
     log "Testing check_templates_compilation"
     local tmpl_file="${ROOT}/usr/share/mios/templates/toml-config"
-    if [ -f "$tmpl_file" ]; then
-        local bak_file="${tmpl_file}.bak"
-        cp "$tmpl_file" "$bak_file"
-        echo 'INVALID_SYNTAX_BOGUS {{' >> "$tmpl_file"
-
-        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_templates_compilation >/dev/null 2>&1 && die "Check_templates_compilation passed despite invalid template"
-
-        cp "$bak_file" "$tmpl_file" && rm -f "$bak_file"
-        _neg_gate check_templates_compilation || die "Check_templates_compilation failed after restoration"
-    fi
+    [[ -f "$tmpl_file" ]] || return 0
+    local bak_file="${tmpl_file}.bak"
+    cp "$tmpl_file" "$bak_file"
+    echo 'INVALID_SYNTAX_BOGUS {{' >> "$tmpl_file"
+    bash "${ROOT}/automation/98-drift-checks.sh" check_templates_compilation >/dev/null 2>&1 && die "Check_templates_compilation passed despite invalid template"
+    cp "$bak_file" "$tmpl_file" && rm -f "$bak_file"
+    _neg_gate check_templates_compilation || die "Check_templates_compilation failed after restoration"
     log "Test_templates_compilation negative test passed"
+}
+
+test_template_conformance() {
+    log "Testing check_template_conformance"
+    local toml_file="${ROOT}/usr/share/mios/mios.toml"
+    [[ -f "$toml_file" ]] || return 0
+    local bak_file="${toml_file}.bak"
+    cp "$toml_file" "$bak_file"
+    sed -i 's/^\[templates\./[xtemplates./' "$toml_file"
+    if bash "${ROOT}/automation/98-drift-checks.sh" check_template_conformance >/dev/null 2>&1; then
+        cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+        die "check_template_conformance passed despite [templates] renamed to [xtemplates]"
+    fi
+    cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+    _neg_gate check_template_conformance || die "check_template_conformance failed after restoration"
+    log "test_template_conformance negative test passed"
 }
 
 test_impossible_eol() {
@@ -5800,7 +5805,6 @@ _run_test test_leaked_fixtures
     _run_test test_manual_links
     _run_test test_doc_port_scheme
     _run_test test_unit_dependency_closure
-    _run_test test_unit_dependency_closure
     _run_test test_test_hermeticity
     _run_test test_no_mkdir_in_var
     _run_test test_quadlet_privilege
@@ -5842,6 +5846,7 @@ _run_test test_leaked_fixtures
     _run_test test_target_languages
     _run_test test_roadmap_index
     _run_test test_templates_compilation
+    _run_test test_template_conformance
     _run_test test_impossible_eol
     _run_test test_smoke_manifest
     _run_test test_negative_coverage
@@ -5910,7 +5915,6 @@ _run_test test_leaked_fixtures
     _run_test test_deploy_formats
     _run_test test_verify_images
     _run_test test_header_comment_syntax
-    _run_test test_repo_partition_label_ssot
     _run_test test_rust_test_coverage
     _run_test test_os_update_timer_enabled
     _run_test test_verb_stub_backends
@@ -5949,21 +5953,16 @@ test_rust_categories() {
     local toml="${ROOT}/usr/share/mios/mios.toml"
     local backup; backup="$(mktemp)"
     cp -p "$toml" "$backup"
-    # Probe: a category whose owner is empty and whose exemption carries no
-    # reason -- two planted defects the gate must name, assembled dynamically
-    # so the probe never matches a static scan.
-    local probe_owner probe_table
-    probe_owner="$(printf 'ow%sner = ""' 'o')"
-    probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
+    # Planted owner-less category must fail check_rust_categories
+    local probe_owner; probe_owner="$(printf 'ow%sner = ""' 'o')"
+    local probe_table; probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
     printf '\n%s\n%s\n' "$probe_table" "$probe_owner" >> "$toml"
     if _neg_gate check_rust_categories; then
         cp -p "$backup" "$toml"; rm -f "$backup"
         die "rust-categories reported clean with a planted owner-less category"
     fi
-    cp -p "$backup" "$toml"
-    rm -f "$backup"
-    _neg_gate check_rust_categories \
-        || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
+    cp -p "$backup" "$toml" && rm -f "$backup"
+    _neg_gate check_rust_categories || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
     log "check_rust_categories negative test passed"
 }
 

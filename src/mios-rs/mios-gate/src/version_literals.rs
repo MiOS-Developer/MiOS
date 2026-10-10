@@ -176,16 +176,9 @@ fn upstream_projection_lines(root: &Path) -> Result<HashSet<String>, String> {
 }
 
 pub fn check(root: &Path) -> Report {
-    // Not a checkout of this repository at all: nothing to measure, and inventing
-    // a verdict here is worse than declining one.
+    // Not a checkout of this repository at all: cannot run, not ok (T5 defect)
     if !root.join(".git").exists() {
-        return Report {
-            check: CHECK.to_string(),
-            ok: true,
-            could_not_run: None,
-            summary: "not a checkout, so no version literal was scanned".to_string(),
-            findings: Vec::new(),
-        };
+        return cannot_run("not a git checkout (.git directory missing)");
     }
     let want = canonical(root);
     if want.is_empty() {
@@ -374,7 +367,9 @@ mod tests {
             Err(_) => return,
         };
         let r = check(tmp.path());
-        assert_eq!(r.code(), crate::EXIT_CLEAN);
-        assert!(r.findings.is_empty());
+        assert_eq!(r.code(), crate::EXIT_CANNOT_RUN);
+        assert!(!r.ok);
+        assert!(r.could_not_run.is_some());
+        assert!(r.could_not_run.as_ref().unwrap().contains("not a git checkout"));
     }
 }
