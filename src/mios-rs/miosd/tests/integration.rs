@@ -383,6 +383,63 @@ mod registry_integration {
             "Registry::run_all must return false on nonexistent root"
         );
     }
+
+    #[test]
+    fn test_drift_check_template_conformance_and_version_literals_fail_closed() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+
+        // T2 negative: with [templates.*] renamed to [xtemplates.*]
+        let ssot_dir = root.join("usr/share/mios");
+        std::fs::create_dir_all(&ssot_dir).expect("create ssot dir");
+        std::fs::write(
+            ssot_dir.join("mios.toml"),
+            "[meta]\nmios_version = \"0.3.0\"\n[xtemplates.test]\nmatch = '.*\\.sh'\n",
+        )
+        .expect("write mios.toml");
+
+        let output_t2 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--only", "check_template_conformance", "--root"])
+            .arg(root)
+            .output()
+            .expect("execute miosd drift-check check_template_conformance");
+
+        assert!(
+            !output_t2.status.success(),
+            "check_template_conformance must fail when [templates] is renamed to [xtemplates]"
+        );
+        let out_t2 = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output_t2.stdout),
+            String::from_utf8_lossy(&output_t2.stderr)
+        );
+        assert!(
+            !out_t2.contains(" PASS +"),
+            "check_template_conformance must not report PASS when [templates] is missing: {out_t2}"
+        );
+
+        // T5 negative: with .git absent, check_no_hardcode_version must fail (cannot_run, not pass)
+        let output_t5 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["drift-check", "--only", "check_no_hardcode_version", "--root"])
+            .arg(root)
+            .output()
+            .expect("execute miosd drift-check check_no_hardcode_version");
+
+        assert!(
+            !output_t5.status.success(),
+            "check_no_hardcode_version must fail when .git is absent"
+        );
+        let out_t5 = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output_t5.stdout),
+            String::from_utf8_lossy(&output_t5.stderr)
+        );
+        assert!(
+            !out_t5.contains(" PASS +"),
+            "check_no_hardcode_version must not report PASS when .git is absent: {out_t5}"
+        );
+    }
 }
 
 mod render_kargs {

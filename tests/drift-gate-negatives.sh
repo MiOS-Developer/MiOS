@@ -1938,6 +1938,26 @@ test_templates_compilation() {
     log "Test_templates_compilation negative test passed"
 }
 
+test_template_conformance() {
+    log "Testing check_template_conformance"
+    local toml_file="${ROOT}/usr/share/mios/mios.toml"
+    if [ -f "$toml_file" ]; then
+        local bak_file="${toml_file}.bak"
+        cp "$toml_file" "$bak_file"
+        # T2 negative: rename [templates] to [xtemplates]
+        sed -i 's/^\[templates\]/[xtemplates]/' "$toml_file"
+
+        if MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_template_conformance >/dev/null 2>&1; then
+            cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+            die "Check_template_conformance passed despite [templates] renamed to [xtemplates]"
+        fi
+
+        cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+        _neg_gate check_template_conformance || die "Check_template_conformance failed after restoration"
+    fi
+    log "Test_template_conformance negative test passed"
+}
+
 test_impossible_eol() {
     log "Testing check_impossible_eol_regressions"
     local toml_file="${ROOT}/usr/share/mios/mios.toml"
@@ -5842,6 +5862,7 @@ _run_test test_leaked_fixtures
     _run_test test_target_languages
     _run_test test_roadmap_index
     _run_test test_templates_compilation
+    _run_test test_template_conformance
     _run_test test_impossible_eol
     _run_test test_smoke_manifest
     _run_test test_negative_coverage

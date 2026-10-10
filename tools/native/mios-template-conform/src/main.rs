@@ -88,66 +88,87 @@ fn main() {
     if cli.llms_txt {
         std::process::exit(run_llms_txt(&root_path));
     }
-    let cli_ceiling = cli.ceiling;
+    match run_conformance(&root_path, cli.ceiling) {
+        Ok(_) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_conformance(
+    root_path: &Path,
+    cli_ceiling: Option<usize>,
+) -> Result<(usize, usize, usize), String> {
     let config_path = root_path.join("usr/share/mios/mios.toml");
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("cannot read {}: {e}", config_path.display()))?;
+    let val: toml::Value = toml::from_str(&content)
+        .map_err(|e| format!("cannot parse {}: {e}", config_path.display()))?;
 
-    let mut templates_map: HashMap<String, serde_json::Value> = HashMap::new();
     let mut default_ceiling: usize = 0;
+    if let Some(ai_tag) = val.get("ai_tag") {
+        if let Some(max_u) = ai_tag.get("max_unconforming").and_then(|v| v.as_integer()) {
+            default_ceiling = max_u as usize;
+        }
+    }
 
-    if let Ok(content) = fs::read_to_string(&config_path) {
-        if let Ok(val) = toml::from_str::<toml::Value>(&content) {
-            if let Some(ai_tag) = val.get("ai_tag") {
-                if let Some(max_u) = ai_tag.get("max_unconforming").and_then(|v| v.as_integer()) {
-                    default_ceiling = max_u as usize;
-                }
-            }
-            if let Some(tmpls) = val.get("templates").and_then(|v| v.as_table()) {
-                for (k, v) in tmpls {
-                    if let Ok(json_val) = serde_json::to_value(v) {
-                        templates_map.insert(k.clone(), json_val);
-                    }
+    let tmpls = match val.get("templates").and_then(|v| v.as_table()) {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return Err(format!(
+                "[templates] section in {} is missing or empty",
+                config_path.display()
+            ))
+        }
+    };
+
+    let mut compiled_templates: Vec<CompiledTemplate> = Vec::new();
+    for (tname, tval) in tmpls {
+        let tcfg = serde_json::to_value(tval)
+            .map_err(|e| format!("template '{tname}' serialization error: {e}"))?;
+        let match_str = match tcfg.get("match").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return Err(format!("template '{tname}' is missing a non-empty 'match' regex")),
+        };
+        let re = Regex::new(match_str)
+            .map_err(|e| format!("template '{tname}' has invalid regex {match_str:?}: {e}"))?;
+        let required_header = tcfg
+            .get("required_header")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let mut required_markers = Vec::new();
+        if let Some(arr) = tcfg.get("required_markers").and_then(|v| v.as_array()) {
+            for m in arr {
+                if let Some(s) = m.as_str() {
+                    required_markers.push(s.to_string());
                 }
             }
         }
+        let mut required_ordered = Vec::new();
+        if let Some(arr) = tcfg.get("required_ordered").and_then(|v| v.as_array()) {
+            for m in arr {
+                if let Some(s) = m.as_str() {
+                    required_ordered.push(s.to_string());
+                }
+            }
+        }
+        compiled_templates.push(CompiledTemplate {
+            name: tname.clone(),
+            pattern: re,
+            required_header,
+            required_markers,
+            required_ordered,
+        });
+    }
+
+    if compiled_templates.is_empty() {
+        return Err("no template compiled from [templates]".to_string());
     }
 
     let ceiling = cli_ceiling.unwrap_or(default_ceiling);
-    let grandfathered = load_grandfathered(&root_path);
-
-    let mut compiled_templates: Vec<CompiledTemplate> = Vec::new();
-    for (tname, tcfg) in templates_map {
-        if let Some(match_str) = tcfg.get("match").and_then(|v| v.as_str()) {
-            if let Ok(re) = Regex::new(match_str) {
-                let required_header = tcfg
-                    .get("required_header")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                let mut required_markers = Vec::new();
-                if let Some(arr) = tcfg.get("required_markers").and_then(|v| v.as_array()) {
-                    for m in arr {
-                        if let Some(s) = m.as_str() {
-                            required_markers.push(s.to_string());
-                        }
-                    }
-                }
-                let mut required_ordered = Vec::new();
-                if let Some(arr) = tcfg.get("required_ordered").and_then(|v| v.as_array()) {
-                    for m in arr {
-                        if let Some(s) = m.as_str() {
-                            required_ordered.push(s.to_string());
-                        }
-                    }
-                }
-                compiled_templates.push(CompiledTemplate {
-                    name: tname,
-                    pattern: re,
-                    required_header,
-                    required_markers,
-                    required_ordered,
-                });
-            }
-        }
-    }
+    let grandfathered = load_grandfathered(root_path);
 
     let mut unconforming: Vec<(String, String)> = Vec::new();
     let mut checked_count = 0;
@@ -165,7 +186,7 @@ fn main() {
     .cloned()
     .collect();
 
-    for entry in WalkDir::new(&root_path)
+    for entry in WalkDir::new(root_path)
         .into_iter()
         .filter_entry(|e| !ignore_dirs.contains(e.file_name().to_str().unwrap_or("")))
         .filter_map(|e| e.ok())
@@ -175,7 +196,7 @@ fn main() {
         }
 
         let p = entry.path();
-        let rel_path = match p.strip_prefix(&root_path) {
+        let rel_path = match p.strip_prefix(root_path) {
             Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
             Err(_) => continue,
         };
@@ -245,6 +266,10 @@ fn main() {
         }
     }
 
+    if checked_count == 0 {
+        return Err(format!("no files checked in {} (checked=0)", root_path.display()));
+    }
+
     println!(
         "[conformance] checked={} unconforming={} ceiling={}",
         checked_count,
@@ -260,13 +285,14 @@ fn main() {
     }
 
     if unconforming.len() > ceiling {
-        eprintln!(
-            "FAIL: {} unconforming files exceeds ceiling {}",
+        return Err(format!(
+            "{} unconforming files exceeds ceiling {}",
             unconforming.len(),
             ceiling
-        );
-        std::process::exit(1);
+        ));
     }
+
+    Ok((checked_count, unconforming.len(), ceiling))
 }
 
 // --- llms.txt (https://llmstxt.org/) ---
@@ -1025,5 +1051,83 @@ mod tests {
             "- [frag](a.sh#top): anchor\n- [mail](mailto:x@example.org)",
         );
         assert_eq!(violations("fragment", &ok), "");
+    }
+
+    #[test]
+    fn conformance_missing_ssot_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run_conformance(dir.path(), None).unwrap_err();
+        assert!(err.contains("cannot read"), "{err}");
+    }
+
+    #[test]
+    fn conformance_missing_or_empty_templates_fails_t2() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssot_dir = dir.path().join("usr/share/mios");
+        fs::create_dir_all(&ssot_dir).unwrap();
+        // T2: [templates.*] renamed to [xtemplates.*]
+        fs::write(
+            ssot_dir.join("mios.toml"),
+            "[xtemplates.test]\nmatch = '.*\\.sh'\n",
+        )
+        .unwrap();
+        let err = run_conformance(dir.path(), None).unwrap_err();
+        assert!(err.contains("[templates] section in"), "{err}");
+
+        // Empty [templates]
+        fs::write(ssot_dir.join("mios.toml"), "[templates]\n").unwrap();
+        let err2 = run_conformance(dir.path(), None).unwrap_err();
+        assert!(err2.contains("[templates] section in"), "{err2}");
+    }
+
+    #[test]
+    fn conformance_invalid_regex_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssot_dir = dir.path().join("usr/share/mios");
+        fs::create_dir_all(&ssot_dir).unwrap();
+        fs::write(
+            ssot_dir.join("mios.toml"),
+            "[templates.bad]\nmatch = '[unclosed'\n",
+        )
+        .unwrap();
+        let err = run_conformance(dir.path(), None).unwrap_err();
+        assert!(err.contains("has invalid regex"), "{err}");
+    }
+
+    #[test]
+    fn conformance_zero_checked_files_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssot_dir = dir.path().join("usr/share/mios");
+        fs::create_dir_all(&ssot_dir).unwrap();
+        fs::write(
+            ssot_dir.join("mios.toml"),
+            "[templates.test]\nmatch = '.*\\.sh'\n",
+        )
+        .unwrap();
+        let gf_dir = dir.path().join("usr/share/mios/templates");
+        fs::create_dir_all(&gf_dir).unwrap();
+        fs::write(
+            gf_dir.join("conformance-grandfathered.list"),
+            "usr/share/mios/mios.toml\nusr/share/mios/templates/conformance-grandfathered.list\n",
+        )
+        .unwrap();
+        let err = run_conformance(dir.path(), None).unwrap_err();
+        assert!(err.contains("checked=0"), "{err}");
+    }
+
+    #[test]
+    fn conformance_valid_tree_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssot_dir = dir.path().join("usr/share/mios");
+        fs::create_dir_all(&ssot_dir).unwrap();
+        fs::write(
+            ssot_dir.join("mios.toml"),
+            "[templates.sh]\nmatch = '.*\\.sh$'\nrequired_header = true\n",
+        )
+        .unwrap();
+        let script = dir.path().join("test.sh");
+        fs::write(&script, "#!/bin/sh\n# AI-hint: test script\necho hi\n").unwrap();
+        let res = run_conformance(dir.path(), None);
+        assert!(res.is_ok(), "{:?}", res);
     }
 }
