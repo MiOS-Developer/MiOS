@@ -19,10 +19,11 @@ jobs:
       - name: Checkout
         # The repository is the deployed root. Checkout fetches the pushed
         # state into the job workspace, and the Containerfile there is what
-        # podman builds.
+        # podman builds. Full history: check_legacy_archive (ADR-0030
+        # Decision 7) replays it, and a shallow clone fails that gate.
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Resolve ratchet comparison baseline
         # Wire ratchet comparison base (task_3398).
@@ -32,13 +33,13 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             target_sha="${{ github.event.pull_request.base.sha }}"
           elif [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
-            git fetch --depth=1 origin main || true
+            git fetch origin main || true  # no --depth: it would graft the full clone shallow
             target_sha="$(git rev-parse FETCH_HEAD 2>/dev/null || true)"
           elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
             target_sha="${{ github.event.before }}"
           fi
           if [[ -n "$target_sha" ]]; then
-            git fetch --depth=1 origin "$target_sha" || true
+            git fetch origin "$target_sha" || true
             if git cat-file -e "$target_sha" 2>/dev/null; then
               echo "MIOS_RATCHET_BASE=$target_sha" >> "$GITHUB_ENV"
             fi

@@ -3822,6 +3822,7 @@ main() {
     check_docs_ratchet
     check_header_integrity
     check_legibility_ratchet
+    check_legacy_archive
     check_docs_ratchet_monotone
     check_comment_lex_equivalence
     check_no_generated_prose_in_resolvers
@@ -4734,6 +4735,12 @@ check_legibility_ratchet() {
         echo "$out" >&2
     fi
     echo "[98-drift-checks]   legibility floors holding"
+}
+
+# --- the legacy archive holds every dropped file at its last content and mode ---
+check_legacy_archive() {  # ADR-0030 Decision 7. Gates are out of the bake: the drift-gate job enforces it on full history.
+    [[ -n "${CTX:-}" || "$ROOT" == "/tmp/build" ]] && { echo "[98-drift-checks]   legacy archive: SKIPPED in-image OCI build" >&2; return 0; }
+    _run_py_check check_legacy_archive "tools/drift-checks.py legacy-archive"
 }
 
 check_header_integrity() {
