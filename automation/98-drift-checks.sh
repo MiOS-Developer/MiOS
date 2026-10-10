@@ -51,6 +51,7 @@ _violation() {
     VIOLATIONS=$((VIOLATIONS + 1))
     return 1
 }
+_fail() { _violation "$@"; }
 
 _subject_present() {
     # Bash twin of drift-checks.py _absent (bdf6aba swept Python only).

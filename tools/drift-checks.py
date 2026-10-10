@@ -2995,10 +2995,15 @@ def check_greenboot() -> int:
     if not critical:
         print("(54) [greenboot].critical_services is empty or absent -- greenboot coverage would pass vacuously over an empty set")
         return 1
+    if "hermes" not in critical:
+        print("(54) [greenboot].critical_services must list 'hermes' as a critical service")
+        return 1
 
     bodies, probed, ssot_driven = {}, set(), False
     if os.path.isdir(gb_dir):
         for name in sorted(os.listdir(gb_dir)):
+            if not name.endswith(".sh"):
+                continue
             fp = os.path.join(gb_dir, name)
             if not os.path.isfile(fp):
                 continue
