@@ -74,17 +74,24 @@ mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (
 5. **Every fold proves it changed nothing at runtime.** A fold lane records the rendered root-overlay manifest, path + sha256 of every file the build would install, before and after. The two must be identical except for differences the lane names, and behaviour tests pass unchanged.
 6. **Size versus count.** This budget supersedes any per-file line ceiling proposed for the same code, such as the 800-line agent-pipe module ceiling. A large module with an AI-hint and a section index is preferred to many small files, so each folded file keeps a one-line AI-hint and a table of contents.
 
-7. **Every dropped file is kept, in `.archive/` (operator directive 2026-10-09: "retain all dropped files as archive in '.archive' folder as a legacy artifact(s)").** A fold removes files from the working tree, never from the record:
-   - `.archive/legacy.oci.tar` is one tracked file holding every file either repo has dropped since its archive base (`[legibility.archive]`), each at its last content, with mode and provenance.
-   - **One tree:** MiOS's repo root, its `.git`, the FHS root, the OCI image, the bootc bootable image and the AI images are the same root tree (the operator: "all aligned in the same root/repo tree"). So archive layer paths are root-relative real paths with no prefix: applying a layer onto the root restores each dropped file at its original FHS path, exactly like an OCI rootfs layer. mios-bootstrap's dropped files travel in their own layers, annotated `org.opencontainers.image.source` with that repo, and `.archive/` sits at the root of the one tree beside `.git`.
-   - It is rebuilt deterministically from git history by `mios-gen archive` (first-parent history since the base; `SOURCE_DATE_EPOCH`-style fixed timestamps), so lanes never hand-edit it and a merge simply regenerates it. `mios-gen archive --check` fails when it is stale, missing a dropped file, or when history is shallow.
-   - It counts as one file in its own `archive` domain. Volumes split at 95 MB (GitHub's 100 MB file limit), each a complete archive.
-8. **Bundles are OCI artifacts in the open AI-model formats MiOS already ships (operator: "organize and compress these bundles in an OpenAI/Open Source AI model's format(s); to OCI standards and patterns from upstream — that is mios-micro").** Every bundle this ADR introduces (the legacy archive, the vendored-dependency bundles, the asset bundles) is a single-file OCI image-layout archive (`oci-layout`, `index.json`, `blobs/sha256/*`; the `oci-archive:` transport of skopeo, readable by ORAS), not a bare tar:
-   - **Corpus-shaped content follows mios-micro's packaging (ADR-0027 Tier 2):** CNCF ModelPack model-spec v0.0.7 — manifest `artifactType` `application/vnd.cncf.model.manifest.v1+json`, config `application/vnd.cncf.model.config.v1+json` (`descriptor`, `modelfs.diffIds`), layers `application/vnd.cncf.model.{code,doc}.v1.tar+gzip` and `...dataset.v1.raw`, each annotated `org.cncf.model.filepath` and `org.opencontainers.image.title` — plus a KitOps `Kitfile` (manifestVersion 1.0.0) describing the same layers.
-   - **The index of a bundle is OpenAI-shaped JSONL** (one `{"object": "...", ...}` row per member), per the operator's ruling that all schemas are OpenAI formats.
-   - **Lineage: MiOS → MiOS AI.** mios-micro is MiOS AI, the model derived from MiOS itself (the operator: "MiOS and mios-micro being a derived Ai model; MiOS Ai"). The legacy archive is therefore a corpus artifact in that lineage, not a dead store: its ModelPack descriptor names the `mios-ai` family, and besides the index it carries a `dataset` layer in OpenAI chat fine-tuning JSONL (one `{"messages": [...]}` record per dropped text file: the path and last commit in the user turn, the file's content in the assistant turn) that mios-micro's SFT harness can consume as-is.
-   - **Other bundles** (vendored wheels, fonts, binaries) use OCI image-spec v1.1 artifacts with their own `artifactType` and the same annotation set.
-   - **Determinism:** sorted members, fixed timestamps, gzip mtime 0, canonical JSON, so a bundle is byte-reproducible and its digest is a stable gate.
+7. **Every dropped file is kept, in `.archive/`, in git's own format (operator directive 2026-10-09: "retain all dropped files as archive in '.archive' folder as a legacy artifact(s)"; "git overlays to root / .git is a dotfile/folder / repo is root -- THAT is the format").**
+   - **One tree.** MiOS's repo root, its `.git`, the FHS root, the OCI image, the bootc bootable image and the AI images are the same root tree. Git overlays to root, and `.git` is just a dotfolder in it. The archive follows the same form.
+   - **`.archive/` is a bare git repository beside `.git`:** sha256 object format, compressed packfiles, one branch `legacy`. Each commit records dropped files at their real root-relative paths, at their last content and mode, with the dropping commit and source repo in the message. Restoring is an overlay onto root: `git --git-dir=/.archive --work-tree=/ checkout legacy -- <path>`.
+   - **It is maintained by `mios-gen archive`, never by hand.** The tool computes the dropped set from first-parent history since `[legibility.archive].since`, appends one commit per update, and repacks to a single pack. Only a handful of tracked files result: `HEAD`, `config`, `refs/heads/legacy` and `objects/pack/pack-*.{pack,idx,rev}`. These are marked binary in `.gitattributes`, so no line-ending conversion can touch them.
+   - **`mios-gen archive --check` fails** when:
+     - a dropped file is missing from `legacy`'s tree;
+     - an archived file's content differs from its last version;
+     - the store fails `git fsck --strict`;
+     - history is shallow.
+     It compares content, not pack bytes, because packs are not byte-reproducible across git versions.
+   - **The `archive` domain holds those few files.** The lane that creates the store pays for them by dropping, and archiving, at least as many files in the same commit.
+   - **mios-bootstrap gets its own `.archive/`** in the same form when it first drops a file. Each repo is its own root.
+8. **There are no tracked bundle tarballs; the tree is the format (operator: "organize and compress these bundles in an OpenAI/Open Source Ai model's format(s); to OCI standards ... that is mios-micro"; "MiOS's root/.git/FHS/OCI/Bootc Bootable images/Ai images are all aligned in the same root/repo tree").**
+   - **Content-addressed and compressed:** git stores already are, like OCI layouts, with sha256 digests in `.archive`. OCI and AI-model packaging happens at publish time, from the tree, not as tarballs committed into it:
+     - the bootc/OCI image is built from the root tree;
+     - **MiOS AI**, mios-micro, the model derived from MiOS itself, packages its artifacts as CNCF ModelPack v0.0.7 plus a KitOps Kitfile 1.0.0 (ADR-0027 Tier 2).
+   - **Lineage: MiOS → MiOS AI.** The `legacy` history in `.archive/` is a corpus source for MiOS AI. When mios-micro packages it, it does so with the `mios-ai` descriptor family and an OpenAI chat fine-tuning JSONL `dataset` layer: path and last commit in the user turn, content in the assistant turn. The index rows are OpenAI-shaped `{"object": ...}` objects, per the ruling that all schemas are OpenAI formats.
+   - **The fold-map bundles follow the same rule.** The vendored dependencies, field assets and theme assets in the fold map are kept as root-tree content (fewer, larger files, or git-native stores like `.archive`), not as tarballs. Their OCI forms are produced when the image or artifact is published.
 
 ## Milestones
 
@@ -149,7 +156,7 @@ None of these blocks a fold; each fold keeps the behaviour until the operator de
 - `gateway-agent` has drop-ins but no base unit. Is it retired?
 - The `.agents/workflows` command copies would be rendered at dev setup. Antigravity sessions that never run setup would lose them.
 - MediCat leftovers in mios-bootstrap have no reader in either repo. Are they dead?
-- Vendored bundles in git rewrite about 60 MB blobs on every bump. The alternative is an OCI artifact.
+- Vendored dependencies: keep them as root-tree content or move them to a git-native store like `.archive`. Their OCI form is produced at publish time.
 
 The per-area survey reports, with lane-sized tasks, planted negatives and risks, travel with the M9 fold assignments.
 
