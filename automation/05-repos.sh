@@ -47,69 +47,17 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    _online_flag=()
-    if [[ "${MIOS_ONLINE_BUILD:-0}" == "1" ]]; then
-        _online_flag=(--online)
-    fi
-    "$_miosd" render-repos --fedora-version "$_fver" "${_online_flag[@]}"
-    mios_ok "Rendered fedora-${_fver}.repo via miosd"
-elif [ -d "/usr/share/mios/vendored/rpms" ] && [[ "${MIOS_ONLINE_BUILD:-0}" != "1" ]]; then
-    mios_log "Using local vendored RPM mirror for Fedora ${_fver}"
-    cat > /etc/yum.repos.d/fedora-${_fver}.repo <<EOREPO
-[fedora-${_fver}]
-name=Fedora ${_fver} - \$basearch
-baseurl=file:///usr/share/mios/vendored/rpms/fedora-${_fver}/\$basearch
-enabled=1
-repo_gpgcheck=0
-type=rpm
-gpgcheck=0
-skip_if_unavailable=True
-priority=95
-
-[fedora-${_fver}-updates]
-name=Fedora ${_fver} Updates - \$basearch
-baseurl=file:///usr/share/mios/vendored/rpms/updates-released-f${_fver}/\$basearch
-enabled=1
-repo_gpgcheck=0
-type=rpm
-gpgcheck=0
-skip_if_unavailable=True
-priority=95
-EOREPO
-else
-    cat > /etc/yum.repos.d/fedora-${_fver}.repo <<EOREPO
-[fedora-${_fver}]
-name=Fedora ${_fver} - \$basearch
-metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-${_fver}&arch=\$basearch
-enabled=1
-repo_gpgcheck=0
-type=rpm
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64
-skip_if_unavailable=True
-priority=95
-timeout=10
-minrate=1k
-max_parallel_downloads=10
-ip_resolve=4
-
-[fedora-${_fver}-updates]
-name=Fedora ${_fver} Updates - \$basearch
-metalink=https://mirrors.fedoraproject.org/metalink?repo=updates-released-f${_fver}&arch=\$basearch
-enabled=1
-repo_gpgcheck=0
-type=rpm
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64
-skip_if_unavailable=True
-priority=95
-timeout=10
-minrate=1k
-max_parallel_downloads=10
-ip_resolve=4
-EOREPO
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required to render repos (task_962)"
+    exit 1
 fi
+
+_online_flag=()
+if [[ "${MIOS_ONLINE_BUILD:-0}" == "1" ]]; then
+    _online_flag=(--online)
+fi
+"$_miosd" render-repos --fedora-version "$_fver" "${_online_flag[@]}"
+mios_ok "Rendered fedora-${_fver}.repo via miosd"
 
 mios_step "Phase 1: pre-upgrade core systemd/filesystem"
 $DNF_BIN "${DNF_SETOPT[@]}" upgrade -y --allowerasing --skip-unavailable \
