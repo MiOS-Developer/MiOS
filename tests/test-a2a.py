@@ -1218,6 +1218,19 @@ class TestA2AProjectedCard(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "1")
 
+    def test_card_must_verify_under_the_provisioned_key(self):
+        from unittest.mock import patch
+        other = Ed25519PrivateKey.generate().public_key()
+        with patch.object(_mcp_server_mod, "_load_card_signing_key",
+                          return_value=(self.key, "fixture-kid", other)):
+            with self.assertRaisesRegex(RuntimeError, "provisioned passport public key"):
+                _project_agent_card("proof-head")
+        # A verifier that resolves the trusted key by registered identity accepts it.
+        card = _project_agent_card("proof-head")
+        trusted = {"proof-head": self.key.public_key()}.get
+        self.assertEqual(_verify_agent_card_signature(card, load_pub_fn=trusted, passport_agent_name="proof-head"),
+                         (True, "ok"))
+
     def test_unknown_registration_rejected_even_if_cli_catalogued(self):
         with self.assertRaisesRegex(ValueError, "Unknown agent"):
             _project_agent_card("catalogue-only", {"tools": [{"name": "catalogue-only"}]})
@@ -1251,6 +1264,15 @@ class TestA2AProjectedCard(unittest.TestCase):
                     serialization.NoEncryption()))
                 (key_path / "private.key").chmod(0o600)
                 (key_path / "kid").write_text("fixture-kid")
+                with self.assertRaisesRegex(RuntimeError, "provisioned passport public key"):
+                    loader("proof-head")
+                pem = serialization.PublicFormat.SubjectPublicKeyInfo
+                (key_path / "public.key").write_bytes(Ed25519PrivateKey.generate().public_key().public_bytes(
+                    serialization.Encoding.PEM, pem))
+                with self.assertRaisesRegex(RuntimeError, "does not match"):
+                    loader("proof-head")
+                (key_path / "public.key").write_bytes(self.key.public_key().public_bytes(
+                    serialization.Encoding.PEM, pem))
                 private, kid, public = loader("proof-head")
                 self.assertEqual(kid, "fixture-kid")
                 self.assertEqual(public.public_bytes_raw(), self.key.public_key().public_bytes_raw())

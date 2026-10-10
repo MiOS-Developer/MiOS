@@ -1804,9 +1804,10 @@ def _run_monitor_ui(mode):
 
 
 def _load_card_signing_key(agent_id: str):
-    """Load only a provisioned, owner-private Ed25519 passport key."""
+    """Load only a provisioned, owner-private Ed25519 passport key, and the
+    provisioned public key it must match -- the key a verifier trusts."""
     from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]*", agent_id) or ".." in agent_id:
         raise ValueError("Invalid relay agent identifier")
@@ -1824,7 +1825,14 @@ def _load_card_signing_key(agent_id: str):
     kid = (directory / "kid").read_text(encoding="utf-8").strip()
     if not kid:
         raise RuntimeError("AgentCard passport key identifier is missing")
-    return priv, kid, priv.public_key()
+    public = directory / "public.key"
+    if public.is_symlink() or not public.is_file():
+        raise RuntimeError("AgentCard signing requires the provisioned passport public key")
+    trusted = serialization.load_pem_public_key(public.read_bytes())
+    if (not isinstance(trusted, Ed25519PublicKey)
+            or trusted.public_bytes_raw() != priv.public_key().public_bytes_raw()):
+        raise RuntimeError("AgentCard passport key does not match its provisioned public key")
+    return priv, kid, trusted
 
 
 def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
@@ -1839,9 +1847,9 @@ def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
         os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios", "agent-pipe"))
     if agent_pipe not in sys.path:
         sys.path.insert(0, agent_pipe)
-    from mios_pipe.federation.agentcard_sign import _agent_card_signature
+    from mios_pipe.federation.agentcard_sign import _agent_card_signature, _verify_agent_card_signature
 
-    priv, kid, _ = _load_card_signing_key(agent_id)
+    priv, kid, trusted = _load_card_signing_key(agent_id)
     base = _agent_pipe_url()
     label = registration.get("label") or agent_id
     kind = registration["kind"]
@@ -1864,6 +1872,9 @@ def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
     if not sig:
         raise RuntimeError("AgentCard passport signing failed")
     card["signatures"] = [sig]
+    # Emit only what verifies under the provisioned key; the card carries no key.
+    if _verify_agent_card_signature(card, public_key=trusted) != (True, "ok"):
+        raise RuntimeError("AgentCard does not verify against the provisioned passport public key")
     return card
 
 
