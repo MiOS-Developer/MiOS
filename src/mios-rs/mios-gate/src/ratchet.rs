@@ -266,6 +266,51 @@ pub fn check(root: &Path) -> Report {
     }
 
     let (exempted, mut findings) = exempt(&work_val);
+    let mut baseline_note = String::new();
+    // ADR-0030 counts generated files too. The old generated-budget number
+    // measured a different set; compare the immutable baseline tree's TOTAL
+    // instead. Never use the current tree or its proposed ceiling as the base.
+    let total_key = "legibility.max_tracked_files";
+    let total_budget = work_val
+        .get("legibility")
+        .and_then(|v| v.get("file_budget"))
+        .and_then(toml::Value::as_table)
+        .is_some();
+    let (old_exempted, _) = exempt(&head_val);
+    if total_budget && exempted.contains_key(total_key) {
+        findings.push(format!(
+            "{total_key} counts every tracked file and cannot be a generated-budget exemption"
+        ));
+    }
+    if total_budget
+        && !exempted.contains_key(total_key)
+        && old_exempted
+            .get(total_key)
+            .is_some_and(|reason| !reason.is_empty())
+        && head.contains_key(total_key)
+        && head_val
+            .get("legibility")
+            .and_then(|v| v.get("file_budget"))
+            .is_none()
+    {
+        let tree = match Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["ls-tree", "-r", "-z", "--name-only", &baseline])
+            .output()
+        {
+            Ok(out) if out.status.success() => out.stdout,
+            _ => return cannot_run("cannot count tracked files in the immutable ratchet baseline"),
+        };
+        let count = tree.iter().filter(|&&byte| byte == 0).count();
+        if count == 0 || tree.last() != Some(&0) {
+            return cannot_run(
+                "immutable ratchet baseline returned an empty or incomplete file list",
+            );
+        }
+        head.insert(total_key.to_string(), count as f64);
+        baseline_note = format!(", TOTAL file baseline measured from Git: {count}");
+    }
     // An exemption for a key that is not a ceiling is stale bookkeeping that
     // would quietly start covering a future key of that name.
     for k in exempted.keys() {
@@ -303,7 +348,7 @@ pub fn check(root: &Path) -> Report {
     report(
         ok,
         format!(
-            "{} shrink-only ceiling(s) are <= {}{note}",
+            "{} shrink-only ceiling(s) are <= {}{note}{baseline_note}",
             work.len(),
             describe_baseline(&compared_to)
         ),

@@ -378,8 +378,8 @@ passes on the real tree or system) and a negative control (a planted defect make
     - M7's L1 TUI task builds on U2 and U5.
   - **To confirm with the operator:** U4 routes `ai` to the desktop's AI workspace, as `usr/bin/mios`
     and the design doc already do, and gives Open WebUI its own verb.
-- **M9: 500 tracked files, total (ADR-0030).**
-  - **Goal:** the operator's cap is "500 disparate files—TOTAL/OVERALL", dependencies included. On 2026-10-09 the tree had 3,654 files after F0.
+- **M9: 500 tracked files per MiOS repo -- mios.git and mios-bootstrap each (ADR-0030, amended).**
+  - **Goal:** the operator's cap is "500 disparate files—TOTAL/OVERALL", dependencies included. The operator settled the scope: "500 total files EACH per MiOS repo", folded losslessly with the Rust static-binary port as the primary goal and the hosted mios.html -> Rust -> mios.toml flow intact. On 2026-10-09 mios.git had 3,654 files and mios-bootstrap 201 (`[legibility].max_bootstrap_files`, its own 500 target; folds task_3672 field/, task_3673 root).
     - Every domain has a shrink-only `max_files` in `[legibility.file_budget]` and a `target_files`; the targets sum to 405.
     - `max_tracked_files` counts everything and is no longer exempt in `[drift.generated_ceilings]`.
     - No commit adds a file without folding one away in the same commit.
