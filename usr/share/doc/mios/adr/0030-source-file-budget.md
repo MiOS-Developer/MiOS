@@ -160,6 +160,15 @@ None of these blocks a fold; each fold keeps the behaviour until the operator de
 
 The per-area survey reports, with lane-sized tasks, planted negatives and risks, travel with the M9 fold assignments.
 
+## Rationale
+
+- **A ceiling must be able to fail.** The old `max_tracked_files` sat in `[drift.generated_ceilings]` and was re-baselined upward on every merge, from 3,050 to 3,662, so it bounded nothing. Shrink-only domains with a first-match partition are measurable per area, and a file that matches no domain is itself a violation. Silence is never a pass.
+- **Folding beats deleting.** The operator's constraint is "no loss of functionalities". Deleting a file loses what it did, while folding keeps the behaviour and drops the file. The rendered-root manifest in Decision 5 proves this per lane. `.archive/` keeps every dropped byte recoverable, so even a fold that later proves wrong can be undone.
+- **Projections are outputs because SSOT is the source.** A tracked copy of something `mios.toml` renders is a second source that can drift. Rendering in the build and gating on render-twice determinism removes about 524 files and a whole drift class at once.
+- **Per repo, not per platform.** mios.git and mios-bootstrap are separate roots with separate histories and publishers, so each is measured on its own tree and its own budget is enforced on it. A combined number would let one repo's growth hide behind the other's shrinkage.
+- **Git-native, not a bundle format.** The repo is the root, and git is already a content-addressed, compressed, sha256-capable store with a native overlay-to-root restore. A tarball or OCI layout committed into the tree would be a second packaging of the same bytes, opaque to the gates. OCI/ModelPack forms are produced at publish time from the tree (Decision 8).
+- **Few large files over many small ones.** A module with an AI-hint and a section index is as navigable as a directory, and it keeps multicall MiOS-MODULES (ruling Q19) and the Rust static-binary port as the shape the tree converges to.
+
 ## Consequences
 
 - **Large folds are hard to review.** Each fold lane moves code without changing it: one commit moves, a separate commit edits. Rename-aware history is lost, so the move commit's message lists every source → destination pair.
