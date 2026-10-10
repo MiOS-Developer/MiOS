@@ -417,7 +417,7 @@ fi
 rm -rf /usr/share/gnome/help/* /usr/share/help/* 2>/dev/null || true
 rm -f /var/log/dnf5.log* /var/log/hawkey.log 2>/dev/null || true
 rm -rf /run/ceph /run/cockpit /run/k3s /tmp/mios-step-*.log 2>/dev/null || true
-rm -f /var/lib/systemd/random-seed /tmp/mios-build.log "$MIOS_VERSION_MANIFEST" 2>/dev/null || true
+rm -f /var/lib/systemd/random-seed /tmp/mios-build.log /tmp/mios-sbom-scan.spdx.json "$MIOS_VERSION_MANIFEST" 2>/dev/null || true
     return 0
 }
 

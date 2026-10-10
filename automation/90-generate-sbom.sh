@@ -40,13 +40,17 @@ VERSION="${VERSION:-unknown}"
 
 mios_log "Scanning root filesystem with syft"
 
-syft scan dir:/ --source-name mios --source-version "${VERSION}" --output "cyclonedx-json=${ARTIFACT_DIR}/mios-sbom-${VERSION}.cyclonedx.json" \
+# One scan, every format: a scan of / takes ~12 min of bake. 92-export-sbom.sh
+# exports the SPDX JSON cache below rather than rescanning, and
+# 91-strip-build-toolchain.sh deletes that cache when it changes the tree.
+SBOM_SCAN_CACHE=/tmp/mios-sbom-scan.spdx.json
+rm -f "$SBOM_SCAN_CACHE"
+syft scan dir:/ --source-name mios --source-version "${VERSION}" \
+    --output "cyclonedx-json=${ARTIFACT_DIR}/mios-sbom-${VERSION}.cyclonedx.json" \
+    --output "spdx-tag-value=${ARTIFACT_DIR}/mios-sbom-${VERSION}.spdx.txt" \
+    --output "spdx-json=${SBOM_SCAN_CACHE}" \
     --exclude "./ctx/**" --exclude "./var/cache/**" \
-    || mios_warn "CycloneDX SBOM generation failed"
-
-syft scan dir:/ --source-name mios --source-version "${VERSION}" --output "spdx-tag-value=${ARTIFACT_DIR}/mios-sbom-${VERSION}.spdx.txt" \
-    --exclude "./ctx/**" --exclude "./var/cache/**" \
-    || mios_warn "SPDX SBOM generation failed"
+    || { rm -f "$SBOM_SCAN_CACHE"; mios_warn "SBOM generation failed"; }
 
 mios_log "SBOM artifacts in ${ARTIFACT_DIR}:"
 ls -lh "$ARTIFACT_DIR" 2>/dev/null || true
