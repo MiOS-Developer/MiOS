@@ -3882,7 +3882,18 @@ PY
 }
 
 _run_test() {
-    if ( "$1" ); then :; else _FAILED+=("$1"); fi
+    local pre_status post_status
+    pre_status="$(git -C "$ROOT" status --porcelain)"
+    if ( "$1" ); then
+        post_status="$(git -C "$ROOT" status --porcelain)"
+        if [[ "$post_status" != "$pre_status" ]]; then
+            echo -e " \033[1;31m[drift-gate-negatives]\033[0m Test $1 violated tree restore invariant:" >&2
+            git -C "$ROOT" status --porcelain >&2
+            _FAILED+=("$1 (unrestored git porcelain diff)")
+        fi
+    else
+        _FAILED+=("$1")
+    fi
 }
 
 _neg_gate() {
