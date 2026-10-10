@@ -98,10 +98,10 @@ class Ed25519Signer:
                 os.makedirs(parent, mode=0o700, exist_ok=True)
             fd = os.open(self.key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                          | getattr(os, "O_BINARY", 0), 0o600)
-        except FileExistsError:
-            self._load_key()  # a concurrent writer provisioned it first
-            return
         except OSError as exc:
+            if isinstance(exc, FileExistsError) and os.path.lexists(self.key_path):
+                self._load_key()  # a concurrent writer provisioned it first
+                return
             self.key_error = (f"cannot persist a new node key at {self.key_path} ({exc}); "
                               "refusing to sign with a key no later run could verify")
             return

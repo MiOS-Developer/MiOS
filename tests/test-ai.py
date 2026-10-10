@@ -271,14 +271,14 @@ class ac_TestAuditChain(unittest.TestCase):
             f.write("x")
         recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path,
                                                      key_path=os.path.join(not_a_dir, "node.key"))
-        with self.assertRaises(self._KeyError):
+        with self.assertRaisesRegex(self._KeyError, "cannot persist"):
             recorder.record_event("decision", {"step": 1})
         self.assertFalse(os.path.exists(self.log_path))
         # 3. An unreadable key is neither replaced nor bypassed.
         with open(self.key_path, "wb") as f:
             f.write(b"short")
         recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
-        with self.assertRaises(self._KeyError):
+        with self.assertRaisesRegex(self._KeyError, "unreadable"):
             recorder.record_event("decision", {"step": 1})
         with open(self.key_path, "rb") as f:
             self.assertEqual(f.read(), b"short")
