@@ -23,9 +23,15 @@ from unittest.mock import MagicMock, patch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
+os.environ.setdefault("MIOS_TOML_ROOT", _ROOT)
 
-# Resolve agent-pipe path
-_AGENT_PIPE = os.path.join(_ROOT, "usr", "lib", "mios", "agent-pipe")
+# Resolve mios library and agent-pipe paths
+_LIB_MIOS = os.path.join(_ROOT, "usr", "lib", "mios")
+if _LIB_MIOS not in sys.path:
+    sys.path.insert(0, _LIB_MIOS)
+import mios_toml
+
+_AGENT_PIPE = os.path.join(_LIB_MIOS, "agent-pipe")
 if _AGENT_PIPE not in sys.path:
     sys.path.insert(0, _AGENT_PIPE)
 
@@ -1032,5 +1038,448 @@ class TestMcpSandbox(unittest.TestCase):
             self.assertEqual(called_args[-2:], ["echo", "hello"])
 
 
+# Domain 3.3: Agent CLI Catalog & Dynamic Nested Workflow Dispatch
+
+
+def _load_mios_mcp_server_module():
+    server_path = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-mcp-server")
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("mios_mcp_server", server_path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class TestAgentCliCatalog(unittest.TestCase):
+    """Validates SSOT agent_cli catalog conformance and approval defaults."""
+
+    def setUp(self):
+        self.orig_env = os.environ.get("MIOS_TOML_ROOT")
+        os.environ["MIOS_TOML_ROOT"] = _ROOT
+        mios_toml.clear_cache()
+        self.server_mod = _load_mios_mcp_server_module()
+
+    def tearDown(self):
+        if self.orig_env is not None:
+            os.environ["MIOS_TOML_ROOT"] = self.orig_env
+        else:
+            os.environ.pop("MIOS_TOML_ROOT", None)
+        mios_toml.clear_cache()
+
+    def test_agent_cli_catalog_enabled_and_branch_rule(self):
+        """Verify [agent_cli] is enabled and specifies default cloud branch rule."""
+        cfg = self.server_mod._agent_cli_config()
+        self.assertTrue(cfg.get("enabled"))
+        self.assertEqual(cfg.get("branch_rule"), "^cloud/[a-zA-Z0-9._-]+$")
+
+    def test_all_adr0029_verified_tools_present(self):
+        """Verify all verified local and cloud agent CLIs from ADR-0029 are catalogued."""
+        cfg = self.server_mod._agent_cli_config()
+        tool_names = {row["name"] for row in cfg.get("tools", [])}
+        expected_tools = {
+            "claude", "claude-cloud",
+            "codex", "codex-cloud",
+            "gemini", "copilot", "opencode",
+            "agy", "aider", "jules", "gh-agent-task",
+        }
+        for expected in expected_tools:
+            self.assertIn(expected, tool_names, f"Expected agent tool '{expected}' missing from SSOT catalog")
+
+    def test_tool_schema_conformance(self):
+        """Verify each tool entry conforms to the schema with required templates and metadata."""
+        cfg = self.server_mod._agent_cli_config()
+        valid_kinds = {"npm", "native", "python", "cloud"}
+        for tool in cfg.get("tools", []):
+            name = tool["name"]
+            self.assertRegex(name, r"^[a-z][a-z0-9-]*$", f"Tool '{name}' has invalid name format")
+            self.assertIn(tool.get("kind"), valid_kinds, f"Tool '{name}' has unknown kind '{tool.get('kind')}'")
+            self.assertIn("launch_template", tool, f"Tool '{name}' missing launch_template")
+            self.assertIsInstance(tool.get("experimental"), bool, f"Tool '{name}' experimental flag must be bool")
+            self.assertIsInstance(tool.get("required_credentials"), list, f"Tool '{name}' required_credentials must be list")
+
+    def test_adr_0029_verified_cloud_templates(self):
+        """Verify cloud templates strictly match ADR-0029 verified table (--env, --repo, -b, -R)."""
+        cfg = self.server_mod._agent_cli_config()
+        tools_by_name = {tool["name"]: tool for tool in cfg.get("tools", [])}
+
+        codex_cloud = tools_by_name["codex-cloud"]
+        self.assertIn("--env", codex_cloud["launch_template"], "codex-cloud launch_template must include --env")
+
+        jules = tools_by_name["jules"]
+        self.assertIn("--repo", jules["launch_template"], "jules launch_template must include --repo")
+
+        gh = tools_by_name["gh-agent-task"]
+        self.assertIn("-b", gh["launch_template"], "gh-agent-task launch_template must include -b <base>")
+        self.assertIn("-R", gh["launch_template"], "gh-agent-task launch_template must include -R <repo>")
+
+    def test_no_invented_local_status_result_templates(self):
+        """Verify local tools do NOT have invented status/result subcommands."""
+        cfg = self.server_mod._agent_cli_config()
+        local_tools = [tool for tool in cfg.get("tools", []) if tool.get("kind") != "cloud"]
+        for tool in local_tools:
+            name = tool["name"]
+            self.assertNotIn("status_template", tool, f"Local tool '{name}' has invented status_template")
+            self.assertNotIn("result_template", tool, f"Local tool '{name}' has invented result_template")
+
+    def test_cloud_tools_enforce_branch_rule(self):
+        """Verify all cloud agent CLIs have branch_rule set to '^cloud/'."""
+        cfg = self.server_mod._agent_cli_config()
+        cloud_tools = [row for row in cfg.get("tools", []) if row.get("kind") == "cloud"]
+        self.assertGreater(len(cloud_tools), 0, "No cloud tools found in catalog")
+        for tool in cloud_tools:
+            self.assertEqual(
+                tool.get("branch_rule"),
+                "^cloud/[a-zA-Z0-9._-]+$",
+                f"Cloud tool '{tool['name']}' must define branch_rule = '^cloud/[a-zA-Z0-9._-]+$'",
+            )
+
+
+    def test_experimental_capabilities(self):
+        """Verify experimental tools are tagged as experimental in SSOT per ADR-0029."""
+        cfg = self.server_mod._agent_cli_config()
+        tools_by_name = {row["name"]: row for row in cfg.get("tools", [])}
+        self.assertTrue(tools_by_name["codex-cloud"]["experimental"], "codex-cloud must be marked experimental=true")
+        self.assertFalse(tools_by_name["claude"]["experimental"], "claude is stable (experimental=false)")
+        self.assertFalse(tools_by_name["gemini"]["experimental"], "gemini is stable (experimental=false)")
+        self.assertFalse(tools_by_name["agy"]["experimental"], "agy is stable (experimental=false)")
+
+    def test_no_blanket_permission_bypass_flags_in_defaults(self):
+        """Verify defaults contain NO blanket bypass flags (--dangerously-skip-permissions, --approval-mode yolo)."""
+        cfg = self.server_mod._agent_cli_config()
+        forbidden_flags = [
+            "--dangerously-skip-permissions",
+            "--approval-mode yolo",
+            "--approval-mode=yolo",
+            "--yolo",
+            "-y",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ]
+        for tool in cfg.get("tools", []):
+            for key in ("launch_template", "status_template", "result_template"):
+                val = tool.get(key, "")
+                for flag in forbidden_flags:
+                    self.assertNotIn(
+                        flag,
+                        val.split(),
+                        f"Forbidden bypass flag '{flag}' found in tool '{tool['name']}' {key}: {val}",
+                    )
+                    self.assertNotIn(
+                        flag,
+                        val,
+                        f"Forbidden bypass flag '{flag}' substring found in tool '{tool['name']}' {key}: {val}",
+                    )
+
+        # Assert gemini explicitly uses safe default approval mode
+        gemini_tool = next(t for t in cfg["tools"] if t["name"] == "gemini")
+        self.assertIn("--approval-mode default", gemini_tool["launch_template"])
+
+    def test_required_credentials_referenced_by_name_only(self):
+        """Verify required credentials only contain valid uppercase variable names, never literal secrets."""
+        cfg = self.server_mod._agent_cli_config()
+        for tool in cfg.get("tools", []):
+            creds = tool.get("required_credentials", [])
+            for cred in creds:
+                self.assertRegex(
+                    cred,
+                    r"^[A-Z][A-Z0-9_]*$",
+                    f"Credential '{cred}' in tool '{tool['name']}' must be valid env var name",
+                )
+                self.assertFalse(
+                    cred.startswith("sk-") or "secret" in cred.lower(),
+                    f"Credential '{cred}' looks like a literal secret, not a variable name",
+                )
+
+
+class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
+    """Validates dynamic command resolution in nested_workflow from SSOT [agent_cli]."""
+
+    def setUp(self):
+        self.orig_env = os.environ.get("MIOS_TOML_ROOT")
+        os.environ["MIOS_TOML_ROOT"] = _ROOT
+        mios_toml.clear_cache()
+        self.server_mod = _load_mios_mcp_server_module()
+
+        self.bridge = self.server_mod._TmuxBridge({
+            "enabled": True,
+            "max_slots": 4,
+            "timeout_s": 60,
+            "history_limit": 1000,
+            "allowed_tools": ["execute-command", "list-slots", "pane-state"],
+        })
+        self.bridge.start = mock.AsyncMock()
+        self.bridge.env = {"PATH": os.environ.get("PATH", "")}
+        self.bridge.slot_locks = {1: asyncio.Lock()}
+
+        async def _mock_reserve(slot=None):
+            await self.bridge.slot_locks[1].acquire()
+            return 1
+
+        self.bridge._reserve_nested_slot = _mock_reserve
+        self.bridge.arguments = mock.MagicMock(
+            return_value=("execute-command", {"command": "", "slot": 1}, None)
+        )
+        self.bridge._call_locked = mock.AsyncMock(
+            return_value=mock.MagicMock(model_dump=lambda **kw: {}, content=[])
+        )
+        self.bridge._payload = mock.MagicMock(
+            return_value={"exitCode": 0, "output": "output receipt"}
+        )
+
+    def tearDown(self):
+        if self.orig_env is not None:
+            os.environ["MIOS_TOML_ROOT"] = self.orig_env
+        else:
+            os.environ.pop("MIOS_TOML_ROOT", None)
+        mios_toml.clear_cache()
+
+    async def _get_dispatched_command(self, agent, task, **extra_args):
+        with mock.patch("shutil.which", return_value="/usr/bin/mios"):
+            args = {"agent": agent, "task": task, **extra_args}
+            await self.bridge.nested_workflow(args)
+            call_args = self.bridge.arguments.call_args[0][1]
+            return call_args["command"]
+
+    async def test_dynamic_command_resolution_local_tools(self):
+        """Verify dynamic template resolution for local tools (claude, codex, gemini, agy)."""
+        cmd = await self._get_dispatched_command("claude", "run unit tests")
+        self.assertIn("claude -p 'run unit tests'", cmd)
+
+        cmd = await self._get_dispatched_command("codex", "run build")
+        self.assertIn("codex exec 'run build'", cmd)
+
+        cmd = await self._get_dispatched_command("gemini", "summarize logs")
+        self.assertIn("gemini -p 'summarize logs' -o json --approval-mode default", cmd)
+
+        cmd = await self._get_dispatched_command("agy", "audit gates")
+        self.assertIn("agy -p 'audit gates' --output-format json", cmd)
+
+    async def test_dynamic_command_resolution_cloud_tools(self):
+        """Verify dynamic template resolution for cloud tools dispatches by catalogue ROW name."""
+        cmd = await self._get_dispatched_command("claude-cloud", "analyze repo", branch="cloud/analysis")
+        self.assertIn("/usr/bin/mios agent claude-cloud --cloud 'analyze repo'", cmd)
+
+        cmd = await self._get_dispatched_command("codex-cloud", "fix bug", branch="cloud/bugfix", env_id="prod-env")
+        self.assertIn("/usr/bin/mios agent codex-cloud cloud exec --env prod-env 'fix bug'", cmd)
+
+        cmd = await self._get_dispatched_command("jules", "refactor module", branch="cloud/refactor", repo="org/repo")
+        self.assertIn("/usr/bin/mios agent jules remote new --repo org/repo --session 'refactor module'", cmd)
+
+        cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy", base="main", repo="org/repo")
+        self.assertIn("/usr/bin/mios agent gh-agent-task agent-task create 'deploy check' -b main -R org/repo", cmd)
+
+    async def test_cloud_tool_parameter_injection_quoting(self):
+        """Verify parameters with shell metacharacters are safely quoted with shlex."""
+        cmd = await self._get_dispatched_command("jules", "refactor", branch="cloud/safe", repo="evil/repo; rm -rf /")
+        self.assertIn("'evil/repo; rm -rf /'", cmd)
+
+    async def test_version_probe_preservation(self):
+        """Verify --version / -v tasks are preserved as '{agent} {task}'."""
+        cmd = await self._get_dispatched_command("claude", "--version")
+        self.assertIn("claude --version", cmd)
+
+        cmd = await self._get_dispatched_command("codex", "-v")
+        self.assertIn("codex -v", cmd)
+
+    async def test_unknown_agent_rejection(self):
+        """Verify attempting to run an uncatalogued agent raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.bridge.nested_workflow({"agent": "nonexistent-bot", "task": "do work"})
+        self.assertIn("not in the SSOT CLI catalog", str(ctx.exception))
+
+    async def test_cloud_agent_branch_rule_enforcement(self):
+        """Verify cloud tools require a branch matching branch_rule (^cloud/)."""
+        # Valid branch: passes
+        cmd = await self._get_dispatched_command("codex-cloud", "do task", branch="cloud/feature-1")
+        self.assertIn("/usr/bin/mios agent codex-cloud cloud exec --env", cmd)
+        self.assertIn("'do task'", cmd)
+
+    async def test_cloud_agent_dispatches_by_catalogue_row_not_first_word_of_template(self):
+        """Plant defect test: nested_workflow must dispatch by catalogue row name, not template's first word."""
+        # For gh-agent-task: first word of template is 'gh', catalogue row name is 'gh-agent-task'.
+        cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy", base="main", repo="org/repo")
+        self.assertIn("agent gh-agent-task", cmd)
+        self.assertNotIn("agent gh ", cmd)
+
+        # For claude-cloud: first word is 'claude', catalogue row name is 'claude-cloud'
+        cmd = await self._get_dispatched_command("claude-cloud", "analyze", branch="cloud/analyze")
+        self.assertIn("agent claude-cloud", cmd)
+        self.assertNotIn("agent claude ", cmd)
+
+        # For codex-cloud: first word is 'codex', catalogue row name is 'codex-cloud'
+        cmd = await self._get_dispatched_command("codex-cloud", "fix", branch="cloud/fix")
+        self.assertIn("agent codex-cloud", cmd)
+        self.assertNotIn("agent codex ", cmd)
+
+        # Invalid branch: rejected
+        with self.assertRaises(ValueError) as ctx:
+            await self.bridge.nested_workflow({
+                "agent": "codex-cloud",
+                "task": "do task",
+                "branch": "main",
+            })
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.bridge.nested_workflow({
+                "agent": "claude-cloud",
+                "task": "do task",
+                "branch": "feat/my-feature",
+            })
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_agent_branch_rule_requires_purpose(self):
+        """Negative control: 'cloud/' with empty purpose must be rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.bridge.nested_workflow({
+                "agent": "codex-cloud",
+                "task": "do task",
+                "branch": "cloud/",
+            })
+        self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_agent_rejects_missing_branch_without_server_fallback(self):
+        """Negative control: cloud agent without branch must fail, never falling back to server cwd."""
+        with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0, stdout="cloud/fallback")):
+            with self.assertRaises(ValueError) as ctx:
+                await self.bridge.nested_workflow({
+                    "agent": "codex-cloud",
+                    "task": "do task",
+                })
+            self.assertIn("requires an isolated branch matching", str(ctx.exception))
+
+    async def test_cloud_branch_reaches_launched_command(self):
+        """Verify the specified cloud branch reaches the launched command in the tmux slot."""
+        cmd = await self._get_dispatched_command("codex-cloud", "do task", branch="cloud/purpose-123")
+        self.assertIn("cloud/purpose-123", cmd)
+        self.assertIn("GIT_BRANCH=", cmd)
+
+
+class TestPlantedNegativeControls(unittest.TestCase):
+    """Planted negative controls asserting that unsafe configurations fail gates."""
+
+    def setUp(self):
+        self.orig_env = os.environ.get("MIOS_TOML_ROOT")
+        os.environ["MIOS_TOML_ROOT"] = _ROOT
+        mios_toml.clear_cache()
+        self.server_mod = _load_mios_mcp_server_module()
+
+    def tearDown(self):
+        if self.orig_env is not None:
+            os.environ["MIOS_TOML_ROOT"] = self.orig_env
+        else:
+            os.environ.pop("MIOS_TOML_ROOT", None)
+        mios_toml.clear_cache()
+
+    def test_positive_control_default_catalog_passes(self):
+        """Positive control: the live SSOT [agent_cli] passes all safety checks."""
+        cfg = self.server_mod._agent_cli_config()
+        self.assertIsInstance(cfg, dict)
+        self.assertGreater(len(cfg["tools"]), 0)
+
+    def test_planted_negative_dangerously_skip_permissions_fails_gate(self):
+        """Negative control: planting --dangerously-skip-permissions fails gate with ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            self.server_mod._assert_safe_command_template("claude -p {task} --dangerously-skip-permissions")
+        self.assertIn("Unsafe permission bypass flag '--dangerously-skip-permissions' is forbidden", str(ctx.exception))
+
+    def test_planted_negative_approval_mode_yolo_fails_gate(self):
+        """Negative control: planting --approval-mode yolo fails gate with ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode yolo")
+        self.assertIn("Unsafe permission bypass flag '--approval-mode yolo' is forbidden", str(ctx.exception))
+
+    def test_planted_negative_yolo_flag_fails_gate(self):
+        """Negative control: planting -y or --yolo fails gate with ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            self.server_mod._assert_safe_command_template("gemini -p {task} --yolo")
+        self.assertIn("Unsafe permission bypass flag '--yolo' is forbidden", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.server_mod._assert_safe_command_template("gemini -p {task} -y")
+        self.assertIn("Unsafe permission bypass flag '-y' is forbidden", str(ctx.exception))
+
+    def test_planted_negative_dangerously_bypass_approvals_fails_gate(self):
+        """Negative control: planting --dangerously-bypass-approvals-and-sandbox fails gate."""
+        with self.assertRaises(ValueError) as ctx:
+            self.server_mod._assert_safe_command_template("codex exec {task} --dangerously-bypass-approvals-and-sandbox")
+        self.assertIn("Unsafe permission bypass flag '--dangerously-bypass-approvals-and-sandbox' is forbidden", str(ctx.exception))
+
+    def test_planted_negative_unsafe_catalog_config_fails_loader(self):
+        """Negative control: planting an unsafe template in mock catalog fails _agent_cli_config."""
+        unsafe_cfg = {
+            "agent_cli": {
+                "enabled": True,
+                "branch_rule": "^cloud/",
+                "tools": [
+                    {
+                        "name": "claude",
+                        "kind": "npm",
+                        "launch_template": "claude -p {task} --dangerously-skip-permissions",
+                    }
+                ]
+            }
+        }
+        with mock.patch("mios_toml.load_merged", return_value=unsafe_cfg):
+            with self.assertRaises(ValueError) as ctx:
+                self.server_mod._agent_cli_config()
+            self.assertIn("--dangerously-skip-permissions", str(ctx.exception))
+
+    def test_planted_negative_approval_mode_yolo_whitespace_and_casing(self):
+        """Negative control: planting --approval-mode with double space, tab, or uppercase YOLO fails."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode  yolo")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode=YOLO")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode\tyolo")
+
+    def test_planted_negative_quoting_bypass(self):
+        """Negative control: planting quoted bypass flags fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode='yolo'")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} \"--approval-mode=yolo\"")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode \"yolo\"")
+
+    def test_planted_negative_claude_permission_mode_bypass(self):
+        """Negative control: planting claude --permission-mode bypassPermissions fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("claude -p {task} --permission-mode bypassPermissions")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("claude -p {task} --permission-mode=bypassPermissions")
+
+    def test_planted_negative_copilot_allow_all_tools(self):
+        """Negative control: planting copilot --allow-all-tools fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("copilot --exec {task} --allow-all-tools")
+
+    def test_planted_negative_codex_sandbox_danger_and_ask_never(self):
+        """Negative control: planting codex --sandbox danger-full-access or -a never fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --sandbox danger-full-access -a never")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --sandbox=danger-full-access")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} -a never")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --ask-for-approval never")
+
+    def test_gh_agent_task_resolution(self):
+        """Verify gh-agent-task resolves 'gh' executable from launch_template first word."""
+        cfg_cli = self.server_mod._agent_cli_config()
+        row = next(r for r in cfg_cli["tools"] if r["name"] == "gh-agent-task")
+        cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
+        self.assertEqual(cmd_name, "gh")
+        with mock.patch("os.getuid", create=True, return_value=1000):
+            with mock.patch("shutil.which", side_effect=lambda name, path=None: f"/usr/bin/{name}" if name == "gh" else None):
+                ui_req = self.server_mod._monitor_ui_request()
+                gh_installed = any(a["installed"] for a in ui_req["agents"] if a["name"] == "gh-agent-task")
+                self.assertTrue(gh_installed)
+
+
 if __name__ == "__main__":
     unittest.main()
+
