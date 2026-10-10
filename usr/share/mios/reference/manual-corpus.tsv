@@ -4768,7 +4768,6 @@ tests/drift-gate-negatives.sh	5707	5707	1	5	b34c607da2f0	STAY	inline-scoped		0		
 tests/drift-gate-negatives.sh	5889	5890	2	20	3fbc443dd40e	STAY	local-scoped		0				0
 tests/drift-gate-negatives.sh	5937	5937	1	2	5708c2858b08	STAY	inline-scoped		0				0
 tests/drift-gate-negatives.sh	5938	5938	1	5	0e06a06c877f	STAY	inline-scoped		0				0
-tests/drift-gate-negatives.sh	5953	5955	3	30	70bd35f2623f	STAY	midsize-why		0				0
 tests/drift-gate-readonly.sh	1	2	2	21	85c6329ea0f2	STAY	ai-header		0				0
 tests/drift-parity.sh	1	3	3	16	61d899f4c217	STAY	ai-header		0				0
 tests/powershell/Challenge_AST_M2.Tests.ps1	1	2	2	19	10b808c00488	STAY	ai-header		0				0
