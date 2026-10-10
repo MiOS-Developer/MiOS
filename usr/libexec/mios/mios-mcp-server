@@ -1803,18 +1803,39 @@ def _run_monitor_ui(mode):
                           input=json.dumps(request), text=True).returncode
 
 
-def _load_card_signing_key(agent_id: str):
-    """Load only a provisioned, owner-private Ed25519 passport key, and the
-    provisioned public key it must match -- the key a verifier trusts."""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-
+def _card_identity_dir(agent_id: str, purpose: str) -> Path:
+    """[passport].key_dir/<agent_id> for a well-formed identity of an enabled passport."""
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]*", agent_id) or ".." in agent_id:
         raise ValueError("Invalid relay agent identifier")
     passport = mios_toml.load_merged()["passport"]
     if not passport["enable"]:
-        raise RuntimeError("AgentCard signing requires an enabled passport")
-    directory = Path(passport["key_dir"]) / agent_id
+        raise RuntimeError(f"AgentCard {purpose} requires an enabled passport")
+    return Path(passport["key_dir"]) / agent_id
+
+
+def _load_card_trusted_key(agent_id: str):
+    """The provisioned passport public key of a registered identity: the one key
+    an AgentCard verifier trusts, never a key the card carries. Needs no private
+    key, so verifiers (usr/libexec/mios/a2a/attestation.py) share it with signing."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    public = _card_identity_dir(agent_id, "trust") / "public.key"
+    if public.is_symlink() or not public.is_file():
+        raise RuntimeError("AgentCard trust requires the provisioned passport public key")
+    trusted = serialization.load_pem_public_key(public.read_bytes())
+    if not isinstance(trusted, Ed25519PublicKey):
+        raise RuntimeError("AgentCard provisioned passport public key must be Ed25519")
+    return trusted
+
+
+def _load_card_signing_key(agent_id: str):
+    """Load only a provisioned, owner-private Ed25519 passport key, and the
+    provisioned public key it must match -- the key a verifier trusts."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    directory = _card_identity_dir(agent_id, "signing")
     path = directory / "private.key"
     # Reject symlinks and require 0600: a public/derived fallback is never a key.
     if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o777 != 0o600:
@@ -1825,12 +1846,8 @@ def _load_card_signing_key(agent_id: str):
     kid = (directory / "kid").read_text(encoding="utf-8").strip()
     if not kid:
         raise RuntimeError("AgentCard passport key identifier is missing")
-    public = directory / "public.key"
-    if public.is_symlink() or not public.is_file():
-        raise RuntimeError("AgentCard signing requires the provisioned passport public key")
-    trusted = serialization.load_pem_public_key(public.read_bytes())
-    if (not isinstance(trusted, Ed25519PublicKey)
-            or trusted.public_bytes_raw() != priv.public_key().public_bytes_raw()):
+    trusted = _load_card_trusted_key(agent_id)
+    if trusted.public_bytes_raw() != priv.public_key().public_bytes_raw():
         raise RuntimeError("AgentCard passport key does not match its provisioned public key")
     return priv, kid, trusted
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: A2A Agent-to-Agent mutual capability exchange and cryptographic attestation protocol engine.
-# AI-related: usr/lib/mios/agent-pipe/mios_pipe/federation/agentcard_sign.py, tests/test-a2a.py
+# AI-related: usr/lib/mios/agent-pipe/mios_pipe/federation/agentcard_sign.py, usr/libexec/mios/mios-mcp-server, tests/test-a2a.py
 """
 MiOS Agent-to-Agent (A2A) Capability Attestation & Key Exchange Engine.
 
@@ -14,7 +14,6 @@ import argparse
 import base64
 import json
 import os
-import re
 import secrets
 import sys
 import time
@@ -386,33 +385,24 @@ def negotiate_capabilities(
         max_clock_skew=max_clock_skew,
     )
 
-_AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*")
+def resolve_trusted_key(agent_id: str) -> Ed25519PublicKey:
+    """The provisioned passport public key of a REGISTERED identity.
 
-
-def resolve_trusted_key(agent_id: str) -> Optional[Ed25519PublicKey]:
-    """The provisioned passport public key of a REGISTERED identity, or None.
-
-    The same trust anchor the AgentCard projection binds its signing key to:
-    ``[passport].key_dir/<agent_id>/public.key`` from the mios.toml SSOT, written
-    by mios-passport and served by the shared ``_passport_load_public`` resolver.
-    The identity is the operator's choice (never the card's claim). None -- no
-    passport, or nothing provisioned for that identity -- means unverified.
+    Delegates to the one AgentCard trust-key resolver, ``_load_card_trusted_key``
+    in mios-mcp-server (the key its card signing is bound to):
+    ``[passport].key_dir/<agent_id>/public.key`` from the mios.toml SSOT. The
+    identity is the operator's choice, never the card's claim. Raises when the
+    identity is malformed or nothing usable is provisioned.
     """
-    if not _AGENT_ID_RE.fullmatch(agent_id or "") or ".." in agent_id:
-        raise ValueError(f"Invalid agent identifier: {agent_id!r}")
-    lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib", "mios"))
-    for path in (os.path.join(lib, "agent-pipe"), lib):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    import mios_toml
-    from mios_pipe.identity import principal
+    from importlib.machinery import SourceFileLoader
+    import importlib.util
 
-    passport = mios_toml.section(mios_toml.load_merged(), "passport")
-    if not passport.get("enable") or not passport.get("key_dir"):
-        return None
-    principal.configure(passport_key_dir=str(passport["key_dir"]))
-    key = principal._passport_load_public(agent_id)
-    return key if isinstance(key, Ed25519PublicKey) else None
+    server = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mios-mcp-server")
+    loader = SourceFileLoader("mios_mcp_server", server)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module._load_card_trusted_key(agent_id)
 
 
 def _cli_trusted_key(args: argparse.Namespace) -> Tuple[Any, str]:
@@ -422,12 +412,9 @@ def _cli_trusted_key(args: argparse.Namespace) -> Tuple[Any, str]:
         return args.key, ""
     if args.agent:
         try:
-            key = resolve_trusted_key(args.agent)
-        except ValueError as exc:
-            return None, f"unverified: {exc}"
-        if key is None:
-            return None, f"unverified: no provisioned passport public key for {args.agent!r}"
-        return key, ""
+            return resolve_trusted_key(args.agent), ""
+        except Exception as exc:  # noqa: BLE001 -- reported; the card stays unverified
+            return None, f"unverified: no trusted key for {args.agent!r}: {exc}"
     return None, "unverified: no trusted key (pass --key or a provisioned --agent)"
 
 
