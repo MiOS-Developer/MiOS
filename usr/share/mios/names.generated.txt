@@ -873,6 +873,7 @@ agent_cli.aider_package  MIOS_AGENT_CLI_AIDER_PACKAGE
 agent_cli.antigravity_linux_installer  MIOS_AGENT_CLI_ANTIGRAVITY_LINUX_INSTALLER
 agent_cli.antigravity_windows_installer  MIOS_AGENT_CLI_ANTIGRAVITY_WINDOWS_INSTALLER
 agent_cli.antigravity_windows_installer_sha256  MIOS_AGENT_CLI_ANTIGRAVITY_WINDOWS_INSTALLER_SHA256
+agent_cli.branch_rule  MIOS_AGENT_CLI_BRANCH_RULE
 agent_cli.tools  MIOS_AGENT_CLI_TOOLS
 mcp.tmux.enabled  MIOS_MCP_TMUX_ENABLED
 mcp.tmux.binary  MIOS_MCP_TMUX_BINARY
