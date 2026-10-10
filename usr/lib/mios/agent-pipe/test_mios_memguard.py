@@ -330,6 +330,77 @@ class TestSentinelSecretHygiene(unittest.TestCase):
         self.assertIn("[REDACTED_API_KEY]", log_output)
 
 
+class TestMemoryPoisoningDriftCheck(unittest.TestCase):
+
+    def test_memory_poisoning_scan_positive_control(self):
+        """Positive Control: clean tree passes check_memory_poisoning_scan."""
+        import importlib.util
+        import os
+        drift_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "tools", "drift-checks.py"))
+        spec = importlib.util.spec_from_file_location("drift_checks", drift_py)
+        dc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dc)
+
+        rc = dc.check_memory_poisoning_scan()
+        self.assertEqual(rc, 0)
+
+    def test_memory_poisoning_scan_negative_controls(self):
+        """Negative Controls: planted discrepancies fail closed with non-zero exit."""
+        import importlib.util
+        import io
+        import os
+        import sys
+        import tempfile
+        drift_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "tools", "drift-checks.py"))
+        spec = importlib.util.spec_from_file_location("drift_checks", drift_py)
+        dc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dc)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "usr", "share", "mios"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "usr", "lib", "mios", "agent-pipe", "mios_pipe", "memory"), exist_ok=True)
+
+            # Defect 1: [pgvector].memory_guard_mode = "off" in mios.toml
+            with open(os.path.join(tmpdir, "usr", "share", "mios", "mios.toml"), "w") as fh:
+                fh.write('[pgvector]\nmemory_guard_mode = "off"\nmemguard_judge_mode = "model"\n')
+
+            orig_root = os.environ.get("MIOS_DRIFT_ROOT")
+            os.environ["MIOS_DRIFT_ROOT"] = tmpdir
+            try:
+                stderr_buf = io.StringIO()
+                orig_stderr = sys.stderr
+                sys.stderr = stderr_buf
+                try:
+                    rc = dc.check_memory_poisoning_scan()
+                finally:
+                    sys.stderr = orig_stderr
+
+                self.assertEqual(rc, 1)
+                self.assertIn("must be 'log', 'strip', or 'reject'", stderr_buf.getvalue())
+
+                # Defect 2: knowledge.py hardcodes MEMORY_GUARD_MODE = "off"
+                with open(os.path.join(tmpdir, "usr", "share", "mios", "mios.toml"), "w") as fh:
+                    fh.write('[pgvector]\nmemory_guard_mode = "log"\nmemguard_judge_mode = "model"\n')
+                with open(os.path.join(tmpdir, "usr", "lib", "mios", "agent-pipe", "mios_pipe", "memory", "knowledge.py"), "w") as fh:
+                    fh.write('MEMORY_GUARD_MODE = "off"\n')
+
+                stderr_buf = io.StringIO()
+                sys.stderr = stderr_buf
+                try:
+                    rc = dc.check_memory_poisoning_scan()
+                finally:
+                    sys.stderr = orig_stderr
+
+                self.assertEqual(rc, 1)
+                self.assertIn("knowledge.py hardcodes MEMORY_GUARD_MODE = 'off'", stderr_buf.getvalue())
+
+            finally:
+                if orig_root is not None:
+                    os.environ["MIOS_DRIFT_ROOT"] = orig_root
+                else:
+                    os.environ.pop("MIOS_DRIFT_ROOT", None)
+
+
 def _run_extra_redact():
     import os
     _saved_env = dict(os.environ)
@@ -339,6 +410,7 @@ def _run_extra_redact():
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestMiosRedact))
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestMiosRedactDatabase))
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestSentinelSecretHygiene))
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestMemoryPoisoningDriftCheck))
         res = unittest.TextTestRunner().run(suite)
         return 0 if res.wasSuccessful() else 1
     except SystemExit as _e:
