@@ -537,6 +537,110 @@ except Exception:
 
 _GATE_EVIDENCE = {"diff_bytes": 7, "positive": True, "negative": True, "tree_restored": True, "exit_code": 0}
 
+# The AgentCard closure of the official A2A v1 JSON Schema (a2a-protocol.org
+# spec/a2a.json, "version": "v1"), pinned so the suite stays hermetic. Every
+# validation keyword is verbatim; only description/title annotations are removed.
+# MIOS_A2A_SCHEMA_PATH validates against a full downloaded copy instead.
+_A2A_AGENT_CARD_SCHEMA = (
+    '{"$defs":{"APIKeySecurityScheme":{"additionalProperties":false,"properties":{"description":{'
+    '"default":"","type":"string"},"location":{"default":"","type":"string"},"name":{"default":""'
+    ',"type":"string"}},"type":"object"},"AgentCapabilities":{"additionalProperties":false,"patte'
+    'rnProperties":{"^(extended_agent_card)$":{"type":"boolean"},"^(push_notifications)$":{"type"'
+    ':"boolean"}},"properties":{"extendedAgentCard":{"type":"boolean"},"extensions":{"items":{"$r'
+    'ef":"#/$defs/AgentExtension"},"type":"array"},"pushNotifications":{"type":"boolean"},"stream'
+    'ing":{"type":"boolean"}},"type":"object"},"AgentCard":{"additionalProperties":false,"pattern'
+    'Properties":{"^(default_input_modes)$":{"items":{"type":"string"},"type":"array"},"^(default'
+    '_output_modes)$":{"items":{"type":"string"},"type":"array"},"^(documentation_url)$":{"type":'
+    '"string"},"^(icon_url)$":{"type":"string"},"^(security_requirements)$":{"items":{"$ref":"#/$'
+    'defs/SecurityRequirement"},"type":"array"},"^(security_schemes)$":{"additionalProperties":{"'
+    '$ref":"#/$defs/SecurityScheme"},"propertyNames":{"type":"string"},"type":"object"},"^(suppor'
+    'ted_interfaces)$":{"items":{"$ref":"#/$defs/AgentInterface"},"type":"array"}},"properties":{'
+    '"capabilities":{"$ref":"#/$defs/AgentCapabilities"},"defaultInputModes":{"items":{"type":"st'
+    'ring"},"type":"array"},"defaultOutputModes":{"items":{"type":"string"},"type":"array"},"desc'
+    'ription":{"default":"","type":"string"},"documentationUrl":{"type":"string"},"iconUrl":{"typ'
+    'e":"string"},"name":{"default":"","type":"string"},"provider":{"$ref":"#/$defs/AgentProvider'
+    '"},"securityRequirements":{"items":{"$ref":"#/$defs/SecurityRequirement"},"type":"array"},"s'
+    'ecuritySchemes":{"additionalProperties":{"$ref":"#/$defs/SecurityScheme"},"propertyNames":{"'
+    'type":"string"},"type":"object"},"signatures":{"items":{"$ref":"#/$defs/AgentCardSignature"}'
+    ',"type":"array"},"skills":{"items":{"$ref":"#/$defs/AgentSkill"},"type":"array"},"supportedI'
+    'nterfaces":{"items":{"$ref":"#/$defs/AgentInterface"},"type":"array"},"version":{"default":"'
+    '","type":"string"}},"type":"object"},"AgentCardSignature":{"additionalProperties":false,"pro'
+    'perties":{"header":{"$ref":"#/$defs/Struct"},"protected":{"default":"","type":"string"},"sig'
+    'nature":{"default":"","type":"string"}},"type":"object"},"AgentExtension":{"additionalProper'
+    'ties":false,"properties":{"description":{"default":"","type":"string"},"params":{"$ref":"#/$'
+    'defs/Struct"},"required":{"default":false,"type":"boolean"},"uri":{"default":"","type":"stri'
+    'ng"}},"type":"object"},"AgentInterface":{"additionalProperties":false,"patternProperties":{"'
+    '^(protocol_binding)$":{"default":"","type":"string"},"^(protocol_version)$":{"default":"","t'
+    'ype":"string"}},"properties":{"protocolBinding":{"default":"","type":"string"},"protocolVers'
+    'ion":{"default":"","type":"string"},"tenant":{"default":"","type":"string"},"url":{"default"'
+    ':"","type":"string"}},"type":"object"},"AgentProvider":{"additionalProperties":false,"proper'
+    'ties":{"organization":{"default":"","type":"string"},"url":{"default":"","type":"string"}},"'
+    'type":"object"},"AgentSkill":{"additionalProperties":false,"patternProperties":{"^(input_mod'
+    'es)$":{"items":{"type":"string"},"type":"array"},"^(output_modes)$":{"items":{"type":"string'
+    '"},"type":"array"},"^(security_requirements)$":{"items":{"$ref":"#/$defs/SecurityRequirement'
+    '"},"type":"array"}},"properties":{"description":{"default":"","type":"string"},"examples":{"'
+    'items":{"type":"string"},"type":"array"},"id":{"default":"","type":"string"},"inputModes":{"'
+    'items":{"type":"string"},"type":"array"},"name":{"default":"","type":"string"},"outputModes"'
+    ':{"items":{"type":"string"},"type":"array"},"securityRequirements":{"items":{"$ref":"#/$defs'
+    '/SecurityRequirement"},"type":"array"},"tags":{"items":{"type":"string"},"type":"array"}},"t'
+    'ype":"object"},"AuthorizationCodeOAuthFlow":{"additionalProperties":false,"patternProperties'
+    '":{"^(authorization_url)$":{"default":"","type":"string"},"^(pkce_required)$":{"default":fal'
+    'se,"type":"boolean"},"^(refresh_url)$":{"default":"","type":"string"},"^(token_url)$":{"defa'
+    'ult":"","type":"string"}},"properties":{"authorizationUrl":{"default":"","type":"string"},"p'
+    'kceRequired":{"default":false,"type":"boolean"},"refreshUrl":{"default":"","type":"string"},'
+    '"scopes":{"additionalProperties":{"type":"string"},"propertyNames":{"type":"string"},"type":'
+    '"object"},"tokenUrl":{"default":"","type":"string"}},"type":"object"},"ClientCredentialsOAut'
+    'hFlow":{"additionalProperties":false,"patternProperties":{"^(refresh_url)$":{"default":"","t'
+    'ype":"string"},"^(token_url)$":{"default":"","type":"string"}},"properties":{"refreshUrl":{"'
+    'default":"","type":"string"},"scopes":{"additionalProperties":{"type":"string"},"propertyNam'
+    'es":{"type":"string"},"type":"object"},"tokenUrl":{"default":"","type":"string"}},"type":"ob'
+    'ject"},"DeviceCodeOAuthFlow":{"additionalProperties":false,"patternProperties":{"^(device_au'
+    'thorization_url)$":{"default":"","type":"string"},"^(refresh_url)$":{"default":"","type":"st'
+    'ring"},"^(token_url)$":{"default":"","type":"string"}},"properties":{"deviceAuthorizationUrl'
+    '":{"default":"","type":"string"},"refreshUrl":{"default":"","type":"string"},"scopes":{"addi'
+    'tionalProperties":{"type":"string"},"propertyNames":{"type":"string"},"type":"object"},"toke'
+    'nUrl":{"default":"","type":"string"}},"type":"object"},"HTTPAuthSecurityScheme":{"additional'
+    'Properties":false,"patternProperties":{"^(bearer_format)$":{"default":"","type":"string"}},"'
+    'properties":{"bearerFormat":{"default":"","type":"string"},"description":{"default":"","type'
+    '":"string"},"scheme":{"default":"","type":"string"}},"type":"object"},"ImplicitOAuthFlow":{"'
+    'additionalProperties":false,"patternProperties":{"^(authorization_url)$":{"default":"","type'
+    '":"string"},"^(refresh_url)$":{"default":"","type":"string"}},"properties":{"authorizationUr'
+    'l":{"default":"","type":"string"},"refreshUrl":{"default":"","type":"string"},"scopes":{"add'
+    'itionalProperties":{"type":"string"},"propertyNames":{"type":"string"},"type":"object"}},"ty'
+    'pe":"object"},"MutualTlsSecurityScheme":{"additionalProperties":false,"properties":{"descrip'
+    'tion":{"default":"","type":"string"}},"type":"object"},"OAuth2SecurityScheme":{"additionalPr'
+    'operties":false,"patternProperties":{"^(oauth2_metadata_url)$":{"default":"","type":"string"'
+    '}},"properties":{"description":{"default":"","type":"string"},"flows":{"$ref":"#/$defs/OAuth'
+    'Flows"},"oauth2MetadataUrl":{"default":"","type":"string"}},"type":"object"},"OAuthFlows":{"'
+    'additionalProperties":false,"patternProperties":{"^(authorization_code)$":{"$ref":"#/$defs/A'
+    'uthorizationCodeOAuthFlow"},"^(client_credentials)$":{"$ref":"#/$defs/ClientCredentialsOAuth'
+    'Flow"},"^(device_code)$":{"$ref":"#/$defs/DeviceCodeOAuthFlow"}},"properties":{"authorizatio'
+    'nCode":{"$ref":"#/$defs/AuthorizationCodeOAuthFlow"},"clientCredentials":{"$ref":"#/$defs/Cl'
+    'ientCredentialsOAuthFlow"},"deviceCode":{"$ref":"#/$defs/DeviceCodeOAuthFlow"},"implicit":{"'
+    '$ref":"#/$defs/ImplicitOAuthFlow"},"password":{"$ref":"#/$defs/PasswordOAuthFlow"}},"type":"'
+    'object"},"OpenIdConnectSecurityScheme":{"additionalProperties":false,"patternProperties":{"^'
+    '(open_id_connect_url)$":{"default":"","type":"string"}},"properties":{"description":{"defaul'
+    't":"","type":"string"},"openIdConnectUrl":{"default":"","type":"string"}},"type":"object"},"'
+    'PasswordOAuthFlow":{"additionalProperties":false,"patternProperties":{"^(refresh_url)$":{"de'
+    'fault":"","type":"string"},"^(token_url)$":{"default":"","type":"string"}},"properties":{"re'
+    'freshUrl":{"default":"","type":"string"},"scopes":{"additionalProperties":{"type":"string"},'
+    '"propertyNames":{"type":"string"},"type":"object"},"tokenUrl":{"default":"","type":"string"}'
+    '},"type":"object"},"SecurityRequirement":{"additionalProperties":false,"properties":{"scheme'
+    's":{"additionalProperties":{"$ref":"#/$defs/StringList"},"propertyNames":{"type":"string"},"'
+    'type":"object"}},"type":"object"},"SecurityScheme":{"additionalProperties":false,"patternPro'
+    'perties":{"^(api_key_security_scheme)$":{"$ref":"#/$defs/APIKeySecurityScheme"},"^(http_auth'
+    '_security_scheme)$":{"$ref":"#/$defs/HTTPAuthSecurityScheme"},"^(mtls_security_scheme)$":{"$'
+    'ref":"#/$defs/MutualTlsSecurityScheme"},"^(oauth2_security_scheme)$":{"$ref":"#/$defs/OAuth2'
+    'SecurityScheme"},"^(open_id_connect_security_scheme)$":{"$ref":"#/$defs/OpenIdConnectSecurit'
+    'yScheme"}},"properties":{"apiKeySecurityScheme":{"$ref":"#/$defs/APIKeySecurityScheme"},"htt'
+    'pAuthSecurityScheme":{"$ref":"#/$defs/HTTPAuthSecurityScheme"},"mtlsSecurityScheme":{"$ref":'
+    '"#/$defs/MutualTlsSecurityScheme"},"oauth2SecurityScheme":{"$ref":"#/$defs/OAuth2SecuritySch'
+    'eme"},"openIdConnectSecurityScheme":{"$ref":"#/$defs/OpenIdConnectSecurityScheme"}},"type":"'
+    'object"},"StringList":{"additionalProperties":false,"properties":{"list":{"items":{"type":"s'
+    'tring"},"type":"array"}},"type":"object"},"Struct":{"type":"object"}},"$ref":"#/$defs/AgentC'
+    'ard"}'
+)
+
 
 class TestA2ATranslateMapping(unittest.TestCase):
     """Validates ADR-0029 standards mapping, receipt invariants, and recursive credential refusal."""
@@ -565,7 +669,7 @@ class TestA2ATranslateMapping(unittest.TestCase):
             },
         )
 
-        # MCP Tasks Extension (2026-07-28)
+        # MCP Tasks extension, at the revision mios.toml [mcp].protocol_version declares
         self.assertEqual(mios_translate.MCP_TASK_STATUS_WORKING, "working")
         self.assertEqual(mios_translate.MCP_TASK_STATUS_INPUT_REQUIRED, "input_required")
         self.assertEqual(mios_translate.MCP_TASK_STATUS_COMPLETED, "completed")
@@ -1044,16 +1148,14 @@ class TestA2AProjectedCard(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_projected_card_official_schema_and_trusted_signature(self):
-        import urllib.request
         import jsonschema
         schema_path = os.environ.get("MIOS_A2A_SCHEMA_PATH")
         if schema_path:
             with open(schema_path, encoding="utf-8") as stream:
                 schema = json.load(stream)
+            schema["$ref"] = "#/$defs/AgentCard"
         else:
-            with urllib.request.urlopen("https://a2a-protocol.org/latest/spec/a2a.json", timeout=30) as stream:
-                schema = json.load(stream)
-        schema["$ref"] = "#/$defs/AgentCard"
+            schema = json.loads(_A2A_AGENT_CARD_SCHEMA)
         card = _project_agent_card("proof-head")
         jsonschema.Draft202012Validator(schema).validate(card)
         self.assertEqual(card["name"], "Proof head")

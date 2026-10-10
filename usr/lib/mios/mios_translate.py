@@ -44,7 +44,7 @@ A2A_TASK_STATES = {
     A2A_TASK_STATE_CANCELED,
 }
 
-# MCP Tasks Extension (2026-07-28)
+# MCP Tasks extension, at the revision mios.toml [mcp].protocol_version declares
 MCP_TASK_STATUS_WORKING = "working"
 MCP_TASK_STATUS_INPUT_REQUIRED = "input_required"
 MCP_TASK_STATUS_COMPLETED = "completed"
@@ -290,7 +290,7 @@ def detect_source(frame: Dict[str, Any]) -> Optional[str]:
             return "a2a"
     if "taskId" in frame and "contextId" in frame and ("status" in frame or "history" in frame or "artifacts" in frame):
         return "a2a"
-    # MCP Tasks (2026-07-28)
+    # MCP Tasks extension ([mcp].protocol_version)
     if "taskId" in frame and frame.get("status") in MCP_TASK_STATUSES:
         return "mcp_tasks"
     # loop.v1
