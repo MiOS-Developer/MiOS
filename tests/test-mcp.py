@@ -1038,9 +1038,8 @@ class TestMcpSandbox(unittest.TestCase):
             self.assertEqual(called_args[-2:], ["echo", "hello"])
 
 
-# ============================================================================
-# Domain 3.3: Agent CLI Catalog & Dynamic Nested Workflow Dispatch (ADR-0029)
-# ============================================================================
+# Domain 3.3: Agent CLI Catalog & Dynamic Nested Workflow Dispatch
+
 
 def _load_mios_mcp_server_module():
     server_path = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-mcp-server")
@@ -1054,9 +1053,7 @@ def _load_mios_mcp_server_module():
 
 
 class TestAgentCliCatalog(unittest.TestCase):
-    """Validates SSOT [agent_cli] catalog conformance against ADR-0029,
-    ensuring verified local & cloud CLIs, command templates, credentials,
-    branch rules, and safe approval defaults (no blanket bypass flags)."""
+    """Validates SSOT agent_cli catalog conformance and approval defaults."""
 
     def setUp(self):
         self.orig_env = os.environ.get("MIOS_TOML_ROOT")
