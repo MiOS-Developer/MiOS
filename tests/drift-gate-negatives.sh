@@ -5539,10 +5539,8 @@ test_tmux_theme() {
     [[ -s "$conf" ]] || die "check_tmux_theme: mios-theme.tmux.conf is missing or empty"
     local bak; bak="$(mktemp)"; cp "$conf" "$bak"
     _tt_restore() { cp "$bak" "$conf"; rm -f "$bak"; unset -f _tt_restore; }
-
     printf '\n# devloop planted mutation\nset -g status off\n' >> "$conf"
     _neg_gate check_tmux_theme && { _tt_restore; die "check_tmux_theme passed with a hand-edited mios-theme.tmux.conf"; }
-
     _tt_restore
     _neg_gate check_tmux_theme || die "check_tmux_theme failed after restoration: ${_NEG_GATE_OUT}"
     log "check_tmux_theme negative test passed"
@@ -5554,10 +5552,8 @@ test_btop_theme() {
     [[ -s "$theme" ]] || die "check_btop_theme: etc/btop/themes/mios.theme is missing or empty"
     local bak; bak="$(mktemp)"; cp "$theme" "$bak"
     _bt_restore() { cp "$bak" "$theme"; rm -f "$bak"; unset -f _bt_restore; }
-
     printf '\n# devloop planted mutation\ntheme[main_bg]="#000000"\n' >> "$theme"
     _neg_gate check_btop_theme && { _bt_restore; die "check_btop_theme passed with a hand-edited mios.theme"; }
-
     _bt_restore
     _neg_gate check_btop_theme || die "check_btop_theme failed after restoration: ${_NEG_GATE_OUT}"
     log "check_btop_theme negative test passed"
@@ -5568,17 +5564,13 @@ test_fastfetch() {
     local toml="${ROOT}/usr/share/mios/mios.toml"
     local bak; bak="$(mktemp)"; cp -p "$toml" "$bak"
     _ff_restore() { cp -p "$bak" "$toml"; rm -f "$bak"; unset -f _ff_restore; }
-
     # (1) Positive control: clean run passes
     _neg_gate check_fastfetch || { _ff_restore; die "check_fastfetch failed on clean tree: ${_NEG_GATE_OUT}"; }
-
     # (2) Negative control: corrupted hex color in mios.toml makes render-fastfetch fail
     sed -i 's/^bg\( *\)= "#[0-9a-fA-F]*"/bg\1= "INVALID_HEX"/' "$toml"
     _neg_gate check_fastfetch && { _ff_restore; die "check_fastfetch passed with invalid hex color in mios.toml"; }
-
     _ff_restore
     _neg_gate check_fastfetch || die "check_fastfetch failed after restoration: ${_NEG_GATE_OUT}"
-
     # (3) Negative control: a hand-edited persisted golden fixture must fail the gate
     local fx="${ROOT}/tests/golden/fastfetch/mock.jsonc" fxbak; fxbak="$(mktemp)"; cp -p "$fx" "$fxbak"
     printf '\n// devloop planted\n' >> "$fx"
@@ -5593,11 +5585,9 @@ test_egress_firewall() {
     local nft="${ROOT}/usr/share/mios/security/egress.nft"
     local bak; bak="$(mktemp)"; cp "$nft" "$bak"
     _ef_restore() { cp "$bak" "$nft"; rm -f "$bak"; unset -f _ef_restore; }
-
     [[ -s "$nft" ]] || { _ef_restore; die "check_egress_firewall: the ruleset is empty, so a diff proves nothing"; }
     printf '\n# devloop planted\n' >> "$nft"
     _neg_gate check_egress_firewall && { _ef_restore; die "check_egress_firewall passed with a hand-edited generated ruleset"; }
-
     _ef_restore
     _neg_gate check_egress_firewall || die "check_egress_firewall failed after restoration: ${_NEG_GATE_OUT}"
     log "check_egress_firewall negative test passed"
