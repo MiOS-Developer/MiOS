@@ -5937,6 +5937,8 @@ kargs.isolcpus  MIOS_KARGS_ISOLCPUS
 kargs.nohz_full  MIOS_KARGS_NOHZ_FULL
 kargs.rcu_nocbs  MIOS_KARGS_RCU_NOCBS
 kargs.THP  MIOS_KARGS_THP
+kargs.cpu_mitigations.required  MIOS_KARGS_CPU_MITIGATIONS_REQUIRED
+kargs.cpu_mitigations.forbidden  MIOS_KARGS_CPU_MITIGATIONS_FORBIDDEN
 testing.min_smoke_components  MIOS_TESTING_MIN_SMOKE_COMPONENTS
 testing.boot.timeout  MIOS_TESTING_BOOT_TIMEOUT
 testing.boot.secure_boot  MIOS_TESTING_BOOT_SECURE_BOOT
