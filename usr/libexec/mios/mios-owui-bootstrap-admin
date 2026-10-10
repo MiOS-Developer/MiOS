@@ -49,6 +49,17 @@ def _log(msg: str) -> None:
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
 import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    def safe_ident(ident: str, allowlist) -> str:
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+        if ident not in allowlist:
+            raise ValueError(f"SQL identifier {ident!r} not in schema allowlist")
+        return ident
 
 
 def _read_mios_toml_identity():
@@ -318,9 +329,11 @@ def main():
             "oauth": None,      # current column name
         }
         use = {k: v for k, v in candidate.items() if k in user_cols}
-        cols_sql = ", ".join(use)
-        ph_sql = ", ".join("?" for _ in use)
-        conn.execute(f"INSERT INTO user ({cols_sql}) VALUES ({ph_sql})", tuple(use.values()))
+        user_col_allowlist = frozenset(candidate.keys())
+        safe_cols = [safe_ident(k, user_col_allowlist) for k in use]
+        safe_cols_sql = ", ".join(safe_cols)
+        ph_sql = ", ".join("?" for _ in safe_cols)
+        conn.execute(f"INSERT INTO user ({safe_cols_sql}) VALUES ({ph_sql})", tuple(use.values()))
         conn.execute(
             "INSERT INTO auth (id, email, password, active) VALUES (?,?,?,?)",
             (uid, email, password_hash, 1),

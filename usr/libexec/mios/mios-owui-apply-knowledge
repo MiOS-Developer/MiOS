@@ -48,6 +48,23 @@ import uuid
 from pathlib import Path
 from typing import Iterable
 
+sys.path.insert(0, "/usr/lib/mios")
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    def safe_ident(ident: str, allowlist: Any) -> str:
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+        if ident not in allowlist:
+            raise ValueError(f"SQL identifier {ident!r} not in schema allowlist")
+        return ident
+
+KNOWLEDGE_TABLES_ALLOWLIST = frozenset({
+    "file", "knowledge", "knowledge_file", "model", "user", "api_key", "auth"
+})
+
 DB = Path(os.environ.get("MIOS_OWUI_DB", "/var/lib/mios/open-webui/webui.db"))
 MODEL_ID = os.environ.get("MIOS_OWUI_MODEL_ID", "MiOS AI")
 
@@ -115,7 +132,8 @@ def _content_type_for(path: str) -> str:
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    safe_table = safe_ident(table, KNOWLEDGE_TABLES_ALLOWLIST)
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({safe_table})").fetchall()]
 
 
 def _admin_user_id(conn: sqlite3.Connection) -> str | None:
@@ -184,7 +202,8 @@ def main() -> int:
     try:
         for tbl in ("file", "knowledge", "knowledge_file", "model"):
             try:
-                conn.execute(f"SELECT 1 FROM {tbl} LIMIT 1")
+                safe_tbl = safe_ident(tbl, KNOWLEDGE_TABLES_ALLOWLIST)
+                conn.execute(f"SELECT 1 FROM {safe_tbl} LIMIT 1")
             except sqlite3.OperationalError:
                 _log(f"FATAL: table {tbl!r} missing in {DB}")
                 return 3
