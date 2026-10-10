@@ -40,7 +40,6 @@ EORENDER
 else
     echo "[mios-gpu-detect] Bare metal"
     rm -f "$NVIDIA_CONF"
-    rm -f /etc/modprobe.d/mios-nvidia-blacklist.conf
     modprobe nvidia_drm 2>/dev/null || true
     rm -f "$RENDERER_CONF"
 

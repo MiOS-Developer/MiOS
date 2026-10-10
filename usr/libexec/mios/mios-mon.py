@@ -1162,7 +1162,7 @@ if TEXTUAL_AVAILABLE:
                 for directory in (os.environ.get("MIOS_LOG_DIR"),
                                   r"M:\MiOS\logs", r"C:\MiOS\logs",
                                   r"C:\mios-bootstrap\installation",
-                                  "/mnt/m/MiOS/logs", "/var/log/mios"):
+                                  "/mnt/c/MiOS/logs", "/mnt/m/MiOS/logs", "/var/log/mios"):
                     if directory and os.path.isdir(directory):
                         for pattern in ("mios-install-*.log", "mios-build-*.log",
                                         "deploy*.log", "build*.log"):

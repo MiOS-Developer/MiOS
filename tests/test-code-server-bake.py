@@ -518,8 +518,9 @@ def rust_toolchain_violations(script, containerfile):
         errs.append("55-native-build.sh --toolchain never runs rustup-init")
     if "libstd-*.rlib" not in block or "/bin/${linker}" not in block:
         errs.append("55-native-build.sh --toolchain does not verify the target std and the linker")
-    call = containerfile.find("55-native-build.sh --toolchain")
-    packages = containerfile.find("install_packages_strict self-build;")
+    lines_no_comments = "\n".join(l for l in containerfile.splitlines() if not l.strip().startswith("#"))
+    call = lines_no_comments.find("55-native-build.sh --toolchain")
+    packages = lines_no_comments.find("install_packages_strict self-build;")
     if call == -1:
         errs.append("Containerfile never provisions the toolchain")
     elif packages == -1 or call < packages:

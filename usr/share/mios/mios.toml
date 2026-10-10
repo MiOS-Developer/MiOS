@@ -2201,7 +2201,7 @@ assess = { description = "Comprehensive system capability report",              
 iommu  = { description = "Pretty-print hardware IOMMU topology",                                 surface = "dev_vm" }
 theme  = { description = "Sync bibata/GTK/Qt themes",                                            surface = "dev_vm" }
 user   = { description = "Initialize user space (dotfiles/XDG)",                                 surface = "dev_vm" }
-pull   = { description = "Sync M:\\ overlay to origin/main",                                      surface = "windows" }
+pull   = { description = "Sync root overlay to origin/main",                                      surface = "windows" }
 update = { description = "Check and perform OS updates via bootc", surface = "all", cmd = "/usr/bin/mios-update" }
 help   = { description = "List every verb",                                                       surface = "windows" }
 
@@ -2259,9 +2259,9 @@ lines = [
     "  By invoking any MiOS entry point you acknowledge:",
     "    * MiOS is provided AS IS, NO WARRANTY (MIT license).",
     "    * Build/install scripts can modify your system globally",
-    "      (registry, env vars, fonts, WT settings, WSL distros, M:\\ partition).",
+    "      (registry, env vars, fonts, WT settings, WSL distros, root overlay).",
     "    * Telemetry: NONE (no data leaves the host without explicit operator action).",
-    "    * Full text: M:\\AGREEMENTS.md  +  M:\\LICENSE",
+    "    * Full text: C:\\AGREEMENTS.md  +  C:\\LICENSE",
     "",
     "  Continued use of this terminal is treated as acknowledgment.",
     "",
@@ -2274,31 +2274,31 @@ linear_log_note = "Note: console doesn't support in-place repaint -- running in 
 linear_log_hint = "      Phase transitions + throttled step updates print sequentially below."
 
 [messages.elevation]
-admin_required   = "  [*] MiOS bootstrap requires admin (M:\\ partition + Podman + dev VM)."
+admin_required   = "  [*] MiOS bootstrap requires admin (Windows features + Podman + dev VM)."
 uac_trigger_line = "  [*] Triggering UAC -- accept to continue. The install will then run"
 uac_trigger_hint = "      in the elevated window, single prompt only."
 
 [messages.pass2_exit]
 exited_code_prefix = "  [!] Bootstrap exited with code "
 failure_detail     = "      Output above is the failure detail (Pass-1 has no separate log)."
-build_log_hint     = "      build-mios.ps1's own log at M:\\MiOS\\logs\\mios-install-*.log only kicks in on Pass-2 success."
+build_log_hint     = "      build-mios.ps1's own log at C:\\MiOS\\logs\\mios-install-*.log only kicks in on Pass-2 success."
 fetch_run_failed   = "  [!] Bootstrap fetch/run failed: "
 press_enter_close  = "  Press Enter to close this elevated bootstrap window..."
 success_transition  = "  [+] Bootstrap complete. Loading MiOS terminal in this window..."
 profile_load_failed = "  [!] MiOS profile load failed: "
 profile_load_hint   = "      Open a fresh MiOS shortcut to retry."
-profile_missing     = "  [!] M:\\MiOS\\powershell\\profile.ps1 not found -- open the MiOS shortcut to launch the app window."
+profile_missing     = "  [!] C:\\MiOS\\powershell\\profile.ps1 not found -- open the MiOS shortcut to launch the app window."
 
 [messages.steps]
 disk_sizing_template       = "Sizing MiOS data disk ({mb} MB on {drive}:)..."
 disk_already_template      = "MiOS data disk already on {drive}: ({size_gb} GB, NTFS)"
-mios_git_init              = "Initializing mios.git as the M:\\ working tree"
-mios_git_update            = "Updating mios.git (fetch + hard reset @ M:\\)"
-mios_git_overlaid          = "mios.git overlaid at M:\\"
-mios_bootstrap_clone       = "Cloning mios-bootstrap.git -> shadow M:\\MiOS\\bootstrap-shadow"
+mios_git_init              = "Initializing mios.git as the root working tree"
+mios_git_update            = "Updating mios.git (fetch + hard reset @ root overlay)"
+mios_git_overlaid          = "mios.git overlaid at C:\\"
+mios_bootstrap_clone       = "Cloning mios-bootstrap.git -> shadow C:\\MiOS\\bootstrap-shadow"
 mios_bootstrap_update      = "Updating mios-bootstrap.git shadow (fetch + hard reset)"
-mios_bootstrap_overlay     = "Overlaying mios-bootstrap files onto M:\\"
-entry_scripts_staged       = "Entry scripts staged at M:\\MiOS\\bin"
+mios_bootstrap_overlay     = "Overlaying mios-bootstrap files onto C:\\"
+entry_scripts_staged       = "Entry scripts staged at C:\\MiOS\\bin"
 miosdev_init_template      = "Initializing MiOS-DEV ({cpus} CPUs / {ram_gb}GB / {disk_gb}GB disk)"
 smoke_header_template      = "Smoke-testing {distro} before rename..."
 smoke_responsive_template  = "smoke 1/4: {name} is responsive"
@@ -2314,9 +2314,9 @@ hub_hint       = "    The MiOS hub shortcut is in your Start Menu / Desktop / Wi
 # Bullets accept {disk_gb} substitution at render time so the
 # storage-size value stays current per host.
 bullets = [
-    "M:\\ partition ({disk_gb} GB NTFS, label MIOS-DEV)",
+    "Root overlay on C:\\ (converged Windows/Linux layout)",
     "Podman Desktop + podman-MiOS-DEV machine",
-    "mios.git + mios-bootstrap overlaid at M:\\",
+    "mios.git + mios-bootstrap nested at C:\\",
     "MiOS terminal essentials layered into MiOS-DEV",
     "Native Windows app: Start Menu + Desktop + per-verb shortcuts",
     "MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)",
@@ -3274,11 +3274,11 @@ offload_cpu          = false
 # capped REAL subset, never zero) + endpoints that 400 on tool_choice=required.
 lane_tool_cap        = "igpu:12,mobile:12"
 default_tool_cap     = 16
-no_tool_choice_hints = "8540,11436"          # host:port substrings whose llama.cpp rejects tool_choice=required
+no_tool_choice_hints = "llm_igpu"           # [ports] keys or host:port substrings whose llama.cpp rejects tool_choice=required
 parallel_tools_hints = "llm_heavy"               # [ports] keys (or host:port substrings) whose model reliably emits PARALLEL tool calls -> OpenAI-default parallel_tool_calls=True (capable heavy lane); everything else stays sequential (small models malform parallel calls). MIOS_PARALLEL_TOOLS_HINTS overrides.
 worker_mcp_tools     = true                  # surface external MCP client tools to fan-out workers
 kv_paging_enable  = true     # master switch; only ACTS on llama.cpp /slots endpoints
-kv_paging_hints   = "8540,11436"  # host:port substrings that speak llama.cpp /slots (default the iGPU lane)
+kv_paging_hints   = "llm_igpu"   # [ports] keys or host:port substrings that speak llama.cpp /slots (default the iGPU lane)
 kv_paging_slot    = 0        # llama-server slot id the light lane pages (single resident frame)
 kv_paging_timeout = 12.0     # seconds for one save/restore POST (best-effort; never fails the turn)
 kv_fork_enable       = false  # master switch (only ACTS when kv_paging is on AND the endpoint speaks llama.cpp /slots)
@@ -3753,15 +3753,22 @@ aider_package = "aider-chat"
 antigravity_linux_installer = "https://antigravity.google/cli/install.sh"
 antigravity_windows_installer = "https://antigravity.google/cli/install.ps1"
 antigravity_windows_installer_sha256 = "51c2cb4fada22ce0228da71b9506370383d6544bfebcec85fe7616a52b805344"
+branch_rule = "^cloud/[a-zA-Z0-9._-]+$"
 tools = [
-  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true },
-  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true },
-  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true },
-  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true },
-  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true },
-  { name = "agy", kind = "native", mcp = true },
-  { name = "aider", kind = "python", mcp = false },
+  { name = "claude", package = "@anthropic-ai/claude-code", kind = "npm", mcp = true, experimental = false, launch_template = "claude -p {task}", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "claude-cloud", package = "@anthropic-ai/claude-code", kind = "cloud", mcp = true, experimental = false, launch_template = "claude --cloud {task}", status_template = "claude -p \"msg\" --cloud {session} --output-format json", result_template = "claude --teleport {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["ANTHROPIC_API_KEY"] },
+  { name = "codex", package = "@openai/codex", kind = "npm", mcp = true, experimental = false, launch_template = "codex exec {task}", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "codex-cloud", package = "@openai/codex", kind = "cloud", mcp = true, experimental = true, launch_template = "codex cloud exec --env {env_id} {task}", status_template = "codex cloud list --json", result_template = "codex apply {task_id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true, experimental = false, launch_template = "gemini -p {task} -o json --approval-mode default", required_credentials = ["GEMINI_API_KEY"] },
+  { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true, experimental = false, launch_template = "copilot --exec {task}", required_credentials = ["GITHUB_TOKEN"] },
+  { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true, experimental = false, launch_template = "opencode run {task}", required_credentials = [] },
+  { name = "agy", kind = "native", mcp = true, experimental = false, launch_template = "agy -p {task} --output-format json", required_credentials = ["ANTIGRAVITY_API_KEY"] },
+  { name = "aider", kind = "python", mcp = false, experimental = false, launch_template = "aider --message {task}", required_credentials = ["OPENAI_API_KEY"] },
+  { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --repo {repo} --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task} -b {base} -R {repo}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GITHUB_TOKEN"] },
 ]
+
+
 
 # Native terminal tools are served by the SAME MiOS MCP endpoint. Each MCP
 # Unbound/HTTP sessions own private servers; native CLI heads bind verified human panes.
@@ -6603,7 +6610,7 @@ bin_map = [
 # stages the SSOT-rendered btop.conf + themes/mios.theme here and points the
 # User-scope BTOP_CONFIG_DIR at it. Defaults to the MiOS-owned data drive
 # ([bootstrap.host_storage].drive_letter) rather than %APPDATA%.
-btop_config_dir = "M:\\MiOS\\btop"
+btop_config_dir = "C:\\MiOS\\btop"
 
 [browser_ai]
 enable       = true
@@ -8386,7 +8393,7 @@ install_packages = true   # run dnf install on PACKAGES.md after FHS overlay
 reboot_on_finish = true   # interactive y/N prompt at end of install
 
 [bootstrap.host_storage]
-drive_letter        = "M"
+drive_letter        = "C"
 volume_label        = "MIOS-DEV"
 shrink_mb           = 262656     # produces "256 GB" in Windows Explorer
 display_size_gb     = 256        # what the operator should see (informational)
@@ -8467,7 +8474,7 @@ cpu_pct             = 15      # reserve 15% of logical CPUs for Windows host
 cpu_min             = 2       # always reserve at least 2 cores
 memory_pct          = 50      # reserve 50% of host RAM for Windows host (WSL2 gets ~50%)
 memory_gb           = 8       # always reserve at least 8 GB
-disk_gb             = 32      # always keep 32 GB free on M:\ for Windows-side
+disk_gb             = 32      # always keep 32 GB free on C:\ for Windows-side
                               # artifacts (build outputs, podman cache, etc.)
 
 [bootstrap.prereqs]
@@ -8495,14 +8502,14 @@ vmp                 = "VirtualMachinePlatform"              # WSL2 + Hyper-V hyp
 hyperv              = "Microsoft-Hyper-V"                   # Hyper-V Manager + VMs (Pro/Ent only)
 require_reboot_to_continue = true
 
-# Repo URLs cloned to M:\MiOS\repo\{mios,mios-bootstrap} during Pass-2.
+# Repo URLs cloned to C:\ during Pass-2.
 # Branch defaults to main; pin to a tag/SHA for reproducible installs.
 [bootstrap.prereqs.repos]
 mios_url            = "https://github.com/mios-dev/mios.git"
 mios_branch         = "main"
 bootstrap_url       = "https://github.com/mios-dev/mios-bootstrap.git"
 bootstrap_branch    = "main"
-clone_root          = "M:\\MiOS\\repo"
+clone_root          = "C:\\"
 
 [terminal]
 windows_tmux_backend = "wsl" # native Rust launcher uses the authenticated Linux namespace
@@ -8699,7 +8706,7 @@ git_commit = "@"
 # ----------------------------------------------------------------------------
 # [branding] -- assets the dashboard / fastfetch / splash screens use.
 # Paths resolve relative to /usr/share/mios on Linux and to the
-# corresponding M:\MiOS\usr\share\mios on Windows.
+# corresponding C:\MiOS\usr\share\mios on Windows.
 # ----------------------------------------------------------------------------
 [branding]
 logo_ascii          = "fastfetch/mios.txt"
@@ -10991,7 +10998,7 @@ min_ap_capable = 0
 role     = "runs the VMs and containers every other plane lands in"
 owner    = "mini"
 markers  = ["libvirt", "qemu-kvm"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.radio]
 role     = "serves WiFi clients as an access point. OPTIONAL: MiOS boots on hardware with no radio at all"
@@ -11003,7 +11010,7 @@ wired_by = ""
 role     = "the uplink: forwards, NATs and filters. The LAN is both uplink and downlink, so one interface suffices"
 owner    = "mini"
 markers  = ["firewalld", "dnsmasq"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.mesh]
 role     = "joins every node and service into one addressable overlay"
@@ -11817,6 +11824,38 @@ nohz_full      = ""                        # CPUs for adaptive-ticks (empty to d
 rcu_nocbs      = ""                        # CPUs to offload RCU callbacks (empty to disable)
 THP            = ""                        # Transparent Huge Pages configuration: "always", "madvise", "never" or empty
 
+[kargs.cpu_mitigations]
+required = [
+  "randomize_kstack_offset=on",
+  "pti=on",
+  "vsyscall=none",
+  "spectre_v2=on",
+  "spectre_bhi=on",
+  "spec_store_bypass_disable=on",
+  "l1tf=full,force",
+  "gather_data_sampling=force",
+  "tsx=off",
+  "kvm.nx_huge_pages=force",
+]
+forbidden = [
+  "pti=off",
+  "nopti",
+  "spectre_v2=off",
+  "nospectre_v2",
+  "spectre_bhi=off",
+  "spec_store_bypass_disable=off",
+  "nospec_store_bypass_disable",
+  "l1tf=off",
+  "gather_data_sampling=off",
+  "tsx=on",
+  "kvm.nx_huge_pages=off",
+  "kvm.nx_huge_pages=never",
+  "randomize_kstack_offset=off",
+  "norandomize_kstack_offset",
+  "nospectre_v1",
+  "mitigations=off",
+]
+
 
 [testing]
 # Grow-only, the inverse of the other ratchets: the smoke test asserted six
@@ -11893,6 +11932,7 @@ manpages = [
     "usr/share/man/man1/mios.1",
     "usr/share/man/man7/mios-variants.7",
     "usr/share/man/man5/mios.toml.5",
+    "usr/share/man/man7/mios.7",
 ]
 commands = ["podman", "bootc", "rpm-ostree"]
 paths = ["usr/lib/mios/agents/.venv/bin/python3"]
@@ -12064,13 +12104,12 @@ import_roots = ["usr/lib/mios/agent-pipe", "usr/libexec/mios", "tools"]
 [pipeline.console]
 width = 100
 bar_width = 24
+# Ruling Q8: 97-ssot-lint, 98-drift-checks and the agent-pipe suites are
+# source-tree gates, so they run in the CI gate job, not here.
 post_steps = [
     { name = "post-bloat", action = "bloat" },
     { name = "post-package-health", action = "package_health" },
     { name = "99-postcheck.sh", action = "invariants" },
-    { name = "97-ssot-lint.sh", action = "ssot" },
-    { name = "98-drift-checks.sh", action = "drift" },
-    { name = "post-agent-tests", action = "agent_tests" },
     { name = "post-libexec-tests", action = "libexec_tests" },
     { name = "post-image-digests", action = "image_digests" },
     { name = "post-log-chain", action = "log_chain" },
@@ -12862,7 +12901,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3626
+max_tracked_files = 3277
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12895,15 +12934,15 @@ max_tooling_python_lines = 80483   # module-test-coverage + static-linkage censu
 [legibility.file_budget]
 target_tracked_files = 500     # operator: "500 total files EACH per MiOS repo" -- this repo (the domains below sum under it)
 target_bootstrap_files = 500   # the same cap for the sister repo mios-bootstrap ([legibility].max_bootstrap_files)
-order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "misc"]
+order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "archive", "misc"]
 
 [legibility.file_budget.domains.dependency]  # vendored wheels and archives fold into one bundle per kind (Law 12 still bakes them); one Cargo.lock
-max_files = 100
+max_files = 6
 target_files = 5
 globs = ["usr/share/mios/vendored/*", "*Cargo.lock"]
 
 [legibility.file_budget.domains.projections]  # rendered by the build from SSOT, not tracked; human views (ROADMAP/TASKS/ADR index) stay
-max_files = 524
+max_files = 319
 target_files = 5
 globs = ["usr/share/man/*", "usr/share/containers/systemd/*", "usr/share/applications/*.desktop", "usr/share/mios/dropins/*", "usr/lib/systemd/system/*", "usr/lib/systemd/user/*", "usr/lib/tmpfiles.d/*", "usr/lib/sysusers.d/*", "usr/lib/sysctl.d/*", "usr/lib/modprobe.d/*", "usr/share/mios/ai/v1/*", "usr/share/mios/reference/*", "ADR.md", "ROADMAP.md", "TASKS.md", "ARTIFACT-PROMPT.md", "automation/manifest.json", "usr/share/mios/pipe-boundaries.manifest.json"]
 
@@ -12918,7 +12957,7 @@ target_files = 45
 globs = ["usr/libexec/*", "usr/bin/*"]
 
 [legibility.file_budget.domains.docs]  # one manual volume per domain; one ADR log
-max_files = 547
+max_files = 543
 target_files = 40
 globs = ["usr/share/doc/*", "docs/*", ".research/*", ".devloop/*", "*.md"]
 
@@ -12938,7 +12977,7 @@ target_files = 15
 globs = ["automation/*", "Justfile", "Containerfile*"]
 
 [legibility.file_budget.domains.etc]  # profile.d one file per shell; skel rendered by the dotfiles registry (ADR-0010)
-max_files = 119
+max_files = 73
 target_files = 25
 globs = ["etc/*"]
 
@@ -12957,10 +12996,27 @@ max_files = 96
 target_files = 30
 globs = ["tools/*", "installation/*"]
 
+[legibility.file_budget.domains.archive]  # Decision 7: the git-native legacy store -- HEAD, config, the branch, one pack (.pack + .idx)
+max_files = 5
+target_files = 5
+globs = [".archive/**"]
+
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 58
+max_files = 53
 target_files = 20
 globs = ["*"]
+
+# ADR-0030 Decision 7: dropped files kept in a bare git store beside .git; built by `mios-gen archive`,
+# verified by drift check legacy-archive.
+[legibility.archive]
+path = ".archive"            # the store, at the root beside .git; only HEAD, config, the branch and one pack are tracked
+ref = "legacy"               # its one branch
+object_format = "sha256"     # git's sha256 object format; content is compared by the sha256 of the bytes
+since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-budget campaign began; first-parent history from here
+author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
+# Dropped paths never re-tracked (keys, tokens, credentials, valued .env, leaks), as globs with a reason each.
+# Screening all 315 dropped paths found none. Vendored assets are consolidated into bundles in-tree (task_3662).
+exclude = ["usr/share/mios/vendored/*"]
 
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]
@@ -13318,10 +13374,9 @@ tier = "unit"
 dir  = "usr/lib/mios/agent-pipe"
 glob = "test_mios_*.py"
 tier = "unit"
-skip = [
-    "test_mios_gateway_queue.py",
-]
-skip_reason = "needs a live database or a heavy dependency; covered by the build job's virtualenv gate"
+# No skips. test_mios_gateway_queue.py was skipped as "covered by the build job's
+# virtualenv gate", the bake's post-agent-tests; ruling Q8 moved that gate out of
+# the bake, and its heavy dependency (smolagents) is in [ci.python].requirements.
 
 [ci.globs.libexec]
 dir  = "usr/libexec/mios"

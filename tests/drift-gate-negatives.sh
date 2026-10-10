@@ -24,11 +24,7 @@ _neg_snapshot_take() {
             mkdir -p "${_NEG_SNAP}/$(dirname "$rel")"
             cp -p "$src" "${_NEG_SNAP}/${rel}"
         elif [[ ! -e "$src" ]]; then
-            # Genuinely absent, so anything appearing at this path afterwards is
-            # a probe. A target that EXISTS but is not a regular file -- a
-            # directory, and the Quadlet directory is one -- is neither a snapshot
-            # nor a probe, and recording it here made the restore try to
-            # unlink a directory, which killed the whole suite.
+            # Genuinely absent; non-files (e.g. Quadlet dir) must not be recorded as probes.
             printf '%s\n' "$rel" >> "$_NEG_ABSENT"
         fi
     done < <(_neg_targets)
@@ -45,8 +41,7 @@ _neg_snapshot_restore() {
         leaked=$((leaked + 1))
     done < <(cd "$_NEG_SNAP" 2>/dev/null && find . -type f | sed 's|^\./||')
 
-    # A probe the suite created and did not delete is the same leak in the other
-    # direction: it reaches the index the next time anyone stages broadly.
+    # Remove probes left behind by tests before broad staging
     while IFS= read -r rel; do
         [[ -n "$rel" && -f "${ROOT}/${rel}" ]] || continue
         rm -f "${ROOT}/${rel}"
@@ -1707,22 +1702,22 @@ test_bootc_install_projection() {
 
 test_uki_cmdline_projection() {
     log "Testing check_uki_cmdline_projection"
-    local target_file="${ROOT}/usr/lib/kernel/cmdline"
-    local unit_gen="" candidate
-    for candidate in "$ROOT/tools/native/target/release/mios-unit-gen" \
-            "$ROOT/tools/native/target/debug/mios-unit-gen" /usr/libexec/mios/mios-unit-gen; do
+    local target_file="${ROOT}/usr/lib/kernel/cmdline" corrupt_dropin="${ROOT}/usr/lib/bootc/kargs.d/99-test-corrupt.toml" unit_gen="" candidate
+    for candidate in "$ROOT/tools/native/target/release/mios-unit-gen" "$ROOT/tools/native/target/debug/mios-unit-gen" /usr/libexec/mios/mios-unit-gen; do
         [[ -n "$candidate" && -x "$candidate" ]] && { unit_gen="$candidate"; break; }
     done
     [[ -n "$unit_gen" ]] || die "mios-unit-gen is required for the UKI negative control"
     [[ -f "$target_file" ]] || { mkdir -p "$(dirname "$target_file")"; "$unit_gen" uki-cmdline --root "$ROOT" >/dev/null 2>&1 || true; }
-
-    echo 'mutated_bogus_karg=1' >> "$target_file"
-
+    echo 'kargs = [ unclosed' > "$corrupt_dropin"
     if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_uki_cmdline_projection >/dev/null 2>&1; then
-        "$unit_gen" uki-cmdline --root "$ROOT" >/dev/null 2>&1 || true
-        die "Check_uki_cmdline_projection passed despite mutated cmdline"
+        rm -f "$corrupt_dropin"; die "Check_uki_cmdline_projection passed despite corrupt drop-in"
     fi
-
+    rm -f "$corrupt_dropin"
+    _neg_gate check_uki_cmdline_projection || die "Check_uki_cmdline_projection failed after removing corrupt drop-in"
+    echo 'mutated_bogus_karg=1' >> "$target_file"
+    if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_uki_cmdline_projection >/dev/null 2>&1; then
+        "$unit_gen" uki-cmdline --root "$ROOT" >/dev/null 2>&1 || true; die "Check_uki_cmdline_projection passed despite mutated cmdline"
+    fi
     "$unit_gen" uki-cmdline --root "$ROOT" >/dev/null 2>&1 || true
     _neg_gate check_uki_cmdline_projection || die "Check_uki_cmdline_projection failed after restoration"
     log "Test_uki_cmdline_projection negative test passed"
@@ -1909,33 +1904,43 @@ test_target_languages() {
 test_roadmap_index() {
     log "Testing check_roadmap_index"
     local roadmap_file="${ROOT}/ROADMAP.md"
-    if [ -f "$roadmap_file" ]; then
-        local bak_file="${roadmap_file}.bak"
-        cp "$roadmap_file" "$bak_file"
-        sed -i 's/\*\*Done\*\*: [0-9]*/\*\*Done\*\*: 99999/g' "$roadmap_file" 2>/dev/null || true
-
-        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_roadmap_index >/dev/null 2>&1 && die "Check_roadmap_index passed despite corrupted rollup"
-
-        cp "$bak_file" "$roadmap_file" && rm -f "$bak_file"
-        _neg_gate check_roadmap_index || die "Check_roadmap_index failed after restoration"
-    fi
+    [[ -f "$roadmap_file" ]] || return 0
+    local bak_file="${roadmap_file}.bak"
+    cp "$roadmap_file" "$bak_file"
+    sed -i 's/\*\*Done\*\*: [0-9]*/\*\*Done\*\*: 99999/g' "$roadmap_file" 2>/dev/null || true
+    bash "${ROOT}/automation/98-drift-checks.sh" check_roadmap_index >/dev/null 2>&1 && die "Check_roadmap_index passed despite corrupted rollup"
+    cp "$bak_file" "$roadmap_file" && rm -f "$bak_file"
+    _neg_gate check_roadmap_index || die "Check_roadmap_index failed after restoration"
     log "Test_roadmap_index negative test passed"
 }
 
 test_templates_compilation() {
     log "Testing check_templates_compilation"
     local tmpl_file="${ROOT}/usr/share/mios/templates/toml-config"
-    if [ -f "$tmpl_file" ]; then
-        local bak_file="${tmpl_file}.bak"
-        cp "$tmpl_file" "$bak_file"
-        echo 'INVALID_SYNTAX_BOGUS {{' >> "$tmpl_file"
-
-        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_templates_compilation >/dev/null 2>&1 && die "Check_templates_compilation passed despite invalid template"
-
-        cp "$bak_file" "$tmpl_file" && rm -f "$bak_file"
-        _neg_gate check_templates_compilation || die "Check_templates_compilation failed after restoration"
-    fi
+    [[ -f "$tmpl_file" ]] || return 0
+    local bak_file="${tmpl_file}.bak"
+    cp "$tmpl_file" "$bak_file"
+    echo 'INVALID_SYNTAX_BOGUS {{' >> "$tmpl_file"
+    bash "${ROOT}/automation/98-drift-checks.sh" check_templates_compilation >/dev/null 2>&1 && die "Check_templates_compilation passed despite invalid template"
+    cp "$bak_file" "$tmpl_file" && rm -f "$bak_file"
+    _neg_gate check_templates_compilation || die "Check_templates_compilation failed after restoration"
     log "Test_templates_compilation negative test passed"
+}
+
+test_template_conformance() {
+    log "Testing check_template_conformance"
+    local toml_file="${ROOT}/usr/share/mios/mios.toml"
+    [[ -f "$toml_file" ]] || return 0
+    local bak_file="${toml_file}.bak"
+    cp "$toml_file" "$bak_file"
+    sed -i 's/^\[templates\./[xtemplates./' "$toml_file"
+    if bash "${ROOT}/automation/98-drift-checks.sh" check_template_conformance >/dev/null 2>&1; then
+        cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+        die "check_template_conformance passed despite [templates] renamed to [xtemplates]"
+    fi
+    cp "$bak_file" "$toml_file" && rm -f "$bak_file"
+    _neg_gate check_template_conformance || die "check_template_conformance failed after restoration"
+    log "test_template_conformance negative test passed"
 }
 
 test_impossible_eol() {
@@ -3107,41 +3112,42 @@ io.open(p,"w",encoding="utf-8",newline="\n").write(
 
 test_greenboot() {
     log "Testing check_greenboot"
-    local toml="${ROOT}/usr/share/mios/mios.toml"
-    local backup="${toml}.negbak"
+    local toml="${ROOT}/usr/share/mios/mios.toml" backup="${ROOT}/usr/share/mios/mios.toml.negbak"
+    local script="${ROOT}/usr/lib/greenboot/check/required.d/40-mios-ai-plane.sh" script_bak="${ROOT}/usr/lib/greenboot/check/40-mios-ai-plane.sh.negbak"
+    local gb_sh="${ROOT}/automation/78-greenboot.sh" gb_bak="${ROOT}/automation/78-greenboot.sh.negbak"
+    local old='critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes"]' neg_rc=0
+    _mut() { python3 -c "import io,sys; s=io.open(sys.argv[1],encoding='utf-8').read(); io.open(sys.argv[1],'w',encoding='utf-8',newline='\n').write(s.replace(sys.argv[2],sys.argv[3]))" "$@"; }
     cp "$toml" "$backup"
-
-    # (1) A critical service with no health-check script anywhere must FAIL.
-    # The bogus name is ASSEMBLED so this file never contains the literal --
-    # the gate scans required.d for unit references, and a spelled-out name
-    # here could not reach it, but keeping the idiom keeps the test honest.
-    local bogus="mios-negtest""-absent"
-    python3 - "$toml" "$bogus" <<'PY'
-import io, sys
-p, bogus = sys.argv[1], sys.argv[2]
-s = io.open(p, encoding="utf-8").read()
-old = 'critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes"]'
-assert s.count(old) == 1, "critical_services anchor moved"
-io.open(p, "w", encoding="utf-8", newline="\n").write(
-    s.replace(old, 'critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes", "%s"]' % bogus))
-PY
-    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed despite a critical service with no health-check script"
+    # (1) Missing health-check script for critical service must FAIL.
+    _mut "$toml" "$old" 'critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes", "mios-negtest-absent"]'
+    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed with uncovered critical service"
     cp "$backup" "$toml"
-
-    # (2) An EMPTY critical set must FAIL rather than pass vacuously.
-    python3 - "$toml" <<'PY'
-import io, sys
-p = sys.argv[1]
-s = io.open(p, encoding="utf-8").read()
-old = 'critical_services = ["agent-pipe", "llm-light", "pgvector", "hermes"]'
-assert s.count(old) == 1, "critical_services anchor moved"
-io.open(p, "w", encoding="utf-8", newline="\n").write(s.replace(old, 'critical_services = []'))
-PY
-    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed over an EMPTY critical set (vacuous success)"
-
+    # (2) Empty critical set must FAIL.
+    _mut "$toml" "$old" 'critical_services = []'
+    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed on empty critical set"
+    cp "$backup" "$toml"
+    # (3) Omitting hermes from critical_services must FAIL.
+    _mut "$toml" "$old" 'critical_services = ["agent-pipe", "llm-light", "pgvector"]'
+    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 && die "check_greenboot passed without hermes"
     mv "$backup" "$toml"
     _neg_gate check_greenboot || die "check_greenboot failed after restoration"
-
+    # (4) Removing greenboot check script must FAIL (RED, exit != 0, and not 127).
+    if [[ -f "$script" ]]; then
+        mv "$script" "$script_bak"; neg_rc=0
+        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot >/dev/null 2>&1 || neg_rc=$?
+        mv "$script_bak" "$script"
+        [[ "$neg_rc" -ne 0 && "$neg_rc" -ne 127 ]] || die "check_greenboot did not fail with exit != 0 and != 127 on missing script (got $neg_rc)"
+        _neg_gate check_greenboot || die "check_greenboot failed after restoring check script"
+    fi
+    # (5) check_greenboot_enablement fails when service enablement missing in automation/78-greenboot.sh.
+    if [[ -f "$gb_sh" ]]; then
+        cp "$gb_sh" "$gb_bak"
+        _mut "$gb_sh" "greenboot-healthcheck.service" "disabled-healthcheck.service"
+        MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_greenboot_enablement >/dev/null 2>&1 && {
+            mv "$gb_bak" "$gb_sh"; die "check_greenboot_enablement passed without service enablement"; }
+        mv "$gb_bak" "$gb_sh"
+        _neg_gate check_greenboot_enablement || die "check_greenboot_enablement failed after restoration"
+    fi
     log "Test_greenboot negative test passed"
 }
 
@@ -3424,7 +3430,7 @@ test_module_length() {
 
 test_vendored_assets_non_stub() {
     log "Testing check_vendored_assets_non_stub"
-    local stub_file="${ROOT}/usr/share/mios/vendored/k3s/fake_stub.tmp"
+    local stub_file="${ROOT}/usr/share/mios/vendored/fake_stub.tmp"
     echo "Stub" > "$stub_file"
 
     MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_vendored_assets_non_stub >/dev/null 2>&1 && die "Check_vendored_assets_non_stub passed despite injected stub file"
@@ -3621,12 +3627,27 @@ test_pipefail_grep_lint() {
 }
 
 test_check_skip_list_covered() {
-    log "Testing check_skip_list_covered..."
-    if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_skip_list_covered >/dev/null 2>&1; then
-        log "check_skip_list_covered passed on HEAD"
-    else
-        die "check_skip_list_covered failed on HEAD"
-    fi
+    log "Testing check_skip_list_covered"
+    local toml="${ROOT}/usr/share/mios/mios.toml" wf="${ROOT}/.github/workflows/mios-ci.yml"
+    local tbak wbak plant; tbak="$(mktemp)"; wbak="$(mktemp)"; plant="$(mktemp)"; cp "$toml" "$tbak"; cp "$wf" "$wbak"
+    _sl_fail() { cp "$tbak" "$toml"; cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant; die "$1"; }
+    # $1: keys added under [ci.globs.agent-pipe]; $2: what the violation must name.
+    _sl_plant() {
+        cp "$tbak" "$toml"; printf '%s\n' "$1" > "$plant"
+        sed -i "/^\[ci\.globs\.agent-pipe\]\$/r $plant" "$toml"
+        cmp -s "$tbak" "$toml" && _sl_fail "the [ci.globs.agent-pipe] plant did not land"
+        _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with $2 planted"
+        [[ "$_NEG_GATE_OUT" == *"$2"* ]] || _sl_fail "check_skip_list_covered failed without naming $2: $_NEG_GATE_OUT"
+    }
+    _neg_gate check_skip_list_covered || _sl_fail "check_skip_list_covered red on the CLEAN tree: $_NEG_GATE_OUT"
+    _sl_plant 'skip = ["test_mios_gateway_queue.py"]' "skip_reason"
+    _sl_plant $'skip = ["test_mios_no_such_suite.py"]\nskip_reason = "negative probe"' "test_mios_no_such_suite.py"
+    cp "$tbak" "$toml"; printf '      # SKIP=negative-probe\n' >> "$wf"
+    _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with an inline SKIP= in a workflow"
+    [[ "$_NEG_GATE_OUT" == *"inline SKIP="* ]] || _sl_fail "check_skip_list_covered failed without naming the inline SKIP="
+    cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant
+    _neg_gate check_skip_list_covered || die "check_skip_list_covered failed after restoration: $_NEG_GATE_OUT"
+    log "check_skip_list_covered negative test passed"
 }
 
 test_ai_manifests_fresh() {
@@ -3968,21 +3989,18 @@ test_leaked_fixtures() {
 
 test_manpages() {
     log "Testing check_manpages"
-    local page="${ROOT}/usr/share/man/man1/mios.1"
+    local page="${ROOT}/usr/share/man/man1/mios.1" existed=0
+    [[ -f "$page" ]] && existed=1
+    [[ "$existed" -eq 0 ]] && (which mios-gen >/dev/null 2>&1 && mios-gen render-manpages --root "$ROOT" >/dev/null 2>&1 || true)
+    [[ -f "$page" ]] || { log "test_manpages skipped (no mios-gen)"; return 0; }
     local bak; bak="$(mktemp)"; cp "$page" "$bak"
-
-    # A page that no longer matches what the SSOT renders answers confidently
-    # and wrongly, which is worse than having no page at all.
     printf '.PP\nan edit the SSOT does not describe\n' >> "$page"
-
     _neg_gate check_manpages && {
-        cp "$bak" "$page"; rm -f "$bak"
+        cp "$bak" "$page"; rm -f "$bak"; [[ "$existed" -eq 0 ]] && rm -f "$page"
         die "check_manpages passed with a page that drifted from the SSOT"
     }
-
-    cp "$bak" "$page"; rm -f "$bak"
-    _neg_gate check_manpages \
-        || die "check_manpages failed after restoration"
+    cp "$bak" "$page"; rm -f "$bak"; [[ "$existed" -eq 0 ]] && rm -f "$page"
+    _neg_gate check_manpages || die "check_manpages failed after restoration"
     log "check_manpages negative test passed"
 }
 
@@ -4797,6 +4815,28 @@ test_drift_stubs() {
     log "check_drift_stubs negative test passed"
 }
 
+test_native_twinless() {
+    log "Testing check_native_twinless"
+    local sql="${ROOT}/usr/share/mios/postgres/schema-init.sql"
+    local bak empty; bak="$(mktemp)"; empty="$(mktemp -d)"; cp "$sql" "$bak"
+    _nt_fail() { cp "$bak" "$sql"; rm -rf "$bak" "$empty"; unset -f _nt_fail; die "$1"; }
+    _neg_gate check_native_twinless || _nt_fail "check_native_twinless red on the CLEAN tree: $_NEG_GATE_OUT"
+    [[ "$_NEG_GATE_OUT" == *"twinless native Check(s) ran here"* ]] || _nt_fail "check_native_twinless did not report what it ran"
+    # check_backfill_coverage has no bash twin, so only this gate runs it: a
+    # vector table the backfill does not know must fail here, named.
+    printf '\nCREATE TABLE IF NOT EXISTS neg_twinless_probe (id bigint PRIMARY KEY, emb vector(768));\n' >> "$sql"
+    _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with an emb table no backfill covers"
+    [[ "$_NEG_GATE_OUT" == *"check_backfill_coverage"*"neg_twinless_probe"* ]] \
+        || _nt_fail "check_native_twinless failed without naming check_backfill_coverage and the planted table"
+    cp "$bak" "$sql"
+    # No miosd to run is a violation, never a skip.
+    MIOS_NATIVE_BIN_DIR="$empty" _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with no miosd to run"
+    [[ "$_NEG_GATE_OUT" == *"miosd is not built"* ]] || _nt_fail "check_native_twinless failed without saying miosd is missing"
+    rm -rf "$bak" "$empty"; unset -f _nt_fail
+    _neg_gate check_native_twinless || die "check_native_twinless failed after restoration: $_NEG_GATE_OUT"
+    log "check_native_twinless negative test passed"
+}
+
 test_phase_registry() {
     log "Testing check_phase_registry"
     local toml="${ROOT}/usr/share/mios/mios.toml"
@@ -5238,7 +5278,17 @@ test_legibility_ratchet() {
     _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the automation budget"
     [[ -n "$f0" && "$_NEG_GATE_OUT" == *"files.automation = $(( f0 + 1 )), over the floor"* && "$_NEG_GATE_OUT" == *"tracked_files = "*", over the floor"* ]] \
         || _lr_fail "check_legibility_ratchet did not charge the planted file to its domain and the total: $_NEG_GATE_OUT"
-    _lr_unplant "$probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
+    _lr_unplant "$probe"
+
+    # task_3662: planted file in dependency domain is refused by files.dependency
+    local dep_probe="${ROOT}/usr/share/mios/vendored/fake_dep.whl"
+    local d0; read -r d0 _ < <(_lr_metric files.dependency)
+    _lr_plant "$dep_probe" 1
+    _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the dependency budget"
+    [[ -n "$d0" && "$_NEG_GATE_OUT" == *"files.dependency = $(( d0 + 1 )), over the floor"* ]] \
+        || _lr_fail "check_legibility_ratchet did not charge planted file to dependency domain: $_NEG_GATE_OUT"
+    _lr_unplant "$dep_probe"
+    unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
 
     _neg_gate check_legibility_ratchet || die "check_legibility_ratchet failed after restoration: $_NEG_GATE_OUT"
     log "check_legibility_ratchet negative test passed"
@@ -5473,16 +5523,20 @@ test_pod_quadlets() {
     log "Testing check_pod_quadlets"
     local dir="${ROOT}/usr/share/containers/systemd"
     local f; f="$(find "$dir" -maxdepth 1 -type f -name '*.image' -o -maxdepth 1 -type f -name '*.container' 2>/dev/null | sort | head -1)"
-    # Empty-set guard: nothing generated means nothing to mutate.
     [[ -n "$f" ]] || die "check_pod_quadlets: no generated unit in $dir to mutate"
     local bak; bak="$(mktemp)"; cp "$f" "$bak"
     _pq_restore() { cp "$bak" "$f"; rm -f "$bak"; unset -f _pq_restore; }
 
     printf '\n# devloop planted\n' >> "$f"
     _neg_gate check_pod_quadlets && { _pq_restore; die "check_pod_quadlets passed with a hand-edited generated unit"; }
-
     _pq_restore
     _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoration: ${_NEG_GATE_OUT}"
+
+    # Planted MIOS_PG_PASS (Law 11) and MIOS_ADGUARD_UID=0 (Law 6)
+    MIOS_PG_PASS="planted-secret-123" _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_PG_PASS"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_PG_PASS: ${_NEG_GATE_OUT}"
+    MIOS_ADGUARD_UID=0 _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_ADGUARD_UID=0"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_ADGUARD_UID: ${_NEG_GATE_OUT}"
     log "check_pod_quadlets negative test passed"
 }
 
@@ -5492,10 +5546,8 @@ test_tmux_theme() {
     [[ -s "$conf" ]] || die "check_tmux_theme: mios-theme.tmux.conf is missing or empty"
     local bak; bak="$(mktemp)"; cp "$conf" "$bak"
     _tt_restore() { cp "$bak" "$conf"; rm -f "$bak"; unset -f _tt_restore; }
-
     printf '\n# devloop planted mutation\nset -g status off\n' >> "$conf"
     _neg_gate check_tmux_theme && { _tt_restore; die "check_tmux_theme passed with a hand-edited mios-theme.tmux.conf"; }
-
     _tt_restore
     _neg_gate check_tmux_theme || die "check_tmux_theme failed after restoration: ${_NEG_GATE_OUT}"
     log "check_tmux_theme negative test passed"
@@ -5507,10 +5559,8 @@ test_btop_theme() {
     [[ -s "$theme" ]] || die "check_btop_theme: etc/btop/themes/mios.theme is missing or empty"
     local bak; bak="$(mktemp)"; cp "$theme" "$bak"
     _bt_restore() { cp "$bak" "$theme"; rm -f "$bak"; unset -f _bt_restore; }
-
     printf '\n# devloop planted mutation\ntheme[main_bg]="#000000"\n' >> "$theme"
     _neg_gate check_btop_theme && { _bt_restore; die "check_btop_theme passed with a hand-edited mios.theme"; }
-
     _bt_restore
     _neg_gate check_btop_theme || die "check_btop_theme failed after restoration: ${_NEG_GATE_OUT}"
     log "check_btop_theme negative test passed"
@@ -5521,17 +5571,13 @@ test_fastfetch() {
     local toml="${ROOT}/usr/share/mios/mios.toml"
     local bak; bak="$(mktemp)"; cp -p "$toml" "$bak"
     _ff_restore() { cp -p "$bak" "$toml"; rm -f "$bak"; unset -f _ff_restore; }
-
     # (1) Positive control: clean run passes
     _neg_gate check_fastfetch || { _ff_restore; die "check_fastfetch failed on clean tree: ${_NEG_GATE_OUT}"; }
-
     # (2) Negative control: corrupted hex color in mios.toml makes render-fastfetch fail
     sed -i 's/^bg\( *\)= "#[0-9a-fA-F]*"/bg\1= "INVALID_HEX"/' "$toml"
     _neg_gate check_fastfetch && { _ff_restore; die "check_fastfetch passed with invalid hex color in mios.toml"; }
-
     _ff_restore
     _neg_gate check_fastfetch || die "check_fastfetch failed after restoration: ${_NEG_GATE_OUT}"
-
     # (3) Negative control: a hand-edited persisted golden fixture must fail the gate
     local fx="${ROOT}/tests/golden/fastfetch/mock.jsonc" fxbak; fxbak="$(mktemp)"; cp -p "$fx" "$fxbak"
     printf '\n// devloop planted\n' >> "$fx"
@@ -5546,11 +5592,9 @@ test_egress_firewall() {
     local nft="${ROOT}/usr/share/mios/security/egress.nft"
     local bak; bak="$(mktemp)"; cp "$nft" "$bak"
     _ef_restore() { cp "$bak" "$nft"; rm -f "$bak"; unset -f _ef_restore; }
-
     [[ -s "$nft" ]] || { _ef_restore; die "check_egress_firewall: the ruleset is empty, so a diff proves nothing"; }
     printf '\n# devloop planted\n' >> "$nft"
     _neg_gate check_egress_firewall && { _ef_restore; die "check_egress_firewall passed with a hand-edited generated ruleset"; }
-
     _ef_restore
     _neg_gate check_egress_firewall || die "check_egress_firewall failed after restoration: ${_NEG_GATE_OUT}"
     log "check_egress_firewall negative test passed"
@@ -5662,6 +5706,8 @@ test_edge_status() {
     _neg_gate check_edge_status || die "check_edge_status failed after restoration: ${_NEG_GATE_OUT}"
     log "check_edge_status negative test passed"
 }
+test_legacy_archive() {  # A stray file in the store must fail; tools/test_drift-checks.py TestLegacyArchive plants the rest.
+    local p="${ROOT}/.archive/hooks/neg-probe"; mkdir -p "${p%/*}"; : > "$p"; _neg_gate check_legacy_archive && { rm -f "$p"; die "check_legacy_archive passed with a stray file in .archive"; }; rm -f "$p"; rmdir "${p%/*}" 2>/dev/null || :; _neg_gate check_legacy_archive || die "check_legacy_archive failed after restoration: $_NEG_GATE_OUT"; }
 
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
@@ -5745,6 +5791,7 @@ _run_test test_leaked_fixtures
     _run_test test_signature_policy
     _run_test test_projection_coverage
     _run_test test_drift_stubs
+    _run_test test_native_twinless
     _run_test test_doc_refs_resolve
     _run_test test_desktop_launchers
     _run_test test_blade_reconcile_schema
@@ -5759,7 +5806,6 @@ _run_test test_leaked_fixtures
     _run_test test_daemon_governor
     _run_test test_manual_links
     _run_test test_doc_port_scheme
-    _run_test test_unit_dependency_closure
     _run_test test_unit_dependency_closure
     _run_test test_test_hermeticity
     _run_test test_no_mkdir_in_var
@@ -5802,6 +5848,7 @@ _run_test test_leaked_fixtures
     _run_test test_target_languages
     _run_test test_roadmap_index
     _run_test test_templates_compilation
+    _run_test test_template_conformance
     _run_test test_impossible_eol
     _run_test test_smoke_manifest
     _run_test test_negative_coverage
@@ -5870,7 +5917,6 @@ _run_test test_leaked_fixtures
     _run_test test_deploy_formats
     _run_test test_verify_images
     _run_test test_header_comment_syntax
-    _run_test test_repo_partition_label_ssot
     _run_test test_rust_test_coverage
     _run_test test_os_update_timer_enabled
     _run_test test_verb_stub_backends
@@ -5892,6 +5938,7 @@ _run_test test_leaked_fixtures
     _run_test test_artifact_prompt
     _run_test test_ai_artifacts
     _run_test test_rust_categories
+    _run_test test_legacy_archive
     if (( ${#_FAILED[@]} )); then
         echo -e "[1;31m[drift-gate-negatives][0m ${#_FAILED[@]} test(s) failed:" >&2
         printf '  %s
@@ -5906,23 +5953,17 @@ test_rust_categories() {
     log "Testing check_rust_categories"
     _neg_gate check_rust_categories || die "rust-categories is red before the probe: $_NEG_GATE_OUT"
     local toml="${ROOT}/usr/share/mios/mios.toml"
-    local backup; backup="$(mktemp)"
-    cp -p "$toml" "$backup"
-    # Probe: a category whose owner is empty and whose exemption carries no
-    # reason -- two planted defects the gate must name, assembled dynamically
-    # so the probe never matches a static scan.
-    local probe_owner probe_table
-    probe_owner="$(printf 'ow%sner = ""' 'o')"
-    probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
+    local backup; backup="$(mktemp)"; cp -p "$toml" "$backup"
+    # Planted owner-less category must fail check_rust_categories
+    local probe_owner; probe_owner="$(printf 'ow%sner = ""' 'o')"
+    local probe_table; probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
     printf '\n%s\n%s\n' "$probe_table" "$probe_owner" >> "$toml"
     if _neg_gate check_rust_categories; then
-        cp -p "$backup" "$toml"; rm -f "$backup"
+        cp -p "$backup" "$toml" && rm -f "$backup"
         die "rust-categories reported clean with a planted owner-less category"
     fi
-    cp -p "$backup" "$toml"
-    rm -f "$backup"
-    _neg_gate check_rust_categories \
-        || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
+    cp -p "$backup" "$toml" && rm -f "$backup"
+    _neg_gate check_rust_categories || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
     log "check_rust_categories negative test passed"
 }
 

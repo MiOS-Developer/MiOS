@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Automated unit test suite for Task task_525/task_526 Nix Subsystem and Declarative Flake Projection Generator.
-# AI-related: usr/libexec/mios/config/nix_project.py, usr/share/mios/nix/flake-template.nix, usr/share/mios/nix/nix.conf, usr/lib/tmpfiles.d/50-nix.conf, automation/59-tools.sh
+# AI-related: usr/libexec/mios/config/nix_project.py, usr/share/mios/nix/flake-template.nix, usr/share/mios/nix/nix.conf, usr/lib/tmpfiles.d/50-mios.conf, automation/59-tools.sh
 """Automated unit test suite for Declarative Nix Subsystem & NixProject (task_525, task_526)."""
 
 from __future__ import annotations
@@ -225,9 +225,9 @@ linux = "~/.config/fastfetch/config.jsonc"
         self.assertTrue(res_val["valid"])
 
     def test_tmpfiles_specification_conformance(self) -> None:
-        """Asserts tmpfiles.d/50-nix.conf declares L+ /nix -> /var/nix and persistent store directories."""
-        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "50-nix.conf")
-        self.assertTrue(os.path.isfile(tmpfiles_path), "50-nix.conf missing")
+        """Asserts tmpfiles.d declares L+ /nix -> /var/nix and persistent store directories."""
+        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "50-mios.conf")
+        self.assertTrue(os.path.isfile(tmpfiles_path), "50-mios.conf missing")
 
         with open(tmpfiles_path, "r", encoding="utf-8") as f:
             content = f.read()

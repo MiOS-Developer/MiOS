@@ -98,6 +98,14 @@ enum Commands {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// Build the git-native legacy archive of every dropped file from [legibility.archive] (ADR-0030 Decision 7).
+    Archive {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Compare the archive with the recomputed dropped set by path, mode and content; write nothing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Render the complete Windows host tmux configuration from layered SSOT.
     RenderHostTmux {
         #[arg(long)]
@@ -276,6 +284,14 @@ enum Commands {
         /// Validate mode: validate roff structural integrity of all rendered pages
         #[arg(long)]
         validate: bool,
+
+        /// Output directory override (defaults to writing under root)
+        #[arg(long, hide = true)]
+        out_dir: Option<PathBuf>,
+
+        /// List mode: list relative paths of all rendered manual pages
+        #[arg(long)]
+        list: bool,
     },
 
     /// Projects [deploy.artifacts] filesystem sizing from mios.toml SSOT into config/artifacts/*.toml
@@ -816,6 +832,25 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Commands::Archive { root, check } => {
+            let root = resolve_root(root);
+            return match archive::run(&root, check) {
+                Ok(summary) => {
+                    println!("[archive] {summary}");
+                    ExitCode::SUCCESS
+                }
+                Err(archive::Failure::Violations(findings)) => {
+                    for finding in findings {
+                        println!("[archive] {finding}");
+                    }
+                    ExitCode::from(archive::EXIT_VIOLATIONS)
+                }
+                Err(archive::Failure::CannotRun(why)) => {
+                    println!("[archive] cannot_run: {why}");
+                    ExitCode::from(archive::EXIT_CANNOT_RUN)
+                }
+            };
+        }
         Commands::Names { root } => {
             let root = resolve_root(root);
             let result = mios_resolver::resolve_merged(Some(&root), false)
@@ -999,12 +1034,14 @@ fn main() -> ExitCode {
             root,
             check,
             validate,
+            out_dir,
+            list,
         } => {
             let r = resolve_root(root);
             (
                 "render-manpages",
                 "usr/share/man/**",
-                match render_manpages::run_render_manpages(&r, check, validate) {
+                match render_manpages::run_render_manpages(&r, check, validate, out_dir.as_deref(), list) {
                     Ok((msg, _)) => {
                         if cli.format != "json" && !msg.is_empty() {
                             println!("{msg}");
@@ -1603,5 +1640,1102 @@ mod projection_evidence {
             }
         }
         Ok(())
+    }
+}
+
+// `archive`: the ADR-0030 Decision 7 legacy store, a bare sha256 repo beside .git, from [legibility.archive].
+// Sections: config, git, replay, dropped set, layout, compare, build.
+mod archive {
+    use sha2::{Digest, Sha256};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::io::Write;
+    use std::path::{Component, Path, PathBuf};
+    use std::process::{Command, Stdio};
+
+    /// The gate contract shared with mios-gate and mios-probe: 1 violations, 2 could not run.
+    pub const EXIT_VIOLATIONS: u8 = 1;
+    pub const EXIT_CANNOT_RUN: u8 = 2;
+
+    const SHALLOW: &str = "full history required (fetch-depth: 0)";
+
+    pub enum Failure {
+        Violations(Vec<String>),
+        CannotRun(String),
+    }
+
+    fn violation(finding: impl Into<String>) -> Failure {
+        Failure::Violations(vec![finding.into()])
+    }
+
+    // ---- config: [legibility.archive] ----------------------------------------------------
+
+    struct Config {
+        path: String,
+        refname: String,
+        object_format: String,
+        since: String,
+        exclude: Vec<String>,
+        author: String,
+    }
+
+    fn config(root: &Path) -> Result<Config, Failure> {
+        let ssot = mios_resolver::resolve_projection(root).map_err(|e| {
+            Failure::CannotRun(format!(
+                "the SSOT under {} did not resolve: {e}",
+                root.display()
+            ))
+        })?;
+        let table = ssot
+            .get("legibility")
+            .and_then(|l| l.get("archive"))
+            .and_then(|a| a.as_table())
+            .ok_or_else(|| {
+                Failure::CannotRun("mios.toml declares no [legibility.archive] table".into())
+            })?;
+        let text = |key: &str| -> Result<String, Failure> {
+            table
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    Failure::CannotRun(format!(
+                        "[legibility.archive].{key} is absent or not a non-empty string"
+                    ))
+                })
+        };
+        let exclude = match table.get("exclude") {
+            Some(toml::Value::Array(items)) => items
+                .iter()
+                .map(|v| v.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    Failure::CannotRun(
+                        "[legibility.archive].exclude must list non-empty glob strings".into(),
+                    )
+                })?,
+            _ => {
+                return Err(Failure::CannotRun(
+                    "[legibility.archive].exclude is absent (an empty list is explicit)".into(),
+                ))
+            }
+        };
+        let cfg = Config {
+            path: text("path")?,
+            refname: text("ref")?,
+            object_format: text("object_format")?,
+            since: text("since")?,
+            exclude,
+            author: text("author")?,
+        };
+        let path = Path::new(&cfg.path);
+        if cfg.path == ".git"
+            || cfg.path.contains('\\')
+            || path.components().count() != 1
+            || !matches!(path.components().next(), Some(Component::Normal(_)))
+        {
+            return Err(Failure::CannotRun(format!(
+                "[legibility.archive].path must be one directory name at the root, not {:?}",
+                cfg.path
+            )));
+        }
+        if cfg.object_format != "sha256" {
+            // The comparison hashes bytes with sha256; another format needs its own digest.
+            return Err(Failure::CannotRun(format!(
+                "[legibility.archive].object_format {:?} is not supported; the store is sha256",
+                cfg.object_format
+            )));
+        }
+        let (name, email) = cfg.author.rsplit_once(" <").unwrap_or(("", ""));
+        let email_ok = email.len() > 1
+            && email.ends_with('>')
+            && !email[..email.len() - 1].contains(['<', '>']);
+        if name.trim().is_empty() || !email_ok || cfg.author.contains('\n') {
+            return Err(Failure::CannotRun(format!(
+                "[legibility.archive].author must read \"Name <email>\", not {:?}",
+                cfg.author
+            )));
+        }
+        Ok(cfg)
+    }
+
+    /// fnmatchcase for `*` (which also crosses `/`, as in [legibility.file_budget]) and `?`.
+    fn glob(pattern: &[u8], text: &[u8]) -> bool {
+        let (mut p, mut t, mut star, mut mark) = (0, 0, None, 0);
+        while t < text.len() {
+            if p < pattern.len() && pattern[p] == b'*' {
+                star = Some(p);
+                mark = t;
+                p += 1;
+            } else if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+                p += 1;
+                t += 1;
+            } else if let Some(s) = star {
+                p = s + 1;
+                mark += 1;
+                t = mark;
+            } else {
+                return false;
+            }
+        }
+        pattern[p..].iter().all(|b| *b == b'*')
+    }
+
+    // ---- git plumbing ---------------------------------------------------------------------
+
+    /// Variables that would point git at another repository, index or object store.
+    const REDIRECTS: [&str; 7] = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ];
+
+    /// One git invocation against the checkout (`git_dir` None) or a bare store.
+    fn git(
+        root: &Path,
+        git_dir: Option<&Path>,
+        args: &[&str],
+        input: Option<&[u8]>,
+    ) -> Result<Vec<u8>, String> {
+        let mut command = Command::new("git");
+        for name in REDIRECTS {
+            command.env_remove(name);
+        }
+        match git_dir {
+            Some(dir) => command.arg("--git-dir").arg(dir),
+            None => command.arg("-C").arg(root),
+        };
+        command
+            .args(["-c", "core.quotepath=false", "-c", "color.ui=false"])
+            .args(args)
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let what = || format!("git {}", args.join(" "));
+        let mut child = command.spawn().map_err(|e| format!("{}: {e}", what()))?;
+        let feeder = match (input, child.stdin.take()) {
+            (Some(bytes), Some(mut stdin)) => {
+                let bytes = bytes.to_vec();
+                Some(std::thread::spawn(move || stdin.write_all(&bytes)))
+            }
+            _ => None,
+        };
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("{}: {e}", what()))?;
+        if let Some(feeder) = feeder {
+            feeder
+                .join()
+                .map_err(|_| format!("{}: the input writer panicked", what()))?
+                .map_err(|e| format!("{}: writing input: {e}", what()))?;
+        }
+        if !output.status.success() {
+            return Err(format!(
+                "{} exited {}: {}",
+                what(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(output.stdout)
+    }
+
+    fn line(bytes: Vec<u8>) -> String {
+        String::from_utf8_lossy(&bytes).trim().to_string()
+    }
+
+    fn records(raw: &[u8]) -> impl Iterator<Item = &[u8]> {
+        raw.split(|b| *b == 0).filter(|r| !r.is_empty())
+    }
+
+    fn utf8(bytes: &[u8]) -> Result<String, String> {
+        String::from_utf8(bytes.to_vec()).map_err(|_| {
+            format!(
+                "a git path is not UTF-8: {}",
+                String::from_utf8_lossy(bytes)
+            )
+        })
+    }
+
+    fn is_oid(s: &str) -> bool {
+        matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    struct Blob {
+        mode: String,
+        oid: String,
+    }
+
+    /// `git ls-tree -r -z --full-tree`: path -> mode and object id.
+    fn parse_tree(raw: &[u8]) -> Result<BTreeMap<String, Blob>, String> {
+        let mut tree = BTreeMap::new();
+        for rec in records(raw) {
+            let tab = rec
+                .iter()
+                .position(|b| *b == b'\t')
+                .ok_or("ls-tree record without a tab")?;
+            let meta = utf8(&rec[..tab])?;
+            let fields: Vec<&str> = meta.split(' ').collect();
+            if fields.len() != 3 || !is_oid(fields[2]) {
+                return Err(format!("unparsable ls-tree record: {meta}"));
+            }
+            let blob = Blob {
+                mode: fields[0].to_string(),
+                oid: fields[2].to_string(),
+            };
+            tree.insert(utf8(&rec[tab + 1..])?, blob);
+        }
+        Ok(tree)
+    }
+
+    /// `cat-file --batch` over every object id: id -> bytes. A short answer is an error.
+    fn blobs(
+        root: &Path,
+        git_dir: Option<&Path>,
+        oids: &BTreeSet<String>,
+    ) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        let mut out = BTreeMap::new();
+        if oids.is_empty() {
+            return Ok(out);
+        }
+        let input: Vec<u8> = oids
+            .iter()
+            .flat_map(|o| format!("{o}\n").into_bytes())
+            .collect();
+        let raw = git(root, git_dir, &["cat-file", "--batch"], Some(&input))?;
+        let mut at = 0;
+        while at < raw.len() {
+            let eol = raw[at..]
+                .iter()
+                .position(|b| *b == b'\n')
+                .ok_or("truncated cat-file header")?
+                + at;
+            let header = String::from_utf8_lossy(&raw[at..eol]).to_string();
+            let fields: Vec<&str> = header.split(' ').collect();
+            if fields.len() != 3 || fields[1] != "blob" {
+                return Err(format!("cat-file did not return a blob: {header}"));
+            }
+            let size: usize = fields[2]
+                .parse()
+                .map_err(|_| format!("bad cat-file size: {header}"))?;
+            let start = eol + 1;
+            if start + size > raw.len() {
+                return Err(format!("truncated cat-file body for {}", fields[0]));
+            }
+            out.insert(fields[0].to_string(), raw[start..start + size].to_vec());
+            at = start + size + 1;
+        }
+        if out.len() != oids.len() {
+            return Err(format!(
+                "cat-file returned {} of {} objects",
+                out.len(),
+                oids.len()
+            ));
+        }
+        Ok(out)
+    }
+
+    // ---- history replay --------------------------------------------------------------------
+
+    /// A path's newest content and mode, and the newest first-parent commit that held it.
+    #[derive(Clone, Debug)]
+    struct Last {
+        blob: Blob,
+        commit: String,
+    }
+
+    struct History {
+        since: String,
+        head: String,
+        last: BTreeMap<String, Last>,
+    }
+
+    /// The first-parent commits of since..HEAD, oldest first, and the base the oldest one was
+    /// made on (None: a root commit), once every link of the walk is proven present.
+    fn chain(
+        root: &Path,
+        since: &str,
+        head: &str,
+    ) -> Result<(Vec<String>, Option<String>), Failure> {
+        let shallow = git(root, None, &["rev-parse", "--is-shallow-repository"], None)
+            .map(line)
+            .unwrap_or_default()
+            == "true";
+        let hint = if shallow {
+            " (this clone is shallow)"
+        } else {
+            ""
+        };
+        let ancestry = ["merge-base", "--is-ancestor", since, head];
+        if git(root, None, &ancestry, None).is_err() {
+            return Err(violation(format!(
+                "{SHALLOW}: {since} is not an ancestor of HEAD in this clone{hint}"
+            )));
+        }
+        let range = format!("{since}..{head}");
+        let walk = ["rev-list", "--first-parent", "--parents", &range];
+        let raw = git(root, None, &walk, None).map_err(|e| violation(format!("{SHALLOW}: {e}")))?;
+        let rows: Vec<Vec<String>> = String::from_utf8_lossy(&raw)
+            .lines()
+            .map(|l| l.split(' ').map(str::to_string).collect())
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            match (row.get(1), rows.get(i + 1)) {
+                (Some(parent), Some(next)) if *parent != next[0] => {
+                    return Err(violation(format!(
+                        "history walk: {} has first parent {parent}, but the walk continued at {}",
+                        row[0], next[0]
+                    )))
+                }
+                (None, _) if shallow => {
+                    return Err(violation(format!(
+                        "{SHALLOW}: history stops at {} before reaching {since}{hint}",
+                        row[0]
+                    )))
+                }
+                (None, Some(_)) => {
+                    return Err(violation(format!(
+                        "history walk: root commit {} is not the oldest of since..HEAD",
+                        row[0]
+                    )))
+                }
+                _ => {}
+            }
+        }
+        // An empty walk from an ancestor means since IS HEAD: the replay starts at HEAD.
+        let base = match rows.last() {
+            Some(oldest) => oldest.get(1).cloned(),
+            None => Some(head.to_string()),
+        };
+        let commits = rows.into_iter().rev().map(|r| r[0].clone()).collect();
+        Ok((commits, base))
+    }
+
+    fn tree_at(root: &Path, commit: &str) -> Result<BTreeMap<String, Blob>, Failure> {
+        git(
+            root,
+            None,
+            &["ls-tree", "-r", "-z", "--full-tree", commit],
+            None,
+        )
+        .and_then(|raw| parse_tree(&raw))
+        .map_err(Failure::CannotRun)
+    }
+
+    /// Replay every first-parent diff of since..HEAD from its base, prove the replay reproduces
+    /// HEAD's tree, and keep each path's newest version: a commit of the walk, else the since tree.
+    fn replay(root: &Path, cfg: &Config) -> Result<History, Failure> {
+        let inside = git(root, None, &["rev-parse", "--is-inside-work-tree"], None).map(line);
+        if inside.as_deref() != Ok("true") {
+            return Err(Failure::CannotRun(format!(
+                "{} is not inside a git checkout",
+                root.display()
+            )));
+        }
+        let cdup =
+            git(root, None, &["rev-parse", "--show-cdup"], None).map_err(Failure::CannotRun)?;
+        if !line(cdup).is_empty() {
+            return Err(Failure::CannotRun(format!(
+                "{} is not the root of its checkout",
+                root.display()
+            )));
+        }
+        let head = git(
+            root,
+            None,
+            &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+            None,
+        )
+        .map(line)
+        .map_err(|_| Failure::CannotRun("HEAD names no commit".into()))?;
+        let since_rev = format!("{}^{{commit}}", cfg.since);
+        let since = git(
+            root,
+            None,
+            &["rev-parse", "--verify", "--quiet", &since_rev],
+            None,
+        )
+        .map(line)
+        .map_err(|_| {
+            violation(format!(
+                "{SHALLOW}: [legibility.archive].since {} is not in this clone",
+                cfg.since
+            ))
+        })?;
+        let (commits, base) = chain(root, &since, &head)?;
+
+        let mut cur = match &base {
+            Some(base) => tree_at(root, base)?,
+            None => BTreeMap::new(),
+        };
+        let mut last: BTreeMap<String, Last> = BTreeMap::new();
+        let range = format!("{since}..{head}");
+        let raw = if commits.is_empty() {
+            Vec::new()
+        } else {
+            let args = [
+                "log",
+                "--first-parent",
+                "--diff-merges=first-parent",
+                "--raw",
+                "-z",
+                "--no-renames",
+                "--no-abbrev",
+                "--reverse",
+                "--no-color",
+                "--no-notes",
+                "--no-show-signature",
+                "--format=%H",
+                &range,
+            ];
+            git(root, None, &args, None).map_err(Failure::CannotRun)?
+        };
+        // `prev` is the walk's commit before `commit`; None while `commit` is the oldest, whose
+        // parent (the base) is outside since..HEAD, so a path only the base held is not counted.
+        let (mut seen, mut prev, mut commit) = (Vec::new(), None::<String>, String::new());
+        let mut tokens = raw
+            .split(|b| *b == 0)
+            .map(|t| t.strip_prefix(b"\n").unwrap_or(t));
+        while let Some(token) = tokens.next() {
+            if token.is_empty() {
+                continue;
+            }
+            if let Some(meta) = token.strip_prefix(b":") {
+                let meta = String::from_utf8_lossy(meta).to_string();
+                let path = tokens
+                    .next()
+                    .ok_or_else(|| violation(format!("history replay: :{meta} has no path")))
+                    .and_then(|p| utf8(p).map_err(Failure::CannotRun))?;
+                let f: Vec<&str> = meta.split(' ').collect();
+                if f.len() != 5 || commit.is_empty() {
+                    return Err(violation(format!(
+                        "history replay: unparsable diff record :{meta}"
+                    )));
+                }
+                let old = Blob {
+                    mode: f[0].into(),
+                    oid: f[2].into(),
+                };
+                let new = Blob {
+                    mode: f[1].into(),
+                    oid: f[3].into(),
+                };
+                let added = f[4].starts_with('A');
+                if (added && cur.contains_key(&path)) || (!added && cur.get(&path) != Some(&old)) {
+                    return Err(violation(format!(
+                        "history replay diverged at {commit} on {path}: the diff does not apply to its first parent"
+                    )));
+                }
+                if f[4].starts_with('D') {
+                    cur.remove(&path);
+                    if let Some(parent) = &prev {
+                        let commit = parent.clone();
+                        last.insert(path, Last { blob: old, commit });
+                    }
+                } else {
+                    cur.insert(path, new);
+                }
+                continue;
+            }
+            let id = String::from_utf8_lossy(token).to_string();
+            if !is_oid(&id) {
+                return Err(violation(format!(
+                    "history replay: unexpected log token {id:?}"
+                )));
+            }
+            if !commit.is_empty() {
+                prev = Some(std::mem::take(&mut commit));
+            }
+            commit.clone_from(&id);
+            seen.push(id);
+        }
+        if seen != commits {
+            return Err(violation(format!(
+                "history replay saw {} commits where the first-parent walk has {}",
+                seen.len(),
+                commits.len()
+            )));
+        }
+        let at_head = tree_at(root, &head)?;
+        if cur != at_head {
+            let first = cur
+                .keys()
+                .chain(at_head.keys())
+                .find(|p| cur.get(*p) != at_head.get(*p))
+                .cloned()
+                .unwrap_or_default();
+            return Err(violation(format!(
+                "history replay does not reproduce HEAD's tree (first difference: {first})"
+            )));
+        }
+        for (path, blob) in cur {
+            let commit = head.clone();
+            last.insert(path, Last { blob, commit });
+        }
+        for (path, blob) in tree_at(root, &since)? {
+            let commit = since.clone();
+            last.entry(path).or_insert(Last { blob, commit });
+        }
+        Ok(History { since, head, last })
+    }
+
+    // ---- dropped set --------------------------------------------------------------------------
+
+    struct Dropped {
+        files: BTreeMap<String, Last>,
+        excluded: usize,
+        unused_excludes: Vec<String>,
+    }
+
+    fn under(path: &str, dir: &str) -> bool {
+        path == dir || path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
+    }
+
+    /// Every path history held that the index no longer tracks, less the store and exclusions.
+    fn dropped(root: &Path, cfg: &Config, history: &History) -> Result<Dropped, Failure> {
+        let staged =
+            git(root, None, &["ls-files", "-s", "-z"], None).map_err(Failure::CannotRun)?;
+        let mut tracked = BTreeSet::new();
+        for rec in records(&staged) {
+            let tab = rec
+                .iter()
+                .position(|b| *b == b'\t')
+                .ok_or_else(|| Failure::CannotRun("ls-files record without a tab".into()))?;
+            tracked.insert(utf8(&rec[tab + 1..]).map_err(Failure::CannotRun)?);
+        }
+        let mut files = BTreeMap::new();
+        let mut used = BTreeSet::new();
+        let mut excluded = 0;
+        for (path, last) in &history.last {
+            if tracked.contains(path) || under(path, &cfg.path) {
+                continue;
+            }
+            let hits: Vec<&String> = cfg
+                .exclude
+                .iter()
+                .filter(|g| glob(g.as_bytes(), path.as_bytes()))
+                .collect();
+            if hits.is_empty() {
+                files.insert(path.clone(), last.clone());
+            } else {
+                excluded += 1;
+                used.extend(hits);
+            }
+        }
+        let mut problems: Vec<String> = files
+            .iter()
+            .filter(|(_, l)| !matches!(l.blob.mode.as_str(), "100644" | "100755" | "120000"))
+            .map(|(p, l)| format!("{p}: mode {} cannot be archived as a file", l.blob.mode))
+            .collect();
+        let clash = files.keys().find(|p| {
+            files
+                .range(format!("{p}/")..)
+                .next()
+                .is_some_and(|(q, _)| under(q, p))
+        });
+        if let Some(clash) = clash {
+            problems.push(format!(
+                "{clash} was both a file and a directory in the dropped set; one tree cannot hold both"
+            ));
+        }
+        if !problems.is_empty() {
+            return Err(Failure::Violations(problems));
+        }
+        let unused_excludes = cfg
+            .exclude
+            .iter()
+            .filter(|g| !used.contains(g))
+            .cloned()
+            .collect();
+        Ok(Dropped {
+            files,
+            excluded,
+            unused_excludes,
+        })
+    }
+
+    fn digest(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    // ---- layout ---------------------------------------------------------------------------------
+
+    fn head_text(cfg: &Config) -> String {
+        format!("ref: refs/heads/{}\n", cfg.refname)
+    }
+
+    fn config_text(cfg: &Config) -> String {
+        format!(
+            "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = {}\n",
+            cfg.object_format
+        )
+    }
+
+    /// Every non-directory under the store, slash-separated and relative to it.
+    fn listing(store: &Path) -> Result<BTreeSet<String>, String> {
+        let mut files = BTreeSet::new();
+        for entry in walkdir::WalkDir::new(store).min_depth(1) {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            let rel = entry
+                .path()
+                .strip_prefix(store)
+                .map_err(|e| e.to_string())?;
+            let parts: Vec<String> = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect();
+            files.insert(parts.join("/"));
+        }
+        Ok(files)
+    }
+
+    /// HEAD, config, the one branch and one pack (.pack and .idx, .rev optional); nothing else.
+    fn layout(root: &Path, cfg: &Config, store: &Path) -> Vec<String> {
+        let files = match listing(store) {
+            Ok(files) => files,
+            Err(e) => return vec![format!("{} could not be listed: {e}", cfg.path)],
+        };
+        let mut bad = Vec::new();
+        let branch = format!("refs/heads/{}", cfg.refname);
+        let mut packs = BTreeMap::<String, BTreeSet<String>>::new();
+        for file in &files {
+            let pack = file
+                .strip_prefix("objects/pack/pack-")
+                .and_then(|n| n.rsplit_once('.'))
+                .filter(|(hash, ext)| is_oid(hash) && matches!(*ext, "pack" | "idx" | "rev"));
+            match pack {
+                Some((hash, ext)) => {
+                    packs
+                        .entry(hash.to_string())
+                        .or_default()
+                        .insert(ext.to_string());
+                }
+                None if file == "HEAD" || file == "config" || *file == branch => {}
+                None => bad.push(format!(
+                    "{}/{file} is outside the allowed set (HEAD, config, {branch}, one pack); delete it or rebuild: mios-gen archive",
+                    cfg.path
+                )),
+            }
+        }
+        let whole = packs
+            .values()
+            .all(|exts| exts.contains("pack") && exts.contains("idx"));
+        if packs.len() != 1 || !whole {
+            bad.push(format!(
+                "{} must hold exactly one pack with its .idx (found {}); rebuild: mios-gen archive",
+                cfg.path,
+                packs.len()
+            ));
+        }
+        for (name, want) in [("HEAD", head_text(cfg)), ("config", config_text(cfg))] {
+            if fs::read(store.join(name)).ok().as_deref() != Some(want.as_bytes()) {
+                bad.push(format!(
+                    "{}/{name} is not the minimal form mios-gen archive writes ({want:?})",
+                    cfg.path
+                ));
+            }
+        }
+        let spec = format!(":(literal){}", cfg.path);
+        let prefix = format!("{}/", cfg.path);
+        match git(root, None, &["ls-files", "-z", "--", &spec], None) {
+            Ok(raw) => {
+                let tracked: BTreeSet<String> = records(&raw)
+                    .filter_map(|r| utf8(r).ok())
+                    .filter_map(|p| p.strip_prefix(&prefix).map(str::to_string))
+                    .collect();
+                for file in files.difference(&tracked) {
+                    bad.push(format!(
+                        "{}/{file} is not tracked; stage it with the rest of the archive",
+                        cfg.path
+                    ));
+                }
+                for file in tracked.difference(&files) {
+                    bad.push(format!(
+                        "{}/{file} is tracked but absent from the worktree",
+                        cfg.path
+                    ));
+                }
+            }
+            Err(e) => bad.push(format!("tracked archive files could not be listed: {e}")),
+        }
+        bad
+    }
+
+    // ---- compare --------------------------------------------------------------------------------
+
+    struct Expected {
+        cfg: Config,
+        history: History,
+        dropped: Dropped,
+        bytes: BTreeMap<String, Vec<u8>>,
+    }
+
+    fn expected(root: &Path) -> Result<Expected, Failure> {
+        let cfg = config(root)?;
+        let history = replay(root, &cfg)?;
+        let dropped = dropped(root, &cfg, &history)?;
+        let oids: BTreeSet<String> = dropped.files.values().map(|l| l.blob.oid.clone()).collect();
+        let bytes = blobs(root, None, &oids).map_err(Failure::CannotRun)?;
+        Ok(Expected {
+            cfg,
+            history,
+            dropped,
+            bytes,
+        })
+    }
+
+    fn total(want: &Expected) -> usize {
+        want.dropped
+            .files
+            .values()
+            .map(|l| want.bytes[&l.blob.oid].len())
+            .sum()
+    }
+
+    /// Every difference between the store and the recomputed dropped set; empty is current.
+    fn compare(root: &Path, want: &Expected) -> Vec<String> {
+        let cfg = &want.cfg;
+        let store = root.join(&cfg.path);
+        if !store.is_dir() {
+            return vec![format!(
+                "{} does not exist; build it: mios-gen archive",
+                cfg.path
+            )];
+        }
+        let mut bad = layout(root, cfg, &store);
+        for glob in &want.dropped.unused_excludes {
+            bad.push(format!(
+                "[legibility.archive].exclude entry {glob:?} matches no dropped path; remove it"
+            ));
+        }
+        let fsck = ["fsck", "--strict", "--no-dangling", "--no-progress"];
+        if let Err(e) = git(root, Some(&store), &fsck, None) {
+            bad.push(format!("{} fails git fsck --strict: {e}", cfg.path));
+            return bad;
+        }
+        let branch = format!("refs/heads/{}", cfg.refname);
+        let listed = git(
+            root,
+            Some(&store),
+            &["ls-tree", "-r", "-z", "--full-tree", &branch],
+            None,
+        )
+        .and_then(|raw| parse_tree(&raw));
+        let tree = match listed {
+            Ok(tree) => tree,
+            Err(e) => {
+                bad.push(format!("{} has no readable {branch}: {e}", cfg.path));
+                return bad;
+            }
+        };
+        let oids = tree.values().map(|b| b.oid.clone()).collect();
+        let have = match blobs(root, Some(&store), &oids) {
+            Ok(have) => have,
+            Err(e) => {
+                bad.push(format!("{} blobs could not be read: {e}", cfg.path));
+                return bad;
+            }
+        };
+        for (path, last) in &want.dropped.files {
+            let Some(blob) = tree.get(path) else {
+                bad.push(format!(
+                    "missing: {path} (dropped; last held by {})",
+                    last.commit
+                ));
+                continue;
+            };
+            if blob.mode != last.blob.mode {
+                bad.push(format!(
+                    "mode differs: {path} (archive {}, last {})",
+                    blob.mode, last.blob.mode
+                ));
+            }
+            let (archived, original) = (
+                digest(&have[&blob.oid]),
+                digest(&want.bytes[&last.blob.oid]),
+            );
+            if archived != original {
+                bad.push(format!(
+                    "content differs: {path} (archive sha256 {archived}, last sha256 {original} in {})",
+                    last.commit
+                ));
+            }
+        }
+        for path in tree.keys().filter(|p| !want.dropped.files.contains_key(*p)) {
+            bad.push(format!(
+                "extra: {path} (archived, but not in the dropped set)"
+            ));
+        }
+        bad
+    }
+
+    // ---- build ----------------------------------------------------------------------------------
+
+    /// C-style quoting, which git fast-import accepts for every path.
+    fn quote(path: &str) -> String {
+        let mut q = String::from("\"");
+        for b in path.bytes() {
+            match b {
+                b'"' => q.push_str("\\\""),
+                b'\\' => q.push_str("\\\\"),
+                0x20..=0x7e => q.push(b as char),
+                _ => q.push_str(&format!("\\{b:03o}")),
+            }
+        }
+        q.push('"');
+        q
+    }
+
+    fn message(want: &Expected) -> String {
+        let h = &want.history;
+        let (n, bytes) = (want.dropped.files.len(), total(want));
+        let mut m = format!(
+            "legacy: {n} dropped paths, {bytes} bytes, {}..{}\n\n\
+             ADR-0030 Decision 7: every path in the tree of the since commit or of a\n\
+             first-parent commit after it that the index no longer tracks, at its last\n\
+             content and mode. Rebuilt by mios-gen archive; mios-gen archive --check\n\
+             compares it by path, mode and content.\n\n\
+             range: {}..{}\npaths: {n}\nbytes: {bytes}\nexcluded: {}\n\n\
+             Newest first-parent commit that held each path:\n",
+            &h.since[..12],
+            &h.head[..12],
+            h.since,
+            h.head,
+            want.dropped.excluded,
+        );
+        for (path, last) in &want.dropped.files {
+            m.push_str(&format!("{} {path}\n", last.commit));
+        }
+        m
+    }
+
+    /// SOURCE_DATE_EPOCH when set, else the since commit's date: a reproducible commit id.
+    fn epoch(root: &Path, since: &str) -> Result<String, String> {
+        if let Ok(value) = std::env::var("SOURCE_DATE_EPOCH") {
+            return value
+                .trim()
+                .parse::<u64>()
+                .map(|v| v.to_string())
+                .map_err(|_| format!("SOURCE_DATE_EPOCH {value:?} is not whole seconds"));
+        }
+        git(root, None, &["show", "-s", "--format=%ct", since], None).map(line)
+    }
+
+    /// A fresh bare store holding one commit on the branch, packed into a single pack.
+    fn render(
+        root: &Path,
+        want: &Expected,
+        scratch: &Path,
+    ) -> Result<(String, Vec<PathBuf>), String> {
+        let cfg = &want.cfg;
+        let store = scratch.join("store");
+        let format = format!("--object-format={}", cfg.object_format);
+        let store_arg = store.to_string_lossy().to_string();
+        git(
+            root,
+            None,
+            &["init", "--bare", "-q", &format, &store_arg],
+            None,
+        )?;
+        let when = epoch(root, &want.history.since)?;
+        let msg = message(want);
+        let mut stream = format!(
+            "commit refs/heads/{}\nauthor {} {when} +0000\ncommitter {} {when} +0000\ndata {}\n{msg}\n",
+            cfg.refname,
+            cfg.author,
+            cfg.author,
+            msg.len()
+        )
+        .into_bytes();
+        for (path, last) in &want.dropped.files {
+            let body = &want.bytes[&last.blob.oid];
+            let header = format!(
+                "M {} inline {}\ndata {}\n",
+                last.blob.mode,
+                quote(path),
+                body.len()
+            );
+            stream.extend_from_slice(header.as_bytes());
+            stream.extend_from_slice(body);
+            stream.push(b'\n');
+        }
+        stream.extend_from_slice(b"done\n");
+        let import = ["fast-import", "--quiet", "--done", "--date-format=raw"];
+        git(root, Some(&store), &import, Some(&stream))?;
+        let repack = [
+            "-c",
+            "repack.writeBitmaps=false",
+            "-c",
+            "pack.writeReverseIndex=false",
+            "-c",
+            "pack.writeBitmapHashCache=false",
+            "-c",
+            "pack.threads=1",
+            "repack",
+            "-a",
+            "-d",
+            "-f",
+            "-n",
+            "-q",
+        ];
+        git(root, Some(&store), &repack, None)?;
+        git(root, Some(&store), &["prune-packed"], None)?;
+        let branch = format!("refs/heads/{}^{{commit}}", cfg.refname);
+        let commit = line(git(
+            root,
+            Some(&store),
+            &["rev-parse", "--verify", &branch],
+            None,
+        )?);
+        let packs: Vec<PathBuf> = fs::read_dir(store.join("objects/pack"))
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        let n = packs
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "pack"))
+            .count();
+        if n != 1 {
+            return Err(format!("repack left {n} packs, not one"));
+        }
+        Ok((commit, packs))
+    }
+
+    /// Replace the store at the root with exactly HEAD, config, the branch and the pack.
+    fn install(root: &Path, cfg: &Config, commit: &str, packs: &[PathBuf]) -> Result<(), String> {
+        let store = root.join(&cfg.path);
+        if let Ok(meta) = fs::symlink_metadata(&store) {
+            if !meta.is_dir() || !store.join("HEAD").is_file() {
+                return Err(format!(
+                    "{} exists and is not a git store; refusing to replace it",
+                    cfg.path
+                ));
+            }
+            fs::remove_dir_all(&store)
+                .map_err(|e| format!("removing the old {}: {e}", cfg.path))?;
+        }
+        let heads = store.join("refs/heads");
+        fs::create_dir_all(&heads).map_err(|e| e.to_string())?;
+        fs::create_dir_all(store.join("objects/pack")).map_err(|e| e.to_string())?;
+        fs::write(store.join("HEAD"), head_text(cfg)).map_err(|e| e.to_string())?;
+        fs::write(store.join("config"), config_text(cfg)).map_err(|e| e.to_string())?;
+        fs::write(heads.join(&cfg.refname), format!("{commit}\n")).map_err(|e| e.to_string())?;
+        for pack in packs {
+            let name = pack.file_name().ok_or("a pack file without a name")?;
+            fs::copy(pack, store.join("objects/pack").join(name)).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Findings a fresh build leaves only because the new files are not staged yet.
+    fn unstaged(finding: &str) -> bool {
+        finding.ends_with("is not tracked; stage it with the rest of the archive")
+            || finding.ends_with("is tracked but absent from the worktree")
+    }
+
+    pub fn run(root: &Path, check: bool) -> Result<String, Failure> {
+        let want = expected(root)?;
+        let summary = |verb: &str| {
+            format!(
+                "{} {verb}: {} dropped paths ({} bytes, {} excluded) on {} for {}..{}; paths, modes and content compared",
+                want.cfg.path,
+                want.dropped.files.len(),
+                total(&want),
+                want.dropped.excluded,
+                want.cfg.refname,
+                &want.history.since[..12],
+                &want.history.head[..12],
+            )
+        };
+        let bad = compare(root, &want);
+        if check {
+            if bad.is_empty() {
+                return Ok(summary("holds every dropped file"));
+            }
+            return Err(Failure::Violations(bad));
+        }
+        // Rebuilding only to un-stage the same content would churn the pack name.
+        if bad.iter().all(|f| unstaged(f)) {
+            let verb = if bad.is_empty() {
+                "is already current".to_string()
+            } else {
+                format!("is current; stage {}/ to commit it", want.cfg.path)
+            };
+            return Ok(summary(&verb));
+        }
+        let scratch = tempfile::tempdir()
+            .map_err(|e| Failure::CannotRun(format!("scratch directory: {e}")))?;
+        let (commit, packs) = render(root, &want, scratch.path()).map_err(Failure::CannotRun)?;
+        install(root, &want.cfg, &commit, &packs).map_err(Failure::CannotRun)?;
+        let left: Vec<String> = compare(root, &want)
+            .into_iter()
+            .filter(|f| !unstaged(f))
+            .collect();
+        if !left.is_empty() {
+            return Err(Failure::Violations(left));
+        }
+        Ok(summary(&format!(
+            "rebuilt at {} (stage {}/ to commit it)",
+            &commit[..12],
+            want.cfg.path
+        )))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn globs_cross_slashes_like_the_file_budget() {
+            assert!(glob(b"docs/*", b"docs/a/b.md"));
+            assert!(glob(b"*.env", b"etc/app/.env"));
+            assert!(glob(b"a?c", b"abc"));
+            assert!(!glob(b"a?c", b"ac"));
+            assert!(!glob(b"docs/*.md", b"usr/docs/x.md"));
+            assert!(glob(b"**", b""));
+        }
+
+        #[test]
+        fn paths_are_quoted_for_fast_import() {
+            assert_eq!(quote("a b/c"), "\"a b/c\"");
+            assert_eq!(quote("q\"\\\n"), "\"q\\\"\\\\\\012\"");
+            assert_eq!(quote("\u{e9}"), "\"\\303\\251\"");
+        }
+
+        #[test]
+        fn the_store_itself_is_never_dropped() {
+            assert!(under(".archive/HEAD", ".archive"));
+            assert!(under(".archive", ".archive"));
+            assert!(!under(".archived", ".archive"));
+        }
+
+        #[test]
+        fn ls_tree_records_parse_and_garbage_is_refused() {
+            let raw = b"100644 blob 0123456789012345678901234567890123456789\ta b.txt\0\
+                        120000 blob 1123456789012345678901234567890123456789\tl\0";
+            let tree = parse_tree(raw).unwrap();
+            assert_eq!(tree["a b.txt"].mode, "100644");
+            assert_eq!(tree["l"].mode, "120000");
+            assert!(parse_tree(b"100644 blob xyz\tp\0").is_err());
+            assert!(parse_tree(b"no tab here\0").is_err());
+        }
     }
 }

@@ -44,5 +44,22 @@ class TestAuditVersionLiterals(unittest.TestCase):
             check(0)
             check(2, dict(env, PATH=""))
 
+    def test_native_scan_refuses_non_checkout(self):
+        binary = os.environ.get("MIOS_GATE_BIN") or shutil.which("mios-gate")
+        self.assertTrue(binary, "native mios-gate is required")
+        vendor = Path(__file__).resolve().parents[1] / "usr/share/mios/mios.toml"
+        version = tomllib.loads(vendor.read_text())["meta"]["mios_version"]
+        with tempfile.TemporaryDirectory(prefix="mios-version-nogit-") as directory:
+            root = Path(directory)
+            ssot = root / "usr/share/mios/mios.toml"
+            ssot.parent.mkdir(parents=True)
+            ssot.write_text(f"[meta]\nmios_version={json.dumps(version)}\n")
+            command = [binary, "version-literals-ssot", "--root", directory, "--format", "json"]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "could_not_run")
+            self.assertIn("not a git checkout", report.get("summary", ""))
+
 if __name__ == "__main__":
     unittest.main()

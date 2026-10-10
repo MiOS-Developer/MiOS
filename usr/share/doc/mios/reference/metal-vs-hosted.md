@@ -22,11 +22,11 @@ So "offload all services to hosted MiOS OCI image(s)" means exactly **2 of 8 pla
 |---|---|---|---|---|---|
 | `ai` | `either` | yes | by default | n/a — payload, not RPM | `usr/share/containers/systemd/mios-llm-light.container` |
 | `ha` | `mini` | **no** | **always** | yes — `pacemaker`, `corosync` | `usr/lib/greenboot/check/wanted.d/50-mios-ha-cluster.sh` |
-| `hypervisor` | `mini` | **no** | **always** | yes — `libvirt`, `qemu-kvm` | `usr/lib/sysctl.d/99-mios-vmhost.conf` |
+| `hypervisor` | `mini` | **no** | **always** | yes — `libvirt`, `qemu-kvm` | `usr/lib/sysctl.d/99-mios.conf` |
 | `mesh` | `mini` | **no** | **always** | yes — `avahi`, `nss-mdns` | **nothing declared** |
 | `orchestrator` | `either` | yes | by default | yes — `k3s` | `usr/share/containers/systemd/mios-k3s.container` |
 | `radio` | `mini` | **no** | optional | yes — `hostapd`, `iw`, `wireless-regdb` | **nothing declared** |
-| `router` | `mini` | **no** | **always** | yes — `firewalld`, `dnsmasq` | `usr/lib/sysctl.d/99-mios-vmhost.conf` |
+| `router` | `mini` | **no** | **always** | yes — `firewalld`, `dnsmasq` | `usr/lib/sysctl.d/99-mios.conf` |
 | `storage` | `mini` | **no** | **always** | yes — `ceph-common`, `cephadm` | `usr/share/containers/systemd/mios-ceph.container` |
 
 | Plane | What it does |

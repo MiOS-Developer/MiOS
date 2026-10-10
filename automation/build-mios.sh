@@ -272,9 +272,9 @@ merge_mios_structure() {
         || log_warn "Some files in /etc were skipped (already exist)"
 
     log_info "Declaring /var directories via tmpfiles.d..."
-    if [[ -f usr/lib/tmpfiles.d/mios.conf ]]; then
-        cp -n usr/lib/tmpfiles.d/mios.conf /usr/lib/tmpfiles.d/ || true
-        systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios.conf || log_warn "tmpfiles creation had warnings"
+    if [[ -f usr/lib/tmpfiles.d/50-mios.conf ]]; then
+        cp -n usr/lib/tmpfiles.d/50-mios.conf /usr/lib/tmpfiles.d/ || true
+        systemd-tmpfiles --create /usr/lib/tmpfiles.d/50-mios.conf || log_warn "tmpfiles creation had warnings"
     fi
 
     log_info "Merging /home skeleton..."
