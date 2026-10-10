@@ -1011,5 +1011,23 @@ class TestLegacyArchive(unittest.TestCase):
         self._fails(d, "cannot_run", code=2)
 
 
+class TestStructuredCheck(unittest.TestCase):
+    def test_empty_directory_skips_and_populated_without_ssot_violates(self):
+        """Task AGY-1811: an empty directory still skips, and a directory that has usr/ but no mios.toml reports a violation."""
+        with tempfile.TemporaryDirectory(prefix="structured-empty-") as empty_dir:
+            env = dict(os.environ, MIOS_DRIFT_ROOT=empty_dir)
+            r_empty = subprocess.run([sys.executable, _MOD_PATH, "structured"],
+                                     capture_output=True, text=True, env=env)
+            self.assertEqual(0, r_empty.returncode, "empty directory must skip (exit 0): %s" % (r_empty.stdout + r_empty.stderr))
+
+        with tempfile.TemporaryDirectory(prefix="structured-populated-") as pop_dir:
+            os.makedirs(os.path.join(pop_dir, "usr", "share"), exist_ok=True)
+            env = dict(os.environ, MIOS_DRIFT_ROOT=pop_dir)
+            r_pop = subprocess.run([sys.executable, _MOD_PATH, "structured"],
+                                   capture_output=True, text=True, env=env)
+            self.assertEqual(1, r_pop.returncode, "populated directory without mios.toml must fail (exit 1)")
+            self.assertIn("missing from populated tree", r_pop.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

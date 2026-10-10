@@ -1592,6 +1592,11 @@ def check_structured() -> int:
     import tomllib as _toml
 
     toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        if os.path.isdir(os.path.join(root, "usr")):
+            sys.stderr.write("    [structured] %s is missing from populated tree (usr/ exists)\n" % toml_path)
+            return 1
+        return 0
     if not _scan(root, toml_path):
         return 0
     if os.path.isfile(toml_path):

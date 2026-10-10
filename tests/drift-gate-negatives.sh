@@ -186,24 +186,50 @@ test_shellcheck_failure() {
 
     local tmp_bin_dir
     tmp_bin_dir="$(mktemp -d)"
+
+    # Sub-test 1: Task AGY-1810 - shellcheck absence under MIOS_DRIFT_REQUIRE_TOOLS=1 vs unset
     cat << 'EOF' > "${tmp_bin_dir}/shellcheck"
-echo "Injected shellcheck failure"
-exit 1
+#!/bin/sh
+echo "shellcheck: command not found" >&2
+exit 127
 EOF
     chmod +x "${tmp_bin_dir}/shellcheck"
 
     local old_path="$PATH"
     export PATH="${tmp_bin_dir}:${PATH}"
 
+    # With MIOS_DRIFT_REQUIRE_TOOLS=1, absence must FAIL
+    if MIOS_DRIFT_REQUIRE_TOOLS=1 MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1; then
+        export PATH="$old_path"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck passed despite absent shellcheck under MIOS_DRIFT_REQUIRE_TOOLS=1"
+    fi
+
+    # With MIOS_DRIFT_REQUIRE_TOOLS unset, absence must WARN and PASS (exit 0)
+    if ! ( unset MIOS_DRIFT_REQUIRE_TOOLS; MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1 ); then
+        export PATH="$old_path"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck failed on absent shellcheck when MIOS_DRIFT_REQUIRE_TOOLS was unset"
+    fi
+
+    # Sub-test 2: Injected shellcheck lint failure (exit 1) must always fail
+    cat << 'EOF' > "${tmp_bin_dir}/shellcheck"
+#!/bin/sh
+echo "Injected shellcheck failure"
+exit 1
+EOF
+    chmod +x "${tmp_bin_dir}/shellcheck"
+
     if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1; then
         export PATH="$old_path"
-        die "Check_shellcheck passed despite shellcheck failure"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck passed despite shellcheck lint failure"
     fi
 
     export PATH="$old_path"
     rm -rf "$tmp_bin_dir"
-    _neg_gate check_shellcheck || die "Check_shellcheck failed after restoration"
-    log "Check_shellcheck negative test passed"
+    _neg_gate check_shellcheck || die "check_shellcheck failed after restoration"
+    log "check_shellcheck negative test passed"
 }
 
 # task_1713: the Python generator is deleted; every site runs the native twin.
