@@ -12889,7 +12889,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3419
+max_tracked_files = 3323
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12925,7 +12925,7 @@ target_bootstrap_files = 500   # the same cap for the sister repo mios-bootstrap
 order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "archive", "misc"]
 
 [legibility.file_budget.domains.dependency]  # vendored wheels and archives fold into one bundle per kind (Law 12 still bakes them); one Cargo.lock
-max_files = 100
+max_files = 6
 target_files = 5
 globs = ["usr/share/mios/vendored/*", "*Cargo.lock"]
 
@@ -13003,8 +13003,8 @@ object_format = "sha256"     # git's sha256 object format; content is compared b
 since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-budget campaign began; first-parent history from here
 author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
 # Dropped paths never re-tracked (keys, tokens, credentials, valued .env, leaks), as globs with a reason each.
-# Screening all 315 dropped paths found none.
-exclude = []
+# Screening all 315 dropped paths found none. Vendored assets are consolidated into bundles in-tree (task_3662).
+exclude = ["usr/share/mios/vendored/*"]
 
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]

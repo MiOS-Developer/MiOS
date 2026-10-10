@@ -3430,7 +3430,7 @@ test_module_length() {
 
 test_vendored_assets_non_stub() {
     log "Testing check_vendored_assets_non_stub"
-    local stub_file="${ROOT}/usr/share/mios/vendored/k3s/fake_stub.tmp"
+    local stub_file="${ROOT}/usr/share/mios/vendored/fake_stub.tmp"
     echo "Stub" > "$stub_file"
 
     MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_vendored_assets_non_stub >/dev/null 2>&1 && die "Check_vendored_assets_non_stub passed despite injected stub file"
@@ -5278,7 +5278,17 @@ test_legibility_ratchet() {
     _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the automation budget"
     [[ -n "$f0" && "$_NEG_GATE_OUT" == *"files.automation = $(( f0 + 1 )), over the floor"* && "$_NEG_GATE_OUT" == *"tracked_files = "*", over the floor"* ]] \
         || _lr_fail "check_legibility_ratchet did not charge the planted file to its domain and the total: $_NEG_GATE_OUT"
-    _lr_unplant "$probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
+    _lr_unplant "$probe"
+
+    # task_3662: planted file in dependency domain is refused by files.dependency
+    local dep_probe="${ROOT}/usr/share/mios/vendored/fake_dep.whl"
+    local d0; read -r d0 _ < <(_lr_metric files.dependency)
+    _lr_plant "$dep_probe" 1
+    _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the dependency budget"
+    [[ -n "$d0" && "$_NEG_GATE_OUT" == *"files.dependency = $(( d0 + 1 )), over the floor"* ]] \
+        || _lr_fail "check_legibility_ratchet did not charge planted file to dependency domain: $_NEG_GATE_OUT"
+    _lr_unplant "$dep_probe"
+    unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
 
     _neg_gate check_legibility_ratchet || die "check_legibility_ratchet failed after restoration: $_NEG_GATE_OUT"
     log "check_legibility_ratchet negative test passed"

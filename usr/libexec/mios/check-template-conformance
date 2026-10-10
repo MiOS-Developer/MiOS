@@ -39,6 +39,13 @@ def load_grandfathered():
 import subprocess
 
 def _try_native_bin(args_list):
+    target_root = "."
+    for i, a in enumerate(args_list):
+        if a == "--root" and i + 1 < len(args_list):
+            target_root = args_list[i + 1]
+            break
+    if not os.path.isfile(os.path.join(target_root, "usr/share/mios/mios.toml")):
+        return
     bin_path = os.environ.get("MIOS_CONFORM_BIN")
     if not bin_path:
         exe = "mios-template-conform.exe" if os.name == "nt" else "mios-template-conform"
