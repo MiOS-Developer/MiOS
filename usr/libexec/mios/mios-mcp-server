@@ -1368,6 +1368,7 @@ def _translation_tools():
                     ]
                 },
                 "frames": {"type": "array", "items": {"type": "object"}},
+                "context_id": {"type": "string"},
                 "evidence": {
                     "type": "object",
                     "required": ["diff_bytes", "positive", "negative", "tree_restored", "exit_code"],
@@ -1803,100 +1804,61 @@ def _run_monitor_ui(mode):
 
 
 def _load_card_signing_key(agent_id: str):
-    """Load or generate Ed25519 signing key for AgentCard projection."""
-    try:
-        from mios_pipe.identity.principal import _passport_load_priv, _passport_kid
-        priv = _passport_load_priv()
-        kid = _passport_kid() if priv else None
-        if priv and kid:
-            return priv, kid, priv.public_key()
-    except Exception:
-        pass
+    """Load only a provisioned, owner-private Ed25519 passport key."""
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    seed = hashlib.sha256(f"mios-agent-card:{agent_id}".encode("utf-8")).digest()
-    priv = Ed25519PrivateKey.from_private_bytes(seed)
-    kid = f"mios-agent-{agent_id}-v1"
+
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]*", agent_id) or ".." in agent_id:
+        raise ValueError("Invalid relay agent identifier")
+    passport = mios_toml.load_merged()["passport"]
+    if not passport["enable"]:
+        raise RuntimeError("AgentCard signing requires an enabled passport")
+    directory = Path(passport["key_dir"]) / agent_id
+    path = directory / "private.key"
+    # Reject symlinks and require 0600: a public/derived fallback is never a key.
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o777 != 0o600:
+        raise RuntimeError("AgentCard signing requires a provisioned 0600 passport key")
+    priv = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not isinstance(priv, Ed25519PrivateKey):
+        raise RuntimeError("AgentCard passport key must be Ed25519")
+    kid = (directory / "kid").read_text(encoding="utf-8").strip()
+    if not kid:
+        raise RuntimeError("AgentCard passport key identifier is missing")
     return priv, kid, priv.public_key()
 
 
 def _project_agent_card(agent_id: str, cfg: Optional[dict] = None) -> dict:
-    """Project relay/CLI registration to an A2A v1.0.1 AgentCard with JWS-over-JCS signature."""
-    cfg = cfg or _agent_cli_config()
-    tool = next((row for row in cfg.get("tools", []) if row.get("name") == agent_id), None)
-    if not tool:
+    """Project a registered relay participant, signed by its provisioned passport."""
+    data = mios_toml.load_merged()
+    registration = next((row for row in _agent_relay_call("mios_agent_list", {})["agents"]
+                         if row["agent_id"] == agent_id), None)
+    if registration is None:
         raise ValueError(f"Unknown agent: {agent_id}")
-    package = tool.get("package", agent_id)
-    kind = tool.get("kind", "cli")
+    from mios_pipe.federation.agentcard_sign import _agent_card_signature
 
-    _agent_pipe_dir = os.path.normpath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios", "agent-pipe"))
-    if _agent_pipe_dir not in sys.path:
-        sys.path.insert(0, _agent_pipe_dir)
-
-    from mios_pipe.federation.agentcard_sign import (
-        _agent_card_signature,
-        _b64u,
-    )
-
-    priv, kid, pub = _load_card_signing_key(agent_id)
-    pub_bytes = pub.public_bytes_raw()
-    pub_b64 = _b64u(pub_bytes)
-
-    port = (mios_toml.load_merged().get("ports") or {}).get("agent_pipe", 8500)
-    base = f"http://127.0.0.1:{port}"
-
+    priv, kid, _ = _load_card_signing_key(agent_id)
+    base = _agent_pipe_url()
+    label = registration.get("label") or agent_id
+    kind = registration["kind"]
     card: Dict[str, Any] = {
-        "name": f"MiOS {agent_id.capitalize()}",
-        "description": f"MiOS {agent_id} agent ({package})",
-        "version": "1.0.1",
-        "supportedInterfaces": [
-            {
-                "url": f"{base}/a2a",
-                "protocolBinding": "JSONRPC",
-                "protocolVersion": "1.0",
-            }
-        ],
-        "provider": {
-            "organization": "MiOS",
-            "url": "https://github.com/mios-dev/MiOS",
-        },
-        "capabilities": {
-            "streaming": True,
-            "pushNotifications": False,
-            "tools": tool.get("mcp", True),
-        },
+        "name": label,
+        "description": f"MiOS relay participant {agent_id}",
+        "version": data["meta"]["mios_version"],
+        "supportedInterfaces": [{"url": f"{base}/a2a", "protocolBinding": "JSONRPC",
+                                 "protocolVersion": data["a2a"]["protocol_version"]}],
+        "capabilities": {"streaming": True, "pushNotifications": False},
         "defaultInputModes": ["text/plain", "application/json"],
         "defaultOutputModes": ["text/plain"],
-        "skills": [
-            {
-                "id": agent_id,
-                "name": f"{agent_id} assistant",
-                "description": f"Executable agent CLI {agent_id}",
-                "tags": [kind, "reasoning", "tools"],
-                "inputModes": ["text/plain", "application/json"],
-                "outputModes": ["text/plain"],
-            }
-        ],
-        "securitySchemes": {
-            "bearer": {
-                "httpAuthSecurityScheme": {
-                    "scheme": "bearer",
-                    "description": "Bearer token authentication",
-                }
-            }
-        },
-        "security": [{"bearer": []}],
-        "x-mios": {
-            "agent_id": agent_id,
-            "package": package,
-            "kind": kind,
-            "publicKey": pub_b64,
-        },
+        "skills": [{"id": agent_id, "name": label, "description": f"Registered {kind} participant",
+                    "tags": [kind], "inputModes": ["text/plain", "application/json"],
+                    "outputModes": ["text/plain"]}],
+        "securitySchemes": {"bearer": {"httpAuthSecurityScheme": {"scheme": "bearer"}}},
+        "securityRequirements": [{"schemes": {"bearer": {"list": []}}}],
     }
-
     sig = _agent_card_signature(card, load_priv_fn=lambda: priv, kid_fn=lambda: kid)
-    if sig:
-        card["signatures"] = [sig]
+    if not sig:
+        raise RuntimeError("AgentCard passport signing failed")
+    card["signatures"] = [sig]
     return card
 
 

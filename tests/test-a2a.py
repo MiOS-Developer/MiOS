@@ -508,7 +508,7 @@ class TestA2ADelegation(unittest.TestCase):
 
 # ============================================================================
 # Domain 1.3: ADR-0029 Standards Mapping, Receipt Invariant, Credential Refusal,
-#             and Signed AgentCard Projection (Task STD26-02 / assign_002)
+#             and Signed AgentCard Projection (task_198 / assign_002)
 # ============================================================================
 
 _LIB_MIOS = os.path.join(_ROOT, "usr", "lib", "mios")
@@ -523,6 +523,7 @@ from mios_pipe.federation.agentcard_sign import (
     _jcs_canonicalize,
 )
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey, Ed25519PrivateKey
+from pathlib import Path
 from importlib.machinery import SourceFileLoader
 import subprocess
 
@@ -532,6 +533,9 @@ try:
     _project_agent_card = getattr(_mcp_server_mod, "_project_agent_card", None)
 except Exception:
     _project_agent_card = None
+
+
+_GATE_EVIDENCE = {"diff_bytes": 7, "positive": True, "negative": True, "tree_restored": True, "exit_code": 0}
 
 
 class TestA2ATranslateMapping(unittest.TestCase):
@@ -828,7 +832,7 @@ class TestA2ATranslateMapping(unittest.TestCase):
             {"kind": "text", "role": "user", "text": "Start analysis", "message_id": "msg_001"},
             {"kind": "tool_call", "name": "read_metrics", "call_id": "call_99", "arguments": {"interval": 60}},
             {"kind": "tool_output", "call_id": "call_99", "output": {"cpu": 12.5, "mem": 45.0}},
-            {"kind": "terminal", "status": "delivered", "text": "", "task_id": "task_42"},
+            {"kind": "terminal", "status": "delivered", "evidence": _GATE_EVIDENCE, "text": "", "task_id": "fixture-task-42"},
         ]
 
         # Forward: loop -> A2A
@@ -873,11 +877,11 @@ class TestA2ATranslateMapping(unittest.TestCase):
     def test_bidirectional_roundtrip_loop_and_mcp_tasks(self):
         """Bidirectional conversion: loop.v1 <-> MCP Tasks extension."""
         orig_events = [
-            {"kind": "terminal", "status": "working", "task_id": "task_mcp_1"},
-            {"kind": "terminal", "status": "blocked", "task_id": "task_mcp_2"},
-            {"kind": "terminal", "status": "delivered", "task_id": "task_mcp_3"},
-            {"kind": "terminal", "status": "errored", "task_id": "task_mcp_4"},
-            {"kind": "terminal", "status": "cancelled", "task_id": "task_mcp_5"},
+            {"kind": "terminal", "status": "working", "task_id": "fixture-mcp-1"},
+            {"kind": "terminal", "status": "blocked", "task_id": "fixture-mcp-2"},
+            {"kind": "terminal", "status": "delivered", "evidence": _GATE_EVIDENCE, "task_id": "fixture-mcp-3"},
+            {"kind": "terminal", "status": "errored", "task_id": "fixture-mcp-4"},
+            {"kind": "terminal", "status": "cancelled", "task_id": "fixture-mcp-5"},
         ]
 
         mcp_items = mios_translate.loop_to_mcp_tasks(orig_events)
@@ -974,156 +978,161 @@ class TestA2ATranslateMapping(unittest.TestCase):
         self.assertIn("UNKNOWN SOURCE", str(cm_unknown.exception))
 
 
+class TestInteropReviewNegatives(unittest.TestCase):
+    def test_camel_case_and_header_credentials_are_refused(self):
+        for key in ("apiKey", "accessToken", "clientSecret", "privateKey", "refreshToken", "x-api-key", "API.KEY"):
+            with self.subTest(key=key):
+                self.assertEqual(mios_translate.credential_key({"parts": [{"data": {key: "fixture"}}]}), key)
+                with self.assertRaises(ValueError):
+                    mios_translate.translate({"source": "a2a", "frames": [{"parts": [{"data": {key: "fixture"}}]}]})
+
+    def test_internal_states_use_protocol_enums_and_unknowns_fail(self):
+        for state in ("unverified", "gate_failed", "vacuous", "timed_out", "control_invalid"):
+            with self.subTest(state=state):
+                self.assertIn(mios_translate.map_task_state("loop.v1", state, "a2a"), mios_translate.A2A_TASK_STATES)
+                self.assertIn(mios_translate.map_task_state("loop.v1", state, "mcp_tasks"), mios_translate.MCP_TASK_STATUSES)
+        for source, state in (("a2a", "TASK_STATE_UNVERIFIED"), ("mcp_tasks", "gate_failed"), ("loop.v1", "invented")):
+            with self.assertRaises(ValueError):
+                mios_translate.map_task_state(source, state, "a2a")
+
+    def test_completed_without_gate_artifact_is_not_delivered(self):
+        task = {"id": "fixture-completion", "status": {"state": "TASK_STATE_COMPLETED"}, "artifacts": []}
+        self.assertEqual(mios_translate.a2a_to_loop([task])[0]["status"], "unverified")
+        result = mios_translate.translate({"source": "a2a", "frames": [task]})
+        self.assertNotEqual(result["events"][0]["status"], "delivered")
+        self.assertNotEqual(result["a2a_items"][0]["status"]["state"], "TASK_STATE_COMPLETED")
+
+    def test_completion_artifact_contains_gate_evidence(self):
+        event = {"kind": "terminal", "status": "delivered", "task_id": "fixture-completion"}
+        result = mios_translate.translate({"source": "loop.v1", "frames": [event], "evidence": _GATE_EVIDENCE})
+        task = result["a2a_items"][0]
+        self.assertEqual(task["status"]["state"], "TASK_STATE_COMPLETED")
+        self.assertTrue(task["artifacts"][0]["artifactId"])
+        self.assertEqual(task["artifacts"][0]["parts"][0]["data"]["gate_evidence"], _GATE_EVIDENCE)
+        self.assertEqual(mios_translate.a2a_to_loop([task])[0]["status"], "delivered")
+        for field in ("positive", "negative", "tree_restored", "exit_code", "diff_bytes"):
+            broken = dict(_GATE_EVIDENCE)
+            broken.pop(field)
+            with self.subTest(field=field):
+                item = mios_translate.a2a_items([{**event, "evidence": broken}])[0]
+                self.assertNotEqual(item["status"]["state"], "TASK_STATE_COMPLETED")
+
+    def test_no_fabricated_backlog_ids_and_context_is_exposed(self):
+        event = {"kind": "terminal", "status": "working"}
+        self.assertNotEqual(mios_translate.mcp_tasks_items([event])[0]["taskId"], "task_default")
+        self.assertFalse(mios_translate.a2a_items([event])[0]["id"].startswith("task_"))
+        schema = _mcp_server_mod._translation_tools()[0]["inputSchema"]
+        self.assertEqual(schema["properties"]["context_id"], {"type": "string"})
+        result = mios_translate.translate({"source": "loop.v1", "frames": [event], "context_id": "fixture-context"})
+        self.assertEqual(result["a2a_items"][0]["contextId"], "fixture-context")
+
+
 class TestA2AProjectedCard(unittest.TestCase):
-    """Validates mios agents --card <id> projection, RFC-8785 JCS, and Ed25519 detached JWS signature."""
+    """Independent trust, provisioned keys, relay identity and official card schema."""
 
     def setUp(self):
-        self.server_path = _SERVER_PATH
-        self.assertTrue(os.path.isfile(self.server_path), f"mios-mcp-server not found at {self.server_path}")
+        from unittest.mock import patch
+        self.key = Ed25519PrivateKey.generate()
+        self.data = _mcp_server_mod.mios_toml.load_merged()
+        self.data["ports"]["agent_pipe"] = 32123
+        self.data["meta"]["mios_version"] = "fixture-version"
+        self.registration = {"agent_id": "proof-head", "kind": "generic", "label": "Proof head"}
+        for patcher in [patch.object(_mcp_server_mod.mios_toml, "load_merged", return_value=self.data),
+                        patch.object(_mcp_server_mod, "_agent_relay_call", return_value={"agents": [self.registration]}),
+                        patch.object(_mcp_server_mod, "_load_card_signing_key", return_value=(self.key, "fixture-kid", self.key.public_key()))]:
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
-    def test_projected_card_structure_and_valid_signature(self):
-        """Verifies in-memory AgentCard generation against A2A v1.0.1 schema with valid Ed25519 signature."""
-        self.assertIsNotNone(_project_agent_card, "Failed to load _project_agent_card from mios-mcp-server")
-        card = _project_agent_card("codex")
+    def test_projected_card_official_schema_and_trusted_signature(self):
+        import urllib.request
+        import jsonschema
+        schema_path = os.environ.get("MIOS_A2A_SCHEMA_PATH")
+        if schema_path:
+            with open(schema_path, encoding="utf-8") as stream:
+                schema = json.load(stream)
+        else:
+            with urllib.request.urlopen("https://a2a-protocol.org/latest/spec/a2a.json", timeout=30) as stream:
+                schema = json.load(stream)
+        schema["$ref"] = "#/$defs/AgentCard"
+        card = _project_agent_card("proof-head")
+        jsonschema.Draft202012Validator(schema).validate(card)
+        self.assertEqual(card["name"], "Proof head")
+        self.assertEqual(card["version"], "fixture-version")
+        self.assertIn(":32123/a2a", card["supportedInterfaces"][0]["url"])
+        self.assertNotIn("provider", card)
+        self.assertNotIn("x-mios", card)
+        self.assertNotIn("tools", card["capabilities"])
+        self.assertIn("securityRequirements", card)
+        self.assertEqual(_verify_agent_card_signature(card, public_key=self.key.public_key()), (True, "ok"))
+        # Plant the old fields; strict stock schema must catch a real schema defect.
+        bad = json.loads(json.dumps(card))
+        for key, value in (("version", {"protocol": "1.0"}), ("security", [{"bearer": []}]),
+                           ("x-mios", {"kind": "fixture"}), ("capabilities", {"tools": True})):
+            bad = {**card, key: value}
+            with self.subTest(key=key), self.assertRaises(jsonschema.ValidationError):
+                jsonschema.Draft202012Validator(schema).validate(bad)
 
-        # Verify A2A v1.0.1 schema conformance
-        self.assertEqual(card["name"], "MiOS Codex")
-        self.assertEqual(card["version"], "1.0.1")
-        self.assertTrue(isinstance(card["supportedInterfaces"], list))
-        self.assertEqual(card["supportedInterfaces"][0]["protocolBinding"], "JSONRPC")
-        self.assertEqual(card["supportedInterfaces"][0]["protocolVersion"], "1.0")
-        self.assertTrue(card["capabilities"]["tools"])
-        self.assertEqual(card["defaultInputModes"], ["text/plain", "application/json"])
-        self.assertEqual(card["defaultOutputModes"], ["text/plain"])
-        self.assertEqual(card["skills"][0]["id"], "codex")
+    def test_attacker_replaces_embedded_key_and_resigns(self):
+        from mios_pipe.federation.agentcard_sign import _agent_card_signature
+        attacker = Ed25519PrivateKey.generate()
+        card = _project_agent_card("proof-head")
+        card["supportedInterfaces"][0]["url"] = "http://evil.example/a2a"
+        card["x-mios"] = {"publicKey": _b64u(attacker.public_key().public_bytes_raw())}
+        card["signatures"] = [_agent_card_signature(card, load_priv_fn=lambda: attacker, kid_fn=lambda: "attacker")]
+        self.assertEqual(_verify_agent_card_signature(card, public_key=self.key.public_key()), (False, "invalid_signature"))
+        self.assertEqual(_verify_agent_card_signature(card, load_pub_fn=lambda _: None), (False, "no_public_key"))
 
-        # Verify x-mios extension and public key
-        self.assertIn("x-mios", card)
-        pub_b64 = card["x-mios"]["publicKey"]
-        self.assertIsNotNone(pub_b64)
-        pub_bytes = _b64u_decode(pub_b64)
-        pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
+    def test_tampered_card_rejected(self):
+        card = _project_agent_card("proof-head")
+        card["name"] = "imposter"
+        self.assertEqual(_verify_agent_card_signature(card, public_key=self.key.public_key()), (False, "invalid_signature"))
 
-        # Verify signatures structure
-        self.assertIn("signatures", card)
-        self.assertEqual(len(card["signatures"]), 1)
-        sig_entry = card["signatures"][0]
-        self.assertIn("protected", sig_entry)
-        self.assertIn("signature", sig_entry)
+    def test_cli_missing_key_fails_without_output(self):
+        from unittest.mock import patch
+        import io
+        with patch.object(_mcp_server_mod, "_load_card_signing_key", side_effect=RuntimeError("missing passport")), patch("sys.stdout", new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(RuntimeError, "missing passport"):
+                _mcp_server_mod._agent_cli_main(["--card", "proof-head"])
+            self.assertEqual(output.getvalue(), "")
 
-        # Verify signature cryptographically using public key
-        valid, reason = _verify_agent_card_signature(card, public_key=pub)
-        self.assertTrue(valid, f"Card verification failed: {reason}")
-        self.assertEqual(reason, "ok")
+    def test_unknown_registration_rejected_even_if_cli_catalogued(self):
+        with self.assertRaisesRegex(ValueError, "Unknown agent"):
+            _project_agent_card("catalogue-only", {"tools": [{"name": "catalogue-only"}]})
 
-        # Verify second agent (claude)
-        card_claude = _project_agent_card("claude")
-        self.assertEqual(card_claude["name"], "MiOS Claude")
-        pub_claude = Ed25519PublicKey.from_public_bytes(_b64u_decode(card_claude["x-mios"]["publicKey"]))
-        valid_claude, reason_claude = _verify_agent_card_signature(card_claude, public_key=pub_claude)
-        self.assertTrue(valid_claude, f"Claude card verification failed: {reason_claude}")
-        self.assertEqual(reason_claude, "ok")
+    def test_missing_passport_has_no_derivable_fallback(self):
+        from unittest.mock import patch
+        # Load the real function independently of the positive fixture's mock.
+        import ast
+        source = Path(_SERVER_PATH).read_text(encoding="utf-8")
+        module = ast.parse(source)
+        node = next(n for n in module.body if isinstance(n, ast.FunctionDef) and n.name == "_load_card_signing_key")
+        namespace = dict(vars(_mcp_server_mod))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), _SERVER_PATH, "exec"), namespace)
+        loader = namespace["_load_card_signing_key"]
+        with tempfile.TemporaryDirectory() as directory:
+            self.data["passport"] = {"enable": True, "key_dir": directory}
+            with self.assertRaisesRegex(RuntimeError, "0600 passport"):
+                loader("proof-head")
+            key_path = Path(directory) / "proof-head"
+            key_path.mkdir()
+            (key_path / "private.key").write_bytes(b"invalid key")
+            (key_path / "private.key").chmod(0o644)
+            with self.assertRaisesRegex(RuntimeError, "0600 passport"):
+                loader("proof-head")
+            with self.assertRaises(ValueError):
+                loader("../escaped")
+            if os.name != "nt":
+                from cryptography.hazmat.primitives import serialization
+                (key_path / "private.key").write_bytes(self.key.private_bytes(
+                    serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption()))
+                (key_path / "private.key").chmod(0o600)
+                (key_path / "kid").write_text("fixture-kid")
+                private, kid, public = loader("proof-head")
+                self.assertEqual(kid, "fixture-kid")
+                self.assertEqual(public.public_bytes_raw(), self.key.public_key().public_bytes_raw())
+                self.assertIsNotNone(private)
 
-    def test_cli_card_projection_subprocess(self):
-        """Verifies CLI execution: python mios-mcp-server --agent-cli --card <id> produces valid signed card."""
-        res = subprocess.run(
-            [sys.executable, self.server_path, "--agent-cli", "--card", "codex"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(res.returncode, 0, f"CLI exited with error: {res.stderr}")
-        card = json.loads(res.stdout)
-
-        self.assertEqual(card["name"], "MiOS Codex")
-        self.assertEqual(card["version"], "1.0.1")
-        self.assertIn("signatures", card)
-
-        pub = Ed25519PublicKey.from_public_bytes(_b64u_decode(card["x-mios"]["publicKey"]))
-        valid, reason = _verify_agent_card_signature(card, public_key=pub)
-        self.assertTrue(valid, f"CLI projected card failed verification: {reason}")
-        self.assertEqual(reason, "ok")
-
-    def test_projected_card_tamper_rejection_negative_controls(self):
-        """Planted negative controls: any alteration to card payload or signature invalidates JWS verification."""
-        self.assertIsNotNone(_project_agent_card)
-        card = _project_agent_card("codex")
-        pub = Ed25519PublicKey.from_public_bytes(_b64u_decode(card["x-mios"]["publicKey"]))
-
-        # 1. Tamper description
-        t_desc = json.loads(json.dumps(card))
-        t_desc["description"] = "tampered description"
-        ok, reason = _verify_agent_card_signature(t_desc, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-        # 2. Tamper capabilities
-        t_caps = json.loads(json.dumps(card))
-        t_caps["capabilities"]["tools"] = False
-        ok, reason = _verify_agent_card_signature(t_caps, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-        # 3. Tamper skills
-        t_skills = json.loads(json.dumps(card))
-        t_skills["skills"].append({"id": "injected_privilege", "name": "admin"})
-        ok, reason = _verify_agent_card_signature(t_skills, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-        # 4. Tamper name
-        t_name = json.loads(json.dumps(card))
-        t_name["name"] = "MiOS Imposter"
-        ok, reason = _verify_agent_card_signature(t_name, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-        # 5. Tamper signature string (corrupted bits)
-        t_sig = json.loads(json.dumps(card))
-        sig_str = t_sig["signatures"][0]["signature"]
-        # Invert first character
-        flipped_char = "B" if sig_str[0] == "A" else "A"
-        t_sig["signatures"][0]["signature"] = flipped_char + sig_str[1:]
-        ok, reason = _verify_agent_card_signature(t_sig, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-        # 6. Tamper protected header algorithm (unsupported alg)
-        t_alg = json.loads(json.dumps(card))
-        bad_hdr = _b64u(_jcs_canonicalize({"alg": "RS256", "kid": "fake-kid"}))
-        t_alg["signatures"][0]["protected"] = bad_hdr
-        ok, reason = _verify_agent_card_signature(t_alg, public_key=pub)
-        self.assertFalse(ok)
-        self.assertEqual(reason, "unsupported_alg:RS256")
-
-        # 7. Unsigned card (missing signatures field)
-        t_unsigned = json.loads(json.dumps(card))
-        del t_unsigned["signatures"]
-        ok, reason = _verify_agent_card_signature(t_unsigned, public_key=pub)
-        self.assertIsNone(ok)
-        self.assertEqual(reason, "unsigned")
-
-        # 8. Foreign key rejection (verify with another valid Ed25519 key)
-        foreign_priv = Ed25519PrivateKey.generate()
-        ok, reason = _verify_agent_card_signature(card, public_key=foreign_priv.public_key())
-        self.assertFalse(ok)
-        self.assertEqual(reason, "invalid_signature")
-
-    def test_unknown_agent_card_rejection(self):
-        """Requesting an unknown agent card raises explicit error and non-zero exit code."""
-        # In-memory rejection
-        self.assertIsNotNone(_project_agent_card)
-        with self.assertRaises(ValueError) as cm:
-            _project_agent_card("nonexistent_unknown_agent")
-        self.assertIn("Unknown agent: nonexistent_unknown_agent", str(cm.exception))
-
-        # CLI subprocess rejection
-        proc = subprocess.run(
-            [sys.executable, self.server_path, "--agent-cli", "--card", "nonexistent_unknown_agent"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("Unknown agent: nonexistent_unknown_agent", proc.stderr)
 
 
 if __name__ == "__main__":

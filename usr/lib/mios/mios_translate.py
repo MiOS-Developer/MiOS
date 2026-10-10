@@ -100,173 +100,49 @@ def enforce_receipt_invariant(receipt_status: str, target_state: str) -> None:
 
 
 def map_task_state(source_standard: str, state: str, target_standard: str, is_receipt: bool = False) -> str:
-    """Map task/receipt state across standards per ADR-0029.
-
-    Standards:
-    - loop.v1 / status: "queued", "working", "blocked", "delivered", "errored", "refused", "cancelled"
-    - a2a: TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_REJECTED, TASK_STATE_CANCELED
-    - mcp_tasks: "working", "input_required", "completed", "failed", "cancelled"
-    - responses / openai: "queued", "in_progress", "incomplete", "completed", "failed", "cancelled"
-    - receipt: "queued", "received"
-    """
-    src = str(source_standard or "").strip().lower()
-    tgt = str(target_standard or "").strip().lower()
-    s = str(state or "").strip()
-
-    is_rec = is_receipt or src in ("receipt", "relay_receipt") or s.lower() == "received"
-
-    if is_rec and s.lower() == "received":
-        if tgt in ("mcp_tasks", "mcp"):
-            raise ValueError("RECEIPT INVARIANT VIOLATION: receipt 'received' cannot map to WORKING or COMPLETED in MCP tasks")
+    """Map only declared protocol states; receipts never certify work."""
+    src, tgt, value = source_standard.lower(), target_standard.lower(), str(state).strip()
+    loop = {"submitted": "submitted", "queued": "submitted", "working": "working",
+            "in_progress": "working", "blocked": "input_required", "input_required": "input_required",
+            "incomplete": "input_required", "unverified": "input_required", "delivered": "completed",
+            "completed": "completed", "errored": "failed", "failed": "failed", "gate_failed": "failed",
+            "vacuous": "failed", "timed_out": "failed", "control_invalid": "failed",
+            "refused": "rejected", "rejected": "rejected", "cancelled": "cancelled", "canceled": "cancelled"}
+    a2a = {"submitted": A2A_TASK_STATE_SUBMITTED, "working": A2A_TASK_STATE_WORKING,
+           "input_required": A2A_TASK_STATE_INPUT_REQUIRED, "completed": A2A_TASK_STATE_COMPLETED,
+           "failed": A2A_TASK_STATE_FAILED, "rejected": A2A_TASK_STATE_REJECTED, "cancelled": A2A_TASK_STATE_CANCELED}
+    mcp = {"working": "working", "input_required": "input_required", "completed": "completed",
+           "failed": "failed", "cancelled": "cancelled"}
+    responses = {"submitted": "queued", "working": "in_progress", "input_required": "incomplete",
+                 "completed": "completed", "failed": "failed", "cancelled": "cancelled"}
+    if src in ("receipt", "relay_receipt") or is_receipt or value.lower() == "received":
+        if value.lower() not in ("queued", "received"):
+            raise ValueError(f"Unknown receipt state: {value}")
         canonical = "submitted"
     elif src == "a2a":
-        if s == A2A_TASK_STATE_SUBMITTED:
-            canonical = "submitted"
-        elif s == A2A_TASK_STATE_WORKING:
-            canonical = "working"
-        elif s == A2A_TASK_STATE_INPUT_REQUIRED:
-            canonical = "input_required"
-        elif s == A2A_TASK_STATE_COMPLETED:
-            canonical = "completed"
-        elif s == A2A_TASK_STATE_FAILED:
-            canonical = "failed"
-        elif s == A2A_TASK_STATE_REJECTED:
-            canonical = "rejected"
-        elif s == A2A_TASK_STATE_CANCELED:
-            canonical = "cancelled"
-        else:
-            canonical = s.lower()
+        canonical = {v: k for k, v in a2a.items()}.get(value)
     elif src in ("mcp_tasks", "mcp"):
-        s_low = s.lower()
-        if s_low == MCP_TASK_STATUS_WORKING:
-            canonical = "working"
-        elif s_low == MCP_TASK_STATUS_INPUT_REQUIRED:
-            canonical = "input_required"
-        elif s_low == MCP_TASK_STATUS_COMPLETED:
-            canonical = "completed"
-        elif s_low == MCP_TASK_STATUS_FAILED:
-            canonical = "failed"
-        elif s_low == MCP_TASK_STATUS_CANCELLED:
-            canonical = "cancelled"
-        else:
-            canonical = s_low
+        canonical = {v: k for k, v in mcp.items()}.get(value.lower())
     elif src in ("responses", "openai", "openai_responses"):
-        s_low = s.lower()
-        if s_low == OPENAI_STATUS_QUEUED:
-            canonical = "submitted"
-        elif s_low == OPENAI_STATUS_IN_PROGRESS:
-            canonical = "working"
-        elif s_low == OPENAI_STATUS_INCOMPLETE:
-            canonical = "input_required"
-        elif s_low == OPENAI_STATUS_COMPLETED:
-            canonical = "completed"
-        elif s_low == OPENAI_STATUS_FAILED:
-            canonical = "failed"
-        elif s_low == OPENAI_STATUS_CANCELLED:
-            canonical = "cancelled"
-        else:
-            canonical = s_low
+        canonical = {v: k for k, v in responses.items()}.get(value.lower())
+    elif src in ("loop.v1", "status"):
+        canonical = loop.get(value.lower())
     else:
-        s_low = s.lower()
-        if s_low in ("submitted", "queued"):
-            canonical = "submitted"
-        elif s_low in ("working", "in_progress"):
-            canonical = "working"
-        elif s_low in ("blocked", "input_required", "incomplete"):
-            canonical = "input_required"
-        elif s_low in ("delivered", "completed"):
-            canonical = "completed"
-        elif s_low in ("errored", "failed"):
-            canonical = "failed"
-        elif s_low in ("refused", "rejected"):
-            canonical = "rejected"
-        elif s_low in ("cancelled", "canceled"):
-            canonical = "cancelled"
-        else:
-            canonical = s_low
-
-    if is_rec and s.lower() == "received":
-        enforce_receipt_invariant("received", canonical)
-
+        raise ValueError(f"Unknown source standard: {src}")
+    if canonical is None:
+        raise ValueError(f"Unknown {src} task state: {value}")
     if tgt == "a2a":
+        return a2a[canonical]
+    if tgt in ("mcp_tasks", "mcp"):
         if canonical == "submitted":
-            res = A2A_TASK_STATE_SUBMITTED
-        elif canonical == "working":
-            res = A2A_TASK_STATE_WORKING
-        elif canonical == "input_required":
-            res = A2A_TASK_STATE_INPUT_REQUIRED
-        elif canonical == "completed":
-            res = A2A_TASK_STATE_COMPLETED
-        elif canonical == "failed":
-            res = A2A_TASK_STATE_FAILED
-        elif canonical == "rejected":
-            res = A2A_TASK_STATE_REJECTED
-        elif canonical == "cancelled":
-            res = A2A_TASK_STATE_CANCELED
-        else:
-            res = f"TASK_STATE_{canonical.upper()}"
-        if is_rec and s.lower() == "received":
-            enforce_receipt_invariant("received", res)
-        return res
-
-    elif tgt in ("mcp_tasks", "mcp"):
-        if is_rec and s.lower() == "received":
-            raise ValueError("RECEIPT INVARIANT VIOLATION: receipt 'received' cannot map to WORKING or COMPLETED in MCP tasks")
-        if canonical == "working":
-            res = MCP_TASK_STATUS_WORKING
-        elif canonical == "input_required":
-            res = MCP_TASK_STATUS_INPUT_REQUIRED
-        elif canonical == "completed":
-            res = MCP_TASK_STATUS_COMPLETED
-        elif canonical in ("failed", "rejected"):
-            res = MCP_TASK_STATUS_FAILED
-        elif canonical == "cancelled":
-            res = MCP_TASK_STATUS_CANCELLED
-        elif canonical == "submitted":
-            raise ValueError("MCP tasks extension has no submitted/queued state; task begins in 'working'")
-        else:
-            res = canonical
-        return res
-
-    elif tgt in ("responses", "openai", "openai_responses"):
-        if canonical == "submitted":
-            res = OPENAI_STATUS_QUEUED
-        elif canonical == "working":
-            res = OPENAI_STATUS_IN_PROGRESS
-        elif canonical == "input_required":
-            res = OPENAI_STATUS_INCOMPLETE
-        elif canonical == "completed":
-            res = OPENAI_STATUS_COMPLETED
-        elif canonical in ("failed", "rejected"):
-            res = OPENAI_STATUS_FAILED
-        elif canonical == "cancelled":
-            res = OPENAI_STATUS_CANCELLED
-        else:
-            res = canonical
-        if is_rec and s.lower() == "received":
-            enforce_receipt_invariant("received", res)
-        return res
-
-    else:
-        if canonical == "submitted":
-            res = "queued"
-        elif canonical == "working":
-            res = "working"
-        elif canonical == "input_required":
-            res = "blocked"
-        elif canonical == "completed":
-            res = "delivered"
-        elif canonical == "failed":
-            res = "errored"
-        elif canonical == "rejected":
-            res = "refused"
-        elif canonical == "cancelled":
-            res = "cancelled"
-        else:
-            res = canonical
-        if is_rec and s.lower() == "received":
-            enforce_receipt_invariant("received", res)
-        return res
+            raise ValueError("RECEIPT INVARIANT VIOLATION: MCP tasks has no submitted/queued state")
+        return mcp["failed" if canonical == "rejected" else canonical]
+    if tgt in ("responses", "openai", "openai_responses"):
+        return responses["failed" if canonical == "rejected" else canonical]
+    if tgt in ("loop.v1", "status"):
+        return {"submitted": "queued", "working": "working", "input_required": "blocked",
+                "completed": "delivered", "failed": "errored", "rejected": "refused", "cancelled": "cancelled"}[canonical]
+    raise ValueError(f"Unknown target standard: {tgt}")
 
 
 def build_otel_genai_attributes(
@@ -361,8 +237,9 @@ def credential_key(value: Any) -> Optional[str]:
     """Recursively search for sensitive credential keys in a data structure."""
     if isinstance(value, dict):
         for k, v in value.items():
-            norm = k.lower().replace("-", "_")
-            if norm in CREDENTIAL_KEYS:
+            norm = re.sub(r"[^a-z0-9]", "", str(k).lower())
+            sensitive = {re.sub(r"[^a-z0-9]", "", key.lower()) for key in CREDENTIAL_KEYS}
+            if norm in sensitive or norm == "xapikey":
                 return k
             found = credential_key(v)
             if found:
@@ -715,6 +592,23 @@ def _openai_chat(frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return events
 
 
+def _valid_gate_evidence(evidence: Any) -> bool:
+    return (isinstance(evidence, dict) and type(evidence.get("diff_bytes")) is int
+            and evidence["diff_bytes"] > 0 and evidence.get("positive") is True
+            and evidence.get("negative") is True and evidence.get("tree_restored") is True
+            and type(evidence.get("exit_code")) is int and evidence["exit_code"] == 0
+            and not evidence.get("timed_out"))
+
+
+def _task_gate_evidence(frame: Dict[str, Any]) -> Optional[dict]:
+    for artifact in frame.get("artifacts") or []:
+        for part in artifact.get("parts") or []:
+            data = part.get("data")
+            if isinstance(data, dict) and _valid_gate_evidence(data.get("gate_evidence")):
+                return data["gate_evidence"]
+    return None
+
+
 def _a2a(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     if not isinstance(frame, dict):
@@ -769,18 +663,24 @@ def _a2a(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
         ctx_id = frame.get("contextId", "")
         if state:
             loop_status = map_task_state("a2a", state, "loop.v1")
+            evidence = _task_gate_evidence(frame)
+            if loop_status == "delivered" and not evidence:
+                loop_status = "unverified"
             events.append({
                 "kind": "terminal",
                 "status": loop_status,
                 "text": "",
                 "task_id": task_id,
                 "context_id": ctx_id,
+                "evidence": evidence,
                 "error": None if loop_status == "delivered" else f"Task state: {state}",
             })
         for art in (frame.get("artifacts") or []):
             art_id = art.get("artifactId") or art.get("id", "")
             for p in (art.get("parts") or []):
                 if isinstance(p, dict) and "data" in p:
+                    if isinstance(p["data"], dict) and "gate_evidence" in p["data"]:
+                        continue
                     events.append({"kind": "tool_output", "call_id": art_id or "artifact", "output": p["data"]})
                 elif isinstance(p, dict) and "text" in p:
                     events.append({"kind": "text", "role": "assistant", "text": str(p["text"])})
@@ -802,11 +702,15 @@ def _mcp_tasks(frame: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not status:
         raise ValueError("MCP TASK STATUS MISSING")
     loop_status = map_task_state("mcp_tasks", status, "loop.v1")
+    evidence = (frame.get("metadata") or {}).get("gate_evidence")
+    if loop_status == "delivered" and not _valid_gate_evidence(evidence):
+        loop_status = "unverified"
     return [{
         "kind": "terminal",
         "status": loop_status,
         "text": "",
         "task_id": task_id,
+        "evidence": evidence,
         "error": None if loop_status == "delivered" else f"MCP task: {status}",
     }]
 
@@ -927,16 +831,20 @@ def a2a_items(events: List[Dict[str, Any]], context_id: str = "") -> List[Dict[s
             })
             idx += 1
         elif k == "terminal":
-            loop_status = ev.get("status", "delivered")
+            loop_status = ev.get("status", "unverified")
+            if loop_status == "delivered" and not _valid_gate_evidence(ev.get("evidence")):
+                loop_status = "unverified"
             a2a_state = map_task_state("loop.v1", loop_status, "a2a")
             items.append({
-                "id": ev.get("task_id") or f"task_{context_id or 'default'}",
+                "id": ev.get("task_id") or str(uuid.uuid4()),
                 "contextId": context_id or ev.get("context_id", ""),
                 "status": {
                     "state": a2a_state,
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 },
-                "artifacts": [],
+                "artifacts": ([{"artifactId": str(uuid.uuid4()),
+                    "parts": [{"data": {"gate_evidence": ev["evidence"]}}]}]
+                    if loop_status == "delivered" and ev.get("evidence") else []),
             })
     return items
 
@@ -946,15 +854,16 @@ def mcp_tasks_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for ev in events:
         if ev.get("kind") == "terminal":
-            loop_status = ev.get("status", "delivered")
-            try:
-                mcp_status = map_task_state("loop.v1", loop_status, "mcp_tasks")
-            except ValueError:
-                mcp_status = None
+            loop_status = ev.get("status", "unverified")
+            if loop_status == "delivered" and not _valid_gate_evidence(ev.get("evidence")):
+                loop_status = "unverified"
+            mcp_status = (None if loop_status in ("queued", "submitted") else
+                          map_task_state("loop.v1", loop_status, "mcp_tasks"))
             if mcp_status:
                 items.append({
-                    "taskId": ev.get("task_id") or "task_default",
+                    "taskId": ev.get("task_id") or str(uuid.uuid4()),
                     "status": mcp_status,
+                    "metadata": ({"gate_evidence": ev["evidence"]} if loop_status == "delivered" else {}),
                     "lastUpdatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 })
     return items
@@ -1087,7 +996,7 @@ def translate(request: Dict[str, Any]) -> Dict[str, Any]:
         if ev.get("kind") == "terminal" and ev.get("status") == "delivered":
             if denied:
                 ev["status"] = "refused"
-            elif evidence is not None:
+            elif (evidence := request.get("evidence") or ev.get("evidence")) is not None:
                 if evidence.get("timed_out"):
                     ev["status"] = "timed_out"
                 elif evidence.get("exit_code", 0) != 0:
@@ -1098,10 +1007,14 @@ def translate(request: Dict[str, Any]) -> Dict[str, Any]:
                     ev["status"] = "gate_failed"
                 elif evidence.get("diff_bytes", 0) == 0:
                     ev["status"] = "vacuous"
+                elif not _valid_gate_evidence(evidence):
+                    ev["status"] = "gate_failed"
                 else:
                     ev["status"] = "delivered"
             else:
                 ev["status"] = "unverified"
+            if ev["status"] == "delivered":
+                ev["evidence"] = dict(evidence)
 
     ctx_id = str(request.get("context_id") or "")
     return {
