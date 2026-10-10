@@ -207,17 +207,123 @@ class ac_TestAuditChain(unittest.TestCase):
         self.assertTrue(ver["valid"])
 
     def test_cli_execution_mock(self):
-        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--record", "--event", "test_cli", "--json"]):
+        log = ["--log-path", self.log_path]
+        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--record", "--event", "test_cli", "--json", *log]):
             code = ac_audit_chain.main()
             self.assertEqual(code, 0)
 
-        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--verify", "--json"]):
+        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--verify", "--json", *log]):
             code = ac_audit_chain.main()
             self.assertEqual(code, 0)
 
-        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--status", "--json"]):
+        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--status", "--json", *log]):
             code = ac_audit_chain.main()
             self.assertEqual(code, 0)
+
+    # -- fail-closed signing: no derivable key, no self-certified block ------
+    _KeyError = getattr(ac_audit_chain, "AuditKeyError", RuntimeError)
+
+    def _block(self, index, prev_hash, payload, public_key, sign):
+        """A block built field-for-field as record_event builds one, signed by ``sign``."""
+        import datetime
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        p_hash = ac_audit_chain.compute_payload_hash(payload)
+        b_hash = ac_audit_chain.compute_block_hash(index, now, prev_hash, "attacker", "decision", p_hash)
+        return {"index": index, "timestamp": now, "prev_hash": prev_hash, "agent_id": "attacker",
+                "event_type": "decision", "payload": payload, "payload_hash": p_hash,
+                "block_hash": b_hash, "public_key": public_key, "signature": sign(b_hash)}
+
+    def _derivable_chain(self):
+        """Signed exactly as the removed fallback signed: HMAC-SHA512 under
+        sha256(b"mios-audit-ed25519-seed") -- a key anyone can compute."""
+        import hashlib
+        import hmac
+        seed = hashlib.sha256(b"mios-audit-ed25519-seed").digest()
+        pub = hashlib.sha256(seed).hexdigest()[:64]
+        sign = lambda h: hmac.new(seed, h.encode("utf-8"), hashlib.sha512).hexdigest()[:128]
+        return [self._block(0, "0" * 64, {"forged": True}, pub, sign)]
+
+    def test_derivable_key_forgery_does_not_verify(self):
+        forged = self._derivable_chain()
+        # Without an Ed25519 implementation there is no key at all -- not a derivable one.
+        with patch.object(ac_audit_chain, "_HAS_CRYPTOGRAPHY", False):
+            recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+            self.assertFalse(recorder.verify_chain(forged)["valid"])
+            self.assertFalse(recorder.signer.verify(forged[0]["block_hash"], forged[0]["signature"],
+                                                    forged[0]["public_key"]))
+        # With a provisioned node key the forgery fails too.
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+        recorder.record_event("boot", {"status": "ok"})
+        self.assertFalse(recorder.verify_chain(forged)["valid"])
+
+    def test_signing_without_a_key_fails_closed(self):
+        # 1. No Ed25519 implementation: refuse, write nothing.
+        with patch.object(ac_audit_chain, "_HAS_CRYPTOGRAPHY", False):
+            recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+            with self.assertRaises(self._KeyError):
+                recorder.record_event("decision", {"step": 1})
+            with patch.object(sys, "argv", ["audit_chain.py", "--record", "--log-path", self.log_path]):
+                self.assertEqual(ac_audit_chain.main(), 1)
+        self.assertFalse(os.path.exists(self.log_path))
+        # 2. A generated key that cannot be persisted is never used.
+        not_a_dir = os.path.join(self.tmpdir.name, "file")
+        with open(not_a_dir, "w", encoding="utf-8") as f:
+            f.write("x")
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path,
+                                                     key_path=os.path.join(not_a_dir, "node.key"))
+        with self.assertRaisesRegex(self._KeyError, "cannot persist"):
+            recorder.record_event("decision", {"step": 1})
+        self.assertFalse(os.path.exists(self.log_path))
+        # 3. An unreadable key is neither replaced nor bypassed.
+        with open(self.key_path, "wb") as f:
+            f.write(b"short")
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+        with self.assertRaisesRegex(self._KeyError, "unreadable"):
+            recorder.record_event("decision", {"step": 1})
+        with open(self.key_path, "rb") as f:
+            self.assertEqual(f.read(), b"short")
+        self.assertFalse(os.path.exists(self.log_path))
+        # 4. A lost node key is not silently replaced mid-chain.
+        os.remove(self.key_path)
+        ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path).record_event("boot", {})
+        with open(self.log_path, "rb") as f:
+            chain = f.read()
+        os.remove(self.key_path)
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+        with self.assertRaisesRegex(self._KeyError, "different key"):
+            recorder.record_event("decision", {"step": 2})
+        with open(self.log_path, "rb") as f:
+            self.assertEqual(f.read(), chain)
+
+    def test_verify_trusts_only_the_node_key(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        import hashlib
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+        recorder.record_event("boot", {"status": "ok"})
+        self.assertTrue(recorder.verify_chain()["valid"])
+        # A chain re-signed under an attacker key that it embeds -> rejected
+        attacker = Ed25519PrivateKey.generate()
+        apub = attacker.public_key().public_bytes_raw().hex()
+        resigned = [self._block(0, "0" * 64, {"rewritten": True}, apub,
+                                lambda h: attacker.sign(h.encode("utf-8")).hex())]
+        ver = recorder.verify_chain(resigned)
+        self.assertFalse(ver["valid"])
+        self.assertEqual(ver["status"], "untrusted_signer")
+        # A block claiming a "mock" key + mock signature is not honoured outside mock mode
+        mocked = [self._block(0, "0" * 64, {"mocked": True}, "mock_ed25519_pubkey_0123456789abcdef0123456789abcdef",
+                              lambda h: hashlib.sha256(b"mock-sig:" + h.encode("utf-8")).hexdigest())]
+        self.assertFalse(recorder.verify_chain(mocked)["valid"])
+        self.assertFalse(recorder.signer.verify(mocked[0]["block_hash"], mocked[0]["signature"],
+                                                mocked[0]["public_key"]))
+        # A broken chain is a non-zero CLI exit, not a printed "valid": false with exit 0
+        mock_rec = ac_audit_chain.AuditChainRecorder(log_path=self.log_path + ".m", key_path=self.key_path, mock=True)
+        mock_rec.record_event("decision", {"target": "agent-pipe"})
+        tampered = copy.deepcopy(mock_rec.load_blocks())
+        tampered[1]["payload"]["target"] = "backdoor"
+        with open(self.log_path + ".m", "w", encoding="utf-8") as f:
+            f.writelines(json.dumps(b) + "\n" for b in tampered)
+        with patch.object(sys, "argv", ["audit_chain.py", "--mock", "--verify", "--log-path", self.log_path + ".m"]):
+            self.assertEqual(ac_audit_chain.main(), 1)
 
 
 # ===== merged from tests/test-ai.py (prefix gs_) =====

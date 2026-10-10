@@ -40,7 +40,7 @@
 #   FEWER is also a failure: fixing a name must be paid for by tightening this
 #   number in the same commit, which is how a ledger drains instead of settling.
 #
-#!ceiling 423
+#!ceiling 417
 #
 # name	sample location
 MIOS_ADMIT_ENABLE	usr/lib/mios/agent-pipe/server.py:663
@@ -72,11 +72,9 @@ MIOS_ASK_CLARIFY_JUDGE	usr/lib/mios/agent-pipe/server.py:2636
 MIOS_ASK_TO_RUN	usr/lib/mios/agent-pipe/server.py:2625
 MIOS_ASK_TO_RUN_TTL	usr/lib/mios/agent-pipe/server.py:2628
 MIOS_ASOUND_CARDS_FILE	usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh:35
-MIOS_AUTOINSTALL	mios-pipeline.ps1:278
 MIOS_AUTONOMOUS_PRIORITY	usr/lib/mios/agent-pipe/mios_pipe/scheduler/sched.py:177
 MIOS_AUTO_FORCE_TOOL	usr/lib/mios/agent-pipe/server.py:532
 MIOS_BAKE_BOUND_IMAGES	automation/54-bake-coderun-sandbox.sh:10
-MIOS_BASE_DIR	config/bootstrap/bootstrap.sh:7
 MIOS_BATCH_ENABLE	usr/lib/mios/agent-pipe/server.py:1387
 MIOS_BATCH_INTERVAL_S	usr/lib/mios/agent-pipe/server.py:1390
 MIOS_BATCH_MAX_SIZE	usr/lib/mios/agent-pipe/server.py:1391
@@ -88,7 +86,6 @@ MIOS_BOOTC_ALLOW_REMOTE	usr/libexec/mios/bootc-switch-from-build.sh:29
 MIOS_BOOT_DIR	etc/greenboot/check/required.d/10-uki-promote.sh:6
 MIOS_BROKER_TIMEOUT_S	usr/lib/mios/agent-pipe/mios_dispatch.py:728
 MIOS_BUILDER_MACHINE	build-mios.ps1:4119
-MIOS_BUILDS_DIR	config/bootstrap/bootstrap.sh:23
 MIOS_CACHE_BUSTED	Get-MiOS.ps1:693
 MIOS_CACHE_DIR	usr/libexec/mios/user-setup.sh:17
 MIOS_CALLER_KEYS_PATH	usr/lib/mios/agent-pipe/server.py:725
@@ -184,7 +181,6 @@ MIOS_IPA_NTP	usr/libexec/mios/mios-freeipa-enroll.sh:49
 MIOS_IPA_OTP	usr/libexec/mios/mios-freeipa-enroll.sh:39
 MIOS_K3S_FILTER	tools/generate-k3s-manifests.sh:9
 MIOS_K3S_OUT	tools/generate-k3s-manifests.ps1:7
-MIOS_KB_COLLECTION	var/lib/mios/embeddings/ingest_local.py:83
 MIOS_KERNEL_DISPATCH	usr/lib/mios/agent-pipe/server.py:3199
 MIOS_KERNEL_ROUTE	usr/lib/mios/agent-pipe/server.py:3194
 MIOS_KV_FORK	usr/lib/mios/agent-pipe/server.py:1363
@@ -322,7 +318,6 @@ MIOS_REGISTRY_BIN	automation/lib/generate-packages.sh:36
 MIOS_RENAME_DISTRO	build-mios.ps1:4716
 MIOS_REPO	install-mios-agents.sh:14
 MIOS_REPO_BRANCH	automation/build-mios.sh:197
-MIOS_REPO_DIR	config/bootstrap/bootstrap.sh:23
 MIOS_REPO_MP	installation/stage-mios-repo.sh:54
 MIOS_REPO_ROOT	installation/mios-common.sh:10
 MIOS_REPUTATION_FLUSH_S	usr/lib/mios/agent-pipe/server.py:3448
@@ -418,7 +413,6 @@ MIOS_SWARM_SYNTH_RESEARCH_CAP	usr/lib/mios/agent-pipe/mios_pipe/routing/swarm.py
 MIOS_SWARM_TRUST_ATOMIC	usr/lib/mios/agent-pipe/server.py:652
 MIOS_SYSFS_DRM_DIR	usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh:37
 MIOS_SYSFS_NET_DIR	usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh:34
-MIOS_SYS_ENV_TABLE	var/lib/mios/embeddings/ingest_local.py:27
 MIOS_TARGET_USER	.devcontainer/install-root-overlay.sh:67
 MIOS_TEMPLATE	usr/libexec/mios/user-setup.sh:81
 MIOS_TENANT_MAX_CONCURRENCY	usr/lib/mios/agent-pipe/server.py:556

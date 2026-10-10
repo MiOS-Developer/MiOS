@@ -213,9 +213,12 @@ class DbDoctor:
             if sqlite_cli:
                 recovered_path = f"{db_path}.recovered"
                 try:
-                    # Execute .recover or .dump to reconstructed db
-                    cmd = f'"{sqlite_cli}" "{backup_path}" ".recover" | "{sqlite_cli}" "{recovered_path}"'
-                    subprocess.run(cmd, shell=True, check=True)
+                    # Execute .recover to reconstructed db without shell
+                    p1 = subprocess.Popen([sqlite_cli, backup_path, ".recover"], stdout=subprocess.PIPE)
+                    subprocess.run([sqlite_cli, recovered_path], stdin=p1.stdout, check=True)
+                    if p1.stdout:
+                        p1.stdout.close()
+                    p1.wait()
                     if os.path.exists(recovered_path) and os.path.getsize(recovered_path) > 0:
                         shutil.move(recovered_path, db_path)
                         post_check = self.check_sqlite_db(db_path)
