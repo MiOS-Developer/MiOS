@@ -3621,12 +3621,31 @@ test_pipefail_grep_lint() {
 }
 
 test_check_skip_list_covered() {
-    log "Testing check_skip_list_covered..."
-    if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_skip_list_covered >/dev/null 2>&1; then
-        log "check_skip_list_covered passed on HEAD"
-    else
-        die "check_skip_list_covered failed on HEAD"
-    fi
+    log "Testing check_skip_list_covered"
+    local toml="${ROOT}/usr/share/mios/mios.toml" wf="${ROOT}/.github/workflows/mios-ci.yml"
+    local tbak; tbak="$(mktemp)"; cp "$toml" "$tbak"
+    local wbak; wbak="$(mktemp)"; cp "$wf" "$wbak"
+    local plant; plant="$(mktemp)"
+    _sl_fail() { cp "$tbak" "$toml"; cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant; die "$1"; }
+    # $1: keys added under [ci.globs.agent-pipe]; $2: what the violation must name.
+    _sl_plant() {
+        cp "$tbak" "$toml"; printf '%s\n' "$1" > "$plant"
+        sed -i "/^\[ci\.globs\.agent-pipe\]\$/r $plant" "$toml"
+        cmp -s "$tbak" "$toml" && _sl_fail "the [ci.globs.agent-pipe] plant did not land"
+        _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with $2 planted"
+        [[ "$_NEG_GATE_OUT" == *"$2"* ]] || _sl_fail "check_skip_list_covered failed without naming $2: $_NEG_GATE_OUT"
+    }
+    # Nothing skipped is the clean state, and it passes.
+    _neg_gate check_skip_list_covered || _sl_fail "check_skip_list_covered red on the CLEAN tree: $_NEG_GATE_OUT"
+    _sl_plant 'skip = ["test_mios_gateway_queue.py"]' "skip_reason"
+    _sl_plant $'skip = ["test_mios_no_such_suite.py"]\nskip_reason = "negative probe"' "test_mios_no_such_suite.py"
+    cp "$tbak" "$toml"
+    printf '      # SKIP=negative-probe\n' >> "$wf"
+    _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with an inline SKIP= in a workflow"
+    [[ "$_NEG_GATE_OUT" == *"inline SKIP="* ]] || _sl_fail "check_skip_list_covered failed without naming the inline SKIP="
+    cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant
+    _neg_gate check_skip_list_covered || die "check_skip_list_covered failed after restoration: $_NEG_GATE_OUT"
+    log "check_skip_list_covered negative test passed"
 }
 
 test_ai_manifests_fresh() {
