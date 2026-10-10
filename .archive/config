@@ -1,0 +1,5 @@
+[core]
+	repositoryformatversion = 1
+	bare = true
+[extensions]
+	objectformat = sha256

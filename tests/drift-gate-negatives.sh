@@ -3621,12 +3621,27 @@ test_pipefail_grep_lint() {
 }
 
 test_check_skip_list_covered() {
-    log "Testing check_skip_list_covered..."
-    if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_skip_list_covered >/dev/null 2>&1; then
-        log "check_skip_list_covered passed on HEAD"
-    else
-        die "check_skip_list_covered failed on HEAD"
-    fi
+    log "Testing check_skip_list_covered"
+    local toml="${ROOT}/usr/share/mios/mios.toml" wf="${ROOT}/.github/workflows/mios-ci.yml"
+    local tbak wbak plant; tbak="$(mktemp)"; wbak="$(mktemp)"; plant="$(mktemp)"; cp "$toml" "$tbak"; cp "$wf" "$wbak"
+    _sl_fail() { cp "$tbak" "$toml"; cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant; die "$1"; }
+    # $1: keys added under [ci.globs.agent-pipe]; $2: what the violation must name.
+    _sl_plant() {
+        cp "$tbak" "$toml"; printf '%s\n' "$1" > "$plant"
+        sed -i "/^\[ci\.globs\.agent-pipe\]\$/r $plant" "$toml"
+        cmp -s "$tbak" "$toml" && _sl_fail "the [ci.globs.agent-pipe] plant did not land"
+        _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with $2 planted"
+        [[ "$_NEG_GATE_OUT" == *"$2"* ]] || _sl_fail "check_skip_list_covered failed without naming $2: $_NEG_GATE_OUT"
+    }
+    _neg_gate check_skip_list_covered || _sl_fail "check_skip_list_covered red on the CLEAN tree: $_NEG_GATE_OUT"
+    _sl_plant 'skip = ["test_mios_gateway_queue.py"]' "skip_reason"
+    _sl_plant $'skip = ["test_mios_no_such_suite.py"]\nskip_reason = "negative probe"' "test_mios_no_such_suite.py"
+    cp "$tbak" "$toml"; printf '      # SKIP=negative-probe\n' >> "$wf"
+    _neg_gate check_skip_list_covered && _sl_fail "check_skip_list_covered passed with an inline SKIP= in a workflow"
+    [[ "$_NEG_GATE_OUT" == *"inline SKIP="* ]] || _sl_fail "check_skip_list_covered failed without naming the inline SKIP="
+    cp "$wbak" "$wf"; rm -f "$tbak" "$wbak" "$plant"; unset -f _sl_fail _sl_plant
+    _neg_gate check_skip_list_covered || die "check_skip_list_covered failed after restoration: $_NEG_GATE_OUT"
+    log "check_skip_list_covered negative test passed"
 }
 
 test_ai_manifests_fresh() {
@@ -4797,6 +4812,28 @@ test_drift_stubs() {
     log "check_drift_stubs negative test passed"
 }
 
+test_native_twinless() {
+    log "Testing check_native_twinless"
+    local sql="${ROOT}/usr/share/mios/postgres/schema-init.sql"
+    local bak empty; bak="$(mktemp)"; empty="$(mktemp -d)"; cp "$sql" "$bak"
+    _nt_fail() { cp "$bak" "$sql"; rm -rf "$bak" "$empty"; unset -f _nt_fail; die "$1"; }
+    _neg_gate check_native_twinless || _nt_fail "check_native_twinless red on the CLEAN tree: $_NEG_GATE_OUT"
+    [[ "$_NEG_GATE_OUT" == *"twinless native Check(s) ran here"* ]] || _nt_fail "check_native_twinless did not report what it ran"
+    # check_backfill_coverage has no bash twin, so only this gate runs it: a
+    # vector table the backfill does not know must fail here, named.
+    printf '\nCREATE TABLE IF NOT EXISTS neg_twinless_probe (id bigint PRIMARY KEY, emb vector(768));\n' >> "$sql"
+    _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with an emb table no backfill covers"
+    [[ "$_NEG_GATE_OUT" == *"check_backfill_coverage"*"neg_twinless_probe"* ]] \
+        || _nt_fail "check_native_twinless failed without naming check_backfill_coverage and the planted table"
+    cp "$bak" "$sql"
+    # No miosd to run is a violation, never a skip.
+    MIOS_NATIVE_BIN_DIR="$empty" _neg_gate check_native_twinless && _nt_fail "check_native_twinless passed with no miosd to run"
+    [[ "$_NEG_GATE_OUT" == *"miosd is not built"* ]] || _nt_fail "check_native_twinless failed without saying miosd is missing"
+    rm -rf "$bak" "$empty"; unset -f _nt_fail
+    _neg_gate check_native_twinless || die "check_native_twinless failed after restoration: $_NEG_GATE_OUT"
+    log "check_native_twinless negative test passed"
+}
+
 test_phase_registry() {
     log "Testing check_phase_registry"
     local toml="${ROOT}/usr/share/mios/mios.toml"
@@ -5231,7 +5268,14 @@ test_legibility_ratchet() {
     _neg_gate check_legibility_ratchet || :
     read -r got _ < <(_lr_metric tooling_python_lines)
     [[ "$got" == "$py0" ]] || _lr_fail "check_legibility_ratchet counted a sibling unit test as tooling ($py0 -> ${got:-none}): $_NEG_GATE_OUT"
-    _lr_unplant "$pytest_probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
+    _lr_unplant "$pytest_probe"
+    # ADR-0030: one planted file is charged to its domain AND the total.
+    local f0; read -r f0 _ < <(_lr_metric files.automation)
+    _lr_plant "$probe" 1
+    _neg_gate check_legibility_ratchet && _lr_fail "check_legibility_ratchet passed despite a new file over the automation budget"
+    [[ -n "$f0" && "$_NEG_GATE_OUT" == *"files.automation = $(( f0 + 1 )), over the floor"* && "$_NEG_GATE_OUT" == *"tracked_files = "*", over the floor"* ]] \
+        || _lr_fail "check_legibility_ratchet did not charge the planted file to its domain and the total: $_NEG_GATE_OUT"
+    _lr_unplant "$probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail
 
     _neg_gate check_legibility_ratchet || die "check_legibility_ratchet failed after restoration: $_NEG_GATE_OUT"
     log "check_legibility_ratchet negative test passed"
@@ -5664,6 +5708,8 @@ test_edge_status() {
     _neg_gate check_edge_status || die "check_edge_status failed after restoration: ${_NEG_GATE_OUT}"
     log "check_edge_status negative test passed"
 }
+test_legacy_archive() {  # A stray file in the store must fail; tools/test_drift-checks.py TestLegacyArchive plants the rest.
+    local p="${ROOT}/.archive/hooks/neg-probe"; mkdir -p "${p%/*}"; : > "$p"; _neg_gate check_legacy_archive && { rm -f "$p"; die "check_legacy_archive passed with a stray file in .archive"; }; rm -f "$p"; rmdir "${p%/*}" 2>/dev/null || :; _neg_gate check_legacy_archive || die "check_legacy_archive failed after restoration: $_NEG_GATE_OUT"; }
 
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
@@ -5747,6 +5793,7 @@ _run_test test_leaked_fixtures
     _run_test test_signature_policy
     _run_test test_projection_coverage
     _run_test test_drift_stubs
+    _run_test test_native_twinless
     _run_test test_doc_refs_resolve
     _run_test test_desktop_launchers
     _run_test test_blade_reconcile_schema
@@ -5894,6 +5941,7 @@ _run_test test_leaked_fixtures
     _run_test test_artifact_prompt
     _run_test test_ai_artifacts
     _run_test test_rust_categories
+    _run_test test_legacy_archive
     if (( ${#_FAILED[@]} )); then
         echo -e "[1;31m[drift-gate-negatives][0m ${#_FAILED[@]} test(s) failed:" >&2
         printf '  %s

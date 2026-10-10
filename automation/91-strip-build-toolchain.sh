@@ -21,6 +21,10 @@ case "$retention" in
     *) mios_err "Invalid [packages.self-build].retain_toolchain: $retention"; exit 1 ;;
 esac
 
+# 90-generate-sbom.sh's scan no longer describes the tree once this strips it,
+# so 92-export-sbom.sh must not export it.
+rm -f /tmp/mios-sbom-scan.spdx.json
+
 mios_log "Resolving and combing all build-time package groups"
 
 # Dynamically discover all *-build package groups from mios.toml alongside build-toolchain

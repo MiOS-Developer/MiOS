@@ -124,7 +124,7 @@ mod build_progress {
             "{}",
             String::from_utf8_lossy(&baseline.stderr)
         );
-        assert_eq!(String::from_utf8(baseline.stdout)?.lines().count(), 10);
+        assert_eq!(String::from_utf8(baseline.stdout)?.lines().count(), 7);
         std::fs::write(
             &path,
             source.replace(
@@ -138,13 +138,43 @@ mod build_progress {
             String::from_utf8(changed.stdout)?.contains("operator-package-health:package_health")
         );
         for modified in [
-            source.replace("{ name = \"98-drift-checks.sh\", action = \"drift\" },", ""),
-            source.replace("action = \"drift\"", "action = \"drift; touch injected\""),
+            source.replace(
+                "{ name = \"99-postcheck.sh\", action = \"invariants\" },",
+                "",
+            ),
+            source.replace(
+                "action = \"invariants\"",
+                "action = \"invariants; touch injected\"",
+            ),
             source.replace("name = \"post-package-health\"", "name = \"bad:identity\""),
-            source.replace("action = \"drift\"", "action = \"ssot\""),
+            source.replace("action = \"image_digests\"", "action = \"invariants\""),
         ] {
+            assert_ne!(
+                modified, source,
+                "a mutation that changes nothing proves nothing"
+            );
             std::fs::write(&path, modified)?;
             assert!(!invoke()?.status.success());
+        }
+        // Ruling Q8: a source-tree gate put back into the bake fails the plan.
+        let anchor = "{ name = \"99-postcheck.sh\", action = \"invariants\" },";
+        for (name, action) in [
+            ("97-ssot-lint.sh", "ssot"),
+            ("98-drift-checks.sh", "drift"),
+            ("post-agent-tests", "agent_tests"),
+        ] {
+            let readded = source.replace(
+                anchor,
+                &format!("{anchor}\n    {{ name = \"{name}\", action = \"{action}\" }},"),
+            );
+            assert_ne!(readded, source, "the Q8 plant must land");
+            std::fs::write(&path, readded)?;
+            let refused = invoke()?;
+            assert!(
+                !refused.status.success(),
+                "{action} re-added to the bake was accepted"
+            );
+            assert!(String::from_utf8_lossy(&refused.stderr).contains("ruling Q8"));
         }
         Ok(())
     }

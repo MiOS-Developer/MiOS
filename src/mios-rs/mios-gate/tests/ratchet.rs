@@ -55,6 +55,63 @@ fn run(dir: &Path) -> (i32, String) {
 const BASE: &str = "[docs]\nmax_a = 5\nmax_b = 9\n";
 
 #[test]
+fn total_file_migration_counts_the_immutable_tree_and_still_rejects_growth() {
+    let d = tempfile::tempdir().unwrap();
+    fs::write(d.path().join("generated-output"), "tracked too\n").unwrap();
+    let old = "[legibility]\nmax_tracked_files=1\n[drift.generated_ceilings]\n\"legibility.max_tracked_files\"=\"legacy generated budget\"\n";
+    let total =
+        "[legibility]\nmax_tracked_files=2\n[legibility.file_budget]\ntarget_tracked_files=500\n";
+    repo(d.path(), old, total);
+    let (code, text) = run(d.path());
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("TOTAL file baseline measured from Git: 2"),
+        "{text}"
+    );
+
+    // A new tracked output cannot inflate the immutable baseline.
+    fs::write(d.path().join("new-output"), "new\n").unwrap();
+    git(d.path(), &["add", "new-output"]);
+    fs::write(
+        d.path().join("usr/share/mios/mios.toml"),
+        total.replace("files=2", "files=3"),
+    )
+    .unwrap();
+    let (code, text) = run(d.path());
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("INCREASED from 2 to 3"), "{text}");
+
+    // Reintroducing the generated exemption must not silence TOTAL growth.
+    fs::write(
+        d.path().join("usr/share/mios/mios.toml"),
+        format!("{total}[drift.generated_ceilings]\n\"legibility.max_tracked_files\"=\"bypass\"\n"),
+    )
+    .unwrap();
+    let (code, text) = run(d.path());
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.contains("cannot be a generated-budget exemption"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_total_baseline_or_nonexempt_legacy_ceiling_never_gets_remeasured() {
+    for base in [
+        "[legibility]\nmax_tracked_files=1\n",
+        "[legibility]\nmax_tracked_files=1\n[legibility.file_budget]\ntarget_tracked_files=500\n",
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("extra"), "tracked\n").unwrap();
+        repo(d.path(), base, "[legibility]\nmax_tracked_files=2\n[legibility.file_budget]\ntarget_tracked_files=500\n");
+        let (code, text) = run(d.path());
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains("INCREASED from 1 to 2"), "{text}");
+        assert!(!text.contains("TOTAL file baseline measured"), "{text}");
+    }
+}
+
+#[test]
 fn a_lowered_ceiling_is_clean_and_a_raised_one_is_not() {
     let d = tempfile::tempdir().unwrap();
     repo(d.path(), BASE, "[docs]\nmax_a = 4\nmax_b = 9\n");

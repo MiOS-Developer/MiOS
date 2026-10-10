@@ -5914,3 +5914,17 @@ The highest task number issued (ADR-0028). Numbers are never reissued: the list'
 below this, so a dropped last task cannot hand its number on. Raising it to the current highest tightens it.
 
 <!-- mios-src:78da468ea451 from usr/share/mios/mios.toml:12352-12353 -->
+### ADR-0030
+
+ADR-0030: the 500-file budget, TOTAL (dependencies included). Each tracked file counts in the
+FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
+a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
+
+<!-- mios-src:ddce63c53e8a from usr/share/mios/mios.toml:12880-12882 -->
+### ADR-0030
+
+ADR-0030: 500 tracked files EACH per repo (dependencies included). Each tracked file counts in the
+FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
+a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
+
+<!-- mios-src:c7bfbbd9989c from usr/share/mios/mios.toml:12882-12884 -->
