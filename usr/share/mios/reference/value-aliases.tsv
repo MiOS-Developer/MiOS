@@ -20,6 +20,7 @@
 # Every name in a row MUST be emitted by the resolver; an unemitted name is a violation that
 # names it. (Skipping such rows hid 14 of the 15 [pgvector] keys a lost table header stranded
 # under [offline].) A name ending in "_" declares a naming family, not a variable.
+MIOS_DISPATCH_NO_TOOL_CHOICE_HINTS	MIOS_DISPATCH_KV_PAGING_HINTS	keep-distinct	# rejection of forced tool_choice and support for /slots paging are independent capabilities; either backend hint can change without changing the other
 MIOS_PGVECTOR_USER	MIOS_PG_USER	derive	# both spell [pgvector].user, the postgres role every pg client logs in as
 MIOS_COLORS_ACCENT	MIOS_COLOR_ACCENT	derive	# family 9 singular/plural color
 MIOS_COLORS_INFO	MIOS_COLOR_INFO	derive	# family 9

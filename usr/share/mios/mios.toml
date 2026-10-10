@@ -3274,11 +3274,11 @@ offload_cpu          = false
 # capped REAL subset, never zero) + endpoints that 400 on tool_choice=required.
 lane_tool_cap        = "igpu:12,mobile:12"
 default_tool_cap     = 16
-no_tool_choice_hints = "8540,11436"          # host:port substrings whose llama.cpp rejects tool_choice=required
+no_tool_choice_hints = "llm_igpu"           # [ports] keys or host:port substrings whose llama.cpp rejects tool_choice=required
 parallel_tools_hints = "llm_heavy"               # [ports] keys (or host:port substrings) whose model reliably emits PARALLEL tool calls -> OpenAI-default parallel_tool_calls=True (capable heavy lane); everything else stays sequential (small models malform parallel calls). MIOS_PARALLEL_TOOLS_HINTS overrides.
 worker_mcp_tools     = true                  # surface external MCP client tools to fan-out workers
 kv_paging_enable  = true     # master switch; only ACTS on llama.cpp /slots endpoints
-kv_paging_hints   = "8540,11436"  # host:port substrings that speak llama.cpp /slots (default the iGPU lane)
+kv_paging_hints   = "llm_igpu"   # [ports] keys or host:port substrings that speak llama.cpp /slots (default the iGPU lane)
 kv_paging_slot    = 0        # llama-server slot id the light lane pages (single resident frame)
 kv_paging_timeout = 12.0     # seconds for one save/restore POST (best-effort; never fails the turn)
 kv_fork_enable       = false  # master switch (only ACTS when kv_paging is on AND the endpoint speaks llama.cpp /slots)
