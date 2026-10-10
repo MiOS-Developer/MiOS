@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3622,
-  "total_metadata_entries": 3016,
-  "total_hints": 3006,
+  "total_files_scanned": 3553,
+  "total_metadata_entries": 2948,
+  "total_hints": 2938,
   "total_functions_indexed": 1481,
-  "total_related_links": 5100,
+  "total_related_links": 5095,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7299,7 +7299,7 @@
         "usr/libexec/mios/config/nix_project.py",
         "usr/share/mios/nix/flake-template.nix",
         "usr/share/mios/nix/nix.conf",
-        "usr/lib/tmpfiles.d/50-nix.conf",
+        "usr/lib/tmpfiles.d/50-mios.conf",
         "automation/59-tools.sh"
       ],
       "functions": [],
@@ -16421,56 +16421,11 @@
       "has_shebang": true
     },
     {
-      "path": "usr/lib/modprobe.d/blacklist-nouveau.conf",
-      "hint": "Blacklists the nouveau kernel module and disables its modesetting to prevent conflicts with proprietary NVIDIA drivers during the boot sequence.",
+      "path": "usr/lib/modprobe.d/50-mios.conf",
+      "hint": "Unified MiOS kernel module configuration, blacklists, and driver options (ADR-0030)",
       "related": [],
       "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/modprobe.d/blacklist-vmw_vsock.conf",
-      "hint": "modprobe.d drop-in that blacklists the vmw_vsock_vmci_transport kernel module so it never auto-loads, avoiding the VMware vsock transport binding/conflict and module-load noise on MiOS hosts that are not VMware guests.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/modprobe.d/kvmfr.conf",
-      "hint": "Configures the kvmfr kernel module's shared memory size (default 128MB) to allocate the buffer required for Looking Glass frame buffer transmission. 'MiOS': KVMFR shared memory for Looking Glass 128MB sufficient for 4K SDR.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/modprobe.d/mios-nvidia-blacklist.conf",
-      "hint": "Blacklists NVIDIA GPU drivers by default to prevent conflicts in virtualized environments, unless the mios-gpu-detect service detects bare metal hardware and removes this configuration to enable native drivers.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/modprobe.d/nvidia-open.conf",
-      "hint": "Configures NVIDIA kernel module parameters to enable open-source driver support for Turing+ and Blackwell GPUs, while enabling kernel suspend notifiers and memory preservation for stable nvidia-drm functionality.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/modprobe.d/nvidia.conf",
-      "hint": "Configures NVIDIA kernel module parameters to enable DRM modesetting, framebuffer support, and GPU firmware/memory preservation for stable graphics rendering in the MiOS environment.",
-      "related": [],
-      "functions": [],
-      "doc": null,
+      "doc": "usr/share/doc/mios/manual/kernel.md",
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -16577,47 +16532,11 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/sysctl.d/20-memory.conf",
-      "hint": "Configures proactive memory compaction and memory parameters for AI workloads (task_744).",
+      "path": "usr/lib/sysctl.d/99-mios.conf",
+      "hint": "Unified MiOS kernel sysctl parameters for memory, overlayfs, hardening, and virtualization (ADR-0030)",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysctl.d/90-mios-le9uo.conf",
-      "hint": "Configures kernel sysctl parameters for the le9uo/BORE scheduler to stabilize file cache under Zram pressure and optimize 1000Hz tick responsiveness for interactive workloads.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysctl.d/90-mios-overlayfs.conf",
-      "hint": "sysctl for OverlayFS stacking depth, inotify limits and neighbour table sizes.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysctl.d/99-mios-hardening.conf",
-      "hint": "Configures kernel sysctl parameters to harden the MiOS system against common exploits while preserving compatibility for NVIDIA/CUDA, Steam, and containerized workloads.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysctl.d/99-mios-vmhost.conf",
-      "hint": "Configures kernel parameters for VM hosting, including memory management (swappiness, overcommit), networking (IP/IPv6 forwarding, bridge iptables integration), and high-capacity inotify limits for container/filesystem monitoring.",
-      "related": [],
-      "functions": [],
-      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -19095,71 +19014,8 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/sysusers.d/10-mios.conf",
-      "hint": "Defines system user/group IDs and permissions for the 'mios' login account, ensuring correct UID 1000 assignment and group memberships for hardware access, service integration, and cross-domain data access.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/20-podman-machine.conf",
-      "hint": "Defines system user accounts and group memberships for Podman Machine compatibility, specifically pinning the 'core' user to UID 1001 to ensure valid logind session creation and resource access.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/30-mios-tmpfiles-prereq.conf",
-      "hint": "Defines systemd-sysusers prerequisites to pre-create the 'cockpit' group for /var/lib/cockpit persistence, ensuring compatibility with tmpfiles.d entries in OCI build environments where RPM scriptlets may fail.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/50-mios-cockpit.conf",
-      "hint": "Defines static system users and groups for Cockpit components to resolve service startup failures caused by the removal of DynamicUser=yes in WSL2-compatible environments.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/50-mios-gpu.conf",
-      "hint": "Defines static GIDs for video (39) and render (105) groups to ensure consistent GPU passthrough permissions across containerized environments. 'MiOS' v0.2.4 - pin Fedora static GIDs for container GPU passthrough.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/50-mios-services.conf",
-      "hint": "Defines pinned UIDs/GIDs for MiOS system and AI service accounts, establishing the 810-829 range for stable filesystem ownership and the 850/860 bucket groups for cross-service state sharing.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/sysusers.d/50-mios-users.conf",
-      "hint": "Defines deterministic user accounts for MiOS multi-user and subordinate UID/GID mappings (task_421).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/sysusers.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "usr/lib/sysusers.d/50-mios.conf",
-      "hint": "Defines static UID/GID mappings for MiOS system accounts (e.g., mios-virt) to ensure consistent ownership of system resources and persistent permissions across image rebuilds.",
+      "hint": "Unified MiOS sysusers configuration declaring all system and service users/groups (ADR-0030)",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/sysusers.d.md",
@@ -19167,486 +19023,12 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/tmpfiles.d/50-nix.conf",
-      "hint": "Declarative tmpfiles configuration for Nix multi-user store on bootc/ostree immutable host.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-adguard.conf",
-      "hint": "Defines systemd-tmpfiles permissions and ownership for AdGuard Home configuration and runtime data directories to ensure the containerized service (UID 825) can access its config and database.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-agent-pipe.conf",
-      "hint": "Defines the persistent state directory and permissions for the mios-agent-pipe service, ensuring the mios-ai user (UID 850) has exclusive access to the agent pipe's data.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-agents.conf",
-      "hint": "Declares the persistent /home/coder volume for the mios-agents super-container (agy/claude logins + war-room state survive container restarts). Law 2 (NO-MKDIR-IN-VAR): the /var path is declared here, never written at build time.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-backup.conf",
-      "hint": "Defines the directory permissions and ownership for /var/lib/mios/backups, ensuring the backup storage path is restricted to root access for system-level backup operations.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-backups.conf",
-      "hint": "Declares the persistent /var/lib/mios/backups directory (owned by the pgvector sysuser, uid/gid 826) where the daily pg_dump retention job writes timestamped database snapshots.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-ceph.conf",
-      "hint": "Defines systemd tmpfiles for Ceph orchestration, ensuring critical directories like /var/lib/ceph/crash/posted exist to prevent ceph-crash.service startup warnings and ensure proper storage path availability.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-cephfs.conf",
-      "hint": "Configures the customized system-auth PAM config as the active link in /etc/pam.d.",
+      "path": "usr/lib/tmpfiles.d/50-mios.conf",
+      "hint": "Unified MiOS tmpfiles configuration defining persistent /var, runtime directories, and permissions (ADR-0030)",
       "related": [
         "/etc/pam.d/system-auth",
         "/usr/lib/pam.d/system-auth"
       ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-codemode.conf",
-      "hint": "Defines the /var/lib/mios/codemode directory as the persistent storage for agent-generated code snippets, owned by UID/GID 828 to be bind-mounted into the coderun-sandbox as the /work workspace.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-cpu.conf",
-      "hint": "Defines system and user cgroup cpuset directory permissions and paths to enforce CPU isolation and resource partitioning for performance tuning in the MiOS kernel.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-crawl4ai.conf",
-      "hint": "Defines filesystem permissions and ownership for the mios-crawl4ai service's working directory and Camoufox/crawl4ai cache locations to ensure the FastAPI service (uid 824) can persist state and browser assets.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-cron-director.conf",
-      "hint": "Defines filesystem permissions and setgid bits for mios-cron-director state and prompt storage, ensuring the mios-ai daemon and launcher-broker can share and access per-minute deduplication data and prompt text.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-crowdsec.conf",
-      "hint": "Defines filesystem permissions and ownership for CrowdSec persistence directories and configuration paths to ensure database integrity and service availability on bootc/immutable systems.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-fastfetch.conf",
-      "hint": "Defines the system-wide fastfetch configuration by symlinking /etc/fastfetch/config.jsonc to /usr/share/mios/fastfetch/config.jsonc to ensure the MiOS branding persists across bootc redeploys.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-fontconfig.conf",
-      "hint": "Configures fontconfig by symlinking the Geist font configuration from the available directory to the active directory to ensure persistent font styling across bootc redeployments.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-forge-runner.conf",
-      "hint": "Defines filesystem permissions and ownership for the Forgejo Runner's persistent state directory (/srv/mios/forge-runner) and the build-output sentinel directory (/var/lib/mios/forge-runner) used by mios-bootc-switch.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-forge.conf",
-      "hint": "Defines filesystem paths, permissions, and ownership for the Forgejo service (SQLite DB, logs, and config overrides) to ensure correct runtime state and access for the mios-forge user.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-freeipa.conf",
-      "hint": "Defines filesystem permissions and directory structures for FreeIPA, certmonger, and SSSD components to ensure proper runtime access and security for identity management.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-gateway-agent.conf",
-      "hint": "Defines filesystem permissions and ownership for the gateway-agent runtime.",
-      "related": [
-        "/etc/mios/gateway",
-        "mios-gateway-agent",
-        "mios-ai"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-gpu.conf",
-      "hint": "Defines systemd-tmpfiles for GPU runtime directories, CDI paths, and NVIDIA container toolkit configurations to ensure persistent mount points and environment files for GPU acceleration. 'MiOS' v0.2.4 -- GPU runtime directories.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-grd.conf",
-      "hint": "tmpfiles.d that creates the /var/lib/mios parent state dir (0755 root:root); the grd/gnome-remote-desktop var dir is intentionally NOT declared here (upstream's grd tmpfiles owns /var/lib/gnome-remote-desktop).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-headscale.conf",
-      "hint": "Defines systemd-tmpfiles permissions and ownership for Headscale configuration and runtime data directories to ensure the containerized service (UID 833) can access its config and database.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-hermes-browser.conf",
-      "hint": "Defines filesystem permissions and ownership for the mios-hermes-browser directory and profile, ensuring the mios-ai user can write launch logs and access the CDP Chrome profile to prevent service crash-loops.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-hermes-worker.conf",
-      "hint": "Declares the Hermes WORKER (:8643) runtime directory and its dedicated CDP browser profile, owned by the mios-ai service user, so the second isolated gateway instance has its own HERMES_HOME (separate pid/lock/state/DBs/config)...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-infra.conf",
-      "hint": "Defines systemd-tmpfiles directory permissions and initial content for core infrastructure components including Cockpit, Libvirt, K3s, Ceph, and MiOS-specific configuration skeletons.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-iommu.conf",
-      "hint": "Defines systemd tmpfiles.d rules to set permissions for /sys/kernel/iommu_groups/ nodes, ensuring the OS correctly exposes IOMMU group visibility for hardware passthrough and device isolation.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-ipa.conf",
-      "hint": "Defines systemd-tmpfiles permissions and ownership for the IPA client sysrestore directory to resolve configuration conflicts and ensure proper access for the mios-freeipa service.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-k3s.conf",
-      "hint": "Defines the persistent directory structure and initial manifest copy operations for the K3s cluster in /var/lib/rancher, ensuring the container runtime and storage drivers are correctly initialized at boot.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-kdump.conf",
-      "hint": "Declarative tmpfiles configuration for persistent /var/crash (task_459, Law 2).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-launcher.conf",
-      "hint": "Defines the /run/mios-launcher directory with 1777 permissions and mios ownership to provide a dedicated, persistent runtime path for the mios-launcher broker and hermes-agent to share sockets and tempfiles.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-llamacpp.conf",
-      "hint": "Defines filesystem permissions and ownership for the mios-llm-light lane (WS-10) state directories, specifically for storing per-conversation KV paging files in /var/lib/mios/llamacpp/slots.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-nfs.conf",
-      "hint": "Defines systemd tmpfiles for NFS state directories, ensuring /var/lib/nfs/sm and sm.bak exist to prevent sm-notify errors during WSL2 boots and manage RPC lock states.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-open-webui.conf",
-      "hint": "Defines the filesystem permissions and ownership for the /var/lib/mios/open-webui state directory to ensure the open-webui service can persist data and manage its internal state.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-opencode-gateway.conf",
-      "hint": "Defines systemd-tmpfiles for the opencode-gateway service, ensuring the mios-ai user owns the runtime work directories and the configuration directory required for OpenAI gateway operations.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-passports.conf",
-      "hint": "Defines the directory structure and permissions for agent identity keys, ensuring public keys are accessible to the mios-ai group for cross-agent verification while restricting private keys.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-pgvector.conf",
-      "hint": "Defines the persistent storage path, permissions, and ownership (UID/GID 826) for the pgvector database directory used by the unified agent-plane Postgres container.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-podman-sock.conf",
-      "hint": "Configures /run/podman permissions to 0750 (root:mios) to allow the mios operator group to traverse the directory and access the Podman API socket for container management.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-pxe.conf",
-      "hint": "Defines filesystem permissions and ownership for the /var/lib/mios/pxe directory tree to ensure persistent storage of ISOs, iPXE menus, and netboot assets for LAN deployment.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-scratch.conf",
-      "hint": "Defines the global shared scratchpad at /var/lib/mios/scratch with 1777 permissions, providing a common writable workspace for all MiOS agents to store notes, JSON handoffs, and session-specific data.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-searxng.conf",
-      "hint": "Defines filesystem permissions and ownership for SearXNG configuration and cache directories, ensuring the uwsgi worker (UID 818) has write access to the cache and the settings.yml file is correctly provisioned.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-shell-sessions.conf",
-      "hint": "Declares the writable state directory for the SHELL-01 persistent PTY substrate, owned by the agent-plane user so mios-shell-session can record per-session activity for the idle reaper.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-shim-links.conf",
-      "hint": "Defines systemd-tmpfiles symlinks to map mios-shell-verbs from /usr/libexec/mios/ to /usr/local/bin/ and /usr/local/sbin/ to ensure consistent tool availability across all user PATH configurations.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-skills.conf",
-      "hint": "Defines the persistent storage directory for the MiOS skill catalog at /var/lib/mios/skills, ensuring the miner (uid 822) can write and all AI agents (gid 850) can read the shared catalog.json file.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-theme.conf",
-      "hint": "Declares /etc/mios/theme (Law 2: NO-MKDIR-IN-VAR / no ad-hoc mkdir at build or run time -- every /var and /etc runtime-writable path this repo creates is declared here so systemd-tmpfiles owns creation + permissions).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-thp.conf",
-      "hint": "Configures Transparent Huge Pages (THP) in madvise mode with asynchronous khugepaged defragmentation (task_744).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-tmp-perms.conf",
-      "hint": "Configures systemd-tmpfiles to enforce 1777 permissions on /tmp and /var/tmp to ensure non-root traversability for mios-hermes sockets and mktemp operations.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-user.conf",
-      "hint": "Defines the declarative materialization of the 'mios' user's home directory, skeleton files, and local assets (icons/fonts) to ensure persistent ownership and Flatpak-accessible paths on first boot.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-virtio.conf",
-      "hint": "Defines the systemd tmpfiles.d configuration for mapping the virtio-win.iso source to the libvirt image path to ensure guest drivers are available for virtualized hardware.",
-      "related": [
-        "automation/21-virt.sh"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-vllm.conf",
-      "hint": "Defines filesystem permissions and ownership for the vLLM heavy lane LoRA adapter directories.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-wsl2-hacks.conf",
-      "hint": "Configures systemd temporary file permissions for WSL2-specific workarounds, specifically fixing a security regression in user-generator permissions to ensure stable session management.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-wslg-wants.conf",
-      "hint": "Configures systemd user-level symlinks to ensure the mios-wsl-env-import and mios-wsl-graphical-session services are automatically activated for WSLg graphical sessions.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios-wslg.conf",
-      "hint": "Defines /tmp/.X11-unix as a physical directory (1777) instead of a symlink to ensure Flatpak/bwrap compatibility while allowing the mios-wslg-permissions-fix.service to bind-mount the WSLg X11 socket.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/tmpfiles.d/mios.conf",
-      "hint": "Defines systemd-tmpfiles directory permissions and ownership for MiOS core components, ensuring the mios-ai user has proper access to the /var/lib/mios/ tree for model state, MCP context, and coderun scratch space.",
-      "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tmpfiles.d.md",
       "comment_style": "hash",
@@ -20324,7 +19706,7 @@
       "related": [
         "usr/share/mios/nix/flake-template.nix",
         "usr/share/mios/nix/nix.conf",
-        "usr/lib/tmpfiles.d/50-nix.conf"
+        "usr/lib/tmpfiles.d/50-mios.conf"
       ],
       "functions": [],
       "doc": null,
@@ -26392,7 +25774,7 @@
       "hint": "Two-sided controls for task_3432's second half -- mios-agents-firstboot.sh runs as root but must seed the coder home as that home's owner, never root.",
       "related": [
         "usr/libexec/mios/mios-agents-firstboot.sh",
-        "usr/lib/tmpfiles.d/mios-agents.conf",
+        "usr/lib/tmpfiles.d/50-mios.conf",
         "usr/lib/systemd/system/mios-agents.service"
       ],
       "functions": [
@@ -26656,8 +26038,7 @@
       "related": [
         "usr/lib/systemd/system/mios-agents.service",
         "usr/lib/systemd/system/mios-cron-director.service",
-        "usr/lib/tmpfiles.d/mios-agents.conf",
-        "usr/lib/tmpfiles.d/mios-cron-director.conf",
+        "usr/lib/tmpfiles.d/50-mios.conf",
         "usr/share/mios/mios.toml"
       ],
       "functions": [],
@@ -33891,7 +33272,7 @@
       "hint": "Multi-user Nix configuration for MiOS bootc/ostree immutable workstation.",
       "related": [
         "automation/59-tools.sh",
-        "usr/lib/tmpfiles.d/50-nix.conf",
+        "usr/lib/tmpfiles.d/50-mios.conf",
         "usr/libexec/mios/config/nix_project.py"
       ],
       "functions": [],
