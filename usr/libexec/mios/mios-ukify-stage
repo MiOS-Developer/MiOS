@@ -136,6 +136,12 @@ def stage_uki(
                 result["status"] = "error"
                 result["error"] = f"ukify failed: {e.stderr.decode().strip()}"
                 return result
+            except OSError as e:
+                # Found on PATH but not runnable (exec format, permission): an
+                # error result, not a traceback that skips the JSON report.
+                result["status"] = "error"
+                result["error"] = f"ukify could not run: {e}"
+                return result
         else:
             # --simulate only: a header envelope for container/test environments
             with open(output_efi, "w", encoding="utf-8") as f:

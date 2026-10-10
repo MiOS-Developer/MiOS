@@ -3511,7 +3511,30 @@ check_drift_stubs() {
         return
     fi
     "$bin" drift-stubs --root "$ROOT" || \
-        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- the bake runs this suite at Containerfile:103 (task_974)"
+        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- check_native_twinless runs this suite's Checks in the gate (task_974)"
+}
+
+# --- every native miosd drift Check with no bash twin in main() runs in this gate ---
+check_native_twinless() {
+    # Ruling Q8 keeps source-tree gates out of the bake. A native Check named like
+    # a check main() dispatches runs as that twin; the rest run here, natively.
+    echo "[98-drift-checks] every native miosd drift Check with no bash twin in main() runs in this gate"
+    local bin; bin="$(native_bin miosd "${MIOS_MIOSD_BIN:-}")" || {
+        _violation "miosd is not built, so the native drift Checks with no bash twin could not run -- build it: cd src/mios-rs && cargo build -p miosd"
+        return; }
+    local ids; ids="$("$bin" drift-check --list 2>&1 | sed -nE 's/^[[:space:]]*[0-9]+\.[[:space:]]+(check_[a-z0-9_]+)[[:space:]].*/\1/p')"
+    [[ -n "$ids" ]] || { _violation "miosd drift-check --list named no Check -- an empty registry is not a pass"; return; }
+    local twins; twins="$(sed -n '/^main() {/,/^}/p' "$_self_dir/$(basename "$_self")" | sed -nE 's/^[[:space:]]+(check_[a-z0-9_]+)[[:space:]]*$/\1/p')"
+    local id out ran=0 twinned=0
+    for id in $ids; do
+        if grep -qxF -- "$id" <<<"$twins"; then twinned=$((twinned + 1)); continue; fi
+        ran=$((ran + 1))
+        # --only matches by substring; exactly one Check must run, and pass.
+        if ! out="$("$bin" drift-check --root "$ROOT" --only "$id" 2>&1)" || [[ "$out" != *"[1/1 PASS "* ]]; then
+            _violations_from "check_native_twinless: $id: " "$(grep -E 'FAIL|MISSING|SKIP|Summary' <<<"$out" || printf '%s' "$out")" || :
+        fi
+    done
+    echo "[98-drift-checks]   ${ran} twinless native Check(s) ran here; ${twinned} run as their bash twin"
 }
 
 check_no_silent_tool_skips() {
@@ -3823,6 +3846,7 @@ main() {
     check_docs_ratchet
     check_header_integrity
     check_legibility_ratchet
+    check_legacy_archive
     check_docs_ratchet_monotone
     check_comment_lex_equivalence
     check_no_generated_prose_in_resolvers
@@ -3919,6 +3943,7 @@ main() {
     check_negatives_registered
     check_tracked_readable
     check_leaked_fixtures
+    check_native_twinless
     _assert_read_only "the gate run (re-run each check alone to name the writer)"
 
     set -e
@@ -4736,6 +4761,9 @@ check_legibility_ratchet() {
     fi
     echo "[98-drift-checks]   legibility floors holding"
 }
+
+# --- the legacy archive holds every dropped file at its last content and mode ---
+check_legacy_archive() { _run_py_check check_legacy_archive "tools/drift-checks.py legacy-archive"; }
 
 check_header_integrity() {
     echo "[98-drift-checks] no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1"

@@ -114,7 +114,7 @@ passes on the real tree or system) and a negative control (a planted defect make
     - `docs/agy/w10-live-boot/` → `docs/w10-live-boot/` (28 files, 5 refs)
     - `usr/share/doc/mios/archive/absorbed-plans-2026-06/` → `archive/` (9 files, 3 refs)
     - `usr/share/mios/prompts/upstream-researched-patterns/foss/` → `prompts/foss-patterns/` (14 files, 7 refs)
-    - `images/coderun-sandbox/` → fold into `images/` (2 files, 2 refs)
+    - ~~`images/coderun-sandbox/` → fold into `images/`~~ done: deleted as a stale copy of `etc/mios/containers/coderun-sandbox/` (task_3658)
   - **T2, coupled to M2 (MiOS-MODULES):** unify the two Rust workspaces, `src/mios-rs` (125 files,
     170 refs) and `tools/native` (165 files, 236 refs), into one domain-organized workspace. That also
     takes `src/` from a single-child chain to the module root.
@@ -378,6 +378,28 @@ passes on the real tree or system) and a negative control (a planted defect make
     - M7's L1 TUI task builds on U2 and U5.
   - **To confirm with the operator:** U4 routes `ai` to the desktop's AI workspace, as `usr/bin/mios`
     and the design doc already do, and gives Open WebUI its own verb.
+- **M9: 500 tracked files per MiOS repo -- mios.git and mios-bootstrap each (ADR-0030, amended).**
+  - **Goal:** the operator's cap is "500 disparate files—TOTAL/OVERALL", dependencies included. The operator settled the scope: "500 total files EACH per MiOS repo", folded losslessly with the Rust static-binary port as the primary goal and the hosted mios.html -> Rust -> mios.toml flow intact. On 2026-10-09 mios.git had 3,654 files and mios-bootstrap 201 (`[legibility].max_bootstrap_files`, its own 500 target; folds task_3672 field/, task_3673 root).
+    - Every domain has a shrink-only `max_files` in `[legibility.file_budget]` and a `target_files`; the targets sum to 405.
+    - `max_tracked_files` counts everything and is no longer exempt in `[drift.generated_ceilings]`.
+    - No commit adds a file without folding one away in the same commit.
+  - **Sources:** `usr/share/doc/mios/adr/0030-source-file-budget.md`; the M9 epic in `tasks.jsonl`.
+  - **Every fold lane proves it changed nothing at runtime:** the rendered root-overlay manifest (path + sha256 of every file the build installs) is identical before and after, except for differences the lane names. Each lane moves code in one commit and edits in another, and lowers its domain's `max_files` in the commit that folds.
+  - **Phases.** "+" is the positive control (must pass); "-" is the planted defect (must fail).
+    - **F0 (landed):** the budget gate, ADR-0030, the epic, and the 9 duplicate `commands/claude` copies deleted.
+      - +: `check_legibility_ratchet` passes at 3654/3654.
+      - -: one planted file is charged to its domain and to the total.
+    - **F1:** projections become build outputs, and exact duplicates and empty markers go. That covers man pages, Quadlets, systemd units, `tmpfiles`/`sysusers`/`sysctl`/`modprobe`, desktop entries, drop-ins and generated indexes. Target: ~3,080.
+      - +: the build renders them byte-identically twice.
+      - -: a deleted projection that the registry declares fails the render check.
+    - **F2:** `etc/profile.d` becomes one file per shell; `kargs.d`/`dracut`/`modprobe` fold; harness shims are rendered at dev setup; the 99 vendored files become one bundle per kind; root misc is cleared. Target: ~2,700.
+    - **F3:** tests become one suite per domain. Target: ~2,450.
+    - **F4:** docs become manual volumes and one ADR log. Target: ~1,850.
+    - **F5:** agent-pipe becomes domain modules, superseding the 800-line module ceiling. Target: ~1,480.
+    - **F6:** libexec and bin verbs become multicall MiOS-MODULES. Target: ~980.
+    - **F7:** one Rust workspace, and automation phases as data. Target: ~700.
+    - **F8:** usr data and tools become SSOT tables and Rust. Target: ≤ 500.
+  - **Sequencing with the lanes in flight:** a fold never takes a file that a claimed assignment owns. F3 (tests) waits for the wave-1 and wave-2 lanes to merge, because they add tests.
 
 ## Operator rulings, 2026-10-09 (/loop-grill, 20 spec questions)
 

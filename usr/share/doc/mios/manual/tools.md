@@ -886,3 +886,28 @@ Task-plane drift gates. One module, one subcommand per gate.
 The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
 
 <!-- mios-src:d84f2b14bb71 from tools/check-tasks.py:5-8 -->
+### ADR-0030
+
+ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
+included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
+domains below partition the same listing.
+
+<!-- mios-src:adf6366d5571 from tools/drift-checks.py:279-281 -->
+### ADR-0030
+
+ADR-0030: the 500-file cap is the PLATFORM -- every tracked file of mios.git
+AND its sister repo mios-bootstrap, dependencies included (the operator: "500
+files is the target for the entire MiOS Platform"). max_tracked_files stays
+this repo's own count, which ratchet-direction compares with main's tree; the
+domains below partition the platform listing, bootstrap paths prefixed.
+
+<!-- mios-src:eaf1382f49a8 from tools/drift-checks.py:279-283 -->
+### ADR-0030
+
+ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+partitioned into the domains below; its sister repo mios-bootstrap has its
+own shrink-only ceiling and target. max_tracked_files is this repo's count,
+which ratchet-direction also compares with main's tree.
+
+<!-- mios-src:52f88e0dbf52 from tools/drift-checks.py:279-283 -->

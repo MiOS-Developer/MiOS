@@ -38,7 +38,8 @@ def test_build_context_preserves_tracked_sources():
     assert "/ctx/bib-configs" not in recipe, "renamed artifacts invalidate source gates"
     restore = "git -C /tmp/build ls-files --deleted -z | git -C /tmp/build checkout-index -z --stdin"
     assert restore in recipe, "partial image context must restore omitted tracked consumers"
-    assert recipe.index(restore) < recipe.index("miosd drift-check"), "restore sources before evaluating drift"
+    assert recipe.index(restore) < recipe.index("mios-gen sync --root /tmp/build"), "restore sources before rendering projections"
+    assert "drift-check" not in recipe, "ruling Q8: source-tree drift gates run in the CI gate job, never in the bake"
     runner = (root / "automation/build.sh").read_text()
     completed = re.search(r'case " \$_name " in\n.*?\n    esac', runner, re.S)
     assert completed, "the phase runner must identify stages already completed by Containerfile"

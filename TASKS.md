@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1734 |
+| pending | 1755 |
 | in_progress | 50 |
 | completed | 1827 |
 | incomplete | 20 |
-| cancelled | 20 |
-| total | 3651 |
+| cancelled | 21 |
+| total | 3673 |
 
 0 record(s) carry at least one override.
 
@@ -1095,7 +1095,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_1748` Introduce pydantic wire-schema models for the FastAPI request/response bodies -- pending · P1 · size L
 - `task_1749` Add a typed exception hierarchy + operator-facing config diagnostics -- pending · P2 · size M
 - `task_1750` Kill the eval-on-agent-args launcher path in mios-launch/mios-window (TD-1) -- pending · P1 · size M
-- `task_1751` Land the 800-line agent-pipe module ceiling as a seeded, ratcheting drift-gate (TD-5) -- pending · P1 · size S
+- `task_1751` Land the 800-line agent-pipe module ceiling as a seeded, ratcheting drift-gate (TD-5) -- cancelled · P1 · size S
 - `task_1752` Continue the server.py R-wave strangler: extract ceph-health and LoRA blocks -- pending · P2 · size XL
 - `task_1753` Split mios_dispatch.py behind a golden command-builder snapshot -- pending · P2 · size L
 - `task_1754` Port jsonsalvage `loads_lenient` to a pyo3 crate proven by differential proptest -- pending · P2 · size L
@@ -1891,6 +1891,36 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2206` Give image refs `:latest` INTENT with digests resolved at BUILD, and record the offline-vendored pin exception in an ADR -- completed · P2 · size M · depends_on task_2204
 - `task_2207` Gate AI-hint manifest freshness so `manifest.json` stops carrying stale version snapshots -- completed · P2 · size S
 - `task_2208` Move the Quadlet renderer's placeholder-preserve list into SSOT instead of per-var `if` branches -- completed · P3 · size S · depends_on task_2204
+
+## WS-FOLD
+
+### No epic
+
+- `task_3652` M9: 500 tracked files total -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES (WS-FOLD | P0 | XL) -- pending · owner claude-code · P0 · size XL
+
+### Epic task_3652
+
+- `task_3653` M9 F1: Man pages are build outputs: render usr/share/man from SSOT in the build and stop tracking all 136 -- pending · P0 · size M
+- `task_3654` M9 F1: Systemd units and user units are build outputs rendered from SSOT by mios-unit-gen (232 files) -- pending · P0 · size L
+- `task_3655` M9 F1: Quadlets, desktop entries and drop-ins are build outputs (62 files) -- pending · P1 · size M
+- `task_3656` M9 F1: tmpfiles.d, sysusers.d, sysctl.d and modprobe.d fold to one rendered file each (73 files) -- pending · P1 · size M
+- `task_3657` M9 F1: Generated indexes and ledgers are build outputs; human views stay tracked -- pending · P1 · size M
+- `task_3658` M9 F1: Delete exact duplicates and empty markers: harness command copies, getty units, keybindings, settings, identical exe -- pending · P0 · size S
+- `task_3659` M9 F2: etc/profile.d folds to one file per shell (48 files to 2) -- pending · P1 · size S
+- `task_3660` M9 F2: bootc kargs.d, dracut and modprobe drop-ins fold to one file per kind -- pending · P2 · size S
+- `task_3661` M9 F2: Harness shims render from one source at dev setup (.agents, .claude, commands, .github/agents, cloud-shell) -- pending · P1 · size M
+- `task_3662` M9 F2: Vendored wheels and archives fold into one bundle per kind (99 files to 5) -- pending · P1 · size M
+- `task_3663` M9 F2: Root dotfiles and var seeds: render or fold (62 misc files to 20) -- pending · P2 · size S
+- `task_3664` M9 F3: Tests fold to one suite per domain (281 files to 40) -- pending · P1 · size L
+- `task_3665` M9 F4: Docs fold into manual volumes and one ADR log (650 files to 40) -- pending · P1 · size L
+- `task_3666` M9 F5: agent-pipe folds into domain modules (414 files to 40), superseding the 800-line module ceiling -- pending · P1 · size XL
+- `task_3667` M9 F6: libexec and bin verbs fold into multicall MiOS-MODULES (549 files to 45) -- pending · P1 · size XL
+- `task_3668` M9 F7: One Rust workspace; crates become the MiOS-MODULES (210 files to 60) -- pending · P1 · size L
+- `task_3669` M9 F7: Automation phases become [build.phases] data run by the Rust build driver (160 files to 15) -- pending · P1 · size L
+- `task_3670` M9 F8: usr data folds into SSOT tables or one bundle per domain (435 files to 60) -- pending · P2 · size L
+- `task_3671` M9 F8: tools fold into mios-gen and mios-gate (96 files to 30) -- pending · P2 · size L
+- `task_3672` M9 F2: mios-bootstrap field/ (MiOS-Field SystemRescue assets, 137 files) folds into SSOT-rendered bundles -- pending · P1 · size L
+- `task_3673` M9 F2: mios-bootstrap root files (24) fold into one installer entry per platform -- pending · P1 · size M
 
 ## WS-GATE
 
