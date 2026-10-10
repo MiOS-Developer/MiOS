@@ -276,14 +276,14 @@ elif [[ -x /usr/libexec/mios/mios-configurator-launch ]]; then
         sudo install -d -m 0755 /etc/mios
         sudo install -m 0644 "$DL_TOML" /etc/mios/mios.toml
         _log "Promoted ~/Downloads/mios.toml -> /etc/mios/mios.toml"
-        if [[ -d /mnt/m ]]; then
-            if sudo install -d -m 0755 /mnt/m/etc/mios 2>/dev/null && \
-               sudo install -m 0644 "$DL_TOML" /mnt/m/etc/mios/mios.toml 2>/dev/null; then
-                _log "Promoted ~/Downloads/mios.toml -> /mnt/m/etc/mios/mios.toml (Windows-side host overlay)"
-            else
-                _log "WARN: could not write /mnt/m/etc/mios/mios.toml -- Windows-side bootstrap will keep using vendor defaults"
+        for _host_mnt in /mnt/c /mnt/m; do
+            if [[ -d "$_host_mnt" ]]; then
+                if sudo install -d -m 0755 "$_host_mnt/etc/mios" 2>/dev/null && \
+                   sudo install -m 0644 "$DL_TOML" "$_host_mnt/etc/mios/mios.toml" 2>/dev/null; then
+                    _log "Promoted ~/Downloads/mios.toml -> $_host_mnt/etc/mios/mios.toml (Windows-side host overlay)"
+                fi
             fi
-        fi
+        done
         if [[ -r /etc/profile.d/mios-env.sh ]]; then
             . /etc/profile.d/mios-env.sh || true
         fi
