@@ -3372,8 +3372,17 @@ def check_smoke_manifest() -> int:
         sys.stderr.write("    Missing [testing.smoke_components] table in mios.toml\n")
         return 1
 
-    file_kinds = ("shims", "units", "python_entries", "manpages")
-    kinds = file_kinds + ("paths", "commands", "rpm_sections")
+    file_kinds = ("shims", "units", "python_entries")
+    kinds = file_kinds + ("paths", "commands", "rpm_sections", "manpages")
+    valid_manpages = {
+        "usr/share/man/man1/mios.1",
+        "usr/share/man/man5/mios.toml.5",
+        "usr/share/man/man7/mios.7",
+    }
+    if data.get("variants", {}).get("entries"):
+        valid_manpages.add("usr/share/man/man7/mios-variants.7")
+    for v in data.get("verbs", {}).keys():
+        valid_manpages.add(f"usr/share/man/man1/mios-{v}.1")
     packages = {k for k, v in data.get("packages", {}).items() if isinstance(v, dict)}
     phases = {p.get("name") for p in data.get("build", {}).get("phases", {}).get("list", [])}
     profiles = {k for k, v in data.get("profiles", {}).items() if isinstance(v, dict)}
@@ -3399,6 +3408,8 @@ def check_smoke_manifest() -> int:
             for item in val:
                 if key in file_kinds and not os.path.exists(os.path.join(root, item)):
                     missing.append(item)
+                elif key == "manpages" and item not in valid_manpages:
+                    missing.append(f"{item} (not a declared or core manpage)")
                 if key == "rpm_sections":
                     if item not in packages:
                         bad.append(f"[testing.smoke_components{at}].rpm_sections names {item!r},"

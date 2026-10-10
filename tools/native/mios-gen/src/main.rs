@@ -284,6 +284,14 @@ enum Commands {
         /// Validate mode: validate roff structural integrity of all rendered pages
         #[arg(long)]
         validate: bool,
+
+        /// Output directory override (defaults to writing under root)
+        #[arg(long, hide = true)]
+        out_dir: Option<PathBuf>,
+
+        /// List mode: list relative paths of all rendered manual pages
+        #[arg(long)]
+        list: bool,
     },
 
     /// Projects [deploy.artifacts] filesystem sizing from mios.toml SSOT into config/artifacts/*.toml
@@ -1026,12 +1034,14 @@ fn main() -> ExitCode {
             root,
             check,
             validate,
+            out_dir,
+            list,
         } => {
             let r = resolve_root(root);
             (
                 "render-manpages",
                 "usr/share/man/**",
-                match render_manpages::run_render_manpages(&r, check, validate) {
+                match render_manpages::run_render_manpages(&r, check, validate, out_dir.as_deref(), list) {
                     Ok((msg, _)) => {
                         if cli.format != "json" && !msg.is_empty() {
                             println!("{msg}");
