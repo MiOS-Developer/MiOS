@@ -277,6 +277,7 @@ etc/fapolicyd/*
 
 !/etc/profile.d/
 !/etc/profile.d/*mios*.sh
+!/etc/profile.d/*mios*.csh
 
 !/etc/xdg/
 etc/xdg/*

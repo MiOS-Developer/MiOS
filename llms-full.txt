@@ -1,1 +1,0 @@
-# AI-hint: Full-text companion to llms.txt for mios-dev/mios; mios-manual splices generated manual content into it ([docs].render_extra).

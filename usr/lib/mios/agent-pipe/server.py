@@ -2489,15 +2489,16 @@ _DEFAULT_ALLOWLIST_HOSTS = {
     "localhost", "127.0.0.1", "::1",
     "host.containers.internal",
     "mios-llm-light", "mios-open-webui", "mios-hermes", "mios-pgvector",
-    "mios-forge", "mios-searxng", "mios-agents",
+    "mios-forge", "mios-searxng", "mios-agents", "mios-crawl4ai", "mios-code-server",
 }
 _env_allowlist = os.environ.get("MIOS_SECURITY_ALLOWLIST_HOSTS", "").strip()
+_toml_sec = _toml_section("security") or {}
+_toml_hosts = _toml_sec.get("allowlist_hosts") or []
+_ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
 if _env_allowlist:
-    _ALLOWLIST_HOSTS = {
-        h.strip().lower() for h in _env_allowlist.split(",") if h.strip()
-    }
-else:
-    _ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
+    _ALLOWLIST_HOSTS.update(h.strip().lower() for h in _env_allowlist.split(",") if h.strip())
+if _toml_hosts:
+    _ALLOWLIST_HOSTS.update(str(h).strip().lower() for h in _toml_hosts if str(h).strip())
 
 from mios_firewall import (   # noqa: E402
     _is_external_url,
@@ -4321,6 +4322,7 @@ sys.modules["mios_swarm"].configure(
 from mios_pipe.auth import (
     usage_completeness_mw as _usage_completeness_mw,
     inbound_auth_mw as _inbound_auth_mw,
+    host_origin_validation_mw as _host_origin_validation_mw,
     configure as _configure_auth
 )
 
@@ -4365,9 +4367,11 @@ _configure_auth(
     auth_open_paths=globals().get("_AUTH_OPEN_PATHS", ()),
     auth_gated_prefixes=globals().get("_AUTH_GATED_PREFIXES", ()),
     check_inbound_principal=globals().get("_check_inbound_principal"),
+    allowlist_hosts=_ALLOWLIST_HOSTS,
 )
 
 app.middleware("http")(_usage_completeness_mw)
+app.middleware("http")(_host_origin_validation_mw)
 app.middleware("http")(_inbound_auth_mw)
 
 _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()
