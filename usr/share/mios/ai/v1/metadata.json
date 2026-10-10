@@ -4,7 +4,7 @@
   "total_metadata_entries": 3016,
   "total_hints": 3006,
   "total_functions_indexed": 1481,
-  "total_related_links": 5100,
+  "total_related_links": 5101,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -19908,6 +19908,7 @@
       "hint": "A2A Agent-to-Agent mutual capability exchange and cryptographic attestation protocol engine.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_pipe/federation/agentcard_sign.py",
+        "usr/libexec/mios/mios-mcp-server",
         "tests/test-a2a.py"
       ],
       "functions": [],
