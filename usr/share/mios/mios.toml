@@ -3727,9 +3727,8 @@ refresh_s = 2
 max_rows = 32
 window_name = "MiOS Agents"
 
-# ADR-0029 coordinator lease. Identities are relay registrations (agent_id +
-# token). client-go's rule holds: lease_duration_s > renew_interval_s >
-# 1.2 x probe_interval_s; the relay refuses values that break it.
+# Coordinator lease: identities are relay registrations; the relay refuses
+# values breaking lease_duration_s > renew_interval_s > 1.2 x probe_interval_s.
 [mcp.agents.succession]
 lease_duration_s = 5400  # seeds a fresh lease; a lease then keeps its own
 renew_interval_s = 1800  # returned as next_renew_s

@@ -384,9 +384,8 @@ fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
-// ADR-0029 coordinator succession. The lease, status files and journal live
-// beside the relay registry; identities are relay registrations, and every
-// number comes from [mcp.agents.succession].
+// Coordinator succession: lease, status and journal beside the relay registry;
+// identities are relay registrations, numbers come from [mcp.agents.succession].
 
 fn format_iso(secs: u64) -> String {
     let s = secs % 60;
@@ -3135,9 +3134,8 @@ mod tests {
     }
 }
 
-// ADR-0029 lease, status and probe, driven through the relay's own entry point
-// (`run`). Each `planted_*` test plants one review defect and must fail on the
-// branch before the fix.
+// Lease, status and probe through `run`; each `planted_*` test plants one
+// review defect and fails on the code before its fix.
 #[cfg(test)]
 mod succession {
     use super::*;
