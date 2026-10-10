@@ -68,8 +68,6 @@
 !/invariants/
 !/invariants/**
 !/.gitattributes
-!/.clinerules
-!/.cursorrules
 !/.editorconfig
 !/.env.mios
 !/.containerignore
@@ -84,6 +82,16 @@
 !/.prompts/**
 !/.research/
 !/.research/**
+# ADR-0030 Decision 7: the legacy archive, a bare git store beside .git. Only HEAD, config, the
+# branch and the one pack are tracked; `mios-gen archive --check` rejects anything else on disk.
+!/.archive/
+/.archive/*
+!/.archive/HEAD
+!/.archive/config
+!/.archive/refs/
+!/.archive/objects/
+/.archive/objects/*
+!/.archive/objects/pack/
 !/.secrets/
 !/.secrets/README.md
 /.secrets/*
@@ -107,8 +115,6 @@
 !/.agents/COORDINATION.md
 !/.agents/agents/
 !/.agents/agents/**
-!/images/
-!/images/**
 !/.forgejo/
 !/.forgejo/**
 !/usr/share/man/
@@ -228,7 +234,6 @@ docs/design/w10-live-boot/*
 
 !/etc/
 etc/**
-!/etc/.keep
 # SSOT projections re-derived by `miosd drift-check` during the container build.
 # See the usr/lib/kernel note below: untracked here means invisible to CI.
 !/etc/cockpit/
@@ -284,11 +289,6 @@ etc/systemd/*
 !/etc/systemd/oomd.conf
 !/etc/systemd/resolved.conf.d/
 !/etc/systemd/resolved.conf.d/*
-!/etc/systemd/user/
-etc/systemd/user/*
-!/etc/systemd/user/*.service.d/
-etc/systemd/user/*.service.d/*
-!/etc/systemd/user/*.service.d/10-mios-*.conf
 
 !/etc/dconf/
 etc/dconf/*

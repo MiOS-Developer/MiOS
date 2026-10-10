@@ -6150,6 +6150,7 @@ bootstrap.sync.mirror_toml_tables  MIOS_BOOTSTRAP_SYNC_MIRROR_TOML_TABLES
 bootstrap.sync.mirror_toml_keys  MIOS_BOOTSTRAP_SYNC_MIRROR_TOML_KEYS
 bootstrap.sync.not_mirrored  MIOS_BOOTSTRAP_SYNC_NOT_MIRRORED
 legibility.max_tracked_files  MIOS_LEGIBILITY_MAX_TRACKED_FILES
+legibility.max_bootstrap_files  MIOS_LEGIBILITY_MAX_BOOTSTRAP_FILES
 legibility.max_tracked_mb  MIOS_LEGIBILITY_MAX_TRACKED_MB
 legibility.tracked_mb_headroom  MIOS_LEGIBILITY_TRACKED_MB_HEADROOM
 legibility.max_shell_lines  MIOS_LEGIBILITY_MAX_SHELL_LINES
@@ -6159,6 +6160,7 @@ legibility.max_libexec_verbs  MIOS_LEGIBILITY_MAX_LIBEXEC_VERBS
 legibility.python_ai_plane_prefixes  MIOS_LEGIBILITY_PYTHON_AI_PLANE_PREFIXES
 legibility.max_tooling_python_lines  MIOS_LEGIBILITY_MAX_TOOLING_PYTHON_LINES
 legibility.file_budget.target_tracked_files  MIOS_LEGIBILITY_FILE_BUDGET_TARGET_TRACKED_FILES
+legibility.file_budget.target_bootstrap_files  MIOS_LEGIBILITY_FILE_BUDGET_TARGET_BOOTSTRAP_FILES
 legibility.file_budget.order  MIOS_LEGIBILITY_FILE_BUDGET_ORDER
 legibility.file_budget.domains.dependency.max_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DEPENDENCY_MAX_FILES
 legibility.file_budget.domains.dependency.target_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DEPENDENCY_TARGET_FILES
@@ -6196,9 +6198,18 @@ legibility.file_budget.domains.data.globs  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_D
 legibility.file_budget.domains.tools.max_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TOOLS_MAX_FILES
 legibility.file_budget.domains.tools.target_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TOOLS_TARGET_FILES
 legibility.file_budget.domains.tools.globs  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TOOLS_GLOBS
+legibility.file_budget.domains.archive.max_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ARCHIVE_MAX_FILES
+legibility.file_budget.domains.archive.target_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ARCHIVE_TARGET_FILES
+legibility.file_budget.domains.archive.globs  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ARCHIVE_GLOBS
 legibility.file_budget.domains.misc.max_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_MAX_FILES
 legibility.file_budget.domains.misc.target_files  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_TARGET_FILES
 legibility.file_budget.domains.misc.globs  MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_GLOBS
+legibility.archive.path  MIOS_LEGIBILITY_ARCHIVE_PATH
+legibility.archive.ref  MIOS_LEGIBILITY_ARCHIVE_REF
+legibility.archive.object_format  MIOS_LEGIBILITY_ARCHIVE_OBJECT_FORMAT
+legibility.archive.since  MIOS_LEGIBILITY_ARCHIVE_SINCE
+legibility.archive.author  MIOS_LEGIBILITY_ARCHIVE_AUTHOR
+legibility.archive.exclude  MIOS_LEGIBILITY_ARCHIVE_EXCLUDE
 ai.firstboot_models  MIOS_AI_FIRSTBOOT_MODELS
 ci.max_exempt_suites  MIOS_CI_MAX_EXEMPT_SUITES
 ci.runners  MIOS_CI_RUNNERS
@@ -6224,8 +6235,6 @@ ci.globs.tools.tier  MIOS_CI_GLOBS_TOOLS_TIER
 ci.globs.agent-pipe.dir  MIOS_CI_GLOBS_AGENT_PIPE_DIR
 ci.globs.agent-pipe.glob  MIOS_CI_GLOBS_AGENT_PIPE_GLOB
 ci.globs.agent-pipe.tier  MIOS_CI_GLOBS_AGENT_PIPE_TIER
-ci.globs.agent-pipe.skip  MIOS_CI_GLOBS_AGENT_PIPE_SKIP
-ci.globs.agent-pipe.skip_reason  MIOS_CI_GLOBS_AGENT_PIPE_SKIP_REASON
 ci.globs.libexec.dir  MIOS_CI_GLOBS_LIBEXEC_DIR
 ci.globs.libexec.glob  MIOS_CI_GLOBS_LIBEXEC_GLOB
 ci.globs.libexec.tier  MIOS_CI_GLOBS_LIBEXEC_TIER

@@ -48,7 +48,6 @@ $defaultSrcPng = $null
 foreach ($cand in @(
     'C:\MiOS\usr\share\mios\branding\icon.png',
     'C:\MiOS\usr\share\mios\branding\_mios-default.ico',
-    'C:\MiOS\usr\share\mios\branding\mios.png',
     'M:\MiOS\branding\icon.png',
     'M:\MiOS\branding\mios.png'
 )) {

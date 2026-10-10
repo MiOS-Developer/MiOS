@@ -276,13 +276,24 @@ def check_legibility_ratchet() -> int:
                                   and r.count("/") == 3
                                   and not _TEST_BASENAME.match(r.rsplit("/", 1)[-1])]),
     }
-    # ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
-    # included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
-    # domains below partition the same listing.
+    # ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+    # operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+    # partitioned into the domains below; its sister repo mios-bootstrap has its
+    # own shrink-only ceiling and target. max_tracked_files is this repo's count,
+    # which ratchet-direction also compares with main's tree.
     import fnmatch
-    source = rels
-
     viol = []
+    source = rels
+    bs_root = os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(root, "..", "mios-bootstrap")
+    bs_rels, _bs_rc = _tracked(bs_root) if os.path.isdir(bs_root) else (None, 1)
+    if bs_rels is None:
+        # Without the sister repo its budget is unmeasured, which is a violation,
+        # never a zero that happens to pass.
+        viol.append("mios-bootstrap is not a checkout at %s (set MIOS_BOOTSTRAP_ROOT): "
+                    "its file budget cannot be measured" % bs_root)
+    else:
+        measured["max_bootstrap_files"] = len(bs_rels)
+
     # The budget fails closed: an absent table, a missing or non-integer target, or a
     # malformed domain is a violation, never a skipped comparison (peer-lane review of
     # af498021 planted all four and each passed).
@@ -291,8 +302,12 @@ def check_legibility_ratchet() -> int:
         viol.append("[legibility.file_budget] is absent -- ADR-0030's 500-file budget is then bounded by nothing")
         budget = {}
     target = budget.get("target_tracked_files")
-    if budget and (type(target) is not int or target <= 0):
-        viol.append("[legibility.file_budget].target_tracked_files must be a positive integer (got %r)" % (target,))
+    for key in ("target_tracked_files", "target_bootstrap_files"):
+        v = budget.get(key)
+        if budget and (type(v) is not int or v <= 0):
+            viol.append("[legibility.file_budget].%s must be a positive integer (got %r)" % (key, v))
+    if "max_bootstrap_files" not in lim:
+        viol.append("[legibility].max_bootstrap_files is absent -- the sister repo's ceiling is then bounded by nothing")
     order, domains = budget.get("order"), budget.get("domains")
     if budget and (not isinstance(order, list) or not order or not isinstance(domains, dict) or not domains):
         viol.append("[legibility.file_budget] needs a non-empty order list and domains table")
@@ -353,6 +368,44 @@ def check_legibility_ratchet() -> int:
               file=sys.stderr)
     print("\n".join(viol))
     sys.exit(1 if viol else 0)
+
+def check_legacy_archive() -> int:
+    """ADR-0030 Decision 7: `mios-gen archive --check` compares .archive with the dropped set;
+    its cannot-run exit (2) stays a failure."""
+    import subprocess
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    if os.environ.get("CTX") or root.rstrip("/") == "/tmp/build":
+        # Gates are out of the bake; the drift-gate job runs this on full history.
+        print("legacy archive: SKIPPED in-image OCI build (the drift-gate job enforces it on full history)")
+        return 0
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        gen = os.path.join(catalog, "mios-gen" + exe)
+        if not os.path.isfile(gen) or not os.access(gen, os.X_OK):
+            print("configured mios-gen is missing or not executable: %s" % gen)
+            return 1
+    else:
+        found = [c for c in [os.path.join(root, "tools/native/target", p, "mios-gen" + exe)
+                             for p in ("release", "debug")]
+                 + ["/usr/libexec/mios/mios-gen", "/usr/bin/mios-gen"] if os.path.isfile(c)]
+        if not found:
+            print("mios-gen is not built, so the legacy archive was never compared -- "
+                  "build it: cd tools/native && cargo build -p mios-gen")
+            return 1
+        gen = found[0]
+    try:
+        proc = subprocess.run([gen, "archive", "--check", "--root", root],
+                              capture_output=True, text=True)
+    except OSError as exc:
+        print("%s archive --check could not run: %s" % (gen, exc))
+        return 1
+    out = "\n".join(s for s in (proc.stdout.strip(), proc.stderr.strip()) if s)
+    if proc.returncode == 0 and out:
+        print(out)
+        return 0
+    print(out or "%s archive --check exited %d with no output" % (gen, proc.returncode))
+    return proc.returncode if proc.returncode in (1, 2) else 1
 
 def _value_sources(root: str):
     """(name -> declaring SSOT key path, None) from `mios-resolver --emit=names`,
@@ -3711,9 +3764,11 @@ def check_value_aliases() -> int:
         return 1
 
     env = {}
-    sub_env = dict(os.environ, MIOS_ROOT=root, MIOS_DRIFT_ROOT=root, MIOS_VENDOR_TOML=os.path.join(root, "usr/share/mios/mios.toml"), MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
+    snap_rel = os.path.relpath(snap, root).replace("\\", "/")
+    vendor_rel = os.path.relpath(os.path.join(root, "usr/share/mios/mios.toml"), root).replace("\\", "/")
+    sub_env = dict(os.environ, MIOS_ROOT=".", MIOS_DRIFT_ROOT=".", MIOS_VENDOR_TOML=vendor_rel, MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
     try:
-        proc = subprocess.run(["bash", snap], capture_output=True, text=True, env=sub_env)
+        proc = subprocess.run(["bash", snap_rel], cwd=root, capture_output=True, text=True, env=sub_env)
     except OSError as exc:
         print("mios-env-snapshot could not be run: %s" % exc)
         return 1
@@ -3854,7 +3909,7 @@ def check_pipefail_grep_lint() -> int:
     return 0
 
 def check_skip_list_covered() -> int:
-    import os, sys
+    import fnmatch, os, sys
     import tomllib
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -3870,13 +3925,22 @@ def check_skip_list_covered() -> int:
     with open(toml_path, "rb") as fh:
         globs = ((tomllib.load(fh).get("ci") or {}).get("globs") or {})
 
-    spec = globs.get("agent-pipe") or {}
+    # Nothing skipped is the goal, so an empty list passes. Every entry that is
+    # there must say why, and must name an agent-pipe suite that exists.
+    spec = globs.get("agent-pipe")
+    if not isinstance(spec, dict) or not spec.get("dir") or not spec.get("glob"):
+        viol.append("[ci.globs.agent-pipe] is absent or names no dir/glob -- the "
+                    "agent-pipe suites would run in no tier")
+        spec = {}
     skip = spec.get("skip") or []
-    if not skip:
-        viol.append("[ci.globs.agent-pipe].skip is empty or absent -- the suites that "
-                    "need a database would run and fail on every runner")
     if skip and not str(spec.get("skip_reason", "")).strip():
         viol.append("[ci.globs.agent-pipe].skip carries no skip_reason")
+    d, pat = spec.get("dir", ""), spec.get("glob", "")
+    for fn in skip:
+        if not (isinstance(fn, str) and fnmatch.fnmatchcase(fn, pat)
+                and os.path.isfile(os.path.join(root, d, fn))):
+            viol.append(f"[ci.globs.agent-pipe].skip names {fn!r}, which is no {d}/{pat} "
+                        f"suite -- a stale skip would exempt the next suite given that name")
 
     for wf in (".github/workflows/mios-ci.yml", ".forgejo/workflows/build-mios.yml"):
         path = os.path.join(root, wf)
@@ -4631,6 +4695,7 @@ _SUBCOMMAND_NAMES = (
     "globals-image-parity", "bake-plan-integrity", "negative-test-coverage",
     "structured", "drift-build-catalog", "drift-projection", "unwired-modules",
     "no-duplicate-value-key", "resolver-differential-parity", "legibility-ratchet",
+    "legacy-archive",
     "header-integrity", "rbac-tiers", "ai-manifest", "capability-manifest",
     "surface-parity", "container-ports", "agent-pipe-budgets", "verb-backends",
     "dag-integrity",
