@@ -402,21 +402,8 @@ def main() -> int:
                 with open(dst, "wb") as f:
                     f.write(src_bytes)
 
-        # 3. Mirror .dotfiles to usr/share/mios/dotfiles
-        share_dotfiles = os.path.join(root, "usr/share/mios/dotfiles")
-        if not args.check:
-            os.makedirs(share_dotfiles, exist_ok=True)
-            for dirpath, _, filenames in os.walk(DOTFILES_DIR):
-                rel = os.path.relpath(dirpath, DOTFILES_DIR)
-                target_dir = os.path.join(share_dotfiles, rel) if rel != "." else share_dotfiles
-                os.makedirs(target_dir, exist_ok=True)
-                for fn in filenames:
-                    s_file = os.path.join(dirpath, fn)
-                    d_file = os.path.join(target_dir, fn)
-                    try:
-                        shutil.copy2(s_file, d_file)
-                    except PermissionError:
-                        shutil.copyfile(s_file, d_file)
+        # 3. No tracked usr/share/mios/dotfiles mirror (ADR-0030): nothing reads it, and
+        #    automation/01-system-files-overlay.sh Stage 5b installs .dotfiles there at bake.
 
         # 4. Also project into active user home directories if write mode
         if not args.check:

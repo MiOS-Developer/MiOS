@@ -121,8 +121,6 @@ etc/mios/containers/coderun-sandbox/Dockerfile	4	:3.20	HARDCODED-literal	MIOS_VE
 etc/mios/containers/coderun-sandbox/Dockerfile	11	:3.20	HARDCODED-literal	MIOS_VERSION_SSOT
 etc/mios/eval-criteria.json	1	:0.5	SSOT-derived/placeholder	MIOS_VERSION_SSOT
 etc/mios/eval-criteria.json	1	:0.7	SSOT-derived/placeholder	MIOS_VERSION_SSOT
-images/coderun-sandbox/Containerfile	3	:3.20	HARDCODED-literal	MIOS_VERSION_SSOT
-images/coderun-sandbox/Containerfile	10	:3.20	HARDCODED-literal	MIOS_VERSION_SSOT
 install-mios-agents.sh	97	:0.3	HARDCODED-literal	MIOS_VERSION_SSOT
 installation/mios-mon.py	720	:4.1	HARDCODED-literal	MIOS_VERSION_SSOT
 installation/mios-mon.py	725	:4.1	HARDCODED-literal	MIOS_VERSION_SSOT

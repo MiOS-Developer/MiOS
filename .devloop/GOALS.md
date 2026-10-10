@@ -114,7 +114,7 @@ passes on the real tree or system) and a negative control (a planted defect make
     - `docs/agy/w10-live-boot/` → `docs/w10-live-boot/` (28 files, 5 refs)
     - `usr/share/doc/mios/archive/absorbed-plans-2026-06/` → `archive/` (9 files, 3 refs)
     - `usr/share/mios/prompts/upstream-researched-patterns/foss/` → `prompts/foss-patterns/` (14 files, 7 refs)
-    - `images/coderun-sandbox/` → fold into `images/` (2 files, 2 refs)
+    - ~~`images/coderun-sandbox/` → fold into `images/`~~ done: deleted as a stale copy of `etc/mios/containers/coderun-sandbox/` (task_3658)
   - **T2, coupled to M2 (MiOS-MODULES):** unify the two Rust workspaces, `src/mios-rs` (125 files,
     170 refs) and `tools/native` (165 files, 236 refs), into one domain-organized workspace. That also
     takes `src/` from a single-child chain to the module root.
