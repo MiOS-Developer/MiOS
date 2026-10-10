@@ -12849,7 +12849,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3626
+max_tracked_files = 3622
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12882,7 +12882,7 @@ max_tooling_python_lines = 80483   # module-test-coverage + static-linkage censu
 [legibility.file_budget]
 target_tracked_files = 500     # operator: "500 total files EACH per MiOS repo" -- this repo (the domains below sum under it)
 target_bootstrap_files = 500   # the same cap for the sister repo mios-bootstrap ([legibility].max_bootstrap_files)
-order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "misc"]
+order = ["dependency", "projections", "agent_pipe", "modules", "harness", "docs", "tests", "rust", "automation", "etc", "data", "tools", "archive", "misc"]
 
 [legibility.file_budget.domains.dependency]  # vendored wheels and archives fold into one bundle per kind (Law 12 still bakes them); one Cargo.lock
 max_files = 100
@@ -12905,7 +12905,7 @@ target_files = 45
 globs = ["usr/libexec/*", "usr/bin/*"]
 
 [legibility.file_budget.domains.docs]  # one manual volume per domain; one ADR log
-max_files = 547
+max_files = 543
 target_files = 40
 globs = ["usr/share/doc/*", "docs/*", ".research/*", ".devloop/*", "*.md"]
 
@@ -12944,10 +12944,27 @@ max_files = 96
 target_files = 30
 globs = ["tools/*", "installation/*"]
 
+[legibility.file_budget.domains.archive]  # Decision 7: the git-native legacy store -- HEAD, config, the branch, one pack (.pack + .idx)
+max_files = 5
+target_files = 5
+globs = [".archive/**"]
+
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 58
+max_files = 53
 target_files = 20
 globs = ["*"]
+
+# ADR-0030 Decision 7: dropped files kept in a bare git store beside .git; built by `mios-gen archive`,
+# verified by drift check legacy-archive.
+[legibility.archive]
+path = ".archive"            # the store, at the root beside .git; only HEAD, config, the branch and one pack are tracked
+ref = "legacy"               # its one branch
+object_format = "sha256"     # git's sha256 object format; content is compared by the sha256 of the bytes
+since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-budget campaign began; first-parent history from here
+author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
+# Dropped paths never re-tracked (keys, tokens, credentials, valued .env, leaks), as globs with a reason each.
+# Screening all 315 dropped paths found none.
+exclude = []
 
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]

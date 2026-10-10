@@ -5699,6 +5699,8 @@ test_edge_status() {
     _neg_gate check_edge_status || die "check_edge_status failed after restoration: ${_NEG_GATE_OUT}"
     log "check_edge_status negative test passed"
 }
+test_legacy_archive() {  # A stray file in the store must fail; tools/test_drift-checks.py TestLegacyArchive plants the rest.
+    local p="${ROOT}/.archive/hooks/neg-probe"; mkdir -p "${p%/*}"; : > "$p"; _neg_gate check_legacy_archive && { rm -f "$p"; die "check_legacy_archive passed with a stray file in .archive"; }; rm -f "$p"; rmdir "${p%/*}" 2>/dev/null || :; _neg_gate check_legacy_archive || die "check_legacy_archive failed after restoration: $_NEG_GATE_OUT"; }
 
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
@@ -5930,6 +5932,7 @@ _run_test test_leaked_fixtures
     _run_test test_artifact_prompt
     _run_test test_ai_artifacts
     _run_test test_rust_categories
+    _run_test test_legacy_archive
     if (( ${#_FAILED[@]} )); then
         echo -e "[1;31m[drift-gate-negatives][0m ${#_FAILED[@]} test(s) failed:" >&2
         printf '  %s

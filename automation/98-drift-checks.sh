@@ -3845,6 +3845,7 @@ main() {
     check_docs_ratchet
     check_header_integrity
     check_legibility_ratchet
+    check_legacy_archive
     check_docs_ratchet_monotone
     check_comment_lex_equivalence
     check_no_generated_prose_in_resolvers
@@ -4759,6 +4760,9 @@ check_legibility_ratchet() {
     fi
     echo "[98-drift-checks]   legibility floors holding"
 }
+
+# --- the legacy archive holds every dropped file at its last content and mode ---
+check_legacy_archive() { _run_py_check check_legacy_archive "tools/drift-checks.py legacy-archive"; }
 
 check_header_integrity() {
     echo "[98-drift-checks] no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1"

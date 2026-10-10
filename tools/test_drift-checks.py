@@ -822,5 +822,194 @@ class TestFileBudgetFailsClosed(unittest.TestCase):
                 self.assertIn(expect, r.stdout)
 
 
+def _native(name):
+    """The mios-gen this tree builds (the newest of release and debug), else the installed one."""
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        path = os.path.join(catalog, name + exe)
+        return path if os.path.isfile(path) else None
+    built = [p for p in (os.path.join(_ROOT, "tools/native/target", t, name + exe)
+                         for t in ("release", "debug")) if os.path.isfile(p)]
+    if built:
+        return max(built, key=os.path.getmtime)
+    return next((p for p in ("/usr/libexec/mios/" + name, "/usr/bin/" + name) if os.path.isfile(p)), None)
+
+
+def _rmtree(path):
+    """Git writes packs read-only, which Windows refuses to delete."""
+    import stat
+    for top, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                os.chmod(os.path.join(top, name), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+_ARCHIVE_TOML = """[legibility.archive]
+path = ".archive"
+ref = "legacy"
+object_format = "sha256"
+since = "%s"
+author = "fixture <fixture@example.invalid>"
+exclude = []
+"""
+
+
+class TestLegacyArchive(unittest.TestCase):
+    """ADR-0030 Decision 7, planted both ways: every defect fails, the untouched archive passes.
+
+    The fixture: since = the base commit, then gone.txt is deleted and tool.sh (100755) edited,
+    then tool.sh is deleted, then `mios-gen archive` builds .archive and it is committed."""
+
+    def setUp(self):
+        gen = _native("mios-gen")
+        if not gen:
+            self.fail("mios-gen is not built, so the legacy archive cannot be exercised -- "
+                      "build it: cd tools/native && cargo build -p mios-gen")
+        self.gen = gen
+        home = tempfile.mkdtemp(prefix="archive-home-")
+        self.addCleanup(_rmtree, home)
+        config = os.path.join(home, "gitconfig")
+        with open(config, "w") as fh:
+            fh.write("")
+        # Hermetic git: no operator config (autocrlf, signing, hooks) reaches the fixture or the tool.
+        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": config, "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+                    "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+                    "GIT_CEILING_DIRECTORIES": os.path.dirname(home),
+                    "MIOS_NATIVE_BIN_DIR": os.path.dirname(gen)}
+
+    def _git(self, d, *args, git_dir=None, stdin=None, env=None):
+        where = ["--git-dir", git_dir] if git_dir else ["-C", d]
+        return subprocess.run(["git", *where, *args], env=env or self.env, input=stdin,
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    def _write(self, d, rel, text):
+        path = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        if rel.endswith(".sh"):
+            os.chmod(path, 0o755)
+
+    def _repo(self):
+        d = tempfile.mkdtemp(prefix="archive-")
+        self.addCleanup(_rmtree, d)
+        self._git(d, "init", "-q")
+        self._write(d, "keep.txt", "kept\n")
+        self._write(d, "gone.txt", "dropped at its base content\n")
+        self._write(d, "tool.sh", "#!/bin/sh\necho one\n")
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % "0")
+        self._git(d, "add", "keep.txt", "gone.txt", "tool.sh", "usr/share/mios/mios.toml")
+        self._git(d, "update-index", "--chmod=+x", "tool.sh")
+        self._git(d, "commit", "-q", "-m", "base")
+        since = self._git(d, "rev-parse", "HEAD")
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % since)
+        self._write(d, "tool.sh", "#!/bin/sh\necho two\n")
+        self._git(d, "add", "usr/share/mios/mios.toml", "tool.sh")
+        self._git(d, "update-index", "--chmod=+x", "tool.sh")  # where core.filemode is off (Windows)
+        self._git(d, "rm", "-q", "gone.txt")
+        self._git(d, "commit", "-q", "-m", "drop gone.txt, edit tool.sh")
+        self._git(d, "rm", "-q", "tool.sh")
+        self._git(d, "commit", "-q", "-m", "drop tool.sh")
+        built = subprocess.run([self.gen, "archive", "--root", d], env=self.env, capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stdout + built.stderr)
+        self._git(d, "add", "--all", "--", ".archive")
+        self._git(d, "commit", "-q", "-m", "archive")
+        return d
+
+    def _check(self, d):
+        return subprocess.run([sys.executable, _MOD_PATH, "legacy-archive"], capture_output=True,
+                              text=True, env={**self.env, "MIOS_DRIFT_ROOT": d})
+
+    def _fails(self, d, expect, code=1):
+        r = self._check(d)
+        self.assertEqual(code, r.returncode, "a planted defect passed:\n" + r.stdout + r.stderr)
+        self.assertIn(expect, r.stdout)
+
+    def _plant(self, d, path, content, mode="100644"):
+        """Rewrite the branch with `path` set to `content`, repack, and commit the store, so the
+        planted entry is the only defect: no loose object, index or unstaged pack is left."""
+        store = os.path.join(d, ".archive")
+        scratch = tempfile.mkdtemp(prefix="archive-plant-")
+        self.addCleanup(_rmtree, scratch)
+        env = {**self.env, "GIT_INDEX_FILE": os.path.join(scratch, "index")}
+        g = lambda *a, stdin=None: self._git(d, *a, git_dir=store, stdin=stdin, env=env)
+        g("read-tree", "legacy")
+        oid = g("hash-object", "-w", "--stdin", stdin=content.encode())
+        g("update-index", "--add", "--cacheinfo", "%s,%s,%s" % (mode, oid, path))
+        g("update-ref", "refs/heads/legacy", g("commit-tree", g("write-tree"), "-m", "planted"))
+        g("-c", "repack.writeBitmaps=false", "-c", "pack.writeReverseIndex=false",
+          "repack", "-a", "-d", "-q", "-n")
+        g("prune-packed")
+        self._git(d, "add", "--all", "--", ".archive")
+        self._git(d, "commit", "-q", "-m", "plant %s" % path)
+
+    def test_an_unmodified_archive_passes(self):
+        d = self._repo()
+        r = self._check(d)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("holds every dropped file: 2 dropped paths", r.stdout)
+        rebuilt = subprocess.run([self.gen, "archive", "--root", d], env=self.env, capture_output=True, text=True)
+        self.assertEqual(0, rebuilt.returncode, rebuilt.stdout + rebuilt.stderr)
+        self.assertIn("is already current", rebuilt.stdout)
+        self.assertEqual("", self._git(d, "status", "--porcelain"))
+        # The archive restores the last version, mode included.
+        out = tempfile.mkdtemp(prefix="archive-restore-")
+        self.addCleanup(_rmtree, out)
+        self._git(d, "--work-tree", out, "restore", "--source=legacy", "--", "tool.sh", "gone.txt",
+                  git_dir=os.path.join(d, ".archive"))
+        with open(os.path.join(out, "tool.sh"), encoding="utf-8", newline="") as fh:
+            self.assertEqual("#!/bin/sh\necho two\n", fh.read())
+        with open(os.path.join(out, "gone.txt"), encoding="utf-8", newline="") as fh:
+            self.assertEqual("dropped at its base content\n", fh.read())
+        self.assertIn("100755", self._git(d, "ls-tree", "legacy", "tool.sh", git_dir=os.path.join(d, ".archive")))
+
+    def test_a_dropped_file_missing_from_the_archive_fails(self):
+        d = self._repo()
+        self._git(d, "rm", "-q", "keep.txt")
+        self._git(d, "commit", "-q", "-m", "drop keep.txt without re-archiving")
+        self._fails(d, "missing: keep.txt")
+
+    def test_an_extra_path_fails(self):
+        d = self._repo()
+        self._plant(d, "planted.txt", "never tracked\n")
+        self._fails(d, "extra: planted.txt")
+
+    def test_changed_content_or_mode_fails(self):
+        d = self._repo()
+        self._plant(d, "gone.txt", "not its last content\n")
+        self._fails(d, "content differs: gone.txt")
+        self._plant(d, "tool.sh", "#!/bin/sh\necho two\n", mode="100644")
+        self._fails(d, "mode differs: tool.sh")
+
+    def test_a_shallow_clone_fails(self):
+        d = self._repo()
+        shallow = tempfile.mkdtemp(prefix="archive-shallow-")
+        self.addCleanup(_rmtree, shallow)
+        url = "file:///" + d.replace(os.sep, "/").lstrip("/")
+        subprocess.run(["git", "clone", "-q", "--depth", "1", url, shallow], env=self.env,
+                       capture_output=True, check=True)
+        self._fails(shallow, "full history required (fetch-depth: 0)")
+
+    def test_a_stray_hook_or_loose_object_fails(self):
+        d = self._repo()
+        self._write(d, ".archive/hooks/pre-commit", "#!/bin/sh\n")
+        self._fails(d, ".archive/hooks/pre-commit is outside the allowed set")
+        os.remove(os.path.join(d, ".archive/hooks/pre-commit"))
+        self.assertEqual(0, self._check(d).returncode)
+        self._git(d, "hash-object", "-w", "--stdin", git_dir=os.path.join(d, ".archive"), stdin=b"loose\n")
+        self._fails(d, "is outside the allowed set")
+
+    def test_outside_a_checkout_it_cannot_run(self):
+        d = tempfile.mkdtemp(prefix="archive-nogit-")
+        self.addCleanup(_rmtree, d)
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % "0")
+        self._fails(d, "cannot_run", code=2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

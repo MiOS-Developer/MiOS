@@ -369,6 +369,44 @@ def check_legibility_ratchet() -> int:
     print("\n".join(viol))
     sys.exit(1 if viol else 0)
 
+def check_legacy_archive() -> int:
+    """ADR-0030 Decision 7: `mios-gen archive --check` compares .archive with the dropped set;
+    its cannot-run exit (2) stays a failure."""
+    import subprocess
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    if os.environ.get("CTX") or root.rstrip("/") == "/tmp/build":
+        # Gates are out of the bake; the drift-gate job runs this on full history.
+        print("legacy archive: SKIPPED in-image OCI build (the drift-gate job enforces it on full history)")
+        return 0
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        gen = os.path.join(catalog, "mios-gen" + exe)
+        if not os.path.isfile(gen) or not os.access(gen, os.X_OK):
+            print("configured mios-gen is missing or not executable: %s" % gen)
+            return 1
+    else:
+        found = [c for c in [os.path.join(root, "tools/native/target", p, "mios-gen" + exe)
+                             for p in ("release", "debug")]
+                 + ["/usr/libexec/mios/mios-gen", "/usr/bin/mios-gen"] if os.path.isfile(c)]
+        if not found:
+            print("mios-gen is not built, so the legacy archive was never compared -- "
+                  "build it: cd tools/native && cargo build -p mios-gen")
+            return 1
+        gen = found[0]
+    try:
+        proc = subprocess.run([gen, "archive", "--check", "--root", root],
+                              capture_output=True, text=True)
+    except OSError as exc:
+        print("%s archive --check could not run: %s" % (gen, exc))
+        return 1
+    out = "\n".join(s for s in (proc.stdout.strip(), proc.stderr.strip()) if s)
+    if proc.returncode == 0 and out:
+        print(out)
+        return 0
+    print(out or "%s archive --check exited %d with no output" % (gen, proc.returncode))
+    return proc.returncode if proc.returncode in (1, 2) else 1
+
 def _value_sources(root: str):
     """(name -> declaring SSOT key path, None) from `mios-resolver --emit=names`,
     run sealed like mios-env-snapshot; else (None, why)."""
@@ -4657,6 +4695,7 @@ _SUBCOMMAND_NAMES = (
     "globals-image-parity", "bake-plan-integrity", "negative-test-coverage",
     "structured", "drift-build-catalog", "drift-projection", "unwired-modules",
     "no-duplicate-value-key", "resolver-differential-parity", "legibility-ratchet",
+    "legacy-archive",
     "header-integrity", "rbac-tiers", "ai-manifest", "capability-manifest",
     "surface-parity", "container-ports", "agent-pipe-budgets", "verb-backends",
     "dag-integrity",
