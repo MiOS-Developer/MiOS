@@ -384,6 +384,10 @@ fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
+// ADR-0029 coordinator succession. The lease, status files and journal live
+// beside the relay registry; identities are relay registrations, and every
+// number comes from [mcp.agents.succession].
+
 fn format_iso(secs: u64) -> String {
     let s = secs % 60;
     let m = (secs / 60) % 60;
@@ -407,32 +411,96 @@ fn format_iso(secs: u64) -> String {
     )
 }
 
+/// ISO-8601 / RFC 3339 to Unix seconds. `Z`, `+HH:MM`, `-HHMM`, `+HH` and
+/// fractional seconds are honoured; a missing offset is UTC, as probe.ps1
+/// parses with AssumeUniversal.
 fn parse_iso(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.len() < 19 {
+    let b = s.as_bytes();
+    if b.len() < 19
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || !matches!(b[10], b'T' | b't' | b' ')
+        || b[13] != b':'
+        || b[16] != b':'
+    {
         return None;
     }
-    let year: u64 = s[0..4].parse().ok()?;
-    let month: u64 = s[5..7].parse().ok()?;
-    let day: u64 = s[8..10].parse().ok()?;
-    let hour: u64 = s[11..13].parse().ok()?;
-    let min: u64 = s[14..16].parse().ok()?;
-    let sec: u64 = s[17..19].parse().ok()?;
+    let digits = |range: std::ops::Range<usize>| -> Option<i64> {
+        if b[range.clone()].iter().all(u8::is_ascii_digit) {
+            s[range].parse().ok()
+        } else {
+            None
+        }
+    };
+    let (year, month, day) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
+    let (hour, min, sec) = (digits(11..13)?, digits(14..16)?, digits(17..19)?);
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
         return None;
     }
-    let y = if month <= 2 {
-        year.checked_sub(1)?
-    } else {
-        year
+    let mut rest = &s[19..];
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let n = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if n == 0 {
+            return None;
+        }
+        rest = &fraction[n..];
+    }
+    let offset = match rest {
+        "" | "Z" | "z" => 0,
+        _ => {
+            let r = rest.as_bytes();
+            let sign = match r[0] {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let (h, m): (&[u8], &[u8]) = match r.len() {
+                3 => (&r[1..3], &b"00"[..]),
+                5 => (&r[1..3], &r[3..5]),
+                6 if r[3] == b':' => (&r[1..3], &r[4..6]),
+                _ => return None,
+            };
+            if !h.iter().chain(m).all(u8::is_ascii_digit) {
+                return None;
+            }
+            let h = i64::from(h[0] - b'0') * 10 + i64::from(h[1] - b'0');
+            let m = i64::from(m[0] - b'0') * 10 + i64::from(m[1] - b'0');
+            if h > 23 || m > 59 {
+                return None;
+            }
+            sign * (h * 3600 + m * 60)
+        }
     };
-    let era = y / 400;
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
     let yoe = y - era * 400;
-    let m = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * m + 2) / 5 + day - 1;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = (era * 146097 + doe).checked_sub(719468)?;
-    Some(days * 86400 + hour * 3600 + min * 60 + sec)
+    let days = era * 146097 + doe - 719468;
+    u64::try_from(days * 86400 + hour * 3600 + min * 60 + sec - offset).ok()
+}
+
+/// A Unix time as Claude Code records `resetsAt`: an integer, a float or a
+/// numeric string. Zero or negative means "no reset time".
+fn epoch_seconds(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|f| f.is_finite() && *f > 0.0)
+                .map(|f| f as u64)
+        })
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .filter(|f| f.is_finite() && *f > 0.0)
+                .map(|f| f as u64)
+        })
+        .filter(|t| *t > 0)
 }
 
 fn resolve_host_path(path_str: &str) -> PathBuf {
@@ -449,6 +517,127 @@ fn resolve_host_path(path_str: &str) -> PathBuf {
         }
     }
     PathBuf::from(path_str)
+}
+
+/// `[mcp.agents.succession]`: every number and name the coordinator lease uses.
+struct Succession {
+    lease_duration_s: u64,
+    renew_interval_s: u64,
+    probe_interval_s: u64,
+    retry_probe_s: u64,
+    min_outage_s: u64,
+    tail_lines: usize,
+    preferred_holder: String,
+    successors: Vec<String>,
+}
+
+fn succession_config(request: &Value) -> Result<Succession, String> {
+    let cfg = &request["config"]["succession"];
+    let invalid = |key: &str| format!("invalid [mcp.agents.succession].{key}");
+    let number = |key: &str| {
+        cfg[key]
+            .as_u64()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| invalid(key))
+    };
+    let name = |value: &Value, key: &str| -> Result<String, String> {
+        let id = value.as_str().ok_or_else(|| invalid(key))?;
+        path_identity(id).map_err(|_| invalid(key))?;
+        Ok(id.to_string())
+    };
+    let s = Succession {
+        lease_duration_s: number("lease_duration_s")?,
+        renew_interval_s: number("renew_interval_s")?,
+        probe_interval_s: number("probe_interval_s")?,
+        retry_probe_s: number("retry_probe_s")?,
+        min_outage_s: number("min_outage_s")?,
+        tail_lines: number("tail_lines")? as usize,
+        preferred_holder: name(&cfg["preferred_holder"], "preferred_holder")?,
+        successors: cfg["successors"]
+            .as_array()
+            .ok_or_else(|| invalid("successors"))?
+            .iter()
+            .map(|v| name(v, "successors"))
+            .collect::<Result<_, _>>()?,
+    };
+    // client-go leader election: leaseDuration > renewDeadline > retryPeriod x 1.2.
+    if s.lease_duration_s <= s.renew_interval_s
+        || s.renew_interval_s.saturating_mul(5) <= s.probe_interval_s.saturating_mul(6)
+    {
+        return Err("[mcp.agents.succession] must keep lease_duration_s > renew_interval_s > 1.2 x probe_interval_s".into());
+    }
+    Ok(s)
+}
+
+/// An identity that names a file beneath the relay state directory: the relay
+/// identifier alphabet, an alphanumeric first byte, and never `..`.
+fn path_identity(value: &str) -> Result<(), String> {
+    identifier(value)?;
+    if !value.as_bytes()[0].is_ascii_alphanumeric() || value.contains("..") {
+        return Err("invalid agent identity".into());
+    }
+    Ok(())
+}
+
+/// Resolve `name` beneath the state directory and confirm it stays there.
+fn contained(directory: &Path, name: &str) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(directory).map_err(|e| e.to_string())?;
+    let path = root.join(name);
+    if path.parent() != Some(root.as_path()) || path.is_symlink() {
+        return Err("path escapes the agent state directory".into());
+    }
+    Ok(path)
+}
+
+fn status_path(directory: &Path, agent_id: &str) -> Result<PathBuf, String> {
+    path_identity(agent_id)?;
+    contained(directory, &format!("{agent_id}.status.json"))
+}
+
+/// Read a JSON object written by this relay or by Windows PowerShell 5.1,
+/// which prefixes UTF-8 with a byte-order mark.
+fn read_json(path: &Path) -> Result<Option<Value>, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+    let value: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if !value.is_object() {
+        return Err(format!("{} is not a JSON object", path.display()));
+    }
+    Ok(Some(value))
+}
+
+/// The last `count` lines of a transcript, read backwards from its end: a
+/// long session's head is never loaded or decoded.
+fn read_tail(path: &Path, count: usize) -> Result<Vec<String>, String> {
+    use std::io::{Seek, SeekFrom};
+    const BLOCK: u64 = 64 * 1024;
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut start = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut newlines = 0;
+    while start > 0 && newlines <= count {
+        let from = start.saturating_sub(BLOCK);
+        let mut chunk = vec![0; (start - from) as usize];
+        file.seek(SeekFrom::Start(from))
+            .map_err(|e| e.to_string())?;
+        file.read_exact(&mut chunk).map_err(|e| e.to_string())?;
+        newlines += chunk.iter().filter(|b| **b == b'\n').count();
+        chunk.extend_from_slice(&buffer);
+        buffer = chunk;
+        start = from;
+    }
+    let text = String::from_utf8_lossy(&buffer);
+    let mut lines: Vec<&str> = text.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0); // a partial line at the block boundary
+    }
+    let skip = lines.len().saturating_sub(count);
+    Ok(lines[skip..].iter().map(|l| l.to_string()).collect())
 }
 
 fn save_json_file(path: &Path, value: &Value) -> Result<(), String> {
@@ -472,8 +661,9 @@ fn save_json_file(path: &Path, value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn journal(dir: &Path, event_type: &str, fields: Value, now: u64) {
-    let journal_path = dir.join("journal.jsonl");
+/// Append one `agent.event` to the private journal. Callers pass only public
+/// fields; a relay token is never among them.
+fn journal(directory: &Path, event_type: &str, fields: Value, now: u64) -> Result<(), String> {
     let mut rec = json!({
         "object": "agent.event",
         "type": event_type,
@@ -484,621 +674,512 @@ fn journal(dir: &Path, event_type: &str, fields: Value, now: u64) {
             rec[k] = v;
         }
     }
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(journal_path)
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
     {
-        if let Ok(line) = serde_json::to_string(&rec) {
-            let _ = writeln!(file, "{line}");
-        }
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(contained(directory, "journal.jsonl")?)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{rec}").map_err(|e| e.to_string())
+}
+
+/// Lease identity is relay registration: the caller proves `agent_id` with the
+/// token it registered. Only the token's digest is ever stored.
+fn authenticate<'a>(state: &Value, request: &'a Value) -> Result<&'a str, String> {
+    let id = string(request, "agent_id")?;
+    path_identity(id)?;
+    let token = string(request, "token")?;
+    if token.len() < 32 || token.len() > 256 {
+        return Err("invalid agent lease token".into());
+    }
+    let agent = &state["agents"][id];
+    if agent["token_hash"].as_str() != Some(digest(token).as_str()) || agent["closed"] == true {
+        return Err("refused: agent_id and token do not match a live relay registration".into());
+    }
+    Ok(id)
+}
+
+/// An optional caller string, bounded by `[mcp.agents].max_message_bytes`.
+fn bounded<'a>(request: &'a Value, field: &str) -> Result<Option<&'a str>, String> {
+    let max = request["config"]["max_message_bytes"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or("invalid [mcp.agents].max_message_bytes")?;
+    match request.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if s.len() as u64 <= max => Ok(Some(s)),
+        Some(_) => Err(format!("invalid or oversized {field}")),
     }
 }
 
-fn handle_lease(
-    dir: &Path,
-    state: &mut Value,
+fn load_lease(directory: &Path, s: &Succession) -> Result<Value, String> {
+    Ok(match read_json(&contained(directory, "lease.json")?)? {
+        Some(lease) => lease,
+        // A fresh install: the SSOT names the identities and nobody holds the
+        // lease yet. The first eligible caller's acquire persists it.
+        None => json!({
+            "object": "agent.lease",
+            "holder_identity": Value::Null,
+            "state": "released",
+            "handoff_to": Value::Null,
+            "lease_duration_seconds": s.lease_duration_s,
+            "acquire_time": Value::Null,
+            "renew_time": Value::Null,
+            "lease_transitions": 0,
+            "preferred_holder": s.preferred_holder,
+            "successors": s.successors,
+        }),
+    })
+}
+
+/// Identities a persisted lease names. Registration cleanup must not free
+/// them for another token to claim.
+fn lease_identities(directory: &Path) -> Result<Vec<String>, String> {
+    let Some(lease) = read_json(&contained(directory, "lease.json")?)? else {
+        return Ok(Vec::new());
+    };
+    let mut ids: Vec<String> = ["holder_identity", "preferred_holder", "handoff_to"]
+        .iter()
+        .filter_map(|k| lease[*k].as_str().map(str::to_owned))
+        .collect();
+    ids.extend(
+        lease["successors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned),
+    );
+    Ok(ids)
+}
+
+fn require_holder(lease: &Value, caller: &str) -> Result<(), String> {
+    match lease["holder_identity"].as_str() {
+        Some(holder) if holder == caller => Ok(()),
+        Some(holder) => Err(format!("refused: {holder} holds the lease, not {caller}")),
+        None => Err("refused: nobody holds the lease".into()),
+    }
+}
+
+/// The caller's own status with `updated_at`, `state` and `note` applied and
+/// validated, not yet written. Lease changes refresh it so the probe always
+/// has activity evidence.
+fn status_update(
+    directory: &Path,
+    agent_id: &str,
     request: &Value,
-    subaction: &str,
+    t: &str,
+) -> Result<(PathBuf, Value), String> {
+    let path = status_path(directory, agent_id)?;
+    let mut st = read_json(&path)?
+        .unwrap_or_else(|| json!({"object": "agent.status", "agent_id": agent_id}));
+    st["updated_at"] = json!(t);
+    if let Some(v) = request.get("state") {
+        let v = v.as_str().ok_or("invalid state")?;
+        identifier(v)?;
+        st["state"] = json!(v);
+    }
+    if let Some(v) = bounded(request, "note")? {
+        st["note"] = json!(v);
+    }
+    Ok((path, st))
+}
+
+fn handle_lease(
+    directory: &Path,
+    state: &Value,
+    request: &Value,
     now: u64,
 ) -> Result<Value, String> {
-    let lease_path = dir.join("lease.json");
-    let lease: Option<Value> = if lease_path.exists() {
-        fs::read_to_string(&lease_path)
-            .ok()
-            .and_then(|content| serde_json::from_str(&content).ok())
-    } else if state
-        .get("coordinator_lease")
-        .is_some_and(|l| l.is_object())
-    {
-        Some(state["coordinator_lease"].clone())
-    } else {
-        None
-    };
-
+    let s = succession_config(request)?;
+    let subaction = request["subaction"].as_str().unwrap_or("get");
+    let mut lease = load_lease(directory, &s)?;
+    if subaction == "get" {
+        return Ok(lease);
+    }
+    let caller = authenticate(state, request)?;
+    let note = bounded(request, "note")?;
+    let t = format_iso(now);
+    let path = contained(directory, "lease.json")?;
     match subaction {
-        "get" | "show" => {
-            let l =
-                lease.ok_or("lease.json is missing; ask the operator, do not invent a lease")?;
-            Ok(l)
-        }
-        "renew" => {
-            let mut l = lease.ok_or("refused: lease.json is missing")?;
-            let caller = request["me"]
-                .as_str()
-                .or_else(|| request["holder"].as_str())
-                .or_else(|| request["agent_id"].as_str())
-                .or_else(|| request["holder_identity"].as_str())
-                .ok_or("missing caller identity ('me' or 'agent_id')")?;
-            let current_holder = l["holder_identity"].as_str().unwrap_or("");
-            if current_holder != caller {
-                return Err(format!(
-                    "refused: {current_holder} holds the lease, not {caller}"
-                ));
-            }
-            let t = format_iso(now);
-            l["renew_time"] = json!(t);
-            l["state"] = json!("held");
-
-            save_json_file(&lease_path, &l)?;
-            state["coordinator_lease"] = l.clone();
-
-            let status_path = dir.join(format!("{caller}.status.json"));
-            let mut st: Value = if status_path.exists() {
-                fs::read_to_string(&status_path)
-                    .ok()
-                    .and_then(|c| serde_json::from_str(&c).ok())
-                    .unwrap_or_else(|| json!({"object":"agent.status","agent_id":caller}))
-            } else {
-                json!({"object":"agent.status","agent_id":caller})
-            };
-            st["updated_at"] = json!(t);
-            if let Some(s) = request["state"].as_str() {
-                st["state"] = json!(s);
-            }
-            if let Some(n) = request["note"].as_str() {
-                st["note"] = json!(n);
-            }
-            if request.get("five_hour").is_some() || request.get("weekly").is_some() {
-                if !st["usage"].is_object() {
-                    st["usage"] = json!({});
-                }
-                if let Some(fh) = request["five_hour"].as_i64() {
-                    st["usage"]["five_hour"] = json!({
-                        "percent_used": fh,
-                        "resets_at": request["five_hour_resets"].as_str().unwrap_or("")
-                    });
-                }
-                if let Some(wk) = request["weekly"].as_i64() {
-                    st["usage"]["weekly"] = json!({
-                        "percent_used": wk,
-                        "resets_at": request["weekly_resets"].as_str().unwrap_or("")
-                    });
-                }
-                st["usage"]["read_at"] = json!(t);
-            }
-            save_json_file(&status_path, &st)?;
-
-            journal(
-                dir,
-                "lease.renewed",
-                json!({"agent_id": caller, "state": st.get("state"), "note": request.get("note")}),
-                now,
-            );
-            Ok(json!({"ok": true, "renewed": t, "lease": l}))
-        }
-        "release" => {
-            let mut l = lease.ok_or("refused: lease.json is missing")?;
-            let caller = request["me"]
-                .as_str()
-                .or_else(|| request["holder"].as_str())
-                .or_else(|| request["agent_id"].as_str())
-                .or_else(|| request["holder_identity"].as_str())
-                .ok_or("missing caller identity ('me' or 'agent_id')")?;
-            let current_holder = l["holder_identity"].as_str().unwrap_or("");
-            if current_holder != caller {
-                return Err(format!(
-                    "refused: {current_holder} holds the lease, not {caller}"
-                ));
-            }
-            let to = request["to"]
-                .as_str()
-                .or_else(|| request["handoff_to"].as_str());
-            let t = format_iso(now);
-            l["state"] = json!("released");
-            l["handoff_to"] = if let Some(target) = to {
-                json!(target)
-            } else {
-                Value::Null
-            };
-            l["renew_time"] = json!(t);
-
-            save_json_file(&lease_path, &l)?;
-            state["coordinator_lease"] = l.clone();
-
-            journal(
-                dir,
-                "lease.released",
-                json!({"agent_id": caller, "handoff_to": to, "note": request.get("note")}),
-                now,
-            );
-            Ok(json!({"ok": true, "released_to": to, "lease": l}))
-        }
         "acquire" => {
-            let mut l = lease
-                .ok_or("refused: lease.json is missing; ask the operator, do not invent a lease")?;
-            let caller = request["me"]
-                .as_str()
-                .or_else(|| request["holder"].as_str())
-                .or_else(|| request["agent_id"].as_str())
-                .or_else(|| request["holder_identity"].as_str())
-                .ok_or("missing caller identity ('me' or 'agent_id')")?;
-            let verdict = request["verdict"]
-                .as_str()
-                .ok_or("missing takeover verdict")?;
-
-            if l["holder_identity"].as_str() == Some(caller) {
-                return Err("refused: already held by you".into());
+            // The relay probes; a caller's own verdict is never read.
+            let probe = evaluate_probe(directory, &lease, caller, &s, now)?;
+            if probe["take_over"] != true {
+                return Err(format!(
+                    "refused: the relay's probe says {} ({})",
+                    probe["verdict"].as_str().unwrap_or("unknown"),
+                    probe["reason"].as_str().unwrap_or("")
+                ));
             }
-
-            let is_successor = l["successors"]
-                .as_array()
-                .map(|arr| arr.iter().any(|v| v.as_str() == Some(caller)))
-                .unwrap_or(false);
-            let is_preferred = l["preferred_holder"].as_str() == Some(caller);
-            if !is_successor && !is_preferred {
-                return Err(format!("refused: {caller} is not a successor"));
-            }
-
-            const TAKEOVER_VERDICTS: &[&str] = &["released", "exhausted", "silent"];
-            if !TAKEOVER_VERDICTS.contains(&verdict) {
-                return Err(
-                    "refused: verdict must be one of [\"exhausted\", \"released\", \"silent\"] from probe.ps1".to_string(),
-                );
-            }
-
-            if verdict == "released" && l["state"].as_str() != Some("released") {
-                return Err("refused: acquire on valid unreleased lease".into());
-            }
-
-            if l["state"].as_str() == Some("released") {
-                if let Some(handoff_to) = l["handoff_to"].as_str() {
-                    if !handoff_to.is_empty() && handoff_to != caller {
-                        return Err(format!("refused: released to {handoff_to}"));
-                    }
-                }
-            }
-
-            let prev = l["holder_identity"].as_str().unwrap_or("").to_string();
-            let t = format_iso(now);
-            l["holder_identity"] = json!(caller);
-            l["state"] = json!("held");
-            l["acquire_time"] = json!(t);
-            l["renew_time"] = json!(t);
-            let transitions = l["lease_transitions"].as_u64().unwrap_or(0) + 1;
-            l["lease_transitions"] = json!(transitions);
-            l["handoff_to"] = Value::Null;
-
-            let mut new_successors = vec![json!(prev)];
-            if let Some(arr) = l["successors"].as_array() {
-                for s in arr {
-                    if let Some(s_str) = s.as_str() {
-                        if s_str != prev && s_str != caller {
-                            new_successors.push(json!(s_str));
-                        }
-                    }
-                }
-            }
-            l["successors"] = json!(new_successors);
-
-            save_json_file(&lease_path, &l)?;
-            state["coordinator_lease"] = l.clone();
-
+            let prev = lease["holder_identity"].as_str().unwrap_or("").to_string();
+            let transitions = lease["lease_transitions"].as_u64().unwrap_or(0) + 1;
+            // The previous holder becomes the first successor.
+            let successors: Vec<Value> = std::iter::once(prev.as_str())
+                .filter(|p| !p.is_empty())
+                .chain(
+                    lease["successors"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .filter(|x| *x != prev && *x != caller),
+                )
+                .map(|x| json!(x))
+                .collect();
+            lease["object"] = json!("agent.lease");
+            lease["holder_identity"] = json!(caller);
+            lease["state"] = json!("held");
+            lease["acquire_time"] = json!(t);
+            lease["renew_time"] = json!(t);
+            lease["lease_transitions"] = json!(transitions);
+            lease["handoff_to"] = Value::Null;
+            lease["successors"] = json!(successors);
+            let (status_file, st) = status_update(directory, caller, request, &t)?;
+            save_json_file(&path, &lease)?;
+            save_json_file(&status_file, &st)?;
             journal(
-                dir,
+                directory,
                 "lease.acquired",
-                json!({
-                    "agent_id": caller,
-                    "previous_holder": prev,
-                    "verdict": verdict,
-                    "note": request.get("note")
-                }),
+                json!({"agent_id": caller, "previous_holder": prev, "verdict": probe["verdict"], "note": note}),
                 now,
-            );
+            )?;
             Ok(json!({
-                "ok": true,
-                "acquired": caller,
-                "from": prev,
-                "verdict": verdict,
-                "transitions": transitions,
-                "lease": l
+                "ok": true, "acquired": caller, "from": prev, "verdict": probe["verdict"],
+                "transitions": transitions, "next_renew_s": s.renew_interval_s, "lease": lease
             }))
         }
-        _ => Err(format!("unknown lease subaction: {subaction}")),
+        "renew" => {
+            require_holder(&lease, caller)?;
+            lease["renew_time"] = json!(t);
+            lease["state"] = json!("held");
+            let (status_file, st) = status_update(directory, caller, request, &t)?;
+            save_json_file(&path, &lease)?;
+            save_json_file(&status_file, &st)?;
+            journal(
+                directory,
+                "lease.renewed",
+                json!({"agent_id": caller, "state": st.get("state"), "note": note}),
+                now,
+            )?;
+            Ok(
+                json!({"ok": true, "renewed": t, "next_renew_s": s.renew_interval_s, "lease": lease}),
+            )
+        }
+        "release" => {
+            require_holder(&lease, caller)?;
+            let to = bounded(request, "handoff_to")?;
+            if let Some(target) = to {
+                path_identity(target)?;
+                let listed = lease["successors"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(target)));
+                if !listed && lease["preferred_holder"].as_str() != Some(target) {
+                    return Err(format!(
+                        "refused: {target} is neither a successor nor the preferred holder"
+                    ));
+                }
+            }
+            lease["state"] = json!("released");
+            lease["handoff_to"] = json!(to);
+            lease["renew_time"] = json!(t);
+            save_json_file(&path, &lease)?;
+            journal(
+                directory,
+                "lease.released",
+                json!({"agent_id": caller, "handoff_to": to, "note": note}),
+                now,
+            )?;
+            Ok(json!({"ok": true, "released_to": to, "lease": lease}))
+        }
+        _ => Err(format!("unknown lease action: {subaction}")),
     }
 }
 
 fn handle_status(
-    dir: &Path,
-    _state: &mut Value,
+    directory: &Path,
+    state: &Value,
     request: &Value,
     now: u64,
 ) -> Result<Value, String> {
-    let agent_id = request["agent_id"]
-        .as_str()
-        .or_else(|| request["me"].as_str())
-        .ok_or("missing agent identity ('agent_id' or 'me')")?;
-    let status_path = dir.join(format!("{agent_id}.status.json"));
-
-    let is_get = request["subaction"].as_str() == Some("get")
-        || (request.get("state").is_none()
-            && request.get("note").is_none()
-            && request.get("transcript").is_none()
-            && request.get("usage").is_none()
-            && request.get("role").is_none());
-
-    if is_get {
-        if status_path.exists() {
-            let content = fs::read_to_string(&status_path).map_err(|e| e.to_string())?;
-            let st: Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-            return Ok(st);
-        } else {
-            return Ok(json!({
-                "object": "agent.status",
-                "agent_id": agent_id,
-                "state": "unknown"
-            }));
+    const FIELDS: &[&str] = &[
+        "state",
+        "note",
+        "transcript",
+        "activity_dirs",
+        "usage",
+        "role",
+        "kind",
+        "harness",
+        "handoff",
+    ];
+    let agent_id = string(request, "agent_id")?;
+    let path = status_path(directory, agent_id)?;
+    let publish = match request["subaction"].as_str() {
+        Some("publish") => true,
+        Some("get") => false,
+        None => FIELDS.iter().any(|f| request.get(*f).is_some()),
+        Some(other) => return Err(format!("unknown status action: {other}")),
+    };
+    if !publish {
+        return Ok(read_json(&path)?.unwrap_or_else(
+            || json!({"object": "agent.status", "agent_id": agent_id, "state": "unknown"}),
+        ));
+    }
+    // Status steers the probe (transcript, state), so only its owner writes it.
+    authenticate(state, request)?;
+    let t = format_iso(now);
+    let (path, mut st) = status_update(directory, agent_id, request, &t)?;
+    for key in ["role", "kind", "harness"] {
+        if let Some(v) = request[key].as_str() {
+            identifier(v)?;
+            st[key] = json!(v);
         }
     }
-
-    let mut st: Value = if status_path.exists() {
-        fs::read_to_string(&status_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-            .unwrap_or_else(|| json!({"object":"agent.status","agent_id":agent_id}))
-    } else {
-        json!({"object":"agent.status","agent_id":agent_id})
-    };
-
-    let t = format_iso(now);
-    st["updated_at"] = json!(t);
-    if let Some(v) = request["state"].as_str() {
-        st["state"] = json!(v);
-    }
-    if let Some(v) = request["note"].as_str() {
-        st["note"] = json!(v);
-    }
-    if let Some(v) = request["role"].as_str() {
-        st["role"] = json!(v);
-    }
-    if let Some(v) = request["kind"].as_str() {
-        st["kind"] = json!(v);
-    }
-    if let Some(v) = request["harness"].as_str() {
-        st["harness"] = json!(v);
-    }
-    if let Some(v) = request["transcript"].as_str() {
-        st["transcript"] = json!(v);
-    }
-    if let Some(v) = request["activity_dirs"].as_array() {
-        st["activity_dirs"] = json!(v);
-    }
-    if let Some(v) = request["usage"].as_object() {
-        st["usage"] = json!(v);
-    }
-    if let Some(v) = request["handoff"].as_str() {
+    if let Some(v) = bounded(request, "handoff")? {
         st["handoff"] = json!(v);
     }
-    if let Some(v) = request["relay_id"].as_str() {
-        st["relay_id"] = json!(v);
+    let absolute = |v: &Value| -> Result<String, String> {
+        let p = v.as_str().ok_or("activity paths must be strings")?;
+        if p.contains('\0') || !resolve_host_path(p).is_absolute() {
+            return Err("activity paths must be absolute".into());
+        }
+        Ok(p.to_string())
+    };
+    if let Some(v) = request.get("transcript") {
+        bounded(request, "transcript")?;
+        st["transcript"] = json!(absolute(v)?);
     }
-
-    save_json_file(&status_path, &st)?;
+    if let Some(v) = request.get("activity_dirs") {
+        let dirs = v.as_array().ok_or("activity_dirs must be an array")?;
+        st["activity_dirs"] = json!(dirs.iter().map(absolute).collect::<Result<Vec<_>, _>>()?);
+    }
+    if let Some(v) = request.get("usage") {
+        st["usage"] = json!(v.as_object().ok_or("usage must be an object")?);
+    }
+    save_json_file(&path, &st)?;
     Ok(st)
 }
 
-fn handle_probe(dir: &Path, request: &Value, now: u64) -> Result<Value, String> {
-    let lease_path = dir.join("lease.json");
-    let me = request["me"]
-        .as_str()
-        .or_else(|| request["agent_id"].as_str())
-        .unwrap_or("antigravity");
+fn handle_probe(directory: &Path, request: &Value, now: u64) -> Result<Value, String> {
+    let s = succession_config(request)?;
+    let me = string(request, "agent_id")?;
+    path_identity(me)?;
+    let lease = load_lease(directory, &s)?;
+    evaluate_probe(directory, &lease, me, &s, now)
+}
 
-    let tail_lines = request["tail_lines"]
+/// The ADR-0029 verdict for `me`, from the lease and the holder's own
+/// evidence. Read-only; the holder is read only from the lease.
+fn evaluate_probe(
+    directory: &Path,
+    lease: &Value,
+    me: &str,
+    s: &Succession,
+    now: u64,
+) -> Result<Value, String> {
+    let holder = match &lease["holder_identity"] {
+        Value::Null => None,
+        Value::String(h) if path_identity(h).is_ok() => Some(h.as_str()),
+        _ => return Err("invalid lease holder_identity".into()),
+    };
+    let duration = lease["lease_duration_seconds"]
         .as_u64()
-        .or_else(|| request["config"]["succession"]["tail_lines"].as_u64())
-        .unwrap_or(80) as usize;
-    let min_outage_s = request["min_outage_s"]
-        .as_i64()
-        .or_else(|| request["config"]["succession"]["min_outage_s"].as_i64())
-        .unwrap_or(900);
-
-    if !lease_path.exists() {
-        return Ok(json!({
-            "object": "agent.probe",
-            "probed_at": format_iso(now),
-            "me": me,
-            "holder": Value::Null,
-            "verdict": "no_lease",
-            "take_over": false,
-            "reason": "lease.json is missing; ask the operator, do not invent a lease",
-            "next_probe_s": 600
-        }));
-    }
-
-    let lease_content = fs::read_to_string(&lease_path).map_err(|e| e.to_string())?;
-    let lease: Value = serde_json::from_str(&lease_content).map_err(|e| e.to_string())?;
-
-    let holder = request["holder"]
-        .as_str()
-        .or_else(|| lease["holder_identity"].as_str())
-        .unwrap_or("")
-        .to_string();
-    let duration = request["lease_duration_s"]
-        .as_u64()
-        .or_else(|| request["config"]["succession"]["lease_duration_s"].as_u64())
-        .or_else(|| lease["lease_duration_seconds"].as_u64())
-        .unwrap_or(5400);
-
-    let may_take = lease["successors"]
+        .unwrap_or(s.lease_duration_s) as i64;
+    let released = lease["state"] == "released";
+    let listed = lease["successors"]
         .as_array()
-        .map(|arr| arr.iter().any(|v| v.as_str() == Some(me)))
-        .unwrap_or(false);
+        .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(me)));
+    // A listed successor takes over; the preferred holder takes a released
+    // lease back, never by seizure.
+    let may_take = listed || (released && lease["preferred_holder"].as_str() == Some(me));
+    let emit = |verdict: &str, take_over: bool, reason: String, next: u64, extra: Value| {
+        let mut o = json!({
+            "object": "agent.probe", "probed_at": format_iso(now), "me": me, "holder": holder,
+            "verdict": verdict, "take_over": take_over, "reason": reason, "next_probe_s": next
+        });
+        if let Value::Object(map) = extra {
+            for (k, v) in map {
+                o[k] = v;
+            }
+        }
+        Ok(o)
+    };
 
-    if holder == me {
-        return Ok(json!({
-            "object": "agent.probe",
-            "probed_at": format_iso(now),
-            "me": me,
-            "holder": holder,
-            "verdict": "held_by_me",
-            "take_over": false,
-            "reason": "you already hold the coordinator lease",
-            "next_probe_s": 600
-        }));
+    if holder == Some(me) {
+        return emit(
+            "held_by_me",
+            false,
+            "you already hold the coordinator lease".into(),
+            s.probe_interval_s,
+            json!({}),
+        );
     }
-
-    if lease["state"].as_str() == Some("released") {
-        let to = lease["handoff_to"].as_str().filter(|s| !s.is_empty());
-        let ok = may_take && (to.is_none() || to == Some(me));
+    if released {
+        let to = lease["handoff_to"].as_str().filter(|t| !t.is_empty());
+        let ok = may_take && to.is_none_or(|t| t == me);
         let reason = format!(
             "holder released the lease{}",
             to.map(|t| format!(" to {t}")).unwrap_or_default()
         );
-        return Ok(json!({
-            "object": "agent.probe",
-            "probed_at": format_iso(now),
-            "me": me,
-            "holder": holder,
-            "verdict": "released",
-            "take_over": ok,
-            "reason": reason,
-            "next_probe_s": 60
-        }));
+        return emit("released", ok, reason, s.retry_probe_s, json!({}));
     }
+    let holder = holder.ok_or("invalid lease: held without a holder_identity")?;
 
-    let status_path = dir.join(format!("{holder}.status.json"));
-    let status: Option<Value> = if status_path.exists() {
-        fs::read_to_string(&status_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-    } else {
-        None
-    };
-
-    let transcript_path_str = status
+    let status_file = status_path(directory, holder)?;
+    let status = read_json(&status_file)?;
+    let transcript = status
         .as_ref()
-        .and_then(|s| s["transcript"].as_str())
-        .map(str::to_string);
+        .and_then(|st| st["transcript"].as_str())
+        .map(resolve_host_path);
 
-    let mut paths_to_check: Vec<PathBuf> = Vec::new();
-    if let Some(ref t_str) = transcript_path_str {
-        let p = resolve_host_path(t_str);
-        if p.exists() {
-            paths_to_check.push(p);
-        }
+    // Newest activity across the transcript, the activity directories and the status file.
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Some(t) = transcript.as_ref().filter(|t| t.exists()) {
+        paths.push(t.clone());
     }
-    if let Some(ref st) = status {
-        if let Some(dirs) = st["activity_dirs"].as_array() {
-            for d in dirs {
-                if let Some(d_str) = d.as_str() {
-                    let dir_p = resolve_host_path(d_str);
-                    if dir_p.is_dir() {
-                        if let Ok(entries) = fs::read_dir(dir_p) {
-                            for entry in entries.flatten() {
-                                let ep = entry.path();
-                                if ep.is_file()
-                                    && ep.extension().and_then(|x| x.to_str()) == Some("jsonl")
-                                {
-                                    paths_to_check.push(ep);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if status_path.exists() {
-        paths_to_check.push(status_path.clone());
-    }
-
-    let mut newest_secs: Option<u64> = None;
-    for p in &paths_to_check {
-        if let Ok(meta) = fs::metadata(p) {
-            if let Ok(mtime) = meta.modified() {
-                if let Ok(dur) = mtime.duration_since(UNIX_EPOCH) {
-                    let secs = dur.as_secs();
-                    if newest_secs.is_none() || Some(secs) > newest_secs {
-                        newest_secs = Some(secs);
-                    }
-                }
-            }
-        }
-    }
-
-    let idle: Option<i64> = newest_secs.map(|s| now.saturating_sub(s) as i64);
-
-    let mut blocked: Option<Value> = None;
-    if let Some(ref t_str) = transcript_path_str {
-        let tp = resolve_host_path(t_str);
-        if tp.is_file() {
-            if let Ok(content) = fs::read_to_string(&tp) {
-                let lines: Vec<&str> = content.lines().collect();
-                let tail_start = lines.len().saturating_sub(tail_lines);
-                for line in lines[tail_start..].iter().rev() {
-                    let Ok(e) = serde_json::from_str::<Value>(line.trim()) else {
-                        continue;
-                    };
-                    if e["type"].as_str() != Some("assistant")
-                        || e["isSidechain"].as_bool() == Some(true)
-                    {
-                        continue;
-                    }
-                    if e["isApiErrorMessage"].as_bool() == Some(true) {
-                        let q = &e["quotaLimits"];
-                        let resets_at = q["resetsAt"].as_i64().map(|ts| format_iso(ts as u64));
-                        let text = e["message"]["content"]
-                            .as_array()
-                            .and_then(|arr| arr.iter().find(|item| item["type"] == "text"))
-                            .and_then(|item| item["text"].as_str())
-                            .map(|s| s.to_string());
-
-                        blocked = Some(json!({
-                            "error": e.get("error").cloned().unwrap_or(Value::Null),
-                            "api_error": e.get("apiError").cloned().unwrap_or(Value::Null),
-                            "http_status": e.get("apiErrorStatus").cloned().unwrap_or(Value::Null),
-                            "limit_type": q.get("rateLimitType").cloned().unwrap_or(Value::Null),
-                            "overage": q.get("overageDisabledReason").cloned().unwrap_or(Value::Null),
-                            "resets_at": resets_at.map(Value::String).unwrap_or(Value::Null),
-                            "at": e.get("timestamp").cloned().unwrap_or(Value::Null),
-                            "text": text.map(Value::String).unwrap_or(Value::Null),
-                        }));
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    if let Some(ref b) = blocked {
-        let wait = b["resets_at"]
-            .as_str()
-            .and_then(parse_iso)
-            .map(|resets| resets as i64 - now as i64);
-        if let Some(wait_s) = wait {
-            if wait_s > 0 && wait_s <= min_outage_s {
-                let next_probe = std::cmp::max(60, (wait_s + 60) as u64);
-                return Ok(json!({
-                    "object": "agent.probe",
-                    "probed_at": format_iso(now),
-                    "me": me,
-                    "holder": holder,
-                    "verdict": "exhausted_briefly",
-                    "take_over": false,
-                    "reason": format!("holder is rate-limited but resets in {wait_s} s; keep working as a worker"),
-                    "next_probe_s": next_probe,
-                    "blocked": b,
-                    "idle_s": idle
-                }));
-            }
-        }
-        let api_err = b["api_error"].as_str().unwrap_or("");
-        let limit_type = b["limit_type"].as_str().unwrap_or("");
-        return Ok(json!({
-            "object": "agent.probe",
-            "probed_at": format_iso(now),
-            "me": me,
-            "holder": holder,
-            "verdict": "exhausted",
-            "take_over": may_take,
-            "reason": format!("holder's latest turn is an API error ({api_err}; {limit_type})"),
-            "next_probe_s": 600,
-            "blocked": b,
-            "idle_s": idle
-        }));
-    }
-
-    let renew_secs = lease["renew_time"].as_str().and_then(parse_iso);
-    let lease_age = renew_secs.map(|r| now.saturating_sub(r) as i64);
-
-    if let Some(idle_s) = idle {
-        if idle_s as u64 > duration && (lease_age.is_none() || lease_age.unwrap() as u64 > duration)
-        {
-            let lease_age_str = lease_age.map(|a| a.to_string()).unwrap_or_default();
-            return Ok(json!({
-                "object": "agent.probe",
-                "probed_at": format_iso(now),
-                "me": me,
-                "holder": holder,
-                "verdict": "silent",
-                "take_over": may_take,
-                "reason": format!("no holder activity for {idle_s} s and the lease is {lease_age_str} s old (limit {duration} s)"),
-                "next_probe_s": 600,
-                "idle_s": idle_s,
-                "lease_age_s": lease_age
+    for dir in status
+        .as_ref()
+        .and_then(|st| st["activity_dirs"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(resolve_host_path)
+    {
+        if let Ok(entries) = fs::read_dir(dir) {
+            paths.extend(entries.flatten().map(|e| e.path()).filter(|p| {
+                p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("jsonl")
             }));
         }
     }
+    if status_file.exists() {
+        paths.push(status_file);
+    }
+    let newest = paths
+        .iter()
+        .filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok())
+        .filter_map(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .max();
+    let idle: Option<i64> = newest.map(|t| now as i64 - t as i64);
 
-    let state = status.as_ref().and_then(|s| s["state"].as_str());
-    let v = if state == Some("waiting") {
+    // Exhaustion: the holder's latest own assistant entry is an API error.
+    let mut blocked: Option<(Value, Option<u64>)> = None;
+    if let Some(t) = transcript.as_ref().filter(|t| t.is_file()) {
+        for line in read_tail(t, s.tail_lines)?.iter().rev() {
+            let Ok(e) = serde_json::from_str::<Value>(line.trim().trim_start_matches('\u{feff}'))
+            else {
+                continue;
+            };
+            // Sidechain entries are subagent turns, not the holder's own.
+            if e["type"] != "assistant" || e["isSidechain"] == true {
+                continue;
+            }
+            if e["isApiErrorMessage"] == true {
+                let q = &e["quotaLimits"];
+                let resets = epoch_seconds(&q["resetsAt"]);
+                let text = e["message"]["content"]
+                    .as_array()
+                    .and_then(|arr| arr.iter().find(|item| item["type"] == "text"))
+                    .map(|item| item["text"].clone())
+                    .unwrap_or(Value::Null);
+                blocked = Some((
+                    json!({
+                        "error": e["error"], "api_error": e["apiError"], "http_status": e["apiErrorStatus"],
+                        "limit_type": q["rateLimitType"], "overage": q["overageDisabledReason"],
+                        "resets_at": resets.map(format_iso), "at": e["timestamp"], "text": text
+                    }),
+                    resets,
+                ));
+            }
+            break; // only the latest assistant entry decides
+        }
+    }
+    if let Some((b, resets)) = blocked {
+        let wait = resets.map(|r| r as i64 - now as i64);
+        if let Some(wait) = wait.filter(|w| *w > 0 && *w as u64 <= s.min_outage_s) {
+            return emit(
+                "exhausted_briefly",
+                false,
+                format!("holder is rate-limited but resets in {wait} s; keep working as a worker"),
+                wait as u64 + s.retry_probe_s,
+                json!({"blocked": b, "idle_s": idle}),
+            );
+        }
+        let reason = format!(
+            "holder's latest turn is an API error ({}; {})",
+            b["api_error"].as_str().unwrap_or(""),
+            b["limit_type"].as_str().unwrap_or("")
+        );
+        return emit(
+            "exhausted",
+            may_take,
+            reason,
+            s.probe_interval_s,
+            json!({"blocked": b, "idle_s": idle}),
+        );
+    }
+
+    // Silence: no activity and no renewal for longer than the lease's own duration.
+    let lease_age = lease["renew_time"]
+        .as_str()
+        .and_then(parse_iso)
+        .map(|r| now as i64 - r as i64);
+    let show = |v: Option<i64>| v.map(|n| n.to_string()).unwrap_or_default();
+    if let Some(idle_s) = idle {
+        if idle_s > duration && lease_age.is_none_or(|a| a > duration) {
+            return emit(
+                "silent",
+                may_take,
+                format!(
+                    "no holder activity for {idle_s} s and the lease is {} s old (limit {duration} s)",
+                    show(lease_age)
+                ),
+                s.probe_interval_s,
+                json!({"idle_s": idle_s, "lease_age_s": lease_age}),
+            );
+        }
+    }
+
+    let holder_state = status.as_ref().and_then(|st| st["state"].as_str());
+    let verdict = if holder_state == Some("waiting") {
         "waiting"
     } else {
         "alive"
     };
-    let idle_str = idle.map(|i| i.to_string()).unwrap_or_default();
-    let lease_age_str = lease_age.map(|a| a.to_string()).unwrap_or_default();
-    let note = status.as_ref().and_then(|s| s["note"].as_str());
-
-    Ok(json!({
-        "object": "agent.probe",
-        "probed_at": format_iso(now),
-        "me": me,
-        "holder": holder,
-        "verdict": v,
-        "take_over": false,
-        "reason": format!("holder is active (idle {idle_str} s, lease age {lease_age_str} s)"),
-        "next_probe_s": 600,
-        "idle_s": idle,
-        "lease_age_s": lease_age,
-        "holder_state": state,
-        "holder_note": note
-    }))
+    emit(
+        verdict,
+        false,
+        format!(
+            "holder is active (idle {} s, lease age {} s)",
+            show(idle),
+            show(lease_age)
+        ),
+        s.probe_interval_s,
+        json!({
+            "idle_s": idle, "lease_age_s": lease_age, "holder_state": holder_state,
+            "holder_note": status.as_ref().map(|st| st["note"].clone()).unwrap_or(Value::Null)
+        }),
+    )
 }
 
 fn dispatch(state: &mut Value, request: &Value, now: u64) -> Result<Value, String> {
-    let action = string(request, "action")?;
-    let dir_path = request["dir"]
-        .as_str()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    dispatch_relay(state, request, now, &[])
+}
 
-    if action == "lease"
-        || action == "acquire"
-        || action == "renew"
-        || action == "release"
-        || action == "get_lease"
-    {
-        let subaction = if action == "lease" {
-            request["subaction"]
-                .as_str()
-                .or_else(|| request["lease_action"].as_str())
-                .or_else(|| request["op"].as_str())
-                .unwrap_or("get")
-        } else if action == "get_lease" {
-            "get"
-        } else {
-            action
-        };
-        return handle_lease(&dir_path, state, request, subaction, now);
-    }
-    if action == "status" {
-        return handle_status(&dir_path, state, request, now);
-    }
-    if action == "probe" {
-        return handle_probe(&dir_path, request, now);
-    }
+/// The relay's mailbox actions. `held` names identities a persisted
+/// coordinator lease references; registration cleanup never retires them.
+fn dispatch_relay(
+    state: &mut Value,
+    request: &Value,
+    now: u64,
+    held: &[String],
+) -> Result<Value, String> {
+    let action = string(request, "action")?;
 
     let cfg = &request["config"];
     let limit = |key: &str| {
@@ -1142,7 +1223,8 @@ fn dispatch(state: &mut Value, request: &Value, now: u64) -> Result<Value, Strin
     }
     if action == "register" {
         // Presence expiry is not permission to steal a mailbox. Preserve both
-        // ends of pending messages; retire only unreferenced dormant identities.
+        // ends of pending messages and every identity the coordinator lease
+        // names; retire only unreferenced dormant identities.
         let protected: std::collections::HashSet<String> = state["messages"]
             .as_array()
             .unwrap()
@@ -1151,6 +1233,7 @@ fn dispatch(state: &mut Value, request: &Value, now: u64) -> Result<Value, Strin
             .flat_map(|m| [m["from"].as_str(), m["to"].as_str()])
             .flatten()
             .map(str::to_owned)
+            .chain(held.iter().cloned())
             .collect();
         let retired: Vec<String> = state["agents"]
             .as_object()
@@ -1275,11 +1358,6 @@ fn run(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::E
     if request["action"] == "observe" {
         return observe(directory, request);
     }
-    if request["action"] == "probe" {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let dir = request["dir"].as_str().map(Path::new).unwrap_or(directory);
-        return handle_probe(dir, request, now).map_err(|e| std::io::Error::other(e).into());
-    }
     if directory.is_symlink() {
         return Err("agent state directory is a symlink".into());
     }
@@ -1316,12 +1394,19 @@ fn run(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::E
         return Err("invalid agent relay state".into());
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let mut req = request.clone();
-    if req.get("dir").is_none() {
-        req["dir"] = json!(directory.to_string_lossy());
+    // Succession files resolve beneath this registry's own locked directory;
+    // a request never chooses where they live.
+    let action = request["action"].as_str().unwrap_or("");
+    let result = match action {
+        "lease" => handle_lease(directory, &state, request, now),
+        "status" => handle_status(directory, &state, request, now),
+        "probe" => handle_probe(directory, request, now),
+        "register" => lease_identities(directory)
+            .and_then(|held| dispatch_relay(&mut state, request, now, &held)),
+        _ => dispatch(&mut state, request, now),
     }
-    let result = dispatch(&mut state, &req, now).map_err(std::io::Error::other)?;
-    if request["action"] != "list" && request["action"] != "probe" {
+    .map_err(std::io::Error::other)?;
+    if !matches!(action, "list" | "lease" | "status" | "probe") {
         let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
         serde_json::to_writer(temporary.as_file_mut(), &state)?;
         temporary.as_file_mut().sync_all()?;
@@ -3046,585 +3131,653 @@ mod tests {
             8
         );
     }
+}
 
-    fn write_test_lease(
-        dir: &Path,
-        holder: &str,
-        state: &str,
-        handoff_to: Option<&str>,
-        successors: Vec<&str>,
-        now: u64,
-        duration: u64,
-    ) {
-        let lease = json!({
-            "holder_identity": holder,
-            "lease_duration_seconds": duration,
-            "acquire_time": format_iso(now.saturating_sub(3600)),
-            "renew_time": format_iso(now.saturating_sub(100)),
-            "lease_transitions": 1,
-            "preferred_holder": "claude-code",
-            "successors": successors,
-            "state": state,
-            "handoff_to": handoff_to,
-        });
-        save_json_file(&dir.join("lease.json"), &lease).unwrap();
+// ADR-0029 lease, status and probe, driven through the relay's own entry point
+// (`run`). Each `planted_*` test plants one review defect and must fail on the
+// branch before the fix.
+#[cfg(test)]
+mod succession {
+    use super::*;
+
+    fn config() -> Value {
+        json!({"lease_s":60,"mailbox_retention_s":120,"queue_offline":true,"max_agents":8,
+            "max_pending":8,"max_message_bytes":256,"max_receipts":8,
+            "succession":{"lease_duration_s":5400,"renew_interval_s":1800,"probe_interval_s":600,
+                "retry_probe_s":60,"min_outage_s":900,"tail_lines":80,
+                "preferred_holder":"claude-code","successors":["antigravity"]}})
     }
-
-    #[test]
-    fn test_probe_verdict_no_lease() {
-        let temp = tempfile::tempdir().unwrap();
-        let now = 1_700_000_000u64;
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["object"], "agent.probe");
-        assert_eq!(res["verdict"], "no_lease");
-        assert_eq!(res["take_over"], false);
-        assert_eq!(res["next_probe_s"], 600);
-        assert_eq!(
-            res["reason"],
-            "lease.json is missing; ask the operator, do not invent a lease"
+    fn merge(target: &mut Value, extra: Value) {
+        if let Value::Object(map) = extra {
+            for (k, v) in map {
+                target[k] = v;
+            }
+        }
+    }
+    fn call_with(dir: &Path, mut request: Value, config: Value) -> Result<Value, String> {
+        request["config"] = config;
+        run(dir, &request).map_err(|e| e.to_string())
+    }
+    fn call(dir: &Path, request: Value) -> Result<Value, String> {
+        call_with(dir, request, config())
+    }
+    fn token(id: &str) -> String {
+        format!("{id}-relay-token-{}", "0123456789abcdef".repeat(2))
+    }
+    fn register(dir: &Path, id: &str) -> String {
+        let t = token(id);
+        call(
+            dir,
+            json!({"action":"register","agent_id":id,"kind":"codex","token":t}),
+        )
+        .unwrap();
+        t
+    }
+    fn lease(dir: &Path, sub: &str, id: &str, extra: Value) -> Result<Value, String> {
+        let mut request = json!({"action":"lease","subaction":sub,"agent_id":id,"token":token(id)});
+        merge(&mut request, extra);
+        call(dir, request)
+    }
+    fn probe(dir: &Path, me: &str) -> Result<Value, String> {
+        call(dir, json!({"action":"probe","agent_id":me}))
+    }
+    fn now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+    fn age(path: &Path, secs: u64) {
+        let file = fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(secs))
+            .unwrap();
+    }
+    fn plant_lease(dir: &Path, holder: &str, state: &str, renewed_s_ago: u64, extra: Value) {
+        let mut l = json!({"object":"agent.lease","holder_identity":holder,"state":state,
+            "handoff_to":null,"lease_duration_seconds":5400,
+            "acquire_time":format_iso(now() - 20000),"renew_time":format_iso(now() - renewed_s_ago),
+            "lease_transitions":1,"preferred_holder":"claude-code","successors":["antigravity"]});
+        merge(&mut l, extra);
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("lease.json"), l.to_string()).unwrap();
+    }
+    fn plant_status(dir: &Path, holder: &str, extra: Value, age_s: u64) -> PathBuf {
+        let mut st = json!({"object":"agent.status","agent_id":holder,"state":"working"});
+        merge(&mut st, extra);
+        let path = dir.join(format!("{holder}.status.json"));
+        fs::create_dir_all(dir).unwrap();
+        fs::write(&path, st.to_string()).unwrap();
+        age(&path, age_s);
+        path
+    }
+    fn plant_transcript(dir: &Path, holder: &str, lines: &[Value]) -> PathBuf {
+        let path = dir.join(format!("{holder}-transcript.jsonl"));
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(&path, text).unwrap();
+        plant_status(
+            dir,
+            holder,
+            json!({"transcript": path.to_str().unwrap()}),
+            0,
         );
-        assert_eq!(res["holder"], Value::Null);
+        path
+    }
+    fn api_error(resets_at: Value) -> Value {
+        json!({"type":"assistant","isApiErrorMessage":true,"apiError":"usage_limit_reached",
+            "error":"rate_limit","apiErrorStatus":429,"quotaLimits":{"status":"rejected",
+            "rateLimitType":"five_hour","resetsAt":resets_at,"overageDisabledReason":"out_of_credits"},
+            "message":{"content":[{"type":"text","text":"You've hit your session limit"}]}})
+    }
+    fn reply() -> Value {
+        json!({"type":"assistant","message":{"content":[{"type":"text","text":"turn finished"}]}})
+    }
+    fn holder_of(dir: &Path) -> Value {
+        serde_json::from_slice::<Value>(&fs::read(dir.join("lease.json")).unwrap()).unwrap()
+            ["holder_identity"]
+            .clone()
+    }
+    fn registry() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("registry");
+        (temp, dir)
     }
 
     #[test]
-    fn test_probe_verdict_held_by_me() {
-        let temp = tempfile::tempdir().unwrap();
-        let now = 1_700_000_000u64;
-        write_test_lease(
-            temp.path(),
+    fn verdict_held_by_me_and_released_targeting() {
+        let (_t, dir) = registry();
+        plant_lease(
+            &dir,
             "antigravity",
             "held",
-            None,
-            vec!["claude-code"],
-            now,
-            5400,
+            5,
+            json!({"successors":["claude-code"]}),
         );
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "held_by_me");
-        assert_eq!(res["take_over"], false);
-        assert_eq!(res["next_probe_s"], 600);
-        assert_eq!(res["reason"], "you already hold the coordinator lease");
-        assert_eq!(res["holder"], "antigravity");
-    }
-
-    #[test]
-    fn test_probe_verdict_released_and_handoff_targeting() {
-        let temp = tempfile::tempdir().unwrap();
-        let now = 1_700_000_000u64;
-        // Case 1: released to antigravity, successor may take
-        write_test_lease(
-            temp.path(),
+        let held = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (held["verdict"].as_str(), held["take_over"].as_bool()),
+            (Some("held_by_me"), Some(false))
+        );
+        plant_lease(
+            &dir,
             "claude-code",
             "released",
-            Some("antigravity"),
-            vec!["antigravity"],
-            now,
-            5400,
+            5,
+            json!({"handoff_to":"antigravity"}),
         );
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "released");
-        assert_eq!(res["take_over"], true);
-        assert_eq!(res["next_probe_s"], 60);
-        assert_eq!(res["reason"], "holder released the lease to antigravity");
-
-        // Case 2: released to another agent (planted negative for take_over)
-        write_test_lease(
-            temp.path(),
+        let mine = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (mine["verdict"].as_str(), mine["take_over"].as_bool()),
+            (Some("released"), Some(true))
+        );
+        assert_eq!(mine["next_probe_s"], 60);
+        assert_eq!(mine["reason"], "holder released the lease to antigravity");
+        // Planted: released to another successor, or to anyone but I am not listed.
+        plant_lease(
+            &dir,
             "claude-code",
             "released",
-            Some("codex"),
-            vec!["antigravity"],
-            now,
-            5400,
+            5,
+            json!({"handoff_to":"codex","successors":["antigravity","codex"]}),
         );
-        let res2 = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res2["verdict"], "released");
-        assert_eq!(res2["take_over"], false);
-        assert_eq!(res2["reason"], "holder released the lease to codex");
-
-        // Case 3: released with no specific handoff_to, but caller is not in successors
-        write_test_lease(
-            temp.path(),
+        assert_eq!(probe(&dir, "antigravity").unwrap()["take_over"], false);
+        plant_lease(
+            &dir,
             "claude-code",
             "released",
-            None,
-            vec!["codex"],
-            now,
-            5400,
+            5,
+            json!({"successors":["codex"]}),
         );
-        let res3 = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res3["verdict"], "released");
-        assert_eq!(res3["take_over"], false);
-        assert_eq!(res3["reason"], "holder released the lease");
+        assert_eq!(probe(&dir, "antigravity").unwrap()["take_over"], false);
     }
 
     #[test]
-    fn test_probe_verdict_exhausted_briefly() {
-        let temp = tempfile::tempdir().unwrap();
-        let transcript_path = temp.path().join("claude_transcript.jsonl");
-        let status_path = temp.path().join("claude-code.status.json");
-
-        let mtime = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let now = mtime;
-        write_test_lease(
-            temp.path(),
+    fn verdict_exhausted_briefly_exhausted_and_recovered() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        plant_transcript(
+            &dir,
             "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
+            &[reply(), api_error(json!(now() + 3600))],
         );
-
-        let resets_at = now + 300;
-        let transcript_line = json!({
-            "type": "assistant",
-            "isApiErrorMessage": true,
-            "apiError": "rate_limit_exceeded",
-            "apiErrorStatus": 429,
-            "quotaLimits": {
-                "rateLimitType": "five_hour",
-                "resetsAt": resets_at
-            },
-            "timestamp": format_iso(now),
-            "message": {
-                "content": [{"type": "text", "text": "Out of 5-hour tokens"}]
-            }
-        });
-        fs::write(&transcript_path, format!("{}\n", transcript_line)).unwrap();
-
-        let status = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "transcript": transcript_path.to_str().unwrap(),
-            "state": "working"
-        });
-        save_json_file(&status_path, &status).unwrap();
-
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "exhausted_briefly");
-        assert_eq!(res["take_over"], false);
-        assert_eq!(res["next_probe_s"], 360); // 300 + 60
-        assert!(res["reason"].as_str().unwrap().contains("resets in 300 s"));
-        assert_eq!(res["blocked"]["limit_type"], "five_hour");
+        let long = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (long["verdict"].as_str(), long["take_over"].as_bool()),
+            (Some("exhausted"), Some(true))
+        );
+        assert_eq!(long["blocked"]["api_error"], "usage_limit_reached");
+        assert_eq!(long["blocked"]["limit_type"], "five_hour");
+        plant_transcript(&dir, "claude-code", &[api_error(json!(now() + 300))]);
+        let brief = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (brief["verdict"].as_str(), brief["take_over"].as_bool()),
+            (Some("exhausted_briefly"), Some(false))
+        );
+        let next = brief["next_probe_s"].as_u64().unwrap();
+        assert!((350..=360).contains(&next), "{brief}");
+        // Planted: an error followed by a normal turn is not exhaustion.
+        plant_transcript(
+            &dir,
+            "claude-code",
+            &[api_error(json!(now() + 3600)), reply()],
+        );
+        assert_eq!(probe(&dir, "antigravity").unwrap()["verdict"], "alive");
     }
 
     #[test]
-    fn test_probe_verdict_exhausted() {
-        let temp = tempfile::tempdir().unwrap();
-        let transcript_path = temp.path().join("claude_transcript.jsonl");
-        let status_path = temp.path().join("claude-code.status.json");
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        write_test_lease(
-            temp.path(),
-            "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
+    fn sidechain_error_does_not_decide() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let mut subagent = api_error(json!(now() + 3600));
+        subagent["isSidechain"] = json!(true);
+        plant_transcript(&dir, "claude-code", &[reply(), subagent]);
+        let res = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (res["verdict"].as_str(), res["take_over"].as_bool()),
+            (Some("alive"), Some(false)),
+            "{res}"
         );
-
-        let resets_at = now + 1800; // > min_outage_s (900)
-        let transcript_line = json!({
-            "type": "assistant",
-            "isApiErrorMessage": true,
-            "apiError": "rate_limit_exceeded",
-            "apiErrorStatus": 429,
-            "quotaLimits": {
-                "rateLimitType": "weekly",
-                "resetsAt": resets_at
-            },
-            "timestamp": format_iso(now),
-            "message": {
-                "content": [{"type": "text", "text": "Weekly quota exhausted"}]
-            }
-        });
-        fs::write(&transcript_path, format!("{}\n", transcript_line)).unwrap();
-
-        let status = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "transcript": transcript_path.to_str().unwrap(),
-            "state": "working"
-        });
-        save_json_file(&status_path, &status).unwrap();
-
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "exhausted");
-        assert_eq!(res["take_over"], true);
-        assert_eq!(res["next_probe_s"], 600);
-        assert!(res["reason"]
-            .as_str()
-            .unwrap()
-            .contains("API error (rate_limit_exceeded; weekly)"));
     }
 
     #[test]
-    fn test_probe_verdict_silent() {
-        let temp = tempfile::tempdir().unwrap();
-        let status_path = temp.path().join("claude-code.status.json");
-        let status = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "state": "working"
-        });
-        save_json_file(&status_path, &status).unwrap();
-
-        let file_mtime = fs::metadata(&status_path)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        // Advance simulated `now` by 6000 seconds past file_mtime and renew_time
-        let duration = 5400u64;
-        let now = file_mtime + 6000;
-        let lease = json!({
-            "holder_identity": "claude-code",
-            "lease_duration_seconds": duration,
-            "acquire_time": format_iso(now.saturating_sub(10000)),
-            "renew_time": format_iso(file_mtime), // lease age = 6000s
-            "lease_transitions": 1,
-            "preferred_holder": "claude-code",
-            "successors": ["antigravity"],
-            "state": "held",
-            "handoff_to": Value::Null,
-        });
-        save_json_file(&temp.path().join("lease.json"), &lease).unwrap();
-
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "silent");
-        assert_eq!(res["take_over"], true);
-        assert_eq!(res["next_probe_s"], 600);
-        assert!(res["reason"]
-            .as_str()
-            .unwrap()
-            .contains("no holder activity for 6000 s and the lease is 6000 s old"));
+    fn verdict_silent_waiting_and_alive() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 6000, json!({}));
+        let status = plant_status(&dir, "claude-code", json!({}), 6000);
+        let silent = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (silent["verdict"].as_str(), silent["take_over"].as_bool()),
+            (Some("silent"), Some(true)),
+            "{silent}"
+        );
+        // Planted: a recent renewal alone keeps the holder.
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        assert_eq!(probe(&dir, "antigravity").unwrap()["verdict"], "alive");
+        // Planted: recent activity alone keeps the holder.
+        plant_lease(&dir, "claude-code", "held", 6000, json!({}));
+        age(&status, 10);
+        assert_eq!(probe(&dir, "antigravity").unwrap()["verdict"], "alive");
+        plant_status(
+            &dir,
+            "claude-code",
+            json!({"state":"waiting","note":"operator review"}),
+            10,
+        );
+        let waiting = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (waiting["verdict"].as_str(), waiting["take_over"].as_bool()),
+            (Some("waiting"), Some(false))
+        );
+        assert_eq!(waiting["holder_note"], "operator review");
     }
 
     #[test]
-    fn test_probe_verdict_waiting() {
-        let temp = tempfile::tempdir().unwrap();
-        let status_path = temp.path().join("claude-code.status.json");
-        let status = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "state": "waiting",
-            "note": "waiting for operator review"
-        });
-        save_json_file(&status_path, &status).unwrap();
-
-        let file_mtime = fs::metadata(&status_path)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let now = file_mtime + 10;
-        write_test_lease(
-            temp.path(),
-            "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
+    fn planted_seizure_of_a_live_lease_is_refused() {
+        let (_t, dir) = registry();
+        register(&dir, "claude-code");
+        register(&dir, "antigravity");
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let status = plant_status(&dir, "claude-code", json!({}), 0);
+        let seized = lease(&dir, "acquire", "antigravity", json!({"verdict":"silent"}));
+        assert!(
+            seized.as_ref().is_err_and(|e| e.contains("refused")),
+            "{seized:?}"
         );
-
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "waiting");
-        assert_eq!(res["take_over"], false);
-        assert_eq!(res["next_probe_s"], 600);
-        assert_eq!(res["holder_state"], "waiting");
-        assert_eq!(res["holder_note"], "waiting for operator review");
+        assert_eq!(holder_of(&dir), "claude-code");
+        // Once the relay itself observes silence, the same successor acquires.
+        plant_lease(&dir, "claude-code", "held", 6000, json!({}));
+        age(&status, 6000);
+        let acquired = lease(&dir, "acquire", "antigravity", json!({})).unwrap();
+        assert_eq!(
+            (acquired["verdict"].as_str(), acquired["from"].as_str()),
+            (Some("silent"), Some("claude-code"))
+        );
+        assert_eq!(acquired["lease"]["successors"], json!(["claude-code"]));
+        assert_eq!(acquired["lease"]["lease_transitions"], 2);
+        assert_eq!(holder_of(&dir), "antigravity");
+        let again = lease(&dir, "acquire", "antigravity", json!({}));
+        assert!(again.is_err_and(|e| e.contains("held_by_me")));
+        let journal = fs::read_to_string(dir.join("journal.jsonl")).unwrap();
+        assert!(
+            journal.contains("\"lease.acquired\"") && journal.contains("\"verdict\":\"silent\"")
+        );
     }
 
     #[test]
-    fn test_probe_verdict_alive() {
-        let temp = tempfile::tempdir().unwrap();
-        let status_path = temp.path().join("claude-code.status.json");
-        let status = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "state": "working",
-            "note": "running lane tasks"
-        });
-        save_json_file(&status_path, &status).unwrap();
-
-        let file_mtime = fs::metadata(&status_path)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let now = file_mtime + 10;
-        write_test_lease(
-            temp.path(),
-            "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
-        );
-
-        let req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let res = handle_probe(temp.path(), &req, now).unwrap();
-        assert_eq!(res["verdict"], "alive");
-        assert_eq!(res["take_over"], false);
-        assert_eq!(res["next_probe_s"], 600);
-        assert_eq!(res["holder_state"], "working");
-        assert_eq!(res["holder_note"], "running lane tasks");
-    }
-
-    #[test]
-    fn test_planted_negatives_and_lease_lifecycle() {
-        let temp = tempfile::tempdir().unwrap();
-        let now = 1_700_000_000u64;
-
-        // 1. Initial lease: held by claude-code, successors: [antigravity]
-        write_test_lease(
-            temp.path(),
-            "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
-        );
-
-        let mut dummy_state = json!({"agents":{},"messages":[]});
-
-        // Planted Negative Control 1: Non-holder renew refusal
-        let renew_unauthorized = json!({
-            "action": "lease",
-            "subaction": "renew",
-            "me": "antigravity"
-        });
-        let err = handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &renew_unauthorized,
-            "renew",
-            now,
-        )
-        .unwrap_err();
-        assert!(err.contains("refused: claude-code holds the lease, not antigravity"));
-
-        // Planted Negative Control 2: Acquire on valid unreleased lease refusal
-        let acquire_unreleased = json!({
-            "action": "lease",
-            "subaction": "acquire",
-            "me": "antigravity",
-            "verdict": "released"
-        });
-        let err2 = handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &acquire_unreleased,
-            "acquire",
-            now,
-        )
-        .unwrap_err();
-        assert!(err2.contains("refused: acquire on valid unreleased lease"));
-
-        // Planted Negative Control 3: Non-successor acquire refusal
-        // First release the lease
-        let release_cmd = json!({
-            "action": "lease",
-            "subaction": "release",
-            "me": "claude-code",
-            "to": "antigravity"
-        });
-        let rel_res =
-            handle_lease(temp.path(), &mut dummy_state, &release_cmd, "release", now).unwrap();
-        assert_eq!(rel_res["ok"], true);
-        assert_eq!(rel_res["lease"]["state"], "released");
-
-        let acquire_non_successor = json!({
-            "action": "lease",
-            "subaction": "acquire",
-            "me": "rogue-agent",
-            "verdict": "released"
-        });
-        let err3 = handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &acquire_non_successor,
-            "acquire",
-            now,
-        )
-        .unwrap_err();
-        assert!(err3.contains("refused: rogue-agent is not a successor"));
-
-        // Planted Negative Control 4: Error-then-reply is not exhausted
-        let transcript_path = temp.path().join("recovered_transcript.jsonl");
-        let line1 = json!({
-            "type": "assistant",
-            "isApiErrorMessage": true,
-            "apiError": "rate_limit_exceeded",
-            "apiErrorStatus": 429,
-            "quotaLimits": {"rateLimitType": "five_hour"}
-        });
-        let line2 = json!({
-            "type": "assistant",
-            "isApiErrorMessage": false,
-            "message": {
-                "content": [{"type": "text", "text": "Recovery successful; turn finished"}]
-            }
-        });
-        fs::write(&transcript_path, format!("{}\n{}\n", line1, line2)).unwrap();
-
-        let status_recovered = json!({
-            "object": "agent.status",
-            "agent_id": "claude-code",
-            "transcript": transcript_path.to_str().unwrap(),
-            "state": "working"
-        });
-        save_json_file(
-            &temp.path().join("claude-code.status.json"),
-            &status_recovered,
-        )
-        .unwrap();
-
-        // Make lease held again so probe inspects transcript
-        write_test_lease(
-            temp.path(),
-            "claude-code",
-            "held",
-            None,
-            vec!["antigravity"],
-            now,
-            5400,
-        );
-        let probe_req = json!({
-            "action": "probe",
-            "me": "antigravity"
-        });
-        let probe_res = handle_probe(temp.path(), &probe_req, now).unwrap();
-        // Since latest assistant turn was a successful reply (line 2), verdict is alive, NOT exhausted
-        assert_eq!(probe_res["verdict"], "alive");
-        assert_ne!(probe_res["verdict"], "exhausted");
-        assert_ne!(probe_res["verdict"], "exhausted_briefly");
-
-        // Lifecycle: Valid acquire by successor after graceful release
-        let release_again = json!({
-            "action": "lease",
-            "subaction": "release",
-            "me": "claude-code",
-            "to": "antigravity"
-        });
-        handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &release_again,
+    fn planted_unauthenticated_lease_changes_are_refused() {
+        let (_t, dir) = registry();
+        let holder = register(&dir, "claude-code");
+        let successor = register(&dir, "antigravity");
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        plant_status(&dir, "claude-code", json!({}), 0);
+        for forged in [
+            json!({"action":"lease","subaction":"release","holder":"claude-code"}),
+            json!({"action":"lease","subaction":"release","agent_id":"claude-code"}),
+            json!({"action":"lease","subaction":"release","agent_id":"claude-code","token":"DEVLOOP-PLANTED-FORGED-TOKEN-000000000000"}),
+            json!({"action":"lease","subaction":"release","agent_id":"claude-code","token":successor}),
+            json!({"action":"lease","subaction":"renew","agent_id":"claude-code"}),
+            json!({"action":"status","subaction":"publish","agent_id":"claude-code","state":"working","transcript":"/DEVLOOP-PLANTED-TRANSCRIPT.jsonl"}),
+        ] {
+            let result = call(&dir, forged.clone());
+            assert!(result.is_err(), "{forged} -> {result:?}");
+        }
+        assert_eq!(holder_of(&dir), "claude-code");
+        let renewed = lease(&dir, "renew", "claude-code", json!({"note":"renewed"})).unwrap();
+        assert_eq!(renewed["next_renew_s"], 1800);
+        let released = lease(
+            &dir,
             "release",
-            now,
+            "claude-code",
+            json!({"handoff_to":"antigravity"}),
         )
         .unwrap();
+        assert_eq!(released["lease"]["state"], "released");
+        // Tokens never reach disk; only their digests do.
+        for entry in fs::read_dir(&dir).unwrap() {
+            let bytes = fs::read(entry.unwrap().path()).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains(&holder) && !text.contains(&successor));
+        }
+    }
 
-        let acquire_valid = json!({
-            "action": "lease",
-            "subaction": "acquire",
-            "me": "antigravity",
-            "verdict": "released"
-        });
-        let acq_res = handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &acquire_valid,
-            "acquire",
-            now,
+    #[test]
+    fn planted_path_traversal_is_contained() {
+        let (temp, dir) = registry();
+        register(&dir, "claude-code");
+        let escaped = temp.path().join("escaped.status.json");
+        let forged = call(
+            &dir,
+            json!({"action":"status","subaction":"publish","agent_id":"../escaped",
+            "token":token("claude-code"),"state":"working"}),
+        );
+        assert!(forged.is_err() && !escaped.exists(), "{forged:?}");
+        fs::write(
+            &escaped,
+            json!({"state":"waiting","note":"DEVLOOP-PLANTED-ESCAPE"}).to_string(),
         )
         .unwrap();
-        assert_eq!(acq_res["ok"], true);
-        assert_eq!(acq_res["acquired"], "antigravity");
-        assert_eq!(acq_res["from"], "claude-code");
-        assert_eq!(acq_res["transitions"], 2);
-        assert_eq!(acq_res["lease"]["holder_identity"], "antigravity");
-        assert_eq!(acq_res["lease"]["state"], "held");
-        // Successors now lists former holder
-        assert_eq!(acq_res["lease"]["successors"], json!(["claude-code"]));
+        for id in ["../escaped", "..", ".hidden", "a/b", "a\\b"] {
+            let read = call(
+                &dir,
+                json!({"action":"status","subaction":"get","agent_id":id}),
+            );
+            assert!(read.is_err(), "{id} -> {read:?}");
+        }
+        // The probe's holder -> status path.
+        plant_lease(&dir, "../escaped", "held", 5, json!({}));
+        let probed = probe(&dir, "antigravity");
+        assert!(probed.is_err(), "{probed:?}");
+    }
 
-        // Attempt acquire when already held
-        let err4 = handle_lease(
-            temp.path(),
-            &mut dummy_state,
-            &acquire_valid,
-            "acquire",
-            now,
+    #[test]
+    fn planted_caller_named_holder_and_directory_are_ignored() {
+        let (temp, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        plant_status(&dir, "claude-code", json!({}), 0);
+        let named = call(
+            &dir,
+            json!({"action":"probe","agent_id":"antigravity","holder":"DEVLOOP-PLANTED-HOLDER"}),
         )
-        .unwrap_err();
-        assert!(err4.contains("refused: already held by you"));
+        .unwrap();
+        assert_eq!(named["holder"], "claude-code");
+        let other = temp.path().join("other");
+        plant_lease(&other, "DEVLOOP-PLANTED-DIR", "released", 5, json!({}));
+        let moved = call(
+            &dir,
+            json!({"action":"probe","agent_id":"antigravity","dir":other.to_str().unwrap()}),
+        )
+        .unwrap();
+        assert_eq!(moved["holder"], "claude-code");
+    }
 
-        // Renew by new holder succeeds
-        let renew_cmd = json!({
-            "action": "lease",
-            "subaction": "renew",
-            "me": "antigravity",
-            "note": "working fine"
-        });
-        let ren_res =
-            handle_lease(temp.path(), &mut dummy_state, &renew_cmd, "renew", now + 50).unwrap();
-        assert_eq!(ren_res["ok"], true);
-        assert_eq!(ren_res["lease"]["renew_time"], format_iso(now + 50));
+    #[test]
+    fn planted_succession_numbers_come_from_ssot() {
+        let (_t, dir) = registry();
+        let mut cfg = config();
+        cfg["succession"]["lease_duration_s"] = json!(4321);
+        cfg["succession"]["probe_interval_s"] = json!(700);
+        cfg["succession"]["retry_probe_s"] = json!(45);
+        cfg["succession"]["successors"] = json!(["antigravity", "codex"]);
+        // A fresh install: the lease is derived from SSOT, and reading it writes nothing.
+        let fresh = call_with(
+            &dir,
+            json!({"action":"lease","subaction":"get"}),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (fresh["holder_identity"].clone(), fresh["state"].as_str()),
+            (Value::Null, Some("released"))
+        );
+        assert_eq!(fresh["lease_duration_seconds"], 4321);
+        assert_eq!(fresh["preferred_holder"], "claude-code");
+        assert_eq!(fresh["successors"], json!(["antigravity", "codex"]));
+        assert!(!dir.join("lease.json").exists());
+        let open = call_with(
+            &dir,
+            json!({"action":"probe","agent_id":"antigravity"}),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                open["verdict"].as_str(),
+                open["take_over"].as_bool(),
+                open["next_probe_s"].as_u64()
+            ),
+            (Some("released"), Some(true), Some(45))
+        );
+        let rogue = call_with(
+            &dir,
+            json!({"action":"probe","agent_id":"rogue"}),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert_eq!(rogue["take_over"], false);
+        let t = token("antigravity");
+        call_with(
+            &dir,
+            json!({"action":"register","agent_id":"antigravity","kind":"codex","token":t}),
+            cfg.clone(),
+        )
+        .unwrap();
+        let first = call_with(
+            &dir,
+            json!({"action":"lease","subaction":"acquire","agent_id":"antigravity","token":t}),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert_eq!(first["lease"]["successors"], json!(["codex"]));
+        assert_eq!(holder_of(&dir), "antigravity");
+        let alive = call_with(
+            &dir,
+            json!({"action":"probe","agent_id":"codex"}),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (alive["verdict"].as_str(), alive["next_probe_s"].as_u64()),
+            (Some("alive"), Some(700))
+        );
+        // Planted: no literal fallback for any key.
+        for key in [
+            "lease_duration_s",
+            "renew_interval_s",
+            "probe_interval_s",
+            "retry_probe_s",
+            "min_outage_s",
+            "tail_lines",
+            "preferred_holder",
+            "successors",
+        ] {
+            let mut missing = cfg.clone();
+            missing["succession"].as_object_mut().unwrap().remove(key);
+            let result = call_with(&dir, json!({"action":"probe","agent_id":"codex"}), missing);
+            assert!(
+                result.as_ref().is_err_and(|e| e.contains(key)),
+                "{key} -> {result:?}"
+            );
+        }
+        // client-go: lease_duration_s > renew_interval_s > 1.2 x probe_interval_s.
+        let mut tight = cfg.clone();
+        tight["succession"]["renew_interval_s"] = json!(800);
+        assert!(call_with(&dir, json!({"action":"probe","agent_id":"codex"}), tight).is_err());
+    }
 
-        // Status update and get
-        let status_set = json!({
-            "agent_id": "antigravity",
-            "state": "working",
-            "note": "standing by"
-        });
-        handle_status(temp.path(), &mut dummy_state, &status_set, now + 50).unwrap();
-        let status_get = json!({
-            "agent_id": "antigravity",
-            "subaction": "get"
-        });
-        let st = handle_status(temp.path(), &mut dummy_state, &status_get, now + 50).unwrap();
-        assert_eq!(st["state"], "working");
-        assert_eq!(st["note"], "standing by");
+    #[test]
+    fn planted_bom_prefixed_status_is_read() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let status = json!({"object":"agent.status","agent_id":"claude-code","state":"waiting","note":"bom-note"});
+        fs::write(
+            dir.join("claude-code.status.json"),
+            format!("\u{feff}{status}"),
+        )
+        .unwrap();
+        let res = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (res["verdict"].as_str(), res["holder_note"].as_str()),
+            (Some("waiting"), Some("bom-note")),
+            "{res}"
+        );
+    }
+
+    #[test]
+    fn planted_utc_offsets_are_honoured() {
+        let utc = Some(1_791_561_600);
+        assert_eq!(parse_iso("2026-10-09T16:00:00Z"), utc);
+        assert_eq!(parse_iso("2026-10-09T16:00:00"), utc);
+        assert_eq!(parse_iso("2026-10-09T12:00:00-04:00"), utc);
+        assert_eq!(parse_iso("2026-10-09T21:30:00+05:30"), utc);
+        assert_eq!(parse_iso("2026-10-09T12:00:00-0400"), utc);
+        assert_eq!(parse_iso("2026-10-09T16:00:00.250Z"), utc);
+        for bad in [
+            "2026-10-09T16:00:00+25:00",
+            "2026-10-09T16:00:00 junk",
+            "2026-13-09T16:00:00Z",
+            "é026-10-09T16:00:00Z",
+        ] {
+            assert_eq!(parse_iso(bad), None, "{bad}");
+        }
+        // A renewal ten minutes ago, written with a -04:00 offset, is not four hours old.
+        let (_t, dir) = registry();
+        let local = format_iso(now() - 600 - 4 * 3600).replace('Z', "-04:00");
+        plant_lease(&dir, "claude-code", "held", 0, json!({"renew_time": local}));
+        plant_status(&dir, "claude-code", json!({}), 7200);
+        let res = probe(&dir, "antigravity").unwrap();
+        assert_eq!(res["verdict"], "alive", "{res}");
+        assert!(
+            (600..=660).contains(&res["lease_age_s"].as_i64().unwrap()),
+            "{res}"
+        );
+    }
+
+    #[test]
+    fn planted_lease_duration_is_the_lease_own() {
+        let (_t, dir) = registry();
+        plant_lease(
+            &dir,
+            "claude-code",
+            "held",
+            10800,
+            json!({"lease_duration_seconds": 100000}),
+        );
+        plant_status(&dir, "claude-code", json!({}), 10800);
+        let res = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (res["verdict"].as_str(), res["take_over"].as_bool()),
+            (Some("alive"), Some(false)),
+            "{res}"
+        );
+    }
+
+    #[test]
+    fn planted_float_and_string_resets_at_are_times() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        for resets in [
+            json!((now() + 300) as f64),
+            json!(format!("{}", now() + 300)),
+        ] {
+            plant_transcript(&dir, "claude-code", &[api_error(resets.clone())]);
+            let res = probe(&dir, "antigravity").unwrap();
+            assert_eq!(
+                (res["verdict"].as_str(), res["take_over"].as_bool()),
+                (Some("exhausted_briefly"), Some(false)),
+                "{resets} -> {res}"
+            );
+        }
+    }
+
+    #[test]
+    fn planted_registry_lease_copy_is_not_a_second_source() {
+        let (_t, dir) = registry();
+        fs::create_dir_all(&dir).unwrap();
+        let planted = json!({"agents":{},"messages":[],"coordinator_lease":{"object":"agent.lease",
+            "holder_identity":"DEVLOOP-PLANTED-STATE","state":"held","successors":["antigravity"],
+            "lease_duration_seconds":5400,"renew_time":format_iso(now())}});
+        fs::write(dir.join("state.json"), planted.to_string()).unwrap();
+        let got = call(&dir, json!({"action":"lease","subaction":"get"})).unwrap();
+        assert_eq!(got["holder_identity"], Value::Null, "{got}");
+        let res = probe(&dir, "antigravity").unwrap();
+        assert_eq!(
+            (res["holder"].clone(), res["verdict"].as_str()),
+            (Value::Null, Some("released")),
+            "{res}"
+        );
+    }
+
+    #[test]
+    fn planted_transcript_head_is_not_read() {
+        let (_t, dir) = registry();
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let path = dir.join("long-transcript.jsonl");
+        let mut bytes = vec![0xff_u8; 256 * 1024];
+        bytes.push(b'\n');
+        for n in 0..200 {
+            bytes.extend(format!("{}\n", json!({"type":"user","n":n})).as_bytes());
+        }
+        bytes.extend(format!("{}\n", api_error(json!(now() + 3600))).as_bytes());
+        fs::write(&path, &bytes).unwrap();
+        plant_status(
+            &dir,
+            "claude-code",
+            json!({"transcript": path.to_str().unwrap()}),
+            0,
+        );
+        assert_eq!(probe(&dir, "antigravity").unwrap()["verdict"], "exhausted");
+        // An error older than the tail does not decide.
+        let mut old = format!("{}\n", api_error(json!(now() + 3600)));
+        for n in 0..100 {
+            old.push_str(&format!("{}\n", json!({"type":"user","n":n})));
+        }
+        fs::write(&path, old).unwrap();
+        assert_eq!(probe(&dir, "antigravity").unwrap()["verdict"], "alive");
+    }
+
+    #[test]
+    fn planted_lease_identities_survive_registration_cleanup() {
+        let (_t, dir) = registry();
+        register(&dir, "claude-code");
+        register(&dir, "antigravity");
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let path = dir.join("state.json");
+        let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for id in ["claude-code", "antigravity"] {
+            state["agents"][id]["expires"] = json!(1);
+        }
+        fs::write(&path, state.to_string()).unwrap();
+        register(&dir, "codex"); // runs dormant-identity cleanup
+        let imposter = call(
+            &dir,
+            json!({"action":"register","agent_id":"claude-code","kind":"codex",
+            "token":"DEVLOOP-PLANTED-IMPOSTER-TOKEN-000000000000"}),
+        );
+        assert!(
+            imposter
+                .as_ref()
+                .is_err_and(|e| e.contains("another lease")),
+            "{imposter:?}"
+        );
+        lease(&dir, "renew", "claude-code", json!({})).unwrap();
+    }
+
+    #[test]
+    fn planted_release_to_an_ineligible_identity_is_refused() {
+        let (_t, dir) = registry();
+        register(&dir, "claude-code");
+        plant_lease(&dir, "claude-code", "held", 5, json!({}));
+        let released = lease(
+            &dir,
+            "release",
+            "claude-code",
+            json!({"handoff_to":"DEVLOOP-PLANTED-ROGUE"}),
+        );
+        assert!(released.is_err(), "{released:?}");
+        assert_eq!(holder_of(&dir), "claude-code");
+    }
+
+    #[test]
+    fn status_publish_is_owned_bounded_and_absolute() {
+        let (_t, dir) = registry();
+        register(&dir, "antigravity");
+        let identity =
+            json!({"action":"status","agent_id":"antigravity","token":token("antigravity")});
+        let mut publish = identity.clone();
+        merge(
+            &mut publish,
+            json!({"subaction":"publish","state":"working","note":"standing by","transcript":"/var/tmp/antigravity.jsonl"}),
+        );
+        call(&dir, publish.clone()).unwrap();
+        let got = call(&dir, json!({"action":"status","agent_id":"antigravity"})).unwrap();
+        assert_eq!(
+            (got["state"].as_str(), got["note"].as_str()),
+            (Some("working"), Some("standing by"))
+        );
+        let mut relative = publish.clone();
+        relative["transcript"] = json!("DEVLOOP-PLANTED-RELATIVE.jsonl");
+        assert!(call(&dir, relative).is_err());
+        let mut long = publish;
+        long["note"] = json!("x".repeat(300));
+        assert!(call(&dir, long).is_err());
     }
 }

@@ -88,19 +88,32 @@ Use `mios_agent_list` for live session discovery, `mios_agent_send` for addresse
 tasks or replies, `mios_agent_receive` to read the recipient's inbox, and
 `mios_agent_ack` after reading. Reusing a message ID makes retries idempotent and
 returns its current receipt. A queued message is not delivery, and a received
-`mios_agent_unregister` marks a session offline.
-Presence expires without transferring mailbox ownership or appointing a new coordinator.
-Ephemeral presence leases (`[mcp.agents].lease_s`) govern mailbox presence only. In contrast,
-the coordinator lease (`agent.lease`, ADR-0029, configured in `[mcp.agents.succession]`)
-manages leader succession across CLIs using Kubernetes Lease semantics. Tools `mios_agent_lease`,
-`mios_agent_status`, and `mios_agent_probe` enable standby agents to monitor holder health
-(evaluating verdicts: `released`, `exhausted`, `exhausted_briefly`, `silent`, `waiting`, `alive`)
-and transition coordination authority cleanly without races. With
+receipt is not completion. `mios_agent_unregister` marks a session offline.
+Presence expires without transferring mailbox ownership. With
 `[mcp.agents].queue_offline`, registered dormant sessions retain bounded queued
 work and resume `receive` with their original private token. Explicitly closed
 sessions reject new messages. Registration preserves both identities referenced
 by pending messages; unrelated dormant identities retire after
 `mailbox_retention_s`. Queue, message, registry and receipt limits derive from SSOT.
+
+Presence never appoints a coordinator. The coordinator lease (`agent.lease`,
+ADR-0029) is separate, and every number and name it uses comes from
+`[mcp.agents.succession]`:
+
+- **Identity is relay registration.** `mios_agent_lease` acquire, renew and
+  release, and `mios_agent_status` publish, carry the session's `agent_id` and
+  the token it registered with. Only the token's digest is stored, and
+  registration cleanup never retires an identity the lease names.
+- **The relay decides takeover.** `mios_agent_probe` returns `held_by_me`,
+  `released`, `exhausted_briefly`, `exhausted`, `silent`, `waiting` or `alive`,
+  with `take_over` and `next_probe_s`. On acquire the relay runs the same probe
+  itself and refuses unless it says `take_over`; a caller's verdict is never read.
+- **Files stay in the registry directory.** The lease, each
+  `<agent_id>.status.json` and the `journal.jsonl` of `agent.event` records live
+  beside `state.json`. An identity that names a file uses the relay alphabet,
+  starts with a letter or digit, and never contains `..`.
+- **A fresh install has an unheld lease** derived from SSOT. A listed successor
+  or the preferred holder acquires it first; reading it writes nothing.
 
 `mios_agent_observe` and `mios agents --observe` provide the same sanitized,
 read-only snapshot. `mios agents --watch` renders a resizing native view in the
