@@ -1156,7 +1156,7 @@ class _TmuxBridge:
 
         escaped_task = shlex.quote(task)
         if task in ("--version", "-v", "version"):
-            cmd = f"{agent} {task}"
+            agent_args = task
         elif "launch_template" in tool_row:
             template = tool_row["launch_template"]
             _assert_safe_command_template(template)
@@ -1182,8 +1182,13 @@ class _TmuxBridge:
             for placeholder, val in replacements.items():
                 if placeholder in cmd:
                     cmd = cmd.replace(placeholder, val)
+            first_word = template.split()[0]
+            if cmd.startswith(first_word):
+                agent_args = cmd[len(first_word):].lstrip()
+            else:
+                agent_args = cmd
         else:
-            cmd = f"{agent} {escaped_task}"
+            agent_args = escaped_task
 
         await self.start()
         dispatcher = shutil.which("mios", path=self.env.get("PATH"))
@@ -1191,7 +1196,7 @@ class _TmuxBridge:
             raise RuntimeError("native MiOS agent dispatcher is missing")
         # The dispatcher refreshes the private caller's MCP configuration.
         # No auth/profile files or leases are copied into this worker HOME.
-        cmd = shlex.quote(dispatcher) + " agent " + cmd
+        cmd = shlex.quote(dispatcher) + " agent " + shlex.quote(agent) + (" " + agent_args if agent_args else "")
         branch_prep = ""
         if target_branch:
             quoted_b = shlex.quote(target_branch)
@@ -1886,8 +1891,13 @@ def _monitor_ui_request():
     data = mios_toml.load_merged()
     def _is_tool_installed(row):
         if row.get("kind") == "cloud":
+            cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
             base = row["name"].replace("-cloud", "")
-            return shutil.which(base) is not None or shutil.which(row["name"]) is not None
+            return (
+                (shutil.which(cmd_name) is not None if cmd_name else False)
+                or shutil.which(base) is not None
+                or shutil.which(row["name"]) is not None
+            )
         binary_dir = "npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin"
         return os.access(Path(data["agent_cli"]["linux_prefix"]) / binary_dir / row["name"], os.X_OK)
 
@@ -1927,8 +1937,9 @@ def _agent_cli_main(args):
         native = Path("/usr/bin") / row["name"]
         executable = str(native) if os.access(native, os.X_OK) else shutil.which(row["name"])
         if not executable and row.get("kind") == "cloud":
+            cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
             base = row["name"].replace("-cloud", "")
-            executable = shutil.which(base)
+            executable = (shutil.which(cmd_name) if cmd_name else None) or shutil.which(base)
         rows.append({**row, "executable": executable, "installed": executable is not None})
     print(json.dumps({"agents": rows}, indent=2))
     return 0 if all(row["installed"] for row in rows) else 1
@@ -2110,7 +2121,13 @@ def main() -> int:
                             "@mios-agent-kind", name], check=True, timeout=3)
         _project_agent_clients()
         if row.get("kind") == "cloud":
-            executable = shutil.which(row["name"]) or shutil.which(row["name"].replace("-cloud", ""))
+            cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
+            base = row["name"].replace("-cloud", "")
+            executable = (
+                (shutil.which(cmd_name) if cmd_name else None)
+                or shutil.which(row["name"])
+                or shutil.which(base)
+            )
             if not executable:
                 raise RuntimeError(f"{name} cloud CLI is not installed or not found on PATH")
             return subprocess.call([executable, *sys.argv[3:]])

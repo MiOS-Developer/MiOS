@@ -1259,18 +1259,18 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
         self.assertIn("agy -p 'audit gates' --output-format json", cmd)
 
     async def test_dynamic_command_resolution_cloud_tools(self):
-        """Verify dynamic template resolution for cloud tools with branch isolation."""
+        """Verify dynamic template resolution for cloud tools dispatches by catalogue ROW name."""
         cmd = await self._get_dispatched_command("claude-cloud", "analyze repo", branch="cloud/analysis")
-        self.assertIn("claude --cloud 'analyze repo'", cmd)
+        self.assertIn("/usr/bin/mios agent claude-cloud --cloud 'analyze repo'", cmd)
 
         cmd = await self._get_dispatched_command("codex-cloud", "fix bug", branch="cloud/bugfix", env_id="prod-env")
-        self.assertIn("codex cloud exec --env prod-env 'fix bug'", cmd)
+        self.assertIn("/usr/bin/mios agent codex-cloud cloud exec --env prod-env 'fix bug'", cmd)
 
         cmd = await self._get_dispatched_command("jules", "refactor module", branch="cloud/refactor", repo="org/repo")
-        self.assertIn("jules remote new --repo org/repo --session 'refactor module'", cmd)
+        self.assertIn("/usr/bin/mios agent jules remote new --repo org/repo --session 'refactor module'", cmd)
 
         cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy", base="main", repo="org/repo")
-        self.assertIn("gh agent-task create 'deploy check' -b main -R org/repo", cmd)
+        self.assertIn("/usr/bin/mios agent gh-agent-task agent-task create 'deploy check' -b main -R org/repo", cmd)
 
     async def test_cloud_tool_parameter_injection_quoting(self):
         """Verify parameters with shell metacharacters are safely quoted with shlex."""
@@ -1295,8 +1295,25 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
         """Verify cloud tools require a branch matching branch_rule (^cloud/)."""
         # Valid branch: passes
         cmd = await self._get_dispatched_command("codex-cloud", "do task", branch="cloud/feature-1")
-        self.assertIn("codex cloud exec --env", cmd)
+        self.assertIn("/usr/bin/mios agent codex-cloud cloud exec --env", cmd)
         self.assertIn("'do task'", cmd)
+
+    async def test_cloud_agent_dispatches_by_catalogue_row_not_first_word_of_template(self):
+        """Plant defect test: nested_workflow must dispatch by catalogue row name, not template's first word."""
+        # For gh-agent-task: first word of template is 'gh', catalogue row name is 'gh-agent-task'.
+        cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy", base="main", repo="org/repo")
+        self.assertIn("agent gh-agent-task", cmd)
+        self.assertNotIn("agent gh ", cmd)
+
+        # For claude-cloud: first word is 'claude', catalogue row name is 'claude-cloud'
+        cmd = await self._get_dispatched_command("claude-cloud", "analyze", branch="cloud/analyze")
+        self.assertIn("agent claude-cloud", cmd)
+        self.assertNotIn("agent claude ", cmd)
+
+        # For codex-cloud: first word is 'codex', catalogue row name is 'codex-cloud'
+        cmd = await self._get_dispatched_command("codex-cloud", "fix", branch="cloud/fix")
+        self.assertIn("agent codex-cloud", cmd)
+        self.assertNotIn("agent codex ", cmd)
 
         # Invalid branch: rejected
         with self.assertRaises(ValueError) as ctx:
@@ -1452,6 +1469,18 @@ class TestPlantedNegativeControls(unittest.TestCase):
             self.server_mod._assert_safe_command_template("codex exec {task} -a never")
         with self.assertRaises(ValueError):
             self.server_mod._assert_safe_command_template("codex exec {task} --ask-for-approval never")
+
+    def test_gh_agent_task_resolution(self):
+        """Verify gh-agent-task resolves 'gh' executable from launch_template first word."""
+        cfg_cli = self.server_mod._agent_cli_config()
+        row = next(r for r in cfg_cli["tools"] if r["name"] == "gh-agent-task")
+        cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
+        self.assertEqual(cmd_name, "gh")
+        with mock.patch("os.getuid", create=True, return_value=1000):
+            with mock.patch("shutil.which", side_effect=lambda name, path=None: f"/usr/bin/{name}" if name == "gh" else None):
+                ui_req = self.server_mod._monitor_ui_request()
+                gh_installed = any(a["installed"] for a in ui_req["agents"] if a["name"] == "gh-agent-task")
+                self.assertTrue(gh_installed)
 
 
 if __name__ == "__main__":
