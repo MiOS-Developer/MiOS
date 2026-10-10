@@ -833,5 +833,70 @@ mod pod_quadlets {
                 orphan_stderr
             );
         }
+
+        // 6. Negative control 1: Planted MIOS_PG_PASS fails closed with Law 11 violation
+        {
+            let secret_output = Command::new(bin_path)
+                .arg("pod-quadlets")
+                .arg("--root")
+                .arg(&root)
+                .arg("--check")
+                .env("MIOS_PG_PASS", "planted-secret-123")
+                .output()
+                .expect("Failed to execute mios-gen pod-quadlets with planted MIOS_PG_PASS");
+
+            assert_eq!(
+                secret_output.status.code(),
+                Some(1),
+                "Expected exit code 1 for planted secret"
+            );
+            let secret_stderr = String::from_utf8_lossy(&secret_output.stderr);
+            assert!(
+                secret_stderr.contains("Law 11") && secret_stderr.contains("POSTGRES"),
+                "stderr should report Law 11 violation for planted secret: {}",
+                secret_stderr
+            );
+        }
+
+        // 7. Negative control 2: Planted off-roster MIOS_ADGUARD_UID=0 fails closed with Law 6 violation
+        {
+            let u0_output = Command::new(bin_path)
+                .arg("pod-quadlets")
+                .arg("--root")
+                .arg(&root)
+                .arg("--check")
+                .env("MIOS_ADGUARD_UID", "0")
+                .output()
+                .expect("Failed to execute mios-gen pod-quadlets with planted MIOS_ADGUARD_UID=0");
+
+            assert_eq!(
+                u0_output.status.code(),
+                Some(1),
+                "Expected exit code 1 for planted off-roster UID=0"
+            );
+            let u0_stderr = String::from_utf8_lossy(&u0_output.stderr);
+            assert!(
+                u0_stderr.contains("Law 6") && u0_stderr.contains("User=0"),
+                "stderr should report Law 6 violation for planted UID=0: {}",
+                u0_stderr
+            );
+        }
+
+        // 8. Positive control: Planted authorized root UID=0 (MIOS_CEPH_UID=0) passes
+        {
+            let ceph_output = Command::new(bin_path)
+                .arg("pod-quadlets")
+                .arg("--root")
+                .arg(&root)
+                .arg("--check")
+                .env("MIOS_CEPH_UID", "0")
+                .output()
+                .expect("Failed to execute mios-gen pod-quadlets with planted MIOS_CEPH_UID=0");
+
+            assert!(
+                ceph_output.status.success(),
+                "Expected exit code 0 for authorized root container"
+            );
+        }
     }
 }

@@ -261,14 +261,17 @@ pub fn post_plan(root: &Path) -> Result<Vec<(String, String)>, String> {
         {
             return Err(format!("Invalid or duplicate post-build identity: {name}"));
         }
+        // Ruling Q8: source-tree gates run in the CI gate job, never in the bake.
+        if matches!(action, "ssot" | "drift" | "agent_tests") {
+            return Err(format!(
+                "Post-build action {action} is a source-tree gate; ruling Q8 runs it in the CI gate job, never in the bake"
+            ));
+        }
         if !matches!(
             action,
             "bloat"
                 | "package_health"
                 | "invariants"
-                | "ssot"
-                | "drift"
-                | "agent_tests"
                 | "libexec_tests"
                 | "image_digests"
                 | "log_chain"
@@ -283,9 +286,6 @@ pub fn post_plan(root: &Path) -> Result<Vec<(String, String)>, String> {
     for required in [
         "package_health",
         "invariants",
-        "ssot",
-        "drift",
-        "agent_tests",
         "libexec_tests",
         "image_digests",
         "log_chain",

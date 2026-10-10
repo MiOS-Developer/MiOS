@@ -76,8 +76,8 @@ mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (
 
 7. **Every dropped file is kept, in `.archive/`, in git's own format (operator directive 2026-10-09: "retain all dropped files as archive in '.archive' folder as a legacy artifact(s)"; "git overlays to root / .git is a dotfile/folder / repo is root -- THAT is the format").**
    - **One tree.** MiOS's repo root, its `.git`, the FHS root, the OCI image, the bootc bootable image and the AI images are the same root tree. Git overlays to root, and `.git` is just a dotfolder in it. The archive follows the same form.
-   - **`.archive/` is a bare git repository beside `.git`:** sha256 object format, compressed packfiles, one branch `legacy`. Each commit records dropped files at their real root-relative paths, at their last content and mode, with the dropping commit and source repo in the message. Restoring is an overlay onto root: `git --git-dir=/.archive --work-tree=/ checkout legacy -- <path>`.
-   - **It is maintained by `mios-gen archive`, never by hand.** The tool computes the dropped set from first-parent history since `[legibility.archive].since`, appends one commit per update, and repacks to a single pack. Only a handful of tracked files result: `HEAD`, `config`, `refs/heads/legacy` and `objects/pack/pack-*.{pack,idx,rev}`. These are marked binary in `.gitattributes`, so no line-ending conversion can touch them.
+   - **`.archive/` is a bare git repository beside `.git`:** sha256 object format, compressed packfiles, one branch `legacy`. Its commit records dropped files at their real root-relative paths, at their last content and mode, and its message names the newest first-parent commit that held each path. Restoring is an overlay onto root: `git --git-dir=/.archive --work-tree=/ checkout legacy -- <path>`.
+   - **It is maintained by `mios-gen archive`, never by hand.** The tool computes the dropped set from first-parent history since `[legibility.archive].since`, rebuilds `legacy` as ONE commit on each update, and repacks to a single pack. That commit is reproducible: its author and date are fixed, so the same history always yields the same commit id. This keeps `--check` and review deterministic, and the git history of `.archive/*` in the main repo already records every update, so the store needs no chain of its own. Only a handful of tracked files result: `HEAD`, `config`, `refs/heads/legacy` and `objects/pack/pack-*.{pack,idx,rev}`. These are marked binary in `.gitattributes`, so no line-ending conversion can touch them.
    - **`mios-gen archive --check` fails** when:
      - a dropped file is missing from `legacy`'s tree;
      - an archived file's content differs from its last version;
@@ -92,6 +92,16 @@ mios-bootstrap is budgeted separately: 201 files today against its own 500 cap (
      - **MiOS AI**, mios-micro, the model derived from MiOS itself, packages its artifacts as CNCF ModelPack v0.0.7 plus a KitOps Kitfile 1.0.0 (ADR-0027 Tier 2).
    - **Lineage: MiOS → MiOS AI.** The `legacy` history in `.archive/` is a corpus source for MiOS AI. When mios-micro packages it, it does so with the `mios-ai` descriptor family and an OpenAI chat fine-tuning JSONL `dataset` layer: path and last commit in the user turn, content in the assistant turn. The index rows are OpenAI-shaped `{"object": ...}` objects, per the ruling that all schemas are OpenAI formats.
    - **The fold-map bundles follow the same rule.** The vendored dependencies, field assets and theme assets in the fold map are kept as root-tree content (fewer, larger files, or git-native stores like `.archive`), not as tarballs. Their OCI forms are produced when the image or artifact is published.
+
+### Operating the legacy archive
+
+`[legibility.archive]` in `mios.toml` holds every value: the path, the branch, the object format, the `since` commit, the author and the `exclude` globs.
+
+- **Dropping files.** In the commit that drops them, after `git rm`, run `mios-gen archive`. It reads the index, so the drop and the archive land together. Stage `.archive/` by explicit path: the old pack's removal and the new pack. A store that is already current is left alone.
+- **What a rebuild writes.** One commit, rebuilt from history each time rather than appended. It has a fixed author and a date from `SOURCE_DATE_EPOCH` or the `since` commit, so its id is reproducible, and its message names the newest first-parent commit that held each path. The pack is written without a bitmap or `.rev`, so the store is five files.
+- **Checking.** `mios-gen archive --check` is drift check `legacy-archive`. It needs full history (`fetch-depth: 0`); both publishers' drift-gate checkouts have it. It is skipped inside the image bake, because gates are out of the bake.
+- **Restoring a file** is an overlay onto root: `git --git-dir=/.archive --work-tree=/ restore --source=legacy -- <path>`. It writes no index into the store. `checkout legacy -- <path>` works too, but it leaves `/.archive/index`, which the check rejects as a stray file, so delete it afterwards. Bytes are exact where `core.autocrlf` is unset, as on every MiOS host.
+- **A merge conflict in `.archive/*`:** take either side (`git checkout --ours -- .archive` or `--theirs`), run `mios-gen archive`, and stage the result. The store is derived from history, so neither side's bytes matter.
 
 ## Milestones
 

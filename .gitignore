@@ -62,7 +62,6 @@
 !/.devcontainer/cloud-shell/README.md
 !/.devcontainer/cloud-shell/claude-code-cloud.sh
 !/.devcontainer/cloud-shell/codex-cloud.sh
-!/usr/share/man/man5/
 !/harness/
 !/harness/**
 !/invariants/
@@ -82,6 +81,16 @@
 !/.prompts/**
 !/.research/
 !/.research/**
+# ADR-0030 Decision 7: the legacy archive, a bare git store beside .git. Only HEAD, config, the
+# branch and the one pack are tracked; `mios-gen archive --check` rejects anything else on disk.
+!/.archive/
+/.archive/*
+!/.archive/HEAD
+!/.archive/config
+!/.archive/refs/
+!/.archive/objects/
+/.archive/objects/*
+!/.archive/objects/pack/
 !/.secrets/
 !/.secrets/README.md
 /.secrets/*
@@ -107,8 +116,9 @@
 !/.agents/agents/**
 !/.forgejo/
 !/.forgejo/**
-!/usr/share/man/
-!/usr/share/man/**/mios*
+# ADR-0030 Decision 4: /usr/share/man/ rendered from SSOT as build output
+/usr/share/man/
+/usr/share/man/**
 # The block-all `/*` rule never un-ignored tests/. Files already tracked there
 # (drift-gate-negatives.sh) survived only because tracking predates the rule --
 # any NEW test was silently unstageable, which is how tests/powershell/ came to
@@ -267,6 +277,7 @@ etc/fapolicyd/*
 
 !/etc/profile.d/
 !/etc/profile.d/*mios*.sh
+!/etc/profile.d/*mios*.csh
 
 !/etc/xdg/
 etc/xdg/*
@@ -564,10 +575,7 @@ usr/lib/environment.d/*
 
 !/usr/lib/modprobe.d/
 usr/lib/modprobe.d/*
-!/usr/lib/modprobe.d/blacklist-*
-!/usr/lib/modprobe.d/kvmfr.conf
-!/usr/lib/modprobe.d/*mios*
-!/usr/lib/modprobe.d/nvidia*
+!/usr/lib/modprobe.d/50-mios.conf
 
 !/usr/lib/modules-load.d/
 usr/lib/modules-load.d/*
@@ -584,9 +592,7 @@ usr/lib/pam.d/*
 
 !/usr/lib/sysctl.d/
 usr/lib/sysctl.d/*
-!/usr/lib/sysctl.d/*mios*
-!/usr/lib/sysctl.d/20-memory.conf
-!/usr/lib/sysctl.d/20-mios-memory.conf
+!/usr/lib/sysctl.d/99-mios.conf
 
 !/usr/lib/systemd/
 usr/lib/systemd/*
@@ -650,13 +656,11 @@ usr/lib/systemd/system/user@0.service.d/*
 
 !/usr/lib/sysusers.d/
 usr/lib/sysusers.d/*
-!/usr/lib/sysusers.d/*mios*
-!/usr/lib/sysusers.d/20-podman-machine.conf
+!/usr/lib/sysusers.d/50-mios.conf
 
 !/usr/lib/tmpfiles.d/
 usr/lib/tmpfiles.d/*
-!/usr/lib/tmpfiles.d/*mios*
-!/usr/lib/tmpfiles.d/50-nix.conf
+!/usr/lib/tmpfiles.d/50-mios.conf
 
 !/usr/lib/udev/
 usr/lib/udev/*

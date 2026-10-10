@@ -647,6 +647,35 @@ class tvr_TestVariantRegistry(unittest.TestCase):
 
     def test_each_variant_has_a_page_in_the_manual(self):
         p = os.path.join(tvr__ROOT, "usr/share/man/man7/mios-variants.7")
+        if not os.path.isfile(p):
+            import shutil, subprocess, tempfile
+            with tempfile.TemporaryDirectory() as td:
+                os.makedirs(os.path.join(td, "usr/share/mios"), exist_ok=True)
+                os.makedirs(os.path.join(td, "usr/share/doc/mios/manual"), exist_ok=True)
+                shutil.copy(os.path.join(tvr__ROOT, "usr/share/mios/mios.toml"), os.path.join(td, "usr/share/mios/mios.toml"))
+                shutil.copy(os.path.join(tvr__ROOT, "VERSION"), os.path.join(td, "VERSION"))
+                ch01 = os.path.join(tvr__ROOT, "usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md")
+                if os.path.isfile(ch01):
+                    shutil.copy(ch01, os.path.join(td, "usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md"))
+                gen = shutil.which("mios-gen")
+                if not gen:
+                    exe = ".exe" if os.name == "nt" else ""
+                    for cand in [
+                        os.path.join(tvr__ROOT, "tools/native/target/debug/mios-gen" + exe),
+                        os.path.join(tvr__ROOT, "tools/native/target/release/mios-gen" + exe),
+                        "/usr/libexec/mios/mios-gen",
+                    ]:
+                        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                            gen = cand
+                            break
+                if gen:
+                    subprocess.run([gen, "render-manpages", "--root", td], check=True, capture_output=True)
+                p = os.path.join(td, "usr/share/man/man7/mios-variants.7")
+                self.assertTrue(os.path.isfile(p), "mios-variants(7) is not rendered")
+                body = open(p, encoding="utf-8").read()
+                for spec in self.entries.values():
+                    self.assertIn(spec["title"].replace("-", chr(92) + "-"), body)
+                return
         self.assertTrue(os.path.isfile(p), "mios-variants(7) is not rendered")
         body = open(p, encoding="utf-8").read()
         for spec in self.entries.values():
