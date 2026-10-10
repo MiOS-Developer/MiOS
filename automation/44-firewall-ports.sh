@@ -22,54 +22,11 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [ -n "$_c" ] && [ -x "$_c" ]; then _miosd="$_c"; break; fi
 done
 
-if [ -n "$_miosd" ]; then
-    "$_miosd" firewall-ports
-    mios_ok "Configured firewalld ports via miosd"
-    exit 0
+if [ -z "$_miosd" ]; then
+    mios_err "Native miosd is required to configure firewall ports (task_962)"
+    exit 1
 fi
 
-# Derive open ports from SSOT [firewall.open_ports]
-_ssot_ports=()
-if python3 -c 'import tomllib' 2>/dev/null; then
-    mapfile -t _ssot_ports < <(python3 -c '
-import tomllib, os
-path = "/usr/share/mios/mios.toml"
-if not os.path.exists(path):
-    path = os.path.join(os.path.dirname(__file__), "../usr/share/mios/mios.toml")
-if os.path.exists(path):
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
-    fw = data.get("firewall", {}).get("open_ports", [])
-    ports = data.get("ports", {})
-    for k in fw:
-        val = ports.get(k)
-        if val is not None:
-            print(f"{val}")
-' 2>/dev/null || true)
-fi
-
-if [ "${#_ssot_ports[@]}" -gt 0 ]; then
-    for port in "${_ssot_ports[@]}"; do
-        firewall-offline-cmd --zone=public --add-port="${port}/tcp" || true
-    done
-else
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_HERMES}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_OPEN_WEBUI}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_CODE_SERVER:-8900}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_GUACAMOLE_WEB}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_CEPH_DASHBOARD}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_K3S_API}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_RDP}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_FORGE_HTTP}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_FORGE_SSH}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_COCKPIT_LINK}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_ADGUARD_UI:-8050}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_SSH}/tcp
-    firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_COCKPIT}/tcp
-fi
-
-firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_ADGUARD_DNS:-53}/tcp
-firewall-offline-cmd --zone=public --add-port=${MIOS_PORTS_ADGUARD_DNS:-53}/udp
-firewall-offline-cmd --zone=public --add-service=ssh
-firewall-offline-cmd --zone=public --add-service=mios-pxe
+"$_miosd" firewall-ports
+mios_ok "Configured firewalld ports via miosd"
 

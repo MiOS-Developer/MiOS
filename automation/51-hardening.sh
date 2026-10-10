@@ -22,27 +22,13 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    "$_miosd" harden
-    mios_ok "Hardening services enabled via miosd"
-else
-    WANTS=/usr/lib/systemd/system/multi-user.target.wants
-    install -d -m 0755 "${WANTS}"
-
-    mios_log "Enable hardening services"
-    for unit in \
-        usbguard.service \
-        auditd.service \
-        fapolicyd.service
-    do
-        if [[ -f "/usr/lib/systemd/system/${unit}" ]]; then
-            ln -sf "../${unit}" "${WANTS}/${unit}"
-            mios_ok "Enabled ${unit}"
-        else
-            mios_skip "${unit} not installed"
-        fi
-    done
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required for hardening services (task_962)"
+    exit 1
 fi
+
+"$_miosd" harden
+mios_ok "Hardening services enabled via miosd"
 
 if command -v fagenrules &>/dev/null; then
     mios_log "Pre-generate fapolicyd trust database"

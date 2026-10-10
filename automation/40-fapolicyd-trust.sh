@@ -23,16 +23,13 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    "$_miosd" harden
-    mios_ok "Fapolicyd trust configured via miosd"
-else
-    for config in /usr/lib/fapolicyd/fapolicyd.conf /etc/fapolicyd/fapolicyd.conf; do
-        if [[ -f "$config" ]]; then
-            sed -i 's/^trust =.*/trust = file,rpmdb/' "$config" || true
-        fi
-    done
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required for fapolicyd trust configuration (task_962)"
+    exit 1
 fi
+
+"$_miosd" harden
+mios_ok "Fapolicyd trust configured via miosd"
 
 systemctl enable fapolicyd.service
 mios_ok "Trust = file,rpmdb set in fapolicyd.conf, fapolicyd.service enabled"
