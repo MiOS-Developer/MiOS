@@ -55,7 +55,7 @@ param(
     [string]$Action = 'Default',
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
-    [string]$RepoDir   = "M:\MiOS\repo\mios-bootstrap",
+    [string]$RepoDir   = "${env:SystemDrive}\mios-bootstrap",
     [switch]$FullBuild,
     [switch]$Unattended,
     [string]$Workflow  = ""
@@ -944,13 +944,14 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_rawUrl = "$($Script:MiosBootstrapRaw)/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_p2ExitedPrefix     = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'exited_code_prefix'   -Default '  [!] Bootstrap exited with code ') -replace "'", "''"
     $_p2FailureDtl       = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'failure_detail'       -Default '      Output above is the failure detail (Pass-1 has no separate log).') -replace "'", "''"
-    $_p2BuildLogHnt      = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'build_log_hint'       -Default "      build-mios.ps1's own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.") -replace "'", "''"
+    $_sysLog = if ($env:SystemDrive) { "$($env:SystemDrive)\MiOS\logs" } else { "C:\MiOS\logs" }
+    $_p2BuildLogHnt      = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'build_log_hint'       -Default "      build-mios.ps1's own log at $_sysLog\mios-install-*.log only kicks in on Pass-2 success.") -replace "'", "''"
     $_p2FetchFailed      = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'fetch_run_failed'     -Default '  [!] Bootstrap fetch/run failed: ') -replace "'", "''"
     $_p2PressEnter       = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'press_enter_close'    -Default '  Press Enter to close this elevated bootstrap window...') -replace "'", "''"
     $_p2SuccessTrans     = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'success_transition'   -Default '  [+] Bootstrap complete. Loading MiOS terminal in this window...') -replace "'", "''"
     $_p2ProfileFailed    = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_load_failed'  -Default '  [!] MiOS profile load failed: ') -replace "'", "''"
     $_p2ProfileFailedHnt = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_load_hint'    -Default '      Open a fresh MiOS shortcut to retry.') -replace "'", "''"
-    $_p2ProfileMissing   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_missing'      -Default '  [!] M:\MiOS\powershell\profile.ps1 not found -- open the MiOS shortcut to launch the app window.') -replace "'", "''"
+    $_p2ProfileMissing   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_missing'      -Default "  [!] $(if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' })\MiOS\powershell\profile.ps1 not found -- open the MiOS shortcut to launch the app window.") -replace "'", "''"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_CACHE_BUSTED='1'
@@ -960,7 +961,8 @@ try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } cat
 try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 try {
-    `$_p2LogDir = if (Test-Path 'M:\') { 'M:\MiOS\logs' } else { Join-Path `$env:TEMP 'mios-logs' }
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$_p2LogDir = if (Test-Path 'M:\MiOS\logs') { 'M:\MiOS\logs' } else { Join-Path `$_sysDrive 'MiOS\logs' }
     if (-not (Test-Path `$_p2LogDir)) { New-Item -ItemType Directory -Force -Path `$_p2LogDir | Out-Null }
     `$_p2Log = Join-Path `$_p2LogDir ('mios-pass2-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
     Start-Transcript -LiteralPath `$_p2Log -Force *> `$null
@@ -987,7 +989,8 @@ try {
         try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
         try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
     }
-    `$_dbg = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$env:TEMP 'mios-center-debug.log' }
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$_dbg = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$_sysDrive 'MiOS\logs\mios-center-debug.log' }
     `$_dbgLines = New-Object System.Collections.Generic.List[string]
     `$_dbgLines.Add("[`$([DateTime]::Now.ToString('HH:mm:ss.fff'))] Pass-2 inner cmd center start")
     for (`$_attempt = 0; `$_attempt -lt 8; `$_attempt++) {
@@ -1014,7 +1017,8 @@ try {
     try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
 } catch {
     try {
-        `$_dbgFail = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$env:TEMP 'mios-center-debug.log' }
+        `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+        `$_dbgFail = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$_sysDrive 'MiOS\logs\mios-center-debug.log' }
         Add-Content -LiteralPath `$_dbgFail -Value "Pass-2 inner cmd center FAILED: `$(`$_.Exception.Message)"
     } catch {}
 }
@@ -1062,7 +1066,8 @@ try {
         Write-Host ''
         Start-Sleep -Milliseconds 800
         try { Clear-Host } catch {}
-        `$_miosProfile = 'M:\MiOS\powershell\profile.ps1'
+        `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+        `$_miosProfile = if (Test-Path 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' } else { Join-Path `$_sysDrive 'MiOS\powershell\profile.ps1' }
         if (Test-Path -LiteralPath `$_miosProfile) {
             try { . `$_miosProfile } catch {
                 Write-Host ('$_p2ProfileFailed' + `$_.Exception.Message) -ForegroundColor Yellow
@@ -1360,8 +1365,10 @@ function Install-MiOSGeistFont {
         $extractedCount = (Get-ChildItem $tmpDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
         Write-Host "  [*] GeistMono.zip: $([math]::Round($zipSize/1MB,1)) MB, $extractedCount files extracted." -ForegroundColor DarkGray
 
-        $miosFontDir = if (Test-Path 'M:\') { 'M:\MiOS\fonts' }
-                       else { Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts' }
+        $_sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+        $miosFontDir = if (Test-Path 'M:\MiOS\fonts') { 'M:\MiOS\fonts' }
+                       elseif (Test-Path "$_sysDrive\MiOS\fonts") { "$_sysDrive\MiOS\fonts" }
+                       else { Join-Path $_sysDrive 'MiOS\fonts' }
         if (-not (Test-Path $miosFontDir)) {
             New-Item -ItemType Directory -Path $miosFontDir -Force | Out-Null
         }
@@ -1422,8 +1429,10 @@ function Install-MiOSBibataCursor {
     $cursorsKey = 'HKCU:\Control Panel\Cursors'
     $current = (Get-ItemProperty -Path $cursorsKey -ErrorAction SilentlyContinue).'(default)'
     if (-not $current) { $current = (Get-ItemProperty -Path $cursorsKey -Name '(default)' -ErrorAction SilentlyContinue).'(default)' }
-    $installRoot = if (Test-Path 'M:\') { 'M:\MiOS\cursors\Bibata-Modern-Classic' }
-                   else { Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors\Bibata-Modern-Classic' }
+    $_sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+    $installRoot = if (Test-Path 'M:\MiOS\cursors\Bibata-Modern-Classic') { 'M:\MiOS\cursors\Bibata-Modern-Classic' }
+                   elseif (Test-Path "$_sysDrive\MiOS\cursors\Bibata-Modern-Classic") { "$_sysDrive\MiOS\cursors\Bibata-Modern-Classic" }
+                   else { Join-Path $_sysDrive 'MiOS\cursors\Bibata-Modern-Classic' }
     if ($current -eq $schemeName -and (Test-Path -LiteralPath (Join-Path $installRoot 'Default.cur'))) {
         Write-Host "  [+] Bibata cursor already installed + active: $installRoot" -ForegroundColor DarkGray
         return $true
@@ -1653,8 +1662,10 @@ function Install-MiOSTerminalProfile {
         $defaultPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
         Write-Host "  [!] No pwsh 7 found; falling back to Windows PS 5.1 in MiOS profile." -ForegroundColor Yellow
     }
-    $miosProfilePath = if (Test-Path 'M:\') { 'M:\MiOS\powershell\profile.ps1' }
-                      else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell\profile.ps1' }
+    $_sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+    $miosProfilePath = if (Test-Path 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' }
+                      elseif (Test-Path "$_sysDrive\MiOS\powershell\profile.ps1") { "$_sysDrive\MiOS\powershell\profile.ps1" }
+                      else { Join-Path $_sysDrive 'MiOS\powershell\profile.ps1' }
     $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -NoProfile -Command "$env:MIOS_APP_CONTEXT=''1''; if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
 
     $_themeFontFace    = Get-MiosTomlValue -Section 'theme.font' -Key 'family'             -Default 'GeistMono Nerd Font Mono'
@@ -1736,7 +1747,7 @@ function Install-MiOSTerminalProfile {
         guid              = $miosGuid
         name              = $_miosProfileName
         commandline       = $profileCmdline
-        startingDirectory = 'M:\\'
+        startingDirectory = (if ($env:SystemDrive) { "$($env:SystemDrive)\\" } else { 'C:\\' })
     }
     foreach ($k in $commonProfileProps.Keys) { $miosProfile[$k] = $commonProfileProps[$k] }
 
@@ -1912,11 +1923,12 @@ function Install-MiOSTerminalProfile {
 # dir; if it isn't there yet (first-run, before build-mios.ps1 stages it),
 # we fall back to a built-in oh-my-posh theme so the prompt still renders.
 function Install-MiOSNativeApp {
-    if (-not (Test-Path 'M:\')) {
-        throw "Install-MiosLauncher: M:\ not provisioned -- Initialize-DataDisk should have created it before this point. MiOS contract: every MiOS-managed file lives on M:\."
-    }
-    $miosRoot = 'M:\MiOS'
-    $miosBin  = Join-Path $miosRoot 'bin'
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDrive  = "${sysLetter}:"
+    $miosRoot  = if (Test-Path 'M:\MiOS') { 'M:\MiOS' }
+                 elseif (Test-Path "$sysDrive\MiOS") { "$sysDrive\MiOS" }
+                 else { Join-Path $sysDrive 'MiOS' }
+    $miosBin   = Join-Path $miosRoot 'bin'
     if (-not (Test-Path $miosBin)) { New-Item -ItemType Directory -Path $miosBin -Force | Out-Null }
 
     $launcherPath = Join-Path $miosBin 'mios-launch.ps1'
@@ -1999,7 +2011,11 @@ if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Verb dispatch on a Windows-side profile (MiOS-WIN, or legacy 'MiOS').
     # Override the WT profile commandline with pwsh.exe loading the MiOS
     # profile body explicitly + running `mios <verb>` after.
-    $miosProfile = 'M:\MiOS\powershell\profile.ps1'
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDrive  = "${sysLetter}:"
+    $miosProfile = if (Test-Path 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' }
+                   elseif (Test-Path "$sysDrive\MiOS\powershell\profile.ps1") { "$sysDrive\MiOS\powershell\profile.ps1" }
+                   else { Join-Path $sysDrive 'MiOS\powershell\profile.ps1' }
     $pwshExe = $null
     try {
         $pwshPkg = Get-Command pwsh.exe -ErrorAction SilentlyContinue
@@ -2125,7 +2141,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # default PowerShell shortcut icon).
     $iconPath = Join-Path $miosRoot 'icons\mios.ico'
     if (-not (Test-Path -LiteralPath $iconPath)) {
-        $altIcon = 'M:\MiOS\icons\mios.ico'
+        $altIcon = if (Test-Path 'M:\MiOS\icons\mios.ico') { 'M:\MiOS\icons\mios.ico' } else { Join-Path $miosRoot 'icons\mios.ico' }
         if (Test-Path -LiteralPath $altIcon) { $iconPath = $altIcon } else { $iconPath = '' }
     }
 
@@ -2267,7 +2283,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
             $sc.Arguments    = "-NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item -LiteralPath '$smLnk','$desktopDir\MiOS.lnk' -Force -EA SilentlyContinue; Remove-Item -LiteralPath '$uninstKey' -Recurse -Force -EA SilentlyContinue`""
         }
         $sc.WorkingDirectory = $miosRoot
-        $sc.Description      = 'Uninstall MiOS (removes WT profiles, WSL distros, M:\ overlay, registry keys, shortcuts)'
+        $sc.Description      = 'Uninstall MiOS (removes WT profiles, WSL distros, root overlay, registry keys, shortcuts)'
         $sc.WindowStyle      = 1   # 1 = Normal -- operator should SEE the uninstall progress
         if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
         $sc.Save()
@@ -2728,10 +2744,11 @@ function Install-MiOSFastfetch {
         Write-Host "  [+] fastfetch already installed." -ForegroundColor DarkGray
     }
 
-    if (-not (Test-Path 'M:\')) {
-        throw "Install-MiOSFastfetch: M:\ not provisioned -- Initialize-DataDisk should have created it before this point."
-    }
-    $miosRoot = 'M:\MiOS'
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDrive  = "${sysLetter}:"
+    $miosRoot  = if (Test-Path 'M:\MiOS') { 'M:\MiOS' }
+                 elseif (Test-Path "$sysDrive\MiOS") { "$sysDrive\MiOS" }
+                 else { Join-Path $sysDrive 'MiOS' }
     $ffDir = Join-Path $miosRoot 'fastfetch'
     if (-not (Test-Path $ffDir)) { New-Item -ItemType Directory -Path $ffDir -Force | Out-Null }
     $logoPath   = Join-Path $ffDir 'mios.txt'
@@ -2781,12 +2798,11 @@ function Install-MiOSFastfetch {
 }
 
 function Install-MiOSOhMyPoshTheme {
-    # Stage mios.omp.json at M:\MiOS\themes\ -- M:\-everywhere
-    # invariant; Initialize-DataDisk creates M:\ before this runs.
-    if (-not (Test-Path 'M:\')) {
-        throw "Install-MiOSOhMyPoshTheme: M:\ not provisioned -- Initialize-DataDisk should have created it before this point."
-    }
-    $miosRoot = 'M:\MiOS'
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDrive  = "${sysLetter}:"
+    $miosRoot  = if (Test-Path 'M:\MiOS') { 'M:\MiOS' }
+                 elseif (Test-Path "$sysDrive\MiOS") { "$sysDrive\MiOS" }
+                 else { Join-Path $sysDrive 'MiOS' }
     $themesDir = Join-Path $miosRoot 'themes'
     if (-not (Test-Path $themesDir)) { New-Item -ItemType Directory -Path $themesDir -Force | Out-Null }
     $ompPath = Join-Path $themesDir 'mios.omp.json'
@@ -2820,8 +2836,11 @@ function Install-MiOSTmuxProfile {
 }
 
 function Install-MiOSPowerShellProfile {
-    $miosPsRoot = if (Test-Path 'M:\') { 'M:\MiOS\powershell' }
-                  else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell' }
+    $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $sysDrive  = "${sysLetter}:"
+    $miosPsRoot = if (Test-Path 'M:\MiOS\powershell') { 'M:\MiOS\powershell' }
+                  elseif (Test-Path "$sysDrive\MiOS\powershell") { "$sysDrive\MiOS\powershell" }
+                  else { Join-Path $sysDrive 'MiOS\powershell' }
     if (-not (Test-Path $miosPsRoot)) { New-Item -ItemType Directory -Path $miosPsRoot -Force | Out-Null }
     $miosProfileScript = Join-Path $miosPsRoot 'profile.ps1'
 
@@ -2866,9 +2885,9 @@ function Install-MiOSPowerShellProfile {
         '  By invoking any MiOS entry point you acknowledge:',
         '    * MiOS is provided AS IS, NO WARRANTY (MIT license).',
         '    * Build/install scripts can modify your system globally',
-        '      (registry, env vars, fonts, WT settings, WSL distros, M:\ partition).',
+        '      (registry, env vars, fonts, WT settings, WSL distros, root overlay).',
         '    * Telemetry: NONE (no data leaves the host without explicit operator action).',
-        '    * Full text: M:\AGREEMENTS.md  +  M:\LICENSE',
+        "    * Full text: $sysDrive\AGREEMENTS.md  +  $sysDrive\LICENSE",
         '',
         '  Continued use of this terminal is treated as acknowledgment.',
         ''
@@ -2970,9 +2989,12 @@ if (`$true) {
         }
     } catch {}
 
-    `$miosArtifactRoot = 'M:\MiOS'
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$miosArtifactRoot = if (Test-Path 'M:\MiOS') { 'M:\MiOS' }
+                         elseif (Test-Path (Join-Path `$_sysDrive 'MiOS')) { Join-Path `$_sysDrive 'MiOS' }
+                         else { Join-Path `$_sysDrive 'MiOS' }
     if (-not (Test-Path -LiteralPath `$miosArtifactRoot)) {
-        Write-Host "  [!] M:\MiOS not found -- re-run the irm|iex bootstrap to provision M:\." -ForegroundColor Yellow
+        try { New-Item -ItemType Directory -Path `$miosArtifactRoot -Force | Out-Null } catch {}
     }
     function _MiosSelfHeal {
         param([string]`$RelDir, [string]`$FileName, [string]`$Blob)
@@ -2990,11 +3012,11 @@ if (`$true) {
     `$ompCands = @()
     if (`$env:MIOS_OMP_JSON) { `$ompCands += `$env:MIOS_OMP_JSON }
     `$ompCands += @(
+        (Join-Path `$_sysDrive 'MiOS\themes\mios.omp.json'),
+        (Join-Path `$_sysDrive 'usr\share\mios\oh-my-posh\mios.omp.json'),
         'M:\MiOS\themes\mios.omp.json',
         'M:\usr\share\mios\oh-my-posh\mios.omp.json'
     )
-    # C:\* deliberately excluded -- M:\-everywhere invariant
-    # (operator: EVERYTHING to M:\, no LOCALAPPDATA / C:\MiOS leaks).
     foreach (`$c in `$ompCands) {
         if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
@@ -3035,8 +3057,11 @@ function mios-build {
 
     # -- Step 1 + 2: configurator pass ------------------------------
     if (-not `$skipConfig) {
+        `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
         `$cfgHtml = `$null
         foreach (`$c in @(
+            (Join-Path `$_sysDrive 'usr\share\mios\configurator\mios.html'),
+            (Join-Path `$_sysDrive 'MiOS\usr\share\mios\configurator\mios.html'),
             'M:\usr\share\mios\configurator\mios.html',
             'M:\MiOS\usr\share\mios\configurator\mios.html'
         )) { if (Test-Path -LiteralPath `$c) { `$cfgHtml = `$c; break } }
@@ -3052,7 +3077,7 @@ function mios-build {
             Write-Host '  Press Enter when you''ve saved the configurator (or to skip the edit pass)...' -ForegroundColor Yellow -NoNewline
             `$null = Read-Host
         } else {
-            Write-Host '  [!] Configurator HTML not found on M:\ -- skipping edit pass.' -ForegroundColor Yellow
+            Write-Host '  [!] Configurator HTML not found -- skipping edit pass.' -ForegroundColor Yellow
             Write-Host '      Run `mios pull` first to seed the overlay.' -ForegroundColor DarkGray
         }
 
@@ -3062,11 +3087,11 @@ function mios-build {
         if (Test-Path -LiteralPath `$dlDir) {
             `$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
             # Operator edits are a host overlay. Keep the fetched vendor
-            # mios.toml in M:\usr\share\mios intact for layered resolution.
+            # mios.toml in usr\share\mios intact for layered resolution.
             `$tomlSrc = Get-ChildItem -LiteralPath `$dlDir -Filter 'mios*.toml' -File -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
             if (`$tomlSrc) {
-                `$tomlDst = 'M:\etc\mios\mios.toml'
+                `$tomlDst = if (Test-Path 'M:\etc\mios') { 'M:\etc\mios\mios.toml' } else { Join-Path `$_sysDrive 'etc\mios\mios.toml' }
                 `$tomlPar = Split-Path -Parent `$tomlDst
                 if (-not (Test-Path -LiteralPath `$tomlPar)) {
                     New-Item -ItemType Directory -Path `$tomlPar -Force | Out-Null
@@ -3085,7 +3110,7 @@ function mios-build {
                 Where-Object { `$_.Name -notmatch '\.imported-' } |
                 Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
             if (`$htmlSrc) {
-                `$htmlDst = 'M:\usr\share\mios\configurator\mios.html'
+                `$htmlDst = if (Test-Path 'M:\usr\share\mios\configurator') { 'M:\usr\share\mios\configurator\mios.html' } else { Join-Path `$_sysDrive 'usr\share\mios\configurator\mios.html' }
                 `$htmlPar = Split-Path -Parent `$htmlDst
                 if (-not (Test-Path -LiteralPath `$htmlPar)) {
                     New-Item -ItemType Directory -Path `$htmlPar -Force | Out-Null
@@ -3102,7 +3127,7 @@ function mios-build {
 
     if (-not `$skipPull) {
         Write-Host ''
-        Write-Host '  [3/4] Syncing M:\ overlay (mios.git + mios-bootstrap)...' -ForegroundColor Cyan
+        Write-Host '  [3/4] Syncing root overlay (mios.git + mios-bootstrap)...' -ForegroundColor Cyan
         try { mios-pull } catch { Write-Host "  [!] mios-pull failed: `$(`$_.Exception.Message)" -ForegroundColor Yellow }
     }
 
@@ -3124,16 +3149,21 @@ function mios-update {
 }
 
 function mios-pull {
-    if (-not (Test-Path 'M:\.git')) {
-        Write-Host '  [!] M:\ is not a git working tree -- run mios-build first.' -ForegroundColor Yellow
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$_targetRoot = if (Test-Path 'M:\.git') { 'M:\' }
+                   elseif (Test-Path (Join-Path `$_sysDrive '.git')) { "`$_sysDrive\" }
+                   elseif (Test-Path (Join-Path `$_sysDrive 'MiOS\.git')) { Join-Path `$_sysDrive 'MiOS' }
+                   else { "`$_sysDrive\" }
+    if (-not (Test-Path (Join-Path `$_targetRoot '.git'))) {
+        Write-Host "  [!] `$_targetRoot is not a git working tree -- run mios-build first." -ForegroundColor Yellow
         return
     }
-    Push-Location 'M:\'
+    Push-Location `$_targetRoot
     try {
         git fetch --depth=1 origin main
         if (`$LASTEXITCODE -eq 0) {
             git reset --hard FETCH_HEAD
-            Write-Host '  [+] M:\ overlay synced to origin/main.' -ForegroundColor Green
+            Write-Host "  [+] `$_targetRoot overlay synced to origin/main." -ForegroundColor Green
         } else {
             Write-Host '  [!] git fetch failed -- check network.' -ForegroundColor Yellow
         }
@@ -3141,8 +3171,16 @@ function mios-pull {
 }
 
 function mios-config {
-    `$cfg = if (Test-Path 'M:\usr\share\mios\configurator\mios.html') { 'M:\usr\share\mios\configurator\mios.html' }
-           else { `$null }
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$cfg = `$null
+    foreach (`$_cand in @(
+        (Join-Path `$_sysDrive 'usr\share\mios\configurator\mios.html'),
+        (Join-Path `$_sysDrive 'MiOS\usr\share\mios\configurator\mios.html'),
+        'M:\usr\share\mios\configurator\mios.html',
+        'M:\MiOS\usr\share\mios\configurator\mios.html'
+    )) {
+        if (Test-Path -LiteralPath `$_cand) { `$cfg = `$_cand; break }
+    }
     if (`$cfg) {
         Start-Process `$cfg
         Write-Host "  [+] Opened `$cfg" -ForegroundColor DarkGray
@@ -3200,8 +3238,15 @@ function mios-mini {
         }
     }
     if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
-        `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
-        `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+        `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+        `$cfg  = ''
+        foreach (`$_c in @((Join-Path `$_sysDrive 'MiOS\fastfetch\config.jsonc'), 'M:\MiOS\fastfetch\config.jsonc')) {
+            if (Test-Path -LiteralPath `$_c) { `$cfg = `$_c; break }
+        }
+        `$logo = ''
+        foreach (`$_l in @((Join-Path `$_sysDrive 'MiOS\fastfetch\mios.txt'), 'M:\MiOS\fastfetch\mios.txt')) {
+            if (Test-Path -LiteralPath `$_l) { `$logo = `$_l; break }
+        }
         Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
     } else {
         if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
@@ -3214,8 +3259,15 @@ function mios-mini {
 
 function mios-metal {
     if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
-        `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
-        `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+        `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+        `$cfg  = ''
+        foreach (`$_c in @((Join-Path `$_sysDrive 'MiOS\fastfetch\config.jsonc'), 'M:\MiOS\fastfetch\config.jsonc')) {
+            if (Test-Path -LiteralPath `$_c) { `$cfg = `$_c; break }
+        }
+        `$logo = ''
+        foreach (`$_l in @((Join-Path `$_sysDrive 'MiOS\fastfetch\mios.txt'), 'M:\MiOS\fastfetch\mios.txt')) {
+            if (Test-Path -LiteralPath `$_l) { `$logo = `$_l; break }
+        }
         Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
     } else {
         Write-Host '  [!] mios mini: Show-MiosDashboard not loaded.' -ForegroundColor Yellow
@@ -3223,8 +3275,14 @@ function mios-metal {
 }
 
 function mios-dash {
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
     `$_ascii = `$null
-    foreach (`$_p in @('M:\MiOS\fastfetch\mios.txt','M:\usr\share\mios\branding\mios.txt')) {
+    foreach (`$_p in @(
+        (Join-Path `$_sysDrive 'MiOS\fastfetch\mios.txt'),
+        (Join-Path `$_sysDrive 'usr\share\mios\branding\mios.txt'),
+        'M:\MiOS\fastfetch\mios.txt',
+        'M:\usr\share\mios\branding\mios.txt'
+    )) {
         if (Test-Path -LiteralPath `$_p) { `$_ascii = `$_p; break }
     }
     if (`$_ascii) {
@@ -3239,9 +3297,15 @@ function mios-dash {
     Write-Host '  ------------------------' -ForegroundColor DarkCyan
 
     # Sys specs via fastfetch (full module list, no frame).
-    `$_ffCfg = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' }
-              elseif (Test-Path 'M:\usr\share\mios\fastfetch\config.jsonc') { 'M:\usr\share\mios\fastfetch\config.jsonc' }
-              else { `$null }
+    `$_ffCfg = `$null
+    foreach (`$_c in @(
+        (Join-Path `$_sysDrive 'MiOS\fastfetch\config.jsonc'),
+        (Join-Path `$_sysDrive 'usr\share\mios\fastfetch\config.jsonc'),
+        'M:\MiOS\fastfetch\config.jsonc',
+        'M:\usr\share\mios\fastfetch\config.jsonc'
+    )) {
+        if (Test-Path -LiteralPath `$_c) { `$_ffCfg = `$_c; break }
+    }
     if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
         if (`$_ffCfg) { & fastfetch -c `$_ffCfg --logo none } else { & fastfetch --logo none }
     } else {
@@ -3298,7 +3362,7 @@ function mios-help {
     Write-Host '                  or use mios-<verb> directly:' -ForegroundColor DarkGray
     Write-Host '  mios build    run the full MiOS OS bootstrap (WSL2 + podman + dev VM)' -ForegroundColor White
     Write-Host '  mios update   re-run Get-MiOS.ps1 (refresh terminal install)' -ForegroundColor White
-    Write-Host '  mios pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
+    Write-Host '  mios pull     git fetch + hard reset root overlay to origin/main' -ForegroundColor White
     Write-Host '  mios config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
     Write-Host '  mios ai       open Open WebUI (rich LLM interface) in your browser' -ForegroundColor White
     Write-Host '  mios dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
@@ -3348,8 +3412,12 @@ Register-ArgumentCompleter -CommandName mios -ParameterName Verb -ScriptBlock {
 }
 
 function _MiosResolveStartupVerb {
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
     `$_cands = @(
         (Join-Path `$env:USERPROFILE '.config\mios\mios.toml'),
+        (Join-Path `$_sysDrive 'etc\mios\mios.toml'),
+        (Join-Path `$_sysDrive 'usr\share\mios\mios.toml'),
+        (Join-Path `$_sysDrive 'MiOS\usr\share\mios\mios.toml'),
         'M:\etc\mios\mios.toml',
         'M:\usr\share\mios\mios.toml'
     )
@@ -3385,7 +3453,12 @@ function btop {
     `$_native = (Get-Command btop.exe -CommandType Application -ErrorAction SilentlyContinue)
     if (`$_native) {
         if (-not `$env:BTOP_CONFIG_DIR) {
-            foreach (`$_bDir in @('M:\MiOS\btop', (Join-Path `$env:LOCALAPPDATA 'btop'))) {
+            `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+            foreach (`$_bDir in @(
+                (Join-Path `$_sysDrive 'MiOS\btop'),
+                'M:\MiOS\btop',
+                (Join-Path `$env:LOCALAPPDATA 'btop')
+            )) {
                 if (Test-Path -LiteralPath `$_bDir) { `$env:BTOP_CONFIG_DIR = `$_bDir; break }
             }
         }
@@ -3459,7 +3532,8 @@ $endMark
     $diagBlock = @"
 
 try {
-    `$_diagDir = 'M:\MiOS\diagnostics'
+    `$_sysDrive = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
+    `$_diagDir = if (Test-Path 'M:\MiOS\diagnostics') { 'M:\MiOS\diagnostics' } else { Join-Path `$_sysDrive 'MiOS\diagnostics' }
     if (-not (Test-Path -LiteralPath `$_diagDir)) { New-Item -ItemType Directory -Path `$_diagDir -Force | Out-Null }
     `$_diagFile = Join-Path `$_diagDir 'window-width.txt'
     `$_ww = try { [Console]::WindowWidth } catch { '?' }
@@ -3876,12 +3950,18 @@ function Invoke-MiOSFullReap {
 function Initialize-DataDisk {
     param(
         [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb'    -Default 262656),
-        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M'),
+        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'C'),
         [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
     )
+    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
+    if (-not $sysLetter) { $sysLetter = 'C' }
+    if ($DriveLetter -eq $sysLetter) {
+        Write-Good "${DriveLetter}:\ matches system drive (${sysLetter}:) -- converged root layout active; skipping partition resize."
+        return
+    }
     $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
     if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
-        Write-Good "M:\ already provisioned ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem), label=$VolumeLabel)"
+        Write-Good "${DriveLetter}:\ already provisioned ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem), label=$VolumeLabel)"
         return
     }
     if ($existing) {
@@ -3891,7 +3971,6 @@ function Initialize-DataDisk {
     }
     $_displayGb = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'display_size_gb' -Default 256
     Write-Info "Provisioning ${DriveLetter}:\ at $ShrinkMB MB (target $_displayGb GB visible in Explorer) ..."
-    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
     $cPart       = Get-Partition -DriveLetter $sysLetter
     $supported   = Get-PartitionSupportedSize -DriveLetter $sysLetter
     $shrinkBytes = [int64]$ShrinkMB * 1MB
@@ -3930,7 +4009,7 @@ function Initialize-DataDisk {
 }
 
 function Set-PodmanMachineStorageOnM {
-    param([string]$MRoot = 'M:\podman\machine')
+    param([string]$MRoot = (if ($env:SystemDrive) { "$($env:SystemDrive)\podman\machine" } else { 'C:\podman\machine' }))
     if (-not (Test-Path $MRoot)) {
         New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
         Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
@@ -3941,7 +4020,7 @@ function Set-PodmanMachineStorageOnM {
         (Join-Path $env:PROGRAMDATA   'containers\podman\machine')
     )
     foreach ($p in $candidates) {
-        if (-not $p) { continue }
+        if (-not $p -or $p -ieq $MRoot) { continue }
         $parent = Split-Path $p -Parent
         if (-not (Test-Path $parent)) { try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {} }
         if (Test-Path $p) {
@@ -3979,7 +4058,7 @@ function Set-PodmanMachineStorageOnM {
 }
 
 function Set-WingetStorageOnM {
-    param([string]$MRoot = 'M:\winget')
+    param([string]$MRoot = (if ($env:SystemDrive) { "$($env:SystemDrive)\winget" } else { 'C:\winget' }))
     if (-not (Test-Path $MRoot)) {
         New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
         Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
@@ -4000,13 +4079,12 @@ function Set-WingetStorageOnM {
         @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') },
         # Machine-scope winget retry (used when --scope user fails -- e.g.
         # Microsoft.PowerShell, .NET runtimes, system-wide tools) lands
-        # in %ProgramFiles%\WinGet\Packages. Junction to M:\ so machine-
-        # scope installs ALSO end up on M:\.
+        # in %ProgramFiles%\WinGet\Packages.
         @{ Src = (Join-Path $_pf 'WinGet\Packages');                                    Dst = (Join-Path $MRoot 'MachinePackages')      }
     )
     foreach ($c in $candidates) {
         $p = $c.Src; $tgt = $c.Dst
-        if (-not $p) { continue }
+        if (-not $p -or $p -ieq $tgt) { continue }
         $parent = Split-Path $p -Parent
         if (-not (Test-Path $parent)) { try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {} }
         if (Test-Path $p) {
@@ -4046,18 +4124,22 @@ if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
 
 function Add-MiosDefenderExclusions {
     if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { return }
+    $_sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
     $_defaultPaths = @(
+        (Join-Path $_sysDrive 'MiOS'),
+        (Join-Path $_sysDrive 'MiOS\bin'),
+        (Join-Path $_sysDrive 'usr'),
+        (Join-Path $_sysDrive 'etc\mios'),
         'M:\',
         'M:\MiOS',
-        'M:\MiOS\bin',
-        'M:\MiOS\repo',
         (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet'),
         $env:TEMP
     )
     $_defaultProcs = @(
-        'M:\MiOS\bin\mios-launch.exe',
-        'M:\MiOS\bin\fastfetch.exe',
-        'M:\MiOS\bin\btop.exe'
+        (Join-Path $_sysDrive 'MiOS\bin\mios-launch.exe'),
+        (Join-Path $_sysDrive 'MiOS\bin\fastfetch.exe'),
+        (Join-Path $_sysDrive 'MiOS\bin\btop.exe'),
+        'M:\MiOS\bin\mios-launch.exe'
     )
     $excPaths = @(Get-MiosTomlValue -Section 'security.defender_exclusions' -Key 'paths'     -Default $_defaultPaths)
     $excProcs = @(Get-MiosTomlValue -Section 'security.defender_exclusions' -Key 'processes' -Default $_defaultProcs)
@@ -4213,30 +4295,48 @@ try {
 try {
     $_miosVendorToml = Resolve-MiosVendorTomlText
     $_miosHostToml = Resolve-MiosTomlText
+    $_sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+    $_sysDrive  = "${_sysLetter}:"
     if ($_miosVendorToml) {
-        $_vendorDst = 'M:\usr\share\mios\mios.toml'
+        $_vendorDst = Join-Path $_sysDrive 'usr\share\mios\mios.toml'
         $_vendorDir = Split-Path -Parent $_vendorDst
         if (-not (Test-Path -LiteralPath $_vendorDir)) { New-Item -ItemType Directory -Path $_vendorDir -Force | Out-Null }
         [IO.File]::WriteAllText($_vendorDst, $_miosVendorToml, (New-Object System.Text.UTF8Encoding($false)))
+        if (Test-Path 'M:\') {
+            try {
+                $_mDst = 'M:\usr\share\mios\mios.toml'
+                $_mDir = Split-Path -Parent $_mDst
+                if (-not (Test-Path -LiteralPath $_mDir)) { New-Item -ItemType Directory -Path $_mDir -Force | Out-Null }
+                [IO.File]::WriteAllText($_mDst, $_miosVendorToml, (New-Object System.Text.UTF8Encoding($false)))
+            } catch {}
+        }
         if ($_miosHostToml) {
-            $_hostDst = 'M:\etc\mios\mios.toml'
+            $_hostDst = Join-Path $_sysDrive 'etc\mios\mios.toml'
             $_hostDir = Split-Path -Parent $_hostDst
             if (-not (Test-Path -LiteralPath $_hostDir)) { New-Item -ItemType Directory -Path $_hostDir -Force | Out-Null }
             [IO.File]::WriteAllText($_hostDst, $_miosHostToml, (New-Object System.Text.UTF8Encoding($false)))
-            Write-Host "  [+] Full vendor mios.toml -> M:\usr\share\mios; operator profile -> M:\etc\mios" -ForegroundColor DarkGray
+            if (Test-Path 'M:\') {
+                try {
+                    $_mHostDst = 'M:\etc\mios\mios.toml'
+                    $_mHostDir = Split-Path -Parent $_mHostDst
+                    if (-not (Test-Path -LiteralPath $_mHostDir)) { New-Item -ItemType Directory -Path $_mHostDir -Force | Out-Null }
+                    [IO.File]::WriteAllText($_mHostDst, $_miosHostToml, (New-Object System.Text.UTF8Encoding($false)))
+                } catch {}
+            }
+            Write-Host "  [+] Full vendor mios.toml -> $_sysDrive\usr\share\mios; operator profile -> $_sysDrive\etc\mios" -ForegroundColor DarkGray
         } else {
-            Write-Host "  [+] Full vendor mios.toml -> M:\usr\share\mios (no host override found)" -ForegroundColor DarkGray
+            Write-Host "  [+] Full vendor mios.toml -> $_sysDrive\usr\share\mios (no host override found)" -ForegroundColor DarkGray
         }
     } else {
-        Write-Host "  [!] Full vendor mios.toml could not be loaded -- M:\usr\share\mios was not overwritten" -ForegroundColor Yellow
+        Write-Host "  [!] Full vendor mios.toml could not be loaded -- mios.toml was not overwritten" -ForegroundColor Yellow
     }
 } catch {
-    Write-Host ("  [!] mios.toml promotion to M:\ failed: $($_.Exception.Message)") -ForegroundColor Yellow
+    Write-Host ("  [!] mios.toml promotion failed: $($_.Exception.Message)") -ForegroundColor Yellow
 }
-$_vendorDst = 'M:\usr\share\mios\mios.toml'
-if (-not (Test-Path -LiteralPath $_vendorDst -PathType Leaf) -or
-    [IO.File]::ReadAllText($_vendorDst, (New-Object System.Text.UTF8Encoding($false))) -cne $_freshVendorToml) {
-    throw 'Full fetched system mios.toml was not staged exactly on M:\; refusing to continue the installer.'
+$_checkDst = if (Test-Path (Join-Path $_sysDrive 'usr\share\mios\mios.toml')) { Join-Path $_sysDrive 'usr\share\mios\mios.toml' } else { 'M:\usr\share\mios\mios.toml' }
+if (-not (Test-Path -LiteralPath $_checkDst -PathType Leaf) -or
+    [IO.File]::ReadAllText($_checkDst, (New-Object System.Text.UTF8Encoding($false))) -cne $_freshVendorToml) {
+    throw "Full fetched system mios.toml was not staged exactly on $_checkDst; refusing to continue the installer."
 }
 
 $_msgStep06 = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_6_features' -Default '[*] Step 0.6: Enabling Windows features (WSL + VirtualMachinePlatform + Hyper-V)...'
@@ -4434,7 +4534,7 @@ if ($true) {
     Write-Host ''
     Write-Host '+============================================================+' -ForegroundColor Cyan
     Write-Host '|  MiOS user-scope setup complete.                           |' -ForegroundColor Cyan
-    Write-Host '|  Continuing with admin steps (M:\ + Podman + dev VM)...    |' -ForegroundColor Cyan
+    Write-Host '|  Continuing with admin steps (Storage + Podman + dev VM)...    |' -ForegroundColor Cyan
     Write-Host '+============================================================+' -ForegroundColor Cyan
     Write-Host ''
     if ($isAdmin) {
@@ -4554,14 +4654,16 @@ Write-Good "Prerequisites OK (git, podman)"
 # stages files. Their original definitions moved up; this header retained
 # for orientation.
 
-# Create the canonical Windows install root structure now that M:\
-# is guaranteed to exist. The reset above wiped M:\MiOS, so this
-# rebuilds it fresh.
-$miosRepoDir = "M:\MiOS\repo"
+# Create the canonical Windows install root structure. Sub-repos are
+# nested directly at the root directory as sub git trees.
+$sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
+$sysDrive  = "${sysLetter}:"
+$miosRepoDir = Join-Path $sysDrive 'MiOS'
+$canonicalBootstrap = Join-Path $sysDrive 'mios-bootstrap'
 New-Item -ItemType Directory -Path $miosRepoDir -Force -ErrorAction SilentlyContinue | Out-Null
 
-if ((Test-Path $RepoDir) -and ($RepoDir -ne 'M:\MiOS\repo\mios-bootstrap')) {
-    Write-Err "-RepoDir $RepoDir already exists. Either delete it manually, or re-run without -RepoDir to use the canonical M:\MiOS\repo\mios-bootstrap."
+if ((Test-Path $RepoDir) -and ($RepoDir -ne $canonicalBootstrap) -and ($RepoDir -ne 'M:\MiOS\repo\mios-bootstrap')) {
+    Write-Err "-RepoDir $RepoDir already exists. Either delete it manually, or re-run without -RepoDir to use the canonical $canonicalBootstrap."
     exit 1
 }
 
