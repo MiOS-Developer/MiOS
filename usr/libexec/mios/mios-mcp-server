@@ -1672,22 +1672,59 @@ def _serve_http(server, port: int) -> None:
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
-FORBIDDEN_BYPASS_FLAGS = (
+FORBIDDEN_SINGLE_FLAGS = {
     "--dangerously-skip-permissions",
-    "--approval-mode yolo",
-    "--approval-mode=yolo",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--allow-all-tools",
     "--yolo",
     "-y",
-    "--dangerously-bypass-approvals-and-sandbox",
-)
+}
+
+FORBIDDEN_FLAG_VALUE_PAIRS = {
+    ("--approval-mode", "yolo"),
+    ("--permission-mode", "bypasspermissions"),
+    ("--permission-mode", "bypass-permissions"),
+    ("--sandbox", "danger-full-access"),
+    ("-a", "never"),
+    ("--ask-for-approval", "never"),
+}
+
+
+def _tokenize_command_template(template: str) -> list[str]:
+    """Tokenize command template using shlex, split --flag=value, and lowercase all parts."""
+    try:
+        raw_tokens = shlex.split(template)
+    except ValueError:
+        raw_tokens = template.split()
+    tokens: list[str] = []
+    for tok in raw_tokens:
+        tok_clean = tok.strip()
+        if tok_clean.startswith("-") and "=" in tok_clean:
+            flag, val = tok_clean.split("=", 1)
+            # Strip any lingering quotes from val
+            val = val.strip("'\"")
+            tokens.append(flag.lower())
+            tokens.append(val.lower())
+        else:
+            tokens.append(tok_clean.lower())
+    return tokens
 
 
 def _assert_safe_command_template(template: str) -> None:
     if not isinstance(template, str):
         return
-    tokens = template.split()
-    for flag in FORBIDDEN_BYPASS_FLAGS:
-        if flag in tokens or flag in template:
+    tokens = _tokenize_command_template(template)
+    for tok in tokens:
+        if tok in FORBIDDEN_SINGLE_FLAGS:
+            raise ValueError(f"Unsafe permission bypass flag '{tok}' is forbidden in command template: {template}")
+    for i in range(len(tokens) - 1):
+        pair = (tokens[i], tokens[i + 1])
+        if pair in FORBIDDEN_FLAG_VALUE_PAIRS:
+            raise ValueError(f"Unsafe permission bypass flag '{pair[0]} {pair[1]}' is forbidden in command template: {template}")
+    # Also guard against raw substring matches of dangerous flag patterns
+    lower_raw = template.lower()
+    for flag in FORBIDDEN_SINGLE_FLAGS:
+        if flag in lower_raw.split():
             raise ValueError(f"Unsafe permission bypass flag '{flag}' is forbidden in command template: {template}")
 
 

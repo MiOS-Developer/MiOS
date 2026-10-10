@@ -1357,6 +1357,48 @@ class TestPlantedNegativeControls(unittest.TestCase):
                 self.server_mod._agent_cli_config()
             self.assertIn("--dangerously-skip-permissions", str(ctx.exception))
 
+    def test_planted_negative_approval_mode_yolo_whitespace_and_casing(self):
+        """Negative control: planting --approval-mode with double space, tab, or uppercase YOLO fails."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode  yolo")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode=YOLO")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode\tyolo")
+
+    def test_planted_negative_quoting_bypass(self):
+        """Negative control: planting quoted bypass flags fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode='yolo'")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} \"--approval-mode=yolo\"")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("gemini -p {task} --approval-mode \"yolo\"")
+
+    def test_planted_negative_claude_permission_mode_bypass(self):
+        """Negative control: planting claude --permission-mode bypassPermissions fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("claude -p {task} --permission-mode bypassPermissions")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("claude -p {task} --permission-mode=bypassPermissions")
+
+    def test_planted_negative_copilot_allow_all_tools(self):
+        """Negative control: planting copilot --allow-all-tools fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("copilot --exec {task} --allow-all-tools")
+
+    def test_planted_negative_codex_sandbox_danger_and_ask_never(self):
+        """Negative control: planting codex --sandbox danger-full-access or -a never fails gate."""
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --sandbox danger-full-access -a never")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --sandbox=danger-full-access")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} -a never")
+        with self.assertRaises(ValueError):
+            self.server_mod._assert_safe_command_template("codex exec {task} --ask-for-approval never")
+
 
 if __name__ == "__main__":
     unittest.main()
+
