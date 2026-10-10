@@ -12454,14 +12454,14 @@ stay_max_words         = 25
 migrate_min_lines      = 6      # ratchet: 6 -> 4 -> 3 as the mid-size band clears
 migrate_min_words      = 60
 landing_min_word_ratio = 0.90   # a doc passage must retain this much of the block
-render_extra           = ["llms.txt", "llms-full.txt"]   # non-.md files mios-manual render also splices
+render_extra           = ["llms.txt"]   # non-.md files mios-manual render also splices
 
 # Retired AI-plane port numbers: every one has a [ports] successor key.
 retired_ports = [11434, 11450, 11441, 3030, 8432, 8441, 8442, 8633, 8640, 8641, 8642, 8888, 8899]
 # Living contract docs that must reference [ports] KEYS, never the numbers above.
 port_clean = [
   "README.md", "CLAUDE.md", "GEMINI.md", "AGENTS.md", "MiOS.md", "SECURITY.md",
-  ".github/ai-instructions.md", "llms.txt", "llms-full.txt",
+  ".github/ai-instructions.md", "llms.txt",
   "usr/share/doc/mios/reference/api.md",
   # Runtime AI payloads and operator surfaces (task_3349, batch 1).
   "system-prompt.md", "tools/README.md",
@@ -12626,6 +12626,7 @@ ref_allowlist = [
   "MIOS_FOO", "mios-XXXXX",
   # Untracked files (installation/MiOS-Field.bat is gitignored, mios-knowledge-graph.json built at runtime).
   "installation/MiOS-Field.bat",
+  ".prompt.MD", "mios-cloud-build.ps1", "mios-windows-export.ps1",
   "usr/share/mios/knowledge/mios-knowledge-graph.json",
   "mios-knowledge-graph",
   "C:\\mios-bootstrap\\Get-MiOS.ps1",
@@ -12889,7 +12890,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3277
+max_tracked_files = 3246
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -12990,7 +12991,7 @@ target_files = 5
 globs = [".archive/**"]
 
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 53
+max_files = 22
 target_files = 20
 globs = ["*"]
 
