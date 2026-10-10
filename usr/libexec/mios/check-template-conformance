@@ -42,21 +42,23 @@ def _try_native_bin(args_list):
     bin_path = os.environ.get("MIOS_CONFORM_BIN")
     if not bin_path:
         exe = "mios-template-conform.exe" if os.name == "nt" else "mios-template-conform"
-        for candidate in (
+        candidates = []
+        if os.environ.get("MIOS_NATIVE_BIN_DIR"):
+            candidates.append(os.path.join(os.environ["MIOS_NATIVE_BIN_DIR"], exe))
+        candidates.extend([
+            "/var/tmp/mios-merge-tools/" + exe,
             os.path.join(ROOT, "tools/native/target/release", exe),
             os.path.join(ROOT, "tools/native/target/debug", exe),
             os.path.join("/usr/bin", exe),
             os.path.join("/usr/local/bin", exe),
-        ):
+        ])
+        for candidate in candidates:
             if os.path.isfile(candidate):
                 bin_path = candidate
                 break
     if bin_path and os.path.isfile(bin_path):
-        try:
-            res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr)
-            sys.exit(res.returncode)
-        except Exception:
-            pass
+        res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr)
+        sys.exit(res.returncode)
 
 def main():
     _try_native_bin(sys.argv[1:])
@@ -75,10 +77,15 @@ def main():
 
     merged = mios_toml.load_merged()
     templates_cfg = merged.get("templates", {})
+    if not templates_cfg:
+        sys.stderr.write("FAIL: [templates] section in mios.toml is missing or empty\n")
+        return 1
 
     compiled_templates = []
     for tname, tcfg in templates_cfg.items():
-        if "match" in tcfg:
+        if tname == "placeholders":
+            continue
+        if isinstance(tcfg, dict) and "match" in tcfg and tcfg["match"]:
             compiled_templates.append({
                 "name": tname,
                 "pattern": re.compile(tcfg["match"]),
@@ -86,6 +93,10 @@ def main():
                 "required_markers": tcfg.get("required_markers", []),
                 "required_ordered": tcfg.get("required_ordered", []),
             })
+
+    if not compiled_templates:
+        sys.stderr.write("FAIL: no template compiled from [templates]\n")
+        return 1
 
     unconforming = []
     checked_count = 0

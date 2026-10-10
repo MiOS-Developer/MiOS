@@ -1933,7 +1933,7 @@ test_template_conformance() {
     [[ -f "$toml_file" ]] || return 0
     local bak_file="${toml_file}.bak"
     cp "$toml_file" "$bak_file"
-    sed -i 's/^\[templates\]/[xtemplates]/' "$toml_file"
+    sed -i 's/^\[templates\./[xtemplates./' "$toml_file"
     if bash "${ROOT}/automation/98-drift-checks.sh" check_template_conformance >/dev/null 2>&1; then
         cp "$bak_file" "$toml_file" && rm -f "$bak_file"
         die "check_template_conformance passed despite [templates] renamed to [xtemplates]"
