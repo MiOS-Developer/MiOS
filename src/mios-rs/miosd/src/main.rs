@@ -690,6 +690,12 @@ enum Commands {
         /// Optional custom port (default: 8700 or $MIOS_PORTS_AGENT_PIPE)
         #[arg(long)]
         port: Option<u16>,
+        /// Per-launch session authentication token
+        #[arg(long)]
+        token: Option<String>,
+        /// Path to file containing session token
+        #[arg(long)]
+        token_file: Option<std::path::PathBuf>,
     },
 }
 
@@ -1906,8 +1912,18 @@ async fn main() {
                 }
             }
         }
-        Commands::ConfigServer { bind, port } => {
-            let config = match miosd::server::ConfigServerConfig::resolve(bind.clone(), *port) {
+        Commands::ConfigServer {
+            bind,
+            port,
+            token,
+            token_file,
+        } => {
+            let config = match miosd::server::ConfigServerConfig::resolve_with_auth(
+                bind.clone(),
+                *port,
+                token.clone(),
+                token_file.clone(),
+            ) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("[miosd config-server] {e}");
