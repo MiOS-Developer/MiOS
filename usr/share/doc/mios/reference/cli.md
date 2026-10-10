@@ -89,7 +89,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | `mios powershell_run` |  |  |
 | `mios process_list` |  |  |
 | `mios profile` | dev_vm | Interactive hardware/system profiler menu |
-| `mios pull` | windows | Sync M:\ overlay to origin/main |
+| `mios pull` | windows | Sync root overlay to origin/main |
 | `mios recall` |  |  |
 | `mios remember` |  |  |
 | `mios resize_window` |  |  |
