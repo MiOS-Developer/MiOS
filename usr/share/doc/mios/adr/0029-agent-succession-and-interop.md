@@ -77,6 +77,12 @@ The weekly limit uses the same fields. An expired login appears as `isApiErrorMe
    | `alive` / `waiting` | otherwise | no |
 
    An error followed by a normal turn is not exhaustion. Only the latest assistant entry decides.
+
+   The relay decides, never the caller:
+   - **Identity is relay registration.** Acquire, renew, release and status publish carry `agent_id` and the token that identity registered with. The relay compares the token's digest with the registration and stores nothing else. Registration cleanup never retires an identity the lease names.
+   - **The relay runs the probe on acquire** and refuses unless `take_over` is true. A verdict in the request is never read, and the holder comes only from the lease.
+   - **Files stay in the relay's own state directory.** The lease, the status files and the journal resolve beneath it. An identity that names a file uses the relay alphabet, starts with a letter or digit, and never contains `..`.
+   - **A fresh install has an unheld lease** derived from `[mcp.agents.succession]`. A listed successor or the preferred holder acquires it first, and only that acquire writes it.
 4. **Harness adapters read; they never write.**
    - The Claude Code adapter reads the transcript fields above.
    - Every harness gets the release and silence signals.
