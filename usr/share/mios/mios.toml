@@ -12952,6 +12952,23 @@ max_files = 62
 target_files = 20
 globs = ["*"]
 
+# ADR-0030 Decision 7: every dropped file is kept in a bare git repository beside .git, on one
+# branch, at its root-relative path, last content and mode. `mios-gen archive` rebuilds it from the
+# history below; `mios-gen archive --check` (drift check legacy-archive) compares it by content.
+# Restore: git --git-dir=/.archive --work-tree=/ restore --source=legacy -- <path>
+[legibility.archive]
+path = ".archive"            # the store, at the root beside .git; only HEAD, config, the branch and one pack are tracked
+ref = "legacy"               # its one branch
+object_format = "sha256"     # git's sha256 object format; content is compared by the sha256 of the bytes
+since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-budget campaign began; first-parent history from here
+author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
+# Dropped paths that must NOT be re-tracked (private keys, tokens, credentials, valued .env files,
+# leaks), as globs where * also crosses /, each with its reason. Screened 2026-10-09: the 278 paths
+# dropped since `since` (tarball members included) hold no key, token or credential, only
+# placeholders such as REPLACEME and synthetic test strings, and no removing commit describes a
+# leak or a security fix.
+exclude = []
+
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]
 # Keys are the fetcher's contract (usr/libexec/mios/mios-models-firstboot): name + source +
