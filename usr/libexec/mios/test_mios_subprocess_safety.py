@@ -20,19 +20,42 @@ def check(name, cond, detail=""):
 def test_no_os_system_in_libexec():
     banned_needle = "os" + "." + "system("
     viol = []
-    for fn in os.listdir(_HERE):
-        path = os.path.join(_HERE, fn)
-        if not os.path.isfile(path) or fn.startswith("test_") or fn.endswith((".pyc", ".json", ".generated")):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-                for idx, line in enumerate(fh, 1):
-                    code = line.split("#")[0].strip()
-                    if banned_needle in code:
-                        viol.append(f"{fn}:{idx}: {line.strip()}")
-        except OSError:
-            continue
+    for dirpath, dirnames, filenames in os.walk(_HERE):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules")]
+        for fn in filenames:
+            path = os.path.join(dirpath, fn)
+            if not os.path.isfile(path) or fn.startswith("test_") or fn.endswith((".pyc", ".json", ".generated")):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    for idx, line in enumerate(fh, 1):
+                        code = line.split("#")[0].strip()
+                        if banned_needle in code:
+                            rel = os.path.relpath(path, _HERE).replace(os.sep, "/")
+                            viol.append(f"{rel}:{idx}: {line.strip()}")
+            except OSError:
+                continue
     check("libexec: zero os.system() invocations", len(viol) == 0, f"violations: {viol}")
+
+def test_no_shell_true_in_libexec():
+    banned_needle = "shell" + "=" + "True"
+    viol = []
+    for dirpath, dirnames, filenames in os.walk(_HERE):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules")]
+        for fn in filenames:
+            path = os.path.join(dirpath, fn)
+            if not os.path.isfile(path) or fn.startswith("test_") or fn.endswith((".pyc", ".json", ".generated")):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    for idx, line in enumerate(fh, 1):
+                        code = line.split("#")[0].strip()
+                        if banned_needle in code:
+                            rel = os.path.relpath(path, _HERE).replace(os.sep, "/")
+                            viol.append(f"{rel}:{idx}: {line.strip()}")
+            except OSError:
+                continue
+    check("libexec: zero shell=True invocations", len(viol) == 0, f"violations: {viol}")
 
 def test_mios_models_subprocess():
     banned_needle = "os" + "." + "system("
@@ -71,6 +94,7 @@ def test_negative_control_detects_plant():
 
 def main():
     test_no_os_system_in_libexec()
+    test_no_shell_true_in_libexec()
     test_mios_models_subprocess()
     test_mios_v2v_import_subprocess()
     test_mios_v2v_import_dry_run()
