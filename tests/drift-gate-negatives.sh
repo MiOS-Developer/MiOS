@@ -5950,21 +5950,15 @@ test_rust_categories() {
     local toml="${ROOT}/usr/share/mios/mios.toml"
     local backup; backup="$(mktemp)"
     cp -p "$toml" "$backup"
-    # Probe: a category whose owner is empty and whose exemption carries no
-    # reason -- two planted defects the gate must name, assembled dynamically
-    # so the probe never matches a static scan.
-    local probe_owner probe_table
-    probe_owner="$(printf 'ow%sner = ""' 'o')"
-    probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
+    local probe_owner; probe_owner="$(printf 'ow%sner = ""' 'o')"
+    local probe_table; probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
     printf '\n%s\n%s\n' "$probe_table" "$probe_owner" >> "$toml"
     if _neg_gate check_rust_categories; then
         cp -p "$backup" "$toml"; rm -f "$backup"
         die "rust-categories reported clean with a planted owner-less category"
     fi
-    cp -p "$backup" "$toml"
-    rm -f "$backup"
-    _neg_gate check_rust_categories \
-        || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
+    cp -p "$backup" "$toml" && rm -f "$backup"
+    _neg_gate check_rust_categories || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
     log "check_rust_categories negative test passed"
 }
 
