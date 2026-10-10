@@ -52,9 +52,17 @@ KNOWLEDGE_TABLE = "knowledge"
 KNOWLEDGE_STORE_ENABLED = True
 KNOWLEDGE_STORE_SKIP_VOLATILE = True
 KNOWLEDGE_STORE_GATE_UNSATISFIED = True
-KNOWLEDGE_ANSWER_MAX = 8000
-MEMORY_GUARD_MODE = "off"
-KNOWLEDGE_RECALL_ENABLED = True
+try:
+    _pg_cfg = _toml_section("pgvector")
+    MEMORY_GUARD_MODE = (os.environ.get("MIOS_MEMORY_GUARD_MODE")
+                         or _pg_cfg.get("memory_guard_mode", "log")).strip().lower()
+except Exception:
+    try:
+        import mios_toml
+        _pg_cfg = mios_toml.load_merged().get("pgvector", {})
+        MEMORY_GUARD_MODE = _pg_cfg.get("memory_guard_mode", "log").strip().lower()
+    except Exception:
+        MEMORY_GUARD_MODE = "log"
 KNOWLEDGE_RECALL_K = 3
 KNOWLEDGE_RECALL_CANDIDATES = 60
 KNOWLEDGE_RECALL_MIN_SCORE = 0.62

@@ -3683,6 +3683,15 @@ _assert_read_only() {  # $1 = what ran; _RO_BEFORE = the fingerprint taken befor
     return 1
 }
 
+check_memory_poisoning_scan() {
+    echo "[98-drift-checks] memory-poisoning scan enabled in SSOT and active in runtime"
+    _need_python || return 0
+    local out
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py memory-poisoning-scan 2>&1)" || {
+        _violations_from "check_memory_poisoning_scan: " "$out"; return; }
+    echo "[98-drift-checks]   memory-poisoning scan verified"
+}
+
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
         if declare -f "$1" >/dev/null; then

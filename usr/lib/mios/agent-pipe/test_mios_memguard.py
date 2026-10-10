@@ -171,7 +171,7 @@ try:
 except ImportError:
     psycopg = None
 
-def setUpModule():
+def _check_pgvector_live():
     if psycopg is None:
         raise unittest.SkipTest("no live pgvector -- integration test")
     port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
@@ -220,6 +220,7 @@ class TestMiosRedact(unittest.TestCase):
 class TestMiosRedactDatabase(unittest.TestCase):
 
     def setUp(self):
+        _check_pgvector_live()
         self.conn_str = "postgresql://mios:mios@localhost:8432/mios"
         with psycopg.connect(self.conn_str) as conn:
             with conn.cursor() as cur:
@@ -268,6 +269,67 @@ class TestMiosRedactDatabase(unittest.TestCase):
         asyncio.run(self.async_test_db_redaction())
 
 
+class TestSentinelSecretHygiene(unittest.TestCase):
+
+    SENTINEL_KEY = "sk-mios-sentinel-private-token-778899aabbcc"
+    SENTINEL_PASS = "SENTINEL_MIOS_SECRET_PASS_998877"
+    SENTINEL_CONN = "postgresql://mios:SENTINEL_MIOS_SECRET_PASS_998877@127.0.0.1:8600/mios"
+
+    def test_sentinel_absent_on_success_path(self):
+        """Positive Control: Normal log and string operations redact the sentinel."""
+        input_log = f"User authenticated with token {self.SENTINEL_KEY} successfully."
+        output, is_redacted = redact(input_log)
+        self.assertTrue(is_redacted)
+        self.assertNotIn(self.SENTINEL_KEY, output)
+        self.assertIn("[REDACTED_API_KEY]", output)
+
+    def test_sentinel_absent_on_error_path(self):
+        """Negative/Error Control: Exception messages and error logs redact the sentinel."""
+        import io
+        import logging
+        from mios_pipe.redact import RedactingLogFilter
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(RedactingLogFilter())
+        test_logger = logging.getLogger("test.secret.hygiene")
+        test_logger.addHandler(handler)
+        test_logger.setLevel(logging.DEBUG)
+
+        try:
+            raise ConnectionError(f"Failed to connect to {self.SENTINEL_CONN} with bearer {self.SENTINEL_KEY}")
+        except ConnectionError as err:
+            test_logger.error("Database connection failure: %s", err)
+
+        log_output = stream.getvalue()
+        self.assertNotIn(self.SENTINEL_KEY, log_output, "Leaked SENTINEL_KEY on error path!")
+        self.assertNotIn(self.SENTINEL_PASS, log_output, "Leaked SENTINEL_PASS on error path!")
+        self.assertIn("[REDACTED_API_KEY]", log_output)
+
+    def test_sentinel_absent_on_traceback_path(self):
+        """Negative/Error Control: Exception traceback logging redacts the sentinel."""
+        import io
+        import logging
+        from mios_pipe.redact import RedactingLogFilter
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(RedactingLogFilter())
+        test_logger = logging.getLogger("test.secret.hygiene.traceback")
+        test_logger.addHandler(handler)
+        test_logger.setLevel(logging.DEBUG)
+
+        try:
+            raise RuntimeError(f"Secret leakage attempt: token={self.SENTINEL_KEY} pass={self.SENTINEL_PASS}")
+        except RuntimeError:
+            test_logger.exception("An unhandled exception occurred")
+
+        log_output = stream.getvalue()
+        self.assertNotIn(self.SENTINEL_KEY, log_output, "Leaked SENTINEL_KEY in traceback!")
+        self.assertNotIn(self.SENTINEL_PASS, log_output, "Leaked SENTINEL_PASS in traceback!")
+        self.assertIn("[REDACTED_API_KEY]", log_output)
+
+
 def _run_extra_redact():
     import os
     _saved_env = dict(os.environ)
@@ -276,6 +338,7 @@ def _run_extra_redact():
         suite = unittest.TestSuite()
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestMiosRedact))
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestMiosRedactDatabase))
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(TestSentinelSecretHygiene))
         res = unittest.TextTestRunner().run(suite)
         return 0 if res.wasSuccessful() else 1
     except SystemExit as _e:
