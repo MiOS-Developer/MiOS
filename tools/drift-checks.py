@@ -4725,6 +4725,61 @@ def check_blade_reconcile_schema() -> int:
         return 1
     return 0
 
+def check_memory_poisoning_scan() -> int:
+    """Verifies that the memory-poisoning scan runs in the mode declared by SSOT.
+
+    Fail-closed requirements:
+    1. [pgvector].memory_guard_mode MUST exist in mios.toml and be one of ('log', 'strip', 'reject').
+    2. [pgvector].memguard_judge_mode MUST exist and be 'model'.
+    3. Code defaults in knowledge.py and server.py must derive from SSOT and never hardcode 'off'.
+    """
+    import os, sys, tomllib, re
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        print("check_memory_poisoning_scan: SSOT mios.toml is missing", file=sys.stderr)
+        return 1
+
+    try:
+        with open(toml_path, "rb") as fh:
+            ssot = tomllib.load(fh)
+    except Exception as exc:
+        print(f"check_memory_poisoning_scan: failed to parse {toml_path}: {exc}", file=sys.stderr)
+        return 1
+
+    pg = ssot.get("pgvector", {})
+    mode = str(pg.get("memory_guard_mode", "")).strip().lower()
+    if mode not in ("log", "strip", "reject"):
+        print(f"Violation: [pgvector].memory_guard_mode in SSOT is {mode!r}; must be 'log', 'strip', or 'reject'", file=sys.stderr)
+        return 1
+
+    judge_mode = str(pg.get("memguard_judge_mode", "")).strip().lower()
+    if judge_mode != "model":
+        print(f"Violation: [pgvector].memguard_judge_mode in SSOT is {judge_mode!r}; must be 'model'", file=sys.stderr)
+        return 1
+
+    # Verify code implementation in knowledge.py does not hardcode 'off'
+    knowledge_path = os.path.join(root, "usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py")
+    if os.path.isfile(knowledge_path):
+        with open(knowledge_path, "r", encoding="utf-8", errors="ignore") as fh:
+            content = fh.read()
+        if re.search(r'^\s*MEMORY_GUARD_MODE\s*=\s*["\']off["\']', content, re.M):
+            print("Violation: knowledge.py hardcodes MEMORY_GUARD_MODE = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    # Verify code implementation in server.py does not fallback to 'off'
+    server_path = os.path.join(root, "usr/lib/mios/agent-pipe/server.py")
+    if os.path.isfile(server_path):
+        with open(server_path, "r", encoding="utf-8", errors="ignore") as fh:
+            s_content = fh.read()
+        if re.search(r'get\(["\']memory_guard_mode["\'],\s*["\']off["\']\)', s_content):
+            print("Violation: server.py falls back to memory_guard_mode = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    print(f"[drift-checks] memory-poisoning scan enabled (mode={mode}, judge={judge_mode}) matching SSOT")
+    return 0
+
 _SUBCOMMAND_NAMES = (
     "agent-schema", "gate-registry",
     "firstboot-tier", "bound-image-store", "cephfs-ssot", "verb-stub-backends", "no-bare-port-literals",
@@ -4747,7 +4802,7 @@ _SUBCOMMAND_NAMES = (
     "os-update-timer-enabled", "adhoc-toml-parsers", "install-uninstall-symmetry",
     "ps-port-fallback-ssot", "ps-encoding-and-bom", "unit-security",
     "unit-dependency-closure", "docs-ratchet", "generator-host-parity",
-    "doc-port-scheme", "blade-reconcile-schema",
+    "doc-port-scheme", "blade-reconcile-schema", "memory-poisoning-scan",
 )
 SUBCOMMANDS = {k: globals()["check_" + k.replace("-", "_")] for k in _SUBCOMMAND_NAMES}
 
