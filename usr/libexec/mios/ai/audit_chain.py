@@ -308,6 +308,11 @@ class AuditChainRecorder:
     ) -> Dict[str, Any]:
         """Append a new signed block to the cryptographic audit chain."""
         blocks = self.load_blocks()
+        if blocks and not self.mock and blocks[-1].get("public_key") != self.signer.public_key_hex:
+            # A lost or replaced node key must not quietly fork the chain onto a new key.
+            raise AuditKeyError(self.signer.key_error or (
+                f"the head of {self.log_path} is not signed by the node key at {self.signer.key_path}; "
+                "refusing to extend it under a different key"))
         if not blocks:
             genesis = self._create_genesis_block()
             blocks = [genesis]

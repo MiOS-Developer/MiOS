@@ -283,6 +283,17 @@ class ac_TestAuditChain(unittest.TestCase):
         with open(self.key_path, "rb") as f:
             self.assertEqual(f.read(), b"short")
         self.assertFalse(os.path.exists(self.log_path))
+        # 4. A lost node key is not silently replaced mid-chain.
+        os.remove(self.key_path)
+        ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path).record_event("boot", {})
+        with open(self.log_path, "rb") as f:
+            chain = f.read()
+        os.remove(self.key_path)
+        recorder = ac_audit_chain.AuditChainRecorder(log_path=self.log_path, key_path=self.key_path)
+        with self.assertRaisesRegex(self._KeyError, "different key"):
+            recorder.record_event("decision", {"step": 2})
+        with open(self.log_path, "rb") as f:
+            self.assertEqual(f.read(), chain)
 
     def test_verify_trusts_only_the_node_key(self):
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
