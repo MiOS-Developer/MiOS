@@ -5515,16 +5515,20 @@ test_pod_quadlets() {
     log "Testing check_pod_quadlets"
     local dir="${ROOT}/usr/share/containers/systemd"
     local f; f="$(find "$dir" -maxdepth 1 -type f -name '*.image' -o -maxdepth 1 -type f -name '*.container' 2>/dev/null | sort | head -1)"
-    # Empty-set guard: nothing generated means nothing to mutate.
     [[ -n "$f" ]] || die "check_pod_quadlets: no generated unit in $dir to mutate"
     local bak; bak="$(mktemp)"; cp "$f" "$bak"
     _pq_restore() { cp "$bak" "$f"; rm -f "$bak"; unset -f _pq_restore; }
 
     printf '\n# devloop planted\n' >> "$f"
     _neg_gate check_pod_quadlets && { _pq_restore; die "check_pod_quadlets passed with a hand-edited generated unit"; }
-
     _pq_restore
     _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoration: ${_NEG_GATE_OUT}"
+
+    # Planted MIOS_PG_PASS (Law 11) and MIOS_ADGUARD_UID=0 (Law 6)
+    MIOS_PG_PASS="planted-secret-123" _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_PG_PASS"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_PG_PASS: ${_NEG_GATE_OUT}"
+    MIOS_ADGUARD_UID=0 _neg_gate check_pod_quadlets && die "check_pod_quadlets passed with planted MIOS_ADGUARD_UID=0"
+    _neg_gate check_pod_quadlets || die "check_pod_quadlets failed after restoring MIOS_ADGUARD_UID: ${_NEG_GATE_OUT}"
     log "check_pod_quadlets negative test passed"
 }
 
@@ -5951,14 +5955,13 @@ test_rust_categories() {
     log "Testing check_rust_categories"
     _neg_gate check_rust_categories || die "rust-categories is red before the probe: $_NEG_GATE_OUT"
     local toml="${ROOT}/usr/share/mios/mios.toml"
-    local backup; backup="$(mktemp)"
-    cp -p "$toml" "$backup"
+    local backup; backup="$(mktemp)"; cp -p "$toml" "$backup"
     # Planted owner-less category must fail check_rust_categories
     local probe_owner; probe_owner="$(printf 'ow%sner = ""' 'o')"
     local probe_table; probe_table="$(printf '[rust.categories.probe-%s]' "$(date +%s)")"
     printf '\n%s\n%s\n' "$probe_table" "$probe_owner" >> "$toml"
     if _neg_gate check_rust_categories; then
-        cp -p "$backup" "$toml"; rm -f "$backup"
+        cp -p "$backup" "$toml" && rm -f "$backup"
         die "rust-categories reported clean with a planted owner-less category"
     fi
     cp -p "$backup" "$toml" && rm -f "$backup"

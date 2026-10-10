@@ -244,6 +244,29 @@ pub fn ssot_expand(text: &str, ssot_exports: &BTreeMap<String, String>) -> Strin
     out
 }
 
+pub fn alias_for_var(name: &str) -> Vec<String> {
+    let mut aliases = Vec::new();
+    // Family 2: MIOS_SERVICES_<NAME>_UID <-> MIOS_<NAME>_UID
+    // and MIOS_SERVICES_<NAME>_GID <-> MIOS_<NAME>_GID
+    // and MIOS_SERVICES_<NAME>_USER <-> MIOS_<NAME>_USER
+    if let Some(rest) = name.strip_prefix("MIOS_SERVICES_") {
+        if rest.ends_with("_UID") || rest.ends_with("_GID") || rest.ends_with("_USER") {
+            aliases.push(format!("MIOS_{rest}"));
+        }
+    } else if let Some(rest) = name.strip_prefix("MIOS_") {
+        if rest.ends_with("_UID") || rest.ends_with("_GID") || rest.ends_with("_USER") {
+            aliases.push(format!("MIOS_SERVICES_{rest}"));
+        }
+    }
+    // Family 3: MIOS_PGVECTOR_PASS <-> MIOS_PG_PASS
+    if name == "MIOS_PGVECTOR_PASS" {
+        aliases.push("MIOS_PG_PASS".to_string());
+    } else if name == "MIOS_PG_PASS" {
+        aliases.push("MIOS_PGVECTOR_PASS".to_string());
+    }
+    aliases
+}
+
 pub fn resolve_one(
     inner: &str,
     placeholders: &BTreeSet<String>,
@@ -271,6 +294,21 @@ pub fn resolve_one(
         };
         return Ok(format!("${{{name}{def_expanded}}}"));
     }
+
+    // 1. Environment variable lookup with alias resolution (for planted overrides)
+    if let Ok(env_val) = std::env::var(name) {
+        if !env_val.is_empty() {
+            return Ok(env_val);
+        }
+    }
+    for alias in alias_for_var(name) {
+        if let Ok(env_val) = std::env::var(&alias) {
+            if !env_val.is_empty() {
+                return Ok(env_val);
+            }
+        }
+    }
+
     let ssot = ssot_exports.get(name).cloned().unwrap_or_default();
     if !ssot.is_empty()
         && sep
@@ -287,9 +325,11 @@ pub fn resolve_one(
     if !ssot.is_empty() {
         return Ok(ssot);
     }
-    if let Ok(env_val) = std::env::var(name) {
-        if !env_val.is_empty() {
-            return Ok(env_val);
+    for alias in alias_for_var(name) {
+        if let Some(ssot_val) = ssot_exports.get(&alias) {
+            if !ssot_val.is_empty() {
+                return Ok(ssot_val.clone());
+            }
         }
     }
     if let Some(img) = sidecar_image(name, sidecars) {
@@ -475,7 +515,7 @@ pub fn validate_environment_entry(
             }
         }
         return Err(format!(
-            "Quadlet '{name}.{unit_type}' attempts to emit non-placeholder password literal '{k}={v}' into /usr/share/containers/systemd/ (Law 11). Quadlets must emit secret references (e.g. EnvironmentFile=/etc/mios/secrets.env) or placeholder tokens rather than plaintext in /usr."
+            "Quadlet '{name}.{unit_type}' attempts to emit non-placeholder password literal '{k}={v}' into /usr/share/containers/systemd/ (Law 11). Quadlets must emit secret references (e.g. EnvironmentFile=/etc/mios/secrets.env or systemd-creds) or placeholder tokens rather than plaintext in /usr."
         ));
     }
     Ok(())
@@ -1620,6 +1660,76 @@ mod tests {
         );
         let msg = err.unwrap_err();
         assert!(msg.contains("declares no User=") && msg.contains("Law 6"));
+
+        // Negative Control 5: Planted MIOS_ADGUARD_UID=0 alias override rejected for off-roster container
+        std::env::set_var("MIOS_ADGUARD_UID", "0");
+        let planted_adguard_spec: toml::Value = toml::from_str(
+            r#"
+            [Container]
+            Image = "adguard"
+            User = "${MIOS_SERVICES_ADGUARD_UID:-825}"
+        "#,
+        )
+        .unwrap();
+        let err_planted = render_nested_quadlet(
+            "mios-adguard",
+            &planted_adguard_spec,
+            "container",
+            &allowed_root,
+            &grandfathered_creds,
+            &secret_keys,
+            &placeholders,
+            &ssot_exports,
+            &sidecars,
+        );
+        std::env::remove_var("MIOS_ADGUARD_UID");
+        assert!(err_planted.is_err(), "Planted MIOS_ADGUARD_UID=0 must fail");
+        assert!(err_planted.unwrap_err().contains("Law 6"));
+
+        // Positive Control: Planted MIOS_CEPH_UID=0 alias override accepted for authorized container
+        std::env::set_var("MIOS_CEPH_UID", "0");
+        let planted_ceph_spec: toml::Value = toml::from_str(
+            r#"
+            [Container]
+            Image = "ceph"
+            User = "${MIOS_SERVICES_CEPH_UID:-800}"
+        "#,
+        )
+        .unwrap();
+        let ok_ceph = render_nested_quadlet(
+            "mios-ceph",
+            &planted_ceph_spec,
+            "container",
+            &allowed_root,
+            &grandfathered_creds,
+            &secret_keys,
+            &placeholders,
+            &ssot_exports,
+            &sidecars,
+        );
+        std::env::remove_var("MIOS_CEPH_UID");
+        assert!(
+            ok_ceph.is_ok(),
+            "Planted MIOS_CEPH_UID=0 must succeed for authorized root container"
+        );
+    }
+
+    #[test]
+    fn test_alias_for_var() {
+        let a1 = alias_for_var("MIOS_SERVICES_ADGUARD_UID");
+        assert_eq!(a1, vec!["MIOS_ADGUARD_UID".to_string()]);
+
+        let a2 = alias_for_var("MIOS_ADGUARD_UID");
+        assert_eq!(a2, vec!["MIOS_SERVICES_ADGUARD_UID".to_string()]);
+
+        let a3 = alias_for_var("MIOS_SERVICES_ADGUARD_GID");
+        assert_eq!(a3, vec!["MIOS_ADGUARD_GID".to_string()]);
+
+        let a4 = alias_for_var("MIOS_PGVECTOR_PASS");
+        assert_eq!(a4, vec!["MIOS_PG_PASS".to_string()]);
+
+        let a5 = alias_for_var("MIOS_PG_PASS");
+        assert_eq!(a5, vec!["MIOS_PGVECTOR_PASS".to_string()]);
     }
 
     #[test]
@@ -1717,6 +1827,36 @@ mod tests {
         );
         assert!(err.is_err(), "Non-placeholder password literal must fail");
         assert!(err.unwrap_err().contains("Law 11"));
+
+        // Negative Control: Planted MIOS_PG_PASS via alias causes non-placeholder password literal failure
+        std::env::set_var("MIOS_PG_PASS", "planted-secret-123");
+        let planted_pass_spec: toml::Value = toml::from_str(
+            r#"
+            [Container]
+            Image = "pgvector"
+            User = "826"
+            Group = "826"
+            Environment = ["POSTGRES_PASSWORD=${MIOS_PGVECTOR_PASS:-mios}"]
+        "#,
+        )
+        .unwrap();
+        let err_planted_pass = render_nested_quadlet(
+            "mios-pgvector",
+            &planted_pass_spec,
+            "container",
+            &allowed_root,
+            &grandfathered_creds,
+            &secret_keys,
+            &placeholders,
+            &ssot_exports,
+            &sidecars,
+        );
+        std::env::remove_var("MIOS_PG_PASS");
+        assert!(
+            err_planted_pass.is_err(),
+            "Planted MIOS_PG_PASS must fail with Law 11 error"
+        );
+        assert!(err_planted_pass.unwrap_err().contains("Law 11"));
     }
 
     /// One lane spec with two engine overlays, the shape [containers.mios-llm-heavy] uses.
