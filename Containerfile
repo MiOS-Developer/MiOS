@@ -66,6 +66,12 @@ ARG MIOS_AI_MODEL
 ARG MIOS_AI_EMBED_MODEL
 # ADR-0025 image profile ([profiles]); empty means [profiles].default.
 ARG MIOS_PROFILES_DEFAULT
+# MIOS_BAKE_BOUND_IMAGES=0 skips every bound-image bake (PR / CI-validation
+# builds; sidecars resolve at bootc deploy time instead of being pre-baked).
+# Ruling Q1: only the full image bakes them. Declared before the main RUN so
+# build.sh and its phases see it too: declared after it, 54's nested
+# localhost/mios-base build never saw the 0 and baked anyway.
+ARG MIOS_BAKE_BOUND_IMAGES=1
 
 # Every SSOT projection the image ships is rendered inside this RUN from the
 # build's own mios.toml by tools/sync-generated.sh, the entry point CI's
@@ -124,7 +130,8 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
         [ -n "${!_v:-}" ] || { [ -n "${!_s:-}" ] || { echo "[build] ERROR: ${_v} is not resolved by the SSOT" >&2; exit 1; }; printf -v "$_v" '%s' "${!_s}"; }; \
         echo "[build] ${_v}=${!_v}"; \
     done; \
-    export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT; \
+    export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT MIOS_BAKE_BOUND_IMAGES; \
+    echo "[build] MIOS_BAKE_BOUND_IMAGES=${MIOS_BAKE_BOUND_IMAGES}"; \
     /usr/libexec/mios/miosd drift-check --root /tmp/build; \
     mios-gen sync --root /tmp/build; \
     bash /tmp/build/automation/01-system-files-overlay.sh; \
@@ -146,10 +153,8 @@ RUN --network=host set -ex; \
         /usr/libexec/mios/oscap-scan.py; \
     fi
 
-
-# MIOS_BAKE_BOUND_IMAGES=0 skips the bake below (for PR / CI-validation builds;
-# sidecars resolve at bootc deploy time instead of being pre-baked).
-ARG MIOS_BAKE_BOUND_IMAGES=1
+# The bound-image bake layers. ARG MIOS_BAKE_BOUND_IMAGES is declared above the
+# main RUN and stays in scope for the rest of this stage.
 RUN --network=host --mount=type=cache,target=/var/tmp/mios-bakescratch \
     MIOS_BAKE_BOUND_IMAGES="${MIOS_BAKE_BOUND_IMAGES}" bash /usr/libexec/mios/57-mios-sys-build.sh
 RUN --network=host --mount=type=cache,target=/var/tmp/mios-bakescratch \
