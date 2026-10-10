@@ -5232,7 +5232,6 @@ $devResolveBlock
 `$downloads = Join-Path `$env:USERPROFILE 'Downloads'
 `$promoteTargets = @(
     @{ Pattern = 'mios*.toml';  TargetDir = "$miosEtcDir";       Filename = 'mios.toml' }
-    @{ Pattern = '*mios*.html'; TargetDir = "$miosShareDirInRepo\configurator"; Filename = 'mios.html' }
 )
 `$promoted = `$false
 foreach (`$pt in `$promoteTargets) {

@@ -1096,12 +1096,30 @@ pub mod server {
             .map_err(|e| format!("the lower tiers did not resolve: {e}"))?;
         let delta = mios_resolver::merge::diff_against(&posted, &base)
             .unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
-        let text =
-            toml::to_string(&delta).map_err(|e| format!("the delta did not serialize: {e}"))?;
         let dest = &config.user_toml_path;
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
         }
+
+        // Round-trip through toml_edit to preserve comments and formatting if user file exists (task_3500)
+        let text = if dest.exists() {
+            let existing = fs::read_to_string(dest).unwrap_or_default();
+            if let Ok(mut doc) = existing.parse::<toml_edit::DocumentMut>() {
+                if let toml::Value::Table(delta_tbl) = &delta {
+                    for (k, v) in delta_tbl {
+                        if let Ok(item) = v.to_string().parse::<toml_edit::Item>() {
+                            doc[k] = item;
+                        }
+                    }
+                }
+                doc.to_string()
+            } else {
+                toml::to_string(&delta).map_err(|e| format!("the delta did not serialize: {e}"))?
+            }
+        } else {
+            toml::to_string(&delta).map_err(|e| format!("the delta did not serialize: {e}"))?
+        };
+
         let tmp_path = dest.with_extension("toml.tmp");
         fs::write(&tmp_path, &text).map_err(|e| format!("Failed to write temporary file: {e}"))?;
         fs::rename(&tmp_path, dest).map_err(|e| format!("Failed to persist config: {e}"))?;

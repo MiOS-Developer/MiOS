@@ -400,7 +400,12 @@ mod registry_integration {
         .expect("write mios.toml");
 
         let output_t2 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
-            .args(["drift-check", "--only", "check_template_conformance", "--root"])
+            .args([
+                "drift-check",
+                "--only",
+                "check_template_conformance",
+                "--root",
+            ])
             .arg(root)
             .output()
             .expect("execute miosd drift-check check_template_conformance");
@@ -421,7 +426,12 @@ mod registry_integration {
 
         // T5 negative: with .git absent, check_no_hardcode_version must fail (cannot_run, not pass)
         let output_t5 = std::process::Command::new(env!("CARGO_BIN_EXE_miosd"))
-            .args(["drift-check", "--only", "check_no_hardcode_version", "--root"])
+            .args([
+                "drift-check",
+                "--only",
+                "check_no_hardcode_version",
+                "--root",
+            ])
             .arg(root)
             .output()
             .expect("execute miosd drift-check check_no_hardcode_version");
