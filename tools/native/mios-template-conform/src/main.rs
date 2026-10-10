@@ -126,6 +126,9 @@ fn run_conformance(
 
     let mut compiled_templates: Vec<CompiledTemplate> = Vec::new();
     for (tname, tval) in tmpls {
+        if tname == "placeholders" {
+            continue;
+        }
         let tcfg = serde_json::to_value(tval)
             .map_err(|e| format!("template '{tname}' serialization error: {e}"))?;
         let match_str = match tcfg.get("match").and_then(|v| v.as_str()) {
