@@ -1099,10 +1099,32 @@ class TestAgentCliCatalog(unittest.TestCase):
             self.assertRegex(name, r"^[a-z][a-z0-9-]*$", f"Tool '{name}' has invalid name format")
             self.assertIn(tool.get("kind"), valid_kinds, f"Tool '{name}' has unknown kind '{tool.get('kind')}'")
             self.assertIn("launch_template", tool, f"Tool '{name}' missing launch_template")
-            self.assertIn("status_template", tool, f"Tool '{name}' missing status_template")
-            self.assertIn("result_template", tool, f"Tool '{name}' missing result_template")
             self.assertIsInstance(tool.get("experimental"), bool, f"Tool '{name}' experimental flag must be bool")
             self.assertIsInstance(tool.get("required_credentials"), list, f"Tool '{name}' required_credentials must be list")
+
+    def test_adr_0029_verified_cloud_templates(self):
+        """Verify cloud templates strictly match ADR-0029 verified table (--env, --repo, -b, -R)."""
+        cfg = self.server_mod._agent_cli_config()
+        tools_by_name = {tool["name"]: tool for tool in cfg.get("tools", [])}
+
+        codex_cloud = tools_by_name["codex-cloud"]
+        self.assertIn("--env", codex_cloud["launch_template"], "codex-cloud launch_template must include --env")
+
+        jules = tools_by_name["jules"]
+        self.assertIn("--repo", jules["launch_template"], "jules launch_template must include --repo")
+
+        gh = tools_by_name["gh-agent-task"]
+        self.assertIn("-b", gh["launch_template"], "gh-agent-task launch_template must include -b <base>")
+        self.assertIn("-R", gh["launch_template"], "gh-agent-task launch_template must include -R <repo>")
+
+    def test_no_invented_local_status_result_templates(self):
+        """Verify local tools do NOT have invented status/result subcommands."""
+        cfg = self.server_mod._agent_cli_config()
+        local_tools = [tool for tool in cfg.get("tools", []) if tool.get("kind") != "cloud"]
+        for tool in local_tools:
+            name = tool["name"]
+            self.assertNotIn("status_template", tool, f"Local tool '{name}' has invented status_template")
+            self.assertNotIn("result_template", tool, f"Local tool '{name}' has invented result_template")
 
     def test_cloud_tools_enforce_branch_rule(self):
         """Verify all cloud agent CLIs have branch_rule set to '^cloud/'."""
@@ -1240,14 +1262,19 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
         cmd = await self._get_dispatched_command("claude-cloud", "analyze repo", branch="cloud/analysis")
         self.assertIn("claude --cloud 'analyze repo'", cmd)
 
-        cmd = await self._get_dispatched_command("codex-cloud", "fix bug", branch="cloud/bugfix")
-        self.assertIn("codex cloud exec 'fix bug'", cmd)
+        cmd = await self._get_dispatched_command("codex-cloud", "fix bug", branch="cloud/bugfix", env_id="prod-env")
+        self.assertIn("codex cloud exec --env prod-env 'fix bug'", cmd)
 
-        cmd = await self._get_dispatched_command("jules", "refactor module", branch="cloud/refactor")
-        self.assertIn("jules remote new --session 'refactor module'", cmd)
+        cmd = await self._get_dispatched_command("jules", "refactor module", branch="cloud/refactor", repo="org/repo")
+        self.assertIn("jules remote new --repo org/repo --session 'refactor module'", cmd)
 
-        cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy")
-        self.assertIn("gh agent-task create 'deploy check'", cmd)
+        cmd = await self._get_dispatched_command("gh-agent-task", "deploy check", branch="cloud/deploy", base="main", repo="org/repo")
+        self.assertIn("gh agent-task create 'deploy check' -b main -R org/repo", cmd)
+
+    async def test_cloud_tool_parameter_injection_quoting(self):
+        """Verify parameters with shell metacharacters are safely quoted with shlex."""
+        cmd = await self._get_dispatched_command("jules", "refactor", branch="cloud/safe", repo="evil/repo; rm -rf /")
+        self.assertIn("'evil/repo; rm -rf /'", cmd)
 
     async def test_version_probe_preservation(self):
         """Verify --version / -v tasks are preserved as '{agent} {task}'."""
@@ -1267,7 +1294,8 @@ class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):
         """Verify cloud tools require a branch matching branch_rule (^cloud/)."""
         # Valid branch: passes
         cmd = await self._get_dispatched_command("codex-cloud", "do task", branch="cloud/feature-1")
-        self.assertIn("codex cloud exec 'do task'", cmd)
+        self.assertIn("codex cloud exec --env", cmd)
+        self.assertIn("'do task'", cmd)
 
         # Invalid branch: rejected
         with self.assertRaises(ValueError) as ctx:

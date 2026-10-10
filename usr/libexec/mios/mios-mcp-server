@@ -1181,16 +1181,17 @@ class _TmuxBridge:
                 cmd = cmd.replace("{prompt}", escaped_task)
             else:
                 cmd = f"{cmd} {escaped_task}"
-            for placeholder, default_val in (
-                ("{env_id}", args.get("env_id", "${CODEX_ENV_ID:-default}")),
-                ("{repo}", args.get("repo", "${MIOS_REPO:-.}")),
-                ("{base}", args.get("base", "${MIOS_BASE_BRANCH:-main}")),
-                ("{session}", args.get("session", "${SESSION_ID:-default}")),
-                ("{task_id}", args.get("task_id", "${TASK_ID:-default}")),
-                ("{id}", args.get("id", "${TASK_ID:-default}")),
-            ):
+            replacements = {
+                "{env_id}": shlex.quote(str(args["env_id"])) if "env_id" in args else "${CODEX_ENV_ID:-default}",
+                "{repo}": shlex.quote(str(args["repo"])) if "repo" in args else "${MIOS_REPO:-.}",
+                "{base}": shlex.quote(str(args["base"])) if "base" in args else "${MIOS_BASE_BRANCH:-main}",
+                "{session}": shlex.quote(str(args["agent_session"])) if "agent_session" in args else "${SESSION_ID:-default}",
+                "{task_id}": shlex.quote(str(args["task_id"])) if "task_id" in args else "${TASK_ID:-default}",
+                "{id}": shlex.quote(str(args["id"])) if "id" in args else "${TASK_ID:-default}",
+            }
+            for placeholder, val in replacements.items():
                 if placeholder in cmd:
-                    cmd = cmd.replace(placeholder, str(default_val))
+                    cmd = cmd.replace(placeholder, val)
         else:
             cmd = f"{agent} {escaped_task}"
 
@@ -1520,6 +1521,12 @@ def _sdk_server(terminal_only=False):
                  "agent": {"type": "string", "enum": sorted(row["name"] for row in _agent_cli_config().get("tools", [])), "description": "Global agent to execute in the nested workflow."},
                  "task": {"type": "string", "description": "Task description or command instruction to execute."},
                  "branch": {"type": "string", "description": "Target git branch for the workflow (must match branch_rule for cloud agents, e.g. cloud/<purpose>)."},
+                 "env_id": {"type": "string", "description": "Cloud execution environment identifier (e.g. for codex-cloud)."},
+                 "repo": {"type": "string", "description": "Target repository (e.g. owner/repo for jules or gh-agent-task)."},
+                 "base": {"type": "string", "description": "Base branch for cloud execution (default: main)."},
+                 "agent_session": {"type": "string", "description": "Target subagent session identifier."},
+                 "task_id": {"type": "string", "description": "Target subagent task identifier."},
+                 "id": {"type": "string", "description": "Target subagent identifier."},
                  "slot": {"type": "integer", "description": "Requested helper slot; a busy or unverified pane is refused. If omitted, a proven free slot is reserved."},
                  "timeoutSeconds": {"type": "integer", "description": "Execution timeout in seconds (default: [mcp.tmux].timeout_s)."},
                  "translate_output": {"type": "boolean", "description": "Translate and normalize output frames using loop_translate (default: true)."},
