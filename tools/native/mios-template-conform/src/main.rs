@@ -1053,17 +1053,29 @@ mod tests {
         assert_eq!(violations("fragment", &ok), "");
     }
 
+    fn test_dir(tag: &str) -> PathBuf {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("mios_tmpl_{tag}_{}_{now}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn conformance_missing_ssot_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = run_conformance(dir.path(), None).unwrap_err();
+        let dir = test_dir("nossot");
+        let err = run_conformance(&dir, None).unwrap_err();
         assert!(err.contains("cannot read"), "{err}");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn conformance_missing_or_empty_templates_fails_t2() {
-        let dir = tempfile::tempdir().unwrap();
-        let ssot_dir = dir.path().join("usr/share/mios");
+        let dir = test_dir("t2");
+        let ssot_dir = dir.join("usr/share/mios");
         fs::create_dir_all(&ssot_dir).unwrap();
         // T2: [templates.*] renamed to [xtemplates.*]
         fs::write(
@@ -1071,63 +1083,67 @@ mod tests {
             "[xtemplates.test]\nmatch = '.*\\.sh'\n",
         )
         .unwrap();
-        let err = run_conformance(dir.path(), None).unwrap_err();
+        let err = run_conformance(&dir, None).unwrap_err();
         assert!(err.contains("[templates] section in"), "{err}");
 
         // Empty [templates]
         fs::write(ssot_dir.join("mios.toml"), "[templates]\n").unwrap();
-        let err2 = run_conformance(dir.path(), None).unwrap_err();
+        let err2 = run_conformance(&dir, None).unwrap_err();
         assert!(err2.contains("[templates] section in"), "{err2}");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn conformance_invalid_regex_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let ssot_dir = dir.path().join("usr/share/mios");
+        let dir = test_dir("badregex");
+        let ssot_dir = dir.join("usr/share/mios");
         fs::create_dir_all(&ssot_dir).unwrap();
         fs::write(
             ssot_dir.join("mios.toml"),
             "[templates.bad]\nmatch = '[unclosed'\n",
         )
         .unwrap();
-        let err = run_conformance(dir.path(), None).unwrap_err();
+        let err = run_conformance(&dir, None).unwrap_err();
         assert!(err.contains("has invalid regex"), "{err}");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn conformance_zero_checked_files_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let ssot_dir = dir.path().join("usr/share/mios");
+        let dir = test_dir("zerochecked");
+        let ssot_dir = dir.join("usr/share/mios");
         fs::create_dir_all(&ssot_dir).unwrap();
         fs::write(
             ssot_dir.join("mios.toml"),
             "[templates.test]\nmatch = '.*\\.sh'\n",
         )
         .unwrap();
-        let gf_dir = dir.path().join("usr/share/mios/templates");
+        let gf_dir = dir.join("usr/share/mios/templates");
         fs::create_dir_all(&gf_dir).unwrap();
         fs::write(
             gf_dir.join("conformance-grandfathered.list"),
             "usr/share/mios/mios.toml\nusr/share/mios/templates/conformance-grandfathered.list\n",
         )
         .unwrap();
-        let err = run_conformance(dir.path(), None).unwrap_err();
+        let err = run_conformance(&dir, None).unwrap_err();
         assert!(err.contains("checked=0"), "{err}");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn conformance_valid_tree_passes() {
-        let dir = tempfile::tempdir().unwrap();
-        let ssot_dir = dir.path().join("usr/share/mios");
+        let dir = test_dir("valid");
+        let ssot_dir = dir.join("usr/share/mios");
         fs::create_dir_all(&ssot_dir).unwrap();
         fs::write(
             ssot_dir.join("mios.toml"),
             "[templates.sh]\nmatch = '.*\\.sh$'\nrequired_header = true\n",
         )
         .unwrap();
-        let script = dir.path().join("test.sh");
+        let script = dir.join("test.sh");
         fs::write(&script, "#!/bin/sh\n# AI-hint: test script\necho hi\n").unwrap();
-        let res = run_conformance(dir.path(), None);
+        let res = run_conformance(&dir, None);
         assert!(res.is_ok(), "{:?}", res);
+        let _ = fs::remove_dir_all(dir);
     }
 }
