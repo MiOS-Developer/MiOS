@@ -3726,9 +3726,11 @@ def check_value_aliases() -> int:
         return 1
 
     env = {}
-    sub_env = dict(os.environ, MIOS_ROOT=root, MIOS_DRIFT_ROOT=root, MIOS_VENDOR_TOML=os.path.join(root, "usr/share/mios/mios.toml"), MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
+    snap_rel = os.path.relpath(snap, root).replace("\\", "/")
+    vendor_rel = os.path.relpath(os.path.join(root, "usr/share/mios/mios.toml"), root).replace("\\", "/")
+    sub_env = dict(os.environ, MIOS_ROOT=".", MIOS_DRIFT_ROOT=".", MIOS_VENDOR_TOML=vendor_rel, MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
     try:
-        proc = subprocess.run(["bash", snap], capture_output=True, text=True, env=sub_env)
+        proc = subprocess.run(["bash", snap_rel], cwd=root, capture_output=True, text=True, env=sub_env)
     except OSError as exc:
         print("mios-env-snapshot could not be run: %s" % exc)
         return 1
