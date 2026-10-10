@@ -146,6 +146,13 @@ done < "$_phase_list"
 rm -f "$_phase_list"
 [[ ${#ALL_SCRIPTS[@]} -gt 0 ]] || { printf '[MISSING] Native build plan selected no phases\n' >&2; exit 1; }
 
+if [[ -d "/usr/share/mios/vendored" ]]; then
+    for _bundle in /usr/share/mios/vendored/*.tar; do
+        [[ -f "$_bundle" ]] || continue
+        tar -xf "$_bundle" -C /usr/share/mios/vendored
+    done
+fi
+
 rm -f "$MIOS_VERSION_MANIFEST"
 record_version mios       "$VERSION_STR"                               "git:$(cat /ctx/VERSION 2>/dev/null || echo unknown)"
 _base_image="${BASE_IMAGE:-}"
