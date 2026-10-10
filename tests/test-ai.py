@@ -302,6 +302,8 @@ class ac_TestAuditChain(unittest.TestCase):
         mocked = [self._block(0, "0" * 64, {"mocked": True}, "mock_ed25519_pubkey_0123456789abcdef0123456789abcdef",
                               lambda h: hashlib.sha256(b"mock-sig:" + h.encode("utf-8")).hexdigest())]
         self.assertFalse(recorder.verify_chain(mocked)["valid"])
+        self.assertFalse(recorder.signer.verify(mocked[0]["block_hash"], mocked[0]["signature"],
+                                                mocked[0]["public_key"]))
         # A broken chain is a non-zero CLI exit, not a printed "valid": false with exit 0
         mock_rec = ac_audit_chain.AuditChainRecorder(log_path=self.log_path + ".m", key_path=self.key_path, mock=True)
         mock_rec.record_event("decision", {"target": "agent-pipe"})
