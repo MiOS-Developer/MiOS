@@ -546,12 +546,27 @@ pub mod server {
         /// Root the six-tier SSOT resolves under; None is the installed FHS tiers
         /// (or the source tree's vendor file when MiOS is not installed).
         pub ssot_root: Option<PathBuf>,
+        /// [security].allowlist_hosts from SSOT.
+        pub allowlist_hosts: Vec<String>,
+        /// [portal].require_login.
+        pub require_login: bool,
+        /// Per-launch session token.
+        pub session_token: Option<String>,
     }
 
     impl ConfigServerConfig {
         /// The listen port is `[ports].agent_pipe` (the route agent-pipe's portal
         /// serves) unless given; an unresolvable port is an error, never a literal.
         pub fn resolve(bind: Option<String>, port: Option<u16>) -> Result<Self, String> {
+            Self::resolve_with_auth(bind, port, None, None)
+        }
+
+        pub fn resolve_with_auth(
+            bind: Option<String>,
+            port: Option<u16>,
+            token: Option<String>,
+            token_file: Option<PathBuf>,
+        ) -> Result<Self, String> {
             let bind_addr = match bind.or_else(|| std::env::var("MIOS_CONFIG_BIND_ADDR").ok()) {
                 Some(b) => b,
                 None => {
@@ -591,20 +606,101 @@ pub mod server {
                 format!("MIOS_PORTAL_CONFIG_MAX_BODY_BYTES={raw_max} is not a byte count")
             })?;
 
+            let merged = mios_resolver::resolve_merged(ssot_root.as_deref(), false).ok();
+
+            let allowlist_hosts = merged
+                .as_ref()
+                .and_then(|m| m.get("security"))
+                .and_then(|s| s.get("allowlist_hosts"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| {
+                    vec![
+                        "localhost".to_string(),
+                        "127.0.0.1".to_string(),
+                        "::1".to_string(),
+                        "host.containers.internal".to_string(),
+                        "mios-llm-light".to_string(),
+                        "mios-open-webui".to_string(),
+                        "mios-hermes".to_string(),
+                        "mios-pgvector".to_string(),
+                        "mios-forge".to_string(),
+                        "mios-searxng".to_string(),
+                        "mios-crawl4ai".to_string(),
+                        "mios-code-server".to_string(),
+                    ]
+                });
+
+            let require_login = merged
+                .as_ref()
+                .and_then(|m| m.get("portal"))
+                .and_then(|p| p.get("require_login"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            let session_token = token
+                .or_else(|| std::env::var("MIOS_PORTAL_SESSION_TOKEN").ok())
+                .or_else(|| std::env::var("MIOS_PORTAL_TOKEN").ok())
+                .or_else(|| {
+                    token_file.and_then(|p| fs::read_to_string(p).ok().map(|s| s.trim().to_string()))
+                })
+                .or_else(|| {
+                    let runtime_dir =
+                        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+                    let path = PathBuf::from(runtime_dir).join("mios/portal-token");
+                    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+                })
+                .or_else(|| {
+                    if require_login {
+                        Some(generate_session_token())
+                    } else {
+                        None
+                    }
+                });
+
             Ok(Self {
                 bind_addr,
                 html_path,
                 user_toml_path,
                 max_body_bytes,
                 ssot_root,
+                allowlist_hosts,
+                require_login,
+                session_token,
             })
         }
+    }
+
+    fn generate_session_token() -> String {
+        use std::time::SystemTime;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let pid = std::process::id();
+        let mut state: u64 = now.as_nanos() as u64 ^ ((pid as u64) << 32);
+        if state == 0 {
+            state = 0x9e3779b97f4a7c15;
+        }
+        let mut token = String::with_capacity(64);
+        for _ in 0..4 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            token.push_str(&format!("{:016x}", state));
+        }
+        token
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct HttpRequest {
         pub method: String,
         pub path: String,
+        pub query: Option<String>,
         pub headers: HashMap<String, String>,
         pub body: Vec<u8>,
     }
@@ -702,10 +798,13 @@ pub mod server {
         let method = req_parts.next()?.to_string();
         let raw_path = req_parts.next()?.to_string();
 
-        let path = if let Some(idx) = raw_path.find('?') {
-            raw_path[..idx].to_string()
+        let (path, query) = if let Some(idx) = raw_path.find('?') {
+            (
+                raw_path[..idx].to_string(),
+                Some(raw_path[idx + 1..].to_string()),
+            )
         } else {
-            raw_path
+            (raw_path, None)
         };
 
         let mut headers = HashMap::new();
@@ -733,6 +832,7 @@ pub mod server {
         Some(HttpRequest {
             method,
             path,
+            query,
             headers,
             body,
         })
@@ -743,9 +843,186 @@ pub mod server {
     /// TOML document. Splicing the tier files' text together produced duplicate
     /// tables whenever a host override repeated a vendor table.
     pub fn read_layered_toml(config: &ConfigServerConfig) -> Result<String, String> {
-        let merged = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false)
+        let mut merged = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false)
             .map_err(|e| format!("the layered mios.toml did not resolve: {e}"))?;
+        redact_secrets(&mut merged);
         toml::to_string(&merged).map_err(|e| format!("the merged config did not serialize: {e}"))
+    }
+
+    pub fn redact_secrets(merged: &mut toml::Value) {
+        if let Some(portal) = merged.get_mut("portal").and_then(toml::Value::as_table_mut) {
+            if portal.contains_key("password") {
+                portal.insert(
+                    "password".to_string(),
+                    toml::Value::String("<redacted>".to_string()),
+                );
+            }
+            if portal.contains_key("secret") {
+                portal.insert(
+                    "secret".to_string(),
+                    toml::Value::String("<redacted>".to_string()),
+                );
+            }
+        }
+
+        if let Some(ai) = merged.get_mut("ai").and_then(toml::Value::as_table_mut) {
+            if ai.contains_key("api_key") {
+                ai.insert(
+                    "api_key".to_string(),
+                    toml::Value::String("<redacted>".to_string()),
+                );
+            }
+        }
+
+        let mut secret_keys: Vec<String> = Vec::new();
+        if let Some(sec) = merged.get("security") {
+            if let Some(sk) = sec.get("secret_keys") {
+                if let Some(arr) = sk.get("keys").and_then(|v| v.as_array()) {
+                    for item in arr {
+                        if let Some(s) = item.as_str() {
+                            secret_keys.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        redact_table_recursive(merged, &secret_keys);
+    }
+
+    fn redact_table_recursive(val: &mut toml::Value, secret_keys: &[String]) {
+        match val {
+            toml::Value::Table(table) => {
+                for (k, v) in table.iter_mut() {
+                    if k == "keys" && v.is_array() {
+                        continue;
+                    }
+                    let matches_secret = secret_keys.iter().any(|sk| {
+                        sk.eq_ignore_ascii_case(k)
+                            || sk
+                                .strip_prefix("MIOS_")
+                                .is_some_and(|stripped| stripped.eq_ignore_ascii_case(k))
+                    });
+                    if matches_secret {
+                        *v = toml::Value::String("<redacted>".to_string());
+                    } else {
+                        redact_table_recursive(v, secret_keys);
+                    }
+                }
+            }
+            toml::Value::Array(arr) => {
+                for item in arr {
+                    redact_table_recursive(item, secret_keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn validate_host(host_header: &str, allowlist: &[String]) -> bool {
+        let host_trimmed = host_header.trim();
+        if host_trimmed.is_empty() {
+            return false;
+        }
+        let hostname = if host_trimmed.starts_with('[') {
+            if let Some(end_bracket) = host_trimmed.find(']') {
+                &host_trimmed[1..end_bracket]
+            } else {
+                return false;
+            }
+        } else {
+            host_trimmed.split(':').next().unwrap_or(host_trimmed)
+        };
+
+        let hostname_lower = hostname.to_ascii_lowercase();
+        for allowed in allowlist {
+            if hostname_lower == allowed.to_ascii_lowercase() {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn validate_origin(origin_header: &str, host_header: &str, allowlist: &[String]) -> bool {
+        let origin = origin_header.trim();
+        let rest = if let Some(r) = origin.strip_prefix("http://") {
+            r
+        } else if let Some(r) = origin.strip_prefix("https://") {
+            r
+        } else {
+            return false;
+        };
+
+        if rest.eq_ignore_ascii_case(host_header.trim()) {
+            return true;
+        }
+
+        let origin_host = if rest.starts_with('[') {
+            if let Some(end) = rest.find(']') {
+                &rest[1..end]
+            } else {
+                return false;
+            }
+        } else {
+            rest.split(':').next().unwrap_or(rest)
+        };
+
+        allowlist
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(origin_host))
+    }
+
+    pub fn extract_cookie(cookie_header: &str, name: &str) -> Option<String> {
+        for part in cookie_header.split(';') {
+            if let Some((k, v)) = part.trim().split_once('=') {
+                if k.trim() == name {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    pub fn is_authenticated(req: &HttpRequest, config: &ConfigServerConfig) -> bool {
+        if !config.require_login {
+            return true;
+        }
+        let expected = match &config.session_token {
+            Some(t) if !t.is_empty() => t.as_str(),
+            _ => return false,
+        };
+        if let Some(cookie_hdr) = req.headers.get("cookie") {
+            if let Some(token) = extract_cookie(cookie_hdr, "mios_portal") {
+                if token == expected {
+                    return true;
+                }
+            }
+        }
+        if let Some(auth_hdr) = req.headers.get("authorization") {
+            if let Some(token) = auth_hdr
+                .strip_prefix("Bearer ")
+                .or_else(|| auth_hdr.strip_prefix("bearer "))
+            {
+                if token.trim() == expected {
+                    return true;
+                }
+            }
+        }
+        if let Some(token) = req.headers.get("x-portal-token") {
+            if token == expected {
+                return true;
+            }
+        }
+        if let Some(query) = &req.query {
+            for param in query.split('&') {
+                if let Some((k, v)) = param.split_once('=') {
+                    if k == "token" && v == expected {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Sections whose loss bricks a deploy: a save may not drop one the live
@@ -831,36 +1108,80 @@ pub mod server {
     }
 
     pub fn handle_request(req: &HttpRequest, config: &ConfigServerConfig) -> HttpResponse {
-        let cors_resp = |resp: HttpResponse| {
-            resp.with_header("Access-Control-Allow-Origin", "*")
-                .with_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                .with_header("Access-Control-Allow-Headers", "Content-Type")
+        let sec_resp = |resp: HttpResponse| {
+            resp.with_header("X-Content-Type-Options", "nosniff")
+                .with_header("X-Frame-Options", "SAMEORIGIN")
         };
 
+        let host_hdr = match req.headers.get("host") {
+            Some(h) if !h.trim().is_empty() => h.trim(),
+            _ => {
+                return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                    "text/plain",
+                    b"Forbidden: Missing or empty Host header".to_vec(),
+                ));
+            }
+        };
+
+        if !validate_host(host_hdr, &config.allowlist_hosts) {
+            return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                "text/plain",
+                format!("Forbidden: Host '{}' not in allowlist", host_hdr).into_bytes(),
+            ));
+        }
+
         if req.method == "OPTIONS" {
-            return cors_resp(
+            return sec_resp(
                 HttpResponse::new(204, "No Content").with_header("Content-Length", "0"),
             );
         }
 
         let mut resp = match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/") | ("HEAD", "/") => cors_resp(HttpResponse::redirect("/configure")),
+            ("GET", "/") | ("HEAD", "/") => sec_resp(HttpResponse::redirect("/configure")),
 
             ("GET", "/configure")
             | ("HEAD", "/configure")
             | ("GET", "/portal/configurator")
             | ("HEAD", "/portal/configurator") => {
-                if config.html_path.is_file() {
+                let has_valid_token = req
+                    .query
+                    .as_deref()
+                    .and_then(|q| {
+                        q.split('&')
+                            .find_map(|p| p.split_once('='))
+                            .filter(|(k, _)| *k == "token")
+                            .map(|(_, v)| v)
+                    })
+                    .map(|tok| {
+                        config
+                            .session_token
+                            .as_deref()
+                            .map(|expected| tok == expected)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+
+                let authenticated =
+                    !config.require_login || is_authenticated(req, config) || has_valid_token;
+                if !authenticated {
+                    return sec_resp(HttpResponse::html(
+                        403,
+                        "Forbidden",
+                        "<h1>403 Forbidden</h1><p>Authentication required: valid session token or cookie required.</p>".to_string(),
+                    ));
+                }
+
+                let mut r = if config.html_path.is_file() {
                     match fs::read_to_string(&config.html_path) {
-                        Ok(content) => cors_resp(HttpResponse::html(200, "OK", content)),
-                        Err(e) => cors_resp(HttpResponse::html(
+                        Ok(content) => sec_resp(HttpResponse::html(200, "OK", content)),
+                        Err(e) => sec_resp(HttpResponse::html(
                             500,
                             "Internal Server Error",
                             format!("<h1>Error reading configurator</h1><pre>{}</pre>", e),
                         )),
                     }
                 } else {
-                    cors_resp(HttpResponse::html(
+                    sec_resp(HttpResponse::html(
                         404,
                         "Not Found",
                         format!(
@@ -868,13 +1189,23 @@ pub mod server {
                             config.html_path
                         ),
                     ))
+                };
+
+                if has_valid_token {
+                    if let Some(token) = &config.session_token {
+                        r = r.with_header(
+                            "Set-Cookie",
+                            &format!("mios_portal={token}; Path=/; HttpOnly; SameSite=Strict"),
+                        );
+                    }
                 }
+                r
             }
 
             ("GET", "/portal/config") | ("HEAD", "/portal/config") => {
                 match read_layered_toml(config) {
-                    Ok(toml_data) => cors_resp(HttpResponse::toml(200, "OK", toml_data)),
-                    Err(e) => cors_resp(HttpResponse::json(
+                    Ok(toml_data) => sec_resp(HttpResponse::toml(200, "OK", toml_data)),
+                    Err(e) => sec_resp(HttpResponse::json(
                         500,
                         "Internal Server Error",
                         serde_json::json!({ "errors": [e] }).to_string(),
@@ -883,10 +1214,49 @@ pub mod server {
             }
 
             ("POST", "/portal/config") => {
+                let origin = match req.headers.get("origin") {
+                    Some(o) if !o.trim().is_empty() => o.trim(),
+                    _ => {
+                        return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                            "text/plain",
+                            b"Forbidden: Missing or invalid Origin header".to_vec(),
+                        ));
+                    }
+                };
+                if !validate_origin(origin, host_hdr, &config.allowlist_hosts) {
+                    return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                        "text/plain",
+                        format!("Forbidden: Cross-origin request from '{origin}' rejected").into_bytes(),
+                    ));
+                }
+
+                let content_type = match req.headers.get("content-type") {
+                    Some(ct) => ct.to_ascii_lowercase(),
+                    _ => {
+                        return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                            "text/plain",
+                            b"Forbidden: Missing Content-Type".to_vec(),
+                        ));
+                    }
+                };
+                if !content_type.starts_with("application/json") {
+                    return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                        "text/plain",
+                        b"Forbidden: Content-Type must be application/json".to_vec(),
+                    ));
+                }
+
+                if config.require_login && !is_authenticated(req, config) {
+                    return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                        "text/plain",
+                        b"Forbidden: Missing or invalid session token".to_vec(),
+                    ));
+                }
+
                 let body_str = match std::str::from_utf8(&req.body) {
                     Ok(s) => s,
                     Err(_) => {
-                        return cors_resp(HttpResponse::json(
+                        return sec_resp(HttpResponse::json(
                             422,
                             "Unprocessable Entity",
                             r#"{"errors":["Request body must be valid UTF-8"]}"#.to_string(),
@@ -894,17 +1264,58 @@ pub mod server {
                     }
                 };
 
-                let errors = validate_portal_save(body_str, config);
+                let json_val: serde_json::Value = match serde_json::from_str(body_str) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return sec_resp(HttpResponse::json(
+                            422,
+                            "Unprocessable Entity",
+                            serde_json::json!({ "errors": [format!("Invalid JSON: {e}")] }).to_string(),
+                        ));
+                    }
+                };
+
+                let toml_str = if let Some(t) = json_val.get("toml").and_then(|v| v.as_str()) {
+                    t.to_string()
+                } else if let Some(c) = json_val.get("config") {
+                    if let Some(s) = c.as_str() {
+                        s.to_string()
+                    } else {
+                        match toml::to_string(c) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                return sec_resp(HttpResponse::json(
+                                    422,
+                                    "Unprocessable Entity",
+                                    serde_json::json!({ "errors": [format!("Failed to convert config to TOML: {e}")] }).to_string(),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    match toml::to_string(&json_val) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return sec_resp(HttpResponse::json(
+                                422,
+                                "Unprocessable Entity",
+                                serde_json::json!({ "errors": [format!("Failed to convert payload to TOML: {e}")] }).to_string(),
+                            ));
+                        }
+                    }
+                };
+
+                let errors = validate_portal_save(&toml_str, config);
                 if !errors.is_empty() {
-                    return cors_resp(HttpResponse::json(
+                    return sec_resp(HttpResponse::json(
                         422,
                         "Unprocessable Entity",
                         serde_json::json!({ "errors": errors }).to_string(),
                     ));
                 }
 
-                match save_user_tier(config, body_str) {
-                    Ok((path, bytes)) => cors_resp(HttpResponse::json(
+                match save_user_tier(config, &toml_str) {
+                    Ok((path, bytes)) => sec_resp(HttpResponse::json(
                         200,
                         "OK",
                         serde_json::json!({
@@ -914,7 +1325,7 @@ pub mod server {
                         })
                         .to_string(),
                     )),
-                    Err(e) => cors_resp(HttpResponse::json(
+                    Err(e) => sec_resp(HttpResponse::json(
                         500,
                         "Internal Server Error",
                         serde_json::json!({ "errors": [e] }).to_string(),
@@ -925,13 +1336,13 @@ pub mod server {
             ("GET", "/health")
             | ("HEAD", "/health")
             | ("GET", "/healthz")
-            | ("HEAD", "/healthz") => cors_resp(HttpResponse::json(
+            | ("HEAD", "/healthz") => sec_resp(HttpResponse::json(
                 200,
                 "OK",
                 r#"{"status":"ok","engine":"miosd-config-server"}"#.to_string(),
             )),
 
-            _ => cors_resp(HttpResponse::new(404, "Not Found").with_body(
+            _ => sec_resp(HttpResponse::new(404, "Not Found").with_body(
                 "text/plain",
                 format!("Path not found: {}", req.path).into_bytes(),
             )),
@@ -1117,11 +1528,17 @@ pub mod server {
                 user_toml_path: root.join("home/.config/mios/mios.toml"),
                 max_body_bytes: 1 << 20,
                 ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+                require_login: false,
+                session_token: None,
             };
+            let mut headers = HashMap::new();
+            headers.insert("host".to_string(), "localhost:8700".to_string());
             let req = HttpRequest {
                 method: "GET".to_string(),
                 path: "/portal/config".to_string(),
-                headers: HashMap::new(),
+                query: None,
+                headers,
                 body: Vec::new(),
             };
             let resp = handle_request(&req, &config);
@@ -1149,6 +1566,9 @@ pub mod server {
                 user_toml_path: user.clone(),
                 max_body_bytes: 1 << 20,
                 ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+                require_login: false,
+                session_token: None,
             };
             let (path, _) = save_user_tier(
                 &config,
@@ -1212,6 +1632,9 @@ pub mod server {
                 user_toml_path: root.join("u.toml"),
                 max_body_bytes: 1 << 20,
                 ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+                require_login: false,
+                session_token: None,
             };
             let ok = "[identity]\nmios_user = \"u\"\n[ports]\nstack_id = 0\na = 9\nlist = [1]\n[ports.categories.x]\nbase = 0\n";
             assert!(validate_portal_save(ok, &config).is_empty());
@@ -1266,6 +1689,9 @@ pub mod server {
                 user_toml_path: tmp_dir.path().join("user.toml"),
                 max_body_bytes: 1 << 20,
                 ssot_root: Some(tmp_dir.path().to_path_buf()),
+                allowlist_hosts: vec!["127.0.0.1".to_string(), "localhost".to_string()],
+                require_login: false,
+                session_token: None,
             };
 
             let cfg_arc = Arc::new(config);
@@ -1305,6 +1731,366 @@ pub mod server {
 
             let _ = shutdown_tx.send(());
             let _ = srv_handle.await;
+        }
+
+        #[test]
+        fn config_server_positive_same_origin_post_and_redacted_get() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{}", e));
+            fs::create_dir_all(root.join("home/.config/mios")).unwrap_or_else(|e| panic!("{}", e));
+
+            let ssot_content = r#"
+[identity]
+mios_user = "initial_user"
+
+[portal]
+require_login = true
+password = "supersecret_portal_password"
+secret = "portal_cookie_secret_value"
+
+[ai]
+endpoint = "host"
+agent_model = "m"
+api_key = "sk-super-secret-api-key"
+
+[security]
+allowlist_hosts = ["localhost", "127.0.0.1", "::1"]
+
+[security.secret_keys]
+min_keys = 1
+keys = ["CUSTOM_TOKEN", "MIOS_BACKUP_KEY"]
+
+[env]
+CUSTOM_TOKEN = "my_custom_secret_123"
+MIOS_BACKUP_KEY = "backup_pass_456"
+
+[ports]
+agent_pipe = 8700
+"#;
+            fs::write(root.join("usr/share/mios/mios.toml"), ssot_content)
+                .unwrap_or_else(|e| panic!("{}", e));
+
+            let user_toml = root.join("home/.config/mios/mios.toml");
+            let config = ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: root.join("mios.html"),
+                user_toml_path: user_toml.clone(),
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec![
+                    "localhost".to_string(),
+                    "127.0.0.1".to_string(),
+                    "::1".to_string(),
+                ],
+                require_login: true,
+                session_token: Some("valid-session-token-abc".to_string()),
+            };
+
+            // 1. Positive GET: Redacts all secret values
+            let mut get_headers = HashMap::new();
+            get_headers.insert("host".to_string(), "localhost:8700".to_string());
+            let get_req = HttpRequest {
+                method: "GET".to_string(),
+                path: "/portal/config".to_string(),
+                query: None,
+                headers: get_headers,
+                body: Vec::new(),
+            };
+            let get_resp = handle_request(&get_req, &config);
+            assert_eq!(get_resp.status_code, 200);
+            let get_body = String::from_utf8_lossy(&get_resp.body);
+
+            // Verify secret values are absent
+            assert!(
+                !get_body.contains("supersecret_portal_password"),
+                "GET /portal/config leaked portal.password: {get_body}"
+            );
+            assert!(
+                !get_body.contains("portal_cookie_secret_value"),
+                "GET /portal/config leaked portal.secret: {get_body}"
+            );
+            assert!(
+                !get_body.contains("sk-super-secret-api-key"),
+                "GET /portal/config leaked ai.api_key: {get_body}"
+            );
+            assert!(
+                !get_body.contains("my_custom_secret_123"),
+                "GET /portal/config leaked CUSTOM_TOKEN: {get_body}"
+            );
+            assert!(
+                !get_body.contains("backup_pass_456"),
+                "GET /portal/config leaked MIOS_BACKUP_KEY: {get_body}"
+            );
+            assert!(
+                get_body.contains("<redacted>"),
+                "GET /portal/config should contain redacted placeholder: {get_body}"
+            );
+
+            // 2. Positive POST: Same-origin JSON POST with session cookie succeeds and persists edits
+            let mut post_headers = HashMap::new();
+            post_headers.insert("host".to_string(), "localhost:8700".to_string());
+            post_headers.insert("origin".to_string(), "http://localhost:8700".to_string());
+            post_headers.insert("content-type".to_string(), "application/json".to_string());
+            post_headers.insert(
+                "cookie".to_string(),
+                "mios_portal=valid-session-token-abc".to_string(),
+            );
+
+            let post_json = serde_json::json!({
+                "identity": {
+                    "mios_user": "updated_operator"
+                },
+                "ports": {
+                    "agent_pipe": 8700
+                }
+            })
+            .to_string();
+
+            let post_req = HttpRequest {
+                method: "POST".to_string(),
+                path: "/portal/config".to_string(),
+                query: None,
+                headers: post_headers,
+                body: post_json.into_bytes(),
+            };
+            let post_resp = handle_request(&post_req, &config);
+            assert_eq!(
+                post_resp.status_code, 200,
+                "POST failed: {}",
+                String::from_utf8_lossy(&post_resp.body)
+            );
+
+            // Verify user tier was persisted
+            assert!(user_toml.exists(), "User toml was not written");
+            let saved_content = fs::read_to_string(&user_toml).unwrap_or_else(|e| panic!("{}", e));
+            assert!(
+                saved_content.contains("updated_operator"),
+                "Persisted user toml does not contain updated_operator: {saved_content}"
+            );
+        }
+
+        #[test]
+        fn config_server_rejects_cross_origin() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{}", e));
+            fs::write(
+                root.join("usr/share/mios/mios.toml"),
+                "[identity]\nmios_user = \"u\"\n[security]\nallowlist_hosts = [\"localhost\", \"127.0.0.1\"]\n",
+            )
+            .unwrap_or_else(|e| panic!("{}", e));
+
+            let config = ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: root.join("mios.html"),
+                user_toml_path: root.join("user.toml"),
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+                require_login: true,
+                session_token: Some("secret-token-xyz".to_string()),
+            };
+
+            // Subtest 1: Cross-origin text/plain POST with Origin: http://evil.example returns 403
+            {
+                let mut headers = HashMap::new();
+                headers.insert("host".to_string(), "localhost:8700".to_string());
+                headers.insert("origin".to_string(), "http://evil.example".to_string());
+                headers.insert("content-type".to_string(), "text/plain".to_string());
+                headers.insert(
+                    "cookie".to_string(),
+                    "mios_portal=secret-token-xyz".to_string(),
+                );
+
+                let req = HttpRequest {
+                    method: "POST".to_string(),
+                    path: "/portal/config".to_string(),
+                    query: None,
+                    headers,
+                    body: b"identity.mios_user = evil".to_vec(),
+                };
+                let resp = handle_request(&req, &config);
+                assert_eq!(
+                    resp.status_code, 403,
+                    "Expected 403 for cross-origin text/plain POST"
+                );
+                let body_str = String::from_utf8_lossy(&resp.body);
+                assert!(
+                    body_str.contains("Forbidden") || body_str.contains("rejected"),
+                    "Body was: {body_str}"
+                );
+            }
+
+            // Subtest 2: Host outside allowlist returns 403
+            {
+                let mut headers = HashMap::new();
+                headers.insert("host".to_string(), "evil.example:8700".to_string());
+                headers.insert("origin".to_string(), "http://localhost:8700".to_string());
+                headers.insert("content-type".to_string(), "application/json".to_string());
+                headers.insert(
+                    "cookie".to_string(),
+                    "mios_portal=secret-token-xyz".to_string(),
+                );
+
+                let req = HttpRequest {
+                    method: "POST".to_string(),
+                    path: "/portal/config".to_string(),
+                    query: None,
+                    headers,
+                    body: b"{}".to_vec(),
+                };
+                let resp = handle_request(&req, &config);
+                assert_eq!(
+                    resp.status_code, 403,
+                    "Expected 403 for Host outside allowlist"
+                );
+            }
+
+            // Subtest 3: POST without token (when require_login is true) returns 403
+            {
+                let mut headers = HashMap::new();
+                headers.insert("host".to_string(), "localhost:8700".to_string());
+                headers.insert("origin".to_string(), "http://localhost:8700".to_string());
+                headers.insert("content-type".to_string(), "application/json".to_string());
+                // No cookie or auth token header
+
+                let req = HttpRequest {
+                    method: "POST".to_string(),
+                    path: "/portal/config".to_string(),
+                    query: None,
+                    headers,
+                    body: b"{}".to_vec(),
+                };
+                let resp = handle_request(&req, &config);
+                assert_eq!(
+                    resp.status_code, 403,
+                    "Expected 403 for POST without session token"
+                );
+            }
+
+            // Subtest 4: POST with wrong token returns 403
+            {
+                let mut headers = HashMap::new();
+                headers.insert("host".to_string(), "localhost:8700".to_string());
+                headers.insert("origin".to_string(), "http://localhost:8700".to_string());
+                headers.insert("content-type".to_string(), "application/json".to_string());
+                headers.insert(
+                    "cookie".to_string(),
+                    "mios_portal=wrong-token".to_string(),
+                );
+
+                let req = HttpRequest {
+                    method: "POST".to_string(),
+                    path: "/portal/config".to_string(),
+                    query: None,
+                    headers,
+                    body: b"{}".to_vec(),
+                };
+                let resp = handle_request(&req, &config);
+                assert_eq!(
+                    resp.status_code, 403,
+                    "Expected 403 for POST with wrong session token"
+                );
+            }
+        }
+
+        #[test]
+        fn config_server_omits_access_control_allow_origin_wildcard() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            let config = ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: root.join("mios.html"),
+                user_toml_path: root.join("user.toml"),
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string()],
+                require_login: false,
+                session_token: None,
+            };
+
+            let check_no_wildcard = |resp: &HttpResponse| {
+                for (k, v) in &resp.headers {
+                    if k.eq_ignore_ascii_case("Access-Control-Allow-Origin") {
+                        assert_ne!(
+                            v, "*",
+                            "Response header must not contain Access-Control-Allow-Origin: *"
+                        );
+                    }
+                }
+            };
+
+            let mut headers = HashMap::new();
+            headers.insert("host".to_string(), "localhost:8700".to_string());
+
+            // GET /health
+            let req = HttpRequest {
+                method: "GET".to_string(),
+                path: "/health".to_string(),
+                query: None,
+                headers: headers.clone(),
+                body: Vec::new(),
+            };
+            let resp = handle_request(&req, &config);
+            check_no_wildcard(&resp);
+
+            // OPTIONS /portal/config
+            let mut opt_headers = headers.clone();
+            opt_headers.insert("origin".to_string(), "http://localhost:8700".to_string());
+            let req = HttpRequest {
+                method: "OPTIONS".to_string(),
+                path: "/portal/config".to_string(),
+                query: None,
+                headers: opt_headers,
+                body: Vec::new(),
+            };
+            let resp = handle_request(&req, &config);
+            check_no_wildcard(&resp);
+        }
+
+        #[test]
+        fn config_server_token_exchange_sets_cookie() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            let html_file = root.join("mios.html");
+            fs::write(&html_file, "<html><body>Settings</body></html>").unwrap();
+
+            let config = ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: html_file,
+                user_toml_path: root.join("user.toml"),
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string()],
+                require_login: true,
+                session_token: Some("my-launch-token-99".to_string()),
+            };
+
+            let mut headers = HashMap::new();
+            headers.insert("host".to_string(), "localhost:8700".to_string());
+
+            // Request with query ?token=my-launch-token-99
+            let req = HttpRequest {
+                method: "GET".to_string(),
+                path: "/configure".to_string(),
+                query: Some("token=my-launch-token-99".to_string()),
+                headers,
+                body: Vec::new(),
+            };
+            let resp = handle_request(&req, &config);
+            assert_eq!(resp.status_code, 200);
+
+            let set_cookie = resp
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+                .map(|(_, v)| v.as_str());
+            assert!(set_cookie.is_some(), "Set-Cookie header missing");
+            let cookie_val = set_cookie.unwrap();
+            assert!(cookie_val.contains("mios_portal=my-launch-token-99"));
+            assert!(cookie_val.contains("HttpOnly"));
+            assert!(cookie_val.contains("SameSite=Strict"));
         }
     }
 }
