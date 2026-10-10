@@ -17,16 +17,12 @@ for f in mios-launcher-daemon mios-db mios-docgen mios-coderun-codemode \
 done
 
 echo "[live] tmpfiles + sysusers"
-for f in mios-shim-links.conf mios-pgvector.conf mios-llamacpp.conf \
-         mios-agent-pipe.conf; do
-    s="$SRC/usr/lib/tmpfiles.d/$f"
-    [ -f "$s" ] && tr -d '\r' < "$s" | sudo tee "/usr/lib/tmpfiles.d/$f" >/dev/null && echo "  + tmpfiles/$f"
-done
-[ -f "$SRC/usr/lib/sysusers.d/50-mios-services.conf" ] && \
-    tr -d '\r' < "$SRC/usr/lib/sysusers.d/50-mios-services.conf" | sudo tee /usr/lib/sysusers.d/50-mios-services.conf >/dev/null && echo "  + sysusers/50-mios-services.conf"
+[ -f "$SRC/usr/lib/tmpfiles.d/50-mios.conf" ] && \
+    tr -d '\r' < "$SRC/usr/lib/tmpfiles.d/50-mios.conf" | sudo tee /usr/lib/tmpfiles.d/50-mios.conf >/dev/null && echo "  + tmpfiles/50-mios.conf"
+[ -f "$SRC/usr/lib/sysusers.d/50-mios.conf" ] && \
+    tr -d '\r' < "$SRC/usr/lib/sysusers.d/50-mios.conf" | sudo tee /usr/lib/sysusers.d/50-mios.conf >/dev/null && echo "  + sysusers/50-mios.conf"
 sudo systemd-sysusers 2>&1 | tail -2 || true
-sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios-shim-links.conf 2>&1 | tail -2 || true
-sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios-pgvector.conf /usr/lib/tmpfiles.d/mios-llamacpp.conf 2>&1 | tail -2 || true
+sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/50-mios.conf 2>&1 | tail -2 || true
 
 echo "[live] restart broker"
 sudo systemctl restart mios-launcher-daemon.service 2>&1 || true

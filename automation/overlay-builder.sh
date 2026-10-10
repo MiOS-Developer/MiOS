@@ -57,6 +57,7 @@ chmod +x /usr/bin/mios 2>/dev/null || true
 
 echo "[overlay-builder] Setting up MiOS sysusers"
 install -d -m 0755 /etc/sysusers.d
+rm -f /etc/sysusers.d/10-mios*.conf /etc/sysusers.d/30-mios*.conf /etc/sysusers.d/50-mios-*.conf 2>/dev/null || true
 _sysusers_added=0
 for sf in usr/lib/sysusers.d/*.conf; do
     [[ -f "$sf" ]] || continue
@@ -70,6 +71,7 @@ fi
 
 echo "[overlay-builder] Setting up MiOS tmpfiles.d"
 install -d -m 0755 /etc/tmpfiles.d
+rm -f /etc/tmpfiles.d/mios-*.conf /etc/tmpfiles.d/20-podman-machine.conf 2>/dev/null || true
 _tmpfiles_added=0
 for tf in usr/lib/tmpfiles.d/*.conf; do
     [[ -f "$tf" ]] || continue

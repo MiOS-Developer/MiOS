@@ -19,8 +19,8 @@ if [[ -f /usr/lib/wsl.conf ]]; then
     fi
 fi
 
-if [[ -f /usr/lib/tmpfiles.d/mios.conf ]]; then
-    systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios.conf 2>/dev/null || true
+if [[ -f /usr/lib/tmpfiles.d/50-mios.conf ]]; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/50-mios.conf 2>/dev/null || true
 fi
 
 if [[ -d /mnt/wslg && ! -e /tmp/.X11-unix ]]; then

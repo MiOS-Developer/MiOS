@@ -10986,7 +10986,7 @@ min_ap_capable = 0
 role     = "runs the VMs and containers every other plane lands in"
 owner    = "mini"
 markers  = ["libvirt", "qemu-kvm"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.radio]
 role     = "serves WiFi clients as an access point. OPTIONAL: MiOS boots on hardware with no radio at all"
@@ -10998,7 +10998,7 @@ wired_by = ""
 role     = "the uplink: forwards, NATs and filters. The LAN is both uplink and downlink, so one interface suffices"
 owner    = "mini"
 markers  = ["firewalld", "dnsmasq"]
-wired_by = "usr/lib/sysctl.d/99-mios-vmhost.conf"
+wired_by = "usr/lib/sysctl.d/99-mios.conf"
 
 [blade.planes.mesh]
 role     = "joins every node and service into one addressable overlay"

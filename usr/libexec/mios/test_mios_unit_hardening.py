@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided test for write paths of ProtectSystem=strict units (task_3432); checks the state dirs are writable and that any StateDirectory= owner/mode agrees with tmpfiles.d.
-# AI-related: usr/lib/systemd/system/mios-agents.service, usr/lib/systemd/system/mios-cron-director.service, usr/lib/tmpfiles.d/mios-agents.conf, usr/lib/tmpfiles.d/mios-cron-director.conf, usr/share/mios/mios.toml
+# AI-related: usr/lib/systemd/system/mios-agents.service, usr/lib/systemd/system/mios-cron-director.service, usr/lib/tmpfiles.d/50-mios.conf, usr/share/mios/mios.toml
 """Two-sided verification controls for task_3432.
 
 Every expected value is read from the tree, never written here as a literal:

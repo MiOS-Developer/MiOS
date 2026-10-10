@@ -35,7 +35,7 @@ class TestKdumpCrash(unittest.TestCase):
         self.assertIn("default reboot", content)
 
     def test_tmpfiles_crash_dir(self):
-        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "mios-kdump.conf")
+        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "50-mios.conf")
         self.assertTrue(os.path.isfile(tmpfiles_path), f"Missing {tmpfiles_path}")
         content = pathlib.Path(tmpfiles_path).read_text(encoding="utf-8")
         self.assertIn("d /var/crash", content)
