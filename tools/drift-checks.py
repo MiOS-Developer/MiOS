@@ -90,15 +90,10 @@ def check_resolver_differential_parity() -> int:
             break
 
     if not resolver_bin:
-        # A silent skip is how a gate stays green while proving nothing. Where the
-        # environment declares tools mandatory, an absent binary is a violation.
-        if os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS", "0") == "1":
-            print("    mios-resolver is not built, so the Python/Rust resolvers were "
-                  "never compared (MIOS_DRIFT_REQUIRE_TOOLS=1). Build it: "
-                  "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
-            sys.exit(1)
-        print("    mios-resolver binary not built locally -- advisory skip")
-        sys.exit(0)
+        print("    mios-resolver is not built, so the Python/Rust resolvers were "
+              "never compared. Build it: "
+              "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
+        sys.exit(1)
 
     # Both twins resolve the SAME tiers: the root's vendor file and drop-ins,
     # no host or user overlay, so the comparison depends on the tree alone.

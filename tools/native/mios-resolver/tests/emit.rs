@@ -60,6 +60,38 @@ mod cli {
     }
 
     #[test]
+    fn user_empty_string_never_overrides_vendor_endpoint() {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let vendor = root.join("usr/share/mios/mios.toml");
+        std::fs::create_dir_all(vendor.parent().unwrap()).unwrap();
+        std::fs::write(&vendor, "[ai]\nendpoint = 'http://vendor:1/v1'\n").unwrap();
+
+        let user = root.join("user.toml");
+        std::fs::write(&user, "[ai]\nendpoint = ''\n").unwrap();
+
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_mios-resolver"));
+        command.env_clear().arg("--emit=json");
+        command.env("MIOS_VENDOR_TOML", &vendor);
+        command.env("MIOS_USER_TOML", &user);
+        command.env("MIOS_HOST_TOML", root.join("absent-host.toml"));
+
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            json["merged"]["ai"]["endpoint"].as_str(),
+            Some("http://vendor:1/v1"),
+            "merged.ai.endpoint must retain vendor URL when user sets empty string"
+        );
+        assert_eq!(
+            json["exports"]["MIOS_AI_ENDPOINT"].as_str(),
+            Some("http://vendor:1/v1"),
+            "exports.MIOS_AI_ENDPOINT must be emitted with vendor URL"
+        );
+    }
+
+    #[test]
     fn test_cli_emit_shell_snapshot() {
         let val: toml::Value = toml::from_str(
             r#"

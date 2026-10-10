@@ -106,12 +106,15 @@ pub fn resolve_tier_dirs(
     let user = env::var("MIOS_USER_TOML").unwrap_or_else(|_| {
         // Mirror userenv.sh and mios_toml.py whatever the root: etc/skel seeds
         // new homes, it is not a user tier. "~" never expands, so resolve HOME.
-        let xdg = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-            let home = env::var("HOME")
-                .or_else(|_| env::var("USERPROFILE"))
-                .unwrap_or_default();
-            format!("{}/.config", home)
-        });
+        let xdg = env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                let home = env::var("HOME")
+                    .or_else(|_| env::var("USERPROFILE"))
+                    .unwrap_or_default();
+                format!("{}/.config", home)
+            });
         format!("{}/mios/mios.toml", xdg)
     });
 
@@ -367,5 +370,35 @@ mod tests {
         paths[1] = dir.path().join("absent.toml");
         let merged = merge_layer_files(&paths).unwrap();
         assert_eq!(merged["ai"]["endpoint"].as_str(), Some("x"));
+    }
+
+    #[test]
+    fn test_xdg_config_home_empty_string_falls_back() {
+        let orig_xdg = env::var("XDG_CONFIG_HOME");
+        let orig_user = env::var("MIOS_USER_TOML");
+        env::remove_var("MIOS_USER_TOML");
+        env::set_var("XDG_CONFIG_HOME", "");
+
+        let (_v, _vd, _h, _hd, user, _ud) = resolve_tier_dirs(None);
+        let user_str = user.to_string_lossy();
+        assert!(
+            user_str.ends_with(".config/mios/mios.toml"),
+            "expected user path to end with .config/mios/mios.toml, got: {user_str}"
+        );
+        assert!(
+            !user_str.starts_with("/mios/mios.toml"),
+            "user path unexpectedly started with bare /mios/mios.toml: {user_str}"
+        );
+
+        if let Ok(v) = orig_xdg {
+            env::set_var("XDG_CONFIG_HOME", v);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+        if let Ok(v) = orig_user {
+            env::set_var("MIOS_USER_TOML", v);
+        } else {
+            env::remove_var("MIOS_USER_TOML");
+        }
     }
 }
