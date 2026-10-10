@@ -139,6 +139,7 @@ main() {
         useradd -u 1000 -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER" 2>/dev/null || useradd -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER"
     fi
     echo "$LINUX_USER:$USER_PASSWORD" | chpasswd
+    chage -d 0 "$LINUX_USER" 2>/dev/null || true
     log_ok "User profile applied."
 
     log_phase "'MiOS' Core Installation (Root Merge)"

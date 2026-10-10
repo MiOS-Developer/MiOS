@@ -95,7 +95,12 @@ if getent passwd "${C_USER}" >/dev/null; then
     fi
     if [[ "$pw_hash" =~ ^\$6\$ ]]; then
         echo "${C_USER}:${pw_hash}" | chpasswd -e
-        mios_ok "Password hash baked into /etc/shadow for ${C_USER}"
+        if command -v chage >/dev/null 2>&1; then
+            chage -d 0 "${C_USER}" 2>/dev/null || true
+        elif [[ -f /etc/shadow ]]; then
+            sed -i -E "s/^(${C_USER}:[^:]*):[0-9]*:(.*)/\1:0:\2/" /etc/shadow 2>/dev/null || true
+        fi
+        mios_ok "Password hash baked into /etc/shadow for ${C_USER} (expired via chage -d 0 per ruling Q5)"
     else
         mios_warn "Pw_hash is not sha512crypt"
     fi

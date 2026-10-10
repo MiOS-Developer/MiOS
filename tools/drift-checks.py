@@ -4357,6 +4357,31 @@ def check_unit_security() -> int:
                             viol.append(f"{rel}: systemd service missing hardening directives ({', '.join(missing)})")
                 except Exception: pass
 
+    # Ruling Q7 (task_3539): mios-attest-server must be disabled until Keylime replaces it
+    attest_viols = []
+    for fname in ('mios-attest.service', 'mios-attest-server.service'):
+        attest_file = os.path.join(systemd_dir, fname)
+        if os.path.isfile(attest_file):
+            with open(attest_file, encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    sline = line.strip()
+                    if sline.startswith('WantedBy=') and 'Keylime' not in sline:
+                        attest_viols.append(f"usr/lib/systemd/system/{fname}: mios-attest-server has '{sline}' (ruling Q7: unit must be disabled until Keylime)")
+
+    for pd in (os.path.join(root, 'usr/lib/systemd/system-preset'), os.path.join(root, 'etc/systemd/system-preset')):
+        if os.path.isdir(pd):
+            for pf in os.listdir(pd):
+                if pf.endswith('.preset'):
+                    with open(os.path.join(pd, pf), encoding='utf-8', errors='replace') as fh:
+                        for pline in fh:
+                            sline = pline.strip()
+                            if sline.startswith('enable') and ('mios-attest.service' in sline or 'mios-attest-server' in sline):
+                                attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root)}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
+
+    if attest_viols:
+        print('\n'.join(attest_viols))
+        return 1
+
     if viol:
         print('\n'.join(viol))
     return 0

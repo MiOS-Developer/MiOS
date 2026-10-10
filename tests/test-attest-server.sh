@@ -156,9 +156,9 @@ set -e
 diag "verify-quote output: $verify_out"
 if [[ "$verify_rc" -eq 0 ]] && \
    echo "$verify_out" | grep -q "Verdict: APPROVED" && \
-   echo "$verify_out" | grep -q "wireguard" && \
-   echo "$verify_out" | grep -q "cephfs"; then
-    assert_pass "Positive appraisal: valid quote verified with Verdict: APPROVED and issued credentials"
+   echo "$verify_out" | grep -q "headscale_preauth_key" && \
+   echo "$verify_out" | grep -q "k3s_join_token"; then
+    assert_pass "Positive appraisal: valid quote verified with Verdict: APPROVED and issued headscale/k3s credentials"
 else
     assert_fail "Positive appraisal failed" "exit code $verify_rc, output: $verify_out"
 fi
@@ -255,8 +255,10 @@ log "Test 6: Systemd unit syntax validation"
 if [[ -f "$SERVICE_FILE" ]]; then
     if grep -q "ExecStart=/usr/libexec/mios/mios-attest-server serve" "$SERVICE_FILE" && \
        grep -q "Restart=always" "$SERVICE_FILE" && \
-       grep -q "StandardOutput=journal" "$SERVICE_FILE"; then
-        assert_pass "Systemd unit mios-attest.service contains required ExecStart, Restart, and StandardOutput"
+       grep -q "StandardOutput=journal" "$SERVICE_FILE" && \
+       ! grep -q "WantedBy=" "$SERVICE_FILE" && \
+       grep -q "ConditionPathExists=/usr/share/doc/mios/keylime-ready" "$SERVICE_FILE"; then
+        assert_pass "Systemd unit mios-attest.service is valid, has no WantedBy, and is conditioned off until Keylime"
     else
         assert_fail "Systemd unit content mismatch" "$(cat "$SERVICE_FILE")"
     fi
@@ -335,8 +337,9 @@ ver_http_code="$(curl -s -o "${TMP_DIR}/verify_res.json" -w "%{http_code}" \
 
 if [[ "$ver_http_code" == "200" ]] && \
    grep -q '"verdict": "APPROVED"' "${TMP_DIR}/verify_res.json" && \
-   grep -q '"wireguard"' "${TMP_DIR}/verify_res.json"; then
-    assert_pass "End-to-end HTTP appraisal: 200 OK, APPROVED with WireGuard and CephFS credentials"
+   grep -q '"headscale_preauth_key"' "${TMP_DIR}/verify_res.json" && \
+   grep -q '"k3s_join_token"' "${TMP_DIR}/verify_res.json"; then
+    assert_pass "End-to-end HTTP appraisal: 200 OK, APPROVED with headscale and k3s credentials"
 else
     assert_fail "End-to-end HTTP appraisal failed" "HTTP $ver_http_code: $(cat "${TMP_DIR}/verify_res.json")"
 fi
