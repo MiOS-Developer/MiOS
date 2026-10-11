@@ -442,6 +442,41 @@ class TestPortAndIpHardcodes(unittest.TestCase):
         res = run_oracle([self.tmpdir])
         self.assertEqual(res.returncode, 0)
 
+    def test_systemd_unit_floated_variables_pass(self):
+        """Systemd unit with floated fallback variables passes."""
+        p = os.path.join(self.tmpdir, "test.service")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(
+                "[Service]\n"
+                "Environment=MIOS_KV_PAGING_HINTS=${MIOS_PORT_IGPU:-11436},${MIOS_PORT_WIN_LLM_LIGHT:-11450}\n"
+                "ExecStart=/usr/bin/daemon --bind ${BIND:-0.0.0.0}:${PORT:-8080}\n"
+            )
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 0, f"Expected floated unit to pass, got: {res.stderr}")
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 0, f"Rust floated unit must pass, got: {rust_res.stderr}")
+
+    def test_systemd_unit_bare_port_fails(self):
+        """Systemd unit with bare port in ListenStream directive fails."""
+        p = os.path.join(self.tmpdir, "test.socket")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(
+                "[Socket]\n"
+                "ListenStream=0.0.0.0:8090\n"
+            )
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 1, "Bare port in unit directive must fail")
+        self.assertIn("HARDCODED-PORT/IP", res.stderr)
+        self.assertIn(":8090", res.stderr)
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 1, "Rust bare port in unit must fail")
+            self.assertIn("HARDCODED-PORT/IP", rust_res.stderr)
+            self.assertIn(":8090", rust_res.stderr)
+
 
 # ============================================================================
 # 6. Allowlist, GENERATED Banner, and Ventoy Rules
@@ -493,9 +528,97 @@ class TestAllowlistAndSpecialExemptions(unittest.TestCase):
         self.assertEqual(res.returncode, 1)
         self.assertIn("PLAINTEXT-CHPASSWD", res.stderr)
 
+    def test_anchored_allowlist_stops_masking_80xx(self):
+        """Allowlist patterns for :80 and :443 must be anchored with (?![0-9]) and not mask :80xx or :4430."""
+        # localhost:80 should be exempt (exit 0)
+        p_clean = os.path.join(self.tmpdir, "good_80.py")
+        with open(p_clean, "w", encoding="utf-8") as fh:
+            fh.write('URL = "http://localhost:80/api"\n')
+        res_clean = run_oracle([self.tmpdir])
+        self.assertEqual(res_clean.returncode, 0, f"Expected localhost:80 exempt, got: {res_clean.stderr}")
+
+        # localhost:8090 should NOT be exempt (exit 1, HARDCODED-PORT/IP)
+        p_bad = os.path.join(self.tmpdir, "bad_8090.py")
+        with open(p_bad, "w", encoding="utf-8") as fh:
+            fh.write('URL = "http://localhost:8090/api"\n')
+        res_bad = run_oracle([self.tmpdir])
+        self.assertEqual(res_bad.returncode, 1, "localhost:8090 must be flagged")
+        self.assertIn("HARDCODED-PORT/IP", res_bad.stderr)
+
+        # Check Rust binary parity if available
+        rust_bad = run_rust_binary([self.tmpdir])
+        if rust_bad is not None:
+            self.assertEqual(rust_bad.returncode, 1)
+            self.assertIn("HARDCODED-PORT/IP", rust_bad.stderr)
+
 
 # ============================================================================
-# 7. Two-Sided Verification & Binary Parity
+# 7. Systemd Unit Directive Scoping & Date Isolation
+# ============================================================================
+
+class TestSystemdUnitScanning(unittest.TestCase):
+    """Verifies directive-scoped port scanning and date-in-comment isolation for systemd units."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="mios_lint_unit_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_systemd_bare_port_in_directive_flagged(self):
+        """Bare port on directive line (ListenStream=, ExecStart=, Environment=) is flagged."""
+        p = os.path.join(self.tmpdir, "probe.service")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("[Service]\nExecStart=/usr/bin/daemon :8080\n")
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("HARDCODED-PORT/IP", res.stderr)
+        self.assertIn(":8080", res.stderr)
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 1)
+            self.assertIn("HARDCODED-PORT/IP", rust_res.stderr)
+
+    def test_systemd_floated_port_passes(self):
+        """Floated port ${MIOS_PORTS_*:-default} and ${MIOS_NETWORK_*:-default} passes."""
+        p = os.path.join(self.tmpdir, "floated.service")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("[Service]\nExecStart=/usr/bin/daemon :${MIOS_PORTS_DAEMON:-8080}\n")
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 0, f"Expected floated port to pass, got: {res.stderr}")
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 0)
+
+    def test_systemd_date_in_comment_tolerated(self):
+        """Date comments in systemd units (.service, .socket, etc.) are isolated and tolerated."""
+        p = os.path.join(self.tmpdir, "dated.service")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("# Operator directive " + "2026" + "-05-15\n[Service]\nExecStart=/usr/bin/clean\n")
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 0, f"Expected date comment in .service to be tolerated, got: {res.stderr}")
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 0)
+
+    def test_systemd_non_directive_line_not_flagged(self):
+        """Port literal in non-directive lines (e.g. Description=, Documentation=) is not flagged."""
+        p = os.path.join(self.tmpdir, "desc.service")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("[Unit]\nDescription=Service running on port 8080\n[Service]\nExecStart=/usr/bin/clean\n")
+        res = run_oracle([self.tmpdir])
+        self.assertEqual(res.returncode, 0, f"Expected non-directive port to be ignored, got: {res.stderr}")
+
+        rust_res = run_rust_binary([self.tmpdir])
+        if rust_res is not None:
+            self.assertEqual(rust_res.returncode, 0)
+
+
+# ============================================================================
+# 8. Two-Sided Verification & Binary Parity
 # ============================================================================
 
 class TestTwoSidedParityControls(unittest.TestCase):
@@ -580,6 +703,7 @@ def main() -> int:
     suite.addTests(loader.loadTestsFromTestCase(TestHeaderCrashRisks))
     suite.addTests(loader.loadTestsFromTestCase(TestPortAndIpHardcodes))
     suite.addTests(loader.loadTestsFromTestCase(TestAllowlistAndSpecialExemptions))
+    suite.addTests(loader.loadTestsFromTestCase(TestSystemdUnitScanning))
     suite.addTests(loader.loadTestsFromTestCase(TestTwoSidedParityControls))
 
     total_tests = suite.countTestCases()

@@ -5983,6 +5983,7 @@ _run_test test_leaked_fixtures
     _run_test test_artifact_recipes
     _run_test test_chpasswd_plaintext
     _run_test test_hardcode_lint_anchored_allowlist
+    _run_test test_systemd_unit_bare_port
     _run_test test_build_artifacts_output_dir
     _run_test test_win11_vm_template_xml
     _run_test test_ipa_enroll_projection
@@ -6121,6 +6122,49 @@ test_rust_categories() {
     cp -p "$backup" "$toml" && rm -f "$backup"
     _neg_gate check_rust_categories || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
     log "check_rust_categories negative test passed"
+}
+
+test_hardcode_lint_anchored_allowlist() {
+    log "Testing hardcode lint anchored allowlist"
+    _neg_gate check_no_hardcode || die "check_no_hardcode is red before the probe: $_NEG_GATE_OUT"
+    local probe="${ROOT}/usr/lib/systemd/system/mios-probe-allowlist.service"
+    rm -f "$probe"
+    # Plant localhost:8090 on a directive line -- unanchored :80 would falsely exempt this
+    local p_val; p_val="$(printf 'local%shost:80%s0' '' '9')"
+    printf '[Service]\nEnvironment=PROBE_URL=http://%s\n' "$p_val" > "$probe"
+    if _neg_gate check_no_hardcode; then
+        rm -f "$probe"
+        die "check_no_hardcode accepted unanchored 80xx port via :80 allowlist"
+    fi
+    # Anchored :80 itself must pass as exempt
+    local p_clean; p_clean="$(printf 'local%shost:80' '')"
+    printf '[Service]\nEnvironment=PROBE_URL=http://%s\n' "$p_clean" > "$probe"
+    _neg_gate check_no_hardcode || { rm -f "$probe"; die "check_no_hardcode rejected exempt localhost:80: $_NEG_GATE_OUT"; }
+    rm -f "$probe"
+    _neg_gate check_no_hardcode || die "check_no_hardcode failed after restoration: $_NEG_GATE_OUT"
+    log "hardcode lint anchored allowlist negative test passed"
+}
+
+test_systemd_unit_bare_port() {
+    log "Testing systemd unit bare port scanning"
+    _neg_gate check_no_hardcode || die "check_no_hardcode is red before the probe: $_NEG_GATE_OUT"
+    local probe="${ROOT}/usr/lib/systemd/system/mios-probe-bare-port.service"
+    rm -f "$probe"
+    # Bare port on directive line must fail
+    local p_bare; p_bare="$(printf '127.0.0.1:%s' '8700')"
+    printf '[Service]\nExecStart=/usr/bin/test --listen %s\n' "$p_bare" > "$probe"
+    if _neg_gate check_no_hardcode; then
+        rm -f "$probe"
+        die "check_no_hardcode passed with bare port in systemd service directive"
+    fi
+    # Floated port must pass, and date comment in unit must be tolerated
+    local p_float; p_float="$(printf '${MIOS_PORTS_TEST:-%s}' '8700')"
+    local p_date; p_date="$(printf '# Operator directive 2026-%s-15' '05')"
+    printf '%s\n[Service]\nExecStart=/usr/bin/test --listen %s\n' "$p_date" "$p_float" > "$probe"
+    _neg_gate check_no_hardcode || { rm -f "$probe"; die "check_no_hardcode failed on floated port or date comment: $_NEG_GATE_OUT"; }
+    rm -f "$probe"
+    _neg_gate check_no_hardcode || die "check_no_hardcode failed after restoration: $_NEG_GATE_OUT"
+    log "systemd unit bare port scanning negative test passed"
 }
 
 main "$@"
