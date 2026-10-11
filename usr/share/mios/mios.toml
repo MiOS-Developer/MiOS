@@ -23,6 +23,40 @@ unconfined = [
 ]
 
 # ----------------------------------------------------------------------------
+# [security.licensing] -- Permissive licensing & zero copyleft taint policy (Milestone M5 / R5).
+# ----------------------------------------------------------------------------
+[security.licensing]
+zero_copyleft_taint = true
+policy = "permissive_only"
+allowed_licenses = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "LGPL-2.1-or-later",
+  "ISC",
+  "Zlib",
+  "CC0-1.0",
+  "Unicode-3.0",
+]
+denied_licenses = [
+  "GPL-3.0-only",
+  "GPL-3.0-or-later",
+  "GPL-2.0-only",
+  "GPL-2.0-or-later",
+  "AGPL-3.0-only",
+  "AGPL-3.0-or-later",
+  "SSPL-1.0",
+]
+
+[security.licensing.replacements]
+coreutils = { upstream = "gnu-coreutils", upstream_license = "GPL-3.0-or-later", replacement = "uutils-coreutils", replacement_license = "MIT" }
+oci_runtime = { upstream = "runc", upstream_license = "GPL-2.0-only", replacement = "youki", replacement_license = "Apache-2.0" }
+bootloader = { upstream = "grub2", upstream_license = "GPL-3.0-or-later", replacement = "systemd-boot", replacement_license = "LGPL-2.1-or-later" }
+dbus_daemon = { upstream = "dbus-daemon", upstream_license = "GPL-2.0-or-later", replacement = "dbus-broker", replacement_license = "Apache-2.0" }
+
+
+# ----------------------------------------------------------------------------
 # [firewall] -- Firewall open ports SSOT selector for public zone.
 # ----------------------------------------------------------------------------
 [firewall]
