@@ -784,6 +784,9 @@ _mios_input MIOS_PATHS_CMD_EXE MIOS_CMD_EXE || { return 1 2>/dev/null || exit 1;
 [ -n "${MIOS_CMD_EXE+x}" ] || MIOS_CMD_EXE="${MIOS_PATHS_CMD_EXE:-}"
 : "${MIOS_COCKPIT_ALLOW_UNENCRYPTED:=true}"
 : "${MIOS_COCKPIT_IDLE_TIMEOUT:=0}"
+_mios_input MIOS_PORTS_COCKPIT_INTERNAL MIOS_PORT_COCKPIT_INTERNAL MIOS_COCKPIT_INTERNAL_PORT || { return 1 2>/dev/null || exit 1; }
+: "${MIOS_PORTS_COCKPIT_INTERNAL:=9090}"
+[ -n "${MIOS_COCKPIT_INTERNAL_PORT+x}" ] || MIOS_COCKPIT_INTERNAL_PORT="${MIOS_PORTS_COCKPIT_INTERNAL:-}"
 _mios_input MIOS_PORTS_COCKPIT_LINK MIOS_PORT_COCKPIT_LINK MIOS_COCKPIT_LINK_PORT || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_COCKPIT_LINK:=8120}"
 [ -n "${MIOS_COCKPIT_LINK_PORT+x}" ] || MIOS_COCKPIT_LINK_PORT="${MIOS_PORTS_COCKPIT_LINK:-}"
@@ -1003,6 +1006,9 @@ _mios_input MIOS_PORTS_CPU_NODE MIOS_PORT_CPU_NODE MIOS_CPU_NODE_PORT || { retur
 _mios_input MIOS_LLAMACPP_CPU_NODE_THREADS MIOS_CPU_NODE_THREADS || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_LLAMACPP_CPU_NODE_THREADS:=14}"
 [ -n "${MIOS_CPU_NODE_THREADS+x}" ] || MIOS_CPU_NODE_THREADS="${MIOS_LLAMACPP_CPU_NODE_THREADS:-}"
+_mios_input MIOS_PORTS_CRAWL4AI_INTERNAL MIOS_PORT_CRAWL4AI_INTERNAL MIOS_CRAWL4AI_INTERNAL_PORT || { return 1 2>/dev/null || exit 1; }
+: "${MIOS_PORTS_CRAWL4AI_INTERNAL:=11235}"
+[ -n "${MIOS_CRAWL4AI_INTERNAL_PORT+x}" ] || MIOS_CRAWL4AI_INTERNAL_PORT="${MIOS_PORTS_CRAWL4AI_INTERNAL:-}"
 _mios_input MIOS_PORTS_CRAWL4AI MIOS_PORT_CRAWL4AI MIOS_CRAWL4AI_PORT || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_CRAWL4AI:=8810}"
 [ -n "${MIOS_CRAWL4AI_PORT+x}" ] || MIOS_CRAWL4AI_PORT="${MIOS_PORTS_CRAWL4AI:-}"
@@ -1704,6 +1710,9 @@ _mios_input MIOS_PATHS_EVERYTHING_CLI_VERSION MIOS_EVERYTHING_CLI_VERSION || { r
 _mios_input MIOS_SERVICES_WEBTOOLS_FIRECRAWL_BULL_KEY MIOS_FIRECRAWL_BULL_KEY || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_SERVICES_WEBTOOLS_FIRECRAWL_BULL_KEY:=mios}"
 [ -n "${MIOS_FIRECRAWL_BULL_KEY+x}" ] || MIOS_FIRECRAWL_BULL_KEY="${MIOS_SERVICES_WEBTOOLS_FIRECRAWL_BULL_KEY:-}"
+_mios_input MIOS_PORTS_FIRECRAWL_INTERNAL MIOS_PORT_FIRECRAWL_INTERNAL MIOS_FIRECRAWL_INTERNAL_PORT || { return 1 2>/dev/null || exit 1; }
+: "${MIOS_PORTS_FIRECRAWL_INTERNAL:=3002}"
+[ -n "${MIOS_FIRECRAWL_INTERNAL_PORT+x}" ] || MIOS_FIRECRAWL_INTERNAL_PORT="${MIOS_PORTS_FIRECRAWL_INTERNAL:-}"
 _mios_input MIOS_SERVICES_WEBTOOLS_FIRECRAWL_LOG_LEVEL MIOS_FIRECRAWL_LOG_LEVEL || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_SERVICES_WEBTOOLS_FIRECRAWL_LOG_LEVEL:=INFO}"
 [ -n "${MIOS_FIRECRAWL_LOG_LEVEL+x}" ] || MIOS_FIRECRAWL_LOG_LEVEL="${MIOS_SERVICES_WEBTOOLS_FIRECRAWL_LOG_LEVEL:-}"
@@ -2197,8 +2206,10 @@ _mios_input MIOS_PORTS_MODEL_ROUTER MIOS_PORT_MODEL_ROUTER MIOS_MODEL_ROUTER_POR
 : "${MIOS_NETWORK_ALLOW_COCKPIT:=true}"
 : "${MIOS_NETWORK_ALLOW_LIBVIRT_BRIDGE:=true}"
 : "${MIOS_NETWORK_ALLOW_SSH:=true}"
+: "${MIOS_NETWORK_BIND_ALL:=0.0.0.0}"
 : "${MIOS_NETWORK_FIREWALL_CONTAINER_MATRIX_DEFAULT_POLICY:=drop}"
 [ -n "${MIOS_NETWORK_FIREWALL_CONTAINER_MATRIX_RULES+x}" ] || MIOS_NETWORK_FIREWALL_CONTAINER_MATRIX_RULES='{ destination = "agent_pipe", port = 8700, protocol = "tcp", source = "open_webui" },{ destination = "hermes", port = 8720, protocol = "tcp", source = "agent_pipe" },{ destination = "pgvector", port = 5432, protocol = "tcp", source = "agent_pipe" },{ destination = "llm_light", port = 8500, protocol = "tcp", source = "agent_pipe" },{ destination = "searxng", port = 8800, protocol = "tcp", source = "hermes" },{ destination = "pgvector", port = 5432, protocol = "tcp", source = "hermes" },{ destination = "forge", port = 8400, protocol = "tcp", source = "forge_runner" }'
+: "${MIOS_NETWORK_LOOPBACK:=127.0.0.1}"
 : "${MIOS_NETWORK_NTP_SERVERS:=0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org,3.pool.ntp.org}"
 _mios_input MIOS_NETWORK_QUADLET_NETWORK MIOS_QUADLET_NETWORK || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_NETWORK_QUADLET_NETWORK:=mios.network}"
@@ -2207,6 +2218,7 @@ _mios_input MIOS_NETWORK_QUADLET_SUBNET MIOS_QUADLET_SUBNET || { return 1 2>/dev
 : "${MIOS_NETWORK_RETRY_DELAYS_SECONDS:=0,5,15,30}"
 : "${MIOS_NETWORK_RETRY_HTTP_STATUS_RETRY:=502,503,504}"
 : "${MIOS_NETWORK_RETRY_TOTAL_TIMEOUT_SEC:=120}"
+: "${MIOS_NETWORK_WIN_TAILSCALE_IP:=100.79.3.50}"
 : "${MIOS_NODES_LOCAL_CPU_API:=llamacpp}"
 [ -n "${MIOS_NODES_LOCAL_CPU_ENDPOINT+x}" ] || MIOS_NODES_LOCAL_CPU_ENDPOINT='http://localhost:'"${MIOS_PORTS_CPU_NODE:-}"'/v1'
 : "${MIOS_NODES_LOCAL_CPU_HEALTH_GATE:=true}"
@@ -2574,6 +2586,7 @@ _mios_input MIOS_POLISH_TIMEOUT_SECONDS MIOS_POLISH_TIMEOUT_S || { return 1 2>/d
 : "${MIOS_PORTS_CATEGORIES_ADMIN_BASE:=8100}"
 : "${MIOS_PORTS_CATEGORIES_ADMIN_DOC:=Host administration surfaces (operator SSH, Cockpit console + discovery shim).}"
 : "${MIOS_PORTS_CATEGORIES_ADMIN_MEMBERS:=ssh,cockpit,cockpit_link}"
+: "${MIOS_PORTS_CATEGORIES_ADMIN_PINNED_COCKPIT_INTERNAL:=9090}"
 : "${MIOS_PORTS_CATEGORIES_ADMIN_STRIDE:=10}"
 : "${MIOS_PORTS_CATEGORIES_AGENT_BASE:=8700}"
 : "${MIOS_PORTS_CATEGORIES_AGENT_DOC:=Agent plane. Ordered along the request path: pipe -> prefilter -> hermes -> workers -> router -> arbiter, then the MCP host and the /v1 gateway shims. All LOOPBACK-only except hermes.}"
@@ -2631,7 +2644,9 @@ _mios_input MIOS_POLISH_TIMEOUT_SECONDS MIOS_POLISH_TIMEOUT_S || { return 1 2>/d
 : "${MIOS_PORTS_CATEGORIES_WEBTOOLS_BASE:=8800}"
 : "${MIOS_PORTS_CATEGORIES_WEBTOOLS_DOC:=Search, crawl and scrape backends (the mios-webtools pod). LOOPBACK-only.}"
 : "${MIOS_PORTS_CATEGORIES_WEBTOOLS_MEMBERS:=searxng,crawl4ai,firecrawl}"
-: "${MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_SEARXNG_INTERNAL:=8080}"
+: "${MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_CRAWL4AI_INTERNAL:=11235}"
+: "${MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_FIRECRAWL_INTERNAL:=3002}"
+: "${MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_SEARXNG_INTERNAL:=8888}"
 : "${MIOS_PORTS_CATEGORIES_WEBTOOLS_STRIDE:=10}"
 : "${MIOS_PORTS_CATEGORIES_WEBUI_BASE:=8200}"
 : "${MIOS_PORTS_CATEGORIES_WEBUI_DOC:=Browser-facing application UIs a human opens directly.}"
@@ -2656,7 +2671,7 @@ _mios_input MIOS_PORTS_RPC_IGPU MIOS_PORT_RPC_IGPU MIOS_RPC_IGPU_PORT || { retur
 _mios_input MIOS_PORTS_SEARXNG MIOS_PORT_SEARXNG MIOS_SEARXNG_PORT || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_SEARXNG:=8800}"
 _mios_input MIOS_PORTS_SEARXNG_INTERNAL MIOS_PORT_SEARXNG_INTERNAL MIOS_SEARXNG_INTERNAL_PORT || { return 1 2>/dev/null || exit 1; }
-: "${MIOS_PORTS_SEARXNG_INTERNAL:=8080}"
+: "${MIOS_PORTS_SEARXNG_INTERNAL:=8888}"
 _mios_input MIOS_PORTS_SSH MIOS_PORT_SSH || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_SSH:=8100}"
 _mios_input MIOS_PORTS_STACK_ID MIOS_PORT_STACK_ID MIOS_STACK_ID_PORT || { return 1 2>/dev/null || exit 1; }
@@ -2678,13 +2693,16 @@ _mios_input MIOS_PORTS_WHISPER MIOS_PORT_WHISPER MIOS_WHISPER_PORT || { return 1
 [ -n "${MIOS_PORT_CHROME_CDP+x}" ] || MIOS_PORT_CHROME_CDP="${MIOS_PORTS_CHROME_CDP:-}"
 [ -n "${MIOS_PORT_CHROME_CDP_WORKER+x}" ] || MIOS_PORT_CHROME_CDP_WORKER="${MIOS_PORTS_CHROME_CDP_WORKER:-}"
 [ -n "${MIOS_PORT_COCKPIT+x}" ] || MIOS_PORT_COCKPIT="${MIOS_PORTS_COCKPIT:-}"
+[ -n "${MIOS_PORT_COCKPIT_INTERNAL+x}" ] || MIOS_PORT_COCKPIT_INTERNAL="${MIOS_PORTS_COCKPIT_INTERNAL:-}"
 [ -n "${MIOS_PORT_COCKPIT_LINK+x}" ] || MIOS_PORT_COCKPIT_LINK="${MIOS_PORTS_COCKPIT_LINK:-}"
 [ -n "${MIOS_PORT_CODE_SERVER+x}" ] || MIOS_PORT_CODE_SERVER="${MIOS_PORTS_CODE_SERVER:-}"
 [ -n "${MIOS_PORT_CPU_NODE+x}" ] || MIOS_PORT_CPU_NODE="${MIOS_PORTS_CPU_NODE:-}"
 [ -n "${MIOS_PORT_CRAWL4AI+x}" ] || MIOS_PORT_CRAWL4AI="${MIOS_PORTS_CRAWL4AI:-}"
+[ -n "${MIOS_PORT_CRAWL4AI_INTERNAL+x}" ] || MIOS_PORT_CRAWL4AI_INTERNAL="${MIOS_PORTS_CRAWL4AI_INTERNAL:-}"
 [ -n "${MIOS_PORT_DAEMON_AGENT+x}" ] || MIOS_PORT_DAEMON_AGENT="${MIOS_PORTS_DAEMON_AGENT:-}"
 [ -n "${MIOS_PORT_FIELD_LIVE_CHAT+x}" ] || MIOS_PORT_FIELD_LIVE_CHAT="${MIOS_PORTS_FIELD_LIVE_CHAT:-}"
 [ -n "${MIOS_PORT_FIRECRAWL+x}" ] || MIOS_PORT_FIRECRAWL="${MIOS_PORTS_FIRECRAWL:-}"
+[ -n "${MIOS_PORT_FIRECRAWL_INTERNAL+x}" ] || MIOS_PORT_FIRECRAWL_INTERNAL="${MIOS_PORTS_FIRECRAWL_INTERNAL:-}"
 [ -n "${MIOS_PORT_FORGE_HTTP+x}" ] || MIOS_PORT_FORGE_HTTP="${MIOS_PORTS_FORGE_HTTP:-}"
 [ -n "${MIOS_PORT_FORGE_SSH+x}" ] || MIOS_PORT_FORGE_SSH="${MIOS_PORTS_FORGE_SSH:-}"
 [ -n "${MIOS_PORT_GUACD+x}" ] || MIOS_PORT_GUACD="${MIOS_PORTS_GUACD:-}"
@@ -3426,7 +3444,7 @@ _mios_input MIOS_UKI_VERITY_UKI_BUILD MIOS_UKI_VERITY_BUILD || { return 1 2>/dev
 : "${MIOS_UNIT_PROJECTION_DRIFT:=hermes-worker-firstboot.service,hermes-worker.path,hermes-worker.service,mios-account-sync.service,mios-additionalimagestores-perms.path,mios-adguard-firstboot.service,mios-agent-pipe.service,mios-agents.service,mios-ai-firstboot.service,mios-ai-firstboot.timer,mios-aios-refresh.timer,mios-bound-images-firstboot.service,mios-ceph-bootstrap.service,mios-daemon.service,mios-dashboard-issue.timer,mios-desktop.target,mios-embed-backfill.service,mios-embed-backfill.timer,mios-finetune-serve.service,mios-firewall-ports.service,mios-firstboot.target,mios-forge-firstboot.service,mios-forgejo-runner-firstboot.service,mios-gpu-amd.service,mios-gpu-detect.service,mios-gpu-intel.service,mios-gpu-nvidia.service,mios-gpu-nvidia.service.d/10-cycle-fix.conf,mios-gpu-pv-detect.service,mios-gpu-status.service,mios-ha-node.target,mios-headless.target,mios-hermes-browser-worker.service,mios-hermes-browser.service,mios-hermes-firstboot.service,mios-hybrid.target,mios-k3s-master.target,mios-k3s-worker.target,mios-libexec-perms.path,mios-mcp.service,mios-models-firstboot.service,mios-opencode-gateway.service,mios-pgvector-backup.service,mios-pgvector-backup.timer,mios-podman-gc.service,mios-policy-arbiter.service,mios-shell-session-gc.service,mios-skills-miner.timer,mios-suggestion-refresh.timer,mios-swarm-pack-firstboot.service,mios-sys-env-refresh.timer,mios-userdb-render.service,mios-webtools-firstboot.service,mios-wsl-firstboot.service,mios-wsl-flatpak-export-sync.path}"
 : "${MIOS_UNIT_PROJECTION_MAX_DRIFT:=55}"
 : "${MIOS_URLS_BOOTSTRAP_REPO:=https://github.com/mios-dev/mios-bootstrap.git}"
-: "${MIOS_URLS_NON_ADDRESSABLE:=adguard_dns,adguard_ui,agent_pipe,ai_legacy,arbiter,ceph_dashboard,crawl4ai,field_live_chat,hermes,llm_heavy,llm_light,node,pgvector,pgvector_internal,chrome_cdp_worker,cockpit_link,cpu_node,daemon_agent,firecrawl,forge_ssh,guacamole_web,guacd,headscale,hermes_dashboard,llm_igpu,rpc_igpu,k3s_api,mcp,model_router,opencode_gateway,oscontrol,otelcol_otlp,piper,prefilter,pxe_hub_api,radosgw,rdp,redis,searxng_internal,ssh,ttyd_bash,ttyd_powershell,whisper}"
+: "${MIOS_URLS_NON_ADDRESSABLE:=adguard_dns,adguard_ui,agent_pipe,ai_legacy,arbiter,ceph_dashboard,cockpit_internal,crawl4ai,crawl4ai_internal,field_live_chat,firecrawl_internal,hermes,llm_heavy,llm_light,node,pgvector,pgvector_internal,chrome_cdp_worker,cockpit_link,cpu_node,daemon_agent,firecrawl,forge_ssh,guacamole_web,guacd,headscale,hermes_dashboard,llm_igpu,rpc_igpu,k3s_api,mcp,model_router,opencode_gateway,oscontrol,otelcol_otlp,piper,prefilter,pxe_hub_api,radosgw,rdp,redis,searxng_internal,ssh,ttyd_bash,ttyd_powershell,whisper}"
 : "${MIOS_URLS_REPO:=https://github.com/mios-dev/MiOS.git}"
 [ -n "${MIOS_USER+x}" ] || MIOS_USER="${MIOS_IDENTITY_USERNAME:-}"
 : "${MIOS_USER_FULLNAME:=MiOS Operator}"

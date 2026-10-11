@@ -86,8 +86,8 @@ _mios_load_unified() {
 _mios_load_unified || { return 1 2>/dev/null || exit 1; }
 
 case "${MIOS_PGVECTOR_LISTEN_LOOPBACK:-true}" in
-    false|False|FALSE|0|no|off) export MIOS_PG_BIND_ADDR="0.0.0.0" ;;
-    *)                          export MIOS_PG_BIND_ADDR="127.0.0.1" ;;
+    false|False|FALSE|0|no|off) export MIOS_PG_BIND_ADDR="${MIOS_NETWORK_BIND_ALL:-0.0.0.0}" ;;
+    *)                          export MIOS_PG_BIND_ADDR="${MIOS_NETWORK_LOOPBACK:-127.0.0.1}" ;;
 esac
 
 _mios_legacy_get() {
@@ -131,13 +131,21 @@ fi
 _ssot_lint_ports_dummy=(
     "MIOS_PORTS_AGENT_PIPE"
     "MIOS_PORTS_CHROME_CDP"
+    "MIOS_PORTS_COCKPIT_INTERNAL"
+    "MIOS_PORT_COCKPIT_INTERNAL"
     "MIOS_PORTS_COCKPIT_LINK"
     "MIOS_PORTS_CPU_NODE"
     "MIOS_PORTS_CRAWL4AI"
+    "MIOS_PORTS_CRAWL4AI_INTERNAL"
+    "MIOS_PORT_CRAWL4AI_INTERNAL"
     "MIOS_PORTS_FIRECRAWL"
+    "MIOS_PORTS_FIRECRAWL_INTERNAL"
+    "MIOS_PORT_FIRECRAWL_INTERNAL"
     "MIOS_PORTS_FORGE_HTTP"
     "MIOS_PORTS_FORGE_SSH"
     "MIOS_PORTS_GUACD"
+    "MIOS_PORTS_IGPU"
+    "MIOS_PORT_IGPU"
     "MIOS_PORTS_LLM_HEAVY"
     "MIOS_PORTS_LLM_LIGHT"
     "MIOS_PORTS_NODE"
@@ -150,6 +158,10 @@ _ssot_lint_ports_dummy=(
     "MIOS_PORTS_RADOSGW"
     "MIOS_PORTS_REDIS"
     "MIOS_PORTS_SEARXNG"
+    "MIOS_PORTS_SEARXNG_INTERNAL"
+    "MIOS_PORT_SEARXNG_INTERNAL"
     "MIOS_PORTS_WHISPER"
+    "MIOS_PORTS_WIN_LLM_LIGHT"
+    "MIOS_PORT_WIN_LLM_LIGHT"
     "MIOS_VERSIONS_FEDORA"
 )

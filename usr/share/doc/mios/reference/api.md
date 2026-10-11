@@ -120,7 +120,9 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 | webtools | searxng | 8800 |
 | webtools | crawl4ai | 8810 |
 | webtools | firecrawl | 8820 |
-| webtools | searxng_internal (pinned) | 8080 |
+| webtools | searxng_internal (pinned) | 8888 |
+| webtools | crawl4ai_internal (pinned) | 11235 |
+| webtools | firecrawl_internal (pinned) | 3002 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:webtools -->
