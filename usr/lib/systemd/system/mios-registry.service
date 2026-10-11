@@ -11,6 +11,10 @@ Wants=network-online.target
 Type=exec
 Restart=on-failure
 RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
 ExecStartPre=-/usr/bin/podman rm -f mios-registry
 ExecStart=/usr/bin/podman run --name mios-registry --rm \
     -p 127.0.0.1:5000:5000 \

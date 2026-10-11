@@ -17,6 +17,10 @@ ExecStartPre=/usr/bin/podman exec mios-pgvector pg_isready -q -h 127.0.0.1 -p 84
 ExecStart=/usr/libexec/mios/mios-account-sync --daemon
 Restart=always
 RestartSec=10s
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

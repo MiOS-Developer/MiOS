@@ -4321,7 +4321,7 @@ def check_ps_encoding_and_bom() -> int:
     return 0
 
 def check_unit_security() -> int:
-    import os, sys
+    import os, sys, glob, re, subprocess, shutil
     import tomllib as _toml
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -4330,32 +4330,17 @@ def check_unit_security() -> int:
     toml_path = os.path.join(root, 'usr/share/mios/mios.toml')
 
     unconfined_roster = set()
+    max_exposure_score = 9.2
     if os.path.isfile(toml_path):
         with open(toml_path, 'rb') as fh:
             data = _toml.load(fh)
             sec = data.get('security', {}).get('privileged_units', {})
             unconfined_roster = set(sec.get('unconfined', []))
-
-    required_directives = ['NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp']
-    viol = []
-
-    if os.path.isdir(systemd_dir):
-        for f in os.listdir(systemd_dir):
-            if f.endswith('.service'):
-                if f in unconfined_roster:
-                    continue
-                fp = os.path.join(systemd_dir, f)
+            if 'max_exposure_score' in sec:
                 try:
-                    with open(fp, encoding='utf-8', errors='replace') as fh:
-                        content = fh.read()
-                        missing = []
-                        for directive in required_directives:
-                            if directive not in content:
-                                missing.append(directive)
-                        if missing:
-                            rel = os.path.relpath(fp, root).replace(os.sep, '/')
-                            viol.append(f"{rel}: systemd service missing hardening directives ({', '.join(missing)})")
-                except Exception: pass
+                    max_exposure_score = float(sec['max_exposure_score'])
+                except (ValueError, TypeError):
+                    pass
 
     # Ruling Q7 (task_3539): mios-attest-server must be disabled until Keylime replaces it
     attest_viols = []
@@ -4379,11 +4364,140 @@ def check_unit_security() -> int:
                                 attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root)}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
 
     if attest_viols:
-        print('\n'.join(attest_viols))
+        print('\n'.join(attest_viols), file=sys.stderr)
         return 1
 
-    if viol:
-        print('\n'.join(viol))
+    # Find long-running services (services that are not Type=oneshot)
+    long_running_units = []
+    static_viols = []
+    hardening_directives = [
+        'NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp',
+        'SystemCallFilter', 'CapabilityBoundingSet'
+    ]
+
+    if os.path.isdir(systemd_dir):
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.endswith('.service') and f.startswith('mios-'):
+                fp = os.path.join(systemd_dir, f)
+                try:
+                    with open(fp, encoding='utf-8', errors='replace') as fh:
+                        content = fh.read()
+                    # Skip Type=oneshot units
+                    if re.search(r'^\s*Type\s*=\s*oneshot', content, re.MULTILINE):
+                        continue
+                    long_running_units.append(f)
+                    if f not in unconfined_roster:
+                        has_directive = any(d in content for d in hardening_directives)
+                        if not has_directive:
+                            rel = os.path.relpath(fp, root).replace(os.sep, '/')
+                            static_viols.append(f"{rel}: long-running service lacks basic sandboxing directives ({', '.join(hardening_directives[:4])})")
+                except Exception: pass
+
+    # Dynamic systemd-analyze security check (if tool available)
+    analyze_bin = shutil.which("systemd-analyze") or ("/usr/sbin/systemd-analyze" if os.path.exists("/usr/sbin/systemd-analyze") else None)
+    dynamic_viols = []
+
+    if analyze_bin and long_running_units:
+        units_to_test = [u for u in long_running_units if u not in unconfined_roster]
+        if units_to_test:
+            cmd = [analyze_bin, f"--root={root}", "--offline=true", "security"] + units_to_test
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for line in res.stdout.splitlines():
+                m = re.search(r"Overall exposure level for (mios-[^:]+): ([\d\.]+)", line)
+                if m:
+                    unit, score_str = m.group(1), m.group(2)
+                    try:
+                        score = float(score_str)
+                        if score > max_exposure_score:
+                            dynamic_viols.append(f"{unit}: exposure score {score:.1f} exceeds threshold {max_exposure_score:.1f} (systemd-analyze security ratchet)")
+                    except ValueError:
+                        pass
+    elif not analyze_bin:
+        print("[check_unit_security] WARNING: systemd-analyze not available (skipping dynamic exposure scoring)", file=sys.stderr)
+
+    all_viols = static_viols + dynamic_viols
+    if all_viols:
+        print('\n'.join(all_viols), file=sys.stderr)
+        return 1
+    return 0
+
+def check_preset_roster_complete() -> int:
+    import os, sys
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    preset_path = os.path.join(root, "usr/lib/systemd/system-preset/90-mios.preset")
+    if not os.path.isfile(preset_path):
+        print(f"Missing preset file: {preset_path}", file=sys.stderr)
+        return 1
+
+    decisions = {}
+    with open(preset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in ("enable", "disable"):
+                decisions[parts[1]] = parts[0]
+
+    systemd_dir = os.path.join(root, "usr/lib/systemd/system")
+    quadlet_dir = os.path.join(root, "usr/share/containers/systemd")
+    violations = []
+
+    # Axis 2: every MiOS-owned unit under usr/lib/systemd/system/ must have an explicit enable or disable decision
+    if os.path.isdir(systemd_dir):
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.startswith("mios-") and any(f.endswith(ext) for ext in (".service", ".timer", ".path", ".target", ".socket")) and not f.endswith(".d"):
+                if f not in decisions:
+                    violations.append(f"Undeclared MiOS unit: {f} has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Check Quadlet-generated mios-* units
+    if os.path.isdir(quadlet_dir):
+        for f in sorted(os.listdir(quadlet_dir)):
+            if f.startswith("mios-") and f.endswith(".container"):
+                unit_name = f[:-10] + ".service"
+                if unit_name not in decisions:
+                    violations.append(f"Undeclared Quadlet unit: {unit_name} (from {f}) has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Axis 1: every enable/disable target in preset must resolve to a real unit or known upstream unit
+    known_upstream = {
+        "chronyd.service", "sshd.service", "NetworkManager.service", "auditd.service",
+        "nftables.service", "redis.service", "usbguard.service", "crowdsec.service",
+        "crowdsec-firewall-bouncer.service", "fapolicyd.service", "firewalld.service",
+        "cockpit.socket", "libvirtd.service", "libvirtd.socket", "libvirtd-ro.socket",
+        "libvirtd-admin.socket", "virtnetworkd.service", "virtnetworkd.socket",
+        "virtnodedevd.service", "virtnodedevd.socket", "virtnwfilterd.socket",
+        "virtproxyd.socket", "virtqemud.service", "virtqemud.socket",
+        "virtsecretd.socket", "virtstoraged.service", "virtstoraged.socket",
+        "libvirt-guests.service", "gdm.service", "k3s.service", "k3s-agent.service",
+        "corosync.service", "pacemaker.service", "ceph-mon@.service", "ceph-osd@.service",
+        "tailscaled.service", "smb.service", "nmb.service", "nfs-server.service",
+        "rpcbind.service", "osbuild-composer.service", "osbuild-worker@1.service",
+        "multipathd.service", "cloud-init.service", "cloud-init-local.service",
+        "cloud-config.service", "cloud-final.service", "qemu-guest-agent.service",
+        "bootc-fetch-apply-updates.timer", "rpm-ostreed-automatic.timer",
+        "systemd-remount-fs.service", "waydroid-container.service", "podman.socket",
+        "podman-auto-update.timer", "user@1000.service", "atd.service", "crond.service",
+        "avahi-daemon.service", "bootloader-update.service", "gnome-remote-desktop.service",
+        "greenboot-grub2-set-counter.service", "greenboot-grub2-set-success.service",
+        "greenboot-healthcheck.service", "greenboot-rpm-ostree-grub2-check-fallback.service",
+        "greenboot-status.service", "nut-server.service", "nut-monitor.service",
+        "nvidia-cdi-refresh.path", "nvidia-cdi-refresh.service", "nvidia-persistenced.service",
+        "pmcd.service", "pmlogger.service", "pmproxy.service", "redboot-auto-reboot.service",
+        "systemd-confext.service", "systemd-resolved.service", "systemd-sysext.service",
+        "uupd.timer"
+    }
+
+    for unit, action in sorted(decisions.items()):
+        unit_path = os.path.join(systemd_dir, unit)
+        quadlet_path = os.path.join(quadlet_dir, unit.replace(".service", ".container"))
+        if not os.path.exists(unit_path) and not os.path.exists(quadlet_path) and unit not in known_upstream:
+            violations.append(f"Orphan preset line: '{action} {unit}' does not resolve to any real or upstream unit")
+
+    if violations:
+        for v in violations:
+            print(f"[check_preset_roster_complete] {v}", file=sys.stderr)
+        return 1
     return 0
 
 def check_unit_dependency_closure() -> int:
@@ -4808,6 +4922,7 @@ _SUBCOMMAND_NAMES = (
     "ps-port-fallback-ssot", "ps-encoding-and-bom", "unit-security",
     "unit-dependency-closure", "docs-ratchet", "generator-host-parity",
     "doc-port-scheme", "blade-reconcile-schema", "memory-poisoning-scan",
+    "preset-roster-complete",
 )
 SUBCOMMANDS = {k: globals()["check_" + k.replace("-", "_")] for k in _SUBCOMMAND_NAMES}
 

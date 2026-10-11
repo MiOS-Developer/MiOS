@@ -4414,8 +4414,60 @@ test_unit_security() {
     fi
     cp "$pbak" "$preset_file"; rm -f "$pbak"
 
+    # Task 1966: synthetic unconfined long-running unit must be rejected
+    local probe="${ROOT}/usr/lib/systemd/system/mios-negtest-unconfined.service"
+    cat > "$probe" <<'UNIT'
+[Unit]
+Description=Synthetic unconfined test service
+[Service]
+Type=simple
+ExecStart=/bin/true
+UNIT
+    if _neg_gate check_unit_security; then
+        rm -f "$probe"
+        die "check_unit_security passed despite synthetic unconfined service"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-negtest-unconfined.service"* ]]; then
+        rm -f "$probe"
+        die "check_unit_security failed without naming mios-negtest-unconfined.service: $_NEG_GATE_OUT"
+    fi
+    rm -f "$probe"
+
     _neg_gate check_unit_security || die "check_unit_security failed after restoration: $_NEG_GATE_OUT"
     log "check_unit_security negative test passed"
+}
+
+test_preset_roster_complete() {
+    log "Testing check_preset_roster_complete"
+    local preset_file="${ROOT}/usr/lib/systemd/system-preset/90-mios.preset"
+    local bak; bak="$(mktemp)"; cp "$preset_file" "$bak"
+
+    # Task 1993 negative 1: deleting an enable line turns gate RED naming the exact unit
+    sed -i '/enable mios-node.service/d' "$preset_file"
+    if _neg_gate check_preset_roster_complete; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete passed despite missing mios-node.service preset line"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-node.service"* ]]; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete failed without naming mios-node.service: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$preset_file"
+
+    # Task 1993 negative 2: an orphan preset line turns gate RED naming the exact unit
+    printf '\nenable mios-nonexistent-synthetic.service\n' >> "$preset_file"
+    if _neg_gate check_preset_roster_complete; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete passed despite orphan preset line"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-nonexistent-synthetic.service"* ]]; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete failed without naming orphan unit: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$preset_file"; rm -f "$bak"
+
+    _neg_gate check_preset_roster_complete || die "check_preset_roster_complete failed after restoration: $_NEG_GATE_OUT"
+    log "check_preset_roster_complete negative test passed"
 }
 
 test_unit_dependency_closure() {
@@ -5910,6 +5962,7 @@ _run_test test_leaked_fixtures
     _run_test test_doc_port_scheme
     _run_test test_unit_dependency_closure
     _run_test test_unit_security
+    _run_test test_preset_roster_complete
     _run_test test_test_hermeticity
     _run_test test_no_mkdir_in_var
     _run_test test_quadlet_privilege
