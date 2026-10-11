@@ -16,6 +16,7 @@ use_compiled_ainode = true
 # [security.privileged_units] -- Roster of systemd units requiring privileged access.
 # ----------------------------------------------------------------------------
 [security.privileged_units]
+max_exposure_score = 9.2
 unconfined = [
   "mios-hermes-worker.service",
   "mios-ceph-bootstrap.service",
@@ -6219,7 +6220,7 @@ opencode_config     = "/etc/mios/opencode/opencode.json"
 opencode_gateway_workdir   = "/var/lib/mios/opencode-gateway/work"
 # Per-run timeout (s). Under VRAM pressure the run times out and the gateway
 # returns empty so the swarm fan-out drops opencode harmlessly.
-opencode_gateway_timeout_s = 90    # opencode `run` HANGS (returns nothing even with the model warm + 240s); 240 just made every coding turn wait longer. Fail FAST at 90 so a hung opencode drops to a 💤 quickly. Restore a longer budget only once `run` headless mode actually returns.
+opencode_gateway_timeout_s = 90    # opencode `run` HANGS (returns nothing even with the model warm + 240s); 240 just made every coding turn wait longer. Fail FAST at 90 so a hung opencode drops to sleep quickly. Restore a longer budget only once `run` headless mode actually returns.
 agent_venv          = "/usr/lib/mios/agents/.venv"
 agent_install_dir   = "/usr/lib/mios/agents/hermes-agent"
 # Inference backend Hermes-Agent forwards to. mios-llm-light's

@@ -3779,6 +3779,7 @@ main() {
     check_no_mkdir_in_var
     check_quadlet_privilege
     check_unit_security
+    check_preset_roster_complete
     check_var_closure
     check_lint_is_final
     check_firstboot_degrade_open
@@ -4389,6 +4390,18 @@ check_unit_security() {
     else
         echo "[98-drift-checks]   All systemd service security baselines pass"
     fi
+}
+
+# --- systemd preset roster declares explicit enable/disable policy for every MiOS unit ---
+check_preset_roster_complete() {
+    echo "[98-drift-checks] systemd preset roster declares explicit enable/disable policy for every MiOS unit"
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+        echo "[98-drift-checks]   WARNING: python missing" >&2
+        return 0
+    fi
+    local out; out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py preset-roster-complete 2>&1)" || {
+        _violations_from "check_preset_roster_complete: " "$out"; return; }
+    echo "[98-drift-checks]   systemd preset roster is complete (no orphans, all units declared)"
 }
 
 # --- systemd units form complete dependency closure without missing targets ---
