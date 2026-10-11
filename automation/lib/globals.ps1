@@ -1,4 +1,4 @@
-﻿# GENERATED IN FULL from usr/share/mios/mios.toml by mios-gen render-globals. Zero hand-written constants; DO NOT EDIT -- re-run the renderer.
+# GENERATED IN FULL from usr/share/mios/mios.toml by mios-gen render-globals. Zero hand-written constants; DO NOT EDIT -- re-run the renderer.
 # AI-related: usr/share/mios/mios.toml, automation/lib/globals.sh, tools/native/mios-gen/src/render.rs
 # AI-functions: Resolve-MiosVersion
 #
@@ -627,7 +627,7 @@ $script:MIOS_BUILD_NATIVE_LINUX_RUSTFLAGS = if ($env:MIOS_BUILD_NATIVE_LINUX_RUS
 $script:MIOS_BUILD_NATIVE_LINUX_TARGETS_AARCH64 = if ($env:MIOS_BUILD_NATIVE_LINUX_TARGETS_AARCH64) { $env:MIOS_BUILD_NATIVE_LINUX_TARGETS_AARCH64 } else { 'aarch64-unknown-linux-musl' }
 $script:MIOS_BUILD_NATIVE_LINUX_TARGETS_X86_64 = if ($env:MIOS_BUILD_NATIVE_LINUX_TARGETS_X86_64) { $env:MIOS_BUILD_NATIVE_LINUX_TARGETS_X86_64 } else { 'x86_64-unknown-linux-musl' }
 $script:MIOS_BUILD_NATIVE_WINDOWS_DRIVER = if ($env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER) { $env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER } else { 'cargo-xwin' }
-$script:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION = if ($env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION) { $env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION } else { '0.23.1' }
+$script:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION = if ($env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION) { $env:MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION } else { '0.3.0' }
 $script:MIOS_BUILD_NATIVE_WINDOWS_LINKER = if ($env:MIOS_BUILD_NATIVE_WINDOWS_LINKER) { $env:MIOS_BUILD_NATIVE_WINDOWS_LINKER } else { 'lld-link' }
 $script:MIOS_BUILD_NATIVE_WINDOWS_ONLY = if ($env:MIOS_BUILD_NATIVE_WINDOWS_ONLY) { $env:MIOS_BUILD_NATIVE_WINDOWS_ONLY } else { 'mios-launch,mios-wallpaperd' }
 $script:MIOS_BUILD_NATIVE_WINDOWS_RUSTFLAGS = if ($env:MIOS_BUILD_NATIVE_WINDOWS_RUSTFLAGS) { $env:MIOS_BUILD_NATIVE_WINDOWS_RUSTFLAGS } else { '-C,target-feature=+crt-static' }

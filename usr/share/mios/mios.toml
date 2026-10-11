@@ -1967,7 +1967,7 @@ pie = { x86_64 = true, aarch64 = false }
 target = "x86_64-pc-windows-msvc"
 linker = "lld-link"
 driver = "cargo-xwin"
-driver_version = "0.23.1"
+driver_version = "0.3.0"
 rustflags = ["-C", "target-feature=+crt-static"]
 # OS imports are permitted; external compiler and runtime DLLs are rejected.
 system_dlls = [
@@ -12934,7 +12934,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3246
+max_tracked_files = 3244
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -13035,7 +13035,7 @@ target_files = 5
 globs = [".archive/**"]
 
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 22
+max_files = 20
 target_files = 20
 globs = ["*"]
 

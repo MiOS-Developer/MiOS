@@ -6,6 +6,88 @@
 !.prompt.MD
 !/ARTIFACT-PROMPT.md
 
+# Windows Host Namespaces (Strict Level-by-Level Isolation)
+/$Recycle.Bin
+/$Recycle.Bin/**
+/$WINDOWS.~BT
+/$WINDOWS.~BT/**
+/Documents and Settings
+/Documents and Settings/**
+/PerfLogs
+/PerfLogs/**
+/Program Files
+/Program Files/**
+/Program Files (x86)
+/Program Files (x86)/**
+/ProgramData
+/ProgramData/**
+/Recovery
+/Recovery/**
+/Riot Games
+/Riot Games/**
+/System Volume Information
+/System Volume Information/**
+/Users
+/Users/**
+/Windows
+/Windows/**
+/XboxGames
+/XboxGames/**
+/inetpub
+/inetpub/**
+/TEMP
+/TEMP/**
+
+# Windows Path Literal Block Rules
+C:\Windows
+C:\Windows\**
+C:\Program Files
+C:\Program Files\**
+C:\Program Files (x86)
+C:\Program Files (x86)\**
+C:\ProgramData
+C:\ProgramData\**
+C:\Users
+C:\Users\**
+$Recycle.Bin
+$Recycle.Bin\**
+
+# Nested Workspaces and Host Artifacts
+/-dev-loop
+/-dev-loop/**
+/MiOS
+/MiOS/**
+/mios-bootstrap
+/mios-bootstrap/**
+/mios-micro
+/mios-micro/**
+/MiOS-preserved-dev-harness-2026-08-28
+/MiOS-preserved-dev-harness-2026-08-28/**
+/MiOS-RnD
+/MiOS-RnD/**
+/worktrees
+/worktrees/**
+/.GamingRoot
+/.zcodeignore
+/*.patch
+/*.vhdx
+/*.xml
+/*.tmp
+/WRP*
+/Output.txt
+/launchers.json
+/init
+/lost+found
+/wsl*
+/%SystemDrive%
+/.autorelabel
+/MiOS_Master_Contiguous_ASCII_Architecture_Map.*
+/census-fix.patch
+/ext4.vhdx
+/testResults.xml
+/WRPC727.tmp
+/WRP5585.tmp
+
 /etc/**
 /usr/**
 /var/**
@@ -47,6 +129,7 @@
 !/.claude/**
 /.claude/settings.local.json
 /.claude/worktrees/
+/.claude/*.lock
 !/.devcontainer/
 !/.devcontainer/devcontainer.json
 !/.devcontainer/Dockerfile
@@ -235,13 +318,14 @@ docs/design/w10-live-boot/*
 
 
 !/etc/
-etc/**
+/etc/*
 # SSOT projections re-derived by `miosd drift-check` during the container build.
 # See the usr/lib/kernel note below: untracked here means invisible to CI.
 !/etc/cockpit/
 !/etc/cockpit/cockpit.conf
 !/etc/kdump.conf
 !/etc/mios/
+!/etc/mios/**
 !/etc/mios/ipa-enroll.env
 !/etc/containers/
 etc/containers/*
@@ -372,18 +456,32 @@ etc/mios/*
 !/etc/mios/containers/**
 
 !/etc/sysusers.d/
-!/etc/sysusers.d/**
+etc/sysusers.d/*
+!/etc/sysusers.d/cephadm.conf
+
+!/etc/sysctl.d/
+etc/sysctl.d/*
+!/etc/sysctl.d/20-memory.conf
 
 
 
 !/usr/
+/usr/*
 !/usr/bin/
 !/usr/bin/mios
-!/usr/bin/mios-*
+!/usr/bin/mios-backup
+!/usr/bin/mios-bench-storage
+!/usr/bin/mios-build
+!/usr/bin/mios-chrome
+!/usr/bin/mios-deploy
+!/usr/bin/mios-pull
+!/usr/bin/mios-rebuild
+!/usr/bin/mios-update
 !/usr/bin/iommu-groups
 !/usr/bin/@
 !/usr/bin/hermes
 !/usr/lib/
+/usr/lib/*
 !/usr/lib/bootc/
 !/usr/lib/bootc/**
 !/usr/lib/mios/
@@ -391,9 +489,13 @@ etc/mios/*
 !/usr/lib/systemd/
 !/usr/lib/systemd/**
 !/usr/libexec/
+/usr/libexec/*
 !/usr/src/
-!/usr/src/**
+/usr/src/*
+!/usr/src/bpf/
+!/usr/src/bpf/**
 !/usr/share/
+/usr/share/*
 !/usr/share/doc/
 !/usr/share/doc/mios/
 !/usr/share/doc/mios/**
@@ -434,11 +536,41 @@ usr/share/fontconfig/conf.avail/*
 !/usr/share/fontconfig/conf.avail/*mios*
 
 !/usr/share/flatpak/
-!/usr/share/flatpak/**
+usr/share/flatpak/*
+!/usr/share/flatpak/overrides/
+usr/share/flatpak/overrides/*
+!/usr/share/flatpak/overrides/global
 
 usr/libexec/*
 !/usr/libexec/mios/
 !/usr/libexec/mios/**
+/usr/libexec/mios/generate-names-registry
+/usr/libexec/mios/mios-agent-relay
+/usr/libexec/mios/mios-ai-config
+/usr/libexec/mios/mios-aiplane-lint
+/usr/libexec/mios/mios-bake-plan
+/usr/libexec/mios/mios-browser
+/usr/libexec/mios/mios-comment-lex
+/usr/libexec/mios/mios-drift-runner
+/usr/libexec/mios/mios-edge-status
+/usr/libexec/mios/mios-gate
+/usr/libexec/mios/mios-gen
+/usr/libexec/mios/mios-install
+/usr/libexec/mios/mios-node
+/usr/libexec/mios/mios-probe
+/usr/libexec/mios/mios-render-quadlets
+/usr/libexec/mios/mios-resolver
+/usr/libexec/mios/mios-size-ceiling
+/usr/libexec/mios/mios-ssot-lint
+/usr/libexec/mios/mios-task
+/usr/libexec/mios/mios-template-compile
+/usr/libexec/mios/mios-template-conform
+/usr/libexec/mios/mios-toolchain-pin
+/usr/libexec/mios/mios-unit-gen
+/usr/libexec/mios/mios-version-check
+/usr/libexec/mios/miosd
+/usr/libexec/mios/xtask
+/usr/libexec/mios/tmux-mcp
 !/usr/libexec/mios-boot-diag
 !/usr/libexec/mios-flatpak-install
 !/usr/libexec/mios-grd-setup
@@ -637,9 +769,9 @@ usr/lib/systemd/system/*
 !/usr/lib/systemd/system/hermes-agent.service
 !/usr/lib/systemd/system/*.service.d/
 !/usr/lib/systemd/system/*.service.d/**
-!/usr/lib/systemd/system/*.slice
-!/usr/lib/systemd/system/*.slice.d/
-!/usr/lib/systemd/system/*.slice.d/**
+!/usr/lib/systemd/system/subagent.slice
+!/usr/lib/systemd/system/system.slice.d/
+!/usr/lib/systemd/system/system.slice.d/**
 !/usr/lib/systemd/system/*.scope.d/
 !/usr/lib/systemd/system/*.scope.d/**
 !/usr/lib/systemd/system/*.socket.d/
@@ -672,17 +804,36 @@ usr/lib/udev/rules.d/*
 !/usr/lib/udev/rules.d/99-mios-*.rules
 
 !/var/
-var/*
+/var/*
 !/var/lib/
-var/lib/*
+/var/lib/*
 !/var/lib/mios/
-var/lib/mios/*
-!/var/lib/mios/embeddings/
-!/var/lib/mios/embeddings/**
-!/var/lib/mios/evals/
-!/var/lib/mios/evals/**
-!/var/lib/mios/training/
-!/var/lib/mios/training/**
+!/var/lib/mios/**
+/var/lib/mios/.wsl-firstboot-done
+/var/lib/mios/bootc-switch-history.tsv
+/var/lib/mios/forge/.firstboot-done
+/var/lib/mios/forge-runner/
+/var/lib/mios/cluster/
+/var/lib/mios/cluster/**
+/var/lib/mios/diffs/
+/var/lib/mios/diffs/**
+/var/lib/mios/sessions/
+/var/lib/mios/sessions/**
+/var/lib/mios/snapshots/
+/var/lib/mios/snapshots/**
+/var/lib/mios/agent-env/
+/var/lib/mios/agent-env/**
+/var/lib/mios/agent-passports/
+/var/lib/mios/agent-passports/**
+/var/lib/mios/agent-pipe/
+/var/lib/mios/agent-pipe/**
+/var/lib/mios/hermes-worker/
+/var/lib/mios/hermes-worker/**
+/var/lib/mios/lora-adapters/
+/var/lib/mios/lora-adapters/**
+/var/lib/mios/memory/
+/var/lib/mios/memory/**
+/var/lib/mios/*.sql
 
 !/var/lib/flatpak/
 var/lib/flatpak/*
