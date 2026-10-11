@@ -447,4 +447,122 @@ mod tests {
         assert_eq!(reloaded.get("k1"), Some(&b"v1".to_vec()));
         assert_eq!(reloaded.total_elements_count(), 1);
     }
+
+    #[test]
+    fn test_crdt_multi_peer_partition_reorder_convergence() {
+        // 3-peer topology: Node A (1), Node B (2), Node C (3)
+        let mut node_a = StateStore::new(1);
+        let mut node_b = StateStore::new(2);
+        let mut node_c = StateStore::new(3);
+
+        // 1. Initial convergence: Node A creates "service.status" = "running", syncs to B and C
+        node_a.set("service.status".to_string(), b"running".to_vec());
+        node_b.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+        node_c.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+
+        assert_eq!(node_a.get("service.status"), Some(&b"running".to_vec()));
+        assert_eq!(node_b.get("service.status"), Some(&b"running".to_vec()));
+        assert_eq!(node_c.get("service.status"), Some(&b"running".to_vec()));
+
+        // Capture a stale out-of-order packet from Node A before deletion
+        let stale_packet = (node_a.vector_clock.clone(), node_a.replicable_elements());
+
+        // 2. Partition phase: Node C is partitioned from Node A and Node B.
+        // Node B deletes "service.status", producing a tombstone with timestamp > initial
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        node_b.delete("service.status");
+        assert_eq!(node_b.get("service.status"), None);
+
+        // Node B adds a new active key
+        node_b.set("node_b.alive".to_string(), b"true".to_vec());
+
+        // Node C mutates its local state while partitioned
+        node_c.set("node_c.counter".to_string(), b"1".to_vec());
+
+        // Node A and B sync while C is partitioned; Node A learns of the deletion
+        node_a.merge_remote_store(node_b.vector_clock.clone(), node_b.replicable_elements());
+        assert_eq!(node_a.get("service.status"), None);
+
+        // Node A updates "cluster.epoch" to "2"
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        node_a.set("cluster.epoch".to_string(), b"2".to_vec());
+        node_b.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+
+        // 3. Partition heals: packets delivered with reordering, duplicate deliveries, and stale packets.
+        // Step A: Node B transmits state (with tombstone) to Node C
+        node_c.merge_remote_store(node_b.vector_clock.clone(), node_b.replicable_elements());
+        // Step B: Duplicate delivery of Node B's packet to Node C
+        node_c.merge_remote_store(node_b.vector_clock.clone(), node_b.replicable_elements());
+
+        // Step C: Stale delayed packet from Node A (captured before delete) arrives at Node C out-of-order
+        node_c.merge_remote_store(stale_packet.0.clone(), stale_packet.1.clone());
+        // Step D: Duplicate delivery of the stale delayed packet
+        node_c.merge_remote_store(stale_packet.0, stale_packet.1);
+
+        // Step E: Node A transmits latest state (with epoch 2) to Node C
+        node_c.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+
+        // Step F: Node C syncs its state back to Node A and Node B
+        node_a.merge_remote_store(node_c.vector_clock.clone(), node_c.replicable_elements());
+        node_b.merge_remote_store(node_c.vector_clock.clone(), node_c.replicable_elements());
+
+        // 4. Convergence verification:
+        // All 3 peers must converge on deletion (tombstone preserved, no resurrection)
+        assert_eq!(node_a.get("service.status"), None);
+        assert_eq!(node_b.get("service.status"), None);
+        assert_eq!(node_c.get("service.status"), None);
+
+        // All 3 peers must have identical active state
+        assert_eq!(node_a.get("cluster.epoch"), Some(&b"2".to_vec()));
+        assert_eq!(node_b.get("cluster.epoch"), Some(&b"2".to_vec()));
+        assert_eq!(node_c.get("cluster.epoch"), Some(&b"2".to_vec()));
+
+        assert_eq!(node_a.get("node_b.alive"), Some(&b"true".to_vec()));
+        assert_eq!(node_b.get("node_b.alive"), Some(&b"true".to_vec()));
+        assert_eq!(node_c.get("node_b.alive"), Some(&b"true".to_vec()));
+
+        assert_eq!(node_a.get("node_c.counter"), Some(&b"1".to_vec()));
+        assert_eq!(node_b.get("node_c.counter"), Some(&b"1".to_vec()));
+        assert_eq!(node_c.get("node_c.counter"), Some(&b"1".to_vec()));
+
+        // Active element counts must match across all 3 nodes
+        assert_eq!(node_a.active_elements().len(), 3);
+        assert_eq!(node_b.active_elements().len(), 3);
+        assert_eq!(node_c.active_elements().len(), 3);
+
+        // Tombstone must be present in all 3 stores
+        assert!(node_a.elements.get("service.status").unwrap().is_deleted);
+        assert!(node_b.elements.get("service.status").unwrap().is_deleted);
+        assert!(node_c.elements.get("service.status").unwrap().is_deleted);
+    }
+
+    #[test]
+    fn test_crdt_active_elements_dropping_tombstones_fails_convergence() {
+        // Negative control: demonstrates that using active_elements() instead of
+        // replicable_elements() drops tombstones, causing the deleted key to persist
+        // on the partitioned peer and failing convergence.
+        let mut node_a = StateStore::new(1);
+        let mut node_b = StateStore::new(2);
+        let mut node_c = StateStore::new(3);
+
+        // Initial sync
+        node_a.set("resurrect.target".to_string(), b"val".to_vec());
+        node_b.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+        node_c.merge_remote_store(node_a.vector_clock.clone(), node_a.replicable_elements());
+
+        // Partition Node C; Node B deletes the key
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        node_b.delete("resurrect.target");
+
+        // Defective replication: sending only active_elements() (dropping tombstones)
+        node_c.merge_remote_store(node_b.vector_clock.clone(), node_b.active_elements());
+
+        // Node C NEVER learned of the tombstone because active_elements dropped it!
+        // The key is resurrected/persists on Node C instead of being None.
+        assert_eq!(node_c.get("resurrect.target"), Some(&b"val".to_vec()));
+        assert_ne!(
+            node_c.get("resurrect.target"),
+            node_b.get("resurrect.target")
+        );
+    }
 }
