@@ -5,6 +5,7 @@
 #![warn(clippy::unwrap_used, clippy::panic, clippy::todo)]
 
 mod drift;
+use miosd::fhs_sync;
 use miosd::native_generator;
 mod terminal_runtime {
     #[cfg(target_os = "linux")]
@@ -312,6 +313,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Synchronize and maintain FHS Root Overlay and Windows/Linux host-guest topology parity at runtime
+    FhsSync {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        daemon: bool,
+        #[arg(long, default_value_t = 15)]
+        interval: u64,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        install_service: bool,
+        #[arg(long)]
+        uninstall_service: bool,
+        #[arg(long)]
+        status: bool,
+    },
     /// Update the single build-stage ledger and render its cumulative status.
     BuildProgress {
         #[arg(long, default_value = ".")]
@@ -1293,10 +1311,74 @@ async fn main() {
         println!("{}", report.format_human());
         std::process::exit(if report.is_valid { 0 } else { 1 });
     }
+    if prog_name == "mios-fhs-sync" || prog_name.starts_with("mios-fhs-sync") {
+        let root_path = if cfg!(windows) {
+            std::path::PathBuf::from("C:\\")
+        } else {
+            std::path::PathBuf::from("/")
+        };
+        let is_daemon = args.iter().any(|a| a == "--daemon" || a == "-d");
+        let is_check = args.iter().any(|a| a == "--check" || a == "-c");
+        let is_status = args.iter().any(|a| a == "--status");
+        if is_status {
+            fhs_sync::print_status(&root_path);
+            std::process::exit(0);
+        } else if is_check {
+            let report = fhs_sync::audit(&root_path);
+            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            std::process::exit(if report.ok { 0 } else { 1 });
+        } else if is_daemon {
+            let interval = args
+                .iter()
+                .position(|a| a == "--interval" || a == "-i")
+                .and_then(|p| args.get(p + 1))
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(15);
+            fhs_sync::run_daemon(root_path, interval).await;
+            std::process::exit(0);
+        } else {
+            let _ = fhs_sync::sync_once(&root_path, true);
+            std::process::exit(0);
+        }
+    }
 
     let cli = Cli::parse();
 
     match &cli.command {
+        Commands::FhsSync {
+            root,
+            daemon,
+            interval,
+            check,
+            install_service,
+            uninstall_service,
+            status,
+        } => {
+            let root_path = if root == "." {
+                if cfg!(windows) {
+                    std::path::PathBuf::from("C:\\")
+                } else {
+                    std::path::PathBuf::from("/")
+                }
+            } else {
+                std::path::PathBuf::from(root)
+            };
+            if *install_service {
+                fhs_sync::install_service(&root_path);
+            } else if *uninstall_service {
+                fhs_sync::uninstall_service();
+            } else if *status {
+                fhs_sync::print_status(&root_path);
+            } else if *check {
+                let report = fhs_sync::audit(&root_path);
+                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                std::process::exit(if report.ok { 0 } else { 1 });
+            } else if *daemon {
+                fhs_sync::run_daemon(root_path, *interval).await;
+            } else {
+                let _ = fhs_sync::sync_once(&root_path, true);
+            }
+        }
         Commands::DriftCheck {
             root,
             soft,

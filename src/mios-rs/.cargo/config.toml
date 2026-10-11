@@ -1,0 +1,6 @@
+# AI-hint: Linker stack size configuration for Windows to match Linux 8MB default stack
+[target.x86_64-pc-windows-gnullvm]
+rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]

@@ -105,7 +105,7 @@ const USAGE: &str = "usage: mios-gate <check> [--root DIR] [--format text|json]\
                              image-equivalence, image-freshness, module-test-coverage, negative-coverage,\n\
                              no-inert-ssot-tables, phase-ratchet, phase-registry, profile-integrity,\n\
                              powershell-parse, powershell-analyze, projection-coverage, protected-refs,\n\
-                             ratchet-direction, render-coverage, rust-categories, shell-lint,\n\
+                             ratchet-direction, render-coverage, root-fhs-overlay, rust-categories, shell-lint,\n\
                              signature-policy, static-linkage, version-literals-ssot\n";
 
 fn main() -> ExitCode {
@@ -247,6 +247,7 @@ fn main() -> ExitCode {
         "protected-refs" => protected_refs::check(&root),
         "ratchet-direction" => ratchet::check(&root),
         "render-coverage" => rendercov::check(&root),
+        "root-fhs-overlay" | "fhs-root-overlay" => host_parity::check_fhs_overlay(&root),
         "rust-categories" => rust_categories::check(&root),
         "shell-lint" => shell_lint::check(&root),
         "signature-policy" => sigpolicy::check(&root),
