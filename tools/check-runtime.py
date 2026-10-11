@@ -929,7 +929,9 @@ def rt_main():
     loopback = mios_toml.get("pgvector", "listen_loopback")
     if loopback is None:
         loopback = True
-    toml_vars["MIOS_PG_BIND_ADDR"] = "127.0.0.1" if loopback else "0.0.0.0"
+    loopback_addr = mios_toml.get("network", "loopback") or "127.0.0.1"
+    bind_all_addr = mios_toml.get("network", "bind_all") or "0.0.0.0"
+    toml_vars["MIOS_PG_BIND_ADDR"] = loopback_addr if loopback else bind_all_addr
 
     ignore_vars = {
         "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_USER_TOML",

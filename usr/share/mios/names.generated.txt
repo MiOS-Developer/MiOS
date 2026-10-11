@@ -187,6 +187,9 @@ auth.password  MIOS_AUTH_PASSWORD
 auth.password_hash  MIOS_AUTH_PASSWORD_HASH
 auth.luks_passphrase  MIOS_AUTH_LUKS_PASSPHRASE
 auth.github_pat  MIOS_AUTH_GITHUB_PAT
+network.loopback  MIOS_NETWORK_LOOPBACK
+network.bind_all  MIOS_NETWORK_BIND_ALL
+network.win_tailscale_ip  MIOS_NETWORK_WIN_TAILSCALE_IP
 network.firewalld_default_zone  MIOS_NETWORK_FIREWALLD_DEFAULT_ZONE
 network.allow_ssh  MIOS_NETWORK_ALLOW_SSH
 network.allow_cockpit  MIOS_NETWORK_ALLOW_COCKPIT
@@ -2745,11 +2748,14 @@ ports.ssh  MIOS_PORTS_SSH
 ports.forge_http  MIOS_PORTS_FORGE_HTTP
 ports.forge_ssh  MIOS_PORTS_FORGE_SSH
 ports.cockpit  MIOS_PORTS_COCKPIT
+ports.cockpit_internal  MIOS_PORTS_COCKPIT_INTERNAL
 ports.cockpit_link  MIOS_PORTS_COCKPIT_LINK
 ports.searxng  MIOS_PORTS_SEARXNG
 ports.searxng_internal  MIOS_PORTS_SEARXNG_INTERNAL
 ports.crawl4ai  MIOS_PORTS_CRAWL4AI
+ports.crawl4ai_internal  MIOS_PORTS_CRAWL4AI_INTERNAL
 ports.firecrawl  MIOS_PORTS_FIRECRAWL
+ports.firecrawl_internal  MIOS_PORTS_FIRECRAWL_INTERNAL
 ports.hermes  MIOS_PORTS_HERMES
 ports.hermes_dashboard  MIOS_PORTS_HERMES_DASHBOARD
 ports.open_webui  MIOS_PORTS_OPEN_WEBUI
@@ -2802,6 +2808,7 @@ ports.categories.edge.doc  MIOS_PORTS_CATEGORIES_EDGE_DOC
 ports.categories.admin.base  MIOS_PORTS_CATEGORIES_ADMIN_BASE
 ports.categories.admin.stride  MIOS_PORTS_CATEGORIES_ADMIN_STRIDE
 ports.categories.admin.members  MIOS_PORTS_CATEGORIES_ADMIN_MEMBERS
+ports.categories.admin.pinned.cockpit_internal  MIOS_PORTS_CATEGORIES_ADMIN_PINNED_COCKPIT_INTERNAL
 ports.categories.admin.doc  MIOS_PORTS_CATEGORIES_ADMIN_DOC
 ports.categories.webui.base  MIOS_PORTS_CATEGORIES_WEBUI_BASE
 ports.categories.webui.stride  MIOS_PORTS_CATEGORIES_WEBUI_STRIDE
@@ -2836,6 +2843,8 @@ ports.categories.webtools.base  MIOS_PORTS_CATEGORIES_WEBTOOLS_BASE
 ports.categories.webtools.stride  MIOS_PORTS_CATEGORIES_WEBTOOLS_STRIDE
 ports.categories.webtools.members  MIOS_PORTS_CATEGORIES_WEBTOOLS_MEMBERS
 ports.categories.webtools.pinned.searxng_internal  MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_SEARXNG_INTERNAL
+ports.categories.webtools.pinned.crawl4ai_internal  MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_CRAWL4AI_INTERNAL
+ports.categories.webtools.pinned.firecrawl_internal  MIOS_PORTS_CATEGORIES_WEBTOOLS_PINNED_FIRECRAWL_INTERNAL
 ports.categories.webtools.doc  MIOS_PORTS_CATEGORIES_WEBTOOLS_DOC
 ports.categories.devtools.base  MIOS_PORTS_CATEGORIES_DEVTOOLS_BASE
 ports.categories.devtools.stride  MIOS_PORTS_CATEGORIES_DEVTOOLS_STRIDE

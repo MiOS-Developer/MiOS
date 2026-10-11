@@ -2122,6 +2122,9 @@ github_pat       = ""           # never tracked; configures git credential helpe
 # Defaults match SECURITY.md (default zone "drop", ssh + cockpit allowed).
 # ----------------------------------------------------------------------------
 [network]
+loopback               = "127.0.0.1"
+bind_all               = "0.0.0.0"
+win_tailscale_ip       = "100.79.3.50"
 firewalld_default_zone = "drop"
 allow_ssh              = true
 allow_cockpit          = true   # opens 9090/tcp
@@ -7468,11 +7471,14 @@ ssh                = 8100     # host admin sshd. "mios-dev ssh should be port 22
 forge_http         = 8400     # Forgejo HTTP web UI
 forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd). Non-22 to coexist with sshd; non-2222 to leave that as the canonical operator-SSH port.
 cockpit            = 8110     # host Cockpit web console
+cockpit_internal   = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
 cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
 searxng            = 8800     # local privacy-respecting metasearch
-searxng_internal   = 8080     # SearXNG internal container listening port (upstream standard 8080; host maps 8800->8080)
+searxng_internal   = 8888     # SearXNG internal container listening port (upstream standard 8888; host maps 8800->8888)
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
+crawl4ai_internal  = 11235   # crawl4ai container internal listening port (upstream default 11235)
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
+firecrawl_internal = 3002     # firecrawl container internal listening port (upstream default 3002)
 hermes             = 8720     # Hermes gateway (canonical /v1). ONE key: hermes-worker.service is the only unit running `hermes gateway run` and binds this.
 hermes_dashboard   = 8210     # Hermes Dashboard web UI (sessions, skills, stats)
 open_webui         = 8200     # Open WebUI (rich LLM interface at http://localhost:3033)
@@ -7487,6 +7493,7 @@ rdp                = 8300     # GNOME Remote Desktop / xRDP
 pgvector           = 8600     # PostgreSQL + pgvector unified agent DB (WS-9, FOSS; sole agent DB since the WS-A3 cutover)
 pgvector_internal  = 5432     # PostgreSQL internal container listening port (upstream standard 5432; host maps 8600->5432)
 llm_light          = 8500    # mios-llm-light: the primary llama.cpp multi-model + KV-paging lane (WS-10, FOSS; served via the upstream llama-swap proxy image)
+win_llm_light      = 11450   # Windows host llama-swap light lane proxy port
 cpu_node           = 8510    # mios-cpu-node: the always-on / gaming-immune CPU llama-server lane (granite brain on -ngl 0). Rendered into mios-cpu-node.container's --port (was a DEAD key -> empty --port -> llama.cpp stoi crash-loop; SSOT-wired).
 agent_pipe         = 8700     # 'MiOS' standalone Agent Pipe (router + refine + critic; fronts hermes for every gateway)
 ttyd_bash          = 8310     # ttyd browser pty -- Linux bash session
@@ -7497,6 +7504,7 @@ headscale          = 8085     # Headscale mesh VPN control plane coordinator (HT
 opencode_gateway   = 8780     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
 llm_heavy          = 8520    # mios-llm-heavy: THE heavy dGPU lane (OpenAI /v1), whichever engine [ai].heavy_engine selects (vLLM or SGLang bind this one port). GATED/disabled by default (VRAM). [nodes.local-heavy].
 llm_igpu           = 8540    # mios-igpu: local iGPU inference lane (llama.cpp + Vulkan on Windows host)
+igpu               = 11436   # Windows host iGPU Vulkan inference listener port
 rpc_igpu           = 8550    # mios-rpc-igpu: cross-lane llama.cpp RPC server on iGPU
 prefilter          = 8710    # mios-delegation-prefilter: conversational-bypass classifier + delegation gate (OpenAI /v1 shim in front of hermes). LOOPBACK only.
 arbiter            = 8760    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
@@ -7540,6 +7548,7 @@ doc     = "Network edge / resolver. DNS is protocol-pinned at 53 and never float
 base    = 8100
 stride  = 10
 members = ["ssh", "cockpit", "cockpit_link"]
+pinned  = { cockpit_internal = 9090 }
 doc     = "Host administration surfaces (operator SSH, Cockpit console + discovery shim)."
 
 [ports.categories.webui]
@@ -7570,6 +7579,7 @@ doc     = "Cluster orchestration and storage control planes."
 base    = 8500
 stride  = 10
 members = ["llm_light", "cpu_node", "llm_heavy", "", "llm_igpu", "rpc_igpu"]
+pinned  = { igpu = 11436, win_llm_light = 11450 }
 doc     = "Model-serving lanes. Ordered cheapest-to-heaviest: always-on llama.cpp, CPU lane, then the GATED dGPU lane. The empty slot (8530) is the retired second heavy lane, folded into llm_heavy as an engine choice; it stays empty so the iGPU lanes keep their ports."
 
 [ports.categories.data]
@@ -7589,7 +7599,7 @@ doc     = "Agent plane. Ordered along the request path: pipe -> prefilter -> her
 base    = 8800
 stride  = 10
 members = ["searxng", "crawl4ai", "firecrawl"]
-pinned  = { searxng_internal = 8080 }
+pinned  = { searxng_internal = 8888, crawl4ai_internal = 11235, firecrawl_internal = 3002 }
 doc     = "Search, crawl and scrape backends (the mios-webtools pod). LOOPBACK-only."
 
 [ports.categories.devtools]
@@ -7669,7 +7679,8 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # is the mesh control API and rpc_igpu a llama.cpp RPC socket: neither is a page.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
-  "crawl4ai", "field_live_chat", "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
+  "cockpit_internal", "crawl4ai", "crawl4ai_internal", "field_live_chat", "firecrawl_internal",
+  "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
   "firecrawl",
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
@@ -12890,7 +12901,14 @@ mirror_files = [
 mirror_toml_tables = ["ports", "colors"]
 
 # Single keys "<dotted.table>.<key>" mirrored by value; the rest of each table stays repo-owned.
-mirror_toml_keys = ["theme.padding", "theme.scrollbar_state", "bootstrap.windows_install_mode"]
+mirror_toml_keys = [
+  "theme.padding",
+  "theme.scrollbar_state",
+  "bootstrap.windows_install_mode",
+  "network.loopback",
+  "network.bind_all",
+  "network.win_tailscale_ip",
+]
 
 # Deliberately NOT mirrored; reasons in installation/UNIFY.md.
 # Owned here and absent from bootstrap (no row needed; the tracked-in-both scan

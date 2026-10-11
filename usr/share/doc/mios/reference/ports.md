@@ -10,6 +10,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | admin | ssh | 8100 |
 | admin | cockpit | 8110 |
 | admin | cockpit_link | 8120 |
+| admin | cockpit_internal (pinned) | 9090 |
 | agent | agent_pipe | 8700 |
 | agent | prefilter | 8710 |
 | agent | hermes | 8720 |
@@ -53,7 +54,9 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | webtools | searxng | 8800 |
 | webtools | crawl4ai | 8810 |
 | webtools | firecrawl | 8820 |
-| webtools | searxng_internal (pinned) | 8080 |
+| webtools | searxng_internal (pinned) | 8888 |
+| webtools | crawl4ai_internal (pinned) | 11235 |
+| webtools | firecrawl_internal (pinned) | 3002 |
 | webui | open_webui | 8200 |
 | webui | hermes_dashboard | 8210 |
 | webui | guacamole_web | 8220 |
