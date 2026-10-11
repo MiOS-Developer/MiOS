@@ -2498,20 +2498,14 @@ _TAINT_VERBS = mios_secset.taint_verb_set(
     ("web_search", "web_extract", "crawl", "web_scrape"),
     (_toml_section("security") or {}).get("taint_verbs"))
 
-_DEFAULT_ALLOWLIST_HOSTS = {
-    "localhost", "127.0.0.1", "::1",
-    "host.containers.internal",
-    "mios-llm-light", "mios-open-webui", "mios-hermes", "mios-pgvector",
-    "mios-forge", "mios-searxng", "mios-agents", "mios-crawl4ai", "mios-code-server",
-}
 _env_allowlist = os.environ.get("MIOS_SECURITY_ALLOWLIST_HOSTS", "").strip()
 _toml_sec = _toml_section("security") or {}
 _toml_hosts = _toml_sec.get("allowlist_hosts") or []
-_ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
+_ALLOWLIST_HOSTS = {
+    str(h).strip().lower() for h in _toml_hosts if str(h).strip()
+}
 if _env_allowlist:
     _ALLOWLIST_HOSTS.update(h.strip().lower() for h in _env_allowlist.split(",") if h.strip())
-if _toml_hosts:
-    _ALLOWLIST_HOSTS.update(str(h).strip().lower() for h in _toml_hosts if str(h).strip())
 
 from mios_firewall import (   # noqa: E402
     _is_external_url,

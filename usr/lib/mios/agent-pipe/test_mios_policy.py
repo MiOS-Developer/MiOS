@@ -3,6 +3,13 @@
 """Standalone test: python test_mios_policy.py (exit 0 = pass)."""
 
 import contextvars
+import os
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_repo = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
+_toml = os.path.join(_repo, "usr", "share", "mios", "mios.toml")
+if "MIOS_TOML" not in os.environ and os.path.isfile(_toml):
+    os.environ["MIOS_TOML"] = _toml
 
 import mios_policy
 
@@ -180,5 +187,100 @@ mios_policy._QUOTA_TRACKERS.clear()
 mios_policy._QUOTA_HYDRATED.clear()
 mios_policy._QUOTA_LEDGER.clear()
 mios_policy._QUOTA_PERSIST = False
+
+# ---------------------------------------------------------------------------
+# Task 3159: policy arbiter consultation and fail-closed integration.
+# A dangerous verb routed through a stub arbiter that denies is refused.
+# The same verb with the arbiter unreachable is ALSO refused (fail closed).
+# ---------------------------------------------------------------------------
+class _StubArbiterClient:
+    def __init__(self, allow=False, reason="Action denied by policy arbiter", status_code=200):
+        self.allow = allow
+        self.reason = reason
+        self.status_code = status_code
+        self.posted = []
+
+    async def post(self, url, json=None, timeout=None):
+        self.posted.append({"url": url, "json": json})
+        class _Resp:
+            def __init__(self, sc, body):
+                self.status_code = sc
+                self.content = b"true"
+                self._body = body
+            def json(self):
+                return self._body
+        return _Resp(self.status_code, {"allow": self.allow, "reason": self.reason})
+
+class _UnreachableArbiterClient:
+    async def post(self, url, json=None, timeout=None):
+        raise ConnectionRefusedError(f"Connection refused to {url}")
+
+_audit_events = []
+def _audit_db_fire(coro_or_val):
+    pass
+def _audit_db_post(coro_or_val):
+    return coro_or_val
+def _audit_db_create(kind, data, **kw):
+    _audit_events.append((kind, data))
+    return data
+
+# Verify default fallback URL and fail mode configuration
+assert mios_policy._HITL_ARBITER_URL.startswith("http://127.0.0.1:8760"), mios_policy._HITL_ARBITER_URL
+assert mios_policy._HITL_ARBITER_FAIL == "closed", mios_policy._HITL_ARBITER_FAIL
+print("ok  hitl_arbiter: default URL is port 8760 and default fail mode is closed")
+
+# Case 1: Dangerous verb routed through a stub arbiter that denies is refused
+_stub_deny = _StubArbiterClient(allow=False, reason="stub policy deny: powershell is forbidden")
+async def _get_stub_deny():
+    return _stub_deny
+
+_audit_events.clear()
+mios_policy.configure(
+    get_client=_get_stub_deny,
+    db_fire=_audit_db_fire,
+    db_post=_audit_db_post,
+    db_create=_audit_db_create,
+)
+
+_res_deny = _asyncio.run(mios_policy._hitl_arbiter_verdict("powershell_run", {"command": "dir"}))
+assert _res_deny is not None, "Dangerous verb routed through stub arbiter that denies must be refused"
+assert "stub policy deny" in _res_deny or "denied" in _res_deny, _res_deny
+assert len(_stub_deny.posted) == 1, _stub_deny.posted
+assert _stub_deny.posted[0]["json"]["verb"] == "powershell_run"
+assert any(ev[1].get("kind") == "arbiter_deny" for ev in _audit_events), _audit_events
+print("ok  hitl_arbiter: dangerous verb routed through denying stub arbiter is refused")
+
+# Case 2: Same verb with the arbiter unreachable is ALSO refused (fail closed)
+async def _get_unreachable():
+    return _UnreachableArbiterClient()
+
+_audit_events.clear()
+mios_policy.configure(
+    get_client=_get_unreachable,
+    db_fire=_audit_db_fire,
+    db_post=_audit_db_post,
+    db_create=_audit_db_create,
+)
+
+_res_unreach = _asyncio.run(mios_policy._hitl_arbiter_verdict("powershell_run", {"command": "dir"}))
+assert _res_unreach is not None, "Dangerous verb with unreachable arbiter must be refused (fail-closed)"
+assert "unreachable" in _res_unreach and "fail-closed" in _res_unreach, _res_unreach
+assert any(ev[1].get("kind") == "arbiter_unreachable" for ev in _audit_events), _audit_events
+print("ok  hitl_arbiter: unreachable arbiter fails closed and refuses action")
+
+# Case 3: Arbiter explicit allow permits execution
+_stub_allow = _StubArbiterClient(allow=True)
+async def _get_stub_allow():
+    return _stub_allow
+
+mios_policy.configure(get_client=_get_stub_allow)
+_res_allow = _asyncio.run(mios_policy._hitl_arbiter_verdict("powershell_run", {"command": "dir"}))
+assert _res_allow is None, "Explicit allow from arbiter must permit verb execution"
+print("ok  hitl_arbiter: allowing arbiter permits action")
+
+# Case 4: Safe verb below threshold is not consulted or blocked
+_res_safe = _asyncio.run(mios_policy._hitl_arbiter_verdict("web_search", {"query": "test"}))
+assert _res_safe is None, "Safe verb below threshold must proceed"
+print("ok  hitl_arbiter: safe verb below threshold proceeds without arbiter block")
 
 print("\nALL mios_policy tests passed")
