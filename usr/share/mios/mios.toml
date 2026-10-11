@@ -2411,7 +2411,7 @@ laws = [
   { id = 11, slug = "SECRETS-NEVER-IN-ENV",  applies_to = "bootc", enforced_by = "99-postcheck.sh:SECRETS-NEVER-IN-ENV" },
   { id = 12, slug = "BAKE-NOT-FETCH",        applies_to = "both",  enforced_by = "98-drift-checks.sh:check_dag_integrity,check_firstboot_degrade_open" },
   { id = 13, slug = "NATIVE-DROPINS",        applies_to = "both",  enforced_by = "98-drift-checks.sh:check_resolver_twin_parity" },
-  { id = 14, slug = "TARGET-LANGUAGES",      applies_to = "both",  enforced_by = "98-drift-checks.sh:check_target_languages" },
+  { id = 14, slug = "TARGET-LANGUAGES",      applies_to = "both",  enforced_by = "98-drift-checks.sh:check_target_languages,check_agentpipe_mypy" },
   { id = 15, slug = "DOUBLE-REPO-TRIPLE-CHECK", applies_to = "both", enforced_by = "process:CLAUDE.md/AGENTS.md (both repos); parity via 98-drift-checks.sh checks 22+27" },
   { id = 16, slug = "ONE-TEMPLATE-PER-TYPE",    applies_to = "both", enforced_by = "98-drift-checks.sh:check_template_conformance" },
 ]
@@ -13103,10 +13103,9 @@ vhdx = false
 # and each missing name cost a CI round trip to discover. The agent-pipe already
 # declares what it needs, so the runner installs THAT and the list cannot drift
 # from the code again.
-requirements = ["usr/lib/mios/agent-pipe/requirements.txt"]
-# Only what no requirements file claims: pyflakes backs lint-python.sh's
-# undefined-name pass.
-packages = ["pyflakes"]
+requirements = ["requirements-dev.txt"]
+# Pinned dev dependencies now include pyflakes, mypy, ruff, pytest, etc.
+packages = []
 
 [ci.powershell.modules]
 # CI provisions exact verified module releases before the read-only native lint gates.

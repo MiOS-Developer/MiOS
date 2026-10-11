@@ -2558,6 +2558,30 @@ check_python_lint() {
     fi
 }
 
+# --- agent-pipe strict static typing conformance (mypy) ---
+check_agentpipe_mypy() {
+    echo "[98-drift-checks] agent-pipe strict static typing conformance (mypy)"
+    local cfg="$ROOT/pyproject.toml"
+    if [[ ! -f "$cfg" ]]; then
+        _violation "pyproject.toml missing for agent-pipe typing check"
+        return
+    fi
+    if ! command -v mypy >/dev/null 2>&1; then
+        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
+            _violation "mypy missing under MIOS_DRIFT_REQUIRE_TOOLS=1"
+        else
+            echo "[98-drift-checks]   WARNING: mypy missing, skipping static type gate" >&2
+        fi
+        return 0
+    fi
+    local out
+    if out="$(cd "$ROOT" && mypy --config-file "$cfg" 2>&1)"; then
+        echo "[98-drift-checks]   agent-pipe typing verified (mypy clean)"
+    else
+        _violations_from "check_agentpipe_mypy: " "$out"
+    fi
+}
+
 check_test_hermeticity() {
     _need_python || return 0
     if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py test-hermeticity
@@ -3833,6 +3857,7 @@ main() {
     check_bound_image_store
     check_rechunk_budget
     check_python_lint
+    check_agentpipe_mypy
     check_test_hermeticity
     check_negative_test_coverage
     check_soft_mode_not_committed

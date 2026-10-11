@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
+
 
 class Verdict:
     __slots__ = ("allow", "reason", "rule")
@@ -13,7 +14,7 @@ class Verdict:
         self.reason = str(reason)
         self.rule = str(rule)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {"allow": self.allow, "reason": self.reason, "rule": self.rule}
 
 def _rank(tier: str, tiers: Sequence[str]) -> int:

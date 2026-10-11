@@ -1,0 +1,18 @@
+# Pinned hermetic dev dependencies for MiOS Python test suites and static gates
+# AI-hint: Pinned hermetic dev dependencies resolved via [ci.python].requirements in mios.toml.
+# AI-related: pyproject.toml, usr/share/mios/mios.toml, tools/ci-suites.py
+
+mypy==1.15.0
+ruff==0.9.10
+pytest==8.3.4
+pytest-cov==6.0.0
+pytest-asyncio==0.25.3
+pyflakes==3.4.0
+fastapi==0.136.3
+httpx==0.28.1
+pydantic==2.12.5
+uvicorn==0.40.0
+websockets==15.0.1
+tomli==2.2.1
+types-requests==2.32.0.20241016
+types-PyYAML==6.0.12.20240917
