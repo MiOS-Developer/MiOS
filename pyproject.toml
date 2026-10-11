@@ -1,0 +1,36 @@
+# AI-hint: Root pyproject.toml configuring strict static typing, linting, and testing for MiOS.
+# AI-related: usr/share/mios/mios.toml, automation/98-drift-checks.sh, tests/drift-gate-negatives.sh
+
+[tool.mypy]
+python_version = "3.11"
+files = [
+    "usr/lib/mios/agent-pipe/mios_pipe/access/arbiter.py",
+    "usr/lib/mios/agent-pipe/mios_pipe/memory/pg.py",
+]
+mypy_path = "usr/lib/mios/agent-pipe"
+follow_imports = "silent"
+ignore_missing_imports = true
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests", "usr/lib/mios/agent-pipe"]
+python_files = ["test_*.py", "*_test.py", "test-*.py"]

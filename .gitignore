@@ -220,6 +220,8 @@ docs/design/w10-live-boot/*
 !/preflight.sh
 !/push-to-github.ps1
 !/renovate.json
+!/pyproject.toml
+!/requirements-dev.txt
 
 !/usr/share/mios/kb/
 !/usr/share/mios/kb/manifest.json

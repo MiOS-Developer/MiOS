@@ -6094,6 +6094,7 @@ _run_test test_leaked_fixtures
     _run_test test_artifact_prompt
     _run_test test_ai_artifacts
     _run_test test_rust_categories
+    _run_test test_agentpipe_mypy
     _run_test test_legacy_archive
     if (( ${#_FAILED[@]} )); then
         echo -e "[1;31m[drift-gate-negatives][0m ${#_FAILED[@]} test(s) failed:" >&2
@@ -6121,6 +6122,22 @@ test_rust_categories() {
     cp -p "$backup" "$toml" && rm -f "$backup"
     _neg_gate check_rust_categories || die "rust-categories failed after restoration: $_NEG_GATE_OUT"
     log "check_rust_categories negative test passed"
+}
+
+test_agentpipe_mypy() {
+    log "Testing check_agentpipe_mypy"
+    _neg_gate check_agentpipe_mypy || die "check_agentpipe_mypy is red before the probe: $_NEG_GATE_OUT"
+    local arbiter="${ROOT}/usr/lib/mios/agent-pipe/mios_pipe/access/arbiter.py"
+    local backup; backup="$(mktemp)"; cp -p "$arbiter" "$backup"
+    # Plant intentional type violation into arbiter.py
+    printf '\n_bad_type_probe: int = "type_error_probe"\n' >> "$arbiter"
+    if _neg_gate check_agentpipe_mypy; then
+        cp -p "$backup" "$arbiter" && rm -f "$backup"
+        die "check_agentpipe_mypy passed despite planted type error in arbiter.py"
+    fi
+    cp -p "$backup" "$arbiter" && rm -f "$backup"
+    _neg_gate check_agentpipe_mypy || die "check_agentpipe_mypy failed after restoration: $_NEG_GATE_OUT"
+    log "check_agentpipe_mypy negative test passed"
 }
 
 main "$@"
