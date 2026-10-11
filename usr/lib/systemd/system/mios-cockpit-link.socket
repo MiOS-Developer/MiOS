@@ -5,7 +5,7 @@ Description='MiOS' Cockpit Link Proxy Socket
 ConditionVirtualization=!container
 
 [Socket]
-ListenStream=0.0.0.0:8120
+ListenStream=${MIOS_NETWORK_BIND_ALL:-0.0.0.0}:${MIOS_PORTS_COCKPIT_LINK:-8120}
 BindIPv6Only=both
 
 [Install]

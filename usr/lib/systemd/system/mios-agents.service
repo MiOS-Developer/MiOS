@@ -50,7 +50,7 @@ ExecStart=/usr/sbin/podman run --replace --name mios-agents \
   --env MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG} \
   --volume /var/lib/mios/agents:/home/coder:rw \
   localhost/mios-agents:latest \
-  --bind-addr 127.0.0.1:8900 /home/coder
+  --bind-addr ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_CODE_SERVER:-8900} /home/coder
 ExecStop=/usr/sbin/podman stop -t 10 mios-agents
 Restart=on-failure
 RestartSec=10s

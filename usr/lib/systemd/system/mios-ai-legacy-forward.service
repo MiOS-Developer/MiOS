@@ -7,7 +7,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/socat TCP-LISTEN:8640,fork,reuseaddr TCP:127.0.0.1:8700
+ExecStart=/usr/bin/socat TCP-LISTEN:${MIOS_PORTS_AI_LEGACY:-8640},fork,reuseaddr TCP:${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_AGENT_PIPE:-8700}
 Restart=always
 RestartSec=5s
 NoNewPrivileges=yes

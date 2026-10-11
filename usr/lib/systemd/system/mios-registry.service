@@ -17,7 +17,7 @@ ProtectHome=read-only
 PrivateTmp=yes
 ExecStartPre=-/usr/bin/podman rm -f mios-registry
 ExecStart=/usr/bin/podman run --name mios-registry --rm \
-    -p 127.0.0.1:5000:5000 \
+    -p ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_REGISTRY:-5000}:${MIOS_PORTS_REGISTRY_INTERNAL:-5000} \
     -v /var/lib/mios/registry:/var/lib/registry:Z \
     docker.io/library/registry:2
 ExecStop=/usr/bin/podman stop -t 10 mios-registry

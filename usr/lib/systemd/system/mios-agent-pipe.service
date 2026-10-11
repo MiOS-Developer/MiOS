@@ -75,7 +75,7 @@ Environment=MIOS_AI_MODEL=granite4.1:8b
 # no-tool-choice list, or the pipe drops/auto's tool_choice and gemma4 NARRATES
 # the call instead of executing it. Keep :11450 in KV_PAGING (it does /slots).
 Environment=MIOS_NO_TOOL_CHOICE_HINTS=11436
-Environment=MIOS_KV_PAGING_HINTS=11436,11450
+Environment=MIOS_KV_PAGING_HINTS=${MIOS_PORT_IGPU:-11436},${MIOS_PORT_WIN_LLM_LIGHT:-11450}
 Environment=MIOS_LLM_API_HINTS=
 # WS-0B: ROUTER + the CPU-offload light-lane (MIOS_LLM_CPU_ENDPOINT) both now
 # default to _LIGHT_BASE in server.py (mios-llm-light) -- no per-endpoint pin here.

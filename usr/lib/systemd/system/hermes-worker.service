@@ -34,16 +34,16 @@ Group=mios-ai
 Environment=HOME=/var/lib/mios/hermes-worker
 Environment=HERMES_HOME=/var/lib/mios/hermes-worker
 # Retrieval endpoints (same as the primary -- retrieval, not inference, Law 5).
-Environment=SEARXNG_URL=http://localhost:8800
-Environment=MIOS_CRAWL_SERVICE_URL=http://127.0.0.1:8810
-Environment=FIRECRAWL_API_URL=http://127.0.0.1:8820
+Environment=SEARXNG_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_SEARXNG:-8800}
+Environment=MIOS_CRAWL_SERVICE_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_CRAWL4AI:-8810}
+Environment=FIRECRAWL_API_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_FIRECRAWL:-8820}
 # BIND: API_SERVER_PORT is the load-bearing var. PORT is set for parity/docs but
 # is INERT in this Hermes build (no PORT->API_SERVER_PORT bridge exists).
-Environment=PORT=8720
-Environment=API_SERVER_PORT=8720
+Environment=PORT=${MIOS_PORTS_HERMES:-8720}
+Environment=API_SERVER_PORT=${MIOS_PORTS_HERMES:-8720}
 # Backend hint (the seeded config.yaml base_url wins at runtime; kept in sync).
 # This gateway does its OWN inference on the heavy lane (port key `vllm`).
-Environment=HERMES_BACKEND_BASE_URL=http://localhost:8520
+Environment=HERMES_BACKEND_BASE_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_LLM_HEAVY:-8520}
 # COMPLETION CAP (operator 2026-06-19 P1 fix): mios-heavy max_model_len=65536; with
 # NO cap hermes lets the completion default to the full 65536, so input+completion
 # overflows -> HTTP 400 "token count exceeds maximum context". Cap the per-call
@@ -52,7 +52,7 @@ Environment=HERMES_BACKEND_BASE_URL=http://localhost:8520
 Environment=HERMES_MAX_TOKENS=8192
 # Dedicated CDP browser for the worker (own port + own profile) so it never
 # stomps the primary :9222 browser. Matches browser.cdp_url in the worker config.
-Environment=BROWSER_CDP_URL=http://localhost:9223
+Environment=BROWSER_CDP_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_CHROME_CDP_WORKER:-9223}
 # api.env carries API_SERVER_ENABLED=true, API_SERVER_HOST=0.0.0.0,
 # API_SERVER_KEY, GATEWAY_ALLOW_ALL_USERS=true. Shared with the dashboard
 # (same key => callers can reach both with one key). install.env is the

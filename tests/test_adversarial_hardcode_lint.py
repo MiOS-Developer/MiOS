@@ -559,8 +559,8 @@ class TestChallenge4ErrorBehaviorAndParity(HardcodeLintAdversarialTestBase):
         o_res = run_oracle([clean_file])
         r_res = run_rust([clean_file])
 
-        self.assertEqual(o_res.returncode, 1, "Python oracle fails when given a file path directly")
-        self.assertIn("scanned 0 files under", o_res.stderr)
+        self.assertEqual(o_res.returncode, 0, "Python oracle scans single file directly")
+        self.assertIn("PASS: 1 file(s) scanned", o_res.stdout)
 
         self.assertEqual(r_res.returncode, 0, "Rust binary scans single file directly")
         self.assertIn("PASS: 1 file(s) scanned", r_res.stdout)

@@ -18,8 +18,15 @@ const EXEMPT: &[&str] = &[
     "/.claude/",
     "/.agents/",
 ];
+const UNIT_EXT: &[&str] = &[
+    ".service", ".socket", ".container", ".timer", ".conf",
+];
+const PORT_IP_EXT: &[&str] = &[
+    ".py", ".sh", ".bash", ".ps1", ".psm1", ".service", ".socket", ".container", ".timer", ".conf",
+];
 const CODE_EXT: &[&str] = &[
     ".py", ".sh", ".bash", ".toml", ".yml", ".yaml", ".ps1", ".psm1",
+    ".service", ".socket", ".container", ".timer", ".conf",
 ];
 
 struct Allowlist {
@@ -53,7 +60,12 @@ fn load_allowlist(roots: &[String]) -> Allowlist {
                         {
                             for p in patterns {
                                 if let Some(pat) = p.as_str() {
-                                    if let Ok(rx) = Regex::new(pat) {
+                                    let clean_pat = pat
+                                        .replace(r"(?![0-9])", "")
+                                        .replace(r"(?!\d)", "")
+                                        .replace(r"(?<![0-9])", "")
+                                        .replace(r"(?<!\d)", "");
+                                    if let Ok(rx) = Regex::new(&clean_pat) {
                                         exempt_patterns.push(pat.to_string());
                                         exempt_patterns_rx.push(rx);
                                     }
@@ -94,7 +106,7 @@ fn is_line_exempt(line: &str, allowlist: &Allowlist) -> bool {
                     true
                 };
             let suffix_ok =
-                if !pat.ends_with('$') && !pat.ends_with(r"\b") && !pat.ends_with(r"(?!\d)") {
+                if !pat.ends_with('$') && !pat.ends_with(r"\b") {
                     end == line.len()
                         || !line[end..]
                             .chars()
@@ -416,19 +428,51 @@ fn tokenize_python(text: &str) -> Vec<PyToken> {
     tokens
 }
 
+fn is_unit_directive_line(line: &str, in_multiline: bool) -> (bool, bool) {
+    let stripped = line.trim();
+    if stripped.starts_with('#') || stripped.starts_with(';') || stripped.starts_with("//") {
+        return (false, in_multiline);
+    }
+    let lower = stripped.to_ascii_lowercase();
+    let is_start = lower.starts_with("listenstream=")
+        || lower.starts_with("listendatagram=")
+        || lower.starts_with("execstart=")
+        || lower.starts_with("execstartpre=")
+        || lower.starts_with("execstartpost=")
+        || lower.starts_with("execstop=")
+        || lower.starts_with("exec=")
+        || lower.starts_with("environment=");
+    let has_bind = stripped.contains("--bind");
+    let is_directive = is_start || in_multiline || has_bind;
+    let next_multiline = is_directive && stripped.ends_with('\\');
+    (is_directive, next_multiline)
+}
+
 fn check_ports_ips_generic(
     text: &str,
+    is_unit: bool,
     allowlist: &Allowlist,
     port_patterns: &[Regex],
     ip_pattern: &Regex,
 ) -> Vec<(usize, String)> {
     let mut out = Vec::new();
+    let mut in_multiline = false;
+
     for (idx, line) in text.split('\n').enumerate() {
         let ln = idx + 1;
         let stripped = line.trim();
         if stripped.starts_with('#') || stripped.starts_with("//") || stripped.starts_with(';') {
             continue;
         }
+
+        if is_unit {
+            let (is_directive, next_multiline) = is_unit_directive_line(line, in_multiline);
+            in_multiline = next_multiline;
+            if !is_directive {
+                continue;
+            }
+        }
+
         if is_line_exempt(line, allowlist) {
             continue;
         }
@@ -620,7 +664,8 @@ fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
 
             let is_file_exempt = allowlist.exempt_files.iter().any(|rx| rx.is_match(&rel));
 
-            if [".py", ".sh", ".bash", ".ps1", ".psm1"]
+            let is_unit = UNIT_EXT.iter().any(|ext| fn_str.ends_with(ext));
+            if PORT_IP_EXT
                 .iter()
                 .any(|ext| fn_str.ends_with(ext))
                 && !is_file_exempt
@@ -638,7 +683,7 @@ fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
                     }
                 } else {
                     for (ln, snip) in
-                        check_ports_ips_generic(&text, &allowlist, &port_patterns, &ip_pattern)
+                        check_ports_ips_generic(&text, is_unit, &allowlist, &port_patterns, &ip_pattern)
                     {
                         violations.push((
                             p_str.clone(),
@@ -728,7 +773,7 @@ fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
                             }
                         }
                     }
-                } else {
+                } else if !is_unit {
                     for (idx, line) in lines.iter().enumerate() {
                         let ln = idx + 1;
                         if let Some(cs) = comment_start(line) {
@@ -960,15 +1005,24 @@ class Runner:
         let ip_pattern = Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b").unwrap();
 
         let text = "nc -l :8080\ncurl http://localhost:9000/api\n";
-        let violations = check_ports_ips_generic(text, &allowlist, &port_patterns, &ip_pattern);
+        let violations = check_ports_ips_generic(text, false, &allowlist, &port_patterns, &ip_pattern);
         assert!(!violations.is_empty());
         assert!(violations.iter().any(|(_, s)| s == ":8080"));
         assert!(violations.iter().any(|(_, s)| s == "localhost:9000"));
 
         // Bracketed IPv6 should not trigger port violation
         let v_bracketed =
-            check_ports_ips_generic("[::1]:8080]", &allowlist, &port_patterns, &ip_pattern);
+            check_ports_ips_generic("[::1]:8080]", false, &allowlist, &port_patterns, &ip_pattern);
         assert!(v_bracketed.is_empty());
+
+        // Systemd unit directives vs comments
+        let unit_bad = "[Service]\nExecStart=/usr/bin/daemon :8080\n";
+        let v_unit = check_ports_ips_generic(unit_bad, true, &allowlist, &port_patterns, &ip_pattern);
+        assert!(!v_unit.is_empty());
+
+        let unit_comment = "# Historical note: previously ran on :8080\n[Service]\nExecStart=/usr/bin/daemon\n";
+        let v_comment = check_ports_ips_generic(unit_comment, true, &allowlist, &port_patterns, &ip_pattern);
+        assert!(v_comment.is_empty());
     }
 
     #[test]

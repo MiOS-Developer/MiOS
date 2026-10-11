@@ -2594,10 +2594,10 @@ exempt_files = [
 ]
 exempt_patterns = [
     "0\\.0\\.0\\.0",
-    "localhost:80",
-    "localhost:443",
-    "127\\.0\\.0\\.1:80",
-    "127\\.0\\.0\\.1:443",
+    "localhost:80(?![0-9])",
+    "localhost:443(?![0-9])",
+    "127\\.0\\.0\\.1:80(?![0-9])",
+    "127\\.0\\.0\\.1:443(?![0-9])",
     "localhost/mios",
     "wsl\\.localhost",
     "localhost:8700",

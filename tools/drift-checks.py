@@ -1893,8 +1893,10 @@ def check_no_bare_port_literals() -> int:
     scan_dirs = [
         os.path.join(root, "usr/lib/mios/agent-pipe"),
         os.path.join(root, "usr/libexec/mios"),
-        os.path.join(root, "usr/bin")
+        os.path.join(root, "usr/bin"),
+        os.path.join(root, "usr/lib/systemd/system"),
     ]
+    unit_exts = (".service", ".socket", ".timer", ".path", ".conf", ".container")
 
     class DocstringCollector(ast.NodeVisitor):
         def __init__(self):
@@ -1927,7 +1929,7 @@ def check_no_bare_port_literals() -> int:
     for d in scan_dirs:
         for r, ds, fs in os.walk(d):
             for f in fs:
-                if not f.endswith((".py", ".sh", ".ps1")) or "test_" in f:
+                if not f.endswith((".py", ".sh", ".ps1") + unit_exts) or "test_" in f:
                     continue
                 if f in ["Setup-MiOSLanPortProxy.ps1", "Heal-MiOSLocalhostForwarding.ps1", "Setup-MiOSLanPortProxy.ps1.bom-bak", "mios-doctor", "net_segmentation.py", "selinux_policy.py", "model_matrix_alloc.py", "editor_config_gen.py", "fastfetch_gen.py", "gnome_extension.py", "status_bar.py"]:
                     continue
@@ -1960,6 +1962,18 @@ def check_no_bare_port_literals() -> int:
                                 for port in banned_ports:
                                     if port in code_part:
                                         violations.append(f"{f}:{line_no} contains banned port '{port}' (fallback)")
+                    elif f.endswith(unit_exts):
+                        unit_directives = ("ListenStream=", "ExecStart=", "Environment=", "ExecStartPre=", "ExecStartPost=")
+                        for line_no, line in enumerate(content.splitlines(), 1):
+                            stripped = line.strip()
+                            if stripped.startswith(("#", ";")):
+                                continue
+                            if not any(stripped.startswith(d) for d in unit_directives):
+                                continue
+                            code_part = re.sub(r'\$\{[A-Za-z0-9_]+:-[0-9]+\}', '', stripped)
+                            for port in banned_ports:
+                                if port in code_part:
+                                    violations.append(f"{f}:{line_no} contains banned port '{port}'")
                     else:
                         for line_no, line in enumerate(content.splitlines(), 1):
                             stripped = line.strip()
