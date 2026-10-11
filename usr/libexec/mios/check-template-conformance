@@ -53,7 +53,6 @@ def _try_native_bin(args_list):
         if os.environ.get("MIOS_NATIVE_BIN_DIR"):
             candidates.append(os.path.join(os.environ["MIOS_NATIVE_BIN_DIR"], exe))
         candidates.extend([
-            "/var/tmp/mios-merge-tools/" + exe,
             os.path.join(ROOT, "tools/native/target/release", exe),
             os.path.join(ROOT, "tools/native/target/debug", exe),
             os.path.join("/usr/bin", exe),

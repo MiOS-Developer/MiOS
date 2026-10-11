@@ -1747,7 +1747,7 @@ function Install-MiOSTerminalProfile {
         guid              = $miosGuid
         name              = $_miosProfileName
         commandline       = $profileCmdline
-        startingDirectory = (if ($env:SystemDrive) { "$($env:SystemDrive)\\" } else { 'C:\\' })
+        startingDirectory = $(if ($env:SystemDrive) { "$($env:SystemDrive)\\" } else { 'C:\\' })
     }
     foreach ($k in $commonProfileProps.Keys) { $miosProfile[$k] = $commonProfileProps[$k] }
 
@@ -4009,7 +4009,7 @@ function Initialize-DataDisk {
 }
 
 function Set-PodmanMachineStorageOnM {
-    param([string]$MRoot = (if ($env:SystemDrive) { "$($env:SystemDrive)\podman\machine" } else { 'C:\podman\machine' }))
+    param([string]$MRoot = $(if ($env:SystemDrive) { "$($env:SystemDrive)\podman\machine" } else { 'C:\podman\machine' }))
     if (-not (Test-Path $MRoot)) {
         New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
         Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
@@ -4058,7 +4058,7 @@ function Set-PodmanMachineStorageOnM {
 }
 
 function Set-WingetStorageOnM {
-    param([string]$MRoot = (if ($env:SystemDrive) { "$($env:SystemDrive)\winget" } else { 'C:\winget' }))
+    param([string]$MRoot = $(if ($env:SystemDrive) { "$($env:SystemDrive)\winget" } else { 'C:\winget' }))
     if (-not (Test-Path $MRoot)) {
         New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
         Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray

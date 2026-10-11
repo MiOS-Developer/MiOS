@@ -151,7 +151,6 @@ pub fn native(ctx: &DriftCtx, name: &str, args: &[&str]) -> Verdict {
                     cur = dir.parent();
                 }
             }
-            candidates.push(Path::new("/var/tmp/mios-merge-tools").join(&filename));
             for directory in [
                 "tools/native/target/release",
                 "tools/native/target/debug",
