@@ -2307,6 +2307,18 @@ smoke_systemd_template     = "smoke 2/4: systemd state '{state}' in {name}"
 smoke_overlay_template     = "smoke 3/4: /usr/share/mios overlay present in {name}"
 smoke_podman_api_template  = "smoke 4/4: podman API server v{version}"
 
+# ----------------------------------------------------------------------------
+# [smoke_tests] -- attempts + interval the dev-VM smoketests use during
+# bootstrap. Phase-3 brings up the podman-MiOS-DEV machine and runs four
+# smoketests (responsive / systemd / overlay / podman API) before declaring
+# the dev VM ready. Tunables live here so operators don't need to edit code.
+# ----------------------------------------------------------------------------
+[smoke_tests]
+echo_attempts       = 15
+systemd_attempts    = 15
+podman_api_attempts = 15
+interval_seconds    = 2
+
 [messages.install_complete]
 title          = "MiOS Windows-side install complete"
 installed_lead = "    Installed ..............................................................."
