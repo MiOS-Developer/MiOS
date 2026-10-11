@@ -108,6 +108,8 @@ async def usage_completeness_mw(request, call_next):
 
 async def inbound_auth_mw(request, call_next):
     """FED-G1: gate /v1/* + /a2a with a credential when [security].api_require_auth is ON."""
+    if getattr(getattr(request, "state", None), "mios_principal", None) is not None:
+        return await call_next(request)
     if not _API_REQUIRE_AUTH:
         return await call_next(request)
     path = request.url.path

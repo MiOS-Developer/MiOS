@@ -530,6 +530,8 @@ Get-MiOS.ps1	3397	3397	1	4	f003166b8f79	STAY	local-scoped		0				0
 Get-MiOS.ps1	3432	3432	1	7	f377b87b3a66	STAY	local-scoped		0				0
 Get-MiOS.ps1	3450	3451	2	26	4285bc929ea4	STAY	midsize-why		0				0
 Get-MiOS.ps1	3456	3461	6	49	e7e1713aa48f	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:e7e1713aa48f	49	1
+Get-MiOS.ps1	3472	3472	1	4	aa523e830638	STAY	local-scoped		0				0
+Get-MiOS.ps1	3481	3483	3	27	0fbd3ea5c1d6	STAY	midsize-why		0				0
 Get-MiOS.ps1	3487	3496	10	79	fa9deff73bf0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/root.md	mios-src:fa9deff73bf0	79	1
 Get-MiOS.ps1	3488	3488	1	13	26f348e805ca	STAY	local-scoped		0				0
 Get-MiOS.ps1	3494	3494	1	4	f02977537a8c	STAY	local-scoped		0				0
@@ -555,8 +557,10 @@ Get-MiOS.ps1	3703	3710	8	71	0bb2493b0c57	MIGRATE	narrative-history		0	usr/share/
 Get-MiOS.ps1	3709	3709	1	5	8a6e0208186d	STAY	local-scoped		0				0
 Get-MiOS.ps1	3717	3718	2	17	6c3e99fee295	STAY	local-scoped		0				0
 Get-MiOS.ps1	3721	3726	6	57	71b1918c52a6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:71b1918c52a6	57	1
+
 Get-MiOS.ps1	3782	3791	10	76	bb11ccac7329	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:bb11ccac7329	76	1
 Get-MiOS.ps1	3793	3798	6	43	1c6ff969906d	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:1c6ff969906d	43	1
+Get-MiOS.ps1	3808	3809	2	16	c5fbc01147f7	STAY	local-scoped		0				0
 Get-MiOS.ps1	3813	3830	18	140	a58a80b19583	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:a58a80b19583	140	1
 Get-MiOS.ps1	3814	3814	1	7	e62f6d91b234	STAY	local-scoped		0				0
 Get-MiOS.ps1	3822	3824	3	30	2c8440d6dea8	STAY	midsize-why		0				0
@@ -822,6 +826,7 @@ automation/44-firewall-ports.sh	1	4	4	23	1da5ef15e1cd	STAY	ai-header		0				0
 automation/44-firewall-ports.sh	1	4	4	38	e22c1962e7c7	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:e22c1962e7c7	38	1
 automation/44-firewall-ports.sh	6	6	1	3	19aef8dad626	STAY	local-scoped		0				0
 automation/44-firewall-ports.sh	13	15	3	36	d6a40eed58ac	STAY	midsize-why		0				0
+
 automation/45-firewall.sh	1	4	4	24	2806d3039fcb	STAY	ai-header		0				0
 automation/45-firewall.sh	1	4	4	40	97451191b1b9	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:97451191b1b9	40	1
 automation/45-firewall.sh	6	6	1	3	19aef8dad626	STAY	local-scoped		0				0
@@ -2202,6 +2207,7 @@ config/artifacts/iso.toml	1	1	1	22	1749c2d37fb0	STAY	ai-header		0				0
 config/artifacts/wsl2.toml	1	1	1	23	c36aca0a95b2	STAY	ai-header		0				0
 config/artifacts/wsl2.toml	4	5	2	22	4b6f63bcdde3	STAY	local-scoped		0				0
 config/artifacts/wsl2.toml	9	9	1	12	21bf9ffcdc87	STAY	local-scoped		0				0
+
 docs/agy/w10-live-boot/live-chat.toml	1	18	18	162	47e601ad10b4	STAY	ai-header		0				0
 docs/agy/w10-live-boot/live-chat.toml	21	23	3	31	01b0a50c843f	STAY	midsize-why		0				0
 docs/agy/w10-live-boot/live-chat.toml	26	28	3	29	cdf741f19302	STAY	midsize-why		0				0
@@ -2628,6 +2634,7 @@ installation/stage-mios-repo.sh	24	24	1	4	9f3579674b1b	STAY	inline-scoped		0				
 installation/stage-mios-repo.sh	60	60	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
 installation/stage-mios-repo.sh	121	121	1	3	b24fe61d02ab	STAY	inline-scoped		0				0
 installation/stage-mios-repo.sh	172	172	1	4	324dad7c5f13	STAY	inline-scoped		0				0
+
 mios-build-local.ps1	1	2	2	24	396b9480b5ff	STAY	ai-header		0				0
 mios-pipeline.ps1	149	161	13	110	b77a676aae79	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/root.md	mios-src:b77a676aae79	110	1
 mios-pipeline.ps1	205	222	18	127	e611f8c8f9b3	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/root.md	mios-src:e611f8c8f9b3	127	1
@@ -25585,3 +25592,4 @@ usr/share/mios/windows/mios-wsl-session-task.ps1	1	2	2	25	fb6e366f8dc3	STAY	ai-h
 usr/share/mios/windows/mios-wsl-session-task.ps1	21	21	1	8	d2b7347de6c3	STAY	local-scoped		0				0
 usr/share/mios/windows/quadlets/mios-llm-light.container	1	1	1	29	58d792803bfb	STAY	ai-header		0				0
 usr/share/mios/windows/quadlets/mios-llm-light.container	14	14	1	6	9aca23049e91	STAY	local-scoped		0				0
+
