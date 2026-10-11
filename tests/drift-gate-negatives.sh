@@ -5362,7 +5362,7 @@ test_legibility_ratchet() {
     # sibling-test leg looked miscounted when nothing had counted it.
     _lr_metric() { sed -n "s/.*[] ]$1=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p" <<<"$_NEG_GATE_OUT" | head -1; }
     _lr_plant() { local i; for i in $(seq 1 "$2"); do echo "# filler $i"; done > "$1"; git -C "$ROOT" add -f -- "$1" >/dev/null 2>&1; }
-    _lr_unplant() { git -C "$ROOT" rm -q --cached --force -- "$@" >/dev/null 2>&1; rm -f "$@"; }
+    _lr_unplant() { git -C "$ROOT" rm -q --cached --force --ignore-unmatch -- "$@" >/dev/null 2>&1; rm -f "$@"; }
     _lr_fail() { _lr_unplant "$probe" "$pytool" "$pytest_probe"; unset -f _lr_metric _lr_plant _lr_unplant _lr_fail; die "$1"; }
 
     _neg_gate check_legibility_ratchet || :
