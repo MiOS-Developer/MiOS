@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3246,
-  "total_metadata_entries": 2897,
-  "total_hints": 2890,
+  "total_files_scanned": 3245,
+  "total_metadata_entries": 2898,
+  "total_hints": 2891,
   "total_functions_indexed": 1483,
-  "total_related_links": 5076,
+  "total_related_links": 5082,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3630,6 +3630,32 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/root.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "pyproject.toml",
+      "hint": "Root pyproject.toml configuring strict static typing, linting, and testing for MiOS.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "automation/98-drift-checks.sh",
+        "tests/drift-gate-negatives.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "requirements-dev.txt",
+      "hint": "Pinned hermetic dev dependencies resolved via [ci.python].requirements in mios.toml.",
+      "related": [
+        "pyproject.toml",
+        "usr/share/mios/mios.toml",
+        "tools/ci-suites.py"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -12300,15 +12326,6 @@
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/context/grounding.py",
       "hint": "Per-turn ENV-GROUNDING subsystem extracted verbatim from server.py (refactor R2 leaf wave).",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/context.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/mios/agent-pipe/mios_pipe/context/kvfork.py",
-      "hint": "Provides filesystem-safe KV-cache fork primitives for the agent-pipe, enabling branching of shared conversation prefixes into independent c...",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/context.md",

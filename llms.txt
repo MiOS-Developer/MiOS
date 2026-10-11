@@ -114,7 +114,7 @@ The canonical registry is `usr/share/mios/mios.toml [laws]`:
 | 11 | SECRETS-NEVER-IN-ENV | bootc | `99-postcheck.sh:SECRETS-NEVER-IN-ENV` |
 | 12 | BAKE-NOT-FETCH | both | `98-drift-checks.sh:check_dag_integrity,check_firstboot_degrade_open` |
 | 13 | NATIVE-DROPINS | both | `98-drift-checks.sh:check_resolver_twin_parity` |
-| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages` |
+| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages,check_agentpipe_mypy` |
 | 15 | DOUBLE-REPO-TRIPLE-CHECK | both | `process:CLAUDE.md/AGENTS.md (both repos); parity via 98-drift-checks.sh checks 22+27` |
 | 16 | ONE-TEMPLATE-PER-TYPE | both | `98-drift-checks.sh:check_template_conformance` |
 

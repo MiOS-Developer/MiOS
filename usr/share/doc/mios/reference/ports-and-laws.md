@@ -54,6 +54,8 @@ is the obvious case, since it cannot float.
 | inference | llm_heavy | 8520 |
 | inference | llm_igpu | 8540 |
 | inference | rpc_igpu | 8550 |
+| inference | igpu (pinned) | 11436 |
+| inference | win_llm_light (pinned) | 11450 |
 | node | ai_legacy | 8640 |
 | node | field_live_chat | 8642 |
 | node | node | 8650 |
@@ -99,7 +101,7 @@ so a law's number is stable even as the registry grows.
 | 11 | SECRETS-NEVER-IN-ENV | bootc | `99-postcheck.sh:SECRETS-NEVER-IN-ENV` |
 | 12 | BAKE-NOT-FETCH | both | `98-drift-checks.sh:check_dag_integrity,check_firstboot_degrade_open` |
 | 13 | NATIVE-DROPINS | both | `98-drift-checks.sh:check_resolver_twin_parity` |
-| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages` |
+| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages,check_agentpipe_mypy` |
 | 15 | DOUBLE-REPO-TRIPLE-CHECK | both | `process:CLAUDE.md/AGENTS.md (both repos); parity via 98-drift-checks.sh checks 22+27` |
 | 16 | ONE-TEMPLATE-PER-TYPE | both | `98-drift-checks.sh:check_template_conformance` |
 

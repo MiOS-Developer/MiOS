@@ -89,6 +89,8 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 | inference | llm_heavy | 8520 |
 | inference | llm_igpu | 8540 |
 | inference | rpc_igpu | 8550 |
+| inference | igpu (pinned) | 11436 |
+| inference | win_llm_light (pinned) | 11450 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:inference -->

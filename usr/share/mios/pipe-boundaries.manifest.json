@@ -191,18 +191,6 @@
       ],
       "public_symbols": []
     },
-    "usr/lib/mios/agent-pipe/mios_pipe/context/kvfork.py": {
-      "configure_kwargs": [],
-      "public_symbols": [
-        "clamp_branches",
-        "conv_token",
-        "fork_outcome",
-        "kv_filename",
-        "parse_bool",
-        "plan_fork",
-        "validate_fork"
-      ]
-    },
     "usr/lib/mios/agent-pipe/mios_pipe/context/kvgc.py": {
       "configure_kwargs": [],
       "public_symbols": [

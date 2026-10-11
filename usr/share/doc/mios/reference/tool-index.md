@@ -452,7 +452,6 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_pipe/context/compact.py` | WS-A5 rolling-summary compaction planner for the agent-pipe. When a conversation's message history exceeds a token budget, plan_compaction... |
 | `usr/lib/mios/agent-pipe/mios_pipe/context/ctxpack.py` | WS-A5 priority token-budget context packer for the agent-pipe. |
 | `usr/lib/mios/agent-pipe/mios_pipe/context/grounding.py` | Per-turn ENV-GROUNDING subsystem extracted verbatim from server.py (refactor R2 leaf wave). |
-| `usr/lib/mios/agent-pipe/mios_pipe/context/kvfork.py` | Provides filesystem-safe KV-cache fork primitives for the agent-pipe, enabling branching of shared conversation prefixes into independent c... |
 | `usr/lib/mios/agent-pipe/mios_pipe/context/kvgc.py` | WS-A4 KV-cache file garbage-collection PLANNER. Pure-stdlib decision core for reclaiming the on-disk KV slot-save files the agent-pipe writes... |
 | `usr/lib/mios/agent-pipe/mios_pipe/context/promptfmt.py` | Pure prompt text-block formatters lifted verbatim from server.py AI-related: server.py, mios_fanout.py, mios_swarm.py, mios_daemons.py A... |
 | `usr/lib/mios/agent-pipe/mios_pipe/context/promptver.py` | WS-LIFECYCLE-VER prompt-version registry (the PURE half). The ~12 agent-pipe hop prompts (router/refine/synthesis/polish/swarm/native-lo... |
@@ -798,7 +797,7 @@ is generated, its generator is here.
 | `usr/lib/mios/mios_translate.py` | Pure Python translation engine for loop.v1 events, Responses items, and cross-harness frame normalization. |
 | `usr/lib/mios/test_mios_comments.py` | Unit tests for the comment lexer and classifier -- one fixture per classifier rule so every rule is proven to fire, plus lexer tests f... |
 
-<!-- derived from the AI-hint headers of 445 file(s) matching usr/lib/mios/*.py -->
+<!-- derived from the AI-hint headers of 444 file(s) matching usr/lib/mios/*.py -->
 <!-- /MIOS-GEN:index:usr/lib/mios/*.py -->
 
 ## Cross-refs

@@ -41,6 +41,8 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | inference | llm_heavy | 8520 |
 | inference | llm_igpu | 8540 |
 | inference | rpc_igpu | 8550 |
+| inference | igpu (pinned) | 11436 |
+| inference | win_llm_light (pinned) | 11450 |
 | node | ai_legacy | 8640 |
 | node | field_live_chat | 8642 |
 | node | node | 8650 |

@@ -720,7 +720,7 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
 
         let ps_keys_common: BTreeSet<&str> = ps_keys
             .into_iter()
-            .filter(|k| !k.starts_with("MIOS_WIN_"))
+            .filter(|k| !k.starts_with("MIOS_WIN_") || sh_keys.contains(k))
             .collect();
 
         let sh_keys_common = sh_keys;

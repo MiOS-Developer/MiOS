@@ -2768,6 +2768,7 @@ ports.rdp  MIOS_PORTS_RDP
 ports.pgvector  MIOS_PORTS_PGVECTOR
 ports.pgvector_internal  MIOS_PORTS_PGVECTOR_INTERNAL
 ports.llm_light  MIOS_PORTS_LLM_LIGHT
+ports.win_llm_light  MIOS_PORTS_WIN_LLM_LIGHT
 ports.cpu_node  MIOS_PORTS_CPU_NODE
 ports.agent_pipe  MIOS_PORTS_AGENT_PIPE
 ports.ttyd_bash  MIOS_PORTS_TTYD_BASH
@@ -2778,6 +2779,7 @@ ports.headscale  MIOS_PORTS_HEADSCALE
 ports.opencode_gateway  MIOS_PORTS_OPENCODE_GATEWAY
 ports.llm_heavy  MIOS_PORTS_LLM_HEAVY
 ports.llm_igpu  MIOS_PORTS_LLM_IGPU
+ports.igpu  MIOS_PORTS_IGPU
 ports.rpc_igpu  MIOS_PORTS_RPC_IGPU
 ports.prefilter  MIOS_PORTS_PREFILTER
 ports.arbiter  MIOS_PORTS_ARBITER
@@ -2829,6 +2831,8 @@ ports.categories.cluster.doc  MIOS_PORTS_CATEGORIES_CLUSTER_DOC
 ports.categories.inference.base  MIOS_PORTS_CATEGORIES_INFERENCE_BASE
 ports.categories.inference.stride  MIOS_PORTS_CATEGORIES_INFERENCE_STRIDE
 ports.categories.inference.members  MIOS_PORTS_CATEGORIES_INFERENCE_MEMBERS
+ports.categories.inference.pinned.igpu  MIOS_PORTS_CATEGORIES_INFERENCE_PINNED_IGPU
+ports.categories.inference.pinned.win_llm_light  MIOS_PORTS_CATEGORIES_INFERENCE_PINNED_WIN_LLM_LIGHT
 ports.categories.inference.doc  MIOS_PORTS_CATEGORIES_INFERENCE_DOC
 ports.categories.data.base  MIOS_PORTS_CATEGORIES_DATA_BASE
 ports.categories.data.stride  MIOS_PORTS_CATEGORIES_DATA_STRIDE
