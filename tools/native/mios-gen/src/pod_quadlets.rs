@@ -1261,7 +1261,7 @@ pub fn run_pod_quadlets(
             } else {
                 String::new()
             };
-            if cur.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
+            if cur != text {
                 eprintln!(
                     "[pod-gen] DRIFT {} (regenerate via tools/generate-pod-quadlets.py)",
                     out.display()
@@ -1343,7 +1343,7 @@ pub fn run_pod_quadlets(
                 } else {
                     String::new()
                 };
-                if cur.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
+                if cur != text {
                     eprintln!(
                         "[pod-gen] DRIFT {} (regenerate via tools/generate-pod-quadlets.py)",
                         out.display()
