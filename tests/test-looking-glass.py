@@ -17,7 +17,12 @@ import sys
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
+_CANDIDATES = [
+    os.path.normpath(os.path.join(_HERE, "..")),
+    os.path.normpath(r"M:\MiOS\worktrees\mios-integration"),
+    os.path.normpath(r"C:\MiOS"),
+]
+_ROOT = next((c for c in _CANDIDATES if os.path.isfile(os.path.join(c, "usr", "libexec", "mios", "display", "looking_glass.py"))), os.path.normpath(os.path.join(_HERE, "..")))
 
 # Load Looking Glass B6 Config Manager (usr/libexec/mios/display/looking_glass.py)
 _LG_CONFIG_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "display", "looking_glass.py")

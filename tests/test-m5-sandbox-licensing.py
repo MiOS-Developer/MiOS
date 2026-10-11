@@ -401,8 +401,11 @@ class TestMilestoneM5SandboxLicensing(unittest.TestCase):
 
     def test_tier3_microvm_krun_runtime_and_quadlet(self):
         """Tier 3: Verify krun OCI runtime registration and MicroVM Quadlet template."""
-        runtime_conf_path = find_file(["usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf"])
-        self.assertIsNotNone(runtime_conf_path, "20-mios-krun-runtime.conf must exist")
+        runtime_conf_path = find_file([
+            "usr/share/containers/containers.conf.d/10-mios-pasta.conf",
+            "usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf",
+        ])
+        self.assertIsNotNone(runtime_conf_path, "krun runtime configuration must exist")
         with open(runtime_conf_path, "r", encoding="utf-8") as f:
             runtime_content = f.read()
 

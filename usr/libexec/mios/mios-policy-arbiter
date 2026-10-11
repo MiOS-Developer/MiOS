@@ -48,7 +48,11 @@ class _Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("content-length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}") if n else {}
         except (ValueError, json.JSONDecodeError):
-            req = {}
+            self._send(400, {"ok": False, "error": "Malformed JSON payload"})
+            return
+        if not isinstance(req, dict):
+            self._send(400, {"ok": False, "error": "Request body must be a JSON object"})
+            return
         deny, allow, block_tier = _policy()
         v = arb.decide(str(req.get("verb", "")), str(req.get("tier", "")),
                        deny=deny, allow=allow, block_tier=block_tier)
