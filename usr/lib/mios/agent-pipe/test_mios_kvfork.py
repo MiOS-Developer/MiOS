@@ -14,12 +14,9 @@ import re
 import sys
 
 import mios_kvfork
-from mios_pipe.context import kvfork as context_kvfork
 
-# The primitives exist twice (mios_kvfork re-implemented context.kvfork); every
-# contract check runs against both, so the copies cannot drift apart unseen.
-_IMPLEMENTATIONS = (("mios_kvfork", mios_kvfork),
-                    ("mios_pipe.context.kvfork", context_kvfork))
+# The primitives are consolidated in mios_kvfork per task_3585 (ADR-0030)
+_IMPLEMENTATIONS = (("mios_kvfork", mios_kvfork),)
 
 _RESULTS: list = []
 _LABEL = ""
