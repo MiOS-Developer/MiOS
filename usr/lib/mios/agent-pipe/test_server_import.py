@@ -32,8 +32,17 @@ def _resolve_toml():
         os.environ["MIOS_TOML"] = toml
 
 def _install_stubs():
-    for name in ("websockets", "uvicorn"):
-        sys.modules.setdefault(name, mock.MagicMock(name=name))
+    class _MockModule(types.ModuleType):
+        def __getattr__(self, name):
+            if name.startswith("__") and name.endswith("__"):
+                raise AttributeError(name)
+            return mock.MagicMock(name=name)
+
+    for name in ("websockets", "uvicorn", "smolagents", "mcp", "mcp.client", "mcp.client.sse", "mcp.client.streamable_http"):
+        mod = _MockModule(name)
+        mod.__path__ = []
+        mod.__file__ = f"<stub {name}>"
+        sys.modules.setdefault(name, mod)
 
     try:
         import httpx

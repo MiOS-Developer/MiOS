@@ -937,7 +937,9 @@ def rt_main():
         "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_USER_TOML",
         "MIOS_VENDOR_TOML_D", "MIOS_HOST_TOML_D", "MIOS_USER_TOML_D",
         "MIOS_DRIFT_ROOT", "MIOS_DRIFT_CHECK_ROOT", "MIOS_DRIFT_CHECK_SOFT",
-        "MIOS_TOML_ROOT", "MIOS_ROOT_LIB", "MIOS_CONFIG_DIR", "MIOS_ROOT"
+        "MIOS_TOML_ROOT", "MIOS_ROOT_LIB", "MIOS_CONFIG_DIR", "MIOS_ROOT",
+        "MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL",
+        "MIOS_ENV_MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL",
     }
 
     # userenv.sh resolves through the first tier it finds: mios-resolver, then
