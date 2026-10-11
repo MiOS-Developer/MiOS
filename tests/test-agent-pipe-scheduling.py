@@ -30,6 +30,7 @@ from mios_priority_sched import (
     PriorityGate, PriorityRequest,
     PRIORITY_FOREGROUND, PRIORITY_BACKGROUND, PRIORITY_INTERACTIVE,
 )
+from test_server_import import check_ast_use_before_def
 
 
 # ============================================================================
@@ -171,5 +172,59 @@ class TestPrioritySched(unittest.TestCase):
         self.assertEqual(len(gate._submitted), 1)
 
 
+# ============================================================================
+# Domain 2.4: AST Sequential Use-Before-Def Boundary Verification (Task 2494)
+# (Catches symbol relocation and import ordering errors like 4c7bcfa7)
+# ============================================================================
+
+class TestAgentPipeASTBoundary(unittest.TestCase):
+    """Validates top-level symbol resolution order and catches symbol relocation defects."""
+
+    def test_server_ast_use_before_definition(self):
+        """server.py executes sequentially with 0 use-before-definition violations in <50ms."""
+        import time
+        server_path = os.path.join(_AGENT_PIPE, "server.py")
+        t0 = time.perf_counter()
+        violations = check_ast_use_before_def(file_path=server_path)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        self.assertEqual(violations, [], f"Use-before-def violations in server.py: {violations}")
+        self.assertLess(elapsed_ms, 50.0, f"Execution time {elapsed_ms:.2f}ms exceeded 50ms budget")
+
+    def test_relocation_negative_control_fails_red(self):
+        """Planted call relocated above its definition fails RED with exact diagnostic."""
+        planted = (
+            "import os\n"
+            "# Defect: call before definition\n"
+            "_configure_scratchpad(_conv_key_var)\n\n"
+            "def _configure_scratchpad(conv_key):\n"
+            "    return conv_key\n\n"
+            "_conv_key_var = 'default'\n"
+        )
+        violations = check_ast_use_before_def(source=planted)
+        symbols = [v[0] for v in violations]
+        lines = [v[1] for v in violations]
+        self.assertIn("_configure_scratchpad", symbols)
+        self.assertIn("_conv_key_var", symbols)
+        self.assertIn(3, lines)
+
+    def test_unbound_rhs_assignment_negative_control(self):
+        """Planted assignment using undefined global fails RED with symbol diagnostic."""
+        planted = "x = _unbound_variable + 42\n"
+        violations = check_ast_use_before_def(source=planted)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][0], "_unbound_variable")
+        self.assertEqual(violations[0][1], 1)
+
+    def test_core_agent_pipe_modules_clean(self):
+        """Core agent-pipe modules exhibit 0 use-before-def violations."""
+        for mod in ["context_compactor.py", "council.py", "macaroon_auth.py", "pss_regulator.py"]:
+            mod_path = os.path.join(_AGENT_PIPE, mod)
+            if os.path.isfile(mod_path):
+                violations = check_ast_use_before_def(file_path=mod_path)
+                self.assertEqual(violations, [], f"Violations in {mod}: {violations}")
+
+
 if __name__ == "__main__":
     unittest.main()
+

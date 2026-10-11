@@ -3,10 +3,13 @@
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 """Stub-and-import gate: prove server.py imports cleanly with all DI wired (refactor R0+)."""
 
+import ast
+import builtins
 import os
 import importlib
 import functools
 import sys
+import time
 import types
 from unittest import mock
 
@@ -236,6 +239,256 @@ def _check_export_identity_controls():
     check("export identity rejects an undeclared wrapper", not _same_export(types.SimpleNamespace(export=traced), source, "export"))
     check("export identity rejects a wrong wrapped target", not _same_export(types.SimpleNamespace(export=traced), types.SimpleNamespace(export=spoof), "export", wrapped=True))
 
+def check_ast_use_before_def(file_path=None, source=None):
+    """Sequential AST use-before-def boundary verification.
+
+    Simulates module-level sequential execution order to detect when module-level
+    functions, variables, or imports are used before they are defined (catching the
+    4c7bcfa7 symbol relocation and import ordering defect class).
+
+    Returns a list of tuples: (symbol_name, line_number, filename).
+    """
+    if source is None:
+        if file_path is None:
+            raise ValueError("Must provide file_path or source")
+        with open(file_path, "r", encoding="utf-8") as f:
+            source = f.read()
+    filename = file_path or "<string>"
+    tree = ast.parse(source, filename)
+
+    defined = set(dir(builtins)) | {
+        "__name__", "__doc__", "__file__", "__package__", "__annotations__",
+        "__builtins__", "__loader__", "__spec__", "__path__", "__cached__"
+    }
+    violations = []
+
+    def _get_bound_names(target):
+        names = set()
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                names.update(_get_bound_names(elt))
+        elif isinstance(target, ast.Starred):
+            names.update(_get_bound_names(target.value))
+        return names
+
+    def _get_loaded_names(node, local_vars=None):
+        if local_vars is None:
+            local_vars = set()
+        loaded = []
+
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in local_vars:
+                loaded.append((node.id, getattr(node, "lineno", 0)))
+            return loaded
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return loaded
+
+        if isinstance(node, ast.Lambda):
+            for d in node.args.defaults:
+                loaded.extend(_get_loaded_names(d, local_vars))
+            for d in node.args.kw_defaults:
+                if d:
+                    loaded.extend(_get_loaded_names(d, local_vars))
+            return loaded
+
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            comp_locals = set(local_vars)
+            for gen in node.generators:
+                loaded.extend(_get_loaded_names(gen.iter, comp_locals))
+                comp_locals.update(_get_bound_names(gen.target))
+                for if_expr in gen.ifs:
+                    loaded.extend(_get_loaded_names(if_expr, comp_locals))
+            loaded.extend(_get_loaded_names(node.elt, comp_locals))
+            return loaded
+
+        if isinstance(node, ast.DictComp):
+            comp_locals = set(local_vars)
+            for gen in node.generators:
+                loaded.extend(_get_loaded_names(gen.iter, comp_locals))
+                comp_locals.update(_get_bound_names(gen.target))
+                for if_expr in gen.ifs:
+                    loaded.extend(_get_loaded_names(if_expr, comp_locals))
+            loaded.extend(_get_loaded_names(node.key, comp_locals))
+            loaded.extend(_get_loaded_names(node.value, comp_locals))
+            return loaded
+
+        if isinstance(node, getattr(ast, "NamedExpr", ())):
+            loaded.extend(_get_loaded_names(node.value, local_vars))
+            return loaded
+
+        for child in ast.iter_child_nodes(node):
+            loaded.extend(_get_loaded_names(child, local_vars))
+        return loaded
+
+    def _check_expr(expr):
+        for name, lineno in _get_loaded_names(expr):
+            if name not in defined:
+                violations.append((name, lineno, filename))
+
+    def _visit_stmt(stmt):
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for d in stmt.decorator_list:
+                _check_expr(d)
+            for d in stmt.args.defaults:
+                _check_expr(d)
+            for d in stmt.args.kw_defaults:
+                if d:
+                    _check_expr(d)
+            defined.add(stmt.name)
+        elif isinstance(stmt, ast.ClassDef):
+            for d in stmt.decorator_list:
+                _check_expr(d)
+            for b in stmt.bases:
+                _check_expr(b)
+            for k in stmt.keywords:
+                _check_expr(k.value)
+            defined.add(stmt.name)
+        elif isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                defined.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(stmt, ast.ImportFrom):
+            for alias in stmt.names:
+                if alias.name != "*":
+                    defined.add(alias.asname or alias.name)
+        elif isinstance(stmt, ast.Assign):
+            _check_expr(stmt.value)
+            for t in stmt.targets:
+                defined.update(_get_bound_names(t))
+        elif isinstance(stmt, ast.AnnAssign):
+            if stmt.value:
+                _check_expr(stmt.value)
+            defined.update(_get_bound_names(stmt.target))
+        elif isinstance(stmt, ast.AugAssign):
+            _check_expr(stmt.value)
+            _check_expr(stmt.target)
+        elif isinstance(stmt, ast.Expr):
+            _check_expr(stmt.value)
+        elif isinstance(stmt, ast.If):
+            _check_expr(stmt.test)
+            for s in stmt.body:
+                _visit_stmt(s)
+            for s in stmt.orelse:
+                _visit_stmt(s)
+        elif isinstance(stmt, ast.Try):
+            for s in stmt.body:
+                _visit_stmt(s)
+            for h in stmt.handlers:
+                if getattr(h, "type", None):
+                    _check_expr(h.type)
+                if getattr(h, "name", None):
+                    defined.add(h.name)
+                for s in h.body:
+                    _visit_stmt(s)
+            for s in stmt.orelse:
+                _visit_stmt(s)
+            for s in stmt.finalbody:
+                _visit_stmt(s)
+        elif isinstance(stmt, (ast.With, getattr(ast, "AsyncWith", ()))):
+            for item in stmt.items:
+                _check_expr(item.context_expr)
+                if item.optional_vars:
+                    defined.update(_get_bound_names(item.optional_vars))
+            for s in stmt.body:
+                _visit_stmt(s)
+        elif isinstance(stmt, (ast.For, getattr(ast, "AsyncFor", ()))):
+            _check_expr(stmt.iter)
+            defined.update(_get_bound_names(stmt.target))
+            for s in stmt.body:
+                _visit_stmt(s)
+            for s in stmt.orelse:
+                _visit_stmt(s)
+        elif isinstance(stmt, ast.While):
+            _check_expr(stmt.test)
+            for s in stmt.body:
+                _visit_stmt(s)
+            for s in stmt.orelse:
+                _visit_stmt(s)
+        elif isinstance(stmt, ast.Assert):
+            _check_expr(stmt.test)
+            if stmt.msg:
+                _check_expr(stmt.msg)
+        elif isinstance(stmt, ast.Raise):
+            if stmt.exc:
+                _check_expr(stmt.exc)
+            if getattr(stmt, "cause", None):
+                _check_expr(stmt.cause)
+
+    for stmt in tree.body:
+        _visit_stmt(stmt)
+    return violations
+
+def _check_ast_boundary_controls():
+    """Verify AST use-before-def checker on server.py, agent-pipe modules, and planted negative controls."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    server_path = os.path.join(here, "server.py")
+
+    # 1. Negative control: planted relocation defect (use-before-def like 4c7bcfa7)
+    planted_relocation = (
+        "import os\n"
+        "# Planted relocation defect: call before definitions\n"
+        "_configure_scratchpad(_conv_key_var)\n\n"
+        "def _configure_scratchpad(conv_key):\n"
+        "    return conv_key\n\n"
+        "_conv_key_var = 'default'\n"
+    )
+    v_planted = check_ast_use_before_def(source=planted_relocation)
+    v_names = {v[0] for v in v_planted}
+    check(
+        "AST use-before-def negative control flags relocated call",
+        "_configure_scratchpad" in v_names and "_conv_key_var" in v_names,
+        f"detected violations: {v_planted}"
+    )
+
+    planted_assign = "x = _unbound_symbol_value + 1\n"
+    v_assign = check_ast_use_before_def(source=planted_assign)
+    check(
+        "AST use-before-def negative control flags unbound RHS in assignment",
+        len(v_assign) == 1 and v_assign[0][0] == "_unbound_symbol_value",
+        f"detected violations: {v_assign}"
+    )
+
+    planted_decorator = (
+        "@_unbound_decorator\n"
+        "def dummy_fn():\n"
+        "    pass\n"
+    )
+    v_deco = check_ast_use_before_def(source=planted_decorator)
+    check(
+        "AST use-before-def negative control flags unbound decorator",
+        len(v_deco) == 1 and v_deco[0][0] == "_unbound_decorator",
+        f"detected violations: {v_deco}"
+    )
+
+    # 2. Positive check on clean server.py
+    t0 = time.perf_counter()
+    violations_server = check_ast_use_before_def(file_path=server_path)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    check(
+        "AST use-before-def check on server.py has 0 violations",
+        len(violations_server) == 0,
+        f"violations={violations_server}"
+    )
+    check(
+        "AST use-before-def check executes in <50ms",
+        elapsed_ms < 50.0,
+        f"elapsed={elapsed_ms:.2f}ms"
+    )
+
+    # 3. Positive check on core agent-pipe modules
+    for mod_name in ["context_compactor.py", "council.py", "macaroon_auth.py", "pss_regulator.py"]:
+        mod_path = os.path.join(here, mod_name)
+        if os.path.isfile(mod_path):
+            v_mod = check_ast_use_before_def(file_path=mod_path)
+            check(
+                f"AST use-before-def check on {mod_name} clean",
+                len(v_mod) == 0,
+                f"violations={v_mod}"
+            )
+
 def _check_scheduler_wiring(server):
     """The [dispatch] scheduler knobs reach their consumers after server's DI runs."""
     import asyncio
@@ -356,6 +609,7 @@ def main():
     _resolve_toml()
     _install_stubs()
     _check_export_identity_controls()
+    _check_ast_boundary_controls()
     try:
         import server  # noqa: E402 -- executes ALL module-level code incl. configure() DI
     except Exception as e:  # noqa: BLE001
