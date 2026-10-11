@@ -76,15 +76,15 @@ class TestLevelGitignoreIsolation(unittest.TestCase):
 
 
 class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
-    """Verifies that the repository operates from authorized root paths per
+    r"""Verifies that the repository operates from authorized root paths per
     the Operator's Singular Root Axiom (C:\ = .git and .git = ./ROOT)."""
 
     def test_01_repository_overlaid_on_host_c_root(self):
-        """Positive Control: Verify that .git resides at host C:\ root per Operator Axiom."""
+        r"""Positive Control: Verify that .git resides at host C:\ root per Operator Axiom."""
         host_c_git = Path("C:/.git")
         self.assertTrue(
             host_c_git.exists(),
-            "Host C:\ must contain a .git directory (Operator Axiom: C:\ = .git and .git = ./ROOT)"
+            r"Host C:\ must contain a .git directory (Operator Axiom: C:\ = .git and .git = ./ROOT)"
         )
 
     def test_02_worktree_reports_zero_untracked_host_folders(self):
