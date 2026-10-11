@@ -156,6 +156,7 @@
     },
     "usr/lib/mios/agent-pipe/mios_pipe/auth.py": {
       "configure_kwargs": [
+        "allowlist_hosts",
         "api_require_auth",
         "auth_gated_prefixes",
         "auth_open_paths",
@@ -722,6 +723,8 @@
     "usr/lib/mios/agent-pipe/mios_pipe/redact.py": {
       "configure_kwargs": [],
       "public_symbols": [
+        "RedactingLogFilter",
+        "filter",
         "redact"
       ]
     },

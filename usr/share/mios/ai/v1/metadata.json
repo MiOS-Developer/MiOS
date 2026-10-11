@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3277,
-  "total_metadata_entries": 2916,
-  "total_hints": 2906,
-  "total_functions_indexed": 1480,
-  "total_related_links": 5086,
+  "total_files_scanned": 3246,
+  "total_metadata_entries": 2897,
+  "total_hints": 2890,
+  "total_functions_indexed": 1483,
+  "total_related_links": 5076,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -344,15 +344,6 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
-    },
-    {
-      "path": ".githooks/pre-commit",
-      "hint": "Git pre-commit hook enforcing lossless environment resolution.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
     },
     {
       "path": ".github/ai-instructions.md",
@@ -2407,35 +2398,6 @@
       "has_shebang": false
     },
     {
-      "path": "config/bootstrap/bootstrap.ps1",
-      "hint": "Forwarding wrapper delegating to provision-env.ps1 for MiOS environment and secret provisioning.",
-      "related": [
-        "config/bootstrap/provision-env.ps1"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "config/bootstrap/bootstrap.sh",
-      "hint": "Initializes the MiOS environment by creating directory structures, sourcing build configurations, and prompting for credentials (GitHub PAT, admin cre...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "config/bootstrap/provision-env.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "docs/DOD.md",
       "hint": "The project default Definition of Done for MiOS, grounded in this repo's actual gates. A task may tighten it, never loosen it. Write the task-specific DoD BEFORE the code.",
       "related": [
@@ -3561,33 +3523,6 @@
       "has_shebang": false
     },
     {
-      "path": "harness/verification_gates.py",
-      "hint": "Embedded harness gate that runs every invariants/test_*.sh and fails closed: 0 is pass, 2 is skip (not a pass), anything else fails.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "image-versions.yml",
-      "hint": "Defines pinned SHA256 digests for base images and bootc-image-builder tools, used by Renovate to automate image updates and by build scripts to ensure reproducible MiOS builds.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "install-mios-agents.sh",
-      "hint": "bash Installs wrapper scripts for mios-agent-claude, mios-agent-gemini, and mios-llm to /usr/local/bin/ to inject the MiOS system prompt into various LLM ...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
       "path": "installation/README.md",
       "hint": "Usage + design reference for mios-install, the unified provisioning",
       "related": [
@@ -3671,42 +3606,6 @@
       "has_shebang": true
     },
     {
-      "path": "invariants/test_invariant_hw.sh",
-      "hint": "Hardware invariant: on a bootc VFIO host the CXL IOMMU bypass karg must be present; skips (exit 2) where no VFIO kargs exist.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "invariants/test_invariant_rel.sh",
-      "hint": "Reliability invariant that proves the two-sided control itself: a passing positive control and a planted failure that must be caught.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "invariants/test_invariant_sec.sh",
-      "hint": "Security invariant: where Tetragon is installed, the agent-sandboxing TracingPolicy file must be present; skips (exit 2) where it is not.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "llms-full.txt",
-      "hint": "Full-text companion to llms.txt for mios-dev/mios; mios-manual splices generated manual content into it ([docs].render_extra).",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "llms.txt",
       "hint": "Machine-readable repository index (llms.txt) for mios-dev/mios \u2014 the system FHS overlay of MiOS: Containerfile, build automation, systemd units, Quadlet sidecars, kernel args, the mios.toml SSOT and the baked documentation surfaces. Orients an LLM/agent to what MiOS IS, what this repo contributes, the OpenAI-compatible endpoint contract (Architectural Law 5), and where the canonical files live.",
       "related": [
@@ -3728,71 +3627,6 @@
     {
       "path": "mios-build-local.ps1",
       "hint": "Legacy PowerShell redirector that routes local build commands to build-mios.ps1 to maintain backward compatibility for existing MiOS build scripts and one-liners.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-cloud-build.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-pipeline.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-windows-export.ps1",
-      "hint": "A Windows-native OCI image exporter that streams rootfs layers directly from container storage to uncompressed .tar or converts disk images to .vhdx via qemu-img.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "powershell/profile.ps1",
-      "hint": "MiOS configuration and runtime asset for profile.ps1.",
-      "related": [
-        "/usr/libexec/mios/mios-dashboard",
-        "/usr/libexec/mios/mios-ssh-dev-cmd",
-        "mios-dashboard",
-        "mios-ssh-dev-cmd",
-        "mios-dev",
-        "mios-bootstrap",
-        "mios-build",
-        "mios-pull",
-        "mios-update",
-        "mios-config"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "preflight.ps1",
-      "hint": "Validates and installs system-level prerequisites (WSL2, Virtual Machine Platform, and Windows Edition checks) required for MiOS operation; agents use this to ensure the host en...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "push-to-github.ps1",
-      "hint": "Automates the MiOS release pipeline by cloning the bootstrap repo, overlaying staged changes, bumping the VERSION, updating CHANGELOG.md, and pushing to the main branch via GitHub.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/root.md",
@@ -10425,13 +10259,17 @@
     },
     {
       "path": "tools/test_conformance_golden.py",
-      "hint": "Golden CLI fixture test runner for check-template-conformance CLI output and behavior.",
+      "hint": "Golden CLI fixture and template conformance test runner against committed independent golden.snap without auto-regeneration.",
       "related": [
-        "/usr/libexec/mios/check-template-conformance",
-        "tests/templates/conform-cli/"
+        "usr/libexec/mios/check-template-conformance",
+        "tests/templates/golden.snap",
+        "usr/libexec/mios/mios-new"
       ],
       "functions": [
-        "test_conformance_golden_cli"
+        "test_templates_match_independent_golden_snapshot",
+        "test_tampered_template_detection",
+        "test_conformant_mini_tree",
+        "test_missing_ai_hint_header"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -34538,24 +34376,6 @@
       "doc": "usr/share/doc/mios/manual/ch06-security.md",
       "comment_style": "hash",
       "has_shebang": false
-    },
-    {
-      "path": "var/lib/mios/embeddings/ingest_local.py",
-      "hint": "Processes chunks.jsonl by generating embeddings via OpenAI-compatible local endpoints (llama.cpp, Ollama, vLLM) and upserting the...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/embeddings.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "var/lib/mios/evals/mios-knowledge.local-runner.py",
-      "hint": "Executes MiOS knowledge evaluation tests against OpenAI-compatible endpoints to validate model responses against criter...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/evals.md",
-      "comment_style": "hash",
-      "has_shebang": true
     }
   ]
 }

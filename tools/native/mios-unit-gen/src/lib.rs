@@ -696,7 +696,7 @@ pub fn project_deployment(
                             }
                         }
                     }
-                    if have.replace("\r\n", "\n") != *body {
+                    if have != *body {
                         drift.push(format!("{relative}: drifted from SSOT"));
                     }
                 }

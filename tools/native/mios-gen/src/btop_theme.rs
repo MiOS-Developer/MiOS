@@ -178,6 +178,7 @@ pub fn run_render_btop_theme(
         None => declared_path("target")?,
     };
 
+    let to_write = rendered.replace("\r\n", "\n");
     if check {
         if !target_path.is_file() {
             return Err(format!(
@@ -188,7 +189,7 @@ pub fn run_render_btop_theme(
         let disk_content = fs::read_to_string(&target_path)
             .map_err(|e| format!("Failed to read {}: {}", target_path.display(), e))?;
         BtopThemeEngine::validate_theme_content(&disk_content).map_err(|errs| errs.join("; "))?;
-        if disk_content.replace("\r\n", "\n") != rendered.replace("\r\n", "\n") {
+        if disk_content != to_write {
             return Err(format!(
                 "btop theme drifted from SSOT projection at {}",
                 target_path.display()
@@ -199,7 +200,7 @@ pub fn run_render_btop_theme(
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create parent dir {}: {}", parent.display(), e))?;
         }
-        fs::write(&target_path, rendered.as_bytes())
+        fs::write(&target_path, to_write.as_bytes())
             .map_err(|e| format!("Failed to write {}: {}", target_path.display(), e))?;
     }
 

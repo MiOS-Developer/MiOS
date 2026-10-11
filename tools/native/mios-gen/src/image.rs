@@ -91,11 +91,10 @@ pub mod bib_configs {
             let raw_content = fs::read_to_string(abs_path)
                 .map_err(|e| format!("Failed to read {}: {}", abs_path.display(), e))?;
 
-            let current_normalized = normalize_newlines(&raw_content);
-            let rendered_normalized =
-                normalize_newlines(&render_artifact_config(&raw_content, target_size));
+            let rendered = render_artifact_config(&raw_content, target_size);
+            let rendered_normalized = normalize_newlines(&rendered);
 
-            if current_normalized != rendered_normalized {
+            if raw_content != rendered_normalized {
                 stale_files.push(rel_path.to_string());
             }
 
@@ -313,7 +312,8 @@ pub mod cargo_manifests {
                 )
             })?;
 
-            if normalize_newlines(&committed_content) != normalize_newlines(&projected_content) {
+            let to_write = normalize_newlines(&projected_content);
+            if committed_content != to_write {
                 return Err(
                 "[generate-cargo-manifests] FAIL: tools/native/Cargo.toml differs from its projection".to_string()
             );
@@ -326,7 +326,8 @@ pub mod cargo_manifests {
             })
         } else {
             // Write mode
-            fs::write(&cargo_toml_path, projected_content.as_bytes())
+            let to_write = normalize_newlines(&projected_content);
+            fs::write(&cargo_toml_path, to_write.as_bytes())
                 .map_err(|e| format!("Failed to write {}: {}", cargo_toml_path.display(), e))?;
 
             Ok(CargoManifestResult {

@@ -575,7 +575,7 @@ pub mod gate_index {
             }
             let existing = fs::read_to_string(&output_path)
                 .map_err(|e| (format!("Failed to read {}: {e}", output_path.display()), 1))?;
-            if existing.replace("\r\n", "\n") != tsv_content.replace("\r\n", "\n") {
+            if existing != tsv_content {
                 return Err((
                 "ERROR: drift-gate-index.tsv is out of sync with 98-drift-checks.sh. Run mios-gen gate-index to regenerate."
                     .to_string(),
@@ -757,7 +757,7 @@ pub mod pipeline_index {
             }
             let existing = fs::read_to_string(&output_path)
                 .map_err(|e| (format!("Failed to read {}: {e}", output_path.display()), 1))?;
-            if existing.replace("\r\n", "\n") != tsv_content.replace("\r\n", "\n") {
+            if existing != tsv_content {
                 return Err((
                 "ERROR: pipeline-index.tsv is out of sync with automation scripts. Run mios-gen pipeline-index to regenerate."
                     .to_string(),
