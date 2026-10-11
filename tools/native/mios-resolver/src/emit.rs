@@ -773,9 +773,17 @@ pub mod emit_shell {
                 .get("MIOS_PGVECTOR_LISTEN_LOOPBACK")
                 .map(|s| s == "true" || s == "1")
                 .unwrap_or(true);
+            let loopback_addr = exports
+                .get("MIOS_NETWORK_LOOPBACK")
+                .map(|s| s.as_str())
+                .unwrap_or("127.0.0.1");
+            let bind_all_addr = exports
+                .get("MIOS_NETWORK_BIND_ALL")
+                .map(|s| s.as_str())
+                .unwrap_or("0.0.0.0");
             exports.insert(
                 "MIOS_PG_BIND_ADDR".to_string(),
-                if is_loopback { "127.0.0.1" } else { "0.0.0.0" }.to_string(),
+                if is_loopback { loopback_addr } else { bind_all_addr }.to_string(),
             );
         }
 
