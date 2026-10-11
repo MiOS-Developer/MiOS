@@ -20,7 +20,7 @@ def find_mios_root() -> Path:
     local_root = Path(__file__).resolve().parent.parent
     if (local_root / "usr/share/mios/mios.toml").exists():
         return local_root
-    for c in [Path("M:/MiOS/worktrees/mios-integration"), Path("C:/MiOS")]:
+    for c in [Path("C:/"), Path("M:/MiOS/worktrees/mios-integration"), Path("C:/MiOS")]:
         if c.is_dir() and (c / "usr/share/mios/mios.toml").exists():
             return c
     return local_root
@@ -76,15 +76,15 @@ class TestLevelGitignoreIsolation(unittest.TestCase):
 
 
 class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
-    """Verifies that the repository operates from authorized worktree paths and strictly
-    protects the host Windows environment per Operator Directive (2026-10-11T20:55:31Z)."""
+    """Verifies that the repository operates from authorized root paths per
+    the Operator's Singular Root Axiom (C:\ = .git and .git = ./ROOT)."""
 
-    def test_01_repository_not_overlaid_on_host_c_root(self):
-        """Positive Control: Verify that .git does NOT reside at host C:\\ root."""
+    def test_01_repository_overlaid_on_host_c_root(self):
+        """Positive Control: Verify that .git resides at host C:\ root per Operator Axiom."""
         host_c_git = Path("C:/.git")
-        self.assertFalse(
+        self.assertTrue(
             host_c_git.exists(),
-            "Host C:\\ must NOT contain a .git directory (Operator Directive: host C:\\ is Windows gaming host)"
+            "Host C:\ must contain a .git directory (Operator Axiom: C:\ = .git and .git = ./ROOT)"
         )
 
     def test_02_worktree_reports_zero_untracked_host_folders(self):
