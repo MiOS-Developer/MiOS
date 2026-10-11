@@ -37,32 +37,44 @@ def configure(**deps) -> None:
         if _k in _INJECTED:
             g[_k] = _v
 
+_gpu_state_cache = {"state": "AI_EXCLUSIVE", "ts": -1e9}
+
 def get_gpu_arbiter_state() -> str:
     """Read the current GPU Arbiter state.
+    Cached for 50ms TTL to prevent synchronous disk I/O thrashing during query routing storms.
     States: 'AI_EXCLUSIVE', 'DRAINING_SLEEP', 'VM_ATTACHED', 'RESTORING_AI'.
     """
     env_state = os.environ.get("MIOS_GPU_STATE")
     if env_state:
         return env_state.strip()
+    import time as _t
+    now = _t.monotonic()
+    if (now - _gpu_state_cache["ts"]) < 0.050:
+        return _gpu_state_cache["state"]
+    state = "AI_EXCLUSIVE"
     for path in (
         os.environ.get("MIOS_GPU_STATE_FILE", "/run/mios/gpu-state"),
         "/run/mios-gpu-state",
+        "/var/run/mios/gpu-state",
     ):
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     content = f.read().strip()
                 if content:
-                    return content
+                    state = content
+                    break
         except Exception:
             pass
-    return "AI_EXCLUSIVE"
+    _gpu_state_cache["state"] = state
+    _gpu_state_cache["ts"] = now
+    return state
 
 
 _heavy_probe = {"ok": False, "ts": -1e9}
 
 async def _heavy_lane_up() -> bool:
-    """Is the heavy lane (either engine) serving right now? Cached for _HEAVY_PROBE_TTL s so we
+    """Is the SGLang heavy lane serving right now? Cached for _HEAVY_PROBE_TTL s so we
     probe at most once per window, never per request."""
     if get_gpu_arbiter_state() != "AI_EXCLUSIVE":
         # Proactive gaming failover: heavy GPU is detached/sleeping
@@ -92,8 +104,6 @@ def _lane_resolver():
         _ai = _toml_section("ai")
     except Exception:  # noqa: BLE001 -- degrade to env/defaults
         _ai = {}
-    # ONE heavy lane ([nodes.local-heavy]); [ai].heavy_engine picks the engine that
-    # serves it, so the engine name never adds a second lane here.
     heavy_engine = (os.environ.get("MIOS_AGENT_PIPE_HEAVY_ENGINE")
                     or str(_ai.get("heavy_engine", "vllm"))).strip()
     _vllm_url = (os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM")
@@ -146,8 +156,9 @@ def _lane_resolver():
 
 async def _pick_tool_backend() -> tuple:
     """(url, model) for the client-tools loop -- delegated to the WS-1 unified lane
-    resolver: the heavy lane when reachable, else the always-on light lane (with
-    per-lane cooldown so a dead lane fails over, never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
+    resolver: the preferred heavy reasoner when reachable, else the other heavy lane,
+    else the always-on light lane (with per-lane cooldown so a dead lane fails over,
+    never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
     probe so the agentic surface never hard-fails."""
     gpu_state = get_gpu_arbiter_state()
     if gpu_state != "AI_EXCLUSIVE":
