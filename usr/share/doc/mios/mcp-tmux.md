@@ -96,6 +96,25 @@ sessions reject new messages. Registration preserves both identities referenced
 by pending messages; unrelated dormant identities retire after
 `mailbox_retention_s`. Queue, message, registry and receipt limits derive from SSOT.
 
+Presence never appoints a coordinator. The coordinator lease (`agent.lease`,
+ADR-0029) is separate, and every number and name it uses comes from
+`[mcp.agents.succession]`:
+
+- **Identity is relay registration.** `mios_agent_lease` acquire, renew and
+  release, and `mios_agent_status` publish, carry the session's `agent_id` and
+  the token it registered with. Only the token's digest is stored, and
+  registration cleanup never retires an identity the lease names.
+- **The relay decides takeover.** `mios_agent_probe` returns `held_by_me`,
+  `released`, `exhausted_briefly`, `exhausted`, `silent`, `waiting` or `alive`,
+  with `take_over` and `next_probe_s`. On acquire the relay runs the same probe
+  itself and refuses unless it says `take_over`; a caller's verdict is never read.
+- **Files stay in the registry directory.** The lease, each
+  `<agent_id>.status.json` and the `journal.jsonl` of `agent.event` records live
+  beside `state.json`. An identity that names a file uses the relay alphabet,
+  starts with a letter or digit, and never contains `..`.
+- **A fresh install has an unheld lease** derived from SSOT. A listed successor
+  or the preferred holder acquires it first; reading it writes nothing.
+
 `mios_agent_observe` and `mios agents --observe` provide the same sanitized,
 read-only snapshot. `mios agents --watch` renders a resizing native view in the
 MiOS Agents pane. In an AI workspace, the SSOT global G action focuses that

@@ -3741,6 +3741,18 @@ refresh_s = 2
 max_rows = 32
 window_name = "MiOS Agents"
 
+# Coordinator lease: identities are relay registrations; the relay refuses
+# values breaking lease_duration_s > renew_interval_s > 1.2 x probe_interval_s.
+[mcp.agents.succession]
+lease_duration_s = 5400  # seeds a fresh lease; a lease then keeps its own
+renew_interval_s = 1800  # returned as next_renew_s
+probe_interval_s = 600   # next_probe_s for a held lease
+retry_probe_s = 60       # next_probe_s after a release, and past a brief outage's reset
+min_outage_s = 900       # an outage resetting sooner is waited out, not taken over
+tail_lines = 80          # transcript lines read from the end
+preferred_holder = "claude-code"
+successors = ["antigravity"]
+
 [agent_cli]
 enabled = true
 linux_prefix = "/usr/lib/mios/agent-cli"

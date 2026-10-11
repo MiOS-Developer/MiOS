@@ -57,9 +57,9 @@ the participant's presence lease. Dormant registered sessions keep queued mail
 when `[mcp.agents].queue_offline` is enabled and resume with their original token.
 Pending messages protect both endpoint identities from registration cleanup;
 unreferenced dormant identities retire after `mailbox_retention_s`. Explicitly
-closed sessions reject new messages. Expiry does not appoint a new coordinator
-or transfer a desktop chat. A paused harness must resume and consume
-its inbox; the relay does not inject user turns into unrelated applications.
+closed sessions reject new messages. The relay distinguishes two leases that are never conflated:
+- **Presence leases (`[mcp.agents].lease_s`)**: Ephemeral, private to each session, and refreshed by `receive` calls. Expiry marks the session offline without transferring mailbox ownership, appointing a new coordinator, or transferring a desktop chat. A paused harness must resume and consume its inbox with its original token; the relay does not inject user turns into unrelated applications.
+- **Coordinator lease (`agent.lease`, ADR-0029)**: Governs exclusive coordinator operations (pushing the PR branch, committing/merging on the integration branch, assigning lanes) using Kubernetes Lease semantics (`holder_identity`, `lease_duration_seconds`, `acquire_time`, `renew_time`, `lease_transitions`, `preferred_holder`, `successors`). Every acquire, renew, release and status publish proves the caller's relay registration (`agent_id` plus the token it registered with). On acquire the relay runs `mios_agent_probe` itself and refuses unless its verdict (`released`, `exhausted` or `silent`) grants `take_over`; a caller-supplied verdict is never read. Succession never follows automatic presence expiration or uncoordinated seizure.
 
 ## Worker execution
 
