@@ -946,7 +946,8 @@ fn handle_status(
     }
     let absolute = |v: &Value| -> Result<String, String> {
         let p = v.as_str().ok_or("activity paths must be strings")?;
-        if p.contains('\0') || !resolve_host_path(p).is_absolute() {
+        let resolved = resolve_host_path(p);
+        if p.contains('\0') || (!resolved.is_absolute() && !resolved.has_root()) {
             return Err("activity paths must be absolute".into());
         }
         Ok(p.to_string())
