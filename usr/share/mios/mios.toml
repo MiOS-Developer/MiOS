@@ -6174,8 +6174,8 @@ build_catalog_authoritative = false
 # verdict, on top of the in-process gate above. Empty (default) -> no arbiter, no
 # overhead. hitl_arbiter_fail = open (default; a down/erroring arbiter proceeds)
 # or closed (fail-safe-deny).
-hitl_arbiter_url    = ""   # WS-9: set to "http://127.0.0.1:8760" to consult the mios-policy-arbiter.service (out-of-process gate). Left "" by default so a not-yet-running arbiter can't add a per-verb timeout; activate after confirming the service is up.
-hitl_arbiter_fail   = "open"
+hitl_arbiter_url    = "http://127.0.0.1:8760"
+hitl_arbiter_fail   = "closed"
 pdp_audit_allow     = false
 tokenizer_backend   = "tiktoken"
 # tiktoken encoding name (the OpenAI-BPE vocabulary). SSOT so it is never restated
