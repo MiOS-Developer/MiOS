@@ -141,38 +141,13 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}" "$_miosd" overlay-bind-images --dest "${BDIR}"
-    mios_ok "LBI binding completed via miosd"
-else
-    _MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}"
-    FB_TOKENS="$(grep -E '^[[:space:]]*firstboot_tokens[[:space:]]*=' "${_MIOS_TOML}" 2>/dev/null | sed -E 's/^[^=]*=//; s/[][",]/ /g')"
-    shopt -s nullglob
-    for QDIR in /usr/share/containers/systemd /etc/containers/systemd; do
-        [[ -d "${QDIR}" ]] || continue
-        for q in "${QDIR}"/*.container "${QDIR}"/*/*.container "${QDIR}"/*.image "${QDIR}"/*/*.image; do
-            [[ -f "$q" ]] || continue
-            name="$(basename "$q")"
-            if [[ -n "${FB_TOKENS// /}" ]]; then
-                _img="$(sed -nE 's/^Image=//p' "$q" | head -1)"
-                _fb=""
-                for _tok in ${FB_TOKENS}; do
-                    [[ -n "$_tok" && "$_img" == *"$_tok"* ]] && { _fb=1; break; }
-                done
-                if [[ -n "$_fb" ]]; then
-                    mios_skip "LBI: ${name} (firstboot tier -- web-pulled at first boot, not bound)"
-                    continue
-                fi
-            fi
-            ln -sf "${q}" "${BDIR}/${name}"
-            mios_log "LBI: bound ${name}"
-        done
-    done
-    shopt -u nullglob
-
-    rm -f "${BDIR}/.gitkeep"
-    mios_log "LBI: stripped git-tracking .gitkeep"
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required for overlay-bind-images (task_962)"
+    exit 1
 fi
+
+MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}" "$_miosd" overlay-bind-images --dest "${BDIR}"
+mios_ok "LBI binding completed via miosd"
 
 mios_step "Pathing compatibility symlinks"
 

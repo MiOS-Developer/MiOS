@@ -2,12 +2,32 @@
 from __future__ import annotations
 
 import os
+import re
 import json
 import logging
 import mios_toml
 from typing import Any
 
 log = logging.getLogger("mios-db-config")
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+def safe_ident(ident: str, allowlist: set[str] | list[str] | tuple[str, ...] | frozenset[str] | Any) -> str:
+    """Validate SQLite table or column identifiers against strict regex and schema allowlist.
+
+    Invariants:
+    1. ident MUST be a string matching ^[A-Za-z_][A-Za-z0-9_]*$.
+    2. ident MUST be a member of the provided schema allowlist.
+    3. Raises ValueError before any query is formed or sent to execute().
+
+    Returns:
+        The validated identifier string.
+    """
+    if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+        raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+    if ident not in allowlist:
+        raise ValueError(f"SQL identifier {ident!r} not in schema allowlist: {sorted(list(allowlist)) if hasattr(allowlist, '__iter__') else allowlist}")
+    return ident
 
 _DIVERGENT_KEYS = set()
 

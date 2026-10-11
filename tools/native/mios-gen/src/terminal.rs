@@ -302,15 +302,15 @@ pub mod fastfetch {
             }
             let existing = fs::read_to_string(target)
                 .map_err(|e| format!("Failed to read {}: {e}", target.display()))?;
-            let norm_existing = existing.replace("\r\n", "\n");
-            let norm_generated = jsonc.replace("\r\n", "\n");
-            if norm_existing != norm_generated {
+            let to_write = jsonc.replace("\r\n", "\n");
+            if existing != to_write {
                 return Err(format!(
                     "fastfetch config drifted from SSOT projection at {}",
                     target.display()
                 ));
             }
         } else if let Some(target) = &target_path {
+            let to_write = jsonc.replace("\r\n", "\n");
             // `--dry-run` is the no-write switch. `--mock` pins metadata only, so an
             // explicit `--out` fixture can be regenerated deterministically.
             if !dry_run {
@@ -321,7 +321,7 @@ pub mod fastfetch {
                         })?;
                     }
                 }
-                fs::write(target, &jsonc)
+                fs::write(target, &to_write)
                     .map_err(|e| format!("Failed to write {}: {e}", target.display()))?;
             }
         }
@@ -391,23 +391,22 @@ pub mod tmux_theme {
             let disk_content = fs::read_to_string(&target_path)
                 .map_err(|e| format!("Failed to read {}: {}", target_path.display(), e))?;
 
-            let disk_norm = disk_content.replace("\r\n", "\n");
-            let rendered_norm = rendered.replace("\r\n", "\n");
-
-            if disk_norm != rendered_norm {
+            let to_write = rendered.replace("\r\n", "\n");
+            if disk_content != to_write {
                 return Err(format!(
                 "{}: out of sync with mios.toml [theme.tmux] projection (run 'mios-gen render-tmux-theme')",
                 GOLDEN
             ));
             }
         } else {
+            let to_write = rendered.replace("\r\n", "\n");
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     format!("Failed to create parent dir {}: {}", parent.display(), e)
                 })?;
             }
 
-            fs::write(&target_path, rendered.as_bytes())
+            fs::write(&target_path, to_write.as_bytes())
                 .map_err(|e| format!("Failed to write {}: {}", target_path.display(), e))?;
         }
 

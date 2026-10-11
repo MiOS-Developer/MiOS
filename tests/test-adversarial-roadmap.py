@@ -417,46 +417,69 @@ class TestAdversarialA2AAttestation(unittest.TestCase):
             capabilities=["chat", "code", "execute"],
             ttl_seconds=3600,
         )
-        # 1. Genuine card passes verification
-        self.assertTrue(A2AAuthenticator.verify_card(card))
-        self.assertTrue(A2AAuthenticator.verify_card(card, trusted_public_key=self.auth1.public_key_hex))
+        trusted = self.auth1.public_key_hex
+        # 1. Genuine card passes verification under the trusted key
+        self.assertTrue(A2AAuthenticator.verify_card(card, trusted_public_key=trusted))
 
         # 2. Tampered capability
         tampered_caps = copy.deepcopy(card)
         tampered_caps["capabilities"].append("root_admin_escalate")
-        self.assertFalse(A2AAuthenticator.verify_card(tampered_caps))
+        self.assertFalse(A2AAuthenticator.verify_card(tampered_caps, trusted_public_key=trusted))
 
         # 3. Tampered agent_name
         tampered_name = copy.deepcopy(card)
         tampered_name["agent_name"] = "imposter-agent"
-        self.assertFalse(A2AAuthenticator.verify_card(tampered_name))
+        self.assertFalse(A2AAuthenticator.verify_card(tampered_name, trusted_public_key=trusted))
 
         # 4. Tampered expires_at
         tampered_exp = copy.deepcopy(card)
         tampered_exp["expires_at"] += 10000
-        self.assertFalse(A2AAuthenticator.verify_card(tampered_exp))
+        self.assertFalse(A2AAuthenticator.verify_card(tampered_exp, trusted_public_key=trusted))
 
         # 5. Bit flipped signature
         tampered_sig = copy.deepcopy(card)
         sig_bytes = bytearray.fromhex(tampered_sig["sig"])
         sig_bytes[0] ^= 0xFF
         tampered_sig["sig"] = sig_bytes.hex()
-        self.assertFalse(A2AAuthenticator.verify_card(tampered_sig))
+        self.assertFalse(A2AAuthenticator.verify_card(tampered_sig, trusted_public_key=trusted))
 
     def test_key_substitution_attack(self):
-        """Attacker replacing public_key with their own fails when checked against trusted key."""
-        # Attacker signs a card with their keypair
+        """A card's embedded key is never a trust anchor: only the trusted key verifies."""
+        # Attacker signs a card with their own keypair and embeds that key
         attacker_card = self.auth2.create_card(
             agent_name="agent-alpha",
             capabilities=["chat", "code"],
         )
-        # Self-verification against card's embedded key is true
-        self.assertTrue(A2AAuthenticator.verify_card(attacker_card))
+        # Self-signed with an embedded attacker key and no trusted key -> unverified
+        self.assertFalse(A2AAuthenticator.verify_card(attacker_card))
+        self.assertFalse(verify_card(attacker_card))
+        self.assertEqual(A2AAuthenticator.negotiate_capabilities(attacker_card, ["chat"]), (False, []))
 
-        # Verification against authentic auth1 trusted key MUST fail
+        # Embedded key differs from the trusted key -> False
         self.assertFalse(
             A2AAuthenticator.verify_card(attacker_card, trusted_public_key=self.auth1.public_key_hex)
         )
+        # Attacker relabels the card with the trusted key but cannot sign for it -> False
+        relabelled = copy.deepcopy(attacker_card)
+        relabelled["public_key"] = self.auth1.public_key_hex
+        self.assertFalse(
+            A2AAuthenticator.verify_card(relabelled, trusted_public_key=self.auth1.public_key_hex)
+        )
+        # Card-supplied keys are data, never a path to open (a readable file
+        # holding the trusted key would otherwise satisfy the comparison)
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file = os.path.join(tmp, "k.pub")
+            with open(key_file, "w", encoding="utf-8") as f:
+                f.write(self.auth2.public_key_hex)
+            payload = {k: v for k, v in attacker_card.items() if k != "sig"}
+            payload["public_key"] = key_file
+            pathy = dict(payload, sig=self.auth2.private_key.sign(canonical_json(payload)).hex())
+            self.assertFalse(A2AAuthenticator.verify_card(pathy, trusted_public_key=self.auth2.public_key_hex))
+
+        # A card signed by the trusted key -> True
+        genuine = self.auth1.create_card(agent_name="agent-alpha", capabilities=["chat", "code"])
+        self.assertTrue(A2AAuthenticator.verify_card(genuine, trusted_public_key=self.auth1.public_key_hex))
+        self.assertTrue(A2AAuthenticator.verify_card(genuine, trusted_public_key=self.auth1.public_key))
 
     def test_clock_skew_and_expiration_attacks(self):
         """Timestamp manipulation: future issued_at, past expires_at, inverted times."""
@@ -464,34 +487,34 @@ class TestAdversarialA2AAttestation(unittest.TestCase):
 
         # Future issued_at (ahead by 300s, max_clock_skew=60s) -> FAIL
         card_future = self.auth1.create_card("future-agent", ["chat"], issued_at=int(now + 300), ttl_seconds=3600)
-        self.assertFalse(A2AAuthenticator.verify_card(card_future, max_clock_skew=60, now_ts=now))
+        self.assertFalse(A2AAuthenticator.verify_card(card_future, trusted_public_key=self.auth1.public_key_hex, max_clock_skew=60, now_ts=now))
 
         # Expired card (expired 100s ago, max_clock_skew=60s) -> FAIL
         card_expired = self.auth1.create_card("expired-agent", ["chat"], issued_at=int(now - 3700), ttl_seconds=3600)
-        self.assertFalse(A2AAuthenticator.verify_card(card_expired, max_clock_skew=60, now_ts=now))
+        self.assertFalse(A2AAuthenticator.verify_card(card_expired, trusted_public_key=self.auth1.public_key_hex, max_clock_skew=60, now_ts=now))
 
         # Tolerable skew (ahead by 30s, max_clock_skew=60s) -> PASS
         card_tolerable = self.auth1.create_card("tolerable-agent", ["chat"], issued_at=int(now + 30), ttl_seconds=3600)
-        self.assertTrue(A2AAuthenticator.verify_card(card_tolerable, max_clock_skew=60, now_ts=now))
+        self.assertTrue(A2AAuthenticator.verify_card(card_tolerable, trusted_public_key=self.auth1.public_key_hex, max_clock_skew=60, now_ts=now))
 
     def test_capability_negotiation_boundaries(self):
         """Negotiation against required capabilities list."""
         card = self.auth1.create_card("worker", ["compute", "memory", "fs_read"])
 
         # 1. Exact match
-        ok, caps = A2AAuthenticator.negotiate_capabilities(card, ["compute", "memory"])
+        ok, caps = A2AAuthenticator.negotiate_capabilities(card, ["compute", "memory"], trusted_key=self.auth1.public_key_hex)
         self.assertTrue(ok)
         self.assertEqual(caps, ["compute", "memory"])
 
         # 2. Missing required capability
-        ok_missing, missing = A2AAuthenticator.negotiate_capabilities(card, ["compute", "fs_write", "gpu"])
+        ok_missing, missing = A2AAuthenticator.negotiate_capabilities(card, ["compute", "fs_write", "gpu"], trusted_key=self.auth1.public_key_hex)
         self.assertFalse(ok_missing)
         self.assertEqual(set(missing), {"fs_write", "gpu"})
 
         # 3. Forged card rejected during negotiation
         card_forged = copy.deepcopy(card)
         card_forged["capabilities"] = ["compute", "fs_write", "gpu"]
-        ok_forged, _ = A2AAuthenticator.negotiate_capabilities(card_forged, ["compute", "fs_write"])
+        ok_forged, _ = A2AAuthenticator.negotiate_capabilities(card_forged, ["compute", "fs_write"], trusted_key=self.auth1.public_key_hex)
         self.assertFalse(ok_forged)
 
 if __name__ == "__main__":

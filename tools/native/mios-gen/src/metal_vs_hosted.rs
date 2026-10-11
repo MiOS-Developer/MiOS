@@ -890,10 +890,8 @@ pub fn run_metal_vs_hosted(root: &Path, check: bool, json_mode: bool) -> Result<
             )
         })?;
 
-        let norm_have = have.replace("\r\n", "\n");
-        let norm_want = want.replace("\r\n", "\n");
-
-        if norm_have != norm_want {
+        let to_write = want.replace("\r\n", "\n");
+        if have != to_write {
             return Err((
                 format!("generate-metal-vs-hosted: {} has drifted from the SSOT -- re-run mios-gen metal-vs-hosted", OUT),
                 1,
@@ -910,7 +908,8 @@ pub fn run_metal_vs_hosted(root: &Path, check: bool, json_mode: bool) -> Result<
         let _ = fs::create_dir_all(parent);
     }
 
-    fs::write(&path, &want).map_err(|e| {
+    let to_write = want.replace("\r\n", "\n");
+    fs::write(&path, to_write.as_bytes()).map_err(|e| {
         (
             format!(
                 "generate-metal-vs-hosted: failed to write {}: {}",

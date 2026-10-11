@@ -16,6 +16,7 @@ use_compiled_ainode = true
 # [security.privileged_units] -- Roster of systemd units requiring privileged access.
 # ----------------------------------------------------------------------------
 [security.privileged_units]
+max_exposure_score = 9.2
 unconfined = [
   "mios-hermes-worker.service",
   "mios-ceph-bootstrap.service",
@@ -1637,14 +1638,14 @@ composefs_mode = "verity"
 mask_systemd_remount_fs = true
 
 
-rule_of_two_mode = "off"
+rule_of_two_mode = "audit"
 
-quarantine_mode = "off"
+quarantine_mode = "audit"
 
 api_require_auth     = false
 api_caller_keys_path = "/etc/mios/ai/v1/caller-keys.json"
 
-principal_bind_mode  = "off"
+principal_bind_mode  = "audit"
 
 firewall_high_privilege_verbs = [
     "service_restart",
@@ -1710,7 +1711,8 @@ allowlist_hosts = [
     "mios-code-server",
 ]
 
-provenance_taint = false
+provenance_taint = true
+# Follow-up: promote rule_of_two_mode, quarantine_mode, principal_bind_mode from "audit" to "enforce" after one release.
 
 # [security.credential_literals] -- Law-11 extension: default credentials still
 # baked into world-readable units. SHRINK-ONLY; task_176 rotates them to
@@ -2305,6 +2307,18 @@ smoke_responsive_template  = "smoke 1/4: {name} is responsive"
 smoke_systemd_template     = "smoke 2/4: systemd state '{state}' in {name}"
 smoke_overlay_template     = "smoke 3/4: /usr/share/mios overlay present in {name}"
 smoke_podman_api_template  = "smoke 4/4: podman API server v{version}"
+
+# ----------------------------------------------------------------------------
+# [smoke_tests] -- attempts + interval the dev-VM smoketests use during
+# bootstrap. Phase-3 brings up the podman-MiOS-DEV machine and runs four
+# smoketests (responsive / systemd / overlay / podman API) before declaring
+# the dev VM ready. Tunables live here so operators don't need to edit code.
+# ----------------------------------------------------------------------------
+[smoke_tests]
+echo_attempts       = 15
+systemd_attempts    = 15
+podman_api_attempts = 15
+interval_seconds    = 2
 
 [messages.install_complete]
 title          = "MiOS Windows-side install complete"
@@ -6218,7 +6232,7 @@ opencode_config     = "/etc/mios/opencode/opencode.json"
 opencode_gateway_workdir   = "/var/lib/mios/opencode-gateway/work"
 # Per-run timeout (s). Under VRAM pressure the run times out and the gateway
 # returns empty so the swarm fan-out drops opencode harmlessly.
-opencode_gateway_timeout_s = 90    # opencode `run` HANGS (returns nothing even with the model warm + 240s); 240 just made every coding turn wait longer. Fail FAST at 90 so a hung opencode drops to a 💤 quickly. Restore a longer budget only once `run` headless mode actually returns.
+opencode_gateway_timeout_s = 90    # opencode `run` HANGS (returns nothing even with the model warm + 240s); 240 just made every coding turn wait longer. Fail FAST at 90 so a hung opencode drops to sleep quickly. Restore a longer budget only once `run` headless mode actually returns.
 agent_venv          = "/usr/lib/mios/agents/.venv"
 agent_install_dir   = "/usr/lib/mios/agents/hermes-agent"
 # Inference backend Hermes-Agent forwards to. mios-llm-light's
@@ -12466,14 +12480,14 @@ stay_max_words         = 25
 migrate_min_lines      = 6      # ratchet: 6 -> 4 -> 3 as the mid-size band clears
 migrate_min_words      = 60
 landing_min_word_ratio = 0.90   # a doc passage must retain this much of the block
-render_extra           = ["llms.txt", "llms-full.txt"]   # non-.md files mios-manual render also splices
+render_extra           = ["llms.txt"]   # non-.md files mios-manual render also splices
 
 # Retired AI-plane port numbers: every one has a [ports] successor key.
 retired_ports = [11434, 11450, 11441, 3030, 8432, 8441, 8442, 8633, 8640, 8641, 8642, 8888, 8899]
 # Living contract docs that must reference [ports] KEYS, never the numbers above.
 port_clean = [
   "README.md", "CLAUDE.md", "GEMINI.md", "AGENTS.md", "MiOS.md", "SECURITY.md",
-  ".github/ai-instructions.md", "llms.txt", "llms-full.txt",
+  ".github/ai-instructions.md", "llms.txt",
   "usr/share/doc/mios/reference/api.md",
   # Runtime AI payloads and operator surfaces (task_3349, batch 1).
   "system-prompt.md", "tools/README.md",
@@ -12638,6 +12652,7 @@ ref_allowlist = [
   "MIOS_FOO", "mios-XXXXX",
   # Untracked files (installation/MiOS-Field.bat is gitignored, mios-knowledge-graph.json built at runtime).
   "installation/MiOS-Field.bat",
+  ".prompt.MD", "mios-cloud-build.ps1", "mios-windows-export.ps1",
   "usr/share/mios/knowledge/mios-knowledge-graph.json",
   "mios-knowledge-graph",
   "C:\\mios-bootstrap\\Get-MiOS.ps1",
@@ -12901,7 +12916,7 @@ not_mirrored = [
 [legibility]
 # EVERY tracked file, dependencies included (ADR-0030). Shrink-only, really: it is no longer
 # exempt in [drift.generated_ceilings]. ratchet-direction compares it with main's tree count.
-max_tracked_files = 3277
+max_tracked_files = 3246
 # The sister repo mios-bootstrap's own count (ADR-0030: 500 EACH per repo). Shrink-only.
 max_bootstrap_files = 201
 # Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
@@ -13002,7 +13017,7 @@ target_files = 5
 globs = [".archive/**"]
 
 [legibility.file_budget.domains.misc]  # root dotfiles and var seeds rendered or folded
-max_files = 53
+max_files = 22
 target_files = 20
 globs = ["*"]
 

@@ -47,7 +47,7 @@
 46	check_lint_is_final	all $n bootc root Containerfile(s) end with 'RUN bootc container lint'
 47	check_firstboot_degrade_open	firstboot scripts degrade open on egress failure (Law 12)
 48	check_vendor_urls	no vendor cloud URL in active config
-49	check_resolver_twin_parity	mios-resolver not built -- twin parity NOT verified (both legs would be mios_toml.py); advisory skip
+49	check_resolver_twin_parity	resolver twin parity: userenv.sh via native mios-resolver agrees with mios_toml.py on the layered MIOS_AI_* set
 50	check_resolver_twin_equivalence	resolver twin equivalence: userenv.sh and mios_toml.py are equivalent
 51	check_template_conformance	template conformance: all new files conform to templates
 52	check_kargs_projection	kargs.d managed files match the mios.toml [kargs] projection
@@ -212,27 +212,28 @@
 211	check_no_hardcoded_ssot_literal	checking for hardcoded fedora-XX / version literals
 212	check_bash_phase_ratchet	bash phase script count ratchet check
 213	check_no_silent_tool_skips	no silent tool skips found (MIOS_DRIFT_REQUIRE_TOOLS compliance clean)
-214	check_build_tool_dispatch	every bake-time tool-dispatch gate is on the shrink-only register
-215	check_signature_policy	usr/lib/containers/policy.json regenerates byte-identically from [security.sigstore]
-216	check_phase_registry	every automation/NN-*.sh on disk is a phase build.sh actually runs
-217	check_drift_stubs	no miosd drift Check claims a verdict about a tree it never reads
-218	check_negatives_are_effective	negative-test effectiveness check
-219	check_pipefail_grep_lint	pipefail grep lint check
-220	check_skip_list_covered	checking the agent-pipe skip list lives in the SSOT
-221	check_ai_manifests_fresh	checking AI manifest freshness
-222	check_ai_metadata_fresh	usr/share/mios/ai/v1/metadata.json regenerates byte-identically from the tracked AI headers
-223	check_ports_category_schema	checking port category schema (allocation + collisions)
-224	check_globals_generated	checking generated globals resolvers match SSOT
-225	check_ci_suite_coverage	all workflow CI jobs cover the required test matrix without gaps
-226	check_manpages	generated manual pages compile cleanly and match CLI help surfaces
-227	check_rust_test_coverage	Rust crate test coverage meets or exceeds minimum threshold
-228	check_rust_categories	[rust.categories] registry: owners, binaries, scopes and the unowned ceiling all hold
-229	check_header_comment_syntax	file header comments strictly conform to comment parser syntax
-230	check_variant_registry	every [variants] entry declares its required fields and names a table, edition, archetype, artifact and doc that exist
-231	check_deploy_formats	deployment artifact target formats comply with bootc/BIB spec
-232	check_verify_images	container image verification signatures and digests are valid
-233	check_temp_fixture_cleanup	test suite cleans up all temporary fixtures and directories
-234	check_negatives_registered	every drift check has a corresponding negative test registered
-235	check_tracked_readable	every tracked file is present and readable, so no corpus-scanning gate drops one in silence
-236	check_leaked_fixtures	no transient test fixtures or dump files are committed in git
-237	check_native_twinless	every native miosd drift Check with no bash twin in main() runs in this gate
+214	check_memory_poisoning_scan	memory-poisoning scan enabled in SSOT and active in runtime
+215	check_build_tool_dispatch	every bake-time tool-dispatch gate is on the shrink-only register
+216	check_signature_policy	usr/lib/containers/policy.json regenerates byte-identically from [security.sigstore]
+217	check_phase_registry	every automation/NN-*.sh on disk is a phase build.sh actually runs
+218	check_drift_stubs	no miosd drift Check claims a verdict about a tree it never reads
+219	check_negatives_are_effective	negative-test effectiveness check
+220	check_pipefail_grep_lint	pipefail grep lint check
+221	check_skip_list_covered	checking the agent-pipe skip list lives in the SSOT
+222	check_ai_manifests_fresh	checking AI manifest freshness
+223	check_ai_metadata_fresh	usr/share/mios/ai/v1/metadata.json regenerates byte-identically from the tracked AI headers
+224	check_ports_category_schema	checking port category schema (allocation + collisions)
+225	check_globals_generated	checking generated globals resolvers match SSOT
+226	check_ci_suite_coverage	all workflow CI jobs cover the required test matrix without gaps
+227	check_manpages	generated manual pages compile cleanly and match CLI help surfaces
+228	check_rust_test_coverage	Rust crate test coverage meets or exceeds minimum threshold
+229	check_rust_categories	[rust.categories] registry: owners, binaries, scopes and the unowned ceiling all hold
+230	check_header_comment_syntax	file header comments strictly conform to comment parser syntax
+231	check_variant_registry	every [variants] entry declares its required fields and names a table, edition, archetype, artifact and doc that exist
+232	check_deploy_formats	deployment artifact target formats comply with bootc/BIB spec
+233	check_verify_images	container image verification signatures and digests are valid
+234	check_temp_fixture_cleanup	test suite cleans up all temporary fixtures and directories
+235	check_negatives_registered	every drift check has a corresponding negative test registered
+236	check_tracked_readable	every tracked file is present and readable, so no corpus-scanning gate drops one in silence
+237	check_leaked_fixtures	no transient test fixtures or dump files are committed in git
+238	check_native_twinless	every native miosd drift Check with no bash twin in main() runs in this gate

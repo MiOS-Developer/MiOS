@@ -7,6 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if ! command -v python3 >/dev/null 2>&1; then
+    if [ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" = "1" ]; then
+        echo "[lint-python] ERROR: python3 is required under MIOS_DRIFT_REQUIRE_TOOLS=1" >&2
+        exit 1
+    fi
     echo "[lint-python] WARNING: python3 is missing" >&2
     exit 2
 fi

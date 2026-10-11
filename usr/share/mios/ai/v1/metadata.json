@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3323,
-  "total_metadata_entries": 2948,
-  "total_hints": 2938,
-  "total_functions_indexed": 1481,
-  "total_related_links": 5095,
+  "total_files_scanned": 3246,
+  "total_metadata_entries": 2897,
+  "total_hints": 2890,
+  "total_functions_indexed": 1483,
+  "total_related_links": 5076,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -344,15 +344,6 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
-    },
-    {
-      "path": ".githooks/pre-commit",
-      "hint": "Git pre-commit hook enforcing lossless environment resolution.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
     },
     {
       "path": ".github/ai-instructions.md",
@@ -2407,35 +2398,6 @@
       "has_shebang": false
     },
     {
-      "path": "config/bootstrap/bootstrap.ps1",
-      "hint": "Forwarding wrapper delegating to provision-env.ps1 for MiOS environment and secret provisioning.",
-      "related": [
-        "config/bootstrap/provision-env.ps1"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "config/bootstrap/bootstrap.sh",
-      "hint": "Initializes the MiOS environment by creating directory structures, sourcing build configurations, and prompting for credentials (GitHub PAT, admin cre...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "config/bootstrap/provision-env.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "docs/DOD.md",
       "hint": "The project default Definition of Done for MiOS, grounded in this repo's actual gates. A task may tighten it, never loosen it. Write the task-specific DoD BEFORE the code.",
       "related": [
@@ -3288,327 +3250,22 @@
       "has_shebang": false
     },
     {
-      "path": "etc/profile.d/00-mios-pre-bootc.sh",
-      "hint": "Pre-bootc-switch MiOS terminal-experience bridge and locale normalization profile script.",
+      "path": "etc/profile.d/50-mios.csh",
+      "hint": "Consolidated profile.d initialization for csh/tcsh (folded per ADR-0030 task_3659).",
       "related": [],
       "functions": [],
-      "doc": null,
+      "doc": "usr/share/doc/mios/manual/root.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "etc/profile.d/50-mios.sh",
+      "hint": "Consolidated profile.d initialization for sh/bash (folded per ADR-0030 task_3659).",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/root.md",
       "comment_style": "hash",
       "has_shebang": true
-    },
-    {
-      "path": "etc/profile.d/bash_completion.sh",
-      "hint": "Configures interactive bash shell completion by sourcing system and user-defined completion scripts to enable tab-completion for MiOS commands and standard utilities.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/colorgrep.sh",
-      "hint": "Configures shell environment aliases for grep, egrep, and fgrep to enable automatic color output for terminal-based text searching and filtering.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/colorls.sh",
-      "hint": "Configures shell aliases (ll, l., ls) and initializes directory color schemes via dircolors for interactive shells to provide visual distinction in file listings.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/colorxzgrep.sh",
-      "hint": "Defines shell aliases for xzgrep, xzegrep, and xzfgrep with automatic color highlighting to ensure consistent, readable output when searching compressed files.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/colorzgrep.sh",
-      "hint": "Configures shell aliases for zgrep, zfgrep, and zegrep to enable automatic color output, ensuring consistent visual highlighting for compressed file searches in the terminal.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/debuginfod.sh",
-      "hint": "Configures the DEBUGINFOD_URLS and DEBUGINFOD_IMA_CERT_PATH environment variables by scanning /etc/debuginfod for .urls and .certpath files to enable remote debug information retrieval.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/docker-host.sh",
-      "hint": "Configures the DOCKER_HOST environment variable to point to the Podman remote socket path, enabling Docker-compatible CLI tools and agents to interact with the container engine.",
-      "related": [
-        "mios-podman-ps.sh"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/enterns.sh",
-      "hint": "Shell script that detects the systemd PID to determine if running in a native environment versus WSL, executing the /enterns utility and displaying the motd if a non-standard systemd PID is detected.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/flatpak.sh",
-      "hint": "Upstream Flatpak profile snippet that appends flatpak exports to XDG_DATA_DIRS so installed apps appear in the desktop menus; shipped verbatim, MiOS adds only this header.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/gawk.sh",
-      "hint": "Provides shell functions to initialize, prepend, or append paths to AWK environment variables (AWKPATH and AWKLIBPATH) to ensure correct script execution and library linking.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/gnupg2.sh",
-      "hint": "Configures the GPG_TTY environment variable for interactive shells to ensure GPG prompts and agents function correctly in non-interactive or multiplexed terminal sessions.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/guestfish.sh",
-      "hint": "Upstream libguestfs profile snippet that sets the guestfish interactive prompt and output colours; shipped verbatim, MiOS adds only this header.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/lang.sh",
-      "hint": "Configures system locale environment variables and handles CJK fallback for terminal displays by parsing /etc/locale.conf and ~/.i18n to set LANG and LC_* variables.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/less.sh",
-      "hint": "Configures the LESSOPEN environment variable to pipe input through lesspipe.sh, enabling interactive viewing of remote or dynamic content via the less pager.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mingw32.sh",
-      "hint": "Defines the mingw32-env alias and environment variables for cross-compiling for the MinGW32 architecture, used by agents to configure the build environment for Windows-targeted binaries.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mingw64.sh",
-      "hint": "Configures environment variables and provides the mingw64-env alias to initialize the MinGW-w64 cross-compilation toolchain environment for Windows development.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-agent.sh",
-      "hint": "Configures shell environment for MiOS agents by injecting @-prefix command dispatching, setting MIOS_AGENT_DEFAULT, and providing the mios_repo_use helper...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "etc/profile.d/mios-btop.sh",
-      "hint": "Wraps the btop monitor to enforce MiOS-specific presets (palette, transparency, and process-only view) by seeding user configs from /etc/btop/ and intercepting the ...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-colors.sh",
-      "hint": "Configures the terminal's visual identity by emitting OSC escape sequences to apply the MiOS unified color palette (Hokusai) to interactive shells, ensuring consi...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-cursor.sh",
-      "hint": "Sets XCURSOR_THEME, XCURSOR_SIZE, and XCURSOR_PATH for interactive shells to ensure GUI applications launched from the terminal correctly inherit and display the Bibata cursor theme.",
-      "related": [
-        "mios-cursor",
-        "mios-theme",
-        "mios-cursor-ensure"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-env.sh",
-      "hint": "Resolves and exports MiOS environment variables (MIOS_*) by merging layered TOML configs and .env files to provide a unified configuration for CLI tools, agents, and...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-keyring-init.sh",
-      "hint": "Stub script for keyring initialization that informs agents that interactive unlocking is handled by mios-keyring-autounlock.service and configuration is man...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-opencode.sh",
-      "hint": "Points the interactive opencode TUI/CLI at the MiOS local inference backend by exporting OPENCODE_CONFIG, so opencode resolves the MiOS provider (mios-...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "etc/profile.d/mios-podman-ps.sh",
-      "hint": "Provides a shell function to intercept `podman ps` for non-root users, falling back to a JSON snapshot of rootful containers if the local rootless podman view is empty.",
-      "related": [
-        "mios-podman-ps",
-        "mios-podman-ps.service"
-      ],
-      "functions": [
-        "podman"
-      ],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-prompt.sh",
-      "hint": "Configures the Oh-My-Posh interactive shell prompt for bash and zsh by mapping the MiOS theme JSON to the shell's initialization sequence.",
-      "related": [
-        "/usr/libexec/mios/oh-my-posh/oh-my-posh",
-        "/usr/share/mios/oh-my-posh/mios.omp.json",
-        "mios-prompt"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-verbs.sh",
-      "hint": "Defines the `mios()` shell function to intercept and route canonical verbs (mini, dash, build, config, etc.) to specific `/usr/libexec/mios/` helpers while allowin...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-wslg-gpu.sh",
-      "hint": "Configures Mesa and GTK4 rendering paths for WSLg environments, forcing software fallback or d3d12 Gallium acceleration to ensure stable window rendering when the default Vulkan-via-Zink path fails.",
-      "related": [
-        "mios-wslg-gpu"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/mios-wslg.sh",
-      "hint": "Configures Wayland/X11 environment variables (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR) and PulseAudio paths specifically for WSLg integration to ensure GUI applic...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/toolbox.sh",
-      "hint": "Login-shell hook from toolbox: shows the toolbox welcome hints once and tags the prompt when running inside a toolbox container.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/vim.sh",
-      "hint": "Configures the shell environment by aliasing vi to vim and ensuring consistent editor behavior across bash, ksh, and zsh shells when the binaries are located in standard system paths.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/vte.sh",
-      "hint": "Login-shell hook from VTE: reports the working directory to VTE-based terminals so new tabs open in the same directory.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/which2.sh",
-      "hint": "Configures the 'which' command alias across different shells (bash, ksh, zsh) to ensure it correctly resolves functions and aliases in the current environment.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/profile.d/zz-mios-motd.sh",
-      "hint": "Dispatches the interactive shell startup verb defined in mios.toml [terminal.startup] to the terminal on login, ensuring the MiOS dashboard or \"mini\" view is ren...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
     },
     {
       "path": "etc/skel/.bashrc.d/mios",
@@ -3866,33 +3523,6 @@
       "has_shebang": false
     },
     {
-      "path": "harness/verification_gates.py",
-      "hint": "Embedded harness gate that runs every invariants/test_*.sh and fails closed: 0 is pass, 2 is skip (not a pass), anything else fails.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "image-versions.yml",
-      "hint": "Defines pinned SHA256 digests for base images and bootc-image-builder tools, used by Renovate to automate image updates and by build scripts to ensure reproducible MiOS builds.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "install-mios-agents.sh",
-      "hint": "bash Installs wrapper scripts for mios-agent-claude, mios-agent-gemini, and mios-llm to /usr/local/bin/ to inject the MiOS system prompt into various LLM ...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
       "path": "installation/README.md",
       "hint": "Usage + design reference for mios-install, the unified provisioning",
       "related": [
@@ -3976,42 +3606,6 @@
       "has_shebang": true
     },
     {
-      "path": "invariants/test_invariant_hw.sh",
-      "hint": "Hardware invariant: on a bootc VFIO host the CXL IOMMU bypass karg must be present; skips (exit 2) where no VFIO kargs exist.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "invariants/test_invariant_rel.sh",
-      "hint": "Reliability invariant that proves the two-sided control itself: a passing positive control and a planted failure that must be caught.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "invariants/test_invariant_sec.sh",
-      "hint": "Security invariant: where Tetragon is installed, the agent-sandboxing TracingPolicy file must be present; skips (exit 2) where it is not.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "llms-full.txt",
-      "hint": "Full-text companion to llms.txt for mios-dev/mios; mios-manual splices generated manual content into it ([docs].render_extra).",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "llms.txt",
       "hint": "Machine-readable repository index (llms.txt) for mios-dev/mios \u2014 the system FHS overlay of MiOS: Containerfile, build automation, systemd units, Quadlet sidecars, kernel args, the mios.toml SSOT and the baked documentation surfaces. Orients an LLM/agent to what MiOS IS, what this repo contributes, the OpenAI-compatible endpoint contract (Architectural Law 5), and where the canonical files live.",
       "related": [
@@ -4033,71 +3627,6 @@
     {
       "path": "mios-build-local.ps1",
       "hint": "Legacy PowerShell redirector that routes local build commands to build-mios.ps1 to maintain backward compatibility for existing MiOS build scripts and one-liners.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-cloud-build.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-pipeline.ps1",
-      "hint": null,
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "mios-windows-export.ps1",
-      "hint": "A Windows-native OCI image exporter that streams rootfs layers directly from container storage to uncompressed .tar or converts disk images to .vhdx via qemu-img.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "powershell/profile.ps1",
-      "hint": "MiOS configuration and runtime asset for profile.ps1.",
-      "related": [
-        "/usr/libexec/mios/mios-dashboard",
-        "/usr/libexec/mios/mios-ssh-dev-cmd",
-        "mios-dashboard",
-        "mios-ssh-dev-cmd",
-        "mios-dev",
-        "mios-bootstrap",
-        "mios-build",
-        "mios-pull",
-        "mios-update",
-        "mios-config"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "preflight.ps1",
-      "hint": "Validates and installs system-level prerequisites (WSL2, Virtual Machine Platform, and Windows Edition checks) required for MiOS operation; agents use this to ensure the host en...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "push-to-github.ps1",
-      "hint": "Automates the MiOS release pipeline by cloning the bootstrap repo, overlaying staged changes, bumping the VERSION, updating CHANGELOG.md, and pushing to the main branch via GitHub.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/root.md",
@@ -10730,13 +10259,17 @@
     },
     {
       "path": "tools/test_conformance_golden.py",
-      "hint": "Golden CLI fixture test runner for check-template-conformance CLI output and behavior.",
+      "hint": "Golden CLI fixture and template conformance test runner against committed independent golden.snap without auto-regeneration.",
       "related": [
-        "/usr/libexec/mios/check-template-conformance",
-        "tests/templates/conform-cli/"
+        "usr/libexec/mios/check-template-conformance",
+        "tests/templates/golden.snap",
+        "usr/libexec/mios/mios-new"
       ],
       "functions": [
-        "test_conformance_golden_cli"
+        "test_templates_match_independent_golden_snapshot",
+        "test_tampered_template_detection",
+        "test_conformant_mini_tree",
+        "test_missing_ai_hint_header"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -19290,6 +18823,7 @@
       "hint": "A2A Agent-to-Agent mutual capability exchange and cryptographic attestation protocol engine.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_pipe/federation/agentcard_sign.py",
+        "usr/libexec/mios/mios-mcp-server",
         "tests/test-a2a.py"
       ],
       "functions": [],
@@ -34488,7 +34022,7 @@
       "path": "usr/share/mios/tmux/mios-bashrc",
       "hint": "MiOS-owned interactive tmux startup; layered SSOT prompt without sourcing personal shell hooks.",
       "related": [
-        "/etc/profile.d/mios-prompt.sh",
+        "/etc/profile.d/50-mios.sh",
         "/usr/libexec/mios/mios-gen (render-tmux-theme --runtime)",
         "/usr/share/mios/mios.toml"
       ],
@@ -34842,24 +34376,6 @@
       "doc": "usr/share/doc/mios/manual/ch06-security.md",
       "comment_style": "hash",
       "has_shebang": false
-    },
-    {
-      "path": "var/lib/mios/embeddings/ingest_local.py",
-      "hint": "Processes chunks.jsonl by generating embeddings via OpenAI-compatible local endpoints (llama.cpp, Ollama, vLLM) and upserting the...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/embeddings.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "var/lib/mios/evals/mios-knowledge.local-runner.py",
-      "hint": "Executes MiOS knowledge evaluation tests against OpenAI-compatible endpoints to validate model responses against criter...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/evals.md",
-      "comment_style": "hash",
-      "has_shebang": true
     }
   ]
 }

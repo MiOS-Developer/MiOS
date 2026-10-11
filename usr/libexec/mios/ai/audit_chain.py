@@ -27,89 +27,127 @@ DEFAULT_AUDIT_LOG_PATH = "/var/lib/mios/ai/audit/audit_chain.jsonl"
 DEFAULT_KEY_PATH = "/var/lib/mios/ai/audit/node_ed25519.key"
 GENESIS_PREV_HASH = "0" * 64
 
-# Try importing cryptography.hazmat for native Ed25519, otherwise use pure fallback
+# Native Ed25519 comes from python3-cryptography. There is deliberately NO
+# fallback: a key derived from a constant (the old sha256-of-a-literal seed) is
+# public, so anything "signed" with it is forgeable. Without the library the
+# signer refuses to sign and every signature check fails.
 try:
     from cryptography.hazmat.primitives.asymmetric import ed25519 as crypto_ed25519
     _HAS_CRYPTOGRAPHY = True
 except ImportError:
     _HAS_CRYPTOGRAPHY = False
 
+_MOCK_PUBLIC_KEY = "mock_ed25519_pubkey_0123456789abcdef0123456789abcdef"
+
+
+class AuditKeyError(RuntimeError):
+    """No usable, persisted node signing key: the audit chain fails closed."""
+
+
 class Ed25519Signer:
-    """Signer using standard cryptography.ed25519 if available, or deterministic HMAC-SHA512 fallback."""
+    """Ed25519 signer bound to ONE persisted node key (``key_path``, raw 32-byte seed, 0600).
+
+    The key is generated on first sign and must be persisted before it is used:
+    a key that is not on disk can never be re-verified by a later run, so a
+    block signed with it would silently break the chain. ``mock`` is a test seam
+    only; it is honoured solely when the caller passes ``mock=True``.
+    """
 
     def __init__(self, key_path: Optional[str] = None, mock: bool = False) -> None:
         self.key_path = key_path or DEFAULT_KEY_PATH
-        self.mock = mock
+        self.mock = bool(mock)
         self._private_key: Any = None
         self._public_key_hex: str = ""
+        self.key_error: str = ""
         self._init_keys()
 
     def _init_keys(self) -> None:
         if self.mock:
-            self._public_key_hex = "mock_ed25519_pubkey_0123456789abcdef0123456789abcdef"
+            self._public_key_hex = _MOCK_PUBLIC_KEY
             return
+        if not _HAS_CRYPTOGRAPHY:
+            self.key_error = ("python3-cryptography is unavailable: there is no Ed25519 "
+                              "implementation, so audit blocks can be neither signed nor verified")
+            return
+        if os.path.lexists(self.key_path):
+            self._load_key()
+        # else: not provisioned yet -- generated (and persisted) on first sign.
 
-        if _HAS_CRYPTOGRAPHY:
-            if os.path.isfile(self.key_path):
-                try:
-                    with open(self.key_path, "rb") as f:
-                        raw = f.read()
-                    self._private_key = crypto_ed25519.Ed25519PrivateKey.from_private_bytes(raw[:32])
-                except Exception:
-                    self._private_key = crypto_ed25519.Ed25519PrivateKey.generate()
-            else:
-                self._private_key = crypto_ed25519.Ed25519PrivateKey.generate()
-                try:
-                    parent = os.path.dirname(self.key_path)
-                    if parent:
-                        os.makedirs(parent, exist_ok=True)
-                    with open(self.key_path, "wb") as f:
-                        f.write(self._private_key.private_bytes_raw())
-                except Exception:
-                    pass
+    def _load_key(self) -> None:
+        try:
+            with open(self.key_path, "rb") as f:
+                raw = f.read()
+            if len(raw) != 32:
+                raise ValueError(f"expected a 32-byte Ed25519 seed, found {len(raw)} bytes")
+            self._set_key(crypto_ed25519.Ed25519PrivateKey.from_private_bytes(raw))
+        except Exception as exc:  # noqa: BLE001 -- recorded, then raised by sign()
+            # Never replace an unreadable key: a fresh one would orphan every
+            # block it signed. Refuse until an operator repairs or rotates it.
+            self.key_error = (f"node key {self.key_path} is unreadable or invalid ({exc}); "
+                              "refusing to sign or verify with a substitute key")
 
-            pub_bytes = self._private_key.public_key().public_bytes_raw()
-            self._public_key_hex = pub_bytes.hex()
-        else:
-            # Deterministic fallback key derived from machine seed
-            seed = hashlib.sha256(b"mios-audit-ed25519-seed").digest()
-            self._private_key = seed
-            self._public_key_hex = hashlib.sha256(seed).hexdigest()[:64]
+    def _set_key(self, key: Any) -> None:
+        self._private_key = key
+        self._public_key_hex = key.public_key().public_bytes_raw().hex()
+
+    def _generate_and_persist(self) -> None:
+        key = crypto_ed25519.Ed25519PrivateKey.generate()
+        parent = os.path.dirname(self.key_path)
+        try:
+            if parent:
+                os.makedirs(parent, mode=0o700, exist_ok=True)
+            fd = os.open(self.key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_BINARY", 0), 0o600)
+        except OSError as exc:
+            if isinstance(exc, FileExistsError) and os.path.lexists(self.key_path):
+                self._load_key()  # a concurrent writer provisioned it first
+                return
+            self.key_error = (f"cannot persist a new node key at {self.key_path} ({exc}); "
+                              "refusing to sign with a key no later run could verify")
+            return
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(key.private_bytes_raw())
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:
+            try:
+                os.unlink(self.key_path)
+            except OSError:
+                pass
+            self.key_error = (f"cannot persist a new node key at {self.key_path} ({exc}); "
+                              "refusing to sign with a key no later run could verify")
+            return
+        self._set_key(key)
 
     @property
     def public_key_hex(self) -> str:
+        """The trusted node public key, or "" when none is provisioned/usable."""
         return self._public_key_hex
 
     def sign(self, message: bytes | str) -> str:
         data = message.encode("utf-8") if isinstance(message, str) else message
         if self.mock:
             return hashlib.sha256(b"mock-sig:" + data).hexdigest()
-
-        if _HAS_CRYPTOGRAPHY and isinstance(self._private_key, crypto_ed25519.Ed25519PrivateKey):
-            sig = self._private_key.sign(data)
-            return sig.hex()
-
-        # Fallback HMAC signature
-        return hmac.new(self._private_key, data, hashlib.sha512).hexdigest()[:128]
+        if self._private_key is None and not self.key_error:
+            self._generate_and_persist()
+        if self.key_error or self._private_key is None:
+            raise AuditKeyError(self.key_error or f"no node signing key at {self.key_path}")
+        return self._private_key.sign(data).hex()
 
     def verify(self, message: bytes | str, signature_hex: str, public_key_hex: str) -> bool:
         data = message.encode("utf-8") if isinstance(message, str) else message
-        if self.mock or "mock" in public_key_hex:
+        if self.mock:
             expected = hashlib.sha256(b"mock-sig:" + data).hexdigest()
-            return signature_hex == expected
-
-        if _HAS_CRYPTOGRAPHY:
-            try:
-                pub_bytes = bytes.fromhex(public_key_hex)
-                pub_key = crypto_ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes)
-                pub_key.verify(bytes.fromhex(signature_hex), data)
-                return True
-            except Exception:
-                return False
-
-        # Fallback check
-        expected = hmac.new(self._private_key, data, hashlib.sha512).hexdigest()[:128]
-        return signature_hex == expected
+            return public_key_hex == _MOCK_PUBLIC_KEY and hmac.compare_digest(signature_hex, expected)
+        if not _HAS_CRYPTOGRAPHY:
+            return False
+        try:
+            pub_key = crypto_ed25519.Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+            pub_key.verify(bytes.fromhex(signature_hex), data)
+            return True
+        except Exception:  # noqa: BLE001 -- any malformed key/signature is a failed check
+            return False
 
 class MerkleTree:
     """Binary Merkle tree implementation for batched block verification."""
@@ -270,6 +308,11 @@ class AuditChainRecorder:
     ) -> Dict[str, Any]:
         """Append a new signed block to the cryptographic audit chain."""
         blocks = self.load_blocks()
+        if blocks and not self.mock and blocks[-1].get("public_key") != self.signer.public_key_hex:
+            # A lost or replaced node key must not quietly fork the chain onto a new key.
+            raise AuditKeyError(self.signer.key_error or (
+                f"the head of {self.log_path} is not signed by the node key at {self.signer.key_path}; "
+                "refusing to extend it under a different key"))
         if not blocks:
             genesis = self._create_genesis_block()
             blocks = [genesis]
@@ -340,6 +383,18 @@ class AuditChainRecorder:
                 "merkle_root": "0" * 64,
             }
 
+        # Signatures verify against the node's own persisted key, never the key a
+        # block carries: a block naming its own key is self-certifying, so a
+        # rewritten chain re-signed under any attacker key would pass.
+        trusted_key = self.signer.public_key_hex
+        if not trusted_key:
+            return {
+                "valid": False,
+                "status": "no_trusted_key",
+                "error": self.signer.key_error or f"no provisioned node key at {self.signer.key_path}",
+                "failed_block_index": 0,
+            }
+
         # Check genesis
         genesis = chain[0]
         if genesis["index"] != 0 or genesis["prev_hash"] != GENESIS_PREV_HASH:
@@ -402,11 +457,19 @@ class AuditChainRecorder:
                     "failed_block_index": i,
                 }
 
+            if blk.get("public_key") != trusted_key:
+                return {
+                    "valid": False,
+                    "status": "untrusted_signer",
+                    "error": f"Block {i} is signed by a key other than this node's key",
+                    "failed_block_index": i,
+                }
+
             # Verify signature
             valid_sig = self.signer.verify(
                 recalc_b_hash,
                 blk.get("signature", ""),
-                blk.get("public_key", ""),
+                trusted_key,
             )
             if not valid_sig:
                 return {
@@ -462,7 +525,11 @@ def main() -> int:
                 return 1
         else:
             payload_data = {"action": "cli_invoked", "args": sys.argv[1:]}
-        result = recorder.record_event(args.event, payload_data)
+        try:
+            result = recorder.record_event(args.event, payload_data)
+        except AuditKeyError as exc:
+            sys.stderr.write(f"[audit-chain] refusing to record: {exc}\n")
+            result = {"success": False, "status": "signing_unavailable", "error": str(exc)}
     elif args.verify:
         result = recorder.verify_chain()
     elif args.dump:
@@ -477,6 +544,7 @@ def main() -> int:
             "merkle_root": ver.get("merkle_root"),
             "head_hash": blocks[-1]["block_hash"] if blocks else None,
             "public_key": recorder.signer.public_key_hex,
+            "key_error": recorder.signer.key_error or None,
         }
     else:
         parser.print_help()
@@ -487,7 +555,10 @@ def main() -> int:
     else:
         print(json.dumps(result, indent=2))
 
-    return 0 if result.get("success", True) or result.get("valid", True) else 1
+    # Any failed record or verification is a non-zero exit (was `or`, which
+    # turned a refused record and a broken chain into exit 0).
+    ok = all(result.get(k, True) for k in ("success", "valid", "chain_valid"))
+    return 0 if ok else 1
 
 if __name__ == "__main__":
     sys.exit(main())

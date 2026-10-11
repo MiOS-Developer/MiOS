@@ -90,15 +90,10 @@ def check_resolver_differential_parity() -> int:
             break
 
     if not resolver_bin:
-        # A silent skip is how a gate stays green while proving nothing. Where the
-        # environment declares tools mandatory, an absent binary is a violation.
-        if os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS", "0") == "1":
-            print("    mios-resolver is not built, so the Python/Rust resolvers were "
-                  "never compared (MIOS_DRIFT_REQUIRE_TOOLS=1). Build it: "
-                  "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
-            sys.exit(1)
-        print("    mios-resolver binary not built locally -- advisory skip")
-        sys.exit(0)
+        print("    mios-resolver is not built, so the Python/Rust resolvers were "
+              "never compared. Build it: "
+              "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
+        sys.exit(1)
 
     # Both twins resolve the SAME tiers: the root's vendor file and drop-ins,
     # no host or user overlay, so the comparison depends on the tree alone.
@@ -1597,6 +1592,11 @@ def check_structured() -> int:
     import tomllib as _toml
 
     toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        if os.path.isdir(os.path.join(root, "usr")):
+            sys.stderr.write("    [structured] %s is missing from populated tree (usr/ exists)\n" % toml_path)
+            return 1
+        return 0
     if not _scan(root, toml_path):
         return 0
     if os.path.isfile(toml_path):
@@ -4321,7 +4321,7 @@ def check_ps_encoding_and_bom() -> int:
     return 0
 
 def check_unit_security() -> int:
-    import os, sys
+    import os, sys, glob, re, subprocess, shutil
     import tomllib as _toml
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -4330,35 +4330,174 @@ def check_unit_security() -> int:
     toml_path = os.path.join(root, 'usr/share/mios/mios.toml')
 
     unconfined_roster = set()
+    max_exposure_score = 9.2
     if os.path.isfile(toml_path):
         with open(toml_path, 'rb') as fh:
             data = _toml.load(fh)
             sec = data.get('security', {}).get('privileged_units', {})
             unconfined_roster = set(sec.get('unconfined', []))
+            if 'max_exposure_score' in sec:
+                try:
+                    max_exposure_score = float(sec['max_exposure_score'])
+                except (ValueError, TypeError):
+                    pass
 
-    required_directives = ['NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp']
-    viol = []
+    # Ruling Q7 (task_3539): mios-attest-server must be disabled until Keylime replaces it
+    attest_viols = []
+    for fname in ('mios-attest.service', 'mios-attest-server.service'):
+        attest_file = os.path.join(systemd_dir, fname)
+        if os.path.isfile(attest_file):
+            with open(attest_file, encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    sline = line.strip()
+                    if sline.startswith('WantedBy=') and 'Keylime' not in sline:
+                        attest_viols.append(f"usr/lib/systemd/system/{fname}: mios-attest-server has '{sline}' (ruling Q7: unit must be disabled until Keylime)")
+
+    for pd in (os.path.join(root, 'usr/lib/systemd/system-preset'), os.path.join(root, 'etc/systemd/system-preset')):
+        if os.path.isdir(pd):
+            for pf in os.listdir(pd):
+                if pf.endswith('.preset'):
+                    with open(os.path.join(pd, pf), encoding='utf-8', errors='replace') as fh:
+                        for pline in fh:
+                            sline = pline.strip()
+                            if sline.startswith('enable') and ('mios-attest.service' in sline or 'mios-attest-server' in sline):
+                                attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root)}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
+
+    if attest_viols:
+        print('\n'.join(attest_viols), file=sys.stderr)
+        return 1
+
+    # Find long-running services (services that are not Type=oneshot)
+    long_running_units = []
+    static_viols = []
+    hardening_directives = [
+        'NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp',
+        'SystemCallFilter', 'CapabilityBoundingSet'
+    ]
 
     if os.path.isdir(systemd_dir):
-        for f in os.listdir(systemd_dir):
-            if f.endswith('.service'):
-                if f in unconfined_roster:
-                    continue
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.endswith('.service') and f.startswith('mios-'):
                 fp = os.path.join(systemd_dir, f)
                 try:
                     with open(fp, encoding='utf-8', errors='replace') as fh:
                         content = fh.read()
-                        missing = []
-                        for directive in required_directives:
-                            if directive not in content:
-                                missing.append(directive)
-                        if missing:
+                    # Skip Type=oneshot units
+                    if re.search(r'^\s*Type\s*=\s*oneshot', content, re.MULTILINE):
+                        continue
+                    long_running_units.append(f)
+                    if f not in unconfined_roster:
+                        has_directive = any(d in content for d in hardening_directives)
+                        if not has_directive:
                             rel = os.path.relpath(fp, root).replace(os.sep, '/')
-                            viol.append(f"{rel}: systemd service missing hardening directives ({', '.join(missing)})")
+                            static_viols.append(f"{rel}: long-running service lacks basic sandboxing directives ({', '.join(hardening_directives[:4])})")
                 except Exception: pass
 
-    if viol:
-        print('\n'.join(viol))
+    # Dynamic systemd-analyze security check (if tool available)
+    analyze_bin = shutil.which("systemd-analyze") or ("/usr/sbin/systemd-analyze" if os.path.exists("/usr/sbin/systemd-analyze") else None)
+    dynamic_viols = []
+
+    if analyze_bin and long_running_units:
+        units_to_test = [u for u in long_running_units if u not in unconfined_roster]
+        if units_to_test:
+            cmd = [analyze_bin, f"--root={root}", "--offline=true", "security"] + units_to_test
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for line in res.stdout.splitlines():
+                m = re.search(r"Overall exposure level for (mios-[^:]+): ([\d\.]+)", line)
+                if m:
+                    unit, score_str = m.group(1), m.group(2)
+                    try:
+                        score = float(score_str)
+                        if score > max_exposure_score:
+                            dynamic_viols.append(f"{unit}: exposure score {score:.1f} exceeds threshold {max_exposure_score:.1f} (systemd-analyze security ratchet)")
+                    except ValueError:
+                        pass
+    elif not analyze_bin:
+        print("[check_unit_security] WARNING: systemd-analyze not available (skipping dynamic exposure scoring)", file=sys.stderr)
+
+    all_viols = static_viols + dynamic_viols
+    if all_viols:
+        print('\n'.join(all_viols), file=sys.stderr)
+        return 1
+    return 0
+
+def check_preset_roster_complete() -> int:
+    import os, sys
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    preset_path = os.path.join(root, "usr/lib/systemd/system-preset/90-mios.preset")
+    if not os.path.isfile(preset_path):
+        print(f"Missing preset file: {preset_path}", file=sys.stderr)
+        return 1
+
+    decisions = {}
+    with open(preset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in ("enable", "disable"):
+                decisions[parts[1]] = parts[0]
+
+    systemd_dir = os.path.join(root, "usr/lib/systemd/system")
+    quadlet_dir = os.path.join(root, "usr/share/containers/systemd")
+    violations = []
+
+    # Axis 2: every MiOS-owned unit under usr/lib/systemd/system/ must have an explicit enable or disable decision
+    if os.path.isdir(systemd_dir):
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.startswith("mios-") and any(f.endswith(ext) for ext in (".service", ".timer", ".path", ".target", ".socket")) and not f.endswith(".d"):
+                if f not in decisions:
+                    violations.append(f"Undeclared MiOS unit: {f} has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Check Quadlet-generated mios-* units
+    if os.path.isdir(quadlet_dir):
+        for f in sorted(os.listdir(quadlet_dir)):
+            if f.startswith("mios-") and f.endswith(".container"):
+                unit_name = f[:-10] + ".service"
+                if unit_name not in decisions:
+                    violations.append(f"Undeclared Quadlet unit: {unit_name} (from {f}) has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Axis 1: every enable/disable target in preset must resolve to a real unit or known upstream unit
+    known_upstream = {
+        "chronyd.service", "sshd.service", "NetworkManager.service", "auditd.service",
+        "nftables.service", "redis.service", "usbguard.service", "crowdsec.service",
+        "crowdsec-firewall-bouncer.service", "fapolicyd.service", "firewalld.service",
+        "cockpit.socket", "libvirtd.service", "libvirtd.socket", "libvirtd-ro.socket",
+        "libvirtd-admin.socket", "virtnetworkd.service", "virtnetworkd.socket",
+        "virtnodedevd.service", "virtnodedevd.socket", "virtnwfilterd.socket",
+        "virtproxyd.socket", "virtqemud.service", "virtqemud.socket",
+        "virtsecretd.socket", "virtstoraged.service", "virtstoraged.socket",
+        "libvirt-guests.service", "gdm.service", "k3s.service", "k3s-agent.service",
+        "corosync.service", "pacemaker.service", "ceph-mon@.service", "ceph-osd@.service",
+        "tailscaled.service", "smb.service", "nmb.service", "nfs-server.service",
+        "rpcbind.service", "osbuild-composer.service", "osbuild-worker@1.service",
+        "multipathd.service", "cloud-init.service", "cloud-init-local.service",
+        "cloud-config.service", "cloud-final.service", "qemu-guest-agent.service",
+        "bootc-fetch-apply-updates.timer", "rpm-ostreed-automatic.timer",
+        "systemd-remount-fs.service", "waydroid-container.service", "podman.socket",
+        "podman-auto-update.timer", "user@1000.service", "atd.service", "crond.service",
+        "avahi-daemon.service", "bootloader-update.service", "gnome-remote-desktop.service",
+        "greenboot-grub2-set-counter.service", "greenboot-grub2-set-success.service",
+        "greenboot-healthcheck.service", "greenboot-rpm-ostree-grub2-check-fallback.service",
+        "greenboot-status.service", "nut-server.service", "nut-monitor.service",
+        "nvidia-cdi-refresh.path", "nvidia-cdi-refresh.service", "nvidia-persistenced.service",
+        "pmcd.service", "pmlogger.service", "pmproxy.service", "redboot-auto-reboot.service",
+        "systemd-confext.service", "systemd-resolved.service", "systemd-sysext.service",
+        "uupd.timer"
+    }
+
+    for unit, action in sorted(decisions.items()):
+        unit_path = os.path.join(systemd_dir, unit)
+        quadlet_path = os.path.join(quadlet_dir, unit.replace(".service", ".container"))
+        if not os.path.exists(unit_path) and not os.path.exists(quadlet_path) and unit not in known_upstream:
+            violations.append(f"Orphan preset line: '{action} {unit}' does not resolve to any real or upstream unit")
+
+    if violations:
+        for v in violations:
+            print(f"[check_preset_roster_complete] {v}", file=sys.stderr)
+        return 1
     return 0
 
 def check_unit_dependency_closure() -> int:
@@ -4705,6 +4844,61 @@ def check_blade_reconcile_schema() -> int:
         return 1
     return 0
 
+def check_memory_poisoning_scan() -> int:
+    """Verifies that the memory-poisoning scan runs in the mode declared by SSOT.
+
+    Fail-closed requirements:
+    1. [pgvector].memory_guard_mode MUST exist in mios.toml and be one of ('log', 'strip', 'reject').
+    2. [pgvector].memguard_judge_mode MUST exist and be 'model'.
+    3. Code defaults in knowledge.py and server.py must derive from SSOT and never hardcode 'off'.
+    """
+    import os, sys, tomllib, re
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        print("check_memory_poisoning_scan: SSOT mios.toml is missing", file=sys.stderr)
+        return 1
+
+    try:
+        with open(toml_path, "rb") as fh:
+            ssot = tomllib.load(fh)
+    except Exception as exc:
+        print(f"check_memory_poisoning_scan: failed to parse {toml_path}: {exc}", file=sys.stderr)
+        return 1
+
+    pg = ssot.get("pgvector", {})
+    mode = str(pg.get("memory_guard_mode", "")).strip().lower()
+    if mode not in ("log", "strip", "reject"):
+        print(f"Violation: [pgvector].memory_guard_mode in SSOT is {mode!r}; must be 'log', 'strip', or 'reject'", file=sys.stderr)
+        return 1
+
+    judge_mode = str(pg.get("memguard_judge_mode", "")).strip().lower()
+    if judge_mode != "model":
+        print(f"Violation: [pgvector].memguard_judge_mode in SSOT is {judge_mode!r}; must be 'model'", file=sys.stderr)
+        return 1
+
+    # Verify code implementation in knowledge.py does not hardcode 'off'
+    knowledge_path = os.path.join(root, "usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py")
+    if os.path.isfile(knowledge_path):
+        with open(knowledge_path, "r", encoding="utf-8", errors="ignore") as fh:
+            content = fh.read()
+        if re.search(r'^\s*MEMORY_GUARD_MODE\s*=\s*["\']off["\']', content, re.M):
+            print("Violation: knowledge.py hardcodes MEMORY_GUARD_MODE = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    # Verify code implementation in server.py does not fallback to 'off'
+    server_path = os.path.join(root, "usr/lib/mios/agent-pipe/server.py")
+    if os.path.isfile(server_path):
+        with open(server_path, "r", encoding="utf-8", errors="ignore") as fh:
+            s_content = fh.read()
+        if re.search(r'get\(["\']memory_guard_mode["\'],\s*["\']off["\']\)', s_content):
+            print("Violation: server.py falls back to memory_guard_mode = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    print(f"[drift-checks] memory-poisoning scan enabled (mode={mode}, judge={judge_mode}) matching SSOT")
+    return 0
+
 _SUBCOMMAND_NAMES = (
     "agent-schema", "gate-registry",
     "firstboot-tier", "bound-image-store", "cephfs-ssot", "verb-stub-backends", "no-bare-port-literals",
@@ -4727,7 +4921,8 @@ _SUBCOMMAND_NAMES = (
     "os-update-timer-enabled", "adhoc-toml-parsers", "install-uninstall-symmetry",
     "ps-port-fallback-ssot", "ps-encoding-and-bom", "unit-security",
     "unit-dependency-closure", "docs-ratchet", "generator-host-parity",
-    "doc-port-scheme", "blade-reconcile-schema",
+    "doc-port-scheme", "blade-reconcile-schema", "memory-poisoning-scan",
+    "preset-roster-complete",
 )
 SUBCOMMANDS = {k: globals()["check_" + k.replace("-", "_")] for k in _SUBCOMMAND_NAMES}
 

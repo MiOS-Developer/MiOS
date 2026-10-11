@@ -64,6 +64,19 @@ logging.basicConfig(
 log = logging.getLogger("mios-agent-pipe")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mios_pipe.redact import RedactingLogFilter  # noqa: E402
+
+_redacting_filter = RedactingLogFilter()
+_root_logger = logging.getLogger()
+_root_logger.addFilter(_redacting_filter)
+for _h in _root_logger.handlers:
+    _h.addFilter(_redacting_filter)
+log.addFilter(_redacting_filter)
+for _u_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    _u_log = logging.getLogger(_u_name)
+    _u_log.addFilter(_redacting_filter)
+    for _uh in _u_log.handlers:
+        _uh.addFilter(_redacting_filter)
 from mios_jsonsalvage import loads_lenient as _loads_lenient   # noqa: E402
 from mios_owui import (strip_owui_scaffold as _strip_owui_scaffold,  # noqa: E402
                        OWUI_TEMPLATE_MARKERS as _OWUI_TEMPLATE_MARKERS)
@@ -2314,7 +2327,7 @@ KNOWLEDGE_STORE_GATE_UNSATISFIED = os.environ.get(
 KNOWLEDGE_TABLE = (os.environ.get("MIOS_KNOWLEDGE_TABLE", "knowledge").strip()
                    or "knowledge")
 MEMORY_GUARD_MODE = (os.environ.get("MIOS_MEMORY_GUARD_MODE")
-                     or (_toml_section("pgvector").get("memory_guard_mode", "off"))
+                     or (_toml_section("pgvector").get("memory_guard_mode", "log"))
                      ).strip().lower()
 KNOWLEDGE_ANSWER_MAX = int(
     os.environ.get("MIOS_KNOWLEDGE_ANSWER_MAX", "8000") or 8000)
@@ -2489,15 +2502,16 @@ _DEFAULT_ALLOWLIST_HOSTS = {
     "localhost", "127.0.0.1", "::1",
     "host.containers.internal",
     "mios-llm-light", "mios-open-webui", "mios-hermes", "mios-pgvector",
-    "mios-forge", "mios-searxng", "mios-agents",
+    "mios-forge", "mios-searxng", "mios-agents", "mios-crawl4ai", "mios-code-server",
 }
 _env_allowlist = os.environ.get("MIOS_SECURITY_ALLOWLIST_HOSTS", "").strip()
+_toml_sec = _toml_section("security") or {}
+_toml_hosts = _toml_sec.get("allowlist_hosts") or []
+_ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
 if _env_allowlist:
-    _ALLOWLIST_HOSTS = {
-        h.strip().lower() for h in _env_allowlist.split(",") if h.strip()
-    }
-else:
-    _ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
+    _ALLOWLIST_HOSTS.update(h.strip().lower() for h in _env_allowlist.split(",") if h.strip())
+if _toml_hosts:
+    _ALLOWLIST_HOSTS.update(str(h).strip().lower() for h in _toml_hosts if str(h).strip())
 
 from mios_firewall import (   # noqa: E402
     _is_external_url,
@@ -4321,6 +4335,7 @@ sys.modules["mios_swarm"].configure(
 from mios_pipe.auth import (
     usage_completeness_mw as _usage_completeness_mw,
     inbound_auth_mw as _inbound_auth_mw,
+    host_origin_validation_mw as _host_origin_validation_mw,
     configure as _configure_auth
 )
 
@@ -4365,9 +4380,11 @@ _configure_auth(
     auth_open_paths=globals().get("_AUTH_OPEN_PATHS", ()),
     auth_gated_prefixes=globals().get("_AUTH_GATED_PREFIXES", ()),
     check_inbound_principal=globals().get("_check_inbound_principal"),
+    allowlist_hosts=_ALLOWLIST_HOSTS,
 )
 
 app.middleware("http")(_usage_completeness_mw)
+app.middleware("http")(_host_origin_validation_mw)
 app.middleware("http")(_inbound_auth_mw)
 
 _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()

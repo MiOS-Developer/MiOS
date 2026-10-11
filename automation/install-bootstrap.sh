@@ -8,6 +8,7 @@ DEFAULT_HOST="user"
 DEFAULT_USER_FULLNAME="User"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
+# shellcheck disable=SC2034
 DEFAULT_SSH_KEY_TYPE="ed25519"
 DEFAULT_BRANCH="main"
 
@@ -19,6 +20,7 @@ MIOS_REPO="https://github.com/mios-dev/MiOS.git"
 : "${MIOS_ETC_DIR:=/etc/mios}"
 : "${MIOS_VAR_DIR:=/var/lib/mios}"
 PROFILE_DIR="${MIOS_ETC_DIR}"
+# shellcheck disable=SC2034
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 
 _BOLD=$(tput bold 2>/dev/null || echo "")
@@ -139,6 +141,7 @@ main() {
         useradd -u 1000 -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER" 2>/dev/null || useradd -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER"
     fi
     echo "$LINUX_USER:$USER_PASSWORD" | chpasswd
+    chage -d 0 "$LINUX_USER" 2>/dev/null || true
     log_ok "User profile applied."
 
     log_phase "'MiOS' Core Installation (Root Merge)"

@@ -13,6 +13,10 @@ ExecStart=/usr/bin/python3 /usr/libexec/mios/log/mios-log-streamer
 Restart=always
 RestartSec=5s
 User=root
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
 StandardOutput=journal
 StandardError=journal
 

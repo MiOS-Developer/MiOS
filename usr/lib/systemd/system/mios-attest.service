@@ -6,14 +6,17 @@
 Description=MiOS RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding Daemon
 Documentation=file:///usr/share/doc/mios/manual/ch76-remote-attestation.md
 After=network.target
+# Ruling Q7 (task_3539): condition mios-attest-server off until Keylime replaces it
+ConditionPathExists=/usr/share/doc/mios/keylime-ready
 
 [Service]
 Type=simple
 ExecStart=/usr/libexec/mios/mios-attest-server serve
 Restart=always
 RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
 StandardOutput=journal
 StandardError=journal
-
-[Install]
-WantedBy=multi-user.target

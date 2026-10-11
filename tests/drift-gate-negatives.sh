@@ -186,24 +186,50 @@ test_shellcheck_failure() {
 
     local tmp_bin_dir
     tmp_bin_dir="$(mktemp -d)"
+
+    # Sub-test 1: Task AGY-1810 - shellcheck absence under MIOS_DRIFT_REQUIRE_TOOLS=1 vs unset
     cat << 'EOF' > "${tmp_bin_dir}/shellcheck"
-echo "Injected shellcheck failure"
-exit 1
+#!/bin/sh
+echo "shellcheck: command not found" >&2
+exit 127
 EOF
     chmod +x "${tmp_bin_dir}/shellcheck"
 
     local old_path="$PATH"
     export PATH="${tmp_bin_dir}:${PATH}"
 
+    # With MIOS_DRIFT_REQUIRE_TOOLS=1, absence must FAIL
+    if MIOS_DRIFT_REQUIRE_TOOLS=1 MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1; then
+        export PATH="$old_path"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck passed despite absent shellcheck under MIOS_DRIFT_REQUIRE_TOOLS=1"
+    fi
+
+    # With MIOS_DRIFT_REQUIRE_TOOLS unset, absence must WARN and PASS (exit 0)
+    if ! ( unset MIOS_DRIFT_REQUIRE_TOOLS; MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1 ); then
+        export PATH="$old_path"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck failed on absent shellcheck when MIOS_DRIFT_REQUIRE_TOOLS was unset"
+    fi
+
+    # Sub-test 2: Injected shellcheck lint failure (exit 1) must always fail
+    cat << 'EOF' > "${tmp_bin_dir}/shellcheck"
+#!/bin/sh
+echo "Injected shellcheck failure"
+exit 1
+EOF
+    chmod +x "${tmp_bin_dir}/shellcheck"
+
     if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_shellcheck >/dev/null 2>&1; then
         export PATH="$old_path"
-        die "Check_shellcheck passed despite shellcheck failure"
+        rm -rf "$tmp_bin_dir"
+        die "check_shellcheck passed despite shellcheck lint failure"
     fi
 
     export PATH="$old_path"
     rm -rf "$tmp_bin_dir"
-    _neg_gate check_shellcheck || die "Check_shellcheck failed after restoration"
-    log "Check_shellcheck negative test passed"
+    _neg_gate check_shellcheck || die "check_shellcheck failed after restoration"
+    log "check_shellcheck negative test passed"
 }
 
 # task_1713: the Python generator is deleted; every site runs the native twin.
@@ -3856,7 +3882,18 @@ PY
 }
 
 _run_test() {
-    if ( "$1" ); then :; else _FAILED+=("$1"); fi
+    local pre_status post_status
+    pre_status="$(git -C "$ROOT" status --porcelain)"
+    if ( "$1" ); then
+        post_status="$(git -C "$ROOT" status --porcelain)"
+        if [[ "$post_status" != "$pre_status" ]]; then
+            echo -e " \033[1;31m[drift-gate-negatives]\033[0m Test $1 violated tree restore invariant:" >&2
+            git -C "$ROOT" status --porcelain >&2
+            _FAILED+=("$1 (unrestored git porcelain diff)")
+        fi
+    else
+        _FAILED+=("$1")
+    fi
 }
 
 _neg_gate() {
@@ -4344,6 +4381,93 @@ test_wsl_distro_resolution() {
     _neg_gate check_wsl_distro_resolution \
         || die "check_wsl_distro_resolution failed after restoration"
     log "check_wsl_distro_resolution negative test passed"
+}
+
+test_unit_security() {
+    log "Testing check_unit_security"
+    local attest_file="${ROOT}/usr/lib/systemd/system/mios-attest.service"
+    local bak; bak="$(mktemp)"; cp "$attest_file" "$bak"
+
+    # Ruling Q7: WantedBy= in mios-attest.service must be rejected
+    printf '\n[Install]\nWantedBy=multi-user.target\n' >> "$attest_file"
+    if _neg_gate check_unit_security; then
+        cp "$bak" "$attest_file"; rm -f "$bak"
+        die "check_unit_security passed despite WantedBy in mios-attest.service"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-attest"* ]]; then
+        cp "$bak" "$attest_file"; rm -f "$bak"
+        die "check_unit_security failed without naming mios-attest: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$attest_file"; rm -f "$bak"
+
+    # Ruling Q7: preset enable must also be rejected
+    local preset_file="${ROOT}/usr/lib/systemd/system-preset/90-mios.preset"
+    local pbak; pbak="$(mktemp)"; cp "$preset_file" "$pbak"
+    printf '\nenable mios-attest.service\n' >> "$preset_file"
+    if _neg_gate check_unit_security; then
+        cp "$pbak" "$preset_file"; rm -f "$pbak"
+        die "check_unit_security passed despite enable mios-attest.service in preset"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-attest"* ]]; then
+        cp "$pbak" "$preset_file"; rm -f "$pbak"
+        die "check_unit_security failed without naming mios-attest in preset: $_NEG_GATE_OUT"
+    fi
+    cp "$pbak" "$preset_file"; rm -f "$pbak"
+
+    # Task 1966: synthetic unconfined long-running unit must be rejected
+    local probe="${ROOT}/usr/lib/systemd/system/mios-negtest-unconfined.service"
+    cat > "$probe" <<'UNIT'
+[Unit]
+Description=Synthetic unconfined test service
+[Service]
+Type=simple
+ExecStart=/bin/true
+UNIT
+    if _neg_gate check_unit_security; then
+        rm -f "$probe"
+        die "check_unit_security passed despite synthetic unconfined service"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-negtest-unconfined.service"* ]]; then
+        rm -f "$probe"
+        die "check_unit_security failed without naming mios-negtest-unconfined.service: $_NEG_GATE_OUT"
+    fi
+    rm -f "$probe"
+
+    _neg_gate check_unit_security || die "check_unit_security failed after restoration: $_NEG_GATE_OUT"
+    log "check_unit_security negative test passed"
+}
+
+test_preset_roster_complete() {
+    log "Testing check_preset_roster_complete"
+    local preset_file="${ROOT}/usr/lib/systemd/system-preset/90-mios.preset"
+    local bak; bak="$(mktemp)"; cp "$preset_file" "$bak"
+
+    # Task 1993 negative 1: deleting an enable line turns gate RED naming the exact unit
+    sed -i '/enable mios-node.service/d' "$preset_file"
+    if _neg_gate check_preset_roster_complete; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete passed despite missing mios-node.service preset line"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-node.service"* ]]; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete failed without naming mios-node.service: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$preset_file"
+
+    # Task 1993 negative 2: an orphan preset line turns gate RED naming the exact unit
+    printf '\nenable mios-nonexistent-synthetic.service\n' >> "$preset_file"
+    if _neg_gate check_preset_roster_complete; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete passed despite orphan preset line"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"mios-nonexistent-synthetic.service"* ]]; then
+        cp "$bak" "$preset_file"; rm -f "$bak"
+        die "check_preset_roster_complete failed without naming orphan unit: $_NEG_GATE_OUT"
+    fi
+    cp "$bak" "$preset_file"; rm -f "$bak"
+
+    _neg_gate check_preset_roster_complete || die "check_preset_roster_complete failed after restoration: $_NEG_GATE_OUT"
+    log "check_preset_roster_complete negative test passed"
 }
 
 test_unit_dependency_closure() {
@@ -5311,6 +5435,35 @@ test_resolver_differential_parity() {
     log "check_resolver_differential_parity negative test passed"
 }
 
+test_resolver_twin_parity() {
+    log "Testing check_resolver_twin_parity negative control"
+    _neg_gate check_resolver_twin_parity || die "check_resolver_twin_parity baseline failed"
+
+    # Negative control 1: missing configured resolver fails hard
+    local missing out rc=0
+    missing="$(mktemp -d)" || die "cannot make missing-tool catalog"
+    out="$(MIOS_NATIVE_BIN_DIR="$missing" \
+        bash "${ROOT}/automation/98-drift-checks.sh" check_resolver_twin_parity 2>&1)" || rc=$?
+    rmdir "$missing" || die "missing-tool catalog was unexpectedly written"
+    [ "$rc" -ne 0 ] || die "check_resolver_twin_parity accepted a missing configured resolver"
+    grep -q 'configured resolver is missing' <<< "$out" \
+        || die "check_resolver_twin_parity failed for a different reason: $out"
+
+    # Negative control 2: resolver divergence on endpoint
+    local userenv="${ROOT}/usr/lib/mios/userenv.sh"
+    local ubak="${userenv}.bak"
+    cp "$userenv" "$ubak"
+    echo 'export MIOS_AI_ENDPOINT="corrupted-drift-endpoint"' >> "$userenv"
+    if bash "${ROOT}/automation/98-drift-checks.sh" check_resolver_twin_parity >/dev/null 2>&1; then
+        cp "$ubak" "$userenv"; rm -f "$ubak"
+        die "check_resolver_twin_parity passed despite divergence in exported endpoint"
+    fi
+    cp "$ubak" "$userenv"; rm -f "$ubak"
+
+    _neg_gate check_resolver_twin_parity || die "check_resolver_twin_parity failed after restoration"
+    log "check_resolver_twin_parity negative test passed"
+}
+
 test_no_generated_prose_in_resolvers() {
     log "Testing check_no_generated_prose_in_resolvers"
     local sh_file="${ROOT}/automation/lib/globals.sh"
@@ -5780,6 +5933,7 @@ _run_test test_leaked_fixtures
     _run_test test_header_integrity
     _run_test test_header_integrity_unreadable_corpus
     _run_test test_resolver_differential_parity
+    _run_test test_resolver_twin_parity
     _run_test test_generator_host_parity
     _run_test test_generator_host_parity_unreadable_corpus
     _run_test test_legibility_ratchet
@@ -5807,6 +5961,8 @@ _run_test test_leaked_fixtures
     _run_test test_manual_links
     _run_test test_doc_port_scheme
     _run_test test_unit_dependency_closure
+    _run_test test_unit_security
+    _run_test test_preset_roster_complete
     _run_test test_test_hermeticity
     _run_test test_no_mkdir_in_var
     _run_test test_quadlet_privilege

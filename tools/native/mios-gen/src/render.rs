@@ -244,6 +244,7 @@ pub mod render_desktop {
         let mut drifted = Vec::new();
         for (name, cfg) in &launchers {
             let rendered = render_launcher(name, cfg, &ports);
+            let to_write = rendered.replace("\r\n", "\n");
             let target_path = apps_dir.join(format!("{name}.desktop"));
 
             if check {
@@ -252,16 +253,14 @@ pub mod render_desktop {
                     continue;
                 }
                 let current = fs::read_to_string(&target_path).unwrap_or_default();
-                let current_norm = current.replace("\r\n", "\n");
-                let rendered_norm = rendered.replace("\r\n", "\n");
-                if current_norm != rendered_norm {
+                if current != to_write {
                     drifted.push(format!("{name}.desktop content drifted"));
                 }
             } else {
                 if let Some(parent) = target_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                if let Err(e) = fs::write(&target_path, rendered.as_bytes()) {
+                if let Err(e) = fs::write(&target_path, to_write.as_bytes()) {
                     return Err((
                         format!(
                             "render-desktop: write {} failed: {e}",
@@ -807,9 +806,7 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
 
         // Check sh_path
         let sh_existing = if sh_path.is_file() {
-            fs::read_to_string(&sh_path)
-                .ok()
-                .map(|s| s.replace("\r\n", "\n"))
+            fs::read_to_string(&sh_path).ok()
         } else {
             None
         };
@@ -827,29 +824,23 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         }
 
         // Check ps_path
-        let ps_existing = if ps_path.is_file() {
-            fs::read(&ps_path).ok().map(|bytes| {
-                let slice = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                    &bytes[3..]
-                } else {
-                    &bytes[..]
-                };
-                String::from_utf8_lossy(slice).replace("\r\n", "\n")
-            })
+        let ps_bytes = if ps_path.is_file() {
+            fs::read(&ps_path).ok()
         } else {
             None
         };
         let ps_norm = ps_body.replace("\r\n", "\n");
-        if ps_existing.as_deref() != Some(&ps_norm) {
+        let mut expected_ps_bytes = vec![0xEF, 0xBB, 0xBF];
+        let crlf_body = ps_norm.replace('\n', "\r\n");
+        expected_ps_bytes.extend_from_slice(crlf_body.as_bytes());
+
+        if ps_bytes.as_deref() != Some(&expected_ps_bytes) {
             drifted.push("automation/lib/globals.ps1".to_string());
             if !check {
                 if let Some(parent) = ps_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                let mut bytes = vec![0xEF, 0xBB, 0xBF];
-                let crlf_body = ps_norm.replace('\n', "\r\n");
-                bytes.extend_from_slice(crlf_body.as_bytes());
-                if let Err(e) = fs::write(&ps_path, bytes) {
+                if let Err(e) = fs::write(&ps_path, expected_ps_bytes) {
                     return Err((format!("failed to write {}: {e}", ps_path.display()), 1));
                 }
             }
@@ -1572,9 +1563,10 @@ pub mod render_manpages {
 
         for (rel, body) in &rendered {
             let full = root.join(rel);
+            let body_lf = body.replace("\r\n", "\n");
             let current = fs::read_to_string(&full).ok();
             let matches = match &current {
-                Some(curr) => curr.replace("\r\n", "\n") == body.replace("\r\n", "\n"),
+                Some(curr) => curr == &body_lf,
                 None => false,
             };
 
@@ -1583,16 +1575,14 @@ pub mod render_manpages {
             }
 
             if check {
-                if current.is_some() {
-                    drift.push(rel.clone());
-                }
+                drift.push(rel.clone());
                 continue;
             }
 
             if let Some(parent) = full.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            if let Err(e) = fs::write(&full, body.as_bytes()) {
+            if let Err(e) = fs::write(&full, body_lf.as_bytes()) {
                 return Err((
                     format!("render-manpages: write {} failed: {e}", full.display()),
                     1,

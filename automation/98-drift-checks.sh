@@ -400,21 +400,28 @@ check_cli_sql_safety() {
         return
     fi
     local allow=" "   # empty: all libexec tools cut over to parameterized pg
-    local pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
+    local legacy_pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
     local hits="" f base active
     while IFS= read -r f; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
         case "$base" in test_*|*.pyc) continue ;; esac
         [[ "$allow" == *" $base "* ]] && continue
+        grep -qI . "$f" || continue
         active=$(sed -E '/^[[:space:]]*#/d' "$f")
-        if printf '%s\n' "$active" | grep -qE "$pattern"; then
-            hits+="    $f"$'\n'
+        if printf '%s\n' "$active" | grep -qE "$legacy_pattern"; then
+            hits+="    $f (legacy DB transport or escaping)"$'\n'
+        fi
+        # Flag raw unwhitelisted f-string SQL identifier interpolation in execute()
+        local unsafe_fstrings
+        unsafe_fstrings=$(printf '%s\n' "$active" | grep -E 'execute\(f["'"'"'].*\{' | grep -vE '\{(safe_|ph_)' || true)
+        if [[ -n "$unsafe_fstrings" ]]; then
+            hits+="    $f (unwhitelisted f-string SQL interpolation: $unsafe_fstrings)"$'\n'
         fi
     done < <(find "$dir" -maxdepth 1 -type f 2>/dev/null)
     if [[ -n "$hits" ]]; then
         printf '%s' "$hits" >&2
-        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql) or hand-rolled SQL escaping (_pgesc/_pgq) -- use parameterized pg via mios-pg-query --exec-json / mios-db --pg-json "
+        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql), hand-rolled SQL escaping (_pgesc/_pgq), or raw unwhitelisted f-string SQL interpolation -- use parameterized pg or safe_ident() for SQLite identifiers"
     else
         echo "[98-drift-checks]   libexec CLIs SQL-safe"
     fi
@@ -1201,21 +1208,27 @@ check_resolver_twin_parity() {
         return
     fi
     local _nat="" _c
-    # debug BEFORE release, matching check_resolver_differential_parity and what
-    # CI step 3 actually builds. Preferring release picked up a binary older
-    # than the fix under test and reported its staleness as a twin mismatch.
-    for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
-              "$ROOT/tools/native/target/release/mios-resolver" \
-              /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
-        [[ -x "$_c" ]] && { _nat="$_c"; break; }
-    done
-    if [[ -z "$_nat" ]]; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
-        else
-            echo "[98-drift-checks]   mios-resolver not built -- twin parity NOT verified (both legs would be mios_toml.py); advisory skip"
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        for _c in "$MIOS_NATIVE_BIN_DIR/mios-resolver" "$MIOS_NATIVE_BIN_DIR/mios-resolver.exe"; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "configured resolver is missing or not executable: $MIOS_NATIVE_BIN_DIR/mios-resolver"
+            return
         fi
-        return
+    else
+        # debug BEFORE release, matching check_resolver_differential_parity and what
+        # CI step 3 actually builds. Preferring release picked up a binary older
+        # than the fix under test and reported its staleness as a twin mismatch.
+        for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
+                  "$ROOT/tools/native/target/release/mios-resolver" \
+                  /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
+            return
+        fi
     fi
 
     # `local fix="$(...)"` returns the status of `local`, not of mktemp, so this
@@ -1238,7 +1251,7 @@ check_resolver_twin_parity() {
     # overridden by host and never reached the resolved value, so the fixture
     # still could not fail -- a repaired check that is still vacuous.
     printf '[ai]\nendpoint = "http://host:${MIOS_PORTS_AGENT_PIPE}"\nmodel = "host-model"\n'                 > "$fix/host.toml"
-    printf '[ai]\nmodel = "user-model"\n'                                                                 > "$fix/.config/mios/mios.toml"
+    printf '[ai]\nendpoint = ""\nmodel = "user-model"\n'                                                  > "$fix/.config/mios/mios.toml"
     local sel='^MIOS_AI_(ENDPOINT|MODEL|EMBED_MODEL)=' bash_out py_out
     mkdir -p "$fix/bin" && ln -sf "$_nat" "$fix/bin/mios-resolver"
     bash_out="$(env -i PATH="$fix/bin:$PATH" HOME="$fix" XDG_CONFIG_HOME="$fix/.config" \
@@ -2534,6 +2547,14 @@ check_python_lint() {
     bash "$lint_script" >/dev/null 2>&1 || res=$?
     if [[ "$res" -eq 1 ]]; then
         _violation "python linting reported compilation/syntax error(s)"
+    elif [[ "$res" -eq 2 ]]; then
+        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
+            _violation "python linting could not run (python3 missing under MIOS_DRIFT_REQUIRE_TOOLS=1)"
+        else
+            echo "[98-drift-checks]   WARNING: python linting could not run (python3 missing)" >&2
+        fi
+    elif [[ "$res" -ne 0 ]]; then
+        _violation "python linting failed with exit code $res"
     fi
 }
 
@@ -3683,6 +3704,15 @@ _assert_read_only() {  # $1 = what ran; _RO_BEFORE = the fingerprint taken befor
     return 1
 }
 
+check_memory_poisoning_scan() {
+    echo "[98-drift-checks] memory-poisoning scan enabled in SSOT and active in runtime"
+    _need_python || return 0
+    local out
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py memory-poisoning-scan 2>&1)" || {
+        _violations_from "check_memory_poisoning_scan: " "$out"; return; }
+    echo "[98-drift-checks]   memory-poisoning scan verified"
+}
+
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
         if declare -f "$1" >/dev/null; then
@@ -3749,6 +3779,7 @@ main() {
     check_no_mkdir_in_var
     check_quadlet_privilege
     check_unit_security
+    check_preset_roster_complete
     check_var_closure
     check_lint_is_final
     check_firstboot_degrade_open
@@ -3920,6 +3951,7 @@ main() {
     check_no_hardcoded_ssot_literal
     check_bash_phase_ratchet
     check_no_silent_tool_skips
+    check_memory_poisoning_scan
     check_build_tool_dispatch
     check_signature_policy
     check_phase_registry
@@ -4349,15 +4381,27 @@ check_unit_security() {
         return 0
     fi
     local out
-    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security)"; then
-        echo "[98-drift-checks]   WARNING: systemd unit security check flagged unconfined services" >&2
-        return 0
+    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security 2>&1)"; then
+        _violations_from "check_unit_security: " "$out"
+        return
     fi
     if [[ -n "$out" ]]; then
         echo "[98-drift-checks]   NOTE: legacy unconfined units pending migration (roster active)"
     else
         echo "[98-drift-checks]   All systemd service security baselines pass"
     fi
+}
+
+# --- systemd preset roster declares explicit enable/disable policy for every MiOS unit ---
+check_preset_roster_complete() {
+    echo "[98-drift-checks] systemd preset roster declares explicit enable/disable policy for every MiOS unit"
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+        echo "[98-drift-checks]   WARNING: python missing" >&2
+        return 0
+    fi
+    local out; out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py preset-roster-complete 2>&1)" || {
+        _violations_from "check_preset_roster_complete: " "$out"; return; }
+    echo "[98-drift-checks]   systemd preset roster is complete (no orphans, all units declared)"
 }
 
 # --- systemd units form complete dependency closure without missing targets ---
