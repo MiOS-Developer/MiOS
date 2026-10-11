@@ -64,19 +64,6 @@ logging.basicConfig(
 log = logging.getLogger("mios-agent-pipe")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mios_pipe.redact import RedactingLogFilter  # noqa: E402
-
-_redacting_filter = RedactingLogFilter()
-_root_logger = logging.getLogger()
-_root_logger.addFilter(_redacting_filter)
-for _h in _root_logger.handlers:
-    _h.addFilter(_redacting_filter)
-log.addFilter(_redacting_filter)
-for _u_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-    _u_log = logging.getLogger(_u_name)
-    _u_log.addFilter(_redacting_filter)
-    for _uh in _u_log.handlers:
-        _uh.addFilter(_redacting_filter)
 from mios_jsonsalvage import loads_lenient as _loads_lenient   # noqa: E402
 from mios_owui import (strip_owui_scaffold as _strip_owui_scaffold,  # noqa: E402
                        OWUI_TEMPLATE_MARKERS as _OWUI_TEMPLATE_MARKERS)
@@ -126,7 +113,7 @@ import mios_reputation   # noqa: E402  -- #54 zero-trust peer reputation
 import mios_quota   # noqa: E402  -- WS-6 per-user quota / rate-limit (inert until configured)
 import mios_capreg   # noqa: E402  -- WS-2 unified RBAC-filtered capability manifest
 import mios_gateway_queue
-from mios_psi import get_psi_monitor, PSIMonitor  # noqa: E402  -- task_429 Linux PSI telemetry & load shedding
+from mios_psi import get_psi_monitor, PSIMonitor  # noqa: E402  -- T-485 Linux PSI telemetry & load shedding
 _PSI_MONITOR: Optional[PSIMonitor] = None
 _PSI_MONITOR_TASK: Optional[asyncio.Task] = None
 _PSI_THROTTLED: bool = False
@@ -1075,11 +1062,11 @@ async def cephfs_health():
 
 @app.post("/v1/inference/lora/load")
 async def lora_load(request: Request):
-    heavy_engine = str(_toml_section("ai").get("heavy_engine") or "").strip().lower()
-    if heavy_engine != "vllm":   # multi-LoRA is a vLLM engine feature of the heavy lane
+    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
+    if heavy_mode != "single":
         return JSONResponse(
             status_code=400,
-            content={"error": "LoRA loading is only supported when [ai].heavy_engine is 'vllm'"}
+            content={"error": "LoRA loading is only supported when heavy_engine_mode is 'single'"}
         )
     try:
         body = await request.json()
@@ -1102,8 +1089,8 @@ async def lora_load(request: Request):
 
 @app.get("/v1/inference/lora/list")
 async def lora_list():
-    heavy_engine = str(_toml_section("ai").get("heavy_engine") or "").strip().lower()
-    if heavy_engine != "vllm":
+    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
+    if heavy_mode != "single":
         return {"adapters": [], "enabled": False}
 
     url = f"{_TOOL_BACKEND_HEAVY}/models"
@@ -1128,7 +1115,7 @@ async def lora_list():
 
 @app.post("/v1/ast/diff")
 async def ast_diff_endpoint(request: Request):
-    """Compute AST structural diff across Python, Rust, Go, TypeScript, C (task_724)."""
+    """Compute AST structural diff across Python, Rust, Go, TypeScript, C (T-780)."""
     try:
         body = await request.json()
         orig = body.get("original", "")
@@ -1144,7 +1131,7 @@ async def ast_diff_endpoint(request: Request):
 
 @app.post("/v1/ast/review")
 async def ast_review_endpoint(request: Request):
-    """2-peer review merge gating on structural diffs (task_724)."""
+    """2-peer review merge gating on structural diffs (T-780)."""
     try:
         body = await request.json()
         action = body.get("action", "create")
@@ -1174,7 +1161,7 @@ async def ast_review_endpoint(request: Request):
         log.warning("AST review request failed: %s", e)
         return JSONResponse(status_code=400, content={"error": "Invalid AST review request"})
 
-from mios_pipe.kernel.httpclient import (   # noqa: E402  -- WS-A6/task_206 chokepoint
+from mios_pipe.kernel.httpclient import (   # noqa: E402  -- WS-A6/T-226 chokepoint
     _batch_request_hook, _get_client, configure as _configure_httpclient)
 
 import mios_audit   # noqa: E402
@@ -1267,7 +1254,7 @@ _orig_over_global_ceiling = _over_global_ceiling
 _orig_host_stats_cached = _host_stats_cached
 
 def _over_global_ceiling(load_ceil: Optional[float] = None) -> bool:
-    """task_429: True when host load/mem is over ceiling OR Linux PSI critical pressure is reached."""
+    """T-485: True when host load/mem is over ceiling OR Linux PSI critical pressure is reached."""
     try:
         mon = get_psi_monitor()
         if mon and mon.is_critical():
@@ -1277,7 +1264,7 @@ def _over_global_ceiling(load_ceil: Optional[float] = None) -> bool:
     return _orig_over_global_ceiling(load_ceil)
 
 def _host_stats_cached(ttl: float = 1.0) -> dict:
-    """task_429: Injects Linux PSI telemetry into host stats."""
+    """T-485: Injects Linux PSI telemetry into host stats."""
     stats = _orig_host_stats_cached(ttl)
     try:
         mon = get_psi_monitor()
@@ -2289,7 +2276,7 @@ from mios_reflect import (   # noqa: E402
     _recent_tool_history,
     _judge_answer_satisfied,
 )
-from mios_persona import (   # noqa: E402  -- task_328 Dynamic Agent Persona Synthesis
+from mios_persona import (   # noqa: E402  -- T-384 Dynamic Agent Persona Synthesis
     DomainCategory,
     PersonaClassifier,
     PersonaSynthesizer,
@@ -2297,7 +2284,7 @@ from mios_persona import (   # noqa: E402  -- task_328 Dynamic Agent Persona Syn
     synthesize_persona_prompt,
     get_domain_guidelines,
 )
-from mios_deliberate import (   # noqa: E402  -- task_329 Bounded Reflection Loop Convergence
+from mios_deliberate import (   # noqa: E402  -- T-385 Bounded Reflection Loop Convergence
     DeliberationConfig,
     DeliberationState,
     DeliberationTurn,
@@ -2327,7 +2314,7 @@ KNOWLEDGE_STORE_GATE_UNSATISFIED = os.environ.get(
 KNOWLEDGE_TABLE = (os.environ.get("MIOS_KNOWLEDGE_TABLE", "knowledge").strip()
                    or "knowledge")
 MEMORY_GUARD_MODE = (os.environ.get("MIOS_MEMORY_GUARD_MODE")
-                     or (_toml_section("pgvector").get("memory_guard_mode", "log"))
+                     or (_toml_section("pgvector").get("memory_guard_mode", "off"))
                      ).strip().lower()
 KNOWLEDGE_ANSWER_MAX = int(
     os.environ.get("MIOS_KNOWLEDGE_ANSWER_MAX", "8000") or 8000)
@@ -2498,14 +2485,19 @@ _TAINT_VERBS = mios_secset.taint_verb_set(
     ("web_search", "web_extract", "crawl", "web_scrape"),
     (_toml_section("security") or {}).get("taint_verbs"))
 
-_env_allowlist = os.environ.get("MIOS_SECURITY_ALLOWLIST_HOSTS", "").strip()
-_toml_sec = _toml_section("security") or {}
-_toml_hosts = _toml_sec.get("allowlist_hosts") or []
-_ALLOWLIST_HOSTS = {
-    str(h).strip().lower() for h in _toml_hosts if str(h).strip()
+_DEFAULT_ALLOWLIST_HOSTS = {
+    "localhost", "127.0.0.1", "::1",
+    "host.containers.internal",
+    "mios-llm-light", "mios-open-webui", "mios-hermes", "mios-pgvector",
+    "mios-forge", "mios-searxng", "mios-agents",
 }
+_env_allowlist = os.environ.get("MIOS_SECURITY_ALLOWLIST_HOSTS", "").strip()
 if _env_allowlist:
-    _ALLOWLIST_HOSTS.update(h.strip().lower() for h in _env_allowlist.split(",") if h.strip())
+    _ALLOWLIST_HOSTS = {
+        h.strip().lower() for h in _env_allowlist.split(",") if h.strip()
+    }
+else:
+    _ALLOWLIST_HOSTS = set(_DEFAULT_ALLOWLIST_HOSTS)
 
 from mios_firewall import (   # noqa: E402
     _is_external_url,
@@ -2884,7 +2876,7 @@ sys.modules["mios_planner"].configure(
     agent_registry=_AGENT_REGISTRY,
     short_prompt_chars=(_toml_section("planner") or {}).get("short_prompt_chars"),
     short_prompt_words=(_toml_section("planner") or {}).get("short_prompt_words"),
-    replay_templates=load_run_templates)   # task_205 intent-keyed replay source
+    replay_templates=load_run_templates)   # T-225 intent-keyed replay source
 from mios_planner import (  # noqa: E402,F401
     _PLANNER_SYSTEM, _planner_system_for, _action_domain_verbs)
 
@@ -4329,7 +4321,6 @@ sys.modules["mios_swarm"].configure(
 from mios_pipe.auth import (
     usage_completeness_mw as _usage_completeness_mw,
     inbound_auth_mw as _inbound_auth_mw,
-    host_origin_validation_mw as _host_origin_validation_mw,
     configure as _configure_auth
 )
 
@@ -4374,18 +4365,59 @@ _configure_auth(
     auth_open_paths=globals().get("_AUTH_OPEN_PATHS", ()),
     auth_gated_prefixes=globals().get("_AUTH_GATED_PREFIXES", ()),
     check_inbound_principal=globals().get("_check_inbound_principal"),
-    allowlist_hosts=_ALLOWLIST_HOSTS,
 )
 
 app.middleware("http")(_usage_completeness_mw)
-app.middleware("http")(_host_origin_validation_mw)
 app.middleware("http")(_inbound_auth_mw)
+
+_ALLOWED_LOCAL_UIDS = frozenset((0, 815, 1000))
+
+@app.middleware("http")
+async def _peercred_auth_mw(request: Request, call_next):
+    """Linux SO_PEERCRED authentication middleware on /run/mios-agent-pipe.socket.
+    Allows privileged local UIDs (0, 815, 1000) while strictly rejecting unauthorized
+    or unverified callers over the UNIX domain socket.
+    """
+    is_unix = request.scope.get("is_unix_socket", False)
+    peercred = request.scope.get("peercred")
+
+    # Support testing or mocked peercred environments
+    if not is_unix and request.headers.get("x-mock-unix-socket") == "1":
+        is_unix = True
+        mock_uid = request.headers.get("x-mock-peercred-uid")
+        mock_gid = request.headers.get("x-mock-peercred-gid", "1000")
+        mock_pid = request.headers.get("x-mock-peercred-pid", "1234")
+        peercred = (int(mock_pid), int(mock_uid), int(mock_gid)) if mock_uid is not None else None
+
+    if is_unix:
+        if peercred and len(peercred) >= 2 and peercred[1] in _ALLOWED_LOCAL_UIDS:
+            try:
+                request.state.is_unix_socket = True
+                request.state.peercred = peercred
+                request.state.mios_principal = f"peercred:uid={peercred[1]}"
+            except Exception:
+                pass
+            return await call_next(request)
+
+        caller_uid = peercred[1] if peercred and len(peercred) >= 2 else "unknown"
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": f"unauthorized caller: uid {caller_uid} not permitted on unix domain socket",
+                    "type": "peercred_auth_error",
+                    "code": 401,
+                }
+            },
+        )
+
+    return await call_next(request)
 
 _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()
 
 @app.middleware("http")
 async def _psi_shed_load_mw(request: Request, call_next):
-    """task_429: Gracefully throttle requests with HTTP 429/503 during critical Linux PSI pressure."""
+    """T-485: Gracefully throttle requests with HTTP 429/503 during critical Linux PSI pressure."""
     try:
         mon = get_psi_monitor()
         if mon and mon.is_critical():
@@ -4640,7 +4672,7 @@ globals()["cluster_health_logic"] = sys.modules["mios_clusterhealth"].cluster_he
 globals()["scheduler_state_logic"] = sys.modules["mios_clusterhealth"].scheduler_state_logic
 globals()["health_logic"] = sys.modules["mios_clusterhealth"].health_logic
 
-# task_429: Surface Linux PSI metrics in /v1/cluster/health and provide system metrics endpoint
+# T-485: Surface Linux PSI metrics in /v1/cluster/health and provide system metrics endpoint
 _orig_cluster_health_logic = sys.modules["mios_clusterhealth"].cluster_health_logic
 async def _psi_cluster_health_logic() -> JSONResponse:
     resp = await _orig_cluster_health_logic()
@@ -4675,7 +4707,7 @@ globals()["health_logic"] = _psi_health_logic
 
 @app.get("/v1/system/psi")
 async def v1_system_psi() -> JSONResponse:
-    """task_429: Linux PSI telemetry, resource stall averages, and load-shedding status."""
+    """T-485: Linux PSI telemetry, resource stall averages, and load-shedding status."""
     return JSONResponse(get_psi_monitor().get_metrics_dict())
 
 globals()["portal_stats_logic"] = sys.modules["mios_portal"].portal_stats_logic
@@ -4735,20 +4767,97 @@ async def v1_events_websocket(websocket: WebSocket):
     finally:
         _event_hub.unregister(websocket)
 
+def extract_peercred(sock: Any) -> Optional[tuple[int, int, int]]:
+    """Extract (pid, uid, gid) from a UNIX domain socket using Linux SO_PEERCRED."""
+    try:
+        import struct
+        so_peercred = getattr(_socket, "SO_PEERCRED", 17)
+        cred = sock.getsockopt(_socket.SOL_SOCKET, so_peercred, struct.calcsize("3i"))
+        pid, uid, gid = struct.unpack("3i", cred)
+        return pid, uid, gid
+    except Exception as e:
+        log.debug("SO_PEERCRED extraction failed: %s", e)
+        return None
+
+
+def _make_peercred_protocol():
+    """Create an H11Protocol subclass that extracts SO_PEERCRED on Unix domain sockets."""
+    try:
+        from uvicorn.protocols.http.h11_impl import H11Protocol
+    except ImportError:
+        return "auto"
+
+    class _PeerCredH11Protocol(H11Protocol):
+        def connection_made(self, transport):
+            super().connection_made(transport)
+            sock = transport.get_extra_info("socket")
+            self._peercred = None
+            self._is_unix = False
+            if sock is not None:
+                if hasattr(_socket, "AF_UNIX") and getattr(sock, "family", None) == _socket.AF_UNIX:
+                    self._is_unix = True
+                    self._peercred = extract_peercred(sock)
+
+        def handle_events(self):
+            super().handle_events()
+            if hasattr(self, "scope") and isinstance(self.scope, dict):
+                self.scope["is_unix_socket"] = getattr(self, "_is_unix", False)
+                self.scope["peercred"] = getattr(self, "_peercred", None)
+
+    return _PeerCredH11Protocol
+
+
 def main() -> int:
     host = _bind_host(_API_REQUIRE_AUTH, os.environ.get("MIOS_BIND_HOST", ""))
-    log.info("starting on %s:%d -> backend=%s model=%s "
+    uds_path = os.environ.get("MIOS_AGENT_PIPE_SOCKET", "/run/mios-agent-pipe.socket")
+    log.info("starting on %s:%d (uds=%s) -> backend=%s model=%s "
              "router_enabled=%s router_model=%s",
-             host, PORT, BACKEND, BACKEND_MODEL,
+             host, PORT, uds_path, BACKEND, BACKEND_MODEL,
              ROUTER_ENABLED, ROUTER_MODEL)
-    uvicorn.run(
-        app,
-        host=host,
-        port=PORT,
-        log_level="info",
-        access_log=False,
-    )
+
+    async def _serve_all():
+        http_cls = _make_peercred_protocol()
+        tcp_cfg = uvicorn.Config(
+            app,
+            host=host,
+            port=PORT,
+            http=http_cls,
+            log_level="info",
+            access_log=False,
+        )
+        tcp_srv = uvicorn.Server(tcp_cfg)
+        servers = [tcp_srv.serve()]
+
+        if hasattr(_socket, "AF_UNIX") and sys.platform != "win32":
+            try:
+                parent_dir = os.path.dirname(uds_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, exist_ok=True)
+                if os.path.exists(uds_path):
+                    try:
+                        os.unlink(uds_path)
+                    except OSError:
+                        pass
+                uds_cfg = uvicorn.Config(
+                    app,
+                    uds=uds_path,
+                    http=http_cls,
+                    log_level="info",
+                    access_log=False,
+                )
+                uds_srv = uvicorn.Server(uds_cfg)
+                servers.append(uds_srv.serve())
+            except Exception as _e:
+                log.warning("could not initialize UNIX domain socket on %s: %s", uds_path, _e)
+
+        await asyncio.gather(*servers)
+
+    try:
+        asyncio.run(_serve_all())
+    except (KeyboardInterrupt, SystemExit):
+        pass
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

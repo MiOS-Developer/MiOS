@@ -261,5 +261,9 @@
     <redirdev bus="usb" type="spicevmc"/>
     <watchdog model="itco" action="reset"/>
     <memballoon model="none"/>
+    <shmem name="looking-glass">
+      <model type="ivshmem-plain"/>
+      <size unit="M">128</size>
+    </shmem>
   </devices>
 </domain>
