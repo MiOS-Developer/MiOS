@@ -54,6 +54,7 @@ coreutils = { upstream = "gnu-coreutils", upstream_license = "GPL-3.0-or-later",
 oci_runtime = { upstream = "runc", upstream_license = "GPL-2.0-only", replacement = "youki", replacement_license = "Apache-2.0" }
 bootloader = { upstream = "grub2", upstream_license = "GPL-3.0-or-later", replacement = "systemd-boot", replacement_license = "LGPL-2.1-or-later" }
 dbus_daemon = { upstream = "dbus-daemon", upstream_license = "GPL-2.0-or-later", replacement = "dbus-broker", replacement_license = "Apache-2.0" }
+workspace_orchestrator = { upstream = "coder", upstream_license = "AGPL-3.0-only", replacement = "devpod", replacement_license = "MPL-2.0" }
 
 
 # ----------------------------------------------------------------------------
@@ -7520,6 +7521,7 @@ open_webui         = 8200     # Open WebUI (rich LLM interface at http://localho
 # hermes_workspace REMOVED (port 3033 freed) -- use the
 # hermes-agent dashboard at port 9119 instead.
 code_server        = 8900     # code-server (VS Code in a browser; matches image default)
+devpod_agent       = 8910     # DevPod client agent transport port
 k3s_api            = 8450     # K3s Kubernetes API
 guacamole_web      = 8220     # mios-guacamole browser desktop
 ceph_dashboard     = 8460     # Ceph dashboard
@@ -7640,7 +7642,7 @@ doc     = "Search, crawl and scrape backends (the mios-webtools pod). LOOPBACK-o
 [ports.categories.devtools]
 base    = 8900
 stride  = 10
-members = ["code_server"]
+members = ["code_server", "devpod_agent"]
 doc     = "Developer surfaces served to a browser."
 
 [ports.categories.sidecar]
@@ -7753,6 +7755,7 @@ open_webui         = "ghcr.io/open-webui/open-webui:main"
 # hermes_workspace sidecar REMOVED -- replaced by the
 # hermes-agent's built-in dashboard at port 9119.
 code_server        = "ghcr.io/coder/code-server:4.139.1"   # pinned (-> MIOS_CODE_SERVER_VERSION): the workbench bake patches are release-bound; a bump that moves an anchor FAILS the build
+devpod             = "ghcr.io/loft-sh/devpod:v0.6.15"      # DevPod workspace container image (MPL-2.0)
 guacamole          = "docker.io/guacamole/guacamole:latest"
 forge_runner       = "code.forgejo.org/forgejo/runner:latest"
 crowdsec           = "docker.io/crowdsecurity/crowdsec:latest"
@@ -11306,6 +11309,42 @@ client_portable_surfaces = [
 bootstrap_client_portable_surfaces = [
     ".devcontainer/devcontainer.json",
 ]
+
+# ----------------------------------------------------------------------------
+# [rde] -- Decentralized Remote Development Environment SSOT Configuration
+# Governs client-only DevPod orchestration, code-server IDE parameters,
+# and OpenTofu infrastructure provisioning targets.
+# ----------------------------------------------------------------------------
+[rde]
+orchestrator        = "devpod"
+engine              = "podman"
+ide                 = "code-server" # MIT licensed FOSS (or "openvscode-server" / "none")
+devpod_version      = "0.6.15"
+opentofu_version    = "1.13.1"
+code_server_version = "4.141.0"
+socket_path         = "/run/user/1000/podman/podman.sock"
+workspace_dir       = "/workspaces/MiOS"
+storage_driver      = "overlay"
+telemetry           = false
+
+[rde.devpod]
+default_provider       = "docker"
+inactivity_timeout     = 0
+git_credentials_sync   = true
+docker_credentials_sync = true
+devcontainer_path      = ".devcontainer/devcontainer.json"
+
+[rde.opentofu]
+binary_path                    = "/usr/local/bin/tofu"
+terraform_compatibility_symlink = true
+parallelism                    = 10
+
+[rde.blade]
+enabled       = false
+target_host   = "blade01.local"
+target_user   = "user"
+target_port   = 8100
+identity_file = "~/.ssh/id_ed25519"
 
 # forwardPorts of every devcontainer.json above (both repos), projected by
 # tools/sync-dotfiles.py from these [ports] keys in order; the array is owned.
