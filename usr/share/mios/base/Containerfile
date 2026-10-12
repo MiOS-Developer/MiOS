@@ -2,6 +2,7 @@
 # AI-related: usr/share/mios/sys/Containerfile, usr/share/mios/cuda/Containerfile, usr/libexec/mios/57-mios-sys-build.sh, usr/libexec/mios/mios-bake-group
 ARG MIOS_BASE_IMAGE=registry.fedoraproject.org/fedora-minimal:latest
 FROM ${MIOS_BASE_IMAGE}
+ARG MIOS_MCP_PACKAGES
 
 LABEL org.opencontainers.image.title="mios-base"
 LABEL org.opencontainers.image.description="MiOS shared minimal Fedora base -- every MiOS service container derives FROM this so the bound-image store dedupes the base once."
@@ -11,10 +12,10 @@ RUN dnf5 -y install \
         --setopt=install_weak_deps=0 \
         --setopt=tsflags=nodocs \
         --setopt=keepcache=0 \
-        ca-certificates tzdata shadow-utils tini glibc-minimal-langpack \
+        ca-certificates tzdata shadow-utils tini glibc-minimal-langpack ${MIOS_MCP_PACKAGES:?SSOT packages.mcp required} \
     && dnf5 clean all \
     && rm -rf /usr/share/doc /usr/share/man /usr/share/info \
-              /usr/share/licenses /usr/share/locale/* /var/cache/* /var/log/* /tmp/* \
+              /usr/share/locale/* /var/cache/* /var/log/* /tmp/* \
     && :
 
 ENV LANG=C.UTF-8 \
@@ -22,3 +23,35 @@ ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
+# The same native interface ships in EVERY service image derived from this
+# base, independent of which optional model, desktop or GPU layers are enabled.
+# The named mios context is the installed root, supplied by the native builder.
+COPY --from=mios /usr/lib/mios/mcp/ /usr/lib/mios/mcp/
+COPY --from=mios /usr/lib/mios/mios_toml.py /usr/lib/mios/mios_toml.py
+COPY --from=mios /usr/libexec/mios/mios-mcp-server /usr/libexec/mios/mios-mcp-server
+COPY --from=mios /usr/libexec/mios/tmux-mcp /usr/libexec/mios/tmux-mcp
+COPY --from=mios /usr/share/mios/mios.toml /usr/share/mios/mios.toml
+COPY --from=mios /usr/share/licenses/tmux-mcp/ /usr/share/licenses/tmux-mcp/
+COPY --from=mios /usr/libexec/mios/mios-unit-gen /usr/libexec/mios/mios-unit-gen
+COPY --from=mios /usr/libexec/mios/mios-agent-relay /usr/libexec/mios/mios-agent-relay
+COPY --from=mios /usr/libexec/mios/mios-gen /usr/libexec/mios/mios-gen
+COPY --from=mios /usr/libexec/mios/ux/theme_sync.py /usr/libexec/mios/ux/theme_sync.py
+COPY --from=mios /usr/libexec/mios/mios-dotfiles-render /usr/libexec/mios/mios-dotfiles-render
+COPY --from=mios /usr/libexec/mios/mios-terminal /usr/libexec/mios/mios-terminal
+COPY --from=mios /usr/libexec/mios/mios-ai-terminal /usr/libexec/mios/mios-ai-terminal
+COPY --from=mios /usr/libexec/mios/mios-dashboard /usr/libexec/mios/mios-dashboard
+COPY --from=mios /usr/libexec/mios/mios-mon.py /usr/libexec/mios/mios-mon.py
+COPY --from=mios /usr/bin/mios /usr/bin/mios
+COPY --from=mios /etc/profile.d/mios-prompt.sh /etc/profile.d/mios-prompt.sh
+COPY --from=mios /etc/tmux.conf /etc/tmux.conf
+COPY --from=mios /usr/share/mios/tmux/ /usr/share/mios/tmux/
+COPY --from=mios /usr/share/mios/keybindings/ /usr/share/mios/keybindings/
+COPY --from=mios /usr/share/mios/theme/templates/oh-my-posh.omp.json.tmpl /usr/share/mios/theme/templates/oh-my-posh.omp.json.tmpl
+COPY --from=mios /usr/share/mios/oh-my-posh/mios.omp.json /usr/share/mios/oh-my-posh/mios.omp.json
+COPY --from=mios /usr/share/fonts/geist/ /usr/share/fonts/geist/
+COPY --from=mios /usr/share/fonts/geist-nerd/ /usr/share/fonts/geist-nerd/
+COPY --from=mios /usr/share/fonts/nerd-symbols/ /usr/share/fonts/nerd-symbols/
+RUN /usr/lib/mios/mcp/.venv/bin/python3 -c 'from mcp import Client; import uvicorn' \
+    && /usr/libexec/mios/tmux-mcp --version \
+    && /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install \
+    && fc-cache -f

@@ -50,7 +50,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 TIMEOUT="${MIOS_IMAGE_TIMEOUT:-8}"
-PROBE_LIST="${MIOS_SEARXNG_URL:-http://127.0.0.1:8800,http://mios-searxng:8800,http://mios-searxng:8080,http://localhost:8800}"
+PROBE_LIST="${MIOS_URLS_SEARXNG:-http://127.0.0.1:8800,http://mios-searxng:8800,http://mios-searxng:8080,http://localhost:8800}"
 
 
 pick_img_src() {

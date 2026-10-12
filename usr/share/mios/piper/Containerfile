@@ -2,21 +2,23 @@
 # AI-related: mios-piper.container, 57-mios-sys-build.sh
 # Every value arrives as a build arg resolved from [services.piper] in
 # /usr/share/mios/mios.toml by the resolver; there are no defaults here (Law 7).
-ARG MIOS_PIPER_BASE
-FROM ${MIOS_PIPER_BASE}
+ARG MIOS_SERVICES_PIPER_BASE
+FROM ${MIOS_SERVICES_PIPER_BASE}
 
-ARG MIOS_PIPER_BASE
-ARG MIOS_PIPER_VERSION
-ARG MIOS_PIPER_VOICE
-ARG MIOS_PIPER_UID
-ARG MIOS_PIPER_GID
+ARG MIOS_SERVICES_PIPER_BASE
+ARG MIOS_SERVICES_PIPER_VERSION
+ARG MIOS_SERVICES_PIPER_VOICE
+ARG MIOS_SERVICES_PIPER_UID
+ARG MIOS_SERVICES_PIPER_GID
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+RUN python3.13 -m venv /opt/piper-venv
+ENV PATH=/opt/piper-venv/bin:$PATH
 
 RUN set -eu; \
-    for v in MIOS_PIPER_BASE MIOS_PIPER_VERSION MIOS_PIPER_VOICE MIOS_PIPER_UID MIOS_PIPER_GID; do \
+    for v in MIOS_SERVICES_PIPER_BASE MIOS_SERVICES_PIPER_VERSION MIOS_SERVICES_PIPER_VOICE MIOS_SERVICES_PIPER_UID MIOS_SERVICES_PIPER_GID; do \
         eval "val=\${$v:-}"; \
         if [ -z "$val" ]; then \
             echo "mios-piper: build arg $v is empty; pass it from the resolved [services.piper] table" >&2; \
@@ -24,19 +26,19 @@ RUN set -eu; \
         fi; \
     done
 
-RUN pip install "piper-tts[http]==${MIOS_PIPER_VERSION}"
+RUN pip install "piper-tts[http]==${MIOS_SERVICES_PIPER_VERSION}"
 
-RUN python3 -m piper.download_voices "${MIOS_PIPER_VOICE}" --download-dir /usr/share/piper/voices \
-    && test -s "/usr/share/piper/voices/${MIOS_PIPER_VOICE}.onnx" \
-    && test -s "/usr/share/piper/voices/${MIOS_PIPER_VOICE}.onnx.json" \
+RUN python3 -m piper.download_voices "${MIOS_SERVICES_PIPER_VOICE}" --download-dir /usr/share/piper/voices \
+    && test -s "/usr/share/piper/voices/${MIOS_SERVICES_PIPER_VOICE}.onnx" \
+    && test -s "/usr/share/piper/voices/${MIOS_SERVICES_PIPER_VOICE}.onnx.json" \
     && chmod -R a+rX /usr/share/piper
 
 LABEL org.opencontainers.image.title="mios-piper" \
       org.opencontainers.image.description="MiOS Piper streaming TTS engine (piper1-gpl http_server) with a baked voice" \
       org.opencontainers.image.source="https://github.com/OHF-Voice/piper1-gpl" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.version="${MIOS_PIPER_VERSION}"
+      org.opencontainers.image.version="${MIOS_SERVICES_PIPER_VERSION}"
 
 WORKDIR /usr/share/piper/voices
-USER ${MIOS_PIPER_UID}:${MIOS_PIPER_GID}
+USER ${MIOS_SERVICES_PIPER_UID}:${MIOS_SERVICES_PIPER_GID}
 ENTRYPOINT ["python3", "-m", "piper.http_server"]

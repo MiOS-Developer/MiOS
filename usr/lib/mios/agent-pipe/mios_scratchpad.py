@@ -1,9 +1,17 @@
 # AI-hint: In-process SQLite vector store (sqlite-vec) scratchpad module for ephemeral tool outputs (CONV-08).
 
+import hashlib
 import os
 from pathlib import Path
 
-SQLITE_VEC_ENABLE = os.environ.get("MIOS_CONV_MEMORY_SQLITE_VEC_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+SQLITE_VEC_ENABLE = os.environ.get("MIOS_CONVERGE_MEMORY_SQLITE_VEC_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+
+
+def _scratchpad_path(session_id: str, scratchpad_dir: str) -> Path:
+    """Keep arbitrary external session identifiers out of filesystem paths."""
+    identity = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return Path(scratchpad_dir or "/tmp") / f"mios-session-{identity}.sqlite"
+
 
 if SQLITE_VEC_ENABLE:
     import sqlite3
@@ -12,7 +20,7 @@ if SQLITE_VEC_ENABLE:
     def create_scratchpad(session_id: str, scratchpad_dir: str) -> tuple:
         db_dir = Path(scratchpad_dir or "/tmp")
         db_dir.mkdir(parents=True, exist_ok=True)
-        path = db_dir / f"mios-session-{session_id}.sqlite"
+        path = _scratchpad_path(session_id, scratchpad_dir)
 
         conn = sqlite3.connect(str(path), check_same_thread=False)
         conn.enable_load_extension(True)
@@ -52,12 +60,11 @@ if SQLITE_VEC_ENABLE:
         return [{"content": row[0], "tainted": bool(row[1]), "distance": row[2]} for row in cursor.fetchall()]
 
     def has_tainted(session_id: str, scratchpad_dir: str) -> bool:
-        db_dir = Path(scratchpad_dir or "/tmp")
-        path = db_dir / f"mios-session-{session_id}.sqlite"
+        path = _scratchpad_path(session_id, scratchpad_dir)
         if not path.exists():
             return False
         try:
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             cursor = conn.execute("SELECT 1 FROM vec_scratch WHERE tainted = 1 LIMIT 1")
@@ -82,4 +89,3 @@ else:
 
     def has_tainted(session_id: str, scratchpad_dir: str) -> bool:
         return False
-

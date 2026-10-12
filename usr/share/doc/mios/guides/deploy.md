@@ -37,14 +37,16 @@ formats so you can reach a running host from whatever you already have.
 |---|---|---|---|
 | OCI image | `just build` | -- | `localhost/mios:latest` |
 | RAW (80 GiB ext4) | `just raw` | `config/artifacts/bib.toml` | `output/*.raw` |
-| Anaconda ISO | `just iso` | `config/artifacts/iso.toml` | `output/*.iso` |
-| QCOW2 | `just qcow2` | `config/artifacts/qcow2.toml` | `output/*.qcow2` |
-| VHDX (Hyper-V) | `just vhdx` | `config/artifacts/vhdx.toml` | `output/*.vhdx` |
+| Anaconda ISO | `just iso` | `config/artifacts/iso.toml` + rendered account | `build/iso/` |
+| QCOW2 | `just qcow2` | rendered from the SSOT | `build/qcow2/` |
+| VHDX (Hyper-V) | `just vhdx` | rendered from the SSOT | `build/vhdx/disk.vhdx` |
 | WSL2 tarball | `just wsl2` | `config/artifacts/wsl2.toml` | `output/*.wsl2` |
 
-`qcow2` and `vhdx` require `MIOS_USER_PASSWORD_HASH` (`openssl passwd -6
-'<pass>'`) and optionally `MIOS_SSH_PUBKEY` in the environment; the recipes
-substitute these into the BIB config at build time.
+`iso`, `qcow2` and `vhdx` build through `miosd artifact-build <format>`, which
+renders the BIB config per build and needs the operator's credential:
+`MIOS_USER_PASSWORD_HASH` (`openssl passwd -6`) and/or `MIOS_SSH_PUBKEY`, or the
+`[auth]` keys `[deploy.identity]` names. With neither it refuses; there is no
+default password.
 
 ## Bootc-managed Fedora host (preferred)
 
@@ -95,8 +97,10 @@ host tracks.
 
 ## VM install
 
-Hyper-V: import `output/*.vhdx`, attach a Gen 2 VM, enable Secure Boot with the
-Microsoft UEFI CA.
+Hyper-V: a Generation 2 VM on `disk.vhdx` with Secure Boot on the Microsoft UEFI
+CA template, shaped by `[deploy.formats.vhdx.vm]`; the PowerShell is in
+`usr/share/doc/mios/upstream/deploy-targets.md`. The VHDX is built locally from
+the published digest, never downloaded (GitHub assets stop at 2 GiB a file).
 
 QEMU/KVM: `qemu-system-x86_64 -enable-kvm -drive file=output/*.qcow2,if=virtio
 -bios /usr/share/edk2/ovmf/OVMF_CODE.fd ...`.

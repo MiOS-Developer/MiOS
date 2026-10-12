@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-968 & T-969: MicroVM live state migration (<50ms handover).
+# AI-hint: Tests for task_912 & task_913: MicroVM live state migration (<50ms handover).
 # AI-functions: test_microvm_live_handover_sub_50ms
 
-"""Tests for T-968 & T-969: MicroVM live state migration (<50ms handover)."""
+"""Tests for task_912 & task_913: MicroVM live state migration (<50ms handover)."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/virt")
 from microvm_migrate import MicroVMLiveMigrator
@@ -24,4 +24,4 @@ def test_microvm_live_handover_sub_50ms():
 
 if __name__ == "__main__":
     test_microvm_live_handover_sub_50ms()
-    print("All T-968/T-969 tests passed.")
+    print("All task_912/task_913 tests passed.")

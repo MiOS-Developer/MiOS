@@ -159,8 +159,8 @@ async def chat_completions(req: ChatCompletionRequest):
     max_steps = gateway_cfg.get("max_steps", 30)
 
     # Law 5: the legacy orchestrator port is RETIRED. [ai].endpoint is
-    # "http://localhost:${MIOS_PORT_AGENT_PIPE}/v1" -- resolve it the same way.
-    _pipe_port = os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")
+    # "http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1" -- resolve it the same way.
+    _pipe_port = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
     ai_endpoint = os.environ.get(
         "MIOS_AI_ENDPOINT", "http://localhost:%s/v1" % _pipe_port)
 
@@ -174,7 +174,7 @@ async def chat_completions(req: ChatCompletionRequest):
         )
     except Exception as e:
         log.error("Failed to initialize OpenAIServerModel: %s", e)
-        return openai_error(f"Model init failed: {e}", status=500,
+        return openai_error("Model initialization failed", status=500,
                             err_type="api_error", code="model_init_failed")
 
     tools = []
@@ -208,7 +208,7 @@ async def chat_completions(req: ChatCompletionRequest):
                     return JSONResponse(status_code=resp.status_code, content=data)
             except Exception as e:
                 log.error("Native pass-through error: %s", e)
-                return openai_error(f"Pass-through failed: {e}", status=502,
+                return openai_error("Upstream service unavailable", status=502,
                                     err_type="api_error",
                                     code="upstream_unavailable")
 
@@ -220,7 +220,7 @@ async def chat_completions(req: ChatCompletionRequest):
         )
     except Exception as e:
         log.error("Failed to initialize ToolCallingAgent: %s", e)
-        return openai_error(f"Agent init failed: {e}", status=500,
+        return openai_error("Agent initialization failed", status=500,
                             err_type="api_error", code="agent_init_failed")
 
     context = ""
@@ -310,7 +310,7 @@ async def chat_completions(req: ChatCompletionRequest):
                     # stop / length / tool_calls / content_filter / function_call --
                     # and a client switching on it drops the turn on anything else.
                     # The failure is already carried in the delta text.
-                    yield openai_chunk(f"\n[Agent Error: {stream_err}]\n", finish_reason="stop")
+                    yield openai_chunk("\n[Agent execution failed]\n", finish_reason="stop")
             if not _closed:
                 yield openai_chunk("", finish_reason="stop")
             yield "data: [DONE]\n\n"
@@ -358,11 +358,11 @@ async def chat_completions(req: ChatCompletionRequest):
                     }]
                 }
             log.error("Agent execution error: %s", run_err)
-            return openai_error(f"Agent loop failed: {run_err}", status=500,
+            return openai_error("Agent execution failed", status=500,
                                 err_type="api_error", code="agent_loop_failed")
 
 if __name__ == "__main__":
     import uvicorn
     gateway_cfg = _toml_section("gateway")
-    port = int(os.environ.get("MIOS_PORT_HERMES", gateway_cfg.get("port") or 8720))
+    port = int(os.environ.get("MIOS_PORTS_HERMES", gateway_cfg.get("port") or 8720))
     uvicorn.run(app, host="0.0.0.0", port=port)

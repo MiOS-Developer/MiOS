@@ -1,0 +1,22 @@
+# AI-hint: Cargo manifest for mios-gen -- the SSOT projector binary (ADR-0021 gen category): every generate-*/render-* surface converges here as a verb.
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, docs/design/doc-rust-static-port.md
+
+[package]
+name = "mios-gen"
+version.workspace = true
+edition.workspace = true
+description = "MiOS SSOT projector verbs (ADR-0021 gen category)"
+
+[dependencies]
+clap = { workspace = true }
+flate2 = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true }
+mios-resolver = { path = "../mios-resolver" }
+mios-service-core = { path = "../mios-service-core" }

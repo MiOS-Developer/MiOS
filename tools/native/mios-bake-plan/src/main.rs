@@ -1,13 +1,30 @@
-// AI-hint: Rust bake-plan generator (AGY-139 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).
+// AI-hint: Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).
 mod latest;
 
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use toml::Value;
+use walkdir::WalkDir;
+
+fn quadlet_paths(dir: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = WalkDir::new(dir)
+        .max_depth(max_depth)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|ext| ext == "container" || ext == "image")
+        })
+        .collect();
+    paths.sort();
+    paths
+}
 
 fn get_root() -> PathBuf {
     if let Ok(r) = env::var("MIOS_ROOT") {
@@ -25,7 +42,7 @@ fn get_root() -> PathBuf {
 }
 
 /// Resolve `${VAR}` in an `Image=` line: env, then SSOT, then sidecars, then
-/// the literal fallback. The SSOT layer is the one this binary lacked (T-1057).
+/// the literal fallback. The SSOT layer is the one this binary lacked (task_994).
 fn resolve_image_val(
     val: &str,
     sidecars: &BTreeMap<String, String>,
@@ -84,6 +101,30 @@ fn resolve_image_val(
     s2.trim().to_string()
 }
 
+/// Every `Image=` an engine overlay declares, `[<kind>s.<name>.engine.<engine>.<Section>].Image`.
+/// mios-gen renders only the overlay its selector names (the heavy lane: vLLM or
+/// SGLang), so an unselected engine's image has no Quadlet. It stays in
+/// [build.bake].core so switching engines is one SSOT edit, never two.
+fn engine_overlay_images(parsed: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for kind in ["containers", "images"] {
+        let specs = parsed.get(kind).and_then(Value::as_table);
+        for spec in specs.into_iter().flat_map(|t| t.values()) {
+            let Some(engines) = spec.get("engine").and_then(Value::as_table) else {
+                continue;
+            };
+            for overlay in engines.values().filter_map(Value::as_table) {
+                for section in overlay.values().filter_map(Value::as_table) {
+                    if let Some(img) = section.get("Image").and_then(Value::as_str) {
+                        out.push(img.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn classify(img: &str, groups: &[String], group_members: &BTreeMap<String, Vec<String>>) -> String {
     for g in groups {
         if let Some(members) = group_members.get(g) {
@@ -100,13 +141,95 @@ fn classify(img: &str, groups: &[String], group_members: &BTreeMap<String, Vec<S
         .unwrap_or_else(|| "extra".to_string())
 }
 
+fn verify_plan_integrity(
+    out_dir: &Path,
+    groups: &[String],
+    group_lists: &BTreeMap<String, Vec<String>>,
+    firstboot_images: &[String],
+    firstboot_tokens: &[String],
+) -> Result<(), String> {
+    if groups.is_empty() || group_lists.values().all(Vec::is_empty) && firstboot_images.is_empty() {
+        return Err("Cannot certify an empty bake-plan inventory".to_string());
+    }
+    let mut expected: BTreeMap<String, BTreeSet<String>> = groups
+        .iter()
+        .enumerate()
+        .map(|(idx, group)| {
+            (
+                format!("{:02}-{group}.list", idx + 1),
+                group_lists
+                    .get(group)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect();
+    expected.insert(
+        "firstboot.list".to_string(),
+        firstboot_images.iter().cloned().collect(),
+    );
+    let entries = fs::read_dir(out_dir)
+        .map_err(|e| format!("Cannot read bake-plan directory {}: {e}", out_dir.display()))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("Cannot enumerate bake plan: {e}"))?
+            .path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "list")
+        {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if !expected.contains_key(name.as_ref()) {
+                return Err(format!("Unexpected bake-plan list: {}", path.display()));
+            }
+        }
+    }
+    let mut seen = BTreeMap::new();
+    for (name, expected_images) in &expected {
+        let path = out_dir.join(name);
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Cannot read bake-plan list {}: {e}", path.display()))?;
+        let mut actual = BTreeSet::new();
+        for image in content
+            .lines()
+            .map(str::trim)
+            .filter(|image| !image.is_empty())
+        {
+            if let Some(previous) = seen.insert(image.to_string(), name.clone()) {
+                return Err(format!(
+                    "Duplicate image '{image}' in {previous} and {name}"
+                ));
+            }
+            if name != "firstboot.list" {
+                for token in firstboot_tokens.iter().filter(|token| !token.is_empty()) {
+                    if image.to_lowercase().contains(&token.to_lowercase()) {
+                        return Err(format!("Firstboot token '{token}' image '{image}' found in baked group list {name}"));
+                    }
+                }
+            }
+            actual.insert(image.to_string());
+        }
+        if actual != *expected_images {
+            let missing: Vec<_> = expected_images.difference(&actual).collect();
+            let extra: Vec<_> = actual.difference(expected_images).collect();
+            return Err(format!(
+                "Bake-plan inventory mismatch in {name}: missing {missing:?}, extra {extra:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let root = get_root();
     if let Some(code) = latest::dispatch(&args, &root) {
         process::exit(code);
     }
-    let check = args.iter().any(|a| a == "--check");
+    let integrity = args.iter().any(|a| a == "--check-integrity");
+    let check = integrity || args.iter().any(|a| a == "--check");
 
     let toml_path = env::var("MIOS_TOML")
         .map(PathBuf::from)
@@ -252,61 +375,57 @@ fn main() {
     let quadlet_dir = root.join("usr/share/containers/systemd");
     let mut images_to_bake: Vec<(String, String)> = Vec::new();
     let mut unresolved: Vec<(String, String)> = Vec::new();
+    let max_depth = parsed
+        .get("build")
+        .and_then(|b| b.get("quadlet_render"))
+        .and_then(|q| q.get("max_depth"))
+        .and_then(Value::as_integer)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(2);
 
     if quadlet_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&quadlet_dir) {
-            let mut paths: Vec<PathBuf> = entries
-                .filter_map(|e| e.ok().map(|entry| entry.path()))
-                .filter(|p| {
-                    p.extension()
-                        .is_some_and(|ext| ext == "container" || ext == "image")
-                })
-                .collect();
-            paths.sort();
-
-            for path in paths {
-                let base_name = path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let mut img = String::new();
-                if let Ok(fc) = fs::read_to_string(&path) {
-                    for line in fc.lines() {
-                        let trimmed = line.trim();
-                        if let Some(stripped) = trimmed.strip_prefix("Image=") {
-                            img = stripped.trim().to_string();
-                            break;
-                        }
+        for path in quadlet_paths(&quadlet_dir, max_depth) {
+            let base_name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let mut img = String::new();
+            if let Ok(fc) = fs::read_to_string(&path) {
+                for line in fc.lines() {
+                    let trimmed = line.trim();
+                    if let Some(stripped) = trimmed.strip_prefix("Image=") {
+                        img = stripped.trim().to_string();
+                        break;
                     }
                 }
-                if img.is_empty() {
-                    continue;
-                }
-                let resolved = resolve_image_val(&img, &sidecars, &ssot_vars);
-                if resolved.is_empty() {
-                    continue;
-                }
-                if resolved.contains('$') {
-                    // Dropping this quietly is how a floated tag became "core
-                    // image is not referenced by any Quadlet". Name the variable
-                    // that did not resolve instead.
-                    unresolved.push((base_name.clone(), img.clone()));
-                    continue;
-                }
-                let first = resolved.split('/').next().unwrap_or("");
-                if first == "localhost" {
-                    continue;
-                }
-                let is_core = core.contains(&resolved);
-                if is_core || enabled_map.get(&base_name) != Some(&false) {
-                    images_to_bake.push((resolved, base_name));
-                }
+            }
+            if img.is_empty() {
+                continue;
+            }
+            let resolved = resolve_image_val(&img, &sidecars, &ssot_vars);
+            if resolved.is_empty() {
+                continue;
+            }
+            if resolved.contains('$') {
+                // Dropping this quietly is how a floated tag became "core
+                // image is not referenced by any Quadlet". Name the variable
+                // that did not resolve instead.
+                unresolved.push((base_name.clone(), img.clone()));
+                continue;
+            }
+            let first = resolved.split('/').next().unwrap_or("");
+            if first == "localhost" {
+                continue;
+            }
+            let is_core = core.contains(&resolved);
+            if is_core || enabled_map.get(&base_name) != Some(&false) {
+                images_to_bake.push((resolved, base_name));
             }
         }
     }
 
-    // T-1039. The Quadlet scan above skips every `localhost/*` image, because a
+    // task_976. The Quadlet scan above skips every `localhost/*` image, because a
     // locally built image is not discovered from a Quadlet's Image= line. The
     // python generator then RE-ADDS every localhost image declared in `core`;
     // this port never did, so every `localhost/*` entry of `[build.bake].core`
@@ -394,7 +513,23 @@ fn main() {
             img
         ));
     }
+    let mut engine_images: BTreeSet<String> = BTreeSet::new();
+    for raw in engine_overlay_images(&parsed) {
+        let img = resolve_image_val(&raw, &sidecars, &ssot_vars);
+        if img.is_empty() || img.starts_with("localhost/") {
+            continue;
+        }
+        if !core.contains(&img) {
+            errors.push(format!(
+                "Engine overlay image '{img}' is missing from [build.bake].core, so selecting that engine would fail the bake"
+            ));
+        }
+        engine_images.insert(img);
+    }
     for img in core_non_localhost.difference(&discovered_non_localhost) {
+        if engine_images.contains(img) {
+            continue; // an unselected engine's image: referenced by its overlay
+        }
         errors.push(format!(
             "Core image '{}' is not referenced by any Quadlet",
             img
@@ -431,6 +566,25 @@ fn main() {
         process::exit(2);
     }
 
+    if check {
+        if let Err(error) = verify_plan_integrity(
+            &out_dir,
+            &groups,
+            &group_lists,
+            &firstboot_images,
+            &firstboot_tokens,
+        ) {
+            eprintln!("[bake-plan-gen] INTEGRITY ERROR: {error}");
+            process::exit(1);
+        }
+        if integrity {
+            println!(
+                "[bake-plan-gen] Bake-plan integrity verified against active Quadlets and SSOT"
+            );
+            return;
+        }
+    }
+
     if !check {
         let _ = fs::create_dir_all(&out_dir);
         if let Ok(entries) = fs::read_dir(&out_dir) {
@@ -464,7 +618,7 @@ fn main() {
         }
 
         let mut seen_images: BTreeSet<String> = BTreeSet::new();
-        // T-1039: the size_gb column. Omitting it made `drift-checks.py
+        // task_976: the size_gb column. Omitting it made `drift-checks.py
         // bake-budget` print "bound-images.tsv missing size_gb column" -- and
         // exit 0, so the day-0 size budget was never actually computed.
         let mut sbom_content = String::from("image\tdigest\tgroup\tsize_gb\n");
@@ -573,6 +727,159 @@ fn main() {
 mod tests {
     use super::*;
 
+    struct PlanFixture {
+        dir: PathBuf,
+        groups: Vec<String>,
+        lists: BTreeMap<String, Vec<String>>,
+        firstboot: Vec<String>,
+    }
+
+    impl Drop for PlanFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    impl PlanFixture {
+        fn new() -> Self {
+            let dir = env::temp_dir().join(format!(
+                "mios-bake-integrity-{}-{}",
+                process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&dir).unwrap();
+            let fixture = Self {
+                dir,
+                groups: vec!["core".into(), "extra".into()],
+                lists: BTreeMap::from([
+                    ("core".into(), vec!["docker.io/example/base:1".into()]),
+                    ("extra".into(), Vec::new()),
+                ]),
+                firstboot: vec!["docker.io/example/floating:1".into()],
+            };
+            fs::write(
+                fixture.dir.join("01-core.list"),
+                "docker.io/example/base:1\n",
+            )
+            .unwrap();
+            fs::write(fixture.dir.join("02-extra.list"), "").unwrap();
+            fs::write(
+                fixture.dir.join("firstboot.list"),
+                "docker.io/example/floating:1\n",
+            )
+            .unwrap();
+            fixture
+        }
+
+        fn check(&self) -> Result<(), String> {
+            verify_plan_integrity(
+                &self.dir,
+                &self.groups,
+                &self.lists,
+                &self.firstboot,
+                &["floating".into()],
+            )
+        }
+
+        fn reject_content(&self, name: &str, content: &[u8], diagnosis: &str) {
+            let path = self.dir.join(name);
+            let original = fs::read(&path).unwrap();
+            fs::write(&path, content).unwrap();
+            let error = self.check().unwrap_err();
+            assert!(error.contains(diagnosis), "{error}");
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                content,
+                "verification must not repair its subject"
+            );
+            fs::write(path, original).unwrap();
+            assert!(self.check().is_ok());
+        }
+    }
+
+    #[test]
+    fn integrity_rejects_duplicate_misrouted_and_unknown_images_without_writes() {
+        let fixture = PlanFixture::new();
+        assert!(fixture.check().is_ok());
+        fixture.reject_content(
+            "01-core.list",
+            b"docker.io/example/base:1\ndocker.io/example/base:1\n",
+            "Duplicate image",
+        );
+        fixture.reject_content(
+            "firstboot.list",
+            b"docker.io/example/base:1\n",
+            "Duplicate image",
+        );
+        fixture.reject_content(
+            "02-extra.list",
+            b"docker.io/example/floating:1\n",
+            "Firstboot token",
+        );
+        fixture.reject_content(
+            "01-core.list",
+            b"docker.io/example/unknown:1\n",
+            "inventory mismatch",
+        );
+        fixture.reject_content("firstboot.list", b"", "inventory mismatch");
+        fixture.reject_content("01-core.list", &[0xff], "Cannot read bake-plan list");
+    }
+
+    #[test]
+    fn integrity_requires_every_declared_list_and_rejects_empty_census() {
+        let fixture = PlanFixture::new();
+        for name in ["01-core.list", "02-extra.list", "firstboot.list"] {
+            let path = fixture.dir.join(name);
+            let original = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            let error = fixture.check().unwrap_err();
+            assert!(
+                error.contains("Cannot read bake-plan list") && error.contains(name),
+                "{error}"
+            );
+            assert!(!path.exists());
+            fs::write(path, original).unwrap();
+            assert!(fixture.check().is_ok());
+        }
+        let extra = fixture.dir.join("99-unknown.list");
+        fs::write(&extra, "").unwrap();
+        assert!(fixture
+            .check()
+            .unwrap_err()
+            .contains("Unexpected bake-plan list"));
+        assert_eq!(fs::read(&extra).unwrap(), b"");
+        fs::remove_file(extra).unwrap();
+        assert!(fixture.check().is_ok());
+        assert!(
+            verify_plan_integrity(&fixture.dir, &fixture.groups, &BTreeMap::new(), &[], &[])
+                .unwrap_err()
+                .contains("empty bake-plan inventory")
+        );
+    }
+
+    #[test]
+    fn user_quadlets_participate_at_the_declared_discovery_depth() {
+        let dir = env::temp_dir().join(format!(
+            "mios-bake-plan-{}-{}",
+            process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        assert!(fs::create_dir_all(dir.join("users")).is_ok());
+        let system = dir.join("system.container");
+        let user = dir.join("users/sunshine.container");
+        assert!(fs::write(&system, "[Container]\n").is_ok());
+        assert!(fs::write(&user, "[Container]\n").is_ok());
+        assert_eq!(quadlet_paths(&dir, 1), vec![system.clone()]);
+        assert_eq!(quadlet_paths(&dir, 2), vec![system, user]);
+        assert!(fs::remove_dir_all(dir).is_ok());
+    }
+
     #[test]
     fn test_resolve_image_val() {
         let sidecars = BTreeMap::new();
@@ -632,6 +939,38 @@ mod tests {
         let got = resolve_image_val("x/y:${MIOS_VERSION_PARITY_PROBE}", &sidecars, &ssot);
         unsafe { env::remove_var("MIOS_VERSION_PARITY_PROBE") };
         assert_eq!(got, "x/y:from-env");
+    }
+
+    #[test]
+    fn every_engine_overlay_image_is_collected_selected_or_not() {
+        let parsed: Value = toml::from_str(
+            r#"
+            [containers.lane.Container]
+            Image = "ignored/base:1"
+            [containers.lane.engine]
+            select = "ai.heavy_engine"
+            [containers.lane.engine.vllm.Container]
+            Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
+            [containers.lane.engine.sglang.Container]
+            Image = "docker.io/lmsysorg/sglang:latest"
+            [images.lane.engine.sglang.Image]
+            Image = "docker.io/lmsysorg/sglang:latest"
+            [containers.plain.Container]
+            Image = "docker.io/library/redis:alpine"
+        "#,
+        )
+        .unwrap();
+        let mut got = engine_overlay_images(&parsed);
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}",
+                "docker.io/lmsysorg/sglang:latest",
+                "docker.io/lmsysorg/sglang:latest",
+            ]
+        );
+        assert!(engine_overlay_images(&toml::from_str("[containers]\n").unwrap()).is_empty());
     }
 
     #[test]

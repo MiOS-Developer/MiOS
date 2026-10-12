@@ -37,7 +37,7 @@ USER_RULES = os.environ.get("MIOS_CRON_USER_RULES",
                             os.path.join(STATE_DIR, "user-rules.toml"))
 RULES_PATHS = [SYSTEM_RULES, USER_RULES]
 STATE_PATH = os.path.join(STATE_DIR, "state.json")
-GATE_ENDPOINT = os.environ.get("MIOS_CRON_GATE_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}/v1")
+GATE_ENDPOINT = os.environ.get("MIOS_CRON_GATE_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}/v1")
 GATE_MODEL = os.environ.get("MIOS_CRON_GATE_MODEL", "granite4.1:8b")  # qwen3:0.6b retired -> 404 on :8500 (2026-06-18)
 GATE_TIMEOUT = float(os.environ.get("MIOS_CRON_GATE_TIMEOUT", "20"))
 

@@ -60,7 +60,7 @@ LAUNCH_FAILURES = Path(os.environ.get(
 COMPACTED_DIR = Path(os.environ.get(
     "MIOS_COMPACTED_DIR", "/var/lib/mios/compacted"))
 REPO_ROOT = Path(os.environ.get("MIOS_REPO_ROOT", "/mnt/c/MiOS"))
-LLM_URL = os.environ.get("MIOS_LLM_URL", f"http://127.0.0.1:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}")
+LLM_URL = os.environ.get("MIOS_LLM_URL", f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}")
 SUMMARY_MODEL = os.environ.get("MIOS_COMPACT_MODEL", "granite4.1:8b")
 
 

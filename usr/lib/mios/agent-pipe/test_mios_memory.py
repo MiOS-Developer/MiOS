@@ -76,20 +76,59 @@ def t_register():
     check("register: custom provider resolvable", isinstance(p, MockProvider))
     check("register: custom retrieve used", asyncio.run(p.retrieve([0.0])) == ["mock"])
 
+def t_secret_token_redaction() -> None:
+    import io
+    import logging
+    from mios_pipe.redact import redact, RedactingLogFilter
+
+    sentinel_key = "sk-mios-sentinel-private-token-778899aabbcc"
+    sentinel_pass = "SENTINEL_MIOS_SECRET_PASS_998877"
+    sentinel_conn = f"postgresql://mios:{sentinel_pass}@127.0.0.1:8600/mios"
+
+    # Positive control: redact() strips secret tokens from text
+    redacted_text, is_redacted = redact(f"Stored memory with token {sentinel_key}")
+    check("redact: sentinel token redacted", is_redacted and sentinel_key not in redacted_text)
+    check("redact: API key placeholder present", "[REDACTED_API_KEY]" in redacted_text)
+
+    # Positive control: redact() strips URI passwords
+    redacted_uri, is_uri_redacted = redact(f"Connecting to {sentinel_conn}")
+    check("redact: URI password redacted", is_uri_redacted and sentinel_pass not in redacted_uri)
+    check("redact: URI secret placeholder present", "[REDACTED_SECRET]" in redacted_uri)
+
+    # Logging sink verification: RedactingLogFilter intercepts sensitive tokens on stdout/log sinks
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RedactingLogFilter())
+    test_logger = logging.getLogger("test.secret.redaction")
+    test_logger.addHandler(handler)
+    test_logger.setLevel(logging.DEBUG)
+
+    try:
+        raise ConnectionError(f"Failed to authenticate with {sentinel_key} to {sentinel_conn}")
+    except ConnectionError as err:
+        test_logger.error("Database connection failure: %s", err)
+
+    log_output = stream.getvalue()
+    check("log sink: sentinel key absent from log output", sentinel_key not in log_output)
+    check("log sink: sentinel pass absent from log output", sentinel_pass not in log_output)
+    check("log sink: API key placeholder in log output", "[REDACTED_API_KEY]" in log_output)
+    check("log sink: secret placeholder in log output", "[REDACTED_SECRET]" in log_output)
+
 def main() -> int:
     t_factory()
     t_retrieve_parity()
     t_add_parity()
     t_register()
+    t_secret_token_redaction()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 
 
 
 # ==============================================================================
-# Consolidated from test_mios_letta.py (T-1092)
+# Consolidated from test_mios_letta.py (task_1006)
 # ==============================================================================
-# AI-hint: Standalone unit test suite for LettaMemoryClient and letta_dispatch_handler (T-077).
+# AI-hint: Standalone unit test suite for LettaMemoryClient and letta_dispatch_handler (task_55).
 
 import asyncio
 import json

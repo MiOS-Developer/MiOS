@@ -273,7 +273,7 @@ up_UNIT_DIR = "usr/lib/systemd/system"
 
 def up_declared_units(data: dict) -> set:
     """Unit filenames [units.*] projects. Table-valued keys only -- the
-    string-valued half is name aliases, not units. See tasks.jsonl T-317."""
+    string-valued half is name aliases, not units. See tasks.jsonl task_267."""
     return {k for k, v in (data.get("units") or {}).items() if isinstance(v, dict)}
 
 def up_unit_aliases(data: dict) -> set:
@@ -353,6 +353,12 @@ def up_hygiene(data: dict, root: str) -> list:
     return viol
 
 def up__built(root: str):
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        p = os.path.join(catalog, "mios-unit-gen" + (".exe" if sys.platform == "win32" else ""))
+        if not os.path.isfile(p) or not os.access(p, os.X_OK):
+            raise RuntimeError("configured unit generator is missing or not executable: %s" % p)
+        return p
     rels = ("target/release/mios-unit-gen.exe", "target/debug/mios-unit-gen.exe", "target/release/mios-unit-gen", "target/debug/mios-unit-gen") if sys.platform == "win32" else ("target/release/mios-unit-gen", "target/debug/mios-unit-gen", "target/release/mios-unit-gen.exe", "target/debug/mios-unit-gen.exe")
     for rel in rels:
         p = os.path.join(root, "tools/native", rel)
@@ -366,7 +372,7 @@ def up_binary_path(root: str, build: bool = True):
     """A built mios-unit-gen, building it once if cargo is available.
 
     Without this the gate SKIPS its rendering comparison wherever nobody has run
-    cargo -- which is every CI checkout, the one place it matters. See T-317.
+    cargo -- which is every CI checkout, the one place it matters. See task_267.
     """
     found = up__built(root)
     if found or not build:
@@ -405,7 +411,11 @@ def up_main() -> int:
 
     viol = up_hygiene(data, root)
 
-    binary = up_binary_path(root)
+    try:
+        binary = up_binary_path(root)
+    except RuntimeError as exc:
+        print("check_unit_projection: %s" % exc, file=sys.stderr)
+        return 1
     if binary:
         ok, out = up_run_binary(binary, root)
         if not ok:
@@ -456,15 +466,15 @@ pf_SKIP_SUBSTR = ("/reference/", "/doc/", "__pycache__", "/.git/", "manifest.jso
 pf_SKIP_EXT = (".md", ".json", ".tsv", ".txt", ".rmeta", ".pyc")
 
 pf_PATTERNS = (
-    re.compile(r"MIOS_PORT_([A-Z0-9_]+)\s*:[-=]\s*(\d+)"),        # ${X:-N} / ${X:=N}
-    re.compile(r'"MIOS_PORT_([A-Z0-9_]+)"\s*,\s*"(\d+)"'),        # get("X", "N")
-    re.compile(r"'MIOS_PORT_([A-Z0-9_]+)'\s*,\s*'(\d+)'"),
-    re.compile(r"'MIOS_PORT_([A-Z0-9_]+)'\s+(\d+)"),              # _MiosPort 'X' N
-    re.compile(r"^\s*Environment=MIOS_PORT_([A-Z0-9_]+)=(\d+)\s*$"),
+    re.compile(r"MIOS_(?:PORTS?)_([A-Z0-9_]+)\s*:[-=]\s*(\d+)"),        # ${X:-N} / ${X:=N}
+    re.compile(r'"MIOS_(?:PORTS?)_([A-Z0-9_]+)"\s*,\s*"(\d+)"'),        # get("X", "N")
+    re.compile(r"'MIOS_(?:PORTS?)_([A-Z0-9_]+)'\s*,\s*'(\d+)'"),
+    re.compile(r"'MIOS_(?:PORTS?)_([A-Z0-9_]+)'\s+(\d+)"),              # _MiosPort 'X' N
+    re.compile(r"^\s*Environment=MIOS_(?:PORTS?)_([A-Z0-9_]+)=(\d+)\s*$"),
     # `get(K, "N") or M` / `get(K) or "M"` -- the SECOND literal is the one that
     # actually runs when the variable is unset or empty, and the first sweep
     # missed it entirely.
-    re.compile(r"MIOS_PORT_([A-Z0-9_]+)[\"']?\s*[,)][^\n]{0,60}?\bor\s+[\"']?(\d+)"),
+    re.compile(r"MIOS_(?:PORTS?)_([A-Z0-9_]+)[\"']?\s*[,)][^\n]{0,60}?\bor\s+[\"']?(\d+)"),
     # The MIOS_<KEY>_PORT spelling: a second emitted name for the same value, so
     # a stale literal beside it is the same defect one alias removed.
     re.compile(r"MIOS_([A-Z0-9_]+)_PORT[\"']?\s*,\s*[\"']?(\d+)"),
@@ -615,8 +625,8 @@ def pb__tracked_files(root: str) -> list:
 
 def pb_referenced_ports(root: str, keys: set) -> set:
     """Port keys whose MIOS_PORT_<KEY> appears in a file that could bind or dial it."""
-    wanted = {("MIOS_PORT_" + k.upper()): k for k in keys}
-    pattern = re.compile(r"\bMIOS_PORT_([A-Z0-9_]+)\b")
+    wanted = {k.upper(): k for k in keys}
+    pattern = re.compile(r"\bMIOS_(?:PORTS?)_([A-Z0-9_]+)\b")
     found = set()
     for rel in pb__tracked_files(root):
         path = os.path.join(root, rel)
@@ -626,7 +636,7 @@ def pb_referenced_ports(root: str, keys: set) -> set:
         except OSError:
             continue
         for m in pattern.finditer(body):
-            key = wanted.get("MIOS_PORT_" + m.group(1))
+            key = wanted.get(m.group(1))
             if key:
                 found.add(key)
     return found
@@ -1461,7 +1471,7 @@ def bc_port_namers(data: dict, root: str) -> dict:
                               if not l.lstrip().startswith("#"))
             stem = name.rsplit(".", 1)[0]
             for key, num in ports.items():
-                if ("MIOS_PORT_%s" % key.upper()) in code or \
+                if any((prefix + key.upper()) in code for prefix in ("MIOS_PORTS_", "MIOS_PORT_")) or \
                         re.search(r"(?<![0-9])%d(?![0-9])" % num, code):
                     out[key].add(stem)
     return out
@@ -1473,10 +1483,10 @@ def bc_person_facing(data: dict) -> set:
     for value in ((data.get("urls") or {}).values()):
         if isinstance(value, str):
             out |= {m.lower() for m in
-                    re.findall(r"\$\{MIOS_PORT_([A-Z0-9_]+)\}", value)}
+                    re.findall(r"\$\{MIOS_(?:PORTS?)_([A-Z0-9_]+)\}", value)}
     endpoint = str((data.get("ai") or {}).get("endpoint") or "")
     out |= {m.lower() for m in
-            re.findall(r"\$\{MIOS_PORT_([A-Z0-9_]+)\}", endpoint)}
+            re.findall(r"\$\{MIOS_(?:PORTS?)_([A-Z0-9_]+)\}", endpoint)}
     return out
 
 def bc_seat_dead_weight(data: dict, root: str) -> list:
@@ -1560,7 +1570,7 @@ def bc_classify(data: dict, root: str = ".") -> list:
             viol.append("[blade.requires].%s lists no capability -- an empty list "
                         "gates nothing, so say so in [blade].seat_side instead" % svc)
         if "gpu-serving" in caps and (svc not in fallbacks or not fallbacks[svc]):
-            viol.append("unit '%s' requires 'gpu-serving' but declares no fallback in [blade.cpu_fallbacks] (AGY-1596)" % svc)
+            viol.append("unit '%s' requires 'gpu-serving' but declares no fallback in [blade.cpu_fallbacks] (task_2237)" % svc)
         for cap in caps:
             if cap not in granted:
                 viol.append("capability '%s' (required by %s) is granted by NO "

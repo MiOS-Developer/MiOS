@@ -51,3 +51,61 @@ Describe "MiOS.Install Sub-modules" {
         }
     }
 }
+
+
+Describe 'Monitor layout uses the resolved SSOT launch mode' {
+    BeforeAll {
+        $common = Join-Path $PSScriptRoot '../../installation/mios-common.ps1'
+        $tokens = $null; $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($common, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count) { throw 'Invalid production monitor source' }
+        $monitor = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-MiosMonitor' }, $true)
+        $selection = $monitor.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Right.Extent.Text -match "Get-MiosSsotValue -Section 'theme' -Key 'launch_mode'" }, $true)
+        $layout = $monitor.Find({ param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Clauses[0].Item1.Extent.Text -match 'fullscreen' -and
+            $node.Extent.Text -match 'split-window'
+        }, $true)
+        if (-not $selection -or -not $layout) { throw 'Production SSOT mode/layout statements missing' }
+        $script:monitorSelection = [scriptblock]::Create($selection.Extent.Text)
+        $script:monitorLayout = [scriptblock]::Create($layout.Extent.Text)
+        function Get-MiosSsotValue { param($Section, $Key, $Default) $script:fixtureMode }
+        function Invoke-MiosTmuxFixture {
+            $script:tmuxCalls.Add(@($args))
+        }
+    }
+    BeforeEach {
+        $script:tmuxCalls = [Collections.Generic.List[object]]::new()
+        $tmuxExe = 'Invoke-MiosTmuxFixture'
+        $cols = 80; $rows = 20
+        $interactiveShell = 'fixture-interactive'; $monRunner = 'fixture-monitor'
+        # A stale caller variable must not override the resolved SSOT mode.
+        $launchMode = 'fullscreen'
+    }
+    It 'creates the expanded four-split layout for both fullscreen SSOT values' {
+        foreach ($selected in @('fullscreen', 'focusFullscreen')) {
+            $script:fixtureMode = $selected
+            $launchMode = 'focus'
+            $script:tmuxCalls.Clear()
+            . $script:monitorSelection
+            . $script:monitorLayout
+            @($script:tmuxCalls | Where-Object { $_[0] -eq 'split-window' }).Count | Should -Be 4
+            ($script:tmuxCalls[-1] -join ' ') | Should -BeExactly 'select-pane -t mios-mon:0.1'
+        }
+    }
+    It 'keeps the compact layout despite a stale fullscreen caller variable' {
+        $script:fixtureMode = 'focus'
+        . $script:monitorSelection
+        . $script:monitorLayout
+        @($script:tmuxCalls | Where-Object { $_[0] -eq 'split-window' }).Count | Should -Be 1
+    }
+    It 'places the compact portrait monitor above the interactive pane' {
+        $script:fixtureMode = 'focus'
+        $cols = 20; $rows = 80
+        . $script:monitorSelection
+        . $script:monitorLayout
+        @($script:tmuxCalls | Where-Object { $_[0] -eq 'split-window' }).Count | Should -Be 1
+        ($script:tmuxCalls[0] -join ' ') | Should -Match 'fixture-monitor$'
+        ($script:tmuxCalls[-1] -join ' ') | Should -BeExactly 'select-pane -t mios-mon:0.0'
+    }
+}

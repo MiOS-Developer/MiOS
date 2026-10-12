@@ -51,12 +51,16 @@ class TestAgyAgentPipeline(unittest.TestCase):
         subagents = data["subagents"]
         self.assertIsInstance(subagents, list)
 
+        # Canonical roles are MiOS project conventions.
         required_roles = {
-            "pipeline-auditor",
-            "pipeline-worker",
-            "pipeline-reviewer",
-            "artifact-publisher",
-            "pipeline-orchestrator",
+            "orchestrator",
+            "worker",
+            "auditor",
+            "reviewer",
+            "challenger",
+            "explorer",
+            "publisher",
+            "developer",
         }
         found_names = set()
         for sa in subagents:
@@ -71,7 +75,7 @@ class TestAgyAgentPipeline(unittest.TestCase):
             found_names.add(sa["name"])
 
         missing = required_roles - found_names
-        self.assertFalse(missing, f"Missing required subagent definitions: {missing}")
+        self.assertFalse(missing, f"Missing required canonical subagents: {missing}")
 
     def test_workflows_exist_and_formatted(self):
         """Verifies .agents/skills/ (or .agents/workflows/) has valid dev-loop, pipeline, and artifacting skills/workflows."""
@@ -107,7 +111,7 @@ class TestAgyAgentPipeline(unittest.TestCase):
             workflow = tomllib.loads(txt)["command"]["workflow"]
             self.assertTrue((REPO_ROOT / workflow).is_file(), f"Unresolved command workflow: {workflow}")
 
-        # Deduplication check: commands/agy must NOT exist as a redundant copy (T-1114)
+        # Deduplication check: commands/agy must NOT exist as a redundant copy (task_3407)
         duplicate_dir = REPO_ROOT / "commands" / "agy"
         self.assertFalse(duplicate_dir.exists(), f"Duplicate directory {duplicate_dir} should not exist; keep commands/antigravity as canonical owner")
 
@@ -182,17 +186,19 @@ class TestAgyAgentPipeline(unittest.TestCase):
         self.assertIn("mios-dev", wf_txt)
 
     def test_workspace_agents_md_files(self):
-        """Verifies .agents/agents/ contains definitions for all 6 MiOS-Dev agents."""
+        """Verifies .agents/agents/ contains canonical definitions for all standard MiOS-Dev agents."""
         agents_dir = REPO_ROOT / ".agents" / "agents"
         self.assertTrue(agents_dir.is_dir(), f"Missing {agents_dir}")
 
         expected = [
-            "mios-dev.md",
-            "pipeline-auditor.md",
-            "pipeline-worker.md",
-            "pipeline-reviewer.md",
-            "artifact-publisher.md",
-            "pipeline-orchestrator.md",
+            "orchestrator.md",
+            "worker.md",
+            "auditor.md",
+            "reviewer.md",
+            "challenger.md",
+            "explorer.md",
+            "publisher.md",
+            "developer.md",
         ]
         for fname in expected:
             fpath = agents_dir / fname

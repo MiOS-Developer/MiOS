@@ -33,8 +33,8 @@ def _check(name: str, ok: bool, detail: str = "") -> None:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f" -- {detail}" if detail else ""))
 
 def t_config_dsn() -> None:
-    env = {"MIOS_PG_HOST": "h", "MIOS_PORT_PGVECTOR": "5544",
-           "MIOS_PG_USER": "u", "MIOS_PG_PASS": "p", "MIOS_PG_DB": "d"}
+    env = {"MIOS_PGVECTOR_HOST": "h", "MIOS_PORTS_PGVECTOR": "5544",
+           "MIOS_PGVECTOR_USER": "u", "MIOS_PGVECTOR_PASS": "p", "MIOS_PGVECTOR_DB": "d"}
     c = P.pg_config(env)
     _check("config: parsed", c == {"host": "h", "port": 5544, "user": "u",
                                    "password": "p", "dbname": "d"}, str(c))
@@ -141,23 +141,23 @@ def t_rls_owner_scope() -> None:
 
     _check("rls: disabled by default (no env)", P.rls_enabled({}) is False)
     _check("rls: enabled on truthy",
-           P.rls_enabled({"MIOS_DB_RLS_ENABLE": "true"}) is True
-           and P.rls_enabled({"MIOS_DB_RLS_ENABLE": "1"}) is True
-           and P.rls_enabled({"MIOS_DB_RLS_ENABLE": "ON"}) is True)
+           P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": "true"}) is True
+           and P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": "1"}) is True
+           and P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": "ON"}) is True)
     _check("rls: disabled on falsy",
-           P.rls_enabled({"MIOS_DB_RLS_ENABLE": "0"}) is False
-           and P.rls_enabled({"MIOS_DB_RLS_ENABLE": "false"}) is False
-           and P.rls_enabled({"MIOS_DB_RLS_ENABLE": ""}) is False)
+           P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": "0"}) is False
+           and P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": "false"}) is False
+           and P.rls_enabled({"MIOS_PGVECTOR_RLS_ENABLE": ""}) is False)
 
     _prior_bm = os.environ.get("MIOS_PRINCIPAL_BIND_MODE")
     try:
         os.environ["MIOS_PRINCIPAL_BIND_MODE"] = "enforce"
         _check("rls: scope None when rls_enable=false (byte-identical no-op, even w/ enforce)",
                P._owner_scope("alice", {}) is None
-               and P._owner_scope("alice", {"MIOS_DB_RLS_ENABLE": "0"}) is None)
+               and P._owner_scope("alice", {"MIOS_PGVECTOR_RLS_ENABLE": "0"}) is None)
 
         P._RLS_UNVERIFIED_WARNED = False
-        sc = P._owner_scope("alice", {"MIOS_DB_RLS_ENABLE": "1"})
+        sc = P._owner_scope("alice", {"MIOS_PGVECTOR_RLS_ENABLE": "1"})
         _check("rls: scope emitted when enabled+enforce+owner",
                sc is not None and "set_config" in sc[0]
                and sc[1] == {"guc": "mios.owner_user", "owner": "alice"}, str(sc))
@@ -167,7 +167,7 @@ def t_rls_owner_scope() -> None:
         for _mode in ("off", "verify"):
             os.environ["MIOS_PRINCIPAL_BIND_MODE"] = _mode
             P._RLS_UNVERIFIED_WARNED = False
-            sc_unv = P._owner_scope("victim", {"MIOS_DB_RLS_ENABLE": "1"})
+            sc_unv = P._owner_scope("victim", {"MIOS_PGVECTOR_RLS_ENABLE": "1"})
             _check(f"rls: NO scope when enabled but bind-mode={_mode} (no false isolation)",
                    sc_unv is None, str(sc_unv))
             _check(f"rls: one-time WARN fired (bind-mode={_mode})",
@@ -176,9 +176,9 @@ def t_rls_owner_scope() -> None:
         os.environ["MIOS_PRINCIPAL_BIND_MODE"] = "enforce"
         P._RLS_UNVERIFIED_WARNED = False
         _check("rls: scope None when enabled+no-owner (degrade-open, no lockout)",
-               P._owner_scope(None, {"MIOS_DB_RLS_ENABLE": "1"}) is None
-               and P._owner_scope("", {"MIOS_DB_RLS_ENABLE": "1"}) is None
-               and P._owner_scope("   ", {"MIOS_DB_RLS_ENABLE": "1"}) is None)
+               P._owner_scope(None, {"MIOS_PGVECTOR_RLS_ENABLE": "1"}) is None
+               and P._owner_scope("", {"MIOS_PGVECTOR_RLS_ENABLE": "1"}) is None
+               and P._owner_scope("   ", {"MIOS_PGVECTOR_RLS_ENABLE": "1"}) is None)
         _check("rls: no warn on the owner-less (intentional) path",
                P._RLS_UNVERIFIED_WARNED is False)
     finally:
@@ -268,7 +268,7 @@ def _set_env(**kw):
 
 def t_pool_default_off_per_call_connect() -> None:
     _install_fake_psycopg()
-    restore = _set_env(MIOS_PG_POOL_ENABLE=None)
+    restore = _set_env(MIOS_PGVECTOR_POOL_ENABLE=None)
     P._POOL = None
     P._pg_down_until = 0.0
     try:
@@ -285,7 +285,7 @@ def t_pool_default_off_per_call_connect() -> None:
 
 def t_pool_on_reuses_connection() -> None:
     _install_fake_psycopg()
-    restore = _set_env(MIOS_PG_POOL_ENABLE="1")
+    restore = _set_env(MIOS_PGVECTOR_POOL_ENABLE="1")
     P._POOL = None
     P._pg_down_until = 0.0
     try:
@@ -311,7 +311,7 @@ class _PoisonPool:
 
 def t_pool_degrade_open_poisoned() -> None:
     _install_fake_psycopg()
-    restore = _set_env(MIOS_PG_POOL_ENABLE="1")
+    restore = _set_env(MIOS_PGVECTOR_POOL_ENABLE="1")
     P._POOL = _PoisonPool()   # enabled + non-None -> _get_pool hands back this broken pool
     P._pg_down_until = 0.0
     try:
@@ -330,7 +330,7 @@ def t_pool_degrade_open_poisoned() -> None:
 
 def t_pool_no_owner_guc_leak() -> None:
     _install_fake_psycopg()
-    restore = _set_env(MIOS_PG_POOL_ENABLE="1", MIOS_DB_RLS_ENABLE="1",
+    restore = _set_env(MIOS_PGVECTOR_POOL_ENABLE="1", MIOS_PGVECTOR_RLS_ENABLE="1",
                        MIOS_PRINCIPAL_BIND_MODE="enforce")
     P._POOL = None
     P._pg_down_until = 0.0
@@ -428,11 +428,124 @@ def main() -> int:
 
 
 # ==============================================================================
-# Consolidated from test_mios_db.py (T-1092)
+# mios_pipe.db transport, client and Postgres injected; task_1006 had folded only a placeholder here.
 # ==============================================================================
-# AI-hint: Placeholder test for mios_db.py.
-def test_stub():
-    pass
+import time
+import unittest
+
+from mios_pipe import db as _db
+
+
+class _FakeReply:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeTransport:
+    def __init__(self, outcome):
+        self.outcome = outcome   # a _FakeReply, or an exception to raise
+        self.calls = []
+
+    async def post(self, url, *, content, headers, timeout):
+        self.calls.append({"url": url, "content": content, "headers": headers, "timeout": timeout})
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+
+class _FakePg:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    async def execute(self, sql, params, fetch):
+        self.calls.append((sql, params, fetch))
+        return self.rows if fetch else None
+
+
+class TestDbTransport(unittest.TestCase):
+    _STATE = ("_PG_PRIMARY", "_mios_pg", "DB_NS", "DB_DB", "DB_URL", "_DB_AUTH",
+              "_db_down_until", "client")
+
+    def setUp(self):
+        self._saved = {k: getattr(_db, k) for k in self._STATE}
+        _db.configure(pg_primary=False, db_ns="ns1", db_db="db1",
+                      db_url="http://db.invalid:1", db_auth="Basic abc")
+        _db._db_down_until = 0.0
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(_db, k, v)
+
+    def _wire(self, outcome):
+        transport = _FakeTransport(outcome)
+        _db.client = lambda: transport
+        return transport
+
+    def test_post_frames_the_statement_for_the_configured_namespace(self):
+        transport = self._wire(_FakeReply(200, [{"result": [1]}]))
+        self.assertEqual(asyncio.run(_db.post("SELECT 1", timeout=2.5)), [{"result": [1]}])
+        call = transport.calls[0]
+        self.assertEqual(call["url"], "http://db.invalid:1/sql")
+        self.assertEqual(call["content"], b"USE NS ns1 DB db1; SELECT 1")
+        self.assertEqual(call["headers"]["Authorization"], "Basic abc")
+        self.assertEqual(call["timeout"], 2.5)
+
+    def test_an_empty_statement_never_reaches_the_transport(self):
+        transport = self._wire(AssertionError("transport reached"))
+        for sql in ("", "   ", None):
+            self.assertIsNone(asyncio.run(_db.post(sql)), repr(sql))
+        self.assertEqual(transport.calls, [])
+
+    def test_postgres_primary_refuses_legacy_writes(self):
+        transport = self._wire(AssertionError("transport reached"))
+        _db.configure(pg_primary=True)
+        for sql in ("CREATE x", "  update y", "Delete z", "INSERT w", "relate a->b->c"):
+            self.assertIsNone(asyncio.run(_db.post(sql)), sql)
+        self.assertEqual(transport.calls, [])
+        reads = self._wire(_FakeReply(200, []))
+        asyncio.run(_db.post("SELECT 1"))
+        self.assertEqual(len(reads.calls), 1, "a read was refused along with the writes")
+
+    def test_a_failure_opens_a_down_window_that_short_circuits(self):
+        for outcome in (_FakeReply(503, None), OSError("connection refused")):
+            _db._db_down_until = 0.0
+            transport = self._wire(outcome)
+            started = time.time()
+            self.assertIsNone(asyncio.run(_db.post("SELECT 1")))
+            self.assertGreaterEqual(_db._db_down_until, started + 29, repr(outcome))
+            self.assertIsNone(asyncio.run(_db.post("SELECT 1")))
+            self.assertEqual(len(transport.calls), 1,
+                             "a request inside the down window reached the transport")
+
+    def test_read_and_update_route_to_postgres_when_primary(self):
+        pg = _FakePg([{"id": 1}])
+        transport = self._wire(AssertionError("legacy transport reached"))
+        _db.configure(pg_primary=True, mios_pg=pg)
+        got = asyncio.run(_db.read("SELECT * FROM t", pg_sql="SELECT * FROM t WHERE id=%(id)s",
+                                   pg_params={"id": 1}))
+        self.assertEqual(got, [{"result": [{"id": 1}]}])
+        asyncio.run(_db.update("UPDATE t", pg_sql="UPDATE t SET a=1"))
+        self.assertEqual(pg.calls, [("SELECT * FROM t WHERE id=%(id)s", {"id": 1}, True),
+                                    ("UPDATE t SET a=1", {}, False)])
+        pg.rows = None
+        self.assertEqual(asyncio.run(_db.read("x", pg_sql="SELECT 1")), [{"result": []}])
+        self.assertEqual(transport.calls, [])
+
+    def test_read_and_update_fall_back_to_the_transport_without_pg_sql(self):
+        transport = self._wire(_FakeReply(200, [{"result": []}]))
+        self.assertEqual(asyncio.run(_db.read("SELECT 1")), [{"result": []}])
+        asyncio.run(_db.update("UPDATE t SET a=1"))
+        self.assertEqual([c["content"] for c in transport.calls],
+                         [b"USE NS ns1 DB db1; SELECT 1", b"USE NS ns1 DB db1; UPDATE t SET a=1"])
+        _db.configure(pg_primary=True, mios_pg=_FakePg([]))
+        asyncio.run(_db.update("UPDATE t SET a=2"))
+        self.assertEqual(len(transport.calls), 2, "a legacy write ran under postgres primary")
+
 
 def _run_case(tc):
     _saved = dict(os.environ)
@@ -443,12 +556,13 @@ def _run_case(tc):
     finally:
         os.environ.clear(); os.environ.update(_saved)
 
-def _run_extra_db(): return 0
+def _run_extra_db():
+    return _run_case(TestDbTransport)
 
 
 
 # ==============================================================================
-# Consolidated from test_mios_db_config.py (T-1092)
+# Consolidated from test_mios_db_config.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for mios_db_config resolver.
 import sys
@@ -464,10 +578,14 @@ except ImportError:
     psycopg = None
 import mios_db_config
 
-def setUpModule():
+def _require_seeded_pgvector():
+    """The live-DB guard for the integration class alone. It was a module-level
+    setUpModule, and task_1006 folded three suites into this one module, so with
+    no live pgvector it skipped the hermetic TestDbTransport and TestDbWrite
+    too: CI ran 0 of their tests and reported OK (skipped=1)."""
     if psycopg is None:
         raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
     conn_str = f"postgresql://mios:mios@localhost:{port}/mios"
     try:
         with psycopg.connect(conn_str, connect_timeout=1) as conn:
@@ -479,6 +597,10 @@ def setUpModule():
         raise unittest.SkipTest("no live pgvector -- integration test")
 
 class TestMiosDbConfig(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        _require_seeded_pgvector()
 
     def setUp(self):
         self.conn_str = "postgresql://mios:mios@localhost:8432/mios"
@@ -498,13 +620,13 @@ class TestMiosDbConfig(unittest.TestCase):
         mios_db_config.clear_cache()
 
     def test_toml_fail_open(self):
-        os.environ["MIOS_PORT_PGVECTOR"] = "9999"
+        os.environ["MIOS_PORTS_PGVECTOR"] = "9999"
         try:
             os.environ["MIOS_DB_AUTHORITATIVE"] = "True"
             val = mios_db_config.get("ai", "kernel_dispatch")
             self.assertTrue(val)
         finally:
-            del os.environ["MIOS_PORT_PGVECTOR"]
+            del os.environ["MIOS_PORTS_PGVECTOR"]
             if "MIOS_DB_AUTHORITATIVE" in os.environ:
                 del os.environ["MIOS_DB_AUTHORITATIVE"]
 
@@ -703,7 +825,7 @@ def _run_extra_db_config():
     return _run_case(TestMiosDbConfig)
 
 # ==============================================================================
-# Consolidated from test_mios_dbwrite.py (T-1092)
+# Consolidated from test_mios_dbwrite.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.dbwrite.
 """Unit tests for database writer layer."""

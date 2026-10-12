@@ -172,6 +172,10 @@ class _PGStub:
         self.calls = []
         self.insert_id = insert_id
 
+    def rid_to_pg_id(self, rid):
+        import mios_pg
+        return mios_pg.rid_to_pg_id(rid)
+
     async def execute(self, sql, params=None, *, fetch=False, **kw):
         self.calls.append((" ".join(sql.split()), params or {}, fetch))
         if fetch and "RETURNING id" in sql:
@@ -312,6 +316,9 @@ def t_write_skill_md_fire(tmp_subdir):
 
 def main():
     import tempfile
+    # The unit fixture must not acquire an invocation row in an ambient DB.
+    # PG lifecycle cases below swap in their own explicit returning-row stub.
+    _with_pg(_PGStub())
     t_make_schema_strict()
     t_skill_to_openai_tool()
     t_execute_skill()

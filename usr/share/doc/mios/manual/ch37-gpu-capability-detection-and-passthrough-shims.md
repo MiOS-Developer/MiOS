@@ -41,7 +41,7 @@ Refreshes CDI specs automatically when graphics adapters change.
 Gating mechanisms control GPU resource allocations between containers and hypervisors.
 
 ## Gating
-- **Shim**: Implemented via [24-gpu-pv-shim.sh](automation/24-gpu-pv-shim.sh).
+- **Detection**: The [GPU detection service](../../../../lib/systemd/system/mios-gpu-pv-detect.service) invokes [gpu-pv-detect](../../../../libexec/mios/gpu-pv-detect) for the runtime capability check.
 - **Locking**: Locks device files to prevent parallel utilization conflicts.
 - **Policies**: Shunts GPU compute priorities to virtual guests.
 

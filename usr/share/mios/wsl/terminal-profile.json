@@ -1,7 +1,7 @@
 {
     "profiles": [
         {
-            "colorScheme": "MiOS Dark",
+            "colorScheme": "MiOS",
             "font": {
                 "face": "GeistMono Nerd Font Mono",
                 "size": 12,
@@ -11,32 +11,36 @@
             "scrollbarState": "hidden",
             "useAcrylic": true,
             "opacity": 50,
+            "unfocusedAppearance": {
+                "opacity": 50,
+                "useAcrylic": true
+            },
             "systemBackdrop": "acrylic"
         }
     ],
     "schemes": [
         {
-            "name": "MiOS Dark",
-            "background": "#0F141C",
-            "foreground": "#D8DEE9",
-            "cursorColor": "#88C0D0",
-            "selectionBackground": "#3B4252",
-            "black": "#1B222D",
-            "red": "#BF616A",
-            "green": "#A3BE8C",
-            "yellow": "#EBCB8B",
-            "blue": "#81A1C1",
-            "purple": "#B48EAD",
-            "cyan": "#88C0D0",
-            "white": "#E5E9F0",
-            "brightBlack": "#4C566A",
-            "brightRed": "#D08770",
-            "brightGreen": "#A3BE8C",
-            "brightYellow": "#EBCB8B",
-            "brightBlue": "#5E81AC",
-            "brightPurple": "#B48EAD",
-            "brightCyan": "#8FBCBB",
-            "brightWhite": "#ECEFF4"
+            "name": "MiOS",
+            "background": "#282262",
+            "foreground": "#E7DFD3",
+            "cursorColor": "#F35C15",
+            "selectionBackground": "#948E8E",
+            "black": "#282262",
+            "brightBlack": "#948E8E",
+            "red": "#DC271B",
+            "brightRed": "#FF6B5C",
+            "green": "#3E7765",
+            "brightGreen": "#5FAA8E",
+            "yellow": "#F35C15",
+            "brightYellow": "#FF8540",
+            "blue": "#1A407F",
+            "brightBlue": "#3D6BA8",
+            "purple": "#734F39",
+            "brightPurple": "#9D7660",
+            "cyan": "#B7C9D7",
+            "brightCyan": "#E0E0E0",
+            "white": "#E7DFD3",
+            "brightWhite": "#FFFFFF"
         }
     ]
 }

@@ -4,7 +4,9 @@
     "DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"
   },
   "remote.extensionKind": {
-    "be5invis.vscode-custom-css": ["ui"]
+    "be5invis.vscode-custom-css": [
+      "ui"
+    ]
   },
   "workbench.colorTheme": "MiOS-Dev",
   "workbench.experimental.modernUI": true,
@@ -112,5 +114,10 @@
     "scrollbarSlider.hoverBackground": "#00000000",
     "scrollbarSlider.activeBackground": "#00000000",
     "scrollbar.shadow": "#00000000"
-  }
+  },
+  "terminal.integrated.allowChords": false,
+  "terminal.integrated.allowMnemonics": false,
+  "terminal.integrated.commandsToSkipShell": [
+    "-workbench.action.toggleSidebarVisibility"
+  ]
 }

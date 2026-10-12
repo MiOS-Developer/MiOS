@@ -99,7 +99,7 @@ build-or-operator-gated — see notes).
   live columns; only `id` is NOT NULL).
 - **Password is now SSOT-sourced** — resolves `MIOS_OPERATOR_PASSWORD` →
   `MIOS_OWUI_ADMIN_PASSWORD` → `mios.toml [identity].default_password` →
-  `MIOS_DEFAULT_PASSWORD` → `"mios"` (the same chain Forge/Portal/Cockpit/RDP use)
+  `MIOS_IDENTITY_DEFAULT_PASSWORD` → `"mios"` (the same chain Forge/Portal/Cockpit/RDP use)
   and **reconciles on every boot** (forge's model), never a random password.
 - **Proven**: signin `admin@mios.local` / `mios` → valid admin token (on the host `open_webui` port).
 - **Latent note**: the OWUI quadlet `PublishPort=…:8080` vs uvicorn `--port 3030`

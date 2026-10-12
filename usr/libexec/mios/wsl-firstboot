@@ -11,18 +11,18 @@ _log() { logger -t mios-wsl-firstboot "$*" 2>/dev/null || true; echo "[wsl-first
 
 _log "Starting WSL2 first-boot bridge (substrate already provisioned at overlay time)"
 
-MIOS_HOSTNAME="${MIOS_HOSTNAME:-mios}"
+MIOS_IDENTITY_HOSTNAME="${MIOS_IDENTITY_HOSTNAME:-mios}"
 if [[ -f ${MIOS_ETC_DIR}/install.env ]]; then
     set +u
     source ${MIOS_ETC_DIR}/install.env 2>/dev/null || true
     set -u
-    MIOS_HOSTNAME="${MIOS_HOSTNAME:-mios}"
+    MIOS_IDENTITY_HOSTNAME="${MIOS_IDENTITY_HOSTNAME:-mios}"
 fi
 
-if [[ -n "$MIOS_HOSTNAME" ]]; then
-    echo "$MIOS_HOSTNAME" > /etc/hostname
-    hostname "$MIOS_HOSTNAME" 2>/dev/null || true
-    _log "Hostname set to $MIOS_HOSTNAME"
+if [[ -n "$MIOS_IDENTITY_HOSTNAME" ]]; then
+    echo "$MIOS_IDENTITY_HOSTNAME" > /etc/hostname
+    hostname "$MIOS_IDENTITY_HOSTNAME" 2>/dev/null || true
+    _log "Hostname set to $MIOS_IDENTITY_HOSTNAME"
 fi
 
 if id mios &>/dev/null; then

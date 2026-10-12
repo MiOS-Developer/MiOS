@@ -208,14 +208,18 @@ bt__HERE = os.path.dirname(os.path.abspath(__file__))
 bt__ROOT = os.path.normpath(os.path.join(bt__HERE, ".."))
 bt__TARGET_PATH = os.path.join(bt__ROOT, "usr", "libexec", "mios", "ux", "btop_theme.py")
 
-bt_spec = importlib.util.spec_from_file_location("btop_theme", bt__TARGET_PATH)
-if bt_spec and bt_spec.loader:
-    btop_theme = importlib.util.module_from_spec(bt_spec)
-    sys.modules[bt_spec.name] = btop_theme
-    bt_spec.loader.exec_module(btop_theme)
+if os.path.isfile(bt__TARGET_PATH):
+    bt_spec = importlib.util.spec_from_file_location("btop_theme", bt__TARGET_PATH)
+    if bt_spec and bt_spec.loader:
+        btop_theme = importlib.util.module_from_spec(bt_spec)
+        sys.modules[bt_spec.name] = btop_theme
+        bt_spec.loader.exec_module(btop_theme)
+    else:
+        btop_theme = None
 else:
-    raise ImportError(f"Could not load module from {bt__TARGET_PATH}")
+    btop_theme = None
 
+@unittest.skipIf(btop_theme is None, "btop_theme.py was strangler-deleted (ported to native mios-gen render-btop-theme)")
 class bt_TestBtopTheme(unittest.TestCase):
     """Test suite for btop theme rendering and exact RGB hex palette mapping."""
 
@@ -581,6 +585,66 @@ class ecg_TestEditorConfigGen(unittest.TestCase):
         self.assertTrue(check_res["local_endpoint"])
         self.assertFalse(check_res["cloud_keys_detected"])
 
+    def check_real_config(self, content):
+        with patch.object(editor_config_gen, "mios_toml", None):
+            gen = editor_config_gen.EditorConfigGen()
+        with tempfile.TemporaryDirectory(prefix="mios-editor-check-") as tmp:
+            path = os.path.join(tmp, "settings.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(content, fh)
+            return gen.check(path)
+
+    def test_check_accepts_all_generated_routes(self):
+        with patch.object(editor_config_gen, "mios_toml", None):
+            gen = editor_config_gen.EditorConfigGen()
+        for config in (gen.render_vscode_settings(), gen.render_cursor_settings(),
+                       gen.render_continue_config()):
+            with self.subTest(config=config):
+                self.assertEqual(self.check_real_config(config)["status"], "compliant")
+
+    def test_check_rejects_each_unapproved_endpoint(self):
+        for endpoint in ("https://unapproved.invalid/v1", "http://localhost.evil.invalid/v1",
+                         "http://localhost:9999/v1", "http://localhost:8700/v1?forward=external",
+                         "http://user:pass@localhost:8700/v1", "not-a-url", 8700):
+            with self.subTest(endpoint=endpoint):
+                result = self.check_real_config({
+                    "openai.apiBase": "http://localhost:8700/v1",
+                    "models": [{"apiBase": endpoint}],
+                })
+                self.assertEqual(result["status"], "non-compliant")
+                self.assertFalse(result["local_endpoint"])
+                self.assertEqual(result["invalid_endpoint_fields"], ["models[0].apiBase"])
+
+    def test_check_localhost_in_prose_is_not_an_endpoint(self):
+        result = self.check_real_config({"description": "connect to localhost"})
+        self.assertEqual(result["status"], "non-compliant")
+        self.assertFalse(result["local_endpoint"])
+
+    def test_check_local_placeholder_key_is_allowed(self):
+        result = self.check_real_config({
+            "openai.apiBase": "http://localhost:8700/v1",
+            "openai.apiKey": "sk-local-fixture",
+        })
+        self.assertEqual(result["status"], "compliant")
+        self.assertFalse(result["cloud_keys_detected"])
+
+    def test_check_rejects_credential_without_echoing_it(self):
+        key = "sk-" + "synthetic-cloud-fixture"
+        result = self.check_real_config({
+            "openai.apiBase": "http://localhost:8700/v1", "openai.apiKey": key,
+        })
+        self.assertEqual(result["status"], "non-compliant")
+        self.assertTrue(result["cloud_keys_detected"])
+        self.assertNotIn(key, json.dumps(result))
+
+    def test_check_ignores_unrelated_schema_and_prose(self):
+        result = self.check_real_config({
+            "openai.apiBase": "http://localhost:8700/v1",
+            "$schema": "https://schemas.invalid/editor.json",
+            "description": "Use a sk-local placeholder for localhost",
+        })
+        self.assertEqual(result["status"], "compliant")
+
     def test_cli_generate_all_mock(self):
         test_args = ["editor_config_gen.py", "--generate", "--target", "all", "--mock", "--json"]
         with patch.object(sys, "argv", test_args):
@@ -622,14 +686,18 @@ fg__HERE = os.path.dirname(os.path.abspath(__file__))
 fg__ROOT = os.path.normpath(os.path.join(fg__HERE, ".."))
 fg__TARGET_PATH = os.path.join(fg__ROOT, "usr", "libexec", "mios", "ux", "fastfetch_gen.py")
 
-fg_spec = importlib.util.spec_from_file_location("fastfetch_gen", fg__TARGET_PATH)
-if fg_spec and fg_spec.loader:
-    fastfetch_gen = importlib.util.module_from_spec(fg_spec)
-    sys.modules[fg_spec.name] = fastfetch_gen
-    fg_spec.loader.exec_module(fastfetch_gen)
+if os.path.isfile(fg__TARGET_PATH):
+    fg_spec = importlib.util.spec_from_file_location("fastfetch_gen", fg__TARGET_PATH)
+    if fg_spec and fg_spec.loader:
+        fastfetch_gen = importlib.util.module_from_spec(fg_spec)
+        sys.modules[fg_spec.name] = fastfetch_gen
+        fg_spec.loader.exec_module(fastfetch_gen)
+    else:
+        fastfetch_gen = None
 else:
-    raise ImportError(f"Could not load module from {fg__TARGET_PATH}")
+    fastfetch_gen = None
 
+@unittest.skipIf(fastfetch_gen is None, "fastfetch_gen.py was strangler-deleted (ported to native mios-gen render-fastfetch)")
 class fg_TestFastfetchGen(unittest.TestCase):
     """Test suite for Fastfetch JSONC configuration and hardware/AI module generation."""
 
@@ -1524,14 +1592,18 @@ tt__HERE = os.path.dirname(os.path.abspath(__file__))
 tt__ROOT = os.path.normpath(os.path.join(tt__HERE, ".."))
 tt__TARGET_PATH = os.path.join(tt__ROOT, "usr", "libexec", "mios", "ux", "tmux_theme.py")
 
-tt_spec = importlib.util.spec_from_file_location("tmux_theme", tt__TARGET_PATH)
-if tt_spec and tt_spec.loader:
-    tmux_theme = importlib.util.module_from_spec(tt_spec)
-    sys.modules[tt_spec.name] = tmux_theme
-    tt_spec.loader.exec_module(tmux_theme)
+if os.path.isfile(tt__TARGET_PATH):
+    tt_spec = importlib.util.spec_from_file_location("tmux_theme", tt__TARGET_PATH)
+    if tt_spec and tt_spec.loader:
+        tmux_theme = importlib.util.module_from_spec(tt_spec)
+        sys.modules[tt_spec.name] = tmux_theme
+        tt_spec.loader.exec_module(tmux_theme)
+    else:
+        tmux_theme = None
 else:
-    raise ImportError(f"Could not load module from {tt__TARGET_PATH}")
+    tmux_theme = None
 
+@unittest.skipIf(tmux_theme is None, "tmux_theme.py was strangler-deleted (ported to native mios-gen render-tmux-theme)")
 class tt_TestTmuxTheme(unittest.TestCase):
     """Test suite for tmux theme rendering across powerline, rounded, and minimal styles."""
 
@@ -1544,19 +1616,109 @@ class tt_TestTmuxTheme(unittest.TestCase):
         self.assertIn("cursor", engine.palette)
 
     def test_generate_powerline_config(self):
-        engine = tmux_theme.TmuxThemeEngine(style="powerline", mock=True)
+        engine = tmux_theme.TmuxThemeEngine(style="powerline", mock=True,
+                                          data=tmux_theme.mios_toml.vendor_tree(tt__ROOT))
         cfg = engine.generate_config()
         self.assertIn("# MiOS Canonical Tmux Theme", cfg)
         self.assertIn("set -g status on", cfg)
+        expected_pane_bg = "default" if engine.pane_background == "terminal" else engine.palette["bg"]
+        self.assertIn(f'set -g window-style "bg={expected_pane_bg},fg={engine.palette["fg"]}"', cfg)
         self.assertIn("set -g pane-active-border-style", cfg)
-        self.assertIn("", cfg)
-        self.assertIn("", cfg)
+        self.assertIn(engine.data["theme"]["prompt"]["powerline_right"], cfg)
+        self.assertIn(engine.data["theme"]["prompt"]["powerline_left"], cfg)
 
     def test_generate_rounded_config(self):
         engine = tmux_theme.TmuxThemeEngine(style="rounded", mock=True)
         cfg = engine.generate_config()
         self.assertIn("", cfg)
         self.assertIn("", cfg)
+
+    def test_pane_background_inherits_terminal_or_uses_ssot_color(self):
+        import copy
+        data = copy.deepcopy(tmux_theme.mios_toml.vendor_tree(tt__ROOT))
+        data["colors"]["bg"] = "#123456"
+        data["theme"]["tmux"]["pane_background"] = "terminal"
+        cfg = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+        self.assertIn('set -g window-active-style "bg=default,', cfg)
+        data["theme"]["tmux"]["pane_background"] = "theme"
+        cfg = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+        self.assertIn('set -g window-active-style "bg=#123456,', cfg)
+        data["theme"]["tmux"]["pane_background"] = "DEVLOOP-PLANTED-INVALID"
+        with self.assertRaisesRegex(ValueError, "pane_background"):
+            tmux_theme.TmuxThemeEngine(data=data)
+
+    def test_status_background_inherits_terminal_or_acrylic(self):
+        import copy
+        data = copy.deepcopy(tmux_theme.mios_toml.vendor_tree(tt__ROOT))
+        data["colors"]["bg"] = "#123456"
+        data["theme"]["acrylic"] = True
+        data["theme"]["opacity"] = 50
+        cfg = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+        self.assertIn('set -g status-style "bg=default,', cfg)
+        data["theme"]["tmux"]["status_background"] = "theme"
+        cfg = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+        self.assertIn('set -g status-style "bg=#123456,', cfg)
+        data["theme"]["tmux"]["status_background"] = "DEVLOOP-PLANTED-INVALID"
+        with self.assertRaisesRegex(ValueError, "status_background"):
+            tmux_theme.TmuxThemeEngine(data=data)
+
+    def test_ssot_layout_and_ascii_font_fallback(self):
+        import copy
+        data = copy.deepcopy(tmux_theme.mios_toml.vendor_tree(tt__ROOT))
+        data["theme"]["tmux"].update(status_position="top", status_interval_s=7)
+        data["theme"]["font"]["family"] = "SSH Plain Mono"
+        cfg = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+        self.assertIn("set -g status-position top", cfg)
+        self.assertIn("set -g status-interval 7", cfg)
+        self.assertIn("# Minimal Status Line Formatting", cfg)
+        self.assertNotIn("", cfg)
+        data["theme"]["tmux"]["glyph_mode"] = "DEVLOOP-PLANTED-INVALID"
+        with self.assertRaisesRegex(ValueError, "glyph_mode"):
+            tmux_theme.TmuxThemeEngine(data=data)
+
+    def test_runtime_projection_changes_with_ssot_and_rejects_collision(self):
+        import copy, tempfile, subprocess
+        data = copy.deepcopy(tmux_theme.mios_toml.vendor_tree(tt__ROOT))
+        data["colors"]["bg"] = "#123456"
+        data["theme"]["tmux"]["status_position"] = "top"
+        data["keybindings"]["actions"][0]["key"] = "u"
+        with tempfile.TemporaryDirectory() as directory:
+            tmux_theme.project_runtime(directory, data)
+            with open(os.path.join(directory, "tmux.conf"), encoding="utf-8") as handle:
+                config = handle.read()
+            self.assertIn("bg=#123456", config)
+            self.assertIn("set -g status-position top", config)
+            self.assertIn("bind-key u new-window", config)
+            with open(os.path.join(directory, "mios.omp.json"), encoding="utf-8") as handle:
+                prompt = handle.read()
+            self.assertIn("#123456", prompt)
+            data["keybindings"]["actions"][1]["key"] = "u"
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                tmux_theme.project_runtime(directory, data)
+            self.assertIn("duplicate or non-mobile key: u", raised.exception.stderr)
+            with open(os.path.join(directory, "tmux.conf"), encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), config)
+            with open(os.path.join(directory, "mios.omp.json"), encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), prompt)
+
+    def test_mobile_prompt_and_tmux_drop_font_dependencies(self):
+        data = tmux_theme.mios_toml.vendor_tree(tt__ROOT)
+        data["theme"]["tmux"]["remote_glyph_mode"] = "auto"
+        data["theme"]["prompt"]["remote_glyph_mode"] = "auto"
+        with patch.dict(os.environ, {"SSH_CONNECTION": "127.0.0.1 5000 127.0.0.1 22"}):
+            config = tmux_theme.TmuxThemeEngine(data=data).generate_config()
+            self.assertNotIn("", config)
+            prompt = json.loads(tmux_theme.render_prompt(data, remote=True))
+        segments = [s for b in prompt["blocks"] for s in b["segments"]]
+        self.assertTrue(all(s["style"] == "plain" for s in segments))
+        self.assertTrue(all(s["template"].isascii() for s in segments))
+        self.assertEqual(segments[-1]["template"], data["theme"]["prompt"]["ascii"]["closer"])
+        self.assertEqual(segments[1]["background"], data["colors"]["accent"])
+        data["theme"]["tmux"]["remote_glyph_mode"] = "nerd"
+        data["theme"]["prompt"]["remote_glyph_mode"] = "nerd"
+        with patch.dict(os.environ, {"SSH_CONNECTION": "127.0.0.1 5000 127.0.0.1 22"}):
+            self.assertIn("", tmux_theme.TmuxThemeEngine(data=data).generate_config())
+        self.assertEqual(tmux_theme.render_prompt(data, remote=True), tmux_theme.render_prompt(data))
 
     def test_generate_minimal_config(self):
         engine = tmux_theme.TmuxThemeEngine(style="minimal", mock=True)
@@ -2030,7 +2192,7 @@ class wcg_TestWmConfigGen(unittest.TestCase):
         conf = engine.generate_sway_config()
         self.assertIn("# MiOS Sway Configuration", conf)
         self.assertIn("set $mod Mod4", conf)
-        self.assertIn("font pango:DejaVu Sans Mono 10", conf)
+        self.assertIn(f"font pango:{engine.data['theme']['font']['family']} {engine.data['theme']['font']['size']}", conf)
         edge = wcg_vendor_edge()
         self.assertIn(f"gaps inner {edge['wm_gaps_inner_px']}\n", conf)
         self.assertIn(f"gaps outer {edge['wm_gaps_outer_px']}\n", conf)
@@ -2111,7 +2273,8 @@ class wcg_TestWmConfigGen(unittest.TestCase):
             self.assertNotIn("sway/config", err.getvalue())
             with patch.object(sys, "argv", ["wm_config_gen.py", "--write-fixture", tmp]):
                 self.assertEqual(wm_config_gen.main(), 0)
-            self.assertEqual(os.stat(conf).st_mode & 0o777, 0o640)
+            if os.name != "nt":
+                self.assertEqual(os.stat(conf).st_mode & 0o777, 0o640)
             os.unlink(os.path.join(tmp, "usr/share/mios/sway/config"))
             with contextlib.redirect_stderr(io.StringIO()) as err2:
                 self.assertEqual(wm_config_gen.check_fixture(tmp), 1)

@@ -102,12 +102,12 @@ if [ -r /etc/mios/install.env ]; then
     set +u; set -a; . /etc/mios/install.env 2>/dev/null || true; set +a
     [ "$_mios_had_u" = 1 ] && set -u
 fi
-_PORT_COCKPIT="${MIOS_PORT_COCKPIT:-8110}"
-_PORT_OWUI="${MIOS_PORT_OPEN_WEBUI:-8200}"
-_PORT_HERMES="${MIOS_PORT_HERMES:-8720}"
-_PORT_PREFILTER="${MIOS_PORT_PREFILTER:-8710}"
-_PORT_SEARXNG="${MIOS_PORT_SEARXNG:-8800}"
-_PORT_FORGE="${MIOS_PORT_FORGE_HTTP:-8400}"
+_PORT_COCKPIT="${MIOS_PORTS_COCKPIT:-8110}"
+_PORT_OWUI="${MIOS_PORTS_OPEN_WEBUI:-8200}"
+_PORT_HERMES="${MIOS_PORTS_HERMES:-8720}"
+_PORT_PREFILTER="${MIOS_PORTS_PREFILTER:-8710}"
+_PORT_SEARXNG="${MIOS_PORTS_SEARXNG:-8800}"
+_PORT_FORGE="${MIOS_PORTS_FORGE_HTTP:-8400}"
 case "$NAME" in
     cockpit)                   exec mios-open-url "http://localhost:${_PORT_COCKPIT}" "$@" ;;
     owui|open-webui|webui|ai)  exec mios-open-url "http://localhost:${_PORT_OWUI}" "$@" ;;
@@ -334,7 +334,7 @@ if grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null \
     done
     if [ -z "$_xep" ]; then
         _xgw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}' || true)"
-        [ -n "$_xgw" ] && _xep="http://${_xgw}:${MIOS_PORT_OSCONTROL:-8950}"
+        [ -n "$_xgw" ] && _xep="http://${_xgw}:${MIOS_PORTS_OSCONTROL:-8950}"
     fi
     _xep="${_xep%/}"
     if [ -n "$_xep" ] && curl -fsS --connect-timeout 1 --max-time 2 "$_xep/health" >/dev/null 2>&1; then

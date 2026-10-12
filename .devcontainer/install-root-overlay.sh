@@ -3,12 +3,12 @@
 # AI-related: .devcontainer/Containerfile, etc/sudoers.d
 set -e
 
-if [ -d "/mios/.git" ]; then
+if git -C /mios rev-parse --git-dir >/dev/null 2>&1; then
     REPO_ROOT="/mios"
-elif [ -d "/workspaces/MiOS/.git" ]; then
+elif git -C /workspaces/MiOS rev-parse --git-dir >/dev/null 2>&1; then
     REPO_ROOT="/workspaces/MiOS"
 else
-    if [ -d ".git" ] && [ -f "Justfile" ]; then
+    if git rev-parse --git-dir >/dev/null 2>&1 && [ -f "Justfile" ]; then
         REPO_ROOT=$(pwd)
     else
         echo "Error: \MiOS Repository not found in /mios, /workspaces/MiOS, or current dir"
@@ -83,17 +83,13 @@ install -d -m 0755 "$TARGET_HOME/.ssh" "$TARGET_HOME/.config" "$TARGET_HOME/.loc
 install -d -m 0755 "$TARGET_CONFIG_DIR/credentials/ssh-keys" "$TARGET_DATA_DIR/artifacts" "$TARGET_DATA_DIR/images" "$TARGET_DATA_DIR/templates" "$TARGET_DATA_DIR/plugins" "$TARGET_CACHE_DIR/podman" "$TARGET_CACHE_DIR/downloads" "$TARGET_CACHE_DIR/build-cache" "$TARGET_STATE_DIR/logs"
 
 HOSTNAME_VALUE="$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "$TARGET_USER")"
+if [ ! -e "${TARGET_CONFIG_DIR}/mios.toml" ]; then
 cat > "${TARGET_CONFIG_DIR}/mios.toml" <<EOF
 [user]
 name = "${TARGET_USER}"
 hostname = "${HOSTNAME_VALUE}"
-
-[image]
-base = "fedora:latest"
-
-[build]
-local_tag = "localhost/mios:latest"
 EOF
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
     chown -R "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.config" "$TARGET_HOME/.local" "$TARGET_HOME/.cache" "$TARGET_HOME/.local/state" 2>/dev/null || true

@@ -59,20 +59,30 @@ COPY --from=rust-builder /out/usr/ /usr/
 
 # Explicit overrides only. Unset or empty, each resolves from the six-tier
 # SSOT inside the build ([identity].username/hostname, [ai].model/embed_model).
-ARG MIOS_USER
-ARG MIOS_HOSTNAME
-ARG MIOS_FLATPAKS=
+ARG MIOS_IDENTITY_USERNAME
+ARG MIOS_IDENTITY_HOSTNAME
+ARG MIOS_DESKTOP_FLATPAKS=
 ARG MIOS_AI_MODEL
 ARG MIOS_AI_EMBED_MODEL
 # ADR-0025 image profile ([profiles]); empty means [profiles].default.
 ARG MIOS_PROFILES_DEFAULT
+# MIOS_BAKE_BOUND_IMAGES=0 skips every bound-image bake (PR / CI-validation
+# builds; sidecars resolve at bootc deploy time instead of being pre-baked).
+# Ruling Q1: only the full image bakes them. Declared before the main RUN so
+# build.sh and its phases see it too: declared after it, 54's nested
+# localhost/mios-base build never saw the 0 and baked anyway.
+ARG MIOS_BAKE_BOUND_IMAGES=1
 
 # Every SSOT projection the image ships is rendered inside this RUN from the
 # build's own mios.toml by tools/sync-generated.sh, the entry point CI's
-# generated-artifacts step runs. The drift check runs before it, so a derived
-# surface edited by hand still fails the build (Law 8) before it is overwritten.
-# Source drift checks need every tracked consumer, including tests and CI.
-# Restore omitted index entries after provisioning; retain copied edits and exclude caches.
+# generated-artifacts step runs. A derived surface edited by hand fails that CI
+# gate (Law 8); ruling Q8 keeps source-tree gates out of the bake, so no drift
+# check runs here. The renderers read tracked inputs this copy omits (tests, CI):
+# restore omitted index entries after provisioning; retain copied edits and exclude caches.
+# [packages.self-build] is installed first: every profile carries it, and
+# 55-native-build.sh in toolchain mode builds with it.
+# The SSOT Rust toolchain (channel, components, musl target, rust-lld) follows it
+# into [build.toolchain].rustup_home, so every image can rebuild its own catalog.
 RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     --mount=type=cache,dst=/var/cache/dnf5,sharing=locked \
@@ -105,22 +115,26 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     source /tmp/build/automation/lib/packages.sh; \
     ${DNF_BIN:-dnf5} clean metadata 2>/dev/null || ${DNF_BIN:-dnf} clean metadata 2>/dev/null || true; \
     install_packages_strict base; \
+    install_packages_strict self-build; \
+    bash /tmp/build/automation/55-native-build.sh --toolchain; \
     git -C /tmp/build ls-files --deleted -z | git -C /tmp/build checkout-index -z --stdin; \
-    if [[ -n "${MIOS_FLATPAKS}" ]]; then \
-        echo "${MIOS_FLATPAKS}" | tr "," "\n" > /tmp/build/usr/share/mios/flatpak-list; \
+    if [[ -n "${MIOS_DESKTOP_FLATPAKS}" ]]; then \
+        echo "${MIOS_DESKTOP_FLATPAKS}" | tr "," "\n" > /tmp/build/usr/share/mios/flatpak-list; \
     fi; \
     _res="$(command -v mios-resolver || echo /usr/libexec/mios/mios-resolver)"; \
     eval "$("$_res" --root /tmp/build --emit=shell \
         | grep -E '^export MIOS_(USER|HOSTNAME|AI_MODEL|AI_EMBED_MODEL)=' | sed 's/^export /_ssot_/')"; \
-    for _v in MIOS_USER MIOS_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL; do \
+    for _v in MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL; do \
         _s="_ssot_${_v}"; \
         [ -n "${!_v:-}" ] || { [ -n "${!_s:-}" ] || { echo "[build] ERROR: ${_v} is not resolved by the SSOT" >&2; exit 1; }; printf -v "$_v" '%s' "${!_s}"; }; \
         echo "[build] ${_v}=${!_v}"; \
     done; \
-    export MIOS_USER MIOS_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT; \
-    /usr/libexec/mios/miosd drift-check --root /tmp/build; \
-    MIOS_ROOT=/tmp/build bash /tmp/build/tools/sync-generated.sh; \
-    bash /tmp/build/automation/01-system-files-overlay.sh; \
+    export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT MIOS_BAKE_BOUND_IMAGES; \
+    echo "[build] MIOS_BAKE_BOUND_IMAGES=${MIOS_BAKE_BOUND_IMAGES}"; \
+    mios-gen sync --root /tmp/build; \
+    CTX=/tmp/build bash /tmp/build/automation/01-system-files-overlay.sh; \
+    install_packages_strict mcp; \
+    python3.13 /tmp/build/usr/libexec/mios/mios-mcp-server --install-native --source-root /tmp/build; \
     chmod +x /tmp/build/automation/build.sh /tmp/build/automation/*.sh 2>/dev/null || true; \
     chmod +x /usr/libexec/mios/copy-build-log.sh 2>/dev/null || true; \
     CTX=/tmp/build /tmp/build/automation/build.sh; \
@@ -137,10 +151,8 @@ RUN --network=host set -ex; \
         /usr/libexec/mios/oscap-scan.py; \
     fi
 
-
-# MIOS_BAKE_BOUND_IMAGES=0 skips the bake below (for PR / CI-validation builds;
-# sidecars resolve at bootc deploy time instead of being pre-baked).
-ARG MIOS_BAKE_BOUND_IMAGES=1
+# The bound-image bake layers. ARG MIOS_BAKE_BOUND_IMAGES is declared above the
+# main RUN and stays in scope for the rest of this stage.
 RUN --network=host --mount=type=cache,target=/var/tmp/mios-bakescratch \
     MIOS_BAKE_BOUND_IMAGES="${MIOS_BAKE_BOUND_IMAGES}" bash /usr/libexec/mios/57-mios-sys-build.sh
 RUN --network=host --mount=type=cache,target=/var/tmp/mios-bakescratch \

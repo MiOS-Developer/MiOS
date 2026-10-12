@@ -27,17 +27,17 @@ function _MiosPort([string]$EnvName, [int]$Default) {
 }
 
 $portMap = @(
-    @{ Port = (_MiosPort 'MIOS_PORT_FORGE_HTTP'       8400); Name = 'forge'       }
-    @{ Port = (_MiosPort 'MIOS_PORT_OPEN_WEBUI'       8200); Name = 'open-webui'  }
-    @{ Port = (_MiosPort 'MIOS_PORT_CODE_SERVER'      8900); Name = 'code-server' }
-    @{ Port = (_MiosPort 'MIOS_PORT_COCKPIT'          8110); Name = 'cockpit'     }
-    @{ Port = (_MiosPort 'MIOS_PORT_LLM_LIGHT'        8500); Name = 'llm-light'   }
-    @{ Port = (_MiosPort 'MIOS_PORT_SEARXNG'          8800); Name = 'searxng'     }
-    @{ Port = (_MiosPort 'MIOS_PORT_HERMES'           8720); Name = 'hermes'      }
-    @{ Port = (_MiosPort 'MIOS_PORT_HERMES_DASHBOARD' 8210); Name = 'dash-ai'     }
+    @{ Port = (_MiosPort 'MIOS_PORTS_FORGE_HTTP'       8400); Name = 'forge'       }
+    @{ Port = (_MiosPort 'MIOS_PORTS_OPEN_WEBUI'       8200); Name = 'open-webui'  }
+    @{ Port = (_MiosPort 'MIOS_PORTS_CODE_SERVER'      8900); Name = 'code-server' }
+    @{ Port = (_MiosPort 'MIOS_PORTS_COCKPIT'          8110); Name = 'cockpit'     }
+    @{ Port = (_MiosPort 'MIOS_PORTS_LLM_LIGHT'        8500); Name = 'llm-light'   }
+    @{ Port = (_MiosPort 'MIOS_PORTS_SEARXNG'          8800); Name = 'searxng'     }
+    @{ Port = (_MiosPort 'MIOS_PORTS_HERMES'           8720); Name = 'hermes'      }
+    @{ Port = (_MiosPort 'MIOS_PORTS_HERMES_DASHBOARD' 8210); Name = 'dash-ai'     }
     @{ Port = (_MiosPort 'MIOS_PORT_GUACAMOLE_WEB'    8220); Name = 'guacamole'   }
-    @{ Port = (_MiosPort 'MIOS_PORT_CEPH_DASHBOARD'   8460); Name = 'ceph-dash'   }
-    @{ Port = (_MiosPort 'MIOS_PORT_RDP'              8300); Name = 'rdp'         }
+    @{ Port = (_MiosPort 'MIOS_PORTS_CEPH_DASHBOARD'   8460); Name = 'ceph-dash'   }
+    @{ Port = (_MiosPort 'MIOS_PORTS_RDP'              8300); Name = 'rdp'         }
 )
 
 # Clean up retired legacy portproxy and firewall rules (retired ports, zero hardcodes)
@@ -77,7 +77,7 @@ foreach ($p in $portMap) {
 
 # 2b. AI-Node Tailscale v4tov6 bridge if requested
 if ($AiNode) {
-    $llmLightPort = _MiosPort 'MIOS_PORT_LLM_LIGHT' 8500
+    $llmLightPort = _MiosPort 'MIOS_PORTS_LLM_LIGHT' 8500
     $aiEntryName = "MiOS AI Node - mios-llm-light ($llmLightPort/tcp)"
     $existingAiRule = Get-NetFirewallRule -DisplayName $aiEntryName -ErrorAction SilentlyContinue
     if ($existingAiRule) {

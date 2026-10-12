@@ -1,0 +1,13 @@
+# AI-hint: Fast native static CLI for querying the layered mios.toml SSOT.
+# AI-related: usr/libexec/mios/mios-toml-get, usr/lib/mios/mios_toml.py
+[package]
+name = "mios-toml-get"
+version.workspace = true
+edition.workspace = true
+description = "Fast native CLI for querying the layered mios.toml SSOT"
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }

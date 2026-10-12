@@ -94,7 +94,20 @@ if [ -f "$OWUI_DB" ]; then
         note "                            tool, api_key, oauth_session, channel"
     else
         python3 - <<EOF
-import sqlite3
+import sqlite3, sys
+sys.path.insert(0, "/usr/lib/mios")
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    def safe_ident(ident, allowlist):
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+        if ident not in allowlist:
+            raise ValueError(f"SQL identifier {ident!r} not in schema allowlist")
+        return ident
+
 DB = "$OWUI_DB"
 WIPE = (
     "chat", "chat_file", "chat_message", "chatidtag",
@@ -106,6 +119,7 @@ WIPE = (
     "automation_run", "calendar_event", "calendar_event_attendee", "calendar",
     "tag",
 )
+WIPE_ALLOWLIST = frozenset(WIPE)
 SELECTIVE_WIPE_SQL = (
     ("file",
      "DELETE FROM file WHERE coalesce(meta, '') NOT LIKE '%mios-owui-apply-knowledge%'"),
@@ -120,8 +134,9 @@ cur = conn.cursor()
 total = 0
 for t in WIPE:
     try:
-        n = cur.execute(f"DELETE FROM {t}").rowcount
-        if n > 0: print(f"     - {t}: {n} rows")
+        safe_t = safe_ident(t, WIPE_ALLOWLIST)
+        n = cur.execute(f"DELETE FROM {safe_t}").rowcount
+        if n > 0: print(f"     - {safe_t}: {n} rows")
         total += n
     except sqlite3.OperationalError:
         pass

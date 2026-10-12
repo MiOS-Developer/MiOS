@@ -10,14 +10,14 @@ Wants=network-online.target
 [Container]
 ContainerName=mios-otelcol
 Environment=COLLECTOR_OTLP_ENABLED=true
-Environment=COLLECTOR_OTLP_GRPC_HOST_PORT=:${MIOS_PORT_OTELCOL_OTLP:-8575}
-Environment=QUERY_HTTP_SERVER_HOST_PORT=:${MIOS_PORT_OTELCOL_UI:-8580}
+Environment=COLLECTOR_OTLP_GRPC_HOST_PORT=:${MIOS_PORTS_OTELCOL_OTLP:-8575}
+Environment=QUERY_HTTP_SERVER_HOST_PORT=:${MIOS_PORTS_OTELCOL_UI:-8580}
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=829
 Image=docker.io/jaegertracing/all-in-one:latest
 Label=org.opencontainers.image.title=mios-otelcol
-Label=org.opencontainers.image.url=http://localhost:${MIOS_PORT_OTELCOL_UI:-8580}/
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_OTELCOL_UI:-8580}/
+Label=org.opencontainers.image.url=http://localhost:${MIOS_PORTS_OTELCOL_UI:-8580}/
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_OTELCOL_UI:-8580}/
 Pod=mios-webtools.pod
 User=829
 

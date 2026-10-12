@@ -1,6 +1,13 @@
 <!-- AI-hint: A machine-readable and human-readable index of all build-automation scripts in the `automation/` directory, used by agents to locate and identify the numbered Phase-2 sub-phase scripts (and the top-level entry-point/bootstrap scripts) that assemble the MiOS OC
      AI-related: /usr/lib/mios/agents/, /usr/share/mios/llamacpp/models, mios-dropin-fanout, mios-build-driver, mios-llm-light, mios-llm-heavy-alt, mios-llm-heavy, mios-pgvector, mios-firewall-init, mios-role -->
-<!--  'MiOS' Artifact | Proprietor: 'MiOS' Project | https://github.com/MiOS-DEV/mios -->
+
+<!--  'MiOS' Artifact | Proprietor: 'MiOS' Project | https://github.com/mios-dev/mios -->
+> **Proprietor:** 'MiOS' Project
+> **Infrastructure:** Self-Building Infrastructure (Personal Property)
+> **License:** Licensed as personal property to 'MiOS' Project
+> **Source Reference:** MiOS-Core-v0.3.0
+---
+
 #  'MiOS' Scripts Index
 > **Generated:** 2026-06-04T23:11:33 (refactored 2026-06-13 for current-state accuracy)
 > **Status:** Maintained index — keep in sync with `automation/`
@@ -14,7 +21,7 @@
     "build-pipeline",
     "index"
   ],
-  "version": "0.2.4",
+  "version": "0.3.0",
   "last_rag_sync": "2026-06-13"
 }
 ```
@@ -391,4 +398,10 @@ out-of-band; they are not part of the in-order build pipeline.
 > OpenAI/Ollama-compatible API). `llama-swap` (`ghcr.io/mostlygeek/llama-swap`)
 > remains a legitimate upstream proxy image.
 
-<!--  'MiOS' Proprietary Artifact | Copyright (c) 2026 'MiOS' Project -->
+---
+- **Copyright:** (c) 2026 'MiOS' Project
+- **Status:** Personal Property / Private Infrastructure
+- **Project Repository:** [MiOS-DEV/mios](https://github.com/mios-dev/mios)
+- **Documentation:** ['MiOS' Navigation Hub](https://github.com/mios-dev/mios/blob/main/specs/Home.md)
+- **Artifact Hub:** [ai-context.json](https://github.com/mios-dev/mios/blob/main/ai-context.json)
+---

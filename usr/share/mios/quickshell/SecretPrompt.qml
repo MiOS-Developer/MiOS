@@ -1,7 +1,7 @@
 // AI-hint: MiOS Native Wayland Secret & Keyring Prompt Dialog for Quickshell.
 // Secure modal dialog for operator passwords, private keys, and keyring unlocks.
 // Theme and colors are SSOT-driven from Theme.qml (/etc/mios/theme/theme.json).
-// AI-related: usr/share/mios/quickshell/Theme.qml, src/mios-rs/miosd/src/secret.rs
+// AI-related: usr/share/mios/quickshell/Theme.qml, src/mios-rs/miosd/src/lib.rs
 
 import QtQuick
 import QtQuick.Controls

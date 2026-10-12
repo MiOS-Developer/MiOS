@@ -4,6 +4,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::sync::OnceLock;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Native comment lexer for MiOS", long_about = None)]
@@ -49,50 +50,141 @@ pub struct Block {
     pub as_: String,
 }
 
-fn style_for(path: &str) -> &'static str {
-    let lower = path.to_lowercase();
-    if lower.ends_with(".py")
-        || lower.ends_with(".sh")
-        || lower.ends_with(".bash")
-        || lower.ends_with(".toml")
-        || lower.ends_with(".yml")
-        || lower.ends_with(".yaml")
-        || lower.ends_with(".ps1")
-        || lower.ends_with(".psm1")
-        || lower.ends_with(".service")
-        || lower.ends_with(".container")
-        || lower.ends_with(".timer")
-        || lower.ends_with(".socket")
-        || lower.ends_with(".target")
-        || lower.ends_with(".conf")
-        || lower.ends_with(".nft")
-        || lower.ends_with(".cfg")
-    {
-        "#"
-    } else if lower.ends_with(".rs")
-        || lower.ends_with(".go")
-        || lower.ends_with(".c")
-        || lower.ends_with(".h")
-        || lower.ends_with(".cs")
-        || lower.ends_with(".ts")
-        || lower.ends_with(".js")
-        || lower.ends_with(".tsx")
-        || lower.ends_with(".mjs")
-    {
-        "//"
-    } else if lower.ends_with(".md") || lower.ends_with(".html") || lower.ends_with(".xml") {
-        "<!--"
-    } else {
-        "#"
+/// The extension as Python's os.path.splitext sees it: leading dots belong to
+/// the name, so `.bashrc` has none.
+fn py_ext(path: &str) -> String {
+    let base = &path[path.rfind('/').map_or(0, |i| i + 1)..];
+    match base.rfind('.') {
+        Some(d) if base[..d].chars().any(|c| c != '.') => base[d..].to_lowercase(),
+        _ => String::new(),
     }
 }
 
+fn style_for(path: &str) -> &'static str {
+    match py_ext(path).as_str() {
+        ".rs" | ".go" | ".c" | ".h" | ".cs" | ".ts" | ".js" | ".tsx" | ".mjs" => "//",
+        ".md" | ".html" | ".xml" => "<!--",
+        _ => "#",
+    }
+}
+
+/// Python's str.isspace(): Unicode White_Space plus U+001C..U+001F.
+fn py_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+fn py_strip(s: &str) -> &str {
+    s.trim_matches(py_space)
+}
+
+fn py_lstrip(s: &str) -> &str {
+    s.trim_start_matches(py_space)
+}
+
+/// Python's str.splitlines(): every boundary it honours, with "\r\n" as one.
+fn py_splitlines(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut it = s.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if !matches!(
+            c,
+            '\n' | '\r'
+                | '\u{0b}'
+                | '\u{0c}'
+                | '\u{1c}'
+                | '\u{1d}'
+                | '\u{1e}'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        ) {
+            continue;
+        }
+        out.push(&s[start..i]);
+        start = i + c.len_utf8();
+        if c == '\r' {
+            if let Some(&(j, '\n')) = it.peek() {
+                it.next();
+                start = j + 1;
+            }
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+/// `\s` spelled as Python's: Rust's class lacks U+001C..U+001F.
+const WS: &str = r"[\s\x{1c}-\x{1f}]";
+
+struct Res {
+    marker: Regex,
+    end_marker: Regex,
+    html_end: Regex,
+    ws_run: Regex,
+    word: Regex,
+}
+
+fn res() -> &'static Res {
+    static RES: OnceLock<Res> = OnceLock::new();
+    RES.get_or_init(|| Res {
+        marker: Regex::new(&format!(r"^{WS}*(?:#+|//+|;+|--|<!--|\*|/\*){WS}?"))
+            .expect("marker pattern"),
+        end_marker: Regex::new(&format!(r"{WS}*(?:--!?>|\*/){WS}*$")).expect("end pattern"),
+        html_end: Regex::new(r"--!?>").expect("HTML end pattern"),
+        ws_run: Regex::new(&format!("{WS}+")).expect("whitespace pattern"),
+        word: Regex::new(r"[A-Za-z0-9_][A-Za-z0-9_./:-]*").expect("word pattern"),
+    })
+}
+
 fn strip_line(line: &str) -> String {
-    let re_marker = Regex::new(r"^\s*(?:#+|//+|;+|--|<!--|\*|/\*)\s?").unwrap();
-    let re_end = Regex::new(r"\s*(?:-->|\*/)\s*$").unwrap();
-    let s1 = re_marker.replace(line, "");
-    let s2 = re_end.replace(&s1, "");
-    s2.trim_end().to_string()
+    let re = res();
+    let s1 = re.marker.replace(line, "");
+    let s2 = re.end_marker.replace(&s1, "");
+    s2.trim_end_matches(py_space).to_string()
+}
+
+fn ident_len(s: &str) -> usize {
+    let b = s.as_bytes();
+    if b.is_empty() || !(b[0].is_ascii_alphabetic() || b[0] == b'_') {
+        return 0;
+    }
+    b.iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
+        .count()
+}
+
+/// The terminator a `<<TAG` / `<<-'TAG'` / `<<"TAG"` opens, as mios_comments'
+/// `_HEREDOC` finds it: the first `<<` at line start or after whitespace.
+fn heredoc_tag(raw: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(off) = raw[from..].find("<<") {
+        let p = from + off;
+        from = p + 1;
+        if raw[..p].chars().next_back().is_some_and(|c| !py_space(c)) {
+            continue;
+        }
+        let rest = &raw[p + 2..];
+        let rest = rest.strip_prefix('-').unwrap_or(rest);
+        let rest = rest.trim_start_matches(py_space);
+        let tag = match rest.chars().next() {
+            Some(q @ ('\'' | '"')) => {
+                let body = &rest[1..];
+                let n = ident_len(body);
+                (n > 0 && body[n..].starts_with(q)).then(|| body[..n].to_string())
+            }
+            _ => {
+                let n = ident_len(rest);
+                (n > 0).then(|| rest[..n].to_string())
+            }
+        };
+        if tag.is_some() {
+            return tag;
+        }
+    }
+    None
 }
 
 /// Where a block sits: grouped so make_block stays inside clippy's
@@ -112,20 +204,16 @@ fn make_block(
     anchor: &str,
     in_header: bool,
 ) -> Block {
+    let re = res();
     let text = body_lines.join("\n");
-    let ws_re = Regex::new(r"\s+").unwrap();
-    let norm = ws_re
-        .replace_all(&text.to_lowercase(), " ")
-        .trim()
-        .to_string();
+    let lowered = text.to_lowercase();
+    let norm = py_strip(&re.ws_run.replace_all(&lowered, " ")).to_string();
 
     let mut hasher = Sha256::new();
     hasher.update(norm.as_bytes());
     let hash_hex = format!("{:x}", hasher.finalize());
     let sha12 = hash_hex[..12].to_string();
-
-    let word_re = Regex::new(r"[A-Za-z0-9_][A-Za-z0-9_./:-]*").unwrap();
-    let words = word_re.find_iter(&text).count();
+    let words = re.word.find_iter(&text).count();
 
     Block {
         path: at.path.to_string(),
@@ -148,93 +236,94 @@ fn make_block(
     }
 }
 
+/// A run of full-line comments, attached to the first code line after it.
+fn finish_run(at: Span<'_>, run: &[String], style: &str, lines: &[&str]) -> Block {
+    let re = res();
+    let anchor = lines
+        .iter()
+        .skip(at.end)
+        .find(|l| !py_strip(l).is_empty() && !re.marker.is_match(l))
+        .map_or("", |l| py_strip(l));
+    let attach = if at.start <= 3 {
+        "file-header"
+    } else if anchor.is_empty() {
+        "orphan"
+    } else {
+        "pre-code"
+    };
+    let in_header = at.start <= 6
+        && run.iter().any(|x| {
+            x.contains("AI-hint") || x.contains("AI-related") || x.contains("AI-functions")
+        });
+    make_block(at, "line", style, run, attach, anchor, in_header)
+}
+
+fn markup_block(path: &str, start: usize, end: usize, body: &[String], in_hdr: bool) -> Block {
+    let attach = if start <= 3 { "file-header" } else { "orphan" };
+    let at = Span { path, start, end };
+    make_block(at, "blockcomment", "<!--", body, attach, "", in_hdr)
+}
+
+/// mios_comments._lex_generic, line for line: the drift gate holds them equal.
 fn lex_generic(path: &str, src: &str, style: &str) -> Vec<Block> {
+    let re = res();
+    let lines = py_splitlines(src);
     let mut out = Vec::new();
-    let lines: Vec<&str> = src.lines().collect();
     let mut run: Vec<String> = Vec::new();
     let mut run_start = 0;
     let mut in_block = false;
     let mut block_start = 0;
     let mut block_lines: Vec<String> = Vec::new();
-
-    let marker_re = Regex::new(r"^\s*(?:#+|//+|;+|--|<!--|\*|/\*)\s?").unwrap();
+    let mut heredoc_end: Option<String> = None;
 
     let flush = |out: &mut Vec<Block>, run: &mut Vec<String>, start: usize, end: usize| {
         if !run.is_empty() {
-            let text = run.join("\n");
-            let attach = if start <= 3 { "file-header" } else { "orphan" };
-            let in_header = start <= 3 || text.contains("AI-hint");
-            out.push(make_block(
-                Span { path, start, end },
-                "blockcomment",
-                style,
-                run,
-                attach,
-                "",
-                in_header,
-            ));
+            out.push(finish_run(Span { path, start, end }, run, style, &lines));
             run.clear();
         }
     };
 
     for (idx, &raw) in lines.iter().enumerate() {
         let i = idx + 1;
-        let s = raw.trim();
+        let s = py_strip(raw);
+
+        // A heredoc body is data, not this file's comments.
+        if let Some(end) = &heredoc_end {
+            if s == end || s.strip_suffix('\'') == Some(end.as_str()) {
+                heredoc_end = None;
+            }
+            continue;
+        }
+        if !py_lstrip(raw).starts_with(style) {
+            if let Some(tag) = heredoc_tag(raw) {
+                flush(&mut out, &mut run, run_start, i - 1);
+                heredoc_end = Some(tag);
+                continue;
+            }
+        }
 
         if style == "<!--" {
             if !in_block && s.starts_with("<!--") {
                 in_block = true;
                 block_start = i;
                 block_lines = vec![strip_line(raw)];
-                if s.contains("-->") {
+                if res().html_end.is_match(s) {
                     in_block = false;
-                    let in_hdr = i <= 3 || raw.contains("AI-hint");
-                    out.push(make_block(
-                        Span {
-                            path,
-                            start: block_start,
-                            end: i,
-                        },
-                        "blockcomment",
-                        style,
-                        &block_lines,
-                        if i <= 3 { "file-header" } else { "orphan" },
-                        "",
-                        in_hdr,
-                    ));
+                    let hdr = raw.contains("AI-hint");
+                    out.push(markup_block(path, block_start, i, &block_lines, hdr));
                 }
-                continue;
-            }
-            if in_block {
+            } else if in_block {
                 block_lines.push(strip_line(raw));
-                if s.contains("-->") {
+                if res().html_end.is_match(s) {
                     in_block = false;
-                    let in_hdr =
-                        block_start <= 3 || block_lines.iter().any(|x| x.contains("AI-hint"));
-                    out.push(make_block(
-                        Span {
-                            path,
-                            start: block_start,
-                            end: i,
-                        },
-                        "blockcomment",
-                        style,
-                        &block_lines,
-                        if block_start <= 3 {
-                            "file-header"
-                        } else {
-                            "orphan"
-                        },
-                        "",
-                        in_hdr,
-                    ));
+                    let hdr = block_lines.iter().any(|x| x.contains("AI-hint"));
+                    out.push(markup_block(path, block_start, i, &block_lines, hdr));
                 }
-                continue;
             }
             continue;
         }
 
-        if !s.is_empty() && marker_re.is_match(raw) && raw.trim_start().starts_with(style) {
+        if !s.is_empty() && re.marker.is_match(raw) && py_lstrip(raw).starts_with(style) {
             if run.is_empty() {
                 run_start = i;
             }
@@ -242,46 +331,44 @@ fn lex_generic(path: &str, src: &str, style: &str) -> Vec<Block> {
             continue;
         }
 
-        if (style == "#" || style == "//")
-            && raw.contains(style)
-            && !raw.trim_start().starts_with(style)
-        {
+        // A trailing comment on a code line is inline, never a block.
+        if (style == "#" || style == "//") && !py_lstrip(raw).starts_with(style) {
             if let Some(pos) = raw.find(style) {
-                if pos > 0 && !raw[..pos].trim().is_empty() {
+                if pos > 0 && !py_strip(&raw[..pos]).is_empty() {
                     flush(&mut out, &mut run, run_start, i - 1);
+                    let at = Span {
+                        path,
+                        start: i,
+                        end: i,
+                    };
+                    let body = [strip_line(&raw[pos..])];
+                    let anchor = py_strip(&raw[..pos]);
                     out.push(make_block(
-                        Span {
-                            path,
-                            start: i,
-                            end: i,
-                        },
-                        "inline",
-                        style,
-                        &[strip_line(&raw[pos..])],
-                        "inline",
-                        raw[..pos].trim(),
-                        false,
+                        at, "inline", style, &body, "inline", anchor, false,
                     ));
                     continue;
                 }
             }
         }
 
-        flush(&mut out, &mut run, run_start, if i > 0 { i - 1 } else { 0 });
+        flush(&mut out, &mut run, run_start, i - 1);
     }
     flush(&mut out, &mut run, run_start, lines.len());
 
     out
 }
 
+/// Decoded as mios_comments.lex reads a file: lossy UTF-8, BOM dropped, LF.
 pub fn lex_file(path: &str) -> Vec<Block> {
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let Ok(bytes) = fs::read(path) else {
+        return Vec::new();
     };
-    let src = content.replace("\r\n", "\n");
-    let style = style_for(path);
-    lex_generic(path, &src, style)
+    let content = String::from_utf8_lossy(&bytes);
+    let src = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&content)
+        .replace("\r\n", "\n");
+    lex_generic(path, &src, style_for(path))
 }
 
 /// Strips comments and docstrings from source text, returning normalized non-comment lines.
@@ -333,13 +420,13 @@ pub fn strip_non_code(path: &str, src: &str) -> Vec<String> {
         // HTML / Markdown <!-- -->
         if is_md || style == "<!--" {
             if in_multiline_comment {
-                if trimmed.contains("-->") {
+                if res().html_end.is_match(trimmed) {
                     in_multiline_comment = false;
                 }
                 continue;
             }
             if trimmed.starts_with("<!--") {
-                if !trimmed.contains("-->") {
+                if !res().html_end.is_match(trimmed) {
                     in_multiline_comment = true;
                 }
                 continue;
@@ -589,6 +676,25 @@ mod tests {
     }
 
     #[test]
+    fn html_endings_bound_comments_without_swallowing_following_content() {
+        for end in ["-->", "--!>"] {
+            assert_eq!(strip_line(&format!("<!-- comment {end}")), "comment");
+            let blocks = lex_generic(
+                "x.md",
+                &format!("<!-- first {end}\ntext\n<!-- second {end}\n"),
+                "<!--",
+            );
+            assert_eq!(blocks.len(), 2);
+            assert_eq!((blocks[0].start_line, blocks[0].end_line), (1, 1));
+            assert_eq!(blocks[1].text, "second");
+        }
+        let blocks = lex_generic("x.md", "<!-- first --!\nsecond --!>\ntext\n", "<!--");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].end_line, 2);
+        assert!(blocks[0].text.contains("first --!"));
+    }
+
+    #[test]
     fn test_lex_generic() {
         let src = "# Header comment\n# Second line\n\nfn main() {}\n";
         let blocks = lex_generic("test.py", src, "#");
@@ -596,6 +702,65 @@ mod tests {
         assert_eq!(blocks[0].start_line, 1);
         assert_eq!(blocks[0].end_line, 2);
         assert_eq!(blocks[0].lines, 2);
+        assert_eq!(blocks[0].kind, "line");
+        assert_eq!(blocks[0].attach, "file-header");
+    }
+
+    #[test]
+    fn heredoc_body_is_not_a_comment() {
+        let src = "# outer\ncat <<'EOF' >x\n# inner\nEOF\n# after\n";
+        let texts: Vec<String> = lex_generic("t.sh", src, "#")
+            .into_iter()
+            .map(|b| b.text)
+            .collect();
+        assert_eq!(texts, ["outer", "after"]);
+    }
+
+    #[test]
+    fn heredoc_tag_forms() {
+        assert_eq!(heredoc_tag("cat <<-\"SQL\"").as_deref(), Some("SQL"));
+        assert_eq!(heredoc_tag("x <<EOF").as_deref(), Some("EOF"));
+        assert_eq!(heredoc_tag("1<<bit"), None);
+        assert_eq!(heredoc_tag("cat <<< \"$x\""), None);
+        assert_eq!(heredoc_tag("cat <<'open"), None);
+    }
+
+    #[test]
+    fn comment_line_never_opens_a_heredoc() {
+        let src = "# usage: cat <<EOF\n\n# kept\n";
+        assert_eq!(lex_generic("t.sh", src, "#").len(), 2);
+    }
+
+    #[test]
+    fn splitlines_matches_python() {
+        assert_eq!(py_splitlines("a\r\nb\rc\x0cd\n"), ["a", "b", "c", "d"]);
+        assert_eq!(py_splitlines("\n"), [""]);
+        assert!(py_splitlines("").is_empty());
+    }
+
+    #[test]
+    fn bom_is_dropped_and_anchor_found() {
+        let dir = std::env::temp_dir().join(format!("mios-lex-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tempdir");
+        let f = dir.join("a.ps1");
+        std::fs::write(
+            &f,
+            "\u{feff}# AI-hint: x\r\n\r\n\r\n\r\n# note\r\nWrite-Host 1\r\n",
+        )
+        .expect("fixture");
+        let blocks = lex_file(f.to_str().expect("utf-8 path"));
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(blocks[0].start_line, 1);
+        assert!(blocks[0].in_header_block);
+        assert_eq!(blocks[1].attach, "pre-code");
+        assert_eq!(blocks[1].anchor_code, "Write-Host 1");
+    }
+
+    #[test]
+    fn extension_follows_splitext() {
+        assert_eq!(py_ext("d/.bashrc"), "");
+        assert_eq!(py_ext("d/a.b.RS"), ".rs");
+        assert_eq!(style_for("d/x.tsx"), "//");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* AI-hint: In-kernel eBPF circular flight recorder probe for MiOS (T-516).
+/* AI-hint: In-kernel eBPF circular flight recorder probe for MiOS (task_460).
  * AI-doc: usr/share/doc/mios/manual/ch02-architecture.md
  */
 

@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (T-534, AGY-2132). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization. -->
+<!-- AI-hint: Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder (task_478, task_2711). Details streaming TTS architecture, sentence segmentation, ONNX acceleration, PipeWire audio playback pipeline, sub-300ms time-to-first-sound latency SLA, and Quadlet containerization. -->
 
 # Chapter 79: Concurrent Streaming Piper TTS Audio Synthesis and PipeWire Buffer Feeder
 
@@ -109,8 +109,8 @@ The Piper TTS engine (piper1-gpl `http_server`) is deployed as a systemd Quadlet
 - **Unit File**: `/usr/share/containers/systemd/mios-piper.container`
 - **Pod**: `mios-ai.pod`
 - **Image**: `localhost/mios-piper:latest`, built at bake from `usr/share/mios/piper/Containerfile` with the `[services.piper]` version and voice.
-- **Port**: `[ports].piper` (`MIOS_PORT_PIPER`).
-- **Voice**: baked into the image at `/usr/share/piper/voices` and loaded with `-m ${MIOS_PIPER_VOICE} --data-dir /usr/share/piper/voices`; no host model bind.
+- **Port**: `[ports].piper` (`MIOS_PORTS_PIPER`).
+- **Voice**: baked into the image at `/usr/share/piper/voices` and loaded with `-m ${MIOS_SERVICES_PIPER_VOICE} --data-dir /usr/share/piper/voices`; no host model bind.
 - **Volume Mounts**: `/run/mios:/run/mios:Z` (shared runtime IPC)
 - **Health Check**: a `python3` urllib GET of `/info` (the image has no curl and `http_server` has no `/health`).
 

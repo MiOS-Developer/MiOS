@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for Attenuated Macaroon Tokens & Replay Prevention (T-723, T-724).
+# AI-hint: Automated unit test suite for Attenuated Macaroon Tokens & Replay Prevention (task_667, task_668).
 # AI-related: usr/lib/mios/agent-pipe/macaroon_auth.py, tests/test-macaroon-auth.py
 """Automated unit test suite for MiOS Macaroon Auth Manager."""
 

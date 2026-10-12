@@ -3,17 +3,20 @@
 
 # Both builders resolve these through mios-toml-get: [image.sidecars].code_server tag, [theme.edge] px.
 ARG MIOS_CODE_SERVER_VERSION
-FROM ghcr.io/coder/code-server:${MIOS_CODE_SERVER_VERSION}
+FROM ghcr.io/coder/code-server:${MIOS_CODE_SERVER_VERSION} AS editor
+FROM localhost/mios-base:latest
 ARG CODE_SERVER_SCROLLBAR_PX
 ARG CODE_SERVER_PERIMETER_PX
 
 USER root
-RUN apt-get -o Acquire::ForceIPv4=true update \
- && apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
+RUN dnf5 install -y --setopt=install_weak_deps=0 \
       tmux git curl ca-certificates jq ripgrep \
-      nodejs npm python3 python3-pip python3-venv \
-      build-essential less procps openssh-client tar gzip \
- && rm -rf /var/lib/apt/lists/*
+      nodejs npm python3 python3-pip \
+      gcc gcc-c++ make less procps-ng openssh-clients tar gzip \
+ && dnf5 clean all \
+ && groupadd -g 1000 coder && useradd -m -u 1000 -g coder coder
+COPY --from=editor /usr/lib/code-server/ /usr/lib/code-server/
+RUN ln -s /usr/lib/code-server/bin/code-server /usr/bin/code-server
 
 COPY --from=mios /usr/libexec/mios/mios-vscode-custom-css /usr/libexec/mios/mios-vscode-custom-css
 COPY --from=mios /usr/share/mios/themes/code-server-terminal.css /usr/share/mios/themes/code-server-terminal.css
@@ -25,15 +28,13 @@ RUN set -eu; \
     python3 /usr/libexec/mios/mios-vscode-custom-css patch "$@"; \
     python3 /usr/libexec/mios/mios-vscode-custom-css verify "$@"
 
-RUN npm install -g @anthropic-ai/claude-code
-
 USER coder
 WORKDIR /home/coder
-RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://antigravity.google/cli/install.sh | bash
+RUN claude --version && agy --version && codex --version
 RUN code-server --install-extension be5invis.vscode-custom-css --install-extension redhat.vscode-podman --install-extension rust-lang.rust-analyzer --install-extension tamasfe.even-better-toml --install-extension ms-python.python || true
 COPY code-server-mobile-settings.json /home/coder/.local/share/code-server/User/settings.json
+COPY --from=mios /usr/share/mios/keybindings/vscode-keybindings.json /home/coder/.local/share/code-server/User/keybindings.json
 USER root
-RUN install -m0755 /home/coder/.local/bin/agy /usr/local/bin/agy
 
 COPY mios-a2o /usr/local/bin/mios-a2o
 COPY mios-frontier /usr/local/bin/mios-frontier

@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 83: Automated Node Failure Detection and Zero-Loss Dynamic Task Re-Distribution Engine (T-538, AGY-2136). Details mesh heartbeat auditing, in-flight task leasing protocols, zero-loss prompt recovery, and PostgreSQL/SQLite state synchronization across the agent plane. -->
+<!-- AI-hint: Chapter 83: Automated Node Failure Detection and Zero-Loss Dynamic Task Re-Distribution Engine (task_482, task_2715). Details mesh heartbeat auditing, in-flight task leasing protocols, zero-loss prompt recovery, and PostgreSQL/SQLite state synchronization across the agent plane. -->
 
 # Chapter 83: Automated Node Failure Detection and Zero-Loss Dynamic Task Re-Distribution Engine
 

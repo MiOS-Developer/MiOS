@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for T-384 Dynamic Agent Persona Synthesis.
+# AI-hint: Automated unit test suite for task_328 Dynamic Agent Persona Synthesis.
 # AI-related: usr/lib/mios/agent-pipe/mios_persona.py, usr/lib/mios/agent-pipe/server.py
 """
 Automated unit tests for domain intent classification, persona prompt specialization,

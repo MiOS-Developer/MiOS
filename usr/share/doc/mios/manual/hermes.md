@@ -127,3 +127,38 @@ it terminal/file/web/browser/skills without the MCP relay. The P0 hop-budget/
 Via guard (_HOP_HEADER/_VIA_HEADER, server.py) is the backstop either way.
 
 <!-- mios-src:28f89470ae3b from usr/share/mios/hermes/config-worker.yaml:1-24 -->
+### DEPRECATED
+
+DEPRECATED: This config has been migrated to the [gateway] section of mios.toml
+/usr/share/mios/hermes/config-worker.yaml -- MiOS-seeded NON-THIN Hermes WORKER
+(Hermes-Agent 0.13.x schema). Copied to /var/lib/mios/hermes-worker/config.yaml
+(the worker's HERMES_HOME) by hermes-worker-firstboot; that path is NEVER touched
+by mios-hermes-firstboot (which only re-thins /var/lib/mios/hermes/config.yaml),
+so this worker config is durable across boots.
+
+This is the P1 worker: a REAL agent that runs its OWN
+native browser_*/CDP + terminal + file + skills tool loop, doing its OWN
+inference on the heavy lane ([ports].llm_heavy, mios-heavy; its engine, vLLM or SGLang, is
+[ai].heavy_engine and emits native OpenAI tool_calls). It serves the OpenAI /v1 surface on :8643
+and is the WORKER-DISPATCH target of [agents.hermes].endpoint in mios.toml.
+
+The [ports].hermes gateway (hermes-agent.service) is UNAFFECTED -- it stays the thin
+Discord/CLI gateway. This worker enables ONLY the api_server platform (NO
+Discord token => no contention for the host-global discord-bot-token scope
+lock held by the [ports].hermes gateway).
+
+LOOP-SAFETY: this worker hits the REAL [ports].llm_heavy model lane for inference, so it
+never relays back to :8700. mcp_servers.mios stays DISABLED here (the relay's
+MIOS_AGENT_PIPE_URL=:8700 would let a worker re-enter the orchestrator ->
+:8700 -> council -> worker cycle). The worker's native toolsets already give
+it terminal/file/web/browser/skills without the MCP relay. The P0 hop-budget/
+Via guard (_HOP_HEADER/_VIA_HEADER, server.py) is the backstop either way.
+
+<!-- mios-src:d9d0cbd7e601 from usr/share/mios/hermes/config-worker.yaml:4-27 -->
+
+### Degrade to the light lane (granite4.1:8b on...
+
+Degrade to the light lane (granite4.1:8b on [ports].llm_light) if the heavy lane OOMs
+(the heavy engine OOMs at gaming-time per memory). Walks DOWN the tier, never up.
+
+<!-- mios-src:56f33b0fd375 from usr/share/mios/hermes/config-worker.yaml:42-43 -->

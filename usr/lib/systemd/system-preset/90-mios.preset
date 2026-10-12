@@ -104,7 +104,7 @@ enable cockpit.socket
 enable mios-cockpit-link.socket
 enable mios-cockpit-link.service
 enable mios-searxng.service
-enable mios-crawl4ai.service
+enable mios-webtools-crawl4ai.service
 enable mios-hermes-firstboot.service
 enable mios-agent-pipe.service
 enable mios-opencode-gateway.service
@@ -129,36 +129,40 @@ enable mios-hermes-browser-worker.service
 # directive 2026-05-15: agent-installable flatpaks should Just Work
 # against /var/home/mios/* by default. One-shot, idempotent.
 enable mios-flatpak-init.service
-# Background log triage: micro-LLM (qwen3:0.6b) classifies journal
-# events in 30s batches. Cheap (<30s CPU/hour). Operator directive
-# 2026-05-15: "background micro-llm could be a daemon for logs and
-# log collection and presenting".
-enable mios-log-watcher.service
 # LLM-gated scheduler: reads /etc/mios/cron-rules.toml, asks the
 # micro-LLM "should this fire now given current state?" for any
 # rule with a gate. Operator directive 2026-05-15.
 enable mios-cron-director.service
-# Tails hermes-agent.service journal, regex-matches the SOUL.md
-# forbidden-phrase list, micro-LLM confirms YES/NO, logs alerts to
-# /var/lib/mios/agent-nudger/. Operator directive 2026-05-15:
-# "the micro-llm should be intercepting these failure logs and
-# nudging".
-enable mios-agent-nudger.service
 # sys_env environment cache: keep the shared snapshot (installed apps /
 # services / HW) warm on the timer's 15-min cadence so sys_env reads are
 # fast + current (the manual sys_env_refresh verb covers "I just installed
 # X"). Ships disabled-by-default in systemd; this preset turns it on.
 enable mios-sys-env-refresh.timer
 enable mios-open-webui.service
-# mios-code-server RETIRED: superseded by mios-agents (code-server + Claude + agy +
-# tmux + mios-a2o) on the SAME MIOS_PORT_CODE_SERVER. Disabled so no duplicate IDE
-# service runs. The [containers.mios-code-server.*] def remains inert in mios.toml.
-disable mios-code-server.service
 # A2O agents super-container = the single code-server IDE (Claude CLI + agy/Gemini +
-# tmux war room), on MIOS_PORT_CODE_SERVER. ExecStartPre builds localhost/mios-agents:latest
+# tmux war room), on MIOS_PORTS_CODE_SERVER. ExecStartPre builds localhost/mios-agents:latest
 # from /usr/share/mios/agents/Containerfile on first deploy; the deployed root / is the
 # workspace so agents develop MiOS from within itself.
 enable mios-agents.service
+
+# --- Quadlet Container Services ---
+enable mios-llm-light.service
+enable mios-pgvector.service
+enable mios-cpu-node.service
+enable mios-guacamole.service
+enable mios-guacd.service
+enable mios-otelcol.service
+enable mios-piper.service
+enable mios-whisper.service
+enable mios-webtools-firecrawl-api.service
+enable mios-webtools-firecrawl-worker.service
+enable mios-webtools-redis.service
+disable mios-ceph.service
+disable mios-headscale.service
+disable mios-k3s.service
+disable mios-llm-heavy.service
+disable mios-llm-worker@.service
+disable mios-radosgw.service
 # Forge bootstrap: admin user + initial repo + runner registration token
 # all minted on first boot. mios-forgejo-runner reads the token and
 # self-registers; without firstboot enabled the runner stays inactive
@@ -224,7 +228,7 @@ enable mios-ai-firstboot.service
 # multi-GB model download.
 enable mios-ai-firstboot.timer
 enable mios-swarm-pack-firstboot.service
-# FBM (T-200): first-boot large-model + bound-image provisioners. Both sentinel-guarded and
+# FBM (task_180): first-boot large-model + bound-image provisioners. Both sentinel-guarded and
 # degrade-open (Law 12); no-op when [ai].firstboot_models / firstboot_bound_images are empty.
 enable mios-models-firstboot.service
 enable mios-shell-session-gc.timer
@@ -269,3 +273,115 @@ disable osbuild-worker@1.service
 disable multipathd.service
 disable cloud-init-local.service
 disable cloud-config.service
+
+# Ruling Q7 (task_3539): mios-attest-server is conditioned off until Keylime replaces it
+disable mios-attest.service
+
+# --- Core MiOS System Daemons & Units (task_1993 complete preset roster) ---
+enable mios-account-sync.service
+enable mios-agent-pipe.socket
+enable mios-ai-legacy-forward.service
+enable mios-ai.target
+enable mios-boot-diag.service
+enable mios-bootc-switch.service
+enable mios-chrony-ptp.service
+enable mios-container-gc.service
+enable mios-copy-build-log.service
+enable mios-cpu-isolate.service
+enable mios-daemon.service
+enable mios-endpoint.target
+enable mios-finetune-serve.service
+enable mios-firewall.service
+enable mios-flatpak-install.service
+enable mios-gpu-amd.service
+enable mios-gpu-intel.service
+enable mios-gpu-nvidia.service
+enable mios-gpu-pv-detect.service
+enable mios-gpu-status.service
+enable mios-hermes-tail.service
+enable mios-ledger-sync.service
+enable mios-log-streamer.service
+enable mios-mdns-mesh.service
+enable mios-mok-enroll.service
+enable mios-node.service
+enable mios-oci-delta-apply.service
+enable mios-passport-provision.service
+enable mios-pgvector-major-upgrade.service
+enable mios-policy-arbiter.service
+enable mios-powerd.service
+enable mios-pstore.service
+enable mios-registry.service
+enable mios-secret-init.service
+enable mios-self-heal.service
+enable mios-sync-theme.service
+enable mios-thermald.service
+enable mios-ttyd-bash.service
+enable mios-ttyd-expose.service
+enable mios-ttyd-powershell.service
+enable mios-userdb-render.service
+enable mios-verify-root.service
+enable mios-verify.service
+enable mios-vfio-setup.service
+enable mios-vpn-killswitch.service
+enable mios-webtools-firstboot.service
+enable mios-wsl-flatpak-export-sync.path
+enable mios-wsl-flatpak-export-sync.service
+enable mios-xdg-userdir-init.service
+
+# --- Periodic Timers & Triggered Services ---
+enable mios-aios-refresh.timer
+disable mios-aios-refresh.service
+enable mios-backup-pgvector.timer
+disable mios-backup-pgvector.service
+enable mios-backup-remote.timer
+disable mios-backup-remote.service
+enable mios-ceph-snap.timer
+disable mios-ceph-snap.service
+enable mios-cephfs-quota.timer
+disable mios-cephfs-quota.service
+enable mios-doc-distill.timer
+disable mios-doc-distill.service
+enable mios-embed-backfill.timer
+disable mios-embed-backfill.service
+enable mios-log-archiver.timer
+disable mios-log-archiver.service
+enable mios-luks-rotate.timer
+disable mios-luks-rotate.service
+enable mios-pgvector-backup.timer
+disable mios-pgvector-backup.service
+enable mios-pgvector-optimize.timer
+disable mios-pgvector-optimize.service
+enable mios-podman-gc.timer
+disable mios-podman-gc.service
+enable mios-podman-ps.timer
+disable mios-podman-ps.service
+enable mios-shell-session-gc.timer
+disable mios-shell-session-gc.service
+enable mios-skills-miner.timer
+disable mios-skills-miner.service
+enable mios-suggestion-refresh.timer
+disable mios-suggestion-refresh.service
+enable mios-sys-env-refresh.timer
+disable mios-sys-env-refresh.service
+enable mios-tmpfs-spill.timer
+disable mios-tmpfs-spill.service
+enable mios-user-snapshot@.timer
+disable mios-user-snapshot@.service
+
+# --- Cluster & Role-Gated Units (default off, activated by mios-role.service) ---
+disable mios-ceph-bootstrap.service
+disable mios-compute.target
+disable mios-controller.target
+disable mios-desktop.target
+disable mios-freeipa-enroll.service
+disable mios-ha-node.target
+disable mios-headless.target
+disable mios-headscale-firstboot.service
+disable mios-hybrid.target
+disable mios-k3s-init.service
+disable mios-k3s-master.target
+disable mios-k3s-worker.target
+disable mios-kvmfr-load.service
+disable mios-pg-replica.service
+disable mios-waydroid-init.service
+disable mios-wol-proxy.service

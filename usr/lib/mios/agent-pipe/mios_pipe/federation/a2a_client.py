@@ -68,7 +68,7 @@ def configure(*, a2a_peers=None, a2a_peer_skills=None, a2a_peers_lock=None,
         g["_invalidate_worker_cache"] = invalidate_worker_cache
 
 def _a2a_self_peer_url(url: str) -> bool:
-    _self_port = str(os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")).strip()
+    _self_port = str(os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")).strip()
     u = (url or "").lower()
     return (f":{_self_port}" in u) and (
         "127.0.0.1" in u or "localhost" in u or "://[::1]" in u or "0.0.0.0" in u)
@@ -131,12 +131,12 @@ async def _a2a_fetch_models_card(url: str, headers: dict, timeout_s: float = 10.
                 has_embed = False
                 has_image = False
                 _routing_cfg = _toml_section("routing") or {}
-                _embed_kw = (os.environ.get("MIOS_MODEL_MODALITIES_EMBEDDINGS")
+                _embed_kw = (os.environ.get("MIOS_ROUTING_MODEL_MODALITIES_EMBEDDINGS")
                              or _routing_cfg.get("model_modalities_embeddings")
                              or ["embed", "bert", "text-embedding", "bge"])
                 if isinstance(_embed_kw, str):
                     _embed_kw = [x.strip() for x in _embed_kw.split(",") if x.strip()]
-                _image_kw = (os.environ.get("MIOS_MODEL_MODALITIES_IMAGE")
+                _image_kw = (os.environ.get("MIOS_ROUTING_MODEL_MODALITIES_IMAGE")
                              or _routing_cfg.get("model_modalities_image")
                              or ["diffuse", "flux", "dall", "midjourney", "sd"])
                 if isinstance(_image_kw, str):

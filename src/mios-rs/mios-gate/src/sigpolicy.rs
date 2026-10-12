@@ -1,5 +1,5 @@
 // AI-hint: Asserts usr/lib/containers/policy.json is byte-identical to what [security.sigstore] projects, the regenerate-and-diff half of Law 8 that this surface never had.
-// AI-related: usr/share/mios/mios.toml, usr/lib/containers/policy.json, tools/generate-cosign-policy.py, automation/49-cosign-policy.sh
+// AI-related: usr/share/mios/mios.toml, usr/lib/containers/policy.json, tools/native/mios-gen/src/main.rs, automation/49-cosign-policy.sh
 
 use crate::Report;
 use std::path::Path;
@@ -85,7 +85,7 @@ pub fn check(root: &Path) -> Report {
     }
 
     // Report the mode in the summary rather than judging it. Whether
-    // insecureAcceptEverything is the right value is T-1036's question; this
+    // insecureAcceptEverything is the right value is task_973's question; this
     // check's job is that the file and the SSOT agree.
     let ok = findings.is_empty();
     Report {

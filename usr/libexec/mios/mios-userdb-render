@@ -12,15 +12,15 @@ log = logging.getLogger("mios-userdb-render")
 def get_pg_config():
     e = os.environ
     try:
-        port = int(e.get("MIOS_PORT_PGVECTOR", "8600") or 8600)
+        port = int(e.get("MIOS_PORTS_PGVECTOR", "8600") or 8600)
     except (TypeError, ValueError):
         port = 8600
     return {
-        "host": e.get("MIOS_PG_HOST", "localhost"),
+        "host": e.get("MIOS_PGVECTOR_HOST", "localhost"),
         "port": port,
-        "user": e.get("MIOS_PG_USER", "mios"),
-        "password": e.get("MIOS_PG_PASS", "mios"),
-        "dbname": e.get("MIOS_PG_DB", "mios"),
+        "user": e.get("MIOS_PGVECTOR_USER", "mios"),
+        "password": e.get("MIOS_PGVECTOR_PASS", "mios"),
+        "dbname": e.get("MIOS_PGVECTOR_DB", "mios"),
     }
 
 def query_accounts(cursor):

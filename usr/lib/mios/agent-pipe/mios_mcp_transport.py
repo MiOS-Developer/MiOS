@@ -13,7 +13,10 @@ import os
 import re
 from typing import Optional
 
-import httpx2
+try:
+    import httpx2
+except ImportError:
+    import httpx as httpx2
 from mcp import Client, StdioServerParameters
 from mcp import types
 from mcp.client.sse import sse_client

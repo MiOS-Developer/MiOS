@@ -11,7 +11,7 @@ chmod 0600 /usr/lib/usbguard/usbguard-daemon.conf 2>/dev/null || true
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018). Same
+# succeed and the branch below it was dead on every build (task_962). Same
 # `miosd harden` stage 40 calls; it is idempotent, and 40 runs first.
 _miosd=""
 _h51="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,27 +22,13 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    "$_miosd" harden
-    mios_ok "Hardening services enabled via miosd"
-else
-    WANTS=/usr/lib/systemd/system/multi-user.target.wants
-    install -d -m 0755 "${WANTS}"
-
-    mios_log "Enable hardening services"
-    for unit in \
-        usbguard.service \
-        auditd.service \
-        fapolicyd.service
-    do
-        if [[ -f "/usr/lib/systemd/system/${unit}" ]]; then
-            ln -sf "../${unit}" "${WANTS}/${unit}"
-            mios_ok "Enabled ${unit}"
-        else
-            mios_skip "${unit} not installed"
-        fi
-    done
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required for hardening services (task_962)"
+    exit 1
 fi
+
+"$_miosd" harden
+mios_ok "Hardening services enabled via miosd"
 
 if command -v fagenrules &>/dev/null; then
     mios_log "Pre-generate fapolicyd trust database"
@@ -59,7 +45,7 @@ _clevis_env="$(dirname "${BASH_SOURCE[0]}")/../etc/mios/clevis-luks.env"
 install -D -m 0644 "${_clevis_env}" /etc/mios/clevis-luks.env
 mios_ok "Installed the committed clevis-luks.env projection"
 
-# Declarative Flatpak permission lockdown profile (T-489)
+# Declarative Flatpak permission lockdown profile (task_433)
 _fp_override="$(dirname "${BASH_SOURCE[0]}")/../usr/share/flatpak/overrides/global"
 if [[ -f "${_fp_override}" ]]; then
     install -D -m 0644 "${_fp_override}" /usr/share/flatpak/overrides/global 2>/dev/null || true

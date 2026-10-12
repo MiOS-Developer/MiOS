@@ -1,5 +1,5 @@
 <!-- AI-hint: Collapse the ~18-image sidecar fleet onto TWO shared-base images (mios-sys CUDA-free + mios-cuda) to cut the bound-image store ~60GB→~25GB; read before migrating any sidecar's Image=/Exec= or building the shared bases. -->
-<!-- AI-related: usr/share/mios/mios.toml ([image.sys] [image.cuda] [image.sidecars] [build].bake_groups), automation/57-mios-sys-build.sh, usr/share/mios/sys/Containerfile, usr/share/mios/cuda/Containerfile, tools/generate-pod-quadlets.py, automation/34-render-quadlets.sh, MIOS_SYS_IMAGE, MIOS_CUDA_IMAGE -->
+<!-- AI-related: usr/share/mios/mios.toml ([image.sys] [image.cuda] [image.sidecars] [build].bake_groups), automation/57-mios-sys-build.sh, usr/share/mios/sys/Containerfile, usr/share/mios/cuda/Containerfile, tools/native/mios-gen/src/pod_quadlets.rs, automation/34-render-quadlets.sh, MIOS_SYS_IMAGE, MIOS_CUDA_IMAGE -->
 ---
 adr: 0002
 title: MiOS-Sys shared-base sidecar consolidation

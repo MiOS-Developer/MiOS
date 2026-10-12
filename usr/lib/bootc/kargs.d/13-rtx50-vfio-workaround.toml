@@ -1,6 +1,0 @@
-# AI-hint: Configures kernel arguments to disable D3 idle states for NVIDIA RTX 50 (Blackwell) GPUs via vfio-pci to prevent power management issues during GPU passthrough.
-# 'MiOS' v0.3.0 -- NVIDIA RTX 50 (Blackwell) VFIO/Idle fixes
-match-architectures = ["x86_64"]
-kargs = [
-    "vfio_pci.disable_idle_d3=1"
-]

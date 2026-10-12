@@ -48,13 +48,6 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 import aiohttp
 
-QWEN_FUNCTION_RE = re.compile(
-    r"<function=([a-zA-Z_-]+)>\s*"
-    r"(?:<parameter=([a-zA-Z_-]+)>\s*(.*?)\s*</parameter>\s*)*"
-    r"</function>(?:\s*</tool_call>)?",
-    re.DOTALL,
-)
-
 NARRATION_LEADERS = [
     r"^let me\b", r"^let.s\b", r"^i.ll\b", r"^i.m going to\b",
     r"^i.m about to\b", r"^i need to\b", r"^i.ll need to\b",
@@ -208,7 +201,7 @@ class Pipe:
         REFINE_ENDPOINT: str = Field(
             default_factory=lambda: (
                 os.environ.get("MIOS_REFINE_ENDPOINT")
-                or "http://127.0.0.1:" + os.environ.get("MIOS_PORT_LLM_LIGHT", "8500")),
+                or "http://127.0.0.1:" + os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")),
             description="Refine-call endpoint -- mios-llm-light (llama.cpp behind llama-swap), resolved from MIOS_REFINE_ENDPOINT or [ports].llm_light. Hits /api/chat (NOT /v1, which drops the options field). The former default froze :8450, which under the current port scheme is [ports].k3s_api -- a refine call would have gone to the Kubernetes API server -- on a host.containers.internal address that stopped resolving when OWUI became a host process.",
         )
         REFINE_TIMEOUT_S: int = Field(

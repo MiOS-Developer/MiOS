@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Zero-downtime systemd socket handoff daemon swapper for agent-pipe (T-542, AGY-2140).
+# AI-hint: Zero-downtime systemd socket handoff daemon swapper for agent-pipe (task_486, task_2719).
 # AI-doc: usr/share/doc/mios/manual/ch87-socket-activation-handoff.md
 """Zero-downtime systemd socket handoff daemon swapper for agent-pipe.
 
@@ -39,7 +39,7 @@ DEFAULT_SERVICE = "agent-pipe"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
 import mios_toml  # noqa: E402 -- the ONE shared layered-mios.toml resolver
 
-_ENV_PORT = os.environ.get("MIOS_PORT_AGENT_PIPE", "")
+_ENV_PORT = os.environ.get("MIOS_PORTS_AGENT_PIPE", "")
 DEFAULT_PORT = int(_ENV_PORT) if _ENV_PORT.isdigit() else int(mios_toml.get("ports", "agent_pipe"))  # SSOT [ports].agent_pipe
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_DRAIN_TIMEOUT = 15.0
@@ -731,6 +731,7 @@ class SocketSwapper:
 
         # Acquire listening sockets
         tcp_sock, unix_sock = self._acquire_listening_sockets(old_pid)
+        self.port = tcp_sock.getsockname()[1]
 
         # Prepare candidate command
         if not candidate_cmd:
@@ -755,7 +756,7 @@ class SocketSwapper:
         env = os.environ.copy()
         env["LISTEN_FDS"] = "2"
         env["LISTEN_FDNAMES"] = "tcp:unix"
-        env["MIOS_PORT_AGENT_PIPE"] = str(self.port)
+        env["MIOS_PORTS_AGENT_PIPE"] = str(self.port)
 
         # Spawn candidate process with pass_fds
         try:
@@ -873,7 +874,7 @@ def shutil_which(cmd: str) -> Optional[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Zero-downtime systemd socket handoff daemon swapper for agent-pipe (T-542, AGY-2140).",
+        description="Zero-downtime systemd socket handoff daemon swapper for agent-pipe (task_486, task_2719).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")

@@ -67,7 +67,7 @@
           "foreground": "#282262",
           "properties": {
             "folder_icon": "  ",
-            "home_icon": "",
+            "home_icon": "~",
             "style": "agnoster_short",
             "max_depth": 3
           },

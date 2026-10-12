@@ -22,7 +22,7 @@ Exit codes:  0 = chain intact (or empty)   1 = tamper detected (first_broken_seq
 
 Env:  MIOS_PG_QUERY        (default /usr/libexec/mios/mios-pg-query)
       MIOS_AGENT_PIPE_DIR  (default: resolved relative to this CLI)
-      plus mios-pg-query's own MIOS_PG_HOST / MIOS_PG_PORT / MIOS_PG_USER / MIOS_PG_DB
+      plus mios-pg-query's own MIOS_PGVECTOR_HOST / MIOS_PG_PORT / MIOS_PGVECTOR_USER / MIOS_PGVECTOR_DB
 """
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-# AI-hint: Tests for T-765 & T-766: DKMS container build (<15s) and MOK signing.
+# AI-hint: Tests for task_709 & task_710: DKMS container build (<15s) and MOK signing.
 # AI-functions: test_dkms_build_and_sign_sub_15s, test_dkms_binary_caching
 
-"""Tests for T-765 & T-766: DKMS container build (<15s) and MOK signing."""
+"""Tests for task_709 & task_710: DKMS container build (<15s) and MOK signing."""
 import sys
 sys.path.insert(0, "usr/libexec/mios/kernel")
 from dkms_engine import DKMSSandboxEngine
@@ -29,4 +29,4 @@ def test_dkms_binary_caching():
 if __name__ == "__main__":
     test_dkms_build_and_sign_sub_15s()
     test_dkms_binary_caching()
-    print("All T-765/T-766 tests passed.")
+    print("All task_709/task_710 tests passed.")

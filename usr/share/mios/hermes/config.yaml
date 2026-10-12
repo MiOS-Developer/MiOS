@@ -63,28 +63,29 @@ custom_providers:
         label: "Granite 4.1 30B (local, big-RAM)"
       - id: gpt-oss:20b
         label: "GPT-OSS 20B (local, agent-tuned)"
-  # SGLang heavy lane (mios-llm-heavy :11441, served-name mios-heavy,
-  # Qwen3-8B-AWQ). Health-gated/off-by-default at the lane; when enabled the
-  # OpenAI /v1 surface is keyless on loopback so api_key is a placeholder.
-  - name: local-sglang
+  # The ONE heavy lane (mios-llm-heavy, [nodes.local-heavy], served-name
+  # mios-heavy; engine vLLM or SGLang per [ai].heavy_engine). Health-gated/
+  # off-by-default at the lane; when enabled the OpenAI /v1 surface is keyless
+  # on loopback so api_key is a placeholder.
+  - name: local-heavy
     base_url: http://localhost:8441/v1
     api_key: sk-local
     models:
       - id: mios-heavy
-        label: "MiOS Heavy (SGLang Qwen3-8B-AWQ, dGPU)"
+        label: "MiOS Heavy (heavy lane, dGPU)"
 # Hermes reads `model.provider` + `model.default` from config.yaml --
 # see /opt/hermes/agent/auxiliary_client.py::_read_main_provider /
 # _read_main_model. Without these the agent loop defaults to
 # openrouter+anthropic/claude-opus-4.6 and 401s on a local install.
 model:
-  provider: custom:local-sglang
+  provider: custom:local-heavy
   default: mios-heavy
   ollama_num_ctx: 65536
   context_length: 65536
   # THE live fast-chat fix: cap Hermes' max OUTPUT
   # tokens. Without max_tokens Hermes defaults the completion budget to the
   # FULL context_length, so prompt_tokens + max_output can exceed the served
-  # window and SGLang rejects the request with a 400 ("requested tokens
+  # window and the heavy engine rejects the request with a 400 ("requested tokens
   # exceed context length"). 16384 leaves ample room for input within 65536.
   max_tokens: 16384
   # NOTE: 131072 (Qwen3-8B's extended YaRN ceiling) needs HiCache + fp8 KV

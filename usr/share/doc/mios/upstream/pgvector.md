@@ -91,7 +91,7 @@ without touching data. Verification record:
 
 | Piece | Where |
 |---|---|
-| Quadlet | `usr/share/containers/systemd/mios-pgvector.container` — `User=826`, `Delegate=yes`, joins `mios-ai.pod` (host net), `Exec=postgres -c port=${MIOS_PORT_PGVECTOR:-8600} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order ...` |
+| Quadlet | `usr/share/containers/systemd/mios-pgvector.container` — `User=826`, `Delegate=yes`, joins `mios-ai.pod` (host net), `Exec=postgres -c port=${MIOS_PORTS_PGVECTOR:-8600} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order ...` |
 | Schema | `usr/share/mios/postgres/schema-init.sql` (knowledge/memory/events/tools/sessions + HNSW indexes) |
 | SSOT knobs | `mios.toml [pgvector]` — db/user `mios`, `data_dir=/var/lib/mios/pgvector`, `emb_version`, HNSW scan tuning, backups |
 | Bring-up check | `automation/support/bringup-pgvector.sh` (renders the Quadlet, verifies the `vector` extension) |

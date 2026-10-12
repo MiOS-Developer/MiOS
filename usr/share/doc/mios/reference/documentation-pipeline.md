@@ -33,8 +33,9 @@ whoever is editing that file, but its knowledge belongs to the reader of a
 manual. So on the Day-N+1 pass:
 
 1. **Scrape** — `mios-manual distill` takes every block the classifier marked
-   `MIGRATE`, skipping the areas listed in `[docs.distill].skip_globs` (the SSOT
-   itself, generated artifacts, and the docs tree).
+   `MIGRATE` that has not landed: exactly the set `check_docs_ratchet` counts,
+   so a clean distill leaves that ratchet at zero. Generated artifacts never reach
+   it, because `[docs].blocklist_globs` classifies them `DROP`.
 2. **Sanitize** — `[docs.sanitize]` rewrites developer-box paths to their FHS
    canonicals and redacts secret-shaped values, because a comment is written for
    a contributor's machine and a manual ships inside the image.

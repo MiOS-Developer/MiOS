@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Dynamic PipeWire bit-perfect sample rate adapter and hardware DAC pass-through manager (T-703, T-704).
+# AI-hint: Dynamic PipeWire bit-perfect sample rate adapter and hardware DAC pass-through manager (task_647, task_648).
 # AI-related: usr/libexec/mios/audio/bitperfect_mgr.py, tests/test-bitperfect-audio.py
 """Dynamic PipeWire bit-perfect sample rate adapter and hardware DAC pass-through manager for MiOS.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (T-507).
+# AI-hint: Automated unit test suite for A/B UKI staging and systemd-ukify compilation pipeline (task_451).
 # AI-doc: usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md
 from __future__ import annotations
 
@@ -154,6 +154,22 @@ class TestUkifyStage(unittest.TestCase):
         self.assertFalse(os.path.exists(out_efi), "a placeholder EFI was staged")
         self.assertFalse(os.path.exists(entry), "a loader entry points at no real UKI")
 
+    def test_negative_unrunnable_ukify_is_an_error(self):
+        """A ukify that is on PATH but cannot execute is an error result, not a traceback."""
+        bad = os.path.join(self.tmpdir.name, "badbin")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "ukify"), "wb") as fh:
+            fh.write(b"\x00\x01not-an-executable")
+        os.chmod(os.path.join(bad, "ukify"), 0o755)
+        out_efi = os.path.join(self.tmpdir.name, "boot", "EFI", "Linux", "mios-bad.efi")
+        mock_kernel, mock_initrd = self._mock_inputs("bad")
+        entry = os.path.join(self.tmpdir.name, "loader", "entries", "mios-bad.conf")
+        data = self._run_stage(bad + os.pathsep + self._no_ukify_path(), out_efi, entry, mock_kernel,
+                               mock_initrd, "console=tty0 rw", want_rc=1)
+        self.assertEqual(data.get("status"), "error")
+        self.assertIn("ukify could not run", data.get("error", ""))
+        self.assertFalse(os.path.exists(out_efi), "a placeholder EFI was staged")
+
     def test_negative_missing_kernel_is_an_error(self):
         out_efi = os.path.join(self.tmpdir.name, "boot", "EFI", "Linux", "mios-nok.efi")
         _, mock_initrd = self._mock_inputs("nok")
@@ -245,8 +261,235 @@ class TestUkifyStage(unittest.TestCase):
             self._pe_sections(b"\x7fELF" + b"\0" * 64)
 
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+
+def _load_ssot_cpu_mitigations() -> tuple[list[str], list[str]]:
+    ssot_path = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
+    with open(ssot_path, "rb") as f:
+        data = tomllib.load(f)
+    mitigations = data.get("kargs", {}).get("cpu_mitigations", {})
+    return mitigations.get("required", []), mitigations.get("forbidden", [])
+
+
+REQUIRED_CPU_MITIGATIONS, FORBIDDEN_CPU_ARGUMENTS = _load_ssot_cpu_mitigations()
+
+
+
+class TestUkiCmdlineFailsClosed(unittest.TestCase):
+    """Two-sided verification for UKI cmdline fail-closed semantics and CPU mitigations (task_971)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="test-uki-cmdline-")
+        self.kargs_dir = os.path.join(self.tmp, "usr", "lib", "bootc", "kargs.d")
+        self.target_dir = os.path.join(self.tmp, "usr", "lib", "kernel")
+        self.target_file = os.path.join(self.target_dir, "cmdline")
+        os.makedirs(self.kargs_dir, exist_ok=True)
+        os.makedirs(self.target_dir, exist_ok=True)
+
+        hardening_content = (
+            'kargs = [\n    "slab_nomerge",\n'
+            + "\n".join(f'    "{m}",' for m in REQUIRED_CPU_MITIGATIONS)
+            + '\n]\nmatch-architectures = ["x86_64"]\n'
+        )
+        with open(
+            os.path.join(self.kargs_dir, "01-mios-hardening.toml"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(hardening_content)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _get_unit_gen(self):
+        ext = ".exe" if sys.platform == "win32" else ""
+        for cand in [
+            os.path.join(_ROOT, "tools", "native", "target", "debug", f"mios-unit-gen{ext}"),
+            os.path.join(_ROOT, "tools", "native", "target", "release", f"mios-unit-gen{ext}"),
+            "/usr/libexec/mios/mios-unit-gen",
+        ]:
+            if os.path.isfile(cand) and (os.access(cand, os.X_OK) or sys.platform == "win32"):
+                return cand
+        return None
+
+    def test_ten_mitigation_args_present_in_committed_cmdline(self):
+        """Positive Control: The committed /usr/lib/kernel/cmdline contains all 10 CPU mitigations."""
+        cmdline_path = os.path.join(_ROOT, "usr", "lib", "kernel", "cmdline")
+        with open(cmdline_path, "r", encoding="utf-8") as f:
+            tokens = set(f.read().split())
+        for m in REQUIRED_CPU_MITIGATIONS:
+            self.assertIn(m, tokens, f"Committed cmdline missing CPU mitigation {m}")
+
+    def test_clean_render_preserves_ten_mitigations(self):
+        """Positive Control: Clean render produces cmdline containing all 10 mitigations."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Render failed: {res.stderr}")
+        self.assertTrue(os.path.isfile(self.target_file))
+        with open(self.target_file, "r", encoding="utf-8") as f:
+            tokens = set(f.read().split())
+        for m in REQUIRED_CPU_MITIGATIONS:
+            self.assertIn(m, tokens)
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertEqual(chk.returncode, 0, f"--check failed: {chk.stderr}")
+
+    def test_corrupt_dropin_fails_closed_and_writes_nothing(self):
+        """Negative Control: Corrupt drop-in exits non-zero and leaves destination file untouched."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        sentinel = "KNOWN-GOOD-SENTINEL-CMDLINE\n"
+        with open(self.target_file, "w", encoding="utf-8") as f:
+            f.write(sentinel)
+
+        bad_dropin = os.path.join(self.kargs_dir, "99-bad.toml")
+        with open(bad_dropin, "w", encoding="utf-8") as f:
+            f.write("kargs = [ unclosed syntax\n")
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        with open(self.target_file, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), sentinel, "Destination file must not be modified on error")
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0, "--check must exit non-zero on corrupt drop-in")
+
+    def test_drifted_cmdline_fails_check(self):
+        """Negative Control: Tampered cmdline fails check mode."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], check=True)
+        with open(self.target_file, "a", encoding="utf-8") as f:
+            f.write(" bogus_drift=1\n")
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+
+    def test_custom_dropin_with_contradictory_arg_fails_closed(self):
+        """Negative Control: Drop-in with contradictory CPU argument fails closed."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        sentinel = "KNOWN-GOOD-SENTINEL-CMDLINE\n"
+        with open(self.target_file, "w", encoding="utf-8") as f:
+            f.write(sentinel)
+
+        custom_dropin = os.path.join(self.kargs_dir, "02-custom-hardening.toml")
+        with open(custom_dropin, "w", encoding="utf-8") as f:
+            f.write('kargs = ["pti=off"]\n')
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("pti=off", res.stderr)
+        with open(self.target_file, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), sentinel, "Destination file must not be modified on error")
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+
+    def test_renamed_hardening_missing_mitigations_fails_check(self):
+        """Negative Control: Renamed drop-in omitting mitigations fails check mode."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        os.remove(os.path.join(self.kargs_dir, "01-mios-hardening.toml"))
+        renamed = os.path.join(self.kargs_dir, "02-custom.toml")
+        with open(renamed, "w", encoding="utf-8") as f:
+            f.write('kargs = ["slab_nomerge"]\n')
+        with open(self.target_file, "w", encoding="utf-8") as f:
+            f.write("slab_nomerge\n")
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+        self.assertIn("missing required CPU mitigation", chk.stderr)
+
+    def test_override_dropin_with_contradictory_arg_fails_closed(self):
+        """Negative Control: Override drop-in with contradictory argument fails closed."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        override_file = os.path.join(self.kargs_dir, "99-override.toml")
+        with open(override_file, "w", encoding="utf-8") as f:
+            f.write('kargs = ["spectre_v2=off"]\n')
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("spectre_v2=off", res.stderr)
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+
+    def test_dropin_with_nospectre_v2_alias_fails_closed(self):
+        """Negative Control: Drop-in with nospectre_v2 alias fails closed."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        override_file = os.path.join(self.kargs_dir, "99-override.toml")
+        with open(override_file, "w", encoding="utf-8") as f:
+            f.write('kargs = ["nospectre_v2"]\n')
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("nospectre_v2", res.stderr)
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+
+    def test_override_dropin_with_last_value_tampering_fails_closed(self):
+        """Negative Control: Override drop-in with spectre_v2=auto fails closed."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        override_file = os.path.join(self.kargs_dir, "99-override.toml")
+        with open(override_file, "w", encoding="utf-8") as f:
+            f.write('kargs = ["spectre_v2=auto"]\n')
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("spectre_v2=auto", res.stderr)
+
+        chk = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp, "--check"], capture_output=True, text=True)
+        self.assertNotEqual(chk.returncode, 0)
+
+    def test_missing_mitigation_fails_render_mode(self):
+        """Negative Control: Missing required mitigation fails render mode (not only check mode)."""
+        unit_gen = self._get_unit_gen()
+        if not unit_gen:
+            self.skipTest("mios-unit-gen binary not found")
+
+        os.remove(os.path.join(self.kargs_dir, "01-mios-hardening.toml"))
+        renamed = os.path.join(self.kargs_dir, "02-custom.toml")
+        with open(renamed, "w", encoding="utf-8") as f:
+            f.write('kargs = ["slab_nomerge"]\n')
+
+        res = subprocess.run([unit_gen, "uki-cmdline", "--root", self.tmp], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("missing required CPU mitigation", res.stderr)
+
+
+
 def main() -> int:
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestUkifyStage)
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite([
+        loader.loadTestsFromTestCase(TestUkifyStage),
+        loader.loadTestsFromTestCase(TestUkiCmdlineFailsClosed),
+    ])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful():
         return 1

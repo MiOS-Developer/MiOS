@@ -44,7 +44,29 @@ EOF
     fi
 }
 
-CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 "http://localhost:${MIOS_PORT_AGENT_PIPE:-8700}/configure" || echo "000")
+TOKEN_DIR="${XDG_RUNTIME_DIR:-/tmp}/mios"
+mkdir -p "$TOKEN_DIR"
+chmod 0700 "$TOKEN_DIR" 2>/dev/null || true
+TOKEN_FILE="$TOKEN_DIR/portal-token"
+
+TOKEN=""
+if command -v openssl >/dev/null 2>&1; then
+    TOKEN=$(openssl rand -hex 32 2>/dev/null || true)
+fi
+if [[ ${#TOKEN} -ne 64 && -r /dev/urandom ]]; then
+    TOKEN=$(od -vN 32 -An -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)
+fi
+if [[ ${#TOKEN} -ne 64 && -r /dev/urandom ]]; then
+    TOKEN=$(tr -dc 'a-f0-9' < /dev/urandom 2>/dev/null | head -c 64 || true)
+fi
+if [[ ${#TOKEN} -ne 64 ]]; then
+    TOKEN=$(printf "%08x%08x%08x%08x%08x%08x%08x%08x" $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM)
+fi
+
+(umask 0177 && printf "%s" "$TOKEN" > "$TOKEN_FILE")
+chmod 0600 "$TOKEN_FILE" 2>/dev/null || true
+
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 "http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/configure?token=${TOKEN}" || echo "000")
 
 if [[ "$CODE" != "303" && "$CODE" != "200" ]]; then
     _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,15 +75,15 @@ if [[ "$CODE" != "303" && "$CODE" != "200" ]]; then
         if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
     done
     if [[ -n "$_miosd" ]]; then
-        "$_miosd" config-server --port "${MIOS_PORT_AGENT_PIPE:-8700}" >/dev/null 2>&1 &
+        "$_miosd" config-server --port "${MIOS_PORTS_AGENT_PIPE:-8700}" --token "$TOKEN" >/dev/null 2>&1 &
         disown
         sleep 0.2
-        CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 "http://localhost:${MIOS_PORT_AGENT_PIPE:-8700}/configure" || echo "000")
+        CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 "http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/configure?token=${TOKEN}" || echo "000")
     fi
 fi
 
 if [[ "$CODE" == "303" || "$CODE" == "200" ]]; then
-    URL="http://localhost:${MIOS_PORT_AGENT_PIPE:-8700}/configure"
+    URL="http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/configure?token=${TOKEN}"
 else
     stage_offline
     URL="file://$DL_DIR/mios-configurator.html"

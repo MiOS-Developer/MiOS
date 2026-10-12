@@ -75,7 +75,7 @@ logging.basicConfig(level=logging.INFO, format="[mios-daemon] %(message)s")
 log = logging.getLogger("mios-daemon")
 
 MODEL = os.environ.get("MIOS_DAEMON_MODEL", "qwen3:1.7b")
-ENDPOINT = os.environ.get("MIOS_DAEMON_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}/v1")
+ENDPOINT = os.environ.get("MIOS_DAEMON_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}/v1")
 STATE_DIR = Path(os.environ.get("MIOS_DAEMON_STATE_DIR", "/var/lib/mios/daemon"))
 STATE_FILE = STATE_DIR / "state.json"
 CLASSIFY_BATCH_S = float(os.environ.get("MIOS_DAEMON_CLASSIFY_S", "30"))
@@ -93,7 +93,7 @@ def _read_daemon_config() -> dict:
     every consumer falls back to its compiled-in default (degrade-open)."""
     layers = (os.environ.get("MIOS_TOML", "/usr/share/mios/mios.toml"),
               "/etc/mios/mios.toml",
-              f"/var/home/{os.environ.get('MIOS_USER', 'mios')}"
+              f"/var/home/{os.environ.get('MIOS_IDENTITY_USERNAME', 'mios')}"
               "/.config/mios/mios.toml")
     merged: dict = {}
     sect = mios_toml.section(mios_toml.load_merged(list(layers)), "daemon")
@@ -167,7 +167,7 @@ WATCHED_UNITS = [u for u in os.environ.get(
 def _toml_db_backend() -> str:
     """SSOT: [dispatch] db_backend from the layered mios.toml (vendor < /etc).
     Mirrors the agent-pipe so the whole agent plane flips together at the
-    legacy->pgvector cutover (R15/G11). Env MIOS_DB_BACKEND still wins."""
+    legacy->pgvector cutover (R15/G11). Env MIOS_PGVECTOR_DB_BACKEND still wins."""
     val = "dual"
     layers = [os.environ.get("MIOS_TOML", "/usr/share/mios/mios.toml"),
               "/etc/mios/mios.toml"]
@@ -178,7 +178,7 @@ def _toml_db_backend() -> str:
     return val
 
 
-DB_BACKEND = (os.environ.get("MIOS_DB_BACKEND")
+DB_BACKEND = (os.environ.get("MIOS_PGVECTOR_DB_BACKEND")
               or _toml_db_backend()).strip().lower()
 _PG_ENABLED = DB_BACKEND in ("dual", "postgres")
 _PG_PRIMARY = DB_BACKEND == "postgres"
@@ -336,7 +336,7 @@ _DEFAULT_FS_WATCHER_DIRS = [
     "/var/lib/mios/cron-director",
     "/var/lib/mios/ai/scratch",
 ]
-_env_fs_dirs = os.environ.get("MIOS_FS_WATCHER_DIRS", "").strip()
+_env_fs_dirs = os.environ.get("MIOS_FS_WATCHER_WATCH_DIRS", "").strip()
 if _env_fs_dirs:
     _FS_WATCHER_DIRS = [d.strip() for d in _env_fs_dirs.split(",") if d.strip()]
 else:
@@ -2074,7 +2074,7 @@ def _read_verb_post_check_map() -> dict:
     tool_call.success."""
     layers = [os.environ.get("MIOS_TOML", "/usr/share/mios/mios.toml"),
               "/etc/mios/mios.toml",
-              f"/var/home/{os.environ.get('MIOS_USER', 'mios')}"
+              f"/var/home/{os.environ.get('MIOS_IDENTITY_USERNAME', 'mios')}"
               "/.config/mios/mios.toml"]
     merged: dict = {}
     pc = mios_toml.section(mios_toml.load_merged(layers), "daemon.post_check")
@@ -2278,7 +2278,7 @@ def _read_daemon_index_config() -> dict:
     the merged config dict or {} when unreadable."""
     layers = ["/usr/share/mios/mios.toml",
               "/etc/mios/mios.toml",
-              f"/var/home/{os.environ.get('MIOS_USER', 'mios')}/.config/mios/mios.toml"]
+              f"/var/home/{os.environ.get('MIOS_IDENTITY_USERNAME', 'mios')}/.config/mios/mios.toml"]
     return dict(mios_toml.section(mios_toml.load_merged(layers), "daemon.index"))
 
 
@@ -2667,7 +2667,7 @@ def rolling_report_loop() -> None:
             _stop_event.wait(5)
 
 
-AGENT_PORT = int(os.environ.get("MIOS_PORT_DAEMON_AGENT", os.environ.get("MIOS_DAEMON_AGENT_PORT", "8740")))
+AGENT_PORT = int(os.environ.get("MIOS_PORTS_DAEMON_AGENT", os.environ.get("MIOS_PORT_DAEMON_AGENT", os.environ.get("MIOS_DAEMON_AGENT_PORT", "8740"))))
 AGENT_WEB_LIMIT = int(os.environ.get("MIOS_DAEMON_AGENT_WEB_LIMIT", "4"))
 AGENT_MAX_TOKENS = int(os.environ.get("MIOS_DAEMON_AGENT_MAX_TOKENS", "400"))
 AGENT_THREADS = int(os.environ.get("MIOS_DAEMON_AGENT_THREADS", "16"))

@@ -7,7 +7,7 @@ All findings confirmed on disk. Synthesis below.
 # MiOS-Cat: Flash-Tonight Deliverables
 
 > [!WARNING]
-> **Deployment Plane Status & Real-World Reality (AGY-1888)**:
+> **Deployment Plane Status & Real-World Reality (task_2457)**:
 > The USB and Ventoy staging machinery generates bootable media, but automated bare-metal installation of MiOS is broken/disconnected in practice.
 > - What runs under Ventoy kickstart installs standard Fedora rather than the MiOS bootc image.
 > - The offline bare-metal installer (`tools/install.sh` executing `bootc install to-disk --transport oci-archive`) is disconnected from automated kickstarts and must be run manually from a live shell.

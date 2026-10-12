@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative kernel kpatch/livepatch manager and MOK signature validator (T-681, T-682).
+# AI-hint: Declarative kernel kpatch/livepatch manager and MOK signature validator (task_625, task_626).
 # AI-related: usr/libexec/mios/kernel/kpatch_mgr.py, tests/test-kpatch-mgr.py
 """Declarative kernel kpatch/livepatch manager and MOK signature validator for MiOS.
 

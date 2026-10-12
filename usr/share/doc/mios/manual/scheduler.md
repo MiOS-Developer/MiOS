@@ -100,7 +100,7 @@ never wedge on a missing blade.
 
 Resolve THIS machine's blade name from SSOT, NOT a baked literal.
 
-    Precedence: env ``MIOS_HOSTNAME`` (the install.env bridge derived from
+    Precedence: env ``MIOS_IDENTITY_HOSTNAME`` (the install.env bridge derived from
     [identity].hostname) -> [identity].hostname -> the OS hostname
     (``socket.gethostname()``) as the degrade-open fallback. Always returns a
     non-empty name when the OS can report one; only a total failure yields ''.
@@ -162,7 +162,7 @@ slots (so suspensions can't grow unbounded), and a priority-ordered suspended
 queue. server.py owns the engine-side interruptible decode + snapshot
 restore/save (which needs llama.cpp/SGLang support); this is the testable policy.
 
-TURN-boundary preemption seam (T-019 / SCHED-01)
+TURN-boundary preemption seam (task_19 / task_19)
 ================================================
 :func:`turn_boundary` is the agent-pipe's TURN-level preemption hook -- DISTINCT
 from the decode-loop RR time-slice ([dispatch].rr_*) and from the priority SCORER
@@ -176,9 +176,9 @@ reads its ``[scheduler]`` SSOT itself (mios_sched-style) so it is self-contained
 unit-testable; server.py injects the live "is a higher-priority turn waiting?"
 probe via :func:`configure`. ONE-WAY BOUNDARY: this module never imports server.
 
-Token-time-sliced priority queue (T-020 / SCHED-02)
+Token-time-sliced priority queue (task_20 / task_20)
 ===================================================
-:class:`TokenSliceQueue` is the queueing POLICY that sits ON TOP of the T-019
+:class:`TokenSliceQueue` is the queueing POLICY that sits ON TOP of the task_19
 turn_boundary mechanism. Turns enqueue with a priority + a per-turn SLICE BUDGET
 measured in TOKENS (a token-time quantum -- NOT wall-clock); the scheduler
 dispatches the highest-priority ready turn, accounts the tokens it generates
@@ -223,10 +223,10 @@ Remove a SPECIFIC suspended task and free its slot, returning its
 
 <!-- mios-src:a24e575e741c from usr/lib/mios/agent-pipe/mios_pipe/scheduler/preempt.py:174-179 -->
 
-### Token-time-sliced priority queue (T-020 / SCHED-02) -- the...
+### Token-time-sliced priority queue (task_20 / task_20) -- the...
 
-Token-time-sliced priority queue (T-020 / SCHED-02) -- the queueing POLICY on
-    top of the T-019 turn-boundary mechanism. It orders ready turns by priority and,
+Token-time-sliced priority queue (task_20 / task_20) -- the queueing POLICY on
+    top of the task_19 turn-boundary mechanism. It orders ready turns by priority and,
     for a dispatched turn, accounts the tokens it generates against a per-turn SLICE
     BUDGET (a token-time quantum -- N tokens, NOT wall-clock). When a turn crosses its
     slice budget the scheduler re-evaluates (the caller drives that via slice_boundary
@@ -276,17 +276,17 @@ Override the turn-boundary wiring under exact names (one-way boundary).
 ### True iff a higher-priority turn is waiting. Two OR-combined...
 
 True iff a higher-priority turn is waiting. Two OR-combined signals: the
-    injected gate head-priority probe (T-019) and -- ONLY when the token-time-sliced
-    queue is enabled ([scheduler].queue_enable, T-020) -- the queue's highest-priority
+    injected gate head-priority probe (task_19) and -- ONLY when the token-time-sliced
+    queue is enabled ([scheduler].queue_enable, task_20) -- the queue's highest-priority
     READY waiter (excluding this turn). False when unwired or on any probe error -- no
     signal => no preemption (degrade-open). With queue_enable OFF this is byte-
     identical to the prior probe-only behaviour.
 
 <!-- mios-src:71b6dbb44fdc from usr/lib/mios/agent-pipe/mios_pipe/scheduler/preempt.py:445-450 -->
 
-### Turn-boundary preemption seam (T-019 / SCHED-01). The...
+### Turn-boundary preemption seam (task_19 / task_19). The...
 
-Turn-boundary preemption seam (T-019 / SCHED-01). The dispatch turn loop
+Turn-boundary preemption seam (task_19 / task_19). The dispatch turn loop
     calls this AFTER a turn's AIOS priority is known -- the clean point at which a
     scheduler decides whether to preempt. Returns True iff this turn was preempted
     (snapshotted + yielded + resumed), else False.
@@ -302,7 +302,7 @@ Turn-boundary preemption seam (T-019 / SCHED-01). The dispatch turn loop
     AND the quantum, so a turn is never starved or busy-waited), then RESUMES by
     discharging ITS OWN snapshot -- the snapshot/resume round-trip per the
     PreemptScheduler API. The richer cross-turn blocking policy that later
-    schedulers (T-020/T-058) layer on this seam is operator-live-validated.
+    schedulers (task_20/task_60) layer on this seam is operator-live-validated.
 
     DEGRADE-OPEN: ANY scheduler error -> returns False and the turn proceeds
     normally; a best-effort discharge prevents a leaked snapshot. Preemption NEVER
@@ -310,10 +310,10 @@ Turn-boundary preemption seam (T-019 / SCHED-01). The dispatch turn loop
 
 <!-- mios-src:29831a5f65d6 from usr/lib/mios/agent-pipe/mios_pipe/scheduler/preempt.py:472-492 -->
 
-### Token-time-slice boundary hook (T-020 / SCHED-02) -- the...
+### Token-time-slice boundary hook (task_20 / task_20) -- the...
 
-Token-time-slice boundary hook (T-020 / SCHED-02) -- the queueing POLICY on
-    top of the T-019 turn_boundary mechanism. The generation loop calls this as a
+Token-time-slice boundary hook (task_20 / task_20) -- the queueing POLICY on
+    top of the task_19 turn_boundary mechanism. The generation loop calls this as a
     dispatched turn produces output: it ACCOUNTS the tokens generated this step
     against the turn's SLICE BUDGET (a token-time quantum -- SLICE_TOKENS tokens, NOT
     wall-clock) and, ONLY when the budget is crossed (a slice boundary), RE-EVALUATES

@@ -843,6 +843,8 @@ name = "mios-build"
 version = "0.3.0"
 dependencies = [
  "insta",
+ "mios-resolver",
+ "object",
  "serde",
  "serde_json",
  "tempfile",
@@ -869,6 +871,7 @@ version = "0.3.0"
 dependencies = [
  "flate2",
  "mios-build",
+ "mios-resolver",
  "regex",
  "ruzstd",
  "serde_json",
@@ -890,6 +893,7 @@ dependencies = [
  "crc32fast",
  "curve25519-dalek",
  "ed25519-dalek",
+ "getrandom 0.2.17",
  "mios-resolver",
  "serde",
  "serde_json",
@@ -931,6 +935,7 @@ name = "mios-unit-gen"
 version = "0.3.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "toml",
 ]
@@ -952,6 +957,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

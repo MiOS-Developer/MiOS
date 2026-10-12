@@ -21,11 +21,17 @@ fn reads_the_tree(run_body: &str) -> bool {
     // Delegation counts: everything in projections.rs hands ctx to
     // regen_and_diff, which does the reading. Eleven checks look blind without
     // this and are not.
+    // Handing the root itself to a callee as an argument is the same delegation:
+    // native_generator::command(&ctx.root, "pod-quadlets", true) runs the
+    // generator's --check over that tree. A path built from it is not
+    // (`ctx.root.join(` never matches "(ctx.root,"), so task_982 still holds.
     let delegates = squashed.contains("(ctx,")
         || squashed.contains("(&ctx,")
         || squashed.contains("(ctx)")
-        || squashed.contains("(&ctx)");
-    // T-1045: `ctx.root.join("x")` builds a PATH and `.exists()` asks whether a
+        || squashed.contains("(&ctx)")
+        || squashed.contains("(&ctx.root,")
+        || squashed.contains("(ctx.root,");
+    // task_982: `ctx.root.join("x")` builds a PATH and `.exists()` asks whether a
     // file is there. Neither opens it. Three checks claimed a verdict after
     // doing exactly that, and two earlier versions of this predicate -- one
     // testing the parameter NAME, one testing whether ctx.root is mentioned at

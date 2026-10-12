@@ -90,6 +90,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         seat = set(self.d["blade"].get("seat_side") or [])
         self.assertEqual(seat, {
             "mios-agent-pipe",        # the front door every client dials
+            "mios-ai-legacy-forward", # the same front door on the legacy port
             "hermes-dashboard",       # the UI
             "mios-hermes-browser",    # the browser the person watches
             "mios-hermes-tail",       # the journal view
@@ -105,11 +106,21 @@ class TestSeatActivatesNothing(unittest.TestCase):
             self.assertGreater(len(starts(self.d, a)), 0, a)
 
     def test_only_gpu_archetypes_start_the_gpu_lanes(self):
-        gpu = {"mios-llm-heavy", "mios-llm-heavy-alt", "mios-llm-worker@"}
+        # ONE heavy lane: its engine (vLLM or SGLang) is [ai].heavy_engine, not a unit.
+        gpu = {"mios-llm-heavy", "mios-llm-worker@"}
         for a in ("hybrid", "compute"):
             self.assertTrue(gpu <= starts(self.d, a), a)
         for a in ("controller", "headless", "desktop", SEAT):
             self.assertFalse(gpu & starts(self.d, a), a)
+
+    def test_the_heavy_engine_is_a_choice_inside_one_lane(self):
+        # The second heavy lane was folded in: an engine is an overlay of the one
+        # spec, selected by [ai].heavy_engine, so no archetype starts two.
+        lanes = {c for c, spec in self.d["containers"].items() if "engine" in spec}
+        self.assertEqual(lanes, {"mios-llm-heavy"})
+        engine = self.d["containers"]["mios-llm-heavy"]["engine"]
+        self.assertEqual(engine["select"], "ai.heavy_engine")
+        self.assertIn(self.d["ai"]["heavy_engine"], engine)
 
     def test_every_required_capability_is_grantable(self):
         granted = set()

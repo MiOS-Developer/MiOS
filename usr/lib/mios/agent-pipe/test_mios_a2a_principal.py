@@ -329,7 +329,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_a2a_passport.py (T-1092)
+# Consolidated from test_mios_a2a_passport.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for mios_a2a_principal (#60 WS-6 signed A2A delegation principal): claim shape, text-binding digest, and the send->verif...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
@@ -431,7 +431,7 @@ def _run_extra_a2a_passport():
 
 
 # ==============================================================================
-# Consolidated from test_mios_principal.py (T-1092)
+# Consolidated from test_mios_principal.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for mios_pipe.identity.principal module (signed A2A delegation principal).
 # AI-related: mios_pipe/identity/principal.py

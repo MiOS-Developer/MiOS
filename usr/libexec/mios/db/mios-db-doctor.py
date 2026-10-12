@@ -26,6 +26,8 @@ DEFAULT_SQLITE_SEARCH_PATHS = [
     "/etc/mios",
 ]
 DEFAULT_PG_DATA_DIR = "/var/lib/mios/pgvector"
+# SSOT [ports].pgvector_internal: the in-container listener (host maps 8600->5432).
+DEFAULT_PG_PORT = int(os.environ.get("MIOS_PORTS_PGVECTOR_INTERNAL", "5432"))
 
 class DbDoctor:
     """Detects and repairs database corruption across SQLite and PostgreSQL stores."""
@@ -35,7 +37,7 @@ class DbDoctor:
         sqlite_paths: Optional[List[str]] = None,
         pg_data_dir: str = DEFAULT_PG_DATA_DIR,
         pg_host: str = "127.0.0.1",
-        pg_port: int = 5432,
+        pg_port: int = DEFAULT_PG_PORT,
         pg_db: str = "mios",
         pg_user: str = "postgres",
         mock: bool = False,
@@ -211,9 +213,12 @@ class DbDoctor:
             if sqlite_cli:
                 recovered_path = f"{db_path}.recovered"
                 try:
-                    # Execute .recover or .dump to reconstructed db
-                    cmd = f'"{sqlite_cli}" "{backup_path}" ".recover" | "{sqlite_cli}" "{recovered_path}"'
-                    subprocess.run(cmd, shell=True, check=True)
+                    # Execute .recover to reconstructed db without shell
+                    p1 = subprocess.Popen([sqlite_cli, backup_path, ".recover"], stdout=subprocess.PIPE)
+                    subprocess.run([sqlite_cli, recovered_path], stdin=p1.stdout, check=True)
+                    if p1.stdout:
+                        p1.stdout.close()
+                    p1.wait()
                     if os.path.exists(recovered_path) and os.path.getsize(recovered_path) > 0:
                         shutil.move(recovered_path, db_path)
                         post_check = self.check_sqlite_db(db_path)
@@ -394,7 +399,7 @@ def main() -> int:
     parser.add_argument("--sqlite-path", nargs="*", help="Explicit SQLite database files or search directories")
     parser.add_argument("--pg-data-dir", default=DEFAULT_PG_DATA_DIR, help="PostgreSQL data directory")
     parser.add_argument("--pg-host", default="127.0.0.1", help="PostgreSQL host")
-    parser.add_argument("--pg-port", type=int, default=5432, help="PostgreSQL port")
+    parser.add_argument("--pg-port", type=int, default=DEFAULT_PG_PORT, help="PostgreSQL port")
     parser.add_argument("--pg-db", default="mios", help="PostgreSQL database")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Output report in JSON format")
     parser.add_argument("--mock", action="store_true", help="Mock execution mode for CI / tests")

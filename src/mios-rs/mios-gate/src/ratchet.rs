@@ -18,7 +18,7 @@ const SSOT: &str = "usr/share/mios/mios.toml";
 /// `security.privileged_quadlets` -- dotted names the comparison can never
 /// match, since `section` is the text before the first dot. `gates` went the
 /// other way: a real-looking name for a table mios.toml does not have. The test
-/// below now rejects both shapes (T-1055).
+/// below now rejects both shapes (task_992).
 const RATCHET_SECTIONS: [&str; 14] = [
     "docs",
     "legibility",
@@ -150,7 +150,7 @@ fn resolve_baseline(root: &Path) -> String {
 fn describe_baseline(b: &str) -> String {
     if b == "HEAD" {
         "HEAD (NO merge base found -- this compares the worktree against its own \
-         parent, so a committed raise passes; see T-1046)"
+         parent, so a committed raise passes; see task_983)"
             .to_string()
     } else if b.len() >= 12 {
         format!("the merge base {}", &b[..12])
@@ -199,7 +199,7 @@ pub fn check(root: &Path) -> Report {
     }
 
     // WHICH commit to compare against is the whole gate: HEAD is the worktree's
-    // own parent, so a clean checkout compares a file with itself (T-1046).
+    // own parent, so a clean checkout compares a file with itself (task_983).
     let baseline = resolve_baseline(root);
     let compared_to = baseline.clone();
 
@@ -266,6 +266,51 @@ pub fn check(root: &Path) -> Report {
     }
 
     let (exempted, mut findings) = exempt(&work_val);
+    let mut baseline_note = String::new();
+    // ADR-0030 counts generated files too. The old generated-budget number
+    // measured a different set; compare the immutable baseline tree's TOTAL
+    // instead. Never use the current tree or its proposed ceiling as the base.
+    let total_key = "legibility.max_tracked_files";
+    let total_budget = work_val
+        .get("legibility")
+        .and_then(|v| v.get("file_budget"))
+        .and_then(toml::Value::as_table)
+        .is_some();
+    let (old_exempted, _) = exempt(&head_val);
+    if total_budget && exempted.contains_key(total_key) {
+        findings.push(format!(
+            "{total_key} counts every tracked file and cannot be a generated-budget exemption"
+        ));
+    }
+    if total_budget
+        && !exempted.contains_key(total_key)
+        && old_exempted
+            .get(total_key)
+            .is_some_and(|reason| !reason.is_empty())
+        && head.contains_key(total_key)
+        && head_val
+            .get("legibility")
+            .and_then(|v| v.get("file_budget"))
+            .is_none()
+    {
+        let tree = match Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["ls-tree", "-r", "-z", "--name-only", &baseline])
+            .output()
+        {
+            Ok(out) if out.status.success() => out.stdout,
+            _ => return cannot_run("cannot count tracked files in the immutable ratchet baseline"),
+        };
+        let count = tree.iter().filter(|&&byte| byte == 0).count();
+        if count == 0 || tree.last() != Some(&0) {
+            return cannot_run(
+                "immutable ratchet baseline returned an empty or incomplete file list",
+            );
+        }
+        head.insert(total_key.to_string(), count as f64);
+        baseline_note = format!(", TOTAL file baseline measured from Git: {count}");
+    }
     // An exemption for a key that is not a ceiling is stale bookkeeping that
     // would quietly start covering a future key of that name.
     for k in exempted.keys() {
@@ -303,7 +348,7 @@ pub fn check(root: &Path) -> Report {
     report(
         ok,
         format!(
-            "{} shrink-only ceiling(s) are <= {}{note}",
+            "{} shrink-only ceiling(s) are <= {}{note}{baseline_note}",
             work.len(),
             describe_baseline(&compared_to)
         ),
@@ -327,7 +372,7 @@ mod tests {
         let d = describe_baseline("HEAD");
         assert!(d.contains("NO merge base"), "got: {d}");
         assert!(
-            d.contains("T-1046"),
+            d.contains("task_983"),
             "the finding must be findable from the line"
         );
         let m = describe_baseline("2cd01afdcd77ff7e496c1c2878d00f0decf94961");
@@ -370,7 +415,7 @@ mod tests {
         // Contains-only matches are section-scoped, not global.
         assert!(is_ceiling_key("soft_max_lines", "legibility"));
         assert!(!is_ceiling_key("soft_max_lines", "branding"));
-        // T-1071: `build` is in RATCHET_SECTIONS, capturing `rechunk_max_layers`.
+        // task_3397: `build` is in RATCHET_SECTIONS, capturing `rechunk_max_layers`.
         assert!(is_ceiling_key("rechunk_max_layers", "build"));
         assert!(!is_ceiling_key("enabled", "legibility"));
     }

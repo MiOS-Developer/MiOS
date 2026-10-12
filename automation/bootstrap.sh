@@ -19,6 +19,7 @@ if [[ -f "$_ENV_FILE" ]]; then
     read -rp "  Load previous build variables? [Y/n]: " _load_ok </dev/tty
     if [[ "${_load_ok,,}" != "n" ]]; then
         set +u
+        # shellcheck source=/dev/null  # the operator's saved answers, written by this script's previous run
         source "$_ENV_FILE"
         set -u
         echo "  ${_g}[OK]${_r} Loaded"
@@ -38,13 +39,13 @@ echo ""
 echo "  ${_y}── Build Configuration ─────────────────────────────────────────${_r}"
 echo ""
 
-if [[ -z "${MIOS_USER:-}" ]]; then
-    read -rp "  Admin username ${_dim}[user]${_r}: " MIOS_USER </dev/tty
-    MIOS_USER="${MIOS_USER:-user}"
+if [[ -z "${MIOS_IDENTITY_USERNAME:-}" ]]; then
+    read -rp "  Admin username ${_dim}[user]${_r}: " MIOS_IDENTITY_USERNAME </dev/tty
+    MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-user}"
 else
-    echo "  Admin username: ${MIOS_USER}  ${_dim}${_r}"
+    echo "  Admin username: ${MIOS_IDENTITY_USERNAME}  ${_dim}${_r}"
 fi
-export MIOS_USER
+export MIOS_IDENTITY_USERNAME
 
 if [[ -z "${MIOS_PASSWORD:-}" ]]; then
     while true; do
@@ -59,13 +60,13 @@ else
 fi
 export MIOS_PASSWORD
 
-if [[ -z "${MIOS_HOSTNAME:-}" ]]; then
+if [[ -z "${MIOS_IDENTITY_HOSTNAME:-}" ]]; then
     _suf=$(shuf -i 10000-99999 -n1 2>/dev/null || printf '%05d' $(( RANDOM % 90000 + 10000 )))
     read -rp "  Hostname base ${_dim}[mios]${_r} (suffix -${_suf} is pre-generated -> mios-${_suf}): " _hbase </dev/tty
     _hbase="${_hbase:-mios}"
-    export MIOS_HOSTNAME="${_hbase}-${_suf}"
+    export MIOS_IDENTITY_HOSTNAME="${_hbase}-${_suf}"
 else
-    echo "  Hostname: ${MIOS_HOSTNAME}  ${_dim}${_r}"
+    echo "  Hostname: ${MIOS_IDENTITY_HOSTNAME}  ${_dim}${_r}"
 fi
 
 if [[ -z "${MIOS_GHCR_USER:-}" ]]; then
@@ -82,9 +83,9 @@ fi
 echo ""
 echo "  ${_y}── Summary ──────────────────────────────────────────────────────${_r}"
 echo ""
-printf "    %-20s %s\n" "Admin user:"     "$MIOS_USER"
+printf "    %-20s %s\n" "Admin user:"     "$MIOS_IDENTITY_USERNAME"
 printf "    %-20s %s\n" "Admin password:" "(masked)"
-printf "    %-20s %s\n" "Hostname:"       "$MIOS_HOSTNAME"
+printf "    %-20s %s\n" "Hostname:"       "$MIOS_IDENTITY_HOSTNAME"
 printf "    %-20s %s\n" "Registry push:"  "${MIOS_GHCR_USER:-none (local build only)}"
 printf "    %-20s %s\n" "Config saved to:" "$_ENV_FILE"
 echo ""
@@ -96,9 +97,9 @@ mkdir -p "$(dirname "$_ENV_FILE")"
     printf '# 'MiOS' Build Configuration\n'
     printf '# Generated: %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     printf 'GHCR_TOKEN=%q\n'    "$GHCR_TOKEN"
-    printf 'MIOS_USER=%q\n'     "$MIOS_USER"
+    printf 'MIOS_IDENTITY_USERNAME=%q\n'     "$MIOS_IDENTITY_USERNAME"
     printf 'MIOS_PASSWORD=%q\n' "$MIOS_PASSWORD"
-    printf 'MIOS_HOSTNAME=%q\n' "$MIOS_HOSTNAME"
+    printf 'MIOS_IDENTITY_HOSTNAME=%q\n' "$MIOS_IDENTITY_HOSTNAME"
     [[ -n "${MIOS_GHCR_USER:-}" ]]       && printf 'MIOS_GHCR_USER=%q\n'       "$MIOS_GHCR_USER"
     [[ -n "${MIOS_GHCR_PUSH_TOKEN:-}" ]] && printf 'MIOS_GHCR_PUSH_TOKEN=%q\n' "$MIOS_GHCR_PUSH_TOKEN"
 } > "$_ENV_FILE"

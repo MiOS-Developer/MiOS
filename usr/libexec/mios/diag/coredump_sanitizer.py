@@ -2,7 +2,7 @@
 # AI-functions: __init__, process_crash, CrashMinidump, CoredumpSanitizer
 
 """
-coredump_sanitizer.py — T-751 WS-DIAG
+coredump_sanitizer.py — task_695 WS-DIAG
 Sanitized systemd-coredump configurator and automated minidump extractor.
 
 Extracts demangled stack minidumps into PostgreSQL bug_tracker, strips MADV_DONTDUMP

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: Automated CI verification test suite for miosd embedded Rust SSOT configurator engine (mios.html & /portal/config).
-# AI-related: src/mios-rs/miosd/src/server.rs, usr/share/mios/configurator/mios.html, usr/share/mios/mios.toml
+# AI-related: src/mios-rs/miosd/src/lib.rs, usr/share/mios/configurator/mios.html, usr/share/mios/mios.toml
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

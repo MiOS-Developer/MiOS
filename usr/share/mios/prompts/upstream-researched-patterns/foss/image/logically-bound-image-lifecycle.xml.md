@@ -2,11 +2,11 @@
      when bound images are fetched, which storage podman must read them from,
      what install, upgrade and rollback retain, and how that squares with the
      two different additional image stores MiOS names.
-     AI-related: usr/share/mios/mios.toml [build.bake], usr/share/containers/storage.conf, automation/01-system-files-overlay.sh, automation/99-postcheck.sh, TASKS.jsonl T-1120, .prompts/README.md -->
+     AI-related: usr/share/mios/mios.toml [build.bake], usr/share/containers/storage.conf, automation/01-system-files-overlay.sh, automation/99-postcheck.sh, TASKS.jsonl task_3413, .prompts/README.md -->
 <context>
 Law 3 (BOUND-IMAGES) symlinks every Quadlet into
 `/usr/lib/bootc/bound-images.d/` so its image ships with the host. Task
-T-1120 (in progress) must prove, for every bound unit, that its image stays
+task_3413 (in progress) must prove, for every bound unit, that its image stays
 available offline before the unit starts across install, upgrade and
 rollback, and must inventory the unit-scoped additional image store setting.
 The tree names two stores: the bake section and 21 of the 26 shipped
@@ -50,7 +50,7 @@ Raised by, at these revisions (re-read before relying on them):
   image; skipped when the bake is disabled).
 - MiOS `usr/lib/systemd/system/mios-bound-images-firstboot.service` at
   `af6de6a`: lines 1-11 (pulls a first-boot image tier once, degrade-open).
-- MiOS `TASKS.jsonl` at `af6de6a`: line 3412 (T-1120, in progress).
+- MiOS `TASKS.jsonl` at `af6de6a`: line 3412 (task_3413, in progress).
 </provenance>
 
 <inputs>

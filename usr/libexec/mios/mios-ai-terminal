@@ -1,0 +1,29 @@
+#!/bin/bash
+# AI-hint: Mobile text frontend for the existing MiOS AI CLI; reads prompts literally and delegates to mios without shell evaluation.
+# AI-related: /usr/bin/mios, /usr/share/mios/mios.toml [keybindings], mios-terminal
+
+set -euo pipefail
+
+case "${1:-}" in
+    -h|--help) printf 'Usage: mios-ai-terminal\nEnter a prompt for MiOS AI. /agents opens live agent observation; /agent NAME opens a native CLI. /exit or Ctrl-d closes this frontend.\n'; exit 0 ;;
+    '') ;;
+    *) printf 'mios-ai-terminal: unsupported option: %s\n' "$1" >&2; exit 64 ;;
+esac
+command -v mios >/dev/null || { printf 'mios-ai-terminal: MiOS CLI is missing\n' >&2; exit 1; }
+printf 'MiOS AI — enter a prompt; /agents observes; /agent NAME opens a CLI; /exit leaves.\n'
+while IFS= read -r -p 'MiOS> ' _mios_prompt; do
+    [[ "$_mios_prompt" == /exit ]] && break
+    if [[ "$_mios_prompt" == /agents ]]; then
+        /usr/libexec/mios/mios-terminal --action agents || printf 'Agent view failed.\n' >&2
+        continue
+    fi
+    if [[ "$_mios_prompt" =~ ^/agent[[:space:]]+([a-z]+)$ ]]; then
+        mios agent "${BASH_REMATCH[1]}" || printf 'Native agent CLI failed.\n' >&2
+        continue
+    fi
+    [[ -n "$_mios_prompt" ]] || continue
+    # One argument: metacharacters and pasted multiline text are never eval'd.
+    if ! /usr/lib/mios/mcp/.venv/bin/python3 /usr/bin/mios --tools "$_mios_prompt"; then
+        printf 'MiOS AI request failed; the session is still available.\n' >&2
+    fi
+done

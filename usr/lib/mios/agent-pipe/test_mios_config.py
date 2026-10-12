@@ -93,7 +93,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_audit.py (T-1092)
+# Consolidated from test_mios_config_audit.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_config_audit functionality.
 # AI-related: localhost:8432
@@ -113,7 +113,7 @@ except ImportError:
 def setUpModule():
     if psycopg is None:
         raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
     conn_str = f"postgresql://mios:mios@localhost:{port}/mios"
     try:
         with psycopg.connect(conn_str, connect_timeout=1):
@@ -123,8 +123,20 @@ def setUpModule():
 
 class TestMiosConfigAudit(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        # The folded runner constructs TestSuites directly, so it bypasses
+        # setUpModule. Probe the same endpoint this class actually tests.
+        if psycopg is None:
+            raise unittest.SkipTest("pgvector audit integration dependency absent")
+        cls.conn_str = "postgresql://mios:mios@localhost:8432/mios"
+        try:
+            with psycopg.connect(cls.conn_str, connect_timeout=1):
+                pass
+        except psycopg.OperationalError:
+            raise unittest.SkipTest("pgvector audit integration endpoint absent")
+
     def setUp(self):
-        self.conn_str = "postgresql://mios:mios@localhost:8432/mios"
         self._cleanup()
 
     def tearDown(self):
@@ -308,7 +320,7 @@ def _run_extra_config_audit():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_validate.py (T-1092)
+# Consolidated from test_mios_config_validate.py (task_1006)
 # ==============================================================================
 # AI-hint: Hermetic unit tests for the WS-CONFIG server-side SAFETY validator
 # AI-related: ./mios_pipe/kernel/config.py, ./mios_pipe/routing/portal.py
@@ -439,7 +451,7 @@ def _run_extra_config_validate():
 
 
 # ==============================================================================
-# Consolidated from test_mios_config_write.py (T-1092)
+# Consolidated from test_mios_config_write.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the /portal/config read/write routes to ensure correct auth, TOML parsing, and background DB re-seeding.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
@@ -570,6 +582,7 @@ class TestConfigWrite(unittest.TestCase):
     @patch("mios_pipe.kernel.config.write_user_config")
     @patch("fastapi.BackgroundTasks.add_task")
     def test_post_config_success(self, mock_add_task, mock_write_user, mock_authed, mock_load_merged):
+        mock_load_merged.return_value = {"portal": {"config_max_body_bytes": 4096}}
         payload = """
 [meta]
 mios_version = "0.3.0"
@@ -605,7 +618,7 @@ def _run_extra_config_write():
 
 
 # ==============================================================================
-# Consolidated from test_mios_toml.py (T-1092)
+# Consolidated from test_mios_toml.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for mios_toml.py overlay and DB authoritative fallbacks.
 # AI-related: /usr/lib/mios/mios_toml.py
@@ -705,7 +718,7 @@ def _run_extra_toml():
 
 
 # ==============================================================================
-# Consolidated from test_mios_user_config.py (T-1092)
+# Consolidated from test_mios_user_config.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_user_config functionality.
 # AI-functions: test_parse_simple_toml_tomllib, test_path_escape_guard, TestMiosUserConfig

@@ -387,7 +387,6 @@ usr/share/containers/systemd/mios-forgejo-runner.container
 usr/share/containers/systemd/mios-guacamole.container
 usr/share/containers/systemd/mios-guacd.container
 usr/share/containers/systemd/mios-k3s.container
-usr/share/containers/systemd/mios-llm-heavy-alt.container
 usr/share/containers/systemd/mios-llm-heavy.container
 usr/share/containers/systemd/mios-llm-light.container
 usr/share/containers/systemd/mios-llm-worker@.container

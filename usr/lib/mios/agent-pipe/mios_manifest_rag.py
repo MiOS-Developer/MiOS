@@ -2,7 +2,7 @@
 # AI-functions: from_dict, __init__, register_node, retrieve, _walk, _keyword_pruner, load_manifest_tree, ManifestNode, ManifestRAG
 
 """
-mios_manifest_rag.py — T-343 MAO-04
+mios_manifest_rag.py — task_287 MAO-04
 Manifest-Guided Progressive-Disclosure Tree Retrieval.
 
 Prevents cosine vector space collapse by navigating a hierarchical manifest

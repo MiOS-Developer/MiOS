@@ -41,7 +41,7 @@ USAGE
             ;;
         *)
             echo "Mios-apps: unknown positional arg: $1" >&2
-            echo "  did you mean: mios-apps"$1")" >&2
+            echo "  did you mean: mios-apps --filter $(printf '%q' "$1")" >&2
             exit 64
             ;;
     esac
@@ -367,7 +367,10 @@ fi
 
 header mios-shim
 {
-    ls -1 /usr/libexec/mios/ 2>/dev/null | grep -E '^mios-' || true
+    for f in /usr/libexec/mios/mios-*; do
+        [ -e "$f" ] || continue
+        basename "$f"
+    done
     if [ -d /usr/local/bin ]; then
         for f in /usr/local/bin/mios-*; do
             [ -e "$f" ] || continue
@@ -397,12 +400,12 @@ if [ -r /etc/mios/install.env ]; then
     set +u; set -a; . /etc/mios/install.env 2>/dev/null || true; set +a
     [ "$_mios_had_u" = 1 ] && set -u
 fi
-_SVC_PORT_COCKPIT="${MIOS_PORT_COCKPIT:-8110}"
-_SVC_PORT_OWUI="${MIOS_PORT_OPEN_WEBUI:-8200}"
-_SVC_PORT_HERMES="${MIOS_PORT_HERMES:-8720}"
-_SVC_PORT_PREFILTER="${MIOS_PORT_PREFILTER:-8710}"
-_SVC_PORT_SEARXNG="${MIOS_PORT_SEARXNG:-8800}"
-_SVC_PORT_FORGE="${MIOS_PORT_FORGE_HTTP:-8400}"
+_SVC_PORT_COCKPIT="${MIOS_PORTS_COCKPIT:-8110}"
+_SVC_PORT_OWUI="${MIOS_PORTS_OPEN_WEBUI:-8200}"
+_SVC_PORT_HERMES="${MIOS_PORTS_HERMES:-8720}"
+_SVC_PORT_PREFILTER="${MIOS_PORTS_PREFILTER:-8710}"
+_SVC_PORT_SEARXNG="${MIOS_PORTS_SEARXNG:-8800}"
+_SVC_PORT_FORGE="${MIOS_PORTS_FORGE_HTTP:-8400}"
 emit service-url "cockpit"   "Web system console"                                   "mios-open-url http://localhost:${_SVC_PORT_COCKPIT}"
 emit service-url "owui"      "MiOS Open WebUI (browser chat front)"                 "mios-open-url http://localhost:${_SVC_PORT_OWUI}"
 emit service-url "hermes"    "Hermes-Agent OpenAI gateway"                          "mios-open-url http://localhost:${_SVC_PORT_HERMES}/v1"

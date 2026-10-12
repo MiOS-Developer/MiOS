@@ -13,7 +13,7 @@ SLOTS=/var/lib/mios/llamacpp/slots
 # unit's condition, so the dir comes first: a worker whose dir fails gets no .env.
 arm_worker(){
   local name="$1" gguf="$2" port="$3" ngl="$4" ctx="$5"
-  if ! install -d -o "${MIOS_LLAMACPP_UID:-827}" -g "${MIOS_LLAMACPP_GID:-827}" "${SLOTS}/${name}"; then
+  if ! install -d -o "${MIOS_SERVICES_LLAMACPP_UID:-827}" -g "${MIOS_SERVICES_LLAMACPP_GID:-827}" "${SLOTS}/${name}"; then
     log "Worker ${name}: cannot create ${SLOTS}/${name}; not armed"; return 1
   fi
   {

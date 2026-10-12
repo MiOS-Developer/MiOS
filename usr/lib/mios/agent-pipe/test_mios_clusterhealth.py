@@ -347,7 +347,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_drift_monitor.py (T-1092)
+# Consolidated from test_mios_drift_monitor.py (task_1006)
 # ==============================================================================
 # AI-hint: Stdlib offline unit tests for mios_pipe.observability.drift_monitor -- the Jensen-Shannon Goodhart alarm (CONS-02). No network / no DB / no ...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
@@ -549,7 +549,7 @@ def _run_extra_drift_monitor():
 
 
 # ==============================================================================
-# Consolidated from test_mios_health.py (T-1092)
+# Consolidated from test_mios_health.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for mios_pipe.health module.
 # AI-related: mios_pipe/health.py

@@ -11,16 +11,17 @@ import stat
 import sys
 import tempfile
 
-_HERE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_raw_file = __file__.replace("\\\\?\\", "")
+_HERE_ROOT = os.path.normpath(os.path.abspath(os.path.join(os.path.dirname(_raw_file), "..")))
 # Data root (MIOS_ROOT, as every other generator sync-generated.sh drives); the
 # resolver library always comes from the checkout this tool ships in.
-REPO_ROOT = os.path.abspath(os.environ.get("MIOS_ROOT") or _HERE_ROOT)
+REPO_ROOT = os.path.normpath(os.path.abspath((os.environ.get("MIOS_ROOT") or _HERE_ROOT).replace("\\\\?\\", "")))
 DOTFILES_DIR = os.path.join(REPO_ROOT, ".dotfiles")
 BOOTSTRAP_ROOT = os.path.abspath(
     os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(REPO_ROOT, "..", "mios-bootstrap"))
-VENDOR_TOML = os.path.join(REPO_ROOT, "usr/share/mios/mios.toml")
+VENDOR_TOML = os.path.join(REPO_ROOT, "usr", "share", "mios", "mios.toml")
 
-sys.path.insert(0, os.path.join(_HERE_ROOT, "usr/lib/mios"))
+sys.path.insert(0, os.path.normpath(os.path.join(_HERE_ROOT, "usr", "lib", "mios")))
 import mios_toml  # noqa: E402
 
 VSCODE_SETTINGS_SRC = os.path.join(DOTFILES_DIR, "vscode", "settings.json")
@@ -76,8 +77,9 @@ def _name_list(dc, key, what):
 def devcontainer_projection():
     """What every devcontainer.json owns, as the resolver emits it (emit_exports: stack_id offset and
     ${MIOS_*} applied): forwardPorts from each [ports] key of [dotfiles.devcontainer].forward_port_keys,
-    in order; containerEnv[n] for each MIOS_* name n of .container_env_keys. Exit 3 on an absent or
-    empty list, or a name without a resolved (integer, for a port) value."""
+    in order; containerEnv[n] for each MIOS_* name n of .container_env_keys; remoteUser from
+    [identity].username; hostRequirements from .host_requirements. Exit 3 on an absent or empty list,
+    a name without a resolved (integer, for a port) value, or an invalid user or host requirement."""
     merged = _vendor_merged()
     dc = mios_toml.section(merged, "dotfiles.devcontainer")
     keys = _name_list(dc, "forward_port_keys", "[ports] key names")
@@ -103,7 +105,21 @@ def devcontainer_projection():
                                 "non-empty repos list of {name, url} that names primary", EXIT_BAD_POLICY))
     folders = [{"name": r.get("label") or r["name"], "path": "." if r["name"] == primary else f"../{r['name']}"}
                for r in repos]
+    # The devcontainer runs [image].ref itself, so its user is the image's own
+    # [identity].username, and its host must hold that image (.host_requirements).
+    user = mios_toml.section(merged, "identity").get("username")
+    if not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]*", user):
+        raise SystemExit(_fatal(f"mios.toml [identity].username {user!r} is not a user name the devcontainer "
+                                "can run as", EXIT_BAD_POLICY))
+    host = dc.get("host_requirements")
+    if (not isinstance(host, dict) or set(host) != {"cpus", "memory", "storage"}
+            or not isinstance(host["cpus"], int) or isinstance(host["cpus"], bool) or host["cpus"] < 1
+            or not all(isinstance(host[k], str) and re.fullmatch(r"[1-9][0-9]*gb", host[k])
+                       for k in ("memory", "storage"))):
+        raise SystemExit(_fatal("mios.toml [dotfiles.devcontainer].host_requirements must be "
+                                "{ cpus = <int>, memory = \"<n>gb\", storage = \"<n>gb\" }", EXIT_BAD_POLICY))
     return {"forwardPorts": [int(v) for v in ports], "containerEnv": env,
+            "remoteUser": user, "hostRequirements": dict(host),
             "workspaceFolder": ws["root"],
             # Pinned so a local clone under any directory name lands where Codespaces puts it.
             "workspaceMount": f"source=${{localWorkspaceFolder}},target={ws['root']}/{primary},type=bind",
@@ -254,8 +270,8 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
     devcontainer.json / *.code-workspace settings block and PRUNE every
     [dotfiles.vscode] desktop-only / User-only / unregistered key already there.
     SSOT keys win on conflict; any surface-only key (installer-specific zenMode.*
-    tuning) survives. A devcontainer.json's forwardPorts array and the
-    containerEnv entries in dc_owned are owned. Returns [(label, reason)] -- one line per key and file, so
+    tuning) survives. A devcontainer.json's forwardPorts array, remoteUser,
+    hostRequirements and the containerEnv entries in dc_owned are owned. Returns [(label, reason)] -- one line per key and file, so
     --check names exactly what is wrong where."""
     pruned = pruned_keys(pol)
     portable = {k: v for k, v in ssot_settings.items() if k not in pruned}
@@ -295,9 +311,16 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
             reasons.extend(f"containerEnv.{n} {cenv.get(n)!r} differs from the resolved SSOT value {v!r} "
                            "([dotfiles.devcontainer].container_env_keys)" for n, v in env.items() if cenv.get(n) != v)
             owned_stale = doc.get("forwardPorts") != fwd or any(cenv.get(n) != v for n, v in env.items())
+            for key, source in (("remoteUser", "[identity].username"),
+                                ("hostRequirements", "[dotfiles.devcontainer].host_requirements")):
+                if doc.get(key) != dc_owned[key]:
+                    reasons.append(f"{key} {doc.get(key)!r} differs from the {source} projection {dc_owned[key]!r}")
+                    owned_stale = True
             if owned_stale:
                 doc["forwardPorts"] = list(fwd)
                 doc["containerEnv"] = dict(cenv, **env)
+                doc["remoteUser"] = dc_owned["remoteUser"]
+                doc["hostRequirements"] = dict(dc_owned["hostRequirements"])
         # [workspace]: the primary devcontainer opens the workspace root and every
         # *.code-workspace here lists the same repos, so each MiOS image opens one set.
         if repo_root == REPO_ROOT and rel_target == dc_owned["workspaceDevcontainer"]:
@@ -337,6 +360,16 @@ def main() -> int:
     pol = load_policy()
     dc_owned = devcontainer_projection()
     drift.extend(project_edge_settings(args.check))
+    # Terminal shortcuts are a native MiOS projection. Both editor profiles
+    # must pass tmux's prefix through when the integrated terminal has focus.
+    mobile = json.load(open(os.path.join(REPO_ROOT, "usr/share/mios/keybindings/vscode-settings.json"), encoding="utf-8"))
+    for source in (VSCODE_SETTINGS_SRC, CODESERVER_SETTINGS_SRC):
+        profile = json.load(open(source, encoding="utf-8"))
+        updated = dict(profile, **mobile)
+        if updated != profile:
+            drift.append((source, "terminal shortcut settings differ from [keybindings] projection"))
+            if not args.check:
+                _write_atomic(source, json.dumps(updated, indent=2) + "\n")
     with open(VSCODE_SETTINGS_SRC, "r", encoding="utf-8") as f:
         vscode_ssot = json.load(f)
     with open(CODESERVER_SETTINGS_SRC, "r", encoding="utf-8") as f:
@@ -370,18 +403,8 @@ def main() -> int:
                 with open(dst, "wb") as f:
                     f.write(src_bytes)
 
-        # 3. Mirror .dotfiles to usr/share/mios/dotfiles
-        share_dotfiles = os.path.join(root, "usr/share/mios/dotfiles")
-        if not args.check:
-            os.makedirs(share_dotfiles, exist_ok=True)
-            for dirpath, _, filenames in os.walk(DOTFILES_DIR):
-                rel = os.path.relpath(dirpath, DOTFILES_DIR)
-                target_dir = os.path.join(share_dotfiles, rel) if rel != "." else share_dotfiles
-                os.makedirs(target_dir, exist_ok=True)
-                for fn in filenames:
-                    s_file = os.path.join(dirpath, fn)
-                    d_file = os.path.join(target_dir, fn)
-                    shutil.copy2(s_file, d_file)
+        # 3. No tracked usr/share/mios/dotfiles mirror (ADR-0030): nothing reads it, and
+        #    automation/01-system-files-overlay.sh Stage 5b installs .dotfiles there at bake.
 
         # 4. Also project into active user home directories if write mode
         if not args.check:

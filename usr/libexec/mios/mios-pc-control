@@ -4,8 +4,6 @@
 import sys
 import os
 import json
-import urllib.request
-import urllib.error
 import subprocess
 import base64
 
@@ -33,103 +31,30 @@ def usage():
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
-import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
-
-def _read_toml_endpoint():
-    """[os_control].executor_endpoint via the shared resolver. Priority
-    MIOS_TOML > /etc > vendor (no per-user layer), matching the former reader."""
-    layers = ["/usr/share/mios/mios.toml", "/etc/mios/mios.toml"]
-    env_toml = os.environ.get("MIOS_TOML", "")
-    if env_toml:
-        layers.append(env_toml)
-    ep = mios_toml.get("os_control", "executor_endpoint", "",
-                       data=mios_toml.load_merged(layers))
-    return str(ep).strip().rstrip("/") if ep else ""
+from mios_oscontrol_client import executor_endpoint, request_json, require_verdict  # noqa: E402
 
 def _get_executor_endpoint():
-    ep = os.environ.get("MIOS_OSCONTROL_EXECUTOR", "")
-    if ep:
-        ep = ep.rstrip("/")
-    else:
-        ep = _read_toml_endpoint()
+    return executor_endpoint()
 
+
+def _http_request(url, method="GET", data=None, timeout=15, required=None):
     try:
-        with open("/proc/sys/kernel/osrelease", "r") as f:
-            content = f.read().lower()
-            is_wsl = "microsoft" in content or "wsl" in content
-    except Exception:
-        is_wsl = False
-
-    if is_wsl:
-        needs_gw = (not ep) or ("localhost" in ep) or ("127.0.0.1" in ep)
-        if needs_gw:
-            try:
-                ip_route = subprocess.check_output(["ip", "route", "show", "default"], text=True)
-                parts = ip_route.split()
-                if "default" in parts:
-                    idx = parts.index("default")
-                    gw = parts[idx + 2]
-                    if ep:
-                        ep = ep.replace("localhost", gw).replace("127.0.0.1", gw)
-                    else:
-                        port = os.environ.get("MIOS_PORT_OSCONTROL", os.environ.get("MIOS_OSCONTROL_PORT", "8950"))
-                        ep = f"http://{gw}:{port}"
-            except Exception:
-                pass
-    return ep
-
-def _http_request(url, method="GET", data=None, timeout=15):
-    req_data = None
-    if data is not None:
-        req_data = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(url, data=req_data, method=method)
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as f:
-            return f.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        return e.read().decode("utf-8")
-    except Exception as e:
-        sys.stderr.write(f"mios-pc-control: OS-control executor unreachable ({method} {url}): {e}\n")
+        if required is None and method == "GET":
+            required = "ok"
+        return json.dumps(request_json(url, method, data, timeout, required))
+    except Exception as error:
+        sys.stderr.write(f"mios-pc-control: executor request failed ({type(error).__name__})\n")
         sys.exit(1)
+
 
 def _exit_on_verdict(resp):
-    """Exit reflecting the executor's READ-BACK verdict, not just transport success.
-    The Windows OS-control executor returns {ok,verified,reason} (Invoke-TypeText et
-    al.): a type/click/window op that did NOT land returns verified:false / ok:false
-    in the BODY.
-
-    FAIL CLOSED (operator 2026-06-19/20: "type reported SUCCESS but nothing was
-    typed" -- twice). The prior version exited 0 on an unparseable/empty/non-dict/
-    keyless body to "not false-fail a transport quirk" -- but THAT is the lie: when
-    the verdict cannot be determined the op's success is UNKNOWN, and an unknown is
-    NOT a success. A false FAILURE is recoverable (the caller retries / sees real
-    state); a false SUCCESS is the fabrication the operator keeps catching. So we
-    exit 0 ONLY on an EXPLICIT truthy verdict key; every undeterminable case exits 1
-    with a diagnostic. (Launch is ALSO independently re-verified by the window-diff
-    in server.py, so failing this closed never silently drops a real launch.)"""
+    """Return success only for literal, mutually consistent positive verdicts."""
     try:
-        d = json.loads(resp) if resp else {}
-    except Exception:
-        sys.stderr.write("mios-pc-control: executor returned an unparseable body; "
-                         "verdict UNKNOWN -> failing closed (exit 1)\n")
+        require_verdict(json.loads(resp))
+    except (ValueError, TypeError):
+        sys.stderr.write("mios-pc-control: executor verdict is unconfirmed\n")
         sys.exit(1)
-    if not isinstance(d, dict):
-        sys.stderr.write("mios-pc-control: executor body is not a JSON object; "
-                         "verdict UNKNOWN -> failing closed (exit 1)\n")
-        sys.exit(1)
-    for k in ("verified", "ok", "launched"):
-        if k in d:
-            if d.get(k):
-                sys.exit(0)
-            sys.stderr.write(f"mios-pc-control: executor verdict {k}=false"
-                             f"{(' (' + str(d.get('reason')) + ')') if d.get('reason') else ''}\n")
-            sys.exit(1)
-    sys.stderr.write("mios-pc-control: executor body carries no verified/ok/launched "
-                     "verdict; cannot confirm the action landed -> failing closed "
-                     "(exit 1)\n")
-    sys.exit(1)
+    sys.exit(0)
 
 
 def main():
@@ -148,89 +73,25 @@ def main():
                   "window-resize", "window-center", "screen-layout", "screenshot", "click", 
                   "double-click", "mouse-move", "type", "key", "key-combo", "ui-find", "ui-click", "ui-list", "ui-tree", "ui-set-value"}
                   
-    exec_ep = _get_executor_endpoint()
-    
-    if exec_ep:
-        try:
-            urllib.request.urlopen(f"{exec_ep}/health", timeout=3)
-        except Exception:
-            exec_ep = ""
-            
-    if sub in ("launch", "ui-find", "ui-click", "ui-list", "ui-tree", "ui-set-value") and not exec_ep:
-        sys.stderr.write(f"mios-pc-control: no OS-control executor reachable for {sub}\n")
+    try:
+        exec_ep = _get_executor_endpoint()
+    except ValueError:
+        sys.stderr.write("mios-pc-control: invalid executor configuration\n")
         sys.exit(2)
-        
+    if sub in valid_subs:
+        _http_request(f"{exec_ep}/health", timeout=3, required="ok")
+
     if exec_ep and sub in valid_subs:
         if sub == "launch":
             if not args:
                 sys.stderr.write("mios-pc-control: launch needs <app-name>\n")
                 sys.exit(64)
             app = " ".join(args)
-            resp = _http_request(f"{exec_ep}/launch", "POST", {"app": app}, 30)
+            resp = _http_request(f"{exec_ep}/launch", "POST", {"app": app}, 30, required="launched")
             print(resp); _exit_on_verdict(resp)   # exit reflects launched==true
             
         elif sub == "window-list":
-            if exec_ep:
-                resp = _http_request(f"{exec_ep}/windows", "GET", None, 15)
-            else:
-                resp = ""
-                try:
-                    pwsh = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-                    if os.path.exists(pwsh):
-                        ps_script = (
-                            "Add-Type -ErrorAction SilentlyContinue -TypeDefinition @'\n"
-                            "using System;\n"
-                            "using System.Text;\n"
-                            "using System.Runtime.InteropServices;\n"
-                            "public class MiosWinList {\n"
-                            "  [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr l);\n"
-                            "  [DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr h);\n"
-                            "  [DllImport(\"user32.dll\")] public static extern int GetWindowTextLength(IntPtr h);\n"
-                            "  [DllImport(\"user32.dll\", CharSet=CharSet.Auto)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int max);\n"
-                            "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);\n"
-                            "  public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);\n"
-                            "}\n"
-                            "'@;\n"
-                            "$script:_wl = @();\n"
-                            "$cb = [MiosWinList+EnumWindowsProc]{\n"
-                            "    param($h, $l)\n"
-                            "    if ([MiosWinList]::IsWindowVisible($h)) {\n"
-                            "        $len = [MiosWinList]::GetWindowTextLength($h);\n"
-                            "        if ($len -gt 0) {\n"
-                            "            $sb = New-Object System.Text.StringBuilder ($len + 1);\n"
-                            "            [MiosWinList]::GetWindowText($h, $sb, $sb.Capacity) | Out-Null;\n"
-                            "            $wpid = 0;\n"
-                            "            [MiosWinList]::GetWindowThreadProcessId($h, [ref]$wpid) | Out-Null;\n"
-                            "            $pname = \"\";\n"
-                            "            try { $pname = (Get-Process -Id $wpid -ErrorAction SilentlyContinue).ProcessName } catch {};\n"
-                            "            $script:_wl += [pscustomobject]@{ hwnd = [int64]$h; pid = [int64]$wpid; title = $sb.ToString(); proc = $pname };\n"
-                            "        }\n"
-                            "    }\n"
-                            "    return $true;\n"
-                            "};\n"
-                            "[MiosWinList]::EnumWindows($cb, [IntPtr]::Zero) | Out-Null;\n"
-                            "if ($script:_wl.Count -eq 0) {\n"
-                            "  $procs = Get-Process | Where-Object { $_.MainWindowTitle -or $_.MainWindowHandle -ne 0 };\n"
-                            "  $script:_wl = @($procs | ForEach-Object { [pscustomobject]@{ hwnd = [int64]$_.MainWindowHandle; pid = [int64]$_.Id; title = $_.MainWindowTitle; proc = $_.ProcessName } });\n"
-                            "};\n"
-                            "@{ ok = $true; count = $script:_wl.Count; windows = $script:_wl } | ConvertTo-Json -Compress"
-                        )
-                        p = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", ps_script],
-                                           capture_output=True, text=True, timeout=10)
-                        if p.returncode == 0 and p.stdout.strip():
-                            raw = p.stdout.strip()
-                            try:
-                                parsed = json.loads(raw)
-                                if isinstance(parsed, dict) and "windows" in parsed:
-                                    wins = parsed.get("windows") or []
-                                    if isinstance(wins, dict): wins = [wins]
-                                    resp = json.dumps({"ok": True, "count": len(wins), "windows": wins})
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-                if not resp:
-                    resp = json.dumps({"ok": True, "count": 0, "windows": []})
+            resp = _http_request(f"{exec_ep}/windows", "GET", None, 15)
             if json_flag:
                 print(resp)
             else:
@@ -306,8 +167,9 @@ def main():
                 if not b64:
                     sys.stderr.write("mios-pc-control: executor returned no image\n")
                     sys.exit(1)
+                image = base64.b64decode(b64, validate=True)
                 with open(out_path, "wb") as f:
-                    f.write(base64.b64decode(b64))
+                    f.write(image)
                 print(f"[mios-pc-control] screenshot saved to {out_path} ({d.get('width')}x{d.get('height')})")
             except Exception as e:
                 sys.stderr.write(f"mios-pc-control: failed to parse screenshot: {e}\n")

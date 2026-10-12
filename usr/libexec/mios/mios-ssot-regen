@@ -21,11 +21,19 @@ if [[ -f "$libexec/mios-ai-capabilities-gen" ]]; then
 fi
 
 echo "[ssot-regen] regenerating roadmap index, gate index, and value duplication report"
-if [[ -f "$tools/roadmap-index.py" ]]; then
-    python3 "$tools/roadmap-index.py" || true
-fi
-if [[ -f "$tools/generate-gate-index.py" ]]; then
-    python3 "$tools/generate-gate-index.py" || true
+if command -v mios-gen >/dev/null 2>&1; then
+    mios-gen roadmap-index --root "$root" || true
+    mios-gen gate-index --root "$root" || true
+elif [[ -x "$root/tools/native/target/debug/mios-gen" ]]; then
+    "$root/tools/native/target/debug/mios-gen" roadmap-index --root "$root" || true
+    "$root/tools/native/target/debug/mios-gen" gate-index --root "$root" || true
+else
+    if [[ -f "$tools/roadmap-index.py" ]]; then
+        python3 "$tools/roadmap-index.py" || true
+    fi
+    if [[ -f "$tools/generate-gate-index.py" ]]; then
+        python3 "$tools/generate-gate-index.py" || true
+    fi
 fi
 if [[ -f "$tools/mios-dup-report" ]]; then
     python3 "$tools/mios-dup-report" || true

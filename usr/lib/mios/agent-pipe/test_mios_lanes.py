@@ -33,10 +33,10 @@ class _Clock:
         self.t += dt
 
 def _lanes():
+    # The ONE heavy lane (whichever engine serves it) + the always-on light floor.
     return {
-        "light": Lane("light", "http://localhost:8450/v1", "granite4.1:8b"),
-        "sglang": Lane("sglang", "http://localhost:8442/v1", "mios-heavy"),
-        "vllm": Lane("vllm", "http://localhost:8441/v1", "mios-heavy"),
+        "light": Lane("light", "http://localhost:8500/v1", "granite4.1:8b"),
+        "heavy": Lane("heavy", "http://localhost:8520/v1", "mios-heavy"),
     }
 
 def _resolver(up, clock, **kw):
@@ -51,54 +51,54 @@ def _resolver(up, clock, **kw):
         return False
 
     lanes = _lanes()
-    chain = build_chain(kw.pop("heavy_engine", "sglang"), lanes.keys())
+    chain = build_chain(kw.pop("heavy_engine", "vllm"), lanes.keys())
     r = LaneResolver(lanes, {"heavy": chain, "tool": chain}, probe,
                      ttl=kw.pop("ttl", 30.0), cooldown=kw.pop("cooldown", 60.0),
                      clock=clock)
     return r, calls
 
 async def t_build_chain():
-    ids = ["light", "sglang", "vllm"]
-    _check("chain sglang-first", build_chain("sglang", ids) == ["sglang", "vllm", "light"],
-           str(build_chain("sglang", ids)))
-    _check("chain vllm-first", build_chain("vllm", ids) == ["vllm", "sglang", "light"],
-           str(build_chain("vllm", ids)))
-    _check("chain explicit comma", build_chain("vllm,light", ids) == ["vllm", "light"],
+    ids = ["light", "heavy"]
+    for engine in ("vllm", "sglang", ""):
+        _check("chain %r -> heavy first" % engine, build_chain(engine, ids) == ["heavy", "light"],
+               str(build_chain(engine, ids)))
+    _check("chain explicit comma", build_chain("heavy,light", ids) == ["heavy", "light"],
+           str(build_chain("heavy,light", ids)))
+    _check("chain engine name in a comma list = heavy", build_chain("vllm,light", ids) == ["heavy", "light"],
            str(build_chain("vllm,light", ids)))
     _check("chain light-only", build_chain("light", ids) == ["light"],
            str(build_chain("light", ids)))
-    _check("chain default(empty)->sglang", build_chain("", ids) == ["sglang", "vllm", "light"],
-           str(build_chain("", ids)))
-    _check("chain drops unavailable", build_chain("sglang", ["light", "sglang"]) == ["sglang", "light"],
-           str(build_chain("sglang", ["light", "sglang"])))
-    _check("chain light always terminal", build_chain("light,sglang", ids) == ["sglang", "light"],
-           str(build_chain("light,sglang", ids)))
+    _check("chain drops unavailable heavy", build_chain("sglang", ["light"]) == ["light"],
+           str(build_chain("sglang", ["light"])))
+    _check("chain light always terminal", build_chain("light,heavy", ids) == ["heavy", "light"],
+           str(build_chain("light,heavy", ids)))
+    _check("chain has ONE heavy lane", build_chain("sglang,vllm,light", ids) == ["heavy", "light"],
+           str(build_chain("sglang,vllm,light", ids)))
 
 async def t_pick_prefers_heavy():
     clk = _Clock()
-    r, _ = _resolver({"8442": True, "8441": True, "8450": True}, clk)
+    r, _ = _resolver({"8520": True, "8500": True}, clk)
     lane = await r.pick("tool")
-    _check("prefers sglang when up", lane.id == "sglang", lane.id)
+    _check("prefers heavy when up", lane.id == "heavy", lane.id)
+    r2, _ = _resolver({"8520": True, "8500": True}, clk, heavy_engine="sglang")
+    _check("engine choice does not change the lane", (await r2.pick("tool")).id == "heavy")
 
-async def t_failover_to_vllm_then_light():
+async def t_failover_to_light():
     clk = _Clock()
-    r, _ = _resolver({"8442": False, "8441": True, "8450": True}, clk)
-    _check("sglang down -> vllm", (await r.pick("tool")).id == "vllm")
-    clk.advance(100)  # past cooldown so a fresh state
-    r2, _ = _resolver({"8442": False, "8441": False, "8450": True}, clk)
-    _check("both heavy down -> light", (await r2.pick("tool")).id == "light")
+    r, _ = _resolver({"8520": False, "8500": True}, clk)
+    _check("heavy down -> light", (await r.pick("tool")).id == "light")
 
 async def t_cooldown_skips_reprobe():
     clk = _Clock()
-    r, calls = _resolver({"8442": False, "8441": True, "8450": True}, clk, cooldown=60.0)
-    await r.pick("tool")               # probes sglang(fail)+vllm(ok) = 2
+    r, calls = _resolver({"8520": False, "8500": True}, clk, cooldown=60.0)
+    await r.pick("tool")               # probes heavy(fail)+light(ok) = 2
     n1 = calls["n"]
-    await r.pick("tool")               # sglang in cooldown -> skipped; vllm cached(ttl) -> 0 new
+    await r.pick("tool")               # heavy in cooldown -> skipped; light cached(ttl) -> 0 new
     _check("cooldown+ttl avoid reprobe", calls["n"] == n1, "calls went %d->%d" % (n1, calls["n"]))
 
 async def t_ttl_caches():
     clk = _Clock()
-    r, calls = _resolver({"8442": True, "8450": True, "8441": True}, clk, ttl=30.0)
+    r, calls = _resolver({"8520": True, "8500": True}, clk, ttl=30.0)
     await r.pick("tool")
     n1 = calls["n"]
     clk.advance(10)                    # within ttl
@@ -110,30 +110,30 @@ async def t_ttl_caches():
 
 async def t_recovery_after_cooldown():
     clk = _Clock()
-    up = {"8442": False, "8441": True, "8450": True}
+    up = {"8520": False, "8500": True}
     r, _ = _resolver(up, clk, cooldown=60.0, ttl=30.0)
-    _check("initially vllm (sglang down)", (await r.pick("tool")).id == "vllm")
-    up["8442"] = True                 # sglang comes back
-    clk.advance(70)                    # past cooldown -> re-probe sglang
-    _check("recovers to sglang after cooldown", (await r.pick("tool")).id == "sglang")
+    _check("initially light (heavy down)", (await r.pick("tool")).id == "light")
+    up["8520"] = True                  # heavy comes back
+    clk.advance(70)                    # past cooldown -> re-probe heavy
+    _check("recovers to heavy after cooldown", (await r.pick("tool")).id == "heavy")
 
 async def t_terminal_floor():
     clk = _Clock()
-    r, _ = _resolver({"8442": False, "8441": False, "8450": False}, clk)
+    r, _ = _resolver({"8520": False, "8500": False}, clk)
     lane = await r.pick("tool")
     _check("all down -> terminal floor light (not None)", lane is not None and lane.id == "light",
            repr(lane))
 
 async def t_mark_down():
     clk = _Clock()
-    r, _ = _resolver({"8442": True, "8441": True, "8450": True}, clk)
-    _check("up before mark_down", (await r.pick("tool")).id == "sglang")
-    r.mark_down("sglang")
-    _check("mark_down forces failover", (await r.pick("tool")).id == "vllm")
+    r, _ = _resolver({"8520": True, "8500": True}, clk)
+    _check("up before mark_down", (await r.pick("tool")).id == "heavy")
+    r.mark_down("heavy")
+    _check("mark_down forces failover", (await r.pick("tool")).id == "light")
 
 async def main():
     print("test_mios_lanes (WS-1 lane resolver)")
-    for fn in (t_build_chain, t_pick_prefers_heavy, t_failover_to_vllm_then_light,
+    for fn in (t_build_chain, t_pick_prefers_heavy, t_failover_to_light,
                t_cooldown_skips_reprobe, t_ttl_caches, t_recovery_after_cooldown,
                t_terminal_floor, t_mark_down):
         await fn()

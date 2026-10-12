@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# AI-hint: Tests for build-context materialization and artifact handoff between build phases.
 """
 Workflow 4 Verification Test Suite: Build Context & Artifact Handoff
 Tests all 6 task implementations:

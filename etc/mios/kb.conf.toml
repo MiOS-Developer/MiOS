@@ -3,16 +3,16 @@
 
 [runtime]
 # Default to MiOS's own Gateway Agent endpoint. Honors $MIOS_AI_ENDPOINT if set.
-base_url    = "${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORT_AGENT_PIPE:-8700}/v1}"
+base_url    = "http://localhost:8700/v1"
 api_key_env = "MIOS_AI_KEY"   # empty key accepted by Gateway Agent
 
 [models]
 # Default models — honor $MIOS_AI_MODEL / $MIOS_AI_EMBED_MODEL / $MIOS_AI_GRADER.
 # Defaults match canonical mios.toml [ai].model + [ai].embed_model.
-chat            = "${MIOS_AI_MODEL:-qwen2.5-coder:7b}"
-embedding       = "${MIOS_AI_EMBED_MODEL:-nomic-embed-text}"
+chat            = "granite4.1:8b"
+embedding       = "nomic-embed-text"
 embed_dims      = 768            # nomic-embed-text default; some local runtimes ignore `dimensions`
-grader          = "${MIOS_AI_GRADER:-qwen2.5-coder:7b}"
+grader          = "qwen2.5-coder:7b"
 
 [api_surface]
 # Which OpenAI surfaces the runtime supports. Defaults reflect MiOS Gateway Agent.

@@ -119,11 +119,11 @@
   function dpr() { return Math.min(window.devicePixelRatio || 1, DPR_CAP); }
 
   // ════════════════ PRIMARY: WebGL2 advection-feedback colour-ocean ════════════════
-  var gl2 = canvas.getContext("webgl2", { antialias: false, alpha: false });
+  var gl2 = canvas.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "low-power" });
   if (gl2 && gl2.getExtension("EXT_color_buffer_float")) {
     runAdvection(gl2);
   } else {
-    var gl1 = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    var gl1 = canvas.getContext("webgl", { powerPreference: "low-power" }) || canvas.getContext("experimental-webgl", { powerPreference: "low-power" });
     if (gl1) runFallback(gl1); else document.body.style.background = darkMode ? bgHex : fgHex;
   }
 
@@ -217,7 +217,8 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       var fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-      gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      var bgC = hex3(qp.get("bg") || qp.get("a0"), DEF[0]);
+      gl.clearColor(bgC[0], bgC[1], bgC[2], 0.0); gl.clear(gl.COLOR_BUFFER_BIT);
       return { tex: tex, fbo: fbo };
     }
     function alloc() {

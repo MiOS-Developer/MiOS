@@ -45,14 +45,14 @@ import sys
 import urllib.error
 import urllib.request
 
-OWUI_URL = os.environ.get("MIOS_OWUI_URL", f"http://localhost:{os.environ.get('MIOS_PORT_OPEN_WEBUI', '8200')}")
+OWUI_URL = os.environ.get("MIOS_OWUI_URL", f"http://localhost:{os.environ.get('MIOS_PORTS_OPEN_WEBUI', '8200')}")
 OWUI_DB = os.environ.get("MIOS_OWUI_DB", "/var/lib/mios/open-webui/webui.db")
 DEFAULT_TOP_K = int(os.environ.get("MIOS_KNOWLEDGE_SEARCH_TOP_K", "5"))
 DEFAULT_THRESHOLD = float(
     os.environ.get("MIOS_KNOWLEDGE_SEARCH_THRESHOLD", "0.0"))
 
 _KB_EMBED_ENDPOINT = os.environ.get("MIOS_RAG_EMBED_ENDPOINT",
-                                    f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}").rstrip("/")
+                                    f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}").rstrip("/")
 _KB_EMBED_MODEL = os.environ.get("MIOS_RAG_EMBED_MODEL", "nomic-embed-text")
 
 

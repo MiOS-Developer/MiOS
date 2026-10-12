@@ -53,7 +53,7 @@ both reachable through `MIOS_AI_ENDPOINT`.
 # 0. Set the unified env vars (or rely on /etc/profile.d/mios-env.sh).
 #    MIOS_AI_ENDPOINT is the single OpenAI-compat endpoint every MiOS agent/tool
 #    targets (Architectural Law 5). The canonical default is the unified surface:
-export MIOS_AI_ENDPOINT=${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORT_HERMES}/v1}
+export MIOS_AI_ENDPOINT=${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORTS_HERMES}/v1}
 export MIOS_AI_KEY=${MIOS_AI_KEY:-}                          # empty key accepted locally
 export MIOS_AI_MODEL=${MIOS_AI_MODEL:-mios-hermes}           # canonical mios.toml [ai] model
 export MIOS_AI_EMBED_MODEL=${MIOS_AI_EMBED_MODEL:-nomic-embed-text}  # served by mios-llm-light on the llm_light port

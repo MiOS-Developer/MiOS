@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 
 ENDPOINT = os.environ.get("MIOS_SUMMARIZE_ENDPOINT",
-                          f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}")   # mios-llm-light /v1 (legacy :11435 lane retired)
+                          f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}")   # mios-llm-light /v1 (legacy :11435 lane retired)
 MODEL = os.environ.get("MIOS_SUMMARIZE_MODEL", "qwen3:1.7b")  # served by mios-llm-light
 L2_MAX = int(os.environ.get("MIOS_SUMMARIZE_L2_MAX_CHARS", "20000"))
 TIMEOUT = float(os.environ.get("MIOS_SUMMARIZE_TIMEOUT", "120"))

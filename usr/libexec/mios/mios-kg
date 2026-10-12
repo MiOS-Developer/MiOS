@@ -12,7 +12,7 @@ hardcoded English aliases in this codebase. (The legacy BSL 1.1 store is retired
 
 Subcommands:
   bootstrap                Create the person row (from $USER /
-                           $MIOS_USER) + ingest mios-apps inventory
+                           $MIOS_IDENTITY_USERNAME) + ingest mios-apps inventory
                            into app_install rows. Idempotent.
   alias add <phrase> <target>
                            Add an alias. <target> can be:
@@ -83,11 +83,11 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     """Create / update the singleton person row + ingest mios-apps
     catalog into app_install rows. Idempotent -- re-running on an
     already-bootstrapped host is a no-op for unchanged rows."""
-    username = (os.environ.get("MIOS_USER")
+    username = (os.environ.get("MIOS_IDENTITY_USERNAME")
                 or os.environ.get("USER")
                 or os.environ.get("LOGNAME")
                 or "operator")
-    hostname = os.environ.get("MIOS_HOSTNAME") or _socket.gethostname()
+    hostname = os.environ.get("MIOS_IDENTITY_HOSTNAME") or _socket.gethostname()
     _pg_batch([
         {"sql": "DELETE FROM person WHERE username = $1", "params": [username]},
         {"sql": ("INSERT INTO person (username, hostname, created_at) "

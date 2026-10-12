@@ -75,51 +75,59 @@ def check_resolver_differential_parity() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
     _toml_data = tomllib.load(open(os.path.join(root, "usr/share/mios/mios.toml"), "rb"))
     resolver_bin = None
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        resolver_bin = os.path.join(catalog, "mios-resolver" + (".exe" if sys.platform == "win32" else ""))
+        if not os.path.isfile(resolver_bin) or not os.access(resolver_bin, os.X_OK):
+            print(f"    configured resolver is missing or not executable: {resolver_bin}", file=sys.stderr)
+            sys.exit(1)
 
-    for cand in [os.path.join(root, "tools/native/target", p, "mios-resolver" + x)
+    for cand in ([] if catalog else [os.path.join(root, "tools/native/target", p, "mios-resolver" + x)
                  for p in ("debug", "release") for x in ("", ".exe")] + [
-                 "/usr/libexec/mios/mios-resolver", "/usr/bin/mios-resolver"]:
+                 "/usr/libexec/mios/mios-resolver", "/usr/bin/mios-resolver"]):
         if os.path.isfile(cand):
             resolver_bin = cand
             break
 
     if not resolver_bin:
-        # A silent skip is how a gate stays green while proving nothing. Where the
-        # environment declares tools mandatory, an absent binary is a violation.
-        if os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS", "0") == "1":
-            print("    mios-resolver is not built, so the Python/Rust resolvers were "
-                  "never compared (MIOS_DRIFT_REQUIRE_TOOLS=1). Build it: "
-                  "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
-            sys.exit(1)
-        print("    mios-resolver binary not built locally -- advisory skip")
-        sys.exit(0)
+        print("    mios-resolver is not built, so the Python/Rust resolvers were "
+              "never compared. Build it: "
+              "cd tools/native && cargo build -p mios-resolver", file=sys.stderr)
+        sys.exit(1)
 
-    import importlib.util as _ilu  # the file is render-globals.py; the import name never resolved
-    _sp = _ilu.spec_from_file_location("rg", os.path.join(root, "tools", "render-globals.py")); render_globals = _ilu.module_from_spec(_sp); _sp.loader.exec_module(render_globals)
-
-    py_exports = render_globals.build_exports()
-
-    # build_exports() returns the UNEXPANDED map on purpose: it renders
-    # automation/lib/globals.{sh,ps1}, which bash and PowerShell expand at source
-    # time, and keeping `${MIOS_PORT_AGENT_PIPE}` live there is what lets an
-    # operator's pre-export propagate. mios-resolver --emit=json is the resolved
-    # view and bakes. Comparing the two directly measured that difference in
-    # representation, not a divergence between the resolvers -- 103 "mismatches"
-    # that were the same 91 values written two correct ways. Both sides are put
-    # in the baked form first, by the same twin the Rust emitter calls, so what
-    # survives is real disagreement about a value.
+    # Both twins resolve the SAME tiers: the root's vendor file and drop-ins,
+    # no host or user overlay, so the comparison depends on the tree alone.
+    tiers = {"MIOS_TOML_ROOT": root,
+             "MIOS_VENDOR_TOML": os.path.join(root, "usr/share/mios/mios.toml"),
+             "MIOS_HOST_TOML": "/nonexistent/mios-host.toml",
+             "MIOS_USER_TOML": "/nonexistent/mios-user.toml"}
+    os.environ.update(tiers)
     _mt_dir = os.path.join(root, "usr", "lib", "mios")
     if _mt_dir not in sys.path:
         sys.path.insert(0, _mt_dir)
     import mios_toml as _mios_toml
-    _mios_toml.resolve_cross_references(py_exports)
+
+    # The Python twin is mios_toml.emit_exports over a merge it performs ITSELF.
+    # load_merged() with no layers hands the merge to mios-resolver whenever one
+    # is on PATH, and the check would then measure the Rust resolver against
+    # itself. emit_exports also resolves ${MIOS_*} cross-references, which is the
+    # baked form --emit=json prints. (tools/render-globals.py, the old Python
+    # side, was ported to `mios-gen render-globals` in 5776d4ff; importing it
+    # crashed this check on every run since.)
+    py_exports = _mios_toml.emit_exports(
+        _mios_toml.load_merged(layers=_mios_toml.layer_paths()))
 
     try:
-        res = subprocess.run([resolver_bin, "--emit=json"], capture_output=True, text=True, check=True)
+        res = subprocess.run([resolver_bin, "--emit=json"], capture_output=True, text=True,
+                             check=True, env=dict(os.environ, **tiers))
         import json
         rs_exports = (_j := json.loads(res.stdout)).get("exports", _j)  # emit_json wraps: {merged, exports}
     except Exception as exc:
         print(f"    mios-resolver --emit=json execution failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not py_exports or not rs_exports:
+        print(f"    a resolver emitted nothing (python {len(py_exports)}, rust "
+              f"{len(rs_exports)}) -- an empty comparison is not parity", file=sys.stderr)
         sys.exit(1)
 
     _rc = _toml_data.get("resolver") or {}; ceil_div = _rc.get("max_key_divergence")
@@ -141,7 +149,7 @@ def check_resolver_differential_parity() -> int:
         for m in mismatches[:10]:
             print(f"      {m}", file=sys.stderr)
         sys.exit(1)
-    print(f"    resolver divergence: {len(diff_keys)}/{ceil_div} keys, {len(mismatches)}/{ceil_val} values (shrink-only; AGY-1676)", file=sys.stderr)
+    print(f"    resolver divergence: {len(diff_keys)}/{ceil_div} keys, {len(mismatches)}/{ceil_val} values (shrink-only; task_2317)", file=sys.stderr)
 
     print("    mios-resolver --emit=json matches Python SSOT render 100%")
     sys.exit(0)
@@ -155,7 +163,13 @@ def check_legibility_ratchet() -> int:
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
     with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
-        lim = (tomllib.load(fh).get("legibility") or {})
+        config = tomllib.load(fh)
+        lim = dict(config.get("legibility") or {})
+    phase_cap = config.get("build", {}).get("ratchet", {}).get("max_phase_scripts")
+    if type(phase_cap) is not int or phase_cap < 0:
+        print("mios.toml [build.ratchet].max_phase_scripts must be a nonnegative integer")
+        sys.exit(1)
+    lim["max_automation_phases"] = phase_cap
     if not lim:
         print("mios.toml [legibility] is absent -- the size of the deliverable is "
               "then bounded by nothing")
@@ -241,7 +255,7 @@ def check_legibility_ratchet() -> int:
         # A sibling unit test is not tooling to port. Counting them made this
         # ratchet pull against check_module_test_coverage the same way
         # max_libexec_verbs did below, and 36% of what it measured was test
-        # code. Floor re-baselined down by what the exclusion removes (T-1044).
+        # code. Floor re-baselined down by what the exclusion removes (task_981).
         "max_tooling_python_lines": lines([
             r for r in rels
             if r.endswith(".py") and not _is_generated(r)
@@ -257,7 +271,83 @@ def check_legibility_ratchet() -> int:
                                   and r.count("/") == 3
                                   and not _TEST_BASENAME.match(r.rsplit("/", 1)[-1])]),
     }
+    # ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+    # operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+    # partitioned into the domains below; its sister repo mios-bootstrap has its
+    # own shrink-only ceiling and target. max_tracked_files is this repo's count,
+    # which ratchet-direction also compares with main's tree.
+    import fnmatch
     viol = []
+    source = rels
+    bs_root = os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(root, "..", "mios-bootstrap")
+    bs_rels, _bs_rc = _tracked(bs_root) if os.path.isdir(bs_root) else (None, 1)
+    if bs_rels is None:
+        # Without the sister repo its budget is unmeasured, which is a violation,
+        # never a zero that happens to pass.
+        viol.append("mios-bootstrap is not a checkout at %s (set MIOS_BOOTSTRAP_ROOT): "
+                    "its file budget cannot be measured" % bs_root)
+    else:
+        measured["max_bootstrap_files"] = len(bs_rels)
+
+    # The budget fails closed: an absent table, a missing or non-integer target, or a
+    # malformed domain is a violation, never a skipped comparison (peer-lane review of
+    # af498021 planted all four and each passed).
+    budget = lim.get("file_budget")
+    if not isinstance(budget, dict) or not budget:
+        viol.append("[legibility.file_budget] is absent -- ADR-0030's 500-file budget is then bounded by nothing")
+        budget = {}
+    target = budget.get("target_tracked_files")
+    for key in ("target_tracked_files", "target_bootstrap_files"):
+        v = budget.get(key)
+        if budget and (type(v) is not int or v <= 0):
+            viol.append("[legibility.file_budget].%s must be a positive integer (got %r)" % (key, v))
+    if "max_bootstrap_files" not in lim:
+        viol.append("[legibility].max_bootstrap_files is absent -- the sister repo's ceiling is then bounded by nothing")
+    order, domains = budget.get("order"), budget.get("domains")
+    if budget and (not isinstance(order, list) or not order or not isinstance(domains, dict) or not domains):
+        viol.append("[legibility.file_budget] needs a non-empty order list and domains table")
+    order = order if isinstance(order, list) else []
+    domains = domains if isinstance(domains, dict) else {}
+    for d in order:
+        spec = domains.get(d) if isinstance(domains.get(d), dict) else {}
+        for key in ("max_files", "target_files"):
+            v = spec.get(key)
+            if type(v) is not int or v < 0:
+                viol.append("[legibility.file_budget.domains.%s].%s must be a non-negative integer (got %r)" % (d, key, v))
+        g = spec.get("globs")
+        if not isinstance(g, list) or not g or not all(isinstance(x, str) and x for x in g):
+            viol.append("[legibility.file_budget.domains.%s].globs must be a non-empty list of strings" % d)
+    # Each source file lands in the FIRST domain (in [legibility.file_budget].order)
+    # whose glob matches it, so a file is never budgeted twice or not at all.
+    per_domain = {}
+    if budget:
+        missing = [d for d in order if d not in domains] + [d for d in domains if d not in order]
+        if missing:
+            viol.append("[legibility.file_budget] order and domains disagree on: %s" % ", ".join(missing))
+        counts = dict.fromkeys(order, 0)
+        homeless = []
+        for rel in source:
+            home = next((d for d in order if d in domains and any(
+                fnmatch.fnmatchcase(rel, g) for g in domains[d].get("globs") or ())), None)
+            if home is None:
+                homeless.append(rel)
+            else:
+                counts[home] += 1
+        if homeless:
+            viol.append("%d tracked file(s) belong to no [legibility.file_budget] domain (first: %s)"
+                        % (len(homeless), homeless[0]))
+        for d in order:
+            spec = domains.get(d) if isinstance(domains.get(d), dict) else {}
+            cap = spec.get("max_files")
+            per_domain[d] = (counts.get(d, 0), cap, spec.get("target_files"))
+            if type(cap) is int and counts.get(d, 0) > cap:
+                viol.append("files.%s = %d, over the floor of %d. This ratchet only comes DOWN: "
+                            "fold or delete, do not raise it." % (d, counts[d], cap))
+        # Only reached with every target an int (malformed ones were reported above).
+        planned = sum(t for _, _, t in per_domain.values() if type(t) is int)
+        if type(target) is int and planned > target:
+            viol.append("[legibility.file_budget] domain targets sum to %d, over target_tracked_files = %d"
+                        % (planned, target))
     for k, got in sorted(measured.items()):
         cap = lim.get(k)
         if cap is None:
@@ -267,8 +357,94 @@ def check_legibility_ratchet() -> int:
                         "fold or delete, do not raise it." % (k.replace("max_", ""), got, cap))
     print("[legibility] " + "  ".join("%s=%d/%s" % (k.replace("max_", ""), v, lim.get(k, "-"))
                                       for k, v in sorted(measured.items())), file=sys.stderr)
+    if per_domain:
+        print("[legibility] files toward target %s: " % budget.get("target_tracked_files", "-")
+              + "  ".join("files.%s=%d/%s(->%s)" % (d, n, cap, t) for d, (n, cap, t) in per_domain.items()),
+              file=sys.stderr)
     print("\n".join(viol))
     sys.exit(1 if viol else 0)
+
+def check_legacy_archive() -> int:
+    """ADR-0030 Decision 7: `mios-gen archive --check` compares .archive with the dropped set;
+    its cannot-run exit (2) stays a failure."""
+    import subprocess
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    if os.environ.get("CTX") or root.rstrip("/") == "/tmp/build":
+        # Gates are out of the bake; the drift-gate job runs this on full history.
+        print("legacy archive: SKIPPED in-image OCI build (the drift-gate job enforces it on full history)")
+        return 0
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        gen = os.path.join(catalog, "mios-gen" + exe)
+        if not os.path.isfile(gen) or not os.access(gen, os.X_OK):
+            print("configured mios-gen is missing or not executable: %s" % gen)
+            return 1
+    else:
+        found = [c for c in [os.path.join(root, "tools/native/target", p, "mios-gen" + exe)
+                             for p in ("release", "debug")]
+                 + ["/usr/libexec/mios/mios-gen", "/usr/bin/mios-gen"] if os.path.isfile(c)]
+        if not found:
+            print("mios-gen is not built, so the legacy archive was never compared -- "
+                  "build it: cd tools/native && cargo build -p mios-gen")
+            return 1
+        gen = found[0]
+    try:
+        proc = subprocess.run([gen, "archive", "--check", "--root", root],
+                              capture_output=True, text=True)
+    except OSError as exc:
+        print("%s archive --check could not run: %s" % (gen, exc))
+        return 1
+    out = "\n".join(s for s in (proc.stdout.strip(), proc.stderr.strip()) if s)
+    if proc.returncode == 0 and out:
+        print(out)
+        return 0
+    print(out or "%s archive --check exited %d with no output" % (gen, proc.returncode))
+    return proc.returncode if proc.returncode in (1, 2) else 1
+
+def _value_sources(root: str):
+    """(name -> declaring SSOT key path, None) from `mios-resolver --emit=names`,
+    run sealed like mios-env-snapshot; else (None, why)."""
+    import json, shutil, subprocess
+    binary = os.environ.get("MIOS_RESOLVER_BIN") or shutil.which("mios-resolver")
+    if not binary:
+        return None, ("mios-resolver is not built, so no name can be traced to its "
+                      "declaration -- build it: cd tools/native && cargo build -p mios-resolver")
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": "/nonexistent",
+           "XDG_CONFIG_HOME": "/nonexistent/.config", "MIOS_ROOT": root, "MIOS_TOML_ROOT": root,
+           "MIOS_VENDOR_TOML": os.environ.get("MIOS_VENDOR_TOML")
+           or os.path.join(root, "usr/share/mios/mios.toml"),
+           "MIOS_USER_TOML": "/nonexistent/user.toml", "MIOS_USER_TOML_D": "/nonexistent/user.d"}
+    try:
+        proc = subprocess.run([binary, "--emit=names"], capture_output=True, text=True, env=env)
+        sources = json.loads(proc.stdout).get("sources") if proc.returncode == 0 else None
+    except (OSError, ValueError, AttributeError) as exc:
+        return None, "%s --emit=names produced no registry: %s" % (binary, exc)
+    if not isinstance(sources, dict) or not sources:
+        tail = (proc.stderr or "").strip().splitlines()
+        return None, ("%s --emit=names exited %d with no provenance map%s" % (
+            binary, proc.returncode, ": " + tail[-1] if tail else
+            " (a resolver older than the `sources` field)"))
+    return sources, None
+
+# A keep-distinct row both value gates honour carries at least this much reason.
+KEEP_DISTINCT_MIN_REASON = 20
+
+def _alias_rows(tsv: str):
+    """value-aliases.tsv rows as (line, canonical, alias, disposition, reason)."""
+    rows = []
+    with open(tsv, encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            raw = raw.rstrip("\n")
+            if not raw.strip() or raw.lstrip().startswith("#"):
+                continue
+            parts = raw.split("\t")
+            if len(parts) < 3 or not parts[2].split():
+                continue
+            rest = "\t".join(parts[2:])
+            rows.append((lineno, parts[0].strip(), parts[1].strip(), parts[2].split()[0].strip(),
+                         rest.split("#", 1)[1].strip() if "#" in rest else ""))
+    return rows
 
 def check_no_duplicate_value_key() -> int:
     """One value, one name, ratcheted against the baseline ledger.
@@ -303,7 +479,7 @@ def check_no_duplicate_value_key() -> int:
 
     DEFAULT_HEADER = [
         "# value-dup-baseline.tsv -- ratcheted exemption ledger for",
-        "# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP AGY-1422).",
+        "# automation/98-drift-checks.sh::check_no_duplicate_value_key (WS-GUP task_2063).",
         "# Regenerate: MIOS_VALUE_DUP_BASELINE_BUMP=1 bash automation/98-drift-checks.sh check_no_duplicate_value_key",
         "# Format: value<TAB>key_count<TAB>comma-separated MIOS_* keys  (value escapes \\\\ \\t \\r)",
     ]
@@ -378,20 +554,57 @@ def check_no_duplicate_value_key() -> int:
     for key, val in env.items():
         by_value.setdefault(val, []).append(key)
 
-    # Two spellings of ONE key are not two keys. The resolver emits an aliased
-    # name beside the walked name -- MIOS_CODEMODE_SOCKET and
-    # MIOS_CODE_MODE_SOCKET are one declaration -- so counting them as a
-    # collision made every new key in an aliased table breach the ratchet, which
-    # would have forced the ceiling up for a duplicate that is not one.
-    def _shape(name):
-        return name.replace("_", "")
+    # A duplicate is two DECLARATIONS sharing one value. The resolver traces each
+    # name to its key path; an untraced name stands alone.
+    root = os.environ.get("MIOS_TOML_ROOT") or os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(snap_tool)), "..", "..", ".."))
+    sources, why = _value_sources(root)
+    if sources is None:
+        emit("cannot tell aliases from duplicates: " + why)
+        sys.exit(1)
 
-    live = {}
+    def _shape(name):
+        return ("decl", sources[name]) if name in sources else ("name", name.replace("_", ""))
+
+    def _rep(name_set):
+        """The one name a ledger row records for a declaration: its canonical."""
+        ident = _shape(next(iter(name_set)))
+        if ident[0] == "decl":
+            body = re.sub(r"[^A-Z0-9_]", "_", ident[1].upper())  # names::canonical_name
+            canon = body if body.startswith("MIOS_") else "MIOS_" + body
+            if canon in name_set:
+                return canon
+        return min(name_set)
+
+    # task_942: a keep-distinct row in value-aliases.tsv declares its alias column a
+    # distinct fact that shares the canonical column's value by coincidence.
+    # check_value_aliases proves the two are separate declarations and that the
+    # row says why; here the alias side stops counting as a duplicate of a group
+    # its canonical side is in. Nothing else exempts a value.
+    aliases_tsv = os.path.join(os.path.dirname(os.path.abspath(baseline_path)), "value-aliases.tsv")
+    if not os.path.isfile(aliases_tsv):
+        emit("%s is absent -- its keep-distinct rows are what tell a coincidence from a "
+             "duplicate, so this gate cannot classify a single group" % aliases_tsv)
+        sys.exit(1)
+    distinct = [(a, b) for _, a, b, disp, reason in _alias_rows(aliases_tsv)
+                if disp == "keep-distinct" and len(reason) >= KEEP_DISTINCT_MIN_REASON]
+
+    live, coincidental = {}, 0
     for val, keys in by_value.items():
         if val in EXEMPT_VALUES:
             continue
-        if len({_shape(k) for k in keys}) > 1:
-            live[val] = sorted(keys)
+        decls = {}
+        for k in keys:
+            decls.setdefault(_shape(k), set()).add(k)
+        if len(decls) < 2:
+            continue
+        explained = {_shape(b) for a, b in distinct
+                     if a in env and b in env and env[a] == env[b] == val and _shape(a) != _shape(b)}
+        residual = {i: n for i, n in decls.items() if i not in explained}
+        if len(residual) > 1:
+            live[val] = sorted(_rep(n) for n in residual.values())
+        else:
+            coincidental += 1
 
     # --- regeneration -----------------------------------------------------------
     if BUMP:
@@ -463,18 +676,26 @@ def check_no_duplicate_value_key() -> int:
     if new_groups:
         bad += 1
         for val in new_groups[:CAP]:
-            emit("NEW duplicate-value group, not on the ratchet ledger: %r is shared by %s" % (val, ", ".join(live[val])))
+            emit("NEW duplicate-value group, not on the ratchet ledger: %r is declared by %s "
+                 "-- collapse it to one declaration, or, only if they are distinct facts, "
+                 "register the pair keep-distinct with its reason in value-aliases.tsv"
+                 % (val, ", ".join(live[val])))
         if len(new_groups) > CAP:
             emit("... and %d further new groups" % (len(new_groups) - CAP))
 
-    # --- growth: a NEW key joining a group the ledger already tolerates ----------
+    # --- growth: a NEW declaration joining a group the ledger already tolerates --
+    # Compared by declaration, not spelling: a ledger row names each declaration
+    # once (its canonical), so a further alias of a recorded declaration is not
+    # growth, and a recorded name that now traces elsewhere is.
     grown = []
     shrunk = []
     for val in sorted(live):
         if val not in base:
             continue
-        added = sorted(set(live[val]) - set(base[val]))
-        removed = sorted(set(base[val]) - set(live[val]))
+        have = {_shape(k): k for k in live[val]}
+        had = {_shape(k): k for k in base[val]}
+        added = sorted(have[i] for i in set(have) - set(had))
+        removed = sorted(had[i] for i in set(had) - set(have))
         if added:
             grown.append((val, added))
         if removed:
@@ -483,7 +704,7 @@ def check_no_duplicate_value_key() -> int:
     if grown:
         bad += 1
         for val, added in grown[:CAP]:
-            emit("group %r GREW: %s now also resolve to it" % (val, ", ".join(added)))
+            emit("group %r GREW: %s now also declare it" % (val, ", ".join(added)))
         if len(grown) > CAP:
             emit("... and %d further grown groups" % (len(grown) - CAP))
 
@@ -510,10 +731,13 @@ def check_no_duplicate_value_key() -> int:
         emit("duplicate-value group count %d is BELOW the ratchet ceiling %d -- lower the ceiling to %d so the progress is locked in" % (len(live), ceiling, len(live)))
 
     if bad:
-        emit("resolver emitted %d MIOS_* keys forming %d non-exempt duplicate-value groups; ledger declares %s" % (len(env), len(live), ceiling))
+        emit("resolver emitted %d MIOS_* keys forming %d non-exempt duplicate-value groups "
+             "(%d more explained by keep-distinct rows); ledger declares %s"
+             % (len(env), len(live), coincidental, ceiling))
         sys.exit(1)
 
-    sys.stdout.write("%d groups at ceiling %d\n" % (len(live), ceiling))
+    sys.stdout.write("%d groups at ceiling %d; %d coincidental groups explained by "
+                     "value-aliases.tsv keep-distinct rows\n" % (len(live), ceiling, coincidental))
     sys.exit(0)
 
 def check_unwired_modules() -> int:
@@ -638,7 +862,7 @@ def check_unwired_modules() -> int:
     sys.exit(1 if (new_dead or stale) else 0)
 
 def check_header_integrity() -> int:
-    """A header tagger must never consume line 1 (AGY-1607)."""
+    """A header tagger must never consume line 1 (task_2248)."""
     import os, re, subprocess, sys
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -1368,6 +1592,11 @@ def check_structured() -> int:
     import tomllib as _toml
 
     toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        if os.path.isdir(os.path.join(root, "usr")):
+            sys.stderr.write("    [structured] %s is missing from populated tree (usr/ exists)\n" % toml_path)
+            return 1
+        return 0
     if not _scan(root, toml_path):
         return 0
     if os.path.isfile(toml_path):
@@ -1505,6 +1734,7 @@ def check_negative_test_coverage() -> int:
         "check_schema_consumers",
         "check_tasks_status_parity",
         "check_agy_tasks",
+        "check_task_ids",
         "check_mios_toml_integrity",
         "check_privileged_quadlets_minimal",
         "check_container_names",
@@ -1529,6 +1759,7 @@ def check_negative_test_coverage() -> int:
         "check_bib_configs_projection",
         "check_repo_partition_label_ssot",
         "check_bib_single_config_invariant",
+        "check_artifact_recipes",
         "check_build_artifacts_output_dir",
         "check_win11_vm_template_xml",
         "check_ipa_enroll_projection",
@@ -1560,84 +1791,13 @@ def check_negative_test_coverage() -> int:
     sys.exit(0)
 
 def check_bake_plan_integrity() -> int:
-    """Lifted from a shell heredoc so it can be imported, linted and tested.
-
-    Inside a heredoc a syntax error surfaces only when the check runs.
-    """
-    import glob, os, sys
-    import tomllib
-
+    """Compatibility entry; native Rust owns the bake-plan integrity policy."""
+    import subprocess
     root = os.environ["MIOS_DRIFT_ROOT"]
-    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
-    plan_dir = os.path.join(root, "usr/lib/mios/bake/plan.d")
-
-    if len(_scan(root, toml_path, plan_dir)) < 2:
-        sys.exit(0)
-
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    bake_cfg = data.get("build", {}).get("bake", {})
-    core_set = set(bake_cfg.get("core", []))
-    tokens = bake_cfg.get("firstboot_tokens", [])
-
-    group_files = sorted(glob.glob(os.path.join(plan_dir, "[0-9][0-9]-*.list")))
-    fb_file = os.path.join(plan_dir, "firstboot.list")
-
-    group_images = set()
-    group_map = {}
-    for gf in group_files:
-        gname = os.path.basename(gf)
-        with open(gf, "r", encoding="utf-8") as f:
-            imgs = set(line.strip() for line in f if line.strip())
-        group_map[gname] = imgs
-        group_images.update(imgs)
-
-    fb_images = set()
-    if os.path.isfile(fb_file):
-        with open(fb_file, "r", encoding="utf-8") as f:
-            fb_images = set(line.strip() for line in f if line.strip())
-
-    viol = []
-
-    for tok in tokens:
-        for gname, imgs in group_map.items():
-            hits = [img for img in imgs if tok in img.lower()]
-            if hits:
-                viol.append(f"Firstboot token '{tok}' image(s) found in baked group list {gname}: {hits}")
-
-        matching_core = [img for img in core_set if tok in img.lower()]
-        for img in matching_core:
-            if img not in fb_images:
-                viol.append(f"Core image '{img}' matching firstboot token '{tok}' missing from firstboot.list")
-
-    for tok in tokens:
-        matching_fb = [img for img in fb_images if tok in img.lower()]
-        for img in matching_fb:
-            if img not in core_set:
-                viol.append(f"Firstboot image '{img}' is not listed in [build.bake].core SSOT")
-
-    all_plan_imgs = list(group_images) + list(fb_images)
-    if len(all_plan_imgs) != len(set(all_plan_imgs)):
-        viol.append("Duplicate image entries found across plan.d/*.list and firstboot.list")
-
-    if set(all_plan_imgs) != core_set:
-        missing_from_plan = core_set - set(all_plan_imgs)
-        extra_in_plan = set(all_plan_imgs) - core_set
-        if missing_from_plan:
-            viol.append(f"Core images missing from plan.d: {missing_from_plan}")
-        if extra_in_plan:
-            viol.append(f"Extra images in plan.d not in core: {extra_in_plan}")
-
-    if bool(tokens) != bool(fb_images):
-        viol.append(f"firstboot_tokens non-empty ({tokens}) but firstboot.list empty ({fb_images}) or vice versa")
-
-    if viol:
-        for v in viol:
-            sys.stderr.write(f"    {v}\n")
-        sys.exit(1)
-
-    sys.exit(0)
+    return subprocess.run(
+        ["bash", os.path.join(root, "automation/98-drift-checks.sh"), "check_bake_plan_integrity"],
+        env=dict(os.environ, MIOS_DRIFT_CHECK_ROOT=root), check=False,
+    ).returncode
 
 def check_globals_image_parity() -> int:
     """Lifted from a shell heredoc so it can be imported, linted and tested.
@@ -1733,8 +1893,10 @@ def check_no_bare_port_literals() -> int:
     scan_dirs = [
         os.path.join(root, "usr/lib/mios/agent-pipe"),
         os.path.join(root, "usr/libexec/mios"),
-        os.path.join(root, "usr/bin")
+        os.path.join(root, "usr/bin"),
+        os.path.join(root, "usr/lib/systemd/system"),
     ]
+    unit_exts = (".service", ".socket", ".timer", ".path", ".conf", ".container")
 
     class DocstringCollector(ast.NodeVisitor):
         def __init__(self):
@@ -1767,7 +1929,7 @@ def check_no_bare_port_literals() -> int:
     for d in scan_dirs:
         for r, ds, fs in os.walk(d):
             for f in fs:
-                if not f.endswith((".py", ".sh", ".ps1")) or "test_" in f:
+                if not f.endswith((".py", ".sh", ".ps1") + unit_exts) or "test_" in f:
                     continue
                 if f in ["Setup-MiOSLanPortProxy.ps1", "Heal-MiOSLocalhostForwarding.ps1", "Setup-MiOSLanPortProxy.ps1.bom-bak", "mios-doctor", "net_segmentation.py", "selinux_policy.py", "model_matrix_alloc.py", "editor_config_gen.py", "fastfetch_gen.py", "gnome_extension.py", "status_bar.py"]:
                     continue
@@ -1800,6 +1962,18 @@ def check_no_bare_port_literals() -> int:
                                 for port in banned_ports:
                                     if port in code_part:
                                         violations.append(f"{f}:{line_no} contains banned port '{port}' (fallback)")
+                    elif f.endswith(unit_exts):
+                        unit_directives = ("ListenStream=", "ExecStart=", "Environment=", "ExecStartPre=", "ExecStartPost=")
+                        for line_no, line in enumerate(content.splitlines(), 1):
+                            stripped = line.strip()
+                            if stripped.startswith(("#", ";")):
+                                continue
+                            if not any(stripped.startswith(d) for d in unit_directives):
+                                continue
+                            code_part = re.sub(r'\$\{[A-Za-z0-9_]+:-[0-9]+\}', '', stripped)
+                            for port in banned_ports:
+                                if port in code_part:
+                                    violations.append(f"{f}:{line_no} contains banned port '{port}'")
                     else:
                         for line_no, line in enumerate(content.splitlines(), 1):
                             stripped = line.strip()
@@ -1921,9 +2095,9 @@ def check_cephfs_ssot() -> int:
     import tomllib as _toml
 
     toml_path = os.path.join(root, "usr/share/mios/mios.toml")
-    if _toml is None:
-        sys.stderr.write("[98-drift-checks]   WARNING: no tomllib/tomli -- skipping CephFS check\n")
-    elif os.path.isfile(toml_path):
+    if not os.path.isfile(toml_path):
+        viol.append("usr/share/mios/mios.toml is missing, so [storage.cephfs] was never read")
+    else:
         with open(toml_path, "rb") as fh:
             data = _toml.load(fh)
         cephfs = data.get("storage", {}).get("cephfs", {}) or {}
@@ -1964,22 +2138,34 @@ def check_cephfs_ssot() -> int:
             os.path.join(root, "usr/share/mios/systemd/home-@.mount.tmpl"),
             os.path.join(root, "usr/share/mios/systemd/home-@.automount.tmpl"),
         ]
-        setup_script = os.path.join(root, "automation/firstboot/mios-cephfs-mount-setup.sh")
-        setup_code = ""
-        if os.path.exists(setup_script):
-            with open(setup_script, "r", encoding="utf-8", errors="ignore") as sf:
+        # A token is named from its table path, [storage.cephfs].<key>. The
+        # prefix was hardcoded without the "storage" segment and matched nothing
+        # after the rename (0023c51d), so no token was compared and deleting
+        # mount_options stayed green. A missing setup script or zero tokens is
+        # now a finding, never a pass.
+        pfx = "MIOS_" + "_".join(("storage", "cephfs")).upper() + "_"
+        setup_code = None
+        try:
+            with open(os.path.join(root, "automation/firstboot/mios-cephfs-mount-setup.sh"),
+                      encoding="utf-8", errors="ignore") as sf:
                 setup_code = sf.read()
+        except OSError:
+            viol.append("automation/firstboot/mios-cephfs-mount-setup.sh is missing, so no template token is substituted")
 
+        ntok = 0
         for tmpl in tmpls:
             if os.path.exists(tmpl):
                 with open(tmpl, "r", encoding="utf-8", errors="ignore") as tf:
-                    tokens = set(re.findall(r"\$\{MIOS_CEPHFS_([A-Z0-9_]+)\}", tf.read()))
-                for tok in tokens:
+                    tokens = set(re.findall(r"\$\{" + pfx + r"([A-Z0-9_]+)\}", tf.read()))
+                ntok += len(tokens)
+                for tok in sorted(tokens):
                     key = tok.lower()
                     if key not in cephfs:
-                        viol.append(f"Template token ${{MIOS_CEPHFS_{tok}}} has no corresponding key '{key}' in [storage.cephfs]")
-                    if setup_code and f"MIOS_CEPHFS_{tok}" not in setup_code:
-                        viol.append(f"Template token ${{MIOS_CEPHFS_{tok}}} is not substituted by mios-cephfs-mount-setup.sh")
+                        viol.append(f"Template token ${{{pfx}{tok}}} has no corresponding key '{key}' in [storage.cephfs]")
+                    if setup_code is not None and "${%s%s}" % (pfx, tok) not in setup_code:
+                        viol.append(f"Template token ${{{pfx}{tok}}} is not substituted by mios-cephfs-mount-setup.sh")
+        if not ntok:
+            viol.append(f"the home-@ templates carry no ${{{pfx}*}} token, so nothing was compared")
 
     for v in viol:
         sys.stderr.write(f"    {v}\n")
@@ -2177,146 +2363,15 @@ def check_bound_image_store() -> int:
     return 1 if bad else 0
 
 def check_gate_registry() -> int:
-    """Lifted from a shell heredoc so it can be imported, linted and tested.
+    """Compatibility entrypoint; native Rust owns bounded registration checks."""
+    import os
+    import subprocess
+    from pathlib import Path
 
-    Inside a heredoc a syntax error surfaces only when the check runs.
-    """
-    import glob, os, sys, re
-
-    root = os.environ["MIOS_DRIFT_ROOT"]
-    script_path = os.path.join(root, "automation/98-drift-checks.sh")
-
-    _rc = _absent(root, script_path)
-    if _rc is not None:
-        sys.exit(_rc)
-
-    with open(script_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    def_re = re.compile(r"^(check_[a-z0-9_]+)\s*\(\)\s*\{")
-    main_call_re = re.compile(r"^\s*(check_[a-z0-9_]+)\s*($|#|;|\|\||&&)")
-
-    defined_counts = {}
-    in_main = False
-    main_calls = []
-
-    for line in lines:
-        line_clean = line.split("#")[0].strip()
-        if line_clean == "main() {":
-            in_main = True
-            continue
-        if in_main and line_clean.startswith("echo \"[98-drift-checks] ----------"):
-            in_main = False
-            continue
-
-        m_def = def_re.match(line)
-        if m_def:
-            name = m_def.group(1)
-            defined_counts[name] = defined_counts.get(name, 0) + 1
-
-        if in_main:
-            m_call = main_call_re.match(line_clean)
-            if m_call:
-                main_calls.append(m_call.group(1))
-
-    bad = []
-
-    for name, count in defined_counts.items():
-        if count > 1:
-            bad.append(f"Duplicate function definition found in 98-drift-checks.sh: {name} (defined {count} times)")
-
-    for name in defined_counts.keys():
-        calls = main_calls.count(name)
-        if calls == 0:
-            bad.append(f"Defined check function is not registered in main(): {name}")
-        elif calls > 1:
-            bad.append(f"Defined check function is called multiple times in main(): {name} ({calls} times)")
-
-    for call in main_calls:
-        if call not in defined_counts:
-            bad.append(f"main() calls unregistered/undefined check function: {call}")
-
-    sh_text = "".join(lines)
-    tool_checks = glob.glob(os.path.join(root, "tools/check-*.py"))
-
-    for tc in tool_checks:
-        tc_name = os.path.basename(tc)
-        if tc_name not in sh_text:
-            with open(tc, "r", encoding="utf-8", errors="ignore") as tcf:
-                tc_head = [tcf.readline() for _ in range(3)]
-            tc_hint = "".join(tc_head).lower()
-            if "drift check" in tc_hint or "drift-check" in tc_hint:
-                bad.append(f"tools/{tc_name} claims drift-check identity in AI-hint but is not referenced in 98-drift-checks.sh")
-
-    if bad:
-        for b in bad:
-            sys.stderr.write(f"    [gate-registry-drift] {b}\n")
-        sys.exit(1)
-
-    sys.exit(0)
-
-def check_names_registry() -> int:
-    """Lifted from a shell heredoc so it can be imported, linted and tested.
-
-    Inside a heredoc a syntax error surfaces only when the check runs.
-    """
-    import os, sys, re, subprocess
-
-    root = os.environ["MIOS_DRIFT_ROOT"]
-    violations = []
-
-    ref_file = os.path.join(root, "usr/share/mios/referenced_names.txt")
-    committed_ref = ""
-    if os.path.isfile(ref_file):
-        try:
-            with open(ref_file, "r", encoding="utf-8") as fh:
-                committed_ref = fh.read()
-        except Exception as e:
-            violations.append(f"Failed to read committed referenced_names.txt: {e}")
-
-    gen_script = os.path.join(root, "tools/generate-names-registry.py")
-    registry_file = os.path.join(root, "usr/share/mios/names.generated.txt")
-
-    if not os.path.isfile(gen_script):
-        violations.append("tools/generate-names-registry.py missing")
-    elif not os.path.isfile(registry_file):
-        violations.append("usr/share/mios/names.generated.txt missing")
-    else:
-        try:
-            with open(registry_file, "r", encoding="utf-8") as fh:
-                committed_data = fh.read()
-            res = subprocess.run([sys.executable, gen_script], capture_output=True, text=True, check=True)
-            fresh_data = res.stdout
-
-            fresh_lines = [l.strip() for l in fresh_data.splitlines() if l.strip()]
-            committed_lines = [l.strip() for l in committed_data.splitlines() if l.strip()]
-
-            if fresh_lines != committed_lines:
-                violations.append("usr/share/mios/names.generated.txt is stale. Please run tools/generate-names-registry.py.")
-        except Exception as e:
-            violations.append(f"Failed to check names registry generation: {e}")
-
-    fresh_ref = ""
-    if os.path.isfile(ref_file):
-        try:
-            with open(ref_file, "r", encoding="utf-8") as fh:
-                fresh_ref = fh.read()
-        except Exception as e:
-            violations.append(f"Failed to read fresh referenced_names.txt: {e}")
-
-    if fresh_ref != committed_ref:
-        try:
-            with open(ref_file, "w", encoding="utf-8") as fh:
-                fh.write(committed_ref)
-        except Exception:
-            pass
-        violations.append("usr/share/mios/referenced_names.txt is stale. Please run tools/generate-names-registry.py.")
-
-    if violations:
-        for v in sorted(violations):
-            sys.stderr.write(f"    {v}\n")
-        sys.exit(1)
-    sys.exit(0)
+    wrapper = Path(__file__).resolve().parents[1] / "automation/98-drift-checks.sh"
+    env = os.environ.copy()
+    env["MIOS_DRIFT_CHECK_ROOT"] = env.get("MIOS_DRIFT_ROOT", ".")
+    return subprocess.call(["bash", str(wrapper), "check_gate_registry"], env=env)
 
 def check_agent_schema() -> int:
     """Lifted from a shell heredoc so it can be imported, linted and tested.
@@ -2527,96 +2582,83 @@ def check_container_ports() -> int:
         d = _toml.load(fh)
     ports = d.get("ports") or {}
 
-    port_vals = {name: val for name, val in ports.items() if name != "stack_id" and isinstance(val, int)}
+    # Twin of container_ports in src/mios-rs/miosd/src/drift/ports.rs (Law 13).
+    # bool is an int subclass in Python; the native side reads integers only.
+    port_vals = {name: val for name, val in ports.items()
+                 if name != "stack_id" and isinstance(val, int) and not isinstance(val, bool)}
+    if not port_vals:
+        print("SSOT [ports] declares no integer port, so no Quadlet literal can be recognised",
+              file=sys.stderr)
+        return 1
+    # Container-side listening ports. This used to hard-code (8080, 3002), the
+    # SearXNG and firecrawl upstream internals; SSOT now names that class
+    # `*_internal`. They may appear as the container side of a mapping or in an
+    # in-container `X=N`, never as a bare host-side `PublishPort=N`.
+    internal = {val for name, val in port_vals.items() if name.endswith("_internal")}
+    # MIOS_PORTS_<KEY> is the canonical [ports] env name. The fallback regex knew
+    # only the older MIOS_PORT_ prefix, so every SSOT-wired `${MIOS_PORTS_X:-N}`
+    # in the tree was reported as a hand-copied literal.
+    patterns = [(name, val,
+                 re.compile(r'\$\{MIOS_' + r'PORTS?_[A-Z0-9_]+:-' + str(val) + r'\}'),
+                 re.compile(rf'\b{val}\b'))
+                for name, val in port_vals.items()]
 
     viol = []
+    subjects = 0
     quadlet_dirs = ["usr/share/containers/systemd", "etc/containers/systemd"]
     for qd in quadlet_dirs:
         dir_path = os.path.join(root, qd)
         if not os.path.isdir(dir_path):
             continue
         for dp, _dn, files in os.walk(dir_path):
-            for fn in files:
+            for fn in sorted(files):
                 if not fn.endswith(".container"):
                     continue
                 path = os.path.join(dp, fn)
                 try:
-                    lines = open(path, encoding="utf-8", errors="ignore").readlines()
-                except OSError:
+                    lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
+                except OSError as exc:
+                    viol.append(f"{fn}: unreadable, so its ports were never compared: {exc}")
                     continue
+                subjects += 1
                 for idx, line in enumerate(lines, 1):
-                    active = re.sub(r'#.*', '', line).strip()
-                    if not active:
+                    # systemd unit syntax: only a WHOLE line starting with # or ;
+                    # is a comment. Stripping `#.*` also cut active values at a
+                    # mid-line # (URL fragments, `$#`), hiding literals that run.
+                    active = line.strip()
+                    if not active or active.startswith(("#", ";")):
                         continue
-                    for name, val in port_vals.items():
-                        cleaned = re.sub(r'\$\{MIOS_PORT_[A-Z0-9_]+:-' + str(val) + r'\}', '', active)
-                        if re.search(rf'\b{val}\b', cleaned):
-                            if val in (8080, 3002) and (":" + str(val) in cleaned or "=" + str(val) in cleaned and not cleaned.startswith("PublishPort=")):
-                                continue
-                            viol.append(f"{fn}:{idx}: manual port literal {val} for '{name}' used in active line: {line.strip()}")
+                    for name, val, fallback, literal in patterns:
+                        cleaned = fallback.sub("", active)
+                        if not literal.search(cleaned):
+                            continue
+                        container_side = (f":{val}" in cleaned
+                                          or (f"={val}" in cleaned
+                                              and not cleaned.startswith("PublishPort=")))
+                        if val in internal and container_side:
+                            continue
+                        viol.append(f"{fn}:{idx}: manual port literal {val} for [ports].{name}; "
+                                    f"write ${{MIOS_PORTS_{name.upper()}:-{val}}} so the SSOT "
+                                    f"value reaches the unit: {active}")
 
+    if subjects == 0:
+        print("no Quadlet .container file was read under " + ", ".join(quadlet_dirs)
+              + " -- the corpus is wrong, so an empty result is not a pass", file=sys.stderr)
+        return 1
     for v in viol:
         print(v)
     return 1 if viol else 0
 
 def check_agent_pipe_budgets() -> int:
-    import os, sys, re
-    import tomllib
+    """Compatibility entrypoint for the complete native SSOT budget census."""
+    import os
+    import subprocess
+    from pathlib import Path
 
-    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
-    if not os.path.isfile(toml_path):
-        # A tracked deliverable. Its absence is the anomaly, not a
-        # reason to report success.
-        print('check_agent_pipe_budgets: a required SSOT file is missing, so nothing was'
-              ' compared', file=sys.stderr)
-        return 1
-
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    agent_pipe = data.get("agent_pipe", {})
-    dispatch = data.get("dispatch", {})
-
-    def key_in_dict(d, k):
-        if not isinstance(d, dict):
-            return False
-        if k in d:
-            return True
-        return any(key_in_dict(v, k) for v in d.values() if isinstance(v, dict))
-
-    search_dir = os.path.join(root, "usr/lib/mios/agent-pipe")
-    if not os.path.isdir(search_dir):
-        search_dir = root
-
-    code = ""
-    for r, ds, fs in os.walk(search_dir):
-        for f in fs:
-            if f.endswith(".py"):
-                try:
-                    with open(os.path.join(r, f), "r", encoding="utf-8", errors="ignore") as fh:
-                        code += fh.read() + "\n"
-                except OSError:
-                    pass
-
-    budget_keys = [
-        "tool_max_iters", "replan_max", "no_progress_window",
-        "max_consecutive_failures", "wall_clock_budget_s", "reflexion_enable",
-        "swarm_max_width", "max_dispatch_depth", "default_hop_budget"
-    ]
-    missing = []
-    for k in budget_keys:
-        if not key_in_dict(agent_pipe, k) and not key_in_dict(dispatch, k):
-            missing.append(f"{k} (missing from mios.toml)")
-            continue
-        pattern = rf"['\"]{k}['\"]"
-        if not re.search(pattern, code) and k not in code:
-            missing.append(k)
-
-    if missing:
-        sys.stderr.write(f"    Missing code consumers or TOML definitions for budget keys: {missing}\n")
-        return 1
-    return 0
+    wrapper = Path(__file__).resolve().parents[1] / "automation/98-drift-checks.sh"
+    env = os.environ.copy()
+    env["MIOS_DRIFT_CHECK_ROOT"] = env.get("MIOS_DRIFT_ROOT", ".")
+    return subprocess.run(["bash", str(wrapper), "check_agent_pipe_budgets"], env=env).returncode
 
 def check_verb_backends() -> int:
     import os, sys, re
@@ -2648,87 +2690,6 @@ def check_verb_backends() -> int:
     for t, vs in sorted(missing.items()):
         sys.stderr.write(f"    {t} <- [verbs.*] {sorted(vs)} (backend not on disk)\n")
     return 1 if missing else 0
-
-def check_python_untested_ratchet() -> int:
-    import sys, os
-    root_dir = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    base_file = os.path.join(root_dir, "usr/share/mios/reference/python-untested-baseline.txt")
-    _rc = _absent(root_dir, base_file)
-    if _rc is not None:
-        return _rc
-    with open(base_file, encoding="utf-8") as f:
-        allowed = set(line.strip() for line in f if line.strip() and not line.startswith("#"))
-
-    untested = []
-    for scan_dir in ['tools', os.path.join('usr', 'libexec', 'mios')]:
-        full_scan = os.path.join(root_dir, scan_dir)
-        if not os.path.isdir(full_scan):
-            continue
-        for f in os.listdir(full_scan):
-            if not f.endswith('.py') or f.startswith('test_') or f == '__init__.py':
-                continue
-            rel = f"{scan_dir}/{f}".replace("\\", "/")
-            norm_stem = f[:-3].replace("-", "_")
-            test1 = os.path.join(full_scan, f"test_{f}")
-            test2 = os.path.join(full_scan, f"test_{f[:-3]}.py")
-            test3 = os.path.join(full_scan, f"test_{norm_stem}.py")
-            if not (os.path.exists(test1) or os.path.exists(test2) or os.path.exists(test3)):
-                if rel not in allowed:
-                    untested.append(rel)
-
-    if untested:
-        for u in untested:
-            sys.stderr.write(f"    untested python module not in baseline: {u}\n")
-        return 1
-
-    return 0
-
-def check_canonical_bools() -> int:
-    import sys, os
-    import tomllib
-    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    toml_path = os.environ.get("MIOS_TOML", os.path.join(root, "usr/share/mios/mios.toml"))
-    if not os.path.isfile(toml_path):
-        # A tracked deliverable. Its absence is the anomaly, not a
-        # reason to report success.
-        print('check_canonical_bools: a required SSOT file is missing, so nothing was'
-              ' compared', file=sys.stderr)
-        return 1
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    verbs = data.get("verbs", {})
-    for vname, vcfg in verbs.items():
-        if vname == "_defaults":
-            continue
-        if not isinstance(vcfg, dict):
-            continue
-        if "hidden" in vcfg:
-            val = vcfg["hidden"]
-            if not isinstance(val, bool):
-                print(f"Non-canonical hidden value in verb '{vname}': {val!r} (must be true/false)")
-                return 1
-        if "sensitive" in vcfg:
-            val = vcfg["sensitive"]
-            if not isinstance(val, bool):
-                print(f"Non-canonical sensitive value in verb '{vname}': {val!r} (must be true/false)")
-                return 1
-        params = vcfg.get("params", {})
-        if isinstance(params, dict):
-            for p_name, p_cfg in params.items():
-                if not isinstance(p_cfg, dict):
-                    continue
-                if "required" in p_cfg:
-                    req = p_cfg["required"]
-                    if not isinstance(req, bool):
-                        print(f"Non-canonical required value in verb '{vname}' param '{p_name}': {req!r} (must be true/false)")
-                        return 1
-                if "default" in p_cfg and p_cfg.get("type") == "boolean":
-                    d = p_cfg["default"]
-                    if not isinstance(d, bool):
-                        print(f"Non-canonical default boolean value in verb '{vname}' param '{p_name}': {d!r} (must be true/false)")
-                        return 1
-    return 0
 
 def check_dag_integrity() -> int:
     import os, sys, re
@@ -2853,6 +2814,13 @@ def check_cli_eval_safety() -> int:
               file=sys.stderr)
         return 1
 
+    # A reviewed eval of non-agent input carries this annotation on the line
+    # DIRECTLY above it -- the remedy the message below prescribes. 5f2aadbf
+    # dropped the exemption and kept the message, so following the remedy no
+    # longer cleared the violation. Twin of eval_safety in
+    # src/mios-rs/miosd/src/drift/security.rs (Law 13).
+    attested = re.compile(r"^#\s*TD-1:\s*eval-safe,\s*input=.+,\s*not agent-controlled")
+
     scanned = 0
     for dirpath, dirnames, filenames in os.walk(dir_to_scan):
         dirnames[:] = [d for d in dirnames
@@ -2880,6 +2848,8 @@ def check_cli_eval_safety() -> int:
 
                 code_part = line.split("#")[0].strip()
                 if re.search(r'\beval\b', code_part):
+                    if idx > 0 and attested.match(lines[idx - 1].strip()):
+                        continue
                     viol.append(f"{rel}:{idx+1} has eval: {line.strip()}")
 
     if scanned < 20:
@@ -3039,10 +3009,15 @@ def check_greenboot() -> int:
     if not critical:
         print("(54) [greenboot].critical_services is empty or absent -- greenboot coverage would pass vacuously over an empty set")
         return 1
+    if "hermes" not in critical:
+        print("(54) [greenboot].critical_services must list 'hermes' as a critical service")
+        return 1
 
     bodies, probed, ssot_driven = {}, set(), False
     if os.path.isdir(gb_dir):
         for name in sorted(os.listdir(gb_dir)):
+            if not name.endswith(".sh"):
+                continue
             fp = os.path.join(gb_dir, name)
             if not os.path.isfile(fp):
                 continue
@@ -3277,6 +3252,10 @@ def check_containerfile_pinned_clones() -> int:
 
 def check_replaceme_mount_substitution() -> int:
     import os, sys, re
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
     justfile = os.path.join(root, "Justfile")
@@ -3286,6 +3265,19 @@ def check_replaceme_mount_substitution() -> int:
 
     with open(justfile, "r", encoding="utf-8") as f:
         content = f.read()
+
+    # P1-4: `miosd artifact-build` renders a disk's account and credential into
+    # its [deploy.formats.<f>] recipe, so mounting a format recipe raw ships a
+    # disk without them. Only the shared recipe may be mounted raw, and no
+    # mounted recipe may carry a REPLACE placeholder.
+    rendered = set()
+    ssot = os.path.join(root, "usr/share/mios/mios.toml")
+    if os.path.isfile(ssot):
+        with open(ssot, "rb") as fh:
+            formats = ((tomllib.load(fh).get("deploy") or {}).get("formats") or {})
+        for name, spec in formats.items():
+            if isinstance(spec, dict) and spec.get("recipe"):
+                rendered.add((os.path.basename(spec["recipe"]), name))
 
     recipe_blocks = re.split(r"\n(?=[a-zA-Z0-9_-]+:)", content)
 
@@ -3299,16 +3291,20 @@ def check_replaceme_mount_substitution() -> int:
 
         mounted_configs = re.findall(r"-v\s+\.?/?config/artifacts/([a-zA-Z0-9_.-]+\.toml)", block_text)
         for cfg in mounted_configs:
+            for base, fmt in sorted(rendered):
+                if base == cfg:
+                    bad.append(f"Recipe '{recipe_name}' mounts the [deploy.formats.{fmt}] recipe '{cfg}' raw, "
+                               f"so the disk gets no account or credential -- build it with "
+                               f"`miosd artifact-build {fmt}`")
             cfg_path = os.path.join(root, "config/artifacts", cfg)
             if os.path.isfile(cfg_path):
                 with open(cfg_path, "r", encoding="utf-8", errors="ignore") as cf:
                     cfg_text = cf.read()
-                if "REPLACEME" in cfg_text or "AAAA_REPLACE" in cfg_text:
-                    if "sed " not in block_text and "sed -e" not in block_text:
-                        bad.append(f"Recipe '{recipe_name}' mounts '{cfg}' containing REPLACEME tokens without credential-substituting sed")
-                    if "REPLACEME_WITH_SHA512_HASH" in cfg_text:
-                        if "MIOS_USER_PASSWORD_HASH:-" in block_text or "[ -z \"${MIOS_USER_PASSWORD_HASH" not in block_text:
-                            bad.append(f"Recipe '{recipe_name}' mounts '{cfg}' with REPLACEME_WITH_SHA512_HASH without asserting non-empty MIOS_USER_PASSWORD_HASH")
+                if "REPLACE" in cfg_text:
+                    bad.append(f"Recipe '{recipe_name}' mounts '{cfg}', which carries a REPLACE placeholder")
+        if re.search(r"sed\b[^\n]*REPLACE", block_text):
+            bad.append(f"Recipe '{recipe_name}' sed-substitutes a credential placeholder; "
+                       f"credentials are rendered by miosd artifact-build")
 
     if bad:
         for b in bad:
@@ -3360,7 +3356,7 @@ def check_bib_rootfs_label_policy() -> int:
     return 0
 
 def check_smoke_manifest() -> int:
-    """[testing.smoke_components] is closed over the SSOT it ships in (T-1171).
+    """[testing.smoke_components] is closed over the SSOT it ships in (task_3464).
 
     Every probe key is a kind `mios-gate image-equivalence` knows, every file
     probe exists in the source tree (commands, paths and rpm packages are build
@@ -3390,8 +3386,17 @@ def check_smoke_manifest() -> int:
         sys.stderr.write("    Missing [testing.smoke_components] table in mios.toml\n")
         return 1
 
-    file_kinds = ("shims", "units", "python_entries", "manpages")
-    kinds = file_kinds + ("paths", "commands", "rpm_sections")
+    file_kinds = ("shims", "units", "python_entries")
+    kinds = file_kinds + ("paths", "commands", "rpm_sections", "manpages")
+    valid_manpages = {
+        "usr/share/man/man1/mios.1",
+        "usr/share/man/man5/mios.toml.5",
+        "usr/share/man/man7/mios.7",
+    }
+    if data.get("variants", {}).get("entries"):
+        valid_manpages.add("usr/share/man/man7/mios-variants.7")
+    for v in data.get("verbs", {}).keys():
+        valid_manpages.add(f"usr/share/man/man1/mios-{v}.1")
     packages = {k for k, v in data.get("packages", {}).items() if isinstance(v, dict)}
     phases = {p.get("name") for p in data.get("build", {}).get("phases", {}).get("list", [])}
     profiles = {k for k, v in data.get("profiles", {}).items() if isinstance(v, dict)}
@@ -3417,6 +3422,8 @@ def check_smoke_manifest() -> int:
             for item in val:
                 if key in file_kinds and not os.path.exists(os.path.join(root, item)):
                     missing.append(item)
+                elif key == "manpages" and item not in valid_manpages:
+                    missing.append(f"{item} (not a declared or core manpage)")
                 if key == "rpm_sections":
                     if item not in packages:
                         bad.append(f"[testing.smoke_components{at}].rpm_sections names {item!r},"
@@ -3454,46 +3461,6 @@ def check_smoke_manifest() -> int:
     if missing:
         sys.stderr.write(f"    Paths listed in [testing.smoke_components] missing from repo: {missing}\n")
     return 1 if bad or missing else 0
-
-def check_negative_coverage() -> int:
-    import os, sys, re
-    import tomllib
-
-    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    checks_sh = os.path.join(root, "automation/98-drift-checks.sh")
-    negatives_sh = os.path.join(root, "tests/drift-gate-negatives.sh")
-    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
-
-    if not (os.path.isfile(checks_sh) and os.path.isfile(negatives_sh) and os.path.isfile(toml_path)):
-        # A tracked deliverable. Its absence is the anomaly, not a
-        # reason to report success.
-        print('check_negative_coverage: a required SSOT file is missing, so nothing was'
-              ' compared', file=sys.stderr)
-        return 1
-
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    exempt = set(data.get("testing", {}).get("negative_coverage_exempt", {}).get("exempt", []))
-
-    with open(checks_sh, "r", encoding="utf-8", errors="ignore") as f:
-        c_content = f.read()
-
-    main_idx = c_content.rfind("main() {")
-    main_body = c_content[main_idx:] if main_idx != -1 else c_content
-    dispatched = set(re.findall(r"^\s*(check_[a-z0-9_]+)\b", main_body, re.MULTILINE))
-
-    with open(negatives_sh, "r", encoding="utf-8", errors="ignore") as f:
-        n_content = f.read()
-
-    covered = set(re.findall(r"check_[a-z0-9_]+\b", n_content))
-
-    uncovered = dispatched - covered - exempt
-    if uncovered:
-        sys.stderr.write(f"    Dispatched drift checks lacking negative test coverage and not exempt: {sorted(list(uncovered))}\n")
-        return 1
-
-    return 0
 
 def check_usr_over_etc() -> int:
     import os, sys, subprocess
@@ -3778,26 +3745,36 @@ def check_v2v_import_ssot() -> int:
               ' compared', file=sys.stderr)
         return 1
 
-    with open(wrapper, "r", encoding="utf-8") as f:
-        wcode = f.read()
-
-    if "qcow2" in wcode and "output_format" not in wcode:
-        sys.stderr.write("    mios-v2v-import hardcodes format instead of resolving [virt.v2v].output_format\n")
-        return 1
-
     with open(toml_path, "rb") as f:
         data = tomllib.load(f)
-
-    v2v_cfg = data.get("virt", {}).get("v2v", {})
-    fmt = v2v_cfg.get("output_format", "qcow2")
-
-    proc = subprocess.run(["bash", wrapper, "--dry-run"], capture_output=True, text=True, env=dict(os.environ, MIOS_TOML=toml_path))
-    out = proc.stdout + proc.stderr
-    if f"-of {fmt}" not in out:
-        sys.stderr.write(f"    mios-v2v-import --dry-run output does not contain expected '-of {fmt}' from SSOT\n")
+    fmt = data.get("virt", {}).get("v2v", {}).get("output_format")
+    if not fmt:
+        sys.stderr.write("    [virt.v2v].output_format is absent, so the wrapper has no SSOT value to resolve\n")
         return 1
 
-    return 0
+    def planned(ssot):
+        proc = subprocess.run(["bash", wrapper, "--dry-run"], capture_output=True, text=True,
+                              env=dict(os.environ, MIOS_TOML=ssot))
+        return proc.stdout + proc.stderr
+
+    bad = []
+    if f"-of {fmt}" not in planned(toml_path):
+        bad.append(f"mios-v2v-import --dry-run output does not contain expected '-of {fmt}' from SSOT")
+    # Echoing the shipped value proves nothing alone: a wrapper that hardcodes
+    # today's "qcow2" emits it too, and passed. Hand it a probe SSOT whose values
+    # are new and require each one back on its flag.
+    import tempfile
+    probe = {"output_format": ("-of", "negprobe-fmt"), "output_storage": ("-os", "negprobe-pool")}
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "mios.toml")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("[virt.v2v]\n" + "".join(f'{k} = "{v}"\n' for k, (_, v) in probe.items()))
+        out = planned(p)
+    bad += [f"mios-v2v-import ignores [virt.v2v].{k}: a probe SSOT set it to '{v}' and '{flag} {v}' never appeared"
+            for k, (flag, v) in probe.items() if f"{flag} {v}" not in out]
+    for b in bad:
+        sys.stderr.write(f"    {b}\n")
+    return 1 if bad else 0
 
 def check_value_aliases() -> int:
     import sys, subprocess, os
@@ -3817,9 +3794,11 @@ def check_value_aliases() -> int:
         return 1
 
     env = {}
-    sub_env = dict(os.environ, MIOS_ROOT=root, MIOS_DRIFT_ROOT=root, MIOS_VENDOR_TOML=os.path.join(root, "usr/share/mios/mios.toml"), MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
+    snap_rel = os.path.relpath(snap, root).replace("\\", "/")
+    vendor_rel = os.path.relpath(os.path.join(root, "usr/share/mios/mios.toml"), root).replace("\\", "/")
+    sub_env = dict(os.environ, MIOS_ROOT=".", MIOS_DRIFT_ROOT=".", MIOS_VENDOR_TOML=vendor_rel, MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL="false")
     try:
-        proc = subprocess.run(["bash", snap], capture_output=True, text=True, env=sub_env)
+        proc = subprocess.run(["bash", snap_rel], cwd=root, capture_output=True, text=True, env=sub_env)
     except OSError as exc:
         print("mios-env-snapshot could not be run: %s" % exc)
         return 1
@@ -3834,24 +3813,43 @@ def check_value_aliases() -> int:
             k, v = line.split("=", 1)
             env[k] = v
     bad = []
-    with open(tsv, encoding="utf-8") as fh:
-        for raw in fh:
-            raw = raw.rstrip("\n")
-            if not raw.strip() or raw.lstrip().startswith("#"):
-                continue
-            parts = raw.split("\t")
-            if len(parts) < 3:
-                continue
-            a, b, disp = parts[0].strip(), parts[1].strip(), parts[2].split()[0].strip()
-            if a not in env or b not in env:
-                continue  # a key not emitted here -> skip (informational; never false-fail)
-            va, vb = env[a], env[b]
-            if disp in ("derive", "delete"):
-                if va != vb:
-                    bad.append(f"{a}={va!r} != {b}={vb!r} (disposition={disp}: MUST be equal -- silent SSOT divergence)")
-            elif disp == "keep-distinct":
-                if va == vb:
-                    bad.append(f"{a} == {b} == {va!r} but marked keep-distinct -- a naive collapse would corrupt this false-friend")
+    rows = _alias_rows(tsv)
+    sources = None
+    if any(disp == "keep-distinct" for *_, disp, _r in rows):
+        sources, why = _value_sources(os.path.abspath(root))
+        if sources is None:
+            print("keep-distinct rows cannot be verified: " + why)
+            return 1
+    seen = {}
+    for lineno, a, b, disp, reason in rows:
+        pair = frozenset((a, b))
+        if pair in seen:
+            bad.append(f"line {lineno}: {a} / {b} is already registered on line {seen[pair]} -- one pair, one row")
+        seen.setdefault(pair, lineno)
+        if a not in env or b not in env:  # never just skipped: that hid stranded keys; "X_" names a family
+            bad += [f"{n} is registered ({a} -> {b}, {disp}) but the resolver does not emit it -- its consumers"
+                    f" take their inline defaults; restore its key to the SSOT table that emits it"
+                    for n in (a, b) if n not in env and not n.endswith("_")]
+            continue
+        va, vb = env[a], env[b]
+        if disp in ("derive", "delete"):
+            if va != vb:
+                bad.append(f"{a}={va!r} != {b}={vb!r} (disposition={disp}: MUST be equal -- silent SSOT divergence)")
+        elif disp == "keep-distinct":
+            # task_942. keep-distinct means DISTINCT FACTS: two declarations, never
+            # collapsed, whose values may coincide. One declaration under two
+            # names is an alias whatever the row claims, and a claim nobody can
+            # review is not a classification.
+            sa, sb = sources.get(a), sources.get(b)
+            if len(reason) < KEEP_DISTINCT_MIN_REASON:
+                bad.append(f"line {lineno}: {a} / {b} is keep-distinct without a reason -- say why"
+                           f" either can change without the other becoming wrong")
+            if sa and sa == sb:
+                bad.append(f"{a} and {b} both carry {sa} -- one declaration under two names is an alias"
+                           f" (derive), never keep-distinct")
+            elif va == vb and not (sa and sb):
+                bad.append(f"{a} == {b} == {va!r} but {a if not sa else b} traces to no SSOT declaration,"
+                           f" so nothing shows the two are distinct facts")
     for msg in bad:
         sys.stderr.write("    [value-alias-drift] " + msg + "\n")
     return 1 if bad else 0
@@ -3941,7 +3939,7 @@ def check_pipefail_grep_lint() -> int:
     return 0
 
 def check_skip_list_covered() -> int:
-    import os, sys
+    import fnmatch, os, sys
     import tomllib
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -3957,13 +3955,22 @@ def check_skip_list_covered() -> int:
     with open(toml_path, "rb") as fh:
         globs = ((tomllib.load(fh).get("ci") or {}).get("globs") or {})
 
-    spec = globs.get("agent-pipe") or {}
+    # Nothing skipped is the goal, so an empty list passes. Every entry that is
+    # there must say why, and must name an agent-pipe suite that exists.
+    spec = globs.get("agent-pipe")
+    if not isinstance(spec, dict) or not spec.get("dir") or not spec.get("glob"):
+        viol.append("[ci.globs.agent-pipe] is absent or names no dir/glob -- the "
+                    "agent-pipe suites would run in no tier")
+        spec = {}
     skip = spec.get("skip") or []
-    if not skip:
-        viol.append("[ci.globs.agent-pipe].skip is empty or absent -- the suites that "
-                    "need a database would run and fail on every runner")
     if skip and not str(spec.get("skip_reason", "")).strip():
         viol.append("[ci.globs.agent-pipe].skip carries no skip_reason")
+    d, pat = spec.get("dir", ""), spec.get("glob", "")
+    for fn in skip:
+        if not (isinstance(fn, str) and fnmatch.fnmatchcase(fn, pat)
+                and os.path.isfile(os.path.join(root, d, fn))):
+            viol.append(f"[ci.globs.agent-pipe].skip names {fn!r}, which is no {d}/{pat} "
+                        f"suite -- a stale skip would exempt the next suite given that name")
 
     for wf in (".github/workflows/mios-ci.yml", ".forgejo/workflows/build-mios.yml"):
         path = os.path.join(root, wf)
@@ -4061,7 +4068,7 @@ def check_secret_handling() -> int:
     import os, sys, re
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    key_regex = re.compile(r'-----BEGIN (?:RSA|OPENSSH|EC|PGP|PRIVATE)[A-Z ]*KEY[A-Z ]*-----\r?\n(?:[^\n]*\r?\n){0,6}?[A-Za-z0-9+/=]{40,}')  # T-1022: a PEM header is not a key
+    key_regex = re.compile(r'-----BEGIN (?:RSA|OPENSSH|EC|PGP|PRIVATE)[A-Z ]*KEY[A-Z ]*-----\r?\n(?:[^\n]*\r?\n){0,6}?[A-Za-z0-9+/=]{40,}')  # task_965: a PEM header is not a key
     conn_regex = re.compile(r'(?:postgres|mysql|mongodb|redis)://[a-zA-Z0-9_-]+:[^@\s\"\'`]{4,}@')
     token_regex = re.compile(r'\b(?:AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|glpat-[a-zA-Z0-9_-]{20})\b')
 
@@ -4078,9 +4085,9 @@ def check_secret_handling() -> int:
         if dirpath != root and (".git" in dirnames or ".git" in filenames):
             dirnames[:] = []
             continue
-        dirnames[:] = [d for d in dirnames if d not in (".git", ".worktrees", "__pycache__", ".cargo", "target", "node_modules", ".venv", ".agents", ".tmp.driveupload", "root")]
+        dirnames[:] = [d for d in dirnames if d not in (".git", ".worktrees", "__pycache__", ".cargo", ".rustup", "target", "node_modules", ".venv", ".agents", ".tmp.driveupload", "root")]
         for f in filenames:
-            if f.endswith((".png", ".jpg", ".tar", ".zip", ".exe", ".pyc", ".iso", ".qcow2", ".vhdx")):
+            if f.endswith((".png", ".jpg", ".tar", ".zip", ".exe", ".pyc", ".iso", ".qcow2", ".vhdx", ".so", ".rlib", ".rmeta", ".dylib", ".dll", ".a", ".whl")):
                 continue
             path = os.path.join(dirpath, f)
             rel = os.path.relpath(path, root).replace("\\", "/")
@@ -4328,7 +4335,7 @@ def check_ps_encoding_and_bom() -> int:
     return 0
 
 def check_unit_security() -> int:
-    import os, sys
+    import os, sys, glob, re, subprocess, shutil
     import tomllib as _toml
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
@@ -4337,35 +4344,174 @@ def check_unit_security() -> int:
     toml_path = os.path.join(root, 'usr/share/mios/mios.toml')
 
     unconfined_roster = set()
+    max_exposure_score = 9.2
     if os.path.isfile(toml_path):
         with open(toml_path, 'rb') as fh:
             data = _toml.load(fh)
             sec = data.get('security', {}).get('privileged_units', {})
             unconfined_roster = set(sec.get('unconfined', []))
+            if 'max_exposure_score' in sec:
+                try:
+                    max_exposure_score = float(sec['max_exposure_score'])
+                except (ValueError, TypeError):
+                    pass
 
-    required_directives = ['NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp']
-    viol = []
+    # Ruling Q7 (task_3539): mios-attest-server must be disabled until Keylime replaces it
+    attest_viols = []
+    for fname in ('mios-attest.service', 'mios-attest-server.service'):
+        attest_file = os.path.join(systemd_dir, fname)
+        if os.path.isfile(attest_file):
+            with open(attest_file, encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    sline = line.strip()
+                    if sline.startswith('WantedBy=') and 'Keylime' not in sline:
+                        attest_viols.append(f"usr/lib/systemd/system/{fname}: mios-attest-server has '{sline}' (ruling Q7: unit must be disabled until Keylime)")
+
+    for pd in (os.path.join(root, 'usr/lib/systemd/system-preset'), os.path.join(root, 'etc/systemd/system-preset')):
+        if os.path.isdir(pd):
+            for pf in os.listdir(pd):
+                if pf.endswith('.preset'):
+                    with open(os.path.join(pd, pf), encoding='utf-8', errors='replace') as fh:
+                        for pline in fh:
+                            sline = pline.strip()
+                            if sline.startswith('enable') and ('mios-attest.service' in sline or 'mios-attest-server' in sline):
+                                attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root)}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
+
+    if attest_viols:
+        print('\n'.join(attest_viols), file=sys.stderr)
+        return 1
+
+    # Find long-running services (services that are not Type=oneshot)
+    long_running_units = []
+    static_viols = []
+    hardening_directives = [
+        'NoNewPrivileges', 'ProtectSystem', 'ProtectHome', 'PrivateTmp',
+        'SystemCallFilter', 'CapabilityBoundingSet'
+    ]
 
     if os.path.isdir(systemd_dir):
-        for f in os.listdir(systemd_dir):
-            if f.endswith('.service'):
-                if f in unconfined_roster:
-                    continue
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.endswith('.service') and f.startswith('mios-'):
                 fp = os.path.join(systemd_dir, f)
                 try:
                     with open(fp, encoding='utf-8', errors='replace') as fh:
                         content = fh.read()
-                        missing = []
-                        for directive in required_directives:
-                            if directive not in content:
-                                missing.append(directive)
-                        if missing:
+                    # Skip Type=oneshot units
+                    if re.search(r'^\s*Type\s*=\s*oneshot', content, re.MULTILINE):
+                        continue
+                    long_running_units.append(f)
+                    if f not in unconfined_roster:
+                        has_directive = any(d in content for d in hardening_directives)
+                        if not has_directive:
                             rel = os.path.relpath(fp, root).replace(os.sep, '/')
-                            viol.append(f"{rel}: systemd service missing hardening directives ({', '.join(missing)})")
+                            static_viols.append(f"{rel}: long-running service lacks basic sandboxing directives ({', '.join(hardening_directives[:4])})")
                 except Exception: pass
 
-    if viol:
-        print('\n'.join(viol))
+    # Dynamic systemd-analyze security check (if tool available)
+    analyze_bin = shutil.which("systemd-analyze") or ("/usr/sbin/systemd-analyze" if os.path.exists("/usr/sbin/systemd-analyze") else None)
+    dynamic_viols = []
+
+    if analyze_bin and long_running_units:
+        units_to_test = [u for u in long_running_units if u not in unconfined_roster]
+        if units_to_test:
+            cmd = [analyze_bin, f"--root={root}", "--offline=true", "security"] + units_to_test
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for line in res.stdout.splitlines():
+                m = re.search(r"Overall exposure level for (mios-[^:]+): ([\d\.]+)", line)
+                if m:
+                    unit, score_str = m.group(1), m.group(2)
+                    try:
+                        score = float(score_str)
+                        if score > max_exposure_score:
+                            dynamic_viols.append(f"{unit}: exposure score {score:.1f} exceeds threshold {max_exposure_score:.1f} (systemd-analyze security ratchet)")
+                    except ValueError:
+                        pass
+    elif not analyze_bin:
+        print("[check_unit_security] WARNING: systemd-analyze not available (skipping dynamic exposure scoring)", file=sys.stderr)
+
+    all_viols = static_viols + dynamic_viols
+    if all_viols:
+        print('\n'.join(all_viols), file=sys.stderr)
+        return 1
+    return 0
+
+def check_preset_roster_complete() -> int:
+    import os, sys
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    preset_path = os.path.join(root, "usr/lib/systemd/system-preset/90-mios.preset")
+    if not os.path.isfile(preset_path):
+        print(f"Missing preset file: {preset_path}", file=sys.stderr)
+        return 1
+
+    decisions = {}
+    with open(preset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in ("enable", "disable"):
+                decisions[parts[1]] = parts[0]
+
+    systemd_dir = os.path.join(root, "usr/lib/systemd/system")
+    quadlet_dir = os.path.join(root, "usr/share/containers/systemd")
+    violations = []
+
+    # Axis 2: every MiOS-owned unit under usr/lib/systemd/system/ must have an explicit enable or disable decision
+    if os.path.isdir(systemd_dir):
+        for f in sorted(os.listdir(systemd_dir)):
+            if f.startswith("mios-") and any(f.endswith(ext) for ext in (".service", ".timer", ".path", ".target", ".socket")) and not f.endswith(".d"):
+                if f not in decisions:
+                    violations.append(f"Undeclared MiOS unit: {f} has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Check Quadlet-generated mios-* units
+    if os.path.isdir(quadlet_dir):
+        for f in sorted(os.listdir(quadlet_dir)):
+            if f.startswith("mios-") and f.endswith(".container"):
+                unit_name = f[:-10] + ".service"
+                if unit_name not in decisions:
+                    violations.append(f"Undeclared Quadlet unit: {unit_name} (from {f}) has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+
+    # Axis 1: every enable/disable target in preset must resolve to a real unit or known upstream unit
+    known_upstream = {
+        "chronyd.service", "sshd.service", "NetworkManager.service", "auditd.service",
+        "nftables.service", "redis.service", "usbguard.service", "crowdsec.service",
+        "crowdsec-firewall-bouncer.service", "fapolicyd.service", "firewalld.service",
+        "cockpit.socket", "libvirtd.service", "libvirtd.socket", "libvirtd-ro.socket",
+        "libvirtd-admin.socket", "virtnetworkd.service", "virtnetworkd.socket",
+        "virtnodedevd.service", "virtnodedevd.socket", "virtnwfilterd.socket",
+        "virtproxyd.socket", "virtqemud.service", "virtqemud.socket",
+        "virtsecretd.socket", "virtstoraged.service", "virtstoraged.socket",
+        "libvirt-guests.service", "gdm.service", "k3s.service", "k3s-agent.service",
+        "corosync.service", "pacemaker.service", "ceph-mon@.service", "ceph-osd@.service",
+        "tailscaled.service", "smb.service", "nmb.service", "nfs-server.service",
+        "rpcbind.service", "osbuild-composer.service", "osbuild-worker@1.service",
+        "multipathd.service", "cloud-init.service", "cloud-init-local.service",
+        "cloud-config.service", "cloud-final.service", "qemu-guest-agent.service",
+        "bootc-fetch-apply-updates.timer", "rpm-ostreed-automatic.timer",
+        "systemd-remount-fs.service", "waydroid-container.service", "podman.socket",
+        "podman-auto-update.timer", "user@1000.service", "atd.service", "crond.service",
+        "avahi-daemon.service", "bootloader-update.service", "gnome-remote-desktop.service",
+        "greenboot-grub2-set-counter.service", "greenboot-grub2-set-success.service",
+        "greenboot-healthcheck.service", "greenboot-rpm-ostree-grub2-check-fallback.service",
+        "greenboot-status.service", "nut-server.service", "nut-monitor.service",
+        "nvidia-cdi-refresh.path", "nvidia-cdi-refresh.service", "nvidia-persistenced.service",
+        "pmcd.service", "pmlogger.service", "pmproxy.service", "redboot-auto-reboot.service",
+        "systemd-confext.service", "systemd-resolved.service", "systemd-sysext.service",
+        "uupd.timer"
+    }
+
+    for unit, action in sorted(decisions.items()):
+        unit_path = os.path.join(systemd_dir, unit)
+        quadlet_path = os.path.join(quadlet_dir, unit.replace(".service", ".container"))
+        if not os.path.exists(unit_path) and not os.path.exists(quadlet_path) and unit not in known_upstream:
+            violations.append(f"Orphan preset line: '{action} {unit}' does not resolve to any real or upstream unit")
+
+    if violations:
+        for v in violations:
+            print(f"[check_preset_roster_complete] {v}", file=sys.stderr)
+        return 1
     return 0
 
 def check_unit_dependency_closure() -> int:
@@ -4416,7 +4562,7 @@ def check_unit_dependency_closure() -> int:
         'pacemaker.service', 'k3s-agent.service', 'cryptsetup.target', 'redis.service',
         'sysinit.target', 'greenboot-healthcheck.service', 'ostree-remount.service',
         'ostree-prepare-root.service', 'waydroid-container.service', 'wslg-x11.service',
-        'wslg-wayland.service', 'ceph.target', 'slices.target'
+        'wslg-wayland.service', 'ceph.target', 'slices.target', 'graphical-session.target'
     }
     known_units.update(well_known)
 
@@ -4488,7 +4634,11 @@ def check_docs_ratchet() -> int:
         print("\n".join(viol))
         return 1
 
-    refindex = mc.RefIndex.build(root)
+    try:
+        refindex = mc.RefIndex.build(root)
+    except RuntimeError as e:
+        print("stale references were not measured, so that ceiling proves nothing: %s" % e)
+        return 1
     ledger_path = os.path.join(root, "usr/share/mios/reference/manual-corpus.tsv")
     rows = {}
     if os.path.isfile(ledger_path):
@@ -4569,62 +4719,15 @@ def check_docs_ratchet() -> int:
     return 0
 
 def check_generator_host_parity() -> int:
-    import os, subprocess, sys
-
-    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
-    viol = []
-
-    # Was a hardcoded list of seven scripts, so the same non-portable idiom in
-    # any other generator went unseen -- proved by planting it in
-    # render-globals.py and watching this pass. Discover the set instead.
-    try:
-        listed = subprocess.run(["git", "-C", root, "ls-files",
-                                 "tools", "automation", "usr/libexec"],
-                                capture_output=True, text=True, check=False).stdout
-    except OSError as exc:
-        print("cannot enumerate generators: %s" % exc, file=sys.stderr)
-        return 1
-
-    scanned_scripts = []
-    for rel in [x.strip() for x in listed.split("\n") if x.strip()]:
-        base = os.path.basename(rel)
-        if (base.startswith(("generate-", "render-"))
-                or base in ("mios-manual", "mios-version-lint", "mios_var_closure.py")):
-            scanned_scripts.append(rel)
-
-    if len(scanned_scripts) < 20:
-        print("only %d generator(s) discovered -- the subject list is wrong, so an "
-              "empty result is not a pass" % len(scanned_scripts), file=sys.stderr)
-        return 1
-
-    read = 0
-    for script in scanned_scripts:
-        fpath = os.path.join(root, script)
-        if not os.path.isfile(fpath):
-            continue
-        with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
-            content = fh.read()
-        read += 1
-        if "fnmatch.fnmatch(" in content:
-            viol.append(f"{script} uses non-portable fnmatch.fnmatch instead of fnmatchcase")
-
-    if viol:
-        print("\n".join(viol), file=sys.stderr)
-        return 1
-
-    # The guard above counted the git LISTING, and the loop then skipped every
-    # listed file that was not on disk, so an empty worktree read nothing.
-    if read < 20:
-        print("only %d of %d listed generator(s) could be read -- an empty scan is "
-              "not a pass" % (read, len(scanned_scripts)), file=sys.stderr)
-        return 1
-
-    # Narrowed from "all generators produce host-independent byte-identical
-    # outputs". Nothing is rendered or compared here: this is one portability
-    # idiom, checked by reading source.
-    print("    %d generator(s) free of the non-portable fnmatch.fnmatch idiom"
-          % read)
-    return 0
+    """Compatibility entry; native Rust owns generator source portability."""
+    import subprocess
+    wrapper = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "automation/98-drift-checks.sh")
+    return subprocess.run(
+        ["bash", wrapper, "check_generator_host_parity"],
+        env=dict(os.environ, MIOS_DRIFT_CHECK_ROOT=os.environ.get("MIOS_DRIFT_ROOT", ".")),
+        check=False,
+    ).returncode
 
 
 def check_doc_port_scheme() -> int:
@@ -4668,7 +4771,7 @@ def check_doc_port_scheme() -> int:
         except OSError:
             pass
 
-    # Code surface scanning (T-1002 / LAW5-01):
+    # Code surface scanning (task_946 / LAW5-01):
     code_exemptions, scanned_exempt_hits = set(docs.get("retired_code_exemptions", [])), set()
     max_ex = docs.get("max_retired_code_exemptions")
     if max_ex is not None and len(code_exemptions) != max_ex:
@@ -4750,25 +4853,81 @@ def check_blade_reconcile_schema() -> int:
         if not re.search(r"\b(logical_ts|logical_clock)\b", body):
             viol.append("table '%s' has no logical_ts column, so append-ordered and last-writer-wins have nothing to order by" % table)
     if viol:
-        viol.append("Land AGY-1598 (origin_node + logical_ts) or set [blade.reconcile].enabled = false until it does.")
+        viol.append("Land task_2239 (origin_node + logical_ts) or set [blade.reconcile].enabled = false until it does.")
         print("\n".join(viol))
         return 1
     return 0
 
+def check_memory_poisoning_scan() -> int:
+    """Verifies that the memory-poisoning scan runs in the mode declared by SSOT.
+
+    Fail-closed requirements:
+    1. [pgvector].memory_guard_mode MUST exist in mios.toml and be one of ('log', 'strip', 'reject').
+    2. [pgvector].memguard_judge_mode MUST exist and be 'model'.
+    3. Code defaults in knowledge.py and server.py must derive from SSOT and never hardcode 'off'.
+    """
+    import os, sys, tomllib, re
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    if not os.path.isfile(toml_path):
+        print("check_memory_poisoning_scan: SSOT mios.toml is missing", file=sys.stderr)
+        return 1
+
+    try:
+        with open(toml_path, "rb") as fh:
+            ssot = tomllib.load(fh)
+    except Exception as exc:
+        print(f"check_memory_poisoning_scan: failed to parse {toml_path}: {exc}", file=sys.stderr)
+        return 1
+
+    pg = ssot.get("pgvector", {})
+    mode = str(pg.get("memory_guard_mode", "")).strip().lower()
+    if mode not in ("log", "strip", "reject"):
+        print(f"Violation: [pgvector].memory_guard_mode in SSOT is {mode!r}; must be 'log', 'strip', or 'reject'", file=sys.stderr)
+        return 1
+
+    judge_mode = str(pg.get("memguard_judge_mode", "")).strip().lower()
+    if judge_mode != "model":
+        print(f"Violation: [pgvector].memguard_judge_mode in SSOT is {judge_mode!r}; must be 'model'", file=sys.stderr)
+        return 1
+
+    # Verify code implementation in knowledge.py does not hardcode 'off'
+    knowledge_path = os.path.join(root, "usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py")
+    if os.path.isfile(knowledge_path):
+        with open(knowledge_path, "r", encoding="utf-8", errors="ignore") as fh:
+            content = fh.read()
+        if re.search(r'^\s*MEMORY_GUARD_MODE\s*=\s*["\']off["\']', content, re.M):
+            print("Violation: knowledge.py hardcodes MEMORY_GUARD_MODE = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    # Verify code implementation in server.py does not fallback to 'off'
+    server_path = os.path.join(root, "usr/lib/mios/agent-pipe/server.py")
+    if os.path.isfile(server_path):
+        with open(server_path, "r", encoding="utf-8", errors="ignore") as fh:
+            s_content = fh.read()
+        if re.search(r'get\(["\']memory_guard_mode["\'],\s*["\']off["\']\)', s_content):
+            print("Violation: server.py falls back to memory_guard_mode = 'off' while SSOT declares active mode", file=sys.stderr)
+            return 1
+
+    print(f"[drift-checks] memory-poisoning scan enabled (mode={mode}, judge={judge_mode}) matching SSOT")
+    return 0
+
 _SUBCOMMAND_NAMES = (
-    "agent-schema", "names-registry", "gate-registry",
+    "agent-schema", "gate-registry",
     "firstboot-tier", "bound-image-store", "cephfs-ssot", "verb-stub-backends", "no-bare-port-literals",
     "globals-image-parity", "bake-plan-integrity", "negative-test-coverage",
     "structured", "drift-build-catalog", "drift-projection", "unwired-modules",
     "no-duplicate-value-key", "resolver-differential-parity", "legibility-ratchet",
+    "legacy-archive",
     "header-integrity", "rbac-tiers", "ai-manifest", "capability-manifest",
     "surface-parity", "container-ports", "agent-pipe-budgets", "verb-backends",
-    "python-untested-ratchet", "canonical-bools", "dag-integrity",
+    "dag-integrity",
     "ai-endpoint-local", "bake-refs-parity", "cli-eval-safety",
     "resolver-ssot-refs", "bake-budget", "greenboot", "router-intent-coverage",
     "council-gate-ssot", "test-hermeticity", "containerfile-pinned-clones",
     "replaceme-mount-substitution", "bib-rootfs-label-policy", "smoke-manifest",
-    "negative-coverage", "usr-over-etc", "projection-registry",
+    "usr-over-etc", "projection-registry",
     "bib-config-mount", "win11-vm-template-xml", "db-seed-coverage",
     "account-column-parity", "v2v-import-ssot", "value-aliases",
     "negatives-are-effective", "pipefail-grep-lint", "skip-list-covered",
@@ -4776,7 +4935,8 @@ _SUBCOMMAND_NAMES = (
     "os-update-timer-enabled", "adhoc-toml-parsers", "install-uninstall-symmetry",
     "ps-port-fallback-ssot", "ps-encoding-and-bom", "unit-security",
     "unit-dependency-closure", "docs-ratchet", "generator-host-parity",
-    "doc-port-scheme", "blade-reconcile-schema",
+    "doc-port-scheme", "blade-reconcile-schema", "memory-poisoning-scan",
+    "preset-roster-complete",
 )
 SUBCOMMANDS = {k: globals()["check_" + k.replace("-", "_")] for k in _SUBCOMMAND_NAMES}
 

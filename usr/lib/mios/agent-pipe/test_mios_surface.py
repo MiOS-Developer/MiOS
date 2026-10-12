@@ -361,7 +361,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_env.py (T-1092)
+# Consolidated from test_mios_env.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test for empty MIOS_* env contract.
 
@@ -427,7 +427,7 @@ def _run_extra_env():
 
 
 # ==============================================================================
-# Consolidated from test_mios_toolsurface.py (T-1092)
+# Consolidated from test_mios_toolsurface.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.routing.toolsurface.
 """Unit tests for worker tool surface assembly and child tool selection."""

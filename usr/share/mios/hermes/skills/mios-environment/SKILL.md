@@ -107,7 +107,7 @@ mios-mcp.service                 -      Agent Context Service
 /etc/mios/                       operator overlay (mios.toml host override, secrets)
 /var/lib/mios/                   state (hermes/, open-webui/, scratch/, ...)
 /var/lib/mios/hermes/            $HERMES_HOME (config.yaml, SOUL.md, skills/, sessions)
-/var/home/$MIOS_USER/.hermes/    operator CLI home (MIOS_USER from mios.toml [identity].username)
+/var/home/$MIOS_IDENTITY_USERNAME/.hermes/    operator CLI home (MIOS_IDENTITY_USERNAME from mios.toml [identity].username)
 /run/mios-launcher/launcher.sock operator broker (cross-user dispatch)
 /usr/libexec/mios/               vendor helpers (90+ scripts)
 /usr/local/bin/mios-*            symlinks for agent $PATH discovery

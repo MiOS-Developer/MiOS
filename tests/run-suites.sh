@@ -48,7 +48,7 @@ mios_resolve_python() {
 
 # Scrub ambient MIOS_* environment variables to prevent host leakage
 mios_scrub_env() {
-    local preserve_regex='^(MIOS_DRIFT_ROOT|MIOS_DRIFT_CHECK_ROOT|MIOS_THEME_ROOT|MIOS_TOML_ROOT|MIOS_VENDOR_TOML|MIOS_AI_AGENT_VENV|MIOS_PYTHON_BIN)$'
+    local preserve_regex='^(MIOS_DRIFT_ROOT|MIOS_DRIFT_CHECK_ROOT|MIOS_DRIFT_REQUIRE_TOOLS|MIOS_RATCHET_BASE|MIOS_NATIVE_BIN_DIR|MIOS_THEME_ROOT|MIOS_TOML_ROOT|MIOS_VENDOR_TOML|MIOS_AI_AGENT_VENV|MIOS_PYTHON_BIN|MIOS_BOOTSTRAP_ROOT|MIOS_TEST_PODMAN_BIN)$'
     for var in $(compgen -v MIOS_); do
         if [[ ! "$var" =~ $preserve_regex ]]; then
             unset "$var"
@@ -74,7 +74,8 @@ if [[ ${#SUITES[@]} -eq 0 ]]; then
 fi
 
 # The registry, the skip reasons and the [ci].max_tool_skips ceiling are checked on every tier.
-(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$PYTHON_BIN" tools/ci-suites.py --check >/dev/null) || { echo "[run-suites] tools/ci-suites.py --check failed" >&2; exit 1; }
+# Its findings go to stderr: discarding them left CI with "--check failed" and no reason.
+(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$PYTHON_BIN" tools/ci-suites.py --check >&2) || { echo "[run-suites] tools/ci-suites.py --check failed" >&2; exit 1; }
 mapfile -t TOOL_SKIPS < <(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$PYTHON_BIN" tools/ci-suites.py --tool-skips | tr -d '\r')
 SUITE_TIMEOUT="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$PYTHON_BIN" tools/ci-suites.py --suite-timeout | tr -d '\r')" \
     || { echo "[run-suites] [ci].suite_timeout_s unresolved" >&2; exit 1; }

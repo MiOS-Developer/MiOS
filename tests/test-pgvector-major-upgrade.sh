@@ -52,10 +52,10 @@ EOF
 }
 
 run_upgrade() {
-    MIOS_PG_DATA_DIR="$tmp_dir/data" \
-    MIOS_PG_RESTORE_SQL="$tmp_dir/restore.sql" \
+    MIOS_PGVECTOR_DATA_DIR="$tmp_dir/data" \
+    MIOS_PGVECTOR_RESTORE_SQL="$tmp_dir/restore.sql" \
     MIOS_PGVECTOR_IMAGE="$1" \
-    MIOS_PG_USER=mios MIOS_PG_DB=mios \
+    MIOS_PGVECTOR_USER=mios MIOS_PGVECTOR_DB=mios \
     bash "$SCRIPT" >"$tmp_dir/out.log" 2>&1
 }
 

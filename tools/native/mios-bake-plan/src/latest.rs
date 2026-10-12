@@ -295,8 +295,10 @@ mod tests {
     /// The policy the image actually ships: these tests exercise the SSOT's
     /// rules, not a copy of them.
     fn shipped() -> Policy {
-        let ssot =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+        let root = std::env::var_os("MIOS_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+        let ssot = root.join("usr/share/mios/mios.toml");
         let text = std::fs::read_to_string(&ssot).expect("the repo's mios.toml is readable");
         Policy::from_value(&text.parse().expect("mios.toml parses"))
             .expect("[build.float] is valid")

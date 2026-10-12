@@ -8,7 +8,7 @@
 set $mod Mod4
 
 # Font Configuration
-font pango:DejaVu Sans Mono 10
+font pango:GeistMono Nerd Font Mono 12
 
 # Gaps & Borders
 default_border pixel 0
@@ -23,6 +23,7 @@ client.unfocused        #948E8E #282262 #948E8E #282262 #282262
 client.urgent           #DC271B #DC271B #E7DFD3 #DC271B #DC271B
 
 # Keybindings
+include /usr/share/mios/sway/mios-keys.conf
 bindsym $mod+Return exec alacritty
 bindsym $mod+q kill
 bindsym $mod+space exec rofi -show drun

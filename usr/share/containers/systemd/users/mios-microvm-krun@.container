@@ -1,0 +1,28 @@
+# AI-hint: Quadlet user unit for Tier 3 MicroVM execution via libkrun (<=90ms startup) with hardware acceleration (T-169 / ISOL-01).
+# AI-doc: usr/share/doc/mios/concepts/container-os-runtime.md
+[Unit]
+Description=MiOS libkrun MicroVM Sandbox (%i)
+After=network-online.target
+ConditionPathExists=/dev/kvm
+
+[Container]
+Image=localhost/mios-coderun-sandbox:latest
+ContainerName=mios-microvm-krun-%i
+Runtime=krun
+User=root
+UserNS=keep-id
+Network=none
+ReadOnly=true
+VolatileTmp=true
+NoNewPrivileges=true
+DropCapability=ALL
+SeccompProfile=/etc/mios/containers/coderun-seccomp.json
+
+[Service]
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

@@ -332,7 +332,7 @@ def cfv_main() -> int:
 
 
 # ==== from tests/test-sec.py (prefix cc_) ====
-"""Unit and integration test suite for KVCompactEngine and mios_kv_compact CLI (T-548)."""
+"""Unit and integration test suite for KVCompactEngine and mios_kv_compact CLI (task_492)."""
 
 
 import importlib.util
@@ -380,10 +380,11 @@ class cc_TestContextCompact(unittest.TestCase):
         self.assertGreater(total_tokens, tokens)
 
     def test_extract_factual_anchors(self):
-        text = "Modified file usr/libexec/mios/sec/livepatch_mgr.py and completed task T-545."
+        text = "Modified file usr/libexec/mios/sec/livepatch_mgr.py and completed task_545; see CVE-2026-1001."
         anchors = mios_kv_compact.extract_factual_anchors(text)
         self.assertTrue(any("livepatch_mgr.py" in a for a in anchors))
-        self.assertIn("T-545", anchors)
+        self.assertIn("task_545", anchors)
+        self.assertIn("CVE-2026-1001", anchors)
 
     def test_should_compact_threshold(self):
         engine = mios_kv_compact.KVCompactEngine(max_tokens=1000, compact_threshold=0.75, mock=True)
@@ -2093,7 +2094,7 @@ class km_TestKASLRMgr(unittest.TestCase):
 
 
 # ==== from tests/test-sec.py (prefix kl_) ====
-"""Unit and integration test suite for LivepatchManager and livepatch_mgr CLI (T-546)."""
+"""Unit and integration test suite for LivepatchManager and livepatch_mgr CLI (task_490)."""
 
 
 import importlib.util
@@ -2824,7 +2825,7 @@ class qsr_TestQuadletSecretsRotation(unittest.TestCase):
             # Assert pre-existing password is NOT disrupted
             self.assertEqual(secrets_map["POSTGRES_PASSWORD"], "my_existing_db_password_123")
             # Assert missing default keys were generated
-            self.assertIn("MIOS_DEFAULT_PASSWORD", secrets_map)
+            self.assertIn("MIOS_IDENTITY_DEFAULT_PASSWORD", secrets_map)
             self.assertIn("K3S_TOKEN", secrets_map)
             self.assertIn("WEBUI_SECRET_KEY", secrets_map)
             self.assertEqual(len(secrets_map["K3S_TOKEN"]), 64)
@@ -2842,6 +2843,97 @@ class qsr_TestQuadletSecretsRotation(unittest.TestCase):
             content = f.read()
         self.assertIn("rotate-quadlet-secrets.py --init", content)
         self.assertIn("[Install]", content)
+
+    def test_unreadable_existing_file_never_regenerates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "secrets.env")
+            original = b"POSTGRES_PASSWORD=preserved-test-credential\n"
+            with open(path, "wb") as stream:
+                stream.write(original)
+            failure = PermissionError("injected existing-file read denial")
+            with patch("builtins.open", side_effect=failure), patch.object(os, "open", side_effect=failure):
+                with self.assertRaises(PermissionError):
+                    rotate_quadlet_secrets.init_secrets_env(path)
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), original)
+            self.assertEqual(os.listdir(folder), ["secrets.env"])
+
+    def test_failed_publication_preserves_existing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "secrets.env")
+            original = b"POSTGRES_PASSWORD=preserved-test-credential\n"
+            with open(path, "wb") as stream:
+                stream.write(original)
+            real_open = open
+            def fail_direct_write(filename, mode="r", *args, **kwargs):
+                if "w" in mode:
+                    raise OSError("injected direct-write failure")
+                return real_open(filename, mode, *args, **kwargs)
+            with patch("builtins.open", side_effect=fail_direct_write), patch.object(os, "replace", side_effect=OSError("injected publication failure")):
+                with self.assertRaises(OSError):
+                    rotate_quadlet_secrets.init_secrets_env(path)
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), original)
+            self.assertEqual(os.listdir(folder), ["secrets.env"])
+
+    def test_private_staging_precedes_first_secret_write(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "secrets.env")
+            observations = []
+            real_open, real_fdopen = open, os.fdopen
+            class ObservedWriter:
+                def __init__(self, stream):
+                    self.stream = stream
+                def __enter__(self):
+                    self.stream.__enter__()
+                    return self
+                def __exit__(self, *args):
+                    return self.stream.__exit__(*args)
+                def __getattr__(self, name):
+                    return getattr(self.stream, name)
+                def write(self, value):
+                    observations.append((os.path.exists(path), stat.S_IMODE(os.fstat(self.stream.fileno()).st_mode)))
+                    return self.stream.write(value)
+            def observed_open(filename, mode="r", *args, **kwargs):
+                stream = real_open(filename, mode, *args, **kwargs)
+                return ObservedWriter(stream) if "w" in mode else stream
+            def observed_fdopen(fd, mode="r", *args, **kwargs):
+                stream = real_fdopen(fd, mode, *args, **kwargs)
+                return ObservedWriter(stream) if "w" in mode else stream
+            with patch("builtins.open", side_effect=observed_open), patch.object(os, "fdopen", side_effect=observed_fdopen):
+                values = rotate_quadlet_secrets.init_secrets_env(path)
+            self.assertTrue(observations, "the production writer must write data")
+            self.assertTrue(all(not visible for visible, _ in observations))
+            if os.name != "nt":
+                self.assertTrue(all(mode == 0o600 for _, mode in observations))
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+            self.assertEqual(os.listdir(folder), ["secrets.env"])
+            with open(path, encoding="utf-8") as stream:
+                content = stream.read()
+            self.assertTrue(all(f"{key}={value}\n" in content for key, value in values.items()))
+
+    def test_permission_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "secrets.env")
+            with patch.object(os, "chmod", side_effect=PermissionError("injected private-mode failure")):
+                with self.assertRaises(PermissionError):
+                    rotate_quadlet_secrets.init_secrets_env(path)
+            self.assertEqual(os.listdir(folder), [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink controls run on Linux; Windows ACL certification remains separate")
+    def test_symlink_target_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            victim = os.path.join(folder, "operator.env")
+            path = os.path.join(folder, "secrets.env")
+            original = b"POSTGRES_PASSWORD=preserved-test-credential\n"
+            with open(victim, "wb") as stream:
+                stream.write(original)
+            os.symlink(victim, path)
+            with self.assertRaises(OSError):
+                rotate_quadlet_secrets.init_secrets_env(path)
+            self.assertTrue(os.path.islink(path))
+            with open(victim, "rb") as stream:
+                self.assertEqual(stream.read(), original)
 
 def qsr_main() -> int:
     suite = unittest.TestLoader().loadTestsFromTestCase(qsr_TestQuadletSecretsRotation)
@@ -3346,7 +3438,7 @@ class scm_TestSmartcardMux(unittest.TestCase):
 
 
 # ==== from tests/test-sec.py (prefix smt_) ====
-"""Unit and integration test suite for SpiffeIdentityAgent and spiffe_identity CLI (T-568)."""
+"""Unit and integration test suite for SpiffeIdentityAgent and spiffe_identity CLI (task_512)."""
 
 
 import datetime
@@ -3806,6 +3898,71 @@ def vs_main() -> int:
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
 
+
+
+
+class TestOwuiCredentialDiagnostics(unittest.TestCase):
+    """Real SQLite creation/reconciliation and failing secret boundaries stay private."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.machinery
+        from pathlib import Path
+        target = Path(__file__).resolve().parents[1] / "usr/libexec/mios/mios-owui-bootstrap-admin"
+        loader = importlib.machinery.SourceFileLoader("owui_credentials_under_test", str(target))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        cls.admin = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.admin)
+
+    def test_creation_and_reconciliation_do_not_log_identity_or_credentials(self):
+        import contextlib
+        import io
+        import sqlite3
+        from pathlib import Path
+        marker = "DEVLOOP-PLANTED-PRIVATE"
+        email = marker + "@example.invalid"
+        with tempfile.TemporaryDirectory(prefix="mios-owui-privacy-") as temporary:
+            database = Path(temporary) / "webui.db"
+            receipt = Path(temporary) / (marker + "-credentials")
+            with sqlite3.connect(database) as connection:
+                connection.executescript("CREATE TABLE user(id TEXT, name TEXT, email TEXT, role TEXT, updated_at INTEGER);"
+                                         "CREATE TABLE auth(id TEXT, email TEXT, password TEXT, active INTEGER);")
+            output = io.StringIO()
+            with patch.object(self.admin, "DB", database), patch.object(self.admin, "PASSWORD_OUT", receipt), \
+                 patch.object(self.admin, "_read_mios_toml_identity", return_value=(marker, email)), \
+                 patch.object(self.admin, "_password_tier", return_value=(0, False)), \
+                 patch.object(self.admin, "_read_password", return_value=marker), \
+                 patch.object(self.admin, "_bcrypt_hash", return_value="fixture-hash"), contextlib.redirect_stderr(output):
+                self.assertEqual(self.admin.main(), 0)
+                self.assertEqual(self.admin.main(), 0)
+            self.assertNotIn(marker, output.getvalue())
+            self.assertIn("admin user created", output.getvalue())
+            self.assertIn("reconciled OWUI admin", output.getvalue())
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM user").fetchone()[0], 1)
+                self.assertEqual(connection.execute("SELECT password, active FROM auth").fetchone(), ("fixture-hash", 1))
+            self.assertNotIn("password: " + marker, receipt.read_text())
+            if os.name != "nt":
+                self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+
+    def test_failed_hash_and_key_export_do_not_log_exception_payloads(self):
+        import contextlib
+        import io
+        import subprocess
+        from unittest.mock import Mock
+        marker = "DEVLOOP-PLANTED-PRIVATE"
+        output = io.StringIO()
+        with patch.object(subprocess, "run", side_effect=FileNotFoundError(marker)), contextlib.redirect_stderr(output):
+            with self.assertRaises(SystemExit) as failure:
+                self.admin._bcrypt_hash_via_container(marker)
+        self.assertEqual(failure.exception.code, 2)
+        connection = Mock()
+        connection.execute.side_effect = RuntimeError(marker)
+        with contextlib.redirect_stderr(output):
+            self.admin._export_admin_api_key(connection, "fixture-user")
+        self.assertNotIn(marker, output.getvalue())
+        self.assertIn("FATAL: bcrypt unavailable", output.getvalue())
+        self.assertIn("api_key export skipped", output.getvalue())
 
 
 def main() -> int:

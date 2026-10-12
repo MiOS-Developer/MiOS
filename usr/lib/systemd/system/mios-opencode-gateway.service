@@ -47,7 +47,7 @@ WorkingDirectory=/var/lib/mios/opencode-gateway/work
 Environment=HOME=/var/lib/mios/opencode-gateway/work
 # SSOT mirrors: [ports].opencode_gateway, [ai].opencode_bin/opencode_model/
 # opencode_provider/opencode_config, [ai].opencode_gateway_timeout_s.
-Environment=MIOS_PORT_OPENCODE_GATEWAY=8780
+Environment=MIOS_PORTS_OPENCODE_GATEWAY=8780
 Environment=MIOS_OPENCODE_HOST=127.0.0.1
 Environment=MIOS_OPENCODE_BIN=/usr/lib/mios/agents/opencode/bin/opencode
 Environment=MIOS_OPENCODE_MODEL=mios-opencode:latest

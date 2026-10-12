@@ -1,9 +1,11 @@
 # AI-hint: Defines the Docker build for the crawl4ai engine, providing a Python 3.12 environment with camoufox for stealth fallback and a FastAPI wrapper to process web scraping tasks via CDP or local Firefox.
 # AI-related: mios-crawl4ai-service
-FROM docker.io/library/python:3.12-slim
+FROM localhost/mios-base:latest
 
-RUN printf 'label ::1/128 0\nlabel ::/0 1\nlabel 2002::/16 2\nlabel ::/96 3\nlabel ::ffff:0:0/96 4\nprecedence ::1/128 50\nprecedence ::/0 40\nprecedence 2002::/16 30\nprecedence ::/96 20\nprecedence ::ffff:0:0/96 100\n' >> /etc/gai.conf \
-    && printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4
+RUN dnf5 install -y firefox nss gtk3 alsa-lib libX11 libXcomposite libXdamage libXrandr mesa-libgbm \
+    && dnf5 clean all \
+    && python3.13 -m venv /opt/crawl4ai-venv
+ENV PATH=/opt/crawl4ai-venv/bin:$PATH
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,9 +19,7 @@ RUN pip install --no-cache-dir \
         pydantic \
         playwright
 
-RUN apt-get update \
-    && playwright install-deps firefox \
-    && rm -rf /var/lib/apt/lists/*
+RUN playwright install firefox
 
 RUN python -m camoufox fetch
 

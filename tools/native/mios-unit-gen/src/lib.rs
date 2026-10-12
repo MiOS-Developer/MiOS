@@ -19,6 +19,106 @@ pub enum UnitGenError {
 
 pub const BLADE_KARG: &str = "usr/lib/bootc/kargs.d/05-mios-blade.toml";
 pub const UKI_CMDLINE: &str = "usr/lib/kernel/cmdline";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuMitigationsPolicy {
+    pub required: Vec<String>,
+    pub forbidden: Vec<String>,
+}
+
+impl CpuMitigationsPolicy {
+    pub fn from_ssot_str(ssot: &str) -> Result<Self, UnitGenError> {
+        let doc: toml::Value = toml::from_str(ssot)?;
+        let kargs_tbl = doc.get("kargs").ok_or_else(|| {
+            UnitGenError::GoldenMaster("mios.toml missing [kargs] table".into())
+        })?;
+        let cpu_tbl = kargs_tbl.get("cpu_mitigations").ok_or_else(|| {
+            UnitGenError::GoldenMaster("mios.toml missing [kargs.cpu_mitigations] table".into())
+        })?;
+        let required = cpu_tbl
+            .get("required")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster(
+                    "[kargs.cpu_mitigations].required must be a string array".into(),
+                )
+            })?
+            .iter()
+            .map(|v| {
+                v.as_str().map(str::to_owned).ok_or_else(|| {
+                    UnitGenError::GoldenMaster(
+                        "[kargs.cpu_mitigations].required elements must be strings".into(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let forbidden = cpu_tbl
+            .get("forbidden")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster(
+                    "[kargs.cpu_mitigations].forbidden must be a string array".into(),
+                )
+            })?
+            .iter()
+            .map(|v| {
+                v.as_str().map(str::to_owned).ok_or_else(|| {
+                    UnitGenError::GoldenMaster(
+                        "[kargs.cpu_mitigations].forbidden elements must be strings".into(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { required, forbidden })
+    }
+}
+
+pub fn load_cpu_mitigations_policy(
+    root: &Path,
+    toml_override: Option<&Path>,
+) -> Result<CpuMitigationsPolicy, UnitGenError> {
+    if let Some(p) = toml_override {
+        let s = fs::read_to_string(p)?;
+        return CpuMitigationsPolicy::from_ssot_str(&s);
+    }
+    let local = root.join(SSOT);
+    if local.is_file() {
+        let s = fs::read_to_string(&local)?;
+        return CpuMitigationsPolicy::from_ssot_str(&s);
+    }
+    if let Ok(m) = std::env::var("MIOS_ROOT") {
+        let p = Path::new(&m).join(SSOT);
+        if p.is_file() {
+            let s = fs::read_to_string(&p)?;
+            return CpuMitigationsPolicy::from_ssot_str(&s);
+        }
+    }
+    let cur = Path::new(SSOT);
+    if cur.is_file() {
+        let s = fs::read_to_string(cur)?;
+        return CpuMitigationsPolicy::from_ssot_str(&s);
+    }
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let p = Path::new(&manifest_dir).join("../../..").join(SSOT);
+        if p.is_file() {
+            let s = fs::read_to_string(&p)?;
+            return CpuMitigationsPolicy::from_ssot_str(&s);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors() {
+            let cand = ancestor.join(SSOT);
+            if cand.is_file() {
+                let s = fs::read_to_string(&cand)?;
+                return CpuMitigationsPolicy::from_ssot_str(&s);
+            }
+        }
+    }
+    Err(UnitGenError::GoldenMaster(
+        "cannot locate usr/share/mios/mios.toml SSOT".into(),
+    ))
+}
+
 pub const COCKPIT_CONF: &str = "etc/cockpit/cockpit.conf";
 pub const IPA_ENROLL_ENV: &str = "etc/mios/ipa-enroll.env";
 pub const BOOTC_INSTALL_CONF: &str = "usr/lib/bootc/install/00-mios.toml";
@@ -34,6 +134,177 @@ pub enum DeploymentKind {
     Cockpit,
     IpaEnroll,
     BootcInstall,
+    Keybindings,
+}
+
+/// Shared mobile keyboard contract. Reject collisions before writing any file;
+/// the same table drives SSH/tmux, compositor, desktop, and editor surfaces.
+pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
+    let doc: toml::Value = toml::from_str(ssot)?;
+    let config = config_value(&doc, "root", "keybindings")?;
+    let string = |table: &toml::Value, key: &str| -> Result<String, UnitGenError> {
+        config_value(table, "keybindings", key)?
+            .as_str()
+            .filter(|v| !v.is_empty() && !v.contains(['\n', '\r', '\0']))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster(format!("[keybindings].{key}: invalid string"))
+            })
+    };
+    let number = |key: &str| -> Result<i64, UnitGenError> {
+        config_value(config, "keybindings", key)?
+            .as_integer()
+            .filter(|v| *v > 0)
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster(format!(
+                    "[keybindings].{key}: positive integer required"
+                ))
+            })
+    };
+    let enabled = config_bool(config, "keybindings", "enabled")?;
+    let prefix = string(config, "tmux_prefix")?;
+    if !prefix.starts_with("C-") || prefix.len() != 3 || !prefix.as_bytes()[2].is_ascii_lowercase()
+    {
+        return Err(UnitGenError::GoldenMaster(
+            "[keybindings].tmux_prefix must be C- plus one lowercase ASCII letter".into(),
+        ));
+    }
+    let editor_prefix = string(config, "vscode_prefix")?;
+    if editor_prefix != format!("ctrl+{}", &prefix[2..]) {
+        return Err(UnitGenError::GoldenMaster(
+            "[keybindings].vscode_prefix must match tmux_prefix".into(),
+        ));
+    }
+    let modifier = string(config, "desktop_modifier")?;
+    let accelerator = string(config, "desktop_accelerator")?;
+    let header =
+        "# AI-hint: Generated from mios.toml [keybindings] by mios-unit-gen keybindings.\n";
+    let mut tmux = header.to_owned();
+    let mut hypr = header.to_owned();
+    let mut sway = header.to_owned();
+    let mut desktop = header.to_owned();
+    let mut editor = Vec::new();
+    let mut mobile = Vec::new();
+    let mut keys = BTreeSet::new();
+    if enabled {
+        tmux += &format!("unbind-key -a -T prefix\nset -g prefix {prefix}\nset -g prefix2 None\nbind-key {prefix} send-prefix\nset -s escape-time {}\nset -g repeat-time {}\nset -g history-limit {}\nset -g mouse {}\n", number("escape_time_ms")?, number("repeat_time_ms")?, number("history_limit")?, if config_bool(config, "keybindings", "mouse")? { "on" } else { "off" });
+        let actions = config_value(config, "keybindings", "actions")?
+            .as_array()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster("[keybindings].actions must not be empty".into())
+            })?;
+        let mut paths = Vec::new();
+        for action in actions {
+            let key = string(action, "key")?;
+            let id = string(action, "id")?;
+            if key.len() != 1
+                || !key.as_bytes()[0].is_ascii_lowercase()
+                || !keys.insert(key.clone())
+            {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "[keybindings].actions duplicate or non-mobile key: {key}"
+                )));
+            }
+            if !id.bytes().all(|v| v.is_ascii_lowercase() || v == b'-') {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "[keybindings].actions invalid id: {id}"
+                )));
+            }
+            let command = string(action, "command")?;
+            let desktop_command = string(action, "desktop_command")?;
+            let label = string(action, "label")?;
+            if [command.as_str(), desktop_command.as_str(), label.as_str()]
+                .iter()
+                .any(|v| v.contains('\''))
+            {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "[keybindings].actions {id}: GVariant quote is unsupported"
+                )));
+            }
+            tmux += &format!("bind-key {key} {}\n", string(action, "tmux_command")?);
+            hypr += &format!("bind = {modifier}, {key}, exec, {desktop_command}\n");
+            let sway_modifier = modifier
+                .split_whitespace()
+                .map(|m| match m {
+                    "CTRL" => "Ctrl",
+                    "ALT" => "Mod1",
+                    "SHIFT" => "Shift",
+                    "SUPER" => "Mod4",
+                    other => other,
+                })
+                .collect::<Vec<_>>()
+                .join("+");
+            sway += &format!("bindsym {sway_modifier}+{key} exec {desktop_command}\n");
+            let path = format!(
+                "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-{id}/"
+            );
+            paths.push(format!("'{path}'"));
+            desktop += &format!("\n[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-{id}]\nname='{label}'\ncommand='{desktop_command}'\nbinding='{accelerator}{key}'\n");
+            let mut row = serde_json::json!({"key": format!("{editor_prefix} {key}"), "command": string(action, "vscode_command")?, "when": "!terminalFocus"});
+            if let Some(shell) = action.get("vscode_shell").and_then(toml::Value::as_str) {
+                row["args"] = serde_json::json!({"commands": ["workbench.action.terminal.new", {"command": "workbench.action.terminal.sendSequence", "args": {"text": format!("{shell}\r")}}]});
+            }
+            editor.push(row);
+            mobile.push(
+                serde_json::json!({"name":label,"prefix":prefix,"key":key,"command":command}),
+            );
+        }
+        desktop += &format!(
+            "\n[org/gnome/settings-daemon/plugins/media-keys]\ncustom-keybindings=[{}]\n",
+            paths.join(", ")
+        );
+        for binding in config_value(config, "keybindings", "tmux")?
+            .get("bindings")
+            .and_then(toml::Value::as_array)
+            .ok_or_else(|| {
+                UnitGenError::GoldenMaster("[keybindings.tmux].bindings must be an array".into())
+            })?
+        {
+            let key = string(binding, "key")?;
+            if !(key == "Tab" || key.len() == 1 && key.as_bytes()[0].is_ascii_lowercase())
+                || !keys.insert(key.clone())
+            {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "[keybindings.tmux].bindings duplicate or non-mobile key: {key}"
+                )));
+            }
+            tmux += &format!("bind-key {key} {}\n", string(binding, "command")?);
+        }
+    }
+    let passthrough = config_value(config, "keybindings", "vscode_passthrough_commands")?
+        .as_array()
+        .ok_or_else(|| {
+            UnitGenError::GoldenMaster("vscode_passthrough_commands must be an array".into())
+        })?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(|v| format!("-{v}"))
+                .ok_or_else(|| UnitGenError::GoldenMaster("invalid passthrough command".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let settings = serde_json::json!({"terminal.integrated.allowChords": config_bool(config,"keybindings","vscode_allow_chords")?, "terminal.integrated.allowMnemonics": config_bool(config,"keybindings","vscode_allow_mnemonics")?, "terminal.integrated.commandsToSkipShell": passthrough});
+    let encode = |value: &serde_json::Value| {
+        // Cargo can unify mios-task's preserve_order feature into a CI build.
+        // Canonicalize nested maps so standalone/runtime and workspace builds
+        // project the same bytes regardless of that unrelated feature.
+        let mut canonical = value.clone();
+        canonical.sort_all_objects();
+        serde_json::to_string_pretty(&canonical).expect("JSON value serializes") + "\n"
+    };
+    Ok(BTreeMap::from([
+        ("usr/share/mios/tmux/mios-keys.tmux.conf".into(), tmux),
+        ("etc/tmux.conf".into(), format!("{header}source-file /usr/share/mios/tmux/mios-theme.tmux.conf\nsource-file /usr/share/mios/tmux/mios-keys.tmux.conf\n")),
+        ("usr/share/mios/hyprland/mios-keys.conf".into(), hypr),
+        ("usr/share/mios/sway/mios-keys.conf".into(), sway),
+        ("etc/dconf/db/local.d/10-mios-keybindings".into(), desktop),
+        ("usr/share/mios/keybindings/vscode-keybindings.json".into(), encode(&serde_json::Value::Array(editor.clone()))),
+        ("usr/share/mios/keybindings/vscode-settings.json".into(), encode(&settings)),
+        ("usr/share/mios/keybindings/mobile-shortcuts.json".into(), encode(&serde_json::Value::Array(mobile))),
+        ("etc/skel/.config/Code/User/keybindings.json".into(), encode(&serde_json::Value::Array(editor.clone()))),
+        ("etc/skel/.local/share/code-server/User/keybindings.json".into(), encode(&serde_json::Value::Array(editor))),
+    ]))
 }
 
 fn config_value<'a>(
@@ -214,10 +485,10 @@ pub fn render_blade_dropins(ssot: &str) -> Result<BTreeMap<String, String>, Unit
         ));
     }
     let mut selectors = String::from(
-        "# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\nservices:\n"
+        "# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\nservices:\n"
     );
     let mut pcs = String::from(
-        "# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\n"
+        "# AI-hint: GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.\n# Rendered by mios-unit-gen blade-dropins.\n"
     );
     for (service, caps) in &requires {
         selectors.push_str(&format!("  {service}:\n    nodeSelector:\n"));
@@ -275,6 +546,14 @@ pub fn render_blade_karg(ssot: &str) -> Result<String, UnitGenError> {
 /// Preserve drop-in filename ordering and each file's token ordering. A bad
 /// drop-in aborts the projection before the existing command line is written.
 pub fn render_uki_cmdline(root: &Path) -> Result<String, UnitGenError> {
+    render_uki_cmdline_with_toml(root, None)
+}
+
+pub fn render_uki_cmdline_with_toml(
+    root: &Path,
+    toml_override: Option<&Path>,
+) -> Result<String, UnitGenError> {
+    let policy = load_cpu_mitigations_policy(root, toml_override)?;
     let directory = root.join("usr/lib/bootc/kargs.d");
     let mut files = Vec::new();
     for entry in fs::read_dir(&directory)? {
@@ -285,6 +564,7 @@ pub fn render_uki_cmdline(root: &Path) -> Result<String, UnitGenError> {
     }
     files.sort();
     let mut tokens = Vec::new();
+    let mut last_values: BTreeMap<String, String> = BTreeMap::new();
     for file in files {
         let doc: toml::Value = fs::read_to_string(&file)?
             .parse()
@@ -297,17 +577,41 @@ pub fn render_uki_cmdline(root: &Path) -> Result<String, UnitGenError> {
                 ))
             })?;
             for arg in args {
-                tokens.push(
-                    arg.as_str()
-                        .ok_or_else(|| {
-                            UnitGenError::GoldenMaster(format!(
-                                "{}: kargs must contain strings",
-                                file.display()
-                            ))
-                        })?
-                        .to_owned(),
-                );
+                let token = arg.as_str().ok_or_else(|| {
+                    UnitGenError::GoldenMaster(format!(
+                        "{}: kargs must contain strings",
+                        file.display()
+                    ))
+                })?;
+                if policy.forbidden.iter().any(|f| f == token) {
+                    return Err(UnitGenError::GoldenMaster(format!(
+                        "{}: contradictory CPU mitigation argument forbidden: {token}",
+                        file.display()
+                    )));
+                }
+                tokens.push(token.to_owned());
+                if let Some((k, v)) = token.split_once('=') {
+                    last_values.insert(k.to_string(), v.to_string());
+                }
             }
+        }
+    }
+    for req in &policy.required {
+        let (req_key, req_val) = req.split_once('=').ok_or_else(|| {
+            UnitGenError::GoldenMaster(format!("required CPU mitigation must be key=value: {req}"))
+        })?;
+        match last_values.get(req_key) {
+            None => {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "missing required CPU mitigation: {req}"
+                )));
+            }
+            Some(actual_val) if actual_val != req_val => {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "contradictory CPU mitigation argument forbidden: {req_key}={actual_val}"
+                )));
+            }
+            _ => {}
         }
     }
     Ok(tokens.join(" ").trim().to_owned() + "\n")
@@ -322,6 +626,9 @@ pub fn project_deployment(
     toml_override: Option<&Path>,
 ) -> Result<usize, UnitGenError> {
     let files = match kind {
+        DeploymentKind::Keybindings => render_keybindings(&fs::read_to_string(
+            toml_override.unwrap_or(&root.join(SSOT)),
+        )?)?,
         DeploymentKind::BladeDropins => render_blade_dropins(&fs::read_to_string(
             toml_override.unwrap_or(&root.join(SSOT)),
         )?)?,
@@ -331,9 +638,10 @@ pub fn project_deployment(
                 toml_override.unwrap_or(&root.join(SSOT)),
             )?)?,
         )]),
-        DeploymentKind::UkiCmdline => {
-            BTreeMap::from([(UKI_CMDLINE.to_owned(), render_uki_cmdline(root)?)])
-        }
+        DeploymentKind::UkiCmdline => BTreeMap::from([(
+            UKI_CMDLINE.to_owned(),
+            render_uki_cmdline_with_toml(root, toml_override)?,
+        )]),
         DeploymentKind::Cockpit => BTreeMap::from([(
             COCKPIT_CONF.to_owned(),
             render_cockpit(&fs::read_to_string(
@@ -359,8 +667,39 @@ pub fn project_deployment(
         let path = root.join(relative);
         if check {
             match fs::read_to_string(&path) {
-                Ok(have) if have.replace("\r\n", "\n") == *body => {}
-                Ok(_) => drift.push(format!("{relative}: drifted from SSOT")),
+                Ok(have) => {
+                    if matches!(kind, DeploymentKind::UkiCmdline) {
+                        let policy = load_cpu_mitigations_policy(root, toml_override)?;
+                        let tokens: Vec<&str> = have.split_whitespace().collect();
+                        let mut disk_kargs: BTreeMap<&str, &str> = BTreeMap::new();
+                        for token in &tokens {
+                            if policy.forbidden.iter().any(|f| f == token) {
+                                drift.push(format!(
+                                    "{relative}: contradictory CPU mitigation argument forbidden: {token}"
+                                ));
+                            }
+                            if let Some((k, v)) = token.split_once('=') {
+                                disk_kargs.insert(k, v);
+                            }
+                        }
+                        for req in &policy.required {
+                            if let Some((k, v)) = req.split_once('=') {
+                                match disk_kargs.get(k) {
+                                    None => drift.push(format!(
+                                        "{relative}: missing required CPU mitigation: {req}"
+                                    )),
+                                    Some(actual) if *actual != v => drift.push(format!(
+                                        "{relative}: contradictory CPU mitigation argument forbidden: {k}={actual}"
+                                    )),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    if have != *body {
+                        drift.push(format!("{relative}: drifted from SSOT"));
+                    }
+                }
                 Err(e) => drift.push(format!("{relative}: cannot read projection: {e}")),
             }
         } else {
@@ -392,9 +731,51 @@ pub struct PrivilegedUnitsRoster {
     pub unconfined: Option<Vec<String>>,
 }
 
+/// systemd expands `${VAR}` only in Exec*= command lines. Anywhere else
+/// (Environment=, ListenStream=, ...) a `${MIOS_PORTS_<NAME>}` placeholder
+/// reaches the daemon verbatim, so the projection resolves it from SSOT
+/// [ports] (+ stack_id * 10000) and the shipped unit carries the number. A
+/// name [ports] does not declare is left as written.
+fn resolve_port_placeholders(key: &str, value: &str, ports: Option<&toml::Value>) -> String {
+    let Some(ports) = ports.filter(|_| !key.starts_with("Exec")) else {
+        return value.to_owned();
+    };
+    let offset = ports
+        .get("stack_id")
+        .and_then(|v| {
+            v.as_integer()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(0)
+        * 10000;
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("${MIOS_PORTS_") {
+        let Some(len) = rest[start..].find('}') else {
+            break;
+        };
+        let placeholder = &rest[start..start + len + 1];
+        let name = placeholder["${MIOS_PORTS_".len()..placeholder.len() - 1]
+            .split(":-")
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        out.push_str(&rest[..start]);
+        match ports.get(&name).and_then(toml::Value::as_integer) {
+            Some(port) => out.push_str(&(port + offset).to_string()),
+            None => out.push_str(placeholder),
+        }
+        rest = &rest[start + len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Render units from SSOT TOML string. Returns map of relative path -> rendered content.
 pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
     let root: SsotRoot = toml::from_str(ssot_toml)?;
+    let doc: toml::Value = toml::from_str(ssot_toml)?;
+    let ports = doc.get("ports");
     let mut rendered = BTreeMap::new();
 
     let unconfined_units: Vec<String> = root
@@ -457,11 +838,13 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
                             existing_keys.insert(k.as_str(), v);
                             match v {
                                 toml::Value::String(s) => {
+                                    let s = resolve_port_placeholders(k, s, ports);
                                     out.push_str(&format!("{}={}\n", k, s));
                                 }
                                 toml::Value::Array(arr) => {
                                     for item in arr {
                                         if let Some(s) = item.as_str() {
+                                            let s = resolve_port_placeholders(k, s, ports);
                                             out.push_str(&format!("{}={}\n", k, s));
                                         }
                                     }
@@ -484,7 +867,7 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
 
                         // No hardening baseline is injected: a generator that
                         // adds undeclared directives is not a projection.
-                        // See tasks.jsonl T-317.
+                        // See tasks.jsonl task_267.
                         let _ = (is_service, is_unconfined, &existing_keys);
                     }
                 }
@@ -594,10 +977,72 @@ pub fn project(root: &Path) -> Result<Projection, UnitGenError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mobile_keybindings_project_all_surfaces() {
+        let ssot = include_str!("../../../../usr/share/mios/mios.toml");
+        let profiles = super::render_keybindings(ssot).unwrap();
+        assert_eq!(profiles.len(), 10);
+        assert!(profiles["usr/share/mios/tmux/mios-keys.tmux.conf"]
+            .contains("bind-key Tab send-keys BTab"));
+        assert!(profiles["usr/share/mios/hyprland/mios-keys.conf"]
+            .contains("bind = CTRL ALT SHIFT, a, exec,"));
+        let editor: serde_json::Value =
+            serde_json::from_str(&profiles["usr/share/mios/keybindings/vscode-keybindings.json"])
+                .unwrap();
+        // One editor row per SSOT action: the count is the SSOT's, not a literal.
+        let doc: toml::Value = toml::from_str(ssot).unwrap();
+        let actions = doc["keybindings"]["actions"].as_array().unwrap().len();
+        assert!(actions > 0);
+        assert_eq!(editor.as_array().unwrap().len(), actions);
+        assert!(editor
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["when"] == "!terminalFocus"));
+    }
+
+    #[test]
+    fn mobile_keybindings_reject_duplicate() {
+        let mut doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        doc["keybindings"]["actions"][1]["key"] = toml::Value::String("t".into());
+        let error = super::render_keybindings(&toml::to_string(&doc).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("duplicate or non-mobile key: t"), "{error}");
+    }
+
+    #[test]
+    fn mobile_keybindings_negative_projection_names_planted_file() {
+        let root = tempfile::tempdir().unwrap();
+        let ssot = root.path().join("usr/share/mios/mios.toml");
+        std::fs::create_dir_all(ssot.parent().unwrap()).unwrap();
+        std::fs::write(&ssot, include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        assert_eq!(
+            super::project_deployment(root.path(), super::DeploymentKind::Keybindings, false, None)
+                .unwrap(),
+            10
+        );
+        super::project_deployment(root.path(), super::DeploymentKind::Keybindings, true, None)
+            .unwrap();
+        std::fs::write(
+            root.path().join("usr/share/mios/tmux/mios-keys.tmux.conf"),
+            "DEVLOOP-PLANTED-KEYBIND",
+        )
+        .unwrap();
+        let error =
+            super::project_deployment(root.path(), super::DeploymentKind::Keybindings, true, None)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("usr/share/mios/tmux/mios-keys.tmux.conf: drifted from SSOT"),
+            "{error}"
+        );
+    }
     use super::*;
 
     /// The renderer is a PROJECTION: only what `[units.*]` declares comes
-    /// out. It used to inject a hardening baseline. See tasks.jsonl T-317.
+    /// out. It used to inject a hardening baseline. See tasks.jsonl task_267.
     #[test]
     fn test_render_invents_no_directives() {
         let toml_str = r#"
@@ -694,6 +1139,33 @@ ExecStartPre = ["/usr/bin/a", "/usr/bin/b"]
         assert_eq!(
             out.get("sample.service").unwrap(),
             "[Service]\nExecStartPre=/usr/bin/a\nExecStartPre=/usr/bin/b\n"
+        );
+    }
+
+    /// systemd leaves `${VAR}` unexpanded outside Exec*= lines, so those values
+    /// must ship resolved; Exec lines keep the placeholder systemd expands, and
+    /// a name [ports] does not declare is not invented.
+    #[test]
+    fn test_port_placeholders_resolve_only_where_systemd_cannot() {
+        let toml_str = r#"
+[ports]
+stack_id = 1
+node = 8650
+[units."sample.socket".Socket]
+ListenStream = "0.0.0.0:${MIOS_PORTS_NODE}"
+[units."sample.service".Service]
+ExecStart = "/usr/bin/x --port ${MIOS_PORTS_NODE}"
+Environment = ["A=${MIOS_PORTS_NODE:-8650}/v1", "B=${MIOS_PORTS_ABSENT:-9}", "C=${MIOS_OTHER}"]
+"#;
+        let out = render_units(toml_str).unwrap();
+        assert_eq!(
+            out.get("sample.socket").unwrap(),
+            "[Socket]\nListenStream=0.0.0.0:18650\n"
+        );
+        assert_eq!(
+            out.get("sample.service").unwrap(),
+            "[Service]\nExecStart=/usr/bin/x --port ${MIOS_PORTS_NODE}\n\
+             Environment=A=18650/v1\nEnvironment=B=${MIOS_PORTS_ABSENT:-9}\nEnvironment=C=${MIOS_OTHER}\n"
         );
     }
 

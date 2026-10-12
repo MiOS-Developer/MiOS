@@ -17,7 +17,7 @@ impl Check for PipelineNumberingCheck {
                 "Skipping pipeline numbering check in OCI build context".to_string(),
             );
         }
-        // T-1043. This used to read ctx.in_image for the early skip above and
+        // task_980. This used to read ctx.in_image for the early skip above and
         // then return a constant Pass -- "ordinals verified dense" about a tree
         // it never opened. Naming the parameter `ctx` was the only thing that
         // made it look implemented. Ported from the bash twin's three assertions.
@@ -115,10 +115,51 @@ impl Check for DAGIntegrityCheck {
         "check_dag_integrity"
     }
     fn describe(&self) -> &'static str {
-        "Assert task dependency DAG contains no cycles or dangling dependencies"
+        "Assert units consuming local images are ordered after their firstboot builder"
     }
-    fn run(&self, _ctx: &DriftCtx) -> Verdict {
-        Verdict::Skip("NOT IMPLEMENTED: DAG integrity verified acyclic".to_string())
+    fn run(&self, ctx: &DriftCtx) -> Verdict {
+        super::audit::verdict((|| {
+            let mut errors = Vec::new();
+            let mut count = 0;
+            for directory in ["usr/lib/systemd/system", "usr/share/containers/systemd"] {
+                // System units only, as the legacy listdir did: a user unit
+                // (containers/systemd/users/) cannot order after a system unit,
+                // and its images are baked rather than built at firstboot.
+                let prefix = format!("{directory}/");
+                for path in super::audit::files(&ctx.root, directory)?
+                    .iter()
+                    .filter(|p| {
+                        p.strip_prefix(&prefix)
+                            .is_some_and(|rest| !rest.contains('/'))
+                    })
+                    .filter(|p| {
+                        [".service", ".container", ".pod"]
+                            .iter()
+                            .any(|ext| p.ends_with(ext))
+                    })
+                {
+                    count += 1;
+                    let body = super::audit::read(&ctx.root, path)?;
+                    if super::audit::ini(&body, "Container", "Image")
+                        .is_some_and(|s| s.starts_with("localhost/"))
+                        || path.ends_with("/mios-webtools.pod")
+                    {
+                        let required = "mios-webtools-firstboot.service";
+                        let ordered = body
+                            .lines()
+                            .filter_map(|s| s.trim().split_once('='))
+                            .filter(|(key, _)| matches!(key.trim(), "After" | "Requires"))
+                            .any(|(_, values)| values.split_whitespace().any(|v| v == required));
+                        if !ordered {
+                            errors.push(format!(
+                                "{path}: local image consumer lacks {required} ordering"
+                            ));
+                        }
+                    }
+                }
+            }
+            super::audit::finish(count, errors, "local image firstboot dependency coverage")
+        })())
     }
 }
 
@@ -130,7 +171,7 @@ impl Check for RoadmapIndexCheck {
     fn describe(&self) -> &'static str {
         "Assert ROADMAP.md task index matches the tasks.jsonl SSOT"
     }
-    fn run(&self, _ctx: &DriftCtx) -> Verdict {
-        Verdict::Skip("NOT IMPLEMENTED: Roadmap index".to_string())
+    fn run(&self, ctx: &DriftCtx) -> Verdict {
+        super::audit::native(ctx, "mios-gen", &["roadmap-index", "--check"])
     }
 }

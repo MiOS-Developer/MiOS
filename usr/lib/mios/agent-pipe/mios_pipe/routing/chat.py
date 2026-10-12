@@ -90,7 +90,7 @@ from mios_knowledge import _recall_knowledge, _store_knowledge
 from mios_native_loop import _respond_local_state, _respond_native_loop_direct
 from mios_oscontrol import _respond_os_control
 from mios_planner import decompose_intent
-import mios_preempt   # T-019/SCHED-01: turn-boundary preemption seam (flag-gated, degrade-open)
+import mios_preempt   # task_19/task_19: turn-boundary preemption seam (flag-gated, degrade-open)
 from mios_refine import refine_intent
 from mios_routing import _deterministic_action_route
 from mios_sse import _sse_chunk, _sse_status, _stream_answer
@@ -100,6 +100,12 @@ from mios_tokenize import _usage_estimate, _normalize_usage
 from mios_verity import polish_response
 from mios_vision import _client_tools_complete, _has_client_tools, _vision_complete
 from mios_web_research import _web_research_enrich
+# Conversation history lives in chat_history. Re-exported: chat_completions_logic
+# resolves these names here, so tests that patch chat.<name> keep working.
+from mios_pipe.routing.chat_history import (  # noqa: F401 -- re-exported
+    _drop_stale_tool_results, _summarize_evicted_messages,
+    _get_gateway_session, _save_gateway_session,
+)
 
 log = logging.getLogger("mios-agent-pipe")
 
@@ -283,20 +289,6 @@ def _pretty_name(n: str) -> str:
             return s[len(_pre):]
     return s
 
-def _drop_stale_tool_results(messages: list, ttl_turns: int) -> list:
-    """Drop tool result messages older than ttl_turns turns ago."""
-    new_msgs = []
-    assistant_count = 0
-    for msg in reversed(messages):
-        role = msg.get("role")
-        if role == "assistant":
-            assistant_count += 1
-        if role in ("tool", "function"):
-            if assistant_count > ttl_turns:
-                continue
-        new_msgs.append(msg)
-    return list(reversed(new_msgs))
-
 def _trim_sys_prefix(sys_prefix: list, lane: str) -> list:
     if lane not in SLOW_LANES or SLOW_LANE_BLOCK_CHARS <= 0:
         return sys_prefix
@@ -312,36 +304,6 @@ def _trim_sys_prefix(sys_prefix: list, lane: str) -> list:
                  + "\n[...trimmed for the light lane...]")
         trimmed.append({**m, "content": c})
     return trimmed
-
-async def _summarize_evicted_messages(evicted_messages: list) -> str:
-    """Precise summarization helper using the planner/model endpoint."""
-    history_str = ""
-    for m in evicted_messages:
-        role = str(m.get("role") or "").upper()
-        content = str(m.get("content") or "").strip()
-        history_str += f"{role}: {content}\n"
-
-    payload = {
-        "model": ROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": "You are a precise summarization assistant. Summarize the key facts, tasks, preferences, and details from the following conversation history in a concise, bulleted format. Keep the summary under 200 words. Focus strictly on facts and decisions made, omitting conversational filler."},
-            {"role": "user", "content": history_str}
-        ],
-        "temperature": 0.0,
-        "max_tokens": 300,
-        "stream": False
-    }
-    try:
-        async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
-            if r.status_code == 200:
-                res = r.json()
-                summary = (res.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-                return summary.strip()
-    except Exception as e:
-        log.warning("Failed to summarize evicted messages: %s", e)
-    return "Archive of oldest conversation history turns."
 
 async def _quick_chat_reply(user_text: str, history: list = None) -> str:
     if not user_text or not user_text.strip():
@@ -648,31 +610,6 @@ async def _budget_release_inflight(turn_token: Optional[str]) -> None:
     except Exception:  # noqa: BLE001
         log.debug("budget inflight release failed for %s", turn_token, exc_info=True)
 
-async def _get_gateway_session(session_id: str) -> list[dict]:
-    try:
-        sql = "SELECT messages FROM gateway_sessions WHERE session_id = %(session_id)s"
-        rows = await _mios_pg.execute(sql, {"session_id": session_id}, fetch=True)
-        if rows:
-            messages = rows[0].get("messages")
-            if isinstance(messages, str):
-                return json.loads(messages)
-            return messages or []
-    except Exception as e:
-        log.warning("Database error fetching gateway session %s: %s", session_id, e)
-    return []
-
-async def _save_gateway_session(session_id: str, messages: list[dict]) -> None:
-    try:
-        sql = """
-            INSERT INTO gateway_sessions (session_id, messages, updated_at)
-            VALUES (%(session_id)s, %(messages)s, CURRENT_TIMESTAMP)
-            ON CONFLICT (session_id)
-            DO UPDATE SET messages = EXCLUDED.messages, updated_at = CURRENT_TIMESTAMP
-        """
-        await _mios_pg.execute(sql, {"session_id": session_id, "messages": json.dumps(messages)})
-    except Exception as e:
-        log.warning("Database error saving gateway session %s: %s", session_id, e)
-
 async def chat_completions_logic(request: Request) -> Any:
     try:
         body_bytes = await request.body()
@@ -722,6 +659,11 @@ async def chat_completions_logic(request: Request) -> Any:
             filtered_messages.append(m)
         messages = filtered_messages
         body["messages"] = messages
+
+    if str(body.get("tool_choice") or "").strip().lower() == "none":
+        body.pop("tools", None)
+        body.pop("tool_choice", None)
+        log.info("tool_choice: 'none' -> stripped tool definitions; 0 tool tokens for plain chat")
 
     last_user_text = _extract_last_user_text(messages)
     _clean_user = _strip_owui_scaffold(last_user_text)
@@ -786,7 +728,7 @@ async def chat_completions_logic(request: Request) -> Any:
     if LETTA_MEMORY_BACKEND and _LETTA_CLIENT:
         try:
             import mios_tokenize
-            _tok_count = mios_tokenize.count_messages(messages)
+            _tok_count = mios_tokenize.count_messages(messages, tools=body.get("tools"))
             _letta_ctx_limit = 8000
             _fill = _tok_count / _letta_ctx_limit
             _session_id = _conv_key_var.get() or "default"
@@ -815,7 +757,7 @@ async def chat_completions_logic(request: Request) -> Any:
                 messages = _drop_stale_tool_results(messages, tool_result_ttl_turns)
                 body["messages"] = messages
 
-            tok_count = mios_tokenize.count_messages(messages)
+            tok_count = mios_tokenize.count_messages(messages, tools=body.get("tools"))
             fill = tok_count / n_ctx
 
             if fill >= compaction_threshold_pct:
@@ -888,7 +830,7 @@ async def chat_completions_logic(request: Request) -> Any:
                     tokens_before = tok_count
                     messages = new_messages
                     body["messages"] = messages
-                    tokens_after = mios_tokenize.count_messages(messages)
+                    tokens_after = mios_tokenize.count_messages(messages, tools=body.get("tools"))
 
                     if _db_write is not None:
                         try:
@@ -1353,15 +1295,16 @@ async def responses_api_logic(request: Request) -> Any:
         return JSONResponse(content={"error": {"message": "you must provide 'input'",
             "type": "invalid_request_error", "param": "input", "code": None}},
             status_code=400)
-    _port = os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")
+    _port = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
     try:
         async with httpx.AsyncClient(timeout=300.0) as s:
             r = await s.post(f"http://127.0.0.1:{_port}/v1/chat/completions",
                              json={"model": model, "messages": msgs, "stream": False},
                              headers={"Content-Type": "application/json"})
         cc = r.json()
-    except Exception as e:  # noqa: BLE001
-        return JSONResponse(content={"error": {"message": str(e)[:200],
+    except Exception:  # noqa: BLE001
+        log.exception("responses relay backend failed")
+        return JSONResponse(content={"error": {"message": "The response backend is unavailable",
                             "type": "api_error"}}, status_code=502)
     answer = (((cc.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
     return JSONResponse(content={
@@ -1470,7 +1413,7 @@ async def _kernel_chat_handler(decision, **ctx):
     decision.mode = "agent"
     return await _KERNEL.dispatcher.run(decision, **ctx)
 
-_ANTIFAB_ENABLE = os.environ.get("MIOS_ANTIFAB_ENABLE", "true").lower() not in {"false", "0", "no", "off"}
+_ANTIFAB_ENABLE = os.environ.get("MIOS_VERITY_ANTIFAB_ENABLE", "true").lower() not in {"false", "0", "no", "off"}
 
 def _contains_tool_result_block(text) -> bool:
     """True when `text` narrates a tool EXECUTION result (real-emitter sentinel or a

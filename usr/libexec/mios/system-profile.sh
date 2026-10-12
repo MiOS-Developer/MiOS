@@ -255,9 +255,14 @@ view_results() {
         has_results=true
     fi
 
-    if [ -d ~/mios-build-assessment-* 2>/dev/null ]; then
+    local -a assessment_dirs=()
+    local assessment_dir
+    for assessment_dir in "$HOME"/mios-build-assessment-*; do
+        [[ -d "$assessment_dir" ]] && assessment_dirs+=("$assessment_dir")
+    done
+    if [[ ${#assessment_dirs[@]} -gt 0 ]]; then
         echo -e "${BOLD}Assessment Reports:${NC}"
-        ls -dlt ~/mios-build-assessment-* 2>/dev/null | head -5 | awk '{print "  "$9}'
+        ls -dlt -- "${assessment_dirs[@]}" 2>/dev/null | head -5 | awk '{print "  "$9}'
         echo ""
         has_results=true
     fi
@@ -284,7 +289,8 @@ compare_profiles() {
     echo -e "${BOLD}${YELLOW}Compare Two System Profiles${NC}\n"
 
     if [ -d ~/system-profile ]; then
-        local profiles=($(ls -t ~/system-profile/system-profile-*.txt 2>/dev/null))
+        local -a profiles
+        mapfile -t profiles < <(ls -t ~/system-profile/system-profile-*.txt 2>/dev/null)
 
         if [ ${#profiles[@]} -lt 2 ]; then
             echo -e "${YELLOW}Need at least 2 profiles to compare.${NC}"
@@ -297,7 +303,8 @@ compare_profiles() {
 
         echo -e "${BOLD}Available Profiles:${NC}\n"
         for i in "${!profiles[@]}"; do
-            local date=$(python3 -c "import os, sys, datetime; print(datetime.date.fromtimestamp(os.path.getmtime(sys.argv[1])))" "${profiles[$i]}" 2>/dev/null || stat -c %y "${profiles[$i]}" 2>/dev/null | cut -d' ' -f1 || stat -f "%Sm" -t "%Y-%m-%d" "${profiles[$i]}" 2>/dev/null || echo "Unknown")
+            local date
+            date=$(python3 -c "import os, sys, datetime; print(datetime.date.fromtimestamp(os.path.getmtime(sys.argv[1])))" "${profiles[$i]}" 2>/dev/null || stat -c %y "${profiles[$i]}" 2>/dev/null | cut -d' ' -f1 || stat -f "%Sm" -t "%Y-%m-%d" "${profiles[$i]}" 2>/dev/null || echo "Unknown")
             echo "  $)) $(basename "${profiles[$i]}") ($date)"
         done
 
@@ -369,7 +376,8 @@ check_system_status() {
 
     echo -e "\n${BOLD}IOMMU:${NC}"
     if [ -d /sys/kernel/iommu_groups ]; then
-        local groups=$(ls -1 /sys/kernel/iommu_groups/ | wc -l)
+        local groups
+        groups=$(ls -1 /sys/kernel/iommu_groups/ | wc -l) || true
         echo -e "  ${GREEN}[OK]${NC} IOMMU enabled ($groups groups)"
     else
         echo -e "  ${RED}[ERR]${NC} IOMMU not available"
@@ -383,7 +391,8 @@ check_system_status() {
     fi
 
     echo -e "\n${BOLD}GPU:${NC}"
-    local gpu_count=$(lspci | grep -c -E "VGA|3D" || echo "0")
+    local gpu_count
+    gpu_count=$(lspci | grep -c -E "VGA|3D" || echo "0")
     if [ "$gpu_count" -gt 0 ]; then
         echo -e "  ${GREEN}[OK]${NC} $gpu_count GPU(s) detected"
         lspci | grep -E "VGA|3D" | while read -r line; do

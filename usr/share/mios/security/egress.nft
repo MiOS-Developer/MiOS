@@ -1,4 +1,4 @@
-# AI-hint: GENERATED nftables egress firewall for the MiOS agent (#54). DO NOT EDIT -- regenerate via tools/generate-egress-firewall.py. OFF: informational ruleset; applying it changes nothing.
+# AI-hint: GENERATED nftables egress firewall for the MiOS agent (#54). DO NOT EDIT -- regenerate via mios-gen egress-firewall. OFF: informational ruleset; applying it changes nothing.
 table inet mios_egress {
     chain output {
         type filter hook output priority filter; policy accept;

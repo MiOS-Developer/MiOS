@@ -100,58 +100,58 @@ bound-images symlink, `mios-agents.service` enabled (replacing `mios-code-server
 *Status: assets present + service enabled; confirm the image builds and the
 container serves the IDE + a working `mios-a2o doctor` in-container.*
 
-**Phase 1 — Role-based harness (F-001, F-003). Built.** Replaced the per-engine-only
+**Phase 1 — Role-based harness (task_3166, task_3168). Built.** Replaced the per-engine-only
 model vars with `{orchestrator, lane_a, lane_b}` roles each carrying
 engine+model+effort; `exec_line` accepts model+effort; the degrade-open
 effort-flag template is live (`effort_flag()`, `mios-a2o:66-72`). *Status: shipped
 + live-verified.*
 
-**Phase 2 — Frontier profile = orchestrator + sub-agent lanes (F-002, F-005). Built.**
+**Phase 2 — Frontier profile = orchestrator + sub-agent lanes (task_3167, task_3170). Built.**
 `cmd_frontier` runs the orchestrator engine interactively in the main pane
 (model+effort pinned, degrades to shell if missing); lanes A/B follow the two
 sub-agent roles; monitor unchanged. `lane-a`/`lane-b` convenience dispatch
 resolves to the sub-agent role config. Pane titles show `engine:model (effort=…)`.
-*Status: shipped + live-verified (F-012's `FRONTIER-LAYOUT` selftest asserts the
+*Status: shipped + live-verified (task_3177's `FRONTIER-LAYOUT` selftest asserts the
 4-pane layout engine-free).*
 
-**Phase 3 — SSOT + env-bridge (F-004, F-008). Built.** `[frontier]` lives in
+**Phase 3 — SSOT + env-bridge (task_3169, task_3173). Built.** `[frontier]` lives in
 `mios.toml`; `tools/lib/userenv.sh` slot-pairs `frontier.*` → `MIOS_A2O_*`
 (including `lane_a_role`/`lane_b_role`); `system-sync-env.sh` emits the full
 `MIOS_A2O_*` block into `/etc/mios/install.env`; `mios-agents.service` forwards
-every var via `--env` into the container. Model ids SSOT'd (F-008 done —
+every var via `--env` into the container. Model ids SSOT'd (task_3173 done —
 Sonnet-5/Opus-4.8 confirmed; Gemini Flash 3.5 id log-verified as
 `"Gemini 3.5 Flash (High)"`, the exact `agy models` display string, via an
 `agy --log-file` resolution trace — bare slugs fail resolution and silently
 fall back to Medium effort).
 
-**Phase 4 — Reasoning-effort activation (F-010). Built.** `claude`'s effort flag
+**Phase 4 — Reasoning-effort activation (task_3175). Built.** `claude`'s effort flag
 confirmed in-container = `--effort {e}` (levels low|medium|high|xhigh|max),
 activated as `mios.toml [frontier].claude_effort_flag`. `agy` needs no separate
 flag — effort is baked into the model display name itself (see Phase 3), so
 `agy_effort_flag` stays empty by design. `gemini` CLI isn't installed, so its
 template stays empty (degrade-open, untested). *Status: resolved, not blocked.*
 
-**Phase 5 — Full-surface streaming (F-011). MVP built, activation seam in
+**Phase 5 — Full-surface streaming (task_3176). MVP built, activation seam in
 progress.** `[frontier].stream_to_reasoning` (default off, degrade-open) +
 `stream_path` gate a JSONL sink `cmd_dispatch`'s runner appends per-task
 start/finish transitions to; `sse.py`'s `_frontier_stream_events()` folds those
 into the same `mios_status` reasoning-channel emission OWUI/CLI/Discord already
 read. *Status: code path shipped; the container write-permission activation seam
-(confirming the mount can write `MIOS_A2O_STREAM_PATH` once flipped on) is being
+(confirming the mount can write `MIOS_FRONTIER_STREAM_PATH` once flipped on) is being
 finished by the code lane before the flag defaults to on.*
 
-**Phase 6 — Identity, security, hardening (F-007, F-009, F-012). Built.**
+**Phase 6 — Identity, security, hardening (task_3172, task_3174, task_3177). Built.**
 `mios-agents` in the security allowlist ✅; credential-mount flow verified
 (runtime OAuth/`/login`, `/home/coder` persists across restarts, zero secrets
 baked) ✅; `MIOS_A2O_AUTO` confinement unchanged; Law-6 posture unchanged;
-selftest asserts the role/frontier layout (F-012) ✅. *Status: complete.*
+selftest asserts the role/frontier layout (task_3177) ✅. *Status: complete.*
 
-**Phase 7 — Advanced orchestration (F-013+). Design sketches written, not yet
+**Phase 7 — Advanced orchestration (task_3184+). Design sketches written, not yet
 coded.** Parallel fan-out beyond two lanes, per-task checkpointing/resume,
 orchestrator↔sub-agent structured hand-off (A2A), cost/turn budgets, and a
 "completeness critic" lane. Concrete per-item designs (files to touch,
 degrade-open activation path) now live in the F- records of `tasks.jsonl` ("Phase-7 design
-sketches" section — including F-024 (Lane-B `agy`→`claude` degrade-open
+sketches" section — including task_3183 (Lane-B `agy`→`claude` degrade-open
 fallback while the Gemini account quota is exhausted, in-progress) and the
 now-resolved dispatch-vs-nested-tool-loop question (dispatch is the shipped
 and preferred shape; nested tool-loop recorded as the Phase-7 alternative).
@@ -160,9 +160,9 @@ and preferred shape; nested tool-loop recorded as the Phase-7 alternative).
 ## 5. Relationship to the MiOS roadmap
 
 mios-frontier is the human-facing face of the A2O program: the repo-root
-`tasks.jsonl` **T-010** (war-room rework) is the umbrella; the sub-agent
-visibility work (FV-*) and constrained-tool-calling (T-111) apply to the lanes;
-the native-typed-launch-args mandate (T-119) governs how the harness exposes its
+`tasks.jsonl` **task_10** (war-room rework) is the umbrella; the sub-agent
+visibility work (FV-*) and constrained-tool-calling (task_112) apply to the lanes;
+the native-typed-launch-args mandate (task_120) governs how the harness exposes its
 own verbs. This file decomposes the war-room into shippable frontier tasks.
 
 ## 6. Open questions / verify points (do NOT guess — confirm in-container)
@@ -171,18 +171,18 @@ All prior open questions in this section are now resolved; kept here (struck
 through) as the historical record per the honesty rule.
 
 - ~~**Gemini Flash 3.5 model id** for the `agy`/`gemini` engine (`--model`
-  value).~~ **Resolved (F-008):** `"Gemini 3.5 Flash (High)"` — the exact
+  value).~~ **Resolved (task_3173):** `"Gemini 3.5 Flash (High)"` — the exact
   `agy models` display string, log-verified via `agy --log-file` resolution
   trace. Bare slugs (`gemini-3.5-flash`, etc.) fail resolution and silently
   fall back to Medium effort, so the display string is the only accepted value.
 - ~~**Per-CLI reasoning-effort flag** for `claude`, `agy`, `gemini`.~~
-  **Resolved (F-010):** `claude` = `--effort {e}` (low|medium|high|xhigh|max),
+  **Resolved (task_3175):** `claude` = `--effort {e}` (low|medium|high|xhigh|max),
   confirmed in-container and activated in `mios.toml [frontier]`. `agy` has no
   separate flag — effort is encoded in the model display name (see above), so
   `agy_effort_flag = ""` is correct by design. `gemini` CLI is not installed;
   its template stays empty (degrade-open, untested).
 - ~~**Port**: `MIOS_PORT_AGENTS` — ACTIVATION cites `8801`, the live dashboard
-  shows `8800`; reconcile the SSOT.~~ **Resolved (F-016):** `mios-agents` reuses
+  shows `8800`; reconcile the SSOT.~~ **Resolved (task_3178):** `mios-agents` reuses
   the retired `mios-code-server` port — one IDE, no duplicate service. SSOT is
   `[ports].code_server = 8800`; `MIOS_PORT_AGENTS` is retired.
 - ~~Whether the orchestrator should **dispatch** to lanes or run a nested

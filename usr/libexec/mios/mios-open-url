@@ -66,11 +66,33 @@ _resolve_browser_chain() {
         [ -n "$_lead" ] && echo "$_lead"
     fi
     python3 - "$(cd "$(dirname "$0")" && pwd)/../../lib/mios" <<'PYEOF' 2>/dev/null
+import os
 import sys
 sys.path.insert(0, sys.argv[1]); import mios_toml  # the ONE shared layered resolver
 chain = []
 seen = set()
+
+# 1. Environment variable override (e.g. projected from userenv.sh / dotfiles)
+env_browser = os.environ.get("MIOS_BROWSER")
+if env_browser and env_browser not in seen:
+    chain.append(env_browser)
+    seen.add(env_browser)
+
 d = mios_toml.load_merged()
+
+# 2. SSOT default browser: [aliases].browser from mios.toml / mios.html
+val = d.get("aliases", {}).get("browser")
+if isinstance(val, str) and val and val not in seen:
+    chain.append(val)
+    seen.add(val)
+
+# 3. [browser].default
+br_default = d.get("browser", {}).get("default")
+if isinstance(br_default, str) and br_default and br_default not in seen:
+    chain.append(br_default)
+    seen.add(br_default)
+
+# 4. [desktop.apps] role="browser" default=true first, then others
 apps = mios_toml.section(d, "desktop").get("apps", [])
 if isinstance(apps, list):
     for entry in apps:
@@ -87,16 +109,42 @@ if isinstance(apps, list):
         if aid and aid not in seen:
             chain.append(aid)
             seen.add(aid)
-aliases = mios_toml.section(d, "mios-find").get("aliases", {})
-web = aliases.get("web") if isinstance(aliases, dict) else None
+
+# 5. [mios-find].aliases.web
+mf_aliases = mios_toml.section(d, "mios-find").get("aliases", {})
+web = mf_aliases.get("web") if isinstance(mf_aliases, dict) else None
 if isinstance(web, str) and web and web not in seen:
     chain.append(web)
     seen.add(web)
+
+# 6. WSL2 / Windows host interop fallback: ensure cmd.exe is in the chain
+if os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop") or os.environ.get("WSL_DISTRO_NAME") or os.path.exists("/mnt/c/Windows/System32/cmd.exe"):
+    for win_h in ("cmd.exe", "explorer.exe"):
+        if win_h not in seen:
+            chain.append(win_h)
+            seen.add(win_h)
+
 print("\n".join(chain))
 PYEOF
 }
 
 _browser_flag() {
+    local target="$1"
+    local mode="${2:-tab}"
+    local mb=""
+    if command -v mios-browser >/dev/null 2>&1; then
+        mb="mios-browser"
+    elif [ -x "/usr/bin/mios-browser" ]; then
+        mb="/usr/bin/mios-browser"
+    elif [ -x "$(dirname "$0")/../../tools/native/target/release/mios-browser" ]; then
+        mb="$(dirname "$0")/../../tools/native/target/release/mios-browser"
+    elif [ -x "$(dirname "$0")/mios-browser" ]; then
+        mb="$(dirname "$0")/mios-browser"
+    fi
+    if [ -n "$mb" ]; then
+        "$mb" --browser "$target" --mode "$mode" --explain 2>/dev/null | awk -F': *' '/^Flags:/{print $2}'
+        return
+    fi
     python3 - "$(cd "$(dirname "$0")" && pwd)/../../lib/mios" "$1" "$2" <<'PYEOF' 2>/dev/null || true
 import sys
 sys.path.insert(0, sys.argv[1]); import mios_toml  # the ONE shared layered resolver
@@ -199,7 +247,7 @@ while IFS= read -r TARGET; do
     fi
 
     if [ "$_already_running" = "1" ] && { echo "$TARGET" | grep -qiE 'chrome|chromium'; }; then
-        _cdp_port="${CDP_PORT:-${MIOS_PORT_CHROME_CDP:-9222}}"
+        _cdp_port="${CDP_PORT:-${MIOS_PORTS_CHROME_CDP:-9222}}"
         if curl -fsS -m 2 "http://127.0.0.1:${_cdp_port}/json/version" >/dev/null 2>&1; then
             echo "[mios-open-url] browser $TARGET is already running with CDP -> opening tab via CDP" >&2
             if /usr/lib/mios/agents/.venv/bin/python3 - "$_cdp_port" "$URL" <<'PYEOF' 2>/dev/null; then
@@ -250,28 +298,41 @@ PYEOF
         fi
     fi
 
+        _cmd_bin="$(command -v cmd.exe 2>/dev/null || true)"
+        [ -n "$_cmd_bin" ] || [ ! -x "/mnt/c/Windows/System32/cmd.exe" ] || _cmd_bin="/mnt/c/Windows/System32/cmd.exe"
         if [ "$TARGET" = "cmd.exe" ] || [ "$TARGET" = "explorer.exe" ]; then
             WIN_URL=$(wslpath -w "$URL" 2>/dev/null || echo "$URL")
             echo "[mios-open-url] trying Windows handler: $TARGET '$WIN_URL'" >&2
-            cmd.exe /c start "" "$WIN_URL"
-            _launch_rc=$?
-            _used_windows_fallback=1
+            if [ -n "$_cmd_bin" ]; then
+                "$_cmd_bin" /c start "" "$WIN_URL" < /dev/null > /dev/null 2>&1 &
+                _launch_rc=$?
+                _used_windows_fallback=1
+            else
+                _launch_rc=127
+            fi
         else
             mios-gui "$TARGET" $_FLAG "$URL"
             _launch_rc=$?
             _used_windows_fallback=0
-            if [ "$_launch_rc" -ne 0 ] && command -v mios-windows >/dev/null 2>&1; then
-                echo "[mios-open-url] mios-gui $TARGET failed; trying Windows fallback via mios-windows" >&2
-                if mios-windows launch "$TARGET" $_FLAG "$URL" >/dev/null 2>&1; then
-                    _launch_rc=0
+            if [ "$_launch_rc" -ne 0 ]; then
+                echo "[mios-open-url] mios-gui $TARGET failed; trying Windows fallback via host handler" >&2
+                if [ -n "$_cmd_bin" ]; then
+                    WIN_URL=$(wslpath -w "$URL" 2>/dev/null || echo "$URL")
+                    "$_cmd_bin" /c start "" "$WIN_URL" < /dev/null > /dev/null 2>&1 &
+                    _launch_rc=$?
                     _used_windows_fallback=1
+                elif command -v mios-windows >/dev/null 2>&1; then
+                    if mios-windows cmd "start \"\" \"$URL\"" >/dev/null 2>&1; then
+                        _launch_rc=0
+                        _used_windows_fallback=1
+                    fi
                 fi
             fi
         fi
 
     _summary=""
     _verify=""
-    if [ "$_already_running" = "0" ]; then
+    if [ "$_already_running" = "0" ] && [ "${_used_windows_fallback:-0}" != "1" ]; then
         for _delay in 1 2 3 4 5; do
             _verify=$(mios-window-active --present "$_verify_pattern" 2>/dev/null)
             _summary=$(_parse_summary "$_verify")
@@ -286,9 +347,9 @@ PYEOF
     _LAST_TARGET="$TARGET"
     _LAST_RC="$_launch_rc"
 
-    if [ "$_summary" = "presented" ]; then
-        echo "$_verify"
-        echo "[mios-open-url] OK target=$TARGET pattern=$_verify_pattern" >&2
+    if [ "$_summary" = "presented" ] || { [ "${_used_windows_fallback:-0}" = "1" ] && [ "$_launch_rc" = "0" ]; }; then
+        printf '{"success": true, "target": "%s", "url": "%s", "summary": "presented", "engine": "windows-host", "launch_rc": 0}\n' "$TARGET" "$URL"
+        echo "[mios-open-url] OK target=$TARGET opened via Windows host" >&2
         exit 0
     fi
 

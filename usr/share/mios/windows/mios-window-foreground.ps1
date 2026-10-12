@@ -11,16 +11,6 @@ param(
 # Strip a trailing .exe -- Get-Process expects the bare name.
 $ProcessName = $ProcessName -replace '\.exe$', ''
 
-$compiledExe = Join-Path $PSScriptRoot '..\..\..\src\mios-launch.exe'
-if (-not (Test-Path $compiledExe)) {
-    $compiledExe = 'C:\MiOS\src\mios-launch.exe'
-}
-
-if (Test-Path $compiledExe) {
-    & $compiledExe foreground $ProcessName
-    exit $LASTEXITCODE
-}
-
 # Wait for the process to appear (the launch + window-creation race
 # is real on slower spawn paths; ~1s budget).
 for ($i = 0; $i -lt $MaxAttempts; $i++) {

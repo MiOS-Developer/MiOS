@@ -3,6 +3,7 @@
 # AI-hint: Configures the `prepare-root.conf` file by reading the `[security].composefs_mode` setting from `mios.toml` to ...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# shellcheck source=/dev/null  # Resolve the repository or installed FHS logging library.
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -62,11 +63,12 @@ if [[ -f "$conf" ]]; then
 fi
 
 mios_log "Writing $conf with composefs mode=${MODE}"
-case "$MODE" in
-    verity)
-        cat > "$conf" <<'EOF'
+# The hint is part of the projection: the tracked copy is gated byte-for-byte
+# against this output (check_composefs_projection) and must carry a header.
+cat > "$conf" <<EOF
+# AI-hint: ostree prepare-root (composefs mode, root/etc mount policy); generated from mios.toml [security].composefs_mode by automation/77-composefs-verity.sh.
 [composefs]
-enabled = verity
+enabled = ${MODE}
 
 [root]
 transient = false
@@ -74,20 +76,6 @@ transient = false
 [etc]
 transient = false
 EOF
-        ;;
-    yes)
-        cat > "$conf" <<'EOF'
-[composefs]
-enabled = yes
-
-[root]
-transient = false
-
-[etc]
-transient = false
-EOF
-        ;;
-esac
 
 if [[ "$MODE" == "verity" && "$MASK_REMOUNT" =~ ^(true|TRUE|1|yes|YES)$ ]]; then
     mios_log "Masking systemd-remount-fs.service"

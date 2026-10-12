@@ -6,7 +6,23 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from mios_config import _DISPATCH_TOML
+from mios_config import _DISPATCH_TOML, _toml_section
+
+
+def _port_hints(raw) -> tuple:
+    """Comma-separated host:port substrings; a [ports] key stands for its port."""
+    ports = None
+    out = []
+    for h in str(raw).split(","):
+        h = h.strip()
+        if h and not h.isdigit():
+            ports = _toml_section("ports") if ports is None else ports
+            port = (ports or {}).get(h)
+            if isinstance(port, int) and not isinstance(port, bool):
+                h = str(port)
+        if h:
+            out.append(h)
+    return tuple(out)
 
 def _binding_api(cfg: dict, engine: Optional[str]) -> str:
     """The feature-family an endpoint declares, from CONFIG: the engine binding's
@@ -20,10 +36,8 @@ def _binding_api(cfg: dict, engine: Optional[str]) -> str:
     return str(cfg.get("api") or "").strip().lower()
 
 _NO_TOOL_CHOICE_API = {"llamacpp", "llama.cpp", "llama-server", "vulkan"}
-_NO_TOOL_CHOICE_HINTS = tuple(
-    h.strip() for h in str(os.environ.get("MIOS_NO_TOOL_CHOICE_HINTS")
-                           or _DISPATCH_TOML.get("no_tool_choice_hints", "8450,8458,11436")).split(",")
-    if h.strip())
+_NO_TOOL_CHOICE_HINTS = _port_hints(os.environ.get("MIOS_NO_TOOL_CHOICE_HINTS")
+                                  or _DISPATCH_TOML.get("no_tool_choice_hints", "llm_igpu"))
 
 def _endpoint_supports_tool_choice(ep: str, cfg: dict,
                                    engine: Optional[str] = None) -> bool:
@@ -39,10 +53,8 @@ def _endpoint_supports_tool_choice(ep: str, cfg: dict,
         return False
     return not any(h and h in (ep or "") for h in _NO_TOOL_CHOICE_HINTS)
 
-_PARALLEL_TOOLS_HINTS = tuple(
-    h.strip() for h in str(os.environ.get("MIOS_PARALLEL_TOOLS_HINTS")
-                           or _DISPATCH_TOML.get("parallel_tools_hints", "8520,8530")).split(",")
-    if h.strip())
+_PARALLEL_TOOLS_HINTS = _port_hints(os.environ.get("MIOS_PARALLEL_TOOLS_HINTS")
+                                    or _DISPATCH_TOML.get("parallel_tools_hints", "llm_heavy"))
 
 def _endpoint_supports_parallel_tools(ep: str) -> bool:
     """True when the endpoint's model reliably emits well-formed PARALLEL tool calls
@@ -51,10 +63,8 @@ def _endpoint_supports_parallel_tools(ep: str) -> bool:
     return any(h and h in (ep or "") for h in _PARALLEL_TOOLS_HINTS)
 
 _LLAMACPP_API = {"llamacpp", "llama.cpp", "llama-server", "vulkan"}
-_KV_PAGING_HINTS = tuple(
-    h.strip() for h in str(os.environ.get("MIOS_KV_PAGING_HINTS")
-                           or _DISPATCH_TOML.get("kv_paging_hints", "8450,8458,11436")).split(",")
-    if h.strip())
+_KV_PAGING_HINTS = _port_hints(os.environ.get("MIOS_KV_PAGING_HINTS")
+                             or _DISPATCH_TOML.get("kv_paging_hints", "llm_igpu"))
 
 def _endpoint_is_llamacpp(ep: str, cfg: dict, engine: Optional[str] = None) -> bool:
     """True when `ep` is a llama.cpp llama-server that can do /slots KV paging.

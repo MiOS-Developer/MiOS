@@ -22,12 +22,12 @@ def _endpoint_key(ep):
     return s.split("/", 1)[0] or s
 
 def t_local_blade_name():
-    _saved_env = os.environ.get("MIOS_HOSTNAME")
+    _saved_env = os.environ.get("MIOS_IDENTITY_HOSTNAME")
     _saved_toml = B._toml_section
     try:
-        os.environ["MIOS_HOSTNAME"] = "blade-from-env"
-        check("local_blade: env MIOS_HOSTNAME wins", B.local_blade_name() == "blade-from-env")
-        os.environ.pop("MIOS_HOSTNAME", None)
+        os.environ["MIOS_IDENTITY_HOSTNAME"] = "blade-from-env"
+        check("local_blade: env MIOS_IDENTITY_HOSTNAME wins", B.local_blade_name() == "blade-from-env")
+        os.environ.pop("MIOS_IDENTITY_HOSTNAME", None)
         B._toml_section = lambda s: {"hostname": "blade-from-identity"} if s == "identity" else {}
         check("local_blade: falls to [identity].hostname",
               B.local_blade_name() == "blade-from-identity")
@@ -36,9 +36,9 @@ def t_local_blade_name():
     finally:
         B._toml_section = _saved_toml
         if _saved_env is None:
-            os.environ.pop("MIOS_HOSTNAME", None)
+            os.environ.pop("MIOS_IDENTITY_HOSTNAME", None)
         else:
-            os.environ["MIOS_HOSTNAME"] = _saved_env
+            os.environ["MIOS_IDENTITY_HOSTNAME"] = _saved_env
 
 def t_load_blade_pool_default():
     _saved = B._toml_section
@@ -148,7 +148,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_k3s.py (T-1092)
+# Consolidated from test_mios_k3s.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for the #61 generated k3s manifests: every committed usr/share/mios/k3s/generated/*.yaml parses, declares an apiVersion, carries ...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

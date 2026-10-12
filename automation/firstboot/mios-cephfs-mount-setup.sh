@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-if [ "${MIOS_CEPHFS_ENABLE:-false}" != "true" ]; then
+if [ "${MIOS_STORAGE_CEPHFS_ENABLE:-false}" != "true" ]; then
     echo "[cephfs-mount-setup] CephFS integration disabled in SSOT"
     exit 0
 fi
@@ -20,16 +20,16 @@ render_template() {
     if command -v envsubst >/dev/null 2>&1; then
         envsubst < "$src" > "$dest"
     else
-        sed -e "s|\${MIOS_CEPHFS_ENABLE}|${MIOS_CEPHFS_ENABLE:-false}|g" \
-            -e "s|\${MIOS_CEPHFS_MONITORS}|${MIOS_CEPHFS_MONITORS:-127.0.0.1:6789}|g" \
-            -e "s|\${MIOS_CEPHFS_FS_NAME}|${MIOS_CEPHFS_FS_NAME:-cephfs}|g" \
-            -e "s|\${MIOS_CEPHFS_TENANT_ID}|${MIOS_CEPHFS_TENANT_ID:-mios}|g" \
-            -e "s|\${MIOS_CEPHFS_DATA_POOL_HOT}|${MIOS_CEPHFS_DATA_POOL_HOT:-cephfs_data_hot}|g" \
-            -e "s|\${MIOS_CEPHFS_DATA_POOL_BULK}|${MIOS_CEPHFS_DATA_POOL_BULK:-cephfs_data_bulk}|g" \
-            -e "s|\${MIOS_XDG_CACHE_LOCAL_PATH}|${MIOS_XDG_CACHE_LOCAL_PATH:-/run/user/{uid}/.cache}|g" \
-            -e "s|\${MIOS_CEPHFS_MOUNT_OPTIONS}|${MIOS_CEPHFS_MOUNT_OPTIONS:-noatime,fsc,_netdev}|g" \
-            -e "s|\${MIOS_CEPHFS_KEYRING_DIR}|${MIOS_CEPHFS_KEYRING_DIR:-/etc/ceph/keyring.d}|g" \
-            -e "s|\${MIOS_CEPHFS_AUTOMOUNT_IDLE_TIMEOUT_S}|${MIOS_CEPHFS_AUTOMOUNT_IDLE_TIMEOUT_S:-600}|g" \
+        sed -e "s|\${MIOS_STORAGE_CEPHFS_ENABLE}|${MIOS_STORAGE_CEPHFS_ENABLE:-false}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_MONITORS}|${MIOS_STORAGE_CEPHFS_MONITORS:-127.0.0.1:6789}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_FS_NAME}|${MIOS_STORAGE_CEPHFS_FS_NAME:-cephfs}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_TENANT_ID}|${MIOS_STORAGE_CEPHFS_TENANT_ID:-mios}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_DATA_POOL_HOT}|${MIOS_STORAGE_CEPHFS_DATA_POOL_HOT:-cephfs_data_hot}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_DATA_POOL_BULK}|${MIOS_STORAGE_CEPHFS_DATA_POOL_BULK:-cephfs_data_bulk}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_XDG_CACHE_HOME_OVERRIDE}|${MIOS_STORAGE_CEPHFS_XDG_CACHE_HOME_OVERRIDE:-/run/user/{uid}/.cache}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_MOUNT_OPTIONS}|${MIOS_STORAGE_CEPHFS_MOUNT_OPTIONS:-noatime,fsc,_netdev}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_KEYRING_DIR}|${MIOS_STORAGE_CEPHFS_KEYRING_DIR:-/etc/ceph/keyring.d}|g" \
+            -e "s|\${MIOS_STORAGE_CEPHFS_AUTOMOUNT_IDLE_TIMEOUT_S}|${MIOS_STORAGE_CEPHFS_AUTOMOUNT_IDLE_TIMEOUT_S:-600}|g" \
             "$src" > "$dest"
     fi
 }

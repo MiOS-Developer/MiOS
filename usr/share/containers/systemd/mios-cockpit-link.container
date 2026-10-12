@@ -14,7 +14,7 @@ Wants=network-online.target
 [Container]
 ContainerName=mios-cockpit-link
 EnvironmentFile=/etc/mios/install.env
-Exec=socat tcp-listen:${MIOS_PORT_COCKPIT_LINK},bind=0.0.0.0,fork,reuseaddr tcp:host.containers.internal:9090
+Exec=socat tcp-listen:${MIOS_PORTS_COCKPIT_LINK},bind=0.0.0.0,fork,reuseaddr tcp:host.containers.internal:9090
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=65534
 Image=localhost/mios-sys:latest

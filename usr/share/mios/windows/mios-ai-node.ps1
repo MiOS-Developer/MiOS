@@ -1,4 +1,4 @@
-﻿# AI-hint: Configures a local Podman machine as a MiOS AI node by installing NVIDIA container toolkits, deploying mios-llm-light Quadlets on port 11450, opening T...
+# AI-hint: Configures a local Podman machine as a MiOS AI node by installing NVIDIA container toolkits, deploying mios-llm-light Quadlets on the resolved SSOT port, opening Tailscale firewall rules, and pulling model weights into VM storage.
 # AI-doc: usr/share/doc/mios/manual/windows.md
 <#
   mios-ai-node.ps1 -- MiOS Windows AI Node setup
@@ -15,9 +15,9 @@
       GPU is accessible to containers via CDI (same mechanism as MiOS-DEV).
   3.  Generates the CDI spec (nvidia.com/gpu=all device class).
   4.  Creates the mios.network bridge and /var/lib/mios/llamacpp* volume directories.
-  5.  Deploys mios-llm-light (port :11450) as a systemd Quadlet inside the machine.
+  5.  Deploys mios-llm-light (port :8500 / SSOT llm_light) as a systemd Quadlet inside the machine.
   6.  Pulls the GGUF weights directly from Hugging Face via curl.
-  7.  Opens Tailscale-scoped Windows Firewall rules for port 11450.
+  7.  Opens Tailscale-scoped Windows Firewall rules for the resolved llm_light port.
   8.  Prints the /etc/mios/mios.toml snippet to paste on MiOS-DEV so Hermes
       registers this node as a swarm agent.
 
@@ -67,6 +67,24 @@ if (($useCompiled -eq 'true' -or $useCompiled -eq '1') -and (Test-Path $compiled
 }
 $QuadletSrc = Join-Path $PSScriptRoot 'quadlets'
 
+# Dot-source mios-common.ps1 if Get-MiosSsotValue isn't available yet
+if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
+    $commonScript = Join-Path $PSScriptRoot '..\..\..\installation\mios-common.ps1'
+    if (Test-Path $commonScript) { . $commonScript }
+}
+
+function Get-PortFromSsot([string]$envVar, [string]$key, [int]$default) {
+    $envVal = [System.Environment]::GetEnvironmentVariable($envVar)
+    if ($envVal -and $envVal -match '^\d+$') { return [int]$envVal }
+    if (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) {
+        $ssotVal = Get-MiosSsotValue -Section 'ports' -Key $key -Default $default
+        if ($ssotVal -and $ssotVal -match '^\d+$') { return [int]$ssotVal }
+    }
+    return $default
+}
+
+$llmLightPort = Get-PortFromSsot 'MIOS_PORTS_LLM_LIGHT' 'llm_light' 8500
+
 function Info($m) { Write-Host "  [*] $m" -ForegroundColor Cyan    }
 function Ok($m)   { Write-Host "  [+] $m" -ForegroundColor Green   }
 function Warn($m) { Write-Host "  [!] $m" -ForegroundColor Yellow  }
@@ -93,7 +111,7 @@ function Resolve-ModelTag($tag) {
     return $tag
 }
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# -- helpers -------------------------------------------------------------------
 
 function Get-TailscaleIP {
     try {
@@ -134,7 +152,7 @@ function Test-MachineCmd([string]$cmd) {
     return ($LASTEXITCODE -eq 0)
 }
 
-# ── uninstall ─────────────────────────────────────────────────────────────────
+# -- uninstall -----------------------------------------------------------------
 
 if ($Uninstall) {
     Info 'Stopping and removing MiOS AI Node Quadlets...'
@@ -153,8 +171,8 @@ rm -f /etc/containers/systemd/mios.network
 systemctl daemon-reload
 echo "[OK] Quadlets removed"
 '@
-    foreach ($port in @(11434, 11435, 11450)) {
-        $name = if ($port -eq 11450) { 'MiOS AI Node - mios-llm-light (11450/tcp)' } else { "MiOS AI Node - mios-ollama ($port/tcp)" }
+    foreach ($port in @(11434, 11435, $llmLightPort, 11450)) {
+        $name = if ($port -eq $llmLightPort -or $port -eq 11450) { "MiOS AI Node - mios-llm-light ($port/tcp)" } else { "MiOS AI Node - mios-ollama ($port/tcp)" }
         Remove-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Out-Null
         netsh interface portproxy delete v4tov6 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
         Ok "removed firewall rule and portproxy: $name"
@@ -163,7 +181,7 @@ echo "[OK] Quadlets removed"
     return
 }
 
-# ── preflight ─────────────────────────────────────────────────────────────────
+# -- preflight -----------------------------------------------------------------
 
 Info 'MiOS AI Node setup starting...'
 Info "Target machine: $MachineName"
@@ -184,7 +202,7 @@ if (-not $tsIp) {
     Ok "Tailscale IP: $tsIp"
 }
 
-# ── resize machine ─────────────────────────────────────────────────────────────
+# -- resize machine -------------------------------------------------------------
 
 if (-not $SkipResize) {
     $info   = podman machine inspect $MachineName 2>$null | ConvertFrom-Json
@@ -221,7 +239,7 @@ if ($state -ne 'running') {
     podman machine start $MachineName
 }
 
-# ── remove retired containers ──────────────────────────────────────────────────
+# -- remove retired containers --------------------------------------------------
 
 Info 'Removing retired Ollama/LLM Light containers if any...'
 Invoke-Machine @'
@@ -237,7 +255,7 @@ done
 echo "[OK] old container cleanup done"
 '@
 
-# ── NVIDIA Container Toolkit ──────────────────────────────────────────────────
+# -- NVIDIA Container Toolkit --------------------------------------------------
 
 if (-not $SkipGpu) {
     Info 'Checking NVIDIA Container Toolkit...'
@@ -296,7 +314,7 @@ echo "[OK] CDI spec ready"
     Info 'Skipping GPU setup (-SkipGpu).'
 }
 
-# ── mios.network + volume directories ─────────────────────────────────────────
+# -- mios.network + volume directories -----------------------------------------
 
 Info 'Creating mios network and volume directories...'
 Invoke-Machine @'
@@ -307,7 +325,7 @@ chmod -R 0777 /var/lib/mios/llamacpp
 echo "[OK] network + volumes ready"
 '@
 
-# ── deploy Quadlet files & config ─────────────────────────────────────────────
+# -- deploy Quadlet files & config ---------------------------------------------
 
 Info 'Deploying Quadlet files...'
 Invoke-Machine 'mkdir -p /etc/containers/systemd'
@@ -335,7 +353,7 @@ $yamlContent = Get-Content $yamlSrc -Raw
 Write-MachineFile '/var/lib/mios/llamacpp/mios-llm-light.yaml' $yamlContent
 Ok 'deployed mios-llm-light.yaml'
 
-# ── pull models ───────────────────────────────────────────────────────────────
+# -- pull models ---------------------------------------------------------------
 
 if (-not $SkipModels) {
     $modelList = $Models -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
@@ -380,7 +398,7 @@ fi
     Info 'Make sure to place weights in /var/lib/mios/llamacpp/models/ and touch .ready inside the VM.'
 }
 
-# ── start Quadlet units ───────────────────────────────────────────────────────
+# -- start Quadlet units -------------------------------------------------------
 
 Info 'Reloading systemd and starting Quadlet units...'
 Invoke-Machine @'
@@ -396,7 +414,7 @@ else
 fi
 '@
 
-# ── firewall + portproxy ───────────────────────────────────────────────────────
+# -- firewall + portproxy -------------------------------------------------------
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -408,8 +426,8 @@ if ($isAdmin) {
         Remove-NetFirewallRule -DisplayName "MiOS AI Node - mios-ollama-cpu ($port/tcp)" -ErrorAction SilentlyContinue | Out-Null
     }
 
-    # Create or update port 11450 firewall rule
-    $entry = [pscustomobject]@{ Port = 11450; Name = 'MiOS AI Node - mios-llm-light (11450/tcp)' }
+    # Create or update llm_light port firewall rule
+    $entry = [pscustomobject]@{ Port = $llmLightPort; Name = "MiOS AI Node - mios-llm-light ($llmLightPort/tcp)" }
     $existing = Get-NetFirewallRule -DisplayName $entry.Name -ErrorAction SilentlyContinue
     if ($existing) {
         Set-NetFirewallRule -DisplayName $entry.Name -Enabled True -Action Allow -ErrorAction SilentlyContinue
@@ -429,12 +447,12 @@ if ($isAdmin) {
     }
 
     # Delete old proxies
-    foreach ($port in @(11434, 11435)) {
+    foreach ($port in @(11434, 11435, 11450)) {
         netsh interface portproxy delete v4tov6 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
     }
 
-    # Configure 11450 proxy
-    $port = 11450
+    # Configure llm_light proxy
+    $port = $llmLightPort
     netsh interface portproxy delete v4tov6 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
     netsh interface portproxy add    v4tov6 listenaddress=0.0.0.0 listenport=$port connectaddress=::1 connectport=$port | Out-Null
     Ok "portproxy 0.0.0.0:${port} -> [::1]:${port}"
@@ -442,20 +460,20 @@ if ($isAdmin) {
     Warn 'Not elevated -- firewall/portproxy skipped. Re-run as admin or run Setup-MiOSLanPortProxy.ps1.'
 }
 
-# ── summary ───────────────────────────────────────────────────────────────────
+# -- summary -------------------------------------------------------------------
 
 Write-Host ''
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Green
 Write-Host '  MiOS AI Node setup complete' -ForegroundColor Green
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Services:' -ForegroundColor Cyan
-Write-Host "    mios-llm-light  GPU  :11450   http://${tsIp}:11450/v1"
+Write-Host "    mios-llm-light  GPU  :${llmLightPort}   http://${tsIp}:${llmLightPort}/v1"
 Write-Host ''
 Write-Host '  Add to /etc/mios/mios.toml on MiOS-DEV:' -ForegroundColor Cyan
 Write-Host ''
 Write-Host "[agents.mios-win]"
-Write-Host "endpoint    = `"http://${tsIp}:11450/v1`""
+Write-Host "endpoint    = `"http://${tsIp}:${llmLightPort}/v1`""
 Write-Host 'model       = "granite4.1:8b"'
 Write-Host 'role        = "gpu"'
 Write-Host 'job         = "RTX 3060 Ti GPU overflow node on MiOS-WIN."'
@@ -468,5 +486,5 @@ Write-Host ''
 Write-Host '  Useful commands:' -ForegroundColor Cyan
 Write-Host "  Status:  podman machine ssh $MachineName -- systemctl status mios-llm-light"
 Write-Host "  Logs:    podman machine ssh $MachineName -- journalctl -u mios-llm-light -f"
-Write-Host "  Models:  podman machine ssh $MachineName -- curl -s http://localhost:11450/v1/models"
+Write-Host "  Models:  podman machine ssh $MachineName -- curl -s http://localhost:${llmLightPort}/v1/models"
 Write-Host ''

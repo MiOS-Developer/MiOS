@@ -155,6 +155,7 @@ for _svc in $_svcs; do
     _port="$(_var "MIOS_GREENBOOT_PROBE_${_U}_PORT")"
     [[ -n "$_unit" ]] || _unit="mios-${_svc}.service"
     [[ -n "$_kind" ]] || _kind="tcp"
+    [[ -n "$_port" ]] || _port="$(_var "MIOS_PORTS_${_U}")"
     [[ -n "$_port" ]] || _port="$(_var "MIOS_PORT_${_U}")"
     check_service "$_unit" "$_port" "$_kind" "$_path" || rc=1
 done

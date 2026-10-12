@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for reserved memory kdump and zstd crash dump extraction (T-515).
+# AI-hint: Automated unit test suite for reserved memory kdump and zstd crash dump extraction (task_459).
 # AI-doc: usr/share/doc/mios/manual/ch45-diagnostic-tools-and-profilers.md
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class TestKdumpCrash(unittest.TestCase):
         self.assertIn("default reboot", content)
 
     def test_tmpfiles_crash_dir(self):
-        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "mios-kdump.conf")
+        tmpfiles_path = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "50-mios.conf")
         self.assertTrue(os.path.isfile(tmpfiles_path), f"Missing {tmpfiles_path}")
         content = pathlib.Path(tmpfiles_path).read_text(encoding="utf-8")
         self.assertIn("d /var/crash", content)

@@ -1,104 +1,44 @@
-# AI-hint: btop color theme template; mios-dotfiles-render fills its tokens from mios.toml [colors] into etc/btop/themes/mios.theme.
-# mios.theme -- MiOS color palette for btop
-#
-# Sourced from mios.toml [colors]:
-#   accent       @MIOS:accent@  (operator-blue, primary brand color)
-#   bg           #0A0E1A  (deep blue-black)
-#   fg           @MIOS:subtle@  (subtle dim text)
-#   ok           #6CC777  (cool green)
-#   warn         #E5B14B  (amber)
-#   err          #E76F4F  (warm red)
-#   highlight    @MIOS:accent@  (operator-blue accent for selection)
-#
-# Operator 2026-05-09: btop config "needs to match the entire MiOS themes
-# and color palette". Theme keys map to btop's standard slots.
-
-# Main background. Set "" for transparent (preserves WT acrylic).
-theme[main_bg]=""
-
-# Main text color
-theme[main_fg]="@MIOS:subtle@"
-
-# Title color for boxes
-theme[title]="@MIOS:accent@"
-
-# Highlight color for keyboard shortcuts
-theme[hi_fg]="#E5B14B"
-
-# Background color of selected item in processes box
+# AI-hint: btop theme projected by native build and runtime renderers from the layered mios.toml palette.
+# Generated from [dotfiles.registry.btop].template; edit the template or SSOT palette.
+theme[main_bg]="@MIOS:bg@"
+theme[main_fg]="@MIOS:fg@"
+theme[title]="@MIOS:fg@"
+theme[hi_fg]="@MIOS:cursor@"
 theme[selected_bg]="@MIOS:accent@"
-
-# Foreground color of selected item in processes box
-theme[selected_fg]="#FFFFFF"
-
-# Color of inactive/disabled text
-theme[inactive_fg]="#5A6770"
-
-# Color of text appearing on top of graphs (process name etc.)
+theme[selected_fg]="@MIOS:fg@"
+theme[inactive_fg]="@MIOS:muted@"
 theme[graph_text]="@MIOS:subtle@"
-
-# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
-theme[meter_bg]="#2A3A4F"
-
-# Foreground color of summary/percentage text
-theme[proc_misc]="#6CC777"
-
-# CPU box outline color
+theme[meter_bg]="@MIOS:muted@"
+theme[proc_misc]="@MIOS:subtle@"
 theme[cpu_box]="@MIOS:accent@"
-
-# Memory/disks box outline color
 theme[mem_box]="@MIOS:accent@"
-
-# Network box outline color
 theme[net_box]="@MIOS:accent@"
-
-# Processes box outline color
 theme[proc_box]="@MIOS:accent@"
-
-# Box divider line and small boxes line color
-theme[div_line]="#2A3A4F"
-
-# Temperature graph color (low - mid - high)
-theme[temp_start]="#6CC777"
-theme[temp_mid]="#E5B14B"
-theme[temp_end]="#E76F4F"
-
-# CPU graph colors (start - mid - end)
-theme[cpu_start]="@MIOS:accent@"
-theme[cpu_mid]="#3D6CB8"
-theme[cpu_end]="#7AAAEE"
-
-# Mem/Disk free meter (start - mid - end)
-theme[free_start]="#0F2547"
-theme[free_mid]="@MIOS:accent@"
-theme[free_end]="#3D6CB8"
-
-# Mem/Disk cached meter (start - mid - end)
-theme[cached_start]="#5A6770"
-theme[cached_mid]="#7A8B9A"
+theme[div_line]="@MIOS:muted@"
+theme[temp_start]="@MIOS:success@"
+theme[temp_mid]="@MIOS:warning@"
+theme[temp_end]="@MIOS:error@"
+theme[cpu_start]="@MIOS:success@"
+theme[cpu_mid]="@MIOS:warning@"
+theme[cpu_end]="@MIOS:error@"
+theme[free_start]="@MIOS:success@"
+theme[free_mid]="@MIOS:subtle@"
+theme[free_end]="@MIOS:ansi_12_bright_blue@"
+theme[cached_start]="@MIOS:accent@"
+theme[cached_mid]="@MIOS:ansi_12_bright_blue@"
 theme[cached_end]="@MIOS:subtle@"
-
-# Mem/Disk available meter (start - mid - end)
-theme[available_start]="#3A5234"
-theme[available_mid]="#4F8050"
-theme[available_end]="#6CC777"
-
-# Mem/Disk used meter (start - mid - end)
-theme[used_start]="#5A2A1F"
-theme[used_mid]="#A04A33"
-theme[used_end]="#E76F4F"
-
-# Download graph colors (start - mid - end)
-theme[download_start]="@MIOS:accent@"
-theme[download_mid]="#3D6CB8"
-theme[download_end]="#7AAAEE"
-
-# Upload graph colors (start - mid - end)
-theme[upload_start]="#5A2A1F"
-theme[upload_mid]="#A04A33"
-theme[upload_end]="#E76F4F"
-
-# Process box color gradient for threads, mem and cpu usage
-theme[process_start]="#3A5234"
-theme[process_mid]="#A0A040"
-theme[process_end]="#E76F4F"
+theme[available_start]="@MIOS:success@"
+theme[available_mid]="@MIOS:subtle@"
+theme[available_end]="@MIOS:ansi_12_bright_blue@"
+theme[used_start]="@MIOS:warning@"
+theme[used_mid]="@MIOS:cursor@"
+theme[used_end]="@MIOS:error@"
+theme[download_start]="@MIOS:ansi_12_bright_blue@"
+theme[download_mid]="@MIOS:accent@"
+theme[download_end]="@MIOS:subtle@"
+theme[upload_start]="@MIOS:cursor@"
+theme[upload_mid]="@MIOS:warning@"
+theme[upload_end]="@MIOS:error@"
+theme[process_start]="@MIOS:success@"
+theme[process_mid]="@MIOS:warning@"
+theme[process_end]="@MIOS:error@"

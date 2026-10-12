@@ -18,6 +18,7 @@ pub const EXCLUDED_SECTIONS: &[&str] = &[
     // itself and never reads globals; projecting them emitted 739
     // constants no consumer reads.
     "units",
+    "generation",
 ];
 
 pub const WALK_MOSTLY_DEAD: &[&str] =
@@ -32,6 +33,7 @@ pub const WALK_EMIT_KEEP: &[&str] = &[
     "MIOS_AI_MCP_DIR",
     "MIOS_AI_MEMORY_DIR",
     "MIOS_AI_MODEL",
+    "MIOS_AI_AGENT_MODEL",
     "MIOS_AI_MODELS_DIR",
     "MIOS_AI_RAM_FLOOR_GB",
     "MIOS_AI_SCRATCH_DIR",
@@ -43,6 +45,8 @@ pub const WALK_EMIT_KEEP: &[&str] = &[
     "MIOS_SECURITY_ALLOWLIST_HOSTS",
     "MIOS_SECURITY_PROBE_VERIFY_TLS",
     "MIOS_SECURITY_PROVENANCE_TAINT",
+    "MIOS_SECURITY_SIGSTORE_COSIGN_VERSION",
+    "MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL",
     "MIOS_HEADLESS",
     "MIOS_MONITOR_RUNNING",
     "MIOS_NO_COLOR",

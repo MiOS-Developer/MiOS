@@ -2,15 +2,15 @@
 
 # storage
 
-### bcachefs_tier.py — T-761 WS-STRG Declarative Bcachefs...
+### bcachefs_tier.py — task_705 WS-STRG Declarative Bcachefs...
 
-bcachefs_tier.py — T-761 WS-STRG
+bcachefs_tier.py — task_705 WS-STRG
 Declarative Bcachefs multi-device tiering and transparent SSD caching manager.
 
 Configures foreground NVMe and background HDD targets with zstd compression,
 providing >10 GB/s burst write absorption and transparent background migration.
 
-<!-- mios-src:2be895d56123 from usr/libexec/mios/storage/bcachefs_tier.py:4-10 -->
+<!-- mios-src:7a240b6e4120 from usr/libexec/mios/storage/bcachefs_tier.py:4-10 -->
 
 ### Renders the bcachefs multi-device format command and its...
 
@@ -24,15 +24,15 @@ Renders the bcachefs multi-device format command and its fstab entry.
 
 <!-- mios-src:68dcc66e5238 from usr/libexec/mios/storage/bcachefs_tier.py:28-35 -->
 
-### ceph_mds.py — T-739 WS-STRG Active-Active CephFS MDS...
+### ceph_mds.py — task_683 WS-STRG Active-Active CephFS MDS...
 
-ceph_mds.py — T-739 WS-STRG
+ceph_mds.py — task_683 WS-STRG
 Active-Active CephFS MDS metadata clustering and dynamic subtree partitioner.
 
 Sets max_mds=2, configures standby replay daemons, and manages dynamic subtree
 directory pinning (ceph.dir.pin) across MDS ranks with <2s failover recovery.
 
-<!-- mios-src:2887d26ce568 from usr/libexec/mios/storage/ceph_mds.py:4-10 -->
+<!-- mios-src:afbd82725ce8 from usr/libexec/mios/storage/ceph_mds.py:4-10 -->
 
 ### MiOS OCI Container Image Storage LRU Garbage Collection &...
 
@@ -68,11 +68,37 @@ Compares current manifest against baseline manifest to determine:
 
 ### Hardware OPAL 2.0 SED / LUKS2 Automated Disk Partitioning...
 
-Hardware OPAL 2.0 SED / LUKS2 Automated Disk Partitioning Engine (T-549).
+Hardware OPAL 2.0 SED / LUKS2 Automated Disk Partitioning Engine (task_493).
 
 Discovers NVMe/SATA storage drives, detects TCG OPAL 2.0 Self-Encrypting Drive (SED)
 hardware capabilities via sedutil-cli/sysfs, activates hardware Locking Range 0,
 falls back to software LUKS2 AES-XTS-512 with TPM 2.0 (PCR 7+11) binding, and applies
 MiOS standard GPT partitioning layouts (ESP, Root, Userspace, DB/Ceph).
 
-<!-- mios-src:5174fc9d7b9a from usr/libexec/mios/storage/opal_luks_partition.py:4-10 -->
+<!-- mios-src:6504ec2817d8 from usr/libexec/mios/storage/opal_luks_partition.py:4-10 -->
+### Compresses bytes into a genuine Zstandard frame using the...
+
+Compresses bytes into a genuine Zstandard frame using the zstd CLI or the
+    python zstandard module.
+
+    Raises:
+        ValueError: when the compression level is outside 1-22.
+        ZstdCompressionError: when an encoder subprocess fails or emits bytes
+            that are not a valid Zstandard frame.
+        ZstdUnavailableError: when neither real encoder is available. There is
+            deliberately no zlib fallback: every payload labeled .chunk.zst must
+            be decodable by an independent Zstandard implementation.
+
+<!-- mios-src:c196a677f75b from usr/libexec/mios/storage/mios-backup-remote:196-207 -->
+
+### Restore-side consumer
+
+Restore-side consumer: decompresses a Zstandard frame produced by
+    compress_data_zstd using the zstd CLI or the python zstandard module.
+
+    Raises:
+        ZstdDecompressionError: when the payload is not a Zstandard frame or
+            fails integrity decode (corruption, truncation, mislabeled data).
+        ZstdUnavailableError: when neither real decoder is available.
+
+<!-- mios-src:3576549edf8e from usr/libexec/mios/storage/mios-backup-remote:251-259 -->

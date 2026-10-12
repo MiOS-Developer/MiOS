@@ -3,6 +3,8 @@
 # AI-hint: Installs the core GNOME 50 desktop environment, including GDM, Wayland portals, and theme consistency for GTK/Qt, while configurin...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# The log helper is resolved in checkout and installed layouts.
+# shellcheck disable=SC1090
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 source "$(dirname "$0")/lib/common.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -110,5 +112,7 @@ fi
 
 mios_log "Flatpaks installed on first boot"
 
-exit 0
+mios_log "Project GTK palette, font and cursor defaults from layered SSOT"
+python3 /usr/libexec/mios/mios-theme-render --gtk --config-root /etc/skel/.config
 
+exit 0

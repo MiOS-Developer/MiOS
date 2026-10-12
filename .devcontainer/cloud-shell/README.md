@@ -56,3 +56,23 @@ Every `FEDORA_*` value has a default in the script; set one in the environment
 variables only to override it. A cold first build can exceed the setup budget:
 past `FEDORA_SETUP_BUDGET_S` the lifecycle is deferred, `mios-dev` says so, and
 `bash /opt/dev-loop-fedora/cloud-fedora-setup.sh --lifecycle` applies it.
+
+## Codex Cloud environment
+
+The main [README's Codex Cloud section](../../README.md#codex-cloud-environment)
+contains paste blocks for every environment-editor field. `codex-cloud.sh`
+installs the Dev Containers CLI, starts the canonical MiOS Fedora devcontainer
+through Podman, applies its create/start lifecycle and installs `mios-dev`.
+The wrapper runs commands as the devcontainer user; it maps the primary checkout
+to `/workspaces/MiOS` and selected public sibling checkouts to their SSOT paths.
+
+Installation requires a cloud control host that permits Podman containers. It
+fails when the runtime, build, lifecycle, Fedora check, required CLI execution
+or gateway readiness check fails. It does not replace the provider's host OS.
+The shared Containerfile owns package and agent installation from SSOT; this
+script installs only control-host prerequisites and the container launcher.
+
+Run `/usr/local/libexec/mios-codex-cloud start` at task startup; run its `check`
+mode to repeat readiness checks. A saved cloud filesystem does not imply that
+background services or containers survived a restart. No credentials are added
+to images or automatically read from the private `.secrets` repository.

@@ -9,3 +9,7 @@
 **/__pycache__
 **/__pycache__/**
 **/*.pyc
+**/.rustup
+**/.cargo/registry
+**/.cargo/git
+**/.cargo/bin

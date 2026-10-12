@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated node failure detection and zero-loss dynamic task re-distribution engine (T-538, AGY-2136).
+# AI-hint: Automated node failure detection and zero-loss dynamic task re-distribution engine (task_482, task_2715).
 # AI-doc: usr/share/doc/mios/manual/ch83-task-failover-resilience.md
 """Automated node failure detection and zero-loss dynamic task re-distribution engine.
 
@@ -40,7 +40,7 @@ DEFAULT_MAX_RETRIES = 3
 
 DEFAULT_DB_PATH = "/var/lib/mios/agent-pipe/task_leases.db"
 DEFAULT_JSON_JOURNAL = "/var/lib/mios/agent-pipe/task_leases.json"
-_PIPE_PORT = os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")
+_PIPE_PORT = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
 DEFAULT_ENDPOINT = os.environ.get("MIOS_AI_ENDPOINT", f"http://localhost:{_PIPE_PORT}/v1")
 
 log = logging.getLogger("mios_task_failover")

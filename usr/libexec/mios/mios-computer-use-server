@@ -185,7 +185,7 @@ async def _call_tool(name: str, a: dict) -> dict:
 
 
 def _agent_card(base: str) -> dict:
-    host = os.environ.get("MIOS_HOSTNAME") or socket.gethostname()
+    host = os.environ.get("MIOS_IDENTITY_HOSTNAME") or socket.gethostname()
     return {
         "protocolVersion": A2A_PROTOCOL_VERSION,
         "name": f"MiOS Desktop ({host})",

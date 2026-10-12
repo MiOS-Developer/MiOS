@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for declarative nftables inter-container firewall rule generator (T-479).
+# AI-hint: Automated unit test suite for declarative nftables inter-container firewall rule generator (task_423).
 # AI-doc: usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md
 from __future__ import annotations
 

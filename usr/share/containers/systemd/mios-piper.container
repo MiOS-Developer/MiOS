@@ -11,10 +11,10 @@ Wants=network-online.target
 [Container]
 ContainerName=mios-piper
 EnvironmentFile=/etc/mios/install.env
-Exec=-m en_US-lessac-medium --data-dir /usr/share/piper/voices --host 0.0.0.0 --port ${MIOS_PORT_PIPER}
+Exec=-m en_US-lessac-medium --data-dir /usr/share/piper/voices --host 0.0.0.0 --port ${MIOS_PORTS_PIPER}
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=831
-HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${MIOS_PORT_PIPER}/info', timeout=5)" || exit 1
+HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${MIOS_PORTS_PIPER}/info', timeout=5)" || exit 1
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=30s

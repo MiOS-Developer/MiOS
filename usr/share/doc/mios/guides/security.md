@@ -183,13 +183,13 @@ explicit allow-list rendered into `/usr/libexec/mios-firewall-init` by
 baked into the runtime script at build time — hardcoded port literals are bugs.
 
 Allowed services: `cockpit`, `ssh`, `mdns`, `samba`, `nfs`, `rpc-bind`,
-`mountd`. Allowed ports include the host admin sshd (`MIOS_PORT_SSH`, hardened
-off `:22` to `2222`), RDP (`MIOS_RDP_PORT` + `3390` for the Hyper-V vsock),
+`mountd`. Allowed ports include the host admin sshd (`MIOS_PORTS_SSH`, hardened
+off `:22` to `2222`), RDP (`MIOS_PORTS_RDP` + `3390` for the Hyper-V vsock),
 libvirt (`16509`), VNC (`5900-5999`), K3s API + kubelet
-(`MIOS_K3S_API_PORT` + `10250`), Pacemaker/Corosync (`2224`, `5403-5405/udp`),
-and the AI/web plane: MiOS-Hermes (`MIOS_PORT_HERMES`, the canonical
+(`MIOS_PORTS_K3S_API` + `10250`), Pacemaker/Corosync (`2224`, `5403-5405/udp`),
+and the AI/web plane: MiOS-Hermes (`MIOS_PORTS_HERMES`, the canonical
 OpenAI-API endpoint — Architectural Law 5), Open WebUI
-(`MIOS_PORT_OPEN_WEBUI`), code-server, Guacamole, Forge HTTP + git-ssh, and the
+(`MIOS_PORTS_OPEN_WEBUI`), code-server, Guacamole, Forge HTTP + git-ssh, and the
 Cockpit link shim. Internal interfaces (`lo`, `podman+`, `br-+`, `veth+`,
 `virbr0`, `cni0`, `flannel.1`, `waydroid0`) are placed in the `trusted` zone via
 wildcards because the nftables backend strictly drops unassigned interfaces.

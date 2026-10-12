@@ -137,13 +137,47 @@ def configure(*, read_tool_enrich_chars=None, read_tool_enrich_timeout=None,
     if src_record is not None:
         _src_record = src_record
 
-_RESCUE_XML_RE = re.compile(
-    r"<function=([a-zA-Z0-9_.\-]+)\s*>\s*"
-    r"((?:<parameter=[a-zA-Z0-9_.\-]+>.*?</parameter>\s*)*)"
-    r"</function>",
-    re.DOTALL)
-_RESCUE_PARAM_RE = re.compile(
-    r"<parameter=([a-zA-Z0-9_.\-]+)>(.*?)</parameter>", re.DOTALL)
+# Scan each markup token once. Nested lazy repetitions allowed exponential
+# backtracking on malformed model output before this scanner.
+_RESCUE_XML_TOKEN_RE = re.compile(
+    r"<(/?)(function|parameter)(?:=([a-zA-Z0-9_.\-]+))?\s*>")
+
+
+def _rescue_xml_calls(text: str):
+    name = None
+    args = {}
+    parameter = None
+    value_start = cursor = 0
+    valid = False
+    for token in _RESCUE_XML_TOKEN_RE.finditer(text):
+        closing, kind, label = token.groups()
+        if kind == "function" and not closing and label:
+            name, args, parameter, valid = label, {}, None, True
+            cursor = token.end()
+            continue
+        if name is None:
+            continue
+        if parameter is None and text[cursor:token.start()].strip():
+            valid = False
+        if kind == "parameter" and not closing and label:
+            if parameter is not None:
+                valid = False
+            parameter, value_start = label, token.end()
+        elif kind == "parameter" and closing and label is None:
+            if parameter is None:
+                valid = False
+            else:
+                args[parameter] = text[value_start:token.start()].strip()
+                parameter = None
+        elif kind == "function" and closing and label is None:
+            if valid and parameter is None:
+                yield name, args
+            name = None
+        else:
+            valid = False
+        cursor = token.end()
+
+
 _RESCUE_FENCE_RE = re.compile(
     r"```(?:json|tool_call|tool)?\s*(\{.*?\}|\[.*?\])\s*```",
     re.DOTALL | re.IGNORECASE)
@@ -190,11 +224,8 @@ def _rescue_tool_calls(content: str, tools: "Optional[list]" = None) -> list:
     if not allowed:
         return []
     out: list = []
-    for m in _RESCUE_XML_RE.finditer(text):
-        name = m.group(1).strip()
+    for name, args in _rescue_xml_calls(text):
         if name in allowed or name.startswith(("mios_recipe__", "mios_skill__", "mcp.")):
-            args = {k: v.strip()
-                    for k, v in _RESCUE_PARAM_RE.findall(m.group(2) or "")}
             out.append(_norm_tool_call(name, args, len(out)))
     if out:
         return out
@@ -370,11 +401,13 @@ async def _exec_tool_calls(tcs: list, push, allow_write: bool = False) -> tuple:
             ran_read = True
             _args_str = f" {json.dumps(args, ensure_ascii=False)}" if args else ""
             push(f" 🔧 recipe:{real}{_args_str}")
+            recipe_args = {"name": rkey, "params": {key: value for key, value in args.items() if key != "os"}}
+            if args.get("os") is not None:
+                recipe_args["os"] = args["os"]
             try:
                 with _tool_span(vname, _sess):
                     res = await asyncio.wait_for(
-                        dispatch_mios_verb("os_recipe",
-                                           {"name": rkey, "params": args}),
+                        dispatch_mios_verb("os_recipe", recipe_args),
                         timeout=READ_TOOL_ENRICH_TIMEOUT * 2)
             except Exception as e:  # noqa: BLE001
                 res = {"error": str(e)}

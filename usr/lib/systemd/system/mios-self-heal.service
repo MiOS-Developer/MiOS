@@ -9,6 +9,10 @@ ConditionPathExists=/usr/libexec/mios/ai/self_heal.py
 [Service]
 Type=simple
 User=root
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
 ExecStart=/usr/bin/python3 /usr/libexec/mios/ai/self_heal.py --daemon
 Restart=on-failure
 RestartSec=10s

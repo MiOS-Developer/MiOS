@@ -8,7 +8,7 @@ lock the operator out of Open WebUI.
 Resolves identity from layered mios.toml ([identity].username,
 [identity].email) and the password from the MiOS password SSOT (see
 _read_password): MIOS_OPERATOR_PASSWORD / MIOS_OWUI_ADMIN_PASSWORD ->
-mios.toml [identity].default_password -> MIOS_DEFAULT_PASSWORD -> "mios"
+mios.toml [identity].default_password -> MIOS_IDENTITY_DEFAULT_PASSWORD -> "mios"
 -- the SAME source Forge / Portal / Cockpit / RDP use, so one operator
 password works everywhere. A "__random__" override generates + writes a
 24-char password to /etc/mios/owui-admin-password (mode 0600 root-only).
@@ -49,6 +49,17 @@ def _log(msg: str) -> None:
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
 import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
+try:
+    from mios_db_config import safe_ident
+except ImportError:
+    import re
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    def safe_ident(ident: str, allowlist) -> str:
+        if not isinstance(ident, str) or not _IDENT_RE.match(ident):
+            raise ValueError(f"Invalid SQL identifier format: {ident!r}")
+        if ident not in allowlist:
+            raise ValueError(f"SQL identifier {ident!r} not in schema allowlist")
+        return ident
 
 
 def _read_mios_toml_identity():
@@ -96,48 +107,70 @@ def _read_toml_default_password():
     return None
 
 
-def _read_password():
-    """Return (password, source) resolved from the MiOS password SSOT.
+# The MiOS password SSOT, highest precedence first. ONE operator password
+# backs every MiOS admin surface (Forge / Portal / Cockpit / RDP / OWUI):
+#   1. MIOS_OPERATOR_PASSWORD     -- explicit override (secrets.env / env)
+#   2. MIOS_OWUI_ADMIN_PASSWORD   -- per-service override (parallels
+#                                    MIOS_FORGE_ADMIN_PASSWORD)
+#   3. mios.toml [identity].default_password  -- the canonical SSOT field
+#   4. MIOS_IDENTITY_DEFAULT_PASSWORD (install.env)  -- shell/systemd bridge of #3
+#   5. literal "mios"             -- vendor default; the same final fallback
+#                                    as usr/libexec/mios/forge-firstboot.sh
+# Labels are what gets logged. Values are read only by _read_password(), so
+# no log line can carry the credential.
+_PASSWORD_TIERS = (
+    ("MIOS_OPERATOR_PASSWORD (secrets.env/env)",
+     lambda: _env_or_file("MIOS_OPERATOR_PASSWORD", [SECRETS_ENV])),
+    ("MIOS_OWUI_ADMIN_PASSWORD (secrets.env/install.env/env)",
+     lambda: _env_or_file("MIOS_OWUI_ADMIN_PASSWORD", [SECRETS_ENV, INSTALL_ENV])),
+    ("mios.toml [identity].default_password (SSOT)",
+     _read_toml_default_password),
+    ("MIOS_IDENTITY_DEFAULT_PASSWORD (install.env)",
+     lambda: _env_or_file("MIOS_IDENTITY_DEFAULT_PASSWORD", [INSTALL_ENV])),
+    ("vendor default 'mios'", lambda: "mios"),
+)
 
-    ONE operator password backs every MiOS admin surface (Forge / Portal /
-    Cockpit / RDP / OWUI). Resolution order, highest precedence first:
-      1. MIOS_OPERATOR_PASSWORD     -- explicit override (secrets.env / env)
-      2. MIOS_OWUI_ADMIN_PASSWORD   -- per-service override (parallels
-                                       MIOS_FORGE_ADMIN_PASSWORD)
-      3. mios.toml [identity].default_password  -- the canonical SSOT field
-      4. MIOS_DEFAULT_PASSWORD (install.env)    -- shell/systemd bridge of #3
-      5. literal "mios"             -- vendor default; the same final fallback
-                                       as usr/libexec/mios/forge-firstboot.sh
+
+def _password_tier():
+    """Return (tier index, generated) for the first configured tier.
 
     A value of "__random__" at any tier opts INTO a generated 24-char password
     (written to PASSWORD_OUT, mode 0600), mirroring forge's __random__ token.
     We deliberately do NOT silently generate a random password: an operator
     who never sees it can't log in, and it diverges from the rest of the OS.
     """
-    for source, pw in (
-        ("MIOS_OPERATOR_PASSWORD (secrets.env/env)",
-         _env_or_file("MIOS_OPERATOR_PASSWORD", [SECRETS_ENV])),
-        ("MIOS_OWUI_ADMIN_PASSWORD (secrets.env/install.env/env)",
-         _env_or_file("MIOS_OWUI_ADMIN_PASSWORD", [SECRETS_ENV, INSTALL_ENV])),
-        ("mios.toml [identity].default_password (SSOT)",
-         _read_toml_default_password()),
-        ("MIOS_DEFAULT_PASSWORD (install.env)",
-         _env_or_file("MIOS_DEFAULT_PASSWORD", [INSTALL_ENV])),
-        ("vendor default 'mios'", "mios"),
-    ):
-        if not pw:
-            continue
-        if pw == "__random__":
-            alphabet = string.ascii_letters + string.digits + "_-"
-            gen = "".join(secrets.choice(alphabet) for _ in range(24))
-            return gen, f"generated ({source}=__random__)"
-        return pw, source
-    alphabet = string.ascii_letters + string.digits + "_-"
-    return "".join(secrets.choice(alphabet) for _ in range(24)), "generated"
+    for index, (_label, read) in enumerate(_PASSWORD_TIERS):
+        value = read()
+        if value:
+            return index, value == "__random__"
+    return None, True
 
 
-def _write_password_file(pw: str, name: str, email: str, source: str) -> None:
+def _tier_source(index, generated) -> str:
+    if index is None:
+        return "generated"
+    label = _PASSWORD_TIERS[index][0]
+    return f"generated ({label}=__random__)" if generated else label
+
+
+def _read_password(index, generated) -> str:
+    if generated:
+        alphabet = string.ascii_letters + string.digits + "_-"
+        return "".join(secrets.choice(alphabet) for _ in range(24))
+    return _PASSWORD_TIERS[index][1]()
+
+
+def _write_credentials_receipt(name: str, email: str, source: str,
+                               generated_password=None) -> None:
+    """Record who the admin is and where its password comes from.
+
+    The password itself is written only when MiOS generated it (__random__):
+    that is the one case the operator cannot know it otherwise. A password
+    the operator set in the SSOT is never copied into a second file.
+    """
     PASSWORD_OUT.parent.mkdir(parents=True, exist_ok=True)
+    secret_line = (f"  password: {generated_password}\n" if generated_password
+                   else f"  password: (not stored; set by {source})\n")
     body = (
         "# MiOS Open WebUI admin credentials\n"
         f"# Auto-created by mios-owui-bootstrap-admin at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
@@ -151,9 +184,14 @@ def _write_password_file(pw: str, name: str, email: str, source: str) -> None:
         "#\n"
         f"  username: {name}\n"
         f"  email:    {email}\n"
-        f"  password: {pw}\n"
+        + secret_line
     )
-    PASSWORD_OUT.write_text(body, encoding="utf-8")
+    # Created 0600 and never followed through a link: write-then-chmod left
+    # the receipt world-readable for the length of the write.
+    fd = os.open(PASSWORD_OUT, os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                 | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body)
     PASSWORD_OUT.chmod(0o600)
 
 
@@ -181,8 +219,8 @@ def _bcrypt_hash_via_container(password: str) -> str:
             input=password, capture_output=True, text=True, timeout=30, check=True
         )
         return out.stdout.strip()
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        _log(f"FATAL: bcrypt unavailable on host AND fallback container exec failed: {e}")
+    except (subprocess.SubprocessError, FileNotFoundError):
+        _log("FATAL: bcrypt unavailable on host AND fallback container exec failed")
         raise SystemExit(2)
 
 
@@ -217,8 +255,8 @@ def _export_admin_api_key(conn, uid: str) -> None:
         except (KeyError, PermissionError, OSError):
             pass  # group may not exist / not root -- file is still 0640
         _log(f"exported OWUI admin api_key -> {out} (mode 0640, root:mios-ai)")
-    except Exception as e:  # noqa: BLE001 -- never block firstboot
-        _log(f"api_key export skipped: {e}")
+    except Exception:  # noqa: BLE001 -- never block firstboot
+        _log("api_key export skipped: database or credential file unavailable")
 
 
 def main():
@@ -230,15 +268,18 @@ def main():
     try:
         try:
             user_cols = {row[1] for row in conn.execute("PRAGMA table_info(user)")}
-        except sqlite3.OperationalError as e:
-            _log(f"OWUI db schema not ready ({e}) -- skipping")
+        except sqlite3.OperationalError:
+            _log("OWUI db schema not ready -- skipping")
             return 0
         if "id" not in user_cols:
             _log("OWUI user table not ready (no columns) -- skipping")
             return 0
 
         name, email = _read_mios_toml_identity()
-        password, source = _read_password()
+        tier, generated = _password_tier()
+        source = _tier_source(tier, generated)
+        password = _read_password(tier, generated)
+        receipt_password = password if generated else None
         now = int(time.time())
         password_hash = _bcrypt_hash(password)
 
@@ -259,19 +300,18 @@ def main():
             if "role" in user_cols:
                 conn.execute("UPDATE user SET role = 'admin', updated_at = ? WHERE id = ?", (now, uid))
             conn.commit()
-            _write_password_file(password, name, email, source)
+            _write_credentials_receipt(name, email, source, receipt_password)
             _export_admin_api_key(conn, uid)
-            _log(f"reconciled OWUI admin {email!r} password to SSOT (source: {source})")
+            _log("reconciled OWUI admin credentials to SSOT")
             return 0
 
         existing = conn.execute("SELECT COUNT(*) FROM user").fetchone()[0]
         if existing > 0:
-            _log(f"OWUI has {existing} user(s), none with the MiOS admin email "
-                 f"{email!r} -- leaving as-is")
+            _log(f"OWUI has {existing} user(s), none matching the configured admin -- leaving as-is")
             return 0
 
         uid = str(uuid.uuid4())
-        _log(f"creating first OWUI admin: name={name!r} email={email!r} (password source: {source})")
+        _log("creating first OWUI admin from configured identity and credentials")
         candidate = {
             "id": uid,
             "name": name,
@@ -289,18 +329,20 @@ def main():
             "oauth": None,      # current column name
         }
         use = {k: v for k, v in candidate.items() if k in user_cols}
-        cols_sql = ", ".join(use)
-        ph_sql = ", ".join("?" for _ in use)
-        conn.execute(f"INSERT INTO user ({cols_sql}) VALUES ({ph_sql})", tuple(use.values()))
+        user_col_allowlist = frozenset(candidate.keys())
+        safe_cols = [safe_ident(k, user_col_allowlist) for k in use]
+        safe_cols_sql = ", ".join(safe_cols)
+        ph_sql = ", ".join("?" for _ in safe_cols)
+        conn.execute(f"INSERT INTO user ({safe_cols_sql}) VALUES ({ph_sql})", tuple(use.values()))
         conn.execute(
             "INSERT INTO auth (id, email, password, active) VALUES (?,?,?,?)",
             (uid, email, password_hash, 1),
         )
         conn.commit()
-        _log(f"admin user created (id={uid[:8]}..., role=admin)")
-        _write_password_file(password, name, email, source)
+        _log("admin user created (role=admin)")
+        _write_credentials_receipt(name, email, source, receipt_password)
         _export_admin_api_key(conn, uid)
-        _log(f"credentials written to {PASSWORD_OUT} (mode 0600)")
+        _log("credentials written to the configured private receipt (mode 0600)")
         return 0
     finally:
         conn.close()

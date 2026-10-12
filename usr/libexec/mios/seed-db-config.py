@@ -12,7 +12,8 @@ logging.basicConfig(level=logging.INFO, format="[seed-db-config] %(levelname)s: 
 log = logging.getLogger("seed-db-config")
 
 _CANONICAL_SECTIONS = {
-    'migration', 'artifacts', 'security', 'firewall', 'ssot_consumers', 'ssot_tables', 'unit_projection', 'units', 'identity', 'user', 'accounts', 'mios', 'agent_passport', 'repos', 'ai_tag', 'selfimprove', 'portal', 'locale', 'auth', 'network', 'management_mesh', 'power', 'metal', 'meta', 'bootc_install', 'psi', 'install_phases', 'messages', 'search', 'hermes', 'gpu', 'sandbox', 'laws', 'uki', 'fs_watcher', 'pkg', 'ttyd', 'agents', 'gateway', 'blades', 'nodes', 'lanes', 'cost', 'audit', 'worker_tools', 'slo', 'sched', 'scheduler', 'admission', 'reflect', 'drift_monitor', 'schema', 'refactor', 'shell_session', 'powershell', 'consensus', 'drift', 'dispatch', 'council', 'web_research', 'knowledge', 'hitl', 'memory', 'run_template', 'aci', 'dci', 'verity', 'code_mode', 'refine', 'planner', 'polish', 'passport', 'daemon', 'budget', 'os_control', 'computer_use', 'observability', 'gossip', 'a2a', 'mcp', 'routing', 'browser', 'owui', 'recipes', 'skills', 'reliability', 'frontier', 'agent_pipe', 'pgvector', 'lsfs', 'offline', 'llamacpp', 'enhanced_session', 'flatpak', 'appearance', 'graphics', 'ai', 'desktop', 'image', 'deployment', 'hwcaps', 'browser_ai', 'virt', 'ports', 'urls', 'generator', 'versions', 'services', 'pods', 'adguard', 'paths', 'mios-find', 'compliance', 'build', 'deploy', 'vm', 'cockpit', 'greenboot', 'colors', 'bootstrap', 'wsl2', 'terminal', 'theme', 'branding', 'btop', 'dashboard', 'apps', 'windows', 'preflight', 'quadlets', 'env', 'finetune', 'storage', 'converge', 'networks', 'images', 'containers', 'editions', 'blade', 'field', 'dotfiles', 'shell', 'ssh', 'gitconfig', 'templates', 'kargs', 'testing', 'pipeline', 'resolver', 'tasks', 'docs', 'legibility', 'ci', 'tests', 'variants', 'profiles', 'rust', 'database', 'logging', 'orchestration'
+    'migration', 'artifacts', 'security', 'firewall', 'ssot_consumers', 'ssot_tables', 'unit_projection', 'units', 'identity', 'user', 'accounts', 'mios', 'agent_passport', 'repos', 'ai_tag', 'selfimprove', 'portal', 'locale', 'auth', 'network', 'management_mesh', 'power', 'metal', 'meta', 'bootc_install', 'psi', 'install_phases', 'messages', 'search', 'hermes', 'gpu', 'sandbox', 'laws', 'uki', 'fs_watcher', 'pkg', 'ttyd', 'agents', 'gateway', 'blades', 'nodes', 'lanes', 'cost', 'audit', 'worker_tools', 'slo', 'sched', 'scheduler', 'admission', 'reflect', 'drift_monitor', 'schema', 'refactor', 'shell_session', 'powershell', 'consensus', 'drift', 'dispatch', 'council', 'web_research', 'knowledge', 'hitl', 'memory', 'run_template', 'aci', 'dci', 'verity', 'code_mode', 'refine', 'planner', 'polish', 'passport', 'daemon', 'budget', 'os_control', 'computer_use', 'observability', 'gossip', 'a2a', 'mcp', 'routing', 'browser', 'owui', 'recipes', 'skills', 'reliability', 'frontier', 'agent_pipe', 'pgvector', 'lsfs', 'offline', 'llamacpp', 'enhanced_session', 'flatpak', 'appearance', 'graphics', 'ai', 'desktop', 'image', 'deployment', 'hwcaps', 'browser_ai', 'virt', 'ports', 'urls', 'generator', 'versions', 'services', 'pods', 'adguard', 'paths', 'mios-find', 'compliance', 'build', 'deploy', 'vm', 'cockpit', 'greenboot', 'colors', 'bootstrap', 'wsl2', 'terminal', 'theme', 'branding', 'btop', 'dashboard', 'apps', 'windows', 'preflight', 'quadlets', 'env', 'finetune', 'storage', 'converge', 'networks', 'images', 'containers', 'editions', 'blade', 'field', 'dotfiles', 'shell', 'ssh', 'gitconfig', 'templates', 'kargs', 'testing', 'pipeline', 'resolver', 'tasks', 'docs', 'legibility', 'ci', 'tests', 'variants', 'profiles', 'rust', 'database', 'logging', 'orchestration',
+    'agent_cli', 'keybindings', 'headscale', 'tailscale', 'aliases', 'workspace', 'generation'
 }
 
 def get_seeded_sections(data: dict) -> list:
@@ -22,11 +23,11 @@ def get_seeded_sections(data: dict) -> list:
 def get_pg_config():
     e = os.environ
     return {
-        "host": e.get("MIOS_PG_HOST", "localhost"),
-        "port": int(e.get("MIOS_PORT_PGVECTOR", "8600") or 8600),
-        "user": e.get("MIOS_PG_USER", "mios"),
-        "password": e.get("MIOS_PG_PASS", "mios"),
-        "dbname": e.get("MIOS_PG_DB", "mios"),
+        "host": e.get("MIOS_PGVECTOR_HOST", "localhost"),
+        "port": int(e.get("MIOS_PORTS_PGVECTOR", "8600") or 8600),
+        "user": e.get("MIOS_PGVECTOR_USER", "mios"),
+        "password": e.get("MIOS_PGVECTOR_PASS", "mios"),
+        "dbname": e.get("MIOS_PGVECTOR_DB", "mios"),
     }
 
 def main():

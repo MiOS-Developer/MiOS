@@ -3,9 +3,32 @@
 # AI-hint: Installs Geist and Symbols-Only Nerd Fonts to ensure the MiOS dashboard, oh-my-posh prompt, and TTY surfaces render icons and mono...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# shellcheck source=usr/lib/mios/log.sh
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
+
+_install_geist_nerd_font() {
+    local archive="$1" expected_sha="$2" destination="$3"
+    [[ -f "$archive" && "$expected_sha" =~ ^[a-fA-F0-9]{64}$ ]] || {
+        mios_err "Geist Nerd SSOT archive or SHA256 is missing/invalid: $archive"
+        return 1
+    }
+    printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum -c - || return 1
+    mkdir -p "$destination"
+    unzip -o -j -q "$archive" '*.[ot]tf' -d "$destination" || return 1
+    [[ -n "$(find "$destination" -maxdepth 1 \( -name '*.ttf' -o -name '*.otf' \) -type f -print -quit)" ]] || {
+        mios_err "Geist Nerd archive installed no OpenType/TrueType fonts"
+        return 1
+    }
+}
+
+# The shared service base copies this third family as well as Geist and Symbols.
+_font_resolver="${MIOS_RESOLVER_BIN:-/usr/libexec/mios/mios-resolver}"
+[[ -x "$_font_resolver" ]] || _font_resolver=/usr/bin/mios-resolver
+_font_inputs="$("$_font_resolver" --emit=json | jq -er '.merged.theme.font | [.native_archive,.native_sha256] | select(all(.[]; type == "string" and length > 0)) | @tsv')"
+IFS=$'\t' read -r _font_archive _font_sha <<< "$_font_inputs"
+_install_geist_nerd_font "/${_font_archive#/}" "$_font_sha" /usr/share/fonts/geist-nerd
 
 mios_log "Installing Geist font family from Vercel"
 mkdir -p /usr/share/fonts/geist

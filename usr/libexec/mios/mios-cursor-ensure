@@ -6,34 +6,21 @@
 set -uo pipefail
 
 _toml_get() {
-    local dotted="$1" default="$2" val=""
-    for f in "$HOME/.config/mios/mios.toml" /etc/mios/mios.toml /usr/share/mios/mios.toml; do
-        [ -r "$f" ] || continue
-        val=$(python3 - "$f" "$dotted" 2>/dev/null <<'PYEOF'
-import sys, tomllib
-path, dotted = sys.argv[1], sys.argv[2]
-try:
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
-except Exception:
-    sys.exit(0)
-node = data
+    python3 - "$1" <<'PYEOF'
+import sys
+sys.path.insert(0, "/usr/lib/mios")
+import mios_toml
+node = mios_toml.load_merged()
+dotted = sys.argv[1]
 for k in dotted.split("."):
-    if isinstance(node, dict) and k in node:
-        node = node[k]
-    else:
-        sys.exit(0)
+    node = node[k]
 print(node)
 PYEOF
-)
-        [ -n "$val" ] && { echo "$val"; return; }
-    done
-    echo "$default"
 }
 
-THEME="$(_toml_get theme.cursor_linux.theme "Bibata-Modern-Classic")"
-SIZE="$(_toml_get theme.cursor_linux.size "16")"
-REPO="$(_toml_get theme.cursor_linux.source_repo "ful1e5/Bibata_Cursor")"
+THEME="$(_toml_get theme.cursor_linux.theme)" || exit 1
+SIZE="$(_toml_get theme.cursor_linux.size)" || exit 1
+REPO="$(_toml_get theme.cursor_linux.source_repo)" || exit 1
 MARKER_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mios"
 
 if [ "$(id -u)" = "0" ] && { [ -w /usr/share/icons ] || [ ! -e /usr/share/icons ]; }; then
@@ -84,6 +71,17 @@ for base in "${_search[@]}"; do
         exit 0
     fi
 done
+
+# Flatpak cannot see /usr/share/icons from the host. Materialize the baked
+# theme in the user icon directory instead of downloading it or linking to
+# a host-only path. The global override exposes xdg-data/icons read-only.
+if [ "$MODE" = user ] && [ -d "/usr/share/icons/$THEME/cursors" ]; then
+    mkdir -p "$DEST"
+    cp -a "/usr/share/icons/$THEME" "$DEST/"
+    _wire "$DEST"
+    echo "Mios-cursor-ensure: [user] hydrated '$THEME' from the baked image"
+    exit 0
+fi
 
 command -v curl >/dev/null 2>&1 || { echo "Mios-cursor-ensure: curl missing" >&2; exit 1; }
 

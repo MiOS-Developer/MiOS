@@ -12,12 +12,12 @@ Wants=network-online.target mios-pgvector.service
 AutoUpdate=registry
 ContainerName=mios-guacamole
 Environment=POSTGRESQL_HOSTNAME=localhost
-Environment=POSTGRESQL_PORT=${MIOS_PORT_PGVECTOR:-8600}
+Environment=POSTGRESQL_PORT=${MIOS_PORTS_PGVECTOR:-8600}
 Environment=POSTGRESQL_DATABASE=mios
 Environment=POSTGRESQL_USERNAME=mios
 Environment=POSTGRESQL_PASSWORD=mios
 Environment=GUACD_HOSTNAME=localhost
-Environment=GUACD_PORT=${MIOS_PORT_GUACD:-8560}
+Environment=GUACD_PORT=${MIOS_PORTS_GUACD:-8560}
 EnvironmentFile=/etc/mios/install.env
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=810

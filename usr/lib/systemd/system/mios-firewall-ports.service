@@ -34,22 +34,22 @@ ExecStart=/bin/bash -c '\
     set +e; \
     if [ -f /etc/mios/install.env ]; then source /etc/mios/install.env; fi; \
     ports=(\
-        "${MIOS_PORT_FORGE_HTTP:-8400}" \
-        "${MIOS_PORT_OPEN_WEBUI:-8200}" \
-        "${MIOS_PORT_CODE_SERVER:-8900}" \
-        "${MIOS_PORT_HERMES:-8720}" \
-        "${MIOS_PORT_SEARXNG:-8800}" \
-        "${MIOS_PORT_COCKPIT:-8110}" \
-        "${MIOS_PORT_HERMES_DASHBOARD:-8210}" \
-        "${MIOS_PORT_LLM_LIGHT:-8500}" \
-        "${MIOS_PORT_PGVECTOR:-8600}" \
-        "${MIOS_PORT_COCKPIT_LINK:-8120}" \
-        "${MIOS_PORT_ADGUARD_UI:-8050}" \
-        "${MIOS_PORT_SSH:-8100}" \
-        "${MIOS_PORT_FORGE_SSH:-8410}" \
-        "${MIOS_PORT_VLLM:-8520}" \
-        "${MIOS_PORT_SGLANG:-8530}" \
-        "${MIOS_PORT_CPU_NODE:-8510}" \
+        "8400" \
+        "8200" \
+        "8900" \
+        "8720" \
+        "8800" \
+        "8110" \
+        "8210" \
+        "8500" \
+        "8600" \
+        "8120" \
+        "8050" \
+        "8100" \
+        "8410" \
+        "8520" \
+        "8530" \
+        "8510" \
         53 \
     ); \
     for p in "$${ports[@]}"; do \

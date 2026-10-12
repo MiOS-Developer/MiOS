@@ -1,7 +1,6 @@
 # NN	kind	name	file	oneline
 01	script	system-files-overlay	automation/01-system-files-overlay.sh	MIOS_APPLY_CLASS=universal
 02	script	materialize-build-ctx	automation/02-materialize-build-ctx.sh	MIOS_APPLY_CLASS=bake-only
-02	script	uki-bootloader	automation/02-uki-bootloader.sh	MIOS_APPLY_CLASS=bake-only
 04	script	local-rpm-mirror	automation/04-local-rpm-mirror.sh	local rpm mirror
 05	script	repos	automation/05-repos.sh	MIOS_APPLY_CLASS=universal
 06	script	enable-external-repos	automation/06-enable-external-repos.sh	MIOS_APPLY_CLASS=universal
@@ -17,7 +16,6 @@
 22	script	akmod-guards	automation/22-akmod-guards.sh	MIOS_APPLY_CLASS=universal
 23	script	gpu-passthrough	automation/23-gpu-passthrough.sh	MIOS_APPLY_CLASS=universal
 24	script	cpu-affinity	automation/24-cpu-affinity.sh	MIOS_APPLY_CLASS=universal
-24	script	gpu-pv-shim	automation/24-gpu-pv-shim.sh	MIOS_APPLY_CLASS=dev-only
 25	script	gpu-cdi-toolkits	automation/25-gpu-cdi-toolkits.sh	MIOS_APPLY_CLASS=universal
 26	script	nvidia-cdi-refresh	automation/26-nvidia-cdi-refresh.sh	MIOS_APPLY_CLASS=universal
 27	script	vm-gating	automation/27-vm-gating.sh	MIOS_APPLY_CLASS=universal
@@ -45,8 +43,8 @@
 51	script	hardening	automation/51-hardening.sh	MIOS_APPLY_CLASS=universal
 52	script	apply-boot-fixes	automation/52-apply-boot-fixes.sh	MIOS_APPLY_CLASS=universal
 53	script	enable-log-copy-service	automation/53-enable-log-copy-service.sh	MIOS_APPLY_CLASS=bake-only
-54	script	bake-coderun-sandbox	automation/54-bake-coderun-sandbox.sh	bake coderun sandbox
-55	script	native-build	automation/55-native-build.sh	The image bake reuses the rust-builder artifacts; build.sh excludes this phase.
+54	script	bake-coderun-sandbox	automation/54-bake-coderun-sandbox.sh	The sandbox now shares the global native terminal/MCP base. This phase runs
+55	script	native-build	automation/55-native-build.sh	Readable by every user; only root updates the toolchain.
 56	script	fonts	automation/56-fonts.sh	MIOS_APPLY_CLASS=universal
 57	script	gnome	automation/57-gnome.sh	MIOS_APPLY_CLASS=universal
 58	script	gnome-remote-desktop	automation/58-gnome-remote-desktop.sh	MIOS_APPLY_CLASS=universal

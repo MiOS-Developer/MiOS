@@ -17,16 +17,16 @@ if [[ -d /.git ]]; then
     exit 0
 fi
 
-MIOS_USER="${MIOS_USER:-mios}"
+MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-mios}"
 if [[ -r /etc/mios/install.env ]]; then
     _mios_had_u=0; case "$-" in *u*) _mios_had_u=1;; esac
     set +u; set -a; source /etc/mios/install.env 2>/dev/null || true; set +a
     [ "$_mios_had_u" = 1 ] && set -u
 fi
-MIOS_USER="${MIOS_USER:-mios}"
+MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-mios}"
 
-FORGE_URL="${MIOS_FORGE_URL:-http://localhost:3000}"
-REPO_URL="${FORGE_URL}/${MIOS_USER}/mios.git"
+FORGE_URL="${MIOS_URLS_FORGE:-http://localhost:3000}"
+REPO_URL="${FORGE_URL}/${MIOS_IDENTITY_USERNAME}/mios.git"
 
 _log "waiting for Forgejo at ${FORGE_URL} ..."
 for _ in $(seq 1 60); do
@@ -50,8 +50,8 @@ _log "git init / + remote add origin ${REPO_URL}"
 git -C / init -b main
 git -C / config core.fileMode false   # prevent perm-noise on read-only composefs
 git -C / config core.autocrlf false
-git -C / config user.email "${MIOS_USER}@$(hostname).local"
-git -C / config user.name "${MIOS_USER}"
+git -C / config user.email "${MIOS_IDENTITY_USERNAME}@$(hostname).local"
+git -C / config user.name "${MIOS_IDENTITY_USERNAME}"
 git -C / remote add origin "${REPO_URL}"
 
 _log "fetching origin main ..."

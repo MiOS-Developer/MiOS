@@ -10,7 +10,7 @@ Wants=network-online.target
 [Container]
 AutoUpdate=registry
 ContainerName=mios-webtools-redis
-Exec=valkey-server --bind 127.0.0.1 --port ${MIOS_PORT_REDIS:-8565} --appendonly no
+Exec=valkey-server --bind 127.0.0.1 --port ${MIOS_PORTS_REDIS:-8565} --appendonly no
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=0
 Image=docker.io/valkey/valkey:latest

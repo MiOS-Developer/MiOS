@@ -4,10 +4,14 @@ codeberg.org/forgejo/forgejo:latest
 code.forgejo.org/forgejo/runner:latest
 docker.io/guacamole/guacamole:latest
 docker.io/guacamole/guacd:latest
+docker.io/headscale/headscale:latest
 docker.io/rancher/k3s:latest
+ghcr.io/mios-dev/mios-micro:latest
 ghcr.io/mios-dev/mios-node:latest
 docker.io/jaegertracing/all-in-one:latest
-docker.io/pgvector/pgvector:latest
+docker.io/pgvector/pgvector:pg18
 quay.io/poseidon/matchbox:latest
 docker.io/searxng/searxng:latest
 docker.io/valkey/valkey:latest
+ghcr.io/ggml-org/whisper.cpp:main
+docker.io/lizardbyte/sunshine:latest-ubuntu-26.10

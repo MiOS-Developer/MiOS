@@ -6,14 +6,14 @@ ENV_FILE=/etc/mios/install.env
 # shellcheck source=/dev/null
 [ -r "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
 
-FORGE_PORT="${MIOS_PORT_FORGE_HTTP:-${MIOS_FORGE_HTTP_PORT:-3000}}"
+FORGE_PORT="${MIOS_PORTS_FORGE_HTTP:-${MIOS_PORT_FORGE_HTTP:-8400}}"
 FORGE="${FORGE_URL:-http://localhost:${FORGE_PORT}}"
 SRC="${GITHUB_URL:-https://github.com/mios-dev/MiOS.git}"
 REPONAME="${MIRROR_NAME:-MiOS}"
 
 FORGE_EXEC=(podman exec --user 816:816 mios-forge forgejo --config /data/gitea/conf/app.ini)
 
-OWNER="${FORGE_OWNER:-${MIOS_FORGE_ADMIN_USER:-${MIOS_LINUX_USER:-${MIOS_USER:-}}}}"
+OWNER="${FORGE_OWNER:-${MIOS_FORGE_ADMIN_USER:-${MIOS_LINUX_USER:-${MIOS_IDENTITY_USERNAME:-}}}}"
 if [ -z "$OWNER" ]; then
   OWNER="$("${FORGE_EXEC[@]}" admin user list 2>/dev/null | awk 'NR>1 && $5=="true"{print $2; exit}')"
 fi

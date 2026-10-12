@@ -7,7 +7,7 @@ set -uo pipefail
 
 SRC="${MIOS_HERMES_SOUL_SRC:-/usr/share/mios/ai/hermes-soul.md}"
 HERMES_HOME="${HERMES_HOME:-/var/lib/mios/hermes}"
-SOUL_USER="${MIOS_HERMES_USER:-mios-hermes}"
+SOUL_USER="${MIOS_SERVICES_HERMES_USER:-mios-hermes}"
 SOUL_GROUP="${MIOS_HERMES_GROUP:-mios-hermes}"
 SOUL_CTX_MARKER="### MIOS-RUNTIME-CONTEXT-BEGIN"
 

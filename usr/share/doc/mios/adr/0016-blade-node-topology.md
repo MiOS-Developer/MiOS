@@ -1,5 +1,5 @@
 <!-- AI-hint: The Blade-Node topology decision: what a blade is, what a node is, how a MiOS addresses a service that lives on another machine, and why "MiOS-Metal" currently names three different things. Establishes that base LINEAGE (which bootc base) and ROLE (what the machine does) are orthogonal axes, that service offload is a [urls] overlay rather than a code change because every pod is Network=host, and that the blade registry must key on something other than the port -- since port is currently the whole of a service's identity. Corrects the assumption that role selection is undecided: [blade] SINGULAR already implements one-image-role-by-flag and is a different axis from [blades] PLURAL. -->
-<!-- AI-related: usr/share/doc/mios/concepts/mios-metal-architecture.md, usr/share/mios/mios.toml [blade], [blade.planes], [urls], [ports], [blades], [nodes], [profile], usr/share/doc/mios/reference/metal-vs-hosted.md, tools/generate-metal-vs-hosted.py, usr/libexec/mios/role-apply, tools/native/mios-unit-gen/src/lib.rs, usr/lib/mios/agent-pipe/mios_pipe/routing/agentreg.py, usr/lib/mios/agent-pipe/mios_pipe/scheduler/vram.py -->
+<!-- AI-related: usr/share/doc/mios/concepts/mios-metal-architecture.md, usr/share/mios/mios.toml [blade], [blade.planes], [urls], [ports], [blades], [nodes], [profile], usr/share/doc/mios/reference/metal-vs-hosted.md, tools/native/mios-gen/src/metal_vs_hosted.rs, usr/libexec/mios/role-apply, tools/native/mios-unit-gen/src/lib.rs, usr/lib/mios/agent-pipe/mios_pipe/routing/agentreg.py, usr/lib/mios/agent-pipe/mios_pipe/scheduler/vram.py -->
 ---
 adr: 0016
 title: "Blade-Node topology — orthogonal lineage/role axes, and service offload as a URL overlay"
@@ -90,7 +90,7 @@ Three things WS-BLADE claims as `done` are **not** in the tree, and each matters
 1. **`usr/lib/bootc/kargs.d/05-mios-blade.toml` does not exist.** `role-apply` parses `mios.blade=`
    and `mios.role=` out of `/proc/cmdline`, so the *reader* ships; the generated karg default does
    not. Deploy-time role selection therefore works only where the installer sets the karg by hand.
-2. **`role-apply` was never demoted.** BLADE-01 specifies a marker-writing resolver; it still calls
+2. **`role-apply` was never demoted.** task_3192 specifies a marker-writing resolver; it still calls
    `systemctl set-default --no-block` and `systemctl start --no-block` on the resolved target. The
    declarative half (markers + `Condition*`) and the imperative half both run.
 3. **`[profile]` was never folded into `[blade]`.** `[profile].role = "developer"` is not one of the
@@ -203,6 +203,13 @@ this decision exists to prevent. They move to the register, whose comment now na
 reasons an entry may appear there: the port serves no page, or its address is already stated
 elsewhere. The register stops being debt and becomes a classification — which is what it always was.
 
+**Amended 2026-10-08: the measurement above predates path-derived names.** The resolver now
+names every key `MIOS_<TABLE>_<KEY>` (`[urls].searxng` is `MIOS_URLS_SEARXNG`) and keeps the old
+`MIOS_<KEY>_URL` spelling only as an accepted input alias. The searxng and forge consumers moved to
+the canonical spelling, so "every `MIOS_URLS_*` has 0 readers" is no longer true and is no longer
+the point. The invariant is unchanged: each address is read under exactly one name.
+`tests/test-offload-overlay.py` now pins that for every `[urls]` key, plus the direction of the move.
+
 ### 2. A blade is a machine; a node is a lane on a blade
 
 * A **blade** is a machine that serves addresses. `[blades.<name>]` becomes the machine registry:
@@ -219,7 +226,7 @@ the blade-level availability primitive rather than a per-node flag.
 is five aliases for one backend and must collapse before anything is built on it.
 
 `[blades]` plural is the fleet axis and must stay orthogonal to `[blade]` singular, exactly as
-BLADE-01's own acceptance criterion already requires (*"`[blades.*]`/`[nodes.*]` fleet-dispatch
+task_3192's own acceptance criterion already requires (*"`[blades.*]`/`[nodes.*]` fleet-dispatch
 (Axis B) stays orthogonal to `[blade]` OS-activation (Axis A)"*). The two keys differing by one
 letter is a Law 9 hazard in waiting; if either is renamed, rename it for the axis it names.
 
@@ -488,7 +495,7 @@ The rule, restated so it is both true and enforceable:
 * An off-box endpoint means the request leaves the machine, so **`[security].api_require_auth` is
   the seat's precondition, not a preference.**
 
-That last clause was unstatable until T-325: `api_require_auth` and `principal_bind_mode` had been
+That last clause was unstatable until task_269: `api_require_auth` and `principal_bind_mode` had been
 orphaned under an unclosed `[security.nohc_allowlist]` header, and both consumers read
 `[security].<key>`, so both always took their compiled default. **The controls that bound a seat
 could not be switched on.** They are reachable now; the defaults are unchanged (`false` and `off`),
@@ -540,7 +547,7 @@ Two consequences the tree did not express. `[greenboot].blade_reachability_criti
 right — a seat must not roll itself back over someone else's outage — but it meant a seat's greenboot
 could only ever fail on `mios-agent-pipe`, and the key itself was read by nothing: its only consumer
 was the generator that *described* it. Blade reachability is now **recorded on every boot** and
-becomes critical only when that flag says so (T-329). And nothing anywhere expresses a compatibility floor: seat and
+becomes critical only when that flag says so (task_273). And nothing anywhere expresses a compatibility floor: seat and
 blade `bootc upgrade` independently, and a seat two releases ahead of its blade fails
 mysteriously. `[blade].min_peer_version`, reported by the reachability probe and **non-fatal**, is
 the smallest thing that makes that legible.
@@ -638,7 +645,7 @@ cannot go stale and nobody can write "built" into the SSOT (Law 8).
 
 Read narrowly: *baked* means the marker packages ship, and *wired* means the named file exists.
 Neither claims a plane is finished — `router` is baked and forwards, and still has no NAT ruleset or
-client DHCP (T-337).
+client DHCP (task_281).
 
 Two planes fail outright, and **both are `owner = "mini"`**:
 
@@ -782,7 +789,7 @@ actually buys:
   that peer is **cold for stateful workloads**, which contradicts D11.4.
 
 Those are the only two options and they are mutually exclusive. This is recorded as unsettled
-(T-338 axis 6) because picking one silently would quietly reverse either D11.4 or the threat model.
+(task_282 axis 6) because picking one silently would quietly reverse either D11.4 or the threat model.
 
 #### 12.4 The default route moves; the router plane does not
 
@@ -801,7 +808,7 @@ the cluster allocate. `failover = "peer"` skips the local step even though `[bla
 guarantees a second interface that might itself have an uplink. Either the second interface should be
 tried first (making this `["local", "peer"]` and consistent with D3), or uplink failover is a
 deliberate exception to D3 because a dead WAN is not a crashed process and retrying in place is
-usually pointless. That is T-338 axis 7.
+usually pointless. That is task_282 axis 7.
 
 This also depends on the plane that is not baked: handing a default route to a peer is a mesh
 operation (a Tailscale exit node, in the current implementation), and `mesh` has no package and no
@@ -935,7 +942,7 @@ itself over the mesh, and is then synced by hand.
 **This is in tension with D11.3**, which settled that peer #2 *joins* one elected k3s server. The two
 can both hold if they describe different layers — k3s joining *within* a box's logical hosts, boxes
 *federating* across the mesh — but which layer owns cross-box container placement is not settled by
-either answer, and is recorded as open rather than guessed (T-338 axis 11).
+either answer, and is recorded as open rather than guessed (task_282 axis 11).
 
 #### 14.5 Management packages: already baked, bar one
 
@@ -1053,7 +1060,7 @@ Two consequences worth stating before anyone builds on it:
   `[profile].role`, and it had already drifted: the SSOT lists three services, the check probes four
   (it adds `hermes`), and `check_greenboot` hardcoded the *check's* four rather than the *SSOT's*
   three, so the script and its gate agreed with each other while both ignored the source of truth.
-  The gate now reads the SSOT; wiring the *probe* to it is what remains of T-314.
+  The gate now reads the SSOT; wiring the *probe* to it is what remains of task_258.
 * **Whether a seat's "critical" may include reaching its blade is now a recorded choice**, not an
   implication: `[greenboot].blade_reachability_critical` defaults to `false`, so Law 12 holds by
   default (degrade open, never block boot) and an operator who wants a seat to fail its boot when
@@ -1078,7 +1085,7 @@ Two consequences worth stating before anyone builds on it:
   override needs no new machinery and is the default until a blade ordinal exists.
 * Whether a seat may write to a blade's pgvector, and whose `[security.redact]` policy applies on
   the persist path when it does.
-* Blade discovery. Static endpoints work today; `mios_gossip.py` has no transport under it (T-229).
+* Blade discovery. Static endpoints work today; `mios_gossip.py` has no transport under it (task_209).
 
 ## Rationale
 

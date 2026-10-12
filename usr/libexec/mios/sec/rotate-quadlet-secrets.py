@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Quadlet container secrets enforcement (0600 permissions) and automated credential rotation.
+# AI-hint: Quadlet secrets enforcement, fail-closed private atomic initialization preserving existing credentials, and explicit token rotation.
 # AI-related: tests/test-sec.py, usr/share/doc/mios/manual/sec.md
 """
 MiOS Quadlet Secrets Permission Hardening and Rotation Engine.
@@ -14,6 +14,7 @@ import os
 import secrets
 import stat
 import sys
+import tempfile
 from typing import Dict, List, Optional, Tuple
 
 class QuadletSecretsHardener:
@@ -49,7 +50,7 @@ class QuadletSecretsHardener:
         """Non-destructively initializes secrets.env ensuring existing credentials are preserved."""
         default_keys = [
             "POSTGRES_PASSWORD",
-            "MIOS_DEFAULT_PASSWORD",
+            "MIOS_IDENTITY_DEFAULT_PASSWORD",
             "HA_PASSWORD",
             "POSTGRESQL_PASSWORD",
             "K3S_TOKEN",
@@ -58,16 +59,20 @@ class QuadletSecretsHardener:
         ]
 
         existing_secrets: Dict[str, str] = {}
-        if os.path.exists(secrets_file):
-            try:
-                with open(secrets_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            existing_secrets[k.strip()] = v.strip()
-            except Exception as e:
-                sys.stderr.write(f"Warning: could not read existing secrets file: {e}\n")
+        if os.path.islink(secrets_file):
+            raise OSError("refusing a symbolic-link secrets file")
+        try:
+            read_fd = os.open(secrets_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            exists = False
+        else:
+            exists = True
+            with os.fdopen(read_fd, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        existing_secrets[k.strip()] = v.strip()
 
         updated = False
         for k in default_keys:
@@ -80,21 +85,30 @@ class QuadletSecretsHardener:
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
 
-        if updated or not os.path.exists(secrets_file):
+        if updated or not exists:
+            # mkstemp creates a private inode. Apply the required mode before
+            # writing any credential, then publish only a complete, flushed file.
+            fd, staged = tempfile.mkstemp(dir=parent_dir or ".", prefix=".mios-secrets-", suffix=".tmp")
             try:
-                with open(secrets_file, "w", encoding="utf-8") as f:
+                os.chmod(staged, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    fd = -1
                     f.write("# MiOS Container Secrets Environment File (0600)\n")
                     f.write("# Managed by mios-secret-init / rotate-quadlet-secrets.py\n")
                     for k, v in existing_secrets.items():
                         f.write(f"{k}={v}\n")
-            except Exception as e:
-                sys.stderr.write(f"Failed to write secrets file {secrets_file}: {e}\n")
-
-        if os.path.exists(secrets_file):
-            try:
-                os.chmod(secrets_file, 0o600)
-            except Exception:
-                pass
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(staged, secrets_file)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                if os.path.exists(staged):
+                    os.unlink(staged)
+        else:
+            # An unreadable file or a mode/publication failure must never become
+            # a successful initialization receipt or regenerate operator keys.
+            os.chmod(secrets_file, 0o600)
 
         return existing_secrets
 
@@ -118,7 +132,8 @@ def main() -> int:
     if args.init:
         secrets_map = hardener.init_secrets_env(secrets_file=args.secrets_file)
         if args.json:
-            sys.stdout.write(json.dumps({"status": "ok", "secrets_file": args.secrets_file, "keys": list(secrets_map.keys())}, indent=2) + "\n")
+            # A count, like the text receipt: the initializer's result never reaches output.
+            sys.stdout.write(json.dumps({"status": "ok", "secrets_file": args.secrets_file, "key_count": len(secrets_map)}, indent=2) + "\n")
         else:
             sys.stdout.write(f"[secrets-init] Initialized {args.secrets_file} with {len(secrets_map)} keys (mode 0600)\n")
         return 0

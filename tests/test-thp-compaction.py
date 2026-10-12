@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for THP madvise and memory compaction tuning (T-800).
+# AI-hint: Automated unit test suite for THP madvise and memory compaction tuning (task_744).
 # AI-doc: usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
-_SYSCTL_USR = os.path.join(_ROOT, "usr", "lib", "sysctl.d", "20-memory.conf")
+_SYSCTL_USR = os.path.join(_ROOT, "usr", "lib", "sysctl.d", "99-mios.conf")
 _SYSCTL_ETC = os.path.join(_ROOT, "etc", "sysctl.d", "20-memory.conf")
-_TMPFILES_THP = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "mios-thp.conf")
+_TMPFILES_THP = os.path.join(_ROOT, "usr", "lib", "tmpfiles.d", "50-mios.conf")
 _THP_TUNE = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-thp-tune")
 
 

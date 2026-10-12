@@ -49,7 +49,7 @@ def t_order_preserved():
     check("order: kept messages in original order", idx == sorted(idx), f"{idx}")
 
 def t_drop_stale_tool_results():
-    from mios_pipe.routing.chat import _drop_stale_tool_results
+    from mios_pipe.routing.chat_history import _drop_stale_tool_results
     msgs = [
         m("user", "turn 1"),
         m("assistant", "response 1"),
@@ -66,19 +66,73 @@ def t_drop_stale_tool_results():
     res2 = _drop_stale_tool_results(msgs, ttl_turns=2)
     check("drop_tool: keeps recent tool message", any(x.get("role") == "tool" for x in res2))
 
+def t_chat_history():
+    """mios_pipe.routing.chat_history: chat re-exports the very same objects;
+    the session store degrades to an empty history, never raising into a turn."""
+    import asyncio
+    import json
+    from mios_pipe.routing import chat, chat_history as ch
+    for name in ("_drop_stale_tool_results", "_summarize_evicted_messages",
+                 "_get_gateway_session", "_save_gateway_session"):
+        check(f"history: chat re-exports chat_history.{name}",
+              getattr(chat, name, None) is getattr(ch, name))
+
+    class _Pg:
+        def __init__(self, rows=None, error=None):
+            self.rows, self.error, self.calls = rows, error, []
+
+        async def execute(self, sql, params, fetch=False):
+            self.calls.append((" ".join(sql.split()), params, fetch))
+            if self.error is not None:
+                raise self.error
+            return self.rows
+
+    turn = [{"role": "user", "content": "hi"}]
+    saved = ch._mios_pg
+    try:
+        ch._mios_pg = _Pg(rows=[{"messages": json.dumps(turn)}])
+        check("history: a stored JSON string is decoded",
+              asyncio.run(ch._get_gateway_session("s1")) == turn)
+        ch._mios_pg = _Pg(rows=[{"messages": turn}])
+        check("history: a stored jsonb list is returned as is",
+              asyncio.run(ch._get_gateway_session("s1")) == turn)
+        ch._mios_pg = _Pg(rows=[])
+        check("history: an unknown session -> []", asyncio.run(ch._get_gateway_session("nope")) == [])
+        ch._mios_pg = _Pg(error=RuntimeError("db down"))
+        check("history: a database error on read degrades to []",
+              asyncio.run(ch._get_gateway_session("s1")) == [])
+
+        pg = _Pg()
+        ch._mios_pg = pg
+        asyncio.run(ch._save_gateway_session("s1", turn))
+        sql, params, _ = pg.calls[0]
+        check("history: save upserts on session_id",
+              "ON CONFLICT (session_id)" in sql and params["session_id"] == "s1", sql)
+        check("history: save stores the messages as JSON", json.loads(params["messages"]) == turn)
+        ch._mios_pg = _Pg(error=RuntimeError("db down"))
+        try:
+            asyncio.run(ch._save_gateway_session("s1", turn))
+            swallowed = True
+        except Exception:
+            swallowed = False
+        check("history: a database error on save never raises into the turn", swallowed)
+    finally:
+        ch._mios_pg = saved
+
 def main():
     t_noop()
     t_summarize_oldest()
     t_keep_system()
     t_order_preserved()
     t_drop_stale_tool_results()
+    t_chat_history()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 
 
 
 # ==============================================================================
-# Consolidated from test_mios_tiered_memory.py (T-1092)
+# Consolidated from test_mios_tiered_memory.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone assert-script unit test for MEM-02 (tiered memory / context warning and eviction logic). Pure stdlib + asyncio, no live Letta server required. Runs as `python3 test_mios_tiered_memory.py` (exit 0 = pass).
 
@@ -293,5 +347,9 @@ def _run_all_folded_compact_suites():
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
 if __name__ == "__main__":
+    # The module's own checks first, as in the other folded suites: the folded
+    # tiered-memory suite patches chat's globals and leaves them patched, so
+    # anything run after it reads the mocks rather than the module.
+    _rc_main = main()
     _run_all_folded_compact_suites()
-    sys.exit(main())
+    sys.exit(_rc_main)

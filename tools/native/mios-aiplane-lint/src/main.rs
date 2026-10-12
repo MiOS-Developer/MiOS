@@ -115,6 +115,12 @@ fn is_consumer_source(path: &Path) -> bool {
     if s.contains("mios-aiplane-lint") {
         return false;
     }
+    // The native drift checks are gates: check_structured asserts the budget
+    // keys are PRESENT, the same naming-without-reading that kept
+    // tools/drift-checks.py from counting. A gate is never a consumer.
+    if s.replace('\\', "/").contains("/miosd/src/drift/") {
+        return false;
+    }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if s.contains("/tests/") || name.starts_with("test_") || name.starts_with("test-") {
         return false;

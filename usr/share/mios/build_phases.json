@@ -14,19 +14,11 @@
     ]
   },
   {
-    "ordinal": 2,
-    "script": "02-uki-bootloader.sh",
-    "stage": "container",
-    "deps": [
-      "02-materialize-build-ctx.sh"
-    ]
-  },
-  {
     "ordinal": 4,
     "script": "04-local-rpm-mirror.sh",
     "stage": "container",
     "deps": [
-      "02-uki-bootloader.sh"
+      "02-materialize-build-ctx.sh"
     ]
   },
   {
@@ -142,19 +134,11 @@
     ]
   },
   {
-    "ordinal": 24,
-    "script": "24-gpu-pv-shim.sh",
-    "stage": "container",
-    "deps": [
-      "24-cpu-affinity.sh"
-    ]
-  },
-  {
     "ordinal": 25,
     "script": "25-gpu-cdi-toolkits.sh",
     "stage": "container",
     "deps": [
-      "24-gpu-pv-shim.sh"
+      "24-cpu-affinity.sh"
     ]
   },
   {

@@ -1,0 +1,16 @@
+# AI-hint: Native Windows launcher for runtime SSOT terminal projection and display-aware placement.
+[package]
+name = "mios-launch"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mios-service-core = { path = "../mios-service-core" }
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
+    "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Console",
+] }

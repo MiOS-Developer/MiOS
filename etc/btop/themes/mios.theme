@@ -1,104 +1,44 @@
-# AI-hint: btop color theme template; mios-dotfiles-render fills its tokens from mios.toml [colors] into etc/btop/themes/mios.theme.
-# mios.theme -- MiOS color palette for btop
-#
-# Sourced from mios.toml [colors]:
-#   accent       #1A407F  (operator-blue, primary brand color)
-#   bg           #0A0E1A  (deep blue-black)
-#   fg           #B7C9D7  (subtle dim text)
-#   ok           #6CC777  (cool green)
-#   warn         #E5B14B  (amber)
-#   err          #E76F4F  (warm red)
-#   highlight    #1A407F  (operator-blue accent for selection)
-#
-# Operator 2026-05-09: btop config "needs to match the entire MiOS themes
-# and color palette". Theme keys map to btop's standard slots.
-
-# Main background. Set "" for transparent (preserves WT acrylic).
-theme[main_bg]=""
-
-# Main text color
-theme[main_fg]="#B7C9D7"
-
-# Title color for boxes
-theme[title]="#1A407F"
-
-# Highlight color for keyboard shortcuts
-theme[hi_fg]="#E5B14B"
-
-# Background color of selected item in processes box
+# AI-hint: btop theme projected by native build and runtime renderers from the layered mios.toml palette.
+# Generated from [dotfiles.registry.btop].template; edit the template or SSOT palette.
+theme[main_bg]="#282262"
+theme[main_fg]="#E7DFD3"
+theme[title]="#E7DFD3"
+theme[hi_fg]="#F35C15"
 theme[selected_bg]="#1A407F"
-
-# Foreground color of selected item in processes box
-theme[selected_fg]="#FFFFFF"
-
-# Color of inactive/disabled text
-theme[inactive_fg]="#5A6770"
-
-# Color of text appearing on top of graphs (process name etc.)
+theme[selected_fg]="#E7DFD3"
+theme[inactive_fg]="#948E8E"
 theme[graph_text]="#B7C9D7"
-
-# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
-theme[meter_bg]="#2A3A4F"
-
-# Foreground color of summary/percentage text
-theme[proc_misc]="#6CC777"
-
-# CPU box outline color
+theme[meter_bg]="#948E8E"
+theme[proc_misc]="#B7C9D7"
 theme[cpu_box]="#1A407F"
-
-# Memory/disks box outline color
 theme[mem_box]="#1A407F"
-
-# Network box outline color
 theme[net_box]="#1A407F"
-
-# Processes box outline color
 theme[proc_box]="#1A407F"
-
-# Box divider line and small boxes line color
-theme[div_line]="#2A3A4F"
-
-# Temperature graph color (low - mid - high)
-theme[temp_start]="#6CC777"
-theme[temp_mid]="#E5B14B"
-theme[temp_end]="#E76F4F"
-
-# CPU graph colors (start - mid - end)
-theme[cpu_start]="#1A407F"
-theme[cpu_mid]="#3D6CB8"
-theme[cpu_end]="#7AAAEE"
-
-# Mem/Disk free meter (start - mid - end)
-theme[free_start]="#0F2547"
-theme[free_mid]="#1A407F"
-theme[free_end]="#3D6CB8"
-
-# Mem/Disk cached meter (start - mid - end)
-theme[cached_start]="#5A6770"
-theme[cached_mid]="#7A8B9A"
+theme[div_line]="#948E8E"
+theme[temp_start]="#3E7765"
+theme[temp_mid]="#F35C15"
+theme[temp_end]="#DC271B"
+theme[cpu_start]="#3E7765"
+theme[cpu_mid]="#F35C15"
+theme[cpu_end]="#DC271B"
+theme[free_start]="#3E7765"
+theme[free_mid]="#B7C9D7"
+theme[free_end]="#3D6BA8"
+theme[cached_start]="#1A407F"
+theme[cached_mid]="#3D6BA8"
 theme[cached_end]="#B7C9D7"
-
-# Mem/Disk available meter (start - mid - end)
-theme[available_start]="#3A5234"
-theme[available_mid]="#4F8050"
-theme[available_end]="#6CC777"
-
-# Mem/Disk used meter (start - mid - end)
-theme[used_start]="#5A2A1F"
-theme[used_mid]="#A04A33"
-theme[used_end]="#E76F4F"
-
-# Download graph colors (start - mid - end)
-theme[download_start]="#1A407F"
-theme[download_mid]="#3D6CB8"
-theme[download_end]="#7AAAEE"
-
-# Upload graph colors (start - mid - end)
-theme[upload_start]="#5A2A1F"
-theme[upload_mid]="#A04A33"
-theme[upload_end]="#E76F4F"
-
-# Process box color gradient for threads, mem and cpu usage
-theme[process_start]="#3A5234"
-theme[process_mid]="#A0A040"
-theme[process_end]="#E76F4F"
+theme[available_start]="#3E7765"
+theme[available_mid]="#B7C9D7"
+theme[available_end]="#3D6BA8"
+theme[used_start]="#F35C15"
+theme[used_mid]="#F35C15"
+theme[used_end]="#DC271B"
+theme[download_start]="#3D6BA8"
+theme[download_mid]="#1A407F"
+theme[download_end]="#B7C9D7"
+theme[upload_start]="#F35C15"
+theme[upload_mid]="#F35C15"
+theme[upload_end]="#DC271B"
+theme[process_start]="#3E7765"
+theme[process_mid]="#F35C15"
+theme[process_end]="#DC271B"

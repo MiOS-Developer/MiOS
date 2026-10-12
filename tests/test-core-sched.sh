@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated unit and integration test suite for Linux Core Scheduling cookie tagger, SMT isolation, and CPU affinity (T-858).
+# AI-hint: Automated unit and integration test suite for Linux Core Scheduling cookie tagger, SMT isolation, and CPU affinity (task_802).
 # AI-doc: usr/share/doc/mios/manual/tests.md
 # AI-related: usr/libexec/mios/mios-core-sched, automation/24-cpu-affinity.sh, usr/lib/systemd/system/subagent.slice
 set -euo pipefail
@@ -39,7 +39,7 @@ fail_test() {
     die "Failed test: $1"
 }
 
-log "Running Linux Core Scheduling & CPU Affinity Test Suite (T-858)"
+log "Running Linux Core Scheduling & CPU Affinity Test Suite (task_802)"
 
 # ==============================================================================
 # Tier 1: CLI Syntax and Help Verification

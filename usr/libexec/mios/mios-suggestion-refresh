@@ -53,7 +53,7 @@ import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
 
 OWUI_DB = os.environ.get("MIOS_OWUI_DB", "/var/lib/mios/open-webui/webui.db")
 REFINE_ENDPOINT = os.environ.get(
-    "MIOS_SUGGESTION_ENDPOINT", f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}")
+    "MIOS_SUGGESTION_ENDPOINT", f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}")
 REFINE_MODEL = os.environ.get("MIOS_SUGGESTION_MODEL", "granite4.1:8b")
 REFINE_TIMEOUT_S = int(os.environ.get(
     "MIOS_SUGGESTION_TIMEOUT_S", "60"))
@@ -336,7 +336,7 @@ def _ask_model(prompt: str) -> list[str]:
     return out
 
 
-OWUI_URL = os.environ.get("MIOS_OWUI_URL", f"http://localhost:{os.environ.get('MIOS_PORT_OPEN_WEBUI', '8200')}")
+OWUI_URL = os.environ.get("MIOS_OWUI_URL", f"http://localhost:{os.environ.get('MIOS_PORTS_OPEN_WEBUI', '8200')}")
 
 
 def _admin_token() -> str:

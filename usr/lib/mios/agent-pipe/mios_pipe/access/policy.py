@@ -133,40 +133,75 @@ def _hitl_block_reason(tool: str, args: "Optional[dict]" = None) -> "Optional[st
     except Exception:  # noqa: BLE001 -- degrade-open: a gate bug never blocks work
         return None
 
-_HITL_ARBITER_URL = str((_toml_section("ai") or {}).get("hitl_arbiter_url") or "").strip()
+_raw_arbiter_url = str((_toml_section("ai") or {}).get("hitl_arbiter_url") or "").strip()
+_default_arbiter_port = int((_toml_section("ports") or {}).get("arbiter", 8760) or 8760)
+_HITL_ARBITER_URL = _raw_arbiter_url if _raw_arbiter_url else f"http://127.0.0.1:{_default_arbiter_port}"
 _HITL_ARBITER_FAIL = str((_toml_section("ai") or {}).get("hitl_arbiter_fail")
-                         or "open").strip().lower()
+                         or "closed").strip().lower()
+
+def _emit_arbiter_audit_event(kind: str, summary: str, payload: dict) -> None:
+    try:
+        if _db_fire and _db_post and _db_create:
+            _db_fire(_db_post(_db_create("event", {
+                "source": "agent-pipe",
+                "kind": kind,
+                "severity": "high",
+                "summary": summary[:200],
+                "payload": payload,
+            }, now_fields=("ts",))))
+    except Exception:
+        pass
 
 async def _hitl_arbiter_verdict(tool: str, args: dict) -> "Optional[str]":
     """Consult the external policy arbiter for a high-risk action; return a refusal
-    reason on DENY, else None (allow/not-applicable). No-op when no arbiter URL is
-    configured. Degrade-open per _HITL_ARBITER_FAIL."""
-    if not _HITL_ARBITER_URL:
-        return None
+    reason on DENY, else None (allow/not-applicable). Wire fallback to
+    http://127.0.0.1:{ports.arbiter}. Fail-closed per _HITL_ARBITER_FAIL."""
+    arbiter_url = str(_HITL_ARBITER_URL or "").strip()
+    if not arbiter_url:
+        port = int((_toml_section("ports") or {}).get("arbiter", 8760) or 8760)
+        arbiter_url = f"http://127.0.0.1:{port}"
     try:
         vperm = _effective_perm(tool, args)
         if _perm_rank(vperm) < _perm_rank(_HITL_THRESHOLD):
             return None  # below the threshold -> arbiter not consulted
         client = await _get_client()
         r = await client.post(
-            _HITL_ARBITER_URL,
+            arbiter_url,
             json={"verb": tool, "tier": vperm, "args": args},
             timeout=5.0)
         if r.status_code == 200:
             v = r.json() if r.content else {}
             if isinstance(v, dict) and not v.get("allow", True):
+                reason = str(v.get("reason") or f"'{tool}' denied by the policy arbiter.")
                 log.info("HITL arbiter: DENY %s (tier=%s): %s",
-                         tool, vperm, v.get("reason"))
-                return str(v.get("reason") or f"'{tool}' denied by the policy arbiter.")
+                         tool, vperm, reason)
+                _emit_arbiter_audit_event(
+                    "arbiter_deny",
+                    f"HITL arbiter DENY {tool} (tier={vperm}): {reason}",
+                    {"verb": tool, "tier": vperm, "args": args, "reason": reason},
+                )
+                return reason
             return None  # explicit allow (or no verdict field) -> proceed
         if _HITL_ARBITER_FAIL == "closed":
-            return (f"'{tool}' blocked: policy arbiter returned HTTP {r.status_code} "
-                    f"(fail-closed).")
+            reason = (f"'{tool}' blocked: policy arbiter returned HTTP {r.status_code} "
+                      f"(fail-closed).")
+            _emit_arbiter_audit_event(
+                "arbiter_block",
+                f"HITL arbiter HTTP {r.status_code} block for {tool}",
+                {"verb": tool, "tier": vperm, "status_code": r.status_code, "args": args},
+            )
+            return reason
         return None
-    except Exception as e:  # noqa: BLE001 -- degrade-open
+    except Exception as e:  # noqa: BLE001 -- fail-closed
         log.warning("HITL arbiter unreachable for %s: %s", tool, e)
         if _HITL_ARBITER_FAIL == "closed":
-            return f"'{tool}' blocked: policy arbiter unreachable (fail-closed)."
+            reason = f"'{tool}' blocked: policy arbiter unreachable (fail-closed)."
+            _emit_arbiter_audit_event(
+                "arbiter_unreachable",
+                f"HITL arbiter unreachable block for {tool}: {e}",
+                {"verb": tool, "error": str(e), "args": args},
+            )
+            return reason
         return None
 
 def _agent_rbac_filter(aname: str, tools: list) -> list:

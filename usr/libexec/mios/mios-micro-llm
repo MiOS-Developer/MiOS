@@ -39,7 +39,7 @@ import urllib.error
 from pathlib import Path
 
 DEFAULT_MODEL = "qwen3:1.7b"  # 4-model-set micro base (was qwen3:0.6b, dropped 2026-06-01); SSOT is mios.toml [ai].micro_model
-DEFAULT_ENDPOINT = f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}/v1"  # SSOT [ports].llm_light
+DEFAULT_ENDPOINT = f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}/v1"  # SSOT [ports].llm_light
 DEFAULT_KEEP_ALIVE = "-1"  # never unload
 DEFAULT_TIMEOUT_S = 30
 

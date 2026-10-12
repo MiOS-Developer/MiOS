@@ -467,7 +467,7 @@ class _FakeAuthReq:
         return self._payload
 
 class TestPrincipalModeVerify(unittest.TestCase):
-    """T-014 FED-G6: the 'verify' tier runs the SAME check enforce does but, on a
+    """task_14 FED-G6: the 'verify' tier runs the SAME check enforce does but, on a
     failed/absent principal, emits a STRUCTURED audit record and ALLOWS the request
     through. off/enforce behaviour is unchanged."""
 
@@ -542,7 +542,7 @@ class TestPrincipalModeVerify(unittest.TestCase):
         self.assertFalse(any("a2a-principal-audit" in m for m in records))  # no audit
 
 class TestCallerKeyRevoke(unittest.TestCase):
-    """T-052 FED-G8: POST /v1/admin/keys/revoke appends a caller key to the CRL and
+    """task_52 FED-G8: POST /v1/admin/keys/revoke appends a caller key to the CRL and
     HOT-RELOADS it so the credential is refused on the very next check, no restart."""
 
     def setUp(self):
@@ -617,11 +617,11 @@ class TestCallerKeyRevoke(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_a2a_loopback.py (T-1092)
+# Consolidated from test_mios_a2a_loopback.py (task_1006)
 # ==============================================================================
 # AI-hint: Offline unit test for the mios-a2a-test loopback smoke-test helper -- exercises the pure message-builder, artifact extr...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Offline tests for T-066 (A2A federation loopback smoke test).
+"""Offline tests for task_68 (A2A federation loopback smoke test).
 
 The network/CLI half of mios-a2a-test needs a live agent-pipe; the pure
 protocol helpers (build_message / extract_artifact_text / classify_task) are

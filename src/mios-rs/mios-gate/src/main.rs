@@ -6,20 +6,30 @@
 
 mod artifact;
 mod artifact_layers;
+mod artifact_recipes;
+mod canonical_bools;
 mod credentials;
 mod dispatch;
 mod doc_refs;
+mod gate_registry;
+mod host_parity;
 mod image_equivalence;
 mod image_freshness;
 mod inert_tables;
 mod laws;
+mod module_tests;
+mod negative_coverage;
 mod phases;
+mod powershell;
 mod profiles;
 mod projreg;
 mod protected_refs;
 mod ratchet;
 mod rendercov;
+mod rust_categories;
+mod shell_lint;
 mod sigpolicy;
+mod static_linkage;
 mod stubs;
 mod version_literals;
 
@@ -89,12 +99,14 @@ impl Report {
 
 const USAGE: &str = "usage: mios-gate <check> [--root DIR] [--format text|json]\n\
                      \x20      mios-gate image-equivalence --root DIR --profile P [--ssot FILE] [--allow-tree-only]\n\
-                     checks: artifact, build-tool-dispatch, credential-literals, doc-refs-resolve,\n\
-                             drift-stubs, image-equivalence, image-freshness, law-enforcers,\n\
-                             no-inert-ssot-tables, profile-integrity,\n\
-                             phase-registry, projection-coverage, protected-refs,\n\
-                             ratchet-direction, render-coverage, signature-policy,\n\
-                             version-literals-ssot\n";
+                     \x20      mios-gate static-linkage [--root DIR] [--format text|json] [--binary PATH] [--arch ARCH] [--census]\n\
+                     checks: artifact, artifact-recipes, build-tool-dispatch, canonical-bools, credential-literals,\n\
+                             doc-refs-headers, doc-refs-resolve, drift-stubs, gate-registry, generator-host-parity,\n\
+                             image-equivalence, image-freshness, module-test-coverage, negative-coverage,\n\
+                             no-inert-ssot-tables, phase-ratchet, phase-registry, profile-integrity,\n\
+                             powershell-parse, powershell-analyze, projection-coverage, protected-refs,\n\
+                             ratchet-direction, render-coverage, root-fhs-overlay, rust-categories, shell-lint,\n\
+                             signature-policy, static-linkage, version-literals-ssot\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -105,6 +117,11 @@ fn main() -> ExitCode {
     let mut ssot: Option<String> = None;
     let mut profile: Option<String> = None;
     let mut allow_tree_only = false;
+    // static-linkage only: optional single binary and architecture override,
+    // and the per-binary census (SHA-256, interpreter, DT_NEEDED) as JSON.
+    let mut binary: Option<String> = None;
+    let mut arch: Option<String> = None;
+    let mut census = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -143,7 +160,24 @@ fn main() -> ExitCode {
                     profile = Some(v);
                 }
             }
+            "--binary" => {
+                i += 1;
+                let Some(v) = args.get(i).cloned() else {
+                    eprint!("mios-gate: --binary needs a path\n{USAGE}");
+                    return ExitCode::from(EXIT_CANNOT_RUN);
+                };
+                binary = Some(v);
+            }
+            "--arch" => {
+                i += 1;
+                let Some(v) = args.get(i).cloned() else {
+                    eprint!("mios-gate: --arch needs a value\n{USAGE}");
+                    return ExitCode::from(EXIT_CANNOT_RUN);
+                };
+                arch = Some(v);
+            }
             "--allow-tree-only" => allow_tree_only = true,
+            "--census" => census = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return ExitCode::from(EXIT_CLEAN);
@@ -168,13 +202,31 @@ fn main() -> ExitCode {
         eprint!("mios-gate: --ssot, --profile and --allow-tree-only belong to image-equivalence\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     }
+    if name != "static-linkage" && (binary.is_some() || arch.is_some() || census) {
+        eprint!("mios-gate: --binary, --arch and --census belong to static-linkage\n{USAGE}");
+        return ExitCode::from(EXIT_CANNOT_RUN);
+    }
+    if census {
+        let (text, code) = static_linkage::census(&static_linkage::Options {
+            root: root.clone(),
+            binary: binary.map(std::path::PathBuf::from),
+            arch,
+        });
+        println!("{text}");
+        return ExitCode::from(code);
+    }
 
     let report = match name.as_str() {
         "artifact" => artifact::check(&root),
+        "artifact-recipes" => artifact_recipes::check(&root),
         "build-tool-dispatch" => dispatch::check(&root),
+        "canonical-bools" => canonical_bools::check(&root),
         "credential-literals" => credentials::check(&root),
+        "doc-refs-headers" => doc_refs::headers(&root),
         "doc-refs-resolve" => doc_refs::check(&root),
         "drift-stubs" => stubs::check(&root),
+        "gate-registry" => gate_registry::check(&root),
+        "generator-host-parity" => host_parity::check(&root),
         "image-equivalence" => image_equivalence::check(&image_equivalence::Options {
             root: root.clone(),
             ssot: ssot.map(std::path::PathBuf::from),
@@ -183,14 +235,27 @@ fn main() -> ExitCode {
         }),
         "image-freshness" => image_freshness::check(&root),
         "law-enforcers" => laws::check(&root),
+        "module-test-coverage" => module_tests::check(&root),
+        "negative-coverage" => negative_coverage::check(&root),
         "no-inert-ssot-tables" => inert_tables::check(&root),
+        "phase-ratchet" => phases::ratchet(&root),
         "phase-registry" => phases::check(&root),
+        "powershell-parse" => powershell::check(&root, false),
+        "powershell-analyze" => powershell::check(&root, true),
         "profile-integrity" => profiles::check(&root),
         "projection-coverage" => projreg::check(&root),
         "protected-refs" => protected_refs::check(&root),
         "ratchet-direction" => ratchet::check(&root),
         "render-coverage" => rendercov::check(&root),
+        "root-fhs-overlay" | "fhs-root-overlay" => host_parity::check_fhs_overlay(&root),
+        "rust-categories" => rust_categories::check(&root),
+        "shell-lint" => shell_lint::check(&root),
         "signature-policy" => sigpolicy::check(&root),
+        "static-linkage" => static_linkage::check(&static_linkage::Options {
+            root: root.clone(),
+            binary: binary.map(std::path::PathBuf::from),
+            arch,
+        }),
         "version-literals-ssot" => version_literals::check(&root),
         _ => {
             eprint!("mios-gate: no such check {name:?}\n{USAGE}");

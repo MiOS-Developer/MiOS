@@ -5,15 +5,6 @@
 set -euo pipefail
 
 PYTHON="python3"
-# T-1032. Windows-only shim: where a host ships `python` but no `python3`,
-# materialise one under that name so the checks below can call it. Two rules
-# make it safe, and BOTH were missing:
-#   1. Never when a real python3 already resolves. On Linux it always does, so
-#      this whole block must no-op there.
-#   2. Never reuse a cached copy. The copy lives in TEMP and outlives
-#      interpreter upgrades; a stale one puts every check on a DIFFERENT
-#      interpreter than sync-generated.sh, just, CI and the operator's own
-#      `python3 tools/...`, and silently absorbs version-dependent failures.
 _real_py="$(command -v python 2>/dev/null || true)"
 if ! command -v python3 >/dev/null 2>&1 && [[ -f "${_real_py:-/nonexistent}" ]]; then
     _shim_dir="${TEMP:-${TMP:-/tmp}}/mios-py-bin"
@@ -29,6 +20,7 @@ fi
 _self="${BASH_SOURCE[0]}"
 _self_dir="$(cd "$(dirname "$_self")" && pwd)"
 ROOT="${MIOS_DRIFT_CHECK_ROOT:-$(cd "$_self_dir/.." && pwd)}"
+cd "$ROOT"
 export MIOS_TOML_ROOT="${MIOS_TOML_ROOT:-$ROOT}"
 _SOFT="${MIOS_DRIFT_CHECK_SOFT:-0}"
 
@@ -59,6 +51,7 @@ _violation() {
     VIOLATIONS=$((VIOLATIONS + 1))
     return 1
 }
+_fail() { _violation "$@"; }
 
 _subject_present() {
     # Bash twin of drift-checks.py _absent (bdf6aba swept Python only).
@@ -97,6 +90,10 @@ _need_python() {
 }
 
 _gate_bin() {
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        native_bin mios-gate
+        return $?
+    fi
     # Folded from 13 copies.  ONE resolution order for the native gate, because
     # a copy that forgot the debug path made check_version_ssot violate
     # unconditionally in CI (which builds `cargo build -p mios-gate`, debug).
@@ -104,6 +101,8 @@ _gate_bin() {
     for c in "${MIOS_GATE_BIN:-}" \
              "$ROOT/src/mios-rs/target/release/mios-gate" \
              "$ROOT/src/mios-rs/target/debug/mios-gate" \
+             "$ROOT/src/mios-rs/target/release/mios-gate.exe" \
+             "$ROOT/src/mios-rs/target/debug/mios-gate.exe" \
              /usr/libexec/mios/mios-gate; do
         [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
     done
@@ -111,6 +110,10 @@ _gate_bin() {
 }
 
 _unit_gen_bin() {
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        native_bin mios-unit-gen
+        return $?
+    fi
     local c
     for c in \
              "$ROOT/tools/native/target/release/mios-unit-gen" \
@@ -119,6 +122,36 @@ _unit_gen_bin() {
              "$ROOT/tools/native/target/debug/mios-unit-gen.exe" \
              /usr/libexec/mios/mios-unit-gen /opt/mios/bin/mios-unit-gen; do
         [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
+    done
+    return 1
+}
+
+# These generators' Python twins were ported and deleted ([rust.categories.gen].replaces);
+# a missing native binary is a violation, never a fallback to a script that no longer exists.
+_GEN_MISSING="native mios-gen is required (its Python twin was ported and deleted, ADR-0021) -- build it: cd tools/native && cargo build -p mios-gen"
+
+native_bin() {
+    local name="$1" override="${2:-}" suffix candidate
+    local suffixes=("" ".exe")
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) suffixes=(".exe" "");; esac
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        candidate="$MIOS_NATIVE_BIN_DIR/$name${suffixes[0]}"
+        [[ -x "$candidate" ]] || return 1
+        printf '%s' "$candidate"
+        return 0
+    fi
+    if [[ -n "$override" && -x "$override" ]]; then
+        printf '%s' "$override"
+        return 0
+    fi
+    for suffix in "${suffixes[@]}"; do
+        for candidate in "$ROOT/tools/native/target/release/$name$suffix" \
+            "$ROOT/tools/native/target/debug/$name$suffix" \
+            "$ROOT/src/mios-rs/target/release/$name$suffix" \
+            "$ROOT/src/mios-rs/target/debug/$name$suffix" \
+            "/usr/libexec/mios/$name$suffix" "/usr/bin/$name$suffix" "/opt/mios/bin/$name$suffix"; do
+            [[ -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+        done
     done
     return 1
 }
@@ -163,86 +196,17 @@ _violations_from() {
 }
 
 _emit_projection_evidence() {
-    local pfx='[98-drift-checks][diff]'
-    local gen_rel="$1"; shift
-    local gen="$ROOT/$gen_rel"
-    local cap=200
-    local -a targets=("$@")
-    local -a abs=() bak=() existed=()
-    local t a b i generr gen_rc dtmp total
-
-    echo "$pfx generator: MIOS_DRIFT_ROOT=$ROOT python3 $gen_rel" >&2
-
-    if [[ ! -x "$gen" && ! -f "$gen" ]]; then
-        echo "$pfx generator ABSENT" >&2
-        for t in "${targets[@]}"; do
-            if [[ -f "$ROOT/$t" ]]; then
-                echo "$pfx target $t exists=yes" >&2
-            else
-                echo "$pfx target $t exists=NO" >&2
-            fi
-        done
+    local pfx='[98-drift-checks][diff]' generator="$1" bin target
+    shift
+    bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || {
+        echo "$pfx native mios-gen required for isolated evidence" >&2
         return 0
+    }
+    local -a args=(projection-evidence --root "$ROOT" --generator "$generator")
+    for target in "$@"; do args+=(--target "$target"); done
+    if ! "$bin" "${args[@]}"; then
+        echo "$pfx native evidence unavailable; the projection gate remains failed" >&2
     fi
-
-    for t in "${targets[@]}"; do
-        a="$ROOT/$t"
-        abs+=("$a")
-        if [[ -f "$a" ]]; then
-            b="$(mktemp 2>/dev/null)" || b=""
-            if [[ -n "$b" ]] && cp -p "$a" "$b" 2>/dev/null; then
-                bak+=("$b"); existed+=("1")
-            else
-                bak+=(""); existed+=("1")
-            fi
-        else
-            bak+=(""); existed+=("0")
-        fi
-    done
-
-    generr="$(mktemp 2>/dev/null || echo /dev/null)"
-    gen_rc=0
-    MIOS_DRIFT_ROOT="$ROOT" python3 "$gen" >/dev/null 2>"$generr" || gen_rc=$?
-    if [[ "$gen_rc" -ne 0 ]]; then
-        echo "$pfx generator ERRORED rendering expected" >&2
-        sed "s|^|$pfx   |" "$generr" 2>/dev/null >&2 || true
-    else
-        for i in "${!abs[@]}"; do
-            a="${abs[$i]}"; b="${bak[$i]}"; t="${targets[$i]}"
-            if [[ "${existed[$i]}" == "0" ]]; then
-                echo "$pfx target $t: ABSENT on disk before regen" >&2
-                sed "s|^|$pfx +|" "$a" 2>/dev/null | head -n "$cap" >&2 || true
-                continue
-            fi
-            if [[ -z "$b" ]]; then
-                echo "$pfx target $t: snapshot unavailable" >&2
-                continue
-            fi
-            echo "$pfx target $t: actual=$a  generated=$a" >&2
-            dtmp="$(mktemp 2>/dev/null || echo /dev/null)"
-            diff -u --label "a/$t (ACTUAL on-disk)" --label "b/$t (GENERATED from SSOT)" \
-                "$b" "$a" >"$dtmp" 2>/dev/null || true
-            total="$(wc -l <"$dtmp" 2>/dev/null | tr -d ' ' || printf 0)"
-            [[ -n "$total" ]] || total=0
-            sed "s|^|$pfx |" "$dtmp" 2>/dev/null | head -n "$cap" >&2 || true
-            if [[ "$total" -gt "$cap" ]]; then
-                echo "$pfx" >&2
-            fi
-            [[ "$dtmp" != "/dev/null" ]] && rm -f "$dtmp" 2>/dev/null || true
-        done
-    fi
-
-    for i in "${!abs[@]}"; do
-        a="${abs[$i]}"; b="${bak[$i]}"
-        if [[ "${existed[$i]}" == "1" && -n "$b" ]]; then
-            cp -p "$b" "$a" 2>/dev/null || true
-        elif [[ "${existed[$i]}" == "0" ]]; then
-            rm -f "$a" 2>/dev/null || true
-        fi
-        if [[ -n "$b" ]]; then rm -f "$b" 2>/dev/null || true; fi
-    done
-    [[ "$generr" != "/dev/null" ]] && rm -f "$generr" 2>/dev/null || true
-    return 0
 }
 
 _require_python3() {
@@ -275,7 +239,7 @@ check_dead_lane() {
     done
     if [[ -n "$hits" ]]; then
         printf '%s' "$hits" >&2
-        _violation "retired :11434 (ollama) lane in active source config -- MiOS is /v1-only; use the live lane (mios-llm-light on \${MIOS_PORT_LLM_LIGHT})"
+        _violation "retired :11434 (ollama) lane in active source config -- MiOS is /v1-only; use the live lane (mios-llm-light on \${MIOS_PORTS_LLM_LIGHT})"
     else
         echo "[98-drift-checks]   no retired :11434 lane in active config"
     fi
@@ -436,69 +400,45 @@ check_cli_sql_safety() {
         return
     fi
     local allow=" "   # empty: all libexec tools cut over to parameterized pg
-    local pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
+    local legacy_pattern='(_pgesc\(|_pgq\(|post_sql\(|def _sql\(|/sql"|surreal-ns)'
     local hits="" f base active
     while IFS= read -r f; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
         case "$base" in test_*|*.pyc) continue ;; esac
         [[ "$allow" == *" $base "* ]] && continue
+        grep -qI . "$f" || continue
         active=$(sed -E '/^[[:space:]]*#/d' "$f")
-        if printf '%s\n' "$active" | grep -qE "$pattern"; then
-            hits+="    $f"$'\n'
+        if printf '%s\n' "$active" | grep -qE "$legacy_pattern"; then
+            hits+="    $f (legacy DB transport or escaping)"$'\n'
+        fi
+        # Flag raw unwhitelisted f-string SQL identifier interpolation in execute()
+        local unsafe_fstrings
+        unsafe_fstrings=$(printf '%s\n' "$active" | grep -E 'execute\(f["'"'"'].*\{' | grep -vE '\{(safe_|ph_)' || true)
+        if [[ -n "$unsafe_fstrings" ]]; then
+            hits+="    $f (unwhitelisted f-string SQL interpolation: $unsafe_fstrings)"$'\n'
         fi
     done < <(find "$dir" -maxdepth 1 -type f 2>/dev/null)
     if [[ -n "$hits" ]]; then
         printf '%s' "$hits" >&2
-        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql) or hand-rolled SQL escaping (_pgesc/_pgq) -- use parameterized pg via mios-pg-query --exec-json / mios-db --pg-json "
+        _violation "a libexec CLI (re)introduced the retired legacy DB transport (post_sql/_sql/:8000/sql), hand-rolled SQL escaping (_pgesc/_pgq), or raw unwhitelisted f-string SQL interpolation -- use parameterized pg or safe_ident() for SQLite identifiers"
     else
         echo "[98-drift-checks]   libexec CLIs SQL-safe"
     fi
 }
 
 check_module_test_coverage() {
-    local dir="$ROOT/usr/lib/mios/agent-pipe"
-    if [[ ! -d "$dir" ]]; then
-        _violation "agent-pipe dir absent -- a tracked deliverable is missing, so this check cannot run"
+    # Native (ADR-0021): a unit test must NAME each module; a test file named after it is not evidence.
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_module_test_coverage could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
         return
     fi
-    local missing="" f base mod_name
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        base="$(basename "$f")"
-        case "$base" in test_*|__init__.py) continue ;; esac          # tests and package init don't need tests
-        if [[ ! -f "$dir/test_${base}" ]]; then
-            missing+="    $base (no test_${base})"$'\n'
-        fi
-    done < <(find "$dir" -maxdepth 1 -type f -name 'mios_*.py' 2>/dev/null)
-
-    if [[ -d "$dir/mios_pipe" ]]; then
-        while IFS= read -r f; do
-            [[ -f "$f" ]] || continue
-            base="$(basename "$f")"
-            case "$base" in test_*|__init__.py) continue ;; esac
-            mod_name="${base%.py}"
-            if [[ ! -f "$dir/test_mios_${mod_name}.py" && ! -f "$dir/test_${mod_name}.py" && ! -f "$dir/test_mios_a2a_${mod_name}.py" ]]; then
-                missing+="    mios_pipe/.../$base (no test_mios_${mod_name}.py)"$'\n'
-            fi
-        done < <(find "$dir/mios_pipe" -type f -name '*.py' 2>/dev/null)
-    fi
-
-    if [[ -n "$missing" ]]; then
-        printf '%s' "$missing" >&2
-        _violation "an agent-pipe pure module has NO sibling unit test -- author test_<module>.py (stdlib assert-script, the sibling-module pattern); isolation-tested logic is the point of the extraction "
+    local out
+    if out="$("$bin" module-test-coverage --root "$ROOT" 2>&1)"; then
+        echo "[98-drift-checks]   every agent-pipe module is named by a unit test; tools/ and libexec python within the sibling-test ratchet"
     else
-        echo "[98-drift-checks]   every agent-pipe mios_*.py and mios_pipe submodule has a sibling unit test"
-    fi
-
-    local baseline_file="$ROOT/usr/share/mios/reference/python-untested-baseline.txt"
-    if [[ -f "$baseline_file" ]]; then
-        if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py python-untested-ratchet
-        then
-            echo "[98-drift-checks]   tools/ and libexec python module test coverage within baseline ratchet"
-        else
-            _violation "new untested tools/ or libexec python module found -- author sibling test_<module>.py or update baseline"
-        fi
+        _violations_from "check_module_test_coverage: " "$out"
     fi
 }
 
@@ -551,37 +491,29 @@ check_surface_parity() {
 }
 
 check_pod_quadlets() {
-    _need_python || return 0
-    local gen="$ROOT/tools/generate-pod-quadlets.py"
-    if [[ ! -f "$gen" ]]; then
-        _violation "tools/generate-pod-quadlets.py absent -- a tracked deliverable is missing, so this check cannot run"
-        return
+    local nb; nb="$(native_bin mios-gen || true)"
+    if [[ -n "$nb" ]]; then
+        if "$nb" pod-quadlets --root "$ROOT" --check; then
+            echo "[98-drift-checks]   Quadlet units in sync with mios.toml SSOT"
+            return 0
+        else
+            _violation "Quadlet unit(s) (.pod, .container, .network, .volume) STALE vs mios.toml SSOT -- regenerate with mios-gen pod-quadlets"
+            return 0
+        fi
     fi
-    # MIOS_CRAWL_CAMOUFOX=True, ...). generate-pod-quadlets.py resolves
-    if env -i PATH="$PATH" HOME="${HOME:-/root}" LANG="${LANG:-C.UTF-8}" \
-            MIOS_ROOT="$ROOT" "$PYTHON" "$gen" --check; then
-        echo "[98-drift-checks]   Quadlet units in sync with mios.toml SSOT"
-    else
-        _violation "Quadlet unit(s) (.pod, .container, .network, .volume) STALE vs mios.toml SSOT -- regenerate with tools/generate-pod-quadlets.py"
-    fi
+    _violation "Native mios-gen is required for the Quadlet projection check; install the SSOT release catalog"
 }
 
 check_egress_firewall() {
-    _need_python || return 0
-    local gen="$ROOT/tools/generate-egress-firewall.py"
-    local committed="$ROOT/usr/share/mios/security/egress.nft"
-    if [[ ! -f "$gen" || ! -f "$committed" ]]; then
-        _violation "egress generator or usr/share/mios/security/egress.nft absent -- a tracked deliverable is missing, so this check cannot run"
+    local native
+    native="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || {
+        _violation "check_egress_firewall: native mios-gen is required; build/install the SSOT release catalog"
         return
-    fi
-    local tmp; tmp="$(mktemp)"
-    if MIOS_ROOT="$ROOT" MIOS_EGRESS_OUT="$tmp" python3 "$gen" >/dev/null 2>&1 \
-            && diff -q "$committed" "$tmp" >/dev/null 2>&1; then
+    }
+    if "$native" egress-firewall --root "$ROOT" --check; then
         echo "[98-drift-checks]   egress.nft in sync with mios.toml [security.egress] SSOT"
-        rm -f "$tmp"
     else
-        rm -f "$tmp"
-        _violation "usr/share/mios/security/egress.nft is STALE vs mios.toml [security.egress] -- regenerate with tools/generate-egress-firewall.py "
+        _violation "usr/share/mios/security/egress.nft is STALE vs mios.toml [security.egress] -- regenerate with mios-gen egress-firewall"
     fi
 }
 
@@ -590,6 +522,30 @@ check_blade_dropins() {
 }
 
 check_no_hardcode() {
+    local bin=""
+    local _c
+    for _c in "${MIOS_HARDCODE_LINT_BIN:-}" \
+              "$ROOT/tools/native/target/release/mios-hardcode-lint" \
+              "$ROOT/tools/native/target/debug/mios-hardcode-lint" \
+              "$ROOT/tools/native/target/release/mios-hardcode-lint.exe" \
+              "$ROOT/tools/native/target/debug/mios-hardcode-lint.exe" \
+              /usr/libexec/mios/mios-hardcode-lint \
+              /usr/bin/mios-hardcode-lint; do
+        if [[ -n "$_c" && -x "$_c" ]]; then bin="$_c"; break; fi
+    done
+    if [[ -n "$bin" ]]; then
+        if "$bin" "$ROOT" >/dev/null 2>"$ROOT/.nohc.err"; then
+            rm -f "$ROOT/.nohc.err" 2>/dev/null || true
+            echo "[98-drift-checks]   no date-in-comment / header crash-risk"
+            return 0
+        else
+            sed 's/^/    /' "$ROOT/.nohc.err" >&2 2>/dev/null || true
+            rm -f "$ROOT/.nohc.err" 2>/dev/null || true
+            _violation "NO-HARDCODE law (Law 7): a date/timestamp in a comment/docstring OR an AI-Hint header crash-risk -- strip the date (timeless comment) or move the header below the shebang/BOM (see mios-hardcode-lint)"
+            return
+        fi
+    fi
+
     _need_python || return 0
     local tool="$ROOT/usr/libexec/mios/mios-hardcode-lint"
     if [[ ! -f "$tool" ]]; then
@@ -647,28 +603,18 @@ check_cephfs_ssot() {
 check_converge_ssot() {
     _need_python || return 0
 
-    # Every value here used to come from ${MIOS_CONV_*:-literal}. Nothing exports
-    # MIOS_CONV_* -- not globals.sh, not run-suites.sh, not this script -- so the
-    # check validated its own hardcoded defaults on every run and never opened
-    # mios.toml at all. The defaults had already drifted from the SSOT:
-    # retire_heavy_alt is true in [converge.inference] but defaulted to false
-    # here, which permanently skipped the one assertion that inspects a real
-    # systemd unit; cold_retention_days is 90 against an asserted 30; and
-    # cold_zstd_level is 10 against an asserted 3.
-    #
-    # Read the SSOT. An env var may still override for testing, but the FALLBACK
-    # is now the SSOT value rather than a literal, so the check cannot silently
-    # grade a file it never read.
     local toml="${MIOS_TOML_ROOT:-$ROOT}/usr/share/mios/mios.toml"
     local ssot
     ssot="$(python3 -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as fh:
-    c = tomllib.load(fh).get("converge", {})
+    d = tomllib.load(fh)
+c = d.get("converge", {})
 inf, mem = c.get("inference", {}), c.get("memory", {})
 def emit(name, value):
     print("%s=%s" % (name, value))
-emit("SSOT_RETIRE_ALT", str(inf.get("retire_heavy_alt", False)).lower())
+emit("SSOT_HEAVY_ENGINE", d.get("ai", {}).get("heavy_engine", ""))
+emit("SSOT_RUNTIME_LORA", str(inf.get("vllm_allow_runtime_lora", False)).lower())
 emit("SSOT_COLD_DIR", mem.get("cold_storage_dir", "/var/lib/mios/history/"))
 emit("SSOT_COLD_DAYS", mem.get("cold_retention_days", 30))
 emit("SSOT_COLD_ZSTD", mem.get("cold_zstd_level", 3))
@@ -678,38 +624,35 @@ emit("SSOT_SQLITE_VEC", str(mem.get("sqlite_vec_enable", False)).lower())
         return
     }
 
-    local SSOT_RETIRE_ALT SSOT_COLD_DIR SSOT_COLD_DAYS SSOT_COLD_ZSTD SSOT_SQLITE_VEC
+    local SSOT_HEAVY_ENGINE SSOT_RUNTIME_LORA SSOT_COLD_DIR SSOT_COLD_DAYS SSOT_COLD_ZSTD SSOT_SQLITE_VEC
     eval "$ssot"
 
-    local retire_alt="${MIOS_CONV_INFERENCE_RETIRE_HEAVY_ALT:-$SSOT_RETIRE_ALT}"
-    if [[ "$retire_alt" == "true" ]]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            if systemctl is-enabled mios-llm-heavy-alt.service >/dev/null 2>&1; then
-                _violation "[converge].retire_heavy_alt=true but mios-llm-heavy-alt.service is still enabled"
-                return
-            fi
-        fi
+    # Runtime LoRA is a vLLM feature of the ONE heavy lane: it binds the engine.
+    local runtime_lora="${MIOS_CONVERGE_INFERENCE_VLLM_ALLOW_RUNTIME_LORA:-$SSOT_RUNTIME_LORA}"
+    if [[ "$runtime_lora" == "true" && "$SSOT_HEAVY_ENGINE" != "vllm" ]]; then
+        _violation "[converge.inference].vllm_allow_runtime_lora=true but [ai].heavy_engine is '${SSOT_HEAVY_ENGINE}', not 'vllm'"
+        return
     fi
 
-    local cold_storage_dir="${MIOS_CONV_MEMORY_COLD_STORAGE_DIR:-$SSOT_COLD_DIR}"
+    local cold_storage_dir="${MIOS_CONVERGE_MEMORY_COLD_STORAGE_DIR:-$SSOT_COLD_DIR}"
     if [[ "$cold_storage_dir" == *"/tenants/"* ]]; then
         _violation "[converge.memory].cold_storage_dir cannot sit inside a CephFS tenants mount: ${cold_storage_dir}"
         return
     fi
 
-    local cold_retention_days="${MIOS_CONV_MEMORY_COLD_RETENTION_DAYS:-$SSOT_COLD_DAYS}"
+    local cold_retention_days="${MIOS_CONVERGE_MEMORY_COLD_RETENTION_DAYS:-$SSOT_COLD_DAYS}"
     if ! [[ "$cold_retention_days" =~ ^[0-9]+$ ]] || (( cold_retention_days < 1 )); then
         _violation "[converge.memory].cold_retention_days must be an integer >= 1, got: ${cold_retention_days}"
         return
     fi
 
-    local cold_zstd_level="${MIOS_CONV_MEMORY_COLD_ZSTD_LEVEL:-$SSOT_COLD_ZSTD}"
+    local cold_zstd_level="${MIOS_CONVERGE_MEMORY_COLD_ZSTD_LEVEL:-$SSOT_COLD_ZSTD}"
     if ! [[ "$cold_zstd_level" =~ ^[0-9]+$ ]] || (( cold_zstd_level < 1 || cold_zstd_level > 19 )); then
         _violation "[converge.memory].cold_zstd_level must be an integer 1..19, got: ${cold_zstd_level}"
         return
     fi
 
-    local sqlite_vec_enable="${MIOS_CONV_MEMORY_SQLITE_VEC_ENABLE:-$SSOT_SQLITE_VEC}"
+    local sqlite_vec_enable="${MIOS_CONVERGE_MEMORY_SQLITE_VEC_ENABLE:-$SSOT_SQLITE_VEC}"
     if [[ "$sqlite_vec_enable" == "true" ]]; then
         local py_bin="/usr/lib/mios/agents/.venv/bin/python3"
         [[ -x "$py_bin" ]] || py_bin="python3"
@@ -719,13 +662,13 @@ emit("SSOT_SQLITE_VEC", str(mem.get("sqlite_vec_enable", False)).lower())
         fi
     fi
 
-    echo "[98-drift-checks]   [converge] SSOT values validated (retention=${cold_retention_days}d zstd=${cold_zstd_level} retire_alt=${retire_alt})"
+    echo "[98-drift-checks]   [converge] SSOT values validated (retention=${cold_retention_days}d zstd=${cold_zstd_level} heavy_engine=${SSOT_HEAVY_ENGINE} runtime_lora=${runtime_lora})"
 }
 
 # --- Hummingbird distroless Containerfile and Quadlet conform when the feature is enabled ---
 check_hummingbird() {
-    local distroless_enable="${MIOS_CONV_IMAGE_DISTROLESS_ENABLE:-false}"
-    local rechunk_enable="${MIOS_CONV_IMAGE_RECHUNK_ENABLE:-false}"
+    local distroless_enable="${MIOS_CONVERGE_IMAGE_DISTROLESS_ENABLE:-false}"
+    local rechunk_enable="${MIOS_CONVERGE_IMAGE_RECHUNK_ENABLE:-false}"
     local containerfile="Containerfile.hummingbird"
     local quadlet="usr/share/containers/systemd/mios-agent-pipe.container"
 
@@ -794,57 +737,29 @@ check_hummingbird() {
 
 check_container_ports() {
     _need_python || return 0
-    local tmp; tmp="$(mktemp)"
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py container-ports >"$tmp" 2>&1
+    local out
+    if out="$(MIOS_DRIFT_ROOT="$ROOT" python3 "$ROOT/tools/drift-checks.py" container-ports 2>&1)"
     then
         echo "[98-drift-checks]   no manual port literals in container definitions"
-        rm -f "$tmp"
     else
+        printf '%s\n' "$out" >&2
         _violation "manual port literal found in container Quadlets"
-        cat "$tmp" >&2
-        rm -f "$tmp"
-        return 1
     fi
 }
 
+# --- every SSOT budget key has a consumer or an itemised shrink-only exemption ---
 check_agent_pipe_budgets() {
-    # Absolute paths, never `command -v`: the Containerfile's rust-builder stage
-    # copies tools/native/target/release/mios-* into /usr/libexec/mios, which
-    # nothing puts on PATH, so the lookup this replaced could never resolve at
-    # bake and this check always fell through to the Python below it (T-1018).
-    local lint_bin=""
-    local _lc
-    for _lc in "${MIOS_AIPLANE_LINT_BIN:-}" \
-               "$ROOT/tools/native/target/release/mios-aiplane-lint" \
-               "$ROOT/tools/native/target/debug/mios-aiplane-lint" \
-               /usr/libexec/mios/mios-aiplane-lint; do
-        if [ -n "$_lc" ] && [ -x "$_lc" ]; then lint_bin="$_lc"; break; fi
-    done
-    # The lint prints its own tally -- N of M consumed, K registered unconsumed.
-    # This wrapper used to answer it with "all ... have code consumers", which
-    # was the overclaim the lint itself was making when it walked a hardcoded
-    # nine of 128 keys (T-1047). Do not reintroduce a summary here that asserts
-    # more than the tool it wraps just measured.
-    if [ -x "$lint_bin" ]; then
-        if MIOS_DRIFT_ROOT="$ROOT" "$lint_bin"; then
-            echo "[98-drift-checks]   every [agent_pipe]/[dispatch] key enumerated from SSOT; unconsumed ones itemised in the register"
-            return 0
-        else
-            _violation "[agent_pipe]/[dispatch] budget keys: unregistered dead key, stale register entry, or a ceiling off its measurement"
-            return 1
-        fi
-    fi
-
-    _need_python || return 0
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py agent-pipe-budgets
-    then
-        # The Python leg still walks its own narrower list; say only that.
-        echo "[98-drift-checks]   [agent_pipe] budget keys checked by the Python fallback (narrower than mios-aiplane-lint)"
+    local lint_bin output
+    lint_bin="$(native_bin mios-aiplane-lint "${MIOS_AIPLANE_LINT_BIN:-}")" || {
+        _violation "mios-aiplane-lint is required for the complete SSOT budget census"
+        return
+    }
+    if output="$(MIOS_DRIFT_ROOT="$ROOT" "$lint_bin" 2>&1)"; then
+        printf '[98-drift-checks]   %s\n' "$output"
     else
-        _violation "some [agent_pipe] keys have no code consumer in the agent-pipe codebase"
+        _violations_from "budget census: " "$output"
     fi
 }
-
 check_no_bare_port_literals() {
     _need_python || return 0
     local out; out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py no-bare-port-literals 2>&1)" || {
@@ -889,10 +804,20 @@ check_edge_generators() {
     echo "[98-drift-checks] every imperative edge-to-edge generator regenerates the surface the image installs byte-identical"
     _need_python || return 0
     local spec gen arg out n=0
+    local mgen; mgen="$(native_bin mios-gen || true)"
     for spec in "usr/libexec/mios/ux/wm_config_gen.py ." "usr/libexec/mios/desktop/gpu_terminal.py ." \
                 "usr/libexec/mios/win/wt_profile_inject.py ." "usr/libexec/mios/ux/tmux_theme.py ." \
                 "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py ."; do
         read -r gen arg <<<"$spec"
+        if [[ "$gen" == "usr/libexec/mios/ux/tmux_theme.py" ]]; then  # ported to mios-gen render-tmux-theme
+            [[ -n "$mgen" ]] || { _violation "$_GEN_MISSING" || :; continue; }
+            if out="$(cd "$ROOT" && "$mgen" render-tmux-theme --root "$ROOT" --check 2>&1)"; then
+                n=$(( n + 1 ))
+            else
+                _violations_from "render-tmux-theme --check: " "$out" || :
+            fi
+            continue
+        fi
         if [[ ! -f "$ROOT/$gen" ]]; then
             _violation "$gen absent -- a tracked generator is missing, so its golden cannot be regenerated" || :
             continue
@@ -987,37 +912,21 @@ check_dag_integrity() {
 
 # --- generated names registry matches source topology ---
 check_names_registry() {
-    _need_python || return 0
-    # Both guards printed a bare "names registry" and returned 0, which reads
-    # exactly like a match. A single pending deletion therefore disabled the
-    # check: planted registry drift fails, and the same drift plus one deleted
-    # tracked file passes.
-    if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "names registry unverifiable: $ROOT is not a git work tree"
+    local bin out
+    bin="$(native_bin mios-gen)" || {
+        _violation "mios-gen is required to verify names-registry projections"
+        return
+    }
+    if out="$("$bin" names-registry --root "$ROOT" --check 2>&1)"; then
+        if [[ "$out" != *"Names-registry projections verified read-only against SSOT and tracked consumers"* ]]; then
+            _violation "mios-gen did not confirm read-only names-registry verification -- rebuild from this checkout"
             return
         fi
-        echo "[98-drift-checks]   WARNING: not a git work tree, names registry NOT verified" >&2
-        return 0
-    fi
-    local _deleted
-    _deleted="$(git -C "$ROOT" ls-files --deleted 2>/dev/null | head -3 | tr '\n' ' ')"
-    if [[ -n "$_deleted" ]]; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "names registry unverifiable: tracked file(s) deleted from the work tree (${_deleted})"
-            return
-        fi
-        echo "[98-drift-checks]   WARNING: deleted tracked file(s) (${_deleted}) -- names registry NOT verified" >&2
-        return 0
-    fi
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py names-registry
-    then
-        echo "[98-drift-checks]   names registry matches generate-names-registry.py"
+        printf '[98-drift-checks]   %s\n' "$out"
     else
-        _violation "naming registry drift / tools/generate-names-registry.py stale (run tools/generate-names-registry.py to regenerate; check 30)"
+        _violations_from "names-registry: " "$out"
     fi
 }
-
 check_drift_projection() {
     _need_python || return 0
     if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py drift-projection
@@ -1029,8 +938,12 @@ check_drift_projection() {
 }
 
 check_canonical_bools() {
-    _need_python || return 0
-    if MIOS_TOML="$ROOT/usr/share/mios/mios.toml" MIOS_VENDOR_TOML="$ROOT/usr/share/mios/mios.toml" python3 tools/drift-checks.py canonical-bools
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_canonical_bools could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
+        return
+    fi
+    if MIOS_TOML="$ROOT/usr/share/mios/mios.toml" "$bin" canonical-bools --root "$ROOT"
     then
         echo "[98-drift-checks]   no non-canonical bool literals in [verbs.*]"
     else
@@ -1161,7 +1074,7 @@ check_var_closure() {
         return
     fi
     if [[ ! -f "$ledger" ]]; then
-        _violation "var-closure-baseline.tsv absent -- a gate with no ledger must never report green (T-1052)"
+        _violation "var-closure-baseline.tsv absent -- a gate with no ledger must never report green (task_989)"
         return
     fi
     local _vc_rc=0
@@ -1251,11 +1164,6 @@ check_lint_is_final() {
 
 # --- firstboot scripts degrade open on egress failure (Law 12) ---
 check_firstboot_degrade_open() {
-    # Was: grep the whole FILE for "|| true" (or set +e / trap / exit 0) and
-    # call that degrade-open. File-global, so one unrelated cleanup guard
-    # certified the script; all thirteen passed and the gate could not fail,
-    # while forge-firstboot.sh really did abort firstboot on an unreachable
-    # Forgejo API. The tool scopes the question to the egress calls themselves.
     _run_py_check check_firstboot_degrade_open "tools/check-runtime.py firstboot-degrade-open"
 }
 
@@ -1299,33 +1207,28 @@ check_resolver_twin_parity() {
         _violation "a resolver is absent -- a tracked deliverable is missing, so this check cannot run"
         return
     fi
-    # The bash leg must run a DIFFERENT implementation, or this check compares
-    # mios_toml.py against itself. userenv.sh resolves in three tiers -- native
-    # mios-resolver, miosd, then the Python fallback -- and under `env -i` with
-    # no binary on PATH it reached tier 3, so mutating mios_toml.py changed BOTH
-    # legs and they went on agreeing. Proven by mutation: disabling
-    # resolve_cross_references in mios_toml.py left the bash leg emitting
-    # ${MIOS_PORT_AGENT_PIPE} verbatim, and the check still passed (T-1062).
-    #
-    # Locate the native resolver and put it on the fixture's PATH so tier 1
-    # fires. Absent, the comparison is vacuous: fail where the environment
-    # declares tools mandatory, and say plainly what went unverified otherwise.
     local _nat="" _c
-    # debug BEFORE release, matching check_resolver_differential_parity and what
-    # CI step 3 actually builds. Preferring release picked up a binary older
-    # than the fix under test and reported its staleness as a twin mismatch.
-    for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
-              "$ROOT/tools/native/target/release/mios-resolver" \
-              /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
-        [[ -x "$_c" ]] && { _nat="$_c"; break; }
-    done
-    if [[ -z "$_nat" ]]; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
-        else
-            echo "[98-drift-checks]   mios-resolver not built -- twin parity NOT verified (both legs would be mios_toml.py); advisory skip"
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        for _c in "$MIOS_NATIVE_BIN_DIR/mios-resolver" "$MIOS_NATIVE_BIN_DIR/mios-resolver.exe"; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "configured resolver is missing or not executable: $MIOS_NATIVE_BIN_DIR/mios-resolver"
+            return
         fi
-        return
+    else
+        # debug BEFORE release, matching check_resolver_differential_parity and what
+        # CI step 3 actually builds. Preferring release picked up a binary older
+        # than the fix under test and reported its staleness as a twin mismatch.
+        for _c in "$ROOT/tools/native/target/debug/mios-resolver" \
+                  "$ROOT/tools/native/target/release/mios-resolver" \
+                  /usr/libexec/mios/mios-resolver /usr/bin/mios-resolver; do
+            [[ -x "$_c" ]] && { _nat="$_c"; break; }
+        done
+        if [[ -z "$_nat" ]]; then
+            _violation "mios-resolver is not built, so userenv.sh would fall back to mios_toml.py and this check would compare it with itself -- build it: cd tools/native && cargo build -p mios-resolver"
+            return
+        fi
     fi
 
     # `local fix="$(...)"` returns the status of `local`, not of mktemp, so this
@@ -1341,14 +1244,14 @@ check_resolver_twin_parity() {
     # [ports].agent_pipe exists so the host layer's endpoint can reference it.
     # With three plain literals this fixture could not fail on the one input
     # shape where the twins can disagree, and it ran green through the whole of
-    # 5efe9e70 -- the shell binding exporting ${MIOS_*} as literal text (T-1062).
+    # 5efe9e70 -- the shell binding exporting ${MIOS_*} as literal text (task_3360).
     printf '[ports]\nagent_pipe = 8700\n[ai]\nendpoint = "http://vendor:1000"\nmodel = "vendor-model"\nembed_model = "vendor-embed"\n' > "$fix/vendor.toml"
     printf '[ai]\nendpoint = "http://vendor-frag:1050"\n'                                                 > "$fix/vendor.d/50-frag.toml"
     # The cross-reference goes in the WINNING layer. Put on vendor it was
     # overridden by host and never reached the resolved value, so the fixture
     # still could not fail -- a repaired check that is still vacuous.
-    printf '[ai]\nendpoint = "http://host:${MIOS_PORT_AGENT_PIPE}"\nmodel = "host-model"\n'                 > "$fix/host.toml"
-    printf '[ai]\nmodel = "user-model"\n'                                                                 > "$fix/.config/mios/mios.toml"
+    printf '[ai]\nendpoint = "http://host:${MIOS_PORTS_AGENT_PIPE}"\nmodel = "host-model"\n'                 > "$fix/host.toml"
+    printf '[ai]\nendpoint = ""\nmodel = "user-model"\n'                                                  > "$fix/.config/mios/mios.toml"
     local sel='^MIOS_AI_(ENDPOINT|MODEL|EMBED_MODEL)=' bash_out py_out
     mkdir -p "$fix/bin" && ln -sf "$_nat" "$fix/bin/mios-resolver"
     bash_out="$(env -i PATH="$fix/bin:$PATH" HOME="$fix" XDG_CONFIG_HOME="$fix/.config" \
@@ -1363,17 +1266,10 @@ check_resolver_twin_parity() {
 import os, sys
 sys.path.insert(0, os.environ["MIOS_ROOT_LIB"])
 import mios_toml
-# emit_exports() is the resolver Law 13 names. Reading section(load_merged())
-# instead compared the bash RESOLVER against a raw table read -- not twin
-# against twin, which is why no cross-reference could ever disagree here: this
-# leg never ran the code that resolves one.
 for k, v in sorted(mios_toml.emit_exports().items()):
     print(k + "=" + str(v))
 ' 2>/dev/null | grep -E "$sel" | sort)"
     rm -rf "$fix" 2>/dev/null || true
-    # Two empty sets compare equal, and the fixture above sets endpoint,
-    # model and embed_model, so emitting nothing means BOTH resolvers are
-    # broken -- previously reported as a pass.
     if [[ -z "$bash_out" && -z "$py_out" ]]; then
         _violation "neither resolver emitted MIOS_AI_* for the layered fixture, so twin parity is unverified"
         return
@@ -1424,19 +1320,6 @@ check_template_conformance() {
 check_kargs_projection() {
     _need_python || return 0
 
-    # This check used to `cp -r` the committed kargs.d into the "expected"
-    # directory and then render into that same copy, so 15 of the 17 files were
-    # diffed against copies of themselves and could only ever match. Its
-    # Extra/Missing branches were unreachable for the same reason, and the
-    # renderer's exit status was discarded, so a completely broken renderer
-    # still printed the PASS line.
-    #
-    # 75-kargs-render.sh is an in-place mutator, not a whole-directory
-    # generator: it manages exactly two files -- it rewrites 01-mios-vfio.toml
-    # when present, and writes or REMOVES 99-mios-kargs.toml depending on
-    # whether [kargs] declares custom arguments. The other 15 files are
-    # hand-maintained and are not projections of anything, so this check does
-    # not claim to verify them.
     local managed=("01-mios-vfio.toml" "99-mios-kargs.toml")
 
     local src="$ROOT/usr/lib/bootc/kargs.d"
@@ -1630,9 +1513,8 @@ check_fluff_tokens() {
 
 check_coordination_hygiene() {
     # The two absorbed ledgers, rebuilt from the frozen history in tasks.jsonl (ADR-0028).
-    local bad="" f text bin="$ROOT/tools/native/target/release/mios-task"
-    [[ -x "$bin" ]] || bin="$ROOT/tools/native/target/debug/mios-task"
-    [[ -x "$bin" ]] || { _violation "mios-task is not built, so check_coordination_hygiene could not run"; return; }
+    local bad="" f text bin
+    bin="$(native_bin mios-task)" || { _violation "mios-task is not built, so check_coordination_hygiene could not run -- build it: cd tools/native && cargo build -p mios-task"; return; }
     for f in AGY-TASKS.md TASKS.md; do
         text="$("$bin" source "MiOS:$f" --root "$ROOT")" || { _violation "mios-task could not rebuild $f from tasks.jsonl"; return; }
         local line_num=0
@@ -1653,22 +1535,15 @@ check_coordination_hygiene() {
 }
 
 check_templates_compilation() {
-    local python_exe
-    if command -v py &>/dev/null; then
-        python_exe=py
-    elif command -v python3 &>/dev/null; then
-        python_exe=python3
-    else
-        python_exe=python
-    fi
-
-    if ! "$python_exe" "$ROOT/tools/compile-templates.py" >/dev/null; then
-        "$python_exe" "$ROOT/tools/compile-templates.py" >&2
+    local bin; bin="$(native_bin mios-template-compile)" || { _violation "native mios-template-compile is required (tools/compile-templates.py was ported and deleted, ADR-0021) -- build it: cd tools/native && cargo build -p mios-template-compile"; return; }
+    if ! "$bin" --root "$ROOT" --check >/dev/null; then
+        "$bin" --root "$ROOT" --check >&2
         _violation "compile-templates validation failed. One or more templates in usr/share/mios/templates are syntactically invalid."
     else
         echo "[98-drift-checks]   all templates compile and validate successfully"
     fi
 }
+
 
 check_impossible_eol_regressions() {
     local bad=""
@@ -1838,21 +1713,21 @@ check_cargo_manifest_generated() {
     # The generator carried its member list as a literal and had fallen two
     # crates behind the tree, so regenerating dropped them out of the
     # workspace: on disk, never compiled, never tested, never shipped.
-    _need_python || return 0
-    local gen="$ROOT/tools/generate-cargo-manifests.py"
-    local manifest="$ROOT/tools/native/Cargo.toml"
-    if [[ ! -f "$gen" || ! -f "$manifest" ]]; then
-        _violation "check_cargo_manifest_generated: tools/generate-cargo-manifests.py or tools/native/Cargo.toml is absent -- a tracked deliverable is gone, so the workspace projection cannot be compared"
-        return
+    local bin; bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || true
+    if [[ -n "$bin" ]]; then
+        local out rc=0
+        out="$( "$bin" cargo-manifests --root "$ROOT" --check 2>&1 )" || rc=$?
+        if (( rc == 0 )); then
+            echo "[98-drift-checks]   tools/native/Cargo.toml matches its generator projection"
+            return 0
+        else
+            echo "$out" >&2
+            _emit_projection_evidence "cargo-manifests" "tools/native/Cargo.toml"
+            _violation "check_cargo_manifest_generated: tools/native/Cargo.toml drifted from mios-gen cargo-manifests -- re-run mios-gen cargo-manifests (Law 8 SSOT-PROJECTION)"
+            return
+        fi
     fi
-    local out
-    if out="$(MIOS_DRIFT_ROOT="$ROOT" python3 "$gen" --check 2>&1)"; then
-        echo "[98-drift-checks]   tools/native/Cargo.toml matches its generator projection"
-    else
-        echo "$out" >&2
-        _emit_projection_evidence "tools/generate-cargo-manifests.py" "tools/native/Cargo.toml"
-        _violation "check_cargo_manifest_generated: tools/native/Cargo.toml drifted from tools/generate-cargo-manifests.py -- re-run the generator (Law 8 SSOT-PROJECTION)"
-    fi
+    _violation "check_cargo_manifest_generated: native mios-gen is required; build/install the SSOT release catalog"
 }
 
 check_root_toml_subset() {
@@ -1939,8 +1814,8 @@ check_toml_projection() {
 check_render_extension_coverage() {
     # A placeholder in a file type 34-render-quadlets.sh does not substitute
     # ships verbatim. mios-cockpit-link.socket carried
-    # ListenStream=0.0.0.0:${MIOS_PORT_COCKPIT_LINK} because `.socket` was
-    # missing from the renderer's find filter (T-1040).
+    # ListenStream=0.0.0.0:${MIOS_PORTS_COCKPIT_LINK} because `.socket` was
+    # missing from the renderer's find filter (task_977).
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_render_extension_coverage could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -1954,21 +1829,8 @@ check_render_extension_coverage() {
 }
 
 check_size_ceiling() {
-    # [legibility].max_tracked_mb is generated, so the gate that matters is not
-    # "is it big enough" -- check_legibility_ratchet asks that -- but "is the
-    # committed number still what the tree implies". Outside the band, the value
-    # is either already breached or carrying slack nobody declared.
-    # No env override here on purpose. MIOS_GATE_BIN exists and is grandfathered
-    # on the var-closure ledger; adding a second name nothing emits is exactly
-    # what that ledger's header forbids, and check_var_closure caught this one
-    # the moment it was written.
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/mios-size-ceiling" \
-             "$ROOT/tools/native/target/debug/mios-size-ceiling" \
-             /usr/libexec/mios/mios-size-ceiling; do
-        [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    local bin
+    if ! bin="$(native_bin mios-size-ceiling)"; then
         _violation "mios-size-ceiling is not built, so check_size_ceiling could not run -- build it: cd tools/native && cargo build -p mios-size-ceiling"
         return
     fi
@@ -1981,13 +1843,8 @@ check_size_ceiling() {
 
 check_task_store() {
     # ADR-0028: `mios-task check` over tasks.jsonl, its frozen history, overrides and TASKS.md render.
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/mios-task" \
-             "$ROOT/tools/native/target/debug/mios-task" \
-             /usr/libexec/mios/mios-task; do
-        [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    local bin
+    if ! bin="$(native_bin mios-task)"; then
         _violation "mios-task is not built, so check_task_store could not run -- build it: cd tools/native && cargo build -p mios-task"
         return
     fi
@@ -2001,17 +1858,25 @@ check_task_store() {
     echo "[98-drift-checks]   task list: $(printf '%s' "$out" | tail -1)"
 }
 
+check_task_ids() {
+    # ADR-0028: no purged task id ([tasks.store].purged) in any tracked path or file; a task is task_<number>.
+    local bin out rc=0
+    bin="$(native_bin mios-task)" || { _violation "mios-task is not built, so check_task_ids could not run -- build it: cd tools/native && cargo build -p mios-task"; return; }
+    out="$("$bin" check --tree --root "$ROOT" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "$out" | head -40 | sed 's/^/    /' >&2
+        _violation "a purged task id is back in the tracked tree -- name the task task_<number> (mios-task check --tree, ADR-0028)"
+        return
+    fi
+    echo "[98-drift-checks]   task ids: $(printf '%s' "$out" | tail -1)"
+}
+
 check_render_quadlets() {
     # Asserts every ${MIOS_*} in the render scope RESOLVES -- not that the tree
     # is already rendered. Stage 34 renders in place at bake; the tracked files
-    # are templates (T-1040).
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/mios-render-quadlets" \
-             "$ROOT/tools/native/target/debug/mios-render-quadlets" \
-             /usr/libexec/mios/mios-render-quadlets; do
-        [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    # are templates (task_977).
+    local bin
+    if ! bin="$(native_bin mios-render-quadlets)"; then
         _violation "mios-render-quadlets is not built, so check_render_quadlets could not run -- build it: cd tools/native && cargo build -p mios-render-quadlets"
         return
     fi
@@ -2025,16 +1890,11 @@ check_render_quadlets() {
 check_toolchain_pin() {
     # rust-toolchain.toml is generated, so the question is not "is a pin
     # present" but "is the committed pin still what the SSOT says". A hand
-    # edit here silently un-pins CI, which is the exact state T-1059 closed:
+    # edit here silently un-pins CI, which is the exact state task_996 closed:
     # clippy::for_kv_map fired under 1.98.0 and killed four pushes that were
     # clean under the 1.94.1 a contributor happened to have.
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/mios-toolchain-pin" \
-             "$ROOT/tools/native/target/debug/mios-toolchain-pin" \
-             /usr/libexec/mios/mios-toolchain-pin; do
-        [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    local bin
+    if ! bin="$(native_bin mios-toolchain-pin)"; then
         _violation "mios-toolchain-pin is not built, so check_toolchain_pin could not run -- build it: cd tools/native && cargo build -p mios-toolchain-pin"
         return
     fi
@@ -2049,12 +1909,8 @@ check_toolchain_pin() {
 check_ai_config_projection() {
     # Generated from [ai] + [ports]. A hand edit, an unregenerated SSOT move or
     # an unbuilt generator is a violation, never a skip.
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/mios-ai-config" \
-             "$ROOT/tools/native/target/debug/mios-ai-config"; do
-        [[ -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    local bin
+    if ! bin="$(native_bin mios-ai-config)"; then
         _violation "mios-ai-config is not built, so check_ai_config_projection could not run -- build it: cd tools/native && cargo build -p mios-ai-config"
         return
     fi
@@ -2070,11 +1926,8 @@ check_artifact_prompt() {
     # The out-of-loop daily task fetches this file from main on every run, so
     # a hand edit or an unregenerated SSOT change reaches that agent directly.
     # An unbuilt generator is cannot-run, which is a violation, never a skip.
-    local bin="" c
-    for c in "$ROOT/tools/native/target/release/xtask" "$ROOT/tools/native/target/debug/xtask"; do
-        [[ -x "$c" ]] && { bin="$c"; break; }
-    done
-    if [[ -z "$bin" ]]; then
+    local bin
+    if ! bin="$(native_bin xtask)"; then
         _violation "xtask is not built, so check_artifact_prompt could not run -- build it: cd tools/native && cargo build -p xtask"
         return
     fi
@@ -2089,12 +1942,6 @@ check_ai_artifacts() {
 }
 
 check_ratchet_direction() {
-    # Ported to mios-gate per ADR-0021; the python twin is deleted in the same
-    # commit, with both paths proved equal first: 78 ceilings on each side, and
-    # the same key named with the same exit code on a planted raise. The port
-    # also carries the [drift.generated_ceilings] exemption, which a ceiling
-    # that is GENERATED rather than hand-maintained needs -- and which must be
-    # itemised with a reason, never a bare name.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_ratchet_direction could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -2104,6 +1951,19 @@ check_ratchet_direction() {
         echo "[98-drift-checks]   shrink-only ratchet ceilings in mios.toml do not exceed the baseline"
     else
         _violation "a shrink-only ratchet ceiling increased in mios.toml, or a generated-budget exemption is not itemised"
+    fi
+}
+
+check_rust_categories() {
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_rust_categories could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
+        return
+    fi
+    if "$bin" rust-categories --root "$ROOT"; then
+        echo "[98-drift-checks]   [rust.categories] registry: owners, binaries, scopes and the unowned ceiling all hold"
+    else
+        _violation "the [rust.categories] ADR-0021 registry failed its ownership audit -- see the mios-gate rust-categories findings above"
     fi
 }
 
@@ -2143,15 +2003,46 @@ check_target_languages() {
     fi
 }
 
-check_bake_plan() {
+# Law 14 (TARGET-LANGUAGES) / task_3441: enforce static Linux linkage for native binaries
+# --- static linkage gate: asserts absence of PT_INTERP and DT_NEEDED on Linux release binaries ---
+check_static_linkage() {
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_static_linkage could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
+        return
+    fi
+    local out
+    if out="$("$bin" static-linkage --root "$ROOT" 2>&1)"; then
+        echo "[98-drift-checks]   static linkage verified for Linux native roles (no PT_INTERP, no DT_NEEDED)"
+        return 0
+    else
+        local rc=$?
+        if [[ $rc -eq 2 ]]; then
+            # Empty scan (unbuilt tree without Linux binaries)
+            echo "[98-drift-checks]   advisory: static-linkage: $out" >&2
+            return 0
+        fi
+        _violations_from "check_static_linkage: " "$out"
+    fi
+}
+
+_run_bake_plan_check() {
+    local mode="$1" out
     # Stage 85's candidates, in stage 85's order. CI builds debug only, so the
     # certified binary was one the bake can never run; debug is dropped because
-    # that tree is where the two sides diverge (T-1057).
+    # that tree is where the two sides diverge (task_994).
     local bin="" c
-    for c in /usr/libexec/mios/mios-bake-plan \
-             "$ROOT/tools/native/target/release/mios-bake-plan"; do
-        [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
-    done
+    if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+        bin="$(native_bin mios-bake-plan)" || {
+            _violation "mios-bake-plan is missing from MIOS_NATIVE_BIN_DIR=$MIOS_NATIVE_BIN_DIR"
+            return
+        }
+    else
+        for c in /usr/libexec/mios/mios-bake-plan \
+                 "$ROOT/tools/native/target/release/mios-bake-plan"; do
+            [[ -n "$c" && -x "$c" ]] && { bin="$c"; break; }
+        done
+    fi
     if [[ -z "$bin" ]] && command -v cargo >/dev/null 2>&1; then
         cargo build --release --manifest-path "$ROOT/tools/native/Cargo.toml" -p mios-bake-plan >/dev/null 2>&1 || true
         [[ -x "$ROOT/tools/native/target/release/mios-bake-plan" ]] && bin="$ROOT/tools/native/target/release/mios-bake-plan"
@@ -2161,21 +2052,31 @@ check_bake_plan() {
         _violation "mios-bake-plan is not built for release, so check_bake_plan could not certify what stage 85 runs -- build it: cd tools/native && cargo build --release -p mios-bake-plan"
         return
     fi
-    if (cd "$ROOT" && "$bin" --check); then
+    # Pin MIOS_ROOT and every SSOT tier: unpinned, the binary takes its root from
+    # its own path, so an installed one graded / and not this tree.
+    # shellcheck disable=SC2046
+    if out="$(cd "$ROOT" && env $(_render_env) \
+            MIOS_PLAN_OUT="$ROOT/usr/lib/mios/bake/plan.d" "$bin" --check "$mode" 2>&1)"; then
+        if [[ "$mode" == --check-integrity && "$out" != *"Bake-plan integrity verified against active Quadlets and SSOT"* ]]; then
+            _violation "mios-bake-plan does not support the required native integrity check"
+            return
+        fi
+        [[ -z "$out" ]] || printf '%s\n' "$out"
         echo "[98-drift-checks]   bake-plan lists in sync with mios.toml [build.bake] SSOT"
     else
-        _violation "bake-plan lists are STALE vs mios.toml -- regenerate with tools/native/target/release/mios-bake-plan"
+        printf '%s\n' "$out" >&2
+        _violation "bake-plan lists are STALE vs mios.toml -- regenerate with MIOS_ROOT=$ROOT $bin"
     fi
 }
 
+# --- bake-plan lists match mios.toml build.bake SSOT ---
+check_bake_plan() {
+    _run_bake_plan_check --check
+}
+
+# --- bake-plan groups match active Quadlets and required SSOT image assignments ---
 check_bake_plan_integrity() {
-    _need_python || return 0
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py bake-plan-integrity
-    then
-        echo "[98-drift-checks]   bake-plan integrity gate verified clean"
-    else
-        _violation "bake-plan integrity gate check failed"
-    fi
+    _run_bake_plan_check --check-integrity
 }
 
 check_bake_ref_defaults() {
@@ -2210,15 +2111,15 @@ check_bake_ref_defaults() {
 }
 
 check_roadmap_index() {
-    _need_python || return 0
     if [[ ! -f "$ROOT/ROADMAP.md" ]]; then
         _violation "ROADMAP.md not found -- a tracked deliverable is missing, so this check cannot run"
         return
     fi
-    if python3 "$ROOT/tools/roadmap-index.py" --check; then
+    local bin; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if "$bin" roadmap-index --root "$ROOT" --check; then
         echo "[98-drift-checks]   roadmap index in sync with frontmatter metadata"
     else
-        _violation "roadmap index is STALE or cites invalid laws/ADRs/ssot_keys -- regenerate with python3 tools/roadmap-index.py"
+        _violation "roadmap index is STALE or cites invalid laws/ADRs/ssot_keys -- regenerate with mios-gen roadmap-index --root $ROOT"
     fi
 }
 
@@ -2235,10 +2136,10 @@ check_shellcheck() {
     bash "$ROOT/automation/lint-shell.sh" || rc=$?
     if [[ $rc -eq 0 ]]; then
         echo "[98-drift-checks]   shellcheck: shell scripts conform to error-level linting"
-    elif [[ $rc -eq 2 ]]; then
-        echo "[98-drift-checks]   WARNING: shellcheck absent" >&2
+    elif [[ $rc -eq 2 && "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" != "1" ]]; then
+        echo "[98-drift-checks]   WARNING: shell-lint could not run (mios-gate or shellcheck absent)" >&2
     else
-        _violation "shellcheck linting failed with errors -- please run automation/lint-shell.sh or check logs"
+        _violation "shell-lint failed (exit $rc) -- run automation/lint-shell.sh for the findings"
     fi
 }
 
@@ -2626,14 +2527,13 @@ check_rechunk_budget() {
     echo "[98-drift-checks]   rechunk budget & SSOT image reference verified"
 }
 
+# --- gate definitions are registered exactly once inside main() ---
 check_gate_registry() {
-    _need_python || return 0
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py gate-registry
-    then
-        echo "[98-drift-checks]   gate registry integrity verified"
-    else
-        _violation "gate registry drift detected in 98-drift-checks.sh"
-    fi
+    local bin; bin="$(_gate_bin)" || {
+        _violation "check_gate_registry requires native mios-gate"; return; }
+    local out; out="$("$bin" gate-registry --root "$ROOT" 2>&1)" || {
+        _violations_from "check_gate_registry: " "$out"; return; }
+    echo "[98-drift-checks]   $out"
 }
 
 check_python_lint() {
@@ -2647,6 +2547,38 @@ check_python_lint() {
     bash "$lint_script" >/dev/null 2>&1 || res=$?
     if [[ "$res" -eq 1 ]]; then
         _violation "python linting reported compilation/syntax error(s)"
+    elif [[ "$res" -eq 2 ]]; then
+        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
+            _violation "python linting could not run (python3 missing under MIOS_DRIFT_REQUIRE_TOOLS=1)"
+        else
+            echo "[98-drift-checks]   WARNING: python linting could not run (python3 missing)" >&2
+        fi
+    elif [[ "$res" -ne 0 ]]; then
+        _violation "python linting failed with exit code $res"
+    fi
+}
+
+# --- agent-pipe strict static typing conformance (mypy) ---
+check_agentpipe_mypy() {
+    echo "[98-drift-checks] agent-pipe strict static typing conformance (mypy)"
+    local cfg="$ROOT/pyproject.toml"
+    if [[ ! -f "$cfg" ]]; then
+        _violation "pyproject.toml missing for agent-pipe typing check"
+        return
+    fi
+    if ! command -v mypy >/dev/null 2>&1; then
+        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
+            _violation "mypy missing under MIOS_DRIFT_REQUIRE_TOOLS=1"
+        else
+            echo "[98-drift-checks]   WARNING: mypy missing, skipping static type gate" >&2
+        fi
+        return 0
+    fi
+    local out
+    if out="$(cd "$ROOT" && mypy --config-file "$cfg" 2>&1)"; then
+        echo "[98-drift-checks]   agent-pipe typing verified (mypy clean)"
+    else
+        _violations_from "check_agentpipe_mypy: " "$out"
     fi
 }
 
@@ -2686,73 +2618,39 @@ check_soft_mode_not_committed() {
     fi
 }
 
-# --- mios-ssot-lint Rust twin matches bash 97-ssot-lint.sh in exit code and output ---
+# --- 97-ssot-lint (native mios-ssot-lint) passes on the tree and names a planted orphan placeholder ---
 check_ssot_lint_equivalence() {
-    local bin="$ROOT/tools/native/target/release/mios-ssot-lint"
-    if [[ ! -x "$bin" ]]; then
-        bin="$ROOT/tools/native/target/debug/mios-ssot-lint"
-    fi
-    if [[ ! -x "$bin" && -x "$ROOT/tools/native/target/debug/mios-ssot-lint.exe" ]]; then
-        bin="$ROOT/tools/native/target/debug/mios-ssot-lint.exe"
-    fi
-    if [[ ! -x "$bin" ]]; then
-        if command -v cargo >/dev/null 2>&1; then
-            cargo build --manifest-path "$ROOT/tools/native/Cargo.toml" -p mios-ssot-lint >/dev/null 2>&1 || true
-        fi
-    fi
-    if [[ ! -x "$bin" ]]; then
-        # Skipping is a pass only where tools may be missing. CI sets the
-        # no-skip switch, and there the Rust twin going unbuilt must be loud.
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "mios-ssot-lint could not be built, so its equivalence to 97-ssot-lint.sh is unverified"
-            return
-        fi
-        echo "[98-drift-checks]   mios-ssot-lint binary absent" >&2
-        return 0
-    fi
-
-    if [[ "$bin" == *.exe && "$(uname -s)" == Linux* ]]; then
-        if ! "$bin" --version >/dev/null 2>&1; then
-            echo "[98-drift-checks]   mios-ssot-lint binary is Windows .exe in Linux environment"
-            return 0
-        fi
-    fi
-
-    local bash_out bash_code=0
-    local rust_out rust_code=0
-
-    bash_out="$(MIOS_SSOT_LINT_ROOT="$ROOT" bash "$ROOT/automation/97-ssot-lint.sh" 2>&1)" || bash_code=$?
-    rust_out="$(MIOS_SSOT_LINT_ROOT="$ROOT" "$bin" 2>&1)" || rust_code=$?
-
-    local bash_norm rust_norm
-    bash_norm="$(echo "$bash_out" | sed -E 's|/mnt/c/MiOS|/ROOT|g; s|C:\\MiOS|/ROOT|g; s|c:\\MiOS|/ROOT|g; s|\\|/|g')"
-    rust_norm="$(echo "$rust_out" | sed -E 's|/mnt/c/MiOS|/ROOT|g; s|C:\\MiOS|/ROOT|g; s|c:\\MiOS|/ROOT|g; s|\\|/|g')"
-
-    # The two conditions were ORed into the exit-code branch, which then
-    # returned. So the output-differs message was unreachable, and an output
-    # mismatch with matching codes reported "exit code (0) differs from ... (0)".
-    if [[ "$bash_code" -ne "$rust_code" ]]; then
-        _violation "mios-ssot-lint exit code ($rust_code) differs from bash 97-ssot-lint.sh ($bash_code)"
+    # The bash twin was retired for the native port it was proven byte-identical
+    # to; what is left to prove is that the linter still bites. The plant goes
+    # into a private copy of its three inputs, never into the tree under test.
+    local out tmp probe rc=0
+    out="$(bash "$ROOT/automation/97-ssot-lint.sh" 2>&1)" || { _violations_from "97-ssot-lint: " "$out"; return; }
+    tmp="$(mktemp -d)"; probe="$(printf 'MIOS_%s_%s' ORPHAN_PROBE "$$")"
+    mkdir -p "$tmp/tools/lib" "$tmp/usr/share/mios/reference" "$tmp/usr/share/containers"
+    cp "$ROOT/tools/lib/userenv.sh" "$tmp/tools/lib/"; cp "$ROOT/usr/share/mios/reference/env-baseline.txt" "$tmp/usr/share/mios/reference/"
+    cp -r "$ROOT/usr/share/containers/systemd" "$tmp/usr/share/containers/"
+    printf '[Container]\nEnvironment=PROBE=${%s}\n' "$probe" > "$tmp/usr/share/containers/systemd/zz-probe.container"
+    out="$(MIOS_SSOT_LINT_ROOT="$tmp" bash "$ROOT/automation/97-ssot-lint.sh" 2>&1)" || rc=$?
+    rm -rf "$tmp"
+    if (( rc == 0 )) || ! grep -q "$probe" <<<"$out"; then
+        _violation "97-ssot-lint passed a Quadlet placeholder no SSOT tier emits -- the linter no longer detects orphans"
         return
     fi
-    if [[ "$bash_norm" != "$rust_norm" ]]; then
-        _violation "mios-ssot-lint output differs from bash 97-ssot-lint.sh (exit codes both $bash_code)"
-        return
-    fi
-
-    echo "[98-drift-checks]   mios-ssot-lint Rust twin byte-identical to bash 97-ssot-lint.sh"
+    echo "[98-drift-checks]   97-ssot-lint passes the tree and names a planted orphan placeholder"
 }
 
 check_gate_index() {
-    if ! _require_python3; then
+    local gen
+    gen="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || {
+        _violation "check_gate_index: native mios-gen is required; build/install the SSOT release catalog"
+        return
+    }
+    if "$gen" gate-index --root "$ROOT" --check; then
+        echo "[98-drift-checks]   gate index in sync with main registration"
         return 0
     fi
-    if MIOS_DRIFT_ROOT="$ROOT" python3 "$ROOT/tools/generate-gate-index.py" --check >/dev/null 2>&1; then
-        echo "[98-drift-checks]   gate index in sync with main registration"
-    else
-        _emit_projection_evidence "tools/generate-gate-index.py" "usr/share/mios/reference/drift-gate-index.tsv"
-        _violation "usr/share/mios/reference/drift-gate-index.tsv is out of sync with main() -- run python3 tools/generate-gate-index.py"
-    fi
+    _emit_projection_evidence "gate-index" "usr/share/mios/reference/drift-gate-index.tsv"
+    _violation "usr/share/mios/reference/drift-gate-index.tsv is out of sync with main() -- run mios-gen gate-index"
 }
 
 check_oci_archive_path() {
@@ -2786,9 +2684,9 @@ check_replaceme_mount_substitution() {
 
     if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py replaceme-mount-substitution
     then
-        echo "[98-drift-checks]   BIB recipes perform credential substitution on mounted config templates"
+        echo "[98-drift-checks]   no Justfile BIB recipe mounts a format recipe or a placeholder raw; miosd artifact-build renders credentials"
     else
-        _violation "unsubstituted REPLACEME template raw-mounted in Justfile BIB recipe"
+        _violation "a Justfile BIB recipe raw-mounts a format recipe or a REPLACE placeholder -- build disks with miosd artifact-build"
     fi
 }
 
@@ -2940,15 +2838,21 @@ check_installer_family_roles() {
 }
 
 check_bib_configs_projection() {
-    if ! _require_python3; then
-        return 0
+    local bin; bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || true
+    if [[ -n "$bin" ]]; then
+        local out rc=0
+        out="$( "$bin" bib-configs --root "$ROOT" --check 2>&1 )" || rc=$?
+        if (( rc == 0 )); then
+            echo "[98-drift-checks]   BIB artifact configs in sync with mios.toml [deploy.artifacts] SSOT"
+            return 0
+        else
+            echo "$out" >&2
+            _emit_projection_evidence "bib-configs" "config/artifacts/bib.toml" "config/artifacts/iso.toml"
+            _violation "BIB artifact configs (bib.toml, iso.toml) out of sync with mios.toml [deploy.artifacts] -- run mios-gen bib-configs"
+            return
+        fi
     fi
-    if MIOS_DRIFT_ROOT="$ROOT" python3 "$ROOT/tools/generate-bib-configs.py" --check >/dev/null 2>&1; then
-        echo "[98-drift-checks]   BIB artifact configs in sync with mios.toml [deploy.artifacts] SSOT"
-    else
-        _emit_projection_evidence "tools/generate-bib-configs.py" "config/artifacts/bib.toml" "config/artifacts/iso.toml"
-        _violation "BIB artifact configs (bib.toml, iso.toml) out of sync with mios.toml [deploy.artifacts] -- run python3 tools/generate-bib-configs.py"
-    fi
+    _violation "check_bib_configs_projection: native mios-gen is required; build/install the SSOT release catalog"
 }
 
 check_repo_partition_label_ssot() {
@@ -2981,6 +2885,13 @@ check_repo_partition_label_ssot() {
     else
         echo "[98-drift-checks]   repo partition label consumers match [field.repo_partition].label SSOT"
     fi
+}
+
+check_artifact_recipes() {
+    echo "[98-drift-checks] no artifact recipe carries a placeholder or a committed credential; disks get the operator's at build time (Law 11)"
+    local bin; bin="$(_gate_bin)" || { _violation "mios-gate is not built, so check_artifact_recipes could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"; return; }
+    "$bin" artifact-recipes --root "$ROOT" || \
+        _violation "an artifact recipe carries a placeholder or a committed credential -- disks get theirs from miosd artifact-build (Law 11)"
 }
 
 check_bib_single_config_invariant() {
@@ -3206,9 +3117,12 @@ check_smoke_manifest() {
 }
 
 check_negative_coverage() {
-    _need_python || return 0
-    if MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py negative-coverage
-    then
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_negative_coverage could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
+        return
+    fi
+    if "$bin" negative-coverage --root "$ROOT"; then
         echo "[98-drift-checks]   negative test coverage gate: all dispatched checks are covered or exempt"
     else
         _violation "drift checks lacking negative test coverage"
@@ -3226,22 +3140,56 @@ check_verb_templates() {
 
 # --- pipe-boundaries.manifest.json matches the agent-pipe tree ---
 check_pipe_boundaries() {
-    _need_python || return 0
     local manifest="${ROOT}/usr/share/mios/pipe-boundaries.manifest.json"
     if [ ! -f "$manifest" ]; then
         _violation "pipe-boundaries.manifest.json is missing"
         return 0
     fi
-    # Existence is not freshness. Regenerate and diff via the generator's own
-    # --check, which is what "up-to-date" was asserting without ever testing.
-    local out rc=0
-    out="$(cd "$ROOT" && python3 tools/gen-pipe-boundary-manifest.py --check 2>&1)" || rc=$?
-    if (( rc != 0 )); then
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out="$("$bin" pipe-boundaries --root "$ROOT" --check 2>&1)"; then
         printf '%s\n' "$out" >&2
-        _violation "pipe-boundaries.manifest.json is stale -- run tools/gen-pipe-boundary-manifest.py"
+        _violation "pipe-boundaries.manifest.json is stale -- run mios-gen pipe-boundaries"
         return
     fi
     echo "[98-drift-checks]   pipe-boundaries.manifest.json matches the agent-pipe tree"
+}
+
+# --- specs/ documentation matches standardized format ---
+check_standardize_docs() {
+    local bin out rc=0
+    bin="$(native_bin mios-gen)" || true
+    if [[ -n "$bin" && -x "$bin" ]]; then
+        out="$("$bin" standardize-docs --root "$ROOT" --check 2>&1)" || rc=$?
+    else
+        _violation "mios-gen is not available"
+        return
+    fi
+
+    if (( rc != 0 )); then
+        printf '%s\n' "$out" >&2
+        _violation "specs/ markdown documentation is unstandardized -- run mios-gen standardize-docs"
+        return
+    fi
+    echo "[98-drift-checks]   specs/ markdown documentation matches standardized format"
+}
+
+# --- wiki and spec documentation embeds match SSOT ---
+check_sync_wiki() {
+    local bin out rc=0
+    bin="$(native_bin mios-gen)" || true
+    if [[ -n "$bin" && -x "$bin" ]]; then
+        out="$("$bin" sync-wiki --root "$ROOT" --check 2>&1)" || rc=$?
+    else
+        _violation "mios-gen is not available"
+        return
+    fi
+
+    if (( rc != 0 )); then
+        printf '%s\n' "$out" >&2
+        _violation "Wiki documentation embeds are STALE -- run mios-gen sync-wiki"
+        return
+    fi
+    echo "[98-drift-checks]   wiki documentation embeds match SSOT"
 }
 
 check_vllm_name_canonical() {
@@ -3264,20 +3212,19 @@ check_pipe_extraction_parity() {
 
 # --- every .desktop launcher matches what render-desktop.py projects from SSOT ---
 check_guacamole_consistency() {
-    # Named for Guacamole and for "unit definitions"; render-desktop.py has no
+    # Named for Guacamole and for "unit definitions"; render-desktop has no
     # Guacamole-specific logic and checks all .desktop launchers, of which
     # mios-svc-guacamole.desktop is one.
-    echo "[98-drift-checks] every .desktop launcher matches what render-desktop.py projects from SSOT"
-    local out; out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/render-desktop.py --check 2>&1)" || { _violations_from "check_guacamole_consistency: " "$out"; return; }
-    echo "[98-drift-checks]   $out"
+    echo "[98-drift-checks] every .desktop launcher matches what render-desktop projects from SSOT"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$(cd "$ROOT" && "$bin" render-desktop --root "$ROOT" --check 2>&1); then
+        _violations_from "check_guacamole_consistency: " "$out"
+        return
+    fi
+    echo "[98-drift-checks]   every .desktop launcher in sync"
 }
 
 check_law_enforcers() {
-    # Ported to mios-gate per ADR-0021; the python twin is deleted in the same
-    # commit. The successor is strictly stronger: the old reader matched a
-    # 99-postcheck.sh target as a bare SUBSTRING, which a comment after `exit 0`
-    # satisfied for four laws, and it silently dropped both a bare second
-    # enforcer in a comma list and any unrecognised enforcer kind.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_law_enforcers could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -3437,7 +3384,7 @@ check_no_duplicate_value_key() {
     [[ -f "$snap_tool" ]] || { _violation "check_no_duplicate_value_key: resolver usr/libexec/mios/mios-env-snapshot is absent -- the gate has no environment to inspect"; return; }
     [[ -f "$baseline" || "$bump" == "1" ]] || { _violation "check_no_duplicate_value_key: ratchet ledger usr/share/mios/reference/value-dup-baseline.tsv is absent -- regenerate with MIOS_VALUE_DUP_BASELINE_BUMP=1"; return; }
     if MIOS_VENDOR_TOML="${ROOT}/usr/share/mios/mios.toml" MIOS_TOML_ROOT="${ROOT}" \
-       MIOS_VALUE_DUP_BASELINE_BUMP="$bump" \
+       MIOS_RESOLVER_BIN="$(native_bin mios-resolver)" MIOS_VALUE_DUP_BASELINE_BUMP="$bump" \
        python3 tools/drift-checks.py no-duplicate-value-key "$snap_tool" "$baseline"; then
         echo "[98-drift-checks]   value-duplication within the recorded ratchet ceiling"
     else
@@ -3466,7 +3413,9 @@ check_pipeline_numbering() {
             is_bad=1
         fi
     fi
-    if [[ -f "$ROOT/tools/generate-pipeline-index.py" ]]; then
+    local _gen
+    _gen="$(native_bin mios-gen || true)"
+    if [ -n "$_gen" ]; then
         _pi_skip=""
         if [[ -n "${CTX:-}" || "$ROOT" == "/tmp/build" ]]; then
             _pi_skip="in-image OCI build (drift-gate job enforces on the pristine tree)"
@@ -3477,13 +3426,16 @@ check_pipeline_numbering() {
         fi
         if [[ -n "$_pi_skip" ]]; then
             echo "  [pipeline-index] SKIPPED: $_pi_skip at \$ROOT" >&2
-        elif ! "$PYTHON" "$ROOT/tools/generate-pipeline-index.py" --check >/dev/null 2>&1; then
+        elif ! "$_gen" pipeline-index --root "$ROOT" --check >/dev/null 2>&1; then
             echo "  [pipeline-numbering-drift] pipeline-index.tsv is out of sync with automation/NN-*.sh scripts" >&2
             is_bad=1
         fi
+    else
+        echo "  [pipeline-index] $_GEN_MISSING" >&2
+        is_bad=1
     fi
     if [[ "$is_bad" -ne 0 ]]; then
-        _violation "pipeline numbering drift (WS-NUMBER AGY-642; see reference/audit-numbering-unification.md)"
+        _violation "pipeline numbering drift (WS-NUMBER task_1577; see reference/audit-numbering-unification.md)"
     else
         echo "[98-drift-checks]   pipeline numbering: labels deleted, single progress count, dense SSOT check ordinals, stage index in sync"
     fi
@@ -3501,11 +3453,12 @@ check_value_aliases() {
         _violation "value-alias snapshot or reference TSV absent -- a tracked deliverable is missing, so this check cannot run"
         return
     fi
-    if MIOS_VENDOR_TOML="${ROOT}/usr/share/mios/mios.toml" MIOS_TOML_ROOT="${ROOT}" python3 tools/drift-checks.py value-aliases "$snap" "$tsv"
+    if MIOS_VENDOR_TOML="${ROOT}/usr/share/mios/mios.toml" MIOS_TOML_ROOT="${ROOT}" \
+       MIOS_RESOLVER_BIN="$(native_bin mios-resolver)" python3 tools/drift-checks.py value-aliases "$snap" "$tsv"
     then
         echo "[98-drift-checks]   value-alias consistency verified"
     else
-        _violation "value-alias consistency drift (reference/value-aliases.tsv; WS-DEDUP AGY-858)"
+        _violation "value-alias consistency drift (reference/value-aliases.tsv; WS-DEDUP task_1591)"
     fi
 }
 
@@ -3529,22 +3482,12 @@ check_no_hardcoded_ssot_literal() {
 
 check_bash_phase_ratchet() {
     echo "[98-drift-checks]   bash phase script count ratchet check"
-    local count
-    count="$(find "$ROOT/automation" -maxdepth 1 -name "[0-9][0-9]-*.sh" | wc -l)"
-    local max_allowed
-    max_allowed="$(python3 -c "import tomllib; f=open('${ROOT}/usr/share/mios/mios.toml','rb'); d=tomllib.load(f); print(d.get('build',{}).get('ratchet',{}).get('max_phase_scripts', 71))" 2>/dev/null || echo "71")"
-    if [[ "$count" -gt "$max_allowed" ]]; then
-        _violation "bash phase script count ($count) exceeds ratchet baseline ($max_allowed)"
-    fi
+    local bin; bin="$(_gate_bin)" || { _violation "mios-gate is not built, so check_bash_phase_ratchet could not run"; return; }
+    "$bin" phase-ratchet --root "$ROOT" || \
+        _violation "the automation/NN-*.sh count is not exactly [build.ratchet].max_phase_scripts -- fold a phase, or lower the ceiling to the count"
 }
 
 check_signature_policy() {
-    # Law 8 for the container signature policy. usr/lib/containers/policy.json
-    # is projected from [security.sigstore] and, until T-1047's sweep, was the
-    # ONE generator in the tree with neither half of the law: no regenerate step
-    # and no drift check. Its own generator's --check compared parsed JSON, so
-    # it could not see the tracked file drifting in bytes from what the writer
-    # emits -- which it had.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_signature_policy could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -3554,7 +3497,7 @@ check_signature_policy() {
         echo "[98-drift-checks]   usr/lib/containers/policy.json regenerates byte-identically from [security.sigstore]"
         return 0
     else
-        _violation "usr/lib/containers/policy.json does not match the [security.sigstore] projection -- regenerate it: python3 tools/generate-cosign-policy.py"
+        _violation "usr/lib/containers/policy.json does not match the [security.sigstore] projection -- regenerate it: mios-gen cosign-policy"
     fi
 }
 
@@ -3578,7 +3521,7 @@ check_projection_coverage() {
 
 check_build_tool_dispatch() {
     # Dispatched by ABSOLUTE path, never `command -v`: this check exists
-    # because that lookup cannot resolve at bake time (T-1018), so using it
+    # because that lookup cannot resolve at bake time (task_962), so using it
     # here would make the check the first thing it detects.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
@@ -3588,7 +3531,7 @@ check_build_tool_dispatch() {
     if "$bin" build-tool-dispatch --root "$ROOT"; then
         echo "[98-drift-checks]   every bake-time tool-dispatch gate is on the shrink-only register"
     else
-        _violation "an automation stage gates its Rust path on \`command -v <binary>\` that cannot resolve at bake time, so the branch is dead -- give the binary a PATH location or dispatch by absolute path (T-1018)"
+        _violation "an automation stage gates its Rust path on \`command -v <binary>\` that cannot resolve at bake time, so the branch is dead -- give the binary a PATH location or dispatch by absolute path (task_962)"
     fi
 }
 
@@ -3601,7 +3544,7 @@ check_phase_registry() {
         return
     fi
     "$bin" phase-registry --root "$ROOT" || \
-        _violation "a phase script on disk is not in [build.phases].list, or the register describes it wrongly, so build.sh silently runs a pipeline short of a stage (T-1038)"
+        _violation "a phase script on disk is not in [build.phases].list, or the register describes it wrongly, so build.sh silently runs a pipeline short of a stage (task_975)"
 }
 
 # --- no miosd drift Check claims a verdict about a tree it never reads ---
@@ -3613,7 +3556,30 @@ check_drift_stubs() {
         return
     fi
     "$bin" drift-stubs --root "$ROOT" || \
-        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- the bake runs this suite at Containerfile:103 (T-1037)"
+        _violation "a miosd drift Check returns Verdict::Pass without reading the tree, or the unimplemented register is stale -- check_native_twinless runs this suite's Checks in the gate (task_974)"
+}
+
+# --- every native miosd drift Check with no bash twin in main() runs in this gate ---
+check_native_twinless() {
+    # Ruling Q8 keeps source-tree gates out of the bake. A native Check named like
+    # a check main() dispatches runs as that twin; the rest run here, natively.
+    echo "[98-drift-checks] every native miosd drift Check with no bash twin in main() runs in this gate"
+    local bin; bin="$(native_bin miosd "${MIOS_MIOSD_BIN:-}")" || {
+        _violation "miosd is not built, so the native drift Checks with no bash twin could not run -- build it: cd src/mios-rs && cargo build -p miosd"
+        return; }
+    local ids; ids="$("$bin" drift-check --list 2>&1 | sed -nE 's/^[[:space:]]*[0-9]+\.[[:space:]]+(check_[a-z0-9_]+)[[:space:]].*/\1/p')"
+    [[ -n "$ids" ]] || { _violation "miosd drift-check --list named no Check -- an empty registry is not a pass"; return; }
+    local twins; twins="$(sed -n '/^main() {/,/^}/p' "$_self_dir/$(basename "$_self")" | sed -nE 's/^[[:space:]]+(check_[a-z0-9_]+)[[:space:]]*$/\1/p')"
+    local id out ran=0 twinned=0
+    for id in $ids; do
+        if grep -qxF -- "$id" <<<"$twins"; then twinned=$((twinned + 1)); continue; fi
+        ran=$((ran + 1))
+        # --only matches by substring; exactly one Check must run, and pass.
+        if ! out="$("$bin" drift-check --root "$ROOT" --only "$id" 2>&1)" || [[ "$out" != *"[1/1 PASS "* ]]; then
+            _violations_from "check_native_twinless: $id: " "$(grep -E 'FAIL|MISSING|SKIP|Summary' <<<"$out" || printf '%s' "$out")" || :
+        fi
+    done
+    echo "[98-drift-checks]   ${ran} twinless native Check(s) ran here; ${twinned} run as their bash twin"
 }
 
 check_no_silent_tool_skips() {
@@ -3707,33 +3673,24 @@ _render_env() {
 
 check_ports_category_schema() {
     echo "[98-drift-checks]   checking port category schema (allocation + collisions)"
-    local out
-
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
     # shellcheck disable=SC2046
-    if ! out=$(cd "$ROOT" && env $(_render_env) python3 tools/render-ports.py --check 2>&1); then
+    if ! out=$(cd "$ROOT" && env $(_render_env) "$bin" render-ports --root "$ROOT" --check 2>&1); then
         printf '%s\n' "$out" | head -n 20 >&2
-        _violation "port schema drift: every port must derive from [ports.categories] (base + index*stride), belong to exactly one category, and not collide -- run tools/render-ports.py"
+        _violation "port schema drift: every port must derive from [ports.categories] (base + index*stride), belong to exactly one category, and not collide -- run mios-gen render-ports"
     fi
 }
 
 check_globals_generated() {
     echo "[98-drift-checks]   checking generated globals resolvers match SSOT"
-    local out
-
-    # shellcheck disable=SC2046
-    if ! out=$(cd "$ROOT" && env $(_render_env) python3 tools/render-globals.py --check 2>&1); then
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$( "$bin" render-globals --root "$ROOT" --check 2>&1 ); then
         printf '%s\n' "$out" | head -n 10 >&2
-        _violation "automation/lib/globals.{sh,ps1} are stale -- they are GENERATED IN FULL from mios.toml; run tools/render-globals.py (never hand-edit them)"
+        _violation "automation/lib/globals.{sh,ps1} are stale -- they are GENERATED IN FULL from mios.toml; run mios-gen render-globals (never hand-edit them)"
     fi
 }
 
 check_ai_metadata_fresh() {
-    # Law 8 for usr/share/mios/ai/v1/metadata.json. It is exported from every
-    # tracked file's AI-* header, but nothing regenerated it and nothing
-    # compared it, so it fell ~2,400 lines behind main and the first unrelated
-    # re-export dragged that whole backlog into a small PR. The exporter's own
-    # --check validates schema only; --check-fresh regenerates in memory and
-    # compares bytes, naming each entry that moved.
     _need_python || return 0
     local out
     if out="$(cd "$ROOT" && python3 usr/libexec/mios/mios-ai-metadata.py --root "$ROOT" --check-fresh 2>&1)"; then
@@ -3746,21 +3703,47 @@ check_ai_metadata_fresh() {
 
 check_ai_manifests_fresh() {
     echo "[98-drift-checks]   checking AI manifest freshness"
-    # generate-ai-manifest.py resolves its targets and relpaths against the CWD,
-    # so it MUST run from $ROOT or it compares the wrong (or no) trees.
-    local out
-    if ! out=$( cd "$ROOT" && python3 tools/generate-ai-manifest.py --check 2>&1 ); then
-        # Surface WHICH manifest drifted AND why. A 'drift|missing' grep was
-        # too narrow -- it filtered out the generator's own entry-level
-        # diagnostics, so the failure stayed unactionable.
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$( cd "$ROOT" && "$bin" ai-manifest --root "$ROOT" --check 2>&1 ); then
         printf '%s\n' "$out" | grep -v '^Generated ' | head -n 14 >&2
         _violation "AI manifests are stale or out of date (run 'just sync', or bash tools/sync-generated.sh, which regenerates every projection in dependency order)"
     fi
 }
 
+# A drift gate grades the tree and must never write it: check_names_registry
+# rewrote names.generated.txt in place (6488 -> 720 lines) and nothing noticed.
+# The tracked tree is fingerprinted through a private index (the real index is
+# never touched) before and after the checks; no git work tree, no fingerprint.
+_tracked_tree() {
+    local idx; idx="$(mktemp)" || return 1
+    cp "$(git -C "$ROOT" rev-parse --path-format=absolute --git-path index 2>/dev/null)" "$idx" 2>/dev/null \
+        && GIT_INDEX_FILE="$idx" git -C "$ROOT" add -u >/dev/null 2>&1 \
+        && GIT_INDEX_FILE="$idx" git -C "$ROOT" write-tree 2>/dev/null
+    local rc=$?; rm -f "$idx"; return "$rc"
+}
+_assert_read_only() {  # $1 = what ran; _RO_BEFORE = the fingerprint taken before it
+    local after; [[ -n "${_RO_BEFORE:-}" ]] && after="$(_tracked_tree)" || return 0
+    [[ "$after" == "$_RO_BEFORE" ]] && return 0
+    _violation "$1 wrote into the tree it grades -- a drift gate must be read-only: $(git -C "$ROOT" diff-tree -r --name-only "$_RO_BEFORE" "$after" | head -5 | tr '\n' ' ')" || :
+    return 1
+}
+
+check_memory_poisoning_scan() {
+    echo "[98-drift-checks] memory-poisoning scan enabled in SSOT and active in runtime"
+    _need_python || return 0
+    local out
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py memory-poisoning-scan 2>&1)" || {
+        _violations_from "check_memory_poisoning_scan: " "$out"; return; }
+    echo "[98-drift-checks]   memory-poisoning scan verified"
+}
+
 main() {
     if [[ $# -eq 1 && -n "$1" ]]; then
         if declare -f "$1" >/dev/null; then
+            _RO_BEFORE="$(_tracked_tree)" || _RO_BEFORE=""
+            _RO_WHO="$1"
+            # A trap, so a check that dies under errexit is still held to it.
+            trap '_assert_read_only "$_RO_WHO" || exit 1' EXIT
             "$1"
             if [[ "$VIOLATIONS" -eq 0 ]]; then
                 exit 0
@@ -3772,13 +3755,8 @@ main() {
         fi
     fi
 
-    # main() dispatches each check as a bare statement under the file's
-    # `set -euo pipefail`, and 189 checks END with _violation, which returns 1.
-    # So the first failing check aborted the whole run: of 207 dispatched
-    # checks only the first 12 ever executed, and the aggregate summary below
-    # was unreachable whenever it had anything to report. Accumulate instead;
-    # VIOLATIONS is the signal, not the exit status of the last check.
     set +e
+    _RO_BEFORE="$(_tracked_tree)" || _RO_BEFORE=""
 
     check_gate_registry
     check_dead_lane
@@ -3825,6 +3803,7 @@ main() {
     check_no_mkdir_in_var
     check_quadlet_privilege
     check_unit_security
+    check_preset_roster_complete
     check_var_closure
     check_lint_is_final
     check_firstboot_degrade_open
@@ -3849,6 +3828,7 @@ main() {
     check_ratchet_direction
     check_size_ceiling
     check_task_store
+    check_task_ids
     check_toolchain_pin
     check_ai_config_projection
     check_artifact_prompt
@@ -3863,6 +3843,7 @@ main() {
     check_sbom_metadata
     check_shellcheck
     check_target_languages
+    check_static_linkage
     check_curl_retry
     check_resolver_ssot_refs
     check_nested_podman_caps
@@ -3876,6 +3857,7 @@ main() {
     check_bound_image_store
     check_rechunk_budget
     check_python_lint
+    check_agentpipe_mypy
     check_test_hermeticity
     check_negative_test_coverage
     check_soft_mode_not_committed
@@ -3890,6 +3872,7 @@ main() {
     check_bib_configs_projection
     check_repo_partition_label_ssot
     check_bib_single_config_invariant
+    check_artifact_recipes
     check_build_artifacts_output_dir
     check_win11_vm_template_xml
     check_ipa_enroll_projection
@@ -3919,6 +3902,7 @@ main() {
     check_docs_ratchet
     check_header_integrity
     check_legibility_ratchet
+    check_legacy_archive
     check_docs_ratchet_monotone
     check_comment_lex_equivalence
     check_no_generated_prose_in_resolvers
@@ -3940,9 +3924,14 @@ main() {
     check_negative_coverage
     check_verb_templates
     check_pipe_boundaries
+    check_standardize_docs
+    check_sync_wiki
     check_vllm_name_canonical
     check_pipe_extraction_parity
     check_desktop_launchers
+    check_tmux_theme
+    check_btop_theme
+    check_fastfetch
     check_guacamole_consistency
     check_no_inert_ssot_tables
     check_profile_integrity
@@ -3987,6 +3976,7 @@ main() {
     check_no_hardcoded_ssot_literal
     check_bash_phase_ratchet
     check_no_silent_tool_skips
+    check_memory_poisoning_scan
     check_build_tool_dispatch
     check_signature_policy
     check_phase_registry
@@ -4001,6 +3991,7 @@ main() {
     check_ci_suite_coverage
     check_manpages
     check_rust_test_coverage
+    check_rust_categories
     check_header_comment_syntax
     check_variant_registry
     check_deploy_formats
@@ -4009,6 +4000,8 @@ main() {
     check_negatives_registered
     check_tracked_readable
     check_leaked_fixtures
+    check_native_twinless
+    _assert_read_only "the gate run (re-run each check alone to name the writer)"
 
     set -e
 
@@ -4083,8 +4076,8 @@ check_resolver_shell_equivalence() {
 # --- comment lexing preserves semantic intent across documentation generators ---
 check_comment_lex_equivalence() {
     echo "[98-drift-checks] comment lexing preserves semantic intent across documentation generators"
-    local out
-    if ! out=$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/check-docs.py comment-lex 2>&1); then
+    local out bin; bin="$(native_bin mios-comment-lex "${MIOS_COMMENT_LEX_BIN:-}")" || bin=""
+    if ! out=$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" MIOS_COMMENT_LEX_BIN="$bin" python3 tools/check-docs.py comment-lex 2>&1); then
         printf '%s\n' "$out" | tail -n 12 >&2
         _violation "comment lexer equivalence check failed"
     fi
@@ -4093,10 +4086,6 @@ check_comment_lex_equivalence() {
 # --- the PowerShell half of the resolver twin exists; its CONTENT is check_globals_generated's job ---
 check_resolver_ps_equivalence() {
     echo "[98-drift-checks] the PowerShell half of the resolver twin exists; its content is check_globals_generated's job"
-    # This tests EXISTENCE and nothing else. It used to say "present and
-    # verified" while claiming to compare resolver logic: a globals.ps1 with a
-    # port changed to 9999 passed it rc=0, and check_globals_generated caught
-    # that same plant rc=1.
     if [[ -f "$ROOT/automation/lib/globals.ps1" ]]; then
         echo "[98-drift-checks]   globals.ps1 present (content equivalence is check_globals_generated)"
     else
@@ -4417,15 +4406,27 @@ check_unit_security() {
         return 0
     fi
     local out
-    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security)"; then
-        echo "[98-drift-checks]   WARNING: systemd unit security check flagged unconfined services" >&2
-        return 0
+    if ! out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py unit-security 2>&1)"; then
+        _violations_from "check_unit_security: " "$out"
+        return
     fi
     if [[ -n "$out" ]]; then
         echo "[98-drift-checks]   NOTE: legacy unconfined units pending migration (roster active)"
     else
         echo "[98-drift-checks]   All systemd service security baselines pass"
     fi
+}
+
+# --- systemd preset roster declares explicit enable/disable policy for every MiOS unit ---
+check_preset_roster_complete() {
+    echo "[98-drift-checks] systemd preset roster declares explicit enable/disable policy for every MiOS unit"
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+        echo "[98-drift-checks]   WARNING: python missing" >&2
+        return 0
+    fi
+    local out; out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py preset-roster-complete 2>&1)" || {
+        _violations_from "check_preset_roster_complete: " "$out"; return; }
+    echo "[98-drift-checks]   systemd preset roster is complete (no orphans, all units declared)"
 }
 
 # --- systemd units form complete dependency closure without missing targets ---
@@ -4444,7 +4445,8 @@ check_unit_dependency_closure() {
 # --- documentation coverage count meets or exceeds established ratchet floor ---
 check_docs_ratchet() {
     echo "[98-drift-checks] documentation coverage count meets or exceeds established ratchet floor"
-    local out; out="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py docs-ratchet)" || {
+    local out bin; bin="$(_gate_bin)" || bin=""
+    out="$(MIOS_DRIFT_ROOT="$ROOT" MIOS_GATE_BIN="$bin" python3 tools/drift-checks.py docs-ratchet)" || {
         _violations_from "" "$out"; return; }
     echo "[98-drift-checks]   documentation ratchet holding (narrative + hint + stale-ref ceilings)"
 }
@@ -4493,9 +4495,6 @@ check_credential_literals() {
     # usr/share/containers/systemd. It said "tracked source tree", which is
     # check_secret_handling's job, not this one.
     echo "[98-drift-checks] no credential literal is baked into a systemd unit or Quadlet Environment= line"
-    # Ported to mios-gate per ADR-0021; the python twin is deleted in the same
-    # commit. The register now pins path:KEY=VALUE, so a grandfathered KEY whose
-    # VALUE becomes an operator's real password is a NEW finding (T-1035).
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_credential_literals could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -4505,71 +4504,18 @@ check_credential_literals() {
         _violation "a credential literal is baked into a world-readable systemd unit or Quadlet whose exact path:KEY=VALUE is not on the shrink-only register (Law 11)"
 }
 
-# --- the Rust names-registry twin reproduces the Python leg byte for byte ---
+# Retain the registered gate name while the retired Python twin has no executable.
+# Equivalence now means both committed artifacts match the canonical projection.
+# --- both name-registry artifacts match the canonical read-only native projection ---
 check_names_registry_equivalence() {
-    echo "[98-drift-checks] the native names-registry generator emits the same two artefacts as the Python leg"
-    # The twin was transliterated from a pre-fix revision and never called, so
-    # five later corrections landed on one side only: it emitted 3486 lines
-    # where the Python emits 1229. Nothing compared them, so pointing
-    # sync-generated at it would have rewritten the registry (T-1056).
-    local bin="$ROOT/tools/native/target/release/generate-names-registry"
-    [[ -x "$bin" ]] || bin="$ROOT/tools/native/target/debug/generate-names-registry"
-    if [[ ! -x "$bin" ]] && command -v cargo >/dev/null 2>&1; then
-        cargo build --manifest-path "$ROOT/tools/native/Cargo.toml" -p generate-names-registry >/dev/null 2>&1 || true
-    fi
-    if [[ ! -x "$bin" ]]; then
-        if [[ "${MIOS_DRIFT_REQUIRE_TOOLS:-0}" == "1" ]]; then
-            _violation "generate-names-registry could not be built, so its equivalence to the Python leg is unverified"
-            return
-        fi
-        echo "[98-drift-checks]   generate-names-registry binary absent" >&2
-        return 0
-    fi
-
-    local names="$ROOT/usr/share/mios/names.generated.txt"
-    local refs="$ROOT/usr/share/mios/referenced_names.txt"
-    if [[ ! -f "$names" || ! -f "$refs" ]]; then
-        _violation "a names-registry artefact is missing, so the twins could not be compared"
-        return
-    fi
-    # Both legs write in place, so the committed bytes are copied out first and
-    # restored under every exit -- a comparison must not leave the tree changed.
-    local keep; keep="$(mktemp -d)"
-    cp "$names" "$keep/names" && cp "$refs" "$keep/refs" || {
-        rm -rf "$keep"; _violation "could not snapshot the names-registry artefacts"; return; }
-
-    local rc=0
-    MIOS_DRIFT_ROOT="$ROOT" "$bin" >/dev/null 2>"$keep/err" || rc=$?
-
-    # Compare, then RESTORE, then report. _violation returns 1 and errexit is
-    # live, so a bare call aborts the function -- reporting first left the tree
-    # holding the twin's output, which is the leak this gate exists to prevent.
-    local names_differ=0 refs_differ=0
-    cmp -s "$keep/names" "$names" || names_differ=1
-    cmp -s "$keep/refs" "$refs" || refs_differ=1
-    if (( rc != 0 )); then
-        sed 's/^/    /' "$keep/err" >&2 2>/dev/null || true
-    fi
-    (( names_differ )) && { diff "$keep/names" "$names" 2>/dev/null | head -10 >&2 || true; }
-    (( refs_differ )) && { diff "$keep/refs" "$refs" 2>/dev/null | head -10 >&2 || true; }
-    cp "$keep/names" "$names"
-    cp "$keep/refs" "$refs"
-    rm -rf "$keep"
-
-    local bad=0
-    (( rc != 0 )) && { _violation "the native names-registry generator exited $rc" || true; bad=1; }
-    (( names_differ )) && { _violation "the native generator's names.generated.txt differs from the Python leg's" || true; bad=1; }
-    (( refs_differ )) && { _violation "the native generator's referenced_names.txt differs from the Python leg's" || true; bad=1; }
-    (( bad == 0 )) && echo "[98-drift-checks]   both artefacts regenerate byte-identically from the native twin"
-    return 0
+    check_names_registry
 }
-
 # --- every ref the Quadlet renderer leaves unbaked is actually supplied at runtime ---
 check_protected_refs() {
     echo "[98-drift-checks] every bare \${MIOS_*} the Quadlet renderer leaves for systemd is supplied by the unit's own Environment= or by install.env"
     # The renderer decides WHETHER to protect a ref; nothing checked whether the
     # name can arrive. systemd expands an unset name to empty, so hollow
-    # protection reads exactly like working indirection (T-1064). Scope comes
+    # protection reads exactly like working indirection (task_3362). Scope comes
     # from [build.quadlet_render], the renderer's own table.
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
@@ -4647,8 +4593,8 @@ check_rust_test_coverage() {
 # --- generated manual pages compile cleanly and match CLI help surfaces ---
 check_manpages() {
     echo "[98-drift-checks] generated manual pages compile cleanly and match CLI help surfaces"
-    _need_python || return 0
-    local out; out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/render-manpages.py --check --validate 2>&1)" || { _violations_from "check_manpages: " "$out"; return; }
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$bin" render-manpages --root "$ROOT" --check --validate 2>&1)" || { _violations_from "check_manpages: " "$out"; return; }
     echo "[98-drift-checks]   usr/share/man matches the SSOT; man(1) reads it directly"
 }
 
@@ -4700,7 +4646,8 @@ check_manual_links() {
 # --- ADR architecture decision record index matches committed ADR files ---
 check_adr_index() {
     echo "[98-drift-checks] ADR architecture decision record index matches committed ADR files"
-    local out; out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/generate-adr-index.py --check 2>&1)" || { _violations_from "check_adr_index: " "$out"; return; }
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$bin" adr-index --root "$ROOT" --check 2>&1)" || { _violations_from "check_adr_index: " "$out"; return; }
     echo "[98-drift-checks]   $out"
 }
 
@@ -4729,17 +4676,54 @@ check_blade_coverage() { _run_py_check check_blade_coverage "tools/check-ssot.py
 check_fleet_safety() { _run_py_check check_fleet_safety "tools/check-ssot.py fleet-safety" ""; }
 check_ssot_consumer_keys() { _run_py_check check_ssot_consumer_keys "tools/check-ssot.py consumer-keys" ""; }
 check_unit_projection() { _run_py_check check_unit_projection "tools/check-ssot.py unit-projection" ""; }
-check_metal_vs_hosted() { _run_py_check check_metal_vs_hosted "tools/generate-metal-vs-hosted.py --check" ""; }
+check_metal_vs_hosted() {
+    echo "[98-drift-checks]   check_metal_vs_hosted"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" "$bin" metal-vs-hosted --root "$ROOT" --check 2>&1)" || { _violations_from "check_metal_vs_hosted: " "$out"; return; }
+    echo "[98-drift-checks]   $out"
+}
 check_node_pool() { _run_py_check check_node_pool "tools/check-ssot.py node-pool" ""; }
 check_port_fallbacks() { _run_py_check check_port_fallbacks "tools/check-ssot.py port-fallbacks" ""; }
 check_role_ssot() { _run_py_check check_role_ssot "tools/check-ssot.py role-ssot" ""; }
 check_blade_karg() { _run_deployment_projection blade-karg; }
 check_firstboot_provisioners() { _run_py_check check_firstboot_provisioners "tools/check-runtime.py firstboot-provisioners"; }
-check_desktop_launchers() { _run_py_check check_desktop_launchers "tools/render-desktop.py --check"; }
+check_desktop_launchers() {
+    echo "[98-drift-checks]   checking desktop launchers match SSOT"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$(cd "$ROOT" && "$bin" render-desktop --root "$ROOT" --check 2>&1); then
+        printf '%s\n' "$out" | head -n 20 >&2
+        _violation "desktop launchers drifted from SSOT (run 'just sync' or 'mios-gen render-desktop --root $ROOT')"
+    fi
+}
+check_tmux_theme() {
+    echo "[98-drift-checks]   checking tmux theme matches SSOT"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$(cd "$ROOT" && "$bin" render-tmux-theme --root "$ROOT" --check 2>&1); then
+        printf '%s\n' "$out" | head -n 20 >&2
+        _violation "tmux theme drifted from SSOT (run 'just sync' or 'mios-gen render-tmux-theme --root $ROOT')"
+    fi
+}
+check_btop_theme() {
+    echo "[98-drift-checks]   checking btop theme matches SSOT"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    if ! out=$(cd "$ROOT" && "$bin" render-btop-theme --root "$ROOT" --check 2>&1); then
+        printf '%s\n' "$out" | head -n 20 >&2
+        _violation "btop theme drifted from SSOT (run 'just sync' or 'mios-gen render-btop-theme --root $ROOT')"
+    fi
+}
+check_fastfetch() {
+    echo "[98-drift-checks]   checking fastfetch config matches SSOT"
+    local bin out; bin="$(native_bin mios-gen)" || { _violation "$_GEN_MISSING"; return; }
+    # Real comparison: deterministic (--mock) render vs the persisted golden fixture.
+    # A missing/corrupt fixture or a drifted generator both fail; nothing passes vacuously.
+    if ! out=$(cd "$ROOT" && "$bin" render-fastfetch --root "$ROOT" --check --mock --out "$ROOT/tests/golden/fastfetch/mock.jsonc" 2>&1); then
+        printf '%s\n' "$out" | head -n 20 >&2
+        _violation "fastfetch generator output differs from tests/golden/fastfetch/mock.jsonc (regenerate: mios-gen render-fastfetch --mock --out tests/golden/fastfetch/mock.jsonc)"
+    fi
+}
 
-# --- every mios.toml SSOT table has an access-shaped consumer or sits in the shrink-only [ssot_tables] register ---
 check_no_inert_ssot_tables() {
-    # Ported to mios-gate (ADR-0021, Law 14); python twin deleted (T-1001).
+    # Ported to mios-gate (ADR-0021, Law 14); python twin deleted (task_945).
     local bin; bin="$(_gate_bin)" || bin=""
     if [[ -z "$bin" ]]; then
         _violation "mios-gate is not built, so check_no_inert_ssot_tables could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
@@ -4779,7 +4763,9 @@ check_doc_refs_resolve() {
     fi
     local out
     if out="$("$bin" doc-refs-resolve --root "$ROOT" 2>&1)"; then
-        echo "[98-drift-checks]   every path named in an AI header or a markdown link resolves in the tracked tree"
+        # The binary's own line carries the measured count; a fixed sentence
+        # here dropped it, so a clean pass could not be compared with anything.
+        echo "[98-drift-checks]   ${out}"
     else
         _violations_from "check_doc_refs_resolve: " "$out"
     fi
@@ -4799,7 +4785,9 @@ check_generator_host_parity() {
     # Nothing is rendered or compared here: it reads generator sources for one
     # portability idiom. The old wording promised byte-identical output.
     echo "[98-drift-checks] generators avoid the non-portable fnmatch.fnmatch idiom"
-    local out; out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py generator-host-parity 2>&1)" || {
+    local bin; bin="$(_gate_bin)" || {
+        _violation "check_generator_host_parity requires native mios-gate"; return; }
+    local out; out="$("$bin" generator-host-parity --root "$ROOT" 2>&1)" || {
         _violations_from "check_generator_host_parity: " "$out"; return; }
     echo "[98-drift-checks]   $out"
 }
@@ -4821,8 +4809,9 @@ check_blade_reconcile_schema() {
 # --- bootstrap repository sync: shared files in MiOS-bootstrap match main repository SSOT ---
 check_bootstrap_sync() {
     echo "[98-drift-checks] bootstrap repository sync: shared files in MiOS-bootstrap match main repository SSOT"
-    local out; out="$(cd "$ROOT" && MIOS_DRIFT_ROOT="$ROOT" python3 tools/sync-bootstrap.py \
-            --root "$ROOT" --check 2>&1)" || {
+    local bin; bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || {
+        _violation "check_bootstrap_sync: native mios-gen is required; install the SSOT release catalog"; return; }
+    local out; out="$("$bin" bootstrap-sync --root "$ROOT" --check 2>&1)" || {
         _violations_from "check_bootstrap_sync: " "$out"; return; }
     echo "[98-drift-checks]   $out"
 }
@@ -4842,8 +4831,9 @@ check_legibility_ratchet() {
     echo "[98-drift-checks]   legibility floors holding"
 }
 
-# Header integrity: a tagger must never absorb line 1. See AGY-1607.
-# --- no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1 ---
+# --- the legacy archive holds every dropped file at its last content and mode ---
+check_legacy_archive() { _run_py_check check_legacy_archive "tools/drift-checks.py legacy-archive"; }
+
 check_header_integrity() {
     echo "[98-drift-checks] no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1"
     _need_python || return 0

@@ -11,7 +11,7 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-pxe-hub
-Exec=/usr/bin/matchbox -address 0.0.0.0:${MIOS_PORT_PXE_HUB_API:-8585} -data-path /var/lib/matchbox/data -assets-path /var/lib/matchbox/assets
+Exec=/usr/bin/matchbox -address 0.0.0.0:${MIOS_PORTS_PXE_HUB_API:-8585} -data-path /var/lib/matchbox/data -assets-path /var/lib/matchbox/assets
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=0
 Image=quay.io/poseidon/matchbox:latest

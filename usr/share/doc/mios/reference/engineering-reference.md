@@ -140,8 +140,8 @@ identifier used in paths, env vars, package names, and code.
 │   │                              #   profilers, etc.)
 │   └── windows/                   # Windows-specific helpers
 ├── config/
-│   ├── artifacts/                 # BIB configs (bib.toml, iso.toml, qcow2.toml,
-│   │                              #   vhdx.toml, wsl2.toml)
+│   ├── artifacts/                 # BIB recipes (bib.toml, iso.toml, wsl2.toml);
+│   │                              #   qcow2/vhdx rendered by miosd artifact-build
 │   └── bootstrap/bootstrap.ps1    # Windows bootstrap PS1
 ├── Containerfile                  # OCI build entry (single-stage + ctx scratch)
 ├── Justfile                       # Linux build orchestrator
@@ -265,9 +265,9 @@ COPY tools/                       → /ctx/tools/
 FROM ${BASE_IMAGE}                  # main build stage
 LABEL ...
 CMD ["/sbin/init"]
-ARG MIOS_USER=mios
-ARG MIOS_HOSTNAME=mios
-ARG MIOS_FLATPAKS=
+ARG MIOS_IDENTITY_USERNAME=mios
+ARG MIOS_IDENTITY_HOSTNAME=mios
+ARG MIOS_DESKTOP_FLATPAKS=
 RUN --mount=type=bind,from=ctx,...
     --mount=type=cache,...
     set -ex;
@@ -969,8 +969,8 @@ Canonical vars (see `usr/share/mios/env.defaults`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `MIOS_VERSION` | `0.2.x` | Image version |
-| `MIOS_DEFAULT_USER` | `mios` | Login user name |
-| `MIOS_DEFAULT_HOST` | `mios` | Hostname |
+| `MIOS_IDENTITY_USERNAME` | `mios` | Login user name |
+| `MIOS_IDENTITY_HOSTNAME` | `mios` | Hostname |
 | `MIOS_REPO_URL` | https://github.com/mios-dev/mios | System repo URL |
 | `MIOS_BOOTSTRAP_REPO_URL` | https://github.com/mios-dev/mios-bootstrap | Bootstrap repo URL |
 | `MIOS_IMAGE_NAME` | `ghcr.io/mios-dev/mios` | OCI image base name |
@@ -981,8 +981,8 @@ Canonical vars (see `usr/share/mios/env.defaults`):
 | `MIOS_AI_ENDPOINT` | local OpenAI-compatible front door | Single endpoint every agent/tool targets (LAW 5; resolves to `mios-agent-pipe`) |
 | `MIOS_AI_MODEL` | per `[ai].model` | Default chat model |
 | `MIOS_AI_KEY` | `""` | API key (empty for local) |
-| `MIOS_PORT_LLM_LIGHT` | per `[ports].llm_light` | `mios-llm-light` primary inference lane |
-| `MIOS_PORT_PGVECTOR` | `5432` | PostgreSQL + pgvector agent datastore |
+| `MIOS_PORTS_LLM_LIGHT` | per `[ports].llm_light` | `mios-llm-light` primary inference lane |
+| `MIOS_PORTS_PGVECTOR` | `5432` | PostgreSQL + pgvector agent datastore |
 | `MIOS_INSTALL_ENV` | `/etc/mios/install.env` | Host install env file |
 | `MIOS_WSLBOOT_DONE` | `/var/lib/mios/.wsl-firstboot-done` | Sentinel |
 
@@ -1066,9 +1066,9 @@ cat /var/lib/mios/role.active
 mios "ask the local AI a question"
 
 # AI surface (front door is the agent-pipe on the agent_pipe port; lanes below it)
-curl -s http://localhost:${MIOS_PORT_AGENT_PIPE}/v1/models | jq
-curl -s http://localhost:${MIOS_PORT_LLM_LIGHT}/v1/models | jq   # mios-llm-light lane
-curl -s http://localhost:${MIOS_PORT_LLM_LIGHT}/v1/embeddings \
+curl -s http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1/models | jq
+curl -s http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/models | jq   # mios-llm-light lane
+curl -s http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/embeddings \
   -d '{"model":"nomic-embed-text","input":"hello"}' -H 'Content-Type: application/json' | jq
 
 # Agent datastore (PostgreSQL + pgvector)

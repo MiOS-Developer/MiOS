@@ -102,7 +102,7 @@ there were sixteen.
 | 11 | SECRETS-NEVER-IN-ENV | bootc | `99-postcheck.sh:SECRETS-NEVER-IN-ENV` |
 | 12 | BAKE-NOT-FETCH | both | `98-drift-checks.sh:check_dag_integrity,check_firstboot_degrade_open` |
 | 13 | NATIVE-DROPINS | both | `98-drift-checks.sh:check_resolver_twin_parity` |
-| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages` |
+| 14 | TARGET-LANGUAGES | both | `98-drift-checks.sh:check_target_languages,check_agentpipe_mypy` |
 | 15 | DOUBLE-REPO-TRIPLE-CHECK | both | `process:CLAUDE.md/AGENTS.md (both repos); parity via 98-drift-checks.sh checks 22+27` |
 | 16 | ONE-TEMPLATE-PER-TYPE | both | `98-drift-checks.sh:check_template_conformance` |
 
@@ -126,7 +126,6 @@ Law 6 (UNPRIVILEGED-QUADLETS) permits root only for the units registered in
 | `mios-webtools-firecrawl-worker.container` | see `[security.privileged_quadlets]` |
 | `mios-webtools-redis.container` | see `[security.privileged_quadlets]` |
 | `mios-llm-heavy.container` | see `[security.privileged_quadlets]` |
-| `mios-llm-heavy-alt.container` | see `[security.privileged_quadlets]` |
 | `mios-coderun-sandbox@.container` | see `[security.privileged_quadlets]` |
 
 <!-- derived from usr/share/mios/mios.toml [security.privileged_quadlets].root -->

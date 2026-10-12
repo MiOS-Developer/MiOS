@@ -555,7 +555,7 @@ The repo root **is** the system root (no `system_files/` directory).
 - One large `RUN` block bind-mounts `/ctx` read-only and a writable
   `/tmp/build` copy, sources `automation/lib/packages.sh`, runs
   `dnf clean metadata`, `install_packages_strict base`, optionally
-  writes `/usr/share/mios/flatpak-list` from `MIOS_FLATPAKS`,
+  writes `/usr/share/mios/flatpak-list` from `MIOS_DESKTOP_FLATPAKS`,
   runs `automation/01-system-files-overlay.sh` pre-pipeline, then
   `CTX=/tmp/build /tmp/build/automation/build.sh` to iterate
   `automation/[0-9][0-9]-*.sh`.

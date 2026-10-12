@@ -20,7 +20,7 @@ fn die(msg: &str) -> ExitCode {
 
 /// Every knob comes from `[build.quadlet_render]`. Nothing here is a literal:
 /// the two bash renderers each carried their own hardcoded list and had already
-/// drifted apart by fourteen names (T-1040).
+/// drifted apart by fourteen names (task_977).
 #[derive(Debug)]
 struct Config {
     dirs: Vec<String>,
@@ -140,7 +140,7 @@ where
 }
 
 /// A unit declaring Environment=/EnvironmentFile= **in `[Service]`** owns its
-/// Exec refs (T-1040).
+/// Exec refs (task_977).
 ///
 /// The section is the whole point. In a `.container` Quadlet,
 /// `[Container] Environment=` becomes podman's `--env`: it populates the
@@ -401,7 +401,7 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    println!("mios-render-quadlets: rendered {changed} of {scanned} file(s)");
+    println!("mios-render-quadlets: checked {scanned} file(s), updated {changed}, unchanged {}; no unresolved placeholders", scanned - changed);
     ExitCode::SUCCESS
 }
 
@@ -447,11 +447,11 @@ mod tests {
     /// and its own header records the failure: code-server dies "Invalid URL".
     #[test]
     fn a_protected_line_still_bakes_its_default_forms() {
-        let unit = "[Service]\nEnvironment=MIOS_X=1\nExecStart=/bin/cs \\\n  --env A=${MIOS_X} \\\n  --bind-addr 127.0.0.1:${MIOS_PORT_CODE_SERVER:-8900}\n";
+        let unit = "[Service]\nEnvironment=MIOS_X=1\nExecStart=/bin/cs \\\n  --env A=${MIOS_X} \\\n  --bind-addr 127.0.0.1:${MIOS_PORTS_CODE_SERVER:-8900}\n";
         let out = render_file(
             unit,
             &cfg(),
-            &ssot(&[("MIOS_X", "9"), ("MIOS_PORT_CODE_SERVER", "8900")]),
+            &ssot(&[("MIOS_X", "9"), ("MIOS_PORTS_CODE_SERVER", "8900")]),
         );
         assert!(
             out.rendered.contains("--env A=${MIOS_X}"),
@@ -529,14 +529,14 @@ mod tests {
 
     /// Image= is not an Exec line and Quadlet does not expand it, so a floated
     /// tag that resolves to nothing must be NAMED. Four shipped .container
-    /// files carried exactly this (T-1040).
+    /// files carried exactly this (task_977).
     #[test]
     fn an_unresolvable_image_tag_is_reported_with_its_line() {
-        let unit = "[Container]\nImage=quay.io/ceph/ceph:${MIOS_VERSION_CEPH}\n";
+        let unit = "[Container]\nImage=quay.io/ceph/ceph:${MIOS_VERSIONS_CEPH}\n";
         let out = render_file(unit, &cfg(), &ssot(&[]));
         assert_eq!(1, out.unresolved.len(), "{:?}", out.unresolved);
         assert_eq!(2, out.unresolved[0].0);
-        assert_eq!("MIOS_VERSION_CEPH", out.unresolved[0].1);
+        assert_eq!("MIOS_VERSIONS_CEPH", out.unresolved[0].1);
     }
 
     #[test]

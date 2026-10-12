@@ -207,38 +207,59 @@ class Policy:
         return bool(rx and rx.search(text))
 
 # --------------------------------------------------------------------------
-# Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / MON-026)
+# Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / task_3395)
 # --------------------------------------------------------------------------
 class RefIndex:
-    """Stale-reference resolution is owned by doc_refs.rs in Rust (Law 14 / MON-026).
+    """Client of `mios-gate doc-refs-headers`, which resolves every AI header
+    path; a block is stale when it names one that did not resolve."""
 
-    Python mios_comments remains responsible only for comment lexing and classification.
-    """
-
-    def __init__(self, root: str = "") -> None:
+    def __init__(self, root: str = "", stale: dict[str, set[str]] | None = None) -> None:
         self.root = root
-        self.names: set[str] = set()
-        self.paths: set[str] = set()
-        self.dirs: set[str] = set()
+        self.stale = stale or {}
+
+    @staticmethod
+    def gate_bin(root: str) -> str | None:
+        import shutil
+        exe = "mios-gate.exe" if os.name == "nt" else "mios-gate"
+        native_dir = os.environ.get("MIOS_NATIVE_BIN_DIR")
+        for cand in (os.environ.get("MIOS_GATE_BIN"),
+                     native_dir and os.path.join(native_dir, exe),
+                     os.path.join(root, "src", "mios-rs", "target", "release", exe),
+                     os.path.join(root, "src", "mios-rs", "target", "debug", exe),
+                     os.path.join("/usr/libexec/mios", exe)):
+            if cand and os.path.isfile(cand):
+                return cand
+        return None if native_dir else shutil.which(exe)
 
     @classmethod
     def build(cls, root: str, skip_dirs: Iterable[str] = ()) -> "RefIndex":
-        return cls(root)
+        import json
+        exe = cls.gate_bin(root)
+        if not exe:
+            raise RuntimeError("mios-gate is not built, so no reference was resolved")
+        proc = subprocess.run([exe, "doc-refs-headers", "--root", root, "--format", "json"],
+                              capture_output=True, text=True)
+        try:
+            data = json.loads(proc.stdout)
+        except ValueError:
+            raise RuntimeError(f"{exe} doc-refs-headers returned no report"
+                               f" (rc={proc.returncode}): {proc.stderr.strip()[:300]}") from None
+        if data.get("status") == "could_not_run":
+            raise RuntimeError(f"doc-refs-headers could not run: {data.get('summary')}")
+        stale: dict[str, set[str]] = {}
+        for finding in data.get("findings", []):
+            rel, sep, target = finding.partition("\t")
+            if sep:
+                stale.setdefault(rel, set()).add(target)
+        return cls(root, stale)
 
-    def add_code_identifiers(self, text: str) -> None:
-        pass
-
-    def known(self, token: str) -> bool:
-        return True
-
-    def dangling(self, text: str, allowlist: Iterable[str] = ()) -> list[str]:
-        return []
+    def dangling(self, text: str, allowlist: Iterable[str] = (), path: str = "") -> list[str]:
+        # The allowlist is applied by the resolver, which reads the same [docs] key.
+        return sorted(t for t in self.stale.get(path, ()) if t in text)
 
 # --------------------------------------------------------------------------
 # Lexing
 # --------------------------------------------------------------------------
-# `<<EOF`, `<<-'PY'`, `<<"SQL"` -- captures the terminator so the body can be
-# skipped. Not matched when it is itself inside a comment.
 _AI_HINT_LINE = re.compile(r"\s*#?\s*AI-hint:")
 _AI_KEY_LINE = re.compile(r"\s*#?\s*AI-[a-z]+:")
 
@@ -270,11 +291,14 @@ def _hint_prose_len(text: str) -> int:
                 in_hint = False
     return total
 
+# `<<EOF`, `<<-'PY'`, `<<"SQL"` -- captures the terminator so the body can be
+# skipped. Not matched when it is itself inside a comment.
 _HEREDOC = re.compile(r"(?<!\S)<<-?\s*(?P<tag>'[A-Za-z_][A-Za-z0-9_]*'"
                       r'|"[A-Za-z_][A-Za-z0-9_]*"'
                       r"|[A-Za-z_][A-Za-z0-9_]*)")
 _MARKER = re.compile(r"^\s*(?:#+|//+|;+|--|<!--|\*|/\*)\s?")
-_END_MARKER = re.compile(r"\s*(?:-->|\*/)\s*$")
+_HTML_END = re.compile(r"--!?>")
+_END_MARKER = re.compile(r"\s*(?:--!?>|\*/)\s*$")
 _WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./:-]*")
 
 _STYLE_BY_EXT = {
@@ -411,7 +435,7 @@ def _lex_generic(path: str, src: str, style: str) -> list[Block]:
             if s == heredoc_end or s == heredoc_end + "'":
                 heredoc_end = None
             continue
-        m = _HEREDOC.search(raw)
+        m = None if raw.lstrip().startswith(style) else _HEREDOC.search(raw)
         if m:
             flush(i - 1)
             heredoc_end = m.group("tag").strip("'\"")
@@ -419,7 +443,7 @@ def _lex_generic(path: str, src: str, style: str) -> list[Block]:
         if style == "<!--":
             if not in_block and s.startswith("<!--"):
                 in_block, block_start, block_lines = True, i, [_strip(raw)]
-                if "-->" in s:
+                if _HTML_END.search(s):
                     in_block = False
                     out.append(_mk(path, block_start, i, "blockcomment", style,
                                    block_lines, "file-header" if i <= 3 else "orphan",
@@ -427,7 +451,7 @@ def _lex_generic(path: str, src: str, style: str) -> list[Block]:
                 continue
             if in_block:
                 block_lines.append(_strip(raw))
-                if "-->" in s:
+                if _HTML_END.search(s):
                     in_block = False
                     out.append(_mk(path, block_start, i, "blockcomment", style,
                                    block_lines,
@@ -472,17 +496,8 @@ def lex(path: str, raw: bytes | None = None, ai_tag=None) -> list[Block]:
     A block is a maximal run of consecutive full-line comments; a blank line, a
     code line, or a style change ends it.
     """
+    # Never the native binary: the census must not vary with what is on PATH.
     if raw is None:
-        native_bin = _find_native_comment_lex()
-        if native_bin and not path.endswith(".py"):
-            try:
-                import subprocess, json
-                proc = subprocess.run([native_bin, path], capture_output=True, check=True)
-                records = json.loads(proc.stdout.decode("utf-8"))
-                return [Block(**r) for r in records]
-            except Exception:
-                pass
-
         try:
             with open(path, "rb") as fh:
                 raw = fh.read()
@@ -512,7 +527,7 @@ def classify(block: Block, policy: Policy, refindex: RefIndex | None = None) -> 
     L, W = block.lines, block.words
 
     # R7 is an axis, not a class: evaluated for every block.
-    stale = bool(refindex and refindex.dangling(text, policy.ref_allowlist))
+    stale = bool(refindex and refindex.dangling(text, policy.ref_allowlist, block.path))
 
     # R0 GENERATED-SOURCE -- extracting from an artifact multi-counts the source.
     if _glob_any(block.path, policy.blocklist_globs):

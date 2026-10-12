@@ -1,4 +1,4 @@
-# AI-hint: Powershell script that hosts a llama.cpp Vulkan-backend inference server on Windows to provide a persistent, low-latency micro-LLM for the MiOS dae...
+# AI-hint: Powershell script that hosts a llama.cpp Vulkan-backend inference server (or rpc-server) on Windows to provide a persistent, low-latency micro-LLM for the MiOS daemon and agent pipeline.
 # AI-doc: usr/share/doc/mios/manual/windows.md
 <#
   mios-igpu-server.ps1  --  MiOS iGPU inference server (Windows host)
@@ -14,27 +14,33 @@
 
   The only way to actually use the AMD iGPU is to run the inference server
   NATIVELY on Windows, where the iGPU has a real driver + a Vulkan ICD, and
-  expose it over Tailscale so the in-VM agent-pipe can reach it. This script
-  is that server: llama.cpp's OpenAI-compatible `llama-server` on the VULKAN
-  backend (Vulkan supports AMD + Intel iGPUs; ROCm-on-Windows usually does
-  NOT support integrated Radeon).
+  expose it over localhost (127.0.0.1) under WSL2 mirrored networking per
+  Architectural Law 5 (MIOS_AI_ENDPOINT). This script is that server: llama.cpp's
+  OpenAI-compatible `llama-server` (or `rpc-server`) on the VULKAN backend
+  (Vulkan supports AMD + Intel iGPUs; ROCm-on-Windows usually does NOT support
+  integrated Radeon).
 
-  The MiOS swarm node formerly named the in-VM :11435 ollama is repointed at
-  http://<this-host-tailscale-ip>:<Port>/v1 (see mios.toml [agents]).
+  The MiOS swarm node local-igpu is pointed at:
+  http://127.0.0.1:8540/v1 (see mios.toml [nodes.local-igpu]).
 
   USAGE
   -----
-    pwsh -File mios-igpu-server.ps1                 # run in foreground (see Vulkan detect the iGPU)
-    pwsh -File mios-igpu-server.ps1 -Install        # register a logon scheduled task (persistent, hidden)
-    pwsh -File mios-igpu-server.ps1 -Uninstall      # remove the scheduled task
+    pwsh -File mios-igpu-server.ps1                 # run in foreground on 127.0.0.1:8540
+    pwsh -File mios-igpu-server.ps1 -Mode Rpc       # run rpc-server for cross-lane sharding
+    pwsh -File mios-igpu-server.ps1 -Install        # register a Windows service (persistent, hidden)
+    pwsh -File mios-igpu-server.ps1 -Uninstall      # remove the service
     pwsh -File mios-igpu-server.ps1 -Model C:\path\to\model.gguf
 
-  First run needs internet ONCE to fetch the llama.cpp Vulkan binary + a
-  default GGUF; after that it is fully offline.
+  First run needs internet ONCE if binaries need fetching; local GGUF models in
+  the MiOS WSL distro (\\wsl$\<distro>\var\lib\mios\llamacpp\models\, the
+  distro resolved from the Lxss registry or passed as -Distro) are detected and
+  used automatically without downloading.
 #>
 [CmdletBinding()]
 param(
-    [int]    $Port        = 11436,
+    [ValidateSet('Server', 'Rpc')]
+    [string] $Mode        = 'Server',
+    [int]    $Port        = 8540,
     [string] $Model       = '',
     # The iGPU's ROLE is the ALWAYS-ON LIGHT-COMPUTE BRAIN (
     # "iGPU SHOULD BE THE MICRO LLM ... AND the always-on MiOS daemon background
@@ -76,27 +82,19 @@ param(
     [string] $Device      = 'auto',
     [switch] $ShowDevices,
     [string] $LlamaTag    = 'latest',      # llama.cpp release tag, or 'latest'
+    # MiOS WSL distro whose /var/lib/mios/llamacpp/models is the local GGUF
+    # fallback. Empty = resolved below, never assumed by name.
+    [string] $Distro      = '',
     [switch] $Install,
     [switch] $Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
 
-$compiledExe = Join-Path $PSScriptRoot '..\..\..\src\mios-ainode\mios-ainode.exe'
-if (-not (Test-Path $compiledExe)) {
-    $compiledExe = 'C:\MiOS\src\mios-ainode\mios-ainode.exe'
+if (-not $PSBoundParameters.ContainsKey('Port') -and $env:MIOS_PORTS_LLM_IGPU) {
+    $Port = [int]$env:MIOS_PORTS_LLM_IGPU
 }
 
-$useCompiled = $env:MIOS_MIGRATION_USE_COMPILED_AINODE
-if ($null -eq $useCompiled -or $useCompiled -eq '') {
-    $useCompiled = 'true'
-}
-
-if (($useCompiled -eq 'true' -or $useCompiled -eq '1') -and (Test-Path $compiledExe)) {
-    Write-Host "[mios-igpu-server] launching compiled binary: $compiledExe $Port"
-    & $compiledExe $Port
-    exit $LASTEXITCODE
-}
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 $root      = Join-Path $env:ProgramData 'mios\igpu'
 $binDir    = Join-Path $root 'bin'
@@ -109,12 +107,57 @@ $logDir    = Join-Path $root 'logs'
 # The in-VM agent-pipe demand-pages per conversation against it (_kv_paging).
 $slotDir   = Join-Path $root 'slots'
 $exe       = Join-Path $binDir 'llama-server.exe'
+$rpcExe    = Join-Path $binDir 'rpc-server.exe'
+if (-not (Test-Path $rpcExe) -and (Test-Path (Join-Path $binDir 'ggml-rpc-server.exe'))) {
+    $rpcExe = Join-Path $binDir 'ggml-rpc-server.exe'
+}
 $taskName  = 'MiOS-iGPU-Server'
-$fwName    = "MiOS - igpu-llm ($Port/tcp)"
 
 function Info($m){ Write-Host "  [*] $m" -ForegroundColor Cyan }
 function Ok($m)  { Write-Host "  [+] $m" -ForegroundColor Green }
 function Warn($m){ Write-Host "  [!] $m" -ForegroundColor Yellow }
+
+# ---- resolve the MiOS WSL distro generatively ---------------------------------
+# The shared Resolve-MiosDistro when the MiOS globals are loaded; otherwise the
+# Lxss registry walk it was lifted from (wsl.exe -l emits UTF-16 that mangles
+# under the default console encoding), preferring a distro that carries the
+# MiOS product. Resolved here, in the operator's session, so -Install can pin it
+# for the service, whose own HKCU is not the operator's.
+if (-not $Distro) {
+    if (Get-Command Resolve-MiosDistro -ErrorAction SilentlyContinue) {
+        $Distro = Resolve-MiosDistro
+    } else {
+        $Distro = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue |
+            ForEach-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DistributionName } |
+            Where-Object { $_ -match 'MiOS' }) | Select-Object -First 1
+    }
+}
+
+# ---- low-power GPU routing (DirectX UserGpuPreferences) ----------------------
+function Ensure-MiosGpuPreferences {
+    param(
+        [string[]]$TargetExes
+    )
+    $hives = @('HKCU:\Software\Microsoft\DirectX\UserGpuPreferences')
+    if (Test-Path 'Registry::HKEY_USERS') {
+        Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | ForEach-Object {
+            $hives += "Registry::$($_.Name)\Software\Microsoft\DirectX\UserGpuPreferences"
+        }
+    }
+
+    foreach ($h in $hives) {
+        try {
+            if (-not (Test-Path $h)) {
+                New-Item -Path $h -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            foreach ($t in $TargetExes) {
+                if ($t) {
+                    Set-ItemProperty -Path $h -Name $t -Value 'GpuPreference=1;' -Type String -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch { }
+    }
+}
 
 # ---- service install / uninstall -------------------------------------
 if ($Uninstall) {
@@ -128,19 +171,23 @@ if ($Uninstall) {
         Ok "removed Windows Service '$taskName'"
     }
     # Clean up wrapper files
-    $targetExe = Join-Path $PSScriptRoot "$taskName.exe"
+    $targetExeWrapper = Join-Path $PSScriptRoot "$taskName.exe"
     $targetCfg = Join-Path $PSScriptRoot "$taskName.cfg"
-    Remove-Item $targetExe -Force -ErrorAction SilentlyContinue
+    Remove-Item $targetExeWrapper -Force -ErrorAction SilentlyContinue
     Remove-Item $targetCfg -Force -ErrorAction SilentlyContinue
+    # Clean up legacy firewall rules if present
+    Remove-NetFirewallRule -DisplayName "MiOS - igpu-llm ($Port/tcp)" -ErrorAction SilentlyContinue | Out-Null
     return
 }
 if ($Install) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         Warn 'Not elevated -- re-launching via UAC to register the service...'
-        Start-Process -FilePath 'pwsh.exe' -Verb RunAs -ArgumentList @(
+        $elevatedArgs = @(
             '-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Install',
-            '-Port',$Port,'-ContextSize',$ContextSize,'-GpuLayers',$GpuLayers)
+            '-Mode',$Mode,'-Port',$Port,'-ContextSize',$ContextSize,'-GpuLayers',$GpuLayers,'-Device',$Device)
+        if ($Distro) { $elevatedArgs += @('-Distro',$Distro) }
+        Start-Process -FilePath 'pwsh.exe' -Verb RunAs -ArgumentList $elevatedArgs
         return
     }
 
@@ -152,10 +199,11 @@ if ($Install) {
     if (-not $psExe -or $psExe -like '*\WindowsApps\*' -or -not (Test-Path $psExe)) {
         $psExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     }
-    $argsStr = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Port $Port -ContextSize $ContextSize -GpuLayers $GpuLayers -Device $Device"
-    if ($Model) { $argsStr += " -Model `"$Model`"" }
+    $argsStr = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode -Port $Port -ContextSize $ContextSize -GpuLayers $GpuLayers -Device $Device"
+    if ($Model -and $Mode -ne 'Rpc') { $argsStr += " -Model `"$Model`"" }
+    if ($Distro -and $Mode -ne 'Rpc') { $argsStr += " -Distro `"$Distro`"" }
 
-    $targetExe = Join-Path $PSScriptRoot "$taskName.exe"
+    $targetExeWrapper = Join-Path $PSScriptRoot "$taskName.exe"
     $targetCfg = Join-Path $PSScriptRoot "$taskName.cfg"
     $wrapperSrc = Join-Path $PSScriptRoot "MiosServiceTool.exe"
 
@@ -164,7 +212,7 @@ if ($Install) {
     }
 
     # Copy wrapper and create configuration file
-    Copy-Item $wrapperSrc $targetExe -Force
+    Copy-Item $wrapperSrc $targetExeWrapper -Force
     $cfgContent = "$psExe`r`n$argsStr"
     Set-Content -Path $targetCfg -Value $cfgContent -Encoding Utf8
 
@@ -175,10 +223,10 @@ if ($Install) {
         Start-Sleep -Seconds 1
     }
 
-    # Register as native Windows Service
-    New-Service -Name $taskName -BinaryPathName "`"$targetExe`"" -DisplayName "MiOS iGPU Server" -StartupType Automatic | Out-Null
+    $svcDisplayName = if ($Mode -eq 'Rpc') { "MiOS iGPU RPC Server" } else { "MiOS iGPU Server" }
+    New-Service -Name $taskName -BinaryPathName "`"$targetExeWrapper`"" -DisplayName $svcDisplayName -StartupType Automatic | Out-Null
 
-    Ok "registered Windows Service '$taskName' (port $Port)"
+    Ok "registered Windows Service '$taskName' (mode: $Mode, port: $Port)"
     Info "starting it now..."
     Start-Service -Name $taskName
     return
@@ -201,18 +249,32 @@ function Test-SHA256Integrity {
     }
 }
 
-# ---- ensure llama.cpp Vulkan binary -----------------------------------------
-if (-not (Test-Path $exe)) {
-    Info 'llama-server not found -- fetching llama.cpp Vulkan release...'
+# ---- ensure llama.cpp Vulkan binaries ---------------------------------------
+$targetBinary = if ($Mode -eq 'Rpc') { $rpcExe } else { $exe }
+if (-not (Test-Path $targetBinary)) {
+    Info "binary not found ($targetBinary) -- fetching llama.cpp Vulkan release..."
     $headers = @{ 'User-Agent' = 'mios-igpu-server' }
-    $relUrl  = if ($LlamaTag -eq 'latest') {
-        'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
+    if ($LlamaTag -eq 'latest') {
+        # Query releases array to bypass empty tags like v0.6.0
+        $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20' -Headers $headers
+        $matchedRelease = $null
+        $asset = $null
+        foreach ($r in $releases) {
+            $candidate = $r.assets | Where-Object { $_.name -match 'win-vulkan-x64\.zip$' } | Select-Object -First 1
+            if ($candidate) {
+                $matchedRelease = $r
+                $asset = $candidate
+                break
+            }
+        }
+        if (-not $asset) { throw "no release with win-vulkan-x64 asset found in recent llama.cpp releases" }
+        $rel = $matchedRelease
     } else {
-        "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$LlamaTag"
+        $relUrl = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$LlamaTag"
+        $rel = Invoke-RestMethod -Uri $relUrl -Headers $headers
+        $asset = $rel.assets | Where-Object { $_.name -match 'win-vulkan-x64\.zip$' } | Select-Object -First 1
+        if (-not $asset) { throw "no win-vulkan-x64 asset in llama.cpp release '$($rel.tag_name)'" }
     }
-    $rel   = Invoke-RestMethod -Uri $relUrl -Headers $headers
-    $asset = $rel.assets | Where-Object { $_.name -match 'win-vulkan-x64\.zip$' } | Select-Object -First 1
-    if (-not $asset) { throw "no win-vulkan-x64 asset in llama.cpp release '$($rel.tag_name)'" }
     $zip = Join-Path $env:TEMP $asset.name
     Info "downloading $($asset.name) ($([math]::Round($asset.size/1MB)) MB)..."
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers
@@ -220,43 +282,98 @@ if (-not (Test-Path $exe)) {
     Info 'extracting...'
     Expand-Archive -Path $zip -DestinationPath $binDir -Force
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
+
     # Some release zips nest the exe in a subfolder -- flatten if needed.
-    if (-not (Test-Path $exe)) {
-        $found = Get-ChildItem -Path $binDir -Recurse -Filter 'llama-server.exe' | Select-Object -First 1
-        if ($found) { Copy-Item $found.FullName $binDir -Force; Get-ChildItem $found.DirectoryName -Filter '*.dll' | Copy-Item -Destination $binDir -Force }
+    $foundServer = Get-ChildItem -Path $binDir -Recurse -Filter 'llama-server.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($foundServer -and $foundServer.DirectoryName -ne $binDir) {
+        Copy-Item $foundServer.FullName $binDir -Force
+        Get-ChildItem $foundServer.DirectoryName -Filter '*.dll' -ErrorAction SilentlyContinue | Copy-Item -Destination $binDir -Force
     }
-    if (-not (Test-Path $exe)) { throw "llama-server.exe not found after extraction in $binDir" }
-    Ok "installed llama-server -> $exe ($($rel.tag_name))"
+    $foundRpc = Get-ChildItem -Path $binDir -Recurse -Filter '*rpc-server.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($foundRpc) {
+        Copy-Item $foundRpc.FullName (Join-Path $binDir 'rpc-server.exe') -Force
+        $rpcExe = Join-Path $binDir 'rpc-server.exe'
+    }
+
+    $targetBinary = if ($Mode -eq 'Rpc') { $rpcExe } else { $exe }
+    if (-not (Test-Path $targetBinary)) { throw "$targetBinary not found after extraction in $binDir" }
+    Ok "installed llama.cpp Vulkan binaries -> $binDir ($($rel.tag_name))"
+}
+
+# Ensure rpc-server.exe is accessible
+if (-not (Test-Path $rpcExe)) {
+    $foundRpc = Get-ChildItem -Path $binDir -Recurse -Filter '*rpc-server.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($foundRpc) {
+        Copy-Item $foundRpc.FullName (Join-Path $binDir 'rpc-server.exe') -Force
+        $rpcExe = Join-Path $binDir 'rpc-server.exe'
+    }
 }
 
 # ---- list Vulkan devices and exit (to pick the right -Device) ---------------
-if ($ShowDevices) { & $exe --list-devices; return }
-
-# ---- ensure a model ---------------------------------------------------------
-if (-not $Model) {
-    $existing = Get-ChildItem -Path $modelsDir -Filter '*.gguf' -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 } | Select-Object -First 1
-    if ($existing) {
-        $Model = $existing.FullName
+if ($ShowDevices) {
+    if ($Mode -eq 'Rpc') {
+        & $rpcExe --device ?
     } else {
-        $Model = Join-Path $modelsDir (Split-Path $ModelUrl -Leaf)
-        Info "no GGUF present -- downloading default model ($(Split-Path $ModelUrl -Leaf))..."
-        Invoke-WebRequest -Uri $ModelUrl -OutFile $Model
-        Test-SHA256Integrity -FilePath $Model -ExpectedSha256 $env:MIOS_QWEN_GGUF_SHA256
-        Ok "model -> $Model"
+        & $exe --list-devices
     }
+    return
 }
-if (-not (Test-Path $Model)) { throw "model not found: $Model" }
 
-# ---- firewall: allow inbound on $Port, scoped to Tailscale CGNAT + local WSL --
-$fwRemote = @('100.64.0.0/10', '172.16.0.0/12')
-if (-not (Get-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName $fwName -Direction Inbound -Action Allow -Protocol TCP `
-        -LocalPort $Port -RemoteAddress $fwRemote -Profile Any -ErrorAction SilentlyContinue | Out-Null
-    Ok "firewall: allow tailnet + local WSL -> :$Port"
-} else {
-    Set-NetFirewallRule -DisplayName $fwName -RemoteAddress $fwRemote -ErrorAction SilentlyContinue | Out-Null
-    Ok "firewall: reconciled scope -> tailnet + local WSL on :$Port"
+# ---- ensure a model (Server mode only) --------------------------------------
+# No MiOS distro registered: the WSL fallback is skipped, never guessed.
+$wslModelsDir = if ($Distro) { "\\wsl$\$Distro\var\lib\mios\llamacpp\models" } else { $null }
+if ($Mode -ne 'Rpc') {
+    if ($Model -and -not (Test-Path $Model)) {
+        if (Test-Path (Join-Path $modelsDir $Model)) {
+            $Model = Join-Path $modelsDir $Model
+        } elseif ($wslModelsDir -and (Test-Path (Join-Path $wslModelsDir $Model))) {
+            $Model = Join-Path $wslModelsDir $Model
+        }
+    }
+
+    if (-not $Model) {
+        # 1. Local Windows models dir
+        $existing = Get-ChildItem -Path $modelsDir -Filter '*.gguf' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -gt 0 } | Select-Object -First 1
+        if ($existing) {
+            $Model = $existing.FullName
+            Ok "using existing model in models dir: $Model"
+        } elseif ($wslModelsDir -and (Test-Path $wslModelsDir)) {
+            # 2. Local WSL models fallback (granite-4.1-8b.gguf, lfm2-700m.gguf)
+            $wslCandidates = @('lfm2-700m.gguf', 'granite-4.1-8b.gguf')
+            foreach ($c in $wslCandidates) {
+                $candidatePath = Join-Path $wslModelsDir $c
+                if (Test-Path $candidatePath) {
+                    $Model = $candidatePath
+                    Ok "using local WSL model: $Model"
+                    break
+                }
+            }
+            if (-not $Model) {
+                $anyWsl = Get-ChildItem -Path $wslModelsDir -Filter '*.gguf' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Length -gt 0 } | Select-Object -First 1
+                if ($anyWsl) {
+                    $Model = $anyWsl.FullName
+                    Ok "using local WSL model: $Model"
+                }
+            }
+        }
+
+        # 3. Remote download fallback
+        if (-not $Model) {
+            $Model = Join-Path $modelsDir (Split-Path $ModelUrl -Leaf)
+            Info "no local GGUF present -- downloading default model ($(Split-Path $ModelUrl -Leaf))..."
+            Invoke-WebRequest -Uri $ModelUrl -OutFile $Model
+            Test-SHA256Integrity -FilePath $Model -ExpectedSha256 $env:MIOS_QWEN_GGUF_SHA256
+            Ok "model -> $Model"
+        }
+    }
+    if (-not (Test-Path $Model)) { throw "model not found: $Model" }
 }
+
+# ---- ensure DirectX Low-Power GPU Preference (GpuPreference=1;) -------------
+Ensure-MiosGpuPreferences @($exe, $rpcExe, (Join-Path $binDir 'ggml-rpc-server.exe'))
+Ok "registered DirectX low-power GPU preference (GpuPreference=1;) in UserGpuPreferences"
 
 # ---- resolve the AMD iGPU device by NAME (enumeration order is unstable) -----
 # CRITICAL: Vulkan device INDICES are not stable across
@@ -267,8 +384,12 @@ if (-not (Get-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue
 # an NVIDIA one. `--list-devices` prints e.g. "  Vulkan1: AMD Radeon(TM) Graphics
 # (..)". Only runs for -Device auto; an explicit VulkanN is honoured as-is.
 if ($Device -eq 'auto') {
-    $devTxt = (& $exe --list-devices 2>&1 | Out-String)
-    $hit = [regex]::Matches($devTxt, '(?im)^\s*(Vulkan\d+)\s*:\s*(.+?)\s*\(') |
+    $devTxt = if ($Mode -eq 'Rpc') {
+        (& $rpcExe --device ? 2>&1 | Out-String)
+    } else {
+        (& $exe --list-devices 2>&1 | Out-String)
+    }
+    $hit = [regex]::Matches($devTxt, '(?im)^\s*(Vulkan\d+)\s*:\s*(.+?)\s*(\(|$|\r|\n)') |
            Where-Object { $_.Groups[2].Value -match '(?i)AMD|Radeon' -and
                           $_.Groups[2].Value -notmatch '(?i)NVIDIA|GeForce|RTX' } |
            Select-Object -First 1
@@ -277,41 +398,44 @@ if ($Device -eq 'auto') {
         Ok "auto-selected iGPU by NAME: $Device = $($hit.Groups[2].Value.Trim())"
     } else {
         $Device = 'Vulkan0'
-        Warn "no AMD/Radeon Vulkan device found in --list-devices; falling back to $Device"
+        Warn "no AMD/Radeon Vulkan device found; falling back to $Device"
         Warn "device list was:`n$devTxt"
     }
 }
 
-# ---- run llama-server (pinned to the resolved AMD iGPU device) ---------------
-$tsIp = (Get-NetIPAddress -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like '100.*' } | Select-Object -First 1).IPAddress
-Info "model:    $Model"
-Info "binding:  0.0.0.0:$Port   (tailnet -> http://$tsIp`:$Port/v1)"
-Info "GPU:      Vulkan device $Device (resolved by name; expect the AMD iGPU, ~9 tok/s -- NOT the 4090)"
-$logFile = Join-Path $logDir ("llama-server-{0:yyyyMMdd}.log" -f (Get-Date))
-# llama-server logs to STDERR. Under Windows PowerShell 5.1 (which the scheduled
-# task now uses for a STABLE interpreter path -- the MSIX pwsh alias is
-# unresolvable by Task Scheduler, see -Install above), a native command writing
-# to stderr with $ErrorActionPreference='Stop' + 2>&1 raises a terminating
-# NativeCommandError and KILLS the server on its FIRST log line (operator
-# task exited 1, port never bound). Relax to Continue for the exec
-# so the server's normal logging flows into the Tee'd log instead of aborting.
-# (pwsh 7 does not treat native stderr this way, so this is harmless there.)
+# ---- run server (pinned to the resolved AMD iGPU device, localhost only) ----
 $ErrorActionPreference = 'Continue'
-Info "kv-paging: --slot-save-path $slotDir (agent-pipe pages conversations to/from disk)"
-# CRITICAL ("iGPU NEVER fired -- not a single tick on Task
-# Manager"): newer llama.cpp auto-fits params to device memory ("fitting params
-# to device memory ...") and SILENTLY places all layers on the CPU -- it prefers
-# the big Ryzen 9950X3D -- EVEN WITH --device VulkanN + --n-gpu-layers 99. So the
-# "iGPU server" ran a 1.5B on CPU at 0% iGPU util. `-fit off` disables that
-# auto-placement so the explicit iGPU offload is honoured. VERIFIED 0% -> 99.6%.
-& $exe `
-    --host 0.0.0.0 --port $Port `
-    --model $Model `
-    --ctx-size $ContextSize `
-    --parallel $Parallel `
-    --n-gpu-layers $GpuLayers `
-    --device $Device `
-    -fit off `
-    --alias mios-igpu `
-    --slot-save-path $slotDir `
-    2>&1 | Tee-Object -FilePath $logFile
+
+if ($Mode -eq 'Rpc') {
+    $logFile = Join-Path $logDir ("rpc-server-{0:yyyyMMdd}.log" -f (Get-Date))
+    Info "mode:     Rpc (llama.cpp rpc-server fabric)"
+    Info "binding:  127.0.0.1:$Port (localhost loopback per Law 5)"
+    Info "GPU:      Vulkan device $Device (AMD iGPU, coopmat disabled)"
+    # task_192 / WSL2 Mesa Dozen interop: disable coopmat for Vulkan RPC
+    $env:GGML_VK_DISABLE_COOPMAT = '1'
+
+    & $rpcExe `
+        --host 127.0.0.1 --port $Port `
+        --device $Device `
+        2>&1 | Tee-Object -FilePath $logFile
+} else {
+    $logFile = Join-Path $logDir ("llama-server-{0:yyyyMMdd}.log" -f (Get-Date))
+    Info "mode:     Server (OpenAI-compatible /v1/chat/completions)"
+    Info "model:    $Model"
+    Info "binding:  127.0.0.1:$Port (localhost -> http://127.0.0.1:$Port/v1 per Law 5)"
+    Info "GPU:      Vulkan device $Device (resolved by name; AMD iGPU)"
+    Info "kv-paging: --slot-save-path $slotDir (agent-pipe pages conversations to/from disk)"
+
+    # CRITICAL: -fit off disables auto-placement so explicit iGPU offload is honoured.
+    & $exe `
+        --host 127.0.0.1 --port $Port `
+        --model $Model `
+        --ctx-size $ContextSize `
+        --parallel $Parallel `
+        --n-gpu-layers $GpuLayers `
+        --device $Device `
+        -fit off `
+        --alias mios-igpu `
+        --slot-save-path $slotDir `
+        2>&1 | Tee-Object -FilePath $logFile
+}

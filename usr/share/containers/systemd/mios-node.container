@@ -10,15 +10,15 @@ Wants=network-online.target
 [Container]
 ContainerName=mios-node
 Environment=MIOS_NODE_ID=101
-Environment=MIOS_PORT=${MIOS_PORT_NODE:-8650}
-Environment=MIOS_AI_ENDPOINT=http://127.0.0.1:${MIOS_PORT_AGENT_PIPE:-8700}/v1
+Environment=MIOS_PORT=${MIOS_PORTS_NODE:-8650}
+Environment=MIOS_AI_ENDPOINT=http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE:-8700}/v1
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=830
 Image=ghcr.io/mios-dev/mios-node:latest
 Label=org.opencontainers.image.title=mios-node
 Pod=mios-ai.pod
-PublishPort=${MIOS_PORT_NODE:-8650}:${MIOS_PORT_NODE:-8650}/udp
-PublishPort=${MIOS_PORT_NODE:-8650}:${MIOS_PORT_NODE:-8650}/tcp
+PublishPort=${MIOS_PORTS_NODE:-8650}:${MIOS_PORTS_NODE:-8650}/udp
+PublishPort=${MIOS_PORTS_NODE:-8650}:${MIOS_PORTS_NODE:-8650}/tcp
 User=830
 Volume=/var/lib/mios:/var/lib/mios:Z
 

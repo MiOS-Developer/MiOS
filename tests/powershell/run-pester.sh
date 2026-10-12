@@ -60,10 +60,12 @@ export MIOS_BOOTSTRAP_ROOT="${MIOS_BOOTSTRAP_ROOT:-$ROOT/../mios-bootstrap}"
 [[ -f "$MIOS_BOOTSTRAP_ROOT/build-mios.ps1" ]] || { echo "[run-pester] ERROR: set MIOS_BOOTSTRAP_ROOT to the bootstrap checkout" >&2; exit 1; }
 
 win_test_dir="$ROOT/tests/powershell"
-if [[ "$win_test_dir" =~ ^/mnt/c/ ]]; then
-    win_test_dir="C:/${win_test_dir#/mnt/c/}"
-elif [[ "$win_test_dir" =~ ^/c/ ]]; then
-    win_test_dir="C:/${win_test_dir#/c/}"
+if [[ "$PS_BIN" == *.exe ]]; then
+    if [[ "$win_test_dir" =~ ^/mnt/c/ ]]; then
+        win_test_dir="C:/${win_test_dir#/mnt/c/}"
+    elif [[ "$win_test_dir" =~ ^/c/ ]]; then
+        win_test_dir="C:/${win_test_dir#/c/}"
+    fi
 fi
 
 OUT=$("$PS_BIN" -NoProfile -NonInteractive -Command "

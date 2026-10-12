@@ -152,63 +152,63 @@ spec:
     env:
     - name: HOME
       value: /var/lib/mios/llamacpp
-    - name: MIOS_PORT_COCKPIT
+    - name: MIOS_PORTS_COCKPIT
       value: "8090"
-    - name: MIOS_PORT_FORGE_SSH
+    - name: MIOS_PORTS_FORGE_SSH
       value: "8301"
-    - name: MIOS_PORT_OPENCODE_GATEWAY
+    - name: MIOS_PORTS_OPENCODE_GATEWAY
       value: "8633"
-    - name: MIOS_PORT_PGVECTOR
+    - name: MIOS_PORTS_PGVECTOR
       value: "8432"
-    - name: MIOS_PORT_TTYD_POWERSHELL
+    - name: MIOS_PORTS_TTYD_POWERSHELL
       value: "8682"
     - name: LD_LIBRARY_PATH
       value: /usr/lib/wsl/lib:/usr/local/cuda/lib64
-    - name: MIOS_PORT_TTYD_BASH
+    - name: MIOS_PORTS_TTYD_BASH
       value: "8681"
     - name: MIOS_PORT_GUACAMOLE_WEB
       value: "8080"
-    - name: MIOS_PORT_SGLANG
+    - name: MIOS_PORTS_SGLANG
       value: "8442"
-    - name: MIOS_PORT_CODE_SERVER
+    - name: MIOS_PORTS_CODE_SERVER
       value: "8800"
-    - name: MIOS_PORT_AGENT_PIPE
+    - name: MIOS_PORTS_AGENT_PIPE
       value: "8640"
-    - name: MIOS_PORT_SSH
+    - name: MIOS_PORTS_SSH
       value: "8222"
-    - name: MIOS_PORT_FORGE_HTTP
+    - name: MIOS_PORTS_FORGE_HTTP
       value: "8300"
-    - name: MIOS_PORT_FIRECRAWL
+    - name: MIOS_PORTS_FIRECRAWL
       value: "8302"
-    - name: MIOS_PORT_CPU_NODE
+    - name: MIOS_PORTS_CPU_NODE
       value: "8458"
-    - name: MIOS_PORT_VLLM
+    - name: MIOS_PORTS_VLLM
       value: "8441"
-    - name: MIOS_PORT_HERMES
+    - name: MIOS_PORTS_HERMES
       value: "8642"
-    - name: MIOS_PORT_HERMES_DASHBOARD
+    - name: MIOS_PORTS_HERMES_DASHBOARD
       value: "8119"
-    - name: MIOS_PORT_CRAWL4AI
+    - name: MIOS_PORTS_CRAWL4AI
       value: "8235"
-    - name: MIOS_PORT_K3S_API
+    - name: MIOS_PORTS_K3S_API
       value: "8443"
     - name: MIOS_PORT_HERMES_WORKER
       value: "8643"
-    - name: MIOS_PORT_LLM_LIGHT
+    - name: MIOS_PORTS_LLM_LIGHT
       value: "8450"
-    - name: MIOS_PORT_OPEN_WEBUI
+    - name: MIOS_PORTS_OPEN_WEBUI
       value: "8033"
-    - name: MIOS_PORT_COCKPIT_LINK
+    - name: MIOS_PORTS_COCKPIT_LINK
       value: "8091"
-    - name: MIOS_PORT_RDP
+    - name: MIOS_PORTS_RDP
       value: "8389"
-    - name: MIOS_PORT_ADGUARD_UI
+    - name: MIOS_PORTS_ADGUARD_UI
       value: "8053"
-    - name: MIOS_PORT_SEARXNG
+    - name: MIOS_PORTS_SEARXNG
       value: "8899"
-    - name: MIOS_PORT_CEPH_DASHBOARD
+    - name: MIOS_PORTS_CEPH_DASHBOARD
       value: "8444"
-    - name: MIOS_PORT_ADGUARD_DNS
+    - name: MIOS_PORTS_ADGUARD_DNS
       value: "53"
     image: ghcr.io/mostlygeek/llama-swap:cuda
     name: mios-llm-light

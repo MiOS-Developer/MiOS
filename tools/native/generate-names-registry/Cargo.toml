@@ -5,7 +5,4 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-toml.workspace = true
-serde.workspace = true
-regex.workspace = true
-mios-resolver = { path = "../mios-resolver" }
+mios-gen = { path = "../mios-gen" }

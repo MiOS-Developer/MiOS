@@ -28,9 +28,9 @@ _render_unified() {
     }
 
     if [[ -f "${MIOS_CONFIG_DIR}/env.toml" ]]; then
-        legacy_user=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_USER)
-        legacy_host=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_HOSTNAME)
-        legacy_flat=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_FLATPAKS)
+        legacy_user=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_IDENTITY_USERNAME)
+        legacy_host=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_IDENTITY_HOSTNAME)
+        legacy_flat=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_DESKTOP_FLATPAKS)
         legacy_base=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_BASE_IMAGE)
         legacy_localtag=$(_get "${MIOS_CONFIG_DIR}/env.toml" MIOS_LOCAL_TAG)
     fi

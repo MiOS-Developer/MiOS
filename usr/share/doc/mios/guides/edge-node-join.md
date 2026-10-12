@@ -1,4 +1,4 @@
-<!-- AI-hint: Operator guide for joining a Raspberry Pi / edge node to a MiOS council over the single outbound-dial port (agent-pipe, port key `agent_pipe`, MIOS_PORT_AGENT_PIPE), using the three-layer mios.toml overlay and the [agents.<name>] remote-http template. Covers the optional federated pgvector path ([pgvector].listen_loopback=false) and the least-privilege posture for untrusted edge peers. Fulfils roadmap T-070 (WS-D2); depends on the D1 remote/edge agent template ([agents._defaults]).
+<!-- AI-hint: Operator guide for joining a Raspberry Pi / edge node to a MiOS council over the single outbound-dial port (agent-pipe, port key `agent_pipe`, MIOS_PORTS_AGENT_PIPE), using the three-layer mios.toml overlay and the [agents.<name>] remote-http template. Covers the optional federated pgvector path ([pgvector].listen_loopback=false) and the least-privilege posture for untrusted edge peers. Fulfils roadmap task_72 (WS-D2); depends on the D1 remote/edge agent template ([agents._defaults]).
      AI-related: ../../mios/mios.toml ([agents], [pgvector], [security]), ../reference/api.md (the `agent_pipe`-port /v1 + /a2a surface), ./edge-node-join.md -->
 
 # Joining a Pi / Edge Node to a MiOS Council
@@ -17,7 +17,7 @@ across NAT, tailnets, and firewalled home LANs.
 ## 0. What "join" means here
 
 A MiOS hub exposes its whole brain on a **single port** — the agent-pipe,
-port key `agent_pipe` (`MIOS_PORT_AGENT_PIPE`). Three surfaces live there:
+port key `agent_pipe` (`MIOS_PORTS_AGENT_PIPE`). Three surfaces live there:
 
 | Path | Purpose |
 |---|---|
@@ -36,7 +36,7 @@ Prerequisites:
 - The hub is reachable from the edge node on the `agent_pipe` port (LAN IP,
   tailnet address, or reverse-tunnel). Verify from the edge node:
   ```bash
-  curl -fsS http://<HUB>:${MIOS_PORT_AGENT_PIPE}/health && echo OK
+  curl -fsS http://<HUB>:${MIOS_PORTS_AGENT_PIPE}/health && echo OK
   ```
 - If the hub has `[security].require_auth = true` (recommended once it binds
   anything other than loopback), you have a **caller key** for the edge node
@@ -111,7 +111,7 @@ Verify the edge node now sees the hub as a peer:
 
 ```bash
 mios-sync-env
-curl -fsS http://<HUB>:${MIOS_PORT_AGENT_PIPE}/v1/models  # should list the hub's models
+curl -fsS http://<HUB>:${MIOS_PORTS_AGENT_PIPE}/v1/models  # should list the hub's models
 # then exercise a real hop:
 echo "hello from the pi" | mios              # routes through the council incl. the hub
 ```
@@ -185,12 +185,12 @@ and federate over `/a2a` only.
 
 ## 6. Checklist — a Pi joins by following this doc alone
 
-1. `curl -fsS http://<HUB>:${MIOS_PORT_AGENT_PIPE}/health` from the Pi → `OK`.
+1. `curl -fsS http://<HUB>:${MIOS_PORTS_AGENT_PIPE}/health` from the Pi → `OK`.
 2. Create/seed `~/.config/mios/mios.toml` (`just init-user-space` optional) → edit it.
 3. Add the `[agents.hub]` remote-http block (§2); set `MIOS_AGENT_HUB_KEY` if the
    hub requires auth.
 4. `mios-sync-env`.
-5. `curl -fsS http://<HUB>:${MIOS_PORT_AGENT_PIPE}/v1/models` lists the hub's models.
+5. `curl -fsS http://<HUB>:${MIOS_PORTS_AGENT_PIPE}/v1/models` lists the hub's models.
 6. `echo hi | mios` routes through the council including the hub.
 7. (Optional) enable federated pgvector on the hub only if you need shared memory.
 

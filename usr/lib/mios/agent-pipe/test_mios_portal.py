@@ -128,6 +128,19 @@ def test_read_asset_missing():
     check("missing asset degrades to b''",
           mios_portal._read_portal_asset("does-not-exist-xyz.bin") == b"")
 
+def test_portal_assets_reexport():
+    """The PWA assets live in mios_pipe.routing.portal_assets; the routes,
+    server.py and the checks above read them as mios_portal.<name>. Pin that the
+    re-export hands over the very same objects."""
+    from mios_pipe.routing import portal_assets
+    names = ("_PORTAL_ICON", "_read_portal_asset", "_PORTAL_ICON_192", "_PORTAL_ICON_512",
+             "_PORTAL_MANIFEST", "_PORTAL_SW", "_PORTAL_LOGIN_HTML", "_IOSTEST_HTML")
+    stale = [n for n in names if getattr(mios_portal, n, None) is not getattr(portal_assets, n)]
+    check("assets: mios_portal re-exports portal_assets' own objects", not stale, str(stale))
+    check("assets: the PNG icons are bytes (b'' when not baked)",
+          isinstance(portal_assets._PORTAL_ICON_192, bytes)
+          and isinstance(portal_assets._PORTAL_ICON_512, bytes))
+
 def test_host_stats_shape():
     s = mios_portal._host_stats()
     check("host stats is a dict with cpu key",
@@ -305,6 +318,7 @@ def main():
     test_authed_flag()
     test_manifest_shape()
     test_read_asset_missing()
+    test_portal_assets_reexport()
     test_host_stats_shape()
     test_swarm_probe()
     test_portal_stats_logic()

@@ -303,7 +303,7 @@ def cmd_launch(args: list[str]) -> int:
         print(json.dumps({"success": False, "fired": False, "launched": False,
                           "error": "usage: mios-os-control launch \"<app>\""}))
         return 64
-    port = os.environ.get("MIOS_PORT_DAEMON_AGENT", os.environ.get("MIOS_DAEMON_AGENT_PORT", "8740"))
+    port = os.environ.get("MIOS_PORTS_DAEMON_AGENT", os.environ.get("MIOS_PORT_DAEMON_AGENT", os.environ.get("MIOS_DAEMON_AGENT_PORT", "8740")))
     base = os.environ.get(
         "MIOS_DAEMON_AGENT_URL", f"http://127.0.0.1:{port}").rstrip("/")
     payload = json.dumps({"action": "launch", "app": app,

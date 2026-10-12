@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Bandwidth-throttled Ceph self-healing daemon and PG rebalance orchestrator (T-729, T-730).
+# AI-hint: Bandwidth-throttled Ceph self-healing daemon and PG rebalance orchestrator (task_673, task_674).
 # AI-related: usr/libexec/mios/storage/ceph_heal.py, tests/test-storage.py
 """Bandwidth-throttled Ceph self-healing daemon and PG rebalance orchestrator for MiOS.
 

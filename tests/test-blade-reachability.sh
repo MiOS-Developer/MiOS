@@ -28,6 +28,8 @@ else
 fi
 
 FIXTURE="$(mktemp -d)"
+export MIOS_PATHS_BLADE_ENV="${FIXTURE}/blade.env"
+printf '%s\n' 'MIOS_BLADE_TYPE=WS-BLADE' 'MIOS_BLADE_CAPS=service-plane' >"$MIOS_PATHS_BLADE_ENV"
 SRV_PID=""
 stop_server() {
     if [ -n "$SRV_PID" ]; then
@@ -88,12 +90,15 @@ run_status() {
     MIOS_HOST_TOML="${FIXTURE}/mios.toml" \
     MIOS_USER_TOML=/dev/null \
     MIOS_BLADE_PROBE_TIMEOUT=2 \
-    MIOS_PORT_CPU_NODE=8510 MIOS_PORT_LLM_LIGHT=8500 \
-    MIOS_PORT_SGLANG=8530 MIOS_PORT_VLLM=8520 \
+    MIOS_PORTS_CPU_NODE=8510 MIOS_PORTS_LLM_LIGHT=8500 \
+    MIOS_PORTS_LLM_HEAVY=8520 \
         bash "${ROOT}/usr/libexec/mios/mios-blade" status 2>&1
 }
 
 OUT="$(run_status)"
+
+grep -q '^Blade Type:   WS-BLADE$' <<<"$OUT" \
+    || die "status ignored the selected runtime state fixture: $OUT"
 
 grep -q '^Offload targets:' <<<"$OUT" \
     || die "status does not report offload targets:
@@ -110,7 +115,7 @@ grep -qE "^  search +REMOTE +UNREACHABLE " <<<"$OUT" \
 $OUT"
 ok "an offloaded target that does not answer reads REMOTE UNREACHABLE"
 
-grep -qE "^  node:local-sglang +local " <<<"$OUT" \
+grep -qE "^  node:local-heavy +local " <<<"$OUT" \
     || die "a target the overlay does not name must stay local:
 $OUT"
 ok "targets the overlay does not name stay local"
@@ -118,8 +123,8 @@ ok "targets the overlay does not name stay local"
 # The seat/blade tell: with NO overlay every target is local.
 OUT_LOCAL="$(MIOS_USR_DIR="${ROOT}/usr/lib/mios" MIOS_ETC_DIR="$FIXTURE" \
     MIOS_HOST_TOML=/dev/null MIOS_USER_TOML=/dev/null MIOS_BLADE_PROBE_TIMEOUT=1 \
-    MIOS_PORT_AGENT_PIPE=8700 MIOS_PORT_SEARXNG=8800 MIOS_PORT_CPU_NODE=8510 \
-    MIOS_PORT_LLM_LIGHT=8500 MIOS_PORT_SGLANG=8530 MIOS_PORT_VLLM=8520 \
+    MIOS_PORTS_AGENT_PIPE=8700 MIOS_PORTS_SEARXNG=8800 MIOS_PORTS_CPU_NODE=8510 \
+    MIOS_PORTS_LLM_LIGHT=8500 MIOS_PORTS_LLM_HEAVY=8520 \
     bash "${ROOT}/usr/libexec/mios/mios-blade" status 2>&1)"
 grep -q 'REMOTE' <<<"$OUT_LOCAL" \
     && die "with no overlay nothing should be REMOTE:

@@ -19,21 +19,21 @@ spec:
     - /usr/bin/s6-svscan
     - /etc/s6
     env:
-    - name: MIOS_PORT_ADGUARD_DNS
+    - name: MIOS_PORTS_ADGUARD_DNS
       value: "53"
-    - name: MIOS_PORT_OPENCODE_GATEWAY
+    - name: MIOS_PORTS_OPENCODE_GATEWAY
       value: "8633"
     - name: FORGEJO__security__INSTALL_LOCK
       value: "true"
-    - name: MIOS_PORT_SEARXNG
+    - name: MIOS_PORTS_SEARXNG
       value: "8899"
-    - name: MIOS_PORT_PGVECTOR
+    - name: MIOS_PORTS_PGVECTOR
       value: "8432"
     - name: FORGEJO__log__LEVEL
       value: Info
     - name: GITEA__server__HTTP_ADDR
       value: 0.0.0.0
-    - name: MIOS_PORT_LLM_LIGHT
+    - name: MIOS_PORTS_LLM_LIGHT
       value: "8450"
     - name: FORGEJO__server__SSH_LISTEN_PORT
       value: "49922"
@@ -41,73 +41,73 @@ spec:
       value: "8643"
     - name: FORGEJO__server__SSH_PORT
       value: "49922"
-    - name: MIOS_PORT_ADGUARD_UI
+    - name: MIOS_PORTS_ADGUARD_UI
       value: "8053"
-    - name: MIOS_PORT_CPU_NODE
+    - name: MIOS_PORTS_CPU_NODE
       value: "8458"
     - name: FORGEJO__server__SSH_LISTEN_HOST
       value: 0.0.0.0
-    - name: MIOS_PORT_COCKPIT_LINK
+    - name: MIOS_PORTS_COCKPIT_LINK
       value: "8091"
     - name: FORGEJO__log__MODE
       value: console
     - name: USER_UID
       value: "816"
-    - name: MIOS_PORT_VLLM
+    - name: MIOS_PORTS_VLLM
       value: "8441"
-    - name: MIOS_PORT_FORGE_SSH
+    - name: MIOS_PORTS_FORGE_SSH
       value: "8301"
-    - name: MIOS_PORT_RDP
+    - name: MIOS_PORTS_RDP
       value: "8389"
     - name: FORGEJO__database__PATH
       value: /data/forgejo.db
-    - name: MIOS_PORT_AGENT_PIPE
+    - name: MIOS_PORTS_AGENT_PIPE
       value: "8640"
-    - name: MIOS_PORT_CEPH_DASHBOARD
+    - name: MIOS_PORTS_CEPH_DASHBOARD
       value: "8444"
-    - name: MIOS_PORT_HERMES_DASHBOARD
+    - name: MIOS_PORTS_HERMES_DASHBOARD
       value: "8119"
     - name: FORGEJO__server__HTTP_PORT
       value: "8300"
-    - name: MIOS_PORT_CODE_SERVER
+    - name: MIOS_PORTS_CODE_SERVER
       value: "8800"
-    - name: MIOS_PORT_SGLANG
+    - name: MIOS_PORTS_SGLANG
       value: "8442"
     - name: USER_GID
       value: "816"
-    - name: MIOS_PORT_FIRECRAWL
+    - name: MIOS_PORTS_FIRECRAWL
       value: "8302"
-    - name: MIOS_PORT_TTYD_POWERSHELL
+    - name: MIOS_PORTS_TTYD_POWERSHELL
       value: "8682"
-    - name: MIOS_PORT_SSH
+    - name: MIOS_PORTS_SSH
       value: "8222"
-    - name: MIOS_PORT_CRAWL4AI
+    - name: MIOS_PORTS_CRAWL4AI
       value: "8235"
     - name: FORGEJO__server__HTTP_ADDR
       value: 0.0.0.0
     - name: FORGEJO__database__DB_TYPE
       value: sqlite3
-    - name: MIOS_PORT_COCKPIT
+    - name: MIOS_PORTS_COCKPIT
       value: "8090"
-    - name: MIOS_PORT_OPEN_WEBUI
+    - name: MIOS_PORTS_OPEN_WEBUI
       value: "8033"
     - name: MIOS_PORT_GUACAMOLE_WEB
       value: "8080"
-    - name: MIOS_PORT_TTYD_BASH
+    - name: MIOS_PORTS_TTYD_BASH
       value: "8681"
     - name: FORGEJO__service__DISABLE_REGISTRATION
       value: "true"
     - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
       value: "false"
-    - name: MIOS_PORT_HERMES
+    - name: MIOS_PORTS_HERMES
       value: "8642"
     - name: FORGEJO__server__START_SSH_SERVER
       value: "true"
     - name: FORGEJO__server__ROOT_URL
       value: http://localhost:8300/
-    - name: MIOS_PORT_FORGE_HTTP
+    - name: MIOS_PORTS_FORGE_HTTP
       value: "8300"
-    - name: MIOS_PORT_K3S_API
+    - name: MIOS_PORTS_K3S_API
       value: "8443"
     image: codeberg.org/forgejo/forgejo:12
     name: mios-forge
@@ -137,21 +137,21 @@ spec:
     - mountPath: /data
       name: 740e61d02e0f02ff994b8ed364d92522f80eb69e3ec5f15c84f86427263079f3-pvc
   - env:
-    - name: MIOS_PORT_AGENT_PIPE
+    - name: MIOS_PORTS_AGENT_PIPE
       value: "8640"
-    - name: MIOS_PORT_FORGE_HTTP
+    - name: MIOS_PORTS_FORGE_HTTP
       value: "8300"
     - name: BIND_ADDRESS
       value: 0.0.0.0:8899
-    - name: MIOS_PORT_K3S_API
+    - name: MIOS_PORTS_K3S_API
       value: "8443"
-    - name: MIOS_PORT_OPENCODE_GATEWAY
+    - name: MIOS_PORTS_OPENCODE_GATEWAY
       value: "8633"
     - name: GRANIAN_WORKERS
       value: "2"
-    - name: MIOS_PORT_FIRECRAWL
+    - name: MIOS_PORTS_FIRECRAWL
       value: "8302"
-    - name: MIOS_PORT_TTYD_BASH
+    - name: MIOS_PORTS_TTYD_BASH
       value: "8681"
     - name: MIOS_PORT_GUACAMOLE_WEB
       value: "8080"
@@ -159,55 +159,55 @@ spec:
       value: "8"
     - name: SEARXNG_BIND_ADDRESS
       value: 0.0.0.0:8899
-    - name: MIOS_PORT_SEARXNG
+    - name: MIOS_PORTS_SEARXNG
       value: "8899"
     - name: GRANIAN_PORT
       value: "8899"
-    - name: MIOS_PORT_CODE_SERVER
+    - name: MIOS_PORTS_CODE_SERVER
       value: "8800"
-    - name: MIOS_PORT_TTYD_POWERSHELL
+    - name: MIOS_PORTS_TTYD_POWERSHELL
       value: "8682"
-    - name: MIOS_PORT_HERMES
+    - name: MIOS_PORTS_HERMES
       value: "8642"
-    - name: MIOS_PORT_RDP
+    - name: MIOS_PORTS_RDP
       value: "8389"
-    - name: MIOS_PORT_VLLM
+    - name: MIOS_PORTS_VLLM
       value: "8441"
-    - name: MIOS_PORT_SGLANG
+    - name: MIOS_PORTS_SGLANG
       value: "8442"
-    - name: MIOS_PORT_HERMES_DASHBOARD
+    - name: MIOS_PORTS_HERMES_DASHBOARD
       value: "8119"
-    - name: MIOS_PORT_PGVECTOR
+    - name: MIOS_PORTS_PGVECTOR
       value: "8432"
-    - name: MIOS_PORT_ADGUARD_DNS
+    - name: MIOS_PORTS_ADGUARD_DNS
       value: "53"
-    - name: MIOS_PORT_COCKPIT_LINK
+    - name: MIOS_PORTS_COCKPIT_LINK
       value: "8091"
-    - name: MIOS_PORT_CRAWL4AI
+    - name: MIOS_PORTS_CRAWL4AI
       value: "8235"
     - name: SEARXNG_BASE_URL
       value: http://localhost:8899/
     - name: SEARXNG_LOG_LEVEL
       value: WARNING
-    - name: MIOS_PORT_COCKPIT
+    - name: MIOS_PORTS_COCKPIT
       value: "8090"
     - name: MIOS_PORT_HERMES_WORKER
       value: "8643"
-    - name: MIOS_PORT_LLM_LIGHT
+    - name: MIOS_PORTS_LLM_LIGHT
       value: "8450"
-    - name: MIOS_PORT_CPU_NODE
+    - name: MIOS_PORTS_CPU_NODE
       value: "8458"
-    - name: MIOS_PORT_SSH
+    - name: MIOS_PORTS_SSH
       value: "8222"
-    - name: MIOS_PORT_FORGE_SSH
+    - name: MIOS_PORTS_FORGE_SSH
       value: "8301"
-    - name: MIOS_PORT_CEPH_DASHBOARD
+    - name: MIOS_PORTS_CEPH_DASHBOARD
       value: "8444"
-    - name: MIOS_PORT_ADGUARD_UI
+    - name: MIOS_PORTS_ADGUARD_UI
       value: "8053"
     - name: GRANIAN_HOST
       value: 0.0.0.0
-    - name: MIOS_PORT_OPEN_WEBUI
+    - name: MIOS_PORTS_OPEN_WEBUI
       value: "8033"
     image: docker.io/searxng/searxng:latest
     name: mios-searxng

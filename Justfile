@@ -22,8 +22,10 @@ VERSION := `cat VERSION 2>/dev/null || echo {{MIOS_VAR_VERSION}}`
 LOCAL := env_var_or_default("MIOS_LOCAL_TAG", "localhost/mios:latest") # @verb:SET_LOCAL
 MIOS_IMG_BIB := "quay.io/centos-bootc/bootc-image-builder:latest" # @verb:GET_BIB
 BIB := env_var_or_default("MIOS_BIB_IMAGE", MIOS_IMG_BIB)
+# miosd by ABSOLUTE path, never `command -v` (task_962): this tree's build, else the installed one.
+MIOSD := `for c in "${MIOS_MIOSD_BIN:-}" ./src/mios-rs/target/release/miosd ./src/mios-rs/target/debug/miosd /usr/libexec/mios/miosd; do [ -n "$c" ] && [ -x "$c" ] && { printf '%s' "$c"; exit 0; }; done; printf '%s' miosd-is-not-built`
 
-# Resolved by ABSOLUTE path, never `command -v` (T-1018).
+# Resolved by ABSOLUTE path, never `command -v` (task_962).
 preflight:
     @bin=""; for c in "${MIOS_PROBE_BIN:-}" \
         ./src/mios-rs/target/release/mios-probe \
@@ -92,7 +94,7 @@ ps-gate:
 # compare a committed artefact against a fresh render, and the AI manifests
 # embed file CONTENT, so a stale one turns the gate red for the wrong reason.
 sync:
-    bash ./tools/sync-generated.sh
+    mios-gen sync --root .
 
 # Run the CI/CD pipeline automation suite (01-ingest, 02-distill, 03-build, 04-deploy, 05-run-agy-pipeline-agent).
 cicd:
@@ -179,10 +181,10 @@ drift-gate:
 
 build: preflight flight-status
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(python3 usr/libexec/mios/mios-toml-get image base)}" \
-        --build-arg MIOS_FLATPAKS={{env_var_or_default("MIOS_FLATPAKS", "")}} \
-        --build-arg MIOS_USER={{env_var_or_default("MIOS_USER", "")}} \
-        --build-arg MIOS_HOSTNAME={{env_var_or_default("MIOS_HOSTNAME", "")}} \
+        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
+        --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
         -t {{LOCAL}} .
     @echo "[OK] Built: {{LOCAL}}"
 
@@ -194,10 +196,10 @@ build-logged: artifact
     @echo "Unified log will be available at: ${LOG_FILE}" | tee -a "${LOG_FILE}"
     @echo "" | tee -a "${LOG_FILE}"
     @set -o pipefail; podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(python3 usr/libexec/mios/mios-toml-get image base)}" \
-        --build-arg MIOS_FLATPAKS={{env_var_or_default("MIOS_FLATPAKS", "")}} \
-        --build-arg MIOS_USER={{env_var_or_default("MIOS_USER", "")}} \
-        --build-arg MIOS_HOSTNAME={{env_var_or_default("MIOS_HOSTNAME", "")}} \
+        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
+        --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
         -t {{LOCAL}} . 2>&1 | tee -a "${LOG_FILE}"
     @echo "" | tee -a "${LOG_FILE}"
     @echo "[OK] CHECKPOINT: 'MiOS' build complete" | tee -a "${LOG_FILE}"
@@ -206,10 +208,10 @@ build-logged: artifact
 
 build-verbose: artifact
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(python3 usr/libexec/mios/mios-toml-get image base)}" \
-        --build-arg MIOS_FLATPAKS={{env_var_or_default("MIOS_FLATPAKS", "")}} \
-        --build-arg MIOS_USER={{env_var_or_default("MIOS_USER", "")}} \
-        --build-arg MIOS_HOSTNAME={{env_var_or_default("MIOS_HOSTNAME", "")}} \
+        --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
+        --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
         -t {{LOCAL}} .
 
 embed-log:
@@ -268,61 +270,20 @@ raw: build
         {{BIB}} build --type raw --rootfs ext4 {{LOCAL}}
     @echo "[OK] RAW image in build/raw"
 
+# iso, qcow2, vhdx: `miosd artifact-build <format>` renders the builder config
+# from the SSOT and the credential [deploy.identity] names, and refuses without
+# one. `sudo -E` keeps those variables for rootful podman.
 iso: build
-    mkdir -p build/iso
-    @if [ -z "${MIOS_USER_PASSWORD_HASH:-}" ]; then echo "[FAIL] Set MIOS_USER_PASSWORD_HASH"; exit 1; fi
-    @TMPTOML="$(mktemp /tmp/mios-iso-XXXXXX.toml)" && \
-        sed -e "s|\$6\$REPLACEME_WITH_SHA512_HASH\$REPLACEME|${MIOS_USER_PASSWORD_HASH}|g" \
-            -e "s|AAAA_REPLACE_WITH_REAL_PUBKEY|${MIOS_SSH_PUBKEY:-}|g" \
-            ./config/artifacts/iso.toml > "$$TMPTOML" && \
-        sudo podman run --rm -it --privileged \
-            --security-opt label=type:unconfined_t \
-            -v ./build/iso:/output \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$$TMPTOML":/config.toml:ro \
-            {{BIB}} build --type iso --rootfs ext4 {{LOCAL}}; \
-        rm -f "$$TMPTOML"
-    @echo "[OK] ISO image in build/iso"
+    sudo -E {{MIOSD}} artifact-build iso --root . --image {{LOCAL}}
 
 qcow2: build
-    mkdir -p build/qcow2
-    @if [ -z "${MIOS_USER_PASSWORD_HASH:-}" ]; then echo "[FAIL] Set MIOS_USER_PASSWORD_HASH"; exit 1; fi
-    @TMPTOML="$(mktemp /tmp/mios-qcow2-XXXXXX.toml)" && \
-        sed -e "s|\$6\$REPLACEME_WITH_SHA512_HASH\$REPLACEME|${MIOS_USER_PASSWORD_HASH}|g" \
-            -e "s|AAAA_REPLACE_WITH_REAL_PUBKEY|${MIOS_SSH_PUBKEY:-}|g" \
-            ./config/artifacts/qcow2.toml > "$$TMPTOML" && \
-        sudo podman run --rm -it --privileged \
-            --security-opt label=type:unconfined_t \
-            -v ./build/qcow2:/output \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$$TMPTOML":/config.toml:ro \
-            {{BIB}} build --type qcow2 --rootfs ext4 {{LOCAL}}; \
-        rm -f "$$TMPTOML"
-    @echo "[OK] QCOW2 image in build/qcow2"
+    sudo -E {{MIOSD}} artifact-build qcow2 --root . --image {{LOCAL}}
 
+# Hyper-V: the builder's VHD converted to a dynamic VHDX, for the VM
+# [deploy.formats.vhdx.vm] declares. Boot-test it with
+# `miosd artifact-boot-test vhdx --disk build/vhdx/disk.vhdx --identity <key>`.
 vhdx: build
-    mkdir -p build/vhdx
-    @if [ -z "${MIOS_USER_PASSWORD_HASH:-}" ]; then echo "[FAIL] Set MIOS_USER_PASSWORD_HASH"; exit 1; fi
-    @TMPTOML="$(mktemp /tmp/mios-vhdx-XXXXXX.toml)" && \
-        sed -e "s|\$6\$REPLACEME_WITH_SHA512_HASH\$REPLACEME|${MIOS_USER_PASSWORD_HASH}|g" \
-            -e "s|AAAA_REPLACE_WITH_REAL_PUBKEY|${MIOS_SSH_PUBKEY:-}|g" \
-            ./config/artifacts/vhdx.toml > "$$TMPTOML" && \
-        sudo podman run --rm -it --privileged \
-            --security-opt label=type:unconfined_t \
-            -v ./build/vhdx:/output \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$$TMPTOML":/config.toml:ro \
-            {{BIB}} build --type vhd --rootfs ext4 {{LOCAL}}; \
-        rm -f "$$TMPTOML"
-    @if command -v qemu-img >/dev/null 2>&1 && ls build/vhdx/*.vhd >/dev/null 2>&1; then \
-        for vhd in build/vhdx/*.vhd; do \
-            vhdx="$${vhd%.vhd}.vhdx"; \
-            qemu-img convert -f vpc -O vhdx "$$vhd" "$$vhdx" && rm -f "$$vhd" && echo "[OK] Converted: $$vhdx"; \
-        done; \
-    else \
-        echo "[WARN] qemu-img not found or no .vhd produced"; \
-    fi
-    @echo "[OK] VHDX image in build/vhdx"
+    sudo -E {{MIOSD}} artifact-build vhdx --root . --image {{LOCAL}}
 
 wsl2: build
     @mkdir -p build/wsl2
@@ -457,8 +418,8 @@ forge:
     else \
         echo "  First-boot:     pending"; \
     fi
-    @echo "  Web UI:         http://localhost:${MIOS_FORGE_HTTP_PORT:-3000}/"
-    @echo "  git+ssh:        ssh://git@localhost:${MIOS_FORGE_SSH_PORT:-2222}/<user>/<repo>.git"
+    @echo "  Web UI:         http://localhost:${MIOS_PORTS_FORGE_HTTP:-3000}/"
+    @echo "  git+ssh:        ssh://git@localhost:${MIOS_PORTS_FORGE_SSH:-2222}/<user>/<repo>.git"
     @echo "  Admin user:     $(grep -E '^MIOS_FORGE_ADMIN_USER=' /etc/mios/install.env 2>/dev/null | cut -d= -f2- | tr -d '\"' || echo '(check /etc/mios/install.env)')"
     @echo "  Admin email:    $(grep -E '^MIOS_FORGE_ADMIN_EMAIL=' /etc/mios/install.env 2>/dev/null | cut -d= -f2- | tr -d '\"' || echo '(check /etc/mios/install.env)')"
     @if [ -r /etc/mios/forge/admin-password ]; then \
@@ -466,7 +427,7 @@ forge:
     else \
         echo "  Initial pwd:"; \
     fi
-    @echo "  Local push:     git remote add origin http://localhost:${MIOS_FORGE_HTTP_PORT:-3000}/<user>/<repo>.git && git push origin main"
+    @echo "  Local push:     git remote add origin http://localhost:${MIOS_PORTS_FORGE_HTTP:-3000}/<user>/<repo>.git && git push origin main"
 
 rechunk-conv: build
     @bash automation/build/rechunk.sh

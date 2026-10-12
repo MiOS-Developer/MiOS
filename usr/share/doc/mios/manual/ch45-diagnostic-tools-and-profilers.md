@@ -41,7 +41,7 @@ Profiles system capabilities using profiling scripts.
 Validates outbound networking rules.
 
 ## Setup
-- **Verify tool**: Run [generate-egress-firewall.py](tools/generate-egress-firewall.py).
+- **Verify tool**: Run `mios-gen egress-firewall --check` using the [native projector](../../../../../tools/native/mios-gen/src/main.rs).
 - **Checks**: Audits active rules inside firewall filters.
 - **Safety**: Confines network execution blocks.
 

@@ -63,7 +63,7 @@ A var is "wired in userenv" if it appears, on a NON-comment line, either as
 a typed slot target  ("section.field", "MIOS_X")  -> the quoted token
 "MIOS_X"  -- or as an explicit  export MIOS_X=  /  MIOS_X=  assignment, or
 named in a legacy for-loop. We strip full-line comments first so a var that
-is only *mentioned* in prose (e.g. MIOS_CRAWL_CDP_URL in a doc paragraph)
+is only *mentioned* in prose (e.g. MIOS_SERVICES_WEBTOOLS_CDP_URL in a doc paragraph)
 does NOT count as wired.
 
 <!-- mios-src:bd0d334822c4 from automation/97-ssot-lint.sh:103-109 -->
@@ -153,7 +153,7 @@ AI-related: mios-custom, mios-home, mios-wheel, mios-nfs
 
 !/bin/bash
 MIOS_APPLY_CLASS=universal
-AI-hint: Sets the initial hostname template in /usr/lib/hostname.default based on the MIOS_HOSTNAME build-arg to ensure a unique, stable mios-XXXXX identifier is generated during the first boot.
+AI-hint: Sets the initial hostname template in /usr/lib/hostname.default based on the MIOS_IDENTITY_HOSTNAME build-arg to ensure a unique, stable mios-XXXXX identifier is generated during the first boot.
 AI-related: mios-XXXXX, mios-init, mios-a3f9c, mios-ws-83427
 
 <!-- mios-src:8a64ccc13d61 from automation/12-hostname.sh:1-4 -->
@@ -407,7 +407,7 @@ AI-related: /usr/libexec/mios/mios-dashboard.sh, /usr/lib/mios/userenv.sh., /usr
 
 !/bin/bash
 MIOS_APPLY_CLASS=universal
-AI-hint: Captures the MIOS_FLATPAKS build-time variable into a system-level environment file at ${MIOS_USR_DIR}/env.d/flatpaks.env to be consumed by the mios-flatpak-install tool during boot-time setup.
+AI-hint: Captures the MIOS_DESKTOP_FLATPAKS build-time variable into a system-level environment file at ${MIOS_USR_DIR}/env.d/flatpaks.env to be consumed by the mios-flatpak-install tool during boot-time setup.
 AI-related: /usr/lib/mios/env.d, mios-flatpak-install
 
 <!-- mios-src:c18f7d4f3d5f from automation/60-flatpak-env.sh:1-4 -->
@@ -575,7 +575,7 @@ time it silently collapses to its inline `:-default`, so editing mios.toml
 does nothing and the value is un-tunable. This lint walks every Quadlet
 Exec=/Environment= line, pulls each referenced ${MIOS_*}, and asserts the
 two-sided wiring. It retroactively catches the known dead keys
-(MIOS_SGLANG_TOOL_PARSER, MIOS_PORT_CPU_NODE, MIOS_CPU_NODE_THREADS, ...).
+(MIOS_SGLANG_TOOL_PARSER, MIOS_PORTS_CPU_NODE, MIOS_LLAMACPP_CPU_NODE_THREADS, ...).
 
 Default behaviour: emit a per-key error for every orphan and exit 1 if any
 orphan is found (so it can fail a CI/build step). It NEVER mutates anything
@@ -715,7 +715,7 @@ not one. The enable stays exactly where it was, after either leg.
 
 Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 nothing puts on PATH at bake time, so the lookup this replaced could never
-succeed (T-1018). Note the elif below is dead too: SYSFILES is
+succeed (task_962). Note the elif below is dead too: SYSFILES is
 /ctx/system_files, and the Containerfile builds /ctx from automation/, usr/,
 etc/, tools/ and VERSION -- it never creates a system_files/ directory, and
 the repo has none. Both non-default branches were unreachable, so policy.json
@@ -734,9 +734,9 @@ than relying on the caller's cwd.
 
 <!-- mios-src:cb2dc2e83237 from automation/76-uki-render.sh:41-46 -->
 
-### T-1032. Windows-only shim
+### task_969. Windows-only shim
 
-T-1032. Windows-only shim: where a host ships `python` but no `python3`,
+task_969. Windows-only shim: where a host ships `python` but no `python3`,
 materialise one under that name so the checks below can call it. Two rules
 make it safe, and BOTH were missing:
   1. Never when a real python3 already resolves. On Linux it always does, so
@@ -770,7 +770,7 @@ grade a file it never read.
 The lint prints its own tally -- N of M consumed, K registered unconsumed.
 This wrapper used to answer it with "all ... have code consumers", which
 was the overclaim the lint itself was making when it walked a hardcoded
-nine of 128 keys (T-1047). Do not reintroduce a summary here that asserts
+nine of 128 keys (task_984). Do not reintroduce a summary here that asserts
 more than the tool it wraps just measured.
 
 <!-- mios-src:7ea252901d10 from automation/98-drift-checks.sh:836-840 -->
@@ -793,7 +793,7 @@ mios-resolver, miosd, then the Python fallback -- and under `env -i` with
 no binary on PATH it reached tier 3, so mutating mios_toml.py changed BOTH
 legs and they went on agreeing. Proven by mutation: disabling
 resolve_cross_references in mios_toml.py left the bash leg emitting
-${MIOS_PORT_AGENT_PIPE} verbatim, and the check still passed (T-1062).
+${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (task_3360).
 
 Locate the native resolver and put it on the fixture's PATH so tier 1
 fires. Absent, the comparison is vacuous: fail where the environment
@@ -873,7 +873,7 @@ enforcer in a comma list and any unrecognised enforcer kind.
 ### Law 8 for the container signature policy....
 
 Law 8 for the container signature policy. usr/lib/containers/policy.json
-is projected from [security.sigstore] and, until T-1047's sweep, was the
+is projected from [security.sigstore] and, until task_984's sweep, was the
 ONE generator in the tree with neither half of the law: no regenerate step
 and no drift check. Its own generator's --check compared parsed JSON, so
 it could not see the tracked file drifting in bytes from what the writer
@@ -905,13 +905,13 @@ that same plant rc=1.
 
 Ported to mios-gate per ADR-0021; the python twin is deleted in the same
 commit. The register now pins path:KEY=VALUE, so a grandfathered KEY whose
-VALUE becomes an operator's real password is a NEW finding (T-1035).
+VALUE becomes an operator's real password is a NEW finding (task_972).
 
 <!-- mios-src:f78fa7ea982c from automation/98-drift-checks.sh:4502-4504 -->
 
 ### Header integrity
 
-Header integrity: a tagger must never absorb line 1. See AGY-1607.
+Header integrity: a tagger must never absorb line 1. See task_2248.
 --- no AI-hint tagger has absorbed a shebang or a MIOS_* build directive from line 1 ---
 
 <!-- mios-src:b6768304192e from automation/98-drift-checks.sh:4836-4837 -->
@@ -920,8 +920,112 @@ Header integrity: a tagger must never absorb line 1. See AGY-1607.
 
 stderr carried the only record of a dropped variable and was discarded
 here, so MIOS_AI_ENDPOINT going missing from install.env was invisible at
-bake while Law 5 routed every agent through it (T-1060). It is captured
+bake while Law 5 routed every agent through it (task_997). It is captured
 and echoed now -- on failure AND on success, because a declared
 [security.non_bare_env] skip is a thing a reader should still see.
 
 <!-- mios-src:8bbbe72c2e67 from automation/99-postcheck.sh:519-523 -->
+### toolchain
+
+--toolchain: provision the SSOT Rust toolchain system-wide and stop, so every
+MiOS image can rebuild its native catalog. The Containerfile runs it after
+[packages.self-build] (Fedora's rustup RPM ships rustup-init only). Installs the
+[build.toolchain] channel and components with this machine's
+[build.native.linux] target into [build.toolchain].rustup_home/cargo_home, then
+proves the target's std and the linker are there; any gap fails the build.
+
+<!-- mios-src:b09c7374cc50 from automation/55-native-build.sh:7-12 -->
+
+### Every value here used to come from ${MIOS_CONV_*:-literal}....
+
+Every value here used to come from ${MIOS_CONV_*:-literal}. Nothing exports
+MIOS_CONV_* -- not globals.sh, not run-suites.sh, not this script -- so the
+check validated its own hardcoded defaults on every run and never opened
+mios.toml at all. The defaults had already drifted from the SSOT:
+cold_retention_days is 90 against an asserted 30, and cold_zstd_level is
+10 against an asserted 3. (The heavy-alt retirement branch went with the
+lane itself: the one heavy lane carries its engine as [ai].heavy_engine.)
+
+Read the SSOT. An env var may still override for testing, but the FALLBACK
+is now the SSOT value rather than a literal, so the check cannot silently
+grade a file it never read.
+
+<!-- mios-src:73cbc909c116 from automation/98-drift-checks.sh:634-644 -->
+
+### The findings go out BEFORE _violation
+
+The findings go out BEFORE _violation: it returns 1, and in
+single-check mode errexit ends the script there, so anything printed
+after it never reached the operator (or a negative test reading why).
+
+<!-- mios-src:bd8a7c2a418f from automation/98-drift-checks.sh:784-786 -->
+
+### Ported to mios-gate per ADR-0021 / task_953 unit 2; the...
+
+Ported to mios-gate per ADR-0021 / task_953 unit 2; the Python twin is
+deleted in the same commit. Parity proved on the real tree: both sides
+verify 131 verbs clean.
+
+<!-- mios-src:94b1e0f1d814 from automation/98-drift-checks.sh:1023-1025 -->
+
+### The bash leg must run a DIFFERENT implementation, or this...
+
+The bash leg must run a DIFFERENT implementation, or this check compares
+mios_toml.py against itself. userenv.sh resolves in three tiers -- native
+mios-resolver, miosd, then the Python fallback -- and under `env -i` with
+no binary on PATH it reached tier 3, so mutating mios_toml.py changed BOTH
+legs and they went on agreeing. Proven by mutation: disabling
+resolve_cross_references in mios_toml.py left the bash leg emitting
+${MIOS_PORTS_AGENT_PIPE} verbatim, and the check still passed (task_3360).
+
+Locate the native resolver and put it on the fixture's PATH so tier 1
+fires. Absent, the comparison is vacuous: fail where the environment
+declares tools mandatory, and say plainly what went unverified otherwise.
+
+<!-- mios-src:d4ade8ef15b7 from automation/98-drift-checks.sh:1300-1310 -->
+
+### task_3488 / ADR-0021
+
+task_3488 / ADR-0021: the [rust.categories] registry is the port plan -- this
+gate fails it the moment a category loses its owner, a crate vanishes from
+disk while still cataloged, a replaces= claim outlives its script, or a
+universe script stops being owned by exactly one porting category.
+
+<!-- mios-src:a119d7969c11 from automation/98-drift-checks.sh:2097-2100 -->
+
+### Ported to mios-gate per ADR-0021 / task_953 unit 1; the...
+
+Ported to mios-gate per ADR-0021 / task_953 unit 1; the Python twin is
+deleted in the same commit. Parity proved on the real tree: both sides
+flagged check_static_linkage identically before the exemption landed,
+and both pass after it.
+
+<!-- mios-src:1b2def083b62 from automation/98-drift-checks.sh:3252-3255 -->
+
+### Law 8 for usr/share/mios/ai/v1/metadata.json. It is...
+
+Law 8 for usr/share/mios/ai/v1/metadata.json. It is exported from every
+tracked file's AI-* header, but nothing regenerated it and nothing
+compared it, so it fell ~2,400 lines behind main and the first unrelated
+re-export dragged that whole backlog into a small PR. The exporter's own
+--check validates schema only; --check-fresh regenerates in memory and
+compares bytes, naming each entry that moved.
+
+<!-- mios-src:e4da726b6ea7 from automation/98-drift-checks.sh:3870-3875 -->
+
+### The warning-level pass is a ratchet
+
+The warning-level pass is a ratchet: it lints what changed since a base.
+CI exports MIOS_RATCHET_BASE (the PR base, fetched beside a depth-1 checkout
+that has neither origin/main nor HEAD~1), so it wins; origin/main, then
+HEAD~1, serve a full clone. An explicit base that does not resolve is a
+misconfiguration, not a reason to lint nothing. Paths are repo-relative, so
+the pass runs from ROOT; a worktree's .git is a file, hence -e.
+
+<!-- mios-src:52cdadb2df41 from automation/lint-shell.sh:72-77 -->
+### These generators' Python twins were ported and deleted...
+
+These generators' Python twins were ported and deleted ([rust.categories.gen].replaces);
+a missing native binary is a violation, never a fallback to a script that no longer exists.
+
+<!-- mios-src:4836d6daebbb from automation/98-drift-checks.sh:128-129 -->

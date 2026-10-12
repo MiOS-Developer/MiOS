@@ -1,8 +1,0 @@
-# AI-hint: PowerShell script for Windows provisioning or automation.
-# AI-related: C:\mios-bootstrap\src\
-# AI-functions: Get-Something
-
-[CmdletBinding()]
-param()
-
-Write-Host "PowerShell script initialized."

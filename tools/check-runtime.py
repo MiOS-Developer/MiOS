@@ -47,11 +47,12 @@ def cn_ssot_containers(root: str) -> tuple:
 
 def cn_rendered_containers(root: str) -> dict:
     out = {}
-    for path in sorted(glob.glob(os.path.join(root, cn_QUADLET_GLOB))):
-        unit = os.path.basename(path)[: -len(".container")]
-        text = open(path, encoding="utf-8", errors="replace").read()
-        m = re.search(r"^ContainerName=(.*)$", text, re.M)
-        out[unit] = (m.group(1).strip() if m else "")
+    for g in (cn_QUADLET_GLOB, "usr/share/containers/systemd/users/*.container"):
+        for path in sorted(glob.glob(os.path.join(root, g))):
+            unit = os.path.basename(path)[: -len(".container")]
+            text = open(path, encoding="utf-8", errors="replace").read()
+            m = re.search(r"^ContainerName=(.*)$", text, re.M)
+            out[unit] = (m.group(1).strip() if m else "")
     return out
 
 def cn_main() -> int:
@@ -202,7 +203,10 @@ except ModuleNotFoundError:  # pragma: no cover -- py<3.11
     import tomli as tomllib  # type: ignore
 
 su_TOML = "usr/share/mios/mios.toml"
-su__PORT_VAR = re.compile(r"\$\{MIOS_PORT_([A-Z0-9_]+)\}")
+# The canonical, path-derived name of [ports].<key>. The retired MIOS_PORT_<KEY>
+# spelling is only an input alias now, so a [urls] entry templated with it does
+# not count as the port's canonical address.
+su__PORT_VAR = re.compile(r"\$\{MIOS_PORTS_([A-Z0-9_]+)\}")
 
 def su_port_keys(data: dict) -> set:
     """Numeric [ports] keys. stack_id is an offset, not a port."""
@@ -296,7 +300,7 @@ def su_bare_port_addresses(data: dict) -> list:
                 num = int(m.group(1))
                 if num in ports:
                     viol.append("%s hardcodes :%d instead of "
-                                "${MIOS_PORT_%s} -- an /etc/mios overlay cannot "
+                                "${MIOS_PORTS_%s} -- an /etc/mios overlay cannot "
                                 "move a baked port, so the service can never be "
                                 "offloaded" % (dotted, num, ports[num].upper()))
 
@@ -925,13 +929,17 @@ def rt_main():
     loopback = mios_toml.get("pgvector", "listen_loopback")
     if loopback is None:
         loopback = True
-    toml_vars["MIOS_PG_BIND_ADDR"] = "127.0.0.1" if loopback else "0.0.0.0"
+    loopback_addr = mios_toml.get("network", "loopback") or "127.0.0.1"
+    bind_all_addr = mios_toml.get("network", "bind_all") or "0.0.0.0"
+    toml_vars["MIOS_PG_BIND_ADDR"] = loopback_addr if loopback else bind_all_addr
 
     ignore_vars = {
         "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_USER_TOML",
         "MIOS_VENDOR_TOML_D", "MIOS_HOST_TOML_D", "MIOS_USER_TOML_D",
         "MIOS_DRIFT_ROOT", "MIOS_DRIFT_CHECK_ROOT", "MIOS_DRIFT_CHECK_SOFT",
-        "MIOS_TOML_ROOT", "MIOS_ROOT_LIB", "MIOS_CONFIG_DIR", "MIOS_ROOT"
+        "MIOS_TOML_ROOT", "MIOS_ROOT_LIB", "MIOS_CONFIG_DIR", "MIOS_ROOT",
+        "MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL",
+        "MIOS_ENV_MIOS_MIGRATION_USE_RUST_RESOLVER_SHELL",
     }
 
     # userenv.sh resolves through the first tier it finds: mios-resolver, then

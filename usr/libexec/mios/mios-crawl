@@ -28,7 +28,7 @@ answer from the fetched markdown.
 
 SSOT (env rendered from mios.toml [crawl] via globals/userenv):
   MIOS_CRAWL_SERVICE_URL  base URL of the local crawl service
-                          (default http://127.0.0.1:${MIOS_PORT_CRAWL4AI:-8810})
+                          (default http://127.0.0.1:${MIOS_PORTS_CRAWL4AI:-8810})
 
 Usage:
   mios-crawl <http(s)-url> [--max-chars N] [--camoufox] [--timeout S] [--json]
@@ -45,7 +45,7 @@ import os
 import sys
 import urllib.request
 
-_PORT = os.environ.get("MIOS_PORT_CRAWL4AI", "8810").strip() or "8810"
+_PORT = os.environ.get("MIOS_PORTS_CRAWL4AI", "8810").strip() or "8810"
 SERVICE_URL = os.environ.get(
     "MIOS_CRAWL_SERVICE_URL", f"http://127.0.0.1:{_PORT}").rstrip("/")
 

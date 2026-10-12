@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (T-530, AGY-2128).
+# AI-hint: Automated RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (task_474, task_2707).
 # AI-doc: usr/share/doc/mios/manual/ch76-remote-attestation.md
 """
 Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier and Zero-Touch Cluster Onboarding Daemon.
@@ -38,15 +38,29 @@ except ImportError:
         toml_parser = None
 
 # Defaults & Constants
-DEFAULT_PORT = 8443
-DEFAULT_PCR_LIST = [0, 7, 11]
-DEFAULT_ADMISSION_DIR = Path("/var/lib/mios/cluster/admission")
-DEFAULT_ATTESTED_DIR = Path("/var/lib/mios/cluster/attested")
-DEFAULT_QUARANTINE_DIR = Path("/var/lib/mios/cluster/quarantine")
 DEFAULT_CONFIG_PATHS = [
     Path("/etc/mios/mios.toml"),
     Path("/usr/share/mios/mios.toml"),
 ]
+
+def resolve_attest_port() -> int:
+    for cfg_p in DEFAULT_CONFIG_PATHS:
+        if cfg_p.is_file() and toml_parser:
+            try:
+                with open(cfg_p, "rb") as fh:
+                    cfg = toml_parser.load(fh)
+                    p = cfg.get("ports", {}).get("attest") or cfg.get("ports", {}).get("attest_server")
+                    if p:
+                        return int(p)
+            except Exception:
+                pass
+    return 8443
+
+DEFAULT_PORT = resolve_attest_port()
+DEFAULT_PCR_LIST = [0, 7, 11]
+DEFAULT_ADMISSION_DIR = Path("/var/lib/mios/cluster/admission")
+DEFAULT_ATTESTED_DIR = Path("/var/lib/mios/cluster/attested")
+DEFAULT_QUARANTINE_DIR = Path("/var/lib/mios/cluster/quarantine")
 
 EXIT_SUCCESS = 0
 EXIT_SECURITY_VIOLATION = 1
@@ -392,33 +406,10 @@ class RatsAttestationServer:
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         expires_utc = (now_utc + datetime.timedelta(hours=24)).isoformat()
 
-        # Generate ephemeral WireGuard preshared key and credentials
-        psk = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        server_pubkey = "mIoSSerVerPuBkEy11111111111111111111111111="
-        wireguard_creds = {
-            "mesh_ip": blade.get("wireguard_ip", "10.42.0.101"),
-            "mesh_prefix": 24,
-            "endpoint": "10.42.0.1:51820",
-            "preshared_key": psk,
-            "server_pubkey": server_pubkey,
-            "allowed_ips": ["10.42.0.0/24"],
-        }
-
-        # Generate CephFS client token and capability keyring
-        ceph_key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
-        client_name = blade_id if blade_id.startswith("blade-") else f"blade-{blade_id}"
-        cephfs_creds = {
-            "client_id": f"client.{client_name}",
-            "keyring": ceph_key,
-            "caps": {
-                "mon": "allow r",
-                "osd": "allow rw pool=mios-pool",
-                "mds": "allow rw",
-            },
-            "cluster_fsid": "a8b2c4d6-1111-2222-3333-abcdef123456",
-            "mon_hosts": ["10.42.0.1:6789"],
-            "expires_at": expires_utc,
-        }
+        # Ruling Q7 (task_3539): Issue only short-lived headscale pre-auth key and k3s join token;
+        # no hard-coded WireGuard key, Ceph fsid, endpoint or port literal outside [ports].
+        headscale_preauth_key = secrets.token_hex(24)
+        k3s_join_token = secrets.token_hex(32)
 
         credentials = {
             "$schema": "https://mios.dev/schemas/blade-attestation-v1.json",
@@ -427,8 +418,8 @@ class RatsAttestationServer:
             "attested_at": now_utc.isoformat(),
             "expires_at": expires_utc,
             "roles": blade.get("roles", ["worker"]),
-            "wireguard": wireguard_creds,
-            "cephfs": cephfs_creds,
+            "headscale_preauth_key": headscale_preauth_key,
+            "k3s_join_token": k3s_join_token,
         }
 
         # Remove from quarantine if previously flagged
@@ -619,7 +610,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="mios-attest-server",
-        description="MiOS Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier & Cluster Onboarding Daemon (T-530, AGY-2128)",
+        description="MiOS Automated RFC 9334 RATS Remote TPM 2.0 Quote Verifier & Cluster Onboarding Daemon (task_474, task_2707)",
         parents=[common_parser],
     )
 

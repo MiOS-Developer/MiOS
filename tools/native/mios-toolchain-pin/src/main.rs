@@ -18,7 +18,7 @@ fn die(msg: &str) -> ExitCode {
 }
 
 /// One file at the root: rustup ascends, so both workspaces resolve to it.
-/// Two would be one value written twice (T-1059).
+/// Two would be one value written twice (task_996).
 fn render(channel: &str, components: &[String]) -> String {
     let listed = components
         .iter()

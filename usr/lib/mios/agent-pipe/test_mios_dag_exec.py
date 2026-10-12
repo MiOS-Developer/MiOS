@@ -246,7 +246,7 @@ def test_deepen_early_exit():
 
 
 # ==============================================================================
-# Consolidated from test_mios_dag_validate.py (T-1092)
+# Consolidated from test_mios_dag_validate.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test suite for pre-execution DAG validator dag_validate.py.
 # AI-related: mios_pipe/routing/dag_validate.py

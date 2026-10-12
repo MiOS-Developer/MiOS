@@ -42,10 +42,10 @@ def _load_toml():
 
 
 def _resolve_port(cfg):
-    """Agent-pipe port from SSOT (env MIOS_A2A_PORT / MIOS_PORT_AGENT_PIPE override,
+    """Agent-pipe port from SSOT (env MIOS_A2A_PORT / MIOS_PORTS_AGENT_PIPE override,
     else [ports].agent_pipe). No literal default -- empty means we cannot honestly
     build the loopback self-URL, so the self-peer is simply skipped (degrade-open)."""
-    env = os.environ.get("MIOS_A2A_PORT") or os.environ.get("MIOS_PORT_AGENT_PIPE")
+    env = os.environ.get("MIOS_A2A_PORT") or os.environ.get("MIOS_PORTS_AGENT_PIPE")
     if env and str(env).strip():
         return str(env).strip()
     port = (cfg.get("ports") or {}).get("agent_pipe")

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 /// How many times a resolved value may itself be expanded before we call it a
-/// cycle. `MIOS_AI_ENDPOINT` -> `http://localhost:${MIOS_PORT_AGENT_PIPE}/v1`
+/// cycle. `MIOS_AI_ENDPOINT` -> `http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1`
 /// is one level; nothing legitimate in the tree needs many.
 pub const MAX_DEPTH: usize = 16;
 
@@ -28,7 +28,7 @@ fn lookup(name: &str, ssot: &BTreeMap<String, String>) -> Option<String> {
 
 /// Find the index of the `}` closing the `${` that starts at `open`, counting
 /// nested `${` ... `}` pairs. A regex cannot do this: `[^}]*` stops at the
-/// first brace, which is the whole T-1040 defect.
+/// first brace, which is the whole task_977 defect.
 fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut i = open;
@@ -81,6 +81,17 @@ fn is_name(s: &str) -> bool {
     s.starts_with("MIOS_") && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
+/// The `MIOS_*` name a value consists of, when the WHOLE value is one
+/// `${NAME}` or `${NAME:-default}` -- a reference that carries NAME's value
+/// whenever NAME is set. Anything around or after it makes it a composition.
+pub fn sole_reference(text: &str) -> Option<&str> {
+    if !text.starts_with("${") || matching_brace(text.as_bytes(), 0)? != text.len() - 1 {
+        return None;
+    }
+    let (name, _) = split_default(&text[2..text.len() - 1]);
+    is_name(name).then_some(name)
+}
+
 /// What a pass is allowed to touch.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -93,7 +104,7 @@ pub enum Mode {
     DefaultsOnly,
 }
 
-/// Expand every `${...}`; `$$` is systemd's escape and passes through (T-1040).
+/// Expand every `${...}`; `$$` is systemd's escape and passes through (task_977).
 pub fn expand(text: &str, ssot: &BTreeMap<String, String>) -> Expansion {
     expand_mode(text, ssot, Mode::All)
 }
@@ -183,7 +194,20 @@ mod tests {
     }
 
     const KB: &str =
-        "base_url = \"${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORT_AGENT_PIPE:-8700}/v1}\"";
+        "base_url = \"${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/v1}\"";
+
+    #[test]
+    fn sole_reference_is_only_a_whole_value_reference() {
+        assert_eq!(sole_reference("${MIOS_A}"), Some("MIOS_A"));
+        assert_eq!(sole_reference("${MIOS_A:-x:${MIOS_B}}"), Some("MIOS_A"));
+        // A composition, a trailing literal, two references or a foreign name
+        // is not one declaration's value.
+        assert_eq!(sole_reference("http://${MIOS_A}/v1"), None);
+        assert_eq!(sole_reference("${MIOS_A}x"), None);
+        assert_eq!(sole_reference("${MIOS_A}${MIOS_B}"), None);
+        assert_eq!(sole_reference("${HOME}"), None);
+        assert_eq!(sole_reference("${MIOS_A"), None);
+    }
 
     /// The bash renderer produced FOUR different answers for this one line
     /// depending only on which variables were exported, one of which was
@@ -195,12 +219,12 @@ mod tests {
         assert_eq!(want, expand(KB, &ssot(&[])).text, "neither set");
         assert_eq!(
             want,
-            expand(KB, &ssot(&[("MIOS_PORT_AGENT_PIPE", "8700")])).text,
+            expand(KB, &ssot(&[("MIOS_PORTS_AGENT_PIPE", "8700")])).text,
             "inner set -- bash deleted /v1 here"
         );
         assert_eq!(
             "base_url = \"http://localhost:9999/v1\"",
-            expand(KB, &ssot(&[("MIOS_PORT_AGENT_PIPE", "9999")])).text,
+            expand(KB, &ssot(&[("MIOS_PORTS_AGENT_PIPE", "9999")])).text,
             "inner set to a non-default"
         );
         assert_eq!(
@@ -209,7 +233,7 @@ mod tests {
                 KB,
                 &ssot(&[
                     ("MIOS_AI_ENDPOINT", "http://example/v1"),
-                    ("MIOS_PORT_AGENT_PIPE", "8700"),
+                    ("MIOS_PORTS_AGENT_PIPE", "8700"),
                 ])
             )
             .text,
@@ -217,20 +241,20 @@ mod tests {
         );
     }
 
-    /// The live defect: envsubst turned $$MIOS_PORT_PGVECTOR into $8432, which
+    /// The live defect: envsubst turned $$MIOS_PORTS_PGVECTOR into $8432, which
     /// /bin/sh then evaluates to 432 because $8 is an unset positional.
     #[test]
     fn systemd_escaped_dollars_are_never_touched() {
         let s = ssot(&[
-            ("MIOS_PORT_PGVECTOR", "8432"),
-            ("MIOS_PG_BACKUP_DIR", "/var/lib/mios/backups"),
+            ("MIOS_PORTS_PGVECTOR", "8432"),
+            ("MIOS_PGVECTOR_BACKUP_DIR", "/var/lib/mios/backups"),
         ]);
-        let line = "PORT=\"$$MIOS_PORT_PGVECTOR\"; DIR=\"$$MIOS_PG_BACKUP_DIR\"";
+        let line = "PORT=\"$$MIOS_PORTS_PGVECTOR\"; DIR=\"$$MIOS_PGVECTOR_BACKUP_DIR\"";
         assert_eq!(line, expand(line, &s).text);
         // The braced escape survives too, as a literal ${...}.
         assert_eq!(
-            "$${MIOS_PORT_PGVECTOR}",
-            expand("$${MIOS_PORT_PGVECTOR}", &s).text
+            "$${MIOS_PORTS_PGVECTOR}",
+            expand("$${MIOS_PORTS_PGVECTOR}", &s).text
         );
     }
 
@@ -238,17 +262,17 @@ mod tests {
     /// as one, which is the other half of the $$ damage.
     #[test]
     fn a_bare_dollar_name_is_not_a_placeholder() {
-        let s = ssot(&[("MIOS_A2O_ORCH_MODEL", "x")]);
+        let s = ssot(&[("MIOS_FRONTIER_ORCH_MODEL", "x")]);
         assert_eq!(
-            "$MIOS_A2O_ORCH_MODEL",
-            expand("$MIOS_A2O_ORCH_MODEL", &s).text
+            "$MIOS_FRONTIER_ORCH_MODEL",
+            expand("$MIOS_FRONTIER_ORCH_MODEL", &s).text
         );
     }
 
     #[test]
     fn a_plain_reference_resolves_from_ssot() {
-        let s = ssot(&[("MIOS_VERSION_CEPH", "v19")]);
-        let e = expand("Image=quay.io/ceph/ceph:${MIOS_VERSION_CEPH}", &s);
+        let s = ssot(&[("MIOS_VERSIONS_CEPH", "v19")]);
+        let e = expand("Image=quay.io/ceph/ceph:${MIOS_VERSIONS_CEPH}", &s);
         assert_eq!("Image=quay.io/ceph/ceph:v19", e.text);
         assert!(e.unresolved.is_empty());
     }
@@ -258,22 +282,22 @@ mod tests {
     /// We keep the literal and NAME it so a gate can fail on it.
     #[test]
     fn an_unresolvable_name_is_kept_and_reported_not_blanked() {
-        let e = expand("Image=x:${MIOS_VERSION_CEPH}", &ssot(&[]));
-        assert_eq!("Image=x:${MIOS_VERSION_CEPH}", e.text);
-        assert_eq!(vec!["MIOS_VERSION_CEPH".to_string()], e.unresolved);
+        let e = expand("Image=x:${MIOS_VERSIONS_CEPH}", &ssot(&[]));
+        assert_eq!("Image=x:${MIOS_VERSIONS_CEPH}", e.text);
+        assert_eq!(vec!["MIOS_VERSIONS_CEPH".to_string()], e.unresolved);
     }
 
     /// A value that itself carries a reference must expand. This is exactly why
     /// install.env drops MIOS_AI_ENDPOINT: the resolver emitted it unexpanded,
-    /// so emit() saw a `$` and skipped the variable entirely (T-1060).
+    /// so emit() saw a `$` and skipped the variable entirely (task_997).
     #[test]
     fn a_resolved_value_that_carries_a_reference_is_expanded_too() {
         let s = ssot(&[
             (
                 "MIOS_AI_ENDPOINT",
-                "http://localhost:${MIOS_PORT_AGENT_PIPE}/v1",
+                "http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1",
             ),
-            ("MIOS_PORT_AGENT_PIPE", "8700"),
+            ("MIOS_PORTS_AGENT_PIPE", "8700"),
         ]);
         let e = expand("url=${MIOS_AI_ENDPOINT}", &s);
         assert_eq!("url=http://localhost:8700/v1", e.text);

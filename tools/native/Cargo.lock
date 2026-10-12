@@ -77,6 +77,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "atk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,7 +129,7 @@ dependencies = [
  "addr2line",
  "cfg-if",
  "libc",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
  "object",
  "rustc-demangle",
  "windows-link",
@@ -402,6 +408,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,6 +609,17 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "flate2"
+version = "1.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide 0.9.1",
+ "zlib-rs",
+]
 
 [[package]]
 name = "fnv"
@@ -821,10 +847,7 @@ dependencies = [
 name = "generate-names-registry"
 version = "0.3.0"
 dependencies = [
- "mios-resolver",
- "regex",
- "serde",
- "toml",
+ "mios-gen",
 ]
 
 [[package]]
@@ -1468,9 +1491,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
+
+[[package]]
+name = "mios-agent-relay"
+version = "0.3.0"
+dependencies = [
+ "mios-service-core",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "mios-ai-config"
 version = "0.3.0"
 dependencies = [
+ "mios-resolver",
  "serde_json",
  "tempfile",
  "toml",
@@ -1493,6 +1537,17 @@ dependencies = [
  "regex",
  "toml",
  "walkdir",
+]
+
+[[package]]
+name = "mios-browser"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "mios-resolver",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -1520,6 +1575,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "mios-gen"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "flate2",
+ "mios-resolver",
+ "mios-service-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "toml_edit 0.20.2",
+ "walkdir",
+]
+
+[[package]]
+name = "mios-hardcode-lint"
+version = "0.3.0"
+dependencies = [
+ "regex",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
 name = "mios-install"
 version = "0.3.0"
 dependencies = [
@@ -1527,6 +1609,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "mios-launch"
+version = "0.3.0"
+dependencies = [
+ "mios-service-core",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1553,6 +1644,21 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "mios-service-core"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "mios-unit-gen",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1584,9 +1690,11 @@ dependencies = [
 name = "mios-template-compile"
 version = "0.3.0"
 dependencies = [
+ "clap",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "toml",
 ]
 
@@ -1602,6 +1710,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mios-toml-get"
+version = "0.3.0"
+dependencies = [
+ "mios-resolver",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "mios-toolchain-pin"
 version = "0.3.0"
 dependencies = [
@@ -1614,6 +1732,7 @@ name = "mios-unit-gen"
 version = "0.3.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",
@@ -1627,6 +1746,7 @@ version = "0.3.0"
 name = "mios-wallpaperd"
 version = "0.3.0"
 dependencies = [
+ "mios-service-core",
  "tao",
  "windows",
  "windows-service",
@@ -2460,6 +2580,12 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "simd-adler32"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "siphasher"
@@ -3541,6 +3667,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

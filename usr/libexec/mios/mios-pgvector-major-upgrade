@@ -7,14 +7,14 @@ set -euo pipefail
 log()  { echo "[mios-pgvector-major-upgrade] $*"; }
 warn() { echo "[mios-pgvector-major-upgrade] WARN: $*" >&2; }
 
-DATA_DIR="${MIOS_PG_DATA_DIR:-/var/lib/mios/pgvector}"
+DATA_DIR="${MIOS_PGVECTOR_DATA_DIR:-/var/lib/mios/pgvector}"
 PGDATA_SUB="${DATA_DIR}/pgdata"
-RESTORE_SQL="${MIOS_PG_RESTORE_SQL:-/var/lib/mios/pgvector-restore.sql}"
+RESTORE_SQL="${MIOS_PGVECTOR_RESTORE_SQL:-/var/lib/mios/pgvector-restore.sql}"
 IMAGE="${MIOS_PGVECTOR_IMAGE:-}"
-PG_USER="${MIOS_PG_USER:-mios}"
-PG_DB="${MIOS_PG_DB:-mios}"
-PG_UID="${MIOS_PGVECTOR_UID:-826}"
-PG_GID="${MIOS_PGVECTOR_GID:-826}"
+PG_USER="${MIOS_PGVECTOR_USER:-mios}"
+PG_DB="${MIOS_PGVECTOR_DB:-mios}"
+PG_UID="${MIOS_SERVICES_PGVECTOR_UID:-826}"
+PG_GID="${MIOS_SERVICES_PGVECTOR_GID:-826}"
 
 # The cluster's own record of the major it was initialised at.
 current_major() {

@@ -1,0 +1,10 @@
+# AI-hint: Cargo manifest for {{name}} crate.
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml
+
+[package]
+name = "{{name}}"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }

@@ -119,7 +119,7 @@ def _load_verb_catalog() -> dict:
             conn_str = (f"postgresql://{cfg['user']}:{cfg['password']}"
                         f"@{cfg['host']}:{cfg['port']}/{cfg['dbname']}")
 
-            locale = os.environ.get("MIOS_LOCALE") or os.environ.get("LANG", "en")
+            locale = os.environ.get("MIOS_LOCALE_LANGUAGE") or os.environ.get("LANG", "en")
             lang = locale.split("_")[0].split(".")[0].lower()
 
             with psycopg.connect(conn_str, connect_timeout=2) as conn:
@@ -222,7 +222,7 @@ def _load_verb_catalog_from_db() -> dict:
         conn_str = (f"postgresql://{cfg['user']}:{cfg['password']}"
                     f"@{cfg['host']}:{cfg['port']}/{cfg['dbname']}")
 
-        locale = os.environ.get("MIOS_LOCALE") or os.environ.get("LANG", "en")
+        locale = os.environ.get("MIOS_LOCALE_LANGUAGE") or os.environ.get("LANG", "en")
         lang = locale.split("_")[0].split(".")[0].lower()
 
         defaults = {}

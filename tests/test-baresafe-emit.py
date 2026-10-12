@@ -25,7 +25,7 @@ UNSAFE_CASES = (
     ("tab", "two\twords"),
     ("double quote", 'say"what'),
     ("single quote", "say'what"),
-    ("dollar", "http://localhost:${MIOS_PORT_AGENT_PIPE}/v1"),
+    ("dollar", "http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1"),
     ("backtick", "now`date`"),
     ("hash", "value#comment"),
 )

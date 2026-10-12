@@ -16,10 +16,10 @@ Environment=POSTGRES_PASSWORD=mios
 Environment=POSTGRES_DB=mios
 Environment=PGDATA=/var/lib/postgresql/data/pgdata
 EnvironmentFile=/etc/mios/install.env
-Exec=postgres -c port=${MIOS_PORT_PGVECTOR:-8600} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order -c hnsw.max_scan_tuples=20000 -c hnsw.scan_mem_multiplier=1
+Exec=postgres -c port=${MIOS_PORTS_PGVECTOR:-8600} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order -c hnsw.max_scan_tuples=20000 -c hnsw.scan_mem_multiplier=1
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=826
-Image=docker.io/pgvector/pgvector:latest
+Image=docker.io/pgvector/pgvector:pg18
 Label=org.opencontainers.image.title=mios-pgvector
 Label=org.opencontainers.image.documentation=https://github.com/pgvector/pgvector
 Pod=mios-ai.pod
@@ -34,7 +34,7 @@ WantedBy=multi-user.target default.target
 [Service]
 Delegate=yes
 EnvironmentFile=/etc/mios/install.env
-ExecStartPost=/usr/bin/bash -c 'for i in $(seq 1 45); do /usr/bin/podman exec mios-pgvector pg_isready -p ${MIOS_PORT_PGVECTOR:-8600} -U mios -d mios -q && break; sleep 2; done; /usr/bin/podman exec mios-pgvector psql -p ${MIOS_PORT_PGVECTOR:-8600} -v ON_ERROR_STOP=0 -U mios -d mios -f /docker-entrypoint-initdb.d/10-mios-schema.sql || true'
+ExecStartPost=/usr/bin/bash -c 'for i in $(seq 1 45); do /usr/bin/podman exec mios-pgvector pg_isready -p ${MIOS_PORTS_PGVECTOR:-8600} -U mios -d mios -q && break; sleep 2; done; /usr/bin/podman exec mios-pgvector psql -p ${MIOS_PORTS_PGVECTOR:-8600} -v ON_ERROR_STOP=0 -U mios -d mios -f /docker-entrypoint-initdb.d/10-mios-schema.sql || true'
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=180s

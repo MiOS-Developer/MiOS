@@ -254,13 +254,19 @@ _is_section_enabled() {
 # values return no policy so destructive callers can refuse rather than guess.
 get_package_setting() {
     local category="$1" key="$2" cand result
-    for cand in \
+    local -a files
+    if [[ $# -ge 3 ]]; then
+        files=("$3")
+    else
+        files=( \
         "${MIOS_TOML:-}" \
         "${HOME:-/root}/.config/mios/mios.toml" \
         "/etc/mios/mios.toml" \
         "/ctx/mios-bootstrap/mios.toml" \
         "/usr/share/mios/mios.toml" \
-        "/ctx/usr/share/mios/mios.toml"; do
+        "/ctx/usr/share/mios/mios.toml" )
+    fi
+    for cand in "${files[@]}"; do
         [[ -n "$cand" && -f "$cand" ]] || continue
         result=$(awk -v sect="[packages.$category]" -v key="$key" '
             $0 == sect { active = 1; next }

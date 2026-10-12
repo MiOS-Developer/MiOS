@@ -1,8 +1,8 @@
-# AI-hint: T-340 SCHED-05 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended
+# AI-hint: task_284 task_3218 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot save/restore API (/slots endpoint). Suspended conversations are checkpointed to /var/lib/mios/llamacpp/slots/ and their task row updated to suspended
 # AI-related: mios-llm-light, mios_kv_compact, test_mios_kvfork
 # AI-functions: slot_path, __init__, suspend, resume, erase, _llama_slot_action, list_suspended, class KVSlot, class KVForkManager
 """
-mios_kvfork.py — T-340 SCHED-05
+mios_kvfork.py — task_284 task_3218
 Turn-boundary preemption & snapshot-suspend-resume via llama.cpp KV-cache slot
 save/restore API (/slots endpoint).  Suspended conversations are checkpointed
 to /var/lib/mios/llamacpp/slots/ and their task row updated to `suspended`.
@@ -117,7 +117,7 @@ class KVForkManager:
     def __init__(self, llama_base_url: str | None = None,
                  dry_run: bool = False) -> None:
         if llama_base_url is None:
-            _port = os.environ.get("MIOS_PORT_LLM_LIGHT", "8500")
+            _port = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")
             llama_base_url = os.environ.get("MIOS_LLM_LIGHT_ENDPOINT") or f"http://localhost:{_port}"
         self.llama_base_url = llama_base_url.rstrip("/")
         self.dry_run = dry_run

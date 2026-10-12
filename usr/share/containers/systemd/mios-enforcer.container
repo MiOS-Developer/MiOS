@@ -1,0 +1,80 @@
+# AI-hint: MiOS Cilium Tetragon eBPF kernel enforcement plane Quadlet container. (WS-SEC / KENF-01 / task_169 / Milestone M4).
+# AI-related: usr/lib/mios/agent-pipe/mios_isolation.py, tests/test-tetragon-quarantine.py, /etc/tetragon/tetragon.tp.d/20-agent-sandboxing.yaml
+# /usr/share/containers/systemd/mios-enforcer.container
+
+[Unit]
+Description='MiOS' Tetragon eBPF Kernel Enforcement Plane (Standalone Out-of-Process Quarantine)
+Documentation=https://tetragon.io/docs/
+After=network-online.target local-fs.target
+Wants=network-online.target
+# Inert on WSL2 / container virtualization where eBPF tracepoints and debugfs are restricted
+ConditionVirtualization=!wsl
+ConditionVirtualization=!container
+ConditionPathExists=/sys/kernel/debug
+
+[Container]
+ContainerName=mios-enforcer
+Image=quay.io/cilium/tetragon:v1.4.2
+AutoUpdate=registry
+Network=host
+PID=host
+
+# Law-6 privileged exception documentation:
+# Cilium Tetragon standalone requires CAP_BPF and CAP_SYS_ADMIN to attach kprobes (sys_enter_connect)
+# and tracepoints into the host Linux kernel for in-kernel SIGKILL enforcement of network egress isolation.
+User=mios-enforcer
+Group=mios-enforcer
+
+AddCapability=CAP_BPF
+AddCapability=CAP_SYS_ADMIN
+AddCapability=CAP_SYS_RESOURCE
+AddCapability=CAP_SYS_PTRACE
+AddCapability=CAP_NET_ADMIN
+SecurityLabelDisable=true
+
+Volume=/sys/kernel/debug:/sys/kernel/debug:rw
+Volume=/sys/fs/bpf:/sys/fs/bpf:rw
+Volume=/etc/tetragon/tetragon.tp.d:/etc/tetragon/tetragon.tp.d:ro
+Volume=/var/run/tetragon:/var/run/tetragon:rw
+Volume=/var/log/tetragon:/var/log/tetragon:rw
+
+Exec=--bpf-lib=/var/lib/tetragon/bpf --tracing-policy-dir=/etc/tetragon/tetragon.tp.d --export-filename=/var/run/tetragon/tetragon.log
+
+# TracingPolicy specification template embedded for automated compilation:
+# ---
+# apiVersion: cilium.io/v1alpha1
+# kind: TracingPolicy
+# metadata:
+#   name: "agent-network-egress-quarantine"
+# spec:
+#   kprobes:
+#     - call: "sys_enter_connect"
+#       syscall: true
+#       args:
+#         - index: 0
+#           type: "int"
+#         - index: 1
+#           type: "sockaddr"
+#       selectors:
+#         - matchNamespaces:
+#             - "mios-agents"
+#             - "podman-unprivileged"
+#             - "coderun-sandbox"
+#           matchArgs:
+#             - index: 0
+#               operator: "Equal"
+#               values:
+#                 - 2   # AF_INET
+#                 - 10  # AF_INET6
+#           matchActions:
+#             - action: Sigkill
+
+[Install]
+WantedBy=multi-user.target default.target
+
+[Service]
+Delegate=yes
+Restart=always
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=15s

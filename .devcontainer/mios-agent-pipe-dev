@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AI-hint: Starts the agent-pipe gateway by hand inside the devcontainer, where the host-oriented systemd units stay disabled.
-# Launch the gateway explicitly; host-oriented systemd units stay disabled.
+# AI-hint: Start and verify the unprivileged devcontainer gateway on the SSOT agent-pipe port without requiring the host-oriented systemd service.
+# AI-related: .devcontainer/boot-mios-systems.sh, usr/share/mios/mios.toml [ports]
 set -euo pipefail
 
 readonly ROOT="${MIOS_ROOT:-/workspaces/MiOS}"
@@ -16,5 +16,44 @@ if [[ ! -f "${SERVER}" ]]; then
     exit 1
 fi
 
-cd "${ROOT}"
-exec "${PYTHON}" "${SERVER}" "$@"
+readonly STATE="${XDG_STATE_HOME:-${HOME}/.local/state}/mios/agent-pipe"
+
+check() {
+    MIOS_TOML_ROOT="$ROOT" "$PYTHON" - "$ROOT" <<'PY'
+import json, pathlib, sys, urllib.request
+sys.path.insert(0, str(pathlib.Path(sys.argv[1])/'usr/lib/mios'))
+import mios_toml
+port = mios_toml.load_merged()['ports']['agent_pipe']
+with urllib.request.urlopen(f'http://127.0.0.1:{port}/v1/models', timeout=3) as response:
+    result = json.load(response)
+if not isinstance(result.get('data'), list):
+    raise SystemExit('MiOS gateway readiness response is not an OpenAI model catalog')
+print(f'MiOS gateway ready on the SSOT agent_pipe port {port}')
+PY
+}
+
+start() {
+    if check >/dev/null 2>&1; then check; return; fi
+    [[ "$(id -u)" != 0 ]] || { echo 'Start the developer gateway as the devcontainer user.' >&2; return 1; }
+    umask 077
+    install -d -m 0700 "$STATE"
+    cd "$ROOT"
+    MIOS_TOML_ROOT="$ROOT" MIOS_BIND_HOST=127.0.0.1 \
+        setsid "$PYTHON" "$SERVER" >"$STATE/gateway.log" 2>&1 </dev/null &
+    local pid=$!
+    printf '%s\n' "$pid" > "$STATE/gateway.pid"
+    for _ in {1..30}; do
+        if check >/dev/null 2>&1; then check; return; fi
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    echo "MiOS gateway failed to become ready; inspect $STATE/gateway.log" >&2
+    return 1
+}
+
+case "${1:-serve}" in
+    start) start ;;
+    check) check ;;
+    serve) shift || true; cd "$ROOT"; exec "$PYTHON" "$SERVER" "$@" ;;
+    *) cd "$ROOT"; exec "$PYTHON" "$SERVER" "$@" ;;
+esac

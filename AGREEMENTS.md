@@ -106,7 +106,7 @@ are listed verbatim in `usr/share/doc/mios/reference/licenses.md`; non-exhaustiv
 - **Microsoft Windows VM guests** -- bring-your-own valid licenses
   for any Windows guests run under libvirt/QEMU.
 - **Flathub apps** -- each Flatpak shipped or installed via
-  `MIOS_FLATPAKS` carries its own license metadata.
+  `MIOS_DESKTOP_FLATPAKS` carries its own license metadata.
 - **Sigstore-signed images** -- if you install signed image policies
   via `bootc switch --enforce-container-sigpolicy`, you accept the
   Sigstore transparency log and Fulcio identity attestation model.

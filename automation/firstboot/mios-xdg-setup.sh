@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-if [ "${MIOS_CEPHFS_ENABLE:-false}" != "true" ]; then
+if [ "${MIOS_STORAGE_CEPHFS_ENABLE:-false}" != "true" ]; then
     echo "[xdg-setup] CephFS integration disabled in SSOT"
     exit 0
 fi
@@ -19,7 +19,7 @@ mkdir -p /etc/xdg
 cp /usr/share/mios/xdg/user-dirs.defaults /etc/xdg/user-dirs.defaults
 echo "[xdg-setup] Configured /etc/xdg/user-dirs.defaults"
 
-_op_user="${MIOS_USER:-mios}"
+_op_user="${MIOS_IDENTITY_USERNAME:-mios}"
 if ! getent passwd "$_op_user" >/dev/null; then
     echo "[xdg-setup] Operator user $_op_user not found"
 else
@@ -28,7 +28,7 @@ else
 
     mkdir -p "$_user_systemd_dir/default.target.wants"
 
-    cp /usr/share/mios/systemd/mios-xdg-userdir-init.service "$_user_systemd_dir/mios-xdg-userdir-init.service"
+    cp /usr/lib/systemd/system/mios-xdg-userdir-init.service "$_user_systemd_dir/mios-xdg-userdir-init.service"
 
     ln -sf "../mios-xdg-userdir-init.service" "$_user_systemd_dir/default.target.wants/mios-xdg-userdir-init.service"
 

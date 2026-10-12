@@ -12,7 +12,7 @@ _PG_PRIMARY = False
 _mios_pg = None
 DB_NS = "mios"
 DB_DB = "mios"
-_pg_port = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+_pg_port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
 DB_URL = os.environ.get("MIOS_DB_URL", f"http://localhost:{_pg_port}")
 _DB_AUTH = ""
 

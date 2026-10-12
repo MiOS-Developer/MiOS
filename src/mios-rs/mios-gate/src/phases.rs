@@ -27,6 +27,66 @@ fn is_phase_name(name: &str) -> bool {
         && name.ends_with(".sh")
 }
 
+/// The phase scripts directly under `dir`, or None when it cannot be listed.
+fn phase_scripts(dir: &Path) -> Option<BTreeSet<String>> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    Some(
+        rd.flatten()
+            .filter(|e| e.path().is_file())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| is_phase_name(n))
+            .collect(),
+    )
+}
+
+/// The phase-script count must equal `[build.ratchet].max_phase_scripts`:
+/// above it is growth, below it is slack the next phase hides in, and an
+/// absent ceiling cannot run (the bash check defaulted it to 71).
+pub fn ratchet(root: &Path) -> Report {
+    let report = |ok: bool, cnr: Option<String>, summary: String, findings: Vec<String>| Report {
+        check: "phase-ratchet".to_string(),
+        ok,
+        could_not_run: cnr,
+        summary,
+        findings,
+    };
+    let ceiling = std::fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .and_then(|v| {
+            v.get("build")?
+                .get("ratchet")?
+                .get("max_phase_scripts")?
+                .as_integer()
+        });
+    let Some(ceiling) = ceiling else {
+        let why =
+            "mios.toml [build.ratchet].max_phase_scripts is absent, unreadable or not a count";
+        return report(false, Some(why.into()), String::new(), Vec::new());
+    };
+    let measured = match phase_scripts(&root.join("automation")) {
+        Some(s) if !s.is_empty() => s.len() as i64,
+        _ => {
+            let why = "automation/ holds no NN-*.sh phase script, so nothing was counted";
+            return report(false, Some(why.into()), String::new(), Vec::new());
+        }
+    };
+    let mut findings = Vec::new();
+    if measured > ceiling {
+        findings.push(format!(
+            "{measured} phase script(s) exceed [build.ratchet].max_phase_scripts = {ceiling} -- \
+             fold a phase instead of raising the ceiling"
+        ));
+    } else if measured < ceiling {
+        findings.push(format!(
+            "[build.ratchet].max_phase_scripts is {ceiling} but only {measured} phase script(s) \
+             exist -- lower the ceiling to {measured}"
+        ));
+    }
+    let summary = format!("{measured} phase script(s) on disk (ceiling {ceiling})");
+    report(findings.is_empty(), None, summary, findings)
+}
+
 pub fn check(root: &Path) -> Report {
     let ssot = root.join("usr/share/mios/mios.toml");
     let dir = root.join("automation");
@@ -90,19 +150,9 @@ pub fn check(root: &Path) -> Report {
         listed.insert(script.to_string());
     }
 
-    let mut on_disk: BTreeSet<String> = BTreeSet::new();
-    let Ok(rd) = std::fs::read_dir(&dir) else {
+    let Some(on_disk) = phase_scripts(&dir) else {
         return cannot_run("automation/ could not be read");
     };
-    for ent in rd.flatten() {
-        if !ent.path().is_file() {
-            continue;
-        }
-        let name = ent.file_name().to_string_lossy().to_string();
-        if is_phase_name(&name) {
-            on_disk.insert(name);
-        }
-    }
     if on_disk.is_empty() {
         return cannot_run("automation/ holds no NN-*.sh phase scripts, so nothing was compared");
     }

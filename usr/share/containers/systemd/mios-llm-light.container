@@ -15,10 +15,10 @@ Entrypoint=/app/llama-swap
 Environment=HOME=/var/lib/mios/llamacpp
 Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64
 EnvironmentFile=/etc/mios/install.env
-Exec=--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORT_LLM_LIGHT:-8500}
+Exec=--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORTS_LLM_LIGHT}
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=827
-HealthCmd=curl -fsS http://localhost:${MIOS_PORT_LLM_LIGHT}/v1/models || exit 1
+HealthCmd=curl -fsS http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/models || exit 1
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=60s

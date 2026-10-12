@@ -9,6 +9,9 @@ description = "MiOS living-wallpaper + desktop-services daemon: silent WorkerW W
 name = "mios-wallpaperd"
 path = "src/main.rs"
 
+[dependencies]
+mios-service-core = { path = "../mios-service-core" }
+
 [target.'cfg(windows)'.dependencies]
 wry = "0.45"
 tao = "0.30"
@@ -24,10 +27,5 @@ windows = { version = "0.58", features = [
     "Win32_System_Registry",
     "Win32_System_Environment",
 ] }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"
+# Release size tuning lives in the workspace root (rendered by mios-gen
+# cargo-manifests): [profile.release.package] here would be silently ignored.

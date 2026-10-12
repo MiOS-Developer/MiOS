@@ -1,5 +1,5 @@
 <!-- AI-hint: Guide to configuring Blink Shell on iOS (iPhone/iPad) and tmux for Shift+Tab and mobile terminal shortcut combos. -->
-<!-- AI-related: /usr/share/mios/tmux/blink-mobile-keys.tmux.conf, /usr/libexec/mios/ux/tmux_theme.py, /etc/tmux.conf -->
+<!-- AI-related: /usr/share/mios/tmux/blink-mobile-keys.tmux.conf, tools/native/mios-gen/src/terminal.rs, /etc/tmux.conf -->
 
 # Blink Shell & Tmux Mobile Keyboard Integration Guide
 

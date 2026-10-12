@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROLE_CONF="${MIOS_ETC_DIR:-/etc/mios}/role.conf"
 BLADE_D="${MIOS_ETC_DIR:-/etc/mios}/blade.d"
+BLADE_ENV="${MIOS_PATHS_BLADE_ENV:-/run/mios/blade.env}"
 
 log() { printf '[mios-blade] %s\n' "$*"; }
 die() { printf '[mios-blade] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -135,9 +136,9 @@ case "$cmd" in
         printf 'Capabilities\n  %s\n' "${SSOT_CAPS_LEGAL:-<none>}"
         ;;
     status)
-        if [[ -f /run/mios/blade.env ]]; then
+        if [[ -f "$BLADE_ENV" ]]; then
             # shellcheck source=/dev/null
-            source /run/mios/blade.env
+            source "$BLADE_ENV"
             echo "Blade Type:   ${MIOS_BLADE_TYPE:-unknown}"
             echo "Capabilities: ${MIOS_BLADE_CAPS//,/ }"
         elif [[ -f /var/lib/mios/role.active ]]; then

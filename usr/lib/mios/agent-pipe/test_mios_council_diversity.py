@@ -1,6 +1,6 @@
-# AI-hint: Stdlib offline unit tests for mios_council_diversity -- the council input-diversity gate (T-047 RouteMoA GAP-1) + confidence-aware aggre...
+# AI-hint: Stdlib offline unit tests for mios_council_diversity -- the council input-diversity gate (task_47 RouteMoA GAP-1) + confidence-aware aggre...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Stdlib offline unit tests for mios_council_diversity (T-047 / T-048)."""
+"""Stdlib offline unit tests for mios_council_diversity (task_47 / task_48)."""
 
 import asyncio
 import sys
@@ -93,13 +93,13 @@ def t_diversity_gate_prunes():
         M.apply_council_gates(nodes, embed_one=_mk_embed(),
                               diversity_gate=True, diversity_threshold=0.92,
                               aggregator_bypass=False))
-    check("T-047 diversity: two identical -> 1 input kept", len(sel) == 1)
-    check("T-047 diversity: no bypass", byp is None)
+    check("task_47 diversity: two identical -> 1 input kept", len(sel) == 1)
+    check("task_47 diversity: no bypass", byp is None)
     nodes = _nodes("A", "B")
     sel, byp = asyncio.get_event_loop().run_until_complete(
         M.apply_council_gates(nodes, embed_one=_mk_embed(),
                               diversity_gate=True, aggregator_bypass=False))
-    check("T-047 diversity: diverse pair kept whole", len(sel) == 2)
+    check("task_47 diversity: diverse pair kept whole", len(sel) == 2)
 
 def t_aggregator_bypass():
     events = []
@@ -117,15 +117,15 @@ def t_aggregator_bypass():
                               log_event=_log))
     if byp is None:
         aggregator_calls["n"] += 1
-    check("T-048 bypass: bypass returned (aggregator skipped)", byp is not None)
-    check("T-048 bypass: aggregator LLM NOT called", aggregator_calls["n"] == 0)
-    check("T-048 bypass: highest-confidence individual response returned",
+    check("task_48 bypass: bypass returned (aggregator skipped)", byp is not None)
+    check("task_48 bypass: aggregator LLM NOT called", aggregator_calls["n"] == 0)
+    check("task_48 bypass: highest-confidence individual response returned",
           byp is not None and (byp.get("node") or {}).get("output") == "A")
-    check("T-048 bypass: council_size == 3",
+    check("task_48 bypass: council_size == 3",
           byp is not None and byp.get("council_size") == 3)
-    check("T-048 bypass: event logged kind=aggregator_bypass",
+    check("task_48 bypass: event logged kind=aggregator_bypass",
           len(events) == 1 and events[0].get("kind") == "aggregator_bypass")
-    check("T-048 bypass: event carries council_size + mean_similarity",
+    check("task_48 bypass: event carries council_size + mean_similarity",
           events[0].get("council_size") == 3
           and abs(events[0].get("mean_similarity") - 1.0) < 1e-9)
 
@@ -136,8 +136,8 @@ def t_aggregator_bypass():
                               diversity_gate=False, aggregator_bypass=True,
                               aggregator_bypass_threshold=0.95,
                               log_event=lambda **k: events2.append(k)))
-    check("T-048 bypass: divergent council -> no bypass", byp is None)
-    check("T-048 bypass: divergent council -> no event", events2 == [])
+    check("task_48 bypass: divergent council -> no bypass", byp is None)
+    check("task_48 bypass: divergent council -> no event", events2 == [])
 
 def t_degrade_open_missing_embed():
     nodes = _nodes("A", "A", "MISS")
@@ -179,7 +179,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_consensus.py (T-1092)
+# Consolidated from test_mios_consensus.py (task_1006)
 # ==============================================================================
 # AI-hint: Stdlib offline unit tests for mios_pipe.routing.consensus -- the weighted multi-judge Definition-of-Done fold (CONS-01). No network / no DB / no...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

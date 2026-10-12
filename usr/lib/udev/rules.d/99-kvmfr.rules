@@ -1,3 +1,4 @@
-# AI-hint: Defines udev rules to grant the kvm group read/write access to kvmfr character devices, ensuring proper permissions for KVM-based hardware emulation.
-# 'MiOS': kvmfr character device accessible by kvm group members
+# AI-hint: Defines udev rules to grant the kvm group read/write access to kvmfr character devices (mode 0660).
+# 'MiOS': kvmfr character device accessible by kvm group members with mode 0660
+KERNEL=="kvmfr0", OWNER="root", GROUP="kvm", MODE="0660"
 SUBSYSTEM=="kvmfr", OWNER="root", GROUP="kvm", MODE="0660", TAG+="uaccess"

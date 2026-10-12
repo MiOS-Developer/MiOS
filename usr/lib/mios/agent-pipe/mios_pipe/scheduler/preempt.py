@@ -1,4 +1,4 @@
-# AI-hint: WS-A12 round-robin preemption state machine + generation-snapshot contract, PLUS the T-019/SCHED-01 TURN-boundary preemption seam AND th...
+# AI-hint: WS-A12 round-robin preemption state machine + generation-snapshot contract, PLUS the task_19/task_19 TURN-boundary preemption seam AND th...
 # AI-doc: usr/share/doc/mios/manual/scheduler.md
 
 from __future__ import annotations
@@ -248,8 +248,8 @@ class TokenSliceQueue:
         }
 
 _SCHEDULER_FALLBACK = {
-    "preempt_enable": False,   # MASTER FLAG (T-019) -- off => turn_boundary is a pass-through no-op
-    "queue_enable": False,     # MASTER FLAG (T-020) -- off => slice_boundary is a pass-through no-op
+    "preempt_enable": False,   # MASTER FLAG (task_19) -- off => turn_boundary is a pass-through no-op
+    "queue_enable": False,     # MASTER FLAG (task_20) -- off => slice_boundary is a pass-through no-op
     "max_suspended": 4,        # mirrors PreemptScheduler(max_suspended=...): bounded snapshots
     "quantum_s": 8.0,          # mios_preempt.Quantum limit (turn time-slice; <=0 = unbounded)
     "slice_tokens": 256,       # TokenSliceQueue per-turn slice budget in TOKENS (0 = slicing off)

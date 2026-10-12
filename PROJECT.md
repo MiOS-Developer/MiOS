@@ -1,73 +1,89 @@
-<!-- AI-hint: Architecture notes for the dev-loop lane-isolation harness: multi-lane orchestration, harness adapters and gates, base-tree guard, and git lock management. -->
-# Project: Dev-Loop Lane Isolation & Concurrent Worker Harness
+<!-- AI-hint: Project brief: gateway context budgeting, the Windows low-power iGPU desktop and static Rust consolidation across the Windows/WSL boundary. -->
+# Project: MiOS Gateway Context Budgeting, Windows Low-Power iGPU Desktop & Static Rust Consolidation
 
 ## Architecture
-The dev-loop orchestration harness coordinates autonomous AI coding agents across multiple harnesses (Antigravity/AGY, Claude Code CLI `claude -p`, Codex, OpenCode, Copilot, Cursor).
-The core system architecture consists of:
-1. **Execution Engine & Multi-Lane Orchestration (`devloop.sh`, `DevLoop.ps1`)**:
-   Manages the lifecycle of worker lanes, partitioning tasks into dependency waves (`adapters.py waves`), provisioning isolated git worktrees (`<worktree_root>/<id>`), launching concurrent jobs via detached supervisor (`job.py spawn`), executing sequential pre-merge verification gates (`gate_merge`), and atomically reconciling git commits (`--no-ff`).
-2. **Harness Adapters & Gating Engine (`adapters.py`)**:
-   Synthesizes execution commands (`build_argv`) for diverse CLI agents, prepares isolated prompt contracts, and executes two-sided verification gates (`positive_cmd` and `negative_control_cmd`). Validates path ownership (`cmd_owned`), detects tool permission denials (`cmd_denials`), and enforces supply-chain / security scans.
-3. **Base-Tree State Guard & Leakage Enforcement (`adapters.py`, `agy_session.py`, `devloop.sh`)**:
-   Enforces absolute immutability of the base git repository. Captures baseline `git status --porcelain` snapshots prior to execution and ensures that only designated metadata paths (`.devloop/`, `.git/`, `AGENTS.md`, `tasks.jsonl`, `<worktree_root>/`) can ever be modified in the base working tree. Halts execution immediately with diagnostic error reporting if stray files or fixture leaks are detected.
-4. **Git Lock & Concurrency Manager (`git_lock.py`, `adapters.py:git`)**:
-   Resolves git directories for primary and linked worktrees, arbitrating concurrent git operations with exponential backoff, jitter, and stale lock eviction (>45s) to eliminate index lock contention.
+MiOS local neural gateway, desktop presentation layer, and verification tooling operate across the Windows host and WSL2 container boundaries under Architectural Laws 5 (UNIFIED-AI-REDIRECTS), 7 (NO-HARDCODE), 8 (SSOT-PROJECTION), and 14 (TARGET-LANGUAGES):
+- **Gateway Context Budgeting & Ingress Routing (:8700 / MIOS_AI_ENDPOINT)**:
+  `usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py` and `vision.py` front all local agent inference. Plain chat requests with `tool_choice: "none"` strip all tool definitions before backend dispatch, ensuring 0 tool tokens in the prompt. When client harnesses (Codex, OpenCode, Claude Code) supply their own tool sets, the gateway detects caller tools (using `_name_is_verb` and tool capacity thresholds) and suppresses redundant `_mios_sel` tool injection. The gateway enforces a dynamic 32,768-token context ceiling (`--ctx-size 32768`), applying tiered principled pruning (`_drop_stale_tool_results`, `plan_compaction`, content truncation) to prevent HTTP 400 errors from backend LLM servers.
+- **Windows Low-Power iGPU Desktop & Wallpaper Lifecycle**:
+  `usr/share/mios/windows/Set-MiOSWallpaper.ps1`, `MiOS-Wallpaper-Service`, `MiOS-Wallpaper.exe`, and `tools/native/mios-wallpaperd` manage desktop wallpaper execution. Windows DirectX low-power GPU routing (`GpuPreference=1;`) is enforced across `HKCU:\Software\Microsoft\DirectX\UserGpuPreferences` and all hives under `HKEY_USERS` for `MiOS-Wallpaper.exe`, `msedgewebview2.exe`, `mios-wallpaperd.exe`, and `llama-server.exe`, directing 3D rendering to the generic Power Saving / Integrated GPU across all supported architectures (Intel, AMD, Qualcomm/ARM, or virtual adapters) without hardcoding vendor IDs or chipset models. On multi-GPU configurations, the secondary discrete / high-performance GPU maintains strictly 0 MB compute VRAM allocation during wallpaper and loopback inference, cleanly degrading open on single-GPU or CPU-only systems. Color tokens are wired dynamically from `usr/share/mios/mios.toml` `[colors]` into `HKLM\SOFTWARE\MiOS\WallpaperUrl`.
+- **Compiled Static Rust Tooling (task_3454 / task_3455)**:
+  Candidate leaf verification tools in `usr/libexec/mios` and `automation/` are consolidated into compiled static Rust binaries in `tools/native/` with strangler shims. `mios-hardcode-lint` delivers 100% byte-identical CLI output and exit codes against the Python oracle. `tools/native/mios-service-core` provides shared daemon infrastructure across `mios-agent-relay`, `mios-wallpaperd`, and `mios-launch`, strictly enforcing Architectural Law 5 (0 vendor cloud URLs) and dynamic layered SSOT resolution.
+- **Upstream FOSS Research**:
+  Controlled research into upstream FOSS patterns for context window budgeting, prompt compression, and DirectX low-power GPU scheduling to inform architectural designs and limits.
+- **Standing Gate Certification & Two-Sided Controls**:
+  All changes across gateway, wallpaper, and Rust tooling are accompanied by two-sided verification controls (positive pass + negative planted failure). Standing gates (`phase-registry`, `ratchet-direction`, `credential-literals`, `version-literals-ssot`, `signature-policy`), `ci-suites.py --check`, `sync-bootstrap.py --check`, and `sync-generated.sh` are certified clean with 0 unprojected diffs.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Worktree Layout Isolation | Enforce worker and manager isolation within dedicated git worktrees under `<worktree_root>/<id>` with narrow `.git/info/exclude` | M1 | R1, Survey §1.1 |
-| 2 | Clean Worktree Provisioning | Fix worktree reuse bug in `devloop.sh` to clean/reset existing worktrees before lane execution | M1 | R1, Survey §1.1 |
-| 3 | Prompt & Dispatch Alignment | Update `manager.md` and `dispatch.*.md` to eliminate unisolated subagent fictions and mandate dedicated worktrees | M1 | R1, Survey §1.2 |
-| 4 | Base-Tree Snapshot Protocol | Implement pre- and post-execution snapshotting (`base_tree_state`) in `adapters.py` and `devloop.sh` | M2 | R2, Survey §1.2 |
-| 5 | Two-Sided Gate Base-Tree Audit | Enforce base-tree immutability inside `adapters.py:cmd_gate`; halt with exit 2 on stray modifications outside allowed metadata paths | M2 | R2, Survey §1.2 |
-| 6 | Orchestrator Pre/Post Leak Audit | Implement automated pre/post execution audits in `devloop.sh` halting with non-zero exit on stray files | M2 | R2, Survey §1.2 |
-| 7 | Diagnostic Stray Path Reporting | Report exact stray file paths on stderr when base tree leakage is detected | M2 | R2, Survey §1.2 |
-| 8 | Fail-Closed Session Guard | Enforce immediate fail-closed termination in `agy_session.py` when base tree mutations are detected | M2 | R2, Survey §1.2 |
-| 9 | Concurrent Detached Execution | Enable parallel detached worker job spawning (`job.py spawn`) across waves for headless and multi-lane runs | M3 | R3, Survey §1.3 |
-| 10 | Claude Code CLI Worker Harness | Full production support for `claude -p` workers with `cwd=wt`, JSON envelope, schema validation, and tool allowlists | M3 | R3, Survey §1.3 |
-| 11 | Concurrent Worktree Index Isolation | Ensure zero index lock contention during concurrent worker builds and gate runs via worktree-specific index files and `git_lock.py` backoff | M3 | R3, Survey §1.3 |
-| 12 | Atomic Diff Reconciliation | Reconcile diffs sequentially via two-sided gate, path ownership audit, and `--no-ff` merge with instant conflict abort | M3 | R3, Survey §1.4 |
-| 13 | E2E Testing Suite (Tiers 1-4) | Comprehensive opaque-box test suite covering worktree isolation, stray leakage detection, and concurrent Claude Code/AGY spawning | E2E | Acceptance Criteria |
-| 14 | Adversarial Hardening (Tier 5) | White-box stress testing of edge cases, rapid lock contention, dirty baselines, and nested negative controls | M4 | Project Pattern |
+| F1 | `tool_choice: "none"` Ingress Stripping | Strip tool definitions and tool_choice in `chat.py` so plain chat runs with 0 tool tokens | M1 | R1 / Survey |
+| F2 | `_has_client_tools` Bypass on `tool_choice: "none"` | Bypass client tools loop in `vision.py` when `tool_choice == "none"` | M1 | R1 / Survey |
+| F3 | Client Harness Tool De-duplication | Suppress `_mios_sel` in `vision.py` when caller supplies tools or MiOS verbs | M1 | R1 / Survey |
+| F4 | Gateway Context Token Budgeting & Pruning | Align context limit to 32k and apply tiered pruning before dispatch to prevent HTTP 400 | M1 | R1 / Survey |
+| F5 | Gateway End-to-End Chat Completion | Verify `/v1/chat/completions` succeeds within context limits without HTTP 400 | M1 | R1 / Survey |
+| F6 | DirectX Low-Power Preference (`GpuPreference=1;`) | Enforce `GpuPreference=1;` for wallpaper, webview, and iGPU executables on generic Power Saving GPU | M2 | R2 / Survey |
+| F7 | 0 MB Discrete GPU Compute VRAM Isolation | Verify zero compute memory allocation on discrete / high-performance GPU during wallpaper and inference | M2 | R2 / Survey |
+| F8 | Living Wallpaper `[colors]` SSOT Binding | Wire `mios.toml` `[colors]` tokens dynamically into `HKLM\SOFTWARE\MiOS\WallpaperUrl` | M2 | R2 / Survey |
+| F9 | Rust Leaf Verifier Parity & Strangler Shims | Verify 100% byte parity and strangler shims for `mios-hardcode-lint` and candidate verifiers | M3 | R3 / Survey |
+| F10 | Shared Daemon Infrastructure (`mios-service-core`) | Enforce zero cloud URLs and dynamic SSOT resolution across daemons and relays | M3 | R3 / Survey |
+| F11 | Upstream FOSS Research & Synthesis | Research upstream FOSS patterns for context token budgeting, compression, and GPU scheduling | M4 | R4 / Survey |
+| F12 | Two-Sided Verification Controls | Implement positive and negative controls for all modified components | M5 | R5 / Survey |
+| F13 | Standing Gates & Sync Certification | Certify all 5 standing gates, `ci-suites.py`, `sync-bootstrap.py`, and `sync-generated.sh` clean | M5 | R5 / Survey |
+| F14 | Comprehensive E2E Test Suite (Tiers 1-4) | Requirement-driven opaque-box test suite published via `TEST_READY.md` | M6 | Dual Track |
+| F15 | Adversarial Coverage Hardening (Tier 5) | White-box adversarial testing and coverage gap verification | M6 | Dual Track |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| E2E | E2E Testing Track | Requirement-driven test suite (Tiers 1-4) covering R1, R2, R3, and publishing `TEST_READY.md` | none | DONE |
-| M1 | Strict Worktree Isolation | Enforce worktree provisioning, sanitization, and prompt alignment for all manager and worker runs | none | DONE |
-| M2 | Leakage Detection & Enforcement | Implement base-tree snapshotting, two-sided gate leakage audit in `adapters.py`, orchestrator audits in `devloop.sh`, and diagnostic error reporting | M1 | DONE |
-| M3 | Concurrent Worker Lanes & Claude Code CLI | Multi-lane concurrent spawning via `job.py`, Claude Code CLI (`claude -p`) harness verification, and atomic diff reconciliation | M1, M2 | DONE |
-| M4 | Final Milestone & Hardening | Pass 100% of E2E tests (Tiers 1-4) and adversarial coverage hardening (Tier 5) | E2E, M3 | DONE |
+| M1 | Gateway Context Budgeting & Tool De-duplication | Implement `tool_choice: "none"` stripping, caller tool deduplication, and context pruning in `chat.py` & `vision.py` | none | DONE |
+| M2 | Windows Low-Power iGPU Desktop & Wallpaper | Verify `GpuPreference=1;`, 0 MB discrete compute VRAM, and `[colors]` SSOT registry projection | none | DONE |
+| M3 | Static Rust Consolidation (task_3454 / task_3455) | Verify 100% parity of `mios-hardcode-lint`, strangler shims, `mios-service-core` shared daemon crate | none | DONE |
+| M4 | Upstream FOSS Research & Synthesis | Controlled research and documentation for context budgeting, prompt compression, and DirectX scheduling | none | DONE |
+| M5 | Two-Sided Controls & Standing Gates | Two-sided test controls, all 5 standing gates, `ci-suites.py --check`, `sync-bootstrap.py`, `sync-generated.sh` | M1, M2, M3, M4 | DONE |
+| M6 | Final E2E Test Suite & Adversarial Hardening | Pass 100% of E2E test suite (Tiers 1-4) and Tier 5 adversarial coverage hardening | M5 | DONE |
 
 ## Interface Contracts
-### `adapters.py` ↔ `devloop.sh`
-- `adapters.py base-audit --root <root> --before <snapshot_file> [--lanes <lanes_json>]`:
-  - Returns exit code 0 if base tree has no modifications outside allowed metadata paths (`.devloop/`, `.git/`, `AGENTS.md`, `tasks.jsonl`, `<worktree_root>/`).
-  - Returns exit code 6 if stray modifications or untracked files exist, outputting the newline-delimited list of stray paths to `stderr`.
-- `adapters.py gate --lane <lane_json> --wt <worktree_dir> --run <run_dir> [--root <base_root>]`:
-  - Executes positive and negative controls.
-  - Takes snapshots of both worktree (`wt`) and base repository (`root`).
-  - Verifies worktree restoration and asserts base repository has zero stray edits.
-  - If stray edits exist in base repository: outputs `BASE TREE LEAKAGE DETECTED: <paths>` to stderr and exits with code 2.
+### Gateway Ingress ↔ Backend LLM (`chat.py` / `vision.py` ↔ `llama-server`)
+- Ingress: OpenAI-standard `/v1/chat/completions` on `http://127.0.0.1:8700`
+- `tool_choice: "none"`:
+  * Backend dispatch payload contains no `tools` array (or empty `tools: []`) and no `tool_choice` field.
+  * Tool token overhead: exactly 0 tokens.
+- Caller-supplied tools:
+  * If caller tools count >= `DEFAULT_TOOL_CAP` or any tool matches a MiOS verb (`_name_is_verb`), `_mios_sel` is not appended.
+  * All tool names are deduplicated.
+- Context limit:
+  * Effective context: 32,768 tokens (configurable via `MIOS_AGENT_PIPE_TOOL_CTX`).
+  * If input tokens exceed budget, apply tiered pruning: stale tool results drop, intermediate message compaction, user input truncation. Backend never receives > 32k tokens.
 
-### Harness Runner ↔ Claude Code CLI (`claude-code`)
-- Invocation:
-  `claude -p "{prompt}" --output-format json --permission-mode dontAsk --allowedTools "{allowed_tools}" --model "{model}" --effort "{effort}" --json-schema "{schema}"`
-- Working Directory: `cwd=wt` (must run strictly within allocated `<worktree_root>/<id>`).
-- Output parsing: Extracts `devloop_report` JSON; checks `permission_denials` and downgrades status to `partial` if non-empty.
+### Windows Wallpaper ↔ DirectX & Registry
+- Registry:
+  * `HKLM\SOFTWARE\MiOS\WallpaperUrl`: `file:///C:/Windows/Web/MiOS/living-wallpaper.html?a0=...&a1=...&bg=...&fg=...`
+  * `HKLM\SOFTWARE\MiOS\Wallpaper\Enabled`: DWORD `1`
+  * `HKCU\Software\Microsoft\DirectX\UserGpuPreferences`: `GpuPreference=1;` for `MiOS-Wallpaper.exe`, `msedgewebview2.exe`, `mios-wallpaperd.exe`, `llama-server.exe`
+- Hardware:
+  * Power-Saving / Integrated GPU: active 3D shader load on low-power adapter
+  * Discrete GPU (multi-GPU setups): strictly 0 MB compute VRAM (degrading open on single-adapter / virtual systems)
+
+### Static Rust Binaries ↔ CLI & Callers
+- `mios-hardcode-lint`:
+  * Exit code 0 on clean tree; exit code 1 on violations.
+  * 100% byte-identical stdout/stderr against Python oracle.
+- `mios-service-core`:
+  * Dynamic layered SSOT resolution from `usr/share/mios/mios.toml`.
+  * Forbidden cloud endpoint rejection (`api.openai.com`, `generativelanguage.googleapis.com`, `api.anthropic.com`).
 
 ## Code Layout
-- Dev-loop core harness:
-  - `/home/mios-dev/.dev-loop/skills/dev-loop/scripts/`
-    - `adapters.py`: Universal adapter and CLI subcommands
-    - `devloop.sh`: Multi-lane bash orchestrator
-    - `agy_session.py`: Antigravity session manager and base tree monitor
-    - `agy_host.sh`: Antigravity host launcher
-    - `job.py`: Detached process runner
-    - `git_lock.py`: Git concurrency and lock helper
-  - Mirrored under `/home/mios-dev/.gemini/config/skills/dev-loop/scripts/`
-- Test suites:
-  - `/home/mios-dev/.dev-loop/tests/`: Harness unit and integration tests
-  - `/workspaces/MiOS/tests/`: Project E2E and CI test suites
-  - `/workspaces/MiOS/tools/`: Project tools and test suites
+- `usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py` — Gateway chat ingress routing & tool_choice handling
+- `usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py` — Gateway client-tools loop, tool deduplication, and context pruning
+- `usr/lib/mios/agent-pipe/test_mios_chat.py` — Chat ingress unit tests
+- `usr/lib/mios/agent-pipe/test_mios_vision.py` — Vision & client-tools unit tests
+- `usr/share/mios/windows/Set-MiOSWallpaper.ps1` — Wallpaper setup & DirectX preference script
+- `usr/share/mios/windows/mios-igpu-server.ps1` — Windows iGPU & RPC inference script
+- `tools/native/mios-hardcode-lint/` — Compiled static Rust hardcode linter
+- `tools/native/mios-service-core/` — Shared daemon and SSOT resolver crate
+- `tools/native/mios-wallpaperd/` — Native Rust wallpaper daemon
+- `tests/test-wallpaper-service.py` — Wallpaper service verification suite
+- `tests/test-adversarial-igpu-rpc.py` — iGPU and DirectX preference adversarial tests
+- `tests/test_native_static_hardening_e2e.py` — Native static Rust binary E2E test suite
+- `tests/test-igpu-rpc-rust-e2e.py` — iGPU, RPC, and Rust consolidation E2E test suite

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=bake-only
-# AI-hint: Composefs fs-verity root filesystem sealing and atomic image descriptor validator (T-527, AGY-2125).
+# AI-hint: Composefs fs-verity root filesystem sealing and atomic image descriptor validator (task_471, task_2704).
 # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
 set -euo pipefail
 
@@ -19,7 +19,7 @@ show_help() {
     cat <<'EOF'
 Usage: 93-composefs-seal.sh [OPTIONS]
 
-Composefs fs-verity root filesystem sealing and atomic image descriptor validator (T-527, AGY-2125).
+Composefs fs-verity root filesystem sealing and atomic image descriptor validator (task_471, task_2704).
 
 Options:
   -v, --verbose       Enable verbose diagnostic output
@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-mios_log "Starting Composefs fs-verity root filesystem sealing (T-527, AGY-2125)"
+mios_log "Starting Composefs fs-verity root filesystem sealing (task_471, task_2704)"
 
 TEMP_CLEANUP=""
 trap '[[ -n "$TEMP_CLEANUP" && -d "$TEMP_CLEANUP" ]] && rm -rf "$TEMP_CLEANUP"' EXIT
@@ -73,7 +73,8 @@ SEAL_ROOT="${COMPOSEFS_SEAL_ROOT:-}"
 
 # 1. Configure ostree prepare-root.conf
 COMPOSEFS_MODE="${COMPOSEFS_MODE:-verity}"
-PREPARE_CONF_CONTENT="[composefs]
+PREPARE_CONF_CONTENT="# AI-hint: ostree prepare-root (composefs mode, root/etc mount policy); generated from mios.toml [security].composefs_mode by automation/77-composefs-verity.sh.
+[composefs]
 enabled = ${COMPOSEFS_MODE}
 
 [root]
@@ -176,7 +177,7 @@ KARGS_DIRS=(
 
 DIGEST_KARG=""
 [[ -z "$DIGEST" ]] || DIGEST_KARG=$'\n'"  \"ostree.composefs.digest=${DIGEST}\","
-KARGS_CONTENT="# AI-hint: Boot-time composefs fs-verity root filesystem sealing (T-527)
+KARGS_CONTENT="# AI-hint: Boot-time composefs fs-verity root filesystem sealing (task_471)
 # AI-doc: usr/share/doc/mios/manual/ch71-composefs-sealing.md
 kargs = [
   \"ostree.composefs=1\",${DIGEST_KARG}

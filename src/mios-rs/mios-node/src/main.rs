@@ -13,11 +13,13 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(
     name = "mios-node",
     author = "MiOS Core Team",
-    version = "0.3.0",
+    version,
+    subcommand_required = true,
+    arg_required_else_help = true,
     about = "MiOS ('My OS') Distributed Edge Micro-Node Runtime CLI & Daemon"
 )]
 struct Cli {
@@ -25,14 +27,14 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Start the MiOS micro-node network daemon
     Run {
         #[arg(short, long, default_value_t = 101)]
         node_id: u32,
 
-        /// UDP port; defaults to MIOS_PORT_NODE ([ports].node, resolved at run time).
+        /// UDP port; defaults to MIOS_PORTS_NODE ([ports].node, resolved at run time).
         #[arg(short, long)]
         port: Option<u16>,
 
@@ -44,11 +46,11 @@ enum Commands {
         #[arg(short, long)]
         target_addr: String,
 
-        #[arg(short, long, default_value_t = 1001)]
+        #[arg(long, default_value_t = 1001)]
         task_id: u64,
 
         #[arg(short, long)]
-        wasm_file: Option<String>,
+        wasm_file: String,
 
         #[arg(short, long, default_value = "input=default")]
         input: String,
@@ -64,7 +66,7 @@ enum Commands {
     Demo,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum StateCommands {
     /// List all active elements in state store
     List,
@@ -86,7 +88,7 @@ async fn main() -> Result<()> {
         }) => {
             let port = match port {
                 Some(p) => p,
-                None => mios_node::ssot::require_port("MIOS_PORT_NODE")?,
+                None => mios_node::ssot::require_port("MIOS_PORTS_NODE")?,
             };
             println!("====================================================");
             println!("  MiOS ('My OS' / 'MyOS') Distributed Edge Runtime  ");
@@ -105,11 +107,7 @@ async fn main() -> Result<()> {
             wasm_file,
             input,
         }) => {
-            let code_bytes = if let Some(path) = wasm_file {
-                fs::read(&path)?
-            } else {
-                b"WASM_INTERPRETER_BYTECODE_PLACEHOLDER".to_vec()
-            };
+            let code_bytes = fs::read(&wasm_file)?;
 
             let payload = TaskOffloadPayload {
                 task_id,
@@ -176,14 +174,14 @@ async fn main() -> Result<()> {
             };
             println!(
                 "  Discovery Port      : {} (UDP / TCP)",
-                show("MIOS_PORT_NODE")
+                show("MIOS_PORTS_NODE")
             );
             println!("  Default State File  : /var/lib/mios/state.json");
             println!("  AI Endpoint         : {}", show("MIOS_AI_ENDPOINT"));
             println!(
                 "  Inference Lanes     : mios-llm-light (:{}), mios-llm-heavy (:{})",
-                show("MIOS_PORT_LLM_LIGHT"),
-                show("MIOS_PORT_VLLM")
+                show("MIOS_PORTS_LLM_LIGHT"),
+                show("MIOS_PORTS_LLM_HEAVY")
             );
             println!("  Registered Sub-Agent: mios-node (role: edge_execution)");
             println!("====================================================");
@@ -251,4 +249,25 @@ async fn run_offload_demo() -> Result<()> {
 
     println!("\n✅ MiOS Standalone Protocol & Sandbox Test Completed Successfully!");
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn offload_requires_a_real_bytecode_file() {
+        let result = Cli::try_parse_from(["mios-node", "offload", "--target-addr", "127.0.0.1:9999"]);
+        assert_eq!(result.unwrap_err().kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let parsed = Cli::try_parse_from([
+            "mios-node", "offload", "--target-addr", "127.0.0.1:9999", "--wasm-file", "fixture.wasm",
+        ]).unwrap();
+        assert!(matches!(parsed.command, Some(Commands::Offload { wasm_file, .. }) if wasm_file == "fixture.wasm"));
+    }
+
+    #[test]
+    fn default_invocation_does_not_execute_the_demo() {
+        assert!(Cli::try_parse_from(["mios-node"]).is_err());
+        assert!(matches!(Cli::try_parse_from(["mios-node", "demo"]).unwrap().command, Some(Commands::Demo)));
+    }
 }

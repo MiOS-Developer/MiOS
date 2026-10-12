@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for T-557 Headless QEMU Syzkaller / KASAN Fuzz Harness.
+# AI-hint: Automated unit test suite for task_501 Headless QEMU Syzkaller / KASAN Fuzz Harness.
 # AI-related: usr/libexec/mios/kernel/fuzz_harness.py, tests/test-kernel-fuzz.py
-"""Automated unit test suite for Headless QEMU Kernel & eBPF Fuzz Harness (T-557)."""
+"""Automated unit test suite for Headless QEMU Kernel & eBPF Fuzz Harness (task_501)."""
 
 from __future__ import annotations
 

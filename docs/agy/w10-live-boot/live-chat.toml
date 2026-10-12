@@ -1,4 +1,6 @@
-# AI-hint: Build-mechanics config for automation/build/live-iso.sh (W10 --
+# AI-hint: Build-mechanics config for automation/build/live-iso.sh, the W10 MiOS-Cat zero-install live-USB-to-AI-chat leg: dracut/xorriso plumbing of this build leg, not operator SSOT and not a bootc-image-builder customization file.
+#
+# Build-mechanics config for automation/build/live-iso.sh (W10 --
 # MiOS-Cat zero-install live-USB-to-AI-chat). Sibling of iso.toml/qcow2.toml
 # but deliberately NOT a bootc-image-builder customization file -- BIB has no
 # "live" --type, so this leg never mounts as /config.toml into the BIB

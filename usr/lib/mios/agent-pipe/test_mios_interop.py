@@ -62,7 +62,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_remote_adapter.py (T-1092)
+# Consolidated from test_mios_remote_adapter.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit test for mios_pipe.routing.remote_adapter. Validates Anthropic, Gemini, and OpenAI remote calls.
 import asyncio

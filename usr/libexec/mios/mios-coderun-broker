@@ -59,7 +59,7 @@ def main():
             import urllib.error
             
             req_http = urllib.request.Request(
-                f"http://127.0.0.1:{os.environ.get('MIOS_PORT_AGENT_PIPE', '8700')}/v1/dispatch",
+                f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_AGENT_PIPE', '8700')}/v1/dispatch",
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "Accept": "application/json"}
             )

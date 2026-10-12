@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-CDP_PORT="${MIOS_PORT_CHROME_CDP:-9222}"
+CDP_PORT="${MIOS_PORTS_CHROME_CDP:-9222}"
 FLATPAK_ID="${MIOS_CHROME_FLATPAK_ID:-com.google.ChromeDev}"
 
 _status() {

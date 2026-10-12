@@ -44,16 +44,45 @@ same way.
 
 ## Hyper-V Gen 2 (Windows)
 
-1. Build the VHDX: `just vhdx` (requires `MIOS_USER_PASSWORD_HASH` **and**
-   `MIOS_SSH_PUBKEY` — see [Password hash & SSH key](#password-hash--ssh-key)).
-   BIB emits a VPC `.vhd`; the recipe converts it to `.vhdx` via `qemu-img`.
-2. In Hyper-V Manager: New VM, Generation 2, attach `output/*.vhdx`.
-3. **Enable Secure Boot** with the **Microsoft UEFI CA** template (not the
-   "Microsoft Windows" template — the latter rejects the Linux shim).
-4. The first-boot console fix is already baked: `plymouth.enable=0` ships in
-   `usr/lib/bootc/kargs.d/10-mios-console.toml`, because Plymouth otherwise
-   steals the framebuffer and makes Hyper-V/QEMU/serial boot invisible. (Console
-   verbosity kargs are in `00-mios.toml` + `10-mios-verbose.toml`.)
+The VHDX is never published: GitHub release assets stop at 2 GiB a file and
+GHCR at 10 GB a layer. Build it from the published image digest on MiOS-DEV or
+any rootful podman host (`[deploy.formats.vhdx]`):
+
+```bash
+export MIOS_SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)"     # and/or MIOS_USER_PASSWORD_HASH
+sudo -E miosd artifact-build vhdx --image ghcr.io/mios-dev/mios@sha256:<digest> \
+    --output /mnt/m/MiOS/artifacts/vhdx
+# -> disk.vhdx, a dynamic VHDX (bootc-image-builder's VHD, converted); without
+#    --output it lands in build/vhdx ([build.artifacts].output_dir)
+miosd artifact-boot-test vhdx --disk /mnt/m/MiOS/artifacts/vhdx/disk.vhdx \
+    --identity ~/.ssh/id_ed25519
+```
+
+With no credential the build stops: there is no default password (see
+[Password hash & SSH key](#password-hash--ssh-key)). `just vhdx` runs the same
+command against the local build.
+
+Then on the Windows host, with the values `[deploy.formats.vhdx.vm]` declares
+(copy the disk first; a VM writes to the file it boots):
+
+```powershell
+$disk = 'M:\MiOS\vms\MiOS.vhdx'
+Copy-Item 'M:\MiOS\artifacts\vhdx\disk.vhdx' $disk
+New-VM -Name MiOS -Generation 2 -MemoryStartupBytes 8GB -VHDPath $disk -SwitchName 'Default Switch'
+Set-VMMemory -VMName MiOS -DynamicMemoryEnabled $false
+Set-VMProcessor -VMName MiOS -Count 4
+Set-VMFirmware -VMName MiOS -EnableSecureBoot On -SecureBootTemplate MicrosoftUEFICertificateAuthority
+Start-VM -Name MiOS
+```
+
+- **Generation 2** only: the disk is UEFI and GPT.
+- **Secure Boot with the Microsoft UEFI CA** template, not "Microsoft Windows":
+  the Windows template rejects the Linux shim.
+- The first-boot console fix is already baked: `plymouth.enable=0` ships in
+  `usr/lib/bootc/kargs.d/10-mios-console.toml`, because Plymouth otherwise
+  steals the framebuffer and makes Hyper-V/QEMU/serial boot invisible. (Console
+  verbosity kargs are in `00-mios.toml` + `10-mios-verbose.toml`.) The disk
+  carries the image's own `kargs.d`; the build restates none.
 
 ## QEMU/KVM
 
@@ -109,7 +138,7 @@ align with the remote `:latest` tag, so the installed host immediately tracks
 the published image.
 
 > [!WARNING]
-> **Bare-Metal & USB Deployment Status Notice (AGY-1888)**:
+> **Bare-Metal & USB Deployment Status Notice (task_2457)**:
 > Automated USB/Ventoy installer media generation is functional for WinPE live sessions and standard Fedora recovery, but automated bare-metal deployment of the MiOS bootc image is disconnected: the kickstart scripts deploy standard Fedora rather than installing MiOS.
 > From a live environment with network access, install with `mios-install disk --target-disk DEV --yes` (or `--auto-select`), which runs the image's own `bootc install to-disk` in podman (ADR-0014; `upstream/bootc.md` §Installing a bootc image).
 > Offline, `tools/install.sh --target-disk DEV` installs the staged `oci-archive:` from the MiOS-Repo partition through `mios-install disk --source oci-archive:PATH`, which sets `--target-imgref` so the installed host upgrades from the published image.
@@ -129,17 +158,22 @@ the published image.
 
 ## Password hash & SSH key
 
-The `qcow2` and `vhdx` recipes need a login credential baked in, since (unlike
-the ISO path) there is no interactive installer to create the user. Both
-`sed`-substitute env vars into a `mktemp`-staged copy of the artifact TOML at
-build time, keeping secrets out of the committed configs:
+A disk has no interactive installer to create a login, so the build gives the
+`[identity].username` account (in `[identity].groups`) the operator's
+credential. Nothing is committed: `miosd artifact-build` renders
+the builder config per build into a private temporary file, from the names
+`[deploy.identity]` gives, and refuses to build when it finds neither half:
 
-- `MIOS_USER_PASSWORD_HASH` (from `openssl passwd -6 'pass'`) replaces the
-  placeholder `$6$REPLACEME_WITH_SHA512_HASH$REPLACEME`.
-- `MIOS_SSH_PUBKEY` (an ed25519 public key, for sudo-less remote management)
-  replaces `AAAA_REPLACE_WITH_REAL_PUBKEY`.
+- `MIOS_USER_PASSWORD_HASH` (from `openssl passwd -6`), the console login, or
+  `[auth].password_hash` under `password_policy = "hashed"` in your layered
+  `mios.toml`.
+- `MIOS_SSH_PUBKEY` (an OpenSSH public key; SSH takes keys only), or
+  `[auth].existing_ssh_key` (the key or its `.pub` file) under
+  `ssh_key_action = "existing"`.
 
-The `raw`, `iso`, and `wsl2` recipes do not require these.
+The vendor `[auth].password` is never used. `mios-gate artifact-recipes`
+fails if any recipe under `config/artifacts/` carries a placeholder or a
+credential. The `raw` and `wsl2` recipes do not take these.
 
 ## Cross-refs
 

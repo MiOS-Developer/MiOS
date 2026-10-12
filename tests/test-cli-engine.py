@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for unified mios CLI engine and output formatting (T-513).
+# AI-hint: Automated unit test suite for unified mios CLI engine and output formatting (task_457).
 # AI-doc: usr/share/doc/mios/manual/mios.md
 from __future__ import annotations
 

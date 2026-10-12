@@ -1,26 +1,10 @@
 {
   "mcpServers": {
     "mios-control": {
-      "command": "python3",
+      "command": "/usr/lib/mios/mcp/.venv/bin/python3",
       "args": [
-        "c:\\MiOS\\usr\\libexec\\mios\\mios-mcp-server"
-      ],
-      "env": {
-        "MIOS_TOML": "c:\\MiOS\\usr\\share\\mios\\mios.toml",
-        "PYTHONPATH": "c:\\MiOS\\usr\\lib\\mios",
-        "MIOS_AGENT_PIPE_URL": "http://localhost:8700",
-        "MIOS_MCP_PROTOCOL_VERSION": "2026-07-28"
-      }
-    },
-    "dev-loop": {
-      "command": "python3",
-      "args": [
-        "c:\\-dev-loop\\skills\\dev-loop\\scripts\\devloop_mcp.py"
-      ],
-      "env": {
-        "CI": "1",
-        "GIT_TERMINAL_PROMPT": "0"
-      }
+        "/usr/libexec/mios/mios-mcp-server"
+      ]
     }
   }
 }

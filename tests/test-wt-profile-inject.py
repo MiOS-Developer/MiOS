@@ -45,6 +45,14 @@ class TestWtProfileInject(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory(prefix="mios-test-wt-")
         self.settings_path = os.path.join(self.temp_dir.name, "settings.json")
 
+    def test_scheme_uses_ssot_ansi_and_rejects_planted_missing_color(self):
+        import copy
+        data = copy.deepcopy(wt_profile_inject.mios_toml.load_merged())
+        data["colors"]["ansi_0_black"] = "#123456"
+        self.assertEqual(wt_profile_inject.color_scheme(data)["black"], "#123456")
+        data["colors"]["ansi_0_black"] = "DEVLOOP-PLANTED-NOT-A-COLOR"
+        with self.assertRaisesRegex(ValueError, "black is invalid"):
+            wt_profile_inject.color_scheme(data)
     def tearDown(self):
         self.temp_dir.cleanup()
 
@@ -61,6 +69,26 @@ class TestWtProfileInject(unittest.TestCase):
         self.assertIn(wt_profile_inject.WSL_GUID, guids)
         self.assertIn(wt_profile_inject.SSH_GUID, guids)
         self.assertIn(wt_profile_inject.SERIAL_GUID, guids)
+
+    def test_global_opacity_projects_user_tier_over_opaque_profile_overrides(self):
+        user = self._write_user('[theme]\nopacity = 43\nunfocused_opacity = 37\nunfocused_acrylic = false\n')
+        with _env(user):
+            injector = wt_profile_inject.WindowsTerminalProfileInjector(mock=True)
+            settings = {"profiles": {"defaults": {"opacity": 100}, "list": [
+                {"name": "Command Prompt", "commandline": "cmd.exe", "opacity": 100,
+                 "unfocusedAppearance": {"opacity": 100, "cursorShape": "bar"}}]}}
+            injector.merge_profiles(settings, injector.build_mios_profiles())
+        for appearance in [settings["profiles"]["defaults"], *settings["profiles"]["list"]]:
+            self.assertEqual(appearance["opacity"], 43)
+            self.assertEqual(appearance["unfocusedAppearance"]["opacity"], 37)
+            self.assertIs(appearance["unfocusedAppearance"]["useAcrylic"], False)
+        self.assertEqual(settings["profiles"]["list"][0]["commandline"], "cmd.exe")
+        self.assertEqual(settings["profiles"]["list"][0]["unfocusedAppearance"]["cursorShape"], "bar")
+        import copy
+        data = copy.deepcopy(injector.data)
+        data["theme"]["unfocused_opacity"] = 101
+        with self.assertRaisesRegex(ValueError, "opacity"):
+            wt_profile_inject.WindowsTerminalProfileInjector(data=data)
 
     def test_merge_profiles_and_schemes_into_existing(self):
         initial_settings = {
@@ -103,7 +131,7 @@ class TestWtProfileInject(unittest.TestCase):
 
         # Scheme injected
         scheme_names = [s["name"] for s in updated["schemes"]]
-        self.assertIn("MiOS Dark", scheme_names)
+        self.assertIn(wt_profile_inject.mios_toml.load_merged()["theme"]["terminal"]["scheme_name"], scheme_names)
 
     def _write_user(self, body):
         path = os.path.join(self.temp_dir.name, "user.toml")
@@ -154,7 +182,7 @@ class TestWtProfileInject(unittest.TestCase):
             text = f.read()
         pad, bar = wt_profile_inject.wt_edge(wt_profile_inject.mios_toml.vendor_tree(_ROOT))
         self.assertEqual(json.loads(text)["profiles"], [{
-            "colorScheme": "MiOS Dark",
+            "colorScheme": wt_profile_inject.mios_toml.vendor_tree(_ROOT)["theme"]["terminal"]["scheme_name"],
             "font": {
                 "face": "GeistMono Nerd Font Mono",
                 "size": 12,
@@ -164,6 +192,7 @@ class TestWtProfileInject(unittest.TestCase):
             "scrollbarState": bar,
             "useAcrylic": True,
             "opacity": 50,
+            "unfocusedAppearance": {"opacity": 50, "useAcrylic": True},
             "systemBackdrop": "acrylic",
         }])
         with open(copy, "w", encoding="utf-8") as f:

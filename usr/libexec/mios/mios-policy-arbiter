@@ -9,14 +9,26 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-_PIPE = os.environ.get("MIOS_AGENT_PIPE_DIR", "/usr/lib/mios/agent-pipe")
+_PIPE = os.environ.get("MIOS_AGENT_PIPE_DIR")
+if not _PIPE:
+    for _cand in ("/usr/lib/mios/agent-pipe", "C:/MiOS/usr/lib/mios/agent-pipe", "C:\\MiOS\\usr\\lib\\mios\\agent-pipe"):
+        if os.path.exists(_cand):
+            _PIPE = _cand
+            break
+if not _PIPE:
+    _PIPE = "/usr/lib/mios/agent-pipe"
 if _PIPE not in sys.path:
     sys.path.insert(0, _PIPE)
 
+_LIBEXEC = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() and __file__ else os.environ.get("MIOS_LIBEXEC_DIR", "/usr/libexec/mios")
+if _LIBEXEC and _LIBEXEC not in sys.path:
+    sys.path.insert(0, _LIBEXEC)
+
 import mios_arbiter as arb  # noqa: E402  -- pure decision core
+import gpu_arbiter  # noqa: E402  -- dynamic GPU arbiter state machine
 
 HOST = os.environ.get("MIOS_ARBITER_HOST", "127.0.0.1")
-PORT = int(os.environ.get("MIOS_PORT_ARBITER", os.environ.get("MIOS_ARBITER_PORT", "8760")) or 8760)
+PORT = int(os.environ.get("MIOS_PORTS_ARBITER", os.environ.get("MIOS_PORT_ARBITER", os.environ.get("MIOS_ARBITER_PORT", "8760"))) or 8760)
 
 
 def _csv(name):
@@ -48,15 +60,40 @@ class _Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("content-length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}") if n else {}
         except (ValueError, json.JSONDecodeError):
-            req = {}
+            self._send(400, {"ok": False, "error": "Malformed JSON payload"})
+            return
+        if not isinstance(req, dict):
+            self._send(400, {"ok": False, "error": "Request body must be a JSON object"})
+            return
+
+        if self.path in ("/gpu/claim", "/v1/gpu/claim"):
+            res = gpu_arbiter.get_gpu_arbiter().claim_gaming()
+            self._send(200, res)
+            return
+        if self.path in ("/gpu/release", "/v1/gpu/release"):
+            res = gpu_arbiter.get_gpu_arbiter().release_gaming()
+            self._send(200, res)
+            return
+
         deny, allow, block_tier = _policy()
         v = arb.decide(str(req.get("verb", "")), str(req.get("tier", "")),
                        deny=deny, allow=allow, block_tier=block_tier)
         self._send(200, v.to_dict())
 
-    def do_GET(self):  # noqa: N802 -- health probe
-        self._send(200, {"object": "mios.policy.arbiter", "ok": True,
-                         "host": HOST, "port": PORT})
+    def do_GET(self):  # noqa: N802
+        # 1. GPU Arbiter state query
+        if self.path in ("/gpu/state", "/gpu/status", "/v1/gpu/state"):
+            self._send(200, gpu_arbiter.get_gpu_arbiter().get_state())
+            return
+
+        # 2. Default health probe
+        self._send(200, {
+            "object": "mios.policy.arbiter",
+            "ok": True,
+            "host": HOST,
+            "port": PORT,
+            "gpu_state": gpu_arbiter.get_gpu_arbiter().state,
+        })
 
     def log_message(self, *a):  # quiet (journald captures stderr if needed)
         return

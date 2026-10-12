@@ -95,8 +95,8 @@ mios-doctor
 # Spot-check the individual planes:
 systemctl status mios-llm-light.service mios-pgvector.service \
                  hermes-agent.service mios-agent-pipe.service
-curl -s "http://localhost:${MIOS_PORT_LLM_LIGHT}/v1/models"   # light lane: served models
-curl -s "http://localhost:${MIOS_PORT_LLM_LIGHT}/v1/embeddings" -d '{"model":"nomic-embed-text","input":"ping"}' \
+curl -s "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/models"   # light lane: served models
+curl -s "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/embeddings" -d '{"model":"nomic-embed-text","input":"ping"}' \
      -H 'content-type: application/json'         # embeddings lane
 ```
 

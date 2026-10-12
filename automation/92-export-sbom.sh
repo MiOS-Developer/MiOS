@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (T-509).
+# AI-hint: Hermetic Podman OCI image synthesis and Syft SPDX SBOM generation pipeline (task_453).
 # AI-doc: usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md
 set -euo pipefail
 
@@ -11,7 +11,7 @@ source "$(dirname "$0")/lib/common.sh" 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-mios_log "Hermetic OCI image synthesis and Syft SBOM generation (T-509)"
+mios_log "Hermetic OCI image synthesis and Syft SBOM generation (task_453)"
 
 DEST_SBOM="${MIOS_SBOM_PATH:-${ROOT}/usr/share/doc/mios/sbom.json}"
 install -d -m 0755 "$(dirname "$DEST_SBOM")"
@@ -19,8 +19,13 @@ install -d -m 0755 "$(dirname "$DEST_SBOM")"
 # Discover current MiOS version
 VERSION="$(cat /ctx/VERSION 2>/dev/null || cat "${ROOT}/VERSION" 2>/dev/null || echo "0.3.0")"
 
-# Check if syft is available
-if command -v syft >/dev/null 2>&1; then
+# 90-generate-sbom.sh's scan of this same tree (91 deletes it if it strips
+# anything) is exported as is: a second scan of / cost ~12 min for the same list.
+SBOM_SCAN_CACHE=/tmp/mios-sbom-scan.spdx.json
+if [[ -s "$SBOM_SCAN_CACHE" ]]; then
+    mios_log "Exporting the SPDX JSON from 90-generate-sbom's scan"
+    install -m 0644 "$SBOM_SCAN_CACHE" "$DEST_SBOM"
+elif command -v syft >/dev/null 2>&1; then
     mios_log "Generating SPDX JSON SBOM with syft"
     syft scan dir:/ --source-name mios --source-version "${VERSION}" \
         --output spdx-json="$DEST_SBOM" \
@@ -28,6 +33,7 @@ if command -v syft >/dev/null 2>&1; then
         mios_warn "Syft scan encountered errors; generating canonical SPDX document"
     }
 fi
+rm -f "$SBOM_SCAN_CACHE"
 
 if [[ ! -f "$DEST_SBOM" || ! -s "$DEST_SBOM" ]]; then
     # Generate canonical SPDX 2.3 JSON document if syft is unavailable or in mock environment

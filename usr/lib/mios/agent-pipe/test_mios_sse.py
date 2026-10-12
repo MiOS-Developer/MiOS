@@ -116,22 +116,114 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_streaming.py (T-1092)
+# mios_pipe.streaming via configure() fakes; task_1006 had folded only a placeholder here.
 # ==============================================================================
-# AI-hint: Placeholder test for mios_streaming.py.
-def test_stub():
-    pass
+from mios_pipe import streaming as _streaming
+
+
+def _streaming_wire(calls, *, shed=False, inner_error=None):
+    class Shed(Exception):
+        pass
+
+    def gate(kind):
+        class _Gate:
+            def __init__(self, key):
+                self.key = key
+
+            async def __aenter__(self):
+                calls.append(("enter", kind, self.key))
+
+            async def __aexit__(self, *exc):
+                calls.append(("exit", kind, self.key))
+                return False
+        return _Gate
+
+    async def admit(ep, model, lane, prio, est, foreground):
+        calls.append(("admit", ep, model, lane, prio, est, foreground))
+        if shed:
+            raise Shed()
+
+    async def model_active(ep, model, delta, est):
+        calls.append(("active", delta))
+
+    async def inner(name, cfg, body, headers, client, q, prefer_cpu):
+        calls.append(("inner", name, prefer_cpu))
+        if inner_error is not None:
+            raise inner_error
+        return name, "<chrome>answer</chrome>"
+
+    _streaming.configure(
+        _agent_offload_engine=lambda cfg: "cpu-engine",
+        _agent_binding=lambda cfg, engine: ("http://ep", f"model@{engine}"),
+        _dispatch_priority=lambda cfg: 5,
+        _opt_int_mb=lambda v: int(v) if v is not None else None,
+        _admit=admit, _SloShed=Shed,
+        _priority_gate=gate("priority"), _endpoint_sem=gate("endpoint"),
+        _lane_sem=gate("lane"), _lane_sem_key=lambda cfg: "lane-key",
+        _model_active=model_active, _call_agent_stream_inner=inner,
+        _strip_agent_chrome=lambda t: t.replace("<chrome>", "").replace("</chrome>", ""),
+    )
+
+
+def t_streaming_admits_gates_and_accounts_in_order():
+    calls = []
+    _streaming_wire(calls)
+    got = asyncio.run(_streaming.call_agent_stream("peer", {"vram_mb": "512"}, {}, {}, None, None))
+    check("streaming: returns (name, chrome-stripped text)", got == ("peer", "answer"), str(got))
+    check("streaming: admission precedes every gate, on the offload engine's lane",
+          calls[0] == ("admit", "http://ep", "model@cpu-engine", "cpu-engine", 5, 512, False), str(calls[0]))
+    order = [c[:2] for c in calls[1:]]
+    check("streaming: gates nest priority > endpoint > lane, the call runs inside all three",
+          order == [("enter", "priority"), ("enter", "endpoint"), ("enter", "lane"), ("active", 1),
+                    ("inner", "peer"), ("active", -1), ("exit", "lane"), ("exit", "endpoint"),
+                    ("exit", "priority")], str(order))
+
+
+def t_streaming_priority_and_lane_selection():
+    calls = []
+    _streaming_wire(calls)
+    asyncio.run(_streaming.call_agent_stream("p", {}, {}, {}, None, None, priority=9))
+    check("streaming: an explicit priority overrides the dispatch default",
+          calls[0][4] == 9 and ("enter", "priority", 9) in calls, str(calls[:2]))
+    calls.clear()
+    asyncio.run(_streaming.call_agent_stream("p", {}, {}, {}, None, None, prefer_cpu=False))
+    check("streaming: prefer_cpu=False binds no engine and admits on the lane key",
+          calls[0][2] == "model@None" and calls[0][3] == "lane-key"
+          and ("enter", "lane", "lane-key") in calls and ("inner", "p", False) in calls, str(calls))
+
+
+def t_streaming_slo_shed_runs_nothing():
+    calls = []
+    _streaming_wire(calls, shed=True)
+    got = asyncio.run(_streaming.call_agent_stream("p", {}, {}, {}, None, None))
+    check("streaming: an SLO shed returns (name, '')", got == ("p", ""), str(got))
+    check("streaming: a shed request enters no gate and never calls the model",
+          [c[0] for c in calls] == ["admit"], str(calls))
+
+
+def t_streaming_failure_still_releases_accounting():
+    calls = []
+    _streaming_wire(calls, inner_error=RuntimeError("upstream reset"))
+    try:
+        asyncio.run(_streaming.call_agent_stream("p", {}, {}, {}, None, None))
+        raised = False
+    except RuntimeError:
+        raised = True
+    check("streaming: an upstream failure propagates", raised)
+    check("streaming: the active-model count is released on failure",
+          ("active", 1) in calls and ("active", -1) in calls, str(calls))
+    check("streaming: every gate is exited on failure",
+          [c[1] for c in calls if c[0] == "exit"] == ["lane", "endpoint", "priority"], str(calls))
+
 
 def _run_extra_streaming():
-    import os
-    _saved_env = dict(os.environ)
-    try:
-        return 0
-    except SystemExit as _e:
-        return _e.code if _e.code is not None else 0
-    finally:
-        os.environ.clear()
-        os.environ.update(_saved_env)
+    before = _fails
+    for t in (t_streaming_admits_gates_and_accounts_in_order,
+              t_streaming_priority_and_lane_selection,
+              t_streaming_slo_shed_runs_nothing,
+              t_streaming_failure_still_releases_accounting):
+        t()
+    return 1 if _fails > before else 0
 
 
 

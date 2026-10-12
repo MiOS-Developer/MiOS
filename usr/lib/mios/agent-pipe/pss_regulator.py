@@ -2,7 +2,7 @@
 # AI-functions: __init__, current_allocated_mb, admit_task, release_task, SwarmAgentTask, PSSMemoryRegulator
 
 """
-pss_regulator.py — T-972 WS-AI
+pss_regulator.py — task_916 WS-AI
 PSS memory budget regulator and swarm agent OOM circuit breaker in agent-pipe.
 
 Enforces strict Proportional Set Size (PSS) host memory budgets across multi-agent

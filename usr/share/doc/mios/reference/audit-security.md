@@ -1,5 +1,5 @@
 <!-- AI-hint: Prioritized MiOS security-audit remediation plan (P0..P2) with file:line evidence and drop-in artifacts: PAT rotation + secret-store, cosign sign->VERIFY gate (CI + runtime policy.json from SSOT), SBOM digest/sha completeness, nft egress firewall from [security.egress] SSOT, and least-privilege for the Law-10 privileged Quadlets. -->
-<!-- AI-related: usr/share/mios/mios.toml, .github/workflows/mios-ci.yml, usr/lib/containers/policy.json, tools/generate-cosign-policy.py, tools/generate-egress-firewall.py, usr/share/mios/security/egress.nft, usr/share/mios/artifacts/sbom/bound-images.tsv, usr/libexec/mios/mios-bake-group, automation/90-generate-sbom.sh, automation/98-drift-checks.sh, usr/share/containers/systemd/, usr/lib/fapolicyd/rules.d/, usr/libexec/mios/mios-hermes-firstboot -->
+<!-- AI-related: usr/share/mios/mios.toml, .github/workflows/mios-ci.yml, usr/lib/containers/policy.json, tools/native/mios-gen/src/main.rs, tools/native/mios-gen/src/main.rs, usr/share/mios/security/egress.nft, usr/share/mios/artifacts/sbom/bound-images.tsv, usr/libexec/mios/mios-bake-group, automation/90-generate-sbom.sh, automation/98-drift-checks.sh, usr/share/containers/systemd/, usr/lib/fapolicyd/rules.d/, usr/libexec/mios/mios-hermes-firstboot -->
 
 # MiOS Security Audit — Remediation Plan
 

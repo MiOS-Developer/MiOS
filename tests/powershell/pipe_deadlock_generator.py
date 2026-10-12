@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# AI-hint: Pipe-buffer stress generator for ProcessStartInfo deadlock tests: concurrent, interleaved or sequential stdout/stderr.
 """
 Pipe buffer stress generator for testing ProcessStartInfo deadlock conditions.
 Generates configurable volumes of stdout and stderr concurrently, interleaved, or sequential.

@@ -10,6 +10,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | admin | ssh | 8100 |
 | admin | cockpit | 8110 |
 | admin | cockpit_link | 8120 |
+| admin | cockpit_internal (pinned) | 9090 |
 | agent | agent_pipe | 8700 |
 | agent | prefilter | 8710 |
 | agent | hermes | 8720 |
@@ -25,18 +26,24 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | cluster | ceph_dashboard | 8460 |
 | cluster | radosgw | 8470 |
 | data | pgvector | 8600 |
+| data | pgvector_internal (pinned) | 5432 |
 | desktop | rdp | 8300 |
 | desktop | ttyd_bash | 8310 |
 | desktop | ttyd_powershell | 8320 |
 | devtools | code_server | 8900 |
+| devtools | devpod_agent | 8910 |
 | edge | adguard_ui | 8050 |
 | edge | adguard_dns (pinned) | 53 |
+| edge | headscale (pinned) | 8085 |
 | forge | forge_http | 8400 |
 | forge | forge_ssh | 8410 |
 | inference | llm_light | 8500 |
 | inference | cpu_node | 8510 |
-| inference | vllm | 8520 |
-| inference | sglang | 8530 |
+| inference | llm_heavy | 8520 |
+| inference | llm_igpu | 8540 |
+| inference | rpc_igpu | 8550 |
+| inference | igpu (pinned) | 11436 |
+| inference | win_llm_light (pinned) | 11450 |
 | node | ai_legacy | 8640 |
 | node | field_live_chat | 8642 |
 | node | node | 8650 |
@@ -50,6 +57,9 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | webtools | searxng | 8800 |
 | webtools | crawl4ai | 8810 |
 | webtools | firecrawl | 8820 |
+| webtools | searxng_internal (pinned) | 8888 |
+| webtools | crawl4ai_internal (pinned) | 11235 |
+| webtools | firecrawl_internal (pinned) | 3002 |
 | webui | open_webui | 8200 |
 | webui | hermes_dashboard | 8210 |
 | webui | guacamole_web | 8220 |

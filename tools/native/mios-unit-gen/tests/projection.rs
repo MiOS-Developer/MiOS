@@ -280,12 +280,12 @@ fn uki_cmdline_preserves_filename_and_token_order_including_duplicates() {
     write_fixture(
         temp.path(),
         "usr/lib/bootc/kargs.d/01-base.toml",
-        "kargs = [\"quiet\", \"mios.blade=hybrid\"]\n",
+        "kargs = [\n    \"quiet\", \"mios.blade=hybrid\",\n    \"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"\n]\n",
     );
     write_fixture(temp.path(), "usr/lib/bootc/kargs.d/ignored.txt", "not toml");
     assert_eq!(
         render_uki_cmdline(temp.path()).unwrap(),
-        "quiet mios.blade=hybrid mios.blade=endpoint quiet\n"
+        "quiet mios.blade=hybrid randomize_kstack_offset=on pti=on vsyscall=none spectre_v2=on spectre_bhi=on spec_store_bypass_disable=on l1tf=full,force gather_data_sampling=force tsx=off kvm.nx_huge_pages=force mios.blade=endpoint quiet\n"
     );
     project_deployment(temp.path(), DeploymentKind::UkiCmdline, false, None).unwrap();
     project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None).unwrap();
@@ -307,6 +307,193 @@ fn invalid_uki_input_never_erases_the_existing_cmdline() {
         );
     }
 }
+
+#[test]
+fn ten_cpu_mitigations_survive_clean_uki_cmdline_render() {
+    let temp = tempfile::tempdir().unwrap();
+    let hardening = r#"kargs = [
+    "slab_nomerge",
+    "randomize_kstack_offset=on",
+    "pti=on",
+    "vsyscall=none",
+    "spectre_v2=on",
+    "spectre_bhi=on",
+    "spec_store_bypass_disable=on",
+    "l1tf=full,force",
+    "gather_data_sampling=force",
+    "tsx=off",
+    "kvm.nx_huge_pages=force"
+]
+match-architectures = ["x86_64"]
+"#;
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        hardening,
+    );
+    let rendered = render_uki_cmdline(temp.path()).unwrap();
+    let policy = mios_unit_gen::load_cpu_mitigations_policy(temp.path(), None).unwrap();
+    for mitigation in &policy.required {
+        assert!(
+            rendered.contains(mitigation),
+            "expected rendered cmdline to contain mitigation argument {mitigation}"
+        );
+    }
+    project_deployment(temp.path(), DeploymentKind::UkiCmdline, false, None).unwrap();
+    project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None).unwrap();
+}
+
+#[test]
+fn corrupt_uki_dropin_fails_check_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(temp.path(), UKI_CMDLINE, "known-good\n");
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-bad.toml",
+        "kargs = [ unclosed",
+    );
+    let err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("01-bad.toml"), "{err}");
+}
+
+#[test]
+fn missing_cpu_mitigations_fail_check_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    let hardening = r#"kargs = [
+    "slab_nomerge",
+    "randomize_kstack_offset=on"
+]
+"#;
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        hardening,
+    );
+    write_fixture(
+        temp.path(),
+        UKI_CMDLINE,
+        "slab_nomerge randomize_kstack_offset=on\n",
+    );
+    let err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("missing required CPU mitigation"), "{err}");
+}
+
+#[test]
+fn custom_dropin_with_contradictory_mitigation_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(temp.path(), UKI_CMDLINE, "known-good\n");
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/02-custom-hardening.toml",
+        "kargs = [\"pti=off\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("contradictory CPU mitigation argument forbidden: pti=off"),
+        "{err}"
+    );
+    let deploy_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, false, None)
+        .unwrap_err()
+        .to_string();
+    assert!(deploy_err.contains("pti=off"), "{deploy_err}");
+    assert_eq!(
+        fs::read_to_string(temp.path().join(UKI_CMDLINE)).unwrap(),
+        "known-good\n"
+    );
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("pti=off"), "{check_err}");
+}
+
+#[test]
+fn renamed_dropin_missing_mitigations_fails_check_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/02-custom.toml",
+        "kargs = [\"slab_nomerge\"]\n",
+    );
+    write_fixture(temp.path(), UKI_CMDLINE, "slab_nomerge\n");
+    let err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("missing required CPU mitigation"), "{err}");
+}
+
+#[test]
+fn override_dropin_with_contradictory_mitigation_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        "kargs = [\"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"]\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/99-override.toml",
+        "kargs = [\"spectre_v2=off\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(err.contains("spectre_v2=off"), "{err}");
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("spectre_v2=off"), "{check_err}");
+}
+
+#[test]
+fn dropin_with_nospectre_v2_alias_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        "kargs = [\"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"]\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/99-override.toml",
+        "kargs = [\"nospectre_v2\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("contradictory CPU mitigation argument forbidden: nospectre_v2"),
+        "{err}"
+    );
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("nospectre_v2"), "{check_err}");
+}
+
+#[test]
+fn override_dropin_with_last_value_tampering_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/01-mios-hardening.toml",
+        "kargs = [\"randomize_kstack_offset=on\", \"pti=on\", \"vsyscall=none\", \"spectre_v2=on\", \"spectre_bhi=on\", \"spec_store_bypass_disable=on\", \"l1tf=full,force\", \"gather_data_sampling=force\", \"tsx=off\", \"kvm.nx_huge_pages=force\"]\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/bootc/kargs.d/99-override.toml",
+        "kargs = [\"spectre_v2=auto\"]\n",
+    );
+    let err = render_uki_cmdline(temp.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("contradictory CPU mitigation argument forbidden: spectre_v2=auto"),
+        "{err}"
+    );
+    let check_err = project_deployment(temp.path(), DeploymentKind::UkiCmdline, true, None)
+        .unwrap_err()
+        .to_string();
+    assert!(check_err.contains("spectre_v2=auto"), "{check_err}");
+}
+
 
 #[test]
 fn deployment_cli_writes_then_checks_the_requested_root() {
@@ -342,7 +529,7 @@ fn deployment_cli_advertises_modes_and_rejects_incomplete_options() {
     assert!(advertised.status.success());
     assert_eq!(
         String::from_utf8(advertised.stdout).unwrap(),
-        "blade-dropins\nblade-karg\nuki-cmdline\ncockpit\nipa-enroll\nbootc-install\n"
+        "blade-dropins\nblade-karg\nuki-cmdline\ncockpit\nipa-enroll\nbootc-install\nkeybindings\n"
     );
     let temp = tempfile::tempdir().unwrap();
     for options in [vec!["--root"], vec!["--toml", "--check"], vec!["--unknown"]] {
@@ -510,41 +697,6 @@ fn service_cli_projects_independent_roots_and_checks_corruption() {
 fn committed_service_configs_match_ssot() {
     for kind in [DeploymentKind::Cockpit, DeploymentKind::IpaEnroll] {
         assert_eq!(project_deployment(&root(), kind, true, None).unwrap(), 1);
-    }
-}
-
-#[test]
-fn sync_lookup_selects_the_host_suffix_when_both_artifacts_exist() {
-    let source = fs::read_to_string(root().join("tools/sync-generated.sh")).unwrap();
-    let start = source.find("native_bin() {").unwrap();
-    let end = start + source[start..].find("\n}\n").unwrap() + 3;
-    let helper = &source[start..end];
-    let temp = tempfile::tempdir().unwrap();
-    for suffix in ["", ".exe"] {
-        let relative = format!("tools/native/target/debug/fixture-tool{suffix}");
-        write_fixture(temp.path(), &relative, "fixture\n");
-        let status = std::process::Command::new("chmod")
-            .arg("+x")
-            .arg(temp.path().join(relative))
-            .status()
-            .unwrap();
-        assert!(status.success());
-    }
-    for (platform, suffix) in [("Linux", ""), ("MINGW64_NT", ".exe"), ("MSYS_NT", ".exe")] {
-        let script =
-            format!("{helper}\nuname() {{ printf '%s' '{platform}'; }}\nnative_bin fixture-tool\n");
-        let result = std::process::Command::new("bash")
-            .args(["-c", &script])
-            .env("ROOT", temp.path())
-            .output()
-            .unwrap();
-        assert!(result.status.success());
-        assert_eq!(
-            String::from_utf8(result.stdout).unwrap(),
-            temp.path()
-                .join(format!("tools/native/target/debug/fixture-tool{suffix}"))
-                .to_string_lossy()
-        );
     }
 }
 

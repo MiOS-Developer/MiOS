@@ -1,4 +1,4 @@
-# AI-hint: Unprivileged daily oneshot that pg_dumps the unified agent-plane Postgres+pgvector database to /var/lib/mios/backups over loopback-trust and prunes to the newest MIOS_PG_BACKUP_KEEP snapshots; degrade-open so a backup failure...
+# AI-hint: Unprivileged daily oneshot that pg_dumps the unified agent-plane Postgres+pgvector database to /var/lib/mios/backups over loopback-trust and prunes to the newest MIOS_PGVECTOR_BACKUP_KEEP snapshots; degrade-open so a backup failure...
 # AI-doc: usr/share/doc/mios/manual/system.md
 [Unit]
 Description='MiOS' daily pg_dump backup of the unified agent-plane datastore (pgvector)
@@ -12,20 +12,20 @@ ConditionVirtualization=|wsl
 
 [Service]
 Type=oneshot
-# SSOT env: MIOS_PG_USER / MIOS_PG_DB / MIOS_PORT_PGVECTOR / MIOS_PG_BACKUP_*
+# SSOT env: MIOS_PGVECTOR_USER / MIOS_PGVECTOR_DB / MIOS_PORTS_PGVECTOR / MIOS_PG_BACKUP_*
 # all flow from mios.toml [pgvector] -> userenv.sh. '-' = tolerate absence
 # (degrade-open to the inline defaults below).
 EnvironmentFile=-/etc/mios/userenv.sh
 # Inline-default the knobs so the unit is correct even with no env file present.
-Environment=MIOS_PG_BACKUP_ENABLE=true
-Environment=MIOS_PG_BACKUP_DIR=/var/lib/mios/backups
-Environment=MIOS_PG_BACKUP_KEEP=7
-Environment=MIOS_PG_USER=mios
-Environment=MIOS_PG_DB=mios
+Environment=MIOS_PGVECTOR_BACKUP_ENABLE=true
+Environment=MIOS_PGVECTOR_BACKUP_DIR=/var/lib/mios/backups
+Environment=MIOS_PGVECTOR_BACKUP_KEEP=7
+Environment=MIOS_PGVECTOR_USER=mios
+Environment=MIOS_PGVECTOR_DB=mios
 # SSOT [ports].pgvector: the pgvector container's postgres listens on 8432
-# (Exec=postgres -c port=${MIOS_PORT_PGVECTOR}), NOT the standard 5432. The old
+# (Exec=postgres -c port=${MIOS_PORTS_PGVECTOR}), NOT the standard 5432. The old
 # 5432 here was a stale postgres-default assumption that never matched.
-Environment=MIOS_PORT_PGVECTOR=8600
+Environment=MIOS_PORTS_PGVECTOR=8600
 # Runs as root to `podman exec` into the mios-ai.pod pgvector container -- the SAME
 # proven pattern mios-sys-env-refresh uses. The pg listens loopback-only INSIDE the
 # pod (no PublishPort), so the old unprivileged host-side pg_dump could never reach
@@ -37,16 +37,16 @@ PrivateTmp=true
 # newest N. Pure POSIX sh so it runs on the minimal base. Every branch exits 0
 # (degrade-open): gate-off, missing client, or a dump error logs and succeeds.
 ExecStart=/bin/sh -c '\
-  case "$$MIOS_PG_BACKUP_ENABLE" in \
-    0|false|False|FALSE|no|off) echo "mios-pgvector-backup: disabled (MIOS_PG_BACKUP_ENABLE=$$MIOS_PG_BACKUP_ENABLE)"; exit 0 ;; \
+  case "$$MIOS_PGVECTOR_BACKUP_ENABLE" in \
+    0|false|False|FALSE|no|off) echo "mios-pgvector-backup: disabled (MIOS_PGVECTOR_BACKUP_ENABLE=$$MIOS_PGVECTOR_BACKUP_ENABLE)"; exit 0 ;; \
   esac; \
-  DIR="$$MIOS_PG_BACKUP_DIR"; [ -z "$$DIR" ] && DIR="/var/lib/mios/backups"; \
-  KEEP="$$MIOS_PG_BACKUP_KEEP"; [ -z "$$KEEP" ] && KEEP="7"; \
+  DIR="$$MIOS_PGVECTOR_BACKUP_DIR"; [ -z "$$DIR" ] && DIR="/var/lib/mios/backups"; \
+  KEEP="$$MIOS_PGVECTOR_BACKUP_KEEP"; [ -z "$$KEEP" ] && KEEP="7"; \
   case "$$KEEP" in *[!0-9]*|"") KEEP=7 ;; esac; \
   [ "$$KEEP" -lt 1 ] && KEEP=1; \
-  PORT="$$MIOS_PORT_PGVECTOR"; [ -z "$$PORT" ] && PORT="8432"; \
-  USR="$$MIOS_PG_USER"; [ -z "$$USR" ] && USR="mios"; \
-  DB="$$MIOS_PG_DB"; [ -z "$$DB" ] && DB="mios"; \
+  PORT="$$MIOS_PORTS_PGVECTOR"; [ -z "$$PORT" ] && PORT="8432"; \
+  USR="$$MIOS_PGVECTOR_USER"; [ -z "$$USR" ] && USR="mios"; \
+  DB="$$MIOS_PGVECTOR_DB"; [ -z "$$DB" ] && DB="mios"; \
   if ! command -v podman >/dev/null 2>&1; then \
     echo "mios-pgvector-backup: podman not found on PATH -- skipping (need podman to exec pg_dump inside the pod)"; \
     exit 0; \

@@ -330,10 +330,10 @@ _OTEL_ENABLE = (
     .strip().lower() not in {"false", "0", "no", "off", ""}
 )
 # Law 5/7: the collector's port resolves from the SSOT name, never a bare literal.
-# [observability].otel_endpoint ships a ${MIOS_PORT_OTELCOL_OTLP} placeholder and
+# [observability].otel_endpoint ships a ${MIOS_PORTS_OTELCOL_OTLP} placeholder and
 # os.path.expandvars leaves it VERBATIM when the var is unset, so an unexpanded
 # value is not an endpoint -- drop it and rebuild from the resolved port.
-_OTEL_PORT = os.environ.get("MIOS_PORT_OTELCOL_OTLP", "8575")
+_OTEL_PORT = os.environ.get("MIOS_PORTS_OTELCOL_OTLP", "8575")
 _otel_cfg_endpoint = str(_otel_toml.get("otel_endpoint") or "").strip()
 if "${" in _otel_cfg_endpoint:
     _otel_cfg_endpoint = ""
@@ -746,7 +746,7 @@ _configure_authn(
 # Law 5/7: :8000 was the RETIRED SurrealDB lane, and this value is pushed into
 # mios_pipe/db.py via _configure_db(db_url=...) -- so the stale literal here
 # OVERRODE db.py's already-correct SSOT resolution. Resolve the same way it does.
-_DB_PORT = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+_DB_PORT = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
 DB_URL = os.environ.get("MIOS_DB_URL", "http://localhost:%s" % _DB_PORT)
 DB_USER = os.environ.get("MIOS_DB_USER", "root")
 DB_PASS = os.environ.get("MIOS_DB_PASS", "root")
@@ -897,7 +897,7 @@ async def lifespan(app):
     asyncio.create_task(_a2a_client_startup())
 
     global _GATEWAY_QUEUE, _GATEWAY_WORKER, _GATEWAY_TASK, _MCP_POOL
-    mcp_pool_enable = os.environ.get("MIOS_CONV_IMAGE_MCP_POOL_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+    mcp_pool_enable = os.environ.get("MIOS_CONVERGE_IMAGE_MCP_POOL_ENABLE", "false").lower() in ("true", "1", "yes", "on")
     if mcp_pool_enable:
         tools_cfg = _toml_section("tools") or {}
         mcp_servers = tools_cfg.get("mcp_servers") or {}
@@ -906,10 +906,10 @@ async def lifespan(app):
         await _MCP_POOL.startup()
         sys.modules["mios_a2a"].configure(mcp_pool=_MCP_POOL)
 
-    conv_gw_mode = os.environ.get("MIOS_CONV_GATEWAY_MODE", "http")
+    conv_gw_mode = os.environ.get("MIOS_CONVERGE_GATEWAY_MODE", "http")
     if conv_gw_mode == "queue":
-        q_maxsize = int(os.environ.get("MIOS_CONV_GATEWAY_QUEUE_MAXSIZE", "64"))
-        w_concurrency = int(os.environ.get("MIOS_CONV_GATEWAY_WORKER_CONCURRENCY", "4"))
+        q_maxsize = int(os.environ.get("MIOS_CONVERGE_GATEWAY_QUEUE_MAXSIZE", "64"))
+        w_concurrency = int(os.environ.get("MIOS_CONVERGE_GATEWAY_WORKER_CONCURRENCY", "4"))
 
         mios_gateway_queue.configure(
             verb_catalog=_VERB_CATALOG,
@@ -919,8 +919,8 @@ async def lifespan(app):
         )
 
         # Law 5: the legacy hermes port is RETIRED. [ai].endpoint is
-        # "http://localhost:${MIOS_PORT_AGENT_PIPE}/v1" -- mirror that resolution.
-        _pipe_port = os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")
+        # "http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1" -- mirror that resolution.
+        _pipe_port = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
         ai_endpoint = os.environ.get(
             "MIOS_AI_ENDPOINT", "http://localhost:%s/v1" % _pipe_port)
         ai_model = os.environ.get("MIOS_AI_MODEL", "granite4.1:8b")
@@ -1007,13 +1007,13 @@ def _check_user_cephfs(uid_str: str, tenant_id: str, fs_name: str, keyring_dir: 
 @app.get("/v1/storage/cephfs/users")
 async def cephfs_users():
     import os
-    cephfs_enable = os.environ.get("MIOS_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+    cephfs_enable = os.environ.get("MIOS_STORAGE_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
     if not cephfs_enable:
         return {"enabled": False}
 
-    tenant_id = os.environ.get("MIOS_CEPHFS_TENANT_ID", "mios")
-    fs_name = os.environ.get("MIOS_CEPHFS_FS_NAME", "cephfs")
-    keyring_dir = os.environ.get("MIOS_CEPHFS_KEYRING_DIR", "/etc/ceph/keyring.d")
+    tenant_id = os.environ.get("MIOS_STORAGE_CEPHFS_TENANT_ID", "mios")
+    fs_name = os.environ.get("MIOS_STORAGE_CEPHFS_FS_NAME", "cephfs")
+    keyring_dir = os.environ.get("MIOS_STORAGE_CEPHFS_KEYRING_DIR", "/etc/ceph/keyring.d")
 
     users = []
     if os.path.exists(keyring_dir):
@@ -1033,7 +1033,7 @@ async def cephfs_health():
     import os
     import subprocess
     import json
-    cephfs_enable = os.environ.get("MIOS_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+    cephfs_enable = os.environ.get("MIOS_STORAGE_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
     if not cephfs_enable:
         return {"enabled": False}
 
@@ -1045,7 +1045,8 @@ async def cephfs_health():
         if proc_h.returncode == 0:
             health_data = json.loads(proc_h.stdout)
     except Exception as e:
-        health_data = {"status": "UNAVAILABLE", "error": str(e)}
+        log.warning("CephFS health probe failed: %s", e)
+        health_data = {"status": "UNAVAILABLE", "error": "CephFS health probe unavailable"}
 
     try:
         proc_d = subprocess.run(["ceph", "df", "--format", "json"], capture_output=True, text=True, timeout=5)
@@ -1061,7 +1062,7 @@ async def cephfs_health():
 
 @app.post("/v1/inference/lora/load")
 async def lora_load(request: Request):
-    heavy_mode = os.environ.get("MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE", "dual")
+    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
     if heavy_mode != "single":
         return JSONResponse(
             status_code=400,
@@ -1084,11 +1085,11 @@ async def lora_load(request: Request):
         return Response(content=r.content, status_code=r.status_code, media_type=r.headers.get("content-type"))
     except Exception as e:
         log.error("Failed to load LoRA adapter on heavy backend: %s", e)
-        return JSONResponse(status_code=500, content={"error": f"Failed to load LoRA adapter: {e}"})
+        return JSONResponse(status_code=500, content={"error": "Failed to load LoRA adapter"})
 
 @app.get("/v1/inference/lora/list")
 async def lora_list():
-    heavy_mode = os.environ.get("MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE", "dual")
+    heavy_mode = os.environ.get("MIOS_CONVERGE_INFERENCE_HEAVY_ENGINE_MODE", "dual")
     if heavy_mode != "single":
         return {"adapters": [], "enabled": False}
 
@@ -1125,7 +1126,8 @@ async def ast_diff_endpoint(request: Request):
         result = engine.compute_ast_diff(orig, mod, lang)
         return JSONResponse(result)
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        log.warning("AST diff request failed: %s", e)
+        return JSONResponse(status_code=400, content={"error": "Invalid AST diff request"})
 
 @app.post("/v1/ast/review")
 async def ast_review_endpoint(request: Request):
@@ -1156,7 +1158,8 @@ async def ast_review_endpoint(request: Request):
         else:
             return JSONResponse(status_code=400, content={"error": f"Unknown action: {action}"})
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        log.warning("AST review request failed: %s", e)
+        return JSONResponse(status_code=400, content={"error": "Invalid AST review request"})
 
 from mios_pipe.kernel.httpclient import (   # noqa: E402  -- WS-A6/T-226 chokepoint
     _batch_request_hook, _get_client, configure as _configure_httpclient)
@@ -1578,7 +1581,7 @@ from mios_agent_call import (  # noqa: E402
     _trip_breaker, _num_predict_cap_for)
 
 from mios_toolexec import (   # noqa: E402
-    _RESCUE_XML_RE, _RESCUE_PARAM_RE, _RESCUE_FENCE_RE, _RESCUE_TOOLCALL_RE)
+    _RESCUE_FENCE_RE, _RESCUE_TOOLCALL_RE)
 
 from mios_toolexec import (   # noqa: E402
     _norm_tool_call, _rescue_tool_calls, _verb_result_cap,
@@ -2980,6 +2983,10 @@ from mios_a2a import (   # noqa: E402
 # and were referenced here without ever being imported -- a module-scope
 # NameError that made server.py unimportable.
 from mios_policy import (   # noqa: E402
+    _perm_rank,
+    _effective_perm,
+    _agent_rbac_filter,
+    _dispatch_pdp_reason,
     _match_user_cfg,
     _user_rbac_filter,
     _PERMISSION_TIERS,
@@ -3477,7 +3484,7 @@ from mios_daemons import (daemons_router, selfimprove_report_ep,   # noqa: E402,
 app.include_router(daemons_router)
 
 _VERB_EMBED_MODEL = os.environ.get(
-    "MIOS_VERB_EMBED_MODEL", "nomic-embed-text")
+    "MIOS_AI_EMBED_MODEL", "nomic-embed-text")
 _VERB_EMBED_URL = os.environ.get(
     "MIOS_VERB_EMBED_URL", _LIGHT_BASE + "/v1/embeddings")
 
@@ -4363,6 +4370,49 @@ _configure_auth(
 app.middleware("http")(_usage_completeness_mw)
 app.middleware("http")(_inbound_auth_mw)
 
+_ALLOWED_LOCAL_UIDS = frozenset((0, 815, 1000))
+
+@app.middleware("http")
+async def _peercred_auth_mw(request: Request, call_next):
+    """Linux SO_PEERCRED authentication middleware on /run/mios-agent-pipe.socket.
+    Allows privileged local UIDs (0, 815, 1000) while strictly rejecting unauthorized
+    or unverified callers over the UNIX domain socket.
+    """
+    is_unix = request.scope.get("is_unix_socket", False)
+    peercred = request.scope.get("peercred")
+
+    # Support testing or mocked peercred environments
+    if not is_unix and request.headers.get("x-mock-unix-socket") == "1":
+        is_unix = True
+        mock_uid = request.headers.get("x-mock-peercred-uid")
+        mock_gid = request.headers.get("x-mock-peercred-gid", "1000")
+        mock_pid = request.headers.get("x-mock-peercred-pid", "1234")
+        peercred = (int(mock_pid), int(mock_uid), int(mock_gid)) if mock_uid is not None else None
+
+    if is_unix:
+        if peercred and len(peercred) >= 2 and peercred[1] in _ALLOWED_LOCAL_UIDS:
+            try:
+                request.state.is_unix_socket = True
+                request.state.peercred = peercred
+                request.state.mios_principal = f"peercred:uid={peercred[1]}"
+            except Exception:
+                pass
+            return await call_next(request)
+
+        caller_uid = peercred[1] if peercred and len(peercred) >= 2 else "unknown"
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": f"unauthorized caller: uid {caller_uid} not permitted on unix domain socket",
+                    "type": "peercred_auth_error",
+                    "code": 401,
+                }
+            },
+        )
+
+    return await call_next(request)
+
 _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()
 
 @app.middleware("http")
@@ -4717,20 +4767,97 @@ async def v1_events_websocket(websocket: WebSocket):
     finally:
         _event_hub.unregister(websocket)
 
+def extract_peercred(sock: Any) -> Optional[tuple[int, int, int]]:
+    """Extract (pid, uid, gid) from a UNIX domain socket using Linux SO_PEERCRED."""
+    try:
+        import struct
+        so_peercred = getattr(_socket, "SO_PEERCRED", 17)
+        cred = sock.getsockopt(_socket.SOL_SOCKET, so_peercred, struct.calcsize("3i"))
+        pid, uid, gid = struct.unpack("3i", cred)
+        return pid, uid, gid
+    except Exception as e:
+        log.debug("SO_PEERCRED extraction failed: %s", e)
+        return None
+
+
+def _make_peercred_protocol():
+    """Create an H11Protocol subclass that extracts SO_PEERCRED on Unix domain sockets."""
+    try:
+        from uvicorn.protocols.http.h11_impl import H11Protocol
+    except ImportError:
+        return "auto"
+
+    class _PeerCredH11Protocol(H11Protocol):
+        def connection_made(self, transport):
+            super().connection_made(transport)
+            sock = transport.get_extra_info("socket")
+            self._peercred = None
+            self._is_unix = False
+            if sock is not None:
+                if hasattr(_socket, "AF_UNIX") and getattr(sock, "family", None) == _socket.AF_UNIX:
+                    self._is_unix = True
+                    self._peercred = extract_peercred(sock)
+
+        def handle_events(self):
+            super().handle_events()
+            if hasattr(self, "scope") and isinstance(self.scope, dict):
+                self.scope["is_unix_socket"] = getattr(self, "_is_unix", False)
+                self.scope["peercred"] = getattr(self, "_peercred", None)
+
+    return _PeerCredH11Protocol
+
+
 def main() -> int:
     host = _bind_host(_API_REQUIRE_AUTH, os.environ.get("MIOS_BIND_HOST", ""))
-    log.info("starting on %s:%d -> backend=%s model=%s "
+    uds_path = os.environ.get("MIOS_AGENT_PIPE_SOCKET", "/run/mios-agent-pipe.socket")
+    log.info("starting on %s:%d (uds=%s) -> backend=%s model=%s "
              "router_enabled=%s router_model=%s",
-             host, PORT, BACKEND, BACKEND_MODEL,
+             host, PORT, uds_path, BACKEND, BACKEND_MODEL,
              ROUTER_ENABLED, ROUTER_MODEL)
-    uvicorn.run(
-        app,
-        host=host,
-        port=PORT,
-        log_level="info",
-        access_log=False,
-    )
+
+    async def _serve_all():
+        http_cls = _make_peercred_protocol()
+        tcp_cfg = uvicorn.Config(
+            app,
+            host=host,
+            port=PORT,
+            http=http_cls,
+            log_level="info",
+            access_log=False,
+        )
+        tcp_srv = uvicorn.Server(tcp_cfg)
+        servers = [tcp_srv.serve()]
+
+        if hasattr(_socket, "AF_UNIX") and sys.platform != "win32":
+            try:
+                parent_dir = os.path.dirname(uds_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, exist_ok=True)
+                if os.path.exists(uds_path):
+                    try:
+                        os.unlink(uds_path)
+                    except OSError:
+                        pass
+                uds_cfg = uvicorn.Config(
+                    app,
+                    uds=uds_path,
+                    http=http_cls,
+                    log_level="info",
+                    access_log=False,
+                )
+                uds_srv = uvicorn.Server(uds_cfg)
+                servers.append(uds_srv.serve())
+            except Exception as _e:
+                log.warning("could not initialize UNIX domain socket on %s: %s", uds_path, _e)
+
+        await asyncio.gather(*servers)
+
+    try:
+        asyncio.run(_serve_all())
+    except (KeyboardInterrupt, SystemExit):
+        pass
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

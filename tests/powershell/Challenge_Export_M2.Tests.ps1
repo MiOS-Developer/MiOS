@@ -231,7 +231,7 @@ Describe "Adversarial Challenge: Container Export Failure & Cleanup" {
                 if (-not (Test-Path `$artifactDir)) { New-Item -ItemType Directory -Path `$artifactDir -Force | Out-Null }
                 if (-not (Test-Path `$wslFsDir))    { New-Item -ItemType Directory -Path `$wslFsDir    -Force | Out-Null }
 
-                # ── Phase 10: Export WSL2 tar ──────────────────────────────────────────────
+                # -- Phase 10: Export WSL2 tar ----------------------------------------------
                 Start-Phase 10
                 `$wslTar = Join-Path `$artifactDir "mios-wsl2.tar"
                 `$wslOk  = `$false
@@ -247,7 +247,7 @@ Describe "Adversarial Challenge: Container Export Failure & Cleanup" {
                     `$ExitCode = 1
                 }
 
-                # ── Phase 11: Register WSL2 distro ────────────────────────────────────────
+                # -- Phase 11: Register WSL2 distro ----------------------------------------
                 Start-Phase 11
                 if (`$wslOk) {
                     try {

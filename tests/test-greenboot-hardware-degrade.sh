@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Verification suite for peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (T-531, AGY-2129).
+# AI-hint: Verification suite for peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (task_475, task_2708).
 # AI-doc: usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md
 set -euo pipefail
 
@@ -20,7 +20,7 @@ show_help() {
 Usage: test-greenboot-hardware-degrade.sh [OPTIONS]
 
 Integration test suite for peripheral hardware health evaluator and non-fatal
-Greenboot degradation reporter (T-531, AGY-2129).
+Greenboot degradation reporter (task_475, task_2708).
 
 Tests:
   Test 1: Script existence, executable bit, and help output.

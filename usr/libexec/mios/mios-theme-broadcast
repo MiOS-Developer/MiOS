@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Theme event emitter synchronizing GNOME settings and living wallpaper via DBus and Unix domain sockets (T-500).
+# AI-hint: Theme event emitter synchronizing GNOME settings and living wallpaper via DBus and Unix domain sockets (task_444).
 # AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 from __future__ import annotations
 
@@ -169,7 +169,7 @@ def broadcast_wallpaper_socket(colors: Dict[str, str], is_dark: bool, dry_run: b
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Theme Broadcast Bus for DBus and living wallpaper (T-500)"
+        description="MiOS Theme Broadcast Bus for DBus and living wallpaper (task_444)"
     )
     parser.add_argument("--dry-run", action="store_true", help="Simulate broadcast without firing DBus or socket events")
     parser.add_argument("--json", action="store_true", help="Output status in JSON format")

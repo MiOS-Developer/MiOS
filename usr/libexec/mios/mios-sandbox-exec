@@ -57,15 +57,13 @@ BWRAP_ARGS=(
     --tmpfs /tmp
     --bind "$WORKSPACE" "$WORKSPACE"
     --chdir "$WORKSPACE"
-    --unshare-pid
-    --unshare-ipc
-    --unshare-uts
+    --unshare-all
     --die-with-parent
     --new-session
 )
 BWRAP_ARGS+=( --cap-drop ALL )
-if [ "$LEVEL" = "enforce" ] && [ "$ALLOW_NET" = "0" ]; then
-    BWRAP_ARGS+=( --unshare-net )
+if [ "$ALLOW_NET" = "1" ]; then
+    BWRAP_ARGS+=( --share-net )
 fi
 
 # fd 9 keeps the unlinked filter alive across the exec. Manual ch62.

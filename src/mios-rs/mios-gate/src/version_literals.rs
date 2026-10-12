@@ -35,8 +35,8 @@ const SKIP_SEGMENT: &str = "/tests/golden/";
 /// from the python scanner so this port changes no verdict; note in passing that
 /// exempting a VALUE exempts it in every file, which is a wider allowlist than
 /// any single pin needs (see the ledger entry that ports this check).
-const EXEMPT_VALUE: [&str; 10] = [
-    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.80.0", "0.9.6", "0.0.76", "0.1.0",
+const EXEMPT_VALUE: [&str; 11] = [
+    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.6.15", "0.80.0", "0.9.6", "0.0.76", "0.1.0",
 ];
 /// Lines whose version is documented as an upstream fallback, not ours.
 const EXEMPT_LINE: [&str; 2] = ["INTEL_SG_FALLBACK_TAG", "Upstream v0.15.0"];
@@ -142,17 +142,43 @@ fn corpus(root: &Path) -> Option<Vec<String>> {
     )
 }
 
-pub fn check(root: &Path) -> Report {
-    // Not a checkout of this repository at all: nothing to measure, and inventing
-    // a verdict here is worse than declining one.
-    if !root.join(".git").exists() {
-        return Report {
-            check: CHECK.to_string(),
-            ok: true,
-            could_not_run: None,
-            summary: "not a checkout, so no version literal was scanned".to_string(),
-            findings: Vec::new(),
+/// Exact generated assignments for upstream version pins. Their values belong
+/// to the named SSOT key, rather than the MiOS release identity. Only these two
+/// generated files may use the assignments; changed values and authored glue
+/// continue through the ordinary literal check.
+fn upstream_projection_lines(root: &Path) -> Result<HashSet<String>, String> {
+    let merged = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
+    let names = mios_resolver::names::registry(&merged)?;
+    let version = Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+        .map_err(|e| e.to_string())?;
+    let mut lines = HashSet::new();
+    for entry in names.entries {
+        if !entry.emitted || entry.key == "meta.mios_version" {
+            continue;
+        }
+        let value = entry
+            .key
+            .split('.')
+            .try_fold(&merged, |value, key| value.get(key));
+        let Some(value) = value
+            .and_then(toml::Value::as_str)
+            .filter(|v| version.is_match(v))
+        else {
+            continue;
         };
+        let name = entry.canonical;
+        lines.insert(format!(": \"${{{name}:={value}}}\""));
+        lines.insert(format!(
+            "$script:{name} = if ($env:{name}) {{ $env:{name} }} else {{ '{value}' }}"
+        ));
+    }
+    Ok(lines)
+}
+
+pub fn check(root: &Path) -> Report {
+    // Not a checkout of this repository at all: cannot run, not ok (T5 defect)
+    if !root.join(".git").exists() {
+        return cannot_run("not a git checkout (.git directory missing)");
     }
     let want = canonical(root);
     if want.is_empty() {
@@ -164,6 +190,14 @@ pub fn check(root: &Path) -> Report {
     if files.is_empty() {
         return cannot_run("the tracked corpus is empty, so this check proved nothing");
     }
+    let projected = match upstream_projection_lines(root) {
+        Ok(lines) => lines,
+        Err(error) => {
+            return cannot_run(&format!(
+                "cannot verify generated SSOT version pins: {error}"
+            ))
+        }
+    };
     let Ok(pat) = Regex::new(r"\bv?0\.[0-9]+\.[0-9]+\b") else {
         return cannot_run("the version-literal pattern did not compile");
     };
@@ -179,6 +213,13 @@ pub fn check(root: &Path) -> Report {
         let skip = cfg_test_lines(rel, &lines);
         scanned += 1;
         for (idx, line) in lines.iter().enumerate() {
+            if matches!(
+                rel.as_str(),
+                "automation/lib/globals.sh" | "automation/lib/globals.ps1"
+            ) && projected.contains(line.trim())
+            {
+                continue;
+            }
             if skip.contains(&(idx + 1)) {
                 continue;
             }
@@ -216,6 +257,53 @@ pub fn check(root: &Path) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_projection_matches_only_the_exact_ssot_assignment() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("usr/share/mios")).unwrap();
+        std::fs::write(
+            tmp.path().join(SSOT),
+            "[meta]\nmios_version='0.3.0'\n[build.native.windows]\ndriver_version='0.23.1'\n",
+        )
+        .unwrap();
+        let globals = tmp.path().join("automation/lib/globals.sh");
+        std::fs::create_dir_all(globals.parent().unwrap()).unwrap();
+        let valid = ": \"${MIOS_BUILD_NATIVE_WINDOWS_DRIVER_VERSION:=0.23.1}\"\n";
+        std::fs::write(&globals, valid).unwrap();
+        for args in [vec!["init", "-q"], vec!["add", "."]] {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        assert!(check(tmp.path()).ok);
+        std::fs::write(&globals, valid.replace("0.23.1", "0.23.2")).unwrap();
+        assert!(!check(tmp.path()).ok, "changed upstream pin must fail");
+        std::fs::write(&globals, valid).unwrap();
+        let authored = tmp.path().join("automation/authored.sh");
+        std::fs::write(&authored, valid).unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["add", "."])
+            .status()
+            .unwrap()
+            .success());
+        assert!(
+            !check(tmp.path()).ok,
+            "the value is not exempt outside generated globals"
+        );
+        std::fs::write(&authored, "echo runtime\n").unwrap();
+        std::fs::write(&globals, format!("{valid}echo 0.23.1\n")).unwrap();
+        assert!(
+            !check(tmp.path()).ok,
+            "extra authored literals on the projection remain checked"
+        );
+    }
 
     #[test]
     fn a_cfg_test_module_is_excluded_and_its_boundary_is_exact() {
@@ -279,7 +367,9 @@ mod tests {
             Err(_) => return,
         };
         let r = check(tmp.path());
-        assert_eq!(r.code(), crate::EXIT_CLEAN);
-        assert!(r.findings.is_empty());
+        assert_eq!(r.code(), crate::EXIT_CANNOT_RUN);
+        assert!(!r.ok);
+        assert!(r.could_not_run.is_some());
+        assert!(r.could_not_run.as_ref().unwrap().contains("not a git checkout"));
     }
 }

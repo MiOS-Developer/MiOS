@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated NCCL topology discovery and NVLink/PCIe parameter optimizer (T-713, T-714).
+# AI-hint: Automated NCCL topology discovery and NVLink/PCIe parameter optimizer (task_657, task_658).
 # AI-related: usr/libexec/mios/hw/nccl_tune.py, tests/test-hw.py, automation/20-hardware.sh
 """Automated NCCL topology discovery and NVLink/PCIe parameter optimizer for MiOS.
 

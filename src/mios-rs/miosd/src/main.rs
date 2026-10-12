@@ -1,9 +1,304 @@
 // AI-hint: Entry point for the MiOS daemon native workspace (WS-LANG)
-// AI-related: Containerfile, automation/98-drift-checks.sh
+// AI-related: Containerfile, automation/98-drift-checks.sh, usr/libexec/mios/mios-terminal, usr/share/mios/windows/mios-native-client-setup.ps1
+// AI-doc: usr/share/doc/mios/manual/root.md
 
 #![warn(clippy::unwrap_used, clippy::panic, clippy::todo)]
 
 mod drift;
+use miosd::fhs_sync;
+use miosd::native_generator;
+use miosd::rde;
+mod terminal_runtime {
+    #[cfg(target_os = "linux")]
+    mod linux {
+        use std::ffi::CString;
+        use std::fs::{self, File, OpenOptions};
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::fs::{
+            DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt,
+        };
+        use std::os::unix::net::UnixStream;
+        use std::path::Path;
+
+        fn peer_owner(path: &Path, uid: u32) -> Result<(), String> {
+            let stream =
+                UnixStream::connect(path).map_err(|e| format!("live tmux witness: {e}"))?;
+            let mut creds: libc::ucred = unsafe { std::mem::zeroed() };
+            let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+            let result = unsafe {
+                libc::getsockopt(
+                    stream.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_PEERCRED,
+                    (&mut creds as *mut libc::ucred).cast(),
+                    &mut size,
+                )
+            };
+            if result != 0
+                || size as usize != std::mem::size_of::<libc::ucred>()
+                || creds.uid != uid
+            {
+                return Err("live tmux server belongs to a different user".into());
+            }
+            Ok(())
+        }
+
+        fn validate_entry(meta: &fs::Metadata, label: &str, uid: u32) -> Result<(), String> {
+            let lock = label.starts_with("mios-")
+                && label.ends_with(".lock")
+                && meta.is_file()
+                && meta.len() == 0;
+            if meta.nlink() != 1
+                || ![0, uid].contains(&meta.uid())
+                || !(lock || meta.file_type().is_socket())
+            {
+                return Err(format!(
+                    "unexpected, linked or foreign tmux entry: {label}; preserved"
+                ));
+            }
+            Ok(())
+        }
+
+        fn restore(file: &File, uid: u32, gid: u32, mode: u32) -> Result<(), String> {
+            // O_PATH descriptors retain the witnessed inode even if its name changes.
+            let result = unsafe {
+                libc::fchownat(
+                    file.as_raw_fd(),
+                    c"".as_ptr(),
+                    uid,
+                    gid,
+                    libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW,
+                )
+            };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            fs::set_permissions(
+                format!("/proc/self/fd/{}", file.as_raw_fd()),
+                fs::Permissions::from_mode(mode),
+            )
+            .map_err(|e| e.to_string())
+        }
+
+        pub fn check(
+            base: &Path,
+            human: &str,
+            uid: u32,
+            gid: u32,
+            repair: bool,
+        ) -> Result<(), String> {
+            let caller = fs::metadata("/proc/self").map_err(|e| e.to_string())?.uid();
+            if caller != uid && !(caller == 0 && repair) {
+                return Err("only the selected user or an explicit privileged repair may inspect this namespace".into());
+            }
+            if !base.is_absolute() || base.canonicalize().map_err(|e| e.to_string())? != base {
+                return Err("tmux socket root must be an absolute canonical directory".into());
+            }
+            let directory = base.join(format!("tmux-{uid}"));
+            if !directory.exists() {
+                if caller != uid {
+                    return Err("create the tmux namespace as its unprivileged user first".into());
+                }
+                let mut builder = fs::DirBuilder::new();
+                builder.mode(0o700);
+                if let Err(e) = builder.create(&directory) {
+                    if e.kind() != std::io::ErrorKind::AlreadyExists {
+                        return Err(e.to_string());
+                    }
+                }
+            }
+            let dir = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&directory)
+                .map_err(|e| format!("unsafe tmux namespace: {e}"))?;
+            let metadata = dir.metadata().map_err(|e| e.to_string())?;
+            if metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700 && !repair {
+                let human_path = directory.join(human);
+                match fs::symlink_metadata(&human_path) {
+                    Ok(socket) if socket.uid() == uid && socket.file_type().is_socket() => {}
+                    Ok(_) => return Err("unsafe tmux human socket; run mios repair".into()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.to_string()),
+                }
+                return Ok(());
+            }
+            if !repair {
+                return Err(format!(
+                    "{} requires owner {uid} and private permissions; run mios repair",
+                    directory.display()
+                ));
+            }
+            if caller != 0 || ![0, uid].contains(&metadata.uid()) {
+                return Err("privileged repair refuses a foreign-owned tmux directory".into());
+            }
+            let pinned = std::path::PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+            // A root-owned directory may be reclaimed only after authenticating its
+            // existing human server, never by trusting a socket filename alone.
+            if metadata.uid() != uid {
+                peer_owner(&pinned.join(human), uid)?;
+            }
+            let mut entries = Vec::new();
+            for entry in fs::read_dir(&pinned).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let name = entry.file_name();
+                let c_name = CString::new(name.as_encoded_bytes()).map_err(|e| e.to_string())?;
+                let fd = unsafe {
+                    libc::openat(
+                        dir.as_raw_fd(),
+                        c_name.as_ptr(),
+                        libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    )
+                };
+                if fd < 0 {
+                    return Err(std::io::Error::last_os_error().to_string());
+                }
+                let file = unsafe { File::from_raw_fd(fd) };
+                let meta = file.metadata().map_err(|e| e.to_string())?;
+                let label = name.to_string_lossy();
+                validate_entry(&meta, &label, uid)?;
+                if meta.file_type().is_socket() {
+                    peer_owner(&pinned.join(&name), uid)?;
+                }
+                entries.push(file);
+            }
+            // No mutation until every entry has passed. Descriptor operations cannot
+            // follow a replacement symlink or chown a replacement pathname.
+            restore(&dir, uid, gid, 0o700)?;
+            for file in entries {
+                restore(&file, uid, gid, 0o600)?;
+            }
+            Ok(())
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+            fn identity() -> (u32, u32) {
+                let m = fs::metadata("/proc/self").unwrap();
+                (m.uid(), m.gid())
+            }
+            #[test]
+            fn creates_a_private_namespace_and_detects_bad_mode() {
+                let base = tempfile::tempdir().unwrap();
+                let (uid, gid) = identity();
+                check(base.path(), "human", uid, gid, false).unwrap();
+                let directory = base.path().join(format!("tmux-{uid}"));
+                assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+                fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+                assert!(check(base.path(), "human", uid, gid, false)
+                    .unwrap_err()
+                    .contains("mios repair"));
+            }
+            #[test]
+            fn refuses_namespace_symlinks_without_touching_the_target() {
+                let base = tempfile::tempdir().unwrap();
+                let target = tempfile::tempdir().unwrap();
+                let original = fs::metadata(target.path()).unwrap().mode() & 0o777;
+                let (uid, gid) = identity();
+                std::os::unix::fs::symlink(target.path(), base.path().join(format!("tmux-{uid}")))
+                    .unwrap();
+                assert!(check(base.path(), "human", uid, gid, true).is_err());
+                assert_eq!(
+                    fs::metadata(target.path()).unwrap().mode() & 0o777,
+                    original
+                );
+            }
+            #[test]
+            fn rejects_linked_nonempty_and_symlink_entries_before_repair() {
+                let base = tempfile::tempdir().unwrap();
+                let path = base.path().join("mios-human.lock");
+                fs::write(&path, "").unwrap();
+                let (uid, _) = identity();
+                validate_entry(
+                    &fs::symlink_metadata(&path).unwrap(),
+                    "mios-human.lock",
+                    uid,
+                )
+                .unwrap();
+                fs::hard_link(&path, base.path().join("outside")).unwrap();
+                assert!(validate_entry(
+                    &fs::symlink_metadata(&path).unwrap(),
+                    "mios-human.lock",
+                    uid
+                )
+                .is_err());
+                fs::remove_file(base.path().join("outside")).unwrap();
+                fs::write(&path, "operator data").unwrap();
+                assert!(validate_entry(
+                    &fs::symlink_metadata(&path).unwrap(),
+                    "mios-human.lock",
+                    uid
+                )
+                .is_err());
+                assert_eq!(fs::read_to_string(&path).unwrap(), "operator data");
+                let link = base.path().join("mios-link.lock");
+                std::os::unix::fs::symlink(&path, &link).unwrap();
+                assert!(validate_entry(
+                    &fs::symlink_metadata(&link).unwrap(),
+                    "mios-link.lock",
+                    uid
+                )
+                .is_err());
+            }
+            #[test]
+            fn credential_witness_rejects_another_uid() {
+                let base = tempfile::tempdir().unwrap();
+                let path = base.path().join("human");
+                let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+                let (uid, _) = identity();
+                peer_owner(&path, uid).unwrap();
+                assert!(peer_owner(&path, uid.wrapping_add(1)).is_err());
+            }
+        }
+    }
+
+    pub fn run(
+        root: &Path,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        repair: bool,
+    ) -> Result<(), String> {
+        if uid.is_some() != gid.is_some() {
+            return Err("pass both --uid and --gid for an explicit identity".into());
+        }
+        let doc = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+        let base = doc
+            .get("terminal")
+            .and_then(|v| v.get("socket_root"))
+            .and_then(toml::Value::as_str)
+            .ok_or("missing [terminal].socket_root")?;
+        let human = doc
+            .get("keybindings")
+            .and_then(|v| v.get("socket_name"))
+            .and_then(toml::Value::as_str)
+            .ok_or("missing [keybindings].socket_name")?;
+        if human.is_empty()
+            || !human
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err("invalid SSOT tmux socket name".into());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let caller = std::fs::metadata("/proc/self").map_err(|e| e.to_string())?;
+            let uid = uid.unwrap_or(caller.uid());
+            let gid = gid.unwrap_or(caller.gid());
+            if uid == 0 {
+                return Err("MiOS terminal requires an unprivileged user".into());
+            }
+            linux::check(Path::new(base), human, uid, gid, repair)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (base, human, uid, gid, repair);
+            Err("tmux terminal runtime verification requires Linux".into())
+        }
+    }
+    use std::path::Path;
+}
 
 // AI-related: Containerfile, automation/98-drift-checks.sh
 
@@ -19,6 +314,136 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Synchronize and maintain FHS Root Overlay and Windows/Linux host-guest topology parity at runtime
+    FhsSync {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        daemon: bool,
+        #[arg(long, default_value_t = 15)]
+        interval: u64,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        install_service: bool,
+        #[arg(long)]
+        uninstall_service: bool,
+        #[arg(long)]
+        status: bool,
+    },
+    /// Update the single build-stage ledger and render its cumulative status.
+    BuildProgress {
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+        #[arg(long)]
+        state: std::path::PathBuf,
+        #[arg(long, value_parser = ["init", "start", "result", "note", "finish"])]
+        event: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, value_parser = ["pass", "fail", "warn", "skip", "missing"])]
+        status: Option<String>,
+    },
+    /// Verify or explicitly repair the SSOT tmux namespace without restarting sessions
+    TerminalRuntimeCheck {
+        #[arg(long, default_value = "/")]
+        root: String,
+        #[arg(long)]
+        uid: Option<u32>,
+        #[arg(long)]
+        gid: Option<u32>,
+        #[arg(long)]
+        repair: bool,
+    },
+    /// Build, lint, verify and install the SSOT Linux native catalog into an FHS root
+    NativeBuild {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        target_dir: std::path::PathBuf,
+        #[arg(long)]
+        install_root: std::path::PathBuf,
+        #[arg(long, default_value = std::env::consts::ARCH)]
+        arch: String,
+    },
+    /// Lint, cross-build and verify the Windows catalog, or one selected executable
+    NativeWindowsBuild {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        binary: Option<String>,
+        #[arg(long)]
+        target_dir: std::path::PathBuf,
+    },
+    /// Verify SSOT-required lint tools; optionally run warning-fatal workspace lint
+    NativeToolchainCheck {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long)]
+        lint: bool,
+    },
+    /// Validate and transactionally install every declared Windows executable.
+    NativeWindowsInstall {
+        #[arg(long)]
+        root: std::path::PathBuf,
+        #[arg(long)]
+        source: std::path::PathBuf,
+        #[arg(long)]
+        bin_dir: std::path::PathBuf,
+    },
+    /// Check every installed SSOT native artifact without requiring Cargo
+    NativeRuntimeCheck {
+        #[arg(long, default_value = "/")]
+        root: String,
+        #[arg(long, default_value = std::env::consts::OS)]
+        platform: String,
+        #[arg(long, default_value = std::env::consts::ARCH)]
+        arch: String,
+        #[arg(long)]
+        bin_dir: Option<std::path::PathBuf>,
+    },
+    /// Build current source image targets and verify their SSOT runtime commands
+    ImageBuild {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "all")]
+        target: String,
+        #[arg(long)]
+        plan: bool,
+    },
+    /// Build a [deploy.formats.<format>] disk from a bootc image with bootc-image-builder;
+    /// the operator's credential is required and never defaulted
+    ArtifactBuild {
+        /// A [deploy.formats] key, e.g. vhdx, qcow2, iso
+        format: String,
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+        /// Image to build from; [image].local_tag when omitted. A published
+        /// digest (ghcr.io/...@sha256:...) is pulled first.
+        #[arg(long)]
+        image: Option<String>,
+        /// Output directory; [build.artifacts].output_dir/<format> when omitted
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+        /// Print the rendered config (credential withheld) and the builder call
+        #[arg(long)]
+        plan: bool,
+    },
+    /// Boot a built disk under QEMU in its [deploy.formats.<format>.vm] shape and run
+    /// [testing.boot].probes in the guest over SSH
+    ArtifactBootTest {
+        format: String,
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+        #[arg(long)]
+        disk: std::path::PathBuf,
+        /// Private key whose public half the disk was built with
+        #[arg(long)]
+        identity: std::path::PathBuf,
+        /// Serial console log; kept as boot evidence
+        #[arg(long, default_value = "boot-serial.log")]
+        serial_log: std::path::PathBuf,
+    },
     /// Resolve the SSOT native Linux target, linker and static runtime flags
     NativeBuildSettings {
         #[arg(long, default_value = ".")]
@@ -36,6 +461,8 @@ enum Commands {
         /// Tree whose [build.native.linux] policy (e.g. pie) the artifact must meet.
         #[arg(long, default_value = ".")]
         root: String,
+        #[arg(long, default_value = "linux")]
+        platform: String,
     },
     /// List SSOT-categorized native executables using both Cargo workspaces
     NativeTargets {
@@ -88,6 +515,9 @@ enum Commands {
         /// Print the profile's package sections ("*" = every section) instead of phases
         #[arg(long)]
         sections: bool,
+        /// Print the SSOT post-build validation plan for the build adapter
+        #[arg(long, conflicts_with_all = ["sections", "list", "plan"])]
+        post_list: bool,
     },
     /// Resolve configuration parameters
     Resolve {
@@ -172,7 +602,7 @@ enum Commands {
         #[arg(long, default_value = "/var/lib/mios/forge-runner/last-build.txt")]
         sentinel: String,
     },
-    /// Inspect, dry-run, or execute atomic bootc rollback with recovery verification (T-1025)
+    /// Inspect, dry-run, or execute atomic bootc rollback with recovery verification (task_3356)
     BootcRollback {
         /// Validate rollback target without switching
         #[arg(long)]
@@ -276,9 +706,22 @@ enum Commands {
         /// Optional custom bind address (e.g. 127.0.0.1:8700)
         #[arg(long)]
         bind: Option<String>,
-        /// Optional custom port (default: 8700 or $MIOS_PORT_AGENT_PIPE)
+        /// Optional custom port (default: 8700 or $MIOS_PORTS_AGENT_PIPE)
         #[arg(long)]
         port: Option<u16>,
+        /// Per-launch session authentication token
+        #[arg(long)]
+        token: Option<String>,
+        /// Path to file containing session token
+        #[arg(long)]
+        token_file: Option<std::path::PathBuf>,
+    },
+    /// Decentralized Remote Development Environment (RDE) platform engine (DevPod + OpenTofu + MIT IDE)
+    Rde {
+        #[command(subcommand)]
+        action: rde::RdeCommand,
+        #[arg(long, default_value = ".")]
+        root: String,
     },
 }
 
@@ -407,14 +850,13 @@ fn run_scaffold(type_name: &str, name: &str) -> Result<(), Box<dyn std::error::E
     };
 
     let tmpl_file = repo_root.join("usr/share/mios/templates").join(type_name);
-    if !tmpl_file.is_file() {
+    if !tmpl_file.exists() {
         eprintln!(
             "Error: Template for '{}' not found at {:?}",
             type_name, tmpl_file
         );
         std::process::exit(1);
     }
-    let content = std::fs::read_to_string(&tmpl_file)?;
 
     let toml_path = repo_root.join("usr/share/mios/mios.toml");
     let mut placeholders: std::collections::HashMap<String, String> =
@@ -439,6 +881,83 @@ fn run_scaffold(type_name: &str, name: &str) -> Result<(), Box<dyn std::error::E
             }
         }
     }
+
+    if tmpl_file.is_dir() {
+        let dest_dir = tmpl_cfg
+            .as_ref()
+            .and_then(|c| c.get("dest_dir"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("tools/native");
+        let dest_root = repo_root.join(dest_dir).join(name);
+        std::fs::create_dir_all(&dest_root)?;
+
+        let pascal_name = {
+            let words: Vec<&str> = name.split(&['-', '_'][..]).collect();
+            words
+                .iter()
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                })
+                .collect::<String>()
+        };
+
+        fn walk_scaffold(
+            src_dir: &std::path::Path,
+            dst_dir: &std::path::Path,
+            crate_name: &str,
+            p_name: &str,
+            p_map: &std::collections::HashMap<String, String>,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            for entry in std::fs::read_dir(src_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let rel = path.strip_prefix(src_dir)?;
+                let target = dst_dir.join(rel);
+                if path.is_dir() {
+                    std::fs::create_dir_all(&target)?;
+                    walk_scaffold(&path, &target, crate_name, p_name, p_map)?;
+                } else if path.is_file() {
+                    let mut text = std::fs::read_to_string(&path)?;
+                    text = text.replace("{{name}}", crate_name);
+                    text = text.replace("{{PascalName}}", p_name);
+                    for (k, v) in p_map {
+                        text = text.replace(&format!("{{{{{}}}}}", k), v);
+                    }
+                    if let Some(p) = target.parent() {
+                        std::fs::create_dir_all(p)?;
+                    }
+                    std::fs::write(&target, text)?;
+                }
+            }
+            Ok(())
+        }
+
+        walk_scaffold(&tmpl_file, &dest_root, name, &pascal_name, &placeholders)?;
+
+        if type_name == "rust_crate" || type_name == "rust-crate" {
+            let gen_script = repo_root.join("tools/generate-cargo-manifests.py");
+            if gen_script.is_file() {
+                let py = if cfg!(windows) { "python" } else { "python3" };
+                let _ = std::process::Command::new(py)
+                    .arg(&gen_script)
+                    .current_dir(&repo_root)
+                    .output();
+            }
+        }
+
+        println!(
+            "Scaffolded new {} at: {}",
+            type_name,
+            dest_root.display().to_string().replace('\\', "/")
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&tmpl_file)?;
 
     // Name BEFORE render: {{id}} must agree with the filename the allocator chose.
     let final_name = match tmpl_cfg.as_ref() {
@@ -722,7 +1241,7 @@ fn run_render_ports(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std::
     // line containing '=' inside [ports] as a key/value pair, so a COMMENT
     // became an environment variable name -- including one carrying a backtick
     // pair, which `bash source` reads as command substitution. install.env is
-    // the file Law 10 (BARE-SAFE-ENV) governs. T-1018.
+    // the file Law 10 (BARE-SAFE-ENV) governs. task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-ports: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content
@@ -754,6 +1273,8 @@ fn run_render_ports(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std::
             continue;
         };
         let rendered = if value == 53 { value } else { value + offset };
+        entries.push(format!("MIOS_PORTS_{}={}", name.to_uppercase(), rendered));
+        // Installed older units still consume the previous input spelling.
         entries.push(format!("MIOS_PORT_{}={}", name.to_uppercase(), rendered));
     }
     if entries.is_empty() {
@@ -763,7 +1284,7 @@ fn run_render_ports(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std::
     let mut out_lines = Vec::new();
     if let Ok(existing) = std::fs::read_to_string(out_path) {
         for line in existing.lines() {
-            if !line.starts_with("MIOS_PORT_") {
+            if !line.starts_with("MIOS_PORT_") && !line.starts_with("MIOS_PORTS_") {
                 out_lines.push(line.to_string());
             }
         }
@@ -798,10 +1319,74 @@ async fn main() {
         println!("{}", report.format_human());
         std::process::exit(if report.is_valid { 0 } else { 1 });
     }
+    if prog_name == "mios-fhs-sync" || prog_name.starts_with("mios-fhs-sync") {
+        let root_path = if cfg!(windows) {
+            std::path::PathBuf::from("C:\\")
+        } else {
+            std::path::PathBuf::from("/")
+        };
+        let is_daemon = args.iter().any(|a| a == "--daemon" || a == "-d");
+        let is_check = args.iter().any(|a| a == "--check" || a == "-c");
+        let is_status = args.iter().any(|a| a == "--status");
+        if is_status {
+            fhs_sync::print_status(&root_path);
+            std::process::exit(0);
+        } else if is_check {
+            let report = fhs_sync::audit(&root_path);
+            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            std::process::exit(if report.ok { 0 } else { 1 });
+        } else if is_daemon {
+            let interval = args
+                .iter()
+                .position(|a| a == "--interval" || a == "-i")
+                .and_then(|p| args.get(p + 1))
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(15);
+            fhs_sync::run_daemon(root_path, interval).await;
+            std::process::exit(0);
+        } else {
+            let _ = fhs_sync::sync_once(&root_path, true);
+            std::process::exit(0);
+        }
+    }
 
     let cli = Cli::parse();
 
     match &cli.command {
+        Commands::FhsSync {
+            root,
+            daemon,
+            interval,
+            check,
+            install_service,
+            uninstall_service,
+            status,
+        } => {
+            let root_path = if root == "." {
+                if cfg!(windows) {
+                    std::path::PathBuf::from("C:\\")
+                } else {
+                    std::path::PathBuf::from("/")
+                }
+            } else {
+                std::path::PathBuf::from(root)
+            };
+            if *install_service {
+                fhs_sync::install_service(&root_path);
+            } else if *uninstall_service {
+                fhs_sync::uninstall_service();
+            } else if *status {
+                fhs_sync::print_status(&root_path);
+            } else if *check {
+                let report = fhs_sync::audit(&root_path);
+                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                std::process::exit(if report.ok { 0 } else { 1 });
+            } else if *daemon {
+                fhs_sync::run_daemon(root_path, *interval).await;
+            } else {
+                let _ = fhs_sync::sync_once(&root_path, true);
+            }
+        }
         Commands::DriftCheck {
             root,
             soft,
@@ -819,6 +1404,104 @@ async fn main() {
             if let Err(e) = run_scaffold(template_type, name) {
                 eprintln!("[miosd] Scaffold error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::ImageBuild { root, target, plan } => {
+            let root = std::path::Path::new(root);
+            let result = mios_resolver::resolve_merged(Some(root), false)
+                .map_err(|e| e.to_string())
+                .and_then(|config| mios_build::images::image_plan(root, &config, target))
+                .and_then(|commands| {
+                    if *plan {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&commands).map_err(|e| e.to_string())?
+                        );
+                        return Ok(());
+                    }
+                    mios_build::images::execute_images(&commands, |command| {
+                        println!("[miosd] {} from {}", command.target, command.root.display());
+                        let status = std::process::Command::new(&command.engine)
+                            .current_dir(&command.root)
+                            .args(&command.args)
+                            .status()
+                            .map_err(|e| e.to_string())?;
+                        if status.success() {
+                            Ok(())
+                        } else {
+                            Err(status.to_string())
+                        }
+                    })
+                });
+            if let Err(error) = result {
+                eprintln!("[miosd] Image build: {error}");
+                std::process::exit(1);
+            }
+        }
+        Commands::ArtifactBuild {
+            format,
+            root,
+            image,
+            output,
+            plan,
+        } => {
+            let env = |name: &str| std::env::var(name).ok();
+            let result = mios_resolver::resolve_merged(Some(root), false)
+                .map_err(|e| e.to_string())
+                .and_then(|config| {
+                    if *plan {
+                        let plan = mios_build::artifacts::plan(
+                            &config,
+                            root,
+                            format,
+                            image.as_deref(),
+                            output.as_deref(),
+                            &env,
+                        )?;
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())?
+                        );
+                        return Ok(());
+                    }
+                    let disk = mios_build::artifacts::build(
+                        &config,
+                        root,
+                        format,
+                        image.as_deref(),
+                        output.as_deref(),
+                        &env,
+                    )?;
+                    println!("[miosd] {format} artifact: {}", disk.display());
+                    Ok(())
+                });
+            if let Err(error) = result {
+                eprintln!("[miosd] Artifact {format}: {error}");
+                std::process::exit(1);
+            }
+        }
+        Commands::ArtifactBootTest {
+            format,
+            root,
+            disk,
+            identity,
+            serial_log,
+        } => {
+            let result = mios_resolver::resolve_merged(Some(root), false)
+                .map_err(|e| e.to_string())
+                .and_then(|config| {
+                    mios_build::artifacts::boot_test(&config, format, disk, identity, serial_log)
+                });
+            match result {
+                Ok(probes) => println!(
+                    "[miosd] {format} booted; {} probe(s) passed in the guest (serial log: {})",
+                    probes.len(),
+                    serial_log.display()
+                ),
+                Err(error) => {
+                    eprintln!("[miosd] Boot test {format}: {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::NativeBuildSettings { root, arch, json } => {
@@ -846,13 +1529,121 @@ async fn main() {
                 }
             }
         }
-        Commands::NativeArtifactCheck { path, arch, root } => {
-            let result = mios_build::native_linux_target(std::path::Path::new(root), arch)
-                .and_then(|policy| {
-                    std::fs::read(path)
-                        .map_err(|e| format!("cannot read artifact: {e}"))
-                        .and_then(|data| mios_build::verify_static_elf(&data, arch, policy.pie))
-                });
+        Commands::NativeBuild {
+            root,
+            target_dir,
+            install_root,
+            arch,
+        } => {
+            match mios_build::native_build::build_linux(
+                std::path::Path::new(root),
+                target_dir,
+                install_root,
+                arch,
+            ) {
+                Ok(count) => println!("[miosd] {count} native Linux artifacts built and installed"),
+                Err(error) => {
+                    eprintln!("[miosd] Native build: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::NativeWindowsBuild {
+            root,
+            binary,
+            target_dir,
+        } => {
+            let result = if let Some(binary) = binary {
+                mios_build::verification::windows_build(
+                    std::path::Path::new(root),
+                    binary,
+                    target_dir,
+                )
+                .map(|path| format!("Verified Windows artifact: {}", path.display()))
+            } else {
+                mios_build::verification::windows_build_catalog(
+                    std::path::Path::new(root),
+                    target_dir,
+                )
+                .map(|count| format!("{count} Windows native release artifacts built and verified"))
+            };
+            match result {
+                Ok(receipt) => println!("[miosd] {receipt}"),
+                Err(error) => {
+                    eprintln!("[miosd] Windows build: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TerminalRuntimeCheck {
+            root,
+            uid,
+            gid,
+            repair,
+        } => {
+            if let Err(error) =
+                terminal_runtime::run(std::path::Path::new(root), *uid, *gid, *repair)
+            {
+                eprintln!("[miosd] Terminal runtime: {error}");
+                std::process::exit(1);
+            }
+            println!("[miosd] private SSOT tmux namespace verified; repair: {repair}");
+        }
+        Commands::NativeToolchainCheck { root, lint } => {
+            if let Err(error) =
+                mios_build::verification::toolchain_check(std::path::Path::new(root), *lint)
+            {
+                eprintln!("[miosd] Toolchain verification: {error}");
+                std::process::exit(1);
+            }
+            println!("[miosd] SSOT-required lint tools verified; workspace lint requested: {lint}");
+        }
+        Commands::NativeWindowsInstall {
+            root,
+            source,
+            bin_dir,
+        } => match mios_build::verification::windows_install(root, source, bin_dir) {
+            Ok(count) => {
+                println!("[miosd] {count} Windows native release artifacts installed and verified")
+            }
+            Err(error) => {
+                eprintln!("[miosd] Windows installation: {error}");
+                std::process::exit(1);
+            }
+        },
+        Commands::NativeRuntimeCheck {
+            root,
+            platform,
+            arch,
+            bin_dir,
+        } => {
+            match mios_build::verification::runtime_check(
+                std::path::Path::new(root),
+                platform,
+                arch,
+                bin_dir.as_deref(),
+            ) {
+                Ok(count) => {
+                    println!("[miosd] {count} installed {platform} native artifacts verified")
+                }
+                Err(error) => {
+                    eprintln!("[miosd] Runtime artifact verification: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::NativeArtifactCheck {
+            path,
+            arch,
+            root,
+            platform,
+        } => {
+            let result = mios_build::verification::artifact_check(
+                std::path::Path::new(root),
+                std::path::Path::new(path),
+                platform,
+                arch,
+            );
             if let Err(error) = result {
                 eprintln!("[miosd] Artifact {path}: {error}");
                 std::process::exit(1);
@@ -900,12 +1691,55 @@ async fn main() {
             list,
             profile,
             sections,
+            post_list,
         } => {
+            if *post_list {
+                let root = std::env::var_os("MIOS_ROOT")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "/".into());
+                match mios_build::progress::post_plan(&root) {
+                    Ok(plan) => {
+                        for (name, action) in plan {
+                            println!("{name}:{action}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("[build-plan] {error}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
             if let Err(e) =
                 mios_build::run_build_selected(phase, *plan, *list, *sections, profile.as_deref())
             {
                 eprintln!("[miosd] Build error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::BuildProgress {
+            root,
+            state,
+            event,
+            name,
+            status,
+        } => {
+            use mios_build::progress::Status;
+            let status = status.as_deref().and_then(|s| match s {
+                "pass" => Some(Status::Pass),
+                "fail" => Some(Status::Fail),
+                "warn" => Some(Status::Warn),
+                "skip" => Some(Status::Skip),
+                "missing" => Some(Status::Missing),
+                _ => None,
+            });
+            match mios_build::progress::run(root, state, event, name.as_deref(), status) {
+                Ok(true) => {}
+                Ok(false) => std::process::exit(1),
+                Err(error) => {
+                    eprintln!("[build-progress] {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Greenboot => {
@@ -1168,8 +2002,18 @@ async fn main() {
                 }
             }
         }
-        Commands::ConfigServer { bind, port } => {
-            let config = match miosd::server::ConfigServerConfig::resolve(bind.clone(), *port) {
+        Commands::ConfigServer {
+            bind,
+            port,
+            token,
+            token_file,
+        } => {
+            let config = match miosd::server::ConfigServerConfig::resolve_with_auth(
+                bind.clone(),
+                *port,
+                token.clone(),
+                token_file.clone(),
+            ) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("[miosd config-server] {e}");
@@ -1197,6 +2041,11 @@ async fn main() {
                 eprintln!("[miosd] Config server error: {}", e);
                 std::process::exit(1);
             }
+        }
+        Commands::Rde { action, root } => {
+            let root_path = std::path::Path::new(root);
+            let exit_code = rde::dispatch_action(action, root_path).await;
+            std::process::exit(exit_code);
         }
     }
 }
@@ -1254,7 +2103,7 @@ fn run_overlay_bind_images(
     // array across lines would yield an EMPTY token set -- and an empty set binds
     // every image, including the two heavy GPU lanes the register exists to keep
     // out of the image. Same defect class as render-chrony's silent hardcoded
-    // fallback (T-1018).
+    // fallback (task_962).
     let mios_toml_path =
         std::env::var("MIOS_TOML").unwrap_or_else(|_| "/usr/share/mios/mios.toml".to_string());
     let mut fb_tokens: Vec<String> = Vec::new();
@@ -1318,7 +2167,6 @@ fn run_overlay_bind_images(
             }
 
             let dst_file = bdir.join(&name);
-            #[cfg(unix)]
             {
                 // A swallowed symlink failure is an unbound image that still
                 // reports as bound; Law 3 has no way to notice afterwards.
@@ -1333,7 +2181,7 @@ fn run_overlay_bind_images(
                         .into())
                     }
                 }
-                std::os::unix::fs::symlink(&path, &dst_file).map_err(|e| {
+                native_file_symlink(&path, &dst_file).map_err(|e| {
                     format!(
                         "overlay-bind-images: cannot bind {} -> {}: {e}",
                         dst_file.display(),
@@ -1453,7 +2301,7 @@ ip_resolve=4
 /// an unconditional success line -- "[miosd] enabled usbguard.service" printed
 /// whether or not the symlink was created. A hardening step that reports
 /// success it did not achieve is worse than one that fails: the failure is
-/// recoverable, the false report is not visible at all (T-1018).
+/// recoverable, the false report is not visible at all (task_962).
 fn run_harden(root: &str) -> Result<(), Box<dyn std::error::Error>> {
     let at = |p: &str| std::path::Path::new(root).join(p.trim_start_matches('/'));
     let usb_conf = at("/usr/lib/usbguard/usbguard-daemon.conf");
@@ -1506,7 +2354,6 @@ fn run_harden(root: &str) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         let dst = wants_dir.join(u);
-        #[cfg(unix)]
         {
             match std::fs::remove_file(&dst) {
                 Ok(()) => {}
@@ -1515,13 +2362,36 @@ fn run_harden(root: &str) -> Result<(), Box<dyn std::error::Error>> {
                     return Err(format!("harden: cannot replace {}: {e}", dst.display()).into())
                 }
             }
-            std::os::unix::fs::symlink(format!("../{u}"), &dst)
+            native_file_symlink(format!("../{u}"), &dst)
                 .map_err(|e| format!("harden: cannot enable {u}: {e}"))?;
         }
         println!("[miosd] enabled {u}");
     }
 
     Ok(())
+}
+
+/// Both builders must create the link or report the platform's real error.
+fn native_file_symlink(
+    source: impl AsRef<std::path::Path>,
+    destination: impl AsRef<std::path::Path>,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source, destination)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(source, destination)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source, destination);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native file links require Linux or Windows",
+        ))
+    }
 }
 
 /// One layered-loader read: `mios-toml-get <section> <key>` (vendor < host < user), empty is an error.
@@ -1785,7 +2655,7 @@ fn run_bootc_rollback(
     dry_run: bool,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("[miosd] Initiating bootc rollback evaluation (T-1025)...");
+    println!("[miosd] Initiating bootc rollback evaluation (task_3356)...");
 
     // Invariant 1: Ensure /var persistence is intact before and during rollback operations
     let hist_dir = &mios_state_dir();
@@ -1932,7 +2802,7 @@ fn run_bootc_rollback(
 }
 
 fn run_greenboot() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[greenboot] Running native greenboot health check (T-508 / T-1025)...");
+    println!("[greenboot] Running native greenboot health check (task_452 / task_3356)...");
 
     // 1. Verify Invariant 1: /var persistence & writability
     let var_dir = &mios_state_dir();
@@ -1966,6 +2836,13 @@ fn run_greenboot() -> Result<(), Box<dyn std::error::Error>> {
         return Err("SSOT mios.toml not found".into());
     }
     println!("[greenboot] [ok] SSOT mios.toml accessibility verified");
+    let verified = mios_build::verification::runtime_check(
+        std::path::Path::new("/"),
+        "linux",
+        std::env::consts::ARCH,
+        None,
+    )?;
+    println!("[greenboot] [ok] {verified} SSOT native artifacts verified");
 
     // 3. Verify UKI / bootloader entries if bootloader directory exists
     let entries_dir = std::path::Path::new("/boot/loader/entries");
@@ -2032,7 +2909,7 @@ fn run_finalize_osrelease(
     // of that exit code -- so a missing file or an unresolved version reported a
     // projection that had not occurred. The bash leg it shadows prints nothing
     // in the same situation, because its success log sits inside the branch
-    // that did the work (T-1018).
+    // that did the work (task_962).
     let p = std::path::Path::new(path);
     if !p.exists() {
         println!("[miosd] os-release: {path} does not exist -- nothing projected");
@@ -2071,49 +2948,9 @@ fn run_finalize_osrelease(
     Ok(())
 }
 
-/// Run one of the repo's generator scripts, resolved against MIOS_ROOT.
-///
-/// Four subcommands each carried their own copy of this. Every copy resolved
-/// the script relative to the process working directory, and every copy ended
-/// in an else-branch that printed "... up to date." and returned Ok when the
-/// script was not there -- a claim about an artefact it had never opened. Run
-/// from anywhere but the repo root, `miosd render-uki-cmdline` reported the
-/// kernel cmdline current without reading a single kargs.d fragment, and the
-/// build stage that called it took that for a render (T-1018).
-///
-/// An absent generator is now an error naming the root it looked under, so a
-/// wrong MIOS_ROOT fails loudly instead of passing quietly.
-fn run_repo_generator(
-    rel: &str,
-    check: bool,
-    subject: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MIOS_ROOT").unwrap_or_else(|_| ".".to_string());
-    let script = std::path::Path::new(&root).join(rel);
-    if !script.is_file() {
-        return Err(format!(
-            "{}: generator {} not found (MIOS_ROOT={}) -- nothing was rendered, \
-             so nothing can be reported up to date",
-            subject,
-            script.display(),
-            root
-        )
-        .into());
-    }
-    let mut cmd = std::process::Command::new("python3");
-    cmd.arg(&script);
-    if check {
-        cmd.arg("--check");
-    }
-    let status = cmd.status()?;
-    if !status.success() {
-        return Err(format!("{}: {} failed", subject, script.display()).into());
-    }
-    Ok(())
-}
-
 fn run_cosign_policy(check: bool) -> Result<(), Box<dyn std::error::Error>> {
-    run_repo_generator("tools/generate-cosign-policy.py", check, "cosign-policy")
+    let root = std::env::var("MIOS_ROOT").unwrap_or_else(|_| ".".to_string());
+    native_generator::run(std::path::Path::new(&root), "cosign-policy", check)
 }
 
 fn run_firewall_ports() -> Result<(), Box<dyn std::error::Error>> {
@@ -2137,8 +2974,9 @@ fn run_firewall_ports() -> Result<(), Box<dyn std::error::Error>> {
 
     if std::path::Path::new("/usr/bin/firewall-offline-cmd").exists() {
         for (svc, proto) in ports {
-            let env_var = format!("MIOS_PORT_{}", svc);
-            if let Ok(port_val) = std::env::var(&env_var) {
+            let port = std::env::var(format!("MIOS_PORTS_{svc}"))
+                .or_else(|_| std::env::var(format!("MIOS_PORT_{svc}")));
+            if let Ok(port_val) = port {
                 let arg = format!("--add-port={}/{}", port_val, proto);
                 let _ = std::process::Command::new("/usr/bin/firewall-offline-cmd")
                     .arg("--zone=public")
@@ -2166,7 +3004,7 @@ fn run_render_nut(toml_path: &str, conf_dir: &str) -> Result<(), Box<dyn std::er
     // comment containing '=' or a multi-line value would break it exactly as it
     // broke [ports] and [network.ntp]. And unwrap_or_default() meant a
     // NONEXISTENT manifest rendered four default config files and exited 0.
-    // T-1018.
+    // task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-nut: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content
@@ -2232,7 +3070,7 @@ fn run_render_chrony(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std:
     // Law 7, and a sovereignty question on a machine whose SSOT named a pool.
     // There is no hardcoded fallback now: an absent table yields no servers,
     // which is what the Python renderer this must match byte-for-byte does.
-    // T-1018.
+    // task_962.
     let content = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("render-chrony: {toml_path} could not be read: {e}"))?;
     let parsed: toml::Value = content
@@ -2298,5 +3136,6 @@ fn run_render_uki_cmdline(check: bool) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn run_generate_quadlets(check: bool) -> Result<(), Box<dyn std::error::Error>> {
-    run_repo_generator("tools/generate-pod-quadlets.py", check, "generate-quadlets")
+    let root = std::env::var("MIOS_ROOT").unwrap_or_else(|_| ".".to_string());
+    native_generator::run(std::path::Path::new(&root), "pod-quadlets", check)
 }

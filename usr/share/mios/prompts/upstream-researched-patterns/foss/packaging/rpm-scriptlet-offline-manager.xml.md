@@ -2,7 +2,7 @@
      reachable manager exists: SYSTEMD_OFFLINE semantics, what the systemd RPM
      macros run, how dnf5 reports scriptlet failure, and how to run a
      transaction inside the running manager's context.
-     AI-related: automation/build.sh, CONTRIBUTING.md, usr/libexec/mios/install-nvidia-wsl-userland.sh, usr/libexec/mios/automation/35-xrdp-enhanced-session.sh, usr/share/doc/mios/manual/root.md, TASKS.jsonl T-1143, .prompts/README.md -->
+     AI-related: automation/build.sh, CONTRIBUTING.md, usr/libexec/mios/install-nvidia-wsl-userland.sh, usr/libexec/mios/automation/35-xrdp-enhanced-session.sh, usr/share/doc/mios/manual/root.md, TASKS.jsonl task_3436, .prompts/README.md -->
 <context>
 MiOS installs packages in three contexts: the OCI build, the WSL2 dev
 machine, and helper scripts run on a booted host. The tree sets
@@ -10,7 +10,7 @@ machine, and helper scripts run on a booted host. The tree sets
 scriptlets from failing or hanging, and its manual says dnf's exit code is
 unreliable on the dev machine because `%post` and trigger scriptlets fail with
 "Transport endpoint is not connected". The bootstrap repository's comment
-claims the variable survives `sudo`. Task T-1143 (open) asks MiOS either to
+claims the variable survives `sudo`. Task task_3436 (open) asks MiOS either to
 run transactions inside the systemd namespace or to set `SYSTEMD_OFFLINE=1`
 so scriptlets degrade cleanly, while preserving real transaction failures.
 Which choice is correct depends on documented systemd, RPM macro, dnf5 and
@@ -39,7 +39,7 @@ Raised by, at these revisions (re-read before relying on them):
 - MiOS `usr/share/doc/mios/manual/root.md` at `af6de6a`: lines 6709-6718
   (scriptlets fail with "Transport endpoint is not connected" because "there's
   no systemd PID 1 to take daemon-reload"; verify with `rpm -q`).
-- MiOS `TASKS.jsonl` at `af6de6a`: line 3435 (T-1143, open).
+- MiOS `TASKS.jsonl` at `af6de6a`: line 3435 (task_3436, open).
 - mios-bootstrap `build-mios.ps1` at `91dc899`: lines 2847-2877 (dnf5 run
   through `sudo env` with the variable set; line 2865 says the variable
   survives sudo).

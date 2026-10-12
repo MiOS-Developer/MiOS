@@ -21,7 +21,7 @@ reached through the broker like any other verb. Offline-first: if the daemon is
 down it returns success=false with an honest error -- it NEVER fabricates a
 launched=true.
 
-SSOT: MIOS_DAEMON_AGENT_URL (else built from MIOS_DAEMON_AGENT_PORT, default
+SSOT: MIOS_DAEMON_AGENT_URL (else built from MIOS_PORTS_DAEMON_AGENT, default
 8644 -- matches the daemon's AGENT_PORT / mios.toml [agents.mios-daemon-agent]).
 
 Output JSON: {success, app, launched, verdict, recent_failures, checked_by}.
@@ -35,7 +35,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-_PORT = os.environ.get("MIOS_DAEMON_AGENT_PORT", "8740")
+_PORT = os.environ.get("MIOS_PORTS_DAEMON_AGENT", "8740")
 AGENT_URL = os.environ.get(
     "MIOS_DAEMON_AGENT_URL", f"http://127.0.0.1:{_PORT}").rstrip("/")
 

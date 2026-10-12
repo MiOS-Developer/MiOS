@@ -1,20 +1,20 @@
 <!-- AI-hint: MiOS architectural documentation: Hummingbird: Distroless Agent-Pipe Service.
      AI-related: mios-agent-pipe, mios-agent-pipe.container -->
 
-# Hummingbird: Distroless Agent-Pipe Service
+# Hummingbird: Native Agent-Pipe Service
 
-This guide explains the architecture, deployment, and security details of the Hummingbird distroless agent-pipe container deployment pattern.
+Hummingbird packages the agent-pipe service with the native MiOS terminal and combined MCP interface.
 
 ## Overview
 
-Hummingbird packages the core agent-pipe service into a minimal, distroless container image. By eliminating the shell, package manager, and auxiliary OS packages, it reduces the attack surface while maintaining standard interface parity with host-level services.
+The final image derives from `localhost/mios-base:latest`. It includes tmux, Bash, MiOS-MCP and its terminal adapter by default. The historical filename remains for compatibility; the image now includes a shell and package manager as required by the global native-interface contract.
 
 ```mermaid
 graph TD
     Systemd[systemd / Quadlet] -->|Spawns| Podman[Podman Container]
-    Podman -->|Runs| Distroless[Distroless Image]
-    Distroless -->|Env| Endpoint[MIOS_AI_ENDPOINT]
-    Distroless -->|Non-root USER| Execution[Uvicorn Server]
+    Podman -->|Runs| Native[MiOS Base Image]
+    Native -->|Env| Endpoint[MIOS_AI_ENDPOINT]
+    Native -->|Non-root USER| Execution[Uvicorn Server]
 ```
 
 ## Quadlet Invocation
@@ -27,7 +27,7 @@ The container is managed natively via systemd Quadlets. The systemd unit file is
 ## Security Posture
 
 Hummingbird adheres to the following security design rules:
-1. **No-Shell Execution**: Uses the `gcr.io/distroless/python3-debian13` base image containing only Python, system libraries, and SSL certificates.
+1. **Native Interface**: Uses the common Fedora MiOS base with tmux, MiOS-MCP and the SSOT-derived terminal profile.
 2. **De-escalated Privileges**: Runs under standard non-root `USER 65534:65534` (nobody:nogroup) with all ambient privileges dropped.
 3. **ReadOnly Host Access**: Avoids privileged container escapes. Directory bindings are mapped read-only except for explicitly defined runtime state trees in `/var/lib/mios/`.
 4. **Cache Isolation**: All application cache operations (`XDG_CACHE_HOME`) are bound to local, transient tmpfs mounts to prevent metadata MDS storms on shared storage clusters.

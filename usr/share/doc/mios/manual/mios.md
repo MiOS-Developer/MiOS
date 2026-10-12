@@ -5,10 +5,10 @@
 ### Examples for other local OpenAI-API-compatible runtimes...
 
 Examples for other local OpenAI-API-compatible runtimes:
-  LLM-Light:          base_url = "http://localhost:${MIOS_PORT_LLM_LIGHT}/v1"
+  LLM-Light:          base_url = "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1"
   vLLM:               base_url = "http://localhost:8000/v1"
   LM Studio:          base_url = "http://localhost:1234/v1"
-  mios-gateway-agent: base_url = "http://localhost:${MIOS_PORT_HERMES}/v1"
+  mios-gateway-agent: base_url = "http://localhost:${MIOS_PORTS_HERMES}/v1"
   LiteLLM proxy:      base_url = "http://localhost:4000/v1"
 
 <!-- mios-src:7036a2325287 from etc/mios/kb.conf.toml:11-16 -->
@@ -477,14 +477,14 @@ Run:  python test_mios_office_convert.py
 ### Reference resolution -- owned by doc_refs.rs in Rust (Law...
 
 --------------------------------------------------------------------------
-Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / MON-026)
+Reference resolution -- owned by doc_refs.rs in Rust (Law 14 / task_3395)
 --------------------------------------------------------------------------
 
-<!-- mios-src:4fa8bbb4c604 from usr/lib/mios/mios_comments.py:188-190 -->
+<!-- mios-src:34013fc6aaec from usr/lib/mios/mios_comments.py:188-190 -->
 
 ### Stale-reference resolution is owned by doc_refs.rs in Rust...
 
-Stale-reference resolution is owned by doc_refs.rs in Rust (Law 14 / MON-026).
+Stale-reference resolution is owned by doc_refs.rs in Rust (Law 14 / task_3395).
 
     Python mios_comments remains responsible only for comment lexing and classification.
 
@@ -500,10 +500,10 @@ str(dict) gives a PYTHON REPR -- {'ordinal': '01', 'fatal': True} --
 which only Python can parse and which disagreed with the Rust
 resolver's TOML inline tables on 12 keys. That was the whole residual
 of check_resolver_differential_parity, sitting exactly at its ceiling
-of 12 with no headroom (T-1063). TOML wins because it is a real
+of 12 with no headroom (task_3361). TOML wins because it is a real
 format and because Rust is the destination tier.
 
-<!-- mios-src:737153c244c1 from usr/lib/mios/mios_toml.py:697-706 -->
+<!-- mios-src:ba4386c9db23 from usr/lib/mios/mios_toml.py:697-706 -->
 
 ### Render a value as TOML inline syntax, byte-compatible with...
 
@@ -525,11 +525,11 @@ to collapse rather than record. Dropping the split here was tried
 and reverted for that reason.
 
 It is still the ONLY one of three emitters that splits, which is
-T-1065's real finding: the fix is to stop emitting the redundant
+task_3363's real finding: the fix is to stop emitting the redundant
 _VERSION alias in both twins, not to change how it is rendered.
 That removes 23 keys and needs its own change.
 
-<!-- mios-src:133a719d6497 from usr/lib/mios/mios_toml.py:787-797 -->
+<!-- mios-src:59009b8b75b9 from usr/lib/mios/mios_toml.py:787-797 -->
 
 ### Resolve ${MIOS_*} that one emitted value makes to another....
 
@@ -540,14 +540,14 @@ Resolve ${MIOS_*} that one emitted value makes to another.
 
     Apply it where the consumer CANNOT expand: systemd EnvironmentFile= and
     podman --env-file read a value literally, so an emitted
-    MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORT_AGENT_PIPE}/v1 means one thing
+    MIOS_AI_ENDPOINT=http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1 means one thing
     to bash and another to them. It is also why system-sync-env.sh DROPPED that
     variable rather than emitting it: its filter rejects any value containing
-    `$` (T-1060).
+    `$` (task_997).
 
     Do NOT apply it to the export map that renders automation/lib/globals.{sh,ps1}.
     Those are sourced by bash and PowerShell, which expand at load time, and the
-    live reference is the feature: exporting MIOS_PORT_AGENT_PIPE before sourcing
+    live reference is the feature: exporting MIOS_PORTS_AGENT_PIPE before sourcing
     propagates into MIOS_AI_ENDPOINT. render-globals.build_exports() therefore
     returns the unexpanded map.
 
@@ -555,7 +555,7 @@ Resolve ${MIOS_*} that one emitted value makes to another.
     alone because systemd owns it, and leaves an unresolvable name verbatim
     rather than blanking it so a caller can report it.
 
-<!-- mios-src:0b6e10f68be6 from usr/lib/mios/mios_toml.py:819-840 -->
+<!-- mios-src:6d3281e8d9cf from usr/lib/mios/mios_toml.py:819-840 -->
 
 ### Law 12
 
@@ -621,7 +621,7 @@ Every MiOS node ships the A2A server, so a live card == a delegable peer.
 
 ### Agent-pipe port from SSOT (env MIOS_A2A_PORT /...
 
-Agent-pipe port from SSOT (env MIOS_A2A_PORT / MIOS_PORT_AGENT_PIPE override,
+Agent-pipe port from SSOT (env MIOS_A2A_PORT / MIOS_PORTS_AGENT_PIPE override,
     else [ports].agent_pipe). No literal default -- empty means we cannot honestly
     build the loopback self-URL, so the self-peer is simply skipped (degrade-open).
 
@@ -715,7 +715,7 @@ One-shot mDNS browse for the A2A service type when [a2a].mdns_discovery is
 
 ### mios-a2a-test -- A2A federation loopback smoke test...
 
-mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / T-066).
+mios-a2a-test -- A2A federation loopback smoke test (roadmap B5 / task_68).
 
 Registers the local MiOS instance as its own A2A peer (loopback) and runs a
 full JSON-RPC 2.0 ``message/send`` -> Task -> Artifact round-trip against the
@@ -734,7 +734,7 @@ via /etc/mios/install.env at runtime) -- identical to mios-a2a-delegate; no
 literal port is baked into a decision. Unreachable endpoint => clear message +
 nonzero exit, never a traceback (degrade-open: a dev checkout has no live lane).
 
-<!-- mios-src:239ab3380a6b from usr/libexec/mios/mios-a2a-test:5-23 -->
+<!-- mios-src:fcef9d7cad23 from usr/libexec/mios/mios-a2a-test:5-23 -->
 
 ### Build an A2A Message with a single text Part (pure)....
 
@@ -995,7 +995,7 @@ Exit codes:  0 = chain intact (or empty)   1 = tamper detected (first_broken_seq
 
 Env:  MIOS_PG_QUERY        (default /usr/libexec/mios/mios-pg-query)
       MIOS_AGENT_PIPE_DIR  (default: resolved relative to this CLI)
-      plus mios-pg-query's own MIOS_PG_HOST / MIOS_PG_PORT / MIOS_PG_USER / MIOS_PG_DB
+      plus mios-pg-query's own MIOS_PGVECTOR_HOST / MIOS_PG_PORT / MIOS_PGVECTOR_USER / MIOS_PGVECTOR_DB
 
 <!-- mios-src:a198b84a4b58 from usr/libexec/mios/mios-chain-verify:5-26 -->
 
@@ -1295,7 +1295,7 @@ answer from the fetched markdown.
 
 SSOT (env rendered from mios.toml [crawl] via globals/userenv):
   MIOS_CRAWL_SERVICE_URL  base URL of the local crawl service
-                          (default http://127.0.0.1:${MIOS_PORT_CRAWL4AI:-8810})
+                          (default http://127.0.0.1:${MIOS_PORTS_CRAWL4AI:-8810})
 
 Usage:
   mios-crawl <http(s)-url> [--max-chars N] [--camoufox] [--timeout S] [--json]
@@ -2068,7 +2068,7 @@ multi-line value across several lines, and the old `grep '^MIOS_'` kept only
 the FIRST of them -- continuation lines do not start with MIOS_, so the rest
 was dropped without a word. Measured: MIOS_OWUI_SYSTEM_PROMPT_TEMPLATE is 2633
 characters over 42 lines and reached the baseline as the nine characters
-"# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (T-1066).
+"# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (task_3364).
 check_value_aliases trusts this output, so a gate was comparing mutilated
 values confidently.
 
@@ -2082,7 +2082,7 @@ is escaped first, so the transform is reversible.
 contains newlines. An awk with RS="\0" is not portable across awk
 implementations, and this script must not grow a python dependency.
 
-<!-- mios-src:e30d3c475fd5 from usr/libexec/mios/mios-env-snapshot:30-47 -->
+<!-- mios-src:514143ea70d7 from usr/libexec/mios/mios-env-snapshot:30-47 -->
 
 ### ONE resolver, always the shell twin. This snapshot is a...
 
@@ -2538,7 +2538,7 @@ hardcoded English aliases in this codebase. (The legacy BSL 1.1 store is retired
 
 Subcommands:
   bootstrap                Create the person row (from $USER /
-                           $MIOS_USER) + ingest mios-apps inventory
+                           $MIOS_IDENTITY_USERNAME) + ingest mios-apps inventory
                            into app_install rows. Idempotent.
   alias add <phrase> <target>
                            Add an alias. <target> can be:
@@ -3389,7 +3389,7 @@ lock the operator out of Open WebUI.
 Resolves identity from layered mios.toml ([identity].username,
 [identity].email) and the password from the MiOS password SSOT (see
 _read_password): MIOS_OPERATOR_PASSWORD / MIOS_OWUI_ADMIN_PASSWORD ->
-mios.toml [identity].default_password -> MIOS_DEFAULT_PASSWORD -> "mios"
+mios.toml [identity].default_password -> MIOS_IDENTITY_DEFAULT_PASSWORD -> "mios"
 -- the SAME source Forge / Portal / Cockpit / RDP use, so one operator
 password works everywhere. A "__random__" override generates + writes a
 24-char password to /etc/mios/owui-admin-password (mode 0600 root-only).
@@ -3427,7 +3427,7 @@ Return (password, source) resolved from the MiOS password SSOT.
       2. MIOS_OWUI_ADMIN_PASSWORD   -- per-service override (parallels
                                        MIOS_FORGE_ADMIN_PASSWORD)
       3. mios.toml [identity].default_password  -- the canonical SSOT field
-      4. MIOS_DEFAULT_PASSWORD (install.env)    -- shell/systemd bridge of #3
+      4. MIOS_IDENTITY_DEFAULT_PASSWORD (install.env)    -- shell/systemd bridge of #3
       5. literal "mios"             -- vendor default; the same final fallback
                                        as usr/libexec/mios/forge-firstboot.sh
 
@@ -3675,9 +3675,9 @@ Two modes:
      NULL is JSON null; keep integers (e.g. LIMIT) inline in the SQL string
      (int-coerced by the caller) to avoid text->int inference edge cases.
 
-Env:    MIOS_PG_HOST (127.0.0.1) MIOS_PG_PORT (5432)
-        MIOS_PG_USER (mios)      MIOS_PG_DB (mios)
-        T-068 RLS: MIOS_DB_RLS_ENABLE (off) gates a per-connection owner scope;
+Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
+        MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
         the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
         When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
         SET first so the schema RLS policies scope rows to that owner. Default-off /
@@ -3691,7 +3691,7 @@ Output: tab-separated columns, one row per line (psql -At shape) for BOTH modes.
 ### The owner to scope THIS invocation's rows to, or None to...
 
 The owner to scope THIS invocation's rows to, or None to emit NO scope.
-    Gated by MIOS_DB_RLS_ENABLE (SSOT [pgvector].rls_enable, bridged by userenv.sh),
+    Gated by MIOS_PGVECTOR_RLS_ENABLE (SSOT [pgvector].rls_enable, bridged by userenv.sh),
     the SAME flag the agent-pipe pg path reads -- default-off => None => no change.
     The owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER, so
     the confined consumers (mios-ai / daemon / skills / kg) can scope their reads.
@@ -4410,7 +4410,7 @@ reached through the broker like any other verb. Offline-first: if the daemon is
 down it returns success=false with an honest error -- it NEVER fabricates a
 launched=true.
 
-SSOT: MIOS_DAEMON_AGENT_URL (else built from MIOS_DAEMON_AGENT_PORT, default
+SSOT: MIOS_DAEMON_AGENT_URL (else built from MIOS_PORTS_DAEMON_AGENT, default
 8644 -- matches the daemon's AGENT_PORT / mios.toml [agents.mios-daemon-agent]).
 
 Output JSON: {success, app, launched, verdict, recent_failures, checked_by}.
@@ -4502,7 +4502,7 @@ parallel ~= 300-500ms vs ~200ms single) and surface evidence one phrasing
 misses. SearXNG's own limiter is off + granian workers are bumped so the
 local instance absorbs the burst; agent-pipe bounds CROSS-agent concurrency.
 
-SSOT: SearXNG endpoint = $MIOS_SEARXNG_URL; micro-LLM = $MIOS_MICRO_MODEL /
+SSOT: SearXNG endpoint = $MIOS_URLS_SEARXNG; micro-LLM = $MIOS_MICRO_MODEL /
 $MIOS_MICRO_ENDPOINT (same as agent-pipe); fan-out knobs = $MIOS_WEB_FANOUT /
 $MIOS_WEB_FANOUT_WORKERS / $MIOS_WEB_RRF_K; the anchor stopword screen =
 mios.toml [search].anchor_stopwords ($MIOS_WEB_ANCHOR_STOPWORDS CSV) -- all
@@ -4567,15 +4567,15 @@ Law 10 keeps these four out of install.env -- a space, parentheses or a
 {} placeholder, or an empty value the resolver drops -- while ExecStart
 references each BARE, which the renderer leaves for systemd to expand.
 Without a supply here systemd expanded all four to the empty string
-(T-1064). `mios-gate protected-refs` fails the build on the general case.
+(task_3362). `mios-gate protected-refs` fails the build on the general case.
 
-<!-- mios-src:d3795988e925 from usr/share/mios/mios.toml:1056-1060 -->
+<!-- mios-src:18cec70748ce from usr/share/mios/mios.toml:1056-1060 -->
 
-### T-1035. Each entry pins path:KEY=VALUE, not just path:KEY....
+### task_972. Each entry pins path:KEY=VALUE, not just path:KEY....
 
-T-1035. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
+task_972. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
 cannot tell the shipped placeholder from an operator's real password: setting
-MIOS_PG_PASS in the build environment bakes that value into a 0644 file under
+MIOS_PGVECTOR_PASS in the build environment bakes that value into a 0644 file under
 /usr and the key-only gate stayed green. Every value below is a placeholder
 and none is a secret; changing any of them is a NEW finding by design.
 
@@ -4608,12 +4608,12 @@ A value carrying whitespace, a quote, `$`, a backtick or `#` cannot be written
 bare without changing what it means, so system-sync-env.sh skips it.
 
 Skipping SILENTLY is the defect: MIOS_AI_ENDPOINT was dropped this way and
-Law 5 routes every agent through it (T-1060). These keys are declared, with
+Law 5 routes every agent through it (task_997). These keys are declared, with
 the reason each value cannot be bare; ANY other unsafe value now fails the
 render instead of vanishing. Shrink-only: max_declared comes down as values
 are made bare, never up.
 
-<!-- mios-src:17a41992aa6e from usr/share/mios/mios.toml:2244-2253 -->
+<!-- mios-src:d6cb288e3660 from usr/share/mios/mios.toml:2244-2253 -->
 
 ### Law 11 SECRETS-NEVER-IN-ENV
 
@@ -4643,9 +4643,9 @@ server/agent join, corosync membership -- automatically, never by hand.
 
 <!-- mios-src:46f29ed120aa from usr/share/mios/mios.toml:9715-9717 -->
 
-### T-1037. miosd Check implementations that were never...
+### task_974. miosd Check implementations that were never...
 
-T-1037. miosd Check implementations that were never written: their `run` takes
+task_974. miosd Check implementations that were never written: their `run` takes
 `_ctx`, never reads the tree, and returned a constant Verdict::Pass with a
 message CLAIMING verification. Containerfile:103 invokes this suite at every
 bake, so the bake's own gate was certifying a tree it had not read -- pointed
@@ -4665,11 +4665,11 @@ shape renders differently in the two resolver twins, and its registered
 divergence set is a shrink-only 12 that a thirteenth key breaches
 (check_resolver_differential_parity). Law 13 costs a shape here.
 
-<!-- mios-src:f1e7f4872fe6 from usr/share/mios/mios.toml:10635-10653 -->
+<!-- mios-src:a3974980f932 from usr/share/mios/mios.toml:10635-10653 -->
 
-### T-1047. Budget keys that MUST exist in [agent_pipe] or...
+### task_984. Budget keys that MUST exist in [agent_pipe] or...
 
-T-1047. Budget keys that MUST exist in [agent_pipe] or [dispatch].
+task_984. Budget keys that MUST exist in [agent_pipe] or [dispatch].
 
 Enumerating the tables catches a key ADDED with no consumer. It cannot catch
 a key DELETED, because a deleted key is simply absent from the enumeration --
@@ -4682,7 +4682,7 @@ Seeded with exactly the nine the old constant named, so the floor is no
 weaker than what it replaced. Removing an entry here is removing a guarantee:
 do it only when the knob is genuinely retired.
 
-<!-- mios-src:2ba5ca737de3 from usr/share/mios/mios.toml:10659-10670 -->
+<!-- mios-src:79457e3dfd8e from usr/share/mios/mios.toml:10659-10670 -->
 
 ### [agent_pipe]/[dispatch] keys that SSOT declares and NOTHING...
 
@@ -4702,12 +4702,12 @@ is not consuming it, and that is exactly how they stayed dead.
 
 <!-- mios-src:93be7cd6618b from usr/share/mios/mios.toml:10683-10695 -->
 
-### T-1038. Phase scripts present in automation/ that build.sh...
+### task_975. Phase scripts present in automation/ that build.sh...
 
-T-1038. Phase scripts present in automation/ that build.sh does NOT run.
+task_975. Phase scripts present in automation/ that build.sh does NOT run.
 Shrink-only, and the ceiling may never sit above the measurement.
 
-The register is empty as of T-1018 stage 5. It previously held
+The register is empty as of task_962 stage 5. It previously held
 55-native-build.sh on the reasoning that registering it would put miosd on
 PATH -- its `ln -sf "${DEST_DIR}/${bin}" "/usr/bin/${bin}"` is the only such
 line in the tree -- and so arm the `command -v miosd` gates in every stage
@@ -4730,7 +4730,7 @@ build_phases.json), and that glob already included 55.
 
 Keys the Python and Rust resolvers do not agree on. Shrink-only.
 The parity check never ran until the binary was found in target/debug,
-so this is the first measurement, not a regression. AGY-1676 drives it
+so this is the first measurement, not a regression. task_2317 drives it
 to zero by making one implementation authoritative.
 
 <!-- mios-src:c3a6640de0d8 from usr/share/mios/mios.toml:10890-10893 -->
@@ -4739,17 +4739,17 @@ to zero by making one implementation authoritative.
 
 Values that differ for keys both resolvers emit. The remainder is
 Python's repr of nested arrays/tables, which needs preserve_order on
-the toml crate to match -- AGY-1676, with a toolchain that can link.
+the toml crate to match -- task_2317, with a toolchain that can link.
 
-<!-- mios-src:e2846b2f8e2a from usr/share/mios/mios.toml:10895-10897 -->
+<!-- mios-src:2ebc31cc089b from usr/share/mios/mios.toml:10895-10897 -->
 
 ### Itemised shrink-only register of code files retaining...
 
-Itemised shrink-only register of code files retaining retired ports (T-1002 / LAW5-01).
+Itemised shrink-only register of code files retaining retired ports (task_946 / LAW5-01).
 Strictly limited to intentional cleanup routines (e.g. Setup-MiOSLanPortProxy.ps1) and regression test fixtures.
 Any unlisted code file under usr/libexec/mios or usr/lib/mios containing a retired port FAILS the gate.
 
-<!-- mios-src:0e2172ea476c from usr/share/mios/mios.toml:11028-11030 -->
+<!-- mios-src:4908eb7a70f4 from usr/share/mios/mios.toml:11028-11030 -->
 
 ### Raised from 3032
 
@@ -4768,7 +4768,7 @@ why it is itemised in [drift.generated_ceilings] rather than silently skipped.
 The alternative considered and not taken -- exclude usr/share/mios/vendored/
 (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 the way generated globals are excluded from the shell/PowerShell counts -- is
-recorded in T-1051 with the numbers.
+recorded in task_988 with the numbers.
 
 <!-- mios-src:dc968d88eb72 from usr/share/mios/mios.toml:11355-11370 -->
 
@@ -4776,9 +4776,9 @@ recorded in T-1051 with the numbers.
 
 The allowance, and the only operator-tunable half: how far the tree may grow
 between regenerations before the gate says anything. 0 makes the ceiling exact
-and every MiB boundary a failure, which is the state T-1051 was filed about.
+and every MiB boundary a failure, which is the state task_988 was filed about.
 
-<!-- mios-src:9a66660c6132 from usr/share/mios/mios.toml:11372-11374 -->
+<!-- mios-src:a3f01f522faa from usr/share/mios/mios.toml:11372-11374 -->
 
 ### invariants/test_invariant_{hw,sec}.sh gained explicit...
 
@@ -4795,12 +4795,12 @@ bug they fix.
 
 <!-- mios-src:03d410ce0279 from usr/share/mios/mios.toml:11377-11386 -->
 
-### tooling to port, and 36% of this was test code (T-1044)....
+### tooling to port, and 36% of this was test code (task_981)....
 
 tooling to port, and 36% of this was test
-code (T-1044). Pulled to the measurement,
+code (task_981). Pulled to the measurement,
 never left as slack. Merge inheritance it
-cannot see: T-1046. Raised from 75987:
+cannot see: task_983. Raised from 75987:
 harness/verification_gates.py was rewritten
 to execute invariants/test_*.sh (PASS/SKIP/
 FAIL + redaction + fail-closed) instead of
@@ -4864,7 +4864,7 @@ already navigates the manual by directory, not by original filename.
 ### Raised from 3065 (prior raise: 3032->3065, same cycle): 56...
 
 Raised from 3065 (prior raise: 3032->3065, same cycle): 56 new tracked
-manual pages produced by resolving MON-027/MON-028 -- the pre-existing,
+manual pages produced by resolving task_3403/task_3404 -- the pre-existing,
 out-of-scope docs-ratchet and no-duplicate-value-key drift-check failures
 flagged onto /goal in the prior session. Fixing docs-ratchet REQUIRES this
 ceiling to rise: the gate's own remedy is "harvest narrative comments and
@@ -4893,7 +4893,7 @@ why it is itemised in [drift.generated_ceilings] rather than silently skipped.
 The alternative considered and not taken -- exclude usr/share/mios/vendored/
 (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 the way generated globals are excluded from the shell/PowerShell counts -- is
-recorded in T-1051 with the numbers.
+recorded in task_988 with the numbers.
 
 <!-- mios-src:406e7f65ceb5 from usr/share/mios/mios.toml:11355-11385 -->
 
@@ -4906,3 +4906,1025 @@ R15: mirror the directory index into pgvector. The directory_entry
     modes. Degrade-open via _pg_run (mios-db --pg-json).
 
 <!-- mios-src:8f958af7e20c from usr/libexec/mios/mios-daemon:2450-2454 -->
+
+### task_972. Each entry pins path:KEY=VALUE, not just path:KEY....
+
+task_972. Each entry pins path:KEY=VALUE, not just path:KEY. A key-only register
+cannot tell the shipped placeholder from an operator's real password: setting
+MIOS_PGVECTOR_PASS in the build environment bakes that value into a 0644 file under
+/usr and the key-only gate stayed green. Every value below is a placeholder
+and none is a secret; changing any of them is a NEW finding by design.
+
+<!-- mios-src:7846f980429c from usr/share/mios/mios.toml:1719-1723 -->
+
+### Where every MiOS image keeps that toolchain, so it can...
+
+Where every MiOS image keeps that toolchain, so it can rebuild its own native
+catalog: the channel, components and [build.native.linux] target with its
+linker, provisioned by `automation/55-native-build.sh --toolchain` in the image
+build. Under /usr because /var and /usr/local reset on an ostree image.
+etc/profile.d/mios-env.sh exports RUSTUP_HOME and puts the rustup proxies in
+cargo_home/bin first on PATH; CARGO_HOME itself stays per user (~/.cargo), so
+registry downloads never need a writable /usr.
+
+<!-- mios-src:b8fc25fdddf4 from usr/share/mios/mios.toml:1882-1888 -->
+
+### Shrink-only, and set to the measured count so the next...
+
+Shrink-only, and set to the measured count so the next untagged file
+fails the gate. At 130 against an actual 42 it had 88 files of slack
+and could not catch a regression until 88 files had degraded.
+Header-free prompts, fixtures, vendored files and generated artifacts are
+excluded by the native classifier. The remaining taggable source census
+leaves one untagged file; the check fails above AND below this number.
+
+<!-- mios-src:0b817c7d9353 from usr/share/mios/mios.toml:2022-2027 -->
+
+### The ONE local heavy dGPU lane
+
+The ONE local heavy dGPU lane: mios-llm-heavy.container on ${MIOS_PORTS_LLM_HEAVY},
+running the engine [ai].heavy_engine selects -- vLLM (PagedAttention + APC,
+runtime LoRA) or SGLang (HiCache spills inactive KV to CPU RAM for the native
+256k context); the tunables are [ai.vllm] / [ai.sglang]. Either engine serves
+"mios-heavy" over OpenAI /v1 and honours tool_choice=required, so the node does
+not change when the engine does. health_gate=true => AUTO-JOINS only when
+reachable; gated off until a model is baked + the service is enabled.
+
+<!-- mios-src:7747a41cc3a9 from usr/share/mios/mios.toml:2858-2864 -->
+
+### [refactor] -- module-size ratchet for the agent-pipe...
+
+----------------------------------------------------------------------------
+[refactor] -- module-size ratchet for the agent-pipe extraction (check 149).
+`oversize` is a SHRINK-ONLY debt register; numbers may only go DOWN. See ch54.
+Operator ruling: the line ceiling governs SUB-MODULES only -- modules inside a
+component's package (submodule_roots). A component's main modules (the
+agent-pipe root: server.py, the mios_*.py components and their tests) are
+where features fold in, and carry no ceiling.
+
+<!-- mios-src:1abcf6a339cd from usr/share/mios/mios.toml:3040-3046 -->
+
+### Heavy first-boot pulls
+
+Heavy first-boot pulls: the GGUF and vLLM weights and the firstboot-tier
+inference images (mios-ai-firstboot), [ai].firstboot_models
+(mios-models-firstboot) and [ai].firstboot_bound_images
+(mios-bound-images-firstboot). Each reads the LAYERED SSOT, so a cloud or
+container deployment turns them off with the [deployment.cloud] host drop-in;
+the image is unchanged. false skips without writing a done-sentinel, so
+removing the drop-in resumes them at the next run.
+
+<!-- mios-src:c5d801583ea9 from usr/share/mios/mios.toml:6074-6080 -->
+
+### THE engine of the ONE heavy dGPU lane, mios-llm-heavy...
+
+THE engine of the ONE heavy dGPU lane, mios-llm-heavy: "vllm" | "sglang".
+mios-gen renders [containers.mios-llm-heavy.engine.<this>] (and the .image
+twin) into the lane's Quadlet; the engine tunables are [ai.vllm] / [ai.sglang]
+and the per-engine surface settings [lanes.<this>]. Runtime LoRA
+([converge.inference].vllm_*) needs "vllm". Env MIOS_AGENT_PIPE_HEAVY_ENGINE
+may still set the agent-pipe route to "light" (skip the heavy lane).
+
+<!-- mios-src:1c22fa9e8b24 from usr/share/mios/mios.toml:6140-6145 -->
+
+### Cloud and container deployments of the ONE image: the...
+
+Cloud and container deployments of the ONE image: the devcontainer, Codespaces,
+the Claude Code and Codex cloud environments, Cloud Shell and a GCE VM all run
+[image].ref. They differ from a booted install by configuration only: every
+cloud entry point (.devcontainer/cloud-shell/bootstrap.sh, the devcontainer
+lifecycle) writes [deployment.cloud.overlay] as the host drop-in `dropin`, which
+the layered resolver merges over the vendor SSOT, turning off the heavy runtime
+model pulls, runtime desktop installs and the desktop session.
+
+<!-- mios-src:b3e7328f469d from usr/share/mios/mios.toml:6413-6419 -->
+
+### The ONE development userspace, part of every full MiOS...
+
+The ONE development userspace, part of every full MiOS image: the repos phase
+(automation/05-repos.sh) installs it with its declared dependency closure, so
+the devcontainer, Codespaces and the cloud environments, which all run
+[image].ref (.devcontainer/Containerfile adds only container wiring), carry it
+because MiOS does. [ci.fedora].package_sets also provisions the lean CI harness
+from it. The core profile selects self-build without these editor extras.
+
+<!-- mios-src:0f41d1c9289a from usr/share/mios/mios.toml:6615-6620 -->
+
+### Ports with no browser-openable URL
+
+Ports with no browser-openable URL: either they serve no page, or their
+address is already a key their consumers resolve -- agent_pipe is
+MIOS_AI_ENDPOINT, pgvector MIOS_DB_URL, llm_light MIOS_LLM_CPU_ENDPOINT,
+hermes MIOS_HERMES_ENDPOINT, crawl4ai MIOS_CRAWL_SERVICE_URL, otelcol_otlp
+[observability].otel_endpoint, llm_igpu [nodes.local-igpu].endpoint. headscale
+is the mesh control API and rpc_igpu a llama.cpp RPC socket: neither is a page.
+
+<!-- mios-src:b490d1c2283c from usr/share/mios/mios.toml:7608-7613 -->
+
+### Units tools/generate-pod-quadlets.py writes under users/...
+
+Units tools/generate-pod-quadlets.py writes under users/ (podman's user Quadlet
+search path) instead of the system directory: they run rootless under each
+login user's systemd. Everything not listed is a system unit.
+
+<!-- mios-src:775f64fe6b02 from usr/share/mios/mios.toml:8867-8869 -->
+
+### A USER-scope unit (see [quadlets.scope]): it streams the...
+
+A USER-scope unit (see [quadlets.scope]): it streams the logged-in user's own
+desktop, so it runs rootless under that user's systemd, not as root (Law 6).
+Capture goes through xdg-desktop-portal ScreenCast + PipeWire (capture=portal);
+KMS capture would need host CAP_SYS_ADMIN, which a rootless unit cannot hold.
+
+<!-- mios-src:b206f6f17fba from usr/share/mios/mios.toml:10732-10735 -->
+
+### medicat_sha1 / medicat_md5
+
+medicat_sha1 / medicat_md5 : upstream-published hashes of MediCat.USB.v<medicatver>.7z,
+                 checked by installation/MiOS-Field.bat after download (SHA1 preferred,
+                 MD5 if SHA1 is empty; both empty -> check skipped). Update them with
+                 medicatver; keep them equal to mios-bootstrap's mios.toml [field]. Source
+                 for v21.12: the MediCat download page, https://medicatusb.com/#downloads
+                 (repo github.com/mon5termatt/medicat-website,
+                 src/components/home/downloads.astro @ cd6f924); the MD5 matches upstream
+                 github.com/mon5termatt/medicat_installer src/downloads.h + download/cdn.bat
+                 @ d588fd3, whose archive size (22994783619) matches MiOS-Field.bat's size gate.
+
+<!-- mios-src:b5384c3a4f7b from usr/share/mios/mios.toml:11115-11123 -->
+
+### hostRequirements of every devcontainer.json above. The...
+
+hostRequirements of every devcontainer.json above. The devcontainer runs
+[image].ref itself: ~23 GB compressed and ~49 GB unpacked, and Codespaces'
+containerd keeps both, so the pull alone needs ~72 GB before the workspace or a
+nested build of the image. Codespaces offers 128 GB of storage only on its
+16-core / 64 GB machine, which is also what a rebuild of MiOS inside it needs.
+remoteUser is projected from [identity].username: the image's own user.
+
+<!-- mios-src:b4c9aaf7ba49 from usr/share/mios/mios.toml:11232-11237 -->
+
+### task_975. Phase scripts present in automation/ that build.sh...
+
+task_975. Phase scripts present in automation/ that build.sh does NOT run.
+Shrink-only, and the ceiling may never sit above the measurement.
+
+The register is empty as of task_962 stage 5. It previously held
+55-native-build.sh on the reasoning that registering it would put miosd on
+PATH -- its `ln -sf "${DEST_DIR}/${bin}" "/usr/bin/${bin}"` is the only such
+line in the tree -- and so arm the `command -v miosd` gates in every stage
+numbered above 55, producing a split brain inside one bake.
+
+That reasoning read the script instead of measuring whether the line runs.
+This was a historical missing-package condition. [packages.build-toolchain]
+now ships Rust/Cargo and the repos phase installs selected build dependencies.
+Phase 55 must distinguish complete source checkouts from image bake contexts;
+prebuilt native binaries copied by the Containerfile remain the bake producer.
+The binaries in the image come from the Containerfile's rust-builder stage,
+COPYed to /usr/libexec/mios, which is not on PATH -- so no stage, above or
+below 55, has ever reached its Rust branch. Registering 55 arms nothing.
+It also cannot change which phases run: build.sh selected via the
+automation/[0-9][0-9]-*.sh glob (build_catalog_authoritative = false and no
+build_phases.json), and that glob already included 55.
+
+<!-- mios-src:bba7b1b1a922 from usr/share/mios/mios.toml:12139-12158 -->
+
+### Raised to 3409 following approved merges on main...
+
+Raised to 3409 following approved merges on main: task_1018..task_1025, manual corpus,
+devcontainer, artifacts, and core OS daemons.
+GENERATED by tools/native/mios-size-ceiling; do not hand-edit. The valid band
+is round(tracked MiB) .. that + tracked_mb_headroom, and a committed value
+outside it fails check_size_ceiling. This ceiling is NOT shrink-only, which is
+why it is itemised in [drift.generated_ceilings] rather than silently skipped.
+The alternative considered and not taken -- exclude usr/share/mios/vendored/
+(83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
+the way generated globals are excluded from the shell/PowerShell counts -- is
+recorded in task_988 with the numbers.
+
+<!-- mios-src:56b862a6f5c5 from usr/share/mios/mios.toml:12772-12781 -->
+
+### CI-only extras the harness needs beyond that set: sandbox...
+
+CI-only extras the harness needs beyond that set: sandbox tests (bubblewrap),
+composefs sealing (mkcomposefs, composefs-info), unit verification
+(systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
+test-ukify-stage's real-compiler tier (ukify + the systemd-boot EFI stub; the
+image's own kernel is the input). A suite that cannot run its live tier exits
+77, which fails unless [ci.tool_skips] registers it: provide the tool here.
+
+<!-- mios-src:6d76e53cc4e6 from usr/share/mios/mios.toml:12864-12869 -->
+
+### Image profiles (ADR-0025): every MiOS image kind is the one...
+
+Image profiles (ADR-0025): every MiOS image kind is the one pipeline run
+under a profile. A profile selects phases from [build.phases].list and
+sections from [packages]; `extends` unions a parent's selection and `all`
+selects everything. `floor` is the profile every other one must contain.
+Read by `miosd build --list --profile`; gate: check_profile_integrity.
+
+<!-- mios-src:9ef4afec86f6 from usr/share/mios/mios.toml:13257-13261 -->
+
+### [rust.categories] -- ADR-0021 Function-Named Binary & Crate...
+
+----------------------------------------------------------------------------
+[rust.categories] -- ADR-0021 Function-Named Binary & Crate SSOT Registry
+----------------------------------------------------------------------------
+Maps script domains and existing crates to destination static binaries,
+lifecycle roles, install directories, and responsible owners (task_3488).
+Ownership gate: mios-gate rust-categories.
+Script layer: scope= globs claim the scripts a category owns for porting;
+exempt categories (binary = "exempt") carry their reason in description=;
+universe= fixes the script roots the gate must account for, and max_unowned
+is the shrink-only ceiling for scripts no category claims yet (task_3488).
+A replaces= entry is ported-and-deleted evidence: the named script must be
+absent from the tree in the same commit that proves parity (ADR-0021).
+
+<!-- mios-src:a43e15e87658 from usr/share/mios/mios.toml:13399-13410 -->
+### Agent-pipe port from SSOT (env MIOS_A2A_PORT /...
+
+Agent-pipe port from SSOT (env MIOS_A2A_PORT / MIOS_PORTS_AGENT_PIPE override,
+    else [ports].agent_pipe). No literal default -- empty means we cannot honestly
+    build the loopback self-URL, so the self-peer is simply skipped (degrade-open).
+
+<!-- mios-src:62bbb33a781f from usr/libexec/mios/mios-a2a-discover:45-47 -->
+
+### MiOS Native AI Metadata Engine. Parses AI comment headers...
+
+MiOS Native AI Metadata Engine.
+
+Parses AI comment headers across all source files, modules, units, and documentation
+to produce first-class, machine-readable metadata. Guarantees that AI-hint, AI-related,
+AI-functions, and AI-doc headers are recognized as native OS metadata for local agent
+discovery, tool routing, and automated pipeline validation.
+
+<!-- mios-src:a4d385807750 from usr/libexec/mios/mios-ai-metadata.py:6-13 -->
+
+### Files that stay header-free are not taggable, rather than...
+
+Files that stay header-free are not taggable, rather than counted against
+[ai_tag].max_untagged: a header would leak into an agent-harness prompt, make a
+vendored or Law 15 mirrored copy differ from its source, be overwritten by the
+generator that owns the file, or corrupt a format with no comment syntax.
+Multi-component and (^|/)-anchored, so a code dir that only shares a name
+(usr/lib/mios/agents) stays taggable, on root-relative and absolute paths alike.
+
+<!-- mios-src:5816a5b08704 from usr/libexec/mios/mios-ai-tag:46-51 -->
+
+### mios-chain-verify -- walk the MiOS event hash chain and...
+
+mios-chain-verify -- walk the MiOS event hash chain and report the first tamper.
+
+The `event` table is an append-only observability stream; SEC-03 links every row to
+its predecessor with a SHA-256 chain (chain_seq / prev_hash / chain_hash) at the
+agent-pipe persist chokepoint. This tool independently RE-DERIVES the chain from the
+stored rows and reports whether it is intact:
+
+  * reads the chained rows (WHERE chain_hash IS NOT NULL) in chain_seq order via
+    `mios-pg-query --exec-json` -- the pure-stdlib pg wire transport every confined
+    agent-plane reader uses (no psql / psycopg / podman required);
+  * recomputes each link with the SAME canonical_core + sha256 used on write,
+    imported from the agent-pipe `mios_audit` module so the algorithm has ONE source
+    of truth (no second copy of the crypto to drift);
+  * prints `{ok, checked, first_broken_seq}` and EXITS NONZERO on a broken chain.
+
+Exit codes:  0 = chain intact (or empty)   1 = tamper detected (first_broken_seq)
+             2 = read / setup failure (cannot reach pg or import the verifier)
+
+Env:  MIOS_PG_QUERY        (default /usr/libexec/mios/mios-pg-query)
+      MIOS_AGENT_PIPE_DIR  (default: resolved relative to this CLI)
+      plus mios-pg-query's own MIOS_PGVECTOR_HOST / MIOS_PG_PORT / MIOS_PGVECTOR_USER / MIOS_PGVECTOR_DB
+
+<!-- mios-src:63ac53820650 from usr/libexec/mios/mios-chain-verify:5-26 -->
+
+### Known Composefs Magic Numbers
+
+Known Composefs Magic Numbers:
+0xd078629a: Standard libcomposefs CFS_MAGIC (little-endian: 9a 62 78 d0)
+0x00736663: 'cfs\0' (little-endian: 63 66 73 00)
+0x00534643: 'CFS\0' (little-endian: 43 46 53 00)
+0x66706d63: 'cmpf'
+0x636d7066: 'fpmc'
+
+<!-- mios-src:4af6324cf0e3 from usr/libexec/mios/mios-composefs-validator:23-28 -->
+
+### Linux kernel fsverity_descriptor struct (256 bytes total)...
+
+Linux kernel fsverity_descriptor struct (256 bytes total):
+u8 version (1)
+u8 hash_algorithm (1 = SHA-256)
+u8 log_blocksize (12 = 4096)
+u8 salt_size (0)
+u32 sig_size (0)
+u64 data_size (len(data))
+u8 root_hash[64]
+u8 salt[32]
+u8 reserved[144]
+
+<!-- mios-src:2a97130cfe25 from usr/libexec/mios/mios-composefs-validator:77-86 -->
+
+### MiOS Core Scheduling and SMT Sibling Isolation Utility...
+
+MiOS Core Scheduling and SMT Sibling Isolation Utility (task_802).
+
+Enforces hardware execution isolation across Simultaneous Multi-Threading (SMT)
+sibling cores for untrusted subagents and sandboxed processes using the Linux
+PR_SCHED_CORE prctl interface (Linux 5.14+).
+
+Prevents cross-SMT speculative execution side-channels (Spectre-v2, MDS, L1TF)
+while preserving 100% of Hyper-Threading capacity for trusted system processes.
+
+<!-- mios-src:23a1297b511f from usr/libexec/mios/mios-core-sched:6-14 -->
+
+### mios-crawl -- native CRAWL verb backend (fetch a URL ->...
+
+mios-crawl -- native CRAWL verb backend (fetch a URL -> clean markdown).
+
+Reads ONE web page and returns LLM-ready markdown so agents GROUND on the
+ACTUAL page content instead of a search snippet or a fabrication. Thin HTTP
+client for the local mios-crawl4ai service (loopback FastAPI) -- the slow
+crawl4ai/camoufox import + browser-attach is kept WARM in that service, so
+each `crawl` verb call is just a fast loopback POST (same shape as
+mios-web-search -> SearXNG).
+
+  --- engine flow (operator directive 2026-05-24) ---
+  PRIMARY  : crawl4ai drives the EXISTING local Chrome over the DevTools
+             Protocol (ws://127.0.0.1:9222, the ChromeDev flatpak that
+             mios-hermes-browser.service keeps up). crawl4ai ATTACHES to
+             that browser via BrowserConfig(browser_mode="custom",
+             cdp_url=...) -- NO bundled/downloaded Chromium.
+  FAIL-RETRY: if the CDP crawl errors / is blocked / returns near-empty
+             markdown, the SAME url is retried with Camoufox (stealth
+             anti-detect Firefox). Camoufox ships its own patched Firefox.
+  HONEST-FAIL: if both engines fail, this prints success:false with an
+             error -- it NEVER invents page content.
+
+Companion to mios-web-search: web_search (SearXNG) finds candidate URLs;
+crawl reads the chosen one. Agent flow: search -> pick URL -> crawl ->
+answer from the fetched markdown.
+
+SSOT (env rendered from mios.toml [crawl] via globals/userenv):
+  MIOS_CRAWL_SERVICE_URL  base URL of the local crawl service
+                          (default http://127.0.0.1:${MIOS_PORTS_CRAWL4AI:-8810})
+
+Usage:
+  mios-crawl <http(s)-url> [--max-chars N] [--camoufox] [--timeout S] [--json]
+    --camoufox   force the Camoufox stealth path (skip Chrome CDP). Used by
+                 the smoke test to confirm the fail-retry engine works.
+    --max-chars  truncate returned markdown (0 = no limit; default 20000)
+Output: JSON {success, engine, url, title, markdown, links}
+
+<!-- mios-src:1f9c643d5a38 from usr/libexec/mios/mios-crawl:4-39 -->
+
+### Flatpak cannot see /usr/share/icons from the host....
+
+Flatpak cannot see /usr/share/icons from the host. Materialize the baked
+theme in the user icon directory instead of downloading it or linking to
+a host-only path. The global override exposes xdg-data/icons read-only.
+
+<!-- mios-src:2e92094b476c from usr/libexec/mios/mios-cursor-ensure:75-77 -->
+
+### Automated network and audio fallback manager with operator...
+
+Automated network and audio fallback manager with operator desktop alert daemon.
+Inspects degraded peripheral statuses from /var/log/mios-hardware-degrade.log or live sysfs/proc probes.
+Triggers automated network failover (secondary NIC, USB tethering) and dynamic PipeWire null-sink binding
+when physical soundcards or primary network interfaces are missing or degraded. Dispatches operator desktop
+notifications with driver and firmware remediation guidance.
+
+<!-- mios-src:28f30cd2ae4a from usr/libexec/mios/mios-hardware-fallback:4-10 -->
+
+### 'MiOS' Headscale mesh VPN coordinator first-boot config...
+
+'MiOS' Headscale mesh VPN coordinator first-boot config generator.
+
+Writes /etc/headscale/config.yaml from the [headscale] + [ports] SSOT in
+mios.toml (layered: vendor /usr/share/mios/mios.toml < host /etc/mios/mios.toml).
+
+Idempotent + non-destructive: if the config file already exists it does NOTHING
+(Headscale state/sqlite remains preserved across runs). Pass --force to regenerate.
+
+<!-- mios-src:50b526d71604 from usr/libexec/mios/mios-headscale-firstboot:4-11 -->
+
+### Validates that target strictly resolves to an IP within the...
+
+Validates that target strictly resolves to an IP within the dedicated
+    out-of-band management subnet (10.200.0.0/16) or test loopback (127.0.0.1/8).
+    Raises SecurityError on violation.
+    Returns (host, port).
+
+<!-- mios-src:ea4bf09307f1 from usr/libexec/mios/mios-ipkvm-manager:92-97 -->
+
+### mios-kg -- Personal Knowledge Graph CLI for the MiOS agent...
+
+mios-kg -- Personal Knowledge Graph CLI for the MiOS agent stack.
+
+Phase C.1 of the AgentOS roadmap. Manages the operator-preference data in
+PostgreSQL/pgvector (person / app_install / alias + resolves_to natural-key
+edge). The agent-pipe's kg_lookup() helper queries the same tables (JOIN on
+app_id) to resolve ambiguous noun phrases to concrete launch targets. Mappings
+are PER-OPERATOR data -- this CLI is the interface, never the source. NO
+hardcoded English aliases in this codebase. (The legacy BSL 1.1 store is retired.)
+
+Subcommands:
+  bootstrap                Create the person row (from $USER /
+                           $MIOS_IDENTITY_USERNAME) + ingest mios-apps inventory
+                           into app_install rows. Idempotent.
+  alias add <phrase> <target>
+                           Add an alias. <target> can be:
+                             app:<short_name>   (resolves to app_install)
+                             "<short_name>"     (bare = app:<short_name>)
+  alias rm <phrase>        Remove an alias.
+  alias list               List all aliases + their resolves_to.
+  lookup <phrase>          Print the lookup result for <phrase>.
+  apps                     Print known app_install rows.
+  who                      Print the person row.
+
+Fully local: routes all reads + writes through the shared
+/usr/libexec/mios/mios-db --pg-json CLI, which binds every value OUT-OF-BAND via
+mios-pg-query's extended protocol (no value is spliced into SQL -> injection-
+safe). resolves_to / app_install / alias / person tables are defined in
+/usr/share/mios/postgres/schema-init.sql.
+
+<!-- mios-src:ad9febc92240 from usr/libexec/mios/mios-kg:4-32 -->
+
+### Verifies that the kernel module carries a valid...
+
+Verifies that the kernel module carries a valid cryptographic signature.
+    Per Architectural Invariant 2, MOK signing governs runtime out-of-tree and
+    livepatch module signatures, distinct from UKI boot signing.
+
+<!-- mios-src:7ad8e02a589f from usr/libexec/mios/mios-livepatch:31-35 -->
+
+### mios-manual -- corpus ledger and census for the MiOS...
+
+mios-manual -- corpus ledger and census for the MiOS documentation system.
+
+Spec: docs/design/doc-generative-documentation.md sections 3.4 and 5.
+
+Subcommands:
+  ledger          rebuild usr/share/mios/reference/manual-corpus.tsv from the tree
+  audit           census as JSON (counts by class and reason)
+  coverage        the two ratchet numbers, for the gate and for humans
+  harvest         move a comment's prose into a doc and record where it landed
+  prune           delete a comment that provably landed (the only destructive path)
+  landing         verify every pruned comment still lands in a doc
+  check-functions verify harvested AI-functions lines against source
+  render          splice derived content into MIOS-GEN marker interiors
+
+`--root` selects the repo, and either layout resolves, so the same tools serve
+mios.git and mios-bootstrap.git without being copied across (Law 15).
+
+The ledger is the safety mechanism for the whole programme. Deletion of a
+comment is only ever permitted once a ledger row proves its knowledge reached a
+doc, so the landing columns must survive ordinary code churn: they are carried
+forward BY CONTENT HASH, never recomputed. Moving a block within a file, or
+reformatting the code around it, keeps its landing record.
+
+Rows for blocks that no longer exist but were pruned are kept as tombstones --
+that retention is what lets a gate prove, after the fact, that a comment which
+is gone did land somewhere first.
+
+<!-- mios-src:a03aa62539e4 from usr/libexec/mios/mios-manual:5-31 -->
+
+### Verify that every function named in a harvested...
+
+Verify that every function named in a harvested AI-functions line exists in its source.
+
+    Acceptance criteria (task_3482):
+    WHEN a harvested AI-functions line names a function absent from its mios-src
+    source THE SYSTEM SHALL fail a check naming the doc line and the function.
+
+<!-- mios-src:4a042f129320 from usr/libexec/mios/mios-manual:921-926 -->
+
+### mios-mcp-server -- Model Context Protocol stdio and...
+
+mios-mcp-server -- Model Context Protocol stdio and Streamable HTTP relay.
+
+Exposes MiOS's [verbs.*] catalog (SSOT in mios.toml) as MCP tools so
+LOCAL MCP-aware agents can drive MiOS verbs natively.
+
+LOCAL-ONLY by design. Any on-host MCP client using the MiOS local endpoint
+may consume the catalog; the server has no dependency on a hosted model.
+
+Protocol framing, version negotiation and HTTP security are supplied by the
+upstream FOSS Python MCP SDK v2. It serves 2026-07-28 and legacy peers on the
+same endpoint. [mcp].protocol_version is the preferred client revision.
+  https://modelcontextprotocol.io/specification
+
+Implements through the SDK:
+  server/discover     -- modern capability and version discovery
+  initialize         -- legacy handshake for older clients
+  tools/list          -- renders [verbs.*] as MCP tool specs (calls
+                         agent-pipe /v1/verbs)
+  tools/call          -- dispatches via agent-pipe /v1/dispatch which
+                         routes through the launcher broker
+  resources/list      -- the COMPLETE read-only surface (every verb/script
+                         + recipe + skill, promoted AND not) via agent-pipe
+                         /v1/resources -- progressive-disclosure discovery
+  resources/read      -- fetch one mios:// resource via /v1/resources/read
+  ping               -- liveness
+
+The dynamic catalog is private and uncached; clients can re-list after a change.
+Prompts remain absent until the MiOS profile declares them.
+
+<!-- mios-src:a2baf8f4aa44 from usr/libexec/mios/mios-mcp-server:4-32 -->
+
+### Keep the last-good catalog warm independent of client...
+
+Keep the last-good catalog warm independent of client connect timing.
+    Re-tries faster while the upstream looks unhealthy so the cache re-warms
+    promptly once agent-pipe recovers. When the served catalog actually CHANGES
+    (e.g. recovers from the SSOT floor / a degraded set back to the full surface),
+    log a catalog change. The SDK serves uncached list results, so clients
+    re-list against the current catalog instead of keeping a stale session.
+
+<!-- mios-src:ba2829141466 from usr/libexec/mios/mios-mcp-server:353-358 -->
+
+### Per MCP session upstream client, private socket and bounded...
+
+Per MCP session upstream client, private socket and bounded slot policy.
+
+    The SDK owns framing and version negotiation. Its context is entered and
+    exited in one owner task so concurrent tool handlers cannot corrupt an
+    anyio cancel scope. Terminal access has the caller's OS permissions; a
+    tool/path allowlist is not a filesystem sandbox for arbitrary shell code.
+
+<!-- mios-src:bf7309f7c58b from usr/libexec/mios/mios-mcp-server:620-626 -->
+
+### Only our sleeping foreground bash may accept a new...
+
+Only our sleeping foreground bash may accept a new workflow.
+
+        A CLI waiting for input is still occupied. Bash/readline may poll
+        instead of n_tty_read; verify its kernel state and terminal ownership.
+        Missing or changing process evidence fails closed.
+
+<!-- mios-src:ca64cf4b945f from usr/libexec/mios/mios-mcp-server:1065-1070 -->
+
+### Explicit terminal capabilities for stateless HTTP; stdio...
+
+Explicit terminal capabilities for stateless HTTP; stdio stays implicit.
+
+    Modern MCP HTTP has an application lifespan rather than a client lifespan.
+    Never use that application bridge as an HTTP client's terminal. Tokens are
+    opaque capabilities, expire after idle time, and are bounded by SSOT.
+
+<!-- mios-src:6ed6f1d6130d from usr/libexec/mios/mios-mcp-server:1231-1236 -->
+
+### mios-owui-bootstrap-admin -- create the first OWUI admin...
+
+mios-owui-bootstrap-admin -- create the first OWUI admin user when
+the `user` table is empty, so a fresh install / reinstall doesn't
+lock the operator out of Open WebUI.
+
+Resolves identity from layered mios.toml ([identity].username,
+[identity].email) and the password from the MiOS password SSOT (see
+_read_password): MIOS_OPERATOR_PASSWORD / MIOS_OWUI_ADMIN_PASSWORD ->
+mios.toml [identity].default_password -> MIOS_IDENTITY_DEFAULT_PASSWORD -> "mios"
+-- the SAME source Forge / Portal / Cockpit / RDP use, so one operator
+password works everywhere. A "__random__" override generates + writes a
+24-char password to /etc/mios/owui-admin-password (mode 0600 root-only).
+
+Idempotent: skips if any user row exists. Logs to stderr so
+mios-hermes-firstboot can capture the output via _log.
+
+Why direct sqlite + bcrypt instead of POST /api/v1/auths/signup:
+  * doesn't depend on OWUI being up + responsive at firstboot time
+  * doesn't need ENABLE_SIGNUP=True dance (toggle env, restart, post,
+    toggle back, restart) which is fragile and slow
+  * uses the same bcrypt scheme OWUI does (passlib bcrypt $2b$)
+
+Returns exit 0 on success, no-op skip, or any expected non-fatal path.
+Returns exit 2 only on hard infrastructure failures (db missing, no
+admin name resolvable). Designed to never block firstboot.
+
+<!-- mios-src:6c99c80a9900 from usr/libexec/mios/mios-owui-bootstrap-admin:4-28 -->
+
+### The MiOS password SSOT, highest precedence first. ONE...
+
+The MiOS password SSOT, highest precedence first. ONE operator password
+backs every MiOS admin surface (Forge / Portal / Cockpit / RDP / OWUI):
+  1. MIOS_OPERATOR_PASSWORD     -- explicit override (secrets.env / env)
+  2. MIOS_OWUI_ADMIN_PASSWORD   -- per-service override (parallels
+                                   MIOS_FORGE_ADMIN_PASSWORD)
+  3. mios.toml [identity].default_password  -- the canonical SSOT field
+  4. MIOS_IDENTITY_DEFAULT_PASSWORD (install.env)  -- shell/systemd bridge of #3
+  5. literal "mios"             -- vendor default; the same final fallback
+                                   as usr/libexec/mios/forge-firstboot.sh
+Labels are what gets logged. Values are read only by _read_password(), so
+no log line can carry the credential.
+
+<!-- mios-src:c9fcb2de2628 from usr/libexec/mios/mios-owui-bootstrap-admin:99-109 -->
+
+### Return (tier index, generated) for the first configured...
+
+Return (tier index, generated) for the first configured tier.
+
+    A value of "__random__" at any tier opts INTO a generated 24-char password
+    (written to PASSWORD_OUT, mode 0600), mirroring forge's __random__ token.
+    We deliberately do NOT silently generate a random password: an operator
+    who never sees it can't log in, and it diverges from the rest of the OS.
+
+<!-- mios-src:e25b56a94372 from usr/libexec/mios/mios-owui-bootstrap-admin:124-130 -->
+
+### Record who the admin is and where its password comes from....
+
+Record who the admin is and where its password comes from.
+
+    The password itself is written only when MiOS generated it (__random__):
+    that is the one case the operator cannot know it otherwise. A password
+    the operator set in the SSOT is never copied into a second file.
+
+<!-- mios-src:a0e63b37fa76 from usr/libexec/mios/mios-owui-bootstrap-admin:154-159 -->
+
+### mios-pg-query -- minimal pure-stdlib PostgreSQL client for...
+
+mios-pg-query -- minimal pure-stdlib PostgreSQL client for the MiOS agent
+plane. No psql binary, no psycopg, no podman needed: it speaks the v3 wire
+protocol directly over a loopback TCP socket.
+
+Why this exists (R15): confined service users such as `mios-ai` (which runs
+mios-daemon's directory indexer + the dispatched directory_lookup verb) have
+NEITHER a psql binary NOR podman access to exec into the pgvector container --
+so `mios-db --pg`'s two existing paths both fail for them, and the agent plane
+could not reach pgvector. This is the universal fallback. It relies on the
+pgvector pg_hba `host all all 127.0.0.1/32 trust` line (loopback trust), so
+there is no auth exchange -- the StartupMessage is answered with
+AuthenticationOk directly.
+
+Two modes:
+  1. SIMPLE (default, unchanged):  mios-pg-query [-At ...] '<sql>'   (or SQL on
+     stdin). Sends the SQL verbatim as one simple-Query ('Q') message. Multiple
+     / multi-statement queries are handled. The SQL is run AS-IS -- the caller
+     owns its safety (it is a trusted raw-SQL transport / console).
+  2. EXTENDED / parameterized (WS-A3):  mios-pg-query --exec-json   reads a JSON
+     envelope on stdin and binds the values OUT-OF-BAND via the v3 extended
+     query protocol (Parse/Bind/Execute/Sync), so NO value is ever spliced into
+     the SQL text (kills SQL-injection). Two envelope shapes:
+        {"sql": "... $1 ... $2 ...", "params": [v1, v2, ...]}
+        {"statements": [{"sql": "...", "params": [...]}, ...]}  # one txn (atomic)
+     Placeholders are $1..$n; params are bound as TEXT format with unspecified
+     type (the backend infers from context / an explicit ::cast in the SQL).
+     NULL is JSON null; keep integers (e.g. LIMIT) inline in the SQL string
+     (int-coerced by the caller) to avoid text->int inference edge cases.
+
+Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
+        MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
+        the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
+        When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
+        SET first so the schema RLS policies scope rows to that owner. Default-off /
+        no owner -> nothing is emitted (byte-identical; no consumer is locked out).
+Output: tab-separated columns, one row per line (psql -At shape) for BOTH modes.
+        Multi-row handled; NULLs render as empty. Exit 1 on any backend
+        ErrorResponse or unsupported (non-trust) auth.
+
+<!-- mios-src:f1952ac835aa from usr/libexec/mios/mios-pg-query:5-44 -->
+
+### The owner to scope THIS invocation's rows to, or None to...
+
+The owner to scope THIS invocation's rows to, or None to emit NO scope.
+    Gated by MIOS_PGVECTOR_RLS_ENABLE (SSOT [pgvector].rls_enable, bridged by userenv.sh),
+    the SAME flag the agent-pipe pg path reads -- default-off => None => no change.
+    The owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER, so
+    the confined consumers (mios-ai / daemon / skills / kg) can scope their reads.
+    None whenever RLS is off OR no owner is supplied -> the GUC stays unset -> the
+    schema policy is permissive (degrade-open: a confined tool / the daemon is NEVER
+    locked out).
+
+<!-- mios-src:136d7c707d7b from usr/libexec/mios/mios-pg-query:254-261 -->
+
+### MiOS Shadow Dual-Process Candidate Daemon Validator and...
+
+MiOS Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness.
+
+Validates candidate daemon builds and patches in a shadow container or isolated
+network namespace before promotion to production. Intercepts and mirrors
+non-mutating OpenAI-compatible /v1 queries, strictly filters mutating requests,
+measures latency differentials, evaluates schema compliance, and gates canary
+promotions.
+
+<!-- mios-src:f3c08d190590 from usr/libexec/mios/mios-shadow-test:4-12 -->
+
+### Evaluates whether an HTTP query represents a state-mutating...
+
+Evaluates whether an HTTP query represents a state-mutating operation.
+    Enforces the Mutation Guard invariant: under no circumstances may state-altering
+    operations be mirrored to candidate instances.
+
+<!-- mios-src:865c7b07d731 from usr/libexec/mios/mios-shadow-test:112-116 -->
+
+### Zero-downtime systemd socket handoff daemon swapper for...
+
+Zero-downtime systemd socket handoff daemon swapper for agent-pipe.
+
+Implements zero-downtime hot swapping of daemon instances (agent-pipe, hermes gateway)
+via systemd socket activation (sd_listen_fds / FD 3+), SCM_RIGHTS file descriptor
+passing, dual-accept concurrency, graceful SIGUSR1 draining, and automated rollback
+upon candidate failure.
+
+<!-- mios-src:ed375451ac88 from usr/libexec/mios/mios-socket-swap:4-10 -->
+
+### Built-in daemon worker used for testing zero-downtime...
+
+Built-in daemon worker used for testing zero-downtime socket handoff.
+
+    Accepts sd_listen_fds, serves HTTP on TCP and Unix domain socket,
+    supports SCM_RIGHTS FD handoff over a control socket, and gracefully
+    drains connections on SIGUSR1.
+
+<!-- mios-src:5d6059899a87 from usr/libexec/mios/mios-socket-swap:147-152 -->
+
+### MiOS Proactive PID Thermal Daemon & Dynamic Power Cap...
+
+MiOS Proactive PID Thermal Daemon & Dynamic Power Cap Modulator.
+
+Monitors CPU/SoC temperatures via /sys/class/hwmon, GPU temperatures and power draw
+via /sys/class/drm or nvidia-smi / NVML, and CPU frequency / Energy Performance
+Preference (EPP) via /sys/devices/system/cpu/cpu*/cpufreq/.
+
+Proactively modulates power caps and EPP before silicon thermal throttling thresholds
+(e.g., at 80°C instead of hardware 95°C throttle) based on PID temperature error and
+rate of temperature rise (dT/dt). Provides hysteresis recovery restoring full performance
+profile after temperature remains below 70°C for at least 10 seconds.
+
+<!-- mios-src:7ba655c35584 from usr/libexec/mios/mios-thermald:5-16 -->
+
+### mios-verify-launch -- ask the always-on mios-daemon-agent...
+
+mios-verify-launch -- ask the always-on mios-daemon-agent (the iGPU
+daemon-tier brain) whether an app ACTUALLY launched, IN-TURN.
+
+Operator 2026-05-25 (4A): "the iGPU's always-on daemon-agent ... runs the
+Definition-of-Done success check; the main agent/sub-agents just delegate and
+read the success signal." The daemon already runs a post-hoc launch_verifier
+loop (it scans recent chats and records false launch-success claims to
+/var/lib/mios/daemon/launch_failures.json). This verb closes the loop
+SYNCHRONOUSLY: after an agent fires an OS-control verb (open_app / window /
+pc_*), it calls `verify_launch {app}` and gets the daemon's consolidated
+verdict -- a live read-only window/process probe (mios-window-active --present,
+which never launches anything) PLUS the daemon's own recorded false-success
+history for that app. The agent then retries or reports honestly instead of
+blind-claiming success.
+
+GLOBAL tool (operator: ALL agents/sub-agents/nodes use ALL tools globally),
+reached through the broker like any other verb. Offline-first: if the daemon is
+down it returns success=false with an honest error -- it NEVER fabricates a
+launched=true.
+
+SSOT: MIOS_DAEMON_AGENT_URL (else built from MIOS_PORTS_DAEMON_AGENT, default
+8644 -- matches the daemon's AGENT_PORT / mios.toml [agents.mios-daemon-agent]).
+
+Output JSON: {success, app, launched, verdict, recent_failures, checked_by}.
+
+<!-- mios-src:3e2732a815d1 from usr/libexec/mios/mios-verify-launch:4-28 -->
+
+### mios-web-search -- native WEB-search verb backend...
+
+mios-web-search -- native WEB-search verb backend (concurrent fan-out).
+
+Queries the LOCAL, self-hosted SearXNG metasearch (offline-first; NO cloud
+AI dependency -- Architectural Law 5) and returns clean, citable results so
+agents GROUND current-world answers (weather, news, events, prices, facts,
+general knowledge) on REAL fetched data instead of fabricating from model
+memory.
+
+Operator 2026-05-21: the chat agent invented a weather report -- wrong city
+(Port Hope vs. the asked-about Toronto), wrong units (Fahrenheit for a
+Canadian user), and made-up event details -- because NO web_search verb
+existed; only filesystem search (everything_search / fs_search) did, whose
+own descriptions tell the model to "use a WEB search" that was never wired.
+SearXNG was already up (:8800) and advertised as the web_search backend.
+
+Operator 2026-05-22: "have web tools shoot off more web queries concurrently".
+QUERY FAN-OUT (--fanout K, the industry pattern behind Google AI Mode /
+RAG-Fusion / ParallelSearch): expand one query into K diverse sub-queries via
+the always-warm micro-LLM, fire them at SearXNG CONCURRENTLY, then merge with
+Reciprocal Rank Fusion + URL dedupe. K parallel queries overlap latency (8
+parallel ~= 300-500ms vs ~200ms single) and surface evidence one phrasing
+misses. SearXNG's own limiter is off + granian workers are bumped so the
+local instance absorbs the burst; agent-pipe bounds CROSS-agent concurrency.
+
+SSOT: SearXNG endpoint = $MIOS_URLS_SEARXNG; micro-LLM = $MIOS_MICRO_MODEL /
+$MIOS_MICRO_ENDPOINT (same as agent-pipe); fan-out knobs = $MIOS_WEB_FANOUT /
+$MIOS_WEB_FANOUT_WORKERS / $MIOS_WEB_RRF_K; the anchor stopword screen =
+mios.toml [search].anchor_stopwords ($MIOS_WEB_ANCHOR_STOPWORDS CSV) -- all
+rendered from mios.toml. The localhost fallbacks + the documented default
+screen are the only literals, matching the unit/SSOT defaults. The query
+tokenizer is unicode-aware (CJK/accented scripts tokenize, never to zero).
+
+<!-- mios-src:64ba19d2f0dc from usr/libexec/mios/mios-web-search:4-35 -->
+
+### Parses a MAC address in any standard notation into exactly...
+
+Parses a MAC address in any standard notation into exactly 6 bytes.
+    Accepts:
+      - 'AA:BB:CC:DD:EE:FF'
+      - 'aa-bb-cc-dd-ee-ff'
+      - 'aabb.ccdd.eeff'
+      - 'aabbccddeeff'
+
+<!-- mios-src:64159b194461 from usr/libexec/mios/mios-wol-proxy:55-62 -->
+
+### Parses SecureON password/payload which must resolve to...
+
+Parses SecureON password/payload which must resolve to exactly 6 bytes.
+    Accepts:
+      - 12 hex characters (e.g. '01:02:03:04:05:06', '01-02-03-04-05-06', '010203040506', '0x010203040506')
+      - Exactly 6 ASCII / UTF-8 characters (e.g. 'secret', 'passwd')
+
+<!-- mios-src:c760dac71756 from usr/libexec/mios/mios-wol-proxy:72-77 -->
+
+### Constructs 108-byte WoL Magic Packet with SecureON...
+
+Constructs 108-byte WoL Magic Packet with SecureON password:
+      - Header: 6 bytes 0xFF
+      - Target MAC: 16 repetitions of 6-byte MAC address (96 bytes)
+      - SecureON: 6-byte password / payload
+    Total: 6 + 96 + 6 = 108 bytes.
+
+<!-- mios-src:4fc74eba6d00 from usr/libexec/mios/mios-wol-proxy:104-110 -->
+
+### Enforces interface security invariant
+
+Enforces interface security invariant: only private LAN / mesh / loopback / bridge
+    interfaces are permitted. Untrusted / public / WAN interfaces are strictly rejected.
+
+<!-- mios-src:dafc849f12dd from usr/libexec/mios/mios-wol-proxy:159-162 -->
+
+### Enforces destination IP security invariant: only private...
+
+Enforces destination IP security invariant: only private LAN / loopback / link-local /
+    broadcast addresses are permitted. Public global IP addresses are strictly rejected.
+
+<!-- mios-src:b6013243d18d from usr/libexec/mios/mios-wol-proxy:178-181 -->
+
+### Workflow 4 Verification Test Suite
+
+Workflow 4 Verification Test Suite: Build Context & Artifact Handoff
+Tests all 6 task implementations:
+1. Syntax typo fix in mios-build-driver:25 ($(date -Iseconds))
+2. Staging /etc/mios and invoking materialize-build-ctx.py when MIOS_REPO=/
+3. Variable evaluation order in 02-materialize-build-ctx.sh (export before log)
+4. materialize-build-ctx.py exit 2 on missing psycopg and dual-write of build_phases.json
+5. tools/mios-overlay.sh binary protection in sed normalization
+6. Justfile:preflight on-demand cargo build and bootstrap fallback
+
+<!-- mios-src:0d6a396f76c8 from usr/libexec/mios/test_mios_buildctx.py:3-12 -->
+
+### task_3428
+
+task_3428: WHEN mios-mcp.service starts THE SYSTEM SHALL have its MCP port
+defined -- by the resolver-rendered /etc/mios/install.env, not a literal.
+
+* the exports the resolver renders from the vendor mios.toml carry
+  MIOS_PORTS_MCP / MIOS_PORTS_MCP equal to [ports].mcp;
+* mcp-server-runner's preamble, run under exactly that environment (ambient
+  MIOS_* scrubbed), resolves MIOS_PORTS_MCP to that value;
+* neither the unit nor its [units."mios-mcp.service"] SSOT mirror assigns a
+  MIOS_* port literal.
+
+Negative controls: the same environment without the port names must stop
+the runner with its named error, and a planted Environment=MIOS_PORTS_MCP=<n>
+must be named by the literal check.
+
+<!-- mios-src:3e1552f4708e from usr/libexec/mios/test_mios_mcp_port.py:5-18 -->
+
+### Two-sided verification controls for task_3432. Every expected...
+
+Two-sided verification controls for task_3432.
+
+Every expected value is read from the tree, never written here as a literal:
+
+* the paths a unit writes are the tmpfiles.d-declared directories that its
+  Exec* command lines and the scripts they run refer to;
+* each such path must be writable under ProtectSystem=strict, through
+  ReadWritePaths= or StateDirectory=;
+* when a unit claims a path with StateDirectory=, the owner systemd will
+  enforce (User=/Group=, root when absent) and StateDirectoryMode= (0755 when
+  absent) must equal the owner and mode usr/lib/tmpfiles.d declares for the
+  same path. systemd recursively chowns a StateDirectory= to the unit's user
+  on every start, so a mismatch re-owns the tmpfiles-declared directory.
+
+Negative controls plant defects in a scratch copy of the files involved and
+require a diagnostic naming the unit and path; the real tree is hashed before
+and after to show nothing was mutated.
+
+Runtime controls (firstboot across boots, EROFS in the journal) need a booted
+systemd host and are not run by this file.
+
+<!-- mios-src:54e523c0a61e from usr/libexec/mios/test_mios_unit_hardening.py:4-24 -->
+### 'MiOS' Headscale mesh VPN coordinator first-boot config...
+
+'MiOS' Headscale mesh VPN coordinator first-boot config generator.
+
+Writes /etc/headscale/config.yaml from the [headscale] + [metal.mesh] + [ports] SSOT in
+mios.toml (layered: vendor /usr/share/mios/mios.toml < host /etc/mios/mios.toml).
+
+Idempotent + non-destructive: if the config file already exists it does NOTHING
+(Headscale state/sqlite remains preserved across runs). Pass --force to regenerate.
+
+<!-- mios-src:a32618333bfe from usr/libexec/mios/mios-headscale-firstboot:4-11 -->
+### Units mios-gen pod-quadlets writes under users/ (podman's...
+
+Units mios-gen pod-quadlets writes under users/ (podman's user Quadlet
+search path) instead of the system directory: they run rootless under each
+login user's systemd. Everything not listed is a system unit.
+
+<!-- mios-src:72159aff486f from usr/share/mios/mios.toml:8876-8878 -->
+### [rust.categories] -- ADR-0021 Function-Named Binary & Crate...
+
+----------------------------------------------------------------------------
+[rust.categories] -- ADR-0021 Function-Named Binary & Crate SSOT Registry
+----------------------------------------------------------------------------
+Maps script domains and existing crates to destination static binaries,
+lifecycle roles, install directories, and responsible owners (task_3488).
+Ownership gate: mios-gate rust-categories.
+Owner lanes and install roles are declared once each, in [rust.categories.owners]
+and [rust.categories.roles], as lists of categories (every category in exactly
+one of each). A role names its [build.native.categories.<role>] table, which
+owns the install directory. A destination binary's own crate is implied by
+binary=; crates= lists only the other crates folded into it.
+Script layer: scope= globs claim the scripts a category owns for porting;
+exempt categories (role exempt, no binary) carry their reason in description=;
+universe= fixes the script roots the gate must account for, and max_unowned
+is the shrink-only ceiling for scripts no category claims yet (task_3488).
+A replaces= entry is ported-and-deleted evidence: the named script must be
+absent from the tree in the same commit that proves parity (ADR-0021).
+
+<!-- mios-src:d9a9204b4e94 from usr/share/mios/mios.toml:13459-13475 -->
+### mios-manual -- corpus ledger and census for the MiOS...
+
+mios-manual -- corpus ledger and census for the MiOS documentation system.
+
+Spec: docs/design/doc-generative-documentation.md sections 3.4 and 5.
+
+Subcommands:
+  ledger          rebuild usr/share/mios/reference/manual-corpus.tsv from the tree
+  audit           census as JSON (counts by class and reason)
+  coverage        the two ratchet numbers, for the gate and for humans
+  harvest         move a comment's prose into a doc and record where it landed
+  prune           delete a comment that provably landed (the only destructive path)
+  landing         verify every pruned comment still lands in a doc
+  check-functions verify harvested AI-functions lines against source
+  render          splice derived content into MIOS-GEN marker interiors
+  rehash          after an in-place rewrite (mios-task migrate-ids), move landed rows to their new hash
+
+`--root` selects the repo, and either layout resolves, so the same tools serve
+mios.git and mios-bootstrap.git without being copied across (Law 15).
+
+The ledger is the safety mechanism for the whole programme. Deletion of a
+comment is only ever permitted once a ledger row proves its knowledge reached a
+doc, so the landing columns must survive ordinary code churn: they are carried
+forward BY CONTENT HASH, never recomputed. Moving a block within a file, or
+reformatting the code around it, keeps its landing record.
+
+Rows for blocks that no longer exist but were pruned are kept as tombstones --
+that retention is what lets a gate prove, after the fact, that a comment which
+is gone did land somewhere first.
+
+<!-- mios-src:88e704cf17e5 from usr/libexec/mios/mios-manual:5-32 -->
+
+### Carry landings across a rewrite that changed only the ids...
+
+Carry landings across a rewrite that changed only the ids in comment text.
+
+    `mios-task migrate-ids` rewrites old task ids to typed ones in the comments and in the docs they landed in
+    alike. A comment's hash changes with its text, so the ledger, which carries a landing by hash, would lose
+    it and `distill` would land the prose a second time. Each changed source is lexed as it was at --from and
+    as it is now, and the two block sequences are aligned on their text with every word that holds a digit
+    masked (an old id and its typed id mask alike); an aligned pair is one comment, so its old hash moves to
+    its new one in the ledger and in every mios-src marker of the docs. A hash two different comments would
+    move to is left alone.
+
+<!-- mios-src:29140265cbba from usr/libexec/mios/mios-manual:1473-1482 -->
+
+### AGY task hygiene ratchet over the frozen AGY-TASKS.md....
+
+AGY task hygiene ratchet over the frozen AGY-TASKS.md. Duplicate task IDs make dependencies ambiguous.
+The task from which AGY tasks carry the full schema (a typed id once the ids are migrated); a DONE task
+is exempt by its marker. schema_also names the tasks created after it that the list files before it,
+so their numbers sit below it -- the schema is demanded of them too.
+
+<!-- mios-src:35f44e5ef3ae from usr/share/mios/mios.toml:12312-12315 -->
+
+### The highest task number issued (ADR-0028). Numbers are...
+
+The highest task number issued (ADR-0028). Numbers are never reissued: the list's highest may not fall
+below this, so a dropped last task cannot hand its number on. Raising it to the current highest tightens it.
+
+<!-- mios-src:78da468ea451 from usr/share/mios/mios.toml:12352-12353 -->
+### ADR-0030
+
+ADR-0030: the 500-file budget, TOTAL (dependencies included). Each tracked file counts in the
+FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
+a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
+
+<!-- mios-src:ddce63c53e8a from usr/share/mios/mios.toml:12880-12882 -->
+### ADR-0030
+
+ADR-0030: 500 tracked files EACH per repo (dependencies included). Each tracked file counts in the
+FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_files only comes DOWN:
+a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
+
+<!-- mios-src:c7bfbbd9989c from usr/share/mios/mios.toml:12882-12884 -->

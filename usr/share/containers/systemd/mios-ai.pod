@@ -1,5 +1,5 @@
-# AI-hint: GENERATED Quadlet pod for the co-resident group 'mios-ai' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-ai] in mios.toml. Members (9): mios-llm-light, mios-cpu-node, mios-llm-worker@, mios-llm-heavy, mios-llm-heavy-alt, mios-pgvector, mios-open-webui, mios-piper, mios-whisper.
-# AI-related: usr/share/mios/mios.toml, tools/generate-pod-quadlets.py, mios-llm-light.container, mios-cpu-node.container, mios-llm-worker@.container, mios-llm-heavy.container, mios-llm-heavy-alt.container, mios-pgvector.container, mios-open-webui.container, mios-piper.container, mios-whisper.container
+# AI-hint: GENERATED Quadlet pod for the co-resident group 'mios-ai' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-ai] in mios.toml. Members (8): mios-llm-light, mios-cpu-node, mios-llm-worker@, mios-llm-heavy, mios-pgvector, mios-open-webui, mios-piper, mios-whisper.
+# AI-related: usr/share/mios/mios.toml, tools/generate-pod-quadlets.py, mios-llm-light.container, mios-cpu-node.container, mios-llm-worker@.container, mios-llm-heavy.container, mios-pgvector.container, mios-open-webui.container, mios-piper.container, mios-whisper.container
 # /usr/share/containers/systemd/mios-ai.pod
 # Consolidated AI pod.
 # Members (each member .container declares Pod=mios-ai.pod):
@@ -7,7 +7,6 @@
 #   mios-cpu-node
 #   mios-llm-worker@
 #   mios-llm-heavy
-#   mios-llm-heavy-alt
 #   mios-pgvector
 #   mios-open-webui
 #   mios-piper

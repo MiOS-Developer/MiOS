@@ -18,7 +18,7 @@ Every Antigravity agent and subagent operating on this repository operates under
 ## 2. Universal Endpoint Contract (Architectural Law 5)
 
 Every agent and subagent communicates strictly over OpenAI-API-compatible interfaces:
-- **Endpoint**: `$MIOS_AI_ENDPOINT` (defaults to local local gateway `http://localhost:8642/v1` or `http://localhost:11434/v1`).
+- **Endpoint**: `$MIOS_AI_ENDPOINT`, projected from layered MiOS SSOT. Do not substitute hardcoded ports or vendor endpoints.
 - **No Cloud-AI URLs**: Never hardcode vendor-cloud endpoints (`generativelanguage.googleapis.com`, `api.anthropic.com`, etc.).
 - **OpenAI Standard Verbs**: `/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, function-calling, and structured outputs only.
 
@@ -41,3 +41,9 @@ When executing in CI/CD pipeline cycles or automated dev-loops:
    - `python3 tools/ci-suites.py --check`
 4. **Projection Synchronization**: Run `bash ./tools/sync-generated.sh` whenever FHS targets, ports, units, or tools are modified. The git index must be clean with 0 unprojected diffs.
 5. **Lossless Merge & Preservation**: Never delete, clobber, or drop code without verifying migration and preservation.
+
+## 5. Universal Harness Neutrality & Native MiOS-MCP + tmux-mcp Everywhere
+
+- **Zero Hardcoded Master/Worker/Monitor Roles**: No agent harness (Antigravity, Codex, Claude Code, OpenCode, Gemini, etc.) is permanently hardcoded as Master, Orchestrator, Worker, or Monitor. Absolutely **ANY AGENT** can be dynamically promoted to Orchestrator or Monitor based on whichever Agent's CLI is invoked.
+- **Session Leases**: Each running participant registers its own session, keeps its lease private and refreshes it through receive calls. Acknowledgements certify reading only. Automatic role arbitration and conversation transfer are not implemented; follow [the coordination contract](../COORDINATION.md).
+- **Native MiOS-MCP + tmux-mcp Everywhere**: Use the combined server's terminal tools and `mios_tmux_nested_workflow` for worker execution, and `mios_agent_send/receive/ack` for addressed messages. A native CLI head binds to its verified human pane; unbound automation uses private headless sessions. Observation does not consume inboxes.

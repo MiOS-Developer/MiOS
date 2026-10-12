@@ -38,22 +38,42 @@ impl DriftCtx {
             || root.to_string_lossy().starts_with("/tmp/build")
             || root.to_string_lossy().starts_with("C:\\tmp\\build");
 
-        let git_status = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .arg("status")
-            .arg("--porcelain")
-            .output();
+        let is_repo_root = root.join(".git").exists()
+            || match Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["rev-parse", "--show-toplevel"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let toplevel = String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .replace('\\', "/");
+                    let root_str = root.to_string_lossy().replace('\\', "/");
+                    toplevel.trim_end_matches('/').eq_ignore_ascii_case(root_str.trim_end_matches('/'))
+                }
+                _ => false,
+            };
 
-        let (git_ok, incomplete_tree) = match git_status {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let has_deleted = stdout
-                    .lines()
-                    .any(|l| l.starts_with(" D") || l.starts_with("D "));
-                (true, has_deleted)
+        let (git_ok, incomplete_tree) = if is_repo_root {
+            match Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .arg("status")
+                .arg("--porcelain")
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let has_deleted = stdout
+                        .lines()
+                        .any(|l| l.starts_with(" D") || l.starts_with("D "));
+                    (true, has_deleted)
+                }
+                _ => (false, false),
             }
-            _ => (false, false),
+        } else {
+            (false, false)
         };
 
         Self {
@@ -87,7 +107,7 @@ impl Check for SSOTParseCheck {
         }
         match fs::read_to_string(&p) {
             Ok(content) => match content.parse::<toml::Value>() {
-                // T-1043: an EMPTY file is valid TOML, so "parses" was true of a
+                // task_980: an EMPTY file is valid TOML, so "parses" was true of a
                 // zero-byte mios.toml and this reported Pass on a tree with no
                 // SSOT in it at all. An SSOT with no tables is not an SSOT.
                 Ok(v) => match v.as_table().map(|t| t.len()).unwrap_or(0) {
@@ -201,7 +221,7 @@ impl Check for BackfillCoverageCheck {
             }
         }
 
-        // T-1043: zero embeddable tables made "all covered" vacuously true, so
+        // task_980: zero embeddable tables made "all covered" vacuously true, so
         // an empty schema-init.sql reported Pass. The shipped schema always has
         // them; finding none means the scan failed, not that the work is done.
         if emb_tables.is_empty() {
@@ -222,6 +242,7 @@ impl Check for BackfillCoverageCheck {
 }
 
 pub mod aiplane;
+pub mod audit;
 pub mod bake;
 pub mod boot;
 pub mod converge;
@@ -389,6 +410,13 @@ impl Registry {
         let mut passed = 0;
         let mut skipped = 0;
         let mut executed = 0;
+        let mut missing = 0;
+        let started = std::time::Instant::now();
+        let total = self
+            .checks
+            .iter()
+            .filter(|check| filter.is_none_or(|f| check.id() == f || check.id().contains(f)))
+            .count();
 
         for check in &self.checks {
             if let Some(f) = filter {
@@ -401,16 +429,41 @@ impl Registry {
             let verdict = check.run(ctx);
             match &verdict {
                 Verdict::Pass(msg) => {
-                    println!("[miosd:drift] [PASS] {}: {}", check.id(), msg);
+                    println!(
+                        "[miosd:drift] [{executed}/{total} PASS +{}s] {}: {}",
+                        started.elapsed().as_secs(),
+                        check.id(),
+                        msg.replace('\n', "\n    ")
+                    );
                     passed += 1;
                 }
                 Verdict::Fail(msg) => {
-                    eprintln!("[miosd:drift] [FAIL] {}: {}", check.id(), msg);
+                    eprintln!(
+                        "[miosd:drift] [{executed}/{total} FAIL +{}s] {}: {}",
+                        started.elapsed().as_secs(),
+                        check.id(),
+                        msg.replace('\n', "\n    ")
+                    );
                     failed += 1;
                 }
                 Verdict::Skip(msg) => {
-                    println!("[miosd:drift] [SKIP] {}: {}", check.id(), msg);
-                    skipped += 1;
+                    if msg.starts_with("NOT IMPLEMENTED:") {
+                        eprintln!(
+                            "[miosd:drift] [{executed}/{total} MISSING +{}s] {}: {}",
+                            started.elapsed().as_secs(),
+                            check.id(),
+                            msg
+                        );
+                        missing += 1;
+                    } else {
+                        println!(
+                            "[miosd:drift] [{executed}/{total} SKIP +{}s] {}: {}",
+                            started.elapsed().as_secs(),
+                            check.id(),
+                            msg
+                        );
+                        skipped += 1;
+                    }
                 }
             }
         }
@@ -426,11 +479,11 @@ impl Registry {
         }
 
         println!(
-            "[miosd:drift] Summary: {} passed, {} failed, {} skipped",
-            passed, failed, skipped
+            "[miosd:drift] Summary: {executed}/{total} | PASS {passed} FAIL {failed} MISSING {missing} SKIP {skipped} | elapsed {}s | {}",
+            started.elapsed().as_secs(), if failed + missing > 0 { if ctx.soft { "ADVISORY: INCOMPLETE/FAILED" } else { "INCOMPLETE/FAILED" } } else if skipped > 0 { "COMPLETE WITH EXCLUSIONS" } else { "COMPLETE" }
         );
 
-        if failed > 0 && !ctx.soft {
+        if (failed > 0 || missing > 0 || executed == 0) && !ctx.soft {
             return false;
         }
         true
@@ -447,13 +500,8 @@ pub fn run_checks_cli(root: &str, soft: bool, list: bool, only: Option<&str>, pa
     }
 
     if parity {
-        println!("[miosd:drift] Running differential parity mode...");
-        // In parity mode, run all registered checks and verify against bash twin output
-        let ok = reg.run_all(&ctx, only);
-        if !ok && !soft {
-            std::process::exit(1);
-        }
-        return;
+        eprintln!("[miosd:drift] [MISSING] Differential parity requires comparing independent check receipts; running one implementation cannot certify parity");
+        std::process::exit(2);
     }
 
     if !reg.run_all(&ctx, only) && !soft {
@@ -495,6 +543,31 @@ mod tests {
         fn run(&self, _ctx: &DriftCtx) -> Verdict {
             Verdict::Fail("Simulated error".into())
         }
+    }
+
+    struct DummyMissingCheck;
+    impl Check for DummyMissingCheck {
+        fn id(&self) -> &'static str {
+            "dummy_missing"
+        }
+        fn describe(&self) -> &'static str {
+            "Unimplemented control"
+        }
+        fn run(&self, _ctx: &DriftCtx) -> Verdict {
+            Verdict::Skip("NOT IMPLEMENTED: control".into())
+        }
+    }
+    #[test]
+    fn missing_implementation_and_empty_registry_cannot_report_success(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let ctx = DriftCtx::new(temp.path().into(), false);
+        assert!(!Registry {
+            checks: vec![Box::new(DummyMissingCheck)]
+        }
+        .run_all(&ctx, None));
+        assert!(!Registry { checks: vec![] }.run_all(&ctx, None));
+        Ok(())
     }
 
     #[test]

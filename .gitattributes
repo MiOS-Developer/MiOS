@@ -34,3 +34,6 @@
 *.woff2 binary
 *.ttf binary
 *.pdf binary
+# The legacy archive is a bare git store (ADR-0030 Decision 7): its packs, HEAD and config are
+# git's own bytes, which no conversion may touch. On a conflict, re-run `mios-gen archive`.
+.archive/** binary

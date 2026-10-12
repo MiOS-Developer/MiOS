@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Standalone assert-script unit test for LoRA list/load endpoints (CONV-06).
+# AI-hint: Standalone assert-script unit test for LoRA list/load endpoints (CONV-06): enabled only when [ai].heavy_engine = vllm.
 # AI-related: ./server.py
 
 import os
@@ -100,15 +100,19 @@ class MockHttpxResponse:
     def json(self):
         return self.json_data
 
-async def test_lora_list_dual_mode():
-    os.environ["MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE"] = "dual"
-    res = await server.lora_list()
-    check("lora_list (dual): empty adapters returned", res.get("adapters") == [])
-    check("lora_list (dual): disabled is False", res.get("enabled") is False)
+def _engine(name):
+    """Select the heavy lane's engine the way the SSOT does: [ai].heavy_engine."""
+    real = server._toml_section
+    return mock.patch("server._toml_section",
+                      lambda section: {"heavy_engine": name} if section == "ai" else real(section))
 
-async def test_lora_list_single_mode():
-    os.environ["MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE"] = "single"
+async def test_lora_list_sglang_engine():
+    with _engine("sglang"):
+        res = await server.lora_list()
+    check("lora_list (sglang): empty adapters returned", res.get("adapters") == [])
+    check("lora_list (sglang): disabled is False", res.get("enabled") is False)
 
+async def test_lora_list_vllm_engine():
     mock_models = {
         "data": [
             {"id": "base-model", "object": "model"},
@@ -120,36 +124,35 @@ async def test_lora_list_single_mode():
     mock_client = mock.AsyncMock()
     mock_client.get.return_value = MockHttpxResponse(mock_models)
 
-    with mock.patch("server._get_client", mock.AsyncMock(return_value=mock_client)):
+    with _engine("vllm"), mock.patch("server._get_client", mock.AsyncMock(return_value=mock_client)):
         res = await server.lora_list()
-        check("lora_list (single): enabled is True", res.get("enabled") is True)
+        check("lora_list (vllm): enabled is True", res.get("enabled") is True)
         adapters = res.get("adapters") or []
-        check("lora_list (single): parsed 2 adapters", len(adapters) == 2)
-        check("lora_list (single): coding adapter present", any(a["id"] == "adapter-coding" for a in adapters))
+        check("lora_list (vllm): parsed 2 adapters", len(adapters) == 2)
+        check("lora_list (vllm): coding adapter present", any(a["id"] == "adapter-coding" for a in adapters))
 
-async def test_lora_load_dual_mode():
-    os.environ["MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE"] = "dual"
+async def test_lora_load_sglang_engine():
     req = MockRequest({"lora_name": "coding", "lora_path": "/path"})
-    res = await server.lora_load(req)
-    check("lora_load (dual): status code is 400", res.status_code == 400)
-    check("lora_load (dual): returns error message", "only supported" in res.content.get("error"))
+    with _engine("sglang"):
+        res = await server.lora_load(req)
+    check("lora_load (sglang): status code is 400", res.status_code == 400)
+    check("lora_load (sglang): returns error message", "only supported" in res.content.get("error"))
 
-async def test_lora_load_single_mode():
-    os.environ["MIOS_CONV_INFERENCE_HEAVY_ENGINE_MODE"] = "single"
+async def test_lora_load_vllm_engine():
     req = MockRequest({"lora_name": "coding", "lora_path": "/path"})
 
     mock_client = mock.AsyncMock()
     mock_client.post.return_value = MockHttpxResponse({"status": "loaded"})
 
-    with mock.patch("server._get_client", mock.AsyncMock(return_value=mock_client)):
+    with _engine("vllm"), mock.patch("server._get_client", mock.AsyncMock(return_value=mock_client)):
         res = await server.lora_load(req)
-        check("lora_load (single): status code is 200", res.status_code == 200)
+        check("lora_load (vllm): status code is 200", res.status_code == 200)
 
 async def main():
-    await test_lora_list_dual_mode()
-    await test_lora_list_single_mode()
-    await test_lora_load_dual_mode()
-    await test_lora_load_single_mode()
+    await test_lora_list_sglang_engine()
+    await test_lora_list_vllm_engine()
+    await test_lora_load_sglang_engine()
+    await test_lora_load_vllm_engine()
 
     if _fails > 0:
         sys.exit(1)

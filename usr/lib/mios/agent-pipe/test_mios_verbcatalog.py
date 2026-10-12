@@ -164,7 +164,7 @@ class VerbCatalogTest(unittest.TestCase):
 
 
 # ==============================================================================
-# Consolidated from test_mios_build_catalog.py (T-1092)
+# Consolidated from test_mios_build_catalog.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit and regression test suite for mios_build_catalog functionality.
 # AI-functions: setUpModule, test_seeding_and_materializing, test_materialization, mock_open_impl, write_impl, TestMiosBuildCatalog
@@ -182,7 +182,7 @@ def setUpModule():
         import psycopg
     except ImportError:
         raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
     dsn = f"postgresql://mios:mios@localhost:{port}/mios"
     try:
         with psycopg.connect(dsn, connect_timeout=1):
@@ -191,6 +191,13 @@ def setUpModule():
         raise unittest.SkipTest("no live pgvector -- integration test")
 
 class TestMiosBuildCatalog(unittest.TestCase):
+
+    def setUp(self):
+        # Folded suites share one interpreter: these parser fakes must not
+        # replace the real TOML parser used by VerbCatalogTest afterward.
+        self._modules = patch.dict(sys.modules)
+        self._modules.start()
+        self.addCleanup(self._modules.stop)
 
     def test_seeding_and_materializing(self):
         mock_conn = MagicMock()

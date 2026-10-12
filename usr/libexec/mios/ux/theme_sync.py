@@ -17,12 +17,18 @@ Synchronizes canonical palette tokens from `mios.toml` [colors] directly into:
 from __future__ import annotations
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+_TREE = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..")
+)
 
 # Enable relative import of mios_toml
 _LIB_DIR = os.path.normpath(
@@ -132,8 +138,24 @@ class ThemeSyncEngine:
             '"ColorizationAfterglow"=dword:00000000',
             '"ColorizationBlurBalance"=dword:00000001',
             "",
+        ]
+
+        console_targets = [
+            "[HKEY_CURRENT_USER\\Console]",
+            "[HKEY_CURRENT_USER\\Console\\%SystemRoot%_System32_cmd.exe]",
             "[HKEY_CURRENT_USER\\Console\\MiOS]",
         ]
+
+        font_family = "GeistMono Nerd Font Mono"
+        font_size = 12
+        if mios_toml is not None:
+            try:
+                d = mios_toml.load_merged()
+                font_family = d.get("theme", {}).get("font", {}).get("family", font_family)
+                font_size = int(d.get("theme", {}).get("font", {}).get("size", font_size))
+            except Exception:
+                pass
+        font_dword = (font_size << 16)
 
         # ANSI 16 slot console color table mapping
         ansi_keys = [
@@ -143,16 +165,21 @@ class ThemeSyncEngine:
             "ansi_9_bright_red", "ansi_13_bright_magenta", "ansi_11_bright_yellow", "ansi_15_bright_white"
         ]
 
-        for idx, key in enumerate(ansi_keys):
-            hex_val = self.palette.get(key, "#000000")
-            dword = hex_to_dword_bgr(hex_val)
-            reg_lines.append(f'"ColorTable{idx:02d}"=dword:{dword:08x}')
-
-        reg_lines.extend([
-            f'"PopupColors"=dword:000000f5',
-            f'"ScreenColors"=dword:00000007',
-            "",
-        ])
+        for section in console_targets:
+            reg_lines.extend([
+                section,
+                f'"FaceName"="{font_family}"',
+                '"FontFamily"=dword:00000036',
+                f'"FontSize"=dword:{font_dword:08x}',
+                '"PopupColors"=dword:000000f5',
+                '"ScreenColors"=dword:00000007',
+                '"VirtualTerminalLevel"=dword:00000001',
+            ])
+            for idx, key in enumerate(ansi_keys):
+                hex_val = self.palette.get(key, "#000000")
+                dword = hex_to_dword_bgr(hex_val)
+                reg_lines.append(f'"ColorTable{idx:02d}"=dword:{dword:08x}')
+            reg_lines.append("")
 
         return "\r\n".join(reg_lines)
 
@@ -287,6 +314,45 @@ class ThemeSyncEngine:
             "mock": self.mock,
         }
 
+def render_prompt(data, remote=False):
+    """Render desktop or portable prompt glyphs with the same layered palette."""
+    loader = importlib.machinery.SourceFileLoader(
+        "mios_terminal_dotfiles", os.path.join(_TREE, "usr/libexec/mios/mios-dotfiles-render")
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    renderer = importlib.util.module_from_spec(spec)
+    loader.exec_module(renderer)
+    template = os.path.join(_TREE, data["dotfiles"]["registry"]["oh-my-posh"]["template"])
+    with open(template, encoding="utf-8") as handle:
+        omp = renderer._render_text(handle.read(), renderer._resolved_for(data, None), data)
+    settings = data["theme"]["prompt"]
+    mode = settings["remote_glyph_mode"] if remote else settings["glyph_mode"]
+    if mode not in {"auto", "nerd", "ascii"}:
+        raise ValueError("[theme.prompt] glyph modes must be auto, nerd or ascii")
+    prompt = json.loads(omp)
+    if mode == "ascii" or (mode == "auto" and (remote or "nerd" not in data["theme"]["font"]["family"].lower())):
+        ascii_style = settings["ascii"]
+        for block in prompt["blocks"]:
+            for segment in block["segments"]:
+                if segment["style"] == "powerline":
+                    segment["style"] = "plain"
+                    segment.pop("powerline_symbol", None)
+                if segment["type"] == "text":
+                    segment["template"] = ascii_style["leader"]
+                elif segment["type"] == "status":
+                    segment["template"] = ascii_style["closer"]
+                elif segment["type"] == "git":
+                    properties = segment.setdefault("properties", {})
+                    properties.update(
+                        fetch_upstream_icon=False,
+                        branch_icon=ascii_style["git_branch"],
+                        commit_icon=ascii_style["git_commit"],
+                    )
+                    segment["template"] = segment["template"].replace("{{ .UpstreamIcon }}", "").replace("✎", ascii_style["git_change"])
+                if segment["style"] == "plain" and segment["type"] not in {"text", "status"}:
+                    segment["template"] += ascii_style["separator"]
+    return json.dumps(prompt, ensure_ascii=True, indent=2) + "\n"
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="MiOS Cross-Platform Theme & Palette Synchronizer"
@@ -304,8 +370,22 @@ def main() -> int:
     parser.add_argument("--mock", action="store_true", help="Deterministic mock execution for CI")
     parser.add_argument("--json", action="store_true", help="Format output as JSON dictionary")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--render-prompt", action="store_true",
+                        help="Print the layered Oh My Posh prompt JSON to stdout (used by mios-gen render-tmux-theme --runtime)")
+    parser.add_argument("--remote", action="store_true", help="With --render-prompt: render the remote-terminal glyph mode")
 
     args = parser.parse_args()
+
+    if args.render_prompt:
+        try:
+            if mios_toml is None:
+                raise RuntimeError("mios_toml unavailable")
+            mios_toml.clear_cache()
+            sys.stdout.write(render_prompt(mios_toml.load_merged(), remote=args.remote))
+            return 0
+        except Exception as e:  # noqa: BLE001 -- report and fail closed for the caller
+            print(f"[theme_sync] ERROR: {e}", file=sys.stderr)
+            return 1
 
     engine = ThemeSyncEngine(
         target=args.target,

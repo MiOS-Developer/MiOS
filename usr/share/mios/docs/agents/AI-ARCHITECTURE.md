@@ -149,7 +149,7 @@ loop.
   (`mios-opencode-gateway.service`, port key `opencode_gateway`) as a first-class OpenAI `/v1`
   council member, registered as `[agents.opencode]`:
   ```
-  POST http://localhost:${MIOS_PORT_OPENCODE_GATEWAY}/v1/chat/completions
+  POST http://localhost:${MIOS_PORTS_OPENCODE_GATEWAY}/v1/chat/completions
     { "model": "mios-opencode:latest", "messages": [...] }
   ```
   The agent-pipe orchestrator dispatches code-heavy facets to it in parallel

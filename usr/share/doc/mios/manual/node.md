@@ -11,19 +11,19 @@ Compacts tombstone entries older than `ttl_s`.
 
 ### MiOS Node Cryptographic Handshake & Wire AEAD Encryption...
 
-MiOS Node Cryptographic Handshake & Wire AEAD Encryption Engine (T-388 / AGY-1986).
+MiOS Node Cryptographic Handshake & Wire AEAD Encryption Engine (task_332 / task_2565).
 Provides mutual Ed25519 identity verification, X25519 ephemeral Diffie-Hellman key exchange,
 HKDF-SHA256 session key derivation, and ChaCha20-Poly1305 authenticated symmetric payload encryption.
 
-<!-- mios-src:f494bf02e58f from usr/libexec/mios/node/crypto.py:5-9 -->
+<!-- mios-src:c66d593e3759 from usr/libexec/mios/node/crypto.py:5-9 -->
 
 ### MiOS Edge Node Mesh Discovery, Heartbeat Monitor &...
 
-MiOS Edge Node Mesh Discovery, Heartbeat Monitor & Dead-Peer Eviction Engine (T-387 / AGY-1985).
+MiOS Edge Node Mesh Discovery, Heartbeat Monitor & Dead-Peer Eviction Engine (task_331 / task_2564).
 Manages zero-conf peer announcements, periodic 5s heartbeats, 3-strike dead peer detection (15s eviction threshold),
 degraded state transitions, routing table pruning, and eviction event dispatching.
 
-<!-- mios-src:d5aa1dd418b8 from usr/libexec/mios/node/discovery.py:5-9 -->
+<!-- mios-src:bcfc38e2dde0 from usr/libexec/mios/node/discovery.py:5-9 -->
 
 ### WS-NODE
 
@@ -42,7 +42,7 @@ Header Format (16 Bytes Fixed, Big-Endian Network Byte Order):
 ### WS-NODE
 
 WS-NODE: Edge Micro-Mesh 16-Byte Fixed Binary Wire Protocol & Async TCP Stream Engine.
-Provides byte-for-byte wire compatibility with the Rust mios-node runtime (T-386 / AGY-1984).
+Provides byte-for-byte wire compatibility with the Rust mios-node runtime (task_330 / task_2563).
 
 Header Format (16 Bytes Fixed, Big-Endian Network Byte Order):
 +-------------------------------------------------------------------+
@@ -51,7 +51,7 @@ Header Format (16 Bytes Fixed, Big-Endian Network Byte Order):
 | PayloadLen (4B: u32)             | Checksum (4B: u32 CRC32)       |
 +-------------------------------------------------------------------+
 
-<!-- mios-src:c20a378cf0d7 from usr/libexec/mios/node/wire.py:5-15 -->
+<!-- mios-src:42584fd7eced from usr/libexec/mios/node/wire.py:5-15 -->
 ### Strict Architectural Invariant
 
 Strict Architectural Invariant:
@@ -59,13 +59,13 @@ Strict Architectural Invariant:
     On single-core systems, Core 0 is retained.
 
 <!-- mios-src:3386c02b7254 from usr/libexec/mios/node/cgroups.py:49-53 -->
-### topology_switch.py — T-970 WS-NODE Dual-mode dynamic...
+### topology_switch.py — task_914 WS-NODE Dual-mode dynamic...
 
-topology_switch.py — T-970 WS-NODE
+topology_switch.py — task_914 WS-NODE
 Dual-mode dynamic topology switcher (Seat UI vs Headless Blade) in mios-node.
 
 Dynamically transitions system state between interactive Workstation Seat mode
 (Wayland, GNOME, ASR audio, Guacamole) and Headless Compute Blade mode (k3s, Ceph,
 RPC inference workers) without GPU memory leaks or orphaned processes.
 
-<!-- mios-src:6d8bf3e1bc94 from usr/libexec/mios/node/topology_switch.py:5-12 -->
+<!-- mios-src:afa82b5958d1 from usr/libexec/mios/node/topology_switch.py:5-12 -->

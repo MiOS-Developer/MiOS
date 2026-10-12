@@ -37,10 +37,10 @@ case "$VARIANT" in
 esac
 
 if [[ "$VARIANT" == "bash" ]]; then
-    PORT="${MIOS_PORT_TTYD_BASH:-8310}"
+    PORT="${MIOS_PORTS_TTYD_BASH:-8310}"
     SHELL_CMD="${MIOS_TTYD_BASH_SHELL:-/bin/bash}"
 else
-    PORT="${MIOS_PORT_TTYD_POWERSHELL:-8320}"
+    PORT="${MIOS_PORTS_TTYD_POWERSHELL:-8320}"
     SHELL_CMD="${MIOS_TTYD_POWERSHELL_SHELL:-/usr/libexec/mios/mios-powershell --shell}"
 fi
 

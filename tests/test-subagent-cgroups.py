@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Automated unit test suite for subagent Bubblewrap sandboxing, cgroup quotas, and escape resistance.
 # AI-related: usr/lib/mios/agent-pipe/mios_subagent_sandbox.py, usr/share/mios/mios.toml
-"""Unit and integration test suite for SubagentSandbox and mios_subagent_sandbox CLI (T-552)."""
+"""Unit and integration test suite for SubagentSandbox and mios_subagent_sandbox CLI (task_496)."""
 
 from __future__ import annotations
 

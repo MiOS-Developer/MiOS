@@ -13,6 +13,7 @@ Run:  python test_mios_reputation.py
 import sys
 
 import mios_reputation as R
+import mios_pipe.identity.reputation as identity_reputation
 
 _RESULTS: list = []
 
@@ -97,9 +98,23 @@ def t_persistence() -> None:
         {"peer_id": "ok", "ok": 2, "bad": 0, "streak_bad": 0}], str(r3.rows()))
     _check("restore: replaces prior state", (r2.restore([]) or True) and r2.rows() == [])
 
+def t_federation_reexport() -> None:
+    """Every check above runs on mios_pipe.identity.reputation's PeerReputation:
+    mios_reputation re-exports it for the A2A daemons, which call .score(),
+    .restore() and .rows() on it. Aliasing it to the task_288 session
+    ReputationEngine once removed that API from the federation path."""
+    _check("reexport: PeerReputation is identity.reputation's class",
+           R.PeerReputation is identity_reputation.PeerReputation)
+    _check("reexport: NEUTRAL is identity.reputation's", R.NEUTRAL == identity_reputation.NEUTRAL)
+    api = ("record", "score", "rank", "snapshot", "rows", "restore")
+    missing = [a for a in api if not callable(getattr(R.PeerReputation, a, None))]
+    _check("reexport: the federation API is all there", not missing, str(missing))
+    _check("reexport: not aliased to the session ReputationEngine",
+           R.PeerReputation is not getattr(R, "ReputationEngine", None))
+
 def main() -> int:
     for t in (t_neutral, t_scoring, t_recent_penalty, t_rank_stable,
-              t_rank_prefers_reliable, t_persistence):
+              t_rank_prefers_reliable, t_persistence, t_federation_reexport):
         t()
     passed = sum(1 for _, ok in _RESULTS if ok)
     total = len(_RESULTS)

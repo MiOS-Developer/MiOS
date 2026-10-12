@@ -42,7 +42,7 @@ OSR=/usr/lib/os-release
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for _c in "${MIOS_MIOSD_BIN:-}" \
@@ -52,18 +52,14 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required to finalize os-release (task_962)"
+    exit 1
+fi
+
 # No blanket success log here: miosd prints what it actually did, including the
 # two cases where it projects nothing. Asserting the projection on the strength
 # of the exit code is what made the old miosd leg unfalsifiable.
-if [[ -n "$_miosd" ]]; then
-    "$_miosd" finalize-osrelease --path "$OSR" --version "$MIOS_VERSION"
-elif [[ -f "$OSR" && "$MIOS_VERSION" != "unknown" ]]; then
-    for _k in VERSION VERSION_ID BUILD_ID IMAGE_VERSION OSTREE_VERSION; do
-        sed -i -E "s|^${_k}=.*|${_k}=\"${MIOS_VERSION}\"|" "$OSR"
-    done
-    sed -i -E "s|^PRETTY_NAME=.*|PRETTY_NAME=\"MiOS ${MIOS_VERSION}\"|" "$OSR"
-    sed -i -E "s|^CPE_NAME=.*|CPE_NAME=\"cpe:/o:mios-dev:mios:${MIOS_VERSION}\"|" "$OSR"
-    mios_ok "Os-release version projected from SSOT: ${MIOS_VERSION}"
-fi
+"$_miosd" finalize-osrelease --path "$OSR" --version "$MIOS_VERSION"
 
 mios_ok "Finalized"

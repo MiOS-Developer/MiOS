@@ -29,8 +29,8 @@ Documentation=man:mios-launcher-daemon
 # (uid 1000) user manager ALSO starts it they contend for that socket, and
 # whichever wins launches GUI apps in the WRONG session (root -> invisible,
 # then the window dies). ConditionUser gates the broker to the operator so
-# exactly ONE instance owns the socket. ('mios' = MIOS_USER, the operator;
-# render from MIOS_USER if that default ever changes.) Operator-hit
+# exactly ONE instance owns the socket. ('mios' = MIOS_IDENTITY_USERNAME, the operator;
+# render from MIOS_IDENTITY_USERNAME if that default ever changes.) Operator-hit
 # 2026-06-06: multi-broker invisible launches recurring after WSL restarts.
 ConditionUser=mios
 

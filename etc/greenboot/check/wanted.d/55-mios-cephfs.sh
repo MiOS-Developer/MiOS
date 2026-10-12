@@ -8,7 +8,7 @@ if [ -f /etc/profile.d/mios-env.sh ]; then
     source /etc/profile.d/mios-env.sh
 fi
 
-if [ "${MIOS_CEPHFS_ENABLE:-false}" != "true" ]; then
+if [ "${MIOS_STORAGE_CEPHFS_ENABLE:-false}" != "true" ]; then
     exit 0
 fi
 
@@ -51,7 +51,7 @@ if command -v ceph >/dev/null 2>&1; then
     fi
 fi
 
-_op_user="${MIOS_USER:-mios}"
+_op_user="${MIOS_IDENTITY_USERNAME:-mios}"
 if command -v findmnt >/dev/null 2>&1; then
     if ! findmnt "/home/$_op_user" -t ceph >/dev/null 2>&1; then
         log_health_failure "user_mount" "CephFS mount for user $_op_user is not active on /home/$_op_user"

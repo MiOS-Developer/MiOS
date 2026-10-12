@@ -3,7 +3,22 @@
 
 # WS-NAME — Global Naming Minification → one unified names/keys registry
 
-**Status:** planned (workstream) · **Source:** operator directive 2026-07-10 · **Effort:** XL (global, phased)
+**Status:** migration under verification · **Source:** operator directives 2026-07-10 and 2026-10-08 · **Effort:** XL (global, phased)
+
+Current implementation uses `tools/native/mios-resolver/src/names.rs` for the
+canonical transform and naming metadata. `mios-gen names --root .` exposes this
+metadata without configuration values; `mios-gen names-registry` projects the
+tracked names artifacts. Generated globals use the same export implementation.
+Canonical nonempty inputs win; unique legacy inputs remain supported, with
+conflicts rejected before applying any override. Ambiguous aliases and aliases
+with different semantics are reported separately and never merged by spelling.
+
+`mios-gen sync --root . --plan` validates the SSOT-declared generation pipeline
+before writes. `mios-gen sync --root .` executes all existing stages. The shell
+entry point and standalone names generator now delegate to the native command
+and library. Compatibility deletion, remaining script ports, installed platform
+verification and live configurator synchronization are still open; the phases
+below describe the complete target rather than a completion claim.
 
 ## Goal
 

@@ -86,8 +86,11 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 |---|---|---|
 | inference | llm_light | 8500 |
 | inference | cpu_node | 8510 |
-| inference | vllm | 8520 |
-| inference | sglang | 8530 |
+| inference | llm_heavy | 8520 |
+| inference | llm_igpu | 8540 |
+| inference | rpc_igpu | 8550 |
+| inference | igpu (pinned) | 11436 |
+| inference | win_llm_light (pinned) | 11450 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:inference -->
@@ -109,6 +112,7 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 | Category | Service | Port |
 |---|---|---|
 | data | pgvector | 8600 |
+| data | pgvector_internal (pinned) | 5432 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:data -->
@@ -118,6 +122,9 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 | webtools | searxng | 8800 |
 | webtools | crawl4ai | 8810 |
 | webtools | firecrawl | 8820 |
+| webtools | searxng_internal (pinned) | 8888 |
+| webtools | crawl4ai_internal (pinned) | 11235 |
+| webtools | firecrawl_internal (pinned) | 3002 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:webtools -->

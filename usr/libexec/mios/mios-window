@@ -107,7 +107,7 @@ fi
     _OSC_EP="$(awk -F\" '/^[[:space:]]*executor_endpoint[[:space:]]*=/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
 if [ -z "$_OSC_EP" ] && grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null; then
     _osc_gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}' || true)"
-    [ -n "$_osc_gw" ] && _OSC_EP="http://${_osc_gw}:${MIOS_PORT_OSCONTROL:-8950}"
+    [ -n "$_osc_gw" ] && _OSC_EP="http://${_osc_gw}:${MIOS_PORTS_OSCONTROL:-8950}"
 fi
 _OSC_EP="${_OSC_EP%/}"
 
@@ -147,9 +147,9 @@ if [ -n "$_OSC_EP" ]; then
         _t="$(_json_str "$_title")"
     elif [ "$sub" = "move" ]; then
         if [ "$#" -ge 3 ]; then
-            _x="${@: -2: 1}"
-            _y="${@: -1: 1}"
-            _title="${@:1:$#-2}"
+            _x="${*: -2: 1}"
+            _y="${*: -1: 1}"
+            _title="${*:1:$#-2}"
         else
             _title="${1:-}"
             _x="${2:-}"
@@ -158,9 +158,9 @@ if [ -n "$_OSC_EP" ]; then
         _t="$(_json_str "$_title")"
     elif [ "$sub" = "resize" ]; then
         if [ "$#" -ge 3 ]; then
-            _w="${@: -2: 1}"
-            _h="${@: -1: 1}"
-            _title="${@:1:$#-2}"
+            _w="${*: -2: 1}"
+            _h="${*: -1: 1}"
+            _title="${*:1:$#-2}"
         else
             _title="${1:-}"
             _w="${2:-}"

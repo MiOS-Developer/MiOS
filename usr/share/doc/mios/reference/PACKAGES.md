@@ -76,7 +76,7 @@ image, and guest OSes stay fully contained.
 
 | Format | What goes here | Where it's defined |
 |---|---|---|
-| **Flatpak** | User-facing applications (GUI apps, games, IDEs, file managers, terminal emulators, viewers, editors, gaming clients, virt GUIs). | `mios-bootstrap/mios.toml` `[desktop].flatpaks` → `MIOS_FLATPAKS` build-arg → `/usr/lib/mios/env.d/flatpaks.env` → `mios-flatpak-install` at first boot. |
+| **Flatpak** | User-facing applications (GUI apps, games, IDEs, file managers, terminal emulators, viewers, editors, gaming clients, virt GUIs). | `mios-bootstrap/mios.toml` `[desktop].flatpaks` → `MIOS_DESKTOP_FLATPAKS` build-arg → `/usr/lib/mios/env.d/flatpaks.env` → `mios-flatpak-install` at first boot. |
 | **Container** (Quadlet / Podman / Distrobox) | Long-lived services and isolated workloads (the local AI plane -- `mios-llm-light`, the gated `mios-llm-heavy`/`mios-llm-heavy-alt` lanes, `mios-pgvector`, `mios-open-webui`, `mios-searxng`; plus Forgejo, Ceph daemons, k3s workloads, NUT). | `etc/containers/systemd/*.container` (Quadlet) or `usr/share/distrobox/`. |
 | **VM** (libvirt / QEMU) | Heavyweight guest workloads needing a full guest OS (Windows guests, legacy distros, hardware-emulation testbeds). | Driven by libvirt/QEMU from the host substrate. |
 

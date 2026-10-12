@@ -1,7 +1,7 @@
 // AI-hint: Heavy regen-and-diff projection checks for miosd drift runner.
-// AI-related: tools/generate-pod-quadlets.py, tools/generate-egress-firewall.py, automation/98-drift-checks.sh
+// AI-related: tools/native/mios-gen/src/pod_quadlets.rs, tools/native/mios-gen/src/main.rs, automation/98-drift-checks.sh
 
-use super::regen::{regen_and_diff, regen_and_diff_shell};
+use super::regen::regen_and_diff_shell;
 use super::{Check, DriftCtx, Verdict};
 
 pub struct PodQuadletsCheck;
@@ -17,12 +17,20 @@ impl Check for PodQuadletsCheck {
         // path automation/98-drift-checks.sh has always checked. The old
         // usr/share/mios/quadlets has never existed, so this check hard-failed
         // the in-image `miosd drift-check` on every build.
-        regen_and_diff(
-            ctx,
-            "tools/generate-pod-quadlets.py",
-            &["usr/share/containers/systemd"],
-            &["--check"],
-        )
+        let output = crate::native_generator::command(&ctx.root, "pod-quadlets", true)
+            .and_then(|mut command| command.output().map_err(|e| e.to_string()));
+        match output {
+            Ok(out) if out.status.success() => {
+                Verdict::Pass("Native Quadlet projection matches SSOT".into())
+            }
+            Ok(out) => Verdict::Fail(format!(
+                "Native Quadlet check failed ({}): {} {}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout).trim(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+            Err(error) => Verdict::Fail(error),
+        }
     }
 }
 
@@ -35,12 +43,20 @@ impl Check for EgressFirewallCheck {
         "Assert generated egress firewall rules match committed egress.nft"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        regen_and_diff(
-            ctx,
-            "tools/generate-egress-firewall.py",
-            &["usr/share/mios/security/egress.nft"],
-            &["--check"],
-        )
+        match crate::native_generator::command(&ctx.root, "egress-firewall", true)
+            .and_then(|mut command| command.output().map_err(|e| e.to_string()))
+        {
+            Ok(out) if out.status.success() => {
+                Verdict::Pass("Native egress firewall matches SSOT".into())
+            }
+            Ok(out) => Verdict::Fail(format!(
+                "Native egress firewall check failed ({}): {} {}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout).trim(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+            Err(error) => Verdict::Fail(error),
+        }
     }
 }
 

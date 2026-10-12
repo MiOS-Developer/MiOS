@@ -9,16 +9,10 @@ for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-GEN_SCRIPT="${ROOT}/tools/generate-pod-quadlets.py"
-TOML_FILE="${ROOT}/usr/share/mios/mios.toml"
+TOML_FILE="${MIOS_TOML:-${ROOT}/usr/share/mios/mios.toml}"
 OUT_DIR="${ROOT}/usr/share/containers/systemd"
 
-mios_log "Generating Quadlets from ${TOML_FILE} to ${OUT_DIR}"
-
-if [[ ! -f "$GEN_SCRIPT" ]]; then
-    mios_err "generate-pod-quadlets.py not found at $GEN_SCRIPT"
-    exit 1
-fi
+mios_log "Generating Quadlets with native mios-gen from ${TOML_FILE}"
 
 TARGET_DIR="/usr/share/containers/systemd"
 if [[ -w "$TARGET_DIR" ]]; then
@@ -27,23 +21,15 @@ fi
 
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
+          /usr/bin/miosd \
           /usr/libexec/mios/miosd \
-          "${ROOT}/src/mios-rs/target/release/miosd" \
-          "${ROOT}/src/mios-rs/target/debug/miosd"; do
+          "${ROOT}/src/mios-rs/target/release/miosd"; do
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-# Both legs run the same generator -- miosd generate-quadlets execs
-# tools/generate-pod-quadlets.py -- so this dispatch decides who invokes it,
-# not which implementation renders. The environment is identical on both sides
-# for that reason.
-if [[ -n "$_miosd" ]]; then
-    MIOS_ROOT="$ROOT" MIOS_TOML="$TOML_FILE" MIOS_POD_OUT="$OUT_DIR" "$_miosd" generate-quadlets
-    mios_ok "Quadlets generated into ${OUT_DIR} via miosd"
-else
-    MIOS_ROOT="$ROOT" MIOS_TOML="$TOML_FILE" MIOS_POD_OUT="$OUT_DIR" python3 "$GEN_SCRIPT"
-    mios_ok "Quadlets generated into ${OUT_DIR}"
-fi
+[[ -n "$_miosd" ]] || { mios_err "Native miosd is required; install the SSOT release catalog"; exit 1; }
+MIOS_ROOT="$ROOT" MIOS_VENDOR_TOML="$TOML_FILE" MIOS_POD_OUT="$OUT_DIR" "$_miosd" generate-quadlets
+mios_ok "Quadlets generated into ${OUT_DIR} via native mios-gen"

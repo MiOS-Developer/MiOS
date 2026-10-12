@@ -4,7 +4,7 @@
 # AI-functions: cdp_responding, wait_for_cdp, kill_existing
 set -uo pipefail
 
-CDP_PORT="${HERMES_BROWSER_CDP_PORT:-${MIOS_PORT_CHROME_CDP:-9222}}"
+CDP_PORT="${HERMES_BROWSER_CDP_PORT:-${MIOS_PORTS_CHROME_CDP:-9222}}"
 PROFILE_DIR="${HERMES_BROWSER_PROFILE_DIR:-/var/lib/mios/hermes-browser/profile}"
 if [ -n "${HERMES_BROWSER_HEADLESS:-}" ]; then
     HEADLESS="$HERMES_BROWSER_HEADLESS"
@@ -13,15 +13,7 @@ elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
 else
     HEADLESS=1
 fi
-if [ -z "${HERMES_BROWSER_APP_ID:-}" ]; then
-    if [ -d "/var/lib/flatpak/app/org.chromium.Chromium" ] || [ -d "${HOME:-}/.local/share/flatpak/app/org.chromium.Chromium" ]; then
-        APP_ID="org.chromium.Chromium"
-    else
-        APP_ID="com.google.ChromeDev"
-    fi
-else
-    APP_ID="$HERMES_BROWSER_APP_ID"
-fi
+APP_ID="${HERMES_BROWSER_APP_ID:-${MIOS_CHROME_FLATPAK_ID:-com.google.ChromeDev}}"
 LOG_FILE="${HERMES_BROWSER_LOG:-/var/lib/mios/hermes-browser/launch.log}"
 
 mkdir -p "$PROFILE_DIR" "$(dirname "$LOG_FILE")"

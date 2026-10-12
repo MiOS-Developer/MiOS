@@ -12,6 +12,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `hermes-worker.path` | `usr/lib/systemd/system` | MiOS' watch for the Hermes venv -> (re)start hermes-worker |
 | `hermes-worker.service` | `usr/lib/systemd/system` | MiOS' Hermes gateway (native tool loop, port key `hermes`) |
 | `k3s.service` | `usr/lib/systemd/system` | Lightweight Kubernetes (K3s) |
+| `llama-rpc-server.service` | `usr/lib/systemd/system` | MiOS' llama.cpp RPC Server (Headless Blade Compute Node) |
 | `mios-account-sync.service` | `usr/lib/systemd/system` | MiOS' live PostgreSQL-to-OS user account sync daemon |
 | `mios-additionalimagestores-perms.path` | `usr/lib/systemd/system` | MiOS': watch additionalimagestores for perm changes; retrigger chmod |
 | `mios-additionalimagestores-perms.service` | `usr/lib/systemd/system` | MiOS': enforce world-readable perms on /usr/lib/containers/storage |
@@ -22,6 +23,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-agents.service` | `usr/lib/systemd/system` | MiOS' A2O agents super-container (Claude + agy/Gemini + tmux war room + code-server) |
 | `mios-ai-firstboot.service` | `usr/lib/systemd/system` | MiOS' AI first-boot provisioning (agent venv + llama.cpp GGUFs) |
 | `mios-ai-firstboot.timer` | `usr/lib/systemd/system` | MiOS' AI first-boot provisioning retry (until the sentinel is written) |
+| `mios-ai-legacy-forward.service` | `usr/lib/systemd/system` | MiOS' AI Legacy Port Forwarder (8640 -> 8700) |
 | `mios-ai.target` | `usr/lib/systemd/system` | MiOS AI Services Target |
 | `mios-aios-refresh.service` | `usr/lib/systemd/system` | MiOS' AIOS refresh -- regenerate SSOT-driven role SYSTEMs + discover the A2A fleet |
 | `mios-aios-refresh.timer` | `usr/lib/systemd/system` | Periodic MiOS AIOS refresh (SSOT role SYSTEMs + A2A fleet discovery) |
@@ -62,6 +64,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-embed-backfill.service` | `usr/lib/systemd/system` | MiOS' Embedding Backfill Worker |
 | `mios-embed-backfill.timer` | `usr/lib/systemd/system` | MiOS' Embedding Backfill Timer |
 | `mios-endpoint.target` | `usr/lib/systemd/system` | MiOS' Endpoint Role |
+| `mios-enforcer.container` | `usr/share/containers/systemd` | MiOS' Tetragon eBPF Kernel Enforcement Plane (Standalone Out-of-Process Quarantine) |
+| `mios-fhs-sync.service` | `usr/lib/systemd/system` | MiOS' FHS root overlay & host-guest topology runtime sync daemon |
 | `mios-finetune-serve.service` | `usr/lib/systemd/system` | MiOS' fine-tune serve (base+adapter refiner backend) |
 | `mios-firewall-ports.service` | `usr/lib/systemd/system` | MiOS': ensure firewalld has the MiOS service ports open |
 | `mios-firewall.service` | `usr/lib/systemd/system` | MiOS': Declarative nftables container micro-segmentation firewall |
@@ -87,6 +91,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-ha-node.target` | `usr/lib/systemd/system` | MiOS' HA Cluster Node Role |
 | `mios-hardware-fallback.service` | `usr/lib/systemd/user` | MiOS' Automated Network and Audio Fallback Manager |
 | `mios-headless.target` | `usr/lib/systemd/system` | MiOS' Headless Role |
+| `mios-headscale-firstboot.service` | `usr/lib/systemd/system` | MiOS' Headscale mesh VPN coordinator first-boot config generator |
+| `mios-headscale.container` | `usr/share/containers/systemd` | MiOS' Headscale Mesh VPN Control Plane Coordinator |
 | `mios-hermes-browser-worker.service` | `usr/lib/systemd/system` | MiOS' Hermes-Browser-Worker (ChromeDev CDP :9223 for the worker) |
 | `mios-hermes-browser.service` | `usr/lib/systemd/system` | MiOS' Hermes-Browser (ChromeDev w/ CDP for Hermes-Agent) |
 | `mios-hermes-firstboot.service` | `usr/lib/systemd/system` | MiOS' Hermes-Agent first-boot config + key generation |
@@ -104,8 +110,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-libexec-perms.path` | `usr/lib/systemd/system` | MiOS': watch /usr/libexec/mios for perm changes; retrigger chmod |
 | `mios-libexec-perms.service` | `usr/lib/systemd/system` | MiOS': enforce exec perms (go+rX) on /usr/libexec/mios |
 | `mios-libvirtd-setup.service` | `usr/lib/systemd/system` | MiOS' first-boot libvirtd wiring |
-| `mios-llm-heavy-alt.container` | `usr/share/containers/systemd` | MiOS' SGLang heavy lane (OpenAI /v1, HiCache CPU KV-offload; native 256k context) |
-| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' vLLM heavy lane (OpenAI /v1, PagedAttention + APC; gated) |
+| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated) |
 | `mios-llm-light.container` | `usr/share/containers/systemd` | MiOS' LLM-Light (llama.cpp multi-model + KV-paging lane, served via the upstream llama-swap proxy, FOSS) |
 | `mios-llm-worker@.container` | `usr/share/containers/systemd` | MiOS' swarm worker %i (single-model llama-server, FOSS) |
 | `mios-log-archiver.service` | `usr/lib/systemd/system` | MiOS Structured Parquet Log Archiver and Vector Indexer |
@@ -142,7 +147,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-pstore.service` | `usr/lib/systemd/system` | MiOS Persistent Kernel Crash Buffer Extractor |
 | `mios-pxe-hub.container` | `usr/share/containers/systemd` | MiOS' PXE Boot Hub |
 | `mios-radosgw.container` | `usr/share/containers/systemd` | MiOS' Ceph RADOS Gateway (S3 Object Storage) |
-| `mios-registry.service` | `usr/lib/systemd/system` | MiOS Local OCI Distribution Registry (T-510) |
+| `mios-registry.service` | `usr/lib/systemd/system` | MiOS Local OCI Distribution Registry (task_454) |
 | `mios-role.service` | `usr/lib/systemd/system` | MiOS' System Init & Role Engine |
 | `mios-searxng.container` | `usr/share/containers/systemd` | MiOS' SearXNG metasearch (privacy-respecting search proxy) |
 | `mios-secret-init.service` | `usr/lib/systemd/system` | MiOS Quadlet Secrets Environment Initialization |
@@ -203,5 +208,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-machines.mount` | `usr/lib/systemd/system` | Virtual Machine and Container Storage (Compatibility) |
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 
-<!-- derived from tracked unit files (195 unit(s)) -->
+<!-- derived from tracked unit files (200 unit(s)) -->
 <!-- /MIOS-GEN:units -->

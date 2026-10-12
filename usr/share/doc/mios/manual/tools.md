@@ -71,7 +71,7 @@ never one holding git-tracked files.
 
 tools/generate-pipeline-index.py
 Generates usr/share/mios/reference/pipeline-index.tsv from automation/[0-9][0-9]-*.sh scripts.
-Enforces 1:1 mapping for stage identity coordinates (ADR-0012, WS-NUMBER AGY-644).
+Enforces 1:1 mapping for stage identity coordinates (ADR-0012, WS-NUMBER task_1577).
 
 <!-- mios-src:f43995ec2b39 from tools/generate-pipeline-index.py:2-6 -->
 
@@ -607,9 +607,9 @@ added now would be one nobody checked.
 
 <!-- mios-src:3c264cead283 from tools/check-task-schema.py:22-26 -->
 
-### `## AGY-106..122 -- Campaign banner` covers every id in the...
+### `## task_1139 -- Campaign banner` covers every id in the...
 
-`## AGY-106..122 -- Campaign banner` covers every id in the range, so
+`## task_1139 -- Campaign banner` covers every id in the range, so
 a Dep naming one of them names a task that exists -- but the banner
 plus its individual children is the NORMAL shape, not a collision, so
 only individual headings count toward the duplicate ceiling.
@@ -728,7 +728,7 @@ The shell commands a workflow actually executes.
 
 build_exports() returns the UNEXPANDED map on purpose: it renders
 automation/lib/globals.{sh,ps1}, which bash and PowerShell expand at source
-time, and keeping `${MIOS_PORT_AGENT_PIPE}` live there is what lets an
+time, and keeping `${MIOS_PORTS_AGENT_PIPE}` live there is what lets an
 operator's pre-export propagate. mios-resolver --emit=json is the resolved
 view and bakes. Comparing the two directly measured that difference in
 representation, not a divergence between the resolvers -- 103 "mismatches"
@@ -756,9 +756,9 @@ prefix from SSOT rather than by a list baked in here.
 A sibling unit test is not tooling to port. Counting them made this
 ratchet pull against check_module_test_coverage the same way
 max_libexec_verbs did below, and 36% of what it measured was test
-code. Floor re-baselined down by what the exclusion removes (T-1044).
+code. Floor re-baselined down by what the exclusion removes (task_981).
 
-<!-- mios-src:320398d89ba2 from tools/drift-checks.py:234-239 -->
+<!-- mios-src:7c8c73010910 from tools/drift-checks.py:234-239 -->
 
 ### A test's OWN name is not evidence that it invokes anything...
 
@@ -799,3 +799,115 @@ a committed table. Blobs are identical in every clean checkout of the
 same commit, so the gate converges.
 
 <!-- mios-src:ce4d50bb40a1 from tools/roadmap-index.py:269-276 -->
+
+### Size-optimized release for the Windows wallpaper daemon...
+
+Size-optimized release for the Windows wallpaper daemon (its profile
+previously sat in the member manifest, where cargo silently ignored
+it). lto/strip/panic are workspace-level profile knobs cargo cannot
+set per package.
+
+<!-- mios-src:29470f63dacf from tools/native/Cargo.toml:54-57 -->
+### Operator ruling
+
+Operator ruling: the ceiling governs SUB-MODULES only -- the packages named by
+[refactor].submodule_roots. The agent-pipe root (server.py, the mios_*.py
+components) holds main modules, where features fold in. Shims are excluded --
+they are ~28 lines of lazy re-export.
+
+<!-- mios-src:f7cb199fb90d from tools/check-testhygiene.py:556-559 -->
+
+### The dev container IS the MiOS image plus container wiring...
+
+The dev container IS the MiOS image plus container wiring, so anything that
+would make it a different image is refused: a second stage, a FROM other than
+the ARG, an ARG default other than [image].ref, a file brought in from the
+build context, or a RUN that installs a package, toolchain or payload. A
+component the devcontainer lacks belongs in the OS pipeline instead.
+
+<!-- mios-src:af11408df797 from tools/ci-suites.py:320-324 -->
+
+### The Python twin is mios_toml.emit_exports over a merge it...
+
+The Python twin is mios_toml.emit_exports over a merge it performs ITSELF.
+load_merged() with no layers hands the merge to mios-resolver whenever one
+is on PATH, and the check would then measure the Rust resolver against
+itself. emit_exports also resolves ${MIOS_*} cross-references, which is the
+baked form --emit=json prints. (tools/render-globals.py, the old Python
+side, was ported to `mios-gen render-globals` in 5776d4ff; importing it
+crashed this check on every run since.)
+
+<!-- mios-src:28ef4adc99fb from tools/drift-checks.py:109-115 -->
+
+### Container-side listening ports. This used to hard-code...
+
+Container-side listening ports. This used to hard-code (8080, 3002), the
+SearXNG and firecrawl upstream internals; SSOT now names that class
+`*_internal`. They may appear as the container side of a mapping or in an
+in-container `X=N`, never as a bare host-side `PublishPort=N`.
+
+<!-- mios-src:c32f4d0a96ae from tools/drift-checks.py:2559-2562 -->
+
+### A reviewed eval of non-agent input carries this annotation...
+
+A reviewed eval of non-agent input carries this annotation on the line
+DIRECTLY above it -- the remedy the message below prescribes. 5f2aadbf
+dropped the exemption and kept the message, so following the remedy no
+longer cleared the violation. Twin of eval_safety in
+src/mios-rs/miosd/src/drift/security.rs (Law 13).
+
+<!-- mios-src:25efb2748554 from tools/drift-checks.py:2865-2869 -->
+
+### What every devcontainer.json owns, as the resolver emits it...
+
+What every devcontainer.json owns, as the resolver emits it (emit_exports: stack_id offset and
+    ${MIOS_*} applied): forwardPorts from each [ports] key of [dotfiles.devcontainer].forward_port_keys,
+    in order; containerEnv[n] for each MIOS_* name n of .container_env_keys; remoteUser from
+    [identity].username; hostRequirements from .host_requirements. Exit 3 on an absent or empty list,
+    a name without a resolved (integer, for a port) value, or an invalid user or host requirement.
+
+<!-- mios-src:138dc3a7f084 from tools/sync-dotfiles.py:77-81 -->
+
+### Merge the CLIENT-PORTABLE subset of the SSOT settings into...
+
+Merge the CLIENT-PORTABLE subset of the SSOT settings into every
+    devcontainer.json / *.code-workspace settings block and PRUNE every
+    [dotfiles.vscode] desktop-only / User-only / unregistered key already there.
+    SSOT keys win on conflict; any surface-only key (installer-specific zenMode.*
+    tuning) survives. A devcontainer.json's forwardPorts array, remoteUser,
+    hostRequirements and the containerEnv entries in dc_owned are owned. Returns [(label, reason)] -- one line per key and file, so
+    --check names exactly what is wrong where.
+
+<!-- mios-src:dde5b5ab080e from tools/sync-dotfiles.py:268-274 -->
+### Task-plane drift gates. One module, one subcommand per...
+
+Task-plane drift gates. One module, one subcommand per gate.
+
+The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
+
+<!-- mios-src:d84f2b14bb71 from tools/check-tasks.py:5-8 -->
+### ADR-0030
+
+ADR-0030: max_tracked_files counts EVERY tracked file, dependencies
+included (the operator: "500 disparate files -- TOTAL/OVERALL"), and the
+domains below partition the same listing.
+
+<!-- mios-src:adf6366d5571 from tools/drift-checks.py:279-281 -->
+### ADR-0030
+
+ADR-0030: the 500-file cap is the PLATFORM -- every tracked file of mios.git
+AND its sister repo mios-bootstrap, dependencies included (the operator: "500
+files is the target for the entire MiOS Platform"). max_tracked_files stays
+this repo's own count, which ratchet-direction compares with main's tree; the
+domains below partition the platform listing, bootstrap paths prefixed.
+
+<!-- mios-src:eaf1382f49a8 from tools/drift-checks.py:279-283 -->
+### ADR-0030
+
+ADR-0030: 500 tracked files EACH per MiOS repo, dependencies included (the
+operator: "500 total files EACH per MiOS repo(s)"). This repo's files are
+partitioned into the domains below; its sister repo mios-bootstrap has its
+own shrink-only ceiling and target. max_tracked_files is this repo's count,
+which ratchet-direction also compares with main's tree.
+
+<!-- mios-src:52f88e0dbf52 from tools/drift-checks.py:279-283 -->

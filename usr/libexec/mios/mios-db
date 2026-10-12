@@ -8,15 +8,16 @@ if [ "${1:-}" = "--config" ]; then
     shift
     for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
         if [ -r "$_ue" ]; then
+            # shellcheck source=usr/lib/mios/userenv.sh
             . "$_ue"
             break
         fi
     done
-    PG_HOST="${MIOS_PG_HOST:-localhost}"
-    PG_PORT="${MIOS_PORT_PGVECTOR:-8600}"
-    PG_USER="${MIOS_PG_USER:-mios}"
-    PG_PASS="${MIOS_PG_PASS:-mios}"
-    PG_DB="${MIOS_PG_DB:-mios}"
+    PG_HOST="${MIOS_PGVECTOR_HOST:-localhost}"
+    PG_PORT="${MIOS_PORTS_PGVECTOR:-8600}"
+    PG_USER="${MIOS_PGVECTOR_USER:-mios}"
+    PG_PASS="${MIOS_PGVECTOR_PASS:-mios}"
+    PG_DB="${MIOS_PGVECTOR_DB:-mios}"
 
     if [ "${1:-}" = "get" ]; then
         VAL_ESCAPED=$(echo "${2:-}" | sed "s/'/''/g")
@@ -38,19 +39,20 @@ fi
 
 for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     if [ -r "$_ue" ]; then
+        # shellcheck source=usr/lib/mios/userenv.sh
         . "$_ue"
         break
     fi
 done
 
 OWUI_DB="${MIOS_OWUI_DB:-/var/lib/mios/open-webui/webui.db}"
-EMBED_URL="${MIOS_EMBED_URL:-http://localhost:${MIOS_PORT_LLM_LIGHT:-8500}}"
+EMBED_URL="${MIOS_EMBED_URL:-http://localhost:${MIOS_PORTS_LLM_LIGHT:-8500}}"
 EMBED_MODEL="${MIOS_EMBED_MODEL:-nomic-embed-text}"
-PG_HOST="${MIOS_PG_HOST:-localhost}"
-PG_PORT="${MIOS_PORT_PGVECTOR:-8600}"
-PG_USER="${MIOS_PG_USER:-mios}"
-PG_PASS="${MIOS_PG_PASS:-mios}"
-PG_DB="${MIOS_PG_DB:-mios}"
+PG_HOST="${MIOS_PGVECTOR_HOST:-localhost}"
+PG_PORT="${MIOS_PORTS_PGVECTOR:-8600}"
+PG_USER="${MIOS_PGVECTOR_USER:-mios}"
+PG_PASS="${MIOS_PGVECTOR_PASS:-mios}"
+PG_DB="${MIOS_PGVECTOR_DB:-mios}"
 
 JSON=0
 FILE=""
@@ -62,8 +64,9 @@ PG_SQL=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --ns)          DB_NS="$2"; shift 2 ;;
-        --db)          DB_DB="$2"; shift 2 ;;
+        # Retired SurrealDB namespace/database selectors: still accepted, and
+        # still require their value, so existing invocations parse unchanged.
+        --ns|--db)     : "$2"; shift 2 ;;
         --json)        JSON=1; shift ;;
         -f)            FILE="$2"; shift 2 ;;
         --owui)        MODE="owui"; OWUI_SQL="$2"; shift 2 ;;
@@ -148,8 +151,8 @@ if [ "$MODE" = "pg" ]; then
         fi
     fi
     if [ -x /usr/libexec/mios/mios-pg-query ]; then
-        export MIOS_PG_HOST="$PG_HOST" MIOS_PG_PORT="$PG_PORT" \
-               MIOS_PG_USER="$PG_USER" MIOS_PG_DB="$PG_DB"
+        export MIOS_PGVECTOR_HOST="$PG_HOST" MIOS_PG_PORT="$PG_PORT" \
+               MIOS_PGVECTOR_USER="$PG_USER" MIOS_PGVECTOR_DB="$PG_DB"
         if [ -n "$FILE" ]; then
             exec /usr/libexec/mios/mios-pg-query < "$FILE"
         else
@@ -163,8 +166,8 @@ fi
 
 if [ "$MODE" = "pgjson" ]; then
     if [ -x /usr/libexec/mios/mios-pg-query ]; then
-        export MIOS_PG_HOST="$PG_HOST" MIOS_PG_PORT="$PG_PORT" \
-               MIOS_PG_USER="$PG_USER" MIOS_PG_DB="$PG_DB"
+        export MIOS_PGVECTOR_HOST="$PG_HOST" MIOS_PG_PORT="$PG_PORT" \
+               MIOS_PGVECTOR_USER="$PG_USER" MIOS_PGVECTOR_DB="$PG_DB"
         exec /usr/libexec/mios/mios-pg-query --exec-json
     fi
     echo "Mios-db:" >&2

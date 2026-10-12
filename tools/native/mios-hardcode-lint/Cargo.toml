@@ -1,0 +1,12 @@
+# AI-hint: Fast native static CLI enforcement gate for the NO-HARDCODE law (Architectural Law 7).
+# AI-related: usr/libexec/mios/mios-hardcode-lint, automation/98-drift-checks.sh, usr/share/mios/mios.toml
+[package]
+name = "mios-hardcode-lint"
+version.workspace = true
+edition.workspace = true
+description = "Fast native enforcement gate for the NO-HARDCODE law (Law 7)"
+
+[dependencies]
+regex.workspace = true
+toml.workspace = true
+walkdir.workspace = true

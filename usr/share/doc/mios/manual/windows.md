@@ -313,3 +313,34 @@ nothing real). We count only ports the VM binds on 0.0.0.0 / * / [::] (loopback-
 only VM ports aren't WSL-forwarded to Windows, so Tailscale can't reach them).
 
 <!-- mios-src:fbe05fbcd2d8 from usr/share/mios/windows/mios-tailscale-serve.ps1:101-105 -->
+### resolve the WSL distro generatively from the registry...
+
+---- resolve the WSL distro generatively from the registry -------------------
+(wsl.exe -l emits UTF-16 that mangles under the default console encoding ->
+"p" instead of "podman-MiOS-DEV"; the Lxss registry is clean + null-free.)
+Prefer a distro whose name carries the MiOS product (that's where the MiOS
+MCP server lives). A non-MiOS default distro cannot serve the native component.
+
+<!-- mios-src:ac481736771e from usr/share/mios/windows/mios-claude-mcp-setup.ps1:29-33 -->
+
+### resolve the MiOS WSL distro generatively...
+
+---- resolve the MiOS WSL distro generatively ---------------------------------
+The shared Resolve-MiosDistro when the MiOS globals are loaded; otherwise the
+Lxss registry walk it was lifted from (wsl.exe -l emits UTF-16 that mangles
+under the default console encoding), preferring a distro that carries the
+MiOS product. Resolved here, in the operator's session, so -Install can pin it
+for the service, whose own HKCU is not the operator's.
+
+<!-- mios-src:4f8208af0d53 from usr/share/mios/windows/mios-igpu-server.ps1:120-125 -->
+
+### Center the window on its current monitor's work area....
+
+Center the window on its current monitor's work area.
+Usage: window-center <hwnd-or-pid>
+Operator directive "MiOS apps STILL don't center
+launch and don't self center" -- Windows apps launched via
+Start-Process appear at default Win32 placement (often top-
+left or last-position). This puts them in the screen center.
+
+<!-- mios-src:ab8c3383025b from usr/share/mios/windows/mios-pc-control.ps1:336-341 -->

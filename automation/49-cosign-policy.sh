@@ -12,18 +12,10 @@ source "$(dirname "$0")/lib/common.sh"
 mios_log "Ensuring cosign + trust roots + policy.json"
 
 if ! command -v cosign >/dev/null 2>&1; then
-    COSIGN_FALLBACK_VERSION="v2.6.4"
-    COSIGN_VERSION=$( (scurl -s https://api.github.com/repos/sigstore/cosign/releases?per_page=30 \
-        | grep -Po '"tag_name": "\Kv2\.[^"]+' \
-        | head -n1) 2>/dev/null || true)
-    if [[ -z "$COSIGN_VERSION" ]]; then
-        [[ -n "$COSIGN_FALLBACK_VERSION" ]] || die "Cosign: api.github.com lookup empty AND no fallback pin"
-        mios_warn "Cosign: api.github.com lookup empty"
-        COSIGN_VERSION="$COSIGN_FALLBACK_VERSION"
-    fi
-    COSIGN_BASE_URL="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+    COSIGN_VERSION="${MIOS_SECURITY_SIGSTORE_COSIGN_VERSION:?SSOT cosign version unresolved}"
+    COSIGN_BASE_URL="${MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL:?SSOT cosign release URL unresolved}/${COSIGN_VERSION}"
     record_version cosign "$COSIGN_VERSION" "https://github.com/sigstore/cosign/releases/tag/${COSIGN_VERSION}"
-    mios_log "Resolved cosign latest v2.x: ${COSIGN_VERSION}"
+    mios_log "Resolved SSOT cosign version: ${COSIGN_VERSION}"
     mios_log "Downloading cosign ${COSIGN_VERSION} static binary"
     mkdir -p /tmp/cosign-dl
     scurl -sfL "${COSIGN_BASE_URL}/cosign-linux-amd64" -o /tmp/cosign-dl/cosign-linux-amd64
@@ -43,35 +35,23 @@ if ! command -v cosign >/dev/null 2>&1; then
     rm -rf /tmp/cosign-dl
 fi
 
-SYSFILES="/ctx/system_files"
+SYSFILES="${CTX:-/ctx}"
 install -d -m 0755 /usr/share/pki/containers
 install -d -m 0755 /usr/lib/containers/registries.d
 
-# Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
-# nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed (T-1018). Note the elif below is dead too: SYSFILES is
-# /ctx/system_files, and the Containerfile builds /ctx from automation/, usr/,
-# etc/, tools/ and VERSION -- it never creates a system_files/ directory, and
-# the repo has none. Both non-default branches were unreachable, so policy.json
-# arrived purely as an overlay copy and this stage generated nothing.
+# Native projection is required; an existing policy file does not prove freshness.
 _miosd=""
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for _c in "${MIOS_MIOSD_BIN:-}" \
+          /usr/bin/miosd \
           /usr/libexec/mios/miosd \
-          "${_here}/src/mios-rs/target/release/miosd" \
-          "${_here}/src/mios-rs/target/debug/miosd"; do
+          "${_here}/src/mios-rs/target/release/miosd"; do
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    MIOS_ROOT="${MIOS_ROOT:-$_here}" "$_miosd" cosign-policy
-    mios_ok "Policy.json generated via miosd"
-elif [[ -f "${SYSFILES}/usr/lib/containers/policy.json" ]]; then
-    install -m 0644 "${SYSFILES}/usr/lib/containers/policy.json" /usr/lib/containers/policy.json
-    mios_ok "Installed /usr/lib/containers/policy.json"
-else
-    [[ -f /usr/lib/containers/policy.json ]] || mios_warn "Missing policy.json"
-fi
+[[ -n "$_miosd" ]] || die "Native miosd is required for signing policy projection"
+MIOS_ROOT="${MIOS_ROOT:-$_here}" "$_miosd" cosign-policy
+mios_ok "Policy.json generated via native mios-gen"
 
 for f in fulcio_v1.crt.pem rekor.pub ublue-os.pub ublue-cosign.pub mios-cosign.pub; do
     src="${SYSFILES}/usr/share/pki/containers/${f}"

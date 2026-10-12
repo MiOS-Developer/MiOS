@@ -75,8 +75,8 @@ CALLS="$(
   export MIOS_GREENBOOT_PROBE_AGENT_PIPE_KIND="http"
   export MIOS_GREENBOOT_PROBE_AGENT_PIPE_PATH="/v1/models"
   export MIOS_GREENBOOT_PROBE_HERMES_UNIT="hermes-worker.service"
-  export MIOS_PORT_AGENT_PIPE=8700 MIOS_PORT_LLM_LIGHT=8500
-  export MIOS_PORT_PGVECTOR=8600 MIOS_PORT_HERMES=8720
+  export MIOS_PORTS_AGENT_PIPE=8700 MIOS_PORTS_LLM_LIGHT=8500
+  export MIOS_PORTS_PGVECTOR=8600 MIOS_PORTS_HERMES=8720
   # shellcheck disable=SC1091
   . "${WORK}/drv.sh"
 )"
@@ -105,9 +105,6 @@ EMPTY="$(
 [[ -z "$EMPTY" ]] || die "an empty critical set must probe nothing, got: $EMPTY"
 ok "empty critical set probes nothing"
 
-# ==============================================================================
-# Part 2: Reachability Probe & Posture Behavior (ADR-0016 D8)
-# ==============================================================================
 
 {
     sed -n '/^_tcp_up() {/,/^}/p' "$SCRIPT"
@@ -116,6 +113,7 @@ ok "empty critical set probes nothing"
 } > "${WORK}/fn_reach.sh"
 grep -q '_blade_reachable' "${WORK}/fn_reach.sh" || die "could not extract _blade_reachable -- renamed?"
 
+# shellcheck disable=SC2034  # read by _tcp_up, which fn_reach.sh (sourced below) defines
 PROBE_TIMEOUT=3
 # shellcheck disable=SC1091
 . "${WORK}/fn_reach.sh"

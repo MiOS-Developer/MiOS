@@ -309,7 +309,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_vector.py (T-1092)
+# Consolidated from test_mios_vector.py (task_1006)
 # ==============================================================================
 # AI-hint: stdlib unit test for pgvector schema and cosine similarity matching.
 import os
@@ -322,7 +322,7 @@ except ImportError:
 def setUpModule():
     if psycopg is None:
         raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORT_PGVECTOR", "8600")
+    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
     conn_str = f"postgresql://mios:mios@localhost:{port}/mios"
     try:
         with psycopg.connect(conn_str, connect_timeout=1) as conn:

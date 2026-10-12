@@ -1,22 +1,29 @@
-# AI-hint: Generated from mios.toml SSOT by tools/generate-cargo-manifests.py. DO NOT EDIT DIRECTLY.
+# AI-hint: Generated from mios.toml SSOT by mios-gen cargo-manifests. DO NOT EDIT DIRECTLY.
 [workspace]
 members = [
     "generate-names-registry",
+    "mios-agent-relay",
     "mios-ai-config",
     "mios-aiplane-lint",
     "mios-bake-plan",
+    "mios-browser",
     "mios-comment-lex",
     "mios-drift-runner",
     "mios-edge-status",
+    "mios-gen",
+    "mios-hardcode-lint",
     "mios-install",
+    "mios-launch",
     "mios-render-quadlets",
     "mios-resolver",
+    "mios-service-core",
     "mios-size-ceiling",
     "mios-ssot-lint",
     "mios-ssot-walk",
     "mios-task",
     "mios-template-compile",
     "mios-template-conform",
+    "mios-toml-get",
     "mios-toolchain-pin",
     "mios-unit-gen",
     "mios-version-check",
@@ -32,6 +39,7 @@ edition = "2021"
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
 figment = { version = "0.10", features = ["toml", "env"] }
+flate2 = "1.0"
 miette = { version = "5.10", features = ["fancy"] }
 regex = "1.10"
 serde = { version = "1.0", features = ["derive"] }
@@ -40,4 +48,13 @@ sha2 = "0.10"
 tempfile = "3.10"
 thiserror = "1.0"
 toml = "0.8"
+toml_edit = "0.20"
 walkdir = "2.4"
+
+# Size-optimized release for the Windows wallpaper daemon (its profile
+# previously sat in the member manifest, where cargo silently ignored
+# it). lto/strip/panic are workspace-level profile knobs cargo cannot
+# set per package.
+[profile.release.package.mios-wallpaperd]
+opt-level = "z"
+codegen-units = 1

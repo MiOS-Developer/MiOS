@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: 30-fixture unit test suite for the mios_comments comment classifier (AGY-1583).
+# AI-hint: 30-fixture unit test suite for the mios_comments comment classifier (task_2224).
 # AI-related: usr/lib/mios/mios_comments.py, usr/share/mios/mios.toml, docs/design/doc-generative-documentation.md
 import os
 import sys
@@ -17,7 +17,7 @@ class TestMiosManualComments(unittest.TestCase):
     def setUpClass(cls):
         cls.merged = mios_toml.load_merged()
         cls.policy = Policy.from_toml(cls.merged)
-        cls.refidx = RefIndex.build(ROOT)
+        cls.refidx = RefIndex(ROOT)  # class fixtures; staleness is test_mios_comments'
 
     def _make_block(self, path="test.py", text="test comment", start_line=1, lines=1, words=2,
                     attach="pre-code", kind="line", style="#", anchor_code="x = 1", in_header=False):
@@ -128,7 +128,7 @@ class TestMiosManualComments(unittest.TestCase):
                 self.assertIn(v.cls, ("STAY", "MIGRATE", "DROP", "READONLY", "MIGRATE_HEADER"))
 
     def test_10_ledger_duplicate_preservation(self):
-        """Prove that Ledger preserves all duplicate rows with identical sha12 hashes (AGY-1611)."""
+        """Prove that Ledger preserves all duplicate rows with identical sha12 hashes (task_2252)."""
         import importlib.util
         import importlib.machinery
         manual_script = os.path.join(ROOT, "usr", "libexec", "mios", "mios-manual")
@@ -144,6 +144,50 @@ class TestMiosManualComments(unittest.TestCase):
             ledger.add(row)
 
         self.assertEqual(len(ledger.values()), 5, "Ledger must preserve all 5 duplicate rows without silent row loss")
+
+    def test_11_rehash_carries_landings_across_an_id_rewrite_only(self):
+        """A comment whose ids were rewritten keeps its landing; a comment whose words changed does not."""
+        import importlib.machinery, importlib.util, shutil, subprocess, tempfile, types
+        loader = importlib.machinery.SourceFileLoader(
+            "mios_manual", os.path.join(ROOT, "usr", "libexec", "mios", "mios-manual"))
+        mm = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(mm)
+        root = tempfile.mkdtemp(prefix="rehash-")
+        try:
+            git = lambda *a: subprocess.run(["git", "-C", root, *a], check=True, capture_output=True)
+            git("init", "-q")
+            src = os.path.join(root, "tool.sh")
+            def write(rel, text):
+                p = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(text)
+            write("tool.sh", "# Closes K-001 by folding the parser into the gate.\necho a\n\n"
+                             "# The second note explains the retry budget.\necho b\n")
+            old = {b.start_line: b.sha12 for b in lex(src)}
+            write("doc.md", f"<!-- mios-src:{old[1]} -->\nCloses K-001.\n<!-- mios-src:{old[4]} -->\nRetry.\n")
+            row = lambda line, sha: "\t".join(["tool.sh", str(line), str(line), "1", "8", sha, "MIGRATE", "x",
+                                                "", "0", "doc.md", "a", "8", "0"])
+            write(mm.LEDGER_REL, "# " + "\t".join(mm.COLUMNS) + "\n" + row(1, old[1]) + "\n" + row(4, old[4]) + "\n")
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "before")
+            write("tool.sh", "# Closes task_1 by folding the parser into the gate.\necho a\n\n"
+                             "# The second note explains the timeout budget instead.\necho b\n")
+            new = {b.start_line: b.sha12 for b in lex(src)}
+            self.assertNotEqual(new[1], old[1])
+            rc = mm.cmd_rehash(types.SimpleNamespace(root=root, rev="HEAD", dry_run=False))
+            self.assertEqual(rc, 0)
+            with open(os.path.join(root, mm.LEDGER_REL), encoding="utf-8") as fh:
+                ledger = fh.read()
+            with open(os.path.join(root, "doc.md"), encoding="utf-8") as fh:
+                doc = fh.read()
+            self.assertIn(new[1], ledger)
+            self.assertIn(f"mios-src:{new[1]}", doc)
+            self.assertNotIn(old[1], ledger + doc)
+            self.assertIn(old[4], ledger, "a comment whose words changed keeps its old hash")
+            self.assertIn(f"mios-src:{old[4]}", doc)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main()

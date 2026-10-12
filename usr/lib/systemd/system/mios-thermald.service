@@ -1,4 +1,4 @@
-# AI-hint: Systemd service unit for proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (T-543, AGY-2141).
+# AI-hint: Systemd service unit for proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (task_487, task_2720).
 # AI-doc: usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md
 
 [Unit]

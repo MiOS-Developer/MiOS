@@ -30,9 +30,10 @@ function Get-MiosSsotValue {
         [string]$Default = '',
         [string]$TomlPath = ''
     )
+    $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
     $candidatePaths = if ($TomlPath) { @($TomlPath) } else {
         @(
-            (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
+            (Join-Path $userHome '.config\mios\mios.toml'),
             'C:\ProgramData\MiOS\mios.toml',
             'C:\MiOS\usr\share\mios\mios.toml',
             'C:\Windows\Web\MiOS\mios.toml',
@@ -263,6 +264,7 @@ function Resolve-MiosMonitorScript {
 }
 
 function Center-MiosMonitorWindow {
+    param([int]$WantedWidth = 0, [int]$WantedHeight = 0)
     if (-not ([System.Management.Automation.PSTypeName]'MiosMonitorCenter').Type) {
         Add-Type -TypeDefinition @'
 using System;
@@ -282,7 +284,7 @@ public static class MiosMonitorCenter {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
-    public static bool Center() {
+    public static bool Center(int wantedWidth = 0, int wantedHeight = 0) {
         bool centered = false;
         EnumWindows((hwnd, param) => {
             if (!IsWindowVisible(hwnd)) return true;
@@ -298,8 +300,8 @@ public static class MiosMonitorCenter {
                 info.cbSize = Marshal.SizeOf(typeof(MonitorInfo));
                 IntPtr monitor = MonitorFromWindow(hwnd, 2);
                 if (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info) && GetWindowRect(hwnd, out rect)) {
-                    int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
-                    int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+                    int width = (wantedWidth > 0) ? Math.Min(wantedWidth, info.work.Right - info.work.Left) : Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
+                    int height = (wantedHeight > 0) ? Math.Min(wantedHeight, info.work.Bottom - info.work.Top) : Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
                     if (width > 0 && height > 0) {
                         int x = info.work.Left + (info.work.Right - info.work.Left - width) / 2;
                         int y = info.work.Top + (info.work.Bottom - info.work.Top - height) / 2;
@@ -317,7 +319,7 @@ public static class MiosMonitorCenter {
 }
 '@ -ErrorAction Stop
     }
-    return [MiosMonitorCenter]::Center()
+    return [MiosMonitorCenter]::Center($WantedWidth, $WantedHeight)
 }
 
 function Start-MiosMonitor {
@@ -328,11 +330,20 @@ function Start-MiosMonitor {
     $mon = Resolve-MiosMonitorScript
     if (-not $mon) { return $null }
 
+    $cols = [int](Get-MiosSsotValue -Section 'terminal.monitor' -Key 'cols' -Default '80')
+    $rows = [int](Get-MiosSsotValue -Section 'terminal.monitor' -Key 'rows' -Default '20')
+    $cellW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_w_px' -Default '10')
+    $cellH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_h_px' -Default '20')
+    $chromeW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_w_px' -Default '20')
+    $chromeH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_h_px' -Default '12')
+    $wantedW = ($cols * $cellW) + $chromeW
+    $wantedH = ($rows * $cellH) + $chromeH
+
     $escapedPath = [regex]::Escape($mon)
     $alreadyRunning = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match $escapedPath -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match 'mios-mon') } |
         Select-Object -First 1
-    if ($alreadyRunning -and (Center-MiosMonitorWindow)) { return $alreadyRunning }
+    if ($alreadyRunning -and (Center-MiosMonitorWindow -WantedWidth $wantedW -WantedHeight $wantedH)) { return $alreadyRunning }
 
     $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
     if (-not $python) { return $null }
@@ -348,16 +359,10 @@ function Start-MiosMonitor {
     $profile = Get-MiosSsotValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN'
     $scheme = Get-MiosSsotValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS'
     $mode = Get-MiosSsotValue -Section 'theme' -Key 'launch_mode' -Default 'focus'
-    $cols = [int](Get-MiosSsotValue -Section 'terminal.install' -Key 'cols' -Default '80')
-    $rows = [int](Get-MiosSsotValue -Section 'terminal.install' -Key 'rows' -Default '40')
-    $cellW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_w_px' -Default '10')
-    $cellH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_h_px' -Default '20')
-    $chromeW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_w_px' -Default '20')
-    $chromeH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_h_px' -Default '12')
     Add-Type -AssemblyName System.Windows.Forms
     $work = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
-    $x = [int]($work.X + [Math]::Max(0, $work.Width - (($cols * $cellW) + $chromeW)) / 2)
-    $y = [int]($work.Y + [Math]::Max(0, $work.Height - (($rows * $cellH) + $chromeH)) / 2)
+    $x = [int]($work.X + [Math]::Max(0, $work.Width - $wantedW) / 2)
+    $y = [int]($work.Y + [Math]::Max(0, $work.Height - $wantedH) / 2)
     $modeArgs = switch ($mode) {
         'focus' { @('--focus') }
         'maximized' { @('--maximized') }
@@ -367,12 +372,77 @@ function Start-MiosMonitor {
         default { @() }
     }
     $modeText = @($modeArgs) -join ' '
-    $wtArgs = "$modeText --pos `"$x,$y`" --size `"$cols,$rows`" -w new new-tab --profile `"$profile`" --colorScheme `"$scheme`" --title `"MiOS Build Monitor`" `"$python`" `"$mon`" --pipeline"
+
+    $tmuxExe = Get-Command tmux.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+    if (-not $tmuxExe) {
+        foreach ($tc in @(
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Links\tmux.exe",
+            "$env:ProgramFiles\WinGet\Links\tmux.exe"
+        )) { if (Test-Path -LiteralPath $tc) { $tmuxExe = $tc; break } }
+    }
+    if ($tmuxExe) {
+        & $tmuxExe kill-session -t mios-mon 2>$null
+        $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+        if (-not $pwsh) {
+            foreach ($cand in @(
+                "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe",
+                "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                "$env:ProgramFiles\PowerShell\7-preview\pwsh.exe"
+            )) {
+                if (Test-Path -LiteralPath $cand) { $pwsh = $cand; break }
+            }
+        }
+        if (-not $pwsh) { $pwsh = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+        $monitorShell = $pwsh
+
+        $interactiveProfile = if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') {
+            'M:\MiOS\powershell\profile.ps1'
+        } elseif (Test-Path -LiteralPath "$env:USERPROFILE\Documents\PowerShell\Microsoft.PowerShell_profile.ps1") {
+            "$env:USERPROFILE\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+        } else { '' }
+
+        $interactiveShell = if ($interactiveProfile) {
+            "$pwsh -NoLogo -NoExit -Command `"`$env:MIOS_APP_CONTEXT='1'; . '$interactiveProfile'`""
+        } else {
+            "$pwsh -NoLogo -NoExit"
+        }
+
+        $monRunner = "`"$python`" `"$mon`" --pipeline"
+        if ($mode -in @('fullscreen', 'focusFullscreen')) {
+            # 1 + 4 Expanded View: Head (smaller ~38%) on LEFT, Monitor + 3 Workers (2x2 grid ~62%) on RIGHT
+            & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $cols -y $rows $interactiveShell
+            & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+            & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+            & $tmuxExe split-window -h -p 62 -t mios-mon:0.0 $monRunner
+            & $tmuxExe split-window -v -t mios-mon:0.1 $interactiveShell
+            & $tmuxExe split-window -h -t mios-mon:0.1 $interactiveShell
+            & $tmuxExe split-window -h -t mios-mon:0.2 $interactiveShell
+            & $tmuxExe select-pane -t mios-mon:0.1
+        } elseif ($cols -ge $rows) {
+            # Landscape Golden Ratio: Head (smaller 38.2%) on LEFT, Monitor (bigger 61.8%) on RIGHT
+            & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $cols -y $rows $interactiveShell
+            & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+            & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+            & $tmuxExe split-window -h -p 62 -t mios-mon:0.0 $monRunner
+            & $tmuxExe select-pane -t mios-mon:0.1
+        } else {
+            # Portrait & Mobile Golden Ratio: Monitor (bigger 61.8%) on TOP, Head (smaller 38.2%) on BOTTOM
+            & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $cols -y $rows $monRunner
+            & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+            & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+            & $tmuxExe split-window -v -p 38 -t mios-mon:0.0 $interactiveShell
+            & $tmuxExe select-pane -t mios-mon:0.0
+        }
+        $wtInner = "`"$tmuxExe`" attach-session -t mios-mon"
+    } else {
+        $wtInner = "`"$python`" `"$mon`" --pipeline"
+    }
+    $wtArgs = "$modeText --pos `"$x,$y`" --size `"$cols,$rows`" -w new new-tab --profile `"$profile`" --colorScheme `"$scheme`" --title `"MiOS Build Monitor`" $wtInner"
     try {
         $p = Start-Process -FilePath $wtExe -ArgumentList $wtArgs -WindowStyle Normal -PassThru -ErrorAction Stop
         $deadline = (Get-Date).AddSeconds(6)
         while ((Get-Date) -lt $deadline) {
-            [void](Center-MiosMonitorWindow)
+            [void](Center-MiosMonitorWindow -WantedWidth $wantedW -WantedHeight $wantedH)
             Start-Sleep -Milliseconds 250
         }
         return $p
@@ -468,7 +538,7 @@ function Resolve-MiosDistro {
 }
 
 # ============================================================================
-#  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
+#  MiOS-Data & OCI Bulk Staging (task_239 / task_3411)
 # ============================================================================
 
 function Read-MiosTarEntry {
@@ -824,7 +894,7 @@ function Invoke-MiosStage {
         }
     }
 
-    # T-261: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
+    # task_239: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
     if ($diskSizeGB -ge $MinDiskGB) {
         Write-Host "Disk >= ${MinDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store..." -ForegroundColor Cyan
         $dataDir = Join-Path $drivePath "MiOS-Data"
@@ -1024,7 +1094,7 @@ function Invoke-MiosVerify {
 }
 
 # ============================================================================
-#  Backward Compatibility Aliases (T-1118)
+#  Backward Compatibility Aliases (task_3411)
 # ============================================================================
 function Invoke-MiOSFieldStage { Invoke-MiosStage @args }
 function Invoke-MiOSFieldVerify { Invoke-MiosVerify @args }

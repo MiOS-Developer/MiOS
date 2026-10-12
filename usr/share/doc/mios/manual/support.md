@@ -17,7 +17,7 @@ Findings:
   * conversational tone in body prose ("operator-flagged YYYY-MM-DD")
   * hardcoded paths bound to a single user (/mnt/c/Users/<name>,
     /var/home/<name>); operator name is an SSOT variable
-    ([identity].username -> MIOS_USER)
+    ([identity].username -> MIOS_IDENTITY_USERNAME)
   * hardcoded hostnames (MiOS-955, mios-ec377, ...)
   * project-internal phase jargon in YAML frontmatter description
     (descriptions get surfaced to LLM context; jargon noise wastes

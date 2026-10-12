@@ -14,7 +14,7 @@
   <name replace-wildcards="yes">MiOS A2A on %h</name>
   <service protocol="any">
     <type>${MIOS_A2A_MDNS_SERVICE_TYPE}</type>
-    <port>${MIOS_PORT_AGENT_PIPE}</port>
+    <port>${MIOS_PORTS_AGENT_PIPE}</port>
     <txt-record>proto=a2a</txt-record>
     <txt-record>card=/.well-known/agent-card.json</txt-record>
   </service>

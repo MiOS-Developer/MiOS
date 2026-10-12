@@ -40,8 +40,8 @@ if [[ -r /etc/mios/install.env ]]; then
 fi
 
 BUILD_ARGS=()
-[[ -n "${MIOS_LINUX_USER:-}"        ]] && BUILD_ARGS+=(--build-arg "MIOS_USER=${MIOS_LINUX_USER}")
-[[ -n "${MIOS_HOSTNAME:-}"          ]] && BUILD_ARGS+=(--build-arg "MIOS_HOSTNAME=${MIOS_HOSTNAME}")
+[[ -n "${MIOS_LINUX_USER:-}"        ]] && BUILD_ARGS+=(--build-arg "MIOS_IDENTITY_USERNAME=${MIOS_LINUX_USER}")
+[[ -n "${MIOS_IDENTITY_HOSTNAME:-}"          ]] && BUILD_ARGS+=(--build-arg "MIOS_IDENTITY_HOSTNAME=${MIOS_IDENTITY_HOSTNAME}")
 [[ -n "${MIOS_AI_MODEL:-}"          ]] && BUILD_ARGS+=(--build-arg "MIOS_AI_MODEL=${MIOS_AI_MODEL}")
 [[ -n "${MIOS_AI_EMBED_MODEL:-}"    ]] && BUILD_ARGS+=(--build-arg "MIOS_AI_EMBED_MODEL=${MIOS_AI_EMBED_MODEL}")
 

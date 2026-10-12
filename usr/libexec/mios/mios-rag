@@ -36,7 +36,7 @@ import sys
 import urllib.request
 
 EMBED_ENDPOINT = os.environ.get("MIOS_RAG_EMBED_ENDPOINT",
-                                f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}").rstrip("/")  # mios-llm-light /v1
+                                f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}").rstrip("/")  # mios-llm-light /v1
 EMBED_MODEL = os.environ.get("MIOS_RAG_EMBED_MODEL", "nomic-embed-text")
 DOCS_DIR = os.environ.get("MIOS_RAG_DOCS_DIR", "/usr/share/mios/docs")
 CHUNK_CHARS = int(os.environ.get("MIOS_RAG_CHUNK_CHARS", "700"))

@@ -1,10 +1,11 @@
-# AI-hint: Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (T-273).
+# AI-hint: Verb -> bash COMMAND BUILDER, extracted VERBATIM from mios_dispatch.py (task_251).
 # AI-doc: usr/share/doc/mios/manual/routing.md
 """Verb -> bash command builder (extracted from the dispatch chokepoint)."""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import re
 import shlex
@@ -49,10 +50,11 @@ def _sandbox_wrap_cmd(tool: str, cmd: str,
                       profile: "mios_sandbox.SandboxProfile",
                       session_id: Optional[str] = None) -> "tuple":
     import subprocess
-    cephfs_enable = os.environ.get("MIOS_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+    cephfs_enable = os.environ.get("MIOS_STORAGE_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
     if cephfs_enable:
-        sess_id = session_id or uuid.uuid4().hex[:8]
-        sess_id = "".join(c for c in sess_id if c.isalnum() or c in "-_")[:32]
+        # A digest preserves stable isolation for arbitrary external IDs without
+        # separator filtering, truncation aliases or shell-significant Unicode.
+        sess_id = hashlib.sha256((session_id or uuid.uuid4().hex).encode("utf-8")).hexdigest()[:32]
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         runtime_dir = f"/run/user/{uid}/session-{sess_id}"
         try:
@@ -97,7 +99,7 @@ def normalize_container_exec(script: str) -> str:
     script = re.sub(
         # A flag's ARGUMENT may not start with '-'; that would be the next flag.
         # With [^\s]+ both parses were legal and the group backtracked
-        # exponentially on model-controlled input (~1.64^n). See tasks.jsonl T-336.
+        # exponentially on model-controlled input (~1.64^n). See tasks.jsonl task_280.
         r'\b(podman\s+exec\s+(?:-[a-zA-Z\d\-]+(?:\s+[^-\s]\S*)?\s+)*[\w\-\.]+)\s+(bash|sh|zsh|/bin/bash|/bin/sh|/bin/zsh)(\s+-[a-zA-Z\d\-]+)*\s*$',
         r'\1 true',
         script,
@@ -274,4 +276,3 @@ def _build_dispatch_cmd(tool: str, args: dict) -> Optional[str]:
         cmd += " -"
         return cmd
     return None
-

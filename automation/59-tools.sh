@@ -1,6 +1,6 @@
 #!/bin/bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Sets executable permissions for the core mios- suite of CLI tools in /usr/bin/ and installs auxiliary scripts like mios-toggle-headless.
+# AI-hint: Sets executable permissions for the core mios- CLI tools, bakes the pinned native code-server with its verified workbench patches, and installs auxiliary scripts like mios-toggle-headless.
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 # shellcheck disable=SC1090  # log.sh resolves at runtime: build ctx or installed
@@ -27,7 +27,37 @@ for tool in "${TOOLS[@]}"; do
     fi
 done
 
-[[ -f "/usr/bin/mios-dash" ]] || ln -sf /usr/libexec/mios/mios-dashboard.sh /usr/bin/mios-dash 2>/dev/null || true
+[[ -f "/usr/bin/mios-dash" ]] || ln -sf /usr/libexec/mios/mios-dashboard /usr/bin/mios-dash 2>/dev/null || true
+
+# code-server, native: the [image.sidecars].code_server release (the pin the
+# mios-code-server sidecar runs), its workbench stylesheet and both workbench.js
+# patches baked and verified. A container that cannot run the sidecar (the
+# devcontainer, Codespaces, a cloud session) starts this one on [ports].code_server;
+# an upstream release that moves a patch anchor fails the build.
+mios_log "Install and bake code-server"
+_src="$(cd "${SCRIPT_DIR}/.." && pwd)"
+_toml_get() { MIOS_TOML_ROOT="$_src" python3 "$_src/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
+_cs_image="$(_toml_get image.sidecars code_server)"
+_cs_version="${_cs_image##*:}"
+[[ "$_cs_image" == *:* && "$_cs_version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+    || { mios_err "[image.sidecars].code_server '${_cs_image}' has no pinned release tag"; exit 1; }
+case "$(uname -m)" in
+    x86_64)  _cs_arch=amd64 ;;
+    aarch64) _cs_arch=arm64 ;;
+    *) mios_err "No code-server RPM for $(uname -m)"; exit 1 ;;
+esac
+dnf install -y "https://github.com/coder/code-server/releases/download/v${_cs_version}/code-server-${_cs_version}-${_cs_arch}.rpm"
+_cs_scrollbar="$(_toml_get theme.edge code_server_scrollbar_px)"
+_cs_perimeter="$(_toml_get theme.edge code_server_perimeter_px)"
+[[ -n "$_cs_scrollbar" && -n "$_cs_perimeter" ]] \
+    || { mios_err "[theme.edge].code_server_scrollbar_px or code_server_perimeter_px is empty"; exit 1; }
+_cs_bake=(--target /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.html
+          --css "$_src/usr/share/mios/themes/code-server-terminal.css"
+          --scrollbar-px "$_cs_scrollbar" --perimeter-px "$_cs_perimeter")
+python3 "$_src/usr/libexec/mios/mios-vscode-custom-css" patch "${_cs_bake[@]}"
+python3 "$_src/usr/libexec/mios/mios-vscode-custom-css" verify "${_cs_bake[@]}"
+mios_ok "code-server ${_cs_version} baked and verified"
+
 if [ -f "/usr/libexec/mios/mios-vscode-custom-css" ]; then
     chmod +x "/usr/libexec/mios/mios-vscode-custom-css"
     ln -sf "/usr/libexec/mios/mios-vscode-custom-css" "/usr/bin/mios-vscode-custom-css" 2>/dev/null || true

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import json
 import os
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -572,6 +574,70 @@ class TestDBSSOTMaterialize(unittest.TestCase):
 
 
 
+class TestNativeResolverDBOverlay(unittest.TestCase):
+    """The optional native baseline must obey the same DB precedence as TOML."""
+
+    def setUp(self):
+        mios_toml.clear_cache()
+        self.addCleanup(mios_toml.clear_cache)
+        self.vendor = {
+            "ports": {"categories": {"forge": {
+                "base": 8400, "stride": 10, "members": ["forge_http"],
+            }}},
+            "packages": {"dev_overlay": {"sections": ["editor"]}},
+            "vendor_only": {"keep": True},
+        }
+
+    def test_database_overlay_after_native_or_file_baseline(self):
+        for native in (True, False):
+            for packages in ({}, {"db_only": {"sections": ["shell"]}}, None):
+                with self.subTest(native=native, packages=packages):
+                    baseline = copy.deepcopy(self.vendor)
+                    database = {
+                        "ports": {"categories": {"forge": {"base": 9200}}},
+                        "packages": packages,
+                    }
+                    mios_toml.clear_cache()
+                    with patch.object(mios_toml, "_native_resolver_json", return_value={"merged": baseline} if native else None), \
+                         patch.object(mios_toml, "layer_paths", return_value=["fixture"]), \
+                         patch.object(mios_toml, "_load_one", return_value=baseline) as read_layer, \
+                         patch.object(mios_db_config, "is_db_authoritative", return_value=True), \
+                         patch.object(mios_db_config, "load_db_config", return_value=database) as read_db:
+                        merged = mios_toml.load_merged()
+                        self.assertEqual(merged["ports"]["forge_http"], 9200)
+                        self.assertEqual(merged["packages"]["dev_overlay"], self.vendor["packages"]["dev_overlay"])
+                        self.assertTrue(merged["vendor_only"]["keep"])
+                        if packages:
+                            self.assertIn("db_only", merged["packages"])
+                        self.assertIs(mios_toml.load_merged(), merged)
+                        read_db.assert_called_once_with()
+                        self.assertEqual(read_layer.call_count, 0 if native else 1)
+
+    def test_native_baseline_when_database_disabled_or_unavailable(self):
+        for authoritative, database in ((False, {}), (True, {}), (True, OSError("offline fixture"))):
+            with self.subTest(authoritative=authoritative, database=database):
+                mios_toml.clear_cache()
+                with patch.object(mios_toml, "_native_resolver_json", return_value={"merged": copy.deepcopy(self.vendor)}), \
+                     patch.object(mios_db_config, "is_db_authoritative", return_value=authoritative), \
+                     patch.object(mios_db_config, "load_db_config", return_value=database, side_effect=database if isinstance(database, Exception) else None) as read_db:
+                    merged = mios_toml.load_merged()
+                    self.assertEqual(merged["ports"]["forge_http"], 8400)
+                    self.assertTrue(merged["vendor_only"]["keep"])
+                    self.assertEqual(read_db.call_count, int(authoritative))
+
+    def test_explicit_layers_bypass_native_database_and_cache(self):
+        mios_toml._LOAD_MERGED_CACHE = {"cached": True}
+        with patch.object(mios_toml, "_native_resolver_json", side_effect=AssertionError("unexpected native read")), \
+             patch.object(mios_db_config, "is_db_authoritative", side_effect=AssertionError("unexpected DB read")) as read_db, \
+             patch.object(mios_toml, "_load_one", return_value=self.vendor) as read_layer:
+            merged = mios_toml.load_merged(layers=["explicit"])
+            self.assertEqual(merged["ports"]["forge_http"], 8400)
+            self.assertNotIn("cached", merged)
+            read_layer.assert_called_once_with("explicit")
+            read_db.assert_not_called()
+            self.assertEqual(mios_toml._LOAD_MERGED_CACHE, {"cached": True})
+
+
 # ======================================================================
 # from tests/test-pg-events.py
 # ======================================================================
@@ -582,7 +648,7 @@ from mios_pg_events import EventBus, AgentEvent
 
 
 class TestPgEvents(unittest.TestCase):
-    """Tests for T-342: mios_pg_events -- PostgreSQL LISTEN/NOTIFY event bus."""
+    """Tests for task_286: mios_pg_events -- PostgreSQL LISTEN/NOTIFY event bus."""
 
     def test_inject_and_dispatch(self):
         """Injected events are dispatched to subscribers within SLA."""

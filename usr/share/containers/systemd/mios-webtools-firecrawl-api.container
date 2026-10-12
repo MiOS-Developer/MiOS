@@ -9,10 +9,10 @@ Wants=mios-webtools-redis.service
 
 [Container]
 ContainerName=mios-webtools-firecrawl-api
-Environment=REDIS_URL=redis://127.0.0.1:${MIOS_PORT_REDIS:-8565}
-Environment=REDIS_RATE_LIMIT_URL=redis://127.0.0.1:${MIOS_PORT_REDIS:-8565}
+Environment=REDIS_URL=redis://127.0.0.1:${MIOS_PORTS_REDIS:-8565}
+Environment=REDIS_RATE_LIMIT_URL=redis://127.0.0.1:${MIOS_PORTS_REDIS:-8565}
 Environment=HOST=127.0.0.1
-Environment=PORT=${MIOS_PORT_FIRECRAWL:-8820}
+Environment=PORT=${MIOS_PORTS_FIRECRAWL:-8820}
 Environment=USE_DB_AUTHENTICATION=false
 Environment=NUM_WORKERS_PER_QUEUE=2
 Environment=PLAYWRIGHT_MICROSERVICE_URL=
@@ -20,6 +20,7 @@ Environment=PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 Environment=BULL_AUTH_KEY=mios
 Environment=LOGGING_LEVEL=INFO
 Environment=NODE_ENV=production
+Environment=ENV=local
 Exec=pnpm run start:production
 Group=0
 Image=localhost/mios-firecrawl:v1.0.0

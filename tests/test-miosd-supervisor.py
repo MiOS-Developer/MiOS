@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Test suite for T-397: Native Rust miosd daemon supervisor and state manager.
-# AI-related: usr/lib/systemd/system/miosd.service, src/mios-rs/miosd/src/daemon/
+# AI-hint: Test suite for task_341: Native Rust miosd daemon supervisor and state manager.
+# AI-related: usr/lib/systemd/system/miosd.service, src/mios-rs/miosd/src/daemon.rs
 
 import json
 import os

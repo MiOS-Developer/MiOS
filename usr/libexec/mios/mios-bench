@@ -113,14 +113,95 @@ def _print_table(rep: dict):
         print(l)
 
 
+def _print_verification_table(rep: dict):
+    b = rep["baseline"]
+    c = rep["candidate"]
+    lines = [
+        "================================================================",
+        "  MiOS Darwin Gödel Machine (DGM) Consistency Verification Gate",
+        "================================================================",
+        f"  Evaluation Param k:     {rep['k']}",
+        "----------------------------------------------------------------",
+        "  Metric              Baseline       Candidate      Delta",
+        "----------------------------------------------------------------",
+        f"  pass@1:             {b['pass_at_1']:.4f}         {c['pass_at_1']:.4f}         {rep['delta_accuracy']:+.4f}",
+        f"  pass@k:             {b['pass_at_k']:.4f}         {c['pass_at_k']:.4f}         {rep['delta_pass_at_k']:+.4f}",
+        f"  pass^k (tau-bench): {b['pass_hat_k']:.4f}         {c['pass_hat_k']:.4f}         {rep['delta_pass_hat_k']:+.4f}",
+        f"  accuracy:           {b['accuracy']:.4f}         {c['accuracy']:.4f}         {rep['delta_accuracy']:+.4f}",
+        f"  stability:          {b['stability']:.4f}         {c['stability']:.4f}         {rep['delta_stability']:+.4f}",
+        f"  security:           {b['security']:.4f}         {c['security']:.4f}         {rep['delta_security']:+.4f}",
+        f"  utility:            {b['utility']:.4f}         {c['utility']:.4f}         {rep['delta_utility']:+.4f}",
+        "================================================================",
+    ]
+    if rep["passed"]:
+        lines.append(f"  VERDICT: [PASS] Positive delta utility confirmed ({rep['delta_utility']:+.4f}).")
+        lines.append("           Mutation clears SWE-bench / tau-bench gate for git commit.")
+    else:
+        lines.append(f"  VERDICT: [FAIL] Negative delta or regression detected ({rep['delta_utility']:+.4f}).")
+        for reg in rep.get("regressions", []):
+            lines.append(f"           - {reg}")
+        lines.append("           Commit BLOCKED per DGM meta-agentic self-improvement law.")
+    lines.append("================================================================")
+    for l in lines:
+        print(l)
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     records = _records_of(_load_json(args.results))
     if not records:
         sys.stderr.write("mios-bench: no trial records found\n")
         return 1
+    if getattr(args, "baseline", None):
+        base_recs = _records_of(_load_json(args.baseline))
+        passes, report = mb.verify_positive_delta(base_recs, records, k=max(1, int(args.k)))
+        if getattr(args, "json", False):
+            print(json.dumps(report, indent=2))
+        else:
+            _print_verification_table(report)
+        return 0 if passes else 1
     rep = _report(records, max(1, int(args.k)))
     _print_table(rep)
     return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    candidate_path = args.candidate
+    baseline_path = args.baseline
+    if not candidate_path or not baseline_path:
+        sys.stderr.write("mios-bench verify: both candidate and --baseline paths are required\n")
+        return 2
+
+    try:
+        cand_doc = _load_json(candidate_path)
+        base_doc = _load_json(baseline_path)
+    except Exception as e:
+        sys.stderr.write(f"mios-bench verify: error loading results: {e}\n")
+        return 2
+
+    cand_recs = _records_of(cand_doc)
+    base_recs = _records_of(base_doc)
+
+    if not cand_recs:
+        sys.stderr.write("mios-bench verify: no candidate trial records found\n")
+        return 1
+    if not base_recs:
+        sys.stderr.write("mios-bench verify: no baseline trial records found\n")
+        return 1
+
+    k = max(1, int(args.k))
+    min_delta = float(getattr(args, "min_delta", 0.0) or 0.0)
+    allow_neutral = bool(getattr(args, "allow_neutral", False))
+
+    passes, report = mb.verify_positive_delta(
+        base_recs, cand_recs, k=k, min_delta=min_delta, allow_neutral=allow_neutral
+    )
+
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        _print_verification_table(report)
+
+    return 0 if passes else 1
 
 
 def _expect_ok(answer: str, expect) -> bool:
@@ -197,10 +278,32 @@ def cmd_run(args: argparse.Namespace) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(prog="mios-bench")
     sub = p.add_subparsers(dest="cmd", required=True)
+
     ps = sub.add_parser("score", help="score a results JSON (offline)")
     ps.add_argument("results")
     ps.add_argument("--k", type=int, default=8)
+    ps.add_argument("--baseline", default="", help="optional baseline results JSON for delta comparison")
+    ps.add_argument("--json", action="store_true", help="output JSON format")
     ps.set_defaults(func=cmd_score)
+
+    pv = sub.add_parser("verify", help="verify positive delta utility of candidate against baseline")
+    pv.add_argument("candidate", help="path to candidate results JSON")
+    pv.add_argument("--baseline", required=True, help="path to baseline results JSON")
+    pv.add_argument("--k", type=int, default=8, help="k trials (default 8)")
+    pv.add_argument("--min-delta", type=float, default=0.0, help="minimum delta utility required (default 0.0)")
+    pv.add_argument("--allow-neutral", action="store_true", help="allow neutral delta (delta == 0)")
+    pv.add_argument("--json", action="store_true", help="output JSON report")
+    pv.set_defaults(func=cmd_verify)
+
+    pg = sub.add_parser("gate", help="pre-commit consistency gate alias for verify")
+    pg.add_argument("candidate", help="path to candidate results JSON")
+    pg.add_argument("--baseline", required=True, help="path to baseline results JSON")
+    pg.add_argument("--k", type=int, default=8)
+    pg.add_argument("--min-delta", type=float, default=0.0)
+    pg.add_argument("--allow-neutral", action="store_true")
+    pg.add_argument("--json", action="store_true")
+    pg.set_defaults(func=cmd_verify)
+
     pr = sub.add_parser("run", help="run a suite against the agent-pipe endpoint")
     pr.add_argument("suite", nargs="?", default=None)
     pr.add_argument("--suite", dest="suite_opt", default=None)
@@ -209,9 +312,11 @@ def main() -> int:
     pr.add_argument("--out", default="")
     pr.add_argument("--timeout", type=float, default=120.0)
     pr.set_defaults(func=cmd_run)
+
     args = p.parse_args()
     return args.func(args)
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

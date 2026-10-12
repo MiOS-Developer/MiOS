@@ -57,7 +57,7 @@ pub fn compute_stack_offset(root: &Value) -> i64 {
 /// _toml_inline: scalar and array keys sorted, then nested-table keys sorted;
 /// a string with a backslash (and no quote or newline) as a literal string.
 /// Rendered here rather than by the toml crate, whose inline layout changed
-/// between releases (0.8.23 no longer puts nested tables last), so the twin
+/// between releases (newer releases no longer put nested tables last), so the twin
 /// held only in a workspace that happened to lock an older toml.
 pub fn toml_inline(v: &Value) -> String {
     match v {

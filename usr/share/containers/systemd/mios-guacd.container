@@ -10,7 +10,7 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-guacd
-Exec=guacd -b 0.0.0.0 -l ${MIOS_PORT_GUACD:-8560} -f
+Exec=guacd -b 0.0.0.0 -l ${MIOS_PORTS_GUACD:-8560} -f
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=811
 Image=docker.io/guacamole/guacd:latest

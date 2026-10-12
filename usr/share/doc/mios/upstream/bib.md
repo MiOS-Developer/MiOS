@@ -33,7 +33,7 @@ the gotchas that bit us.
 > Used by MiOS to convert `localhost/mios:latest` (the OCI image built by
 > `just build`) into deployable disk artifacts under `output/`.
 > Source: `Justfile`, `usr/share/doc/mios/guides/deploy.md`,
-> `config/artifacts/{bib,iso,qcow2,vhdx,wsl2}.toml`.
+> `config/artifacts/{bib,iso,wsl2}.toml`, `src/mios-rs/mios-build/src/artifacts.rs`.
 
 ## Project
 
@@ -57,9 +57,9 @@ leg, since BIB reads from `/var/lib/containers/storage`).
 | Type | MiOS Justfile recipe | Output location | Notes |
 | --- | --- | --- | --- |
 | `raw` | `just raw` | `output/*.raw` | ext4 root; bootable disk image |
-| `anaconda-iso` | `just iso` | `output/*.iso` | **Mount ONLY `iso.toml` — see warning below** |
-| `qcow2` | `just qcow2` | `output/*.qcow2` | requires `MIOS_USER_PASSWORD_HASH` (+ optional `MIOS_SSH_PUBKEY`) |
-| `vhd` | `just vhdx` (then `qemu-img convert`) | `output/*.vhdx` | BIB emits VPC `.vhd`; converted to `.vhdx` |
+| `anaconda-iso` | `just iso` (`miosd artifact-build iso`) | `build/iso/` | account and credential rendered into the kickstart |
+| `qcow2` | `just qcow2` (`miosd artifact-build qcow2`) | `build/qcow2/` | needs an operator credential; none is defaulted |
+| `vhd` | `just vhdx` (`miosd artifact-build vhdx`) | `build/vhdx/disk.vhdx` | BIB emits VPC `.vhd`; converted to a dynamic `.vhdx` |
 | `wsl2` | `just wsl2` | `output/wsl2/mios-rootfs.tar.gz` | **not a BIB type** — `podman export` of the rootfs for `wsl --import` |
 | `vmdk` | (not currently in Justfile) | — | available |
 | `gce` | (not currently in Justfile) | — | available |
@@ -84,13 +84,15 @@ exactly one config TOML.
 
 ## TOML schema (high-level)
 
-The real installer config is `config/artifacts/iso.toml`. It pins the root
-filesystem size, blacklists `nouveau` at install time, and — because BIB issue
-#528 makes `[customizations.user]` ignored when a kickstart is present — defines
-the user *inside* the kickstart:
+The ISO's committed recipe is `config/artifacts/iso.toml`. It pins the root
+filesystem size, blacklists `nouveau` at install time, and carries the
+kickstart. Because BIB issue #528 makes `[customizations.user]` ignored when a
+kickstart is present, the account belongs *inside* the kickstart -- and
+`miosd artifact-build iso` appends it there per build (`user`, `sshkey`), from
+`[identity]` and the operator's credential. The committed recipe holds neither:
 
 ```toml
-# config/artifacts/iso.toml — abridged
+# config/artifacts/iso.toml -- abridged
 [customizations.kernel]
 append = "rd.driver.blacklist=nouveau modprobe.blacklist=nouveau iommu=pt"
 
@@ -109,11 +111,15 @@ clearpart --all --initlabel --disklabel=gpt
 reqpart --add-boot
 part / --grow --fstype ext4
 network --bootproto=dhcp --device=link --activate --onboot=on
-user --name=mios --groups=wheel,render,video --iscrypted --password=$6$REPLACEME_WITH_SHA512_HASH$REPLACEME
-sshkey --username=mios "ssh-ed25519 AAAA_REPLACE_WITH_REAL_PUBKEY mios@operator"
 reboot --eject
 """
 ```
+
+The disk formats (`qcow2`, `vhdx`) have no committed recipe at all: the whole
+config is rendered from the SSOT -- `[[customizations.user]]` from `[identity]`
+plus the credential, and the `/` floor from `[bootc_install].root_min_gb`.
+Kernel arguments are not restated: bootc installs the image's own
+`usr/lib/bootc/kargs.d`.
 
 Mutually exclusive sections:
 
@@ -121,29 +127,67 @@ Mutually exclusive sections:
   (BIB #528: the kickstart wins; define the user there)
 - (other top-level sections coexist freely)
 
-## VHDX conversion idiom (`Justfile:vhdx`)
+## VHDX conversion (`miosd artifact-build vhdx`)
+
+BIB writes Hyper-V disks as VPC (`--type vhd`, `[deploy.formats.vhdx].bib_type`);
+Hyper-V Gen 2 wants `.vhdx`. The native builder converts with the `qemu-img`
+the BIB image itself carries, so the host needs nothing but rootful podman:
 
 ```bash
-sudo podman run --rm --privileged ... ${BIB} build --type vhd --rootfs ext4 ${LOCAL}
-qemu-img convert -f vpc -O vhdx output/*.vhd output/*.vhdx
-rm -f output/*.vhd
+podman run --rm -v OUT:/output --entrypoint qemu-img ${BIB} \
+    convert -p -O vhdx -o subformat=dynamic /output/vpc/disk.vhd /output/disk.vhdx
 ```
 
-BIB emits VPC format (`.vhd`); Hyper-V Gen 2 needs `.vhdx`.
-`qemu-img` is the universal converter. The recipe no-ops the conversion (and
-retains the `.vhd`) when `qemu-img` is absent.
+The `.vhd` is removed once the `.vhdx` exists, and a result under
+`[deploy.verify].min_bytes` fails the build.
 
-## Password hash & SSH key substitution
+## Credentials
 
-`qcow2` and `vhdx` recipes `sed`-substitute env vars into a
-`mktemp`-staged copy of the TOML at build time:
+A disk's credential is rendered per build into a 0600 temporary config and
+never committed. `miosd artifact-build` reads the names `[deploy.identity]`
+gives -- `MIOS_USER_PASSWORD_HASH` (`openssl passwd -6`) and `MIOS_SSH_PUBKEY`
+-- then `[auth]` in the layered `mios.toml`, and refuses to build when it finds
+neither; there is no default password. `mios-gate artifact-recipes` fails on a
+`REPLACE` placeholder or a committed credential in any recipe.
 
-- `MIOS_USER_PASSWORD_HASH` (from `openssl passwd -6 'pass'`) replaces
-  the placeholder `$6$REPLACEME_WITH_SHA512_HASH$REPLACEME`
-- `MIOS_SSH_PUBKEY` replaces `AAAA_REPLACE_WITH_REAL_PUBKEY`
+## Gotchas: what the published image hands BIB
 
-This keeps secrets out of the committed TOMLs. `just qcow2`/`just vhdx` fail fast
-if `MIOS_USER_PASSWORD_HASH` is unset.
+Four properties of the image itself stop every BIB disk build of it before a
+disk is written. Measured on MiOS-DEV against `ghcr.io/mios-dev/mios:latest`
+with `miosd artifact-build vhdx`, clearing each in a throwaway derived image to
+reach the next:
+
+- **The CoreOS `disk.yaml`.** MiOS's base is uCore, which is Fedora CoreOS,
+  and ships CoreOS's `/usr/lib/image-builder/bootc/disk.yaml`. Its root
+  partition carries `mkfs_options: { agcount: 2 }`, which the 2026-06-18
+  `bootc-image-builder:latest` cannot parse (`json: unknown field
+  "agcount"`). That file also declares an xfs root, which wins over
+  `--rootfs` (the manifest formats `/` as xfs) while
+  `[bootc_install].root_fs_type` is ext4.
+- **`VERSION_ID="0.3.0"`.** BIB names the distro `bootc-<ID>-<VERSION_ID>` and
+  accepts at most one dot in the version (`too many dots in the version (2)`).
+  MiOS's `os-release` puts its own release there; upstream's is `44`, and
+  `IMAGE_VERSION` already carries MiOS's.
+- **The baked bound-image store.** With `MIOS_BAKE_BOUND_IMAGES=1` the image
+  carries a container store under `/usr/lib/containers/storage`. BIB's
+  `org.osbuild.container-deploy` copies the mounted image with `cp -a`, which
+  cannot stat that store's nested overlay entries, so the build-root stage fails.
+- **Logically bound images without that store.** `bootc install` resolves every
+  `/usr/lib/bootc/bound-images.d` entry from container storage
+  (`[bootc_install].bound_images = "stored"`); an image built without the baked
+  store fails on the first one (`code.forgejo.org/forgejo/runner:7 does not
+  resolve to an image ID`). Bound images pulled on first use (P0-3) remove both
+  of the last two.
+
+Past those four, the host matters. `[security].composefs_mode = "verity"`
+needs fs-verity on the root filesystem: CoreOS's xfs root does not offer it,
+and with an ext4 root made with `verity: true` the MiOS-DEV kernel
+(6.18 `microsoft-standard-WSL2`, built without `CONFIG_FS_VERITY`) still
+cannot set it, so `bootc install` stops at `Filesystem does not support
+fs-verity`. BIB's `--in-vm`, which would bring its own kernel, fails in this
+build with `KeyError: 'graphroot'`. A disk of a verity image therefore needs a
+host kernel built with `CONFIG_FS_VERITY` -- Fedora's is, so MiOS-DEV on the
+Hyper-V provider would be; check a CI runner's before relying on it.
 
 ## Cross-refs
 

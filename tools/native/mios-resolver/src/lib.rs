@@ -1,17 +1,123 @@
 // AI-hint: Crate root for mios-resolver -- the native layered mios.toml resolver that subsumes mios_toml.py / userenv.sh / globals.ps1.
-// AI-related: usr/lib/mios/mios_toml.py, usr/lib/mios/userenv.sh, tools/native/mios-ssot-walk
-pub mod aliases;
+// AI-related: usr/lib/mios/mios_toml.py, usr/lib/mios/userenv.sh, tools/native/mios-ssot-walk, usr/share/mios/mios.toml
+pub mod names;
+// Public compatibility path; all name definitions live in the same module.
+pub use names as aliases;
 pub mod db_overlay;
 pub mod emit;
-pub mod emit_install_env;
-pub mod emit_json;
-pub mod emit_ps;
-pub mod emit_shell;
-pub mod error;
+pub use emit::{emit_build, emit_install_env, emit_json, emit_ps, emit_repos, emit_shell};
+pub mod error {
+    use miette::Diagnostic;
+    use thiserror::Error;
+
+    #[derive(Error, Debug, Diagnostic)]
+    pub enum ResolverError {
+        #[error("Failed to parse TOML layer at {path}: {source}")]
+        #[diagnostic(
+            code(mios_resolver::layer_parse),
+            help("Check TOML syntax in layer file")
+        )]
+        LayerParse {
+            path: String,
+            #[source]
+            source: toml::de::Error,
+        },
+
+        #[error("Type shape or schema mismatch: {msg}")]
+        #[diagnostic(code(mios_resolver::type_shape))]
+        TypeShape { msg: String },
+
+        #[error("Missing expected configuration layer: {path}")]
+        #[diagnostic(code(mios_resolver::missing_layer))]
+        MissingLayer { path: String },
+
+        #[error("Invalid hex color format: '{value}' under [colors].{key}")]
+        #[diagnostic(
+            code(mios_resolver::invalid_color_hex),
+            help("Colors must be valid 6-digit or 3-digit hex strings (e.g. #FFFFFF or #FFF)")
+        )]
+        InvalidColorHex { key: String, value: String },
+
+        #[error("Invalid non-integer port specification under [ports].{key}: '{value}'")]
+        #[diagnostic(
+            code(mios_resolver::invalid_port),
+            help("Port values must be valid 16-bit unsigned integers between 1 and 65535")
+        )]
+        InvalidPortValue { key: String, value: String },
+    }
+}
 pub mod expand;
 pub mod layers;
 pub mod merge;
-pub mod model;
+pub mod model {
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct IdentityConfig {
+        pub username: Option<String>,
+        pub hostname: Option<String>,
+        pub domain: Option<String>,
+        pub email: Option<String>,
+        pub role: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct LocaleConfig {
+        pub lang: Option<String>,
+        pub timezone: Option<String>,
+        pub keymap: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct PortsConfig {
+        pub stack_id: Option<i32>,
+        pub vllm: Option<u16>,
+        pub sglang: Option<u16>,
+        pub searxng: Option<u16>,
+        pub crawl4ai: Option<u16>,
+        pub firecrawl: Option<u16>,
+        pub open_webui: Option<u16>,
+        pub guacamole_web: Option<u16>,
+        pub pgvector: Option<u16>,
+        pub agent_pipe: Option<u16>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct ImageConfig {
+        pub name: Option<String>,
+        pub tag: Option<String>,
+        pub base: Option<String>,
+        pub sidecars: Option<HashMap<String, String>>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct AiConfig {
+        pub model: Option<String>,
+        pub embed_model: Option<String>,
+        pub endpoint: Option<String>,
+        pub ram_floor_gb: Option<u32>,
+        pub dir: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct NetworkConfig {
+        pub listen_host: Option<String>,
+        pub loopback_host: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct MiosModel {
+        pub identity: Option<IdentityConfig>,
+        pub locale: Option<LocaleConfig>,
+        pub ports: Option<PortsConfig>,
+        pub colors: Option<HashMap<String, String>>,
+        pub image: Option<ImageConfig>,
+        pub ai: Option<AiConfig>,
+        pub network: Option<NetworkConfig>,
+        pub env: Option<HashMap<String, String>>,
+    }
+}
 pub mod palette;
 pub mod ports;
 pub mod walk;
@@ -46,9 +152,7 @@ pub fn stack_offset_of(merged: &Value) -> i64 {
 /// active or forced, and [ports] derived from [ports.categories] last so an
 /// override in any tier re-derives.
 pub fn resolve_merged(root_dir: Option<&Path>, db_overlay: bool) -> Result<Value, ResolverError> {
-    let mut merged = layers::create_figment(root_dir)
-        .extract::<Value>()
-        .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+    let mut merged = layers::merge_layer_files(&layers::resolve_layer_paths(root_dir))?;
     db_overlay::maybe_apply_db_overlay(&mut merged, db_overlay);
     ports::derive_ports(&mut merged);
     Ok(merged)
@@ -58,13 +162,38 @@ pub fn resolve_merged(root_dir: Option<&Path>, db_overlay: bool) -> Result<Value
 /// derived the same way resolve_merged derives them, so a derived value the
 /// configurator echoes back is not frozen into the user tier.
 pub fn resolve_below_user(root_dir: Option<&Path>) -> Result<Value, ResolverError> {
-    let mut fig = figment::Figment::new();
-    for p in layers::resolve_layer_paths_below_user(root_dir) {
-        fig = fig.merge(<figment::providers::Toml as figment::providers::Format>::file(p));
+    let mut merged = layers::merge_layer_files(&layers::resolve_layer_paths_below_user(root_dir))?;
+    ports::derive_ports(&mut merged);
+    Ok(merged)
+}
+
+/// Deterministic source projections use only the selected root's vendor and
+/// host layers. Process loader pointers and the developer's home cannot alter them.
+pub fn resolve_projection(root: &Path) -> Result<Value, ResolverError> {
+    let mut layer_paths = Vec::new();
+    for (file, directory) in [
+        ("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"),
+        ("etc/mios/mios.toml", "etc/mios/mios.d"),
+    ] {
+        let path = root.join(file);
+        if path.is_file() {
+            layer_paths.push(path);
+        }
+        let directory = root.join(directory);
+        if directory.exists() {
+            let mut paths = std::fs::read_dir(&directory)
+                .map_err(|e| ResolverError::TypeShape {
+                    msg: format!("{}: {e}", directory.display()),
+                })?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+            paths.retain(|path| path.is_file() && path.extension().is_some_and(|e| e == "toml"));
+            paths.sort();
+            layer_paths.extend(paths);
+        }
     }
-    let mut merged = fig
-        .extract::<Value>()
-        .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
+    let mut merged = layers::merge_layer_files(&layer_paths)?;
     ports::derive_ports(&mut merged);
     Ok(merged)
 }
@@ -94,7 +223,7 @@ pub mod runtime {
     use std::collections::BTreeMap;
     use std::sync::OnceLock;
 
-    static RESOLVED: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    static RESOLVED: OnceLock<Result<BTreeMap<String, String>, String>> = OnceLock::new();
 
     /// `name` from `env`, else from `resolved`; empty strings count as unset.
     pub fn lookup_in(
@@ -107,12 +236,29 @@ pub mod runtime {
             .or_else(|| resolved.get(name).filter(|v| !v.is_empty()).cloned())
     }
 
-    fn resolved() -> &'static BTreeMap<String, String> {
-        RESOLVED.get_or_init(|| crate::resolve_env(None).unwrap_or_default())
+    fn resolved() -> &'static Result<BTreeMap<String, String>, String> {
+        RESOLVED.get_or_init(|| {
+            let result = (|| {
+                let mut merged = crate::resolve_merged(None, false)?;
+                crate::names::overlay_inputs(&mut merged, |key| std::env::var(key).ok())
+                    .map_err(|msg| ResolverError::TypeShape { msg })?;
+                let mut exports =
+                    crate::emit::build_exports_map(&merged, crate::stack_offset_of(&merged));
+                crate::emit::resolve_cross_references(&mut exports);
+                Ok::<_, ResolverError>(exports)
+            })();
+            result.map_err(|error| error.to_string())
+        })
     }
 
     pub fn get(name: &str) -> Option<String> {
-        lookup_in(name, |n| std::env::var(n).ok(), resolved())
+        if let Ok(value) = std::env::var(name) {
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+        let resolved = resolved().as_ref().ok()?;
+        lookup_in(name, |n| std::env::var(n).ok(), resolved)
     }
 
     fn missing(name: &str) -> ResolverError {
@@ -122,6 +268,14 @@ pub mod runtime {
     }
 
     pub fn require(name: &str) -> Result<String, ResolverError> {
+        if let Ok(value) = std::env::var(name) {
+            if !value.is_empty() {
+                return Ok(value);
+            }
+        }
+        if let Err(msg) = resolved() {
+            return Err(ResolverError::TypeShape { msg: msg.clone() });
+        }
         get(name).ok_or_else(|| missing(name))
     }
 
@@ -166,14 +320,14 @@ pub mod runtime {
         use super::*;
 
         fn ssot() -> BTreeMap<String, String> {
-            BTreeMap::from([("MIOS_PORT_NODE".to_string(), "8650".to_string())])
+            BTreeMap::from([("MIOS_PORTS_NODE".to_string(), "8650".to_string())])
         }
 
         #[test]
         fn environment_wins_over_the_resolved_ssot() {
             let env = |_: &str| Some("9100".to_string());
             assert_eq!(
-                lookup_in("MIOS_PORT_NODE", env, &ssot()).as_deref(),
+                lookup_in("MIOS_PORTS_NODE", env, &ssot()).as_deref(),
                 Some("9100")
             );
         }
@@ -182,7 +336,7 @@ pub mod runtime {
         fn empty_environment_falls_back_to_the_ssot() {
             let env = |_: &str| Some(String::new());
             assert_eq!(
-                lookup_in("MIOS_PORT_NODE", env, &ssot()).as_deref(),
+                lookup_in("MIOS_PORTS_NODE", env, &ssot()).as_deref(),
                 Some("8650")
             );
         }

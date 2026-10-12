@@ -1,5 +1,5 @@
-# AI-hint: GENERATED Quadlet pod for the co-resident group 'mios-system' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-system] in mios.toml. Members (7): mios-adguard, mios-ceph, mios-pxe-hub, mios-k3s, mios-guacamole, mios-guacd, mios-radosgw.
-# AI-related: usr/share/mios/mios.toml, tools/generate-pod-quadlets.py, mios-adguard.container, mios-ceph.container, mios-pxe-hub.container, mios-k3s.container, mios-guacamole.container, mios-guacd.container, mios-radosgw.container
+# AI-hint: GENERATED Quadlet pod for the co-resident group 'mios-system' (WS-7 pods-as-SSOT). DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [pods.mios-system] in mios.toml. Members (8): mios-adguard, mios-ceph, mios-pxe-hub, mios-k3s, mios-guacamole, mios-guacd, mios-radosgw, mios-headscale.
+# AI-related: usr/share/mios/mios.toml, tools/generate-pod-quadlets.py, mios-adguard.container, mios-ceph.container, mios-pxe-hub.container, mios-k3s.container, mios-guacamole.container, mios-guacd.container, mios-radosgw.container, mios-headscale.container
 # /usr/share/containers/systemd/mios-system.pod
 # Consolidated system services pod.
 # Members (each member .container declares Pod=mios-system.pod):
@@ -10,6 +10,7 @@
 #   mios-guacamole
 #   mios-guacd
 #   mios-radosgw
+#   mios-headscale
 [Unit]
 Description='MiOS' System pod (dns, storage, admin, sec, pxe, k3s, remote-desktop)
 After=network-online.target

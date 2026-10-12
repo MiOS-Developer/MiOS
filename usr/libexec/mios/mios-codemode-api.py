@@ -37,8 +37,8 @@ import os
 import socket
 from typing import Any
 
-SOCKET_PATH = os.environ.get("MIOS_CODEMODE_SOCKET", "/run/coderun.sock")
-CALL_TIMEOUT_S = float(os.environ.get("MIOS_CODEMODE_CALL_TIMEOUT_S", "60") or 60)
+SOCKET_PATH = os.environ.get("MIOS_CODE_MODE_SOCKET", "/run/coderun.sock")
+CALL_TIMEOUT_S = float(os.environ.get("MIOS_CODE_MODE_CALL_TIMEOUT_S", "60") or 60)
 
 class ToolError(RuntimeError):
     """Raised when a tool call cannot be completed (socket down, host refusal,

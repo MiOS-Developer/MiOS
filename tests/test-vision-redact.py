@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Verification suite for ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (T-539, AGY-2137).
+# AI-hint: Verification suite for ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter (task_483, task_2716).
 # AI-doc: usr/share/doc/mios/manual/ch84-vision-redaction.md
 """Test suite for ATSPI accessibility tree sensitive widget coordinate detector and Wayland frame blur filter."""
 
@@ -582,7 +582,7 @@ def main() -> int:
     MOCK_MODE = args.mock
 
     print("=" * 70)
-    print("MiOS Vision Redaction Test Suite (T-539, AGY-2137)")
+    print("MiOS Vision Redaction Test Suite (task_483, task_2716)")
     print("=" * 70)
 
     test_1_cli_and_help()

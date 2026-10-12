@@ -1,7 +1,8 @@
-# AI-hint: Tests for T-966 & T-967: autonomous self-replication build trigger and digest verification.
+# AI-hint: Tests for task_910 & task_911: autonomous self-replication build trigger and digest verification.
 # AI-functions: test_build_context_ignores_generated_artifacts, test_build_context_preserves_tracked_sources, test_self_replication_build_and_digest
 
-"""Tests for T-966 & T-967: autonomous self-replication build trigger and digest verification."""
+"""Tests for task_910 & task_911: autonomous self-replication build trigger and digest verification."""
+import re
 import sys
 import subprocess
 import tempfile
@@ -37,10 +38,14 @@ def test_build_context_preserves_tracked_sources():
     assert "/ctx/bib-configs" not in recipe, "renamed artifacts invalidate source gates"
     restore = "git -C /tmp/build ls-files --deleted -z | git -C /tmp/build checkout-index -z --stdin"
     assert restore in recipe, "partial image context must restore omitted tracked consumers"
-    assert recipe.index(restore) < recipe.index("miosd drift-check"), "restore sources before evaluating drift"
+    assert recipe.index(restore) < recipe.index("mios-gen sync --root /tmp/build"), "restore sources before rendering projections"
+    assert "drift-check" not in recipe, "ruling Q8: source-tree drift gates run in the CI gate job, never in the bake"
     runner = (root / "automation/build.sh").read_text()
-    completed = next(line for line in runner.splitlines() if line.startswith("CONTAINERFILE_SCRIPTS="))
-    assert "55-native-build.sh" in completed, "reuse rust-builder outputs when restored sources are present"
+    completed = re.search(r'case " \$_name " in\n.*?\n    esac', runner, re.S)
+    assert completed, "the phase runner must identify stages already completed by Containerfile"
+    probe = 'for _name in 55-native-build.sh new-phase.sh; do\n' + completed.group() + '\nprintf "%s\\n" "$_name"\ndone\n'
+    selected = subprocess.run(["bash", "-euc", probe], capture_output=True, text=True, check=True)
+    assert selected.stdout.splitlines() == ["new-phase.sh"], "reuse native outputs while retaining later phases"
     assert "MIOS_NATIVE_INSTALL_ROOT=/out bash /build/automation/55-native-build.sh" in recipe, "native compilation must precede the image bake"
     with tempfile.TemporaryDirectory() as directory:
         fixture = Path(directory)
@@ -68,13 +73,21 @@ def test_node_daemon_unit_command():
     command = service["ExecStart"].split()
     assert command[:2] == ["/usr/bin/mios-node", "run"], "node unit must invoke the run subcommand"
     assert command[2::2] == ["--node-id", "--port"], "node unit must use named CLI arguments"
-    assert command[-1] == "${MIOS_PORT_NODE}", "node port must remain SSOT driven"
-    assert "MIOS_PORT_NODE=${MIOS_PORT_NODE}" in service["Environment"], "node unit must supply its runtime port"
+    assert command[-1] == "${MIOS_PORTS_NODE}", "node port must remain SSOT driven"
+    assert "MIOS_PORTS_NODE=${MIOS_PORTS_NODE}" in service["Environment"], "node unit must supply its runtime port"
     assert not any(":-" in value for value in [service["ExecStart"], *service["Environment"]]), "node unit must carry no shell default expressions"
     unit = (root / "usr/lib/systemd/system/mios-node.service").read_text()
     assert f"ExecStart={service['ExecStart']}" in unit, "node unit must match SSOT"
+    # systemd expands ${VAR} only in Exec*= lines, so the projection
+    # (mios-unit-gen) ships Environment= values with [ports] resolved.
+    ports = config["ports"]
+    offset = int(ports.get("stack_id", 0)) * 10000
+    def resolved(value):
+        return re.sub(r"\$\{MIOS_PORTS_([A-Z0-9_]+)\}",
+                      lambda m: str(int(ports[m.group(1).lower()]) + offset), value)
     for value in service["Environment"]:
-        assert f"Environment={value}" in unit, "node environment must match SSOT"
+        assert "${" not in resolved(value), f"unresolvable SSOT port in {value}"
+        assert f"Environment={resolved(value)}" in unit, "node environment must match SSOT"
 
 
 if __name__ == "__main__":
@@ -82,4 +95,4 @@ if __name__ == "__main__":
     test_build_context_ignores_generated_artifacts()
     test_build_context_preserves_tracked_sources()
     test_self_replication_build_and_digest()
-    print("All T-966/T-967 tests passed.")
+    print("All task_910/task_911 tests passed.")

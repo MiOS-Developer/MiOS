@@ -6,6 +6,7 @@
 # AI-hint: Bakes GGUF weights into /usr/share/mios/llamacpp/models based on MIOS_LLAMACPP_BAKE_MODELS config to enable the offline mios-llm-light lane; agents use this to ens...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# shellcheck source=usr/lib/mios/log.sh
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 
 source "$(dirname "$0")/lib/common.sh" 2>/dev/null || {
@@ -14,7 +15,8 @@ source "$(dirname "$0")/lib/common.sh" 2>/dev/null || {
 }
 
 SPEC="${MIOS_LLAMACPP_BAKE_MODELS:-}"
-SEED_DIR="/usr/share/mios/llamacpp/models"
+SEED_DIR="${MIOS_LLAMACPP_MODELS_DIR:?SSOT models directory unresolved}"
+install -d -m 0755 "$(dirname "$SEED_DIR")"
 
 if [[ -z "$SPEC" ]]; then
     mios_log "MIOS_LLAMACPP_BAKE_MODELS empty"
@@ -27,12 +29,15 @@ if [[ -L "$SEED_DIR" ]]; then
     rm -f "$SEED_DIR"
 fi
 install -d -m 0755 "$SEED_DIR"
+rm -f "${SEED_DIR}/.ready"
 
 baked=0
+requested=0
 IFS=',' read -ra _entries <<< "$SPEC"
 for entry in "${_entries[@]}"; do
     entry="$(printf '%s' "$entry" | tr -d '[:space:]')"
     [[ -z "$entry" ]] && continue
+    requested=$((requested + 1))
     dest="${entry%%=*}"
     rest="${entry#*=}"
     repo="${rest%%:*}"
@@ -71,19 +76,21 @@ for entry in "${_entries[@]}"; do
     fi
 done
 
-if [[ "$baked" -gt 0 ]]; then
+if [[ "$requested" -gt 0 && "$baked" -eq "$requested" ]]; then
     : > "${SEED_DIR}/.ready"   # the quadlet's ConditionPathExists gate -> lane eligible
     seed_size="$(du -sh "$SEED_DIR" 2>/dev/null | awk '{print $1}')"
-    mios_ok "Baked ${baked} GGUF -> ${SEED_DIR}; .ready set"
+    mios_ok "Baked ${baked} GGUF -> ${SEED_DIR} (${seed_size:-?}); .ready set"
 else
-    mios_log "No GGUFs baked"
+    mios_err "Incomplete GGUF bake: ${baked}/${requested}; required model files missing, .ready withheld"
+    exit 1
 fi
 
-# AI-hint: Bakes vLLM model weights into the image at /usr/share/mios/vllm/model if MIOS_VLLM_BAKE_MODEL is set, enabling offline serving via the mios-llm-heavy-alt Quadlet for air-gapped environments.
-# AI-related: /usr/share/mios/vllm/model, mios-llm-heavy-alt, mios-grounding, mios-llm-heavy-alt.container
+# AI-hint: Bakes vLLM model weights into the image at /usr/share/mios/vllm/model if MIOS_VLLM_BAKE_MODEL is set, enabling offline serving via the mios-llm-heavy Quadlet (vLLM or SGLang per [ai].heavy_engine) for air-gapped environments.
+# AI-related: /usr/share/mios/vllm/model, mios-llm-heavy, mios-grounding, mios-llm-heavy.container
 
 MODEL="${MIOS_VLLM_BAKE_MODEL:-}"
 SEED_DIR="/usr/share/mios/vllm/model"
+install -d -m 0755 "$(dirname "$SEED_DIR")"
 
 if [[ -z "$MODEL" ]]; then
     mios_log "MIOS_VLLM_BAKE_MODEL empty"
@@ -122,7 +129,7 @@ print(f"baked {model} -> {dest}")
 PY
 then
     mios_warn "Download failed"
-    exit 0
+    exit 1
 fi
 
 sbom_dir="/usr/share/mios/artifacts/sbom"
@@ -140,6 +147,6 @@ if [[ -d "$SEED_DIR" ]]; then
 fi
 
 seed_size="$(du -sh "$SEED_DIR" 2>/dev/null | awk '{print $1}')"
-mios_ok "Baked ${MODEL} -> ${SEED_DIR}"
+mios_ok "Baked ${MODEL} -> ${SEED_DIR} (${seed_size:-?})"
 fi
 exit 0

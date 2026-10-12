@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Automated unit test suite for deterministic /etc/subuid and /etc/subgid range generator (T-477).
+# AI-hint: Automated unit test suite for deterministic /etc/subuid and /etc/subgid range generator (task_421).
 # AI-doc: usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 _ALLOC_BIN = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-subuid-alloc")
 _AUTO_SCRIPT = os.path.join(_ROOT, "automation", "31-subuid-alloc.sh")
-_SYSUSERS_CONF = os.path.join(_ROOT, "usr", "lib", "sysusers.d", "50-mios-users.conf")
+_SYSUSERS_CONF = os.path.join(_ROOT, "usr", "lib", "sysusers.d", "50-mios.conf")
 
 
 class TestSubuidAlloc(unittest.TestCase):

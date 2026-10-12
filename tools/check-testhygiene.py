@@ -553,13 +553,13 @@ except ModuleNotFoundError:  # pragma: no cover -- py<3.11
     import tomli as tomllib  # type: ignore
 
 ml_PKG = os.path.join("usr", "lib", "mios", "agent-pipe")
-# The whole agent-pipe tree, not just mios_pipe/: mios_dispatch.py (1178 lines)
-# and server.py (4979) live at the ROOT and were outside every earlier version
-# of this gate. Shims are excluded -- they are ~28 lines of lazy re-export.
-ml_SUBDIRS = ("mios_pipe", ".")
+# Operator ruling: the ceiling governs SUB-MODULES only -- the packages named by
+# [refactor].submodule_roots. The agent-pipe root (server.py, the mios_*.py
+# components) holds main modules, where features fold in. Shims are excluded --
+# they are ~28 lines of lazy re-export.
 
 def ml_load_policy(root: str) -> tuple:
-    """Return (max_lines, {path: recorded_lines}) from [refactor]."""
+    """Return (max_lines, {path: recorded_lines}, submodule_roots) from [refactor]."""
     with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
         data = tomllib.load(fh)
     sec = data.get("refactor") or {}
@@ -568,7 +568,10 @@ def ml_load_policy(root: str) -> tuple:
     for row in sec.get("oversize") or []:
         if isinstance(row, dict) and row.get("path"):
             recorded[str(row["path"])] = int(row.get("lines") or 0)
-    return max_lines, recorded
+    roots = [str(r) for r in sec.get("submodule_roots") or []]
+    if not roots or any(not r.endswith("/") for r in roots):
+        raise SystemExit("[refactor].submodule_roots must list package prefixes ending in '/'")
+    return max_lines, recorded, roots
 
 def ml__is_shim(path: str) -> bool:
     """A lazy re-export shim (~28 lines) is not a module worth sizing."""
@@ -584,7 +587,7 @@ def ml__count(path: str) -> int:
 
 def ml_scan(root: str) -> tuple:
     """Return (violations, checked). A violation is a human-readable string."""
-    max_lines, recorded = ml_load_policy(root)
+    max_lines, recorded, roots = ml_load_policy(root)
     base = os.path.join(root, ml_PKG)
     if not os.path.isdir(base):
         return [], 0
@@ -593,15 +596,12 @@ def ml_scan(root: str) -> tuple:
     checked = 0
     scanned = set()
     walked = []
-    for sub in ml_SUBDIRS:
+    for sub in roots:
         top = os.path.normpath(os.path.join(base, sub))
         if not os.path.isdir(top):
             continue
-        if sub == ".":
-            walked.append((top, sorted(os.listdir(top))))
-        else:
-            for dirpath, _dirs, files in os.walk(top):
-                walked.append((dirpath, sorted(files)))
+        for dirpath, _dirs, files in os.walk(top):
+            walked.append((dirpath, sorted(files)))
     for dirpath, files in walked:
         for fn in files:
             if not fn.endswith(".py") or fn == "__init__.py":
@@ -643,7 +643,7 @@ def ml_main() -> int:
         for line in bad:
             print(line)
         return 1
-    max_lines, recorded = ml_load_policy(root)
+    max_lines, recorded, _roots = ml_load_policy(root)
     print(f"agent-pipe modules within the size ratchet "
           f"(checked={checked} limit={max_lines} grandfathered={len(recorded)})")
     return 0

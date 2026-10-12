@@ -37,11 +37,48 @@ def configure(**deps) -> None:
         if _k in _INJECTED:
             g[_k] = _v
 
+_gpu_state_cache = {"state": "AI_EXCLUSIVE", "ts": -1e9}
+
+def get_gpu_arbiter_state() -> str:
+    """Read the current GPU Arbiter state.
+    Cached for 50ms TTL to prevent synchronous disk I/O thrashing during query routing storms.
+    States: 'AI_EXCLUSIVE', 'DRAINING_SLEEP', 'VM_ATTACHED', 'RESTORING_AI'.
+    """
+    env_state = os.environ.get("MIOS_GPU_STATE")
+    if env_state:
+        return env_state.strip()
+    import time as _t
+    now = _t.monotonic()
+    if (now - _gpu_state_cache["ts"]) < 0.050:
+        return _gpu_state_cache["state"]
+    state = "AI_EXCLUSIVE"
+    for path in (
+        os.environ.get("MIOS_GPU_STATE_FILE", "/run/mios/gpu-state"),
+        "/run/mios-gpu-state",
+        "/var/run/mios/gpu-state",
+    ):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    state = content
+                    break
+        except Exception:
+            pass
+    _gpu_state_cache["state"] = state
+    _gpu_state_cache["ts"] = now
+    return state
+
+
 _heavy_probe = {"ok": False, "ts": -1e9}
 
 async def _heavy_lane_up() -> bool:
     """Is the SGLang heavy lane serving right now? Cached for _HEAVY_PROBE_TTL s so we
     probe at most once per window, never per request."""
+    if get_gpu_arbiter_state() != "AI_EXCLUSIVE":
+        # Proactive gaming failover: heavy GPU is detached/sleeping
+        return False
     import time as _t
     now = _t.monotonic()
     if (now - _heavy_probe["ts"]) < _HEAVY_PROBE_TTL:
@@ -68,16 +105,20 @@ def _lane_resolver():
     except Exception:  # noqa: BLE001 -- degrade to env/defaults
         _ai = {}
     heavy_engine = (os.environ.get("MIOS_AGENT_PIPE_HEAVY_ENGINE")
-                    or str(_ai.get("heavy_engine", "sglang"))).strip()
+                    or str(_ai.get("heavy_engine", "vllm"))).strip()
     _vllm_url = (os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM")
                  or _toml_section("nodes").get("local-vllm", {}).get("endpoint")
-                 or f"http://localhost:{os.environ.get('MIOS_PORT_VLLM', '8520')}/v1").rstrip("/")
+                 or f"http://localhost:{os.environ.get('MIOS_PORTS_VLLM', '8520')}/v1").rstrip("/")
     _vllm_model = os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM_MODEL",
                                  _TOOL_BACKEND_HEAVY_MODEL)
+    _cpu_port = os.environ.get("MIOS_PORTS_CPU_NODE", "8510")
     lanes = {
-        "light":  mios_lanes.Lane("light",  _TOOL_BACKEND,       _TOOL_BACKEND_MODEL),
-        "sglang": mios_lanes.Lane("sglang", _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL),
-        "vllm":   mios_lanes.Lane("vllm",   _vllm_url,           _vllm_model),
+        "light":    mios_lanes.Lane("light",    _TOOL_BACKEND,       _TOOL_BACKEND_MODEL),
+        "cpu_node": mios_lanes.Lane("cpu_node", f"http://localhost:{_cpu_port}/v1", _TOOL_BACKEND_MODEL),
+        "sglang":   mios_lanes.Lane("sglang",   _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL),
+        "vllm":     mios_lanes.Lane("vllm",     _vllm_url,           _vllm_model),
+        mios_lanes.HEAVY: mios_lanes.Lane(
+            mios_lanes.HEAVY, _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL),
     }
     chain = mios_lanes.build_chain(heavy_engine, lanes.keys())
     try:
@@ -96,6 +137,9 @@ def _lane_resolver():
         pass
 
     async def _probe(url: str) -> bool:
+        if get_gpu_arbiter_state() != "AI_EXCLUSIVE":
+            if any(h in url for h in (":8520", ":11441", ":8530", "heavy", "vllm", "sglang")):
+                return False
         client = await _get_client()
         r = await client.get(f"{url}/models", timeout=2.0)
         return r.status_code == 200
@@ -116,6 +160,14 @@ async def _pick_tool_backend() -> tuple:
     else the always-on light lane (with per-lane cooldown so a dead lane fails over,
     never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
     probe so the agentic surface never hard-fails."""
+    gpu_state = get_gpu_arbiter_state()
+    if gpu_state != "AI_EXCLUSIVE":
+        # Proactive Zero-Latency Gaming Failover: GPU is not in AI_EXCLUSIVE mode
+        # (e.g. DRAINING_SLEEP, VM_ATTACHED). Immediately route to light (:8500)
+        # or cpu_node (:8510) without any probe timeouts or errors!
+        log.info("GPU arbiter in state %s: zero-latency routing to light/cpu lane (%s)", gpu_state, _TOOL_BACKEND)
+        return _TOOL_BACKEND, _TOOL_BACKEND_MODEL
+
     try:
         lane = await _lane_resolver().pick("tool")
         if lane is not None:

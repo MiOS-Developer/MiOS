@@ -235,6 +235,10 @@ def main():
 
     _test_developer_role()
 
+    _test_tool_choice_none_stripping()
+
+    _test_memory_compaction_tools()
+
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 
@@ -440,6 +444,89 @@ def _test_developer_role():
     system_parts, gemini_contents = oai_msgs_to_gemini(msgs)
     check("developer role -> gemini system parts match", system_parts == {"parts": [{"text": "You are a helpful assistant."}]}, f"sys_parts={system_parts}")
     check("developer role -> gemini contents ignore developer role", len(gemini_contents) == 1, f"gemini={gemini_contents}")
+
+def _test_tool_choice_none_stripping():
+    import mios_vision
+    captured_bodies = []
+    _wire_common(
+        _has_client_tools=mios_vision._has_client_tools,
+        _client_tools_complete=_ahandler("client_tools", S_CLIENT),
+        refine_intent=_ahandler("refine", {"intent": "chat", "reply": "plain chat reply"}),
+        _scratchpad_key=lambda b, cid: (captured_bodies.append(dict(b)), cid)[1],
+    )
+    # Positive control: tool_choice == "none" strips tools and routes to plain chat (0 tool tokens)
+    r_pos = _run({
+        "model": "m",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
+        "tool_choice": "none"
+    })
+    check("tool_choice: 'none' -> client_tools skipped (plain chat)",
+          "client_tools" not in CALLS and "refine" in CALLS,
+          f"calls={CALLS}")
+    check("tool_choice: 'none' -> tools stripped from body",
+          len(captured_bodies) >= 1 and all("tools" not in b for b in captured_bodies),
+          f"body={captured_bodies}")
+    check("tool_choice: 'none' -> tool_choice stripped from body",
+          len(captured_bodies) >= 1 and all("tool_choice" not in b for b in captured_bodies),
+          f"body={captured_bodies}")
+
+    # Positive control (case-insensitive stripped): ' None '
+    captured_ci_bodies = []
+    _wire_common(
+        _has_client_tools=mios_vision._has_client_tools,
+        _client_tools_complete=_ahandler("client_tools", S_CLIENT),
+        refine_intent=_ahandler("refine", {"intent": "chat", "reply": "plain chat reply"}),
+        _scratchpad_key=lambda b, cid: (captured_ci_bodies.append(dict(b)), cid)[1],
+    )
+    r_pos_ci = _run({
+        "model": "m",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
+        "tool_choice": " None "
+    })
+    check("tool_choice: ' None ' (case-insensitive) -> client_tools skipped",
+          "client_tools" not in CALLS and "refine" in CALLS,
+          f"calls={CALLS}")
+    check("tool_choice: ' None ' -> tools stripped from body",
+          len(captured_ci_bodies) >= 1 and all("tools" not in b for b in captured_ci_bodies),
+          f"body={captured_ci_bodies}")
+
+    # Negative control: tool_choice == "auto" retains tools and routes to client_tools
+    auto_bodies = []
+    async def _async_client_tools(b, *a, **k):
+        auto_bodies.append(dict(b))
+        CALLS.append("client_tools")
+        return S_CLIENT
+
+    _wire_common(
+        _has_client_tools=mios_vision._has_client_tools,
+        _client_tools_complete=_async_client_tools,
+    )
+    r_neg = _run({
+        "model": "m",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
+        "tool_choice": "auto"
+    })
+    check("tool_choice: 'auto' -> client_tools passthrough",
+          CALLS == ["client_tools"],
+          f"calls={CALLS}")
+    check("tool_choice: 'auto' -> tools and tool_choice retained in body",
+          len(auto_bodies) == 1 and "tools" in auto_bodies[0] and auto_bodies[0].get("tool_choice") == "auto",
+          f"body={auto_bodies}")
+
+def _test_memory_compaction_tools():
+    import mios_tokenize
+    msgs = [{"role": "user", "content": "hello"}]
+    tools = [{"type": "function", "function": {"name": "t1", "description": "tool " * 50}}]
+    tok_no_tools = mios_tokenize.count_messages(msgs)
+    tok_with_tools = mios_tokenize.count_messages(msgs, tools=tools)
+    check("compaction tokens: tools included in token count",
+          tok_with_tools > tok_no_tools,
+          f"with={tok_with_tools} without={tok_no_tools}")
+    check("compaction tokens: empty tools has 0 overhead",
+          mios_tokenize.count_messages(msgs, tools=[]) == tok_no_tools)
 
 if __name__ == "__main__":
     sys.exit(main())

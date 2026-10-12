@@ -119,15 +119,19 @@ def test_hint_prose_len():
     check("hint-meta-excluded", mc._hint_prose_len(meta) < 30, True)
 
 def test_stale(p):
-    # MON-026: Reference resolution logic moved into doc_refs.rs (Law 14).
-    # RefIndex remains a lightweight shim for backwards compatibility.
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    idx = mc.RefIndex.build(root)
-    fresh = blk("see automation/98-drift-checks.sh for the gate")
-    check("stale-known", mc.classify(fresh, p, idx).stale, False)
-    check("refindex-instantiated", idx is not None, True)
-    check("refindex-dangling-empty", idx.dangling("some text"), [])
-    check("refindex-known-true", idx.known("some/path.py"), True)
+    # The resolver's findings are per file: only the block in that file is stale.
+    idx = mc.RefIndex("", {"automation/x.sh": {"tools/gone.py"}})
+    gone = blk("AI-related: tools/gone.py")
+    check("stale-named", mc.classify(gone, p, idx).stale, True)
+    elsewhere = blk("AI-related: tools/gone.py", path="automation/y.sh")
+    check("stale-other-file", mc.classify(elsewhere, p, idx).stale, False)
+    check("stale-unnamed", mc.classify(blk("AI-related: tools/ok.py"), p, idx).stale, False)
+    check("stale-no-index", mc.classify(gone, p).stale, False)
+
+def test_heredoc():
+    src = "# outer\ncat <<'EOF'\n# inner\nEOF\n# usage: x <<EOF\n\n# kept\n"
+    texts = [b.text for b in mc._lex_generic("t.sh", src, "#")]
+    check("heredoc-body-skipped", texts, ["outer", "usage: x <<EOF", "kept"])
 
 def test_lexer():
     src = (
@@ -157,6 +161,19 @@ def test_lexer():
     b = blk("same text here")
     check("hash-normalised", a.sha12, b.sha12)
 
+def test_html_endings():
+    for end in ("-->", "--!>"):
+        check("html-strip-" + end, mc._strip("<!-- comment " + end), "comment")
+        blocks = mc._lex_generic("x.md", "<!-- first " + end + "\ntext\n<!-- second " + end + "\n", "<!--")
+        check("html-count-" + end, len(blocks), 2)
+        check("html-bound-" + end, (blocks[0].start_line, blocks[0].end_line), (1, 1))
+        check("html-following-" + end, blocks[1].text, "second")
+    blocks = mc._lex_generic("x.md", "<!-- first --!\nsecond --!>\ntext\n", "<!--")
+    check("html-incomplete-does-not-close", len(blocks), 1)
+    check("html-multiline-end", blocks[0].end_line, 2)
+    check("html-incomplete-is-content", "first --!" in blocks[0].text, True)
+
+
 def test_landing_ratio(p: mc.Policy) -> None:
     """Guards mios-manual landed(), which raised AttributeError without it."""
     check("landing-ratio-present", hasattr(p, "landing_min_word_ratio"), True)
@@ -170,7 +187,9 @@ def main() -> int:
     test_classifier(p)
     test_hint_prose_len()
     test_stale(p)
+    test_heredoc()
     test_lexer()
+    test_html_endings()
     test_landing_ratio(p)
     print(f"[test_mios_comments] {PASSED} passed, {len(FAILED)} failed")
     for f in FAILED:

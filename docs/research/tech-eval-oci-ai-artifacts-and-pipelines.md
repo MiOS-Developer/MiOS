@@ -1,10 +1,11 @@
+<!-- AI-hint: Research evaluation of upstream FOSS patterns for OCI-packaged AI artifacts and automated CI/CD pipelines. -->
 # Technology & Architecture Evaluation: Upstream FOSS Patterns for OCI/Container-Based AI Artifacts & Automated CI/CD Pipelines
 
 **Evaluation Topic:** Upstream FOSS Patterns for OCI/Container-Based AI Artifacts (ModelWeights, Datasets, Prompts, Adapters) and Automated CI/CD Packaging Pipelines  
 **Author:** MiOS Core Architecture & Antigravity Agentic Systems  
 **Date:** 2026-09-26  
 **Status:** PROPOSED / APPROVED FOR ARCHITECTURAL BASELINE  
-**Related Epics / Tasks:** T-1108 (ARTIFACT-03: Daily out-of-loop artifact follow-ups), SPIKE-20260924 (Artifact Publisher Contracts), Law 1 (FHS), Law 3 (.git IS /), Law 5 (UNIFIED-AI-REDIRECTS), Law 14 (TARGET-LANGUAGES), Law 16 (ONE-TEMPLATE-PER-TYPE)
+**Related Epics / Tasks:** task_1022 (ARTIFACT-03: Daily out-of-loop artifact follow-ups), SPIKE-20260924 (Artifact Publisher Contracts), Law 1 (FHS), Law 3 (.git IS /), Law 5 (UNIFIED-AI-REDIRECTS), Law 14 (TARGET-LANGUAGES), Law 16 (ONE-TEMPLATE-PER-TYPE)
 
 ---
 

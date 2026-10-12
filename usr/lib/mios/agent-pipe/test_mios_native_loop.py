@@ -209,7 +209,7 @@ def _run_moved():
 
 
 # ==============================================================================
-# Consolidated from test_mios_pty.py (T-1092)
+# Consolidated from test_mios_pty.py (task_1006)
 # ==============================================================================
 # AI-hint: Stdlib offline tests for mios_pipe.routing.pty -- the persistent shell substrate's pure protocol (SHELL-01). No tmux, no subproc...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

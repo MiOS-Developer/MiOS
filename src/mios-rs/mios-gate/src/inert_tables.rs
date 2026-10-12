@@ -11,7 +11,7 @@ const CHECK: &str = "no-inert-ssot-tables";
 const SSOT: &str = "usr/share/mios/mios.toml";
 const CODE_EXT: [&str; 7] = [".py", ".sh", ".ps1", ".rs", ".js", ".ts", ".mjs"];
 const NON_CONSUMER_DIRS: [&str; 3] = ["docs/", "usr/share/doc/", "usr/share/mios/reference/"];
-/// concat! so the contiguous marker never appears here (T-1001).
+/// concat! so the contiguous marker never appears here (task_945).
 const GENERATED: &str = concat!("# GENERATED IN FULL", " from usr/share/mios/mios.toml");
 
 fn report(ok: bool, summary: String, findings: Vec<String>) -> Report {
@@ -48,14 +48,15 @@ fn key_tokens(v: &toml::Value, out: &mut BTreeSet<String>) {
     }
 }
 
-/// Names holding the parsed SSOT, closed transitively (T-1001).
+/// Names holding the parsed SSOT, closed transitively (task_945).
 fn ssot_names(text: &str, re: &Res) -> BTreeSet<String> {
     let loaders: Vec<String> = re
         .def
         .captures_iter(text)
         .filter(|c| {
             let end = c.get(0).map(|m| m.end()).unwrap_or(0);
-            let tail = &text[end..text.len().min(end + 2000)];
+            // A byte window, so its far edge can split a multi-byte char.
+            let tail = &text[end..text.floor_char_boundary(end + 2000)];
             re.load.is_match(tail)
         })
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
@@ -119,7 +120,7 @@ fn word_in(hay: &str, needle: &str) -> bool {
 }
 
 /// Table names this file reads OUT OF the SSOT: a subscript counts only when what
-/// it indexes IS the parse, or a name bound from one (T-1001).
+/// it indexes IS the parse, or a name bound from one (task_945).
 fn ssot_keys(text: &str, re: &Res) -> BTreeSet<String> {
     let names = ssot_names(text, re);
     let mut keys = BTreeSet::new();
@@ -168,9 +169,10 @@ struct Res {
 fn build_res() -> Option<Res> {
     // .ok()? not expect(): CI runs clippy -D warnings.
     Some(Res {
-        // Seeds for "yields the SSOT"; full path only (T-1001).
+        // Seeds for "yields the SSOT"; full path only (task_945). resolve_merged is
+        // the native resolver's twin of load_merged.
         load: Regex::new(
-            r"(?:tomllib|toml|rtoml|tomlkit)\.loads?\(|toml::from_str|load_merged|_toml_section|mios_toml\.(?:load|resolve)|load_mios_toml|MIOS_TOML|usr/share/mios/mios\.toml|\b_?ssot(?:_root)?\s*\(|\bload_ssot\s*\(",
+            r"(?:tomllib|toml|rtoml|tomlkit)\.loads?\(|toml::from_str|(?:load|resolve)_merged|_toml_section|mios_toml\.(?:load|resolve)|load_mios_toml|MIOS_TOML|usr/share/mios/mios\.toml|\b_?ssot(?:_root)?\s*\(|\bload_ssot\s*\(",
         )
         .ok()?,
         bind: Regex::new(r"(?m)^[^\S\n]*([A-Za-z_]\w*)[^\S\n]*(?::[^=\n]+)?=[^\S\n]*(.*)$").ok()?,
@@ -185,7 +187,8 @@ fn build_res() -> Option<Res> {
             .ok()?,
         value: Regex::new(r#"\bconfig_value\(\s*&?([A-Za-z_]\w*)\s*,\s*"root"\s*,\s*"(\w+)"\s*\)"#)
             .ok()?,
-        ctx: Regex::new(r"mios\.toml|mios_toml|_toml_section|load_merged|MIOS_TOML").ok()?,
+        ctx: Regex::new(r"mios\.toml|mios_toml|_toml_section|(?:load|resolve)_merged|MIOS_TOML")
+            .ok()?,
         test_path: Regex::new(r"(^|/)tests?/|(^|/)test[-_]").ok()?,
     })
 }
@@ -475,7 +478,7 @@ mod tests {
         ssot_keys(src, &build_res().unwrap_or_else(|| unreachable!()))
     }
 
-    /// THE DEFECT (T-1001): a local dict must not credit a table.
+    /// THE DEFECT (task_945): a local dict must not credit a table.
     #[test]
     fn local_dict_subscript_is_not_ssot_evidence() {
         let src = "# reads usr/share/mios/mios.toml elsewhere\np = _offline_posture()\nif p[\"offline\"]:\n    pass\n";
@@ -518,6 +521,23 @@ mod tests {
         assert!(!keys(nested).contains("cockpit"));
     }
 
+    /// The native layered resolver yields the SSOT exactly as load_merged does;
+    /// generators ported to Rust read their tables off it.
+    #[test]
+    fn native_resolve_merged_binding_is_evidence() {
+        let src = "let doc = mios_resolver::resolve_merged(Some(root), false)?;\nlet networks = doc\n    .get(\"networks\")\n    .and_then(|v| v.as_table());\n";
+        let re = build_res().unwrap_or_else(|| unreachable!());
+        assert!(
+            re.ctx.is_match(src),
+            "the file must be scanned as an SSOT reader"
+        );
+        assert!(keys(src).contains("networks"));
+        let unrelated =
+            "let doc = other::resolve(Some(root))?;\nlet networks = doc\n    .get(\"networks\");\n";
+        assert!(!re.ctx.is_match(unrelated));
+        assert!(!keys(unrelated).contains("networks"));
+    }
+
     /// One indirection through a loader helper must still credit.
     #[test]
     fn a_helper_that_parses_makes_its_callers_binding_evidence() {
@@ -528,7 +548,7 @@ mod tests {
         );
     }
 
-    /// REGRESSION: the binder must not cross newlines (T-1001).
+    /// REGRESSION: the binder must not cross newlines (task_945).
     #[test]
     fn the_binder_does_not_cross_newlines() {
         let src = "try:\n    with open(p, 'rb') as f:\n        data = tomllib.load(f)\n    x = data[\"kargs\"]\n";
@@ -538,6 +558,20 @@ mod tests {
             "the real binding must survive: {names:?}"
         );
         assert!(!names.contains("try"), "`try` is not a binding: {names:?}");
+    }
+
+    /// REGRESSION: the 2000-byte loader window ended inside a multi-byte char
+    /// in mios.toml-reading code and panicked the whole gate.
+    #[test]
+    fn the_loader_window_never_splits_a_multibyte_char() {
+        let head = "def f():\n    return tomllib.load(fh)\n";
+        let pad = "#".repeat(2005 - head.len());
+        let src = format!("{head}{pad}\u{270e}\n_S = f()\nv = _S[\"tbl\"]\n");
+        assert!(
+            !src.is_char_boundary("def f(".len() + 2000),
+            "the fixture must put the window edge inside the char"
+        );
+        assert!(keys(&src).contains("tbl"), "the loader must still credit");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# AI-hint: Systemd socket activation unit for agent-pipe zero-downtime handoff (T-542, AGY-2140)
+# AI-hint: Systemd socket activation unit for agent-pipe zero-downtime handoff (task_486, task_2719)
 # AI-doc: usr/share/doc/mios/manual/ch87-socket-activation-handoff.md
 [Unit]
 Description=MiOS Agent-Pipe Zero-Downtime Socket Activation
@@ -6,7 +6,7 @@ Documentation=man:agent-pipe(1) file:///usr/share/doc/mios/manual/ch87-socket-ac
 PartOf=mios-agent-pipe.service
 
 [Socket]
-ListenStream=${MIOS_PORT_AGENT_PIPE}
+ListenStream=${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_AGENT_PIPE:-8700}
 ListenStream=/run/mios/agent-pipe.sock
 SocketMode=0660
 Backlog=128

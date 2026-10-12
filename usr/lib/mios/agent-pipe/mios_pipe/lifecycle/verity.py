@@ -19,7 +19,7 @@ from mios_config import (  # SSOT mios.toml reader + model-call scalars (sibling
 
 log = logging.getLogger("mios-agent-pipe")
 
-REFINE_TIMEOUT_S = int(os.environ.get("MIOS_REFINE_TIMEOUT_S", "30"))
+REFINE_TIMEOUT_S = int(os.environ.get("MIOS_REFINE_TIMEOUT_SECONDS", "30"))
 REFINE_ENDPOINT = ""
 REFINE_MODEL = ""
 _WEB_ENRICH_VERBS: set = set()

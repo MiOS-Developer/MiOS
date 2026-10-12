@@ -2,7 +2,7 @@
 # AI-functions: __init__, build_module, CompiledModule, DKMSSandboxEngine
 
 """
-dkms_engine.py — T-765 WS-BUILD
+dkms_engine.py — task_709 WS-BUILD
 Ephemeral containerized DKMS engine and MOK kernel module signer.
 
 Compiles out-of-tree .ko drivers inside bubblewrap sandbox against active UKI kernel,

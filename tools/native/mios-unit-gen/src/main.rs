@@ -1,5 +1,7 @@
 // AI-hint: CLI driver for mios-unit-gen rendering systemd unit files from SSOT.
-use mios_unit_gen::{drift_register, project, project_deployment, render_units, DeploymentKind};
+use mios_unit_gen::{
+    drift_register, project, project_deployment, render_keybindings, render_units, DeploymentKind,
+};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +34,19 @@ fn read_ssot(root: &Path) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "keybindings")
+        && args.iter().any(|arg| arg == "--emit-json")
+    {
+        if args.len() != 5 || args[2] != "--from-json" || args[4] != "--emit-json" {
+            return Err("keybindings --from-json FILE --emit-json required".into());
+        }
+        let doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&args[3])?)?;
+        println!(
+            "{}",
+            serde_json::to_string(&render_keybindings(&toml::to_string(&doc)?)?)?
+        );
+        return Ok(());
+    }
     for option in ["--root", "--toml", "--render"] {
         if let Some(i) = args.iter().position(|arg| arg == option) {
             if args.get(i + 1).is_none_or(|value| value.starts_with("--")) {
@@ -45,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|pair| PathBuf::from(&pair[1]))
         .unwrap_or_else(repo_root);
     if args.iter().any(|arg| arg == "--list-projections") {
-        println!("blade-dropins\nblade-karg\nuki-cmdline\ncockpit\nipa-enroll\nbootc-install");
+        println!("blade-dropins\nblade-karg\nuki-cmdline\ncockpit\nipa-enroll\nbootc-install\nkeybindings");
         return Ok(());
     }
     let deployment = match args.get(1).map(String::as_str) {
@@ -55,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("cockpit") => Some(DeploymentKind::Cockpit),
         Some("ipa-enroll") => Some(DeploymentKind::IpaEnroll),
         Some("bootc-install") => Some(DeploymentKind::BootcInstall),
+        Some("keybindings") => Some(DeploymentKind::Keybindings),
         _ => None,
     };
     if let Some(kind) = deployment {

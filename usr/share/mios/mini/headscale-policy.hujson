@@ -1,0 +1,44 @@
+// AI-hint: Fail-closed restrictive HuJSON ACL policy for MiOS Headscale Mesh VPN Coordinator.
+// Invariant 5: Blade owns hardware; MiOS image is an obfuscated guest.
+// Policy projected from mios.toml [metal.mesh] and [headscale] SSOT.
+{
+  "hosts": {
+    "coordinator": "100.64.0.1"
+  },
+  "tagOwners": {
+    "tag:router": ["autogroup:admin"],
+    "tag:blade": ["autogroup:admin"],
+    "tag:guest": ["autogroup:admin"],
+    "tag:workstation": ["autogroup:admin"]
+  },
+  "acls": [
+    // Permit routers and blades unrestricted mesh communication
+    {
+      "action": "accept",
+      "src": ["tag:router", "tag:blade"],
+      "dst": ["*:*"]
+    },
+    // Permit guests to communicate across mesh on permitted ports
+    {
+      "action": "accept",
+      "src": ["tag:guest", "tag:workstation"],
+      "dst": [
+        "tag:router:*",
+        "tag:blade:*",
+        "tag:guest:*"
+      ]
+    },
+    // Allow all nodes to reach AdGuard DNS on port 53
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:53"]
+    }
+  ],
+  "autoApprovers": {
+    "routes": {
+      "100.64.0.0/10": ["tag:router"]
+    },
+    "exitNode": ["tag:router"]
+  }
+}

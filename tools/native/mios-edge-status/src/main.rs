@@ -878,7 +878,9 @@ pub fn run(root: &Path, bootstrap: Option<&Path>, cs_root: Option<&Path>) -> Rep
             (_, Some(art)) => match measurer(art) {
                 None => unclassified.push(format!("unclassified artifact {key} {art}")),
                 Some(m) => {
+                    let bootstrap_only = get_str(e, "artifact_scope") == Some("bootstrap");
                     let copies: Vec<PathBuf> = std::iter::once(cx.root.join(art))
+                        .filter(|_| !bootstrap_only)
                         .chain(cx.bootstrap.iter().map(|b| b.join(art)))
                         .filter(|f| f.is_file())
                         .collect();
@@ -887,8 +889,10 @@ pub fn run(root: &Path, bootstrap: Option<&Path>, cs_root: Option<&Path>) -> Rep
                     } else {
                         copies.into_iter().take(1).collect()
                     };
-                    // A parent dir absent from --root marks a bootstrap-only file; a MiOS-side artifact that vanished is DRIFT.
-                    let mios_side = cx.root.join(art).parent().is_some_and(Path::is_dir);
+                    // Runtime staging directories cannot turn a bootstrap-only
+                    // artifact into an alleged missing MiOS artifact.
+                    let mios_side =
+                        !bootstrap_only && cx.root.join(art).parent().is_some_and(Path::is_dir);
                     if targets.is_empty() && cx.bootstrap.is_none() && !mios_side {
                         probe.fact(format!(
                             "unmeasured: {art} is not in --root; pass --bootstrap"
@@ -1031,6 +1035,27 @@ mod tests {
         .map(Table::len)
         .unwrap_or(0);
         assert_eq!(rep.lines.len(), keys, "one line per reach key");
+    }
+
+    #[test]
+    fn bootstrap_scope_ignores_incidental_staging_but_measures_the_bootstrap() {
+        let root = scratch("bootstrap-scope");
+        ssot_with(&root, str::to_string);
+        assert!(fs::create_dir_all(root.join("field/lib")).is_ok());
+        let without_bootstrap = run(&root, None, None);
+        assert!(without_bootstrap.lines.iter().any(|line| line
+            .starts_with("edge wt-backend full unmeasured: field/lib/Get-MiOS-Backend.ps1")));
+        let missing_bootstrap = scratch("missing-bootstrap");
+        let missing = run(&root, Some(&missing_bootstrap), None);
+        assert!(missing.lines.iter().any(|line| line
+            == "edge wt-backend DRIFT artifact=missing want=field/lib/Get-MiOS-Backend.ps1"));
+        // A MiOS staging copy must not disguise the missing bootstrap artifact.
+        assert!(fs::write(root.join("field/lib/Get-MiOS-Backend.ps1"), "staging copy").is_ok());
+        let staged = run(&root, Some(&missing_bootstrap), None);
+        assert!(staged.lines.iter().any(|line| line
+            == "edge wt-backend DRIFT artifact=missing want=field/lib/Get-MiOS-Backend.ps1"));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&missing_bootstrap);
     }
 
     #[test]

@@ -4,6 +4,7 @@ set -euo pipefail
 
 USERENV="/usr/lib/mios/userenv.sh"
 if [[ -r "$USERENV" ]]; then
+    # shellcheck source=usr/lib/mios/userenv.sh
     . "$USERENV"
 fi
 
@@ -21,9 +22,6 @@ if [[ "$LIVING_WALLPAPER" != "true" ]]; then
 fi
 
 echo "[living-wallpaper] Starting animated wallpaper daemon"
-
-BG_COLOR="${MIOS_COLOR_BG:-#282262}"
-ACCENT_COLOR="${MIOS_COLOR_ACCENT:-#1A407F}"
 
 if [[ "$MODE" == "static" ]]; then
     echo "[living-wallpaper] mode is static"

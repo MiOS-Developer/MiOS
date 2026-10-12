@@ -8,6 +8,7 @@ that they are now reachable from a test, so this asserts exactly that.
 import ast
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,32 @@ def _load():
     return mod
 
 MOD = _load()
+
+class TestConfiguredResolver(unittest.TestCase):
+    def test_missing_catalog_binary_refuses_installed_fallback(self):
+        with tempfile.TemporaryDirectory() as catalog:
+            env = dict(os.environ, MIOS_NATIVE_BIN_DIR=catalog, MIOS_DRIFT_ROOT=_ROOT)
+            r = subprocess.run([sys.executable, _MOD_PATH, "resolver-differential-parity"],
+                               env=env, capture_output=True, text=True)
+            self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+            self.assertIn("configured resolver is missing", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_unexecutable_catalog_binary_refuses_installed_fallback(self):
+        with tempfile.TemporaryDirectory() as catalog:
+            name = "mios-resolver" + (".exe" if sys.platform == "win32" else "")
+            path = os.path.join(catalog, name)
+            with open(path, "w") as f:
+                f.write("invalid executable\n")
+            os.chmod(path, 0o755)
+            env = dict(os.environ, MIOS_NATIVE_BIN_DIR=catalog, MIOS_DRIFT_ROOT=_ROOT)
+            r = subprocess.run([sys.executable, _MOD_PATH, "resolver-differential-parity"],
+                               env=env, capture_output=True, text=True)
+            self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+            self.assertIn("execution failed", r.stderr)
+            self.assertIn(path, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
 
 class TestExtractedChecks(unittest.TestCase):
     def test_the_module_imports(self):
@@ -83,10 +110,21 @@ class TestExtractedChecks(unittest.TestCase):
     def test_the_shell_gate_calls_the_module_not_a_heredoc(self):
         with open(os.path.join(_ROOT, "automation/98-drift-checks.sh"), encoding="utf-8", errors="replace") as fh:
             gate = fh.read()
+        import inspect
         for name in MOD.SUBCOMMANDS:
-            self.assertIn("tools/drift-checks.py %s" % name, gate,
-                          "check_%s no longer dispatches to the module"
-                          % name.replace("-", "_"))
+            pattern = r'tools/drift-checks\.py["\x27]?\s+' + re.escape(name) + r'(?=[\s"\x27)]|$)'
+            if re.search(pattern, gate):
+                continue
+            # Ported to native: the entry here must re-enter the gate's own
+            # function, and that function must not call back -- one mechanism.
+            fn = "check_" + name.replace("-", "_")
+            src = inspect.getsource(MOD.SUBCOMMANDS[name])
+            self.assertTrue("98-drift-checks.sh" in src and '"%s"' % fn in src,
+                            "%s neither dispatches to the module nor re-enters the gate" % fn)
+            body = re.search(r"(?ms)^%s\(\) \{\n(.*?)^\}" % re.escape(fn), gate)
+            self.assertIsNotNone(body, "%s is not defined in the shell gate" % fn)
+            self.assertNotIn("drift-checks.py", body.group(1),
+                             "%s and its compatibility entry call each other" % fn)
 
 
 # A checkout that never had a file is a skip; a TRACKED file that has gone
@@ -356,67 +394,9 @@ class TestBoundImageStore(unittest.TestCase):
         self.check(1, "symlink targets wrong Quadlet")
 
 
-class TestBoundStoreProjection(unittest.TestCase):
-    def setUp(self):
-        spec = importlib.util.spec_from_file_location(
-            "pod_projection", os.path.join(_HERE, "generate-pod-quadlets.py"))
-        self.mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.mod)
-        self.temp = tempfile.mkdtemp(prefix="store-projection-")
-        self.addCleanup(shutil.rmtree, self.temp, True)
-        self.toml = os.path.join(self.temp, "mios.toml")
-        with open(self.toml, "w", encoding="utf-8") as fh:
-            fh.write('[build.bake]\nadditional_image_store = "/usr/lib/bootc/storage"\n'
-                     'firstboot_tokens = ["floating"]\n')
-
-    def project(self, args=None, image="example/core"):
-        section = {"Image": image}
-        if args is not None:
-            section["GlobalArgs"] = args
-        containers = {"core": {"Container": section}}
-        self.mod.apply_bound_image_store(containers, self.toml)
-        return containers, section
-
-    def test_preserves_other_args_and_is_idempotent(self):
-        containers, section = self.project(["--log-level=debug"])
-        expected = ["--log-level=debug", "--storage-opt=additionalimagestore=/usr/lib/bootc/storage"]
-        self.assertEqual(expected, section["GlobalArgs"])
-        self.mod.apply_bound_image_store(containers, self.toml)
-        self.assertEqual(expected, section["GlobalArgs"])
-
-    def test_split_option_is_preserved(self):
-        args = "--storage-opt additionalimagestore=/usr/lib/bootc/storage"
-        _, section = self.project(args)
-        self.assertEqual(args, section["GlobalArgs"])
-
-    def test_conflicting_or_duplicate_store_fails(self):
-        for args in (["--storage-opt=additionalimagestore=/other"],
-                     ["--storage-opt=additionalimagestore=/usr/lib/bootc/storage"] * 2):
-            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "conflicting"):
-                self.project(args)
-
-    def test_malformed_args_fail(self):
-        for args in (0, False, [0]):
-            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "GlobalArgs must"):
-                self.project(args)
-
-    def test_floating_image_never_uses_bound_store(self):
-        _, section = self.project(["--log-level=debug"], "example/floating")
-        self.assertEqual(["--log-level=debug"], section["GlobalArgs"])
-        with self.assertRaisesRegex(ValueError, "firstboot image"):
-            self.project("--storage-opt=additionalimagestore=/usr/lib/bootc/storage", "example/floating")
-
-    def test_false_settings_are_not_treated_as_missing(self):
-        for setting, value, message in (("additional_image_store", "false", "absolute path"),
-                                         ("firstboot_tokens", "false", "string array")):
-            with self.subTest(setting=setting):
-                with open(self.toml, "w", encoding="utf-8") as fh:
-                    fh.write('[build.bake]\n')
-                    if setting != "additional_image_store":
-                        fh.write('additional_image_store = "/usr/lib/bootc/storage"\n')
-                    fh.write(f"{setting} = {value}\n")
-                with self.assertRaisesRegex(ValueError, message):
-                    self.project()
+# The bound-image-store projection left Python with tools/generate-pod-quadlets.py
+# (f22b85ff, ported to `mios-gen pod-quadlets`). Its six cases now run beside the
+# implementation as the bound_store_* tests in tools/native/mios-gen/src/pod_quadlets.rs.
 
 
 class TestMonitorRegistry(unittest.TestCase):
@@ -511,8 +491,542 @@ class TestMonitorRegistry(unittest.TestCase):
         self.assertEqual("#102030", palette["bg"])
         self.assertEqual("#203040", palette["surface"])
         self.assertTrue(transparent)
+        # Transparency follows the SSOT on every platform, as the tmux theme's
+        # does (mios-service-core tmux_theme.rs): the monitor runs under WSL inside
+        # Windows Terminal, where IS_WINDOWS is False and the acrylic is real.
         self.ns["IS_WINDOWS"] = False
-        self.assertFalse(self.ns["load_ssot_colors"]()[1])
+        self.assertTrue(self.ns["load_ssot_colors"]()[1])
+        for theme in ({"acrylic": False, "opacity": 75}, {"acrylic": True, "opacity": 100}, {}):
+            self.ns.update(monitor_config=lambda theme=theme: {"colors": {"bg": "#102030"}, "theme": theme})
+            self.assertFalse(self.ns["load_ssot_colors"]()[1], theme)
+
+
+# The task_940 pair: a priority scale and a ceiling that must equal its register's
+# size, both 9 once -- two facts that agreed by accident.
+T996_ENV = {"MIOS_SCHED_URGENCY_HIGH": "9", "MIOS_SSOT_TABLES_MAX_UNCONSUMED": "9"}
+T996_SOURCES = {"MIOS_SCHED_URGENCY_HIGH": "sched.urgency_high",
+                "MIOS_SSOT_TABLES_MAX_UNCONSUMED": "ssot_tables.max_unconsumed"}
+T996_ROW = ("MIOS_SCHED_URGENCY_HIGH", "MIOS_SSOT_TABLES_MAX_UNCONSUMED", "keep-distinct",
+            "# a priority level vs a ceiling pinned to its register's size; they agree by accident")
+
+
+def _value_fixture(tmp, emitted, sources):
+    """A snapshot tool printing `emitted` and a resolver whose names registry
+    carries `sources` -- the two inputs both value gates read."""
+    import json
+    snap = os.path.join(tmp, "snapshot.sh")
+    with open(snap, "w", encoding="utf-8") as fh:
+        fh.write("#!/usr/bin/env bash\n")
+        for k, v in emitted.items():
+            fh.write("printf '%%s\\n' '%s=%s'\n" % (k, v))
+    resolver = os.path.join(tmp, "mios-resolver")
+    with open(resolver, "w", encoding="utf-8") as fh:
+        fh.write("#!%s\nimport json\nprint(json.dumps(%r))\n"
+                 % (sys.executable, {"entries": [], "sources": sources}))
+    os.chmod(resolver, 0o755)
+    return snap, resolver
+
+
+class TestValueDupCoincidence(unittest.TestCase):
+    """check_no_duplicate_value_key over declarations, and task_942's one exit."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mios-value-dup-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _run(self, emitted, sources, rows=(), ledger=()):
+        snap, resolver = _value_fixture(self.tmp, emitted, sources)
+        with open(os.path.join(self.tmp, "value-aliases.tsv"), "w", encoding="utf-8") as fh:
+            fh.write("# canonical\talias\tdisposition\n")
+            for row in rows:
+                fh.write("\t".join(row) + "\n")
+        base = os.path.join(self.tmp, "value-dup-baseline.tsv")
+        with open(base, "w", encoding="utf-8") as fh:
+            fh.write("#!ceiling\t%d\n" % len(ledger))
+            for val, keys in ledger:
+                fh.write("%s\t%d\t%s\n" % (val, len(keys), ",".join(keys)))
+        env = dict(os.environ, MIOS_RESOLVER_BIN=resolver, MIOS_TOML_ROOT=self.tmp)
+        return subprocess.run([sys.executable, _MOD_PATH, "no-duplicate-value-key", snap, base],
+                              capture_output=True, text=True, cwd=_ROOT, env=env)
+
+    def test_the_t996_pair_is_a_new_group_until_it_is_classified(self):
+        r = self._run(T996_ENV, T996_SOURCES)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("NEW duplicate-value group", r.stderr)
+
+    def test_the_t996_pair_passes_through_its_keep_distinct_row(self):
+        r = self._run(T996_ENV, T996_SOURCES, [T996_ROW])
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("0 groups at ceiling 0; 1 coincidental", r.stdout)
+
+    def test_a_row_without_its_reason_explains_nothing(self):
+        # Both gates honour the same rows: check_value_aliases rejects this
+        # one, so the ratchet must not count it as a classification either.
+        r = self._run(T996_ENV, T996_SOURCES, [T996_ROW[:3]])
+        self.assertEqual(1, r.returncode)
+        self.assertIn("NEW duplicate-value group", r.stderr)
+
+    def test_spellings_of_one_declaration_are_not_a_group(self):
+        env = {"MIOS_PORTS_X": "8470", "MIOS_PORT_X": "8470", "MIOS_X_PORT": "8470"}
+        r = self._run(env, {k: "ports.x" for k in env})
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_two_declarations_spelled_alike_still_are_a_group(self):
+        # Name shape alone used to fold these; provenance does not.
+        env = {"MIOS_CODE_MODE_X": "v", "MIOS_CODEMODE_X": "v"}
+        r = self._run(env, {"MIOS_CODE_MODE_X": "code_mode.x", "MIOS_CODEMODE_X": "codemode.x"})
+        self.assertEqual(1, r.returncode)
+        self.assertIn("NEW duplicate-value group", r.stderr)
+
+    def test_a_row_explains_only_a_group_its_canonical_side_is_in(self):
+        env = dict(T996_ENV, MIOS_OTHER="7")
+        src = dict(T996_SOURCES, MIOS_OTHER="other.k")
+        row = ("MIOS_OTHER",) + T996_ROW[1:]
+        r = self._run(env, src, [row])
+        self.assertEqual(1, r.returncode)
+
+    def test_growth_needs_its_own_row(self):
+        env = {"MIOS_A": "20", "MIOS_B": "20", "MIOS_NEW": "20"}
+        src = {"MIOS_A": "a.k", "MIOS_B": "b.k", "MIOS_NEW": "n.k"}
+        ledger = [("20", ["MIOS_A", "MIOS_B"])]
+        r = self._run(env, src, ledger=ledger)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GREW: MIOS_NEW", r.stderr)
+        row = ("MIOS_A", "MIOS_NEW", "keep-distinct", "# an unrelated tunable that is also twenty")
+        r = self._run(env, src, [row], ledger=ledger)
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_no_provenance_map_is_not_a_pass(self):
+        r = self._run(T996_ENV, {}, [T996_ROW])
+        self.assertEqual(1, r.returncode)
+        self.assertIn("cannot tell aliases from duplicates", r.stderr)
+
+
+class TestValueAliasRegistry(unittest.TestCase):
+    """value-aliases.tsv vouches for names the resolver emits.
+
+    A row whose names were not emitted used to be skipped as informational.
+    A lost table header stranded fifteen [pgvector] keys under [offline].
+    Fourteen had rows here, every one was skipped, and each consumer quietly
+    took its inline default; the fifteenth, rls_enable, had no row at all.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mios-value-aliases-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _run(self, emitted, rows, sources=None):
+        snap, resolver = _value_fixture(self.tmp, emitted, sources or {})
+        tsv = os.path.join(self.tmp, "value-aliases.tsv")
+        with open(tsv, "w", encoding="utf-8") as fh:
+            fh.write("# canonical\talias\tdisposition\n")
+            for row in rows:
+                fh.write("\t".join(row) + "\n")
+        env = dict(os.environ, MIOS_DRIFT_ROOT=self.tmp, MIOS_RESOLVER_BIN=resolver)
+        return subprocess.run([sys.executable, _MOD_PATH, "value-aliases", snap, tsv],
+                              capture_output=True, text=True, cwd=_ROOT, env=env)
+
+    def test_an_emitted_derive_pair_with_equal_values_passes(self):
+        r = self._run({"T_A": "1", "T_B": "1"},
+                      [("T_A", "T_B", "derive")])
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_a_divergent_derive_pair_fails(self):
+        r = self._run({"T_A": "1", "T_B": "2"},
+                      [("T_A", "T_B", "derive")])
+        self.assertEqual(1, r.returncode)
+        self.assertIn("MUST be equal", r.stderr)
+
+    # task_942. keep-distinct means two declarations whose values may coincide;
+    # it used to mean "must differ", which left a real coincidence no exit.
+    def test_the_t996_coincidence_passes_as_two_declarations(self):
+        r = self._run(T996_ENV, [T996_ROW], T996_SOURCES)
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_keep_distinct_without_a_reason_fails(self):
+        r = self._run(T996_ENV, [T996_ROW[:3]], T996_SOURCES)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("without a reason", r.stderr)
+
+    def test_one_declaration_under_two_names_is_never_keep_distinct(self):
+        # An alias the resolver emits beside its walked name, mislabelled.
+        one = {k: "sched.urgency_high" for k in T996_ENV}
+        r = self._run(T996_ENV, [T996_ROW], one)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("one declaration under two names", r.stderr)
+
+    def test_equal_values_with_no_declaration_to_tell_apart_fail(self):
+        r = self._run(T996_ENV, [T996_ROW], {"MIOS_SCHED_URGENCY_HIGH": "sched.urgency_high"})
+        self.assertEqual(1, r.returncode)
+        self.assertIn("traces to no SSOT declaration", r.stderr)
+
+    def test_a_pair_registered_twice_fails(self):
+        reverse = (T996_ROW[1], T996_ROW[0]) + T996_ROW[2:]
+        r = self._run(T996_ENV, [T996_ROW, reverse], T996_SOURCES)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("already registered", r.stderr)
+
+    def test_a_provenance_less_resolver_is_not_a_pass(self):
+        r = self._run(T996_ENV, [T996_ROW], {})
+        self.assertEqual(1, r.returncode)
+        self.assertIn("cannot be verified", r.stdout + r.stderr)
+
+    def test_a_stranded_family_fails_naming_both_variables(self):
+        # The lost-header shape: the key now parses under another table, so
+        # the resolver emits neither spelling the registry vouches for.
+        r = self._run({"OFFLINE_HNSW_ITERATIVE_SCAN": "strict_order"},
+                      [("PGVECTOR_HNSW_ITERATIVE_SCAN",
+                        "PG_HNSW_ITERATIVE_SCAN", "derive")])
+        self.assertEqual(1, r.returncode)
+        self.assertIn("PG_HNSW_ITERATIVE_SCAN is registered", r.stderr)
+        self.assertIn("PGVECTOR_HNSW_ITERATIVE_SCAN is registered", r.stderr)
+
+    def test_only_the_unemitted_side_is_named(self):
+        r = self._run({"T_A": "1"}, [("T_A", "T_B", "derive")])
+        self.assertEqual(1, r.returncode)
+        self.assertIn("T_B is registered", r.stderr)
+        self.assertNotIn("T_A is registered", r.stderr)
+
+    def test_a_family_prefix_row_names_no_variable(self):
+        r = self._run({}, [("T_", "U_", "derive")])
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def _gate_over(self, toml_text):
+        """The real gate, snapshot tool and registry over a copy of the SSOT."""
+        root = os.path.join(self.tmp, "root")
+        os.makedirs(os.path.join(root, "usr/share/mios"), exist_ok=True)
+        with open(os.path.join(root, "usr/share/mios/mios.toml"), "w", encoding="utf-8") as fh:
+            fh.write(toml_text)
+        return subprocess.run(
+            [sys.executable, _MOD_PATH, "value-aliases",
+             os.path.join(_ROOT, "usr/libexec/mios/mios-env-snapshot"),
+             os.path.join(_ROOT, "usr/share/mios/reference/value-aliases.tsv")],
+            capture_output=True, text=True, cwd=_ROOT,
+            env=dict(os.environ, MIOS_DRIFT_ROOT=root))
+
+    def test_the_lost_pgvector_header_is_named_by_variable(self):
+        # Replays the defect on the shipped SSOT: [lsfs] and [offline] opened
+        # mid-[pgvector], so rls_enable..listen_loopback parsed into [offline].
+        with open(os.path.join(_ROOT, "usr/share/mios/mios.toml"), encoding="utf-8") as fh:
+            shipped = fh.read()
+        m = re.search(r"^rls_enable\s*=.*?^listen_loopback\s*=[^\n]*\n", shipped, re.S | re.M)
+        anchor = "\nfallback_to_online = true\n"
+        self.assertTrue(m and shipped.count(anchor) == 1,
+                        "[pgvector]/[offline] shape changed; this fixture is stale")
+        stranded = (shipped[:m.start()] + shipped[m.end():]).replace(anchor, anchor + m.group(0), 1)
+
+        control = self._gate_over(shipped)
+        self.assertEqual(0, control.returncode, control.stderr)
+
+        r = self._gate_over(stranded)
+        self.assertEqual(1, r.returncode, r.stderr)
+        # The names the pgvector Quadlet, agent-pipe pg.py and mios-pg-query read.
+        for name in ("MIOS_PGVECTOR_HNSW_ITERATIVE_SCAN", "MIOS_PGVECTOR_POOL_ENABLE", "MIOS_PGVECTOR_RLS_ENABLE"):
+            self.assertIn(name + " is registered", r.stderr)
+
+
+# ADR-0030's budget must fail closed. peer-lane planted a missing and a string
+# target (then target_tracked_files) and a string and a negative target_files against af498021,
+# and all four passed, because the comparison simply skipped what it could not read.
+_BUDGET_TOML = """\
+[build.ratchet]
+max_phase_scripts = 10
+
+[legibility]
+max_tracked_files = 2
+max_bootstrap_files = 1
+max_tracked_mb = 1
+max_shell_lines = 100
+max_ps_lines = 100
+max_libexec_verbs = 10
+max_tooling_python_lines = 100
+
+[legibility.file_budget]
+target_tracked_files = 5
+target_bootstrap_files = 5
+order = ["ssot", "misc"]
+
+[legibility.file_budget.domains.ssot]
+max_files = 1
+target_files = 1
+globs = ["usr/share/mios/*"]
+
+[legibility.file_budget.domains.misc]
+max_files = 1
+target_files = 1
+globs = ["*"]
+"""
+
+
+class TestFileBudgetFailsClosed(unittest.TestCase):
+    def _run(self, toml, boot=True):
+        d = tempfile.mkdtemp(prefix="budget-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "usr/share/mios"))
+        with open(os.path.join(d, "usr/share/mios/mios.toml"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(toml)
+        with open(os.path.join(d, "README"), "w") as fh:
+            fh.write("x\n")
+        subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
+        # The sister repo has its own budget (ADR-0030: 500 EACH per repo).
+        b = tempfile.mkdtemp(prefix="budget-boot-")
+        self.addCleanup(shutil.rmtree, b, True)
+        with open(os.path.join(b, "build-mios.sh"), "w") as fh:
+            fh.write("x\n")
+        subprocess.run(["git", "-C", b, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", b, "add", "-A"], check=True, capture_output=True)
+        env = {**os.environ, "MIOS_DRIFT_ROOT": d, "MIOS_BOOTSTRAP_ROOT": b if boot else os.path.join(b, "absent")}
+        return subprocess.run([sys.executable, _MOD_PATH, "legibility-ratchet"], capture_output=True,
+                              text=True, env=env)
+
+    def test_a_well_formed_budget_passes(self):
+        r = self._run(_BUDGET_TOML)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+
+    def test_malformed_budgets_fail_naming_the_fault(self):
+        ssot = "[legibility.file_budget.domains.ssot]\nmax_files = 1\ntarget_files = 1\n"
+        cases = {
+            "target_tracked_files missing": (_BUDGET_TOML.replace("target_tracked_files = 5\n", ""),
+                                             "target_tracked_files must be a positive integer"),
+            "target_tracked_files a string": (_BUDGET_TOML.replace("target_tracked_files = 5", 'target_tracked_files = "5"'),
+                                              "target_tracked_files must be a positive integer"),
+            "target_bootstrap_files missing": (_BUDGET_TOML.replace("target_bootstrap_files = 5\n", ""),
+                                               "target_bootstrap_files must be a positive integer"),
+            "bootstrap ceiling absent": (_BUDGET_TOML.replace("max_bootstrap_files = 1\n", ""),
+                                         "max_bootstrap_files is absent"),
+            "bootstrap over its floor": (_BUDGET_TOML.replace("max_bootstrap_files = 1", "max_bootstrap_files = 0"),
+                                         "bootstrap_files = 1, over the floor of 0"),
+            "target_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", 'target_files = "1"')),
+                                      "domains.ssot].target_files must be a non-negative integer"),
+            "target_files negative": (_BUDGET_TOML.replace(ssot, ssot.replace("target_files = 1", "target_files = -1")),
+                                      "domains.ssot].target_files must be a non-negative integer"),
+            "max_files a string": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", 'max_files = "1"')),
+                                   "domains.ssot].max_files must be a non-negative integer"),
+            "globs empty": (_BUDGET_TOML.replace('globs = ["usr/share/mios/*"]', "globs = []"),
+                            "domains.ssot].globs must be a non-empty list"),
+            "budget table absent": (_BUDGET_TOML.split("[legibility.file_budget]")[0],
+                                    "[legibility.file_budget] is absent"),
+            "targets over the cap": (_BUDGET_TOML.replace("target_tracked_files = 5", "target_tracked_files = 1"),
+                                     "domain targets sum to 2, over target_tracked_files = 1"),
+            "a domain over its floor": (_BUDGET_TOML.replace(ssot, ssot.replace("max_files = 1", "max_files = 0")),
+                                        "files.ssot = 1, over the floor of 0"),
+        }
+        r = self._run(_BUDGET_TOML, boot=False)
+        self.assertEqual(1, r.returncode, "an absent mios-bootstrap passed:\n" + r.stdout + r.stderr)
+        self.assertIn("mios-bootstrap is not a checkout", r.stdout)
+        for name, (toml, expect) in cases.items():
+            with self.subTest(name):
+                r = self._run(toml)
+                self.assertEqual(1, r.returncode, "%s passed:\n%s%s" % (name, r.stdout, r.stderr))
+                self.assertIn(expect, r.stdout)
+
+
+def _native(name):
+    """The mios-gen this tree builds (the newest of release and debug), else the installed one."""
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        path = os.path.join(catalog, name + exe)
+        return path if os.path.isfile(path) else None
+    built = [p for p in (os.path.join(_ROOT, "tools/native/target", t, name + exe)
+                         for t in ("release", "debug")) if os.path.isfile(p)]
+    if built:
+        return max(built, key=os.path.getmtime)
+    return next((p for p in ("/usr/libexec/mios/" + name, "/usr/bin/" + name) if os.path.isfile(p)), None)
+
+
+def _rmtree(path):
+    """Git writes packs read-only, which Windows refuses to delete."""
+    import stat
+    for top, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                os.chmod(os.path.join(top, name), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+_ARCHIVE_TOML = """[legibility.archive]
+path = ".archive"
+ref = "legacy"
+object_format = "sha256"
+since = "%s"
+author = "fixture <fixture@example.invalid>"
+exclude = []
+"""
+
+
+class TestLegacyArchive(unittest.TestCase):
+    """ADR-0030 Decision 7, planted both ways: every defect fails, the untouched archive passes.
+
+    The fixture: since = the base commit, then gone.txt is deleted and tool.sh (100755) edited,
+    then tool.sh is deleted, then `mios-gen archive` builds .archive and it is committed."""
+
+    def setUp(self):
+        gen = _native("mios-gen")
+        if not gen:
+            self.fail("mios-gen is not built, so the legacy archive cannot be exercised -- "
+                      "build it: cd tools/native && cargo build -p mios-gen")
+        self.gen = gen
+        home = tempfile.mkdtemp(prefix="archive-home-")
+        self.addCleanup(_rmtree, home)
+        config = os.path.join(home, "gitconfig")
+        with open(config, "w") as fh:
+            fh.write("")
+        # Hermetic git: no operator config (autocrlf, signing, hooks) reaches the fixture or the tool.
+        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": config, "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+                    "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+                    "GIT_CEILING_DIRECTORIES": os.path.dirname(home),
+                    "MIOS_NATIVE_BIN_DIR": os.path.dirname(gen)}
+
+    def _git(self, d, *args, git_dir=None, stdin=None, env=None):
+        where = ["--git-dir", git_dir] if git_dir else ["-C", d]
+        return subprocess.run(["git", *where, *args], env=env or self.env, input=stdin,
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    def _write(self, d, rel, text):
+        path = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        if rel.endswith(".sh"):
+            os.chmod(path, 0o755)
+
+    def _repo(self):
+        d = tempfile.mkdtemp(prefix="archive-")
+        self.addCleanup(_rmtree, d)
+        self._git(d, "init", "-q")
+        self._write(d, "keep.txt", "kept\n")
+        self._write(d, "gone.txt", "dropped at its base content\n")
+        self._write(d, "tool.sh", "#!/bin/sh\necho one\n")
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % "0")
+        self._git(d, "add", "keep.txt", "gone.txt", "tool.sh", "usr/share/mios/mios.toml")
+        self._git(d, "update-index", "--chmod=+x", "tool.sh")
+        self._git(d, "commit", "-q", "-m", "base")
+        since = self._git(d, "rev-parse", "HEAD")
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % since)
+        self._write(d, "tool.sh", "#!/bin/sh\necho two\n")
+        self._git(d, "add", "usr/share/mios/mios.toml", "tool.sh")
+        self._git(d, "update-index", "--chmod=+x", "tool.sh")  # where core.filemode is off (Windows)
+        self._git(d, "rm", "-q", "gone.txt")
+        self._git(d, "commit", "-q", "-m", "drop gone.txt, edit tool.sh")
+        self._git(d, "rm", "-q", "tool.sh")
+        self._git(d, "commit", "-q", "-m", "drop tool.sh")
+        built = subprocess.run([self.gen, "archive", "--root", d], env=self.env, capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stdout + built.stderr)
+        self._git(d, "add", "--all", "--", ".archive")
+        self._git(d, "commit", "-q", "-m", "archive")
+        return d
+
+    def _check(self, d):
+        return subprocess.run([sys.executable, _MOD_PATH, "legacy-archive"], capture_output=True,
+                              text=True, env={**self.env, "MIOS_DRIFT_ROOT": d})
+
+    def _fails(self, d, expect, code=1):
+        r = self._check(d)
+        self.assertEqual(code, r.returncode, "a planted defect passed:\n" + r.stdout + r.stderr)
+        self.assertIn(expect, r.stdout)
+
+    def _plant(self, d, path, content, mode="100644"):
+        """Rewrite the branch with `path` set to `content`, repack, and commit the store, so the
+        planted entry is the only defect: no loose object, index or unstaged pack is left."""
+        store = os.path.join(d, ".archive")
+        scratch = tempfile.mkdtemp(prefix="archive-plant-")
+        self.addCleanup(_rmtree, scratch)
+        env = {**self.env, "GIT_INDEX_FILE": os.path.join(scratch, "index")}
+        g = lambda *a, stdin=None: self._git(d, *a, git_dir=store, stdin=stdin, env=env)
+        g("read-tree", "legacy")
+        oid = g("hash-object", "-w", "--stdin", stdin=content.encode())
+        g("update-index", "--add", "--cacheinfo", "%s,%s,%s" % (mode, oid, path))
+        g("update-ref", "refs/heads/legacy", g("commit-tree", g("write-tree"), "-m", "planted"))
+        g("-c", "repack.writeBitmaps=false", "-c", "pack.writeReverseIndex=false",
+          "repack", "-a", "-d", "-q", "-n")
+        g("prune-packed")
+        self._git(d, "add", "--all", "--", ".archive")
+        self._git(d, "commit", "-q", "-m", "plant %s" % path)
+
+    def test_an_unmodified_archive_passes(self):
+        d = self._repo()
+        r = self._check(d)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("holds every dropped file: 2 dropped paths", r.stdout)
+        rebuilt = subprocess.run([self.gen, "archive", "--root", d], env=self.env, capture_output=True, text=True)
+        self.assertEqual(0, rebuilt.returncode, rebuilt.stdout + rebuilt.stderr)
+        self.assertIn("is already current", rebuilt.stdout)
+        self.assertEqual("", self._git(d, "status", "--porcelain"))
+        # The archive restores the last version, mode included.
+        out = tempfile.mkdtemp(prefix="archive-restore-")
+        self.addCleanup(_rmtree, out)
+        self._git(d, "--work-tree", out, "restore", "--source=legacy", "--", "tool.sh", "gone.txt",
+                  git_dir=os.path.join(d, ".archive"))
+        with open(os.path.join(out, "tool.sh"), encoding="utf-8", newline="") as fh:
+            self.assertEqual("#!/bin/sh\necho two\n", fh.read())
+        with open(os.path.join(out, "gone.txt"), encoding="utf-8", newline="") as fh:
+            self.assertEqual("dropped at its base content\n", fh.read())
+        self.assertIn("100755", self._git(d, "ls-tree", "legacy", "tool.sh", git_dir=os.path.join(d, ".archive")))
+
+    def test_a_dropped_file_missing_from_the_archive_fails(self):
+        d = self._repo()
+        self._git(d, "rm", "-q", "keep.txt")
+        self._git(d, "commit", "-q", "-m", "drop keep.txt without re-archiving")
+        self._fails(d, "missing: keep.txt")
+
+    def test_an_extra_path_fails(self):
+        d = self._repo()
+        self._plant(d, "planted.txt", "never tracked\n")
+        self._fails(d, "extra: planted.txt")
+
+    def test_changed_content_or_mode_fails(self):
+        d = self._repo()
+        self._plant(d, "gone.txt", "not its last content\n")
+        self._fails(d, "content differs: gone.txt")
+        self._plant(d, "tool.sh", "#!/bin/sh\necho two\n", mode="100644")
+        self._fails(d, "mode differs: tool.sh")
+
+    def test_a_shallow_clone_fails(self):
+        d = self._repo()
+        shallow = tempfile.mkdtemp(prefix="archive-shallow-")
+        self.addCleanup(_rmtree, shallow)
+        url = "file:///" + d.replace(os.sep, "/").lstrip("/")
+        subprocess.run(["git", "clone", "-q", "--depth", "1", url, shallow], env=self.env,
+                       capture_output=True, check=True)
+        self._fails(shallow, "full history required (fetch-depth: 0)")
+
+    def test_a_stray_hook_or_loose_object_fails(self):
+        d = self._repo()
+        self._write(d, ".archive/hooks/pre-commit", "#!/bin/sh\n")
+        self._fails(d, ".archive/hooks/pre-commit is outside the allowed set")
+        os.remove(os.path.join(d, ".archive/hooks/pre-commit"))
+        self.assertEqual(0, self._check(d).returncode)
+        self._git(d, "hash-object", "-w", "--stdin", git_dir=os.path.join(d, ".archive"), stdin=b"loose\n")
+        self._fails(d, "is outside the allowed set")
+
+    def test_outside_a_checkout_it_cannot_run(self):
+        d = tempfile.mkdtemp(prefix="archive-nogit-")
+        self.addCleanup(_rmtree, d)
+        self._write(d, "usr/share/mios/mios.toml", _ARCHIVE_TOML % "0")
+        self._fails(d, "cannot_run", code=2)
+
+
+class TestStructuredCheck(unittest.TestCase):
+    def test_empty_directory_skips_and_populated_without_ssot_violates(self):
+        """Task AGY-1811: an empty directory still skips, and a directory that has usr/ but no mios.toml reports a violation."""
+        with tempfile.TemporaryDirectory(prefix="structured-empty-") as empty_dir:
+            env = dict(os.environ, MIOS_DRIFT_ROOT=empty_dir)
+            r_empty = subprocess.run([sys.executable, _MOD_PATH, "structured"],
+                                     capture_output=True, text=True, env=env)
+            self.assertEqual(0, r_empty.returncode, "empty directory must skip (exit 0): %s" % (r_empty.stdout + r_empty.stderr))
+
+        with tempfile.TemporaryDirectory(prefix="structured-populated-") as pop_dir:
+            os.makedirs(os.path.join(pop_dir, "usr", "share"), exist_ok=True)
+            env = dict(os.environ, MIOS_DRIFT_ROOT=pop_dir)
+            r_pop = subprocess.run([sys.executable, _MOD_PATH, "structured"],
+                                   capture_output=True, text=True, env=env)
+            self.assertEqual(1, r_pop.returncode, "populated directory without mios.toml must fail (exit 1)")
+            self.assertIn("missing from populated tree", r_pop.stderr)
 
 
 if __name__ == "__main__":

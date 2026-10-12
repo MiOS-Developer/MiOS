@@ -214,7 +214,7 @@ def _probe_models() -> list[dict]:
     out: list[dict] = []
     try:
         import urllib.request
-        port = os.environ.get("MIOS_PORT_LLM_LIGHT", "8500")
+        port = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")
         req = urllib.request.Request(f"http://localhost:{port}/v1/models")
         with urllib.request.urlopen(req, timeout=5.0) as response:
             data = json.loads(response.read().decode('utf-8'))

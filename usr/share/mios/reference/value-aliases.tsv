@@ -1,14 +1,27 @@
-# value-aliases.tsv -- canonical<TAB>alias<TAB>disposition{derive|delete|keep-distinct}[ # comment]
-# Enforced by automation/98-drift-checks.sh::check_value_aliases (WS-DEDUP AGY-858):
+# value-aliases.tsv -- canonical<TAB>alias<TAB>disposition{derive|delete|keep-distinct}[<TAB># reason]
+# Enforced by automation/98-drift-checks.sh::check_value_aliases (WS-DEDUP task_1591); the
+# keep-distinct rows are also what check_no_duplicate_value_key honours (task_942):
 #   * derive / delete : the two keys MUST resolve to the SAME value (a divergence is a
 #                       silent SSOT bug the de-dup campaign must fix, not hide).
-#   * keep-distinct   : the two keys MUST resolve DIFFERENTLY (a "false-friend" alias-shaped
-#                       pair that a naive name-based collapse would corrupt -- pinned here so
-#                       the AGY-856..930 collapse can never silently merge them).
-# Seeded from reference/audit-value-dup-report.md (measured). Grows via mios-dup-report (AGY-856).
-# A pair whose keys are not both emitted is skipped (informational), so the gate never
-# false-fails on a platform that does not surface a key.
-MIOS_PGVECTOR_USER	MIOS_PG_USER	keep-distinct	# mios-pgvector service acct != mios postgres role (report 4.1)
+#   * keep-distinct   : the two keys are DISTINCT FACTS -- two SSOT declarations, never to
+#                       be collapsed, whose values MAY coincide. Both gates mean exactly this:
+#                       - check_value_aliases fails the row when the resolver's provenance
+#                         (mios-resolver --emit=names, `sources`) traces both names to ONE
+#                         declaration (that is an alias: derive), when equal values cannot
+#                         be traced to two declarations, or when the row carries no reason;
+#                       - check_no_duplicate_value_key stops counting the ALIAS column as a
+#                         duplicate of the group its CANONICAL column is in. This is the one
+#                         sanctioned representation of a coincidental equal value.
+#                       The reason must say why either key can change without the other
+#                       becoming wrong. If they must change together they are ONE fact:
+#                       collapse them instead. A row whose values differ still pins an
+#                       alias-shaped false-friend against a name-based collapse.
+# Seeded from reference/audit-value-dup-report.md (measured). Grows via mios-dup-report (task_1591).
+# Every name in a row MUST be emitted by the resolver; an unemitted name is a violation that
+# names it. (Skipping such rows hid 14 of the 15 [pgvector] keys a lost table header stranded
+# under [offline].) A name ending in "_" declares a naming family, not a variable.
+MIOS_DISPATCH_NO_TOOL_CHOICE_HINTS	MIOS_DISPATCH_KV_PAGING_HINTS	keep-distinct	# rejection of forced tool_choice and support for /slots paging are independent capabilities; either backend hint can change without changing the other
+MIOS_PGVECTOR_USER	MIOS_PG_USER	derive	# both spell [pgvector].user, the postgres role every pg client logs in as
 MIOS_COLORS_ACCENT	MIOS_COLOR_ACCENT	derive	# family 9 singular/plural color
 MIOS_COLORS_INFO	MIOS_COLOR_INFO	derive	# family 9
 MIOS_COLORS_ANSI_4_BLUE	MIOS_ANSI_4_BLUE	derive	# family 8 ANSI theme projection
@@ -94,6 +107,7 @@ MIOS_PGVECTOR_PASS	MIOS_PG_PASS	derive	# family 3 pgvector/pg
 MIOS_PGVECTOR_POOL_ENABLE	MIOS_PG_POOL_ENABLE	derive	# family 3 pgvector/pg
 MIOS_PGVECTOR_POOL_MAX	MIOS_PG_POOL_MAX	derive	# family 3 pgvector/pg
 MIOS_PGVECTOR_POOL_MIN	MIOS_PG_POOL_MIN	derive	# family 3 pgvector/pg
+MIOS_PGVECTOR_RLS_ENABLE	MIOS_DB_RLS_ENABLE	derive	# family 3 pgvector/db: [pgvector].rls_enable as agent-pipe pg.py and mios-pg-query read it
 MIOS_PGVECTOR_RLS_MODE	MIOS_PG_RLS_MODE	derive	# family 3 pgvector/pg
 MIOS_PGVECTOR_SCHEMA_INIT	MIOS_PG_SCHEMA_INIT	derive	# family 3 pgvector/pg
 MIOS_PGVECTOR_SCRATCH_PERSIST	MIOS_PG_SCRATCH_PERSIST	derive	# family 3 pgvector/pg
@@ -140,7 +154,7 @@ MIOS_SERVICES_OPEN_WEBUI_UID	MIOS_OPEN_WEBUI_UID	derive	# family 2 service-acct 
 MIOS_SERVICES_OPEN_WEBUI_USER	MIOS_OPEN_WEBUI_USER	derive	# family 2 service-acct identity
 MIOS_SERVICES_PGVECTOR_GID	MIOS_PGVECTOR_GID	derive	# family 2 service-acct identity
 MIOS_SERVICES_PGVECTOR_UID	MIOS_PGVECTOR_UID	derive	# family 2 service-acct identity
-MIOS_SERVICES_PGVECTOR_USER	MIOS_PGVECTOR_USER	derive	# family 2 service-acct identity
+MIOS_SERVICES_PGVECTOR_USER	MIOS_PGVECTOR_USER	keep-distinct	# OS account mios-pgvector != postgres role mios (report 4.1); the canonical [pgvector].user owns MIOS_PGVECTOR_USER
 MIOS_SERVICES_SEARXNG_GID	MIOS_SEARXNG_GID	derive	# family 2 service-acct identity
 MIOS_SERVICES_SEARXNG_UID	MIOS_SEARXNG_UID	derive	# family 2 service-acct identity
 MIOS_SERVICES_SEARXNG_USER	MIOS_SEARXNG_USER	derive	# family 2 service-acct identity
@@ -166,9 +180,75 @@ MIOS_STORAGE_CEPHFS_MOUNT_OPTIONS	MIOS_CEPHFS_MOUNT_OPTIONS	derive	# family 5 ce
 MIOS_STORAGE_CEPHFS_PROVISION_SCRIPT	MIOS_CEPHFS_PROVISION_SCRIPT	derive	# family 5 cephfs
 MIOS_STORAGE_CEPHFS_SUBVOLUME_MODE	MIOS_CEPHFS_SUBVOLUME_MODE	derive	# family 5 cephfs
 MIOS_STORAGE_CEPHFS_TENANT_ID	MIOS_CEPHFS_TENANT_ID	derive	# family 5 cephfs
-MIOS_PORTS_SSH	MIOS_SSH_PORT	keep-distinct	# family 1 false-friend: 8222=actual host sshd, 2222=reserved canonical operator-SSH port (mios.toml:7906)
+MIOS_PORTS_SSH	MIOS_SSH_PORT	keep-distinct	# family 1 false-friend: [ports].ssh is the host sshd port the admin category allocates; [ssh].port is the port agents dial on mios-* hosts
 MIOS_PATHS_MIOS_TOML	MIOS_TOML	derive	# family 7 path SSOT under bare + PATHS_ prefix
 MIOS_PATHS_WSL_FIRSTBOOT_DONE	MIOS_WSLBOOT_DONE	derive	# family 7 path: the WSL firstboot sentinel under both names
-MIOS_IMAGES_MIOS_LLM_HEAVY_IMAGE_IMAGE	MIOS_VLLM_IMAGE	derive	# the heavy lane image under its [images] key and its lane-named alias
+MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE	MIOS_VLLM_IMAGE	derive	# vLLM overlay of the single heavy lane and its upstream image alias
+MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_SGLANG_IMAGE_IMAGE	MIOS_SGLANG_IMAGE	derive	# SGLang overlay of the single heavy lane and its upstream image alias
 MIOS_PORTS_RADOSGW	MIOS_PORT_RADOSGW	derive	# port alias family: [ports].radosgw under both spellings
 MIOS_RADOSGW_PORT	MIOS_PORT_RADOSGW	derive	# port alias family: service-prefixed spelling of the same port
+# -- task_942 coincidences: the alias column is a distinct fact that shares the canonical's value --
+MIOS_DISPATCH_TRACE_MAX_SPANS_PER_TRACE	MIOS_RUST_CATEGORIES_MAX_UNOWNED	keep-distinct	# a per-trace span storage cap vs a shrink-only ceiling that must equal the census of unowned scripts; the ceiling moves with every port
+MIOS_DAEMON_INDEX_SUMMARY_MAX_BYTES	MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S	keep-distinct	# bytes of a file kept as its index summary vs seconds a cloud session may spend on setup
+MIOS_DASHBOARD_PROBE_TIMEOUT_MS	MIOS_DEPLOYMENT_CLOUD_GCE_BOOT_DISK_GB	keep-distinct	# a loopback probe timeout in milliseconds vs a Compute Engine boot disk size in GB
+MIOS_DISPATCH_VRAM_COLOAD_RESERVE_MB	MIOS_TERMINAL_WINDOWS_COMMAND_TIMEOUT_MS	keep-distinct	# MB of VRAM held back for co-tenants vs milliseconds a Windows tmux control client may run
+MIOS_SERVICES_HEADSCALE_UID	MIOS_SERVICES_HEADSCALE_GID	keep-distinct	# a user id and a group id live in separate kernel namespaces; equal by the private-group convention, and the group can be retargeted without renumbering the user
+MIOS_NAME	MIOS_AI_AGENT_MODEL	keep-distinct	# the persona's display name vs the model id /v1/models advertises and clients pin in requests; renaming the persona must not re-id the API
+MIOS_NAME	MIOS_MCP_TMUX_WORKSPACE_WINDOW_NAME	keep-distinct	# the persona's display name vs the tmux and Windows Terminal window id the launcher and relay address an open workspace by
+MIOS_RUST_CATEGORIES_APPS_BINARY	MIOS_BUILD_NATIVE_CATEGORIES_APPS_BINARIES	keep-distinct	# the apps category's ADR-0021 port destination vs the executables the native build installs in the apps role today; equal only while that role ships one executable
+MIOS_DRIFT_LINT_PYTHON	MIOS_MCP_TMUX_WORKSPACE_TUI_PYTHON	keep-distinct	# the interpreter the lint gates run vs the system interpreter whose Fedora Textual/Rich packages the workspace TUI imports; either can pin a versioned python alone
+MIOS_TERMINAL_READING_COLS	MIOS_MCP_TMUX_WORKSPACE_DESKTOP_MIN_COLUMNS	keep-distinct	# the reading window's width vs the narrowest terminal that still gets the desktop workspace layout
+MIOS_TERMINAL_READING_COLS	MIOS_PIPELINE_CONSOLE_WIDTH	keep-distinct	# the reading window's width vs the column width the build pipeline console renders at
+MIOS_DISPATCH_CUA_MAX_STEPS	MIOS_MCP_TMUX_WORKSPACE_WORKER_MIN_COLUMNS	keep-distinct	# a computer-use step budget vs the narrowest a tmux worker pane may be squeezed
+MIOS_DISPATCH_DEFAULT_TOOL_CAP	MIOS_MCP_TMUX_WORKSPACE_MINIMUM_HEAD_ROWS	keep-distinct	# a per-turn tool-call cap vs the fewest rows the head pane keeps in portrait
+MIOS_AGENT_PIPE_NO_PROGRESS_WINDOW	MIOS_MCP_AGENTS_OBSERVATION_REFRESH_S	keep-distinct	# turns without progress before the pipe intervenes vs seconds between agent observation refreshes
+MIOS_AGENT_PIPE_TOOL_LOOP_LIMIT	MIOS_DOCS_MAX_RETIRED_CODE_EXEMPTIONS	keep-distinct	# a tool-loop iteration cap vs a shrink-only ceiling that must equal its exemption register's size
+MIOS_TERMINAL_ROWS	MIOS_TERMINAL_MONITOR_ROWS	keep-distinct	# the default terminal's height vs the monitor window profile's own height; [terminal.install] and [terminal.reading] size their windows independently the same way
+MIOS_CRAWL_MIN_CHARS	MIOS_MCP_TMUX_WORKSPACE_PORTRAIT_RATIO_PERCENT	keep-distinct	# the shortest page text a crawl keeps vs the height-to-width ratio past which a terminal counts as portrait
+MIOS_APPEARANCE_CURSOR_SIZE	MIOS_PIPELINE_CONSOLE_BAR_WIDTH	keep-distinct	# the desktop cursor size in pixels vs the pipeline console's progress-bar width in cells
+MIOS_DEV_VM_DISK_RESERVE_GB	MIOS_MCP_AGENTS_OBSERVATION_MAX_ROWS	keep-distinct	# GB of host disk the dev VM leaves free vs the most agent rows one observation lists
+MIOS_DEV_VM_DISK_RESERVE_GB	MIOS_MCP_TMUX_WORKSPACE_DESKTOP_MIN_ROWS	keep-distinct	# GB of host disk the dev VM leaves free vs the shortest terminal that still gets the desktop layout
+MIOS_DISPATCH_COUNCIL_MAX	MIOS_MCP_TMUX_WORKSPACE_WORKER_PANES	keep-distinct	# the most council members one deliberation seats vs the worker panes the tmux workspace opens
+MIOS_AGENT_PIPE_REPLAN_MAX	MIOS_BUILD_IMAGES_RETRIES	keep-distinct	# how often the pipe may replan a turn vs how often podman retries an image build step
+MIOS_DEV_VM_MEMORY_RESERVE_PCT	MIOS_DEPLOYMENT_CLOUD_BUILD_FREE_GB	keep-distinct	# the share of host RAM the dev VM leaves free vs GB of free store a nested cloud build needs
+MIOS_DEV_VM_MEMORY_RESERVE_PCT	MIOS_TERMINAL_MONITOR_WORKER_SPLIT_PERCENT	keep-distinct	# the share of host RAM the dev VM leaves free vs the share of the monitor the fullscreen worker grid takes
+MIOS_DISPATCH_KV_GC_TTL_S	MIOS_MCP_AGENTS_MAILBOX_RETENTION_S	keep-distinct	# how long an idle KV fork lives vs how long an agent mailbox message is kept; both one day today, set by different retention needs
+MIOS_FINETUNE_DEVICE	MIOS_SGLANG_LOAD_FORMAT	keep-distinct	# the fine-tune accelerator choice vs the SGLang engine's --load-format flag
+MIOS_FINETUNE_DEVICE	MIOS_VLLM_LOAD_FORMAT	keep-distinct	# the fine-tune accelerator choice vs the vLLM engine's --load-format flag; each engine takes its own flag
+MIOS_FINETUNE_DEVICE	MIOS_TERMINAL_WINDOWS_GLYPH_MODE	keep-distinct	# the fine-tune accelerator choice vs whether the Windows client draws nerd-font or ascii glyphs
+MIOS_BLADE_FALLBACK	MIOS_DEPLOYMENT_CLOUD_OVERLAY_BLADE_TYPE	keep-distinct	# the archetype a blade falls back to when detection fails vs the archetype the cloud overlay forces on a VM
+MIOS_LANES_LIGHT_TOOL_CALL_PARSER	MIOS_LANES_IGPU_TOOL_CALL_PARSER	keep-distinct	# each lane's tool-call parser follows the model that lane serves; the iGPU lane can change models alone
+MIOS_PODS_MIOS_AI_NETWORK	MIOS_BUILD_IMAGES_NETWORK	keep-distinct	# a pod's runtime network mode vs the network podman build uses while baking an image
+MIOS_ADGUARD_VERSION	MIOS_HEADSCALE_VERSION	keep-distinct	# each sidecar image floats its own tag (ADR-0003); headscale can pin a release without adguard
+MIOS_BRANCH	MIOS_DEPLOYMENT_CLOUD_SOURCE_REF	keep-distinct	# the branch the image is built from vs the ref a cloud agent session clones to work on
+MIOS_IDENTITY_HOSTNAME	MIOS_DEPLOYMENT_CLOUD_GCE_INSTANCE	keep-distinct	# the MiOS host's own hostname vs the name of the Compute Engine VM that hosts it
+MIOS_IDENTITY_HOSTNAME	MIOS_DEPLOYMENT_CLOUD_GCE_CONTAINER	keep-distinct	# the MiOS host's own hostname vs the podman container name the GCE startup script runs it under
+MIOS_LANES_LIGHT_REASONING_PARSER	MIOS_LANES_IGPU_REASONING_PARSER	keep-distinct	# each lane's reasoning parser follows the model that lane serves; the iGPU lane can change models alone
+MIOS_BLADE_REQUIRES_K3S	MIOS_BLADE_REQUIRES_LLAMA_RPC_SERVER	keep-distinct	# each unit's blade requirement class is its own placement decision; llama-rpc-server can move planes alone
+MIOS_BLADE_REQUIRES_K3S	MIOS_BLADE_REQUIRES_MIOS_HEADSCALE	keep-distinct	# each unit's blade requirement class is its own placement decision; mios-headscale can move planes alone
+MIOS_AGENT_PIPE_NO_PROGRESS_WINDOW	MIOS_DEPLOY_FORMATS_VHDX_VM_GENERATION	keep-distinct	# turns before agent progress intervention vs the Hyper-V firmware generation; changing a progress budget cannot select a VM firmware interface
+MIOS_CONVERGE_GATEWAY_WORKER_CONCURRENCY	MIOS_DEPLOY_FORMATS_VHDX_VM_PROCESSORS	keep-distinct	# gateway request workers vs virtual CPUs assigned to a boot-test VM; either workload can be resized independently
+MIOS_BUILD_RATCHET_MAX_PHASE_SCRIPTS	MIOS_LEGIBILITY_MAX_AUTOMATION_PHASES	derive	# both bound the same automation/NN-*.sh population; phase consolidation changes both together
+MIOS_ACI_MAX_LINES	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AUTOMATION_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; it only comes down as that domain folds, independent of the canonical key
+MIOS_DAEMON_INDEX_INTERVAL_MIN	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AUTOMATION_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_TERMINAL_ROWS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_HARNESS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_TERMINAL_ROWS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_WEB_RESEARCH_ANCHOR_MIN_LEN	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ETC_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_GATEWAY_MAX_STEPS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TOOLS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_DISPATCH_COUNCIL_MAX	MIOS_DEPLOY_FORMATS_VHDX_VM_PROCESSORS	keep-distinct	# a VHDX guest's vCPU count and the council size are unrelated facts that coincide at four
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_AGENT_PIPE_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DOCS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_CHAT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_TESTS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_REFINE_TIMEOUT_S	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MODULES_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DEPENDENCY_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_PROJECTIONS_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_KNOWLEDGE_EVICT_BATCH	MIOS_LEGIBILITY_FILE_BUDGET_TARGET_TRACKED_FILES	keep-distinct	# this repo's ADR-0030 file target and a knowledge eviction batch size are unrelated facts
+MIOS_PLANNER_SHORT_PROMPT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DATA_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_PLANNER_SHORT_PROMPT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_RUST_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_MCP_TMUX_WORKSPACE_DESKTOP_MIN_COLUMNS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_DEPENDENCY_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; it only comes down as that domain folds, independent of the canonical key
+MIOS_PLANNER_SHORT_PROMPT_CHARS	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_MISC_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; it only comes down as that domain folds, independent of the canonical key
+MIOS_DISPATCH_DAG_NODE_DEADLINE_S	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_HARNESS_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; it only comes down as that domain folds, independent of the canonical key
+MIOS_LEGIBILITY_FILE_BUDGET_TARGET_TRACKED_FILES	MIOS_LEGIBILITY_FILE_BUDGET_TARGET_BOOTSTRAP_FILES	keep-distinct	# ADR-0030 caps each repo at 500 on its own; the two repos' targets agree by the operator's choice, not by derivation, and may diverge
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ARCHIVE_MAX_FILES	keep-distinct	# ADR-0030 per-domain current file count; the legacy store's tracked files (HEAD, config, branch, pack, idx), independent of the canonical key
+MIOS_SCHED_URGENCY_DEFAULT	MIOS_LEGIBILITY_FILE_BUDGET_DOMAINS_ARCHIVE_TARGET_FILES	keep-distinct	# ADR-0030 per-domain fold target; the number is this domain's own goal, set by what that domain can fold to, and may move without the canonical key being wrong
+MIOS_STORAGE_LEDGER_HASH_ALGO	MIOS_LEGIBILITY_ARCHIVE_OBJECT_FORMAT	keep-distinct	# the storage ledger's digest and git's object format for the legacy archive are separate choices; either may change without the other

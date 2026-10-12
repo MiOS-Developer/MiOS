@@ -27,9 +27,44 @@ PY
     [[ -z "$err" ]] || die "Kargs.d invalid: $err"
     mios_ok "Kargs.d: $(compgen -G "$dir/*.toml" | wc -l) files valid"
 }
+
+# Gate: /etc/shadow under root $1 has expired password (lastchg = 0) for the default user.
+# tests/test-postcheck-kargs.sh sources this. Ruling Q5 (task_3537).
+mios_postcheck_expired_password() {
+    local root="${1:-}"
+    local shadow="${root}/etc/shadow"
+    [[ -f "$shadow" ]] || return 0
+    local default_user="mios"
+    local toml="${root}/usr/share/mios/mios.toml"
+    if [[ -f "$toml" ]] && command -v python3 >/dev/null 2>&1; then
+        default_user=$(python3 -c '
+import sys
+try:
+    import tomllib
+    with open(sys.argv[1], "rb") as f:
+        t = tomllib.load(f)
+        print(t.get("identity", {}).get("username", "mios"))
+except Exception:
+    print("mios")
+' "$toml" 2>/dev/null || echo "mios")
+    fi
+    local line
+    line=$(grep -E "^${default_user}:" "$shadow" 2>/dev/null || true)
+    if [[ -n "$line" ]]; then
+        local lastchg
+        lastchg=$(echo "$line" | cut -d: -f3)
+        if [[ "$lastchg" != "0" ]]; then
+            die "User '${default_user}' in $shadow has non-expired password (lastchg='${lastchg}', expected 0 per ruling Q5)"
+        fi
+        mios_ok "User '${default_user}' in $shadow has expired password (lastchg=0 per ruling Q5)"
+    fi
+}
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 mios_step "'MiOS' build-time validation"
+
+mios_log "Validate default user password is expired (ruling Q5)"
+mios_postcheck_expired_password ""
 
 if command -v systemd-sysusers >/dev/null 2>&1; then
     mios_log "Materialize sysusers.d into /etc/passwd + /etc/group"
@@ -269,7 +304,10 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
         done | sort -u
     )
     _bad_tmpfiles=$(
-        for f in /usr/lib/tmpfiles.d/mios-*.conf; do
+        shopt -s nullglob
+        _tf=(/usr/lib/tmpfiles.d/*mios*.conf)
+        (( ${#_tf[@]} )) || die "no MiOS tmpfiles.d config found -- syntax check would parse nothing"
+        for f in "${_tf[@]}"; do
             [[ -f "$f" ]] || continue
             out=$(systemd-tmpfiles --dry-run --create "$f" 2>&1 || true)
             echo "$out" | awk -v f="$f" -v decl="$_sysusers_declared" -v sq="'" '
@@ -532,11 +570,6 @@ mios_log "Validate BARE-SAFE-ENV: system-sync-env"
 _sync_env="/usr/libexec/mios/system-sync-env.sh"
 [[ -x "$_sync_env" ]] || _sync_env="$(dirname "${BASH_SOURCE[0]}")/../usr/libexec/mios/system-sync-env.sh"
 if [[ -f "$_sync_env" ]]; then
-    # stderr carried the only record of a dropped variable and was discarded
-    # here, so MIOS_AI_ENDPOINT going missing from install.env was invisible at
-    # bake while Law 5 routed every agent through it (T-1060). It is captured
-    # and echoed now -- on failure AND on success, because a declared
-    # [security.non_bare_env] skip is a thing a reader should still see.
     _env_err="$(mktemp)"
     if ! _env_render="$(bash "$_sync_env" --dry-run 2>"$_env_err")"; then
         cat "$_env_err" >&2

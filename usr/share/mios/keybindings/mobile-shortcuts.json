@@ -1,0 +1,26 @@
+[
+  {
+    "command": "/usr/libexec/mios/mios-terminal",
+    "key": "t",
+    "name": "MiOS Terminal",
+    "prefix": "C-b"
+  },
+  {
+    "command": "/usr/bin/mios ai",
+    "key": "a",
+    "name": "MiOS AI",
+    "prefix": "C-b"
+  },
+  {
+    "command": "mios agents --watch",
+    "key": "g",
+    "name": "MiOS Agents",
+    "prefix": "C-b"
+  },
+  {
+    "command": "mios mon",
+    "key": "m",
+    "name": "MiOS System Monitor",
+    "prefix": "C-b"
+  }
+]

@@ -17,7 +17,7 @@ spec.loader.exec_module(seed_db_config)
 class TestSeedDbConfig(unittest.TestCase):
     def test_get_pg_config_defaults(self):
         cfg = seed_db_config.get_pg_config()
-        self.assertEqual(cfg["user"], os.environ.get("MIOS_PG_USER", "mios"))
+        self.assertEqual(cfg["user"], os.environ.get("MIOS_PGVECTOR_USER", "mios"))
         self.assertIn("port", cfg)
 
 if __name__ == "__main__":

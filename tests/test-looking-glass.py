@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (T-1021 / GATECAT-01).
+# AI-hint: Consolidated unit test suite for MiOS Looking Glass & Display domain (task_3353 / GATECAT-01).
 # AI-related: usr/libexec/mios/display/looking_glass.py, usr/libexec/mios/vfio/setup-looking-glass.py, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 """Automated unit test suite for MiOS Looking Glass & Display domain.
 
@@ -17,7 +17,12 @@ import sys
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
+_CANDIDATES = [
+    os.path.normpath(os.path.join(_HERE, "..")),
+    os.path.normpath(r"M:\MiOS\worktrees\mios-integration"),
+    os.path.normpath(r"C:\MiOS"),
+]
+_ROOT = next((c for c in _CANDIDATES if os.path.isfile(os.path.join(c, "usr", "libexec", "mios", "display", "looking_glass.py"))), os.path.normpath(os.path.join(_HERE, "..")))
 
 # Load Looking Glass B6 Config Manager (usr/libexec/mios/display/looking_glass.py)
 _LG_CONFIG_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "display", "looking_glass.py")

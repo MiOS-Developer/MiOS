@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Automated inter-GPU P2P bandwidth and memory latency validation benchmark (T-520, AGY-2118).
+# AI-hint: Automated inter-GPU P2P bandwidth and memory latency validation benchmark (task_464, task_2697).
 # AI-doc: usr/share/doc/mios/manual/ch37-gpu-capability-detection-and-passthrough-shims.md
 set -euo pipefail
 

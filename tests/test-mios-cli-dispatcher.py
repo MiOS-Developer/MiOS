@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Test suite for T-399: Compiled binary CLI dispatcher (/usr/bin/mios).
-# AI-related: usr/bin/mios, src/mios-rs/miosd/src/cli/
+# AI-hint: Test suite for task_343: Compiled binary CLI dispatcher (/usr/bin/mios).
+# AI-related: usr/bin/mios, src/mios-rs/miosd/src/cli.rs
 
 import pathlib
 import subprocess

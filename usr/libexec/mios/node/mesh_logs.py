@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Fluent Bit encrypted mesh log forwarder and central PostgreSQL cluster sink (T-659, T-660).
+# AI-hint: Fluent Bit encrypted mesh log forwarder and central PostgreSQL cluster sink (task_605, task_606).
 # AI-related: usr/libexec/mios/node/mesh_logs.py, tests/test-node.py
 """Fluent Bit encrypted mesh log forwarder and central PostgreSQL cluster sink for MiOS.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: 16-byte fixed binary wire protocol encoder, decoder, and opcode dispatcher for mios-node.
-# AI-related: usr/share/doc/mios/adr/0020-edge-mesh-binary-wire-protocol-and-dual-tier-sandboxing.md, src/mios-rs/mios-node/src/protocol.rs
+# AI-related: usr/share/doc/mios/adr/0020-edge-mesh-binary-wire-protocol-and-dual-tier-sandboxing.md, src/mios-rs/mios-node/src/wire.rs
 # AI-doc: usr/share/doc/mios/manual/node.md
 """
 WS-NODE: Edge Micro-Mesh 16-Byte Fixed Binary Wire Protocol Engine.

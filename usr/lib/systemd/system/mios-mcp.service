@@ -14,7 +14,7 @@ Wants=redis.service
 Type=simple
 User=mios-ai
 Group=mios-ai
-# The runner reads MIOS_PORT_MCP and MIOS_AI_ENDPOINT under set -u; the
+# The runner reads MIOS_PORTS_MCP and MIOS_AI_ENDPOINT under set -u; the
 # resolver-rendered install.env is where they come from.
 EnvironmentFile=-/etc/mios/install.env
 # Execution wrapper that verifies SQLite vaults exist before starting the MCP listener
@@ -26,6 +26,10 @@ RestartSec=5
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/var/lib/mios/mcp /var/log/mios/mcp
+RuntimeDirectory=mios-tmux
+RuntimeDirectoryMode=0700
+KillMode=control-group
+UMask=0077
 # Hardening parity with sibling mios-* daemons (log-watcher, cron-
 # director, hermes-browser) -- consolidation pass 2026-05-15.
 PrivateTmp=true

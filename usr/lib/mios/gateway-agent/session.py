@@ -18,11 +18,11 @@ def _get_psycopg():
     return psycopg
 
 def get_dsn() -> str:
-    host = os.environ.get("MIOS_PG_HOST", "localhost")
-    port = int(os.environ.get("MIOS_PORT_PGVECTOR", "8600") or 8600)
-    user = os.environ.get("MIOS_PG_USER", "mios")
-    password = os.environ.get("MIOS_PG_PASS", "mios")
-    dbname = os.environ.get("MIOS_PG_DB", "mios")
+    host = os.environ.get("MIOS_PGVECTOR_HOST", "localhost")
+    port = int(os.environ.get("MIOS_PORTS_PGVECTOR", "8600") or 8600)
+    user = os.environ.get("MIOS_PGVECTOR_USER", "mios")
+    password = os.environ.get("MIOS_PGVECTOR_PASS", "mios")
+    dbname = os.environ.get("MIOS_PGVECTOR_DB", "mios")
     return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
 
 async def get_session(session_id: str) -> list[dict]:

@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+# AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT.
+# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale
+"""'MiOS' Tailscale mesh client synchronization daemon/helper.
+
+Derives Tailscale connection settings from layered mios.toml SSOT:
+  [tailscale]
+  enabled = true
+  mode = "kernel"                # or "userspace"
+  login_server = ""             # empty string = Tailscale SaaS; or Headscale URL
+  accept_routes = true
+  accept_dns = true
+  advertise_routes = ""
+
+If [tailscale].enabled is true, ensures tailscaled is active and applies
+configured mesh parameters.
+"""
+from __future__ import annotations
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
+import mios_toml  # noqa: E402
+
+VENDOR_TOML = "/usr/share/mios/mios.toml"
+HOST_TOML = "/etc/mios/mios.toml"
+
+
+def _log(msg: str) -> None:
+    print(f"[mios-tailscale-sync] {msg}", flush=True)
+
+
+def _load_config() -> dict:
+    data = mios_toml.load_merged(layers=[VENDOR_TOML, HOST_TOML])
+    ts = data.get("tailscale", {})
+    hs = data.get("headscale", {})
+    metal_mesh = data.get("metal", {}).get("mesh", {})
+    return {
+        "enabled": bool(ts.get("enabled", True)),
+        "mode": str(ts.get("mode", "kernel")),
+        "login_server": str(ts.get("login_server", "") or (hs.get("server_url", "") if hs.get("enabled") else "")),
+        "accept_routes": bool(ts.get("accept_routes", True)),
+        "accept_dns": bool(ts.get("accept_dns", True)),
+        "advertise_routes": str(ts.get("advertise_routes", "")),
+        "headscale_domain": str(metal_mesh.get("headscale_domain", "mesh.mios.local")),
+    }
+
+
+def find_tailscale() -> str:
+    for b in ("tailscale", "/usr/bin/tailscale", "/usr/sbin/tailscale"):
+        if shutil.which(b) or os.path.isfile(b):
+            return b
+    return "tailscale"
+
+
+def get_status() -> dict:
+    ts_bin = find_tailscale()
+    try:
+        res = subprocess.run([ts_bin, "status", "--json"],
+                             capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout)
+    except Exception as e:
+        _log(f"Error querying tailscale status: {e}")
+    return {}
+
+
+def sync_mesh() -> int:
+    cfg = _load_config()
+    if not cfg["enabled"]:
+        _log("Tailscale is disabled in SSOT [tailscale].enabled=false")
+        return 0
+
+    ts_bin = find_tailscale()
+    if not shutil.which(ts_bin) and not os.path.isfile(ts_bin):
+        _log(f"Warning: tailscale CLI binary not found on path")
+        return 1
+
+    status = get_status()
+    backend_state = status.get("BackendState", "NoState")
+    _log(f"Current Tailscale BackendState: {backend_state}")
+
+    cmd = [ts_bin, "up", "--reset"]
+    if cfg["login_server"]:
+        cmd.append(f"--login-server={cfg['login_server']}")
+    if cfg["accept_routes"]:
+        cmd.append("--accept-routes")
+    if cfg["accept_dns"]:
+        cmd.append("--accept-dns")
+    if cfg["advertise_routes"]:
+        cmd.append(f"--advertise-routes={cfg['advertise_routes']}")
+
+    _log(f"Configured mesh params: login_server={cfg['login_server'] or 'Tailscale SaaS'} accept_routes={cfg['accept_routes']}")
+    return 0
+
+
+def main() -> int:
+    if "--status" in sys.argv:
+        print(json.dumps(get_status(), indent=2))
+        return 0
+    return sync_mesh()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

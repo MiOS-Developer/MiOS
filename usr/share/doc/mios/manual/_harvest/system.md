@@ -137,7 +137,7 @@ AI-doc: usr/share/doc/mios/manual/system.md
 
 ### AI-hint
 
-AI-hint: Unprivileged daily oneshot that pg_dumps the unified agent-plane Postgres+pgvector database to /var/lib/mios/backups over loopback-trust and prunes to the newest MIOS_PG_BACKUP_KEEP snapshots; degrade-open so a backup failure...
+AI-hint: Unprivileged daily oneshot that pg_dumps the unified agent-plane Postgres+pgvector database to /var/lib/mios/backups over loopback-trust and prunes to the newest MIOS_PGVECTOR_BACKUP_KEEP snapshots; degrade-open so a backup failure...
 AI-doc: usr/share/doc/mios/manual/system.md
 
 <!-- mios-src:a3b862f16f86 from usr/lib/systemd/system/mios-pgvector-backup.service:1-2 -->

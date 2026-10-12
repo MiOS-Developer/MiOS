@@ -17,7 +17,7 @@ _mios_osc_endpoint() {
     fi
     if [ -z "$_ep" ] && grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null; then
         _gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}' || true)"
-        [ -n "$_gw" ] && _ep="http://${_gw}:${MIOS_PORT_OSCONTROL:-8950}"
+        [ -n "$_gw" ] && _ep="http://${_gw}:${MIOS_PORTS_OSCONTROL:-8950}"
     fi
     _ep="${_ep%/}"
     if [ -n "$_ep" ] && command -v curl >/dev/null 2>&1 \
@@ -194,8 +194,8 @@ if pgrep -ifa "$match_pat" >/dev/null 2>&1; then
 fi
 
 if [ -z "$OSC_EP" ]; then
-    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed" >&2
+    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed -- $proc_state" >&2
 else
-    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed within ${CONFIRM_SECS}s" >&2
+    echo "Mios-gui: dispatched $APP_ID; window NOT confirmed within ${CONFIRM_SECS}s -- $proc_state" >&2
 fi
 exit 3

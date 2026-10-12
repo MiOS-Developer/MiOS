@@ -27,10 +27,11 @@ jobs:
   # are the same set .forgejo/workflows/build-mios.yml runs.
   drift-gate:
     runs-on: ubuntu-24.04
-    # The gate runs on the podman machine OS (Fedora CoreOS) that MiOS-DEV boots
-    # and the dev image is built FROM, not on the runner's Ubuntu. A literal because container: is
+    # The gate runs on the podman machine OS (Fedora CoreOS) that MiOS-DEV boots,
+    # the lean CI harness, not on the runner's Ubuntu. (The dev container is the
+    # full MiOS image, FROM [image].ref.) A literal because container: is
     # resolved before any step can read the SSOT; tools/ci-suites.py --check
-    # holds it equal to [ci.fedora].image and to .devcontainer/Containerfile.
+    # holds it equal to [ci.fedora].image.
     container:
       image: ghcr.io/mios-dev/machine-os:6.1
       # tests/test-sandbox-seccomp.sh's live tier runs bwrap, which needs user
@@ -51,13 +52,17 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # check_legacy_archive (ADR-0030 Decision 7) replays first-parent history
+          # from [legibility.archive].since; a shallow clone fails it, never skips it.
+          fetch-depth: 0
 
       - name: Trust the workspace
         # The checkout is owned by the runner user, not the container's root.
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve ratchet comparison baseline
-        # Wire ratchet comparison base (T-1073).
+        # Wire ratchet comparison base (task_3398).
         # On pull_request: compare against PR base SHA.
         # On push: compare against origin/main or previous commit.
         run: |
@@ -67,14 +72,15 @@ jobs:
             target_sha="${{ github.event.pull_request.base.sha }}"
           elif [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
             echo "Fetching origin/main for branch compare..."
-            git fetch --depth=1 origin main || true
+            # No --depth: on a full clone it would graft the history shallow.
+            git fetch origin main || true
             target_sha="$(git rev-parse FETCH_HEAD 2>/dev/null || true)"
           elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
             target_sha="${{ github.event.before }}"
           fi
           if [[ -n "$target_sha" ]]; then
             echo "Fetching baseline commit ${target_sha}..."
-            git fetch --depth=1 origin "$target_sha" || true
+            git fetch origin "$target_sha" || true
             if git cat-file -e "$target_sha" 2>/dev/null; then
               echo "MIOS_RATCHET_BASE=$target_sha" >> "$GITHUB_ENV"
               echo "Successfully resolved MIOS_RATCHET_BASE=$target_sha"
@@ -84,8 +90,8 @@ jobs:
           fi
 
       - name: Provision the analysis toolchain
-        # Everything comes from the SSOT: [ci.fedora] names the dnf set (the dev
-        # image's [packages.devcontainer] plus CI-only extras, pwsh from its repo), and
+        # Everything comes from the SSOT: [ci.fedora] names the dnf set (MiOS's
+        # [packages.devcontainer] plus CI-only extras, pwsh from its repo), and
         # [ci.python] the pip set. pyflakes backs lint-python.sh's undefined-name
         # pass and the rest make agent-pipe/server.py importable; both fail
         # closed under MIOS_DRIFT_REQUIRE_TOOLS=1, so a failed install fails here.
@@ -107,31 +113,42 @@ jobs:
           # shellcheck disable=SC2086
           python3 -m pip install --quiet --disable-pip-version-check $python_packages
 
-      - name: Build the native gate binaries
-        # mios-unit-gen is check_unit_projection's rendering half, so it must
-        # exist before the gate tier runs. Rationale: commit 8abb1e0f.
+
+      # [ci.powershell.modules] pins the test and analysis dependencies.
+      - name: Provision SSOT PowerShell modules
+        shell: bash
         run: |
-          # mios-aiplane-lint is check_agent_pipe_budgets' Rust leg. Without it
-          # the check silently falls to the Python fallback, which still walks a
-          # narrow hardcoded key list -- so the enumerating version (T-1047)
-          # would never run in CI, and the register it enforces would go
-          # unchecked on every PR.
-          cd ./tools/native && cargo build -p mios-unit-gen -p mios-resolver -p mios-aiplane-lint -p mios-size-ceiling -p mios-toolchain-pin -p mios-ai-config -p mios-bake-plan -p mios-render-quadlets -p generate-names-registry -p xtask -p mios-task
-          # RELEASE too: check_bake_plan resolves the binary stage 85 would
-          # actually run, and stage 85 never looks at target/debug.
-          cargo build --release -p mios-bake-plan
-          # The native gate binary backs a check that fails when it is absent; miosd backs the unit tier's daemon suites.
-          cd ../../src/mios-rs && cargo build -p mios-gate -p miosd
+          set -euo pipefail
+          python3 -c 'import json,tomllib; print(json.dumps(tomllib.load(open("usr/share/mios/mios.toml","rb"))["ci"]["powershell"]["modules"]))' |
+            pwsh -NoProfile -NonInteractive -Command '
+              $ErrorActionPreference = "Stop"
+              $modules = $input | ConvertFrom-Json
+              if (-not $modules.PSScriptAnalyzer -or -not $modules.Pester) { throw "Required CI PowerShell modules are undeclared" }
+              foreach ($entry in $modules.PSObject.Properties) {
+                if ($entry.Name -notmatch "^[A-Za-z][A-Za-z0-9_.-]*$" -or $entry.Value -notmatch "^[0-9]+\.[0-9]+\.[0-9]+$") { throw "Invalid CI PowerShell module policy" }
+                if (-not (Get-Module -ListAvailable -Name $entry.Name | Where-Object { $_.Version -eq [version]$entry.Value })) {
+                  Install-Module -Name $entry.Name -RequiredVersion $entry.Value -Scope CurrentUser -Repository PSGallery -Force -SkipPublisherCheck -ErrorAction Stop
+                }
+              }
+            '
+
+      - name: Build and install the SSOT native catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./automation/55-native-build.sh
+          # Host fixture paths remain part of the existing daemon unit suites.
+          cargo build --locked --manifest-path ./src/mios-rs/Cargo.toml -p mios-gate -p miosd
 
       - name: Base images are the newest stable release
         # Every MiOS image shares [image].machine_os_repo; a newer stable tag fails here.
         run: |
           bash ./tools/fetch-image-facts.sh .
-          ./src/mios-rs/target/debug/mios-gate image-freshness --root .
+          mios-gate image-freshness --root .
 
       - name: Generated artifacts match the SSOT
         run: |
-          bash ./tools/sync-generated.sh
+          mios-gen sync --root .
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "ERROR: generated artifacts differ from what the SSOT renders:" >&2
             git status --porcelain >&2
@@ -158,7 +175,9 @@ jobs:
         run: bash ./tests/run-suites.sh lint
 
       - name: Behavioural suite tier
-        run: bash ./tests/run-suites.sh unit
+        run: |
+          python3.13 ./usr/libexec/mios/mios-mcp-server --install-native --source-root .
+          bash ./tests/run-suites.sh unit
 
       - name: Rust format, lint and tests
         run: |
@@ -232,12 +251,14 @@ jobs:
           # runner mounts one. A hosted runner has none, so identity and model
           # resolve from the SSOT inside the build.
           # [image].base from the SSOT; the Containerfile carries no default.
-          BUILD_ARGS=(--build-arg "BASE_IMAGE=$(python3 ./usr/libexec/mios/mios-toml-get image base)")
+          BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
+          [[ -n "$BASE_IMAGE" ]] || { echo "::error::SSOT image.base is empty" >&2; exit 1; }
+          BUILD_ARGS=(--build-arg "BASE_IMAGE=$BASE_IMAGE")
           if [[ -r /etc/mios/install.env ]]; then
               # shellcheck source=/dev/null
               source /etc/mios/install.env
-              [[ -n "${MIOS_LINUX_USER:-}"     ]] && BUILD_ARGS+=(--build-arg "MIOS_USER=${MIOS_LINUX_USER}")
-              [[ -n "${MIOS_HOSTNAME:-}"       ]] && BUILD_ARGS+=(--build-arg "MIOS_HOSTNAME=${MIOS_HOSTNAME}")
+              [[ -n "${MIOS_LINUX_USER:-}"     ]] && BUILD_ARGS+=(--build-arg "MIOS_IDENTITY_USERNAME=${MIOS_LINUX_USER}")
+              [[ -n "${MIOS_IDENTITY_HOSTNAME:-}"       ]] && BUILD_ARGS+=(--build-arg "MIOS_IDENTITY_HOSTNAME=${MIOS_IDENTITY_HOSTNAME}")
               [[ -n "${MIOS_AI_MODEL:-}"       ]] && BUILD_ARGS+=(--build-arg "MIOS_AI_MODEL=${MIOS_AI_MODEL}")
               [[ -n "${MIOS_AI_EMBED_MODEL:-}" ]] && BUILD_ARGS+=(--build-arg "MIOS_AI_EMBED_MODEL=${MIOS_AI_EMBED_MODEL}")
           fi
@@ -273,7 +294,7 @@ jobs:
         run: |
           set -uo pipefail
           IMAGE_TAG="localhost/mios:${{ steps.tag.outputs.image_tag }}"
-          MAX_LAYERS="${MIOS_RECHUNK_MAX_LAYERS:-67}"
+          MAX_LAYERS="${MIOS_BUILD_RECHUNK_MAX_LAYERS:-67}"
           _RECHUNKED=""
           if sudo podman run --rm --privileged \
               -v /mnt/containers-storage:/var/lib/containers/storage \
@@ -370,6 +391,10 @@ jobs:
   # the image builds. Publishing stays in `build`, which still needs drift-gate.
   smoke-test:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -398,10 +423,125 @@ jobs:
       - name: Smoke build
         # The Containerfile's final layer runs bootc container lint.
         run: |
+          set -euo pipefail
+          BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
+          [[ -n "$BASE_IMAGE" ]] || { echo "::error::SSOT image.base is empty" >&2; exit 1; }
           sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
-              --build-arg "BASE_IMAGE=$(python3 ./usr/libexec/mios/mios-toml-get image base)" \
+              --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t mios:smoke -f Containerfile .
 
       - name: Image runs and carries the MiOS components
         run: bash ./tests/bake-smoke.sh mios:smoke
+
+  # The disk formats [ci.artifacts] opts in. None by default, so until the
+  # operator turns one on this job is the whole cost.
+  artifact-plan:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    outputs:
+      formats: ${{ steps.plan.outputs.formats }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read the opted-in disk formats
+        id: plan
+        run: |
+          set -euo pipefail
+          formats="$(python3 -c 'import json,tomllib; a=tomllib.load(open("usr/share/mios/mios.toml","rb"))["ci"].get("artifacts") or {}; print(json.dumps(sorted(k for k, v in a.items() if v is True)))')"
+          echo "formats=${formats}" >> "$GITHUB_OUTPUT"
+          echo "Disk formats to build and boot: ${formats}"
+
+  # Builds each opted-in disk from an image this job bakes and boots it under
+  # QEMU, running [testing.boot]'s probes over SSH. Only the serial log is
+  # uploaded: a VHDX exceeds GitHub's 2 GiB asset and GHCR's 10 GB layer limits.
+  artifact-boot:
+    permissions:
+      contents: read
+      packages: read
+    needs: artifact-plan
+    if: needs.artifact-plan.outputs.formats != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        format: ${{ fromJSON(needs.artifact-plan.outputs.formats) }}
+    env:
+      MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free the runner disk for the image and the disk
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Provision podman, QEMU and Secure Boot firmware
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y podman qemu-system-x86 ovmf openssh-client
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_prepare_storage
+          echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # Hosted Linux runners expose KVM; the boot test runs unprivileged.
+          sudo chmod 0666 /dev/kvm
+
+      - name: Build miosd
+        run: cargo build --locked --release --manifest-path ./src/mios-rs/Cargo.toml -p miosd
+
+      - name: Bake the image the disk is made from
+        run: |
+          set -euo pipefail
+          BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
+          LOCAL_TAG="$(./usr/libexec/mios/mios-toml-get --vendor image local_tag)"
+          [[ -n "$BASE_IMAGE" && -n "$LOCAL_TAG" ]] || { echo "::error::SSOT image.base or image.local_tag is empty" >&2; exit 1; }
+          sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+              --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+              --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+              --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t "$LOCAL_TAG" -f Containerfile .
+
+      - name: Mint a throwaway login for the boot test
+        # The build refuses a disk no credential opens; this key exists only for
+        # this job. The variable's name is [deploy.identity].ssh_key_env.
+        run: |
+          set -euo pipefail
+          ssh-keygen -q -t ed25519 -N '' -C mios-ci-boot -f "${RUNNER_TEMP}/boot-key"
+          key_env="$(python3 -c 'import tomllib; print(tomllib.load(open("usr/share/mios/mios.toml","rb"))["deploy"]["identity"]["ssh_key_env"])')"
+          echo "${key_env}=$(cat "${RUNNER_TEMP}/boot-key.pub")" >> "$GITHUB_ENV"
+
+      - name: Build the ${{ matrix.format }} disk
+        run: |
+          set -euo pipefail
+          sudo -E ./src/mios-rs/target/release/miosd artifact-build "${{ matrix.format }}" \
+              --root . --output "/mnt/artifacts/${{ matrix.format }}"
+          ls -la "/mnt/artifacts/${{ matrix.format }}"
+
+      - name: Boot the ${{ matrix.format }} disk headless
+        run: |
+          set -euo pipefail
+          disk="$(find "/mnt/artifacts/${{ matrix.format }}" -maxdepth 2 -type f -name "*.${{ matrix.format }}" | head -n 1)"
+          [[ -n "$disk" ]] || { echo "::error::no .${{ matrix.format }} disk was built" >&2; exit 1; }
+          ./src/mios-rs/target/release/miosd artifact-boot-test "${{ matrix.format }}" --root . \
+              --disk "$disk" --identity "${RUNNER_TEMP}/boot-key" \
+              --serial-log "${RUNNER_TEMP}/boot-serial.log"
+
+      - name: Keep the boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-serial-${{ matrix.format }}
+          path: ${{ runner.temp }}/boot-serial.log
+          if-no-files-found: ignore

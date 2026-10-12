@@ -65,7 +65,7 @@ def configure_client(cfg: dict, ceph_conf_path: str):
         raise
 
 def main() -> int:
-    cephfs_enable = os.environ.get("MIOS_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+    cephfs_enable = os.environ.get("MIOS_STORAGE_CEPHFS_ENABLE", "false").lower() in ("true", "1", "yes", "on")
     cfg = load_cephfs_config()
     
     ceph_conf_path = os.environ.get("MIOS_CEPH_CONF", "/etc/ceph/ceph.conf")

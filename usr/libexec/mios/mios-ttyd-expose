@@ -4,7 +4,7 @@
 # AI-functions: _toml_get
 set -euo pipefail
 
-PORT="${MIOS_PORT_TTYD_BASH:-8310}"
+PORT="${MIOS_PORTS_TTYD_BASH:-8310}"
 
 _toml_get() {  # <section> <key>
   local sec="$1" key="$2" f val

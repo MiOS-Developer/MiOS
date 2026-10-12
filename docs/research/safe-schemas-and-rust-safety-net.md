@@ -127,7 +127,7 @@ Instead of persisting credentials in environment variables (`/proc/<pid>/environ
 - Keys are assigned finite kernel TTLs (`keyctl_set_timeout`) and bound to the session keyring (`KEY_SPEC_SESSION_KEYRING`), disappearing automatically on logout or container teardown.
 
 ### 4.2 Neutralizing Shell Injection via Direct `execve`
-As demonstrated in task `AGY-1094` in [`usr/libexec/mios/mios-os-recipe`](file:///usr/libexec/mios/mios-os-recipe), non-pipeline execution completely bypasses shell interpreters (`/bin/sh -c`). Commands are parsed into typed argument vectors (`argv`), executing directly via `execve(2)` / `std::process::Command::args`. Even if an agent passes arguments containing `; rm -rf /` or `$(curl ...)`, these characters are treated as literal string arguments and cannot trigger subshell execution.
+As demonstrated in task `task_1734` in [`usr/libexec/mios/mios-os-recipe`](file:///usr/libexec/mios/mios-os-recipe), non-pipeline execution completely bypasses shell interpreters (`/bin/sh -c`). Commands are parsed into typed argument vectors (`argv`), executing directly via `execve(2)` / `std::process::Command::args`. Even if an agent passes arguments containing `; rm -rf /` or `$(curl ...)`, these characters are treated as literal string arguments and cannot trigger subshell execution.
 
 ---
 

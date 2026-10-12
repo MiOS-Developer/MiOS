@@ -128,4 +128,36 @@ MIOS_ROOT="$alt" python3 "$CLI" --root "$alt" coverage --json >/dev/null 2>&1 \
     || { rm -rf "$alt"; die "case 11: CLI failed against a root-level mios.toml (bootstrap layout)"; }
 rm -rf "$alt"
 
+log "Case 12: distill lands every block the ratchet counts (SSOT, unledgered file, lost landing)"
+# Heredoc bodies, so the lexer reads the planted prose as fixture data, not as this file's comments.
+cat >> "$fix/usr/share/mios/mios.toml" <<'EOF'
+
+# The operator rejected the alternative after an incident, so the rationale is
+# kept where the next reader looks. This fixture block sits in mios.toml itself,
+# which distill once skipped while the ratchet still counted it.
+EOF
+cp "$fix/automation/50-example.sh" "$fix/automation/60-unledgered.sh"
+cat >> "$fix/automation/60-unledgered.sh" <<'EOF'
+
+# Previously this was reverted after a regression; the invariant is that the
+# ledger has no row for this block yet, and distill must still land it rather
+# than skip it while the ratchet counts it as unmigrated narrative here.
+EOF
+( cd "$fix" && git add -A )
+[ "$(narrative)" -gt 0 ] || die "case 12: the planted blocks were not counted"
+run distill >/dev/null
+left="$(narrative)"
+[ "$left" -eq 0 ] || die "case 12: distill left $left block(s) the ratchet still counts"
+toml_sha="$(awk -F'\t' '$1=="usr/share/mios/mios.toml" && $7=="MIGRATE" && $8=="midsize-narrative" {s=$6} END {print s}' \
+    "$fix/usr/share/mios/reference/manual-corpus.tsv")"
+[ -n "$toml_sha" ] || die "case 12: the mios.toml block has no ledger row"
+python3 -c 'import sys; p, s = sys.argv[1:]; r = [l.split("\t") for l in open(p, encoding="utf-8").read().splitlines()]
+open(p, "w", encoding="utf-8", newline="\n").write("\n".join("\t".join(x[:10] + [""] + x[11:]) if len(x) == 14 and x[5] == s else "\t".join(x) for x in r) + "\n")' \
+    "$fix/usr/share/mios/reference/manual-corpus.tsv" "$toml_sha"
+[ "$(narrative)" -ge 1 ] || die "case 12: blanking a landing did not reopen the block"
+run distill >/dev/null
+[ "$(narrative)" -eq 0 ] || die "case 12: distill did not re-record a landing whose passage exists"
+n="$(grep -rc "mios-src:$toml_sha" "$fix/usr/share/doc/mios/manual" | awk -F: '{s+=$2} END {print s}')"
+[ "$n" -eq 1 ] || die "case 12: passage for $toml_sha written $n times, expected 1"
+
 log "all cases passed"

@@ -31,7 +31,7 @@ import subprocess
 from pathlib import Path
 
 DEFAULT_MODEL = "qwen3-vl:4b"
-DEFAULT_ENDPOINT = f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}/v1"
+DEFAULT_ENDPOINT = f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}/v1"
 DEFAULT_TIMEOUT_S = 60
 
 sys.path.insert(0, os.path.join(

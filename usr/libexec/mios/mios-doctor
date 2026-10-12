@@ -10,8 +10,8 @@ if [ -r /etc/mios/install.env ]; then
     set +u; set -a; . /etc/mios/install.env 2>/dev/null || true; set +a
     [ "$_mios_had_u" = 1 ] && set -u
 fi
-LLM_LIGHT_PORT="${MIOS_PORT_LLM_LIGHT:-8500}"
-OWUI_PORT="${MIOS_PORT_OPEN_WEBUI:-8200}"
+LLM_LIGHT_PORT="${MIOS_PORTS_LLM_LIGHT:-8500}"
+OWUI_PORT="${MIOS_PORTS_OPEN_WEBUI:-8200}"
 
 _get_perm() {
     local target="$1"

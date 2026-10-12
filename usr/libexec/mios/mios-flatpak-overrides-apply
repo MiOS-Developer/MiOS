@@ -11,36 +11,27 @@ if ! command -v flatpak >/dev/null 2>&1; then
 fi
 
 _toml_get() {
-    local key="$1" default="$2" val=""
-    for f in /etc/mios/mios.toml /usr/share/mios/mios.toml; do
-        [ -r "$f" ] || continue
-        val=$(python3 - "$f" "$key" 2>/dev/null <<'PYEOF'
-import sys, tomllib
-path, dotted = sys.argv[1], sys.argv[2]
-with open(path, "rb") as fh: data = tomllib.load(fh)
-node = data
+    python3 - "$1" <<'PYEOF'
+import sys
+sys.path.insert(0, "/usr/lib/mios")
+import mios_toml
+node = mios_toml.load_merged()
+dotted = sys.argv[1]
 for k in dotted.split("."):
-    if isinstance(node, dict) and k in node:
-        node = node[k]
-    else:
-        sys.exit(0)
+    node = node[k]
 print(node)
 PYEOF
-)
-        [ -n "$val" ] && { echo "$val"; return; }
-    done
-    echo "$default"
 }
 _gtk_theme=$(_toml_get appearance.gtk_theme "adw-gtk3-dark")
 _adw_color=$(_toml_get appearance.adw_color_scheme "prefer-dark")
-_curs_theme=$(_toml_get appearance.cursor_theme "Bibata-Modern-Classic")
-_curs_size=$(_toml_get appearance.cursor_size "24")
+_curs_theme=$(_toml_get theme.cursor_linux.theme)
+_curs_size=$(_toml_get theme.cursor_linux.size)
 
 _gsk_renderer=$(_toml_get graphics.gsk_renderer "cairo")
 _force_sw_gl=$(_toml_get graphics.force_software_gl "True")
 _disable_vk=$(_toml_get graphics.disable_vulkan "True")
 _gdk_backend=$(_toml_get graphics.gdk_backend "")
-_xcurs_path=$(_toml_get graphics.xcursor_path '~/.local/share/icons:~/.icons:/usr/share/icons:/usr/share/pixmaps')
+_xcurs_path=$(_toml_get graphics.xcursor_path)
 
 if [ -d /mnt/wslg ] || grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
     _ssot_renderer="$_gsk_renderer"
@@ -50,9 +41,8 @@ if [ -d /mnt/wslg ] || grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
     echo "Mios-flatpak-overrides-apply: WSLg detected -> forcing software GL; SSOT graphics.gsk_renderer='$_ssot_renderer' applies on bare-metal only" >&2
 fi
 
-flatpak override --system --reset 2>/dev/null || true
-
 _render_env_args=(
+    --unset-env=GTK_THEME
     --env=GTK_USE_PORTAL=1
     --env=ADW_DEBUG_COLOR_SCHEME="$_adw_color"
     --env=XCURSOR_THEME="$_curs_theme"
@@ -94,15 +84,12 @@ echo "  mounts: xdg-config/gtk-{3,4}.0 + xdg-data/{themes,icons} + /dev/dri"
 echo "  GTK_USE_PORTAL=1"
 
 python3 - <<'PYEOF'
-import os, tomllib
+import os, sys
+sys.path.insert(0, "/usr/lib/mios")
+import mios_toml
 
 merged = {}
-for path in ("/usr/share/mios/mios.toml", "/etc/mios/mios.toml"):
-    try:
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
-    except (OSError, tomllib.TOMLDecodeError):
-        continue
+for data in (mios_toml.load_merged(),):
     apps = data.get("desktop", {}).get("apps", [])
     if isinstance(apps, list):
         for entry in apps:

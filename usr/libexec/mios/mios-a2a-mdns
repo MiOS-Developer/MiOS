@@ -59,7 +59,7 @@ def _resolve_port(cfg):
     """Agent-pipe port from SSOT: env override wins, else [ports].agent_pipe.
     No literal default here -- a missing port means we cannot honestly advertise,
     so advertise() skips rather than announce a guessed endpoint."""
-    env = os.environ.get("MIOS_PORT_AGENT_PIPE")
+    env = os.environ.get("MIOS_PORTS_AGENT_PIPE")
     if env and str(env).strip():
         return str(env).strip()
     port = ((cfg.get("ports") or {}).get("agent_pipe"))
@@ -97,7 +97,7 @@ def advertise(cfg, log=print):
             return False
         with open(AVAHI_TEMPLATE, "r", encoding="utf-8") as f:
             tpl = f.read()
-        rendered = (tpl.replace("${MIOS_PORT_AGENT_PIPE}", port)
+        rendered = (tpl.replace("${MIOS_PORTS_AGENT_PIPE}", port)
                        .replace("${MIOS_A2A_MDNS_SERVICE_TYPE}", stype))
         os.makedirs(os.path.dirname(AVAHI_SERVICE), exist_ok=True)
         tmp = AVAHI_SERVICE + ".tmp"

@@ -27,13 +27,25 @@ USAGE
     exit 0
 fi
 
-_op_uid=""
-if [ -r /usr/share/mios/mios.toml ]; then
-    _op_user="$(awk -F\" '/^\s*username\s*=\s*"/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
-    [ -n "$_op_user" ] && _op_uid="$(id -u "$_op_user" 2>/dev/null)"
+_op_user=""
+if [ -r /etc/wsl.conf ]; then
+    _op_user="$(awk -F= '/^[[:space:]]*default[[:space:]]*=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' /etc/wsl.conf 2>/dev/null)"
 fi
-[ -z "$_op_uid" ] && _op_uid="$(id -u mios 2>/dev/null)"
-[ -z "$_op_uid" ] && _op_uid=992
+if [ -z "$_op_user" ] && [ -r /etc/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /etc/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] && [ -r /usr/share/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] || ! id -u "$_op_user" >/dev/null 2>&1; then
+    if id -u mios >/dev/null 2>&1; then
+        _op_user="mios"
+    elif id -u user >/dev/null 2>&1; then
+        _op_user="user"
+    fi
+fi
+[ -z "$_op_user" ] && _op_user="mios"
+_op_uid="$(id -u "$_op_user" 2>/dev/null || echo 992)"
 
 _quote() {
     printf "'"
@@ -47,7 +59,7 @@ if [ -S "$_BROKER_SOCK" ]; then
     for arg in "$@"; do
         _line="${_line} $(_quote "$arg")"
     done
-    _line="${_line# }"
+    _line="_MIOS_FLATPAK_DEPTH=1 _MIOS_HOST_LAUNCH_DEPTH=1 ${_line# }"
     _resp="$(python3 - "$_BROKER_SOCK" "$_line" <<'PYEOF'
 import socket, sys
 sock_path, line = sys.argv[1], sys.argv[2]
@@ -78,12 +90,6 @@ PYEOF
             ;;
     esac
 fi
-
-_op_user=""
-if [ -r /usr/share/mios/mios.toml ]; then
-    _op_user="$(awk -F\" '/^\s*username\s*=\s*"/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
-fi
-[ -z "$_op_user" ] && _op_user="mios"
 
 WSL_DISTRO=""
 if [ -n "${WSL_DISTRO_NAME:-}" ]; then

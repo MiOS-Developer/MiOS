@@ -34,9 +34,10 @@ GATE="$(gate_bin)" || {
 # tree cannot hold: the commands and paths the manifest names, as stubs.
 FX="$TMP/root"
 mkdir -p "$FX"
-# Hard links when TMP shares the checkout's filesystem; otherwise a plain copy
-# into a clean target (a failed cp -al leaves a partial usr/ behind).
+# Staging usr/ into fixture; renders manpages if untracked.
 cp -al "$ROOT/usr" "$FX/usr" 2>/dev/null || { rm -rf "${FX:?}/usr"; cp -a "$ROOT/usr" "$FX/usr"; }
+cp "$ROOT/VERSION" "$FX/VERSION" 2>/dev/null || true
+(which mios-gen >/dev/null 2>&1 && mios-gen render-manpages --root "$FX" >/dev/null 2>&1) || ([ -x "$ROOT/tools/native/target/release/mios-gen" ] && "$ROOT/tools/native/target/release/mios-gen" render-manpages --root "$FX" >/dev/null 2>&1) || ([ -x "$ROOT/tools/native/target/debug/mios-gen" ] && "$ROOT/tools/native/target/debug/mios-gen" render-manpages --root "$FX" >/dev/null 2>&1) || true
 python3 - "$SSOT" > "$TMP/stubs.txt" <<'PY'
 import sys, tomllib
 sc = tomllib.load(open(sys.argv[1], "rb"))["testing"]["smoke_components"]
@@ -76,10 +77,11 @@ main() {
         fail "core is not clean"
     fi
 
-    if run 0 --profile dev && grep -q 'section:devcontainer ' "$TMP/out"; then
-        pass "dev lists its overlay: $(grep -o 'overlays: [^;]*' "$TMP/out")"
+    # Every image kind, the devcontainer included, is the full profile.
+    if run 0 --profile full && grep -q 'section:devcontainer ' "$TMP/out"; then
+        pass "full lists the devcontainer overlay: $(grep -o 'overlays: [^;]*' "$TMP/out" | cut -c1-120)"
     else
-        fail "dev did not list the devcontainer overlay"
+        fail "full did not list the devcontainer overlay"
     fi
 
     if run 0 --profile core --format json && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1]))["status"] != "clean")' "$TMP/out"; then

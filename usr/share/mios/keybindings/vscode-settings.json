@@ -1,0 +1,7 @@
+{
+  "terminal.integrated.allowChords": false,
+  "terminal.integrated.allowMnemonics": false,
+  "terminal.integrated.commandsToSkipShell": [
+    "-workbench.action.toggleSidebarVisibility"
+  ]
+}

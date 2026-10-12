@@ -1,4 +1,4 @@
-# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (AGY-1595). DO NOT EDIT.
+# AI-hint: GENERATED k3s nodeSelectors/tolerations from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.
 # Rendered by mios-unit-gen blade-dropins.
 services:
   hermes-worker:
@@ -9,6 +9,13 @@ services:
         operator: "Exists"
         effect: "NoSchedule"
   k3s:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+  llama-rpc-server:
     nodeSelector:
       mios.capability/service-plane: "true"
     tolerations:
@@ -152,6 +159,13 @@ services:
       - key: "mios.capability/service-plane"
         operator: "Exists"
         effect: "NoSchedule"
+  mios-headscale:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
   mios-hermes-browser-worker:
     nodeSelector:
       mios.capability/service-plane: "true"
@@ -178,17 +192,6 @@ services:
         operator: "Exists"
         effect: "NoSchedule"
   mios-llm-heavy:
-    nodeSelector:
-      mios.capability/gpu-serving: "true"
-      mios.capability/service-plane: "true"
-    tolerations:
-      - key: "mios.capability/gpu-serving"
-        operator: "Exists"
-        effect: "NoSchedule"
-      - key: "mios.capability/service-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
-  mios-llm-heavy-alt:
     nodeSelector:
       mios.capability/gpu-serving: "true"
       mios.capability/service-plane: "true"

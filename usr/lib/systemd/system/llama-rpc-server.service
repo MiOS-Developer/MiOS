@@ -1,0 +1,36 @@
+# AI-hint: Systemd unit file defining the llama.cpp RPC server on Linux headless Blade nodes for distributed tensor and layer sharding across the MiOS compute mesh.
+# AI-doc: usr/share/doc/mios/manual/system.md
+[Unit]
+Description='MiOS' llama.cpp RPC Server (Headless Blade Compute Node)
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/%N
+EnvironmentFile=-/etc/sysconfig/%N
+Environment=MIOS_PORTS_RPC_IGPU=8550
+ExecStart=/usr/bin/rpc-server --host 0.0.0.0 --port ${MIOS_PORTS_RPC_IGPU:-8550}
+Restart=on-failure
+RestartSec=5s
+
+User=mios
+Group=mios
+SupplementaryGroups=video render
+
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

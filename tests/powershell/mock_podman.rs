@@ -1,3 +1,4 @@
+// AI-hint: Mock podman executable for PowerShell pipe-deadlock tests; emits configurable stdout/stderr volumes.
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, Write};

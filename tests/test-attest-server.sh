@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and onboarding daemon (T-530, AGY-2128).
+# AI-hint: Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and onboarding daemon (task_474, task_2707).
 # AI-doc: usr/share/doc/mios/manual/ch76-remote-attestation.md
 set -euo pipefail
 
@@ -8,13 +8,12 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VERBOSE=false
 DRY_RUN=false
-MOCK_MODE=false
 
 show_help() {
     cat <<'EOF'
 Usage: test-attest-server.sh [OPTIONS]
 
-Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (T-530, AGY-2128).
+Comprehensive test suite for RFC 9334 RATS remote TPM 2.0 quote verifier and zero-touch cluster onboarding daemon (task_474, task_2707).
 
 Options:
   -v, --verbose       Enable verbose test logging
@@ -35,7 +34,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --mock)
-            MOCK_MODE=true
             shift
             ;;
         -h|--help)
@@ -92,7 +90,7 @@ trap cleanup EXIT
 ATTEST_SERVER="${ROOT_DIR}/usr/libexec/mios/mios-attest-server"
 SERVICE_FILE="${ROOT_DIR}/usr/lib/systemd/system/mios-attest.service"
 
-log "=== MiOS RFC 9334 RATS TPM 2.0 Quote Verifier Test Suite (T-530, AGY-2128) ==="
+log "=== MiOS RFC 9334 RATS TPM 2.0 Quote Verifier Test Suite (task_474, task_2707) ==="
 
 if [[ "$DRY_RUN" == "true" ]]; then
     log "Running in dry-run mode: verifying syntax and static properties"
@@ -158,9 +156,9 @@ set -e
 diag "verify-quote output: $verify_out"
 if [[ "$verify_rc" -eq 0 ]] && \
    echo "$verify_out" | grep -q "Verdict: APPROVED" && \
-   echo "$verify_out" | grep -q "wireguard" && \
-   echo "$verify_out" | grep -q "cephfs"; then
-    assert_pass "Positive appraisal: valid quote verified with Verdict: APPROVED and issued credentials"
+   echo "$verify_out" | grep -q "headscale_preauth_key" && \
+   echo "$verify_out" | grep -q "k3s_join_token"; then
+    assert_pass "Positive appraisal: valid quote verified with Verdict: APPROVED and issued headscale/k3s credentials"
 else
     assert_fail "Positive appraisal failed" "exit code $verify_rc, output: $verify_out"
 fi
@@ -257,8 +255,10 @@ log "Test 6: Systemd unit syntax validation"
 if [[ -f "$SERVICE_FILE" ]]; then
     if grep -q "ExecStart=/usr/libexec/mios/mios-attest-server serve" "$SERVICE_FILE" && \
        grep -q "Restart=always" "$SERVICE_FILE" && \
-       grep -q "StandardOutput=journal" "$SERVICE_FILE"; then
-        assert_pass "Systemd unit mios-attest.service contains required ExecStart, Restart, and StandardOutput"
+       grep -q "StandardOutput=journal" "$SERVICE_FILE" && \
+       ! grep -q "WantedBy=" "$SERVICE_FILE" && \
+       grep -q "ConditionPathExists=/usr/share/doc/mios/keylime-ready" "$SERVICE_FILE"; then
+        assert_pass "Systemd unit mios-attest.service is valid, has no WantedBy, and is conditioned off until Keylime"
     else
         assert_fail "Systemd unit content mismatch" "$(cat "$SERVICE_FILE")"
     fi
@@ -337,8 +337,9 @@ ver_http_code="$(curl -s -o "${TMP_DIR}/verify_res.json" -w "%{http_code}" \
 
 if [[ "$ver_http_code" == "200" ]] && \
    grep -q '"verdict": "APPROVED"' "${TMP_DIR}/verify_res.json" && \
-   grep -q '"wireguard"' "${TMP_DIR}/verify_res.json"; then
-    assert_pass "End-to-end HTTP appraisal: 200 OK, APPROVED with WireGuard and CephFS credentials"
+   grep -q '"headscale_preauth_key"' "${TMP_DIR}/verify_res.json" && \
+   grep -q '"k3s_join_token"' "${TMP_DIR}/verify_res.json"; then
+    assert_pass "End-to-end HTTP appraisal: 200 OK, APPROVED with headscale and k3s credentials"
 else
     assert_fail "End-to-end HTTP appraisal failed" "HTTP $ver_http_code: $(cat "${TMP_DIR}/verify_res.json")"
 fi

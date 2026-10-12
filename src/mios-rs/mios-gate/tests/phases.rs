@@ -198,3 +198,48 @@ fn a_missing_ssot_or_automation_dir_cannot_run() {
     let (code, _) = run(d.path());
     assert_eq!(code, 2);
 }
+
+/// phase-ratchet: `scripts` on disk against `[build.ratchet].max_phase_scripts`.
+fn ratchet(dir: &Path, scripts: &[&str], ceiling: Option<i64>) -> (i32, String) {
+    fs::create_dir_all(dir.join("automation")).unwrap();
+    fs::create_dir_all(dir.join("usr/share/mios")).unwrap();
+    for s in scripts {
+        fs::write(dir.join("automation").join(s), "true\n").unwrap();
+    }
+    let body = ceiling.map_or("[other]\nk = 1\n".into(), |c| {
+        format!("[build.ratchet]\nmax_phase_scripts = {c}\n")
+    });
+    fs::write(dir.join("usr/share/mios/mios.toml"), body).unwrap();
+    let out = Command::new(bin())
+        .args(["phase-ratchet", "--root"])
+        .arg(dir)
+        .output()
+        .unwrap();
+    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// Both directions of the ratchet, and the exact fit between them. A non-phase
+/// name (lib-, no ordinal) is not counted.
+#[test]
+fn the_phase_ratchet_fails_above_and_below_its_ceiling() {
+    let two = ["01-a.sh", "02-b.sh", "lint-x.sh"];
+    let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &two, Some(2));
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &two, Some(1));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("fold a phase"), "{out}");
+    let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &two, Some(4));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("lower the ceiling to 2"), "{out}");
+}
+
+/// An absent ceiling is not a default of 71, and no scripts is not zero debt.
+#[test]
+fn the_phase_ratchet_cannot_run_without_a_ceiling_or_a_subject() {
+    let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &["01-a.sh"], None);
+    assert_eq!(code, 2, "{out}");
+    let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &[], Some(0));
+    assert_eq!(code, 2, "{out}");
+}

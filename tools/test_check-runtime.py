@@ -215,12 +215,19 @@ class tsu_TestPortKeys(unittest.TestCase):
 
 class tsu_TestCovered(unittest.TestCase):
     def test_templated_port_is_covered(self):
-        d = tsu_data({"forge_http": 8400}, {"forge": "http://x:${MIOS_PORT_FORGE_HTTP}"})
+        d = tsu_data({"forge_http": 8400}, {"forge": "http://x:${MIOS_PORTS_FORGE_HTTP}"})
         self.assertEqual(tsu_mod.su_covered_ports(d), {"forge_http"})
 
     def test_one_url_may_cover_several_ports(self):
-        d = tsu_data({"a": 1, "b": 2}, {"u": "${MIOS_PORT_A}/${MIOS_PORT_B}"})
+        d = tsu_data({"a": 1, "b": 2}, {"u": "${MIOS_PORTS_A}/${MIOS_PORTS_B}"})
         self.assertEqual(tsu_mod.su_covered_ports(d), {"a", "b"})
+
+    def test_the_retired_port_spelling_is_not_the_canonical_address(self):
+        # MIOS_PORT_<KEY> is an input alias of MIOS_PORTS_<KEY>; templating a
+        # [urls] entry with it leaves the port without its canonical address.
+        d = tsu_data({"forge_http": 8400}, {"forge": "http://x:${MIOS_PORT_FORGE_HTTP}"})
+        self.assertEqual(tsu_mod.su_covered_ports(d), set())
+        self.assertIn("'forge_http'", tsu_mod.su_classify(d)[0])
 
     def test_literal_port_number_does_not_count_as_covered(self):
         # A literal is exactly the hardcoding the gate wants replaced.
@@ -233,31 +240,31 @@ class tsu_TestCovered(unittest.TestCase):
 
 class tsu_TestClassify(unittest.TestCase):
     def test_clean_tree_has_no_violations(self):
-        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORT_A}"}, ["b"])
+        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORTS_A}"}, ["b"])
         self.assertEqual(tsu_mod.su_classify(d), [])
 
     def test_unclassified_port_fails(self):
-        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORT_A}"}, [])
+        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORTS_A}"}, [])
         self.assertEqual(len(tsu_mod.su_classify(d)), 1)
         self.assertIn("'b'", tsu_mod.su_classify(d)[0])
 
     def test_port_in_both_fails(self):
-        d = tsu_data({"a": 1}, {"u": "http://x:${MIOS_PORT_A}"}, ["a"])
+        d = tsu_data({"a": 1}, {"u": "http://x:${MIOS_PORTS_A}"}, ["a"])
         self.assertIn("two answers", tsu_mod.su_classify(d)[0])
 
     def test_register_naming_a_missing_port_fails(self):
-        d = tsu_data({"a": 1}, {"u": "http://x:${MIOS_PORT_A}"}, ["ghost"])
+        d = tsu_data({"a": 1}, {"u": "http://x:${MIOS_PORTS_A}"}, ["ghost"])
         self.assertIn("not a [ports] key", tsu_mod.su_classify(d)[0])
 
     def test_duplicate_register_entry_fails(self):
-        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORT_A}"}, ["b", "b"])
+        d = tsu_data({"a": 1, "b": 2}, {"u": "http://x:${MIOS_PORTS_A}"}, ["b", "b"])
         self.assertIn("twice", tsu_mod.su_classify(d)[0])
 
     def test_empty_port_table_fails_rather_than_passing_vacuously(self):
         self.assertIn("vacuously", tsu_mod.su_classify(tsu_data({}, {}, []))[0])
 
     def test_register_whitespace_and_blanks_are_ignored(self):
-        d = tsu_data({"a": 1, "b": 2}, {"u": "${MIOS_PORT_A}"}, [" b ", "", "  "])
+        d = tsu_data({"a": 1, "b": 2}, {"u": "${MIOS_PORTS_A}"}, [" b ", "", "  "])
         self.assertEqual(tsu_mod.su_classify(d), [])
 
 class tsu_TestShippedTree(unittest.TestCase):
@@ -283,11 +290,11 @@ class tsu_TestBrowserOpenable(unittest.TestCase):
 
     def test_an_http_entry_is_clean(self):
         self.assertEqual(tsu_mod.su_browser_openable(
-            {"urls": {"forge": "http://localhost:${MIOS_PORT_FORGE_HTTP}"}}), [])
+            {"urls": {"forge": "http://localhost:${MIOS_PORTS_FORGE_HTTP}"}}), [])
 
     def test_an_https_entry_is_clean(self):
         self.assertEqual(tsu_mod.su_browser_openable(
-            {"urls": {"cockpit": "https://localhost:${MIOS_PORT_COCKPIT}"}}), [])
+            {"urls": {"cockpit": "https://localhost:${MIOS_PORTS_COCKPIT}"}}), [])
 
     def test_a_dsn_fails(self):
         # [urls].pgvector shipped as a postgresql:// DSN, which made the table
@@ -318,7 +325,7 @@ class tsu_TestBarePortAddresses(unittest.TestCase):
             {"ports": {"llm_light": 8500},
              "ai": {"endpoint": "http://localhost:8500/v1"}})
         self.assertTrue(out)
-        self.assertIn("MIOS_PORT_LLM_LIGHT", out[0])
+        self.assertIn("MIOS_PORTS_LLM_LIGHT", out[0])
 
     def test_the_loopback_spelling_is_caught_too(self):
         self.assertTrue(tsu_mod.su_bare_port_addresses(
@@ -328,7 +335,7 @@ class tsu_TestBarePortAddresses(unittest.TestCase):
     def test_a_templated_url_is_clean(self):
         self.assertEqual(tsu_mod.su_bare_port_addresses(
             {"ports": {"llm_light": 8500},
-             "ai": {"endpoint": "http://localhost:${MIOS_PORT_LLM_LIGHT}/v1"}}), [])
+             "ai": {"endpoint": "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1"}}), [])
 
     def test_a_port_that_is_not_ours_is_ignored(self):
         self.assertEqual(tsu_mod.su_bare_port_addresses(

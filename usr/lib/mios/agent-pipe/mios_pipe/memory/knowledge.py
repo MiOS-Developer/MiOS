@@ -52,9 +52,17 @@ KNOWLEDGE_TABLE = "knowledge"
 KNOWLEDGE_STORE_ENABLED = True
 KNOWLEDGE_STORE_SKIP_VOLATILE = True
 KNOWLEDGE_STORE_GATE_UNSATISFIED = True
-KNOWLEDGE_ANSWER_MAX = 8000
-MEMORY_GUARD_MODE = "off"
-KNOWLEDGE_RECALL_ENABLED = True
+try:
+    _pg_cfg = _toml_section("pgvector")
+    MEMORY_GUARD_MODE = (os.environ.get("MIOS_MEMORY_GUARD_MODE")
+                         or _pg_cfg.get("memory_guard_mode", "log")).strip().lower()
+except Exception:
+    try:
+        import mios_toml
+        _pg_cfg = mios_toml.load_merged().get("pgvector", {})
+        MEMORY_GUARD_MODE = _pg_cfg.get("memory_guard_mode", "log").strip().lower()
+    except Exception:
+        MEMORY_GUARD_MODE = "log"
 KNOWLEDGE_RECALL_K = 3
 KNOWLEDGE_RECALL_CANDIDATES = 60
 KNOWLEDGE_RECALL_MIN_SCORE = 0.62
@@ -347,7 +355,7 @@ async def _store_knowledge_task(q: str, a: str,
                 row["emb_model"] = EMB_MODEL       # WS-A2 embedding-version hygiene
                 row["emb_version"] = EMB_VERSION
         _pg_mirror("knowledge", {**row, "session_id": session_id},
-                   rls_owner=(_ou or None))  # WS-9c + T-068 DB-side RLS
+                   rls_owner=(_ou or None))  # WS-9c + task_70 DB-side RLS
         sql = _db_create(KNOWLEDGE_TABLE, row, now_fields=("ts",), _mirror=False)
         if session_id:
             sql = sql.rstrip(";") + f", session = {session_id};"
@@ -369,7 +377,7 @@ async def _recall_knowledge_pg(query: str) -> "Optional[str]":
             qv, table=KNOWLEDGE_TABLE,
             k=max(KNOWLEDGE_RECALL_K, KNOWLEDGE_RECALL_CANDIDATES),
             owner=_rls_owner(),  # WS-A15 seam (app-side WHERE-filter, gated by rls_mode)
-            rls_owner=_request_principal(),  # T-068 DB-side SET LOCAL (gated in mios_pg by rls_enable)
+            rls_owner=_request_principal(),  # task_70 DB-side SET LOCAL (gated in mios_pg by rls_enable)
             emb_version=EMB_VERSION,  # A3: scope recall to the active embedding space
             query_text=query,
             hybrid=KNOWLEDGE_RAG_HYBRID,
@@ -569,9 +577,9 @@ async def _evict_knowledge() -> dict:
         import json
         import mios_cold_evict
 
-        cold_evict_enable = os.environ.get("MIOS_CONV_MEMORY_COLD_EVICT_ENABLE", "false").lower() in ("true", "1", "yes", "on")
-        cold_storage_dir = os.environ.get("MIOS_CONV_MEMORY_COLD_STORAGE_DIR", "/var/lib/mios/history/")
-        cold_zstd_level = int(os.environ.get("MIOS_CONV_MEMORY_COLD_ZSTD_LEVEL", "3"))
+        cold_evict_enable = os.environ.get("MIOS_CONVERGE_MEMORY_COLD_EVICT_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+        cold_storage_dir = os.environ.get("MIOS_CONVERGE_MEMORY_COLD_STORAGE_DIR", "/var/lib/mios/history/")
+        cold_zstd_level = int(os.environ.get("MIOS_CONVERGE_MEMORY_COLD_ZSTD_LEVEL", "3"))
 
         ttl_candidates = await _db_count(with_ttl=True)
         total = await _db_count(with_ttl=False)
@@ -680,10 +688,10 @@ async def _knowledge_evict_loop() -> None:
             await asyncio.sleep(max(60, KNOWLEDGE_EVICT_INTERVAL_S))
             await _evict_knowledge()
 
-            cold_evict_enable = os.environ.get("MIOS_CONV_MEMORY_COLD_EVICT_ENABLE", "false").lower() in ("true", "1", "yes", "on")
+            cold_evict_enable = os.environ.get("MIOS_CONVERGE_MEMORY_COLD_EVICT_ENABLE", "false").lower() in ("true", "1", "yes", "on")
             if cold_evict_enable:
-                cold_storage_dir = os.environ.get("MIOS_CONV_MEMORY_COLD_STORAGE_DIR", "/var/lib/mios/history/")
-                cold_retention_days = int(os.environ.get("MIOS_CONV_MEMORY_COLD_RETENTION_DAYS", "30"))
+                cold_storage_dir = os.environ.get("MIOS_CONVERGE_MEMORY_COLD_STORAGE_DIR", "/var/lib/mios/history/")
+                cold_retention_days = int(os.environ.get("MIOS_CONVERGE_MEMORY_COLD_RETENTION_DAYS", "30"))
                 await _cold_retention_sweep(cold_storage_dir, cold_retention_days)
 
         except asyncio.CancelledError:
@@ -726,7 +734,7 @@ async def _recall_agent_memory(query: str) -> str:
                                       k=max(AGENT_MEMORY_RECALL_K,
                                             KNOWLEDGE_RECALL_CANDIDATES),
                                       owner=_rls_owner(),  # WS-A15 seam / WS-5 RLS (app-side filter)
-                                      rls_owner=_request_principal(),  # T-068 DB-side SET LOCAL
+                                      rls_owner=_request_principal(),  # task_70 DB-side SET LOCAL
                                       emb_version=EMB_VERSION)  # A3: active emb space
         if not rows:
             return ""

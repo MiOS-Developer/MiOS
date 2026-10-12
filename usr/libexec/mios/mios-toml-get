@@ -1,28 +1,41 @@
 #!/usr/bin/env python3
-# AI-hint: Thin shell-facing CLI over the shared usr/lib/mios/mios_toml.py resolver, so bash scripts + `python3 - <<PY` heredocs stop re-rolling their own awk/regex mios.toml scanners (which mishandle multi-line arrays, [[array.of.tables]], inline tables, and quoting) and instead read the SSOT through the ONE real tomllib-backed layered overlay (vendor<host<user, empty-string rule). `mios-toml-get <section[.sub]> <key> [default]` prints a scalar (default/empty if absent); `--section <a.b>` prints the sub-table as JSON (for [[array]]/catalog reads); `--dump <a.b> k1 k2 ...` prints several keys as `k=v` lines to avoid a python spawn per value on hot paths (e.g. the login-path dashboard). Pairs with mios_toml.py + the 29 already-migrated Python tools; drop-in for the `_mios_toml_value` bash helpers.
-# AI-related: ../../lib/mios/mios_toml.py, ./mios-sync-theme, ./mios-dashboard.sh, ../../../automation/98-drift-checks.sh
+# AI-hint: Thin shell-facing CLI over the shared usr/lib/mios/mios_toml.py resolver, with native tools/native/mios-toml-get dispatch.
+# AI-related: ../../lib/mios/mios_toml.py, ./mios-sync-theme, tools/native/mios-toml-get/
 # AI-functions: main
-"""Shell CLI over the shared mios_toml resolver: scalar get, section-as-JSON, batch dump."""
+"""Shell CLI over the shared mios_toml resolver: native dispatch with fallback."""
 
 from __future__ import annotations
-
 import json
 import os
+import subprocess
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
-import mios_toml  # noqa: E402
+
+def _native_bin() -> str | None:
+    exe = "mios-toml-get.exe" if os.name == "nt" else "mios-toml-get"
+    root = os.environ.get("MIOS_TOML_ROOT") or os.environ.get("MIOS_ROOT") or os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+    )
+    for p in (
+        os.path.join(root, "tools", "native", "target", "release", exe),
+        os.path.join(root, "tools", "native", "target", "debug", exe),
+        os.path.join("/usr/bin", exe),
+        os.path.join("/usr/local/bin", exe),
+    ):
+        if os.path.isfile(p):
+            return p
+    return None
 
 
-def _scalar(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (list, dict)):
-        return json.dumps(v)
-    return "" if v is None else str(v)
+def main(argv: list[str]) -> int:
+    nb = _native_bin()
+    if nb:
+        try:
+            res = subprocess.run([nb] + argv[1:], stdout=sys.stdout, stderr=sys.stderr)
+            return res.returncode
+        except Exception:
+            pass
 
-
-def main(argv):
     args = argv[1:]
     if not args or args[0] in ("-h", "--help"):
         sys.stderr.write(
@@ -32,7 +45,7 @@ def main(argv):
         return 2
 
     use_vendor = False
-    if args and args[0] == "--vendor":
+    if args[0] == "--vendor":
         use_vendor = True
         args = args[1:]
 
@@ -40,7 +53,16 @@ def main(argv):
         sys.stderr.write("mios-toml-get: missing arguments after --vendor\n")
         return 2
 
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
+    import mios_toml
     data = mios_toml.load_vendor() if use_vendor else mios_toml.load_merged()
+
+    def _sc(v: object) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (list, dict)):
+            return json.dumps(v)
+        return "" if v is None else str(v)
 
     if args[0] == "--section":
         if len(args) < 2:
@@ -55,16 +77,16 @@ def main(argv):
             return 2
         sect = mios_toml.section(data, args[1])
         for k in args[2:]:
-            print(f"{k}={_scalar(sect.get(k))}")
+            print(f"{k}={_sc(sect.get(k))}")
         return 0
 
     if len(args) < 2:
         sys.stderr.write("mios-toml-get needs <section> <key>\n")
         return 2
-    section, key = args[0], args[1]
-    default = args[2] if len(args) > 2 else ""
-    val = mios_toml.section(data, section).get(key)
-    print(default if val is None else _scalar(val))
+
+    val = mios_toml.section(data, args[0]).get(args[1])
+    default_val = args[2] if len(args) > 2 else ""
+    print(default_val if val is None else _sc(val))
     return 0
 
 

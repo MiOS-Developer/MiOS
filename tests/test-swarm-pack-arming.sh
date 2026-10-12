@@ -11,8 +11,8 @@ fail(){ echo "[swarm-pack] FAIL: $*" >&2; exit 1; }
 systemctl(){ echo "$*" >> "$TMP/systemctl.log"; }
 logger(){ :; }
 RUNDIR="$TMP/run"; mkdir -p "$RUNDIR"
-MIOS_LLAMACPP_UID="$(id -u)"; MIOS_LLAMACPP_GID="$(id -g)"
-export MIOS_LLAMACPP_UID MIOS_LLAMACPP_GID
+MIOS_SERVICES_LLAMACPP_UID="$(id -u)"; MIOS_SERVICES_LLAMACPP_GID="$(id -g)"
+export MIOS_SERVICES_LLAMACPP_UID MIOS_SERVICES_LLAMACPP_GID
 
 # Positive: the slot dir exists before the .env and the instance is started.
 SLOTS="$TMP/slots"

@@ -2,7 +2,7 @@
 # AI-functions: to_dict, to_json, __init__, run, _has_consensus, _build_packet, _default_responder, Act, Archetype, Move, DecisionPacket, DCISession
 
 """
-mios_deliberate.py — T-341 MAO-02
+mios_deliberate.py — task_285 MAO-02
 Deliberative Collective Intelligence (DCI) — 4-archetype deliberation council
 with typed interaction grammar and Decision Packet output.
 
@@ -173,7 +173,7 @@ def _default_responder(archetype: Archetype,
 
 
 # ---------------------------------------------------------------------------
-# T-385: Bounded Reflection Loop Convergence
+# task_329: Bounded Reflection Loop Convergence
 # ---------------------------------------------------------------------------
 import difflib
 import re

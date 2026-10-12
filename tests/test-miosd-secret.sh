@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: Verification test suite for miosd secret management, Linux native Keyrings, and pipeline credential scanner.
-# AI-related: src/mios-rs/miosd/src/secret.rs, src/mios-rs/miosd/src/main.rs, usr/share/mios/mios.toml
+# AI-related: src/mios-rs/miosd/src/lib.rs, src/mios-rs/miosd/src/main.rs, usr/share/mios/mios.toml
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

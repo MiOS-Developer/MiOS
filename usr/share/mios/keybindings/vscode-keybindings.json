@@ -1,0 +1,55 @@
+[
+  {
+    "command": "workbench.action.terminal.toggleTerminal",
+    "key": "ctrl+b t",
+    "when": "!terminalFocus"
+  },
+  {
+    "args": {
+      "commands": [
+        "workbench.action.terminal.new",
+        {
+          "args": {
+            "text": "mios ai\r"
+          },
+          "command": "workbench.action.terminal.sendSequence"
+        }
+      ]
+    },
+    "command": "runCommands",
+    "key": "ctrl+b a",
+    "when": "!terminalFocus"
+  },
+  {
+    "args": {
+      "commands": [
+        "workbench.action.terminal.new",
+        {
+          "args": {
+            "text": "mios agents --watch\r"
+          },
+          "command": "workbench.action.terminal.sendSequence"
+        }
+      ]
+    },
+    "command": "runCommands",
+    "key": "ctrl+b g",
+    "when": "!terminalFocus"
+  },
+  {
+    "args": {
+      "commands": [
+        "workbench.action.terminal.new",
+        {
+          "args": {
+            "text": "mios mon\r"
+          },
+          "command": "workbench.action.terminal.sendSequence"
+        }
+      ]
+    },
+    "command": "runCommands",
+    "key": "ctrl+b m",
+    "when": "!terminalFocus"
+  }
+]

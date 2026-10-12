@@ -40,7 +40,7 @@ To migrate to the single-engine multi-LoRA topology, follow these steps:
    ```
 4. Verify the active adapters endpoint:
    ```bash
-   curl http://localhost:${MIOS_PORT_AGENT_PIPE}/v1/inference/lora/list
+   curl http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1/inference/lora/list
    ```
 5. Retire the secondary alternative service by updating your configuration:
    ```toml

@@ -3,6 +3,7 @@
 # AI-hint: Configures PAM via authselect, creates the primary system user with fixed UID 1000, and assigns group memberships (wheel, libvirt, ...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+# shellcheck source=usr/lib/mios/log.sh
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 
 mios_log "'MiOS' ${MIOS_VERSION:-} user & authentication"
@@ -15,11 +16,14 @@ if command -v authselect &>/dev/null; then
     authselect apply-changes --force 2>/dev/null || authselect opt-out 2>/dev/null || true
 fi
 
-C_USER="${MIOS_USER:-mios}"
+C_USER="${MIOS_IDENTITY_USERNAME:-mios}"
 
 mios_log "Creating user ${C_USER} via sysusers"
 if [[ "${C_USER}" != "mios" ]]; then
     rm -f /usr/lib/sysusers.d/10-mios.conf /usr/lib/sysusers.d/50-mios-users.conf /etc/sysusers.d/10-mios.conf /etc/sysusers.d/50-mios-users.conf 2>/dev/null || true
+    for _f in /usr/lib/sysusers.d/50-mios.conf /etc/sysusers.d/50-mios.conf; do
+        [[ -f "$_f" ]] && sed -i -E '/^[gum][[:space:]]+mios[[:space:]]/d' "$_f"
+    done
     if getent passwd mios >/dev/null 2>&1; then
         userdel -f mios 2>/dev/null || true
     fi
@@ -91,7 +95,12 @@ if getent passwd "${C_USER}" >/dev/null; then
     fi
     if [[ "$pw_hash" =~ ^\$6\$ ]]; then
         echo "${C_USER}:${pw_hash}" | chpasswd -e
-        mios_ok "Password hash baked into /etc/shadow for ${C_USER}"
+        if command -v chage >/dev/null 2>&1; then
+            chage -d 0 "${C_USER}" 2>/dev/null || true
+        elif [[ -f /etc/shadow ]]; then
+            sed -i -E "s/^(${C_USER}:[^:]*):[0-9]*:(.*)/\1:0:\2/" /etc/shadow 2>/dev/null || true
+        fi
+        mios_ok "Password hash baked into /etc/shadow for ${C_USER} (expired via chage -d 0 per ruling Q5)"
     else
         mios_warn "Pw_hash is not sha512crypt"
     fi

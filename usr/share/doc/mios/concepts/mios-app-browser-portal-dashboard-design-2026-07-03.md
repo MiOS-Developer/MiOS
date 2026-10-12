@@ -70,7 +70,7 @@ be called "the MiOS brand":
 Source of truth: `usr/share/mios/mios.toml [colors]` (three-layer override:
 `~/.config/mios/mios.toml` < `/etc/mios/mios.toml` <
 `/usr/share/mios/mios.toml`). `tools/lib/userenv.sh` already exports these as
-`MIOS_COLOR_BG`, `MIOS_COLOR_ACCENT`, etc. at every interactive shell start
+`MIOS_COLORS_BG`, `MIOS_COLORS_ACCENT`, etc. at every interactive shell start
 and — per its own header comment — these are already meant to reach "the
 oh-my-posh theme, the configurator HTML's `:root`, and globals.{sh,ps1}."
 
@@ -266,7 +266,7 @@ that shell/systemd consumers already have via `install.env`.
   with `MIOS_COLOR_*` (sourced via `lib/common.sh`, already the repo-wide
   convention every other automation script uses).
 - `automation/54-bake-hyprland.sh` — border colors now sourced from
-  `MIOS_COLOR_ACCENT`/`MIOS_COLOR_INFO`/`MIOS_COLOR_MUTED` via a placeholder
+  `MIOS_COLORS_ACCENT`/`MIOS_COLORS_INFO`/`MIOS_COLORS_MUTED` via a placeholder
   + `sed` substitution (the heredoc stays single-quoted on purpose — it also
   contains literal `$mainMod` Hyprland variable references that must **not**
   be shell-expanded); added a Cockpit quick-launch keybind + a

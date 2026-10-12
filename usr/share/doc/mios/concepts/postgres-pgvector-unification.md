@@ -124,7 +124,7 @@ SSOT creds, no hardcodes).
   826 + mios-ai), `tmpfiles.d/mios-pgvector.conf` (PGDATA dir per Law 2),
   `tools/lib/userenv.sh` (the `MIOS_PG_*`/`MIOS_PGVECTOR_*` maps), and
   `automation/34-render-quadlets.sh` (placeholder render per the Quadlet contract).
-- Engine selector: `[pgvector].db_backend` (env `MIOS_DB_BACKEND`). Now set to
+- Engine selector: `[pgvector].db_backend` (env `MIOS_PGVECTOR_DB_BACKEND`). Now set to
   **`postgres`** — Postgres is primary and native `<=>` HNSW recall is live. The
   `surreal` and `dual` values remain only as historical/rollback documentation; the
   the legacy datastore path itself is gone.
@@ -170,7 +170,7 @@ foundation; `test_mios_pg.py` 18/18), the `mios-db --pg` mode, the SSOT entries,
 and the identity/tmpfiles/userenv/render wiring. Nothing live moved yet.
 
 **Cutover code (WS-9c, 2026-06-04): DONE, default `dual`.** Wired a backend
-selector (`[pgvector].db_backend`, env `MIOS_DB_BACKEND`): `surreal` | `dual` |
+selector (`[pgvector].db_backend`, env `MIOS_PGVECTOR_DB_BACKEND`): `surreal` | `dual` |
 `postgres`. `dual` (the safe live-migration default) mirrored writes to both stores
 while reads stayed on the legacy datastore, so Postgres was exercised and verifiable live
 without risking the read path. `mios_pg.py` gained `insert()` + native `recall()`

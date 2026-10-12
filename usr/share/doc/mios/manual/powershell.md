@@ -492,3 +492,24 @@ operator's hardware -- if WindowWidth != mios.toml [terminal].cols, the
 delta is the WT chrome budget that right_margin must absorb.
 
 <!-- mios-src:b38ecb3d63ba from powershell/profile.ps1:1062-1067 -->
+### Pester can only mock a command that resolves. wsl.exe...
+
+Pester can only mock a command that resolves. wsl.exe exists only on
+Windows and podman only where it is installed, while this suite also
+runs under pwsh on the Linux CI runner. Stand-ins make both resolvable
+everywhere, and throw so a path a test forgot to mock fails instead of
+reaching a real builder.
+
+<!-- mios-src:7a6694e0e981 from tests/powershell/NativeBuildLifecycle.Tests.ps1:12-16 -->
+
+### The projection takes its shell as a parameter and uses only...
+
+The projection takes its shell as a parameter and uses only
+CreateShortcut (load an existing link, or a blank one with
+WindowStyle 1) and Save. Windows exercises the real WScript.Shell;
+pwsh on the Linux CI runner has no COM, so it gets a stand-in with the
+same surface that persists those properties to the link file. Both
+write only on Save, so the hash and timestamp assertions below still
+prove an identical projection is left untouched.
+
+<!-- mios-src:ffa80b284b18 from tests/powershell/VerifiedInstaller.Tests.ps1:101-107 -->

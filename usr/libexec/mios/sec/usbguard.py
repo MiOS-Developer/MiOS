@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative USBGuard policy generator and desktop authorization notifier (T-643, T-644).
+# AI-hint: Declarative USBGuard policy generator and desktop authorization notifier (task_587, task_588).
 # AI-related: usr/libexec/mios/sec/usbguard.py, tests/test-sec.py, automation/51-hardening.sh
 """Declarative USBGuard policy generator and desktop authorization notifier for MiOS.
 

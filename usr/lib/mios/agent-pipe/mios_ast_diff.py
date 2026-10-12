@@ -36,6 +36,48 @@ SECURITY_PATTERNS = [
 ]
 
 
+def _strip_comments(code: str, python: bool = False, rust: bool = False) -> str:
+    """Scan once, preserving quoted text and unterminated block comments."""
+    chunks = []
+    start = i = 0
+    size = len(code)
+    while i < size:
+        char = code[i]
+        if char in "\"'`":
+            if rust and char == "'" and i + 1 < size and (code[i + 1].isalpha() or code[i + 1] == "_"):
+                # Rust lifetimes/labels are not quoted strings. A character
+                # literal has its closing quote directly after one character.
+                if i + 2 >= size or code[i + 2] != "'":
+                    i += 1
+                    continue
+            quote = char
+            i += 1
+            while i < size:
+                if code[i] == "\\":
+                    i += 2
+                elif code[i] == quote:
+                    i += 1
+                    break
+                else:
+                    i += 1
+        elif code.startswith("/*", i):
+            end = code.find("*/", i + 2)
+            if end < 0:
+                break
+            chunks.extend((code[start:i], " "))
+            i = end + 2
+            start = i
+        elif (python and char == "#") or (not python and code.startswith("//", i)):
+            chunks.append(code[start:i])
+            end = code.find("\n", i)
+            i = size if end < 0 else end
+            start = i
+        else:
+            i += 1
+    chunks.append(code[start:])
+    return "".join(chunks)
+
+
 class AstNode:
     """Canonical simplified AST representation for structural comparison."""
     def __init__(self, kind: str, value: Optional[str] = None, children: Optional[List["AstNode"]] = None):
@@ -104,14 +146,7 @@ class AstDiffEngine:
         # Normalize line endings
         code = code.replace("\r\n", "\n")
 
-        # Strip multi-line comments: /* ... */
-        code = re.sub(r"/\*[\s\S]*?\*/", " ", code)
-
-        # Strip single-line comments: // ... or # ...
-        if lang in {"python", "py"}:
-            code = re.sub(r"#.*$", "", code, flags=re.MULTILINE)
-        else:
-            code = re.sub(r"//.*$", "", code, flags=re.MULTILINE)
+        code = _strip_comments(code, python=lang in {"python", "py"}, rust=lang == "rust")
 
         # Token specification
         token_specification = [

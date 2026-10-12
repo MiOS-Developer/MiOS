@@ -12,19 +12,19 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-radosgw
-Exec=radosgw -d --cluster ceph --name client.rgw.gateway --rgw-frontends="beast endpoint=127.0.0.1:${MIOS_PORT_RADOSGW:-8470}"
+Exec=radosgw -d --cluster ceph --name client.rgw.gateway --rgw-frontends="beast endpoint=127.0.0.1:${MIOS_PORTS_RADOSGW:-8470}"
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=root
-HealthCmd=/usr/bin/curl -sf http://127.0.0.1:${MIOS_PORT_RADOSGW:-8470}/ || exit 1
+HealthCmd=/usr/bin/curl -sf http://127.0.0.1:${MIOS_PORTS_RADOSGW:-8470}/ || exit 1
 HealthInterval=30s
 HealthRetries=3
 HealthTimeout=5s
 Image=quay.io/ceph/ceph:latest
-Label=io.podman_desktop.openInBrowser=http://127.0.0.1:${MIOS_PORT_RADOSGW:-8470}/
+Label=io.podman_desktop.openInBrowser=http://127.0.0.1:${MIOS_PORTS_RADOSGW:-8470}/
 Label=org.opencontainers.image.title=mios-radosgw
-Label=org.opencontainers.image.url=http://127.0.0.1:${MIOS_PORT_RADOSGW:-8470}/
+Label=org.opencontainers.image.url=http://127.0.0.1:${MIOS_PORTS_RADOSGW:-8470}/
 Pod=mios-system.pod
-PublishPort=127.0.0.1:${MIOS_PORT_RADOSGW:-8470}:${MIOS_PORT_RADOSGW:-8470}
+PublishPort=127.0.0.1:${MIOS_PORTS_RADOSGW:-8470}:${MIOS_PORTS_RADOSGW:-8470}
 User=root
 Volume=/etc/ceph:/etc/ceph:Z
 Volume=/var/lib/ceph:/var/lib/ceph:Z

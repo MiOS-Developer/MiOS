@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Shadow dual-process candidate daemon validator and query mirroring harness (T-541, AGY-2139).
+# AI-hint: Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718).
 # AI-doc: usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md
 """
 MiOS Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness.
@@ -38,7 +38,7 @@ EXIT_DIVERGENCE = 1
 EXIT_ERROR = 2
 
 # Default endpoints and settings
-DEFAULT_LIVE_URL = os.environ.get("MIOS_AI_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORT_AGENT_PIPE', '8700')}/v1")
+DEFAULT_LIVE_URL = os.environ.get("MIOS_AI_ENDPOINT", f"http://127.0.0.1:{os.environ.get('MIOS_PORTS_AGENT_PIPE', '8700')}/v1")
 DEFAULT_CANDIDATE_PORT = 8649
 DEFAULT_STATE_DIR = os.environ.get("MIOS_SHADOW_STATE_DIR", "/var/lib/mios/shadow")
 FALLBACK_STATE_DIR = "/tmp/mios-shadow"
@@ -1000,7 +1000,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios-shadow-test",
-        description="Shadow dual-process candidate daemon validator and query mirroring harness (T-541, AGY-2139).",
+        description="Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718).",
         parents=[common],
     )
 

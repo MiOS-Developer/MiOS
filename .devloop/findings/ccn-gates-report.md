@@ -342,7 +342,7 @@ removed on both branches, but a crash between write and `rm` litters the repo.
    `merge-base HEAD origin/main == HEAD`; either way
    `git show <base>:usr/share/mios/mios.toml` is byte-identical to the worktree
    file, `findings` is empty and the binary exits 0. The tool admits this in
-   `describe_baseline` ("a committed raise passes; see T-1046") but that text
+   `describe_baseline` ("a committed raise passes; see task_983") but that text
    lands only in a summary string while the wrapper branches solely on exit
    status. **All ~78 shrink-only ceilings in `mios.toml` are freely raisable in
    CI.**
@@ -580,7 +580,7 @@ New findings:
    failure.** `cargo build … >/dev/null 2>&1 || true` discards the build failure,
    which then merges into the same "binary absent → return 0" path as "cargo is
    not installed". A Rust twin that no longer **compiles** is precisely the drift
-   this gate documents itself as existing for (its own comment cites T-1056: 3486
+   this gate documents itself as existing for (its own comment cites task_993: 3486
    emitted lines vs the Python's 1229). Everything past that guard is sound.
 5. **`check_unit_dependency_closure` (4470) — Skip-as-Pass, unforceable.** Same
    bypass as sweep B: it sidesteps `_need_python` with its own
@@ -638,7 +638,7 @@ defective** — Law 13 (§8 below) and Law 16 (§14).
    resolves in three tiers — native `mios-resolver`, then `miosd`, then
    **`mios_toml.py` itself** (`userenv.sh:60-65`). Neither binary exists in this
    worktree, so **the bash leg *is* `mios_toml.py`**: a mutation to it changes
-   both legs identically and they go on agreeing. This is verbatim the T-1062
+   both legs identically and they go on agreeing. This is verbatim the task_3360
    defect that the sibling `check_resolver_twin_parity` documents at length and
    guards against; this check has **no guard at all**, not even under
    `MIOS_DRIFT_REQUIRE_TOOLS=1`. The tool's advertised 3-way assertion is also

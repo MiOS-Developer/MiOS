@@ -79,7 +79,7 @@ verity_uki_build = false   # build the verity-rooted UKI artifact (ukify)
 ```
 
 These flow `mios.toml -> tools/lib/userenv.sh (MIOS_FAPOLICYD_OBSERVE_ENABLE /
-MIOS_UKI_VERITY_BUILD) -> the build step`. The build step ALSO reads them
+MIOS_UKI_VERITY_UKI_BUILD) -> the build step`. The build step ALSO reads them
 directly from the resolved TOML via its `_ws7_scalar` helper, so it is correct
 whether or not `userenv.sh` ran.
 

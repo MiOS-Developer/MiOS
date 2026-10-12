@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Hardware watchdog timer integration (/dev/watchdog) with safe 'V' magic close.
-# AI-related: src/mios-rs/mios-node/src/watchdog.rs, tests/test-node.py
+# AI-related: src/mios-rs/mios-node/src/device.rs, tests/test-node.py
 """
 MiOS Hardware Watchdog Controller & Supervisor.
 Manages `/dev/watchdog` hardware timer keepalives and safe magic close ('V') shutdown.

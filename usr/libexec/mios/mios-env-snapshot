@@ -32,7 +32,7 @@ _MIOS_ENV_SNAPSHOT_EXCLUDE='^(MIOS_ROOT|MIOS_TOML_ROOT|MIOS_VENDOR_TOML|MIOS_CON
 # the FIRST of them -- continuation lines do not start with MIOS_, so the rest
 # was dropped without a word. Measured: MIOS_OWUI_SYSTEM_PROMPT_TEMPLATE is 2633
 # characters over 42 lines and reached the baseline as the nine characters
-# "# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (T-1066).
+# "# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (task_3364).
 # check_value_aliases trusts this output, so a gate was comparing mutilated
 # values confidently.
 #

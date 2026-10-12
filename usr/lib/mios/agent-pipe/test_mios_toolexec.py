@@ -4,11 +4,27 @@
 # AI-functions: (test)
 """Offline regression for mios_toolexec -- rescue corpus + executor shaping."""
 
+import ast
 import asyncio
 import contextvars
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import mios_toolexec as T
+
+# Execute the gateway's actual import declarations against the real shim and
+# executor, so a retired symbol cannot hide behind a permissive import stub.
+_server_path = Path(__file__).with_name("server.py")
+_server_imports = [node for node in ast.parse(_server_path.read_text(encoding="utf-8")).body
+                   if isinstance(node, ast.ImportFrom) and node.module == "mios_toolexec"]
+assert _server_imports, "gateway must exercise the executor import contract"
+_exports = {}
+exec(compile(ast.Module(body=_server_imports, type_ignores=[]), str(_server_path), "exec"), _exports)
+for _node in _server_imports:
+    for _alias in _node.names:
+        assert _exports[_alias.asname or _alias.name] is getattr(T, _alias.name)
 
 _VERB_CATALOG = {
     "web_search": {"permission": "read"},
@@ -122,6 +138,19 @@ ok(T._rescue_tool_calls(guard, TOOLS) == [],
 ok(T._rescue_tool_calls("just a normal answer, nothing to call here.", TOOLS) == [],
    "plain prose yields no rescued calls")
 
+# Execute the real parser in a bounded child: the former nested regex wedges
+# on repeated completed parameters without a function closer.
+rescue_probe = """
+import mios_toolexec as t
+bad = '<function=web_search>' + '<parameter=query>x</parameter>' * 10000
+assert t._rescue_tool_calls(bad, [{'function': {'name': 'web_search'}}]) == []
+assert t._rescue_tool_calls('<function=-><parameter=->' * 10000, [{'function': {'name': 'web_search'}}]) == []
+"""
+subprocess.run([sys.executable, "-c", rescue_probe], cwd=Path(__file__).resolve().parent, check=True, timeout=10)
+ok(True, "malformed XML rescue completes within bounded process time")
+ok(T._rescue_tool_calls('<function=web_search>unexpected text</function>', TOOLS) == [],
+   "unexpected function text is not promoted to a tool call")
+
 print("[_cap_verb_result]")
 ok(T._verb_result_cap("web_search") == 1500,
    "verb_result_cap falls back to READ_TOOL_ENRICH_CHARS")
@@ -215,6 +244,10 @@ async def _run():
        "A2: hyphenated read recipe runs on a read-only turn (not dropped)")
     ok(("os_recipe", {"name": "disk-usage", "params": {}}) in _DISPATCHED,
        "A2: read recipe dispatched via os_recipe with the canonical hyphenated name")
+    await T._exec_tool_calls([{"id": "r-os", "function": {
+        "name": "mios_recipe__disk_usage", "arguments": '{"os":"windows","path":"C:\\\\MiOS"}'}}], _push, allow_write=False)
+    ok(("os_recipe", {"name": "disk-usage", "os": "windows", "params": {"path": "C:\\MiOS"}}) in _DISPATCHED,
+       "Recipe OS selector reaches dispatch while path remains a recipe parameter")
     tcs_wrecipe = [{"id": "r2", "function": {
         "name": "mios_recipe__shutdown", "arguments": "{}"}}]
     msgs4, ran4 = await T._exec_tool_calls(tcs_wrecipe, _push, allow_write=False)

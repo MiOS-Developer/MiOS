@@ -1,5 +1,5 @@
 // AI-hint: Law-11 extension gate: fails any credential literal baked into a world-readable unit whose exact path:KEY=value is not on the shrink-only register.
-// AI-related: usr/share/mios/mios.toml, usr/share/containers/systemd, usr/lib/systemd/system, tools/generate-pod-quadlets.py
+// AI-related: usr/share/mios/mios.toml, usr/share/containers/systemd, usr/lib/systemd/system, tools/native/mios-gen/src/pod_quadlets.rs
 
 use crate::Report;
 use std::collections::BTreeSet;
@@ -61,7 +61,7 @@ fn is_literal(val: &str) -> bool {
 /// `Environment=` is the declarative surface. `--env KEY=VALUE` on an Exec line
 /// is the OTHER one, and scanning only the first measured the wrong property:
 /// mios-agents.service hands its container a password as
-/// `--env PASSWORD=${MIOS_DEFAULT_PASSWORD}` on an ExecStart continuation, so a
+/// `--env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD}` on an ExecStart continuation, so a
 /// plain literal planted there passed this gate at rc=0 while the identical
 /// literal on an `Environment=` line failed it. Both controls were run.
 ///
@@ -285,11 +285,14 @@ mod tests {
     }
 
     /// Indirection is not a literal -- this is what keeps the shipped
-    /// `--env PASSWORD=${MIOS_DEFAULT_PASSWORD}` from being reported.
+    /// `--env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD}` from being reported.
     #[test]
     fn indirected_values_are_not_literals() {
-        let pairs = credential_pairs("  --env PASSWORD=${MIOS_DEFAULT_PASSWORD} \\");
-        assert_eq!(pairs, vec![("PASSWORD", "${MIOS_DEFAULT_PASSWORD}")]);
+        let pairs = credential_pairs("  --env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD} \\");
+        assert_eq!(
+            pairs,
+            vec![("PASSWORD", "${MIOS_IDENTITY_DEFAULT_PASSWORD}")]
+        );
         assert!(!is_literal(pairs[0].1));
         assert!(is_literal("hunter2"));
     }

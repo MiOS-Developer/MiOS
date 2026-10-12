@@ -24,11 +24,11 @@ The OCI image reference resolves based on the specific target platform, optimize
 - Deployment packages are bundled and delivered as a self-contained, pre-baked `oci-archive` (tarball format).
 - No network pull is executed during install or update.
 
-## 3. Separation of Credentials and Resolution (AGY-89)
+## 3. Separation of Credentials and Resolution (task_1121)
 
 Historically, image resolution was coupled to credentials defined in `globals.sh` and `globals.ps1`. This coupling led to config clobbering issues where local credentials would overwrite or fallback incorrectly.
 
 - The credential fallback logic in `globals.sh` and `globals.ps1` is **deprecated and inactive** on all fresh execution paths.
 - Canonical entry points do not source the legacy `globals` files for image name resolution.
 - Registry hosts and image tags are resolved directly from `mios.toml` `[image]` SSOT properties, ensuring clean, unified configuration.
-- Cross-reference: [AGY-89 Globals Clobber Fix](file:///C:/MiOS/docs/design/mios-finalization-plan.md).
+- Cross-reference: [task_1121 Globals Clobber Fix](file:///C:/MiOS/docs/design/mios-finalization-plan.md).

@@ -1,11 +1,12 @@
 # AI-hint: MiOS mios-llm-heavy container. (WS-7 pods-as-SSOT).
 # DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [containers.mios-llm-heavy] in mios.toml.
 # /usr/share/containers/systemd/mios-llm-heavy.container
+# Engine: vllm (selected by [ai].heavy_engine; declared engines: sglang, vllm).
 
 [Unit]
 After=network-online.target mios-cdi-detect.service mios-webtools-firstboot.service
 ConditionPathExists=/var/lib/mios/vllm/model/config.json
-Description='MiOS' vLLM heavy lane (OpenAI /v1, PagedAttention + APC; gated)
+Description='MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated)
 Wants=network-online.target
 
 [Container]
@@ -13,25 +14,25 @@ AddDevice=nvidia.com/gpu=all
 ContainerName=mios-llm-heavy
 Environment=HF_HUB_OFFLINE=1
 Environment=TRANSFORMERS_OFFLINE=1
-Environment=VLLM_NO_USAGE_STATS=1
 Environment=DO_NOT_TRACK=1
-Environment=VLLM_WSL2_ENABLE_PIN_MEMORY=1
-Environment=VLLM_USE_V2_MODEL_RUNNER=0
 Environment=HF_HOME=/tmp/.cache
 Environment=XDG_CACHE_HOME=/tmp/.cache
+Environment=GLOO_SOCKET_IFNAME=lo
+Environment=NCCL_SOCKET_IFNAME=lo
+Environment=HOME=/tmp
+Environment=VLLM_NO_USAGE_STATS=1
+Environment=VLLM_WSL2_ENABLE_PIN_MEMORY=1
+Environment=VLLM_USE_V2_MODEL_RUNNER=0
 Environment=VLLM_CACHE_DIR=/tmp/.cache
 Environment=FLASHINFER_WORKSPACE_DIR=/tmp/.cache
 Environment=TRITON_CACHE_DIR=/tmp/.cache
 Environment=VLLM_HOST_IP=127.0.0.1
-Environment=GLOO_SOCKET_IFNAME=lo
-Environment=NCCL_SOCKET_IFNAME=lo
-Environment=HOME=/tmp
-Exec=--model /models --served-model-name mios-heavy --host 0.0.0.0 --port ${MIOS_PORT_VLLM:-8520} --gpu-memory-utilization 0.85 --max-model-len 262144 --kv-cache-dtype fp8 --load-format dummy --enable-prefix-caching --enforce-eager
+Exec=--model /models --served-model-name mios-heavy --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY:-8520} --gpu-memory-utilization 0.85 --max-model-len 262144 --kv-cache-dtype fp8 --load-format auto --enable-prefix-caching --enforce-eager --enable-auto-tool-choice --tool-call-parser hermes
 Group=815
 Image=docker.io/vllm/vllm-openai:latest
 Label=org.opencontainers.image.title=mios-llm-heavy
-Label=org.opencontainers.image.url=http://localhost:${MIOS_PORT_VLLM:-8520}/v1/models
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_VLLM:-8520}/v1/models
+Label=org.opencontainers.image.url=http://localhost:${MIOS_PORTS_LLM_HEAVY:-8520}/v1/models
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_LLM_HEAVY:-8520}/v1/models
 Pod=mios-ai.pod
 User=0
 Volume=/var/lib/mios/vllm/model:/models:ro,Z

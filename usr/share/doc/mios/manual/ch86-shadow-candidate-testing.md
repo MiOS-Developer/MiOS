@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (T-541, AGY-2139). Covers shadow execution mechanics, query mirroring architecture, mutation guarding, divergence scoring, and safe promotion gates for OpenAI-compatible inference daemons. -->
+<!-- AI-hint: Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (task_485, task_2718). Covers shadow execution mechanics, query mirroring architecture, mutation guarding, divergence scoring, and safe promotion gates for OpenAI-compatible inference daemons. -->
 
 # Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness
 

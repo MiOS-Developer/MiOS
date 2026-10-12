@@ -103,11 +103,14 @@ RUN cd /app/src/lib/go-html-to-md && \
     go build -o html-to-markdown.so -buildmode=c-shared html-to-markdown.go && \
     chmod +x html-to-markdown.so
 
-# ── Stage 5: final -- VERBATIM (chromium for puppeteer + assemble) ──────────
-FROM base
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y chromium chromium-sandbox && \
-    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+# Stage 5 keeps the upstream Node 20/pnpm and application builds, on the global
+# MiOS native terminal/MCP base. The original build stages above are retained.
+FROM localhost/mios-base:latest
+RUN dnf5 install -y chromium libstdc++ && dnf5 clean all
+COPY --from=base /usr/local/ /usr/local/
+COPY --from=base /pnpm/ /pnpm/
+ENV PNPM_HOME=/pnpm PATH=/pnpm:/usr/local/bin:$PATH NODE_OPTIONS=--dns-result-order=ipv4first
+WORKDIR /app
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=build /app /app
 COPY --from=go-base /app/src/lib/go-html-to-md/html-to-markdown.so /app/dist/src/lib/go-html-to-md/html-to-markdown.so

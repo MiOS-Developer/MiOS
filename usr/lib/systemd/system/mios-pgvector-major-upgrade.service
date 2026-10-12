@@ -12,8 +12,8 @@ ConditionVirtualization=|wsl
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# SSOT env: MIOS_PGVECTOR_IMAGE / MIOS_PG_DATA_DIR / MIOS_PG_RESTORE_SQL /
-# MIOS_PG_USER / MIOS_PG_DB all flow from mios.toml [pgvector] + [image.sidecars]
+# SSOT env: MIOS_PGVECTOR_IMAGE / MIOS_PGVECTOR_DATA_DIR / MIOS_PGVECTOR_RESTORE_SQL /
+# MIOS_PGVECTOR_USER / MIOS_PGVECTOR_DB all flow from mios.toml [pgvector] + [image.sidecars]
 # -> userenv.sh. '-' tolerates absence (the script defaults every knob inline).
 EnvironmentFile=-/etc/mios/userenv.sh
 # Root because it must podman-run the old-major image and move a 0750 data dir.

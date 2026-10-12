@@ -14,4 +14,5 @@ sparseVhd=true
 autoMemoryReclaim=gradual
 networkingMode=mirrored
 dnsTunneling=true
-firewall=true
+hostAddressLoopback=true
+firewall=false

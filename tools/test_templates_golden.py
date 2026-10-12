@@ -11,7 +11,8 @@ import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SYS_LIBEXEC = os.path.join(ROOT, "usr/libexec/mios")
-GOLDEN_DIR = os.path.join(ROOT, "tests/templates/golden")
+# One file, one "--8<-- <type>" section per template type.
+GOLDEN = os.path.join(ROOT, "tests/templates/golden.snap")
 
 # Load extensionless script mios-new
 mios_new_path = os.path.join(SYS_LIBEXEC, "mios-new")
@@ -37,18 +38,24 @@ def render_for_type(type_name):
     rendered = re.sub(r"\d{4}-\d{2}-\d{2}", "2026-07-17", rendered)
     return rendered
 
+def golden_sections(text):
+    parts = re.split(r"^--8<-- (\S+)\n", text, flags=re.M)
+    if parts[0]:
+        raise ValueError("text before the first --8<-- marker")
+    return dict(zip(parts[1::2], parts[2::2]))
+
 class TestTemplatesGolden(unittest.TestCase):
     def test_all_templates_have_golden_fixtures(self):
-        os.makedirs(GOLDEN_DIR, exist_ok=True)
+        with open(GOLDEN, "r", encoding="utf-8", newline="") as f:
+            sections = golden_sections(f.read())
+        self.assertEqual(sorted(sections), sorted(TYPES), "golden.snap sections differ from TYPES")
         for t in TYPES:
-            golden_file = os.path.join(GOLDEN_DIR, f"{t}.snap")
-            expected = render_for_type(t)
-            if not os.path.exists(golden_file):
-                with open(golden_file, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(expected)
-            with open(golden_file, "r", encoding="utf-8") as f:
-                actual = f.read()
-            self.assertEqual(actual, expected, f"Mismatch in golden snapshot for template '{t}'")
+            self.assertEqual(sections[t], render_for_type(t), f"Mismatch in golden snapshot for template '{t}'")
+
+    def test_section_parser_is_two_sided(self):
+        self.assertEqual(golden_sections("--8<-- a\nx\n--8<-- b\ny\n"), {"a": "x\n", "b": "y\n"})
+        with self.assertRaises(ValueError):
+            golden_sections("stray\n--8<-- a\nx\n")
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,12 @@ from mios_toolexec import _format_tool_error
 from mios_jsonsalvage import loads_lenient as _loads_lenient
 from mios_dispatch import dispatch_mios_verb
 from mios_config import _AUTH_HOSTPORTS, _TOOL_BACKEND, _TOOL_BACKEND_MODEL
-import mios_tokenize  # WS-A5 tokenizer seam -- token estimate for the ctx clamp
+# The context-budget pruner lives in vision_context. Re-exported: the client-tools
+# responders below resolve _tool_ctx/_prune_request_to_context_budget here, and
+# the tests read all four as mios_vision.<name>.
+from mios_pipe.routing.vision_context import (  # noqa: F401 -- re-exported
+    _ELIDED_IMAGE, _DEFAULT_TOOL_CTX, _tool_ctx, _prune_request_to_context_budget,
+)
 
 log = logging.getLogger("mios-agent-pipe")
 
@@ -37,6 +42,11 @@ _agent_contract = None
 _pick_tool_backend = None
 _select_child_tools = None
 _tool_call_sig = None
+
+async def _safe_get_client():
+    if callable(_get_client):
+        return await _get_client()
+    return httpx.AsyncClient()
 
 def configure(*, vision_model=None, vision_endpoint=None, backend_key=None,
               default_tool_cap=None, verb_catalog=None, get_client=None,
@@ -282,6 +292,8 @@ def _has_client_tools(body: dict) -> bool:
     tool_calls back), NOT a MiOS-orchestrated turn. OWUI strips tools before
     calling the pipe and the mios CLI is Hermes-direct, so this is False for them
     (zero regression). Empty/missing tools -> False (normal orchestration)."""
+    if not isinstance(body, dict) or str(body.get("tool_choice") or "").strip().lower() == "none":
+        return False
     t = body.get("tools")
     return isinstance(t, list) and len(t) > 0
 
@@ -340,19 +352,29 @@ def _client_tools_inject_identity(messages: list) -> list:
         return msgs
     return [{"role": "system", "content": lead}] + msgs
 
+def _name_is_verb(name) -> bool:
+    """True if a tool name resolves to a real MiOS verb (the client already carries
+    the MiOS surface -- e.g. Hermes via its mios MCP client)."""
+    if not name:
+        return False
+    try:
+        resolver = _resolve_verb_key
+        if not callable(resolver):
+            try:
+                from mios_pipe.routing.verbcatalog import _resolve_verb_key as default_resolver
+                resolver = default_resolver
+            except Exception:  # noqa: BLE001
+                resolver = None
+        key = resolver(str(name)) if callable(resolver) else str(name)
+        return key in _VERB_CATALOG
+    except Exception:  # noqa: BLE001
+        return False
+
 async def _client_tools_backend(req: dict) -> dict:
     try:
-        _ctx = int(os.environ.get("MIOS_AGENT_PIPE_TOOL_CTX", "65536") or 65536)
-        _in_tokens = mios_tokenize.count_text(
-            json.dumps(req.get("messages") or [])
-            + json.dumps(req.get("tools") or []))
-        _cap = max(512, _ctx - _in_tokens - 1024)
-        _req_mt = int(req.get("max_tokens") or 0)
-        if _req_mt <= 0 or _req_mt > _cap:
-            req = dict(req)
-            req["max_tokens"] = _cap
-    except Exception:  # noqa: BLE001 -- never block the call on the clamp
-        pass
+        req = _prune_request_to_context_budget(req, max_ctx=_tool_ctx())
+    except Exception as _e:  # noqa: BLE001 -- never block the call on the clamp
+        log.warning("client-tools context pruning failed: %s", _e)
     _url, _mdl = await _pick_tool_backend()
 
     async def _post(url: str, mdl: str):
@@ -362,7 +384,7 @@ async def _client_tools_backend(req: dict) -> dict:
         _hp = url.split("://")[-1].split("/")[0]
         if _BACKEND_KEY and _hp in _AUTH_HOSTPORTS:
             headers["authorization"] = f"Bearer {_BACKEND_KEY}"
-        client = await _get_client()
+        client = await _safe_get_client()
         return await client.post(
             f"{url}/chat/completions",
             content=json.dumps(rq).encode("utf-8"), headers=headers)
@@ -411,12 +433,47 @@ async def _client_tools_loop(body: dict, client_names: set, chat_id: str,
         if isinstance(_m, dict) and _m.get("role") == "user":
             _intent = str(_m.get("content") or "")
             break
-    _mios_sel = await _select_child_tools(
-        _client_tools_mios_surface(), _intent, DEFAULT_TOOL_CAP)
-    tools = list(body.get("tools") or []) + _mios_sel
-    base_req: dict = {"model": _TOOL_BACKEND_MODEL, "tools": tools, "stream": False,
+    if not client_names and body.get("tools"):
+        client_names = {((t.get("function") or {}).get("name") or t.get("name"))
+                        for t in (body.get("tools") or []) if isinstance(t, dict)}
+
+    if str(body.get("tool_choice") or "").strip().lower() == "none":
+        tools = []
+        _mios_sel = []
+    else:
+        has_mios_verbs = any(_name_is_verb(n) for n in client_names if n)
+        if has_mios_verbs or len(client_names) >= DEFAULT_TOOL_CAP:
+            log.info("client harness tools detected (%d tools, mios_verbs=%s) -> suppressing redundant _mios_sel",
+                     len(client_names), has_mios_verbs)
+            _mios_sel = []
+        else:
+            if callable(_select_child_tools):
+                _mios_sel = await _select_child_tools(
+                    _client_tools_mios_surface(), _intent, DEFAULT_TOOL_CAP)
+                _mios_sel = [t for t in _mios_sel
+                             if ((t.get("function") or {}).get("name") or t.get("name")) not in client_names]
+            else:
+                _mios_sel = []
+
+        raw_tools = [t for t in (body.get("tools") or []) if isinstance(t, dict)] + _mios_sel
+        seen_names = set()
+        tools = []
+        for t in raw_tools:
+            tname = (t.get("function") or {}).get("name") or t.get("name")
+            if tname and tname in seen_names:
+                continue
+            if tname:
+                seen_names.add(tname)
+            tools.append(t)
+
+    base_req: dict = {"model": _TOOL_BACKEND_MODEL, "stream": False,
                       "parallel_tool_calls": False}
+    if tools:
+        base_req["tools"] = tools
+    _tc_none = str(body.get("tool_choice") or "").strip().lower() == "none"
     for _k in ("temperature", "top_p", "max_tokens", "tool_choice", "parallel_tool_calls"):
+        if _k == "tool_choice" and (_tc_none or not tools):
+            continue  # a tool_choice with no tools makes OpenAI backends reject the call
         if _k in body:
             base_req[_k] = body[_k]
     base_req["chat_template_kwargs"] = {"enable_thinking": False}
@@ -542,18 +599,9 @@ async def _client_tools_sse(msg: dict, chat_id: str,
         yield _chunk({}, finish="stop")
     yield b"data: [DONE]\n\n"
 
-def _name_is_verb(name) -> bool:
-    """True if a tool name resolves to a real MiOS verb (the client already carries
-    the MiOS surface -- e.g. Hermes via its mios MCP client)."""
-    if not name:
-        return False
-    try:
-        return _resolve_verb_key(str(name)) in _VERB_CATALOG
-    except Exception:  # noqa: BLE001
-        return False
-
 async def _client_tools_stream_relay(body: dict, chat_id: str, model: str) -> Any:
     _url, _mdl = await _pick_tool_backend()
+    _ctx = _tool_ctx()
     tbody = dict(body)
     tbody["model"] = _mdl
     tbody["messages"] = _client_tools_inject_identity(list(body.get("messages") or []))
@@ -562,12 +610,19 @@ async def _client_tools_stream_relay(body: dict, chat_id: str, model: str) -> An
     tbody.setdefault("parallel_tool_calls", False)
     for _k in ("mios_flags", "_allow_write", "num_ctx"):
         tbody.pop(_k, None)
+    if str(tbody.get("tool_choice") or "").strip().lower() == "none":
+        tbody.pop("tools", None)
+        tbody.pop("tool_choice", None)
+    try:
+        tbody = _prune_request_to_context_budget(tbody, max_ctx=_ctx)
+    except Exception as _e:  # noqa: BLE001
+        log.warning("client-tools stream relay context pruning failed: %s", _e)
     headers = {"content-type": "application/json"}
     _hp = _url.split("://")[-1].split("/")[0]
     if _BACKEND_KEY and _hp in _AUTH_HOSTPORTS:
         headers["authorization"] = f"Bearer {_BACKEND_KEY}"
     url = f"{_url}/chat/completions"
-    client = await _get_client()
+    client = await _safe_get_client()
 
     async def _gen() -> AsyncGenerator[bytes, None]:
         try:
@@ -613,16 +668,24 @@ async def _client_tools_complete(body: dict, streaming: bool, chat_id: str,
 async def _client_tools_relay(body: dict, streaming: bool) -> Any:
     """Degrade path: the original verbatim passthrough (browser tools only). Used
     when the hybrid loop errors so a smart-window browsing turn still works."""
+    _ctx = _tool_ctx()
     tbody = dict(body)
     tbody["model"] = _TOOL_BACKEND_MODEL
     for _k in ("mios_flags", "_allow_write", "num_ctx"):
         tbody.pop(_k, None)
+    if str(tbody.get("tool_choice") or "").strip().lower() == "none":
+        tbody.pop("tools", None)
+        tbody.pop("tool_choice", None)
+    try:
+        tbody = _prune_request_to_context_budget(tbody, max_ctx=_ctx)
+    except Exception as _e:  # noqa: BLE001
+        log.warning("client-tools relay context pruning failed: %s", _e)
     headers = {"content-type": "application/json"}
     _hp = _TOOL_BACKEND.split("://")[-1].split("/")[0]
     if _BACKEND_KEY and _hp in _AUTH_HOSTPORTS:
         headers["authorization"] = f"Bearer {_BACKEND_KEY}"
     url = f"{_TOOL_BACKEND}/chat/completions"
-    client = await _get_client()
+    client = await _safe_get_client()
     if not streaming:
         tbody["stream"] = False
         try:
@@ -632,7 +695,7 @@ async def _client_tools_relay(body: dict, streaming: bool) -> Any:
         except Exception as e:  # noqa: BLE001
             log.warning("client-tools relay backend failed: %s", e)
             return JSONResponse(
-                content={"error": {"message": f"tool backend error: {e}",
+                content={"error": {"message": "The tool backend is unavailable",
                                    "type": "server_error"}}, status_code=502)
 
     async def _gen() -> AsyncGenerator[bytes, None]:

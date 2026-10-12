@@ -10,12 +10,12 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-whisper
-Environment=PORT=${MIOS_PORT_WHISPER:-8178}
+Environment=PORT=${MIOS_PORTS_WHISPER:-8178}
 EnvironmentFile=/etc/mios/install.env
-Exec='whisper-server --model /app/models/ggml-base.en.bin --port ${MIOS_PORT_WHISPER:-8178} --host 0.0.0.0 --convert'
+Exec='whisper-server --model /app/models/ggml-base.en.bin --port ${MIOS_PORTS_WHISPER:-8178} --host 0.0.0.0 --convert'
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=832
-HealthCmd=curl -fsS http://localhost:${MIOS_PORT_WHISPER:-8178}/health || exit 1
+HealthCmd=curl -fsS http://localhost:${MIOS_PORTS_WHISPER:-8178}/health || exit 1
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=30s

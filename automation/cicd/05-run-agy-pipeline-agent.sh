@@ -43,7 +43,7 @@ run_pipeline_agent() {
             "$gate_bin" version-literals-ssot --root "${REPO_ROOT}"
             "$gate_bin" signature-policy --root "${REPO_ROOT}"
         fi
-        bash "${REPO_ROOT}/tools/sync-generated.sh"
+        "${MIOS_GEN_BIN:-mios-gen}" sync --root "${REPO_ROOT}"
         log "Standing gates and SSOT synchronization verified via fallback."
         return 0
     fi

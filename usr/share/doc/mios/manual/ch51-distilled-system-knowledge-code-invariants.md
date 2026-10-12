@@ -21,7 +21,7 @@ This chapter consolidates losslessly distilled architectural knowledge, operatio
 ##### 2. Agentic AI Stack & Routing Contracts
 - **Orchestration Entrypoint**: The primary front door for all agent tools, CLI invocations, and Open-WebUI is the **Agent-Pipe Orchestrator** on the `agent_pipe` port (`MIOS_AI_ENDPOINT`), utilizing served model `MiOS-Agent`.
 - **Hermes Gateway Role**: Hermes on the `hermes` port serves as a tool-execution leaf node invoked by the orchestrator, never a direct public entrypoint for interactive `@` commands (preventing direct bypass of refinement, deterministic routing, and council verification loops).
-- **Vector & RAG Storage**: Embedding batches (nomic-embed-text 768-dim) are stored in `pgvector` (`MIOS_PORT_PGVECTOR=5432`) with HNSW indexing over PostgreSQL.
+- **Vector & RAG Storage**: Embedding batches (nomic-embed-text 768-dim) are stored in `pgvector` (`MIOS_PORTS_PGVECTOR=5432`) with HNSW indexing over PostgreSQL.
 
 ##### 3. Installer & Consolidation Contracts
 - **Installer Monolith & Redirector**: `build-mios.sh` acts as a thin redirector that delegates target selection (`fedora` FHS vs `bootc` image mode) to `installation/mios-install.sh`. `mios-install.sh` houses the Phase-0..4 setup logic, preflight assertions, package resolution, and reboot prompts.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (T-535, AGY-2133).
+# AI-hint: Integration test suite for multi-vendor hardware video encoder discovery and DMA-BUF capture bridge (task_479, task_2712).
 # AI-doc: usr/share/doc/mios/manual/ch80-hardware-video-encoding.md
 set -euo pipefail
 
@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_DIR="${ROOT_DIR%/}"
 PROBE_BIN="${ROOT_DIR}/usr/libexec/mios/mios-video-encoder-probe"
-QUADLET_FILE="${ROOT_DIR}/usr/share/containers/systemd/mios-sunshine.container"
+QUADLET_FILE="${ROOT_DIR}/usr/share/containers/systemd/users/mios-sunshine.container"
 
 VERBOSE=false
 DRY_RUN=false
@@ -21,7 +21,7 @@ show_help() {
 Usage: tests/test-video-encoder-probe.sh [OPTIONS]
 
 Integration test suite for multi-vendor hardware video encoder discovery and
-DMA-BUF capture bridge (T-535, AGY-2133).
+DMA-BUF capture bridge (task_479, task_2712).
 
 Tests:
   Test 1: CLI and help verification.
@@ -94,6 +94,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 log "Starting test suite: test-video-encoder-probe.sh"
 log "Target probe: ${PROBE_BIN}"
 log "Target Quadlet: ${QUADLET_FILE}"
+log_diag "Execution mode: DRY_RUN=${DRY_RUN} MOCK_MODE=${MOCK_MODE}"
 
 # ==============================================================================
 # Test 1: CLI and help verification
@@ -150,7 +151,7 @@ set +e
 status_help_out="$("$PROBE_BIN" status --help 2>&1)"
 status_help_rc=$?
 set -e
-if [[ $status_help_rc -eq 0 ]]; then
+if [[ $status_help_rc -eq 0 && -n "$status_help_out" ]]; then
     assert_pass "'status --help' returned 0"
 else
     assert_fail "'status --help' failed (rc=$status_help_rc)"
@@ -343,9 +344,9 @@ assert 'sunshine' in cp.get('Container', 'Image', fallback=''), 'Image does not 
 raw = open('${QUADLET_FILE}').read()
 assert 'AddDevice=/dev/dri' in raw, 'AddDevice=/dev/dri missing'
 assert 'AddDevice=/dev/uinput' in raw, 'AddDevice=/dev/uinput missing'
-assert 'CAP_SYS_ADMIN' in raw, 'CAP_SYS_ADMIN capability missing'
+assert 'CAP_SYS_NICE' in raw, 'CAP_SYS_NICE capability missing'
 assert 'Network=host' in raw, 'Network=host missing'
-assert '/var/lib/mios/sunshine' in raw, 'Persistent /var volume missing'
+assert '%h/.config/sunshine' in raw, 'User config volume missing'
 
 print('OK')
 " 2>&1)"

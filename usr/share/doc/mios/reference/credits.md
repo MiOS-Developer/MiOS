@@ -433,7 +433,7 @@ identity. Resolution happens at install/build entry:
 | Shell scripts (`*.sh`) | `$USER`, `$HOME`, `~` | The login shell at runtime |
 | PowerShell scripts (`*.ps1`) | `$env:USERNAME`, `$env:USERPROFILE` | PowerShell at runtime |
 | Markdown aggregates | literal `USER` | The bootstrap installer's sed pass at install entry (`install.sh` / `install.ps1` reads detected username and substitutes) |
-| Profile / env templates | `MIOS_USER`, `MIOS_HOSTNAME` | `etc/mios/profile.toml` -> `/etc/mios/install.env` -> `~/.config/mios/profile.toml` (three-layer override; highest wins) |
+| Profile / env templates | `MIOS_IDENTITY_USERNAME`, `MIOS_IDENTITY_HOSTNAME` | `etc/mios/profile.toml` -> `/etc/mios/install.env` -> `~/.config/mios/profile.toml` (three-layer override; highest wins) |
 
 The only other user-related identifiers permitted in the codebase are
 the `MiOS` brand and the `mios` default account name; both are project

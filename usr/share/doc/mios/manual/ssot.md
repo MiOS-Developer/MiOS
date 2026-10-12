@@ -14,7 +14,7 @@ server/agent join, corosync membership -- automatically, never by hand.
 
 Keys the Python and Rust resolvers do not agree on. Shrink-only.
 The parity check never ran until the binary was found in target/debug,
-so this is the first measurement, not a regression. AGY-1676 drives it
+so this is the first measurement, not a regression. task_2317 drives it
 to zero by making one implementation authoritative.
 
 <!-- mios-src:c3a6640de0d8 from usr/share/mios/mios.toml:10405-10408 -->
@@ -23,9 +23,9 @@ to zero by making one implementation authoritative.
 
 Values that differ for keys both resolvers emit. The remainder is
 Python's repr of nested arrays/tables, which needs preserve_order on
-the toml crate to match -- AGY-1676, with a toolchain that can link.
+the toml crate to match -- task_2317, with a toolchain that can link.
 
-<!-- mios-src:e2846b2f8e2a from usr/share/mios/mios.toml:10410-10412 -->
+<!-- mios-src:2ebc31cc089b from usr/share/mios/mios.toml:10410-10412 -->
 
 ### Installed on a runner before the unit tier. A hand-written...
 

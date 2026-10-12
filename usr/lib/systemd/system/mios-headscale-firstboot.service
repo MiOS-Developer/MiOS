@@ -1,0 +1,16 @@
+# AI-hint: Systemd unit that executes /usr/libexec/mios/mios-headscale-firstboot to generate the config.yaml for Headscale from mios.toml before the container starts.
+# AI-doc: usr/share/doc/mios/manual/system.md
+[Unit]
+Description='MiOS' Headscale mesh VPN coordinator first-boot config generator
+After=network-online.target
+Wants=network-online.target
+Before=mios-headscale.service
+ConditionPathExists=/usr/libexec/mios/mios-headscale-firstboot
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/mios/mios-headscale-firstboot
+
+[Install]
+WantedBy=multi-user.target

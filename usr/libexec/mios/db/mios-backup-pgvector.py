@@ -17,6 +17,9 @@ import sys
 import time
 from typing import List, Tuple
 
+# SSOT [ports].pgvector_internal: the in-container listener (host maps 8600->5432).
+DEFAULT_PG_PORT = int(os.environ.get("MIOS_PORTS_PGVECTOR_INTERNAL", "5432"))
+
 def generate_backup_filename(db_name: str = "mios") -> str:
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     return f"{db_name}_backup_{timestamp}.sql.zst"
@@ -24,7 +27,7 @@ def generate_backup_filename(db_name: str = "mios") -> str:
 def execute_backup(
     db_name: str = "mios",
     host: str = "127.0.0.1",
-    port: int = 5432,
+    port: int = DEFAULT_PG_PORT,
     user: str = "postgres",
     output_dir: str = "/var/lib/mios/backups/pgvector",
     zstd_level: int = 3,
@@ -89,7 +92,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MiOS pgvector zstd backup engine")
     parser.add_argument("--db", default="mios", help="Database name")
     parser.add_argument("--host", default="127.0.0.1", help="PostgreSQL host")
-    parser.add_argument("--port", type=int, default=5432, help="PostgreSQL port")
+    parser.add_argument("--port", type=int, default=DEFAULT_PG_PORT, help="PostgreSQL port")
     parser.add_argument("--user", default="postgres", help="PostgreSQL user")
     parser.add_argument("--output-dir", default="/var/lib/mios/backups/pgvector", help="Backup storage directory")
     parser.add_argument("--retention-days", type=int, default=7, help="Retention period in days")

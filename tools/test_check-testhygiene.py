@@ -556,8 +556,8 @@ def tml_mkroot(files, oversize=(), max_lines=800):
     rows = "\n".join(
         '    { path = "%s", lines = %d },' % (p, n) for p, n in oversize)
     with open(os.path.join(root, "usr/share/mios/mios.toml"), "w") as fh:
-        fh.write("[refactor]\nmax_lines = %d\noversize = [\n%s\n]\n"
-                 % (max_lines, rows))
+        fh.write("[refactor]\nmax_lines = %d\nsubmodule_roots = [\"mios_pipe/\"]\n"
+                 "oversize = [\n%s\n]\n" % (max_lines, rows))
     for rel, n in files.items():
         full = os.path.join(root, tml_M.ml_PKG, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -601,15 +601,30 @@ def tml_t_init_and_nonpy_skipped():
     tml_check("skipped files raise nothing", bad == [])
     shutil.rmtree(root)
 
-def tml_t_root_level_module_is_seen():
-    """mios_dispatch.py and server.py live at the agent-pipe ROOT, outside
-    mios_pipe/. Both earlier versions of this gate walked only mios_pipe/, so
-    the two biggest modules in the package were never sized."""
-    root = tml_mkroot({"root_big.py": 900})
+def tml_t_root_level_module_is_main():
+    """Operator ruling: the ceiling governs sub-modules only. The agent-pipe
+    ROOT (server.py, the mios_*.py components) holds main modules, where
+    features fold in, so a long root module is not a violation -- while the
+    same length inside a sub-module package still is."""
+    root = tml_mkroot({"root_big.py": 900, "mios_pipe/routing/big.py": 900})
     bad, checked = tml_run(root)
-    tml_check("a ROOT-level module is scanned", checked >= 1)
-    tml_check("a ROOT-level module over the limit fails",
-          any("root_big.py" in b for b in bad))
+    tml_check("a ROOT-level main module carries no ceiling",
+          not any("root_big.py" in b for b in bad))
+    tml_check("the same length in a sub-module still fails",
+          checked == 1 and any("big.py" in b for b in bad))
+    shutil.rmtree(root)
+
+def tml_t_submodule_roots_required():
+    root = tempfile.mkdtemp(prefix="modlen-")
+    os.makedirs(os.path.join(root, "usr/share/mios"), exist_ok=True)
+    with open(os.path.join(root, "usr/share/mios/mios.toml"), "w") as fh:
+        fh.write("[refactor]\nmax_lines = 800\noversize = []\n")
+    try:
+        tml_run(root)
+        failed = False
+    except SystemExit:
+        failed = True
+    tml_check("a register without submodule_roots fails closed", failed)
     shutil.rmtree(root)
 
 def tml_t_shim_is_skipped():
@@ -659,7 +674,7 @@ def tml_t_absent_tree_is_noop():
     root = tempfile.mkdtemp(prefix="modlen-")
     os.makedirs(os.path.join(root, "usr/share/mios"), exist_ok=True)
     with open(os.path.join(root, "usr/share/mios/mios.toml"), "w") as fh:
-        fh.write("[refactor]\nmax_lines = 800\noversize = []\n")
+        fh.write("[refactor]\nmax_lines = 800\nsubmodule_roots = [\"mios_pipe/\"]\noversize = []\n")
     bad, checked = tml_run(root)
     tml_check("absent package tree is a clean no-op", bad == [] and checked == 0)
     shutil.rmtree(root)
@@ -669,7 +684,8 @@ def tml_main():
     tml_t_new_oversize_fails()
     tml_t_nested_is_seen()
     tml_t_init_and_nonpy_skipped()
-    tml_t_root_level_module_is_seen()
+    tml_t_root_level_module_is_main()
+    tml_t_submodule_roots_required()
     tml_t_shim_is_skipped()
     tml_t_grandfathered_at_recorded_passes()
     tml_t_grandfathered_growth_fails()

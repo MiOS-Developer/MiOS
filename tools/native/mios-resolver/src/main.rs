@@ -48,7 +48,7 @@ fn main() -> Result<()> {
             }
         }
     } else if let Some(format) = args.emit {
-        let merged = match mios_resolver::resolve_merged(root, args.db_overlay) {
+        let mut merged = match mios_resolver::resolve_merged(root, args.db_overlay) {
             Ok(val) => val,
             Err(e) => {
                 eprintln!(
@@ -59,9 +59,43 @@ fn main() -> Result<()> {
             }
         };
 
+        if format != "names" {
+            mios_resolver::names::overlay_inputs(&mut merged, |key| std::env::var(key).ok())
+                .map_err(|error| miette::miette!("{error}"))?;
+        }
         let stack_offset = mios_resolver::stack_offset_of(&merged);
 
         match format.as_str() {
+            "names" => {
+                let registry = mios_resolver::names::registry(&merged)
+                    .map_err(|error| miette::miette!("{error}"))?;
+                let output = serde_json::to_string_pretty(&registry)
+                    .map_err(|error| miette::miette!("{error}"))?;
+                println!("{output}");
+                Ok(())
+            }
+            "repos" => match mios_resolver::emit_repos::emit_repos(&merged) {
+                Ok(output) => {
+                    print!("{output}");
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("[mios-resolver] {error}");
+                    std::process::exit(1);
+                }
+            },
+            "build-shell" => {
+                match mios_resolver::emit_build::emit_build_shell(&merged, stack_offset) {
+                    Ok(output) => {
+                        print!("{output}");
+                        Ok(())
+                    }
+                    Err(error) => {
+                        eprintln!("[mios-resolver] {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             "shell" => {
                 let ref_names = root.map(|r| r.join("usr/share/mios/referenced_names.txt"));
                 let output = emit_shell(&merged, stack_offset, ref_names.as_deref());

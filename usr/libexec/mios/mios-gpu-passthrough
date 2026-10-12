@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-hint: Syncs Quadlet container configurations with live CDI specifications in /run/cdi/ to automatically map the GPU vendors declared in mios.toml [gpu.cdi] onto background AI service Quadlets (mios-llm-light, vLLM heavy lanes) based on detected hardware; holds no vendor literal of its own.
+# AI-hint: Syncs Quadlet configs with live CDI specs in /run/cdi/, mapping the GPU vendors declared in mios.toml [gpu.cdi] onto the background AI service Quadlets (mios-llm-light, the vLLM/SGLang heavy lane) per detected hardware; no vendor literal.
 # AI-related: /usr/libexec/mios/mios-gpu-passthrough, /usr/libexec/mios/mios-toml-get, /usr/share/mios/mios.toml, /etc/mios/gpu-passthrough.conf, /etc/mios/gpu-passthrough.conf., mios-cdi-detect, mios-daemon, mios-igpu, mios-open-webui, mios-mycustom, mios-doctor, mios-system-status
 # AI-functions: log, read_gpu_matrix, build_dropin
 
@@ -16,7 +16,6 @@ MIOS_AI_QUADLETS_DEFAULT=(
     "mios-llm-light"
     "mios-llm-worker@"
     "mios-llm-heavy"
-    "mios-llm-heavy-alt"
 )
 
 if [ -r "$CONF_FILE" ]; then

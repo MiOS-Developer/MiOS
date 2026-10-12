@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: Generate k3s/k8s manifests from the live MiOS pods (pods-as-SSOT, WS-7 #61).
-# AI-related: usr/share/mios/k3s, usr/share/containers/systemd, usr/share/mios/mios.toml, tools/generate-ai-manifest.py
+# AI-related: usr/share/mios/k3s, usr/share/containers/systemd, usr/share/mios/mios.toml, tools/native/mios-gen/src/ai.rs
 # AI-functions: _emit_header, main
 set -euo pipefail
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Hardware Abstraction Layer & Wasm host imports for GPIO and I2C with allowlist enforcement.
-# AI-related: usr/libexec/mios/node/wasm_sandbox.py, src/mios-rs/mios-node/src/hardware.rs, tests/test-node.py
+# AI-related: usr/libexec/mios/node/wasm_sandbox.py, src/mios-rs/mios-node/src/device.rs, tests/test-node.py
 """
 MiOS Edge Node Hardware Abstraction Layer (HAL) & Wasm Host Import Controller.
 Enforces strict allowlist permissions for local hardware GPIO pins and I2C buses.

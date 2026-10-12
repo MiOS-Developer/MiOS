@@ -1,0 +1,371 @@
+--8<-- adr
+<!-- AI-hint: Describe the key decision made in this ADR here. -->
+<!-- AI-related: /usr/share/doc/mios/adr/README.md -->
+---
+adr: 0012
+title: Sample test
+status: accepted
+date: 2026-07-17
+deciders: [operator, ai-pair]
+tags: []
+laws: []
+ssot_keys: []
+related_ws: []
+supersedes: []
+superseded_by: []
+---
+
+# ADR-0012: Sample test
+
+## Status
+
+accepted — 2026-07-17
+
+## Context
+
+Describe the context, problem, forces, and alignment constraints here.
+
+## Decision
+
+Detail the decision and the concrete architectural commits made.
+
+## Rationale
+
+Why was this decision chosen over alternatives?
+
+## Consequences
+
+What are the outcomes, trade-offs, and done criteria?
+--8<-- roadmap-ws
+<!-- AI-hint: Describe the roadmap workstream tasks and progress here. -->
+## WS-SAMPLE-TEST — Sample test
+<!--
+id: WS-SAMPLE-TEST
+title: Sample test
+theme: OS-Image & Build
+status: proposed
+priority: P2
+laws: []
+ssot_keys: []
+adr: []
+deps: []
+acceptance: |
+  Describe the acceptance criteria here.
+-->
+*Description of sample-test*
+
+### SAMPLE-TEST-01 — Task 1 for sample-test  **[P2]**  (→ task_999)
+- **What:** Detail the task description.
+- **Why:** Explain the rationale.
+- **Files:** List of modified/new files.
+- **Accept:** Criteria for completion.
+- **Deps:** Task dependencies.
+--8<-- markdown-doc
+<!-- AI-hint: Markdown documentation template. -->
+<!-- AI-related: /usr/share/doc/mios/README.md -->
+
+
+Provide an overview of the document here.
+
+Detail the subject matter.
+--8<-- roadmap
+<!-- AI-hint: Core development roadmap tracking all active and proposed workstreams. -->
+<!-- AI-related: /usr/share/doc/mios/roadmap/ -->
+
+# MiOS Roadmap
+
+<!-- ROADMAP_ROLLUP_START -->
+### Workstream Status Rollup
+- **Done**: 0
+- **Active**: 0
+- **Proposed**: 0
+- **Blocked**: 0
+<!-- ROADMAP_ROLLUP_END -->
+
+<!-- ROADMAP_INDEX_START -->
+### Workstream Index
+<!-- ROADMAP_INDEX_END -->
+
+# OS-Image & Build
+
+# AI-Plane & Orchestration
+
+# Deployment & Sovereignty
+
+# Storage & Data
+
+# Security & Identity
+
+# Desktop & UX
+
+# Fleet & Federation
+--8<-- automation-step
+#!/bin/bash
+# AI-hint: Numbered automation step script executed in image builds or firstboot.
+# AI-related: /usr/share/mios/templates/automation-step
+# AI-functions: run_step
+
+set -euo pipefail
+
+run_step() {
+    echo "Running automation step"
+}
+
+run_step
+--8<-- drift-check
+# AI-hint: Drift check verifying static check for sample-test under the source-tree drift fitness-functions.
+# AI-related: automation/98-drift-checks.sh
+# AI-functions: check_sample-test
+check_sample-test() {
+    local hits=""
+    if [[ -n "$hits" ]]; then
+        printf '%s' "$hits" >&2
+        _violation "drift violation in sample-test: static check for sample-test"
+    else
+        echo "[98-drift-checks] check passed: sample-test"
+    fi
+}
+--8<-- bash-verb
+#!/bin/bash
+# AI-hint: Describe the capability of this bash verb script here.
+# AI-related: /usr/share/mios/templates/bash-verb, /usr/share/mios/mios.toml
+# AI-functions: main, parse_args, log_info, log_error
+
+set -euo pipefail
+
+log_info() {
+    printf '[%s] INFO: %s\n' "sample-test" "$*" >&2
+}
+
+log_error() {
+    printf '[%s] ERROR: %s\n' "sample-test" "$*" >&2
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+show_help() {
+    cat <<EOF
+Usage: sample-test [options]
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+main() {
+    log_info "Initializing sample-test..."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    parse_args "$@"
+    main
+fi
+--8<-- bash-tool
+#!/bin/bash
+# AI-hint: Describe the capability of this bash tool script here.
+# AI-related: /usr/share/mios/templates/bash-tool, /usr/share/mios/mios.toml
+# AI-functions: main, parse_args, log_info, log_error
+
+set -euo pipefail
+
+log_info() {
+    printf '[%s] INFO: %s\n' "sample-test" "$*" >&2
+}
+
+log_error() {
+    printf '[%s] ERROR: %s\n' "sample-test" "$*" >&2
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+show_help() {
+    cat <<EOF
+Usage: sample-test [options]
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+main() {
+    log_info "Initializing sample-test..."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    parse_args "$@"
+    main
+fi
+--8<-- bash
+#!/bin/bash
+# AI-hint: Describe the helper shell script logic here.
+# AI-related: /usr/share/mios/templates/bash
+# AI-functions: main
+
+set -euo pipefail
+
+main() {
+    :
+}
+
+main "$@"
+--8<-- python-module
+# AI-hint: Describe the module's behavior and capability here.
+# AI-related: /usr/lib/mios/agent-pipe/mios_pipe/sample-test.py, /usr/lib/mios/agent-pipe/test_mios_sample-test.py
+# AI-functions: sample-test_helper
+
+import logging
+
+logger = logging.getLogger("mios.sample-test")
+
+def sample-test_helper():
+    """
+    Helper function description.
+    """
+    pass
+--8<-- python-test
+# AI-hint: Sibling unit test for the sample-test python module, ensuring compliance with drift-check 11.
+# AI-related: /usr/lib/mios/agent-pipe/mios_pipe/sample-test.py, /usr/lib/mios/agent-pipe/test_mios_sample-test.py
+# AI-functions: TestSampleTest
+
+import unittest
+from mios_pipe.sample-test import sample-test_helper
+
+class TestSampleTest(unittest.TestCase):
+    def test_helper(self):
+        self.assertIsNotNone(sample-test_helper)
+
+if __name__ == "__main__":
+    unittest.main()
+--8<-- python-tool
+#!/usr/bin/env python3
+# AI-hint: Command-line tool/utility written in Python.
+# AI-related: /usr/share/mios/templates/python-tool
+
+import argparse
+import sys
+
+def parse_args():
+    ap = argparse.ArgumentParser()
+    return ap.parse_args()
+
+def main():
+    args = parse_args()
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+--8<-- rust
+// AI-hint: Rust module or source file implementing core logic.
+// AI-related: /usr/share/mios/templates/rust
+// AI-functions: hello
+
+pub fn hello() {
+    println!("Hello from Rust!");
+}
+--8<-- typescript
+// AI-hint: TypeScript tool or module.
+// AI-related: /usr/share/mios/templates/typescript
+// AI-functions: run
+
+export function run(): void {
+    console.log("Hello from TypeScript!");
+}
+--8<-- powershell
+# AI-hint: PowerShell script for Windows provisioning or automation.
+# AI-related: C:\mios-bootstrap\src\
+# AI-functions: Get-Something
+
+[CmdletBinding()]
+param()
+
+Write-Host "PowerShell script initialized."
+--8<-- toml-config
+# AI-hint: TOML configuration file template.
+# AI-related: /usr/share/mios/templates/toml-config
+
+[config]
+version = "0.3.0"
+enabled = true
+--8<-- yaml
+# AI-hint: YAML configuration or deployment manifest.
+# AI-related: /usr/share/mios/templates/yaml
+
+version: "1.0"
+metadata:
+  name: template
+--8<-- json-schema
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sample-testSchema",
+  "type": "object",
+  "properties": {}
+}
+--8<-- systemd-unit
+# AI-hint: systemd unit file for the mios-sample-test service.
+# AI-related: /usr/lib/systemd/system/mios-sample-test.service, /usr/share/mios/mios.toml
+
+[Unit]
+Description=MiOS sample-test Service
+After=network.target mios-pgvector.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=mios-sample-test
+Group=mios-sample-test
+WorkingDirectory=/usr/lib/mios/agent-pipe
+ExecStart=/usr/bin/python3 -m mios_pipe.sample-test
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+--8<-- quadlet
+# AI-hint: Describe the container's purpose and its generator relation here.
+
+[Unit]
+Description=MiOS sample-test Container
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=mios-sample-test
+Image=docker.io/library/sample-test:latest
+Pod=mios-system.pod
+User=1000
+Group=1000
+
+[Install]
+WantedBy=multi-user.target default.target
+
+[Service]
+Delegate=yes
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300s

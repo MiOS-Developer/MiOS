@@ -5,13 +5,25 @@
 > Canonical agent entry point for `mios-bootstrap.git` — the interactive
 > installer + user-editable layer for MiOS. Follows the [agents.md][1]
 > standard and is the SSOT for any agent CLI that arrives at this repo.
-> Per-tool stubs (`CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.clinerules`,
-> `system-prompt.md`) are thin redirectors that defer here.
+> Per-tool stubs (`CLAUDE.md`, `GEMINI.md`, `system-prompt.md`) are thin
+> redirectors that defer here.
 >
 > **Strict OpenAI API standards and patterns ONLY.** Every interface is
 > OpenAI-API-compatible verb-for-verb. No vendor-native protocols, no
 > proprietary side-channels, no fallback to vendor-cloud URLs, no
 > vendor-specific agent / dev-tool product references in any AI file.
+>
+> **Universal Harness Neutrality & Native MiOS-MCP + tmux-mcp (Globally Binding):**
+> No agent or harness (Antigravity, OpenAI Codex, Claude Code, OpenCode, Gemini, etc.)
+> is permanently hardcoded as the master, worker, or monitor. Absolutely **ANY AGENT** can be
+> dynamically promoted to Orchestrator or Monitor based on whichever Agent CLI is invoked.
+> All multi-agent workflows, inter-agent coordination, sub-pane spawning, command execution,
+> and live monitoring MUST use `MiOS-MCP` (`agent-pipe` / `agent-relay` / `state.json`) and `tmux-mcp v2`
+> native slot tools (`open-pane`, `execute-command`, `send-keys`, `capture-pane`, `start-and-watch`,
+> the MiOS `mios_tmux_nested_workflow` adapter) natively. Native heads use verified human panes;
+> unbound automation uses private headless sessions. Each participant registers and consumes
+> its own relay inbox; automatic coordinator takeover and desktop conversation transfer are
+> not implemented. See [.agents/COORDINATION.md](.agents/COORDINATION.md).
 >
 > **System repo:** <https://github.com/mios-dev/mios> — that's where
 > the FHS overlay, Containerfile, automation scripts, and the six
@@ -48,7 +60,7 @@ To ensure agents reason correctly about the system substrate, the following five
 2. **Unified Kernel Image (UKI) vs MOK Conflation**: The bootloader and kernel signing chain is a Unified Kernel Image (`shim -> systemd-boot -> signed UKI`) where kernel command line parameters (kargs) are baked and signed into the UKI itself. This is distinct from Machine Owner Key (MOK) module signing, which only governs out-of-tree runtime driver signature checks.
 3. **Graphics Virtualization (venus vs CUDA)**: The `venus` VirtIO GPU protocol is strictly a graphics/Vulkan transport. It does not support CUDA execution inside a microVM; running CUDA workloads inside a virtualized guest requires whole-device VFIO hardware passthrough.
 4. **GPU Fractioning / mediated vGPU Limit**: GPU fractioning (using `mdevctl` or SR-IOV) is technically impossible without loading a physical host-side PF driver. Therefore, on a driver-free host, the only supported option is whole-device passthrough via `vfio-pci`; vGPU fractioning requires an explicit, invariant-breaking opt-in.
-5. **The Blade owns the hardware; the MiOS image is a guest obfuscated from it.** A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TPM, boot chain and dGPUs, and hosts the MiOS OCI image as a **NIC-less guest** that is obfuscated from all of it. A fleet is 2-6 Blades, and **every Blade is its own AP forming one mesh Wi-Fi**, as well as a member of the **HCI mesh VPN cluster** that the hyper-converged lanes (Ceph, k3s, Pacemaker) actually run over. **No hosted node is ever an access point** -- hardware-facing roles live on the Blade and must be *unclaimable* by a guest archetype, because a capability the guest plane can express but can never serve reads as available and fails at the hardware boundary. This yields three role shapes the SSOT must distinguish: **universal-per-Blade** (radio, mesh membership), **singleton-across-Blades** (WAN gateway, mesh coordinator), and **guest-plane** (k3s, Pacemaker). See `TASKS.md` T-985..T-991.
+5. **The Blade owns the hardware; the MiOS image is a guest obfuscated from it.** A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TPM, boot chain and dGPUs, and hosts the MiOS OCI image as a **NIC-less guest** that is obfuscated from all of it. A fleet is 2-6 Blades, and **every Blade is its own AP forming one mesh Wi-Fi**, as well as a member of the **HCI mesh VPN cluster** that the hyper-converged lanes (Ceph, k3s, Pacemaker) actually run over. **No hosted node is ever an access point** -- hardware-facing roles live on the Blade and must be *unclaimable* by a guest archetype, because a capability the guest plane can express but can never serve reads as available and fails at the hardware boundary. This yields three role shapes the SSOT must distinguish: **universal-per-Blade** (radio, mesh membership), **singleton-across-Blades** (WAN gateway, mesh coordinator), and **guest-plane** (k3s, Pacemaker). See `TASKS.md` task_929..task_935.
 
 ## 1. Repo identity
 
@@ -266,7 +278,7 @@ units / `mios.toml`):
   council/swarm fan-out + critic/polish; fronts Hermes for every gateway.
 * **MiOS-Hermes** (port key `hermes`) — OpenAI-compatible agent gateway: sessions,
   tool-loop, skills, browser/CDP control.
-* **mios-gateway-agent** (port key `hermes`) — Next-generation OpenAI-compatible agent gateway replacing Hermes (phase 2, disabled until T-083).
+* **mios-gateway-agent** (port key `hermes`) — Next-generation OpenAI-compatible agent gateway replacing Hermes (phase 2, disabled until task_83).
 * **prefilter** (port key `prefilter`) — injects fan-out hints on decomposable prompts,
   forwards to Hermes.
 * **mios-llm-light** (port key `llm_light`) — **primary** inference lane: llama.cpp behind
@@ -351,6 +363,16 @@ See [bootstrap_install.md (mios-bootstrap)](https://github.com/mios-dev/mios-boo
   schema) is the shape to standardise on.
 
 ## 14. Persistence sanitization
+
+**MiOS names apply globally to new working artifacts.** Use a sanitized,
+function-based `mios-<purpose>` stem for worktree directories, branches,
+verification directories and helper artifacts. Follow the lowercase
+`a-z0-9-` charset in `[variants.naming]`; identify the job, not a harness,
+operator, model or timestamp. Keep ownership and run timestamps in the relay
+and ledger. Check for collisions before creation; do not silently overwrite
+an existing path. Rename owned lanes with Git worktree operations, preserve
+their commits and uncommitted contributions, and update executable references.
+Retain historical receipts and other participants' identities and worktrees.
 
 Anything persisted to `/var/lib/mios/ai/memory/` or
 `/var/lib/mios/ai/scratch/` must be vendor-neutral:

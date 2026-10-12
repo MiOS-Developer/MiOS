@@ -4,6 +4,10 @@
 # AI-functions: usage, _cfg_bool, _ps_squote, _win_path, _flatten_prologue, _wrap_call, _truncate
 set -euo pipefail
 
+declare -A _mios_powershell_overrides=()
+for _mios_key in ${!MIOS_POWERSHELL_@}; do
+    _mios_powershell_overrides["$_mios_key"]="${!_mios_key}"
+done
 for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     if [ -r "$_ue" ]; then
         # shellcheck disable=SC1090
@@ -11,6 +15,11 @@ for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
         break
     fi
 done
+for _mios_key in "${!_mios_powershell_overrides[@]}"; do
+    printf -v "$_mios_key" '%s' "${_mios_powershell_overrides[$_mios_key]}"
+    export "${_mios_key?}"
+done
+unset _mios_powershell_overrides _mios_key
 
 MAX_SCRIPT_BYTES="${MIOS_POWERSHELL_MAX_SCRIPT_BYTES:-65536}"   # 64 KiB
 MAX_OUTPUT_BYTES="${MIOS_POWERSHELL_MAX_OUTPUT_BYTES:-262144}"  # 256 KiB

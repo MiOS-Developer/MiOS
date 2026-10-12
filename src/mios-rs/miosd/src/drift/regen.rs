@@ -2,94 +2,10 @@
 // AI-related: automation/98-drift-checks.sh, src/mios-rs/miosd/src/drift/mod.rs
 
 use super::{DriftCtx, Verdict};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-
-pub fn regen_and_diff(
-    ctx: &DriftCtx,
-    gen_relpath: &str,
-    targets: &[&str],
-    extra_args: &[&str],
-) -> Verdict {
-    // T-1045. This function is named regen_and_diff and it does not diff: it
-    // runs the generator and then asserts the target EXISTS. That is only sound
-    // when the generator itself compares, i.e. when --check is passed and its
-    // exit status is the verdict. Called without it the generator WRITES --
-    // erasing the very drift the check is looking for, and mutating the tree
-    // from inside a read-only gate. Refuse rather than mislead.
-    if !extra_args.contains(&"--check") {
-        return Verdict::Fail(format!(
-            "regen_and_diff({gen_relpath}) called without --check: it would regenerate the \
-             target and then only confirm the file exists, which cannot detect drift. Pass \
-             --check, or use a helper that snapshots and compares."
-        ));
-    }
-    let gen_path = ctx.root.join(gen_relpath);
-    if !gen_path.exists() {
-        return Verdict::Skip(format!(
-            "Generator script not found: {}",
-            gen_path.display()
-        ));
-    }
-
-    let python_cmd = if Command::new("python3").arg("--version").output().is_ok() {
-        "python3"
-    } else if Command::new("python").arg("--version").output().is_ok() {
-        "python"
-    } else {
-        return Verdict::Skip("Python interpreter not found".to_string());
-    };
-
-    // Clean env isolation to prevent env leakage
-    let mut clean_env = HashMap::new();
-    if let Ok(path) = env::var("PATH") {
-        clean_env.insert("PATH", path);
-    }
-    if let Ok(home) = env::var("HOME") {
-        clean_env.insert("HOME", home);
-    }
-    clean_env.insert("MIOS_ROOT", ctx.root.to_string_lossy().to_string());
-
-    let mut cmd = Command::new(python_cmd);
-    cmd.arg(&gen_path);
-    cmd.args(extra_args);
-
-    cmd.env_clear();
-    for (k, v) in &clean_env {
-        cmd.env(k, v);
-    }
-
-    let output = match cmd.output() {
-        Ok(out) => out,
-        Err(e) => {
-            return Verdict::Fail(format!(
-                "Failed to execute generator {}: {}",
-                gen_relpath, e
-            ))
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Verdict::Fail(format!(
-            "Generator {} exited with error: {}",
-            gen_relpath,
-            stderr.trim()
-        ));
-    }
-
-    for target in targets {
-        let target_path = ctx.root.join(target);
-        if !target_path.exists() {
-            return Verdict::Fail(format!("Target artifact missing: {}", target));
-        }
-    }
-
-    Verdict::Pass(format!("Projection check {} passed cleanly", gen_relpath))
-}
 
 pub fn regen_and_diff_shell(
     ctx: &DriftCtx,
@@ -219,59 +135,132 @@ fn diff_tree(committed: &Path, rendered: &Path) -> Vec<String> {
     out
 }
 
-/// Regenerate-and-compare for a generator that has NO --check mode: snapshot the
-/// committed artifact, run the generator, compare, then put the snapshot back.
-/// The tree is left exactly as it was found whether the check passes or fails.
-pub fn regen_and_compare_file(ctx: &DriftCtx, gen_relpath: &str, target: &str) -> Verdict {
-    let gen_path = ctx.root.join(gen_relpath);
-    if !gen_path.exists() {
-        return Verdict::Fail(format!(
-            "Generator not found: {gen_relpath} (registered by a drift check)"
-        ));
-    }
-    let committed = ctx.root.join(target);
-    let before = match fs::read(&committed) {
-        Ok(b) => b,
-        Err(e) => return Verdict::Fail(format!("Target artifact {target} unreadable: {e}")),
-    };
+// regen_and_compare_file (python3-interpreted regen for .py generators) was
+// deleted with the last of its consumers: the names-registry Python generator
+// was strangler-deleted (task_1713) and its miosd caller moved to
+// regen_and_compare_native below. Every surviving drift regen check invokes a
+// native binary.
 
-    let mut cmd = Command::new("python3");
-    cmd.arg(&gen_path);
-    cmd.env_clear();
-    if let Ok(p) = env::var("PATH") {
-        cmd.env("PATH", p);
+/// Select an executable for the running platform, never a Windows PE on Linux.
+pub fn resolve_native_generator(ctx: &DriftCtx, name: &str) -> Option<std::path::PathBuf> {
+    let executable = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    if let Some(directory) = env::var_os("MIOS_NATIVE_BIN_DIR") {
+        let path = std::path::PathBuf::from(directory).join(&executable);
+        return path.is_file().then_some(path);
     }
-    if let Ok(h) = env::var("HOME") {
-        cmd.env("HOME", h);
+    let mut candidates = ["tools/native/target/release", "tools/native/target/debug"]
+        .map(|dir| ctx.root.join(dir).join(&executable))
+        .to_vec();
+    if cfg!(unix) {
+        candidates.extend(
+            ["/usr/bin", "/usr/libexec/mios"]
+                .map(|dir| std::path::Path::new(dir).join(&executable)),
+        );
     }
-    cmd.env("MIOS_ROOT", ctx.root.as_os_str())
-        .env("MIOS_DRIFT_ROOT", ctx.root.as_os_str());
-    let out = match cmd.output() {
-        Ok(o) => o,
-        Err(e) => return Verdict::Fail(format!("Failed to execute {gen_relpath}: {e}")),
-    };
-    let after = fs::read(&committed);
-    // Restore before judging, so a failure never leaves the tree rewritten.
-    let _ = fs::write(&committed, &before);
+    candidates.into_iter().find(|p| p.is_file())
+}
 
-    if !out.status.success() {
-        return Verdict::Fail(format!(
-            "{gen_relpath} exited with error: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+/// Compare all projections and restore all snapshots even when generation fails.
+pub fn regen_and_compare_native(ctx: &DriftCtx, bin_name: &str, targets: &[&str]) -> Verdict {
+    let Some(bin) = resolve_native_generator(ctx, bin_name) else {
+        return Verdict::Fail(format!("native generator not built: {bin_name} -- build it: cd tools/native && cargo build -p {bin_name}"));
+    };
+    compare_native_run(ctx, &bin.display().to_string(), targets, || {
+        let mut cmd = Command::new(&bin);
+        cmd.env_clear().current_dir(&ctx.root);
+        for key in ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP"] {
+            if let Some(value) = env::var_os(key) {
+                cmd.env(key, value);
+            }
+        }
+        cmd.env("MIOS_ROOT", &ctx.root)
+            .env("MIOS_DRIFT_ROOT", &ctx.root);
+        let output = cmd
+            .output()
+            .map_err(|e| format!("execute {}: {e}", bin.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{} exited with error {}: {}",
+                bin.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
+    })
+}
+
+fn compare_native_run(
+    ctx: &DriftCtx,
+    label: &str,
+    targets: &[&str],
+    generate: impl FnOnce() -> Result<(), String>,
+) -> Verdict {
+    if targets.is_empty() {
+        return Verdict::Fail("native projection target set is empty".into());
     }
-    match after {
-        Ok(a) if a == before => Verdict::Pass(format!(
-            "{target} matches what {gen_relpath} renders ({} bytes)",
-            before.len()
-        )),
-        Ok(a) => Verdict::Fail(format!(
-            "{target} is stale: committed {} bytes, {gen_relpath} renders {} -- run it",
-            before.len(),
-            a.len()
-        )),
-        Err(e) => Verdict::Fail(format!("{target} vanished during regeneration: {e}")),
+    let mut snapshots = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for target in targets {
+        let relative = std::path::Path::new(target);
+        if relative.is_absolute()
+            || !seen.insert(target)
+            || relative
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return Verdict::Fail(format!("invalid or duplicate projection target {target}"));
+        }
+        let path = ctx.root.join(target);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_file() => m,
+            Ok(_) => {
+                return Verdict::Fail(format!("Target artifact {target} is not a regular file"))
+            }
+            Err(e) => return Verdict::Fail(format!("Target artifact {target} unreadable: {e}")),
+        };
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => return Verdict::Fail(format!("Target artifact {target} unreadable: {e}")),
+        };
+        snapshots.push((*target, path, bytes, metadata.permissions()));
     }
+    let generated = generate();
+    let after = snapshots
+        .iter()
+        .map(|(_, p, _, _)| fs::read(p))
+        .collect::<Vec<_>>();
+    let mut failures = Vec::new();
+    // Attempt every restore; one failure must not prevent the others.
+    for (target, path, bytes, permissions) in &snapshots {
+        if let Err(e) =
+            fs::write(path, bytes).and_then(|()| fs::set_permissions(path, permissions.clone()))
+        {
+            failures.push(format!("restore {target} failed: {e}"));
+        }
+    }
+    if let Err(e) = generated {
+        failures.push(e);
+    }
+    for ((target, _, before, _), result) in snapshots.iter().zip(after) {
+        match result {
+            Err(e) => failures.push(format!("read regenerated {target} failed: {e}")),
+            Ok(now) if &now != before => failures.push(format!(
+                "{target}: committed {} bytes, generator renders {}",
+                before.len(),
+                now.len()
+            )),
+            Ok(_) => {}
+        }
+    }
+    if !failures.is_empty() {
+        return Verdict::Fail(format!("{label} projection verification failed: {}; run tools/sync-generated.sh for stale projections", failures.join("; ")));
+    }
+    Verdict::Pass(format!(
+        "{} projection(s) match what {label} renders ({} bytes total)",
+        snapshots.len(),
+        snapshots.iter().map(|(_, _, b, _)| b.len()).sum::<usize>()
+    ))
 }
 
 #[cfg(test)]
@@ -282,6 +271,88 @@ mod tests {
 
     use super::*;
     use tempfile::TempDir;
+
+    fn native_fixture() -> (TempDir, DriftCtx) {
+        let root = TempDir::new().unwrap();
+        let ctx = DriftCtx {
+            root: root.path().into(),
+            soft: false,
+            in_image: false,
+            git_ok: true,
+            incomplete_tree: false,
+        };
+        fs::write(root.path().join("a"), b"original").unwrap();
+        fs::write(root.path().join("b"), b"second").unwrap();
+        (root, ctx)
+    }
+
+    #[test]
+    fn native_comparison_clean_and_stale_controls_restore_all_targets() {
+        let (root, ctx) = native_fixture();
+        assert!(matches!(
+            compare_native_run(&ctx, "fixture", &["a", "b"], || Ok(())),
+            Verdict::Pass(_)
+        ));
+        let verdict = compare_native_run(&ctx, "fixture", &["a", "b"], || {
+            fs::write(root.path().join("a"), b"changed").unwrap();
+            fs::write(root.path().join("b"), b"also changed").unwrap();
+            Ok(())
+        });
+        assert!(
+            matches!(verdict, Verdict::Fail(ref text) if text.contains("a: committed") && text.contains("b: committed"))
+        );
+        assert_eq!(fs::read(root.path().join("a")).unwrap(), b"original");
+        assert_eq!(fs::read(root.path().join("b")).unwrap(), b"second");
+    }
+
+    #[test]
+    fn native_generator_errors_restore_and_empty_target_sets_fail() {
+        let (root, ctx) = native_fixture();
+        let verdict = compare_native_run(&ctx, "fixture", &["a", "b"], || {
+            fs::write(root.path().join("a"), b"partial output").unwrap();
+            Err("planted generator failure".into())
+        });
+        assert!(
+            matches!(verdict, Verdict::Fail(ref text) if text.contains("planted generator failure"))
+        );
+        assert_eq!(fs::read(root.path().join("a")).unwrap(), b"original");
+        let ran = std::cell::Cell::new(false);
+        assert!(matches!(
+            compare_native_run(&ctx, "fixture", &[], || {
+                ran.set(true);
+                Ok(())
+            }),
+            Verdict::Fail(_)
+        ));
+        assert!(!ran.get());
+    }
+
+    #[test]
+    fn native_read_error_cannot_match_an_empty_original() {
+        let (root, ctx) = native_fixture();
+        fs::write(root.path().join("a"), b"").unwrap();
+        let verdict = compare_native_run(&ctx, "fixture", &["a"], || {
+            fs::remove_file(root.path().join("a")).unwrap();
+            Ok(())
+        });
+        assert!(
+            matches!(verdict, Verdict::Fail(ref text) if text.contains("read regenerated a failed"))
+        );
+        assert_eq!(fs::read(root.path().join("a")).unwrap(), b"");
+    }
+
+    #[test]
+    fn native_restore_failure_is_reported_and_other_restores_are_attempted() {
+        let (root, ctx) = native_fixture();
+        let verdict = compare_native_run(&ctx, "fixture", &["a", "b"], || {
+            fs::remove_file(root.path().join("a")).unwrap();
+            fs::create_dir(root.path().join("a")).unwrap();
+            fs::write(root.path().join("b"), b"modified").unwrap();
+            Ok(())
+        });
+        assert!(matches!(verdict, Verdict::Fail(ref text) if text.contains("restore a failed")));
+        assert_eq!(fs::read(root.path().join("b")).unwrap(), b"second");
+    }
 
     #[test]
     fn test_diff_tree_single_file_identical() {

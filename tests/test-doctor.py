@@ -75,8 +75,8 @@ class TestDoctorDiagnostics(unittest.TestCase):
         """Verifies mios-doctor executes to completion in a partial environment without crashing."""
         # Use an unused port to ensure no daemon is mistakenly assumed reachable
         env = os.environ.copy()
-        env["MIOS_PORT_LLM_LIGHT"] = "59998"
-        env["MIOS_PORT_OPEN_WEBUI"] = "59999"
+        env["MIOS_PORTS_LLM_LIGHT"] = "59998"
+        env["MIOS_PORTS_OPEN_WEBUI"] = "59999"
 
         res = subprocess.run(
             [BASH_BIN, DOCTOR_SCRIPT],

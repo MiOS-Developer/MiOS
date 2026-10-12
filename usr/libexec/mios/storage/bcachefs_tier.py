@@ -2,7 +2,7 @@
 # AI-functions: __init__, render_format_command, render_fstab_entry, burst_write, rebalance_to_background, StorageBlock, BcachefsTierManager
 
 """
-bcachefs_tier.py — T-761 WS-STRG
+bcachefs_tier.py — task_705 WS-STRG
 Declarative Bcachefs multi-device tiering and transparent SSD caching manager.
 
 Configures foreground NVMe and background HDD targets with zstd compression,

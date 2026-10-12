@@ -1,0 +1,33 @@
+# AI-hint: MiOS mios-headscale container. (WS-7 pods-as-SSOT).
+# DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [containers.mios-headscale] in mios.toml.
+# /usr/share/containers/systemd/mios-headscale.container
+
+[Unit]
+After=network-online.target mios-headscale-firstboot.service
+Description='MiOS' Headscale Mesh VPN Control Plane Coordinator
+Requires=mios-headscale-firstboot.service
+Wants=network-online.target
+
+[Container]
+ContainerName=mios-headscale
+Exec=headscale serve
+GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
+Group=833
+Image=docker.io/headscale/headscale:latest
+Label=org.opencontainers.image.title=mios-headscale
+Label=org.opencontainers.image.url=https://github.com/juanfont/headscale
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_HEADSCALE:-8085}/metrics
+Pod=mios-system.pod
+User=833
+Volume=/etc/headscale:/etc/headscale:Z
+Volume=/var/lib/headscale:/var/lib/headscale:Z
+Volume=/run/headscale:/var/run/headscale:Z
+
+[Install]
+WantedBy=multi-user.target default.target
+
+[Service]
+Delegate=yes
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300s

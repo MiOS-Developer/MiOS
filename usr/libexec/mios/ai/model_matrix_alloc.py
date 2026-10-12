@@ -3,7 +3,7 @@
 # AI-related: usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md, tests/test-ai.py
 # AI-functions: ModelMatrixAllocator, detect_host_hardware, project_llama_swap_yaml, main
 """
-WS-AI (T-571): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
+WS-AI (task_515): Hardware-Tiered Modern Model Matrix Allocator for Consumer, Prosumer, and Poweruser.
 Dynamically detects host GPU VRAM and System RAM to assign modern open-weight models
 (Qwen2.5-Coder, DeepSeek-R1-Distill, nomic-embed-text) across function-named inference lanes
 (mios-llm-light, mios-llm-heavy). Enforces strict VRAM headroom reservation (<=90%) and projects
@@ -26,8 +26,8 @@ import mios_toml  # noqa: E402 -- the ONE shared layered-mios.toml resolver
 
 
 def llm_light_port() -> int:
-    """SSOT [ports].llm_light: MIOS_PORT_LLM_LIGHT when exported, else the layered mios.toml."""
-    env = os.environ.get("MIOS_PORT_LLM_LIGHT", "")
+    """SSOT [ports].llm_light: MIOS_PORTS_LLM_LIGHT when exported, else the layered mios.toml."""
+    env = os.environ.get("MIOS_PORTS_LLM_LIGHT", "")
     return int(env) if env.isdigit() else int(mios_toml.get("ports", "llm_light"))
 
 TIER_CONSUMER = "consumer"
@@ -225,7 +225,7 @@ class ModelMatrixAllocator:
             },
             "heavy_lane": {
                 "enabled": tier == TIER_POWERUSER,
-                "port_key": "vllm" if tier == TIER_POWERUSER else None,
+                "port_key": "llm_heavy" if tier == TIER_POWERUSER else None,
                 "reason": "Off by default on VRAM grounds" if tier != TIER_POWERUSER else "Enabled for multi-GPU power tier",
             },
             "endpoint_contract": "MIOS_AI_ENDPOINT (Law 5 UNIFIED-AI-REDIRECTS)",
@@ -318,7 +318,7 @@ class ModelMatrixAllocator:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="MiOS Hardware-Tiered Model Matrix Allocator (T-571)"
+        description="MiOS Hardware-Tiered Model Matrix Allocator (task_515)"
     )
     parser.add_argument("--detect", action="store_true", help="Detect host hardware profile")
     parser.add_argument("--tier", choices=[TIER_CONSUMER, TIER_PROSUMER, TIER_POWERUSER], help="Force allocation tier")

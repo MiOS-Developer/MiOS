@@ -10,11 +10,11 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-searxng
-Environment=SEARXNG_BASE_URL=http://localhost:${MIOS_PORT_SEARXNG:-8800}/
-Environment=SEARXNG_BIND_ADDRESS=127.0.0.1:${MIOS_PORT_SEARXNG:-8800}
-Environment=BIND_ADDRESS=127.0.0.1:${MIOS_PORT_SEARXNG:-8800}
+Environment=SEARXNG_BASE_URL=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/
+Environment=SEARXNG_BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG:-8800}
+Environment=BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG:-8800}
 Environment=GRANIAN_HOST=127.0.0.1
-Environment=GRANIAN_PORT=${MIOS_PORT_SEARXNG:-8800}
+Environment=GRANIAN_PORT=${MIOS_PORTS_SEARXNG:-8800}
 Environment=GRANIAN_WORKERS=2
 Environment=GRANIAN_BLOCKING_THREADS=8
 Environment=SEARXNG_LOG_LEVEL=WARNING
@@ -23,9 +23,9 @@ GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=818
 Image=docker.io/searxng/searxng:latest
 Label=org.opencontainers.image.title=mios-searxng
-Label=org.opencontainers.image.url=http://localhost:${MIOS_PORT_SEARXNG:-8800}/
+Label=org.opencontainers.image.url=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/
 Label=org.opencontainers.image.documentation=https://docs.searxng.org/
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_SEARXNG:-8800}/
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/
 Pod=mios-webtools.pod
 User=818
 Volume=/etc/mios/searxng:/etc/searxng:Z

@@ -69,6 +69,7 @@ class WmConfigGenEngine:
         self.mock = mock
         self.dry_run = dry_run
         self.palette = mios_toml.colors(data)
+        self.data = data
 
     def generate_hyprland_conf(self) -> str:
         """The hyprland.conf the image ships: geometry from [theme.edge].wm_*, colours from [colors]."""
@@ -180,7 +181,7 @@ exec-once = systemctl --user start graphical-session.target
 $mainMod = SUPER
 
 bind = $mainMod, Q, killactive,
-bind = $mainMod, M, exit,
+bind = $mainMod SHIFT, M, exit,
 bind = $mainMod, E, exec, mios-webshell
 bind = $mainMod, V, togglefloating,
 bind = $mainMod, R, exec, rofi -show drun
@@ -204,6 +205,9 @@ bind = $mainMod SHIFT, 2, movetoworkspace, 2
 bind = $mainMod SHIFT, 3, movetoworkspace, 3
 bind = $mainMod SHIFT, 4, movetoworkspace, 4
 bind = $mainMod SHIFT, 5, movetoworkspace, 5
+
+# Global MiOS terminal, system and AI shortcuts share the SSH action letters.
+source = /usr/share/mios/hyprland/mios-keys.conf
 """
 
     def generate_sway_config(self) -> str:
@@ -226,7 +230,7 @@ bind = $mainMod SHIFT, 5, movetoworkspace, 5
 set $mod Mod4
 
 # Font Configuration
-font pango:DejaVu Sans Mono 10
+font pango:{self.data['theme']['font']['family']} {self.data['theme']['font']['size']}
 
 # Gaps & Borders
 default_border pixel {self.border_size}
@@ -241,6 +245,7 @@ client.unfocused        {muted} {bg} {muted} {bg} {bg}
 client.urgent           {error} {error} {fg} {error} {error}
 
 # Keybindings
+include /usr/share/mios/sway/mios-keys.conf
 bindsym $mod+Return exec {self.terminal}
 bindsym $mod+q kill
 bindsym $mod+space exec {self.launcher}

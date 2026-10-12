@@ -39,7 +39,7 @@ class TestOwuiPipeEndpoints(unittest.TestCase):
 
     def setUp(self):
         self._saved = {k: os.environ.get(k) for k in
-                       ("MIOS_AI_ENDPOINT", "MIOS_PORT_LLM_LIGHT",
+                       ("MIOS_AI_ENDPOINT", "MIOS_PORTS_LLM_LIGHT",
                         "MIOS_REFINE_ENDPOINT", "MIOS_DB_URL")}
         for k in self._saved:
             os.environ.pop(k, None)
@@ -64,7 +64,7 @@ class TestOwuiPipeEndpoints(unittest.TestCase):
         self.assertEqual(v.BACKEND_URL, "http://example.invalid:9999/v1")
 
     def test_refine_endpoint_follows_the_light_lane(self):
-        os.environ["MIOS_PORT_LLM_LIGHT"] = "9123"
+        os.environ["MIOS_PORTS_LLM_LIGHT"] = "9123"
         v = _load_pipe().Pipe.Valves()
         self.assertEqual(v.REFINE_ENDPOINT, "http://127.0.0.1:9123")
         os.environ["MIOS_REFINE_ENDPOINT"] = "http://example.invalid:1/x"

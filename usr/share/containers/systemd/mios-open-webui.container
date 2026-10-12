@@ -11,14 +11,14 @@ Wants=network-online.target mios-agent-pipe.service mios-cdi-detect.service
 [Container]
 AutoUpdate=registry
 ContainerName=mios-open-webui
-Environment=OPENAI_API_BASE_URL=http://host.containers.internal:${MIOS_PORT_AGENT_PIPE:-8700}/v1
-Environment=OLLAMA_BASE_URL=http://host.containers.internal:${MIOS_PORT_LLM_LIGHT:-8500}
+Environment=OPENAI_API_BASE_URL=http://host.containers.internal:${MIOS_PORTS_AGENT_PIPE:-8700}/v1
+Environment=OLLAMA_BASE_URL=http://host.containers.internal:${MIOS_PORTS_LLM_LIGHT:-8500}
 Environment=WEBUI_NAME="MiOS AI"
 Environment=WEBUI_SECRET_KEY=mios-stable-secret-change-me
 Environment=ENABLE_SIGNUP=False
 Environment=DEFAULT_USER_ROLE=admin
 Environment=DEFAULT_MODELS=MiOS AI
-Environment=PORT=${MIOS_PORT_OPEN_WEBUI:-8200}
+Environment=PORT=${MIOS_PORTS_OPEN_WEBUI:-8200}
 Environment=ENABLE_WEB_SEARCH=True
 Environment=ENABLE_IMAGE_GENERATION=True
 Environment=ENABLE_CODE_INTERPRETER=True
@@ -30,7 +30,7 @@ Environment=RAG_RELEVANCE_THRESHOLD=0.5
 Environment=ENABLE_RAG_HYBRID_SEARCH=True
 Environment=RAG_EMBEDDING_ENGINE=openai
 Environment=RAG_EMBEDDING_MODEL=nomic-embed-text
-Environment=RAG_OPENAI_API_BASE_URL=http://host.containers.internal:${MIOS_PORT_LLM_LIGHT:-8500}/v1
+Environment=RAG_OPENAI_API_BASE_URL=http://host.containers.internal:${MIOS_PORTS_LLM_LIGHT:-8500}/v1
 Environment=RAG_OPENAI_API_KEY=sk-noop
 Environment=TASK_MODEL_EXTERNAL=hermes-agent
 Environment=ENABLE_TITLE_GENERATION=True
@@ -47,8 +47,8 @@ GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=817
 Image=ghcr.io/open-webui/open-webui:main
 Label=org.opencontainers.image.title=mios-open-webui
-Label=org.opencontainers.image.url=http://localhost:${MIOS_PORT_OPEN_WEBUI:-8200}/
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_OPEN_WEBUI:-8200}/
+Label=org.opencontainers.image.url=http://localhost:${MIOS_PORTS_OPEN_WEBUI:-8200}/
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_OPEN_WEBUI:-8200}/
 Pod=mios-ai.pod
 User=817
 Volume=/var/lib/mios/open-webui:/app/backend/data:Z

@@ -34,29 +34,20 @@ WSL_GUID = "{a4b89f81-9b1c-4e8a-b86a-6b45a98d0001}"
 SSH_GUID = "{a4b89f81-9b1c-4e8a-b86a-6b45a98d0002}"
 SERIAL_GUID = "{a4b89f81-9b1c-4e8a-b86a-6b45a98d0003}"
 
-DEFAULT_MIOS_COLOR_SCHEME = {
-    "name": "MiOS Dark",
-    "background": "#0F141C",
-    "foreground": "#D8DEE9",
-    "cursorColor": "#88C0D0",
-    "selectionBackground": "#3B4252",
-    "black": "#1B222D",
-    "red": "#BF616A",
-    "green": "#A3BE8C",
-    "yellow": "#EBCB8B",
-    "blue": "#81A1C1",
-    "purple": "#B48EAD",
-    "cyan": "#88C0D0",
-    "white": "#E5E9F0",
-    "brightBlack": "#4C566A",
-    "brightRed": "#D08770",
-    "brightGreen": "#A3BE8C",
-    "brightYellow": "#EBCB8B",
-    "brightBlue": "#5E81AC",
-    "brightPurple": "#B48EAD",
-    "brightCyan": "#8FBCBB",
-    "brightWhite": "#ECEFF4",
-}
+def color_scheme(data):
+    """Windows Terminal's exact schema, projected from the layered palette."""
+    palette = mios_toml.colors(data)
+    scheme = {"name": data["theme"]["terminal"]["scheme_name"],
+              "background": palette["bg"], "foreground": palette["fg"],
+              "cursorColor": palette["cursor"], "selectionBackground": palette["muted"]}
+    for index, color in enumerate(("black", "red", "green", "yellow", "blue", "magenta", "cyan", "white")):
+        field = "purple" if color == "magenta" else color
+        scheme[field] = palette[f"ansi_{index}_{color}"]
+        scheme["bright" + field.title()] = palette[f"ansi_{index + 8}_bright_{color}"]
+    for key, value in scheme.items():
+        if key != "name" and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            raise ValueError(f"SSOT Windows Terminal color {key} is invalid")
+    return scheme
 
 def wt_edge(data: Dict[str, Any]) -> Tuple[str, str]:
     """(padding, scrollbarState) in WT profile grammar, normalised through edge_insets()."""
@@ -76,7 +67,7 @@ class TerminalProfile:
     guid: str
     name: str
     commandline: str
-    colorScheme: str = "MiOS Dark"
+    colorScheme: Optional[str] = None
     startingDirectory: Optional[str] = None
     icon: Optional[str] = None
     hidden: bool = False
@@ -84,6 +75,7 @@ class TerminalProfile:
     scrollbarState: Optional[str] = None
     useAcrylic: Optional[bool] = None
     opacity: Optional[int] = None
+    unfocusedAppearance: Optional[Dict[str, Any]] = None
     systemBackdrop: Optional[str] = None
     font: Optional[Dict[str, Any]] = None
 
@@ -105,9 +97,16 @@ class WindowsTerminalProfileInjector:
             extra = [toml_config_path] if toml_config_path else []  # tier-major overlay (Law 13), no DB/native resolver
             data = mios_toml.load_merged(mios_toml.layer_paths() + extra)
         self.padding, self.scrollbar_state = wt_edge(data)
+        self.color_scheme = color_scheme(data)
+        self.data = data
         theme = mios_toml.section(data, "theme")
         self.use_acrylic = bool(theme.get("acrylic", True))
         self.opacity = int(theme.get("opacity", 50))
+        self.unfocused_appearance = {"opacity": theme["unfocused_opacity"],
+                                     "useAcrylic": theme["unfocused_acrylic"]}
+        for value in (self.opacity, self.unfocused_appearance["opacity"]):
+            if type(value) is not int or not 0 <= value <= 100:
+                raise ValueError("[theme] opacity must be an integer from 0 to 100")
         self.system_backdrop = str(theme.get("system_backdrop", "acrylic"))
         font_cfg = mios_toml.section(data, "theme.font")
         self.font = {
@@ -216,23 +215,22 @@ class WindowsTerminalProfileInjector:
             TerminalProfile(
                 guid=WSL_GUID,
                 name="MiOS WSL (Development)",
-                commandline="wsl.exe -d MiOS-DEV",
-                colorScheme="MiOS Dark",
-                startingDirectory="//wsl$/MiOS-DEV/home/mios",
+                commandline="mios.cmd terminal",
+                colorScheme=self.color_scheme["name"],
                 hidden=False,
             ),
             TerminalProfile(
                 guid=SSH_GUID,
                 name="MiOS Host SSH",
                 commandline=f"ssh -p {self.ssh_port} {self.ssh_user}@127.0.0.1",
-                colorScheme="MiOS Dark",
+                colorScheme=self.color_scheme["name"],
                 hidden=False,
             ),
             TerminalProfile(
                 guid=SERIAL_GUID,
                 name="MiOS Serial Console",
                 commandline="powershell.exe -NoExit -Command \"Write-Host 'Connecting to MiOS Serial Console...'; plink.exe -serial COM1 -sercfg 115200,8,n,1,N\"",
-                colorScheme="MiOS Dark",
+                colorScheme=self.color_scheme["name"],
                 hidden=False,
             ),
         ]
@@ -241,6 +239,7 @@ class WindowsTerminalProfileInjector:
             p.padding, p.scrollbarState = self.padding, self.scrollbar_state
             p.useAcrylic = self.use_acrylic
             p.opacity = self.opacity
+            p.unfocusedAppearance = dict(self.unfocused_appearance)
             p.systemBackdrop = self.system_backdrop
         return profiles
 
@@ -262,7 +261,7 @@ class WindowsTerminalProfileInjector:
                 "guid": p.guid,
                 "name": p.name,
                 "commandline": p.commandline,
-                "colorScheme": p.colorScheme,
+                "colorScheme": p.colorScheme or self.color_scheme["name"],
                 "hidden": p.hidden,
             }
             if p.startingDirectory:
@@ -279,6 +278,8 @@ class WindowsTerminalProfileInjector:
                 p_dict["useAcrylic"] = p.useAcrylic
             if p.opacity is not None:
                 p_dict["opacity"] = p.opacity
+            if p.unfocusedAppearance is not None:
+                p_dict["unfocusedAppearance"] = p.unfocusedAppearance
             if p.systemBackdrop is not None:
                 p_dict["systemBackdrop"] = p.systemBackdrop
 
@@ -299,6 +300,16 @@ class WindowsTerminalProfileInjector:
         if self.set_default:
             settings["defaultProfile"] = WSL_GUID
 
+        defaults = settings["profiles"].setdefault("defaults", {})
+        for appearance in [defaults, *target_list]:
+            appearance.update(colorScheme=self.color_scheme["name"], font=dict(self.font),
+                              padding=self.padding, scrollbarState=self.scrollbar_state,
+                              opacity=self.opacity, useAcrylic=self.use_acrylic)
+            unfocused = appearance.get("unfocusedAppearance")
+            if not isinstance(unfocused, dict):
+                unfocused = appearance["unfocusedAppearance"] = {}
+            unfocused.update(self.unfocused_appearance)
+
         return added, updated
 
     def merge_schemes(self, settings: Dict[str, Any]) -> bool:
@@ -308,11 +319,11 @@ class WindowsTerminalProfileInjector:
 
         schemes: List[Dict[str, Any]] = settings["schemes"]
         for idx, s in enumerate(schemes):
-            if s.get("name") == "MiOS Dark":
-                schemes[idx] = DEFAULT_MIOS_COLOR_SCHEME.copy()
+            if s.get("name") == self.color_scheme["name"]:
+                schemes[idx] = self.color_scheme.copy()
                 return True
 
-        schemes.append(DEFAULT_MIOS_COLOR_SCHEME.copy())
+        schemes.append(self.color_scheme.copy())
         return True
 
     def merged_settings(self, target_path: str) -> Tuple[Dict[str, Any], int, int, List[TerminalProfile]]:
@@ -341,7 +352,7 @@ class WindowsTerminalProfileInjector:
             "profiles_added": added,
             "profiles_updated": updated,
             "injected_profiles": [asdict(p) for p in mios_profiles],
-            "scheme_injected": "MiOS Dark",
+            "scheme_injected": self.color_scheme["name"],
             "default_profile_set": self.set_default,
             "dry_run": self.dry_run,
             "mock": self.mock,
@@ -351,15 +362,16 @@ def fixture_render() -> str:
     """The WSL terminal profile template, rendered from the vendor tier (WSL adds name and commandLine)."""
     injector = WindowsTerminalProfileInjector(mock=True, data=mios_toml.vendor_tree(_TREE))
     profile = {
-        "colorScheme": DEFAULT_MIOS_COLOR_SCHEME["name"],
+        "colorScheme": injector.color_scheme["name"],
         "font": injector.font,
         "padding": injector.padding,
         "scrollbarState": injector.scrollbar_state,
         "useAcrylic": injector.use_acrylic,
         "opacity": injector.opacity,
+        "unfocusedAppearance": injector.unfocused_appearance,
         "systemBackdrop": injector.system_backdrop,
     }
-    return json.dumps({"profiles": [profile], "schemes": [DEFAULT_MIOS_COLOR_SCHEME]}, indent=4) + "\n"
+    return json.dumps({"profiles": [profile], "schemes": [injector.color_scheme]}, indent=4) + "\n"
 
 def main() -> int:
     parser = argparse.ArgumentParser(

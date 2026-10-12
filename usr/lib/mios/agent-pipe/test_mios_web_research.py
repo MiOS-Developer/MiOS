@@ -430,7 +430,7 @@ def test_link_rank_scorer_ssot():
 
 
 # ==============================================================================
-# Consolidated from test_mios_applet_webresearch.py (T-1092)
+# Consolidated from test_mios_applet_webresearch.py (task_1006)
 # ==============================================================================
 # AI-hint: Isolation tests for the web-research SSE applet (mios_pipe.routing.applet_webresearch).
 # AI-related: mios_pipe.routing

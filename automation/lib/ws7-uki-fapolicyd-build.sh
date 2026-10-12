@@ -89,7 +89,7 @@ ws7_install_fapolicyd_observe() {
 ws7_build_verity_uki() {
     local enable
     enable="$(_ws7_scalar uki verity_uki_build)"
-    enable="${enable:-${MIOS_UKI_VERITY_BUILD:-false}}"
+    enable="${enable:-${MIOS_UKI_VERITY_UKI_BUILD:-false}}"
     if ! _ws7_is_true "$enable"; then
         log "[ws7] verity-rooted UKI build disabled"
         return 0

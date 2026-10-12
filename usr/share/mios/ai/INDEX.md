@@ -143,7 +143,7 @@ otherwise).
 
 The runtime "which model does Hermes use by default" knob is `[ai].big_ram_model`;
 the inference backend Hermes forwards to is `[ai].hermes_backend_url`
-(`http://localhost:${MIOS_PORT_LLM_LIGHT}/v1` -- the mios-llm-light lane). GGUFs are an opt-in
+(`http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1` -- the mios-llm-light lane). GGUFs are an opt-in
 offline build bake; a missing-weights lane stays inert (its
 `ConditionPathExists=` model-ready guard short-circuits the unit so it can't
 crash-loop). The host overlay at `/etc/mios/mios.toml` takes precedence over the
@@ -229,8 +229,8 @@ shows which layer supplied each key).
 | `MIOS_AI_KEY` / `MIOS_AI_MODEL` / `MIOS_AI_ENDPOINT` | AI | Resolution per LAW 5; defaults in `usr/share/mios/env.defaults`. |
 | `MIOS_BASE_IMAGE` | build | OCI base image (default `ghcr.io/ublue-os/ucore-hci:stable-nvidia`, `Justfile:45`). |
 | `MIOS_LOCAL_TAG` | build | Local image tag (default `localhost/mios:latest`, `Justfile:13`). |
-| `MIOS_USER` / `MIOS_HOSTNAME` | build | Default account/hostname baked into the image (`Containerfile:26-27`). |
-| `MIOS_FLATPAKS` | build | Comma-separated Flatpak refs (`Containerfile:28`). |
+| `MIOS_IDENTITY_USERNAME` / `MIOS_IDENTITY_HOSTNAME` | build | Default account/hostname baked into the image (`Containerfile:26-27`). |
+| `MIOS_DESKTOP_FLATPAKS` | build | Comma-separated Flatpak refs (`Containerfile:28`). |
 
 ## 5. Defaults policy
 

@@ -308,9 +308,6 @@ DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout,docker"
 DEFAULT_SSH_KEY_TYPE="ed25519"
 DEFAULT_IMAGE="ghcr.io/mios-dev/mios:latest"
 DEFAULT_BRANCH="main"
-DEFAULT_TIMEZONE="UTC"
-DEFAULT_KEYBOARD="us"
-DEFAULT_LANG="en_US.UTF-8"
 # AI model defaults. These are pre-profile-load vendor fallbacks that
 # MATCH the SSOT mios.toml [ai] section (model / embed_model); they are
 # superseded in load_profile_defaults() by the RAM-driven auto-pick
@@ -329,7 +326,6 @@ PROFILE_DIR="/etc/mios"
 PROFILE_CARD="${PROFILE_DIR}/mios.toml"
 PROFILE_CARD_LEGACY="${PROFILE_DIR}/profile.toml"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
-LOG_FILE="/var/log/mios-bootstrap.log"
 
 # Pull a value from a TOML file. Args: <file> <section> <key>.
 # Strips quotes and inline comments. Returns empty if missing.
@@ -438,9 +434,6 @@ load_profile_defaults() {
     v="$(toml_get_layered auth ssh_key_type)";        [[ -n "$v" ]] && DEFAULT_SSH_KEY_TYPE="$v"
     v="$(toml_get_layered image ref)";                [[ -n "$v" ]] && DEFAULT_IMAGE="$v"
     v="$(toml_get_layered image branch)";             [[ -n "$v" ]] && DEFAULT_BRANCH="$v"
-    v="$(toml_get_layered locale timezone)";          [[ -n "$v" ]] && DEFAULT_TIMEZONE="$v"
-    v="$(toml_get_layered locale keyboard_layout)";   [[ -n "$v" ]] && DEFAULT_KEYBOARD="$v"
-    v="$(toml_get_layered locale language)";          [[ -n "$v" ]] && DEFAULT_LANG="$v"
     v="$(toml_get_layered bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
     v="$(toml_get_layered bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
 
@@ -457,10 +450,12 @@ load_profile_defaults() {
     local legacy_env; legacy_env="$(dirname "${BASH_SOURCE[0]}")/.env.mios"
     if [[ -f "$legacy_env" ]]; then
         log_info "Sourcing legacy ${legacy_env} (deprecated; migrate to profile.toml)"
-        # shellcheck source=/dev/null
-        set +u; source "$legacy_env"; set -u
-        [[ -n "${MIOS_DEFAULT_USER:-}" ]] && DEFAULT_USER="${MIOS_DEFAULT_USER}"
-        [[ -n "${MIOS_DEFAULT_HOST:-}" ]] && DEFAULT_HOST="${MIOS_DEFAULT_HOST}"
+        set +u
+        # shellcheck source=/dev/null  # legacy operator file beside the installer, present only on the host
+        source "$legacy_env"
+        set -u
+        [[ -n "${MIOS_IDENTITY_USERNAME:-}" ]] && DEFAULT_USER="${MIOS_IDENTITY_USERNAME}"
+        [[ -n "${MIOS_IDENTITY_HOSTNAME:-}" ]] && DEFAULT_HOST="${MIOS_IDENTITY_HOSTNAME}"
         [[ -n "${MIOS_IMAGE_NAME:-}" && -n "${MIOS_IMAGE_TAG:-}" ]] && \
             DEFAULT_IMAGE="${MIOS_IMAGE_NAME}:${MIOS_IMAGE_TAG}"
     fi
@@ -565,7 +560,7 @@ spin_stop() {
         wait "$_SPIN_PID" 2>/dev/null || true
         _SPIN_PID=0
     fi
-    printf '\r%s\r' "$(tput el 2>/dev/null || printf '%80s')" >&2
+    printf '\r%s\r' "$(tput el 2>/dev/null || printf '%80s' '')" >&2
 }
 
 # ============================================================================
@@ -736,7 +731,8 @@ launch_configurator() {
     # Pass the staging path to the HTML via a query param so the banner
     # shows the operator exactly where to save (use Pick file -> select
     # this file -> edit -> Save).
-    local url="file://${html}?suggested_path=$(printf '%s' "$staging" | sed 's/ /%20/g')"
+    local url
+    url="file://${html}?suggested_path=$(printf '%s' "$staging" | sed 's/ /%20/g')"
 
     log_info ""
     log_info "Opening configurator: ${url}"
@@ -963,9 +959,9 @@ apply_user_profile() {
 # 'MiOS' install profile -- written by mios-bootstrap install.sh
 # Non-secret installation metadata. Passwords/tokens are NOT stored here.
 MIOS_LINUX_USER="${LINUX_USER}"
-MIOS_HOSTNAME="${HOSTNAME_VAL}"
+MIOS_IDENTITY_HOSTNAME="${HOSTNAME_VAL}"
 MIOS_USER_FULLNAME="${USER_FULLNAME}"
-MIOS_USER_GROUPS="${DEFAULT_USER_GROUPS}"
+MIOS_IDENTITY_GROUPS="${DEFAULT_USER_GROUPS}"
 MIOS_INSTALL_MODE="${INSTALL_MODE}"
 MIOS_IMAGE_TAG="${IMAGE_TAG}"
 MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
@@ -1007,7 +1003,7 @@ EOF
     fi
 
     # Disable bare-metal/cluster services for FHS overlay installs (folded from the
-    # former C:\MiOS build-mios.sh, where it was dead behind the AGY-106 redirect).
+    # former C:\MiOS build-mios.sh, where it was dead behind the task_1139 redirect).
     if [[ -f "${PROFILE_CARD}" && "${INSTALL_MODE}" == "fhs" ]]; then
         log_info "Configuring FHS profile: disabling bare-metal/cluster services in $(basename "${PROFILE_CARD}")"
         local svc
@@ -1078,8 +1074,8 @@ seed_user_skel_for_all_accounts() {
         return 0
     }
 
-    local u home uid sh
-    while IFS=: read -r u _ uid _ _ home sh; do
+    local u home uid
+    while IFS=: read -r u _ uid _ _ home _; do
         [[ "$uid" -ge 1000 && "$uid" -lt 65534 && -d "$home" ]] || continue
         sudo -u "$u" install -d -m 0755 "${home}/.config"
         for subdir in "${skel_subdirs[@]}"; do

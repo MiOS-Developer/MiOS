@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (T-543, AGY-2141, T-544, AGY-2142). Details proactive PID thermal regulation, sysfs telemetry, rate-of-rise (dT/dt) early intervention before silicon throttling (80°C vs 95°C), dynamic EPP and GPU TDP modulation, and automated 10s hysteresis cooldown recovery. -->
+<!-- AI-hint: Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (task_487, task_2720, task_488, task_2721). Details proactive PID thermal regulation, sysfs telemetry, rate-of-rise (dT/dt) early intervention before silicon throttling (80°C vs 95°C), dynamic EPP and GPU TDP modulation, and automated 10s hysteresis cooldown recovery. -->
 
 # Chapter 88: Proactive PID Thermal Daemon and Dynamic Power Cap Modulator
 

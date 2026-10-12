@@ -11,6 +11,6 @@ Describe "globals.ps1 Constant Projection" {
         $globalsPath = Join-Path $PSScriptRoot '../../automation/lib/globals.ps1'
         . $globalsPath
         $script:MIOS_VERSION | Should -Not -BeNullOrEmpty
-        $script:MIOS_PORT_SSH | Should -BeGreaterThan 0
+        $script:MIOS_PORTS_SSH | Should -BeGreaterThan 0
     }
 }

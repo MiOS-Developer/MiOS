@@ -48,23 +48,23 @@ def _is_punt(_out: str) -> bool:
     return not _facty
 
 _ANTIFAB_ENABLE = os.environ.get(
-    "MIOS_ANTIFAB_ENABLE", "true").strip().lower() not in {"false", "0", "no", "off"}
+    "MIOS_VERITY_ANTIFAB_ENABLE", "true").strip().lower() not in {"false", "0", "no", "off"}
 
 def _antifab_min_entities() -> int:
     """Minimum candidate entities a section must carry before its grounding is
     judged; below this the signal is too thin to trust -> degrade-open. SSOT:
-    [verity].antifab_min_entities -> MIOS_ANTIFAB_MIN_ENTITIES (live)."""
+    [verity].antifab_min_entities -> MIOS_VERITY_ANTIFAB_MIN_ENTITIES (live)."""
     try:
-        return int(os.environ.get("MIOS_ANTIFAB_MIN_ENTITIES", "").strip() or 3)
+        return int(os.environ.get("MIOS_VERITY_ANTIFAB_MIN_ENTITIES", "").strip() or 3)
     except ValueError:  # malformed override -> fall back to the degrade-open default
         return 3
 
 def _antifab_ground_min() -> float:
     """Minimum grounded fraction a judged section must clear to survive; below it
     the section's named entities are mostly absent from every fetched source ->
-    fabricated. SSOT: [verity].antifab_ground_min -> MIOS_ANTIFAB_GROUND_MIN."""
+    fabricated. SSOT: [verity].antifab_ground_min -> MIOS_VERITY_ANTIFAB_GROUND_MIN."""
     try:
-        return float(os.environ.get("MIOS_ANTIFAB_GROUND_MIN", "").strip() or 0.34)
+        return float(os.environ.get("MIOS_VERITY_ANTIFAB_GROUND_MIN", "").strip() or 0.34)
     except ValueError:
         return 0.34
 

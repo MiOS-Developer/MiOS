@@ -1,5 +1,5 @@
 // AI-hint: Integration tests for mios-probe: every threshold comes from SSOT, and an unreadable input never reads as ready.
-// AI-related: src/mios-rs/mios-probe/src/probes.rs, usr/share/mios/mios.toml
+// AI-related: src/mios-rs/mios-probe/src/main.rs, usr/share/mios/mios.toml
 
 use std::fs;
 use std::path::Path;
@@ -25,8 +25,13 @@ require_admin = true
 
 [preflight.build]
 required_tools = ["sh"]
-required_files = ["Containerfile"]
 min_disk_free_gb = 1
+
+[build.images]
+order = ["os"]
+
+[build.images.os]
+containerfile = "Containerfile"
 "#;
 
 fn run(dir: &Path, args: &[&str]) -> (i32, String) {
@@ -68,7 +73,7 @@ fn a_host_tier_override_is_the_threshold_probed() {
     fs::create_dir_all(d.path().join("etc/mios")).unwrap();
     fs::write(
         d.path().join("etc/mios/mios.toml"),
-        "[preflight.build]\nrequired_files = [\"Containerfile\", \"host-only-file\"]\n",
+        "[preflight.build]\nrequired_files = [\"host-only-file\"]\n",
     )
     .unwrap();
     let (code, out) = run(d.path(), &["build"]);
@@ -84,6 +89,24 @@ fn a_missing_required_file_fails_and_names_it() {
     assert_eq!(1, code, "{out}");
     assert!(out.contains("Containerfile missing"), "{out}");
     assert!(out.contains("1 error(s)"), "{out}");
+}
+
+#[test]
+fn each_image_target_containerfile_is_required_from_its_one_declaration() {
+    // Renaming the os target's Containerfile moves the requirement with it;
+    // nothing else names the file.
+    let d = tempfile::tempdir().unwrap();
+    tree(
+        d.path(),
+        &FULL.replace(
+            "containerfile = \"Containerfile\"",
+            "containerfile = \"Containerfile.os\"",
+        ),
+    );
+    fs::write(d.path().join("Containerfile"), "FROM scratch\n").unwrap();
+    let (code, out) = run(d.path(), &["build"]);
+    assert_eq!(1, code, "{out}");
+    assert!(out.contains("Containerfile.os missing"), "{out}");
 }
 
 #[test]

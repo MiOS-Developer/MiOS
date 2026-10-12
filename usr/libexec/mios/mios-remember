@@ -63,7 +63,7 @@ def _pg_json(envelope: dict):
 
 
 _EMBED_ENDPOINT = os.environ.get("MIOS_RAG_EMBED_ENDPOINT",
-                                 f"http://localhost:{os.environ.get('MIOS_PORT_LLM_LIGHT', '8500')}").rstrip("/")
+                                 f"http://localhost:{os.environ.get('MIOS_PORTS_LLM_LIGHT', '8500')}").rstrip("/")
 _EMBED_MODEL = os.environ.get("MIOS_RAG_EMBED_MODEL", "nomic-embed-text")
 _EMB_VERSION = os.environ.get("MIOS_EMB_VERSION", "nomic-768-v1")
 

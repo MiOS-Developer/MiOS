@@ -5,7 +5,7 @@ set -uo pipefail
 
 ISSUE_DIR=/etc/issue.d
 ISSUE_FILE="${ISSUE_DIR}/30-mios.issue"
-DASHBOARD=/usr/libexec/mios/mios-dashboard.sh
+DASHBOARD=/usr/bin/mios-gen
 
 mkdir -p "$ISSUE_DIR" 2>/dev/null || true
 
@@ -18,11 +18,12 @@ if [[ ! -x "$DASHBOARD" ]]; then
     } > "$ISSUE_FILE.new"
     mv -f "$ISSUE_FILE.new" "$ISSUE_FILE"
     chmod 0644 "$ISSUE_FILE"
-    exit 0
+    printf '[MISSING] Native dashboard engine %s unavailable\n' "$DASHBOARD" >&2
+    exit 1
 fi
 
-if TERM=linux timeout -k 3 10 env -i PATH="$PATH" TERM=linux bash "$DASHBOARD" \
-        --no-color --services-only > "$ISSUE_FILE.new" 2>/dev/null \
+if TERM=linux timeout -k 3 10 env -i PATH="$PATH" TERM=linux "$DASHBOARD" dashboard --root / \
+        > "$ISSUE_FILE.new" \
    && [[ -s "$ISSUE_FILE.new" ]]; then
     chmod 0644 "$ISSUE_FILE.new"
     mv -f "$ISSUE_FILE.new" "$ISSUE_FILE"
@@ -36,6 +37,8 @@ else
     } > "$ISSUE_FILE.tmp"
     chmod 0644 "$ISSUE_FILE.tmp"
     mv -f "$ISSUE_FILE.tmp" "$ISSUE_FILE"
+    printf '[FAIL] Native dashboard issue rendering failed\n' >&2
+    exit 1
 fi
 
 exit 0

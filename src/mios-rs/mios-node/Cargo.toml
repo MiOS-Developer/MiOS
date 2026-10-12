@@ -9,6 +9,7 @@ authors = ["MiOS Core Team <dev@mios.org>"]
 description = "MiOS ('My OS') Distributed Edge Micro-Node Runtime with custom 16B wire protocol, dual-tier task execution, and CRDT state sync."
 
 [dependencies]
+getrandom = "0.2"
 tokio.workspace = true
 bytes = "1.6"
 byteorder = "1.5"

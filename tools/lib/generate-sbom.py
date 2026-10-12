@@ -182,7 +182,7 @@ def main(out_path: Path):
         if not p.is_file():
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
-        m = re.search(r'MIOS_FLATPAKS\s*=\s*["\']([^"\']*)["\']', text)
+        m = re.search(r'MIOS_DESKTOP_FLATPAKS\s*=\s*["\']([^"\']*)["\']', text)
         if m and m.group(1).strip():
             for fp in m.group(1).split(","):
                 fp = fp.strip()

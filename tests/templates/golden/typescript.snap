@@ -1,7 +1,0 @@
-// AI-hint: TypeScript tool or module.
-// AI-related: /usr/share/mios/templates/typescript
-// AI-functions: run
-
-export function run(): void {
-    console.log("Hello from TypeScript!");
-}

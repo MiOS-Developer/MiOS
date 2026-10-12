@@ -429,16 +429,16 @@ Stage-1 of the domain router: classify the query into ONE [routing.domains]
 
 <!-- mios-src:073a9eccad06 from usr/lib/mios/agent-pipe/mios_pipe/routing/classify.py:129-134 -->
 
-### Council diversity gate + aggregation bypass (T-047 GAP-1 /...
+### Council diversity gate + aggregation bypass (task_47 GAP-1 /...
 
-Council diversity gate + aggregation bypass (T-047 GAP-1 / T-048 GAP-2).
+Council diversity gate + aggregation bypass (task_47 GAP-1 / task_48 GAP-2).
 
 The council/swarm fan-out produces ``k`` responses that are then handed to a
 final aggregator LLM (``polish_response`` in :mod:`mios_pipe.routing.swarm`).
 Two failure modes this module addresses, BOTH riding the 768-d nomic embeddings
 that already exist on that path (no extra model calls, no per-pair calls):
 
-* **T-047 (RouteMoA input diversity).** An echo-chamber council -- several
+* **task_47 (RouteMoA input diversity).** An echo-chamber council -- several
   near-identical responses -- wastes the aggregator's context and degrades
   synthesis. :func:`select_diverse` prunes the inputs to a semantically diverse
   subset: a lowest-mean-similarity seed, then minimax-orthogonal expansion; any
@@ -446,7 +446,7 @@ that already exist on that path (no extra model calls, no per-pair calls):
   is redundant and is replaced by the next most-orthogonal candidate (dropped
   when even the most-orthogonal remaining candidate is over threshold).
 
-* **T-048 (MOSAIC confidence-aware bypass).** When the whole council converges
+* **task_48 (MOSAIC confidence-aware bypass).** When the whole council converges
   (every pairwise cosine exceeds ``aggregator_bypass_threshold``) the expensive
   aggregator call adds nothing. :func:`should_bypass` detects that; the caller
   then ships the highest-confidence individual response (:func:`medoid_index`,
@@ -460,9 +460,9 @@ with the verb-retrieval cache in :mod:`mios_toolsearch`.
 
 <!-- mios-src:786379e6ddc5 from usr/lib/mios/agent-pipe/mios_pipe/routing/council_diversity.py:4-30 -->
 
-### T-047 RouteMoA input-diversity selection. Returns the...
+### task_47 RouteMoA input-diversity selection. Returns the...
 
-T-047 RouteMoA input-diversity selection. Returns the SELECTED indices
+task_47 RouteMoA input-diversity selection. Returns the SELECTED indices
     (a subset of ``range(len(vectors))``) of the council responses to hand the
     aggregator:
 
@@ -490,9 +490,9 @@ Index of the highest-confidence individual response: the medoid -- the
 
 <!-- mios-src:b8c5bbf3aa40 from usr/lib/mios/agent-pipe/mios_pipe/routing/council_diversity.py:138-142 -->
 
-### Apply the T-047 diversity gate + T-048 aggregation bypass...
+### Apply the task_47 diversity gate + task_48 aggregation bypass...
 
-Apply the T-047 diversity gate + T-048 aggregation bypass over the council
+Apply the task_47 diversity gate + task_48 aggregation bypass over the council
     response ``nodes`` (each a dict carrying ``output_key`` text). Embeds every
     response's text ONCE via ``embed_one`` (the 768-d nomic vectors) and REUSES
     those vectors for both gates -- zero per-pair model calls.
@@ -501,7 +501,7 @@ Apply the T-047 diversity gate + T-048 aggregation bypass over the council
       * ``selected_nodes`` -- the (possibly diversity-pruned) nodes for the
         aggregator (unchanged when the diversity gate is off / nothing pruned);
       * ``bypass`` -- ``None``, or ``{"node", "mean_similarity", "council_size"}``
-        when the council converged and the aggregator LLM must be SKIPPED (T-048).
+        when the council converged and the aggregator LLM must be SKIPPED (task_48).
 
     Convergence (bypass) takes precedence over diversity pruning -- a converged
     council needs neither aggregation nor trimming. Degrades OPEN: with both gates
@@ -981,7 +981,7 @@ A compact, SSOT-sourced card for the relevance model: the agent's OWN
     AgentCard the peer publishes). No hardcoded topic text -- the card IS the
     capability surface the model reasons over.
 
-    FED-G7 (T-051, flag-gated): when ROUTE_ON_CARD_SKILLS is set, a federated peer's
+    FED-G7 (task_51, flag-gated): when ROUTE_ON_CARD_SKILLS is set, a federated peer's
     FULL published skills[] (name/description/tags) are folded in alongside the
     strength tokens so the model routes on the advertised skill, not just the token
     proximity. OFF -> byte-identical to the strength-token-only card.
@@ -1200,7 +1200,7 @@ the importable surface stays byte-identical.
 
 Minimum candidate entities a section must carry before its grounding is
     judged; below this the signal is too thin to trust -> degrade-open. SSOT:
-    [verity].antifab_min_entities -> MIOS_ANTIFAB_MIN_ENTITIES (live).
+    [verity].antifab_min_entities -> MIOS_VERITY_ANTIFAB_MIN_ENTITIES (live).
 
 <!-- mios-src:8b66b16d3086 from usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py:70-72 -->
 
@@ -2161,14 +2161,14 @@ Yield the final answer in small character-exact chunks so OWUI renders
 
 <!-- mios-src:5806fe0e99a1 from usr/lib/mios/agent-pipe/mios_pipe/routing/sse.py:244-248 -->
 
-### Best-effort read of the war-room activity sink (F-011): a...
+### Best-effort read of the war-room activity sink (task_3176): a...
 
-Best-effort read of the war-room activity sink (F-011): a JSONL sibling of
+Best-effort read of the war-room activity sink (task_3176): a JSONL sibling of
     the hermes-tail state file into which mios-a2o appends per-task start/finish
     transitions when `[frontier].stream_to_reasoning` is on. Returns event dicts
     newer than seen_ts (may be empty). Degrade-open: when the flag is off the file
     is never created, so this returns [] and `_tail_latest_status` is byte-
-    identical to before. Path from MIOS_A2O_STREAM_PATH (SSOT), else derived as a
+    identical to before. Path from MIOS_FRONTIER_STREAM_PATH (SSOT), else derived as a
     sibling of the hermes-tail path so no transport constant is restated.
 
 <!-- mios-src:2ce205584700 from usr/lib/mios/agent-pipe/mios_pipe/routing/sse.py:279-285 -->
@@ -2911,3 +2911,89 @@ Resolve the anchor stopword screen from SSOT: MIOS_SEARCH_ANCHOR_STOPWORDS, the
     the override is reachable) -> that table -> empty (degrade-open). Lowercased.
 
 <!-- mios-src:1c3a403a2d2f from usr/lib/mios/agent-pipe/mios_pipe/routing/web_research.py:163-165 -->
+### Interruptible chunked decode (WS-A12). Enforces unified...
+
+Interruptible chunked decode (WS-A12). Enforces unified lock order
+    _GLOBAL_PRIORITY_GATE -> endpoint semaphore -> lane semaphore.
+    Across preemption, releases lane + endpoint semaphores before yielding the
+    priority gate, ensuring no dispatch holds an endpoint permit while waiting
+    on the gate (task_3483). Returns the full assistant text. Degrade-open: ANY failure
+    falls back to one completion of the whole budget; the partial is never lost.
+
+<!-- mios-src:4358e2ec6536 from usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py:984-989 -->
+
+### Ordered lane ids for a route. The heavy lane is one lane...
+
+Ordered lane ids for a route. The heavy lane is one lane whatever engine
+    [ai].heavy_engine runs on it, so the value only steers the ROUTE: "light"
+    skips the heavy lane, a comma list is an explicit order, and anything else
+    (an engine name such as "vllm"/"sglang", or empty) puts the heavy lane first.
+    Inside a comma list an engine name -- any id that is not an available lane --
+    means the heavy lane. "light" is always the terminal floor.
+
+<!-- mios-src:e6bdb1072ec4 from usr/lib/mios/agent-pipe/mios_pipe/routing/lanes.py:25-30 -->
+
+### (url, model) for the client-tools loop -- delegated to the...
+
+(url, model) for the client-tools loop -- delegated to the WS-1 unified lane
+    resolver: the heavy lane when reachable, else the always-on light lane (with
+    per-lane cooldown so a dead lane fails over, never 404s). Degrade-open: any resolver error falls back to the legacy heavy/light
+    probe so the agentic surface never hard-fails.
+
+<!-- mios-src:d029438c1e1c from usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py:111-114 -->
+
+### Minimum candidate entities a section must carry before its...
+
+Minimum candidate entities a section must carry before its grounding is
+    judged; below this the signal is too thin to trust -> degrade-open. SSOT:
+    [verity].antifab_min_entities -> MIOS_VERITY_ANTIFAB_MIN_ENTITIES (live).
+
+<!-- mios-src:9d94ccc00719 from usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py:54-56 -->
+
+### Stretch password-derived keys once per worker; explicit...
+
+Stretch password-derived keys once per worker; explicit secrets stay stable.
+
+    A fixed, versioned domain separator preserves restart/multiworker agreement
+    without storing another secret. Changing the password or work factor revokes
+    derived sessions. Upgrade from the old single-hash key requires a new login.
+
+<!-- mios-src:bffebc2d19b0 from usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py:100-105 -->
+
+### Context window for the client-tools lane (env...
+
+Context window for the client-tools lane (env MIOS_AGENT_PIPE_TOOL_CTX).
+    An unparsable or non-positive value falls back to the default instead of
+    raising out of the degrade path.
+
+<!-- mios-src:8b06b1414786 from usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py:22-24 -->
+
+### Restore an OpenAI-valid sequence after messages were...
+
+Restore an OpenAI-valid sequence after messages were dropped.
+
+    * every assistant tool_call keeps a matching tool result (unanswered calls
+      are removed from the assistant message);
+    * every tool result answers a tool_call of the nearest preceding assistant
+      turn (orphans are dropped);
+    * the first non-system turn is a user turn;
+    * consecutive plain user/assistant turns are merged so roles alternate.
+
+<!-- mios-src:8e13e59da0d0 from usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py:40-48 -->
+
+### Principled multi-tier request pruning before backend...
+
+Principled multi-tier request pruning before backend dispatch so the
+    payload fits the backend context instead of failing with HTTP 400.
+
+    Tiers (each runs only while still over budget):
+      1. tool_choice 'none' -> drop tools and tool_choice.
+      2. Elide stale tool results (placeholder keeps tool_call pairing).
+      3. Compact middle turns via plan_compaction, then repair the sequence.
+      4. Budget tool definitions: compact schemas, then keep tools in caller
+         order (forced tool always kept) within half the budget.
+      5. Truncate each oversized message (content-part aware).
+      6. Iteratively truncate the largest message.
+    Finally repair the sequence and clamp max_tokens to what actually fits.
+
+<!-- mios-src:296e360d4944 from usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py:216-228 -->

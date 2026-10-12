@@ -18,7 +18,7 @@ Group=825
 Image=docker.io/adguard/adguardhome:latest
 Label=org.opencontainers.image.title=mios-adguard
 Label=org.opencontainers.image.url=https://github.com/AdguardTeam/AdGuardHome
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_ADGUARD_UI:-8050}/
+Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_ADGUARD_UI:-8050}/
 Pod=mios-system.pod
 User=825
 Volume=/etc/mios/adguard:/opt/adguardhome/conf:Z

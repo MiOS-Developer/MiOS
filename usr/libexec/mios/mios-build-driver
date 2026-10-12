@@ -42,10 +42,10 @@ PYEOF
 _curl_build_trigger() {
     local host port base ref url owner repo token
     command -v curl >/dev/null 2>&1 || { _log "curl fallback: curl not installed"; return 1; }
-    host="${MIOS_FORGE_HOST:-${MIOS_HOSTNAME:-localhost}}"
-    port="${MIOS_PORT_FORGE_HTTP:-}"     # from install.env / userenv.sh -- no literal
+    host="${MIOS_FORGE_HOST:-${MIOS_IDENTITY_HOSTNAME:-localhost}}"
+    port="${MIOS_PORTS_FORGE_HTTP:-}"     # from install.env / userenv.sh -- no literal
     if [[ -z "$port" ]]; then
-        _log "curl fallback: MIOS_PORT_FORGE_HTTP unset (run mios-sync-env) -- cannot resolve forge endpoint"
+        _log "curl fallback: MIOS_PORTS_FORGE_HTTP unset (run mios-sync-env) -- cannot resolve forge endpoint"
         return 1
     fi
     base="http://${host}:${port}"
@@ -276,14 +276,14 @@ elif [[ -x /usr/libexec/mios/mios-configurator-launch ]]; then
         sudo install -d -m 0755 /etc/mios
         sudo install -m 0644 "$DL_TOML" /etc/mios/mios.toml
         _log "Promoted ~/Downloads/mios.toml -> /etc/mios/mios.toml"
-        if [[ -d /mnt/m ]]; then
-            if sudo install -d -m 0755 /mnt/m/etc/mios 2>/dev/null && \
-               sudo install -m 0644 "$DL_TOML" /mnt/m/etc/mios/mios.toml 2>/dev/null; then
-                _log "Promoted ~/Downloads/mios.toml -> /mnt/m/etc/mios/mios.toml (Windows-side host overlay)"
-            else
-                _log "WARN: could not write /mnt/m/etc/mios/mios.toml -- Windows-side bootstrap will keep using vendor defaults"
+        for _host_mnt in /mnt/c /mnt/m; do
+            if [[ -d "$_host_mnt" ]]; then
+                if sudo install -d -m 0755 "$_host_mnt/etc/mios" 2>/dev/null && \
+                   sudo install -m 0644 "$DL_TOML" "$_host_mnt/etc/mios/mios.toml" 2>/dev/null; then
+                    _log "Promoted ~/Downloads/mios.toml -> $_host_mnt/etc/mios/mios.toml (Windows-side host overlay)"
+                fi
             fi
-        fi
+        done
         if [[ -r /etc/profile.d/mios-env.sh ]]; then
             . /etc/profile.d/mios-env.sh || true
         fi
@@ -304,6 +304,7 @@ for cand in \
 done
 if [[ -n "$USERENV_SH" ]]; then
     _log "Sourcing layered config: $USERENV_SH"
+    # shellcheck source=tools/lib/userenv.sh
     source "$USERENV_SH"
 else
     _log "WARN: tools/lib/userenv.sh not found -- using vendor-default env"
@@ -311,13 +312,13 @@ fi
 
 # Identity and models come from the layered SSOT sourced above; a value it
 # does not resolve is a broken resolver, not a reason to bake a literal.
-for _v in MIOS_USER MIOS_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL; do
+for _v in MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL; do
     [[ -n "${!_v:-}" ]] || _fail "${_v} is not resolved by the layered mios.toml (userenv: ${USERENV_SH:-not found})"
 done
 unset _v
-: "${MIOS_PASSWORD_POLICY:=interactive}"
-export MIOS_USER MIOS_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL \
-       MIOS_PASSWORD_POLICY
+: "${MIOS_AUTH_PASSWORD_POLICY:=interactive}"
+export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL \
+       MIOS_AUTH_PASSWORD_POLICY
 
 _hash_password() {
     local plain="$1"
@@ -332,9 +333,9 @@ _hash_password() {
     fi
 }
 
-case "${MIOS_PASSWORD_POLICY}" in
+case "${MIOS_AUTH_PASSWORD_POLICY}" in
     none)
-        _log "MIOS_PASSWORD_POLICY=none -- no password set"
+        _log "MIOS_AUTH_PASSWORD_POLICY=none -- no password set"
         MIOS_USER_PASSWORD_HASH=""
         ;;
     hashed)
@@ -354,7 +355,7 @@ case "${MIOS_PASSWORD_POLICY}" in
             MIOS_USER_PASSWORD_HASH="$_val"
             unset _line _val
         elif [[ "${MIOS_NONINTERACTIVE:-0}" == "1" ]]; then
-            _pw_plain="${MIOS_DEFAULT_PASSWORD:-mios}"
+            _pw_plain="${MIOS_IDENTITY_DEFAULT_PASSWORD:-mios}"
             _log "MIOS_NONINTERACTIVE=1 -- password from mios.toml [identity].default_password (vendor default 'mios' if unset)"
             MIOS_USER_PASSWORD_HASH=$(_hash_password "$_pw_plain")
             unset _pw_plain
@@ -369,7 +370,7 @@ case "${MIOS_PASSWORD_POLICY}" in
             echo "  password_policy=interactive and no /etc/mios/secrets.env yet"
             echo "  This is the ONLY operator prompt"
             echo "  /mios.toml"
-            read -rsp "  Set password for ${MIOS_USER} (default: 'mios'): " _pw_plain
+            read -rsp "  Set password for ${MIOS_IDENTITY_USERNAME} (default: 'mios'): " _pw_plain
             echo
             : "${_pw_plain:=mios}"
             MIOS_USER_PASSWORD_HASH=$(_hash_password "$_pw_plain")
@@ -387,14 +388,14 @@ export MIOS_USER_PASSWORD_HASH
 
 sudo install -d -m 0755 /etc/mios
 {
-    printf 'MIOS_USER=%s\n'           "$MIOS_USER"
-    printf 'MIOS_HOSTNAME=%s\n'       "$MIOS_HOSTNAME"
+    printf 'MIOS_IDENTITY_USERNAME=%s\n'           "$MIOS_IDENTITY_USERNAME"
+    printf 'MIOS_IDENTITY_HOSTNAME=%s\n'       "$MIOS_IDENTITY_HOSTNAME"
     printf 'MIOS_AI_MODEL=%s\n'       "$MIOS_AI_MODEL"
     printf 'MIOS_AI_EMBED_MODEL=%s\n' "$MIOS_AI_EMBED_MODEL"
 } | sudo tee /etc/mios/install.env >/dev/null
 sudo chmod 0640 /etc/mios/install.env
 
-_log "Resolved settings: user=$MIOS_USER host=$MIOS_HOSTNAME ai=$MIOS_AI_MODEL embed=$MIOS_AI_EMBED_MODEL pwpolicy=$MIOS_PASSWORD_POLICY"
+_log "Resolved settings: user=$MIOS_IDENTITY_USERNAME host=$MIOS_IDENTITY_HOSTNAME ai=$MIOS_AI_MODEL embed=$MIOS_AI_EMBED_MODEL pwpolicy=$MIOS_AUTH_PASSWORD_POLICY"
 
 BUILD_CTX="$MIOS_REPO"
 if [[ "$MIOS_REPO" = "/" ]]; then

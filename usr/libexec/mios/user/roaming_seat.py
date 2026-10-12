@@ -3,7 +3,7 @@
 # AI-related: tests/test-roaming-seat.py
 # AI-functions: GPUDevice, SeatAssignment, UserRegistry, GPUManager, LogindSeatManager, CephFSMountManager, RoamingSeatOrchestrator, main
 """
-WS-USER (T-559): Network-Wide Roaming Multi-Seat Session Orchestrator & GPU Assignment Manager.
+WS-USER (task_503): Network-Wide Roaming Multi-Seat Session Orchestrator & GPU Assignment Manager.
 
 Orchestrates multi-seat hardware assignment dynamically for roaming users across cluster blades:
 - Authenticates users against PostgreSQL users_registry or local encrypted credential store.
@@ -486,7 +486,7 @@ class RoamingSeatOrchestrator:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="WS-USER (T-559): Roaming Multi-Seat Session Orchestrator and GPU Assignment Manager"
+        description="WS-USER (task_503): Roaming Multi-Seat Session Orchestrator and GPU Assignment Manager"
     )
     parser.add_argument("--status", action="store_true", help="Print overall seat and GPU status")
     parser.add_argument("--list-seats", action="store_true", help="List all managed seats")

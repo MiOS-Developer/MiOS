@@ -19,16 +19,24 @@ class Lane:
     def __repr__(self) -> str:  # pragma: no cover -- debug only
         return "Lane(%r, %r, %r)" % (self.id, self.url, self.model)
 
+HEAVY = "heavy"   # the ONE heavy lane (mios-llm-heavy), whichever engine serves it
+
 def build_chain(heavy_engine, available) -> list:
+    """Ordered lane ids for a route. The heavy lane is one lane whatever engine
+    [ai].heavy_engine runs on it, so the value only steers the ROUTE: "light"
+    skips the heavy lane, a comma list is an explicit order, and anything else
+    (an engine name such as "vllm"/"sglang", or empty) puts the heavy lane first.
+    Inside a comma list an engine name -- any id that is not an available lane --
+    means the heavy lane. "light" is always the terminal floor."""
     avail_set = set(available)
-    he = (heavy_engine or "sglang").strip().lower()
+    he = (heavy_engine or "").strip().lower()
     if "," in he:
         order = [x.strip() for x in he.split(",") if x.strip()]
+        order = [x if x in avail_set or x == "light" else HEAVY for x in order]
     elif he == "light":
         order = ["light"]
     else:
-        heavies = [x for x in ("sglang", "vllm") if x in avail_set]
-        order = ([he] if he in avail_set else []) + [x for x in heavies if x != he] + ["light"]
+        order = [HEAVY, "light"]
     seen: set = set()
     chain: list = []
     for x in order:

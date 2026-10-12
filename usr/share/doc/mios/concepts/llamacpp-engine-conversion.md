@@ -243,7 +243,7 @@ Cutover steps (since completed):
 2. **Verify the template live** — mios-llm-light image tag, the `cmd`/`proxy`/`ttl`
    schema, the `llama-server` binary path inside the image (`/app/llama-server`),
    `--config`/`--listen` flags, and `--n-gpu-layers` sizing for the shared 4090.
-3. **Wire the lane** — `[nodes.*]` at `http://localhost:${MIOS_PORT_LLM_LIGHT}/v1`,
+3. **Wire the lane** — `[nodes.*]` at `http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1`,
    `api="llamacpp"` → auto-joins the swarm + KV-pages, zero pipe changes.
 4. **Cutover** — point `_embed_one` at the mios-llm-light embed endpoint; migrate the
    chat lanes off Ollama; retire Ollama. (Done — Ollama is fully removed.)

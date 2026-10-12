@@ -25,7 +25,7 @@ parallel ~= 300-500ms vs ~200ms single) and surface evidence one phrasing
 misses. SearXNG's own limiter is off + granian workers are bumped so the
 local instance absorbs the burst; agent-pipe bounds CROSS-agent concurrency.
 
-SSOT: SearXNG endpoint = $MIOS_SEARXNG_URL; micro-LLM = $MIOS_MICRO_MODEL /
+SSOT: SearXNG endpoint = $MIOS_URLS_SEARXNG; micro-LLM = $MIOS_MICRO_MODEL /
 $MIOS_MICRO_ENDPOINT (same as agent-pipe); fan-out knobs = $MIOS_WEB_FANOUT /
 $MIOS_WEB_FANOUT_WORKERS / $MIOS_WEB_RRF_K; the anchor stopword screen =
 mios.toml [search].anchor_stopwords ($MIOS_WEB_ANCHOR_STOPWORDS CSV) -- all
@@ -66,9 +66,9 @@ def _ssot_val(env: str, section: str, key: str, default: str) -> str:
     return default
 
 
-SEARXNG_PORT = _ssot_val("MIOS_PORT_SEARXNG", "ports", "searxng", "8800")
-SEARXNG_URL = os.environ.get("MIOS_SEARXNG_URL", f"http://localhost:{SEARXNG_PORT}").rstrip("/")
-_EXPAND_PORT = _ssot_val("MIOS_PORT_LLM_LIGHT", "ports", "llm_light", "8500")
+SEARXNG_PORT = _ssot_val("MIOS_PORTS_SEARXNG", "ports", "searxng", "8800")
+SEARXNG_URL = os.environ.get("MIOS_URLS_SEARXNG", f"http://localhost:{SEARXNG_PORT}").rstrip("/")
+_EXPAND_PORT = _ssot_val("MIOS_PORTS_LLM_LIGHT", "ports", "llm_light", "8500")
 _EXPAND_MODEL = os.environ.get(
     "MIOS_WEB_EXPAND_MODEL",
     os.environ.get("MIOS_DAEMON_MODEL", "granite4.1:8b"))  # qwen3:1.7b retired -> 404 on :8500 (2026-06-18)

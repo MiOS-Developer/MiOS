@@ -104,6 +104,9 @@ def get_dest_path(name, type_name, repo_root):
         return os.path.join(repo_root, tmpl_cfg["fixed_name"])
 
     dest_dir = tmpl_cfg.get("dest_dir", ".")
+    if tmpl_cfg.get("emit") == "directory":
+        return os.path.join(repo_root, dest_dir, name)
+
     prefix = tmpl_cfg.get("name_prefix", "")
     if prefix:
         seed = re.match(r"^(\d+)-$", prefix)
@@ -183,14 +186,44 @@ def main():
         print(f"Error: Template for '{type_name}' not found at {template_path}")
         sys.exit(1)
 
-    with open(template_path, "r", encoding="utf-8") as f:
-        template_content = f.read()
-
     repo_root = os.environ.get("MIOS_DRIFT_CHECK_ROOT")
     if not repo_root:
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
     dest_path = args.out_path if args.out_path else get_dest_path(name, type_name, repo_root)
+
+    if os.path.isdir(template_path):
+        if not dest_path:
+            dest_path = os.path.join(repo_root, "tools/native", name)
+        dest_path = os.path.abspath(dest_path)
+        os.makedirs(dest_path, exist_ok=True)
+        for root_dir, _, files in os.walk(template_path):
+            rel_dir = os.path.relpath(root_dir, template_path)
+            target_sub = os.path.join(dest_path, rel_dir) if rel_dir != "." else dest_path
+            os.makedirs(target_sub, exist_ok=True)
+            for fname in files:
+                src_f = os.path.join(root_dir, fname)
+                dst_f = os.path.join(target_sub, fname)
+                if os.path.exists(dst_f) and not args.out_path:
+                    print(f"Error: Target file already exists at {dst_f}")
+                    sys.exit(1)
+                with open(src_f, "r", encoding="utf-8") as f:
+                    content = f.read()
+                rendered = render_template(content, name, type_name, description=args.description)
+                with open(dst_f, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(rendered)
+        # Auto-update workspace manifest if rust crate
+        gen_script = os.path.join(repo_root, "tools/generate-cargo-manifests.py")
+        if os.path.isfile(gen_script) and type_name in ("rust_crate", "rust-crate"):
+            try:
+                subprocess.run([sys.executable, gen_script], cwd=repo_root, check=False)
+            except Exception:
+                pass
+        print(f"Scaffolded new {type_name} at: {dest_path}")
+        return
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        template_content = f.read()
 
     # Render AFTER the destination is known: a sequential type's ordinal only
     # exists once the allocator has picked one, and a file whose {{id}} says

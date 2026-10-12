@@ -390,7 +390,7 @@ async def _call_agent_complete(name, cfg, body, headers, client,
         _ep, _adm_model = _agent_binding(cfg, _engine)
 
         big_model = _host_threshold_val("big_ram_model", "mistral-magistral-small-2509")
-        is_heavy = (_adm_model == big_model or (_engine in ("vllm", "sglang") or (isinstance(_ep, str) and ("8520" in _ep or "8530" in _ep))))
+        is_heavy = (_adm_model == big_model or (_engine in ("vllm", "sglang") or (isinstance(_ep, str) and f":{os.environ.get('MIOS_PORTS_LLM_HEAVY', '8520')}" in _ep)))
         if is_heavy:
             cpu_load = _get_cpu_load()
             vram_pct = _get_gpu_vram_usage()
@@ -985,7 +985,7 @@ async def _rr_run(client, ep: str, model, messages, *, conv: str,
     _GLOBAL_PRIORITY_GATE -> endpoint semaphore -> lane semaphore.
     Across preemption, releases lane + endpoint semaphores before yielding the
     priority gate, ensuring no dispatch holds an endpoint permit while waiting
-    on the gate (T-1190). Returns the full assistant text. Degrade-open: ANY failure
+    on the gate (task_3483). Returns the full assistant text. Degrade-open: ANY failure
     falls back to one completion of the whole budget; the partial is never lost."""
     held = False
     partial, produced = "", 0

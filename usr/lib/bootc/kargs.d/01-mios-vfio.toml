@@ -5,5 +5,6 @@ kargs = [
     "kvm-intel.nested=1",
     "intel_iommu=on",
     "amd_iommu=on",
-    "iommu=pt"
+    "iommu=pt",
+    "vfio_pci.disable_idle_d3=1"
 ]

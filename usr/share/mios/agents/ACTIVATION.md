@@ -32,8 +32,8 @@ podman exec -it mios-agents-dev agy                    # sign in the Gemini oper
 **1. Port — reuses the retired `mios-code-server` port.** `mios-agents` replaces
 `mios-code-server` (one IDE, no duplicate service), so it binds the SAME port
 rather than registering a new one. SSOT is `[ports].code_server = 8800` in
-`usr/share/mios/mios.toml`; the unit's `Exec` uses `${MIOS_PORT_CODE_SERVER}`
-(in-unit default `Environment=MIOS_PORT_CODE_SERVER=8800`, since systemd does
+`usr/share/mios/mios.toml`; the unit's `Exec` uses `${MIOS_PORTS_CODE_SERVER}`
+(in-unit default `Environment=MIOS_PORTS_CODE_SERVER=8800`, since systemd does
 NOT expand bash `${VAR:-default}` in `ExecStart`). There is no
 `MIOS_PORT_AGENTS` — that name is retired.
 
@@ -41,31 +41,31 @@ NOT expand bash `${VAR:-default}` in `ExecStart`). There is no
 ```ini
 [Service]
 Type=simple
-Environment=MIOS_PORT_CODE_SERVER=8800
-Environment=MIOS_DEFAULT_PASSWORD=mios
+Environment=MIOS_PORTS_CODE_SERVER=8800
+Environment=MIOS_IDENTITY_DEFAULT_PASSWORD=mios
 EnvironmentFile=-/etc/mios/install.env
 ExecStartPre=/usr/libexec/mios/mios-agents-firstboot.sh
 ExecStart=/usr/sbin/podman run --replace --name mios-agents \
   --network=host \
-  --env PASSWORD=${MIOS_DEFAULT_PASSWORD} \
+  --env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD} \
   --env MIOS_A2O_ENGINE=agy \
   --env MIOS_A2O_WORK=/mnt/mios-root \
-  --env MIOS_A2O_ORCH_ENGINE=${MIOS_A2O_ORCH_ENGINE} \
-  --env MIOS_A2O_ORCH_MODEL=${MIOS_A2O_ORCH_MODEL} \
-  --env MIOS_A2O_ORCH_EFFORT=${MIOS_A2O_ORCH_EFFORT} \
-  --env MIOS_A2O_LANE_A_ENGINE=${MIOS_A2O_LANE_A_ENGINE} \
-  --env MIOS_A2O_LANE_A_MODEL=${MIOS_A2O_LANE_A_MODEL} \
-  --env MIOS_A2O_LANE_A_EFFORT=${MIOS_A2O_LANE_A_EFFORT} \
-  --env MIOS_A2O_LANE_B_ENGINE=${MIOS_A2O_LANE_B_ENGINE} \
-  --env MIOS_A2O_LANE_B_MODEL=${MIOS_A2O_LANE_B_MODEL} \
-  --env MIOS_A2O_LANE_B_EFFORT=${MIOS_A2O_LANE_B_EFFORT} \
-  --env MIOS_A2O_CLAUDE_EFFORT_FLAG=${MIOS_A2O_CLAUDE_EFFORT_FLAG} \
+  --env MIOS_FRONTIER_ORCH_ENGINE=${MIOS_FRONTIER_ORCH_ENGINE} \
+  --env MIOS_FRONTIER_ORCH_MODEL=${MIOS_FRONTIER_ORCH_MODEL} \
+  --env MIOS_FRONTIER_ORCH_EFFORT=${MIOS_FRONTIER_ORCH_EFFORT} \
+  --env MIOS_FRONTIER_LANE_A_ENGINE=${MIOS_FRONTIER_LANE_A_ENGINE} \
+  --env MIOS_FRONTIER_LANE_A_MODEL=${MIOS_FRONTIER_LANE_A_MODEL} \
+  --env MIOS_FRONTIER_LANE_A_EFFORT=${MIOS_FRONTIER_LANE_A_EFFORT} \
+  --env MIOS_FRONTIER_LANE_B_ENGINE=${MIOS_FRONTIER_LANE_B_ENGINE} \
+  --env MIOS_FRONTIER_LANE_B_MODEL=${MIOS_FRONTIER_LANE_B_MODEL} \
+  --env MIOS_FRONTIER_LANE_B_EFFORT=${MIOS_FRONTIER_LANE_B_EFFORT} \
+  --env MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=${MIOS_FRONTIER_CLAUDE_EFFORT_FLAG} \
   --env MIOS_A2O_AGY_EFFORT_FLAG=${MIOS_A2O_AGY_EFFORT_FLAG} \
   --env MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG} \
   --volume /:/mnt/mios-root:rw,rslave \
   --volume /var/lib/mios/agents:/home/coder:rw \
   localhost/mios-agents:latest \
-  --bind-addr 0.0.0.0:${MIOS_PORT_CODE_SERVER} /mnt/mios-root
+  --bind-addr 0.0.0.0:${MIOS_PORTS_CODE_SERVER} /mnt/mios-root
 ```
 `EnvironmentFile=-/etc/mios/install.env` (the `mios-sync-env`-written
 mios.toml→env bridge) overrides the in-unit defaults when present and supplies
@@ -122,5 +122,5 @@ empty stdout because the backing Gemini account has hit its quota (HTTP 429
 `RESOURCE_EXHAUSTED`, "Individual quota reached"; resets ~2026-07-07). Operator
 options: wait for the reset, or upgrade the `agy`/Gemini subscription. Until
 resolved, Lane-B finalize work runs on the `claude` fallback engine. See
-`tasks.jsonl` F-022 (root cause) and F-023 (hardening the `mios-a2o` dispatch so a
+`tasks.jsonl` task_3188 (root cause) and task_3189 (hardening the `mios-a2o` dispatch so a
 silent agy failure is never reported as DONE).

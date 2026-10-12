@@ -539,6 +539,20 @@ _REFINE_SYSTEM_LITE = (
     "not use. JSON keys + verb/tool names stay as-is (identifiers).\n"
 )
 
+def _primary_verb_param(tool: str) -> str:
+    """Derive primary argument name dynamically from SSOT verb catalog schema."""
+    canonical = _resolve_verb_key(tool) if _resolve_verb_key else tool
+    vcfg = _VERB_CATALOG.get(canonical) or _VERB_CATALOG.get(tool) or {}
+    params = vcfg.get("params")
+    if isinstance(params, dict) and params:
+        return next(iter(params.keys()))
+    sig = vcfg.get("sig")
+    if isinstance(sig, str) and sig.strip():
+        first = sig.split(",")[0].split("=")[0].strip().rstrip("?").strip()
+        if first:
+            return first
+    return "name"
+
 def _salvage_refine_dispatch(content: str) -> dict | None:
     if not content:
         return None
@@ -569,7 +583,7 @@ def _salvage_refine_dispatch(content: str) -> dict | None:
     if not args and inner:
         val = inner.strip().strip("\"'").strip()
         if val:
-            args["url" if tool == "open_url" else "name"] = val
+            args[_primary_verb_param(tool)] = val
     if not args:
         return None
     return {"intent": "dispatch", "tool": tool, "args": args, "_salvaged": True}

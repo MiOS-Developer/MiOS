@@ -1,5 +1,5 @@
 # AI-hint: Two-sided test that every Quadlet bind of MiOS-owned state (/var/lib/mios, /srv) exists at boot: declared in usr/lib/tmpfiles.d or guarded by a ConditionPathExists at or under it.
-# AI-related: /usr/share/containers/systemd, /usr/lib/tmpfiles.d, /usr/share/mios/mios.toml, /tools/generate-pod-quadlets.py
+# AI-related: /usr/share/containers/systemd, /usr/lib/tmpfiles.d, /usr/share/mios/mios.toml, tools/native/mios-gen/src/pod_quadlets.rs
 # AI-functions: state_mounts, tmpfiles_declared, findings, main
 
 import argparse

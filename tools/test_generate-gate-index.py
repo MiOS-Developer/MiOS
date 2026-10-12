@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
 # AI-hint: Sibling test for tools/generate-gate-index.py; proves a row never carries a description belonging to another check.
-# AI-related: tools/generate-gate-index.py, automation/98-drift-checks.sh
+# AI-related: tools/native/mios-gen/src/indexes.rs, automation/98-drift-checks.sh
 """Each case is a row the index must NOT emit.
 
 An index row is the only published description of a gate, so a row describing
 the wrong check is worse than a terse one: it is read as the check's contract.
 """
-import importlib.util
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
-
-def _load():
-    spec = importlib.util.spec_from_file_location(
-        "generate_gate_index", os.path.join(_HERE, "generate-gate-index.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-MOD = _load()
 
 GATE = """\
 # --- described neighbour ---
@@ -41,12 +33,21 @@ check_elided() { _run_py_check check_elided tools/fake-elided.py; }
 check_later() {
     echo "[98-drift-checks] a later multi-line check with its own echo"
 }
+main() {
+    check_described
+    check_one_liner
+    check_sub_command
+    check_flagged
+    check_elided
+    check_later
+}
 """
 
 class TestDescription(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = cls.tmp.name
         os.makedirs(os.path.join(cls.root, "tools"))
         for name, hint in (
@@ -55,14 +56,23 @@ class TestDescription(unittest.TestCase):
                 ("fake-elided.py", "A hint the tagger cut off mid-sent...")):
             with open(os.path.join(cls.root, "tools", name), "w") as fh:
                 fh.write("#!/usr/bin/env python3\n# AI-hint: %s\n" % hint)
-        cls.lines = GATE.splitlines()
+        os.makedirs(os.path.join(cls.root, "automation"))
+        with open(os.path.join(cls.root, "automation", "98-drift-checks.sh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(GATE)
+        binary = os.environ.get("MIOS_GEN_BIN") or shutil.which("mios-gen")
+        if not binary:
+            raise AssertionError("mios-gen is required to verify the production gate index")
+        subprocess.run([binary, "gate-index", "--root", cls.root], check=True, capture_output=True, text=True)
+        with open(os.path.join(cls.root, "usr/share/mios/reference/drift-gate-index.tsv"), encoding="utf-8") as fh:
+            cls.descriptions = {row[1]: row[2] for line in fh if not line.startswith("#")
+                                for row in [line.rstrip("\n").split("\t")]}
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
     def _desc(self, name):
-        return MOD._describe(self.root, self.lines, GATE, name)
+        return self.descriptions[name]
 
     def test_a_comment_above_the_definition_wins(self):
         self.assertEqual("described neighbour", self._desc("check_described"))

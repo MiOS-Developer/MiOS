@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: The primary CLI entry point for the MiOS system, providing an OpenAI-compatible agent shell that handles tool-calling, system prompt resolution, and streaming responses from the Hermes-Agent gateway.
-# AI-related: /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard.sh, /usr/libexec/mios/mios-configurator-launch
+# AI-related: /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard, /usr/libexec/mios/mios-configurator-launch
 
 from __future__ import annotations
 
@@ -306,14 +306,20 @@ def chat_streaming(client: OpenAI, msgs: list[dict[str, Any]],
 
 
 KNOWN_VERBS = {
+    "terminal": ["/usr/libexec/mios/mios-terminal"],
+    "ai-terminal": ["/usr/libexec/mios/mios-ai-terminal"],
+    "mcp": ["/usr/lib/mios/mcp/.venv/bin/python3", "/usr/libexec/mios/mios-mcp-server"],
     "build":  ["/usr/libexec/mios/mios-build-driver"],
-    "dash":   ["/usr/libexec/mios/mios-dashboard.sh", "--dash"],
-    "mini":   ["/usr/libexec/mios/mios-dashboard.sh", "--mini"],
-    "mon":    ["/usr/libexec/mios/mios-dashboard.sh", "--monitor"],
-    "monitor":["/usr/libexec/mios/mios-dashboard.sh", "--monitor"],
+    "dash":   ["/usr/bin/mios-gen", "dashboard", "--root", "/"],
+    "mini":   ["/usr/bin/mios-gen", "dashboard", "--root", "/"],
+    "mon":    ["/usr/libexec/mios/mios-dashboard", "--monitor"],
+    "monitor":["/usr/libexec/mios/mios-dashboard", "--monitor"],
+    "shell":  ["/usr/libexec/mios/mios-dashboard", "--monitor"],
     "config": ["/usr/libexec/mios/mios-configurator-launch"],
-    "code":   ["xdg-open", "http://localhost:8080/"],
-    "ai":     ["xdg-open", "http://localhost:3030/"],
+    "code":   ["/usr/libexec/mios/mios-open-url", "http://localhost:8080/"],
+    "ai":     ["/usr/libexec/mios/mios-terminal", "--workspace"],
+    "ai-web": ["/usr/libexec/mios/mios-open-url", "http://localhost:3030/"],
+    "daemon": ["/usr/bin/mios", "daemon"],
     "xbox":   ["/usr/libexec/mios/xbox-repair.sh"],
     "virt":   ["/usr/libexec/mios/virt-apply.sh"],
     "vfio":   ["/usr/libexec/mios/vfio-config.sh"],
@@ -341,6 +347,7 @@ KNOWN_VERBS = {
     "logs":   ["journalctl", "-u", "miosd.service", "-f"],
     "backup": ["/usr/libexec/mios/mios-backup"],
     "secret": ["/usr/libexec/mios/miosd", "secret"],
+    "rde":    ["/usr/libexec/mios/miosd", "rde"],
     "help":   None,        # special-cased below
 }
 
@@ -464,18 +471,139 @@ def _cli_launch_target(prompt: str):
     return rest
 
 
+def _daemon_main(args: list[str]) -> int:
+    """MiOS daemon supervisor: refresh agent session leases and forward pending messages."""
+    import shutil
+    import time
+    install_cron = "--install-cron" in args or "--cron" in args
+
+    if install_cron:
+        cron_file = pathlib.Path("/etc/mios/cron-rules.toml")
+        cron_entry = (
+            "\n# Global agent relay lease refresh and message forwarder\n"
+            "[[rule]]\n"
+            "name = \"agent-relay-refresh-forward\"\n"
+            "cron = \"* * * * *\"\n"
+            "do   = \"/usr/bin/mios daemon --tick\"\n"
+        )
+        try:
+            cron_file.parent.mkdir(parents=True, exist_ok=True)
+            current = cron_file.read_text(encoding="utf-8") if cron_file.is_file() else ""
+            if "agent-relay-refresh-forward" not in current:
+                with cron_file.open("a", encoding="utf-8") as f:
+                    f.write(cron_entry)
+                print("[mios daemon] Registered cron rule in /etc/mios/cron-rules.toml")
+            else:
+                print("[mios daemon] Cron rule already registered in /etc/mios/cron-rules.toml")
+        except Exception as e:
+            sys.stderr.write(f"[mios daemon] Warning: could not write /etc/mios/cron-rules.toml: {e}\n")
+
+    state_dir = pathlib.Path(os.environ.get("XDG_STATE_HOME") or pathlib.Path.home() / ".local/state") / "mios" / "agent-relay"
+    state_file = state_dir / "state.json"
+    notified_count = 0
+    refreshed_count = 0
+    now = int(time.time())
+
+    if state_file.is_file():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            agents = data.get("agents", {})
+            messages = data.get("messages", [])
+
+            for aid, ainfo in agents.items():
+                if ainfo.get("expires", 0) > now - 60:
+                    ainfo["expires"] = now + 300
+                    refreshed_count += 1
+
+            for m in messages:
+                if m.get("status") == "queued" and now - m.get("created", 0) < 300:
+                    target = m.get("to", "")
+                    sender = m.get("from", "")
+                    mid = m.get("message_id", "")
+                    try:
+                        tmux_bin = shutil.which("tmux")
+                        if tmux_bin:
+                            subprocess.run([tmux_bin, "display-message", f"[MiOS Relay] Inbound message {mid} for {target} from {sender}"],
+                                           capture_output=True, timeout=2)
+                            notified_count += 1
+                    except Exception:
+                        pass
+
+            if refreshed_count > 0:
+                tmp = state_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                tmp.replace(state_file)
+        except Exception as e:
+            sys.stderr.write(f"[mios daemon] Error processing relay state: {e}\n")
+
+    print(json.dumps({
+        "status": "ok",
+        "tick": now,
+        "leases_refreshed": refreshed_count,
+        "messages_notified": notified_count
+    }))
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) < 2 and sys.stdin.isatty() and sys.stdout.isatty() and sys.platform != "win32":
+        os.execv("/usr/libexec/mios/mios-terminal", ["mios-terminal"])
+    if len(argv) >= 2 and argv[1] in ("agents", "agent"):
+        if argv[1] == "agent" and len(argv) > 2 and sys.stdin.isatty() and sys.stdout.isatty() and not os.environ.get("TMUX"):
+            os.execv("/usr/libexec/mios/mios-terminal", ["mios-terminal", "--agent", *argv[2:]])
+        option = "--agent-cli" if argv[1] == "agents" else "--launch-agent"
+        os.execv(sys.executable, [sys.executable, "/usr/libexec/mios/mios-mcp-server", option, *argv[2:]])
+    if len(argv) >= 2 and argv[1] in ("ai", "ai-workspace"):
+        if len(argv) >= 3 and argv[2].lower() == "clear":
+            _clear = "/usr/libexec/mios/mios-ai-clear"
+            if pathlib.Path(_clear).is_file():
+                os.execvp(_clear, [_clear] + argv[3:])
+            sys.stderr.write("mios: mios-ai-clear not found at %s\n" % _clear)
+            return 1
+        if not os.environ.get("TMUX") and sys.stdin.isatty() and sys.stdout.isatty() and sys.platform != "win32":
+            os.execv("/usr/libexec/mios/mios-terminal", ["mios-terminal", "--workspace", *argv[2:]])
+        os.execv(sys.executable, [sys.executable, "/usr/libexec/mios/mios-mcp-server", "--workspace", *argv[2:]])
+    if len(argv) >= 2 and argv[1] == "daemon":
+        return _daemon_main(argv[2:])
+    if (len(argv) < 2 or (len(argv) >= 2 and argv[1] in ("mon", "monitor"))) and sys.stdin.isatty() and sys.stdout.isatty():
+        mon_bin = "/usr/libexec/mios/mios-dashboard"
+        mon_py = "/usr/libexec/mios/mios-mon.py"
+        extra_args = argv[2:] if len(argv) >= 2 and argv[1] in ("mon", "monitor") else []
+        root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or (
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if os.path.isabs(__file__) else None
+        )
+        for cand in [
+            os.path.join(root, "usr/libexec/mios/mios-mon.py") if root else None,
+            "C:/MiOS/usr/libexec/mios/mios-mon.py",
+            mon_py,
+        ]:
+            if cand and os.path.isfile(cand):
+                os.execv(sys.executable, [sys.executable, cand, *extra_args])
+        if os.path.isfile(mon_bin) and os.access(mon_bin, os.X_OK):
+            os.execv(mon_bin, [mon_bin, *extra_args])
+        sys.stderr.write("mios: monitor interface not found at " + mon_py + "\n")
+        return 1
+    if len(argv) >= 2 and argv[1] in ("shell", "terminal") and sys.stdin.isatty() and sys.stdout.isatty() and sys.platform != "win32":
+        os.execv("/usr/libexec/mios/mios-terminal", ["mios-terminal", *argv[2:]])
     if len(argv) < 2 or argv[1] in ("-h", "--help") or (len(argv) >= 2 and argv[1] == "help"):
         sys.stderr.write(
             "mios -- MiOS verb dispatcher + locally-hosted OpenAI agent shell.\n\n"
             "Verbs:\n"
+            "  mios                               unified tmux workspace (clients, agents, systems)\n"
+            "  mios mon (or monitor)              unified live TUI monitor\n"
+            "  mios terminal (or shell)             native themed tmux interface (local or SSH)\n"
+            "  mios ai-terminal                     mobile text interface to MiOS AI\n"
+            "  mios mcp                             combined MiOS + terminal MCP stdio\n"
+            "  mios agents [--install]              global SSOT agent CLI catalog / installation\n"
+            "  mios agent NAME [ARGS...]            launch a globally installed agent with native MCP\n"
             "  mios build                           run the MiOS OCI build pipeline (unattended on a non-TTY)\n"
             "  mios dash                            framed dashboard snapshot (services + telemetry)\n"
             "  mios mini                            compact framed static dashboard snapshot\n"
-            "  mios mon (or monitor)                unified live TUI for system services and logs\n"
             "  mios config                          open the HTML configurator in your browser\n"
             "  mios code                            open code-server in your browser\n"
-            "  mios ai                              open Open WebUI in your browser\n"
+            "  mios ai [AGENT ARGS...]               native responsive head + four worker workspace\n"
+            "  mios ai-web                          open Open WebUI in your browser\n"
             "  mios ai clear                        DAY-0 clean slate: wipe chats/jobs/kanban/DBs/RAG\n"
             "  mios xbox                            Xbox VM Secure Boot / XML repair\n"
             "  mios virt                            apply optimized VM config + CPU pinning\n"
@@ -498,6 +626,7 @@ def main(argv: list[str]) -> int:
             "  mios user                            initialize user space (dotfiles/XDG)\n"
             "  mios models                          manage first-boot large models (list, sync, add, rm)\n"
             "  mios secret                          secure secrets management & Linux Keyrings\n"
+            "  mios rde [up|down|status]            decentralized remote development environments\n"
             "  mios status                          system status (--json, --yaml, --table)\n"
             "  mios version                         system version & Law conformance\n"
             "  mios health                          system health assessment\n"
@@ -534,7 +663,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write("mios: mios-ai-clear not found at %s\n" % _clear)
         return 1
 
-    # T-513: Dynamic TTY / JSON / YAML output formatting engine
+    # task_457: Dynamic TTY / JSON / YAML output formatting engine
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or (
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.isabs(__file__) else None
@@ -613,7 +742,7 @@ def main(argv: list[str]) -> int:
     if first in KNOWN_VERBS and KNOWN_VERBS[first] is not None:
         cmd = KNOWN_VERBS[first]
         target = cmd[0]
-        if target.endswith("mios-dashboard.sh"):
+        if sys.platform == "win32" and target.endswith("mios-dashboard"):
             for cand in [
                 os.path.join(root, "usr/libexec/mios/mios-mon.py") if root else None,
                 os.path.join(root, "installation/mios-mon.py") if root else None,
@@ -645,7 +774,10 @@ def main(argv: list[str]) -> int:
             exec_target = target if pathlib.Path(target).is_file() else (resolved_target if root and pathlib.Path(resolved_target).is_file() else target)
             os.execvp(exec_target, [exec_target] + cmd[1:] + argv[2:])
 
-    # Dynamic plugin dispatch (T-514)
+        sys.stderr.write(f"mios: required entrypoint is unavailable: {target}\n")
+        return 127
+
+    # Dynamic plugin dispatch (task_458)
     try:
         from cli.plugin_loader import get_available_plugins, run_plugin
         plugins = get_available_plugins()

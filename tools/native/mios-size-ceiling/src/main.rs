@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_merged_index_lists_every_blob_once() {
-        let listing = "100644 aaaa 0\tREADME.md\0100755 bbbb 0\ttools/x.sh\0";
+        let listing = "100644 aaaa 0\tREADME.md\x00100755 bbbb 0\ttools/x.sh\0";
         let (oids, unmerged) = index_oids(listing);
         assert_eq!(oids, "aaaa\nbbbb\n");
         assert!(unmerged.is_empty());

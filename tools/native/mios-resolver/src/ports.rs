@@ -48,6 +48,49 @@ pub fn derive_ports(merged: &mut Value) {
     }
 }
 
+/// `ports.<name>` -> the `[ports.categories]` key its value is copied from, in
+/// [`derive_ports`] order: a pinned entry, or the base at offset 0.
+pub fn port_origins(merged: &Value) -> std::collections::BTreeMap<String, String> {
+    let mut origins = std::collections::BTreeMap::new();
+    let Some(cats) = merged
+        .get("ports")
+        .and_then(|p| p.get("categories"))
+        .and_then(|c| c.as_table())
+    else {
+        return origins;
+    };
+    let mut names: Vec<&String> = cats.keys().collect();
+    names.sort();
+    for cat_name in names {
+        let cfg = &cats[cat_name];
+        let stride = cfg.get("stride").and_then(|v| v.as_integer()).unwrap_or(1);
+        if let Some(members) = cfg.get("members").and_then(|v| v.as_array()) {
+            for (idx, member) in members.iter().enumerate() {
+                let Some(name) = member.as_str().filter(|n| !n.is_empty()) else {
+                    continue;
+                };
+                let key = format!("ports.{name}");
+                if idx as i64 * stride == 0 {
+                    origins.insert(key, format!("ports.categories.{cat_name}.base"));
+                } else {
+                    origins.remove(&key);
+                }
+            }
+        }
+        if let Some(pinned) = cfg.get("pinned").and_then(|v| v.as_table()) {
+            for (name, value) in pinned {
+                if value.as_integer().is_some() {
+                    origins.insert(
+                        format!("ports.{name}"),
+                        format!("ports.categories.{cat_name}.pinned.{name}"),
+                    );
+                }
+            }
+        }
+    }
+    origins
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +137,20 @@ pinned = { adguard_dns = 53 }
         let p = v.get("ports").unwrap();
         assert_eq!(p.get("agent_pipe").unwrap().as_integer(), Some(8700));
         assert_eq!(p.get("adguard_dns").unwrap().as_integer(), Some(53));
+    }
+
+    #[test]
+    fn origins_name_the_category_key_a_port_is_copied_from() {
+        let o = port_origins(&fixture());
+        assert_eq!(o["ports.agent_pipe"], "ports.categories.agent.base");
+        assert_eq!(o["ports.adguard_ui"], "ports.categories.edge.base");
+        assert_eq!(
+            o["ports.adguard_dns"],
+            "ports.categories.edge.pinned.adguard_dns"
+        );
+        // base + n*stride is computed, not copied: no single source.
+        assert!(!o.contains_key("ports.prefilter"));
+        assert!(!o.contains_key("ports.hermes"));
     }
 
     #[test]

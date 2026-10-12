@@ -17,7 +17,7 @@ mkdir -p "$TMP/bin"
 for b in dnf dnf5; do printf '#!/bin/sh\necho "$*" >> "%s/dnf.log"\nexit "${MIOS_TEST_DNF_RC:-0}"\n' "$TMP" > "$TMP/bin/$b"; chmod +x "$TMP/bin/$b"; done
 
 dependency_checks() {
-    local fixture="$TMP/fixture" got rc
+    local fixture="$TMP/fixture" got
     mkdir -p "$fixture/lib"
     cp "$ROOT/automation/lib/packages.sh" "$fixture/lib/packages.sh"
     cp "$ROOT/automation/91-strip-build-toolchain.sh" "$fixture/91-strip-build-toolchain.sh"
@@ -152,118 +152,56 @@ EOF
     unset -f resolve
 }
 
-native_build_checks() {
-    local fixture="$TMP/native-fixture" output
-    mkdir -p "$fixture/automation" "$fixture/tools/native" "$fixture/src/mios-rs" "$fixture/out"
-    cp "$ROOT/automation/55-native-build.sh" "$fixture/automation/55-native-build.sh"
+native_build_checks() (
+    # This shell phase only bootstraps/delegates. Artifact, catalog and atomic
+    # install controls execute against the real Rust native_build engine.
+    local fixture="$TMP/native-fixture"
+    mkdir -p "$fixture/automation" "$fixture/src/mios-rs" "$fixture/output"
+    cp "$ROOT/automation/55-native-build.sh" "$fixture/automation/"
     printf '[workspace]\n' > "$fixture/src/mios-rs/Cargo.toml"
-    mkdir -p "$fixture/lib" "$fixture/toolchain/lib/rustlib/fixture-host/bin"
-    touch "$fixture/lib/libstd-fixture.rlib" "$fixture/toolchain/lib/rustlib/fixture-host/bin/rust-lld"
-    chmod +x "$fixture/toolchain/lib/rustlib/fixture-host/bin/rust-lld"
     cat > "$TMP/bin/rustc" <<'EOF'
-#!/bin/bash
-case "$*" in
-    '-vV') echo 'host: fixture-host' ;;
-    '--print target-libdir'* )
-        if [[ "${MIOS_TEST_NATIVE_MODE:-}" == missing-std ]]; then echo "$MIOS_TEST_NATIVE_ROOT/missing-std";
-        else echo "$MIOS_TEST_NATIVE_ROOT/lib"; fi ;;
-    '--print sysroot')
-        if [[ "${MIOS_TEST_NATIVE_MODE:-}" == missing-linker ]]; then echo "$MIOS_TEST_NATIVE_ROOT/missing-linker";
-        else echo "$MIOS_TEST_NATIVE_ROOT/toolchain"; fi ;;
-    *) exit 1 ;;
-esac
+#!/bin/sh
+printf 'host: fixture-host\n'
 EOF
-    printf '#!/bin/sh\necho "missing Rust target standard library fixture" >&2\nexit 1\n' > "$TMP/bin/rustup"
-    chmod +x "$TMP/bin/rustc" "$TMP/bin/rustup"
     cat > "$TMP/bin/cargo" <<'EOF'
 #!/bin/bash
 set -euo pipefail
-if [[ "$1" == build ]]; then
-    printf '%s\n' "$*" >> "$MIOS_TEST_CARGO_LOG"
-    name=miosd
-    while (( $# )); do
-        case "$1" in
-            --target-dir) out="$2"; shift 2 ;;
-            --target) target="$2"; shift 2 ;;
-            --bin) name="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
-    out="$out/$target"
-    mkdir -p "$out/release"
-    if [[ "$name" == miosd ]]; then
-        cat > "$out/release/miosd" <<'PLAN'
+printf '%s\n' "$@" > "$MIOS_TEST_CARGO_LOG"
+while (( $# )); do
+    if [[ "$1" == --target-dir ]]; then out="$2"; shift 2; else shift; fi
+done
+mkdir -p "$out/fixture-host/release"
+cat > "$out/fixture-host/release/miosd" <<'ENGINE'
 #!/bin/bash
-case "$1" in
-native-build-settings) printf 'fixture-musl\trust-lld\t-C target-feature=+crt-static\t2\n'; exit 0 ;;
-native-artifact-check)
-    case "${MIOS_TEST_NATIVE_MODE:-}" in
-        foreign) echo 'expected a complete little-endian ELF64 executable' >&2; exit 1 ;;
-        dynamic) echo 'static policy rejects ELF interpreter (PT_INTERP)' >&2; exit 1 ;;
-    esac
-    exit 0 ;;
-native-targets) ;;
-*) exit 1 ;;
-esac
-if [[ "${MIOS_TEST_NATIVE_MODE:-}" == catalog ]]; then echo 'fixture category conflict' >&2; exit 1; fi
-printf 'tools/native\tfixture\tmios-test-native\tcli\t/usr/bin\tfalse\t/usr/libexec/mios\n'
-printf 'src/mios-rs\tfixture\tmios-test-system\tdaemons\t/usr/libexec/mios\ttrue\t-\n'
-PLAN
-        chmod +x "$out/release/miosd"
-        exit 0
-    fi
-    if [[ "${MIOS_TEST_NATIVE_MODE:-}" != missing ]]; then
-        if [[ "${MIOS_TEST_NATIVE_MODE:-}" == foreign ]]; then printf 'MZfixture' > "$out/release/$name";
-        else printf '\177ELFfixture' > "$out/release/$name"; fi
-        chmod +x "$out/release/$name"
-    fi
-    printf 'sidecar' > "$out/release/$name.d"
-    printf 'MZforeign' > "$out/release/$name.exe"
-    chmod +x "$out/release/$name.d" "$out/release/$name.exe"
-else exit 1; fi
+printf '%s\n' "$@" > "$MIOS_TEST_ENGINE_LOG"
+if [[ "${MIOS_TEST_ENGINE_RC:-0}" != 0 ]]; then echo 'planted native engine rejection' >&2; fi
+exit "${MIOS_TEST_ENGINE_RC:-0}"
+ENGINE
+chmod +x "$out/fixture-host/release/miosd"
 EOF
-    chmod +x "$TMP/bin/cargo"
-    run_native() (
-        export PATH="$TMP/bin:$PATH" MIOS_NATIVE_DEST_DIR="$fixture/out" MIOS_TEST_CARGO_LOG="$TMP/cargo.log" CARGO_TARGET_DIR="$TMP/unrelated-output" MIOS_TEST_NATIVE_ROOT="$fixture"
-        bash "$fixture/automation/55-native-build.sh"
-    )
-    output="$(run_native)"
-    if [[ -x "$fixture/out/mios-test-native" && -x "$fixture/out/mios-test-system" && ! -e "$fixture/out/mios-test-native.d" && ! -e "$fixture/out/mios-test-native.exe" ]]; then
-        pass "native installation follows Cargo binaries and excludes executable sidecars"
-    else fail "native artifact installation was incomplete or included foreign artifacts"; fi
-    if grep -q -- "--target-dir $fixture/tools/native/target" "$TMP/cargo.log" && [[ ! -e "$TMP/unrelated-output" ]]; then pass "native build controls its output despite inherited CARGO_TARGET_DIR"; else fail "native build used an unrelated target directory"; fi
-    if MIOS_TEST_NATIVE_MODE=catalog run_native > "$TMP/native.log" 2>&1; then fail "native build accepted invalid role catalog";
-    elif grep -q 'fixture category conflict' "$TMP/native.log"; then pass "native build propagates Rust catalog rejection";
-    else fail "catalog rejection lacked expected diagnostic"; fi
-    (
-        export PATH="$TMP/bin:$PATH" MIOS_NATIVE_INSTALL_ROOT="$fixture/stage" MIOS_TEST_CARGO_LOG="$TMP/cargo.log" MIOS_TEST_NATIVE_ROOT="$fixture"
-        unset MIOS_NATIVE_DEST_DIR
-        mkdir -p "$fixture/stage/usr/bin" "$fixture/stage/usr/libexec/mios"
-        printf 'old executable' > "$fixture/stage/usr/libexec/mios/mios-test-native"
-        ln -s ../libexec/mios/mios-test-native "$fixture/stage/usr/bin/mios-test-native"
-        bash "$fixture/automation/55-native-build.sh"
-    ) > "$TMP/native-stage.log" 2>&1
-    if [[ ! -L "$fixture/stage/usr/bin/mios-test-native" && -x "$fixture/stage/usr/bin/mios-test-native" ]] &&
-       [[ "$(readlink "$fixture/stage/usr/libexec/mios/mios-test-native")" == /usr/bin/mios-test-native ]] &&
-       [[ "$(readlink "$fixture/stage/usr/bin/mios-test-system")" == /usr/libexec/mios/mios-test-system ]]; then
-        pass "FHS staging replaces legacy symlinks and excludes staging prefixes from aliases"
-    else fail "FHS staging created a cycle or leaked a staging path"; fi
-    for mode in foreign missing dynamic missing-std missing-linker; do
-        rm -f "$fixture/tools/native/target/fixture-musl/release/mios-test-native"
-        if MIOS_TEST_NATIVE_MODE="$mode" run_native > "$TMP/native.log" 2>&1; then fail "native build accepted $mode artifact";
-        elif grep -Eq 'ELF64 executable|build did not produce|PT_INTERP|missing Rust target standard library|linker.*unavailable' "$TMP/native.log"; then pass "native build rejects $mode artifact with named diagnostics";
-        else fail "native $mode failure lacked expected diagnostics"; fi
-    done
-    mv "$fixture/src/mios-rs/Cargo.toml" "$fixture/src/mios-rs/Cargo.toml.saved"
-    if run_native > "$TMP/native.log" 2>&1; then fail "partial bake context accepted missing prebuilt tools";
-    elif grep -q 'missing prebuilt' "$TMP/native.log"; then pass "partial bake context requires installed native tools";
-    else fail "partial bake failure lacked expected diagnostics"; fi
-    for name in miosd mios-gate mios-probe mios-node mios-resolver mios-unit-gen mios-render-quadlets mios-bake-plan; do
-        printf '\177ELFfixture' > "$fixture/out/$name"; chmod +x "$fixture/out/$name"
-    done
-    if run_native > "$TMP/native.log" 2>&1 && grep -q 'required prebuilt' "$TMP/native.log"; then pass "partial bake context uses prebuilt native tools without rebuilding"; else fail "prebuilt bake context was rejected"; fi
-    unset -f run_native
-}
+    printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/rustup"
+    chmod +x "$TMP/bin/cargo" "$TMP/bin/rustc" "$TMP/bin/rustup"
+    export PATH="$TMP/bin:$PATH" CARGO_TARGET_DIR="$fixture/output"
+    export MIOS_NATIVE_INSTALL_ROOT="$fixture/stage"
+    export MIOS_TEST_CARGO_LOG="$TMP/cargo.log" MIOS_TEST_ENGINE_LOG="$TMP/engine.log"
+    unset MIOS_NATIVE_DEST_DIR
+    bash "$fixture/automation/55-native-build.sh"
+    grep -Fxq native-build "$TMP/engine.log"
+    grep -Fxq "$fixture/output" "$TMP/engine.log"
+    grep -Fxq "$fixture/stage" "$TMP/engine.log"
+    grep -Fxq -- --locked "$TMP/cargo.log"
+    pass "native phase delegates to the engine with explicit output and FHS install roots"
+    if MIOS_TEST_ENGINE_RC=35 bash "$fixture/automation/55-native-build.sh" > "$TMP/native.log" 2>&1; then
+        fail "native engine rejection was swallowed"
+    elif grep -q 'planted native engine rejection' "$TMP/native.log"; then
+        pass "native engine rejection reaches the phase caller"
+    else fail "native engine rejection lacked its diagnostic"; fi
+    if MIOS_NATIVE_DEST_DIR="$fixture/legacy" bash "$fixture/automation/55-native-build.sh" > "$TMP/native.log" 2>&1; then
+        fail "obsolete flat install destination was accepted"
+    elif grep -q 'Use MIOS_NATIVE_INSTALL_ROOT' "$TMP/native.log"; then
+        pass "obsolete destination fails with the current FHS migration diagnostic"
+    else fail "obsolete destination lacked its diagnostic"; fi
+)
 
 # $1 = BUILD_PROFILE_SECTIONS (or "unset"), $2 = install function, $3 = section; prints dnf call count.
 calls() {
@@ -280,7 +218,76 @@ calls() {
     wc -l < "$TMP/dnf.log" | tr -d ' '
 }
 
+health_checks() (
+    # Execute the production health function without running image build stages.
+    # shellcheck source=/dev/null  # one function excerpted from automation/build.sh at run time
+    source <(sed -n '/^_check_critical_packages() {/,/^}/p' "$ROOT/automation/build.sh")
+    local catalog='gnome-shell gdm podman bootc libvirt kernel-core firewalld cockpit NetworkManager pipewire tuned chrony openssh-server'
+    local catalog_rc=0 missing=''
+    get_packages_strict() { printf '%s\n' "$catalog"; return "$catalog_rc"; }
+    rpm() {
+        printf '%s\n' "$@" >> "$TMP/rpm-health.log"
+        [[ $# -eq 2 && "$1" == -q && "$2" != "$missing" ]]
+    }
+    : > "$TMP/rpm-health.log"
+    _check_critical_packages > "$TMP/health.log" || exit 1
+    [[ "$PKG_OK" -eq 13 && "$PKG_MISS" -eq 0 && "$VALIDATION_FAIL" -eq 0 ]] || exit 1
+    [[ $(grep -c '^\[\|MISS' "$TMP/health.log" || true) -eq 0 ]] || exit 1
+    [[ $(wc -l < "$TMP/rpm-health.log") -eq 26 ]] || exit 1
+    [[ $(grep -c 'gnome-shell gdm' "$TMP/rpm-health.log" || true) -eq 0 ]] || exit 1
+    pass "critical catalog queries thirteen separate RPM names without combined-list false misses"
+    missing=kernel-core
+    if _check_critical_packages > "$TMP/health.log"; then exit 1; fi
+    [[ "$PKG_OK" -eq 12 && "$PKG_MISS" -eq 1 && "$VALIDATION_FAIL" -eq 1 ]] || exit 1
+    grep -q 'kernel-core.*\[MISS\]' "$TMP/health.log" || exit 1
+    pass "one missing critical package is named and fails health validation"
+    # build.sh runs the health gate as a post-build stage: _run_stage records it
+    # in FAIL_LOG and in the native progress ledger, whose final receipt is the
+    # build's exit. Drive those production functions over a one-stage ledger.
+    # shellcheck source=/dev/null  # production functions excerpted at run time
+    source <(sed -n -e '/^_post_package_health() {/,/^}/p' -e '/^_finding() {/,/^}/p' \
+        -e '/^_run_stage() {/,/^}/p' -e '/^_stage_child() {/,/^}/p' "$ROOT/automation/build.sh")
+    for fn in _post_package_health _finding _run_stage _stage_child; do
+        declare -F "$fn" >/dev/null || exit 1
+    done
+    local -A PHASE_FATAL=([package-health]=true)
+    local _miosd="$MIOSD" _mios_root="$ROOT" PROGRESS_DIR PROGRESS_STATE SCRIPT_COUNT
+    local -a FAIL_LOG WARN_LOG WARNED_JSON
+    ledger() {  # one build whose only stage is the health gate; returns the receipt's exit
+        PROGRESS_DIR="$(mktemp -d "$TMP/ledger.XXXXXX")"; PROGRESS_STATE="$PROGRESS_DIR/state.json"
+        SCRIPT_COUNT=0; FAIL_LOG=(); WARN_LOG=(); WARNED_JSON=()
+        printf 'package-health\n' | "$_miosd" build-progress --root "$_mios_root" \
+            --state "$PROGRESS_STATE" --event init > "$TMP/stage.log" 2>&1 || exit 1
+        _run_stage package-health _post_package_health >> "$TMP/stage.log" 2>&1
+        "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event finish >> "$TMP/stage.log" 2>&1
+    }
+    missing=''
+    ledger || exit 1
+    [[ ${#FAIL_LOG[@]} -eq 0 && $SCRIPT_COUNT -eq 1 && ${#WARN_LOG[@]} -eq 0 && ${#WARNED_JSON[@]} -eq 0 && ${PHASE_FATAL[package-health]} == true ]] || exit 1
+    missing=kernel-core
+    if ledger; then exit 1; fi
+    [[ ${#FAIL_LOG[@]} -eq 1 && "${FAIL_LOG[0]}" == "package-health: exit=1" ]] || exit 1
+    grep -q 'Critical package health: 1 missing' "$TMP/stage.log" || exit 1
+    pass "actual build aggregation and final exit fail for missing critical packages"
+    catalog_rc=1
+    : > "$TMP/rpm-health.log"
+    if _check_critical_packages > "$TMP/health.log" 2>&1; then exit 1; fi
+    [[ "$VALIDATION_FAIL" -eq 1 && ! -s "$TMP/rpm-health.log" ]] || exit 1
+    pass "failed package resolution stops before any RPM query"
+)
+
+# The build's native registry and progress engine; build.sh refuses to run without it.
+resolve_miosd() {
+    MIOSD="${MIOS_MIOSD_BIN:-$ROOT/src/mios-rs/target/debug/miosd}"
+    if [[ ! -x "$MIOSD" ]]; then
+        (cd "$ROOT/src/mios-rs" && cargo build -q -p miosd) || { echo "[test-profile-packages] ERROR: cannot build miosd" >&2; exit 1; }
+    fi
+}
+
 main() {
+    resolve_miosd
+    if ! health_checks; then fail "critical package health controls"; fi
+    if [[ "${1:-}" == --health-only ]]; then (( fails == 0 )); return; fi
     dependency_checks
     native_build_checks
     if [[ "${1:-}" == --dependency-only ]]; then
@@ -288,10 +295,7 @@ main() {
         (( fails == 0 ))
         return
     fi
-    local miosd="${MIOS_MIOSD_BIN:-$ROOT/src/mios-rs/target/debug/miosd}"
-    if [[ ! -x "$miosd" ]]; then
-        (cd "$ROOT/src/mios-rs" && cargo build -q -p miosd) || { echo "[test-profile-packages] ERROR: cannot build miosd" >&2; exit 1; }
-    fi
+    local miosd="$MIOSD"
     local core
     core="$(MIOS_ROOT="$ROOT" "$miosd" build --sections --profile core | tr '\n' ' ')"
     [[ " $core " == *" utils "* && " $core " != *" gaming "* ]] \
@@ -315,7 +319,13 @@ main() {
 
     # build.sh itself, truncated before any stage runs: the caller's profile must survive common.sh re-exporting the SSOT env.
     local n_end probe out
-    n_end="$(grep -n "^TOTAL_SCRIPTS=" "$ROOT/automation/build.sh" | cut -d: -f1)"
+    # Truncate at the plan guard: ALL_SCRIPTS is complete there and no stage has run.
+    n_end="$(grep -n '^\[\[ \${#ALL_SCRIPTS\[@\]} -gt 0 \]\]' "$ROOT/automation/build.sh" | head -1 | cut -d: -f1 || true)"
+    if [[ -z "$n_end" ]]; then
+        fail "build.sh no longer guards an empty phase plan, so the profile probe has no truncation point"
+        echo "[test-profile-packages] failures: $fails"
+        return 1
+    fi
     probe="$TMP/build-head.sh"
     head -n "$n_end" "$ROOT/automation/build.sh" \
         | sed "s|^SCRIPT_DIR=.*|SCRIPT_DIR=\"$ROOT/automation\"|" \

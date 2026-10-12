@@ -183,7 +183,7 @@ async def _ensure_verb_embeddings() -> None:
                     try:
                         await pg_execute(
                             "UPDATE verb SET emb = %(emb)s::vector, emb_model = %(model)s, emb_version = %(ver)s WHERE name = %(name)s",
-                            {"emb": vec, "model": os.environ.get("MIOS_VERB_EMBED_MODEL") or "nomic-embed-text", "ver": fp, "name": vname}
+                            {"emb": vec, "model": os.environ.get("MIOS_AI_EMBED_MODEL") or "nomic-embed-text", "ver": fp, "name": vname}
                         )
                     except Exception as e_up:
                         log.debug("Failed to update database verb embedding for %s: %s", vname, e_up)

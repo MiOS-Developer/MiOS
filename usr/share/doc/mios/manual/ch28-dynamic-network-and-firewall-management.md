@@ -16,7 +16,7 @@ Firewall rules isolate host services and control outbound networks.
 
 ## Rules
 - **Tool**: Configured via firewalld policies.
-- **Gating**: Outbound requests are limited by [generate-egress-firewall.py](tools/generate-egress-firewall.py).
+- **Gating**: `mios-gen egress-firewall` projects the outbound rules from SSOT; its [native implementation](../../../../../tools/native/mios-gen/src/main.rs) supports off, audit and enforce modes.
 - **Logs**: Blocked network events are logged in system journals.
 
 #### System References

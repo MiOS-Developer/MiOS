@@ -41,30 +41,30 @@
      so the configurator UI re-skins itself the moment the operator picks
      a new palette -- WYSIWYG editing.
      Token map:
-       --bg      MIOS_COLOR_BG        deep indigo  (Hokusai sky)
-       --fg      MIOS_COLOR_FG        foam cream
-       --accent  MIOS_COLOR_ACCENT    operator blue
-       --text    MIOS_COLOR_FG        body text (alias of fg)
-       --muted   MIOS_COLOR_MUTED     warm grey
+       --bg      MIOS_COLORS_BG        deep indigo  (Hokusai sky)
+       --fg      MIOS_COLORS_FG        foam cream
+       --accent  MIOS_COLORS_ACCENT    operator blue
+       --text    MIOS_COLORS_FG        body text (alias of fg)
+       --muted   MIOS_COLORS_MUTED     warm grey
        --panel   derived from --bg    fieldset surfaces
-       --border  MIOS_COLOR_SUBTLE    pale blue-grey
-       --ok      MIOS_COLOR_SUCCESS   wave green
-       --warn    MIOS_COLOR_WARNING   sunset orange
-       --err     MIOS_COLOR_ERROR     coral red
+       --border  MIOS_COLORS_SUBTLE    pale blue-grey
+       --ok      MIOS_COLORS_SUCCESS   wave green
+       --warn    MIOS_COLORS_WARNING   sunset orange
+       --err     MIOS_COLORS_ERROR     coral red
    */
   :root {
-    --bg:     #282262;   /* MIOS_COLOR_BG     -- deep indigo */
-    --fg:     #E7DFD3;   /* MIOS_COLOR_FG     -- foam cream */
-    --panel:  #1A407F;   /* MIOS_COLOR_ACCENT -- operator blue (panels stand out from bg) */
-    --border: #B7C9D7;   /* MIOS_COLOR_SUBTLE -- pale blue-grey */
-    --accent: #F35C15;   /* MIOS_COLOR_CURSOR -- sunset orange (interactive accents) */
-    --text:   #E7DFD3;   /* MIOS_COLOR_FG     -- body text alias */
-    --muted:  #B7C9D7;   /* MIOS_COLOR_SUBTLE -- secondary text */
-    --ok:     #3E7765;   /* MIOS_COLOR_SUCCESS -- wave green */
-    --warn:   #F35C15;   /* MIOS_COLOR_WARNING -- sunset orange */
-    --err:    #DC271B;   /* MIOS_COLOR_ERROR  -- coral red */
-    --silver: #E0E0E0;   /* MIOS_COLOR_SILVER */
-    --earth:  #734F39;   /* MIOS_COLOR_EARTH */
+    --bg:     #282262;   /* MIOS_COLORS_BG     -- deep indigo */
+    --fg:     #E7DFD3;   /* MIOS_COLORS_FG     -- foam cream */
+    --panel:  #1A407F;   /* MIOS_COLORS_ACCENT -- operator blue (panels stand out from bg) */
+    --border: #B7C9D7;   /* MIOS_COLORS_SUBTLE -- pale blue-grey */
+    --accent: #F35C15;   /* MIOS_COLORS_CURSOR -- sunset orange (interactive accents) */
+    --text:   #E7DFD3;   /* MIOS_COLORS_FG     -- body text alias */
+    --muted:  #B7C9D7;   /* MIOS_COLORS_SUBTLE -- secondary text */
+    --ok:     #3E7765;   /* MIOS_COLORS_SUCCESS -- wave green */
+    --warn:   #F35C15;   /* MIOS_COLORS_WARNING -- sunset orange */
+    --err:    #DC271B;   /* MIOS_COLORS_ERROR  -- coral red */
+    --silver: #E0E0E0;   /* MIOS_COLORS_SILVER */
+    --earth:  #734F39;   /* MIOS_COLORS_EARTH */
     --mono: ui-monospace, "Cascadia Code", "Source Code Pro", Consolas, monospace;
     --sans: -apple-system, "Segoe UI", system-ui, sans-serif;
   }
@@ -1019,6 +1019,23 @@
     </div>
 
     <div class="card">
+      <h3>Heavy AI lane</h3>
+      <p style="color: var(--muted); font-size: 11px; margin: 0 0 10px;">
+        The ONE heavy dGPU lane (<code>mios-llm-heavy</code>) runs the engine
+        picked here; the image renders its Quadlet from it. Each engine's
+        tunables are under Advanced settings &rarr; AI endpoints &amp; models.
+      </p>
+      <label for="f-ai-heavy-engine">engine ([ai].heavy_engine)</label>
+      <!-- Options are re-listed from the loaded SSOT: every [containers.*.engine]
+           table whose select names ai.heavy_engine contributes its overlay names.
+           The static two mirror the vendor overlays for file:// use. -->
+      <select id="f-ai-heavy-engine" data-key="ai.heavy_engine" data-engine-select>
+        <option value="vllm">vllm (PagedAttention + prefix caching, runtime LoRA)</option>
+        <option value="sglang">sglang (HiCache CPU KV offload, native 256k context)</option>
+      </select>
+    </div>
+
+    <div class="card">
       <h3>Locale &amp; language</h3>
       <label for="f-tz">timezone</label>
       <input type="text" id="f-tz" data-key="locale.timezone" placeholder="UTC">
@@ -1233,7 +1250,7 @@
       <summary>Resource Convergence &middot; queue, LoRA, scratchpad <span class="phase-badge">Part 10 &middot; converge</span></summary>
       <div class="section-body">
         <p style="color: var(--muted); font-size: 12px; margin: 0 0 12px;">
-          Configure the converged-resource settings to optimize gateway queues, engine multiplexing (vLLM multi-LoRA), memory tiering, and distroless builds.
+          Configure the converged-resource settings to optimize gateway queues, engine multiplexing (vLLM multi-LoRA: the <code>vllm_*</code> keys apply when the heavy lane's engine, <code>[ai].heavy_engine</code>, is vllm), memory tiering, and distroless builds.
         </p>
 
         <div class="form-grid">
@@ -1254,9 +1271,6 @@
 
           <fieldset>
             <legend>[converge.inference] — Phase 2</legend>
-            <label for="f-conv-inference-heavy-engine-mode">heavy_engine_mode ("dual" or "single")</label>
-            <input type="text" id="f-conv-inference-heavy-engine-mode" data-key="converge.inference.heavy_engine_mode" placeholder="dual">
-
             <label for="f-conv-inference-vllm-lora-adapters-dir">vllm_lora_adapters_dir</label>
             <input type="text" id="f-conv-inference-vllm-lora-adapters-dir" data-key="converge.inference.vllm_lora_adapters_dir" placeholder="/var/lib/mios/lora-adapters/">
 
@@ -1268,9 +1282,6 @@
 
             <label for="f-conv-inference-llama-parallel-slots">llama_parallel_slots</label>
             <input type="text" id="f-conv-inference-llama-parallel-slots" data-key="converge.inference.llama_parallel_slots" data-type="int" placeholder="1">
-
-            <label for="f-conv-inference-retire-heavy-alt">retire_heavy_alt</label>
-            <input type="text" id="f-conv-inference-retire-heavy-alt" data-key="converge.inference.retire_heavy_alt" data-type="bool" placeholder="false">
           </fieldset>
 
           <fieldset>
@@ -1338,30 +1349,34 @@
         </p>
         <div class="grid">
           <fieldset>
-            <legend>[nodes.local-dgpu] — discrete GPU node</legend>
-            <label for="f-node-dgpu-endpoint">endpoint (where this node's engine serves /v1)</label>
-            <input type="text" id="f-node-dgpu-endpoint" data-key="nodes.local-dgpu.endpoint" placeholder="http://localhost:${MIOS_PORT_SGLANG}/v1">
-            <label for="f-node-dgpu-model">model (canonical MiOS model tag this node serves)</label>
-            <input type="text" id="f-node-dgpu-model" data-key="nodes.local-dgpu.model" placeholder="mios-heavy">
-            <label for="f-node-dgpu-lane">lane (compute bucket: gpu | cpu | igpu | npu | accelerator | mobile)</label>
-            <input type="text" id="f-node-dgpu-lane" data-key="nodes.local-dgpu.lane" placeholder="gpu">
-            <label for="f-node-dgpu-api">api (engine protocol: openai | llamacpp | vllm | sglang)</label>
-            <input type="text" id="f-node-dgpu-api" data-key="nodes.local-dgpu.api" placeholder="openai">
-            <label for="f-node-dgpu-hg">health_gate (probe + auto-join/drop)</label>
-            <input type="text" id="f-node-dgpu-hg" data-key="nodes.local-dgpu.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-dgpu-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-dgpu-blade" data-key="nodes.local-dgpu.blade" placeholder="(empty — local blade)">
+            <legend>[nodes.local-heavy] — discrete GPU node: the ONE heavy lane</legend>
+            <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+              Whichever engine <code>[ai].heavy_engine</code> selects (vLLM or
+              SGLang) serves this node on the same port and model name.
+            </p>
+            <label for="f-node-heavy-endpoint">endpoint (where this node's engine serves /v1)</label>
+            <input type="text" id="f-node-heavy-endpoint" data-key="nodes.local-heavy.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1">
+            <label for="f-node-heavy-model">model (canonical MiOS model tag this node serves)</label>
+            <input type="text" id="f-node-heavy-model" data-key="nodes.local-heavy.model" placeholder="mios-heavy">
+            <label for="f-node-heavy-lane">lane (compute bucket: gpu | cpu | igpu | npu | accelerator | mobile)</label>
+            <input type="text" id="f-node-heavy-lane" data-key="nodes.local-heavy.lane" placeholder="gpu">
+            <label for="f-node-heavy-api">api (engine protocol: openai | llamacpp | vllm | sglang)</label>
+            <input type="text" id="f-node-heavy-api" data-key="nodes.local-heavy.api" placeholder="openai">
+            <label for="f-node-heavy-hg">health_gate (inert until the gated lane is enabled + reachable)</label>
+            <input type="text" id="f-node-heavy-hg" data-key="nodes.local-heavy.health_gate" data-type="bool" placeholder="true">
+            <label for="f-node-heavy-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
+            <input type="text" id="f-node-heavy-blade" data-key="nodes.local-heavy.blade" placeholder="(empty — local blade)">
           </fieldset>
           <fieldset>
             <legend>[nodes.local-cpu] — CPU node</legend>
             <label for="f-node-cpu-endpoint">endpoint</label>
-            <input type="text" id="f-node-cpu-endpoint" data-key="nodes.local-cpu.endpoint" placeholder="http://localhost:${MIOS_PORT_SGLANG}/v1">
+            <input type="text" id="f-node-cpu-endpoint" data-key="nodes.local-cpu.endpoint" placeholder="http://localhost:${MIOS_PORTS_CPU_NODE}/v1">
             <label for="f-node-cpu-model">model</label>
-            <input type="text" id="f-node-cpu-model" data-key="nodes.local-cpu.model" placeholder="mios-heavy">
+            <input type="text" id="f-node-cpu-model" data-key="nodes.local-cpu.model" placeholder="mios-agent-cpu">
             <label for="f-node-cpu-lane">lane</label>
-            <input type="text" id="f-node-cpu-lane" data-key="nodes.local-cpu.lane" placeholder="gpu">
+            <input type="text" id="f-node-cpu-lane" data-key="nodes.local-cpu.lane" placeholder="cpu">
             <label for="f-node-cpu-api">api</label>
-            <input type="text" id="f-node-cpu-api" data-key="nodes.local-cpu.api" placeholder="openai">
+            <input type="text" id="f-node-cpu-api" data-key="nodes.local-cpu.api" placeholder="llamacpp">
             <label for="f-node-cpu-hg">health_gate</label>
             <input type="text" id="f-node-cpu-hg" data-key="nodes.local-cpu.health_gate" data-type="bool" placeholder="true">
             <label for="f-node-cpu-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
@@ -1386,45 +1401,15 @@
             <input type="text" id="f-node-igpu-blade" data-key="nodes.local-igpu.blade" placeholder="(empty — local blade)">
           </fieldset>
           <fieldset>
-            <legend>[nodes.local-vllm] — heavy vLLM lane</legend>
-            <label for="f-node-vllm-endpoint">endpoint</label>
-            <input type="text" id="f-node-vllm-endpoint" data-key="nodes.local-vllm.endpoint" placeholder="http://localhost:${MIOS_PORT_VLLM}/v1">
-            <label for="f-node-vllm-model">model</label>
-            <input type="text" id="f-node-vllm-model" data-key="nodes.local-vllm.model" placeholder="mios-heavy">
-            <label for="f-node-vllm-lane">lane</label>
-            <input type="text" id="f-node-vllm-lane" data-key="nodes.local-vllm.lane" placeholder="gpu">
-            <label for="f-node-vllm-api">api</label>
-            <input type="text" id="f-node-vllm-api" data-key="nodes.local-vllm.api" placeholder="openai">
-            <label for="f-node-vllm-hg">health_gate (inert until the gated lane is enabled + reachable)</label>
-            <input type="text" id="f-node-vllm-hg" data-key="nodes.local-vllm.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-vllm-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-vllm-blade" data-key="nodes.local-vllm.blade" placeholder="(empty — local blade)">
-          </fieldset>
-          <fieldset>
-            <legend>[nodes.local-sglang] — heavy SGLang lane</legend>
-            <label for="f-node-sglang-endpoint">endpoint</label>
-            <input type="text" id="f-node-sglang-endpoint" data-key="nodes.local-sglang.endpoint" placeholder="http://localhost:${MIOS_PORT_SGLANG}/v1">
-            <label for="f-node-sglang-model">model</label>
-            <input type="text" id="f-node-sglang-model" data-key="nodes.local-sglang.model" placeholder="mios-heavy">
-            <label for="f-node-sglang-lane">lane</label>
-            <input type="text" id="f-node-sglang-lane" data-key="nodes.local-sglang.lane" placeholder="gpu">
-            <label for="f-node-sglang-api">api</label>
-            <input type="text" id="f-node-sglang-api" data-key="nodes.local-sglang.api" placeholder="openai">
-            <label for="f-node-sglang-hg">health_gate</label>
-            <input type="text" id="f-node-sglang-hg" data-key="nodes.local-sglang.health_gate" data-type="bool" placeholder="true">
-            <label for="f-node-sglang-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
-            <input type="text" id="f-node-sglang-blade" data-key="nodes.local-sglang.blade" placeholder="(empty — local blade)">
-          </fieldset>
-          <fieldset>
             <legend>[nodes.local-llamaswap] — llama.cpp multi-model lane</legend>
             <label for="f-node-ls-endpoint">endpoint</label>
-            <input type="text" id="f-node-ls-endpoint" data-key="nodes.local-llamaswap.endpoint" placeholder="http://localhost:${MIOS_PORT_SGLANG}/v1">
+            <input type="text" id="f-node-ls-endpoint" data-key="nodes.local-llamaswap.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1">
             <label for="f-node-ls-model">model</label>
-            <input type="text" id="f-node-ls-model" data-key="nodes.local-llamaswap.model" placeholder="mios-heavy">
+            <input type="text" id="f-node-ls-model" data-key="nodes.local-llamaswap.model" placeholder="mios-agent-cpu">
             <label for="f-node-ls-lane">lane</label>
-            <input type="text" id="f-node-ls-lane" data-key="nodes.local-llamaswap.lane" placeholder="gpu">
+            <input type="text" id="f-node-ls-lane" data-key="nodes.local-llamaswap.lane" placeholder="cpu">
             <label for="f-node-ls-api">api</label>
-            <input type="text" id="f-node-ls-api" data-key="nodes.local-llamaswap.api" placeholder="openai">
+            <input type="text" id="f-node-ls-api" data-key="nodes.local-llamaswap.api" placeholder="llamacpp">
             <label for="f-node-ls-hg">health_gate</label>
             <input type="text" id="f-node-ls-hg" data-key="nodes.local-llamaswap.health_gate" data-type="bool" placeholder="true">
             <label for="f-node-ls-blade">blade (machine this node lives on; empty = the local blade = [identity].hostname)</label>
@@ -1555,6 +1540,8 @@
             <input type="text" id="f-portal-pass" data-key="portal.password" placeholder="(inherits mios)">
             <label for="f-portal-ttl">session_ttl (signed-cookie lifetime, seconds)</label>
             <input type="text" id="f-portal-ttl" data-key="portal.session_ttl" data-type="int" placeholder="604800">
+            <label for="f-portal-kdf">session_kdf_iterations (PBKDF2 work factor, minimum 600000; changes require login)</label>
+            <input type="text" id="f-portal-kdf" data-key="portal.session_kdf_iterations" data-type="int" placeholder="600000">
             <label for="f-portal-secret">secret (empty = derive the cookie-HMAC key from the password)</label>
             <input type="text" id="f-portal-secret" data-key="portal.secret" placeholder="(empty — derive from password)">
           </fieldset>
@@ -1624,7 +1611,7 @@
             <label for="f-pod-aiheavy-net">network</label>
             <input type="text" id="f-pod-aiheavy-net" data-key="pods.mios-ai-heavy.network" placeholder="host">
             <label for="f-pod-aiheavy-members">members (CSV)</label>
-            <input type="text" id="f-pod-aiheavy-members" data-key="pods.mios-ai-heavy.members" data-array="csv" placeholder="mios-llm-heavy,mios-llm-heavy-alt">
+            <input type="text" id="f-pod-aiheavy-members" data-key="pods.mios-ai-heavy.members" data-array="csv" placeholder="mios-llm-heavy">
           </fieldset>
           <fieldset>
             <legend>[pods.mios-ai-data]</legend>
@@ -1735,7 +1722,7 @@
           <fieldset>
             <legend>[agents.hermes] — agent gateway + tool loop</legend>
             <label for="f-agh-endpoint">endpoint</label>
-            <input type="text" id="f-agh-endpoint" data-key="agents.hermes.endpoint" placeholder="http://localhost:${MIOS_PORT_HERMES}/v1">
+            <input type="text" id="f-agh-endpoint" data-key="agents.hermes.endpoint" placeholder="http://localhost:${MIOS_PORTS_HERMES}/v1">
             <label for="f-agh-model">model</label>
             <input type="text" id="f-agh-model" data-key="agents.hermes.model" placeholder="mios-heavy">
             <label for="f-agh-role">role</label>
@@ -1839,6 +1826,18 @@
             <input type="text" id="f-a2a-mdns-refresh-sec" data-key="a2a.mdns_refresh_sec" data-type="int" placeholder="300">
             <label for="f-mcp-proto">mcp.protocol_version (MCP revision token declared on the initialize handshake)</label>
             <input type="text" id="f-mcp-proto" data-key="mcp.protocol_version" placeholder="2025-11-25">
+            <label for="f-mcp-tmux-enabled">mcp.tmux.enabled (native terminal tools in MiOS MCP)</label>
+            <input type="text" id="f-mcp-tmux-enabled" data-key="mcp.tmux.enabled" data-type="bool">
+            <label for="f-mcp-tmux-binary">mcp.tmux.binary (installed upstream executable)</label>
+            <input type="text" id="f-mcp-tmux-binary" data-key="mcp.tmux.binary">
+            <label for="f-mcp-tmux-slots">mcp.tmux.max_slots (private slots per client)</label>
+            <input type="text" id="f-mcp-tmux-slots" data-key="mcp.tmux.max_slots" data-type="int">
+            <label for="f-mcp-tmux-timeout">mcp.tmux.timeout_s (maximum command duration)</label>
+            <input type="text" id="f-mcp-tmux-timeout" data-key="mcp.tmux.timeout_s" data-type="int">
+            <label for="f-mcp-tmux-history">mcp.tmux.history_limit (terminal scrollback lines)</label>
+            <input type="text" id="f-mcp-tmux-history" data-key="mcp.tmux.history_limit" data-type="int">
+            <label for="f-mcp-tmux-tools">mcp.tmux.allowed_tools (upstream tool allowlist)</label>
+            <input type="text" id="f-mcp-tmux-tools" data-key="mcp.tmux.allowed_tools" data-array="csv">
           </fieldset>
         </div>
       </div>
@@ -1957,8 +1956,6 @@
           </p>
           <label for="f-ai-effort">effort (reasoning-effort ceiling; default shown)</label>
           <input type="text" id="f-ai-effort" data-key="ai.effort" placeholder="max">
-          <label for="f-ai-heavy-engine">heavy_engine (preferred gated heavy lane: sglang | vllm)</label>
-          <input type="text" id="f-ai-heavy-engine" data-key="ai.heavy_engine" placeholder="sglang">
           <label for="f-ai-ask-run">ask_to_run (propose a high-tier action, then wait for a yes before dispatching)</label>
           <input type="text" id="f-ai-ask-run" data-key="ai.ask_to_run" data-type="bool" placeholder="true">
           <label for="f-ai-ask-run-ttl">ask_to_run_ttl_s (per-action approval-bypass window after a yes, seconds)</label>
@@ -1975,6 +1972,56 @@
           <input type="text" id="f-ai-smartroute" data-key="ai.smartroute_enable" data-type="bool" placeholder="false">
           <label for="f-ai-tokbackend">tokenizer_backend (token-accounting backend; default shown)</label>
           <input type="text" id="f-ai-tokbackend" data-key="ai.tokenizer_backend" placeholder="tiktoken">
+        </fieldset>
+        <fieldset>
+          <legend>[ai.vllm] — heavy lane engine options: vLLM</legend>
+          <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+            Used when <code>[ai].heavy_engine</code> = vllm (the selector is in the
+            Personal zone). Placeholders are the SSOT defaults.
+          </p>
+          <label for="f-vllm-enable">enable (documents intent; the unit is the real gate)</label>
+          <input type="text" id="f-vllm-enable" data-key="ai.vllm.enable" data-type="bool" placeholder="false">
+          <label for="f-vllm-served">served_name (= [nodes.local-heavy].model)</label>
+          <input type="text" id="f-vllm-served" data-key="ai.vllm.served_name" placeholder="mios-heavy">
+          <label for="f-vllm-gpu-util">gpu_util (--gpu-memory-utilization)</label>
+          <input type="text" id="f-vllm-gpu-util" data-key="ai.vllm.gpu_util" data-type="float" placeholder="0.85">
+          <label for="f-vllm-max-len">max_model_len (--max-model-len)</label>
+          <input type="text" id="f-vllm-max-len" data-key="ai.vllm.max_model_len" data-type="int" placeholder="262144">
+          <label for="f-vllm-kv">kv_cache_dtype (--kv-cache-dtype)</label>
+          <input type="text" id="f-vllm-kv" data-key="ai.vllm.kv_cache_dtype" placeholder="fp8">
+          <label for="f-vllm-quant">quantization (empty = auto-detect from the weights)</label>
+          <input type="text" id="f-vllm-quant" data-key="ai.vllm.quantization" placeholder="">
+          <label for="f-vllm-tool-parser">tool_call_parser</label>
+          <input type="text" id="f-vllm-tool-parser" data-key="ai.vllm.tool_call_parser" placeholder="hermes">
+          <label for="f-vllm-apc">prefix_caching (--enable-prefix-caching)</label>
+          <input type="text" id="f-vllm-apc" data-key="ai.vllm.prefix_caching" data-type="bool" placeholder="true">
+          <label for="f-vllm-v1">v1_engine</label>
+          <input type="text" id="f-vllm-v1" data-key="ai.vllm.v1_engine" data-type="bool" placeholder="true">
+        </fieldset>
+        <fieldset>
+          <legend>[ai.sglang] — heavy lane engine options: SGLang</legend>
+          <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+            Used when <code>[ai].heavy_engine</code> = sglang. HiCache spills inactive
+            KV to CPU RAM, which is what lets the full 256k context fit the GPU.
+          </p>
+          <label for="f-sglang-enable">enable (documents intent; the unit is the real gate)</label>
+          <input type="text" id="f-sglang-enable" data-key="ai.sglang.enable" data-type="bool" placeholder="false">
+          <label for="f-sglang-bake">bake_model (HF repo of the heavy lane's weights)</label>
+          <input type="text" id="f-sglang-bake" data-key="ai.sglang.bake_model" placeholder="stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ">
+          <label for="f-sglang-served">served_name (= [nodes.local-heavy].model)</label>
+          <input type="text" id="f-sglang-served" data-key="ai.sglang.served_name" placeholder="mios-heavy">
+          <label for="f-sglang-mem">mem_fraction (--mem-fraction-static)</label>
+          <input type="text" id="f-sglang-mem" data-key="ai.sglang.mem_fraction" data-type="float" placeholder="0.85">
+          <label for="f-sglang-tool-parser">tool_parser (--tool-call-parser)</label>
+          <input type="text" id="f-sglang-tool-parser" data-key="ai.sglang.tool_parser" placeholder="qwen25">
+          <label for="f-sglang-reasoning">reasoning_parser (empty = non-thinking model)</label>
+          <input type="text" id="f-sglang-reasoning" data-key="ai.sglang.reasoning_parser" placeholder="">
+          <label for="f-sglang-kv">kv_cache_dtype (--kv-cache-dtype)</label>
+          <input type="text" id="f-sglang-kv" data-key="ai.sglang.kv_cache_dtype" placeholder="fp8_e5m2">
+          <label for="f-sglang-hicache">hierarchical_cache (--enable-hierarchical-cache)</label>
+          <input type="text" id="f-sglang-hicache" data-key="ai.sglang.hierarchical_cache" data-type="bool" placeholder="true">
+          <label for="f-sglang-radix">unified_radix_tree (--enable-unified-radix-tree)</label>
+          <input type="text" id="f-sglang-radix" data-key="ai.sglang.unified_radix_tree" data-type="bool" placeholder="true">
         </fieldset>
       </div>
     </details>
@@ -2275,7 +2322,7 @@
       <fieldset>
         <legend>bootstrap.host_storage</legend>
         <label for="f-host-drive">drive_letter</label>
-        <input type="text" id="f-host-drive" data-key="bootstrap.host_storage.drive_letter" placeholder="M">
+        <input type="text" id="f-host-drive" data-key="bootstrap.host_storage.drive_letter" placeholder="C">
         <label for="f-host-label">volume_label</label>
         <input type="text" id="f-host-label" data-key="bootstrap.host_storage.volume_label" placeholder="MIOS-DEV">
         <label for="f-host-shrink">shrink_mb (MB to take from C:\)</label>
@@ -2351,10 +2398,8 @@
         <input type="text" id="f-port-llm-light" data-key="ports.llm_light" data-type="int" placeholder="11450">
         <label for="f-port-cpu-node">cpu_node (always-on / gaming-immune CPU llama-server lane)</label>
         <input type="text" id="f-port-cpu-node" data-key="ports.cpu_node" data-type="int" placeholder="11451">
-        <label for="f-port-sglang">sglang (heavy local LLM backend)</label>
-        <input type="text" id="f-port-sglang" data-key="ports.sglang" data-type="int" placeholder="11441">
-        <label for="f-port-vllm">vllm (alternate heavy local LLM backend)</label>
-        <input type="text" id="f-port-vllm" data-key="ports.vllm" data-type="int" placeholder="11440">
+        <label for="f-port-llm-heavy">llm_heavy (THE heavy dGPU lane; vLLM or SGLang per [ai].heavy_engine)</label>
+        <input type="text" id="f-port-llm-heavy" data-key="ports.llm_heavy" data-type="int" placeholder="8520">
         <label for="f-port-k3s">k3s_api (Kubernetes API)</label>
         <input type="text" id="f-port-k3s" data-key="ports.k3s_api" data-type="int" placeholder="6443">
         <label for="f-port-stack-id">stack_id (multiplier offset for port collision avoidance)</label>
@@ -2465,7 +2510,7 @@
         <label for="f-img-bib-alpine">bib_alpine (build helper)</label>
         <input type="text" id="f-img-bib-alpine" data-key="image.sidecars.bib_alpine" placeholder="docker.io/library/alpine:latest">
         <label for="f-img-pgvector">pgvector (unified agent datastore)</label>
-        <input type="text" id="f-img-pgvector" data-key="image.sidecars.pgvector" placeholder="docker.io/pgvector/pgvector:pg17">
+        <input type="text" id="f-img-pgvector" data-key="image.sidecars.pgvector" placeholder="docker.io/pgvector/pgvector:pg18">
         <label for="f-img-adguard">adguard (DNS sinkhole + resolver)</label>
         <input type="text" id="f-img-adguard" data-key="image.sidecars.adguard" placeholder="docker.io/adguard/adguardhome:latest">
       </fieldset>
@@ -2830,6 +2875,10 @@
     <div class="grid">
       <fieldset>
         <legend>terminal (post-install MiOS app: 80x20 portal feel, edge-to-edge framing)</legend>
+        <label for="f-term-action">default_action (unified workspace or shell)</label>
+        <select id="f-term-action" data-key="terminal.default_action" data-type="string"><option value="ai">AI workspace</option><option value="terminal">Shell</option></select>
+        <label for="f-term-directory">start_directory (MiOS path for new desktop launches)</label>
+        <input type="text" id="f-term-directory" data-key="terminal.start_directory" data-type="string" placeholder="/">
         <label for="f-term-cols">cols</label>
         <input type="text" id="f-term-cols" data-key="terminal.cols" data-type="int" placeholder="80">
         <label for="f-term-rows">rows</label>
@@ -2977,12 +3026,29 @@
         <label for="f-tt-devprofile">dev_profile_name (the MiOS.lnk target)</label>
         <input type="text" id="f-tt-devprofile" data-key="theme.terminal.dev_profile_name" placeholder="MiOS-DEV">
         <label for="f-tt-summon-keys">summon_keys (toggle MiOS app from anywhere)</label>
-        <input type="text" id="f-tt-summon-keys" data-key="theme.terminal.summon_keys" placeholder="win+space">
+        <input type="text" id="f-tt-summon-keys" data-key="theme.terminal.summon_keys" placeholder="ctrl+alt+shift+space">
         <label for="f-tt-summon-name">summon_window_name</label>
         <input type="text" id="f-tt-summon-name" data-key="theme.terminal.summon_window_name" placeholder="MiOS-DEV">
+        <label>Windows code page <input type="number" data-key="theme.terminal.windows_codepage" data-type="int"></label>
+      </fieldset>
+      <fieldset>
+        <legend>theme.tmux</legend>
+        <label>Style <select data-key="theme.tmux.style"><option>rounded</option><option>powerline</option><option>minimal</option></select></label>
+        <label>Status position <select data-key="theme.tmux.status_position"><option>bottom</option><option>top</option></select></label>
+        <label>Glyph mode <select data-key="theme.tmux.glyph_mode"><option>auto</option><option>nerd</option><option>ascii</option></select></label>
+        <label>SSH glyph mode <select data-key="theme.tmux.remote_glyph_mode"><option>auto</option><option>nerd</option><option>ascii</option></select></label>
+        <label>Refresh seconds <input type="number" data-key="theme.tmux.status_interval_s" data-type="int" min="1"></label>
       </fieldset>
       <fieldset>
         <legend>theme.prompt — additional powerline glyphs</legend>
+        <label>Glyph mode <select data-key="theme.prompt.glyph_mode"><option>auto</option><option>nerd</option><option>ascii</option></select></label>
+        <label>SSH glyph mode <select data-key="theme.prompt.remote_glyph_mode"><option>auto</option><option>nerd</option><option>ascii</option></select></label>
+        <label>ASCII leader <input data-key="theme.prompt.ascii.leader"></label>
+        <label>ASCII closer <input data-key="theme.prompt.ascii.closer"></label>
+        <label>ASCII separator <input data-key="theme.prompt.ascii.separator"></label>
+        <label>ASCII Git change <input data-key="theme.prompt.ascii.git_change"></label>
+        <label>ASCII Git branch <input data-key="theme.prompt.ascii.git_branch"></label>
+        <label>ASCII Git commit <input data-key="theme.prompt.ascii.git_commit"></label>
         <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
           Primary prompt symbol and powerline left/right are in the
           Personal zone above. These remaining tokens fine-tune the
@@ -3289,9 +3355,9 @@
       <fieldset>
         <legend>[hermes] — gateway back-compat</legend>
         <label for="f-herm-endpoint">endpoint</label>
-        <input type="text" id="f-herm-endpoint" data-key="hermes.endpoint" placeholder="http://localhost:${MIOS_PORT_HERMES}/v1">
+        <input type="text" id="f-herm-endpoint" data-key="hermes.endpoint" placeholder="http://localhost:${MIOS_PORTS_HERMES}/v1">
         <label for="f-herm-backend">backend (inference lane it fronts)</label>
-        <input type="text" id="f-herm-backend" data-key="hermes.backend" placeholder="http://localhost:${MIOS_PORT_LLM_LIGHT}">
+        <input type="text" id="f-herm-backend" data-key="hermes.backend" placeholder="http://localhost:${MIOS_PORTS_LLM_LIGHT}">
         <label for="f-herm-model">model (mirrors [ai].model; back-compat)</label>
         <input type="text" id="f-herm-model" data-key="hermes.model" placeholder="granite4.1:8b">
         <label for="f-herm-enable">enable</label>
@@ -3304,7 +3370,7 @@
         <label for="f-ref-model">model</label>
         <input type="text" id="f-ref-model" data-key="refine.model" placeholder="mios-agent">
         <label for="f-ref-endpoint">endpoint</label>
-        <input type="text" id="f-ref-endpoint" data-key="refine.endpoint" placeholder="http://localhost:${MIOS_PORT_LLM_LIGHT}">
+        <input type="text" id="f-ref-endpoint" data-key="refine.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_LIGHT}">
         <label for="f-ref-timeout">timeout_seconds</label>
         <input type="text" id="f-ref-timeout" data-key="refine.timeout_seconds" data-type="int" placeholder="45">
         <label for="f-ref-maxtok">max_tokens</label>
@@ -3331,7 +3397,7 @@
         <label for="f-pol-model">polish.model</label>
         <input type="text" id="f-pol-model" data-key="polish.model" placeholder="mios-agent">
         <label for="f-pol-endpoint">polish.endpoint</label>
-        <input type="text" id="f-pol-endpoint" data-key="polish.endpoint" placeholder="http://localhost:${MIOS_PORT_LLM_LIGHT}">
+        <input type="text" id="f-pol-endpoint" data-key="polish.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_LIGHT}">
         <label for="f-pol-timeout">polish.timeout_seconds</label>
         <input type="text" id="f-pol-timeout" data-key="polish.timeout_seconds" data-type="int" placeholder="45">
         <label for="f-pol-maxtok">polish.max_tokens</label>
@@ -4278,13 +4344,13 @@ function emitTomlValue(v) {
     const allNumeric = v.every(x => typeof x === "number");
     const items = allNumeric
       ? v.map(n => String(n))
-      : v.map(s => `"${String(s).replace(/"/g, '\\"')}"`);
+      : v.map(s => JSON.stringify(String(s)));
     // Inline for short arrays (groups, small sets); multi-line for long
     // arrays (desktop.flatpaks) so the saved TOML stays human-readable.
     if (v.length <= 4) return "[" + items.join(", ") + "]";
     return "[\n    " + items.join(",\n    ") + ",\n]";
   }
-  return `"${String(v).replace(/"/g, '\\"')}"`;
+  return JSON.stringify(String(v));
 }
 
 // ── Form ↔ data binding ──────────────────────────────────────────
@@ -4309,7 +4375,27 @@ function splitDataKey(k) {
   return i < 0 ? ["", k] : [k.substring(0, i), k.substring(i + 1)];
 }
 
+// An engine selector (data-engine-select) offers exactly the overlays the loaded
+// SSOT declares: every [<kind>.<name>.engine] table whose `select` names this
+// control's key contributes the names of its [<...>.engine.<engine>.*] tables.
+// With no such table loaded (file:// defaults) the static options stay.
+function populateEngineSelects() {
+  document.querySelectorAll("select[data-engine-select]").forEach(sel => {
+    const names = new Set();
+    for (const [sec, tbl] of Object.entries(DATA)) {
+      if (!sec.endsWith(".engine") || tbl?.select !== sel.dataset.key) continue;
+      for (const other of Object.keys(DATA)) {
+        if (other.startsWith(sec + ".")) names.add(other.slice(sec.length + 1).split(".")[0]);
+      }
+    }
+    if (!names.size) return;
+    const labels = new Map(Array.from(sel.options).map(o => [o.value, o.textContent]));
+    sel.replaceChildren(...[...names].sort().map(n => new Option(labels.get(n) || n, n)));
+  });
+}
+
 function refreshFromData() {
+  populateEngineSelects();
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);
     const v = DATA[sec]?.[key];
@@ -5001,7 +5087,7 @@ function applyEmbedContext() {
 
 // STEP 5 -- seed the form from the live layered mios.toml when embedded.
 // GET /portal/config (relative to location.origin; no hardcoded host).
-// INERT until AGY builds the route (AGY-50): any non-2xx / network error /
+// INERT until AGY builds the route (task_1077): any non-2xx / network error /
 // empty body degrades SILENTLY to the inline DEFAULTS_TOML already loaded
 // at boot. NEVER attempted under file:// (offline USB fallback, ADR-0008).
 function seedFromServer() {
@@ -5038,7 +5124,7 @@ function seedFromServer() {
       snapshotLoaded();   // WS-CONFIG diff baseline = the live Portal config
       showStatus("Loaded the live mios.toml from the Portal.", "ok");
     })
-    .catch(() => { /* route not live yet (AGY-50) -> keep inline defaults */ });
+    .catch(() => { /* route not live yet (task_1077) -> keep inline defaults */ });
 }
 
 function detectPlatform() {
@@ -5105,7 +5191,7 @@ function renderPathBanner() {
   if (sp) {
     suggestedRow =
       `<div style="margin:4px 0 8px;padding:6px 8px;background:rgba(88,166,255,.12);border-radius:4px">` +
-      `<b>Bootstrap is waiting on:</b> <code>${sp}</code><br>` +
+      `<b>Bootstrap is waiting on:</b> <code>${escapeHtml(sp)}</code><br>` +
       `Click <b>Pick file</b> above and open this exact path; edit; click Save. The bootstrap script will pick up the values when you press Enter back in the terminal.` +
       `</div>`;
   }
@@ -5449,7 +5535,7 @@ renderPathBanner();
 applyEmbedContext();
 
 // STEP 5 -- when embedded, seed the form from the live layered mios.toml
-// (GET /portal/config). Inert/degrades-to-defaults until AGY-50; never
+// (GET /portal/config). Inert/degrades-to-defaults until task_1077; never
 // runs under file://.
 seedFromServer();
 

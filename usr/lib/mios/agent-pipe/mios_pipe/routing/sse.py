@@ -180,7 +180,7 @@ _HERMES_TAIL_PATH = os.environ.get(
     "MIOS_HERMES_TAIL_PATH", "/var/lib/mios/hermes-tail/latest.json")
 
 def _frontier_stream_events(seen_ts: float) -> list:
-    path = os.environ.get("MIOS_A2O_STREAM_PATH") or os.path.join(
+    path = os.environ.get("MIOS_FRONTIER_STREAM_PATH") or os.path.join(
         os.path.dirname(_HERMES_TAIL_PATH), "frontier.jsonl")
     out: list = []
     try:

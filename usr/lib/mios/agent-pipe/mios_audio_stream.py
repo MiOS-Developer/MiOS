@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).
+# AI-hint: Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).
 # AI-doc: usr/share/doc/mios/manual/ch78-streaming-audio-whisper.md
 """Low-latency WebRTC streaming audio ingress and streaming Whisper speech-to-text bridge.
 
@@ -37,7 +37,7 @@ SAMPLES_PER_FRAME = int(DEFAULT_SAMPLE_RATE * (FRAME_DURATION_MS / 1000.0))  # 3
 BYTES_PER_FRAME = SAMPLES_PER_FRAME * BYTES_PER_SAMPLE  # 640 bytes
 
 DEFAULT_SOCKET_PATH = "/run/mios/audio-stream.sock"
-DEFAULT_WHISPER_URL = f"http://localhost:{os.environ.get('MIOS_PORT_WHISPER', '8178')}/inference"
+DEFAULT_WHISPER_URL = f"http://localhost:{os.environ.get('MIOS_PORTS_WHISPER', '8178')}/inference"
 DEFAULT_VAD_THRESHOLD = 0.015
 DEFAULT_BUFFER_SECONDS = 5.0
 LATENCY_TARGET_MS = 150.0
@@ -635,7 +635,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="mios_audio_stream.py",
-        description="Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (T-533, AGY-2131).",
+        description="Low-latency WebRTC streaming audio ingress and streaming Whisper STT bridge (task_477, task_2710).",
         parents=[common_parser],
     )
 

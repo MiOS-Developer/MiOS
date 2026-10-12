@@ -130,7 +130,7 @@ model is just another entry in the lane's model map:
   env-var hardcoding.
 * **Heavy-lane alternative:** grounding heads that need vLLM rather than llama.cpp
   (UI-TARS-1.5-7B, GUI-Actor, Holo1.5) target the gated `mios-llm-heavy` lane
-  at `grounding_endpoint = http://localhost:${MIOS_PORT_VLLM}/v1`, `grounding_model =
+  at `grounding_endpoint = http://localhost:${MIOS_PORTS_VLLM}/v1`, `grounding_model =
   mios-grounding`. To serve one, set `vllm_bake_model` to the head and
   `vllm_served_name = "mios-grounding"` in the `[ai.vllm]` overlay and enable
   `mios-llm-heavy.service` when VRAM frees.
@@ -186,9 +186,9 @@ Win32/Wayland GUIs.
 
 # 2. Point mios-pc-vision at the lane via mios.toml [ai] overlay:
 #      vision_grounding_model    = "qwen3-vl:4b"
-#      vision_grounding_endpoint = "http://localhost:${MIOS_PORT_LLM_LIGHT}/v1"   # mios-llm-light
+#      vision_grounding_endpoint = "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1"   # mios-llm-light
 #    (or, for a UI-TARS-class head on vLLM, enable mios-llm-heavy and set
-#     grounding_endpoint = http://localhost:${MIOS_PORT_VLLM}/v1 / grounding_model =
+#     grounding_endpoint = http://localhost:${MIOS_PORTS_VLLM}/v1 / grounding_model =
 #     "mios-grounding")
 
 # 3. Author / refine a pc-control SKILL in pgvector (the agent's skill store)

@@ -24,7 +24,7 @@ def _as_int(v, default: int = 0) -> int:
 
 def local_blade_name() -> str:
     try:
-        h = str(os.environ.get("MIOS_HOSTNAME") or "").strip()
+        h = str(os.environ.get("MIOS_IDENTITY_HOSTNAME") or "").strip()
         if not h:
             h = str((_toml_section("identity") or {}).get("hostname") or "").strip()
         if not h:

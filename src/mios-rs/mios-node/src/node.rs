@@ -1,5 +1,5 @@
 // AI-hint: Micro-node networking daemon, peer discovery, and gossip protocol manager.
-// AI-related: src/mios-rs/mios-node/src/main.rs, src/mios-rs/mios-node/src/protocol.rs
+// AI-related: src/mios-rs/mios-node/src/main.rs, src/mios-rs/mios-node/src/wire.rs
 //! MiOS Micro-Node Daemon & Network Peer Manager
 
 use crate::executor::ExecutionEngine;

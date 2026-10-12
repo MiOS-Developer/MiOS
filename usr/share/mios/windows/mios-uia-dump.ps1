@@ -1,5 +1,5 @@
-# AI-hint: Dumps the UI Automation control-view tree of the foreground window, a -ProcessId main window, or the desktop root as compact JSON; defers to the compiled mios-launch dump when present.
-# AI-related: mios-launch
+# AI-hint: Dumps the real UI Automation control-view tree of the foreground window, a process window, or the desktop root as compact JSON.
+# AI-related: mios-launch, mios-oscontrol-server.ps1
 
 [CmdletBinding()]
 param(
@@ -7,16 +7,6 @@ param(
     [int]$ProcessId = 0,
     [int]$MaxDepth = 15
 )
-
-$compiledExe = Join-Path $PSScriptRoot '..\..\..\src\mios-launch.exe'
-if (-not (Test-Path $compiledExe)) {
-    $compiledExe = 'C:\MiOS\src\mios-launch.exe'
-}
-
-if (Test-Path $compiledExe) {
-    & $compiledExe dump
-    exit $LASTEXITCODE
-}
 
 Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop

@@ -28,8 +28,8 @@ import urllib.parse
 
 import websockets  # 16.0, present in the agent venv
 
-CDP = os.environ.get("MIOS_CRAWL_CDP_URL") or (
-    "http://127.0.0.1:%s" % os.environ.get("MIOS_PORT_CHROME_CDP", "9222"))
+CDP = os.environ.get("MIOS_SERVICES_WEBTOOLS_CDP_URL") or (
+    "http://127.0.0.1:%s" % os.environ.get("MIOS_PORTS_CHROME_CDP", "9222"))
 
 
 def _http(method, path, timeout=8):

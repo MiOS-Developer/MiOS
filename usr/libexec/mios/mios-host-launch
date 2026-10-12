@@ -21,28 +21,47 @@ else
     exit 127
 fi
 
+_HL_DEPTH="${_MIOS_HOST_LAUNCH_DEPTH:-0}"
 _HL_REEXEC="${_MIOS_HOST_LAUNCH_REEXEC:-0}"
 
 _op_user=""
-if [ -r /usr/share/mios/mios.toml ]; then
-    _op_user="$(awk -F\" '/^\s*username\s*=\s*"/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
+if [ -r /etc/wsl.conf ]; then
+    _op_user="$(awk -F= '/^[[:space:]]*default[[:space:]]*=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' /etc/wsl.conf 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] && [ -r /etc/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /etc/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] && [ -r /usr/share/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] || ! id -u "$_op_user" >/dev/null 2>&1; then
+    if id -u mios >/dev/null 2>&1; then
+        _op_user="mios"
+    elif id -u user >/dev/null 2>&1; then
+        _op_user="user"
+    fi
 fi
 [ -z "$_op_user" ] && _op_user="mios"
-_op_uid="$(id -u "$_op_user" 2>/dev/null || echo 1000)"
+_op_uid="$(id -u "$_op_user" 2>/dev/null || echo 992)"
 _my_uid="$(id -u)"
 
 _NEED_REEXEC=0
-if [ "$_HL_REEXEC" != "1" ] \
-   && [ "$_my_uid" != "$_op_uid" ] \
-   && [ "$_my_uid" -lt "$_op_uid" ]; then
-    _NEED_REEXEC=1
+if [ "$_HL_REEXEC" != "1" ] && [ "$_HL_DEPTH" -lt 2 ] && [ "$_my_uid" != "$_op_uid" ]; then
+    # Only re-exec if root (0) or low-UID system daemon (< 900) without display access
+    if [ "$_my_uid" -eq 0 ] || [ "$_my_uid" -lt 900 ]; then
+        if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] && [ ! -S "/run/user/${_my_uid}/wayland-0" ]; then
+            _NEED_REEXEC=1
+        fi
+    fi
 fi
 
 if [ "$_NEED_REEXEC" = "1" ] \
    && [ -e /mnt/c/Windows/System32/wsl.exe ] \
    && [ -x /usr/libexec/mios/mios-as-operator ]; then
     export _MIOS_HOST_LAUNCH_REEXEC=1
-    exec /usr/libexec/mios/mios-as-operator "$BIN" "$@"
+    export _MIOS_HOST_LAUNCH_DEPTH=$(( _HL_DEPTH + 1 ))
+    exec env _MIOS_HOST_LAUNCH_DEPTH=$(( _HL_DEPTH + 1 )) _MIOS_HOST_LAUNCH_REEXEC=1 \
+        /usr/libexec/mios/mios-as-operator "$BIN" "$@"
 fi
 
 if [ "$_NEED_REEXEC" = "1" ]; then

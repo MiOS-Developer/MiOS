@@ -1,4 +1,4 @@
-# AI-hint: Systemd timer for hourly CephFS atomic subvolume snapshotting and retention management (T-794).
+# AI-hint: Systemd timer for hourly CephFS atomic subvolume snapshotting and retention management (task_738).
 # AI-related: usr/lib/systemd/system/mios-ceph-snap.service, usr/libexec/mios/mios-ceph-snap
 
 [Unit]

@@ -1,1 +1,1 @@
-{"peers":[{"id":"mios-local","url":"http://127.0.0.1:8640","note":"Loopback self-peer so a2a_delegate/handoff have a registered A2A peer on a single-node MiOS. The agent-pipe serves its own AgentCard at /.well-known/agent-card.json and consumes A2A messages, so delegation round-trips locally. Replace/extend with real remote peers for a multi-node swarm."}]}
+{"peers":[],"note":"Register actual remote A2A agents here. The local MiOS orchestrator is not a remote peer; a self-peer would recurse. Local CLI agents coordinate through the combined MiOS-MCP terminal tools."}

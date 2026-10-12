@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Tier-1 Wasm sandbox runtime with fuel bounding, 64MB memory limit, and mios_sys_* host imports.
-# AI-related: src/mios-rs/mios-node/src/executor.rs, tests/test-node.py, usr/share/doc/mios/adr/0020-edge-node-mesh-protocol-and-dual-tier-execution.md
+# AI-related: src/mios-rs/mios-node/src/exec.rs, tests/test-node.py, usr/share/doc/mios/adr/0020-edge-node-mesh-protocol-and-dual-tier-execution.md
 """
 MiOS Tier-1 WebAssembly Sandbox Runtime Engine.
 Enforces fuel instruction limits, 64MB memory ceiling, and isolated `mios_sys_*` host imports.

@@ -172,7 +172,7 @@ def main():
 
 
 # ==============================================================================
-# Consolidated from test_mios_cua_hierarchy.py (T-1092)
+# Consolidated from test_mios_cua_hierarchy.py (task_1006)
 # ==============================================================================
 # AI-hint: Verification test suite for mios_cua hierarchy routing, verify-after-action, and coordinate scaling.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

@@ -23,9 +23,5 @@ clearpart --all --initlabel --disklabel=gpt
 reqpart --add-boot
 part / --grow --fstype ext4
 
-# Replace the crypted password and ssh key below before publishing ISO.
-user --name=mios --groups=wheel,render,video --iscrypted --password=$6$REPLACEME_WITH_SHA512_HASH$REPLACEME
-sshkey --username=mios "ssh-ed25519 AAAA_REPLACE_WITH_REAL_PUBKEY mios@operator"
-
 reboot --eject
 """

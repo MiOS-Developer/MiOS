@@ -1,23 +1,8 @@
 #!/usr/bin/env bash
-# AI-hint: Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (T-531, AGY-2129).
+# AI-hint: Peripheral hardware health evaluator and non-fatal Greenboot degradation reporter (task_475, task_2708).
 # AI-doc: usr/share/doc/mios/manual/ch75-greenboot-hardware-degrade.md
 set -euo pipefail
 
-# ==============================================================================
-# MiOS Peripheral Hardware Health Evaluator ("Degrade-Not-Refuse")
-#
-# Architectural Invariant:
-# Peripheral subsystems (Network, Audio, Display/DRM) are evaluated during the
-# bootc boot cycle under Greenboot wanted.d. If any non-critical peripheral is
-# missing, misconfigured, or has failed driver initialization, this script
-# records the degraded state to the systemd journal, persistent log file, and
-# PostgreSQL hardware_events / hardware_inventory (when reachable).
-#
-# Under the "degrade-not-refuse" architectural philosophy, this script MUST NEVER
-# exit non-zero on peripheral degradation or missing hardware. It explicitly
-# exits 0 so Greenboot promotes the boot deployment rather than triggering an
-# unwanted system rollback.
-# ==============================================================================
 
 SCRIPT_NAME="20-hardware-degrade.sh"
 TAG="greenboot-hardware"

@@ -20,7 +20,7 @@ models:
   # EXEMPT from the global 128k chat mandate). Symmetric q8_0 KV + flash-attn on (GPU-
   # offloadable; NEVER asymmetric k!=v -> issue #20866 CPU-fallback). The qwen3:1.7b
   # alias keeps every pipeline-emitted micro name resolving onto the new model.
-  # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONV_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+  # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
   "lfm2:700m":
     aliases:
       - qwen3:1.7b
@@ -69,7 +69,7 @@ models:
   # 128k FIT: symmetric q8_0 K+V quantized KV cache + flash-attn on (GPU-offloadable;
   # NEVER asymmetric k!=v -> issue #20866 ~40x CPU-fallback). Low-end 8GB profile:
   # drop --cache-type-k/-v to q4_0 in the /etc overlay.
-  # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONV_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+  # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
   "granite4.1:8b":
     # Alias every legacy/role model name the pipeline still emits (incl. the old
     # gemma4:12b reasoning tag and the BLOCKED qwen3.5 tags) onto Granite 4.1 8B so
@@ -101,7 +101,7 @@ models:
       /app/llama-server --model /models/granite-4.1-8b.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 32768 --parallel 1 --cache-reuse 256
-      --n-gpu-layers 999 --flash-attn on
+      --flash-attn auto
       --cache-type-k q8_0 --cache-type-v q8_0
       --slot-save-path /var/lib/mios/llamacpp/slots --jinja
     proxy: "http://127.0.0.1:${PORT}"
@@ -158,6 +158,22 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
+  # ── federated RPC model route (cross-lane dGPU + iGPU layer sharding) ────────
+  "federated:32b":
+    aliases:
+      - mios-federated
+      - federated
+    cmd: >
+      /app/llama-server --model /models/granite-4.1-8b.gguf
+      --port ${PORT} --host 127.0.0.1
+      --rpc 127.0.0.1:8540 --split-mode layer --tensor-split 24,4
+      --ctx-size 32768 --parallel 1 --cache-reuse 256
+      --flash-attn auto
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
 # ── CO-RESIDENT GROUP ("explain the logs" exposed it) ──────
 # Default llama-swap is single-active: only ONE model resident, the rest swapped
 # out. So an embeddings request (RAG / memory) that arrives DURING a chat turn had
@@ -178,3 +194,4 @@ groups:
       - "granite4.1:8b"
       - "lfm2:700m"
       - "nomic-embed-text"
+      - "mios-micro:1.5b"

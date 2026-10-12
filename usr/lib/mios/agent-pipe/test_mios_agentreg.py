@@ -155,8 +155,8 @@ def t_health_gate_via_registry():
 
 # Ports are ALLOCATED from [ports.categories], so a hardcoded literal here goes
 # stale the moment a category base moves. Read the same env the module reads.
-_LIGHT_PORT = os.environ.get("MIOS_PORT_LLM_LIGHT", "8500")
-_CPU_PORT = os.environ.get("MIOS_PORT_CPU_NODE", "8510")
+_LIGHT_PORT = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")
+_CPU_PORT = os.environ.get("MIOS_PORTS_CPU_NODE", "8510")
 
 def t_agent_lane():
     check("lane: explicit wins", reg._agent_lane({"lane": "IGPU"}) == "igpu")

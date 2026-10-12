@@ -1,5 +1,5 @@
 <!-- AI-hint: Deploy the universal MiOS image as a Hyper-V Gen 2 VM booting a .vhdx on M: cut by bootc install/BIB, because the installer factory-populates /var + /var/home that a raw podman-export skips — read before building a run-off-M: deployment or touching the Ceph/VM bootstrap gates. -->
-<!-- AI-related: Justfile vhdx target, config/artifacts/vhdx.toml, usr/lib/bootc/kargs.d/10-mios-console.toml, usr/lib/systemd/system/var-home.mount, usr/lib/systemd/system/ceph-bootstrap.service, usr/lib/systemd/system/mios-ceph-bootstrap.service, usr/libexec/mios/ceph-bootstrap.sh, usr/share/mios/mios.toml [storage.cephfs] -->
+<!-- AI-related: Justfile vhdx target, src/mios-rs/mios-build/src/artifacts.rs, usr/lib/bootc/kargs.d/10-mios-console.toml, usr/lib/systemd/system/var-home.mount, usr/lib/systemd/system/ceph-bootstrap.service, usr/lib/systemd/system/mios-ceph-bootstrap.service, usr/libexec/mios/ceph-bootstrap.sh, usr/share/mios/mios.toml [storage.cephfs] -->
 ---
 adr: 0005
 title: "Sovereign run-off-M: Hyper-V VHDX deployment"

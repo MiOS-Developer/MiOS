@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (T-784).
+# AI-hint: Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (task_728).
 # AI-doc: usr/share/doc/mios/manual/ch69-cpu-vectorized-gemm-and-simd-tuning.md
 from __future__ import annotations
 

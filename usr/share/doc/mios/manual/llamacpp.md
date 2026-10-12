@@ -23,7 +23,7 @@ fine for the short micro job, not a JSON-tool agent. Native ctx 32K (micro lane 
 EXEMPT from the global 128k chat mandate). Symmetric q8_0 KV + flash-attn on (GPU-
 offloadable; NEVER asymmetric k!=v -> issue #20866 CPU-fallback). The qwen3:1.7b
 alias keeps every pipeline-emitted micro name resolving onto the new model.
-Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONV_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
 
 <!-- mios-src:47bbd3a1697e from usr/share/mios/llamacpp/mios-llm-light.yaml:39-58 -->
 
@@ -47,7 +47,7 @@ note: avoid CUDA 13.2 (gibberish-output bug). --jinja MANDATORY for tool_calls.
 128k FIT: symmetric q8_0 K+V quantized KV cache + flash-attn on (GPU-offloadable;
 NEVER asymmetric k!=v -> issue #20866 ~40x CPU-fallback). Low-end 8GB profile:
 drop --cache-type-k/-v to q4_0 in the /etc overlay.
-Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONV_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
 
 <!-- mios-src:b2aa5f67cf2f from usr/share/mios/llamacpp/mios-llm-light.yaml:72-90 -->
 
@@ -125,3 +125,51 @@ implicit default group and swaps in on demand (exclusive), evicting this group
 only when actually used. No more swap-contention 429 on the hot chat+embed path.
 
 <!-- mios-src:1be2f70bf455 from usr/share/mios/llamacpp/mios-llm-light.yaml:179-190 -->
+### ── chat / reasoning models (KV-pageable; --parallel 1 = one...
+
+── chat / reasoning models (KV-pageable; --parallel 1 = one resident slot) ──
+NOTE (fleet modernization): the light brain is now IBM Granite 4.1
+8B (dense 'granite' arch) -- it loads on MAINLINE llama.cpp, which is the REAL
+fix for the old qwen3.5:4b qwen35-arch block (custom "qwen35" arch failed:
+"qwen35.rope.dimension_sections wrong array length; expected 4, got 3"). The
+micro lane is Liquid AI LFM2-700M ('lfm2' arch, also mainline). No patched fork
+is needed any more; every served arch here loads on stock llama-server.
+The fleet is now FAMILY-DIVERSE (IBM Granite + Liquid AI + Google + H Company)
+and 128k-on-every-chat-lane via symmetric q8_0 quantized KV cache + flash-attn.
+micro_cpu (always-warm classify/expand/gate). fleet modernization:
+qwen3:1.7b -> Liquid AI LFM2-700M (LiquidAI/LFM2-700M-GGUF). Dense 'lfm2' arch is
+MERGED in mainline llama.cpp (PR #14620, ~b6709) -- NOT the qwen35 trap; verified
+`llama-cli -hf LiquidAI/LFM2-700M-GGUF`. Beats Qwen3-0.6B on MMLU/GSM8K/IFEval at
+~0.7-1.0GB resident, ~2x faster CPU decode. Family-diversity win (off Qwen).
+CAVEAT: LFM2 tool-calls use a Pythonic special-token format, not OpenAI JSON --
+fine for the short micro job, not a JSON-tool agent. Native ctx 32K (micro lane is
+EXEMPT from the global 128k chat mandate). Symmetric q8_0 KV + flash-attn on (GPU-
+offloadable; NEVER asymmetric k!=v -> issue #20866 CPU-fallback). The qwen3:1.7b
+alias keeps every pipeline-emitted micro name resolving onto the new model.
+Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+
+<!-- mios-src:4d938bc91299 from usr/share/mios/llamacpp/mios-llm-light.yaml:4-23 -->
+
+### light_brain + coder -- IBM Granite 4.1 8B Instruct (dense)....
+
+light_brain + coder -- IBM Granite 4.1 8B Instruct (dense). fleet
+modernization: the served chat/reasoning GGUF moves from gemma4:12b to Granite 4.1
+8B (ibm-granite/granite-4.1-8b; GGUF unsloth/granite-4.1-8b-GGUF Q4_K_M ~5.5GB).
+Dense GraniteForCausalLM ('granite') arch loads on MAINLINE llama.cpp (bartowski
+quant @ b8970; Unsloth uses stock llama-server) -> sidesteps the qwen35 trap that
+BLOCKS qwen3.5:4b and forced the gemma4:12b fallback. Granite is natively 131K-capable,
+but the SERVED --ctx-size is 32768 (model-placement decision): the
+heavy lane on its SGLang engine ([ai.sglang], mem_fraction 0.45 ~= 11GB RESERVED up front) +
+granite weights (~5GB) + a full 128k q8_0 KV (~8GB) CANNOT co-fit the shared 24GB 4090 ->
+granite's load spilled to CPU = 67-100s refine (the chat-slowness root cause). A 32k q8_0
+KV (~2-3GB) co-fits the heavy lane on the GPU (refine drops to ~2-5s) and is ample for chat/refine.
+Raise back toward 131072 ONLY if the heavy lane is disabled or moved off this card
+(then granite has the whole 4090). Apache-2.0; first non-Qwen brain (family mix).
+DO NOT pull the '-h'/granitehybrid GGUF (newer arch = qwen35-style trap). Build
+note: avoid CUDA 13.2 (gibberish-output bug). --jinja MANDATORY for tool_calls.
+128k FIT: symmetric q8_0 K+V quantized KV cache + flash-attn on (GPU-offloadable;
+NEVER asymmetric k!=v -> issue #20866 ~40x CPU-fallback). Low-end 8GB profile:
+drop --cache-type-k/-v to q4_0 in the /etc overlay.
+Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+
+<!-- mios-src:b386057e8363 from usr/share/mios/llamacpp/mios-llm-light.yaml:54-72 -->

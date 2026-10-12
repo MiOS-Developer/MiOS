@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-# AI-hint: Enforcement gate for the NO-HARDCODE law (Architectural Law 7). Read-only repo scan that FAILS on three regression classes the law forbids: (1) a literal date/timestamp or dated attribution in COMMENT or DOCSTRING text (timeless-comment rule -- comments must describe the WHY abstractly, not pin code to a frozen history); (2) a dated attribution baked into a .py STRING LITERAL's prose -- a date inside served CSS/JS-comment text or inside a system-prompt string -- which the #-comment scan never sees; and (3) AI-Hint header crash-risks (a UTF-8 BOM not at byte 0, or a header placed above a shebang) that break the install/CI parse. Comment- and value-aware: .py uses tokenize + AST docstrings + a string-token scan that flags only a whitespace-led (prose) date and EXEMPTS a date used as a VALUE -- a quote-led/standalone protocol-version or config literal, or one glued into a URL/slug/identifier token; other files use quote-aware comment detection, so legitimate date CONFIG VALUES are never flagged -- only doc/comment/attribution text. Mirrors the 98-drift-checks fitness-function pattern (exit 1 on violation, MIOS_HARDCODE_LINT_SOFT=1 for advisory). Pairs with the surface-parity + module-boundary gates as the offline LAW gate.
-# AI-related: ../../../automation/98-drift-checks.sh, ../../share/mios/mios.toml, ./mios-ai-tag, ../../../CLAUDE.md
-# AI-functions: _date_in_comment_py, _date_in_string_py, _date_in_comment_generic, _header_risk, scan, main
+# AI-hint: Read-only enforcement gate for the NO-HARDCODE law (Law 7): fails on a date or dated attribution in comments, docstrings or .py string prose, and on AI-hint header crash-risks (a BOM not at byte 0, a header above a shebang).
+# AI-related: ../../../automation/98-drift-checks.sh, ../../share/mios/mios.toml, ./mios-ai-tag, ../../../CLAUDE.md, tools/native/mios-hardcode-lint/
+# AI-functions: _try_native_bin, _date_in_comment_py, _date_in_string_py, _date_in_comment_generic, _header_risk, scan, main
+#
+# Comments must describe the WHY abstractly, never pin code to a frozen history.
+# A date inside served CSS/JS-comment text or a system-prompt string is prose the
+# comment scan never sees, so .py adds a string-token scan that flags only a
+# whitespace-led date and exempts one used as a VALUE (a protocol-version or
+# config literal, or one glued into a URL/slug/identifier); other files use
+# quote-aware comment detection. Exit 1 on violation, MIOS_HARDCODE_LINT_SOFT=1
+# for advisory; pairs with the surface-parity + module-boundary gates.
 """NO-HARDCODE law enforcement: forbid date-literals in comments/docstrings + dated attributions in string-literal prose + header crash-risks."""
 
 from __future__ import annotations
@@ -10,6 +18,7 @@ import ast
 import io
 import os
 import re
+import subprocess
 import sys
 import tokenize
 
@@ -21,7 +30,35 @@ _EXEMPT = (
     '/.claude/',                           # Claude worktrees
     '/.agents/',                           # Agent worktrees
 )
-_CODE_EXT = ('.py', '.sh', '.bash', '.toml', '.yml', '.yaml', '.ps1', '.psm1')
+_UNIT_EXT = ('.service', '.socket', '.container', '.timer', '.conf')
+_CODE_EXT = ('.py', '.sh', '.bash', '.toml', '.yml', '.yaml', '.ps1', '.psm1') + _UNIT_EXT
+
+
+def _try_native_bin(args_list: list[str]) -> None:
+    if os.environ.get("MIOS_HARDCODE_LINT_NO_NATIVE") == "1":
+        return
+    bin_path = os.environ.get("MIOS_HARDCODE_LINT_BIN")
+    if not bin_path:
+        exe = "mios-hardcode-lint.exe" if os.name == "nt" else "mios-hardcode-lint"
+        root = os.environ.get("MIOS_ROOT") or os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+        )
+        for candidate in (
+            os.path.join(root, "tools", "native", "target", "release", exe),
+            os.path.join(root, "tools", "native", "target", "debug", exe),
+            os.path.join("/usr/libexec/mios", exe),
+            os.path.join("/usr/bin", exe),
+            os.path.join("/usr/local/bin", exe),
+        ):
+            if os.path.isfile(candidate):
+                bin_path = candidate
+                break
+    if bin_path and os.path.isfile(bin_path):
+        try:
+            res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr)
+            sys.exit(res.returncode)
+        except Exception:
+            pass
 
 
 def _date_in_comment_py(text: str):
@@ -148,8 +185,26 @@ def _is_routable_ip(ip_str: str) -> bool:
 
 def _anchor_pattern(pat: str) -> str:
     prefix = r'(?<!\d)' if not pat.startswith('^') and not pat.startswith(r'\b') and not pat.startswith(r'(?<!') else ''
-    suffix = r'(?!\d)' if not pat.endswith('$') and not pat.endswith(r'\b') and not pat.endswith(r'(?!\d)') else ''
+    suffix = r'(?!\d)' if not pat.endswith('$') and not pat.endswith(r'\b') and not pat.endswith(r'(?!\d)') and not pat.endswith(r'(?![0-9])') else ''
     return prefix + pat + suffix
+
+_UNIT_DIRECTIVE_PREFIXES = (
+    'listenstream=', 'listendatagram=',
+    'execstart=', 'execstartpre=', 'execstartpost=', 'execstop=',
+    'exec=',
+    'environment=',
+)
+
+def _is_unit_directive_line(line: str, in_multiline: bool) -> tuple[bool, bool]:
+    stripped = line.strip()
+    if stripped.startswith('#') or stripped.startswith(';') or stripped.startswith('//'):
+        return False, in_multiline
+    lower = stripped.lower()
+    is_directive_start = any(lower.startswith(p) for p in _UNIT_DIRECTIVE_PREFIXES)
+    has_bind = '--bind' in stripped
+    is_directive = is_directive_start or in_multiline or has_bind
+    next_multiline = is_directive and stripped.endswith('\\')
+    return is_directive, next_multiline
 
 def _check_ports_ips_py(text: str, filename: str, exempt_patterns: list[str]) -> list[tuple[int, str]]:
     violations = []
@@ -208,11 +263,19 @@ def _check_ports_ips(text: str, filename: str, exempt_patterns: list[str]) -> li
     violations = []
     lines = text.split('\n')
     exempt_rx = [re.compile(_anchor_pattern(pat)) for pat in exempt_patterns]
+    is_unit = filename.endswith(_UNIT_EXT)
+    in_multiline = False
+
     for idx, line in enumerate(lines, 1):
         stripped = line.strip()
         if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith(';'):
             continue
         
+        if is_unit:
+            is_directive, in_multiline = _is_unit_directive_line(line, in_multiline)
+            if not is_directive:
+                continue
+
         is_line_exempt = False
         for rx in exempt_rx:
             if rx.search(line):
@@ -281,69 +344,75 @@ def scan(roots):
     exempt_files, exempt_patterns = _load_allowlist(roots)
     exempt_files_rx = [re.compile(pat) for pat in exempt_files]
     for root in roots:
-        for dirpath, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'node_modules')]
-            for fn in files:
-                p = os.path.join(dirpath, fn)
-                rel = p.replace('\\', '/')
-                if any(x in rel for x in _EXEMPT) or not fn.endswith(_CODE_EXT):
-                    continue
-                try:
-                    raw = open(p, 'rb').read()
-                except OSError:
-                    continue
-                if not raw:
-                    continue
-                scanned += 1
-                hr = _header_risk(raw, fn)
-                if hr:
-                    violations.append((p, 0, f"HEADER: {hr}"))
-                text = raw.decode('utf-8-sig' if raw[:3] == _BOM else 'utf-8', 'ignore').replace('\r\n', '\n')
-                
-                is_file_exempt = False
-                for rx in exempt_files_rx:
-                    if rx.search(rel):
-                        is_file_exempt = True
-                        break
-                
-                if fn.endswith(('.py', '.sh', '.bash', '.ps1', '.psm1')) and not is_file_exempt:
-                    if fn.endswith('.py'):
-                        for ln, snip in _check_ports_ips_py(text, fn, exempt_patterns):
-                            violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))
-                    else:
-                        for ln, snip in _check_ports_ips(text, fn, exempt_patterns):
-                            violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))
-                        
-                if 'usr/share/mios/ventoy/autorun' in rel:
-                    for idx, line in enumerate(text.split('\n'), 1):
-                        if 'chpasswd' in line and re.search(r'echo\s+["\'][a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+["\']\s*\|\s*chpasswd', line):
-                            violations.append((p, idx, f"PLAINTEXT-CHPASSWD: {line.strip()[:80]}"))
-                        
-                # A GENERATED file is exempt from the timeless-comment rule: its
-                # comments are PROJECTED from mios.toml `comment = "..."` values,
-                # where a date is a value and legitimately exempt (the lint is
-                # value-aware). It only becomes a #-comment once rendered, and a
-                # "DO NOT EDIT" file cannot be hand-corrected -- the fix belongs
-                # in mios.toml. Keyed off the file's own generated marker rather
-                # than an allowlist, so it can never drift out of date.
-                # Both tokens, and only in the file's own top banner -- a
-                # GENERATOR mentions "DO NOT EDIT" in the header it EMITS, and
-                # generators are authored files that must stay linted.
-                _banner = '\n'.join(text.splitlines()[:4])
-                is_generated = 'GENERATED' in _banner and 'DO NOT EDIT' in _banner
-                if not is_generated:
-                    if fn.endswith('.py'):
-                        for ln, snip in _date_in_comment_py(text):
-                            violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))
-                        for ln, snip in _date_in_string_py(text):
-                            violations.append((p, ln, f"DATE-IN-STRING: {snip}"))
-                    else:
-                        for ln, snip in _date_in_comment_generic(text):
-                            violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))
+        if os.path.isfile(root):
+            items = [(os.path.dirname(root), os.path.basename(root), root)]
+        else:
+            items = []
+            for dirpath, dirs, files in os.walk(root):
+                dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'node_modules')]
+                for fn in files:
+                    items.append((dirpath, fn, os.path.join(dirpath, fn)))
+        for dirpath, fn, p in items:
+            rel = p.replace('\\', '/')
+            if any(x in rel for x in _EXEMPT) or not fn.endswith(_CODE_EXT):
+                continue
+            try:
+                raw = open(p, 'rb').read()
+            except OSError:
+                continue
+            if not raw:
+                continue
+            scanned += 1
+            hr = _header_risk(raw, fn)
+            if hr:
+                violations.append((p, 0, f"HEADER: {hr}"))
+            text = raw.decode('utf-8-sig' if raw[:3] == _BOM else 'utf-8', 'ignore').replace('\r\n', '\n')
+            
+            is_file_exempt = False
+            for rx in exempt_files_rx:
+                if rx.search(rel):
+                    is_file_exempt = True
+                    break
+            
+            if fn.endswith(('.py', '.sh', '.bash', '.ps1', '.psm1') + _UNIT_EXT) and not is_file_exempt:
+                if fn.endswith('.py'):
+                    for ln, snip in _check_ports_ips_py(text, fn, exempt_patterns):
+                        violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))
+                else:
+                    for ln, snip in _check_ports_ips(text, fn, exempt_patterns):
+                        violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))
+                    
+            if 'usr/share/mios/ventoy/autorun' in rel:
+                for idx, line in enumerate(text.split('\n'), 1):
+                    if 'chpasswd' in line and re.search(r'echo\s+["\'][a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+["\']\s*\|\s*chpasswd', line):
+                        violations.append((p, idx, f"PLAINTEXT-CHPASSWD: {line.strip()[:80]}"))
+                    
+            # A GENERATED file is exempt from the timeless-comment rule: its
+            # comments are PROJECTED from mios.toml `comment = "..."` values,
+            # where a date is a value and legitimately exempt (the lint is
+            # value-aware). It only becomes a #-comment once rendered, and a
+            # "DO NOT EDIT" file cannot be hand-corrected -- the fix belongs
+            # in mios.toml. Keyed off the file's own generated marker rather
+            # than an allowlist, so it can never drift out of date.
+            # Both tokens, and only in the file's own top banner -- a
+            # GENERATOR mentions "DO NOT EDIT" in the header it EMITS, and
+            # generators are authored files that must stay linted.
+            _banner = '\n'.join(text.splitlines()[:4])
+            is_generated = 'GENERATED' in _banner and 'DO NOT EDIT' in _banner
+            if not is_generated:
+                if fn.endswith('.py'):
+                    for ln, snip in _date_in_comment_py(text):
+                        violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))
+                    for ln, snip in _date_in_string_py(text):
+                        violations.append((p, ln, f"DATE-IN-STRING: {snip}"))
+                elif not fn.endswith(_UNIT_EXT):
+                    for ln, snip in _date_in_comment_generic(text):
+                        violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))
     return violations, scanned
 
 
 def main(argv):
+    _try_native_bin(argv[1:])
     roots = [a for a in argv[1:] if not a.startswith('--')] or ['.']
     soft = os.environ.get('MIOS_HARDCODE_LINT_SOFT', '0') == '1'
     missing = [r for r in roots if not os.path.exists(r)]

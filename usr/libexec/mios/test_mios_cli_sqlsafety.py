@@ -104,10 +104,61 @@ def t_skills():
     check("skills: status payload bound as a param", EVIL2 in params)
     check("skills: statements use $-placeholders", any("$1" in s for s in sqls))
 
+def t_sqlite_safe_ident():
+    import sqlite3
+    sys.path.insert(0, os.path.join(_HERE, "..", "..", "lib", "mios"))
+    from mios_db_config import safe_ident
+
+    allowlist = frozenset({"chat", "file", "knowledge", "user", "email", "role"})
+
+    # Positive Control 1: valid table name executes cleanly
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE chat (id TEXT, text TEXT);")
+    valid_tbl = safe_ident("chat", allowlist)
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {valid_tbl} VALUES ('1', 'hello');")
+    res = cur.execute(f"SELECT COUNT(*) FROM {valid_tbl}").fetchone()[0]
+    check("sqlite safe_ident: positive control valid table executes cleanly", res == 1)
+
+    # Positive Control 2: valid column name passes validator
+    valid_col = safe_ident("role", allowlist)
+    check("sqlite safe_ident: valid column passes validator", valid_col == "role")
+
+    # Negative Control 1: planted SQL injection payload raises ValueError BEFORE execute()
+    evil_table = "x; DROP TABLE chat; --"
+    raised_table = False
+    try:
+        safe_ident(evil_table, allowlist)
+    except ValueError as e:
+        raised_table = True
+        check("sqlite safe_ident: planted table injection rejected", "Invalid SQL identifier format" in str(e))
+    check("sqlite safe_ident: injection prevented before execute()", raised_table is True)
+
+    # Negative Control 2: valid identifier format NOT in allowlist is rejected
+    unauthorized_table = "unauthorized_secret_table"
+    raised_unauth = False
+    try:
+        safe_ident(unauthorized_table, allowlist)
+    except ValueError as e:
+        raised_unauth = True
+        check("sqlite safe_ident: unauthorized table rejected", "not in schema allowlist" in str(e))
+    check("sqlite safe_ident: allowlist membership enforced", raised_unauth is True)
+
+    # Negative Control 3: planted malformed column injection payload raises ValueError
+    evil_col = "email) VALUES ('evil'); --"
+    raised_col = False
+    try:
+        safe_ident(evil_col, allowlist)
+    except ValueError as e:
+        raised_col = True
+        check("sqlite safe_ident: malformed column injection rejected", "Invalid SQL identifier format" in str(e))
+    check("sqlite safe_ident: column injection payload rejected", raised_col is True)
+
 def main():
     t_kg()
     t_remember()
     t_skills()
+    t_sqlite_safe_ident()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

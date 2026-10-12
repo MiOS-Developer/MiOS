@@ -8,17 +8,7 @@ param(
     [Parameter(ValueFromRemainingArguments=$true)][string[]]$Args
 )
 
-$compiledExe = Join-Path $PSScriptRoot '..\..\..\src\mios-launch.exe'
-if (-not (Test-Path $compiledExe)) {
-    $compiledExe = 'C:\MiOS\src\mios-launch.exe'
-}
-
-if (Test-Path $compiledExe) {
-    if ($Action -in @('click', 'move', 'resize', 'foreground')) {
-        & $compiledExe $Action $Args
-        exit $LASTEXITCODE
-    }
-}
+$ErrorActionPreference = 'Stop'
 
 # ─── Win32 P/Invoke surface (loaded once) ─────────────────────────
 $Win32Sig = @"
@@ -69,9 +59,12 @@ switch ($Action) {
         $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
         $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
         $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
-        $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
-        $g.Dispose(); $bmp.Dispose()
+        try {
+            $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+            $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
+        } finally {
+            $g.Dispose(); $bmp.Dispose()
+        }
         Write-Output ("[mios-pc-control] screenshot saved to {0} ({1}x{2})" -f $out, $bounds.Width, $bounds.Height)
     }
 

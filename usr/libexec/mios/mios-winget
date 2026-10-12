@@ -12,7 +12,7 @@ usage() {
 }
 
 _find_winget() {
-    local op="${MIOS_USER:-}"
+    local op="${MIOS_IDENTITY_USERNAME:-}"
     if [[ -z "$op" ]] && [[ "${USER:-root}" != "root" ]]; then
         op="$USER"
     fi
@@ -80,8 +80,9 @@ _run_winget() {
             mv "${f}.tr" "$f"
         fi
     done
-    export _WG_OUT="$(cat "$out_file")"
-    export _WG_ERR="$(cat "$err_file")"
+    _WG_OUT="$(cat "$out_file")"
+    _WG_ERR="$(cat "$err_file")"
+    export _WG_OUT _WG_ERR
     _WG_RC=$rc
     return 0
 }

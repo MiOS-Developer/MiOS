@@ -1,8 +1,8 @@
-# AI-hint: Systemd service unit running the local OCI distribution registry on loopback for image staging (T-510).
+# AI-hint: Systemd service unit running the local OCI distribution registry on loopback for image staging (task_454).
 # AI-doc: usr/share/doc/mios/manual/ch43-local-registry-and-oci-distribution.md
 
 [Unit]
-Description=MiOS Local OCI Distribution Registry (T-510)
+Description=MiOS Local OCI Distribution Registry (task_454)
 Documentation=https://github.com/mios-dev/mios
 After=network-online.target podman.service
 Wants=network-online.target
@@ -11,9 +11,13 @@ Wants=network-online.target
 Type=exec
 Restart=on-failure
 RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
 ExecStartPre=-/usr/bin/podman rm -f mios-registry
 ExecStart=/usr/bin/podman run --name mios-registry --rm \
-    -p 127.0.0.1:5000:5000 \
+    -p ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_REGISTRY:-5000}:${MIOS_PORTS_REGISTRY_INTERNAL:-5000} \
     -v /var/lib/mios/registry:/var/lib/registry:Z \
     docker.io/library/registry:2
 ExecStop=/usr/bin/podman stop -t 10 mios-registry

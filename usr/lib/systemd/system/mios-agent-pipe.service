@@ -8,10 +8,7 @@ Documentation=file:///usr/lib/mios/agent-pipe/server.py
 # firstboot's multi-GB download blocked the router for the whole download. firstboot
 # `systemctl restart --no-block`s this unit once models land, so the edge is redundant.
 After=network-online.target mios-pgvector.service mios-passport-provision.service
-Wants=network-online.target mios-passport-provision.service
-# R6: the pipe touches pgvector on every route, so upgrade the DB edge from After=
-# (ordering only) to a hard Requires= -- a missing DB should hold/fail the unit.
-Requires=mios-pgvector.service
+Wants=network-online.target mios-passport-provision.service mios-pgvector.service
 # R6: bound the existing Restart=on-failure so a DB-down window (many quick
 # restarts) can't trip the default 5/10s start limit and land permanently failed.
 StartLimitIntervalSec=300
@@ -38,15 +35,16 @@ WorkingDirectory=/var/lib/mios/agent-pipe
 
 # SSOT chain: every operator-tunable knob sources from mios.toml via
 # /etc/profile.d/mios-env.sh, which exports MIOS_* into the service
-# environment. The service code reads MIOS_PORT_AGENT_PIPE +
+# environment. The service code reads MIOS_PORTS_AGENT_PIPE +
 # MIOS_AGENT_PIPE_BACKEND + MIOS_DB_URL etc. as os.environ overrides.
 EnvironmentFile=-/etc/mios/agent-pipe.env
 # WS-0B: source the SSOT env bridge (same pattern as hermes-agent.service) so the
-# derived MIOS_PORT_LLM_LIGHT ([ports].llm_light in mios.toml) reaches the service
+# derived MIOS_PORTS_LLM_LIGHT ([ports].llm_light in mios.toml) reaches the service
 # -> server.py composes EVERY light-lane endpoint from it via _LIGHT_BASE. ONE
 # owned port key; no per-endpoint :11450 literal in this unit anymore.
 EnvironmentFile=-/etc/mios/install.env
-Environment=MIOS_PORT_AGENT_PIPE=${MIOS_PORT_AGENT_PIPE}
+Environment=MIOS_PORTS_AGENT_PIPE=8700
+Environment=MIOS_BIND_HOST=0.0.0.0
 # WS-10 (operator 2026-06-05 "EVERYTHING IS LLAMA.CPP"): the agent-pipe
 # reasons DIRECTLY on mios-llm-light (:11450) instead of via a Hermes hop. All
 # inference is on the dGPU via llama.cpp.
@@ -77,7 +75,7 @@ Environment=MIOS_AI_MODEL=granite4.1:8b
 # no-tool-choice list, or the pipe drops/auto's tool_choice and gemma4 NARRATES
 # the call instead of executing it. Keep :11450 in KV_PAGING (it does /slots).
 Environment=MIOS_NO_TOOL_CHOICE_HINTS=11436
-Environment=MIOS_KV_PAGING_HINTS=11436,11450
+Environment=MIOS_KV_PAGING_HINTS=${MIOS_PORT_IGPU:-11436},${MIOS_PORT_WIN_LLM_LIGHT:-11450}
 Environment=MIOS_LLM_API_HINTS=
 # WS-0B: ROUTER + the CPU-offload light-lane (MIOS_LLM_CPU_ENDPOINT) both now
 # default to _LIGHT_BASE in server.py (mios-llm-light) -- no per-endpoint pin here.
@@ -112,8 +110,8 @@ Environment=MIOS_PASSPORT_AGENT_NAME=agent-pipe
 # Phase D.5 -- refine + polish timeouts on CPU-bound dev hardware.
 # Real ROCm/CUDA finishes the LLM call in <1s; WSL CPU takes 15-30s
 # for the same prompt. Generous timeout works on both.
-Environment=MIOS_REFINE_TIMEOUT_S=45
-Environment=MIOS_POLISH_TIMEOUT_S=45
+Environment=MIOS_REFINE_TIMEOUT_SECONDS=45
+Environment=MIOS_POLISH_TIMEOUT_SECONDS=45
 Environment=MIOS_REFINE_MAX_TOKENS=1200
 # Agent self-memory recall (operator 2026-06-20): inject the agent's OWN durable
 # self-edited facts (remember/memory_update -> agent_memory, embed-on-write) into

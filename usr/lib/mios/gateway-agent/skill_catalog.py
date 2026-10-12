@@ -95,8 +95,8 @@ class SkillCatalogLoader:
 
             def forward(self, **kwargs) -> str:
                 # Law 5: the legacy orchestrator port is RETIRED -- resolve the front door the way
-                # [ai].endpoint spells it, "http://localhost:${MIOS_PORT_AGENT_PIPE}/v1".
-                _pipe_port = os.environ.get("MIOS_PORT_AGENT_PIPE", "8700")
+                # [ai].endpoint spells it, "http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1".
+                _pipe_port = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
                 ai_endpoint = os.environ.get(
                     "MIOS_AI_ENDPOINT", "http://localhost:%s/v1" % _pipe_port)
                 orchestrator_root = ai_endpoint.replace("/v1", "").rstrip("/")

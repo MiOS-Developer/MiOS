@@ -4563,9 +4563,9 @@ generator runs at daemon-reload. The .container files at
 /etc/containers/systemd/*.container ship raw `${VAR:-default}`
 placeholders (Image=, PublishPort=, User=, Group=, Network=, ...);
 systemd's Quadlet generator does NOT expand them, so podman gets
-the literal string `${MIOS_PORT_LLM_LIGHT` (split on the `:` of
+the literal string `${MIOS_PORTS_LLM_LIGHT` (split on the `:` of
 `:-8450`) and dies with:
-    Error: cannot parse "${MIOS_PORT_LLM_LIGHT" as an IP address
+    Error: cannot parse "${MIOS_PORTS_LLM_LIGHT" as an IP address
 Every Quadlet stays in `activating auto-restart` and `podman ps`
 is empty. Operator-flagged (containers all dead after
 install).
@@ -4978,11 +4978,11 @@ while shaking out the operator's first install.
       "permission denied". The Quadlet already mounts /var/lib/ollama
       (writable for UID 815), so point HOME at it.
   webui:  [redacted] (env.py:611 requires non-empty
-      when WEBUI_AUTH=true), PORT=${MIOS_PORT_OPEN_WEBUI}, OPENAI_API_BASE_URL=
-      http://localhost:${MIOS_PORT_HERMES}/v1 (mios-hermes:${MIOS_PORT_HERMES} doesn't resolve in
+      when WEBUI_AUTH=true), PORT=${MIOS_PORTS_OPEN_WEBUI}, OPENAI_API_BASE_URL=
+      http://localhost:${MIOS_PORTS_HERMES}/v1 (mios-hermes:${MIOS_PORTS_HERMES} doesn't resolve in
       host netns; use localhost instead).
-  hermes: PORT=${MIOS_PORT_HERMES} (otherwise picks an upstream default).
-  searxng: BIND_ADDRESS=0.0.0.0:${MIOS_PORT_SEARXNG} (granian default is :8080 which
+  hermes: PORT=${MIOS_PORTS_HERMES} (otherwise picks an upstream default).
+  searxng: BIND_ADDRESS=0.0.0.0:${MIOS_PORTS_SEARXNG} (granian default is :8080 which
       collides with mios-ai).
 Hermes-Agent on the dev VM uses host networking, so the
 container-name DNS that the vendor /etc/mios/hermes/config.yaml
@@ -5010,9 +5010,9 @@ Architecture /14 (operator-directed):
     ([quadlets.enable]=false) -- dropped from this list.
   * mios-hermes-workspace: REMOVED entirely -- dropped.
   * mios-open-webui: the chat UI. Its container listens on 8080
-    internally (parent Quadlet remapped host:${MIOS_PORT_OPEN_WEBUI}->container:8080 via
+    internally (parent Quadlet remapped host:${MIOS_PORTS_OPEN_WEBUI}->container:8080 via
     PublishPort). Under host-net PublishPort is a no-op, so it MUST
-    get PORT=${MIOS_PORT_OPEN_WEBUI} or it binds 8080 and collides with mios-code-server
+    get PORT=${MIOS_PORTS_OPEN_WEBUI} or it binds 8080 and collides with mios-code-server
 ("[Errno 98] address already in use" -- operator-confirmed).
   * Bind addresses: 0.0.0.0 everywhere (NOT 127.0.0.1). The old
     "127.0.0.1 forces AF_INET for localhostForwarding" theory is
@@ -7593,3 +7593,31 @@ Windows-side tail entirely.
 
 <!-- mios-src:0acbcca01ab2 from build-mios.ps1:1-38 -->
 
+### Invoke-Expression runs this body inside its caller's...
+
+Invoke-Expression runs this body inside its caller's PowerShell process.
+This entrypoint uses `exit` for explicit pipeline exit codes, so executing it
+directly with `irm ... | iex` would close the operator's terminal. Re-run the
+fetched entrypoint as a script file in a child process; exit then returns to
+the caller's prompt. The environment guard prevents the child's cache-busted
+in-process refresh from spawning another child.
+
+<!-- mios-src:c0df16f5dc7a from Get-MiOS.ps1:66-71 -->
+
+### The monitor must use the profile named by the operator...
+
+The monitor must use the profile named by the operator SSOT. Delay launch
+until the TOML resolver exists so the WT profile is not inferred from a
+stale global default.
+
+<!-- mios-src:0a430550eb7e from Get-MiOS.ps1:583-585 -->
+
+### Read existing settings.json -- preserve operator globals...
+
+Read existing settings.json -- preserve operator globals except the
+system default profile, which MiOS intentionally owns per bootstrap
+contract. Other global settings and keybindings remain untouched.
+WT writes JSONC; ConvertFrom-Json on PS5.1 chokes on it, so strip
+comments + trailing commas before parsing.
+
+<!-- mios-src:720d88370c85 from Get-MiOS.ps1:1758-1762 -->

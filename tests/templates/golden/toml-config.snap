@@ -1,6 +1,0 @@
-# AI-hint: TOML configuration file template.
-# AI-related: /usr/share/mios/templates/toml-config
-
-[config]
-version = "0.3.0"
-enabled = true

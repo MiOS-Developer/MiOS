@@ -3,7 +3,7 @@
   "name": "MiOS Privileged Artifact Builder",
   "build": {
     "dockerfile": "../Containerfile",
-    "context": "../.."
+    "context": ".."
   },
   "privileged": true,
   "init": true,
@@ -24,7 +24,7 @@
   ],
   "postCreateCommand": "bash .devcontainer/boot-mios-systems.sh create",
   "postStartCommand": "bash .devcontainer/boot-mios-systems.sh start",
-  "remoteUser": "mios-dev",
+  "remoteUser": "user",
   "workspaceFolder": "/workspaces/MiOS",
   "customizations": {
     "vscode": {
@@ -158,8 +158,18 @@
         "containers.containerCommand": "podman",
         "containers.environment": {
           "DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"
-        }
+        },
+        "terminal.integrated.allowChords": false,
+        "terminal.integrated.allowMnemonics": false,
+        "terminal.integrated.commandsToSkipShell": [
+          "-workbench.action.toggleSidebarVisibility"
+        ]
       }
     }
+  },
+  "hostRequirements": {
+    "cpus": 16,
+    "memory": "64gb",
+    "storage": "128gb"
   }
 }

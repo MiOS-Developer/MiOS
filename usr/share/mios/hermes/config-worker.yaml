@@ -10,16 +10,16 @@
 #
 # This is the P1 worker: a REAL agent that runs its OWN
 # native browser_*/CDP + terminal + file + skills tool loop, doing its OWN
-# inference on the heavy lane (:11441 mios-heavy, SGLang, --tool-call-parser
-# qwen25 = native OpenAI tool_calls). It serves the OpenAI /v1 surface on :8643
+# inference on the heavy lane ([ports].llm_heavy, mios-heavy; its engine, vLLM or SGLang, is
+# [ai].heavy_engine and emits native OpenAI tool_calls). It serves the OpenAI /v1 surface on :8643
 # and is the WORKER-DISPATCH target of [agents.hermes].endpoint in mios.toml.
 #
-# The :8642 gateway (hermes-agent.service) is UNAFFECTED -- it stays the thin
+# The [ports].hermes gateway (hermes-agent.service) is UNAFFECTED -- it stays the thin
 # Discord/CLI gateway. This worker enables ONLY the api_server platform (NO
 # Discord token => no contention for the host-global discord-bot-token scope
-# lock held by the :8642 gateway).
+# lock held by the [ports].hermes gateway).
 #
-# LOOP-SAFETY: this worker hits the REAL :11441 model lane for inference, so it
+# LOOP-SAFETY: this worker hits the REAL [ports].llm_heavy model lane for inference, so it
 # never relays back to :8700. mcp_servers.mios stays DISABLED here (the relay's
 # MIOS_AGENT_PIPE_URL=:8700 would let a worker re-enter the orchestrator ->
 # :8700 -> council -> worker cycle). The worker's native toolsets already give
@@ -27,7 +27,7 @@
 # Via guard (_HOP_HEADER/_VIA_HEADER, server.py) is the backstop either way.
 _config_version: 1
 
-# Primary model = the SGLang heavy lane on :11441 (served-name "mios-heavy").
+# Primary model = the heavy lane on :11441 (served-name "mios-heavy").
 # MUST be a mapping (not a bare string) so resolve_requested_provider() sees
 # provider=. provider "custom:mios-heavy" resolves against the custom_providers
 # entry below. base_url :11441/v1 = the model lane DIRECTLY (NOT :8700, NOT :8642).
@@ -39,8 +39,8 @@ model:
   # mios-heavy max_model_len is 65536; Hermes v0.15+ refuses tool use under 64k.
   ollama_num_ctx: 65536
   context_length: 65536
-  # Degrade to the light lane (granite4.1:8b on :11450) if the heavy lane OOMs
-  # (SGLang OOMs at gaming-time per memory). Walks DOWN the tier, never up.
+  # Degrade to the light lane (granite4.1:8b on [ports].llm_light) if the heavy lane OOMs
+  # (the heavy engine OOMs at gaming-time per memory). Walks DOWN the tier, never up.
   fallback_model:
     - provider: custom:local-llm
       model: granite4.1:8b

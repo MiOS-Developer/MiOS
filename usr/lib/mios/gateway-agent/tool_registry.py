@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import os
 from typing import List, Callable, Any
 from smolagents import Tool
 
@@ -57,7 +58,9 @@ class WebSearchTool(Tool):
 
         from server import _toml_section
         gateway_cfg = _toml_section("gateway")
-        searxng_url = gateway_cfg.get("searxng_url", "http://mios-searxng:8080")
+        # SSOT [ports].searxng_internal: the in-container listener (host maps 8800->8080).
+        searxng_port = int(os.environ.get("MIOS_PORTS_SEARXNG_INTERNAL", "8080"))
+        searxng_url = gateway_cfg.get("searxng_url", f"http://mios-searxng:{searxng_port}")
         tools.append(WebSearchTool(searxng_url))
 
         return tools

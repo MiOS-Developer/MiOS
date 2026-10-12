@@ -21,9 +21,13 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 KERNEL_CMDLINE_DST="/usr/lib/kernel/cmdline"
 install -d -m 0755 /usr/lib/kernel
 
+# Folded from 02-uki-bootloader.sh (task_3454): ensure 02-security.conf cmdline drop-in exists
+install -d -m 0755 "${ROOT}/etc/cmdline.d"
+[[ -f "${ROOT}/etc/cmdline.d/02-security.conf" ]] || echo "module.sig_enforce=1 lockdown=confidentiality" > "${ROOT}/etc/cmdline.d/02-security.conf"
+
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
           /usr/libexec/mios/miosd \

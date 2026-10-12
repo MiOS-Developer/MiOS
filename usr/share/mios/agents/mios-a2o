@@ -19,22 +19,22 @@ AGY_MODEL="${MIOS_A2O_AGY_MODEL:-}"
 CLAUDE_MODEL="${MIOS_A2O_CLAUDE_MODEL:-}"
 GEMINI_MODEL="${MIOS_A2O_GEMINI_MODEL:-}"
 
-ORCH_ENGINE="${MIOS_A2O_ORCH_ENGINE:-claude}"
-ORCH_MODEL="${MIOS_A2O_ORCH_MODEL:-claude-sonnet-5}"
-ORCH_EFFORT="${MIOS_A2O_ORCH_EFFORT:-high}"
-LANE_A_ENGINE="${MIOS_A2O_LANE_A_ENGINE:-claude}"        # Claude Opus 4.8
-LANE_A_MODEL="${MIOS_A2O_LANE_A_MODEL:-claude-opus-4-8}"
-LANE_A_EFFORT="${MIOS_A2O_LANE_A_EFFORT:-xhigh}"
-LANE_A_ROLE="${MIOS_A2O_LANE_A_ROLE:-framework + ~80%}"
-LANE_B_ENGINE="${MIOS_A2O_LANE_B_ENGINE:-agy}"           # Gemini 3.5 Flash (High) via Antigravity
-LANE_B_MODEL="${MIOS_A2O_LANE_B_MODEL:-Gemini 3.5 Flash (High)}"
-LANE_B_EFFORT="${MIOS_A2O_LANE_B_EFFORT:-high}"
-LANE_B_ROLE="${MIOS_A2O_LANE_B_ROLE:-finalize (last ~20%)}"
-LANE_B_FALLBACK_ENGINE="${MIOS_A2O_LANE_B_FALLBACK_ENGINE:-claude}"
-LANE_B_FALLBACK_MODEL="${MIOS_A2O_LANE_B_FALLBACK_MODEL:-claude-sonnet-5}"
-LANE_B_FALLBACK_EFFORT="${MIOS_A2O_LANE_B_FALLBACK_EFFORT:-high}"
-LANE_B_PREFER_FALLBACK="${MIOS_A2O_LANE_B_PREFER_FALLBACK:-true}"
-CLAUDE_EFFORT_FLAG="${MIOS_A2O_CLAUDE_EFFORT_FLAG:-}"
+ORCH_ENGINE="${MIOS_FRONTIER_ORCH_ENGINE:-claude}"
+ORCH_MODEL="${MIOS_FRONTIER_ORCH_MODEL:-claude-sonnet-5}"
+ORCH_EFFORT="${MIOS_FRONTIER_ORCH_EFFORT:-high}"
+LANE_A_ENGINE="${MIOS_FRONTIER_LANE_A_ENGINE:-claude}"        # Claude Opus 4.8
+LANE_A_MODEL="${MIOS_FRONTIER_LANE_A_MODEL:-claude-opus-4-8}"
+LANE_A_EFFORT="${MIOS_FRONTIER_LANE_A_EFFORT:-xhigh}"
+LANE_A_ROLE="${MIOS_FRONTIER_LANE_A_ROLE:-framework + ~80%}"
+LANE_B_ENGINE="${MIOS_FRONTIER_LANE_B_ENGINE:-agy}"           # Gemini 3.5 Flash (High) via Antigravity
+LANE_B_MODEL="${MIOS_FRONTIER_LANE_B_MODEL:-Gemini 3.5 Flash (High)}"
+LANE_B_EFFORT="${MIOS_FRONTIER_LANE_B_EFFORT:-high}"
+LANE_B_ROLE="${MIOS_FRONTIER_LANE_B_ROLE:-finalize (last ~20%)}"
+LANE_B_FALLBACK_ENGINE="${MIOS_FRONTIER_LANE_B_FALLBACK_ENGINE:-claude}"
+LANE_B_FALLBACK_MODEL="${MIOS_FRONTIER_LANE_B_FALLBACK_MODEL:-claude-sonnet-5}"
+LANE_B_FALLBACK_EFFORT="${MIOS_FRONTIER_LANE_B_FALLBACK_EFFORT:-high}"
+LANE_B_PREFER_FALLBACK="${MIOS_FRONTIER_LANE_B_PREFER_FALLBACK:-true}"
+CLAUDE_EFFORT_FLAG="${MIOS_FRONTIER_CLAUDE_EFFORT_FLAG:-}"
 AGY_EFFORT_FLAG="${MIOS_A2O_AGY_EFFORT_FLAG:-}"
 GEMINI_EFFORT_FLAG="${MIOS_A2O_GEMINI_EFFORT_FLAG:-}"
 _a2o_self_dir="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
@@ -108,13 +108,13 @@ cmd_dispatch(){
   ensure_server; mkdir -p "$work"
   cat > "$PROMPTS/$name.txt"                          # prompt from stdin
   [ -s "$PROMPTS/$name.txt" ] || die "Empty prompt on stdin"
-  # F-014: Checkpoint marker for automatic container restart recovery
+  # task_3185: Checkpoint marker for automatic container restart recovery
   printf 'NAME=%s\nENGINE=%s\nWORK=%s\nMODEL=%s\nEFFORT=%s\nPROMPT_FILE=%s\nDISPATCH_TS=%s\n' \
     "$name" "$eng" "$work" "$model" "$effort" "$PROMPTS/$name.txt" "$(date +%s)" > "$STATUS/$name.resume"
   local AGY_DEBUG_LOG="$RUND/$name.agy-debug.log"
   : > "$LOGS/$name.log"; rm -f "$STATUS/$name.status" "$STATUS/$name.running" "$AGY_DEBUG_LOG"; echo "$eng" > "$STATUS/$name.engine"
   local EXEC; EXEC="$(exec_line "$eng" "$work" "$model" "$effort" "$AGY_DEBUG_LOG")"
-  local _sr="${MIOS_A2O_STREAM_REASONING:-0}"; _sr="${_sr,,}"
+  local _sr="${MIOS_FRONTIER_STREAM_TO_REASONING:-0}"; _sr="${_sr,,}"
   local _stream_on=0; case "$_sr" in 1|true|yes|on) _stream_on=1;; esac
   local _agy_post=""
   if [ "$eng" = agy ]; then
@@ -171,7 +171,7 @@ AGYCHK
 export PATH="$PATH"
 cd "$work" 2>/dev/null || cd "$WORK_DEFAULT"
 A2O_STREAM_ON="$_stream_on"
-A2O_STREAM_PATH="${MIOS_A2O_STREAM_PATH:-}"
+A2O_STREAM_PATH="${MIOS_FRONTIER_STREAM_PATH:-}"
 A2O_MOUNT_ROOT="${MIOS_A2O_WORK:-}"
 _a2o_stream(){  # \$1 = transition detail -> best-effort JSONL append to the frontier
   [ "\$A2O_STREAM_ON" = 1 ] || return 0
@@ -255,16 +255,16 @@ cmd_lane(){
   local lane_up="${lane^^}"
   case "$lane" in
     a|A|lane_a|LANE_A)
-      eng="${MIOS_A2O_LANE_A_ENGINE:-$LANE_A_ENGINE}"
-      mdl="${MIOS_A2O_LANE_A_MODEL:-$LANE_A_MODEL}"
-      eff="${MIOS_A2O_LANE_A_EFFORT:-$LANE_A_EFFORT}"
-      role="${MIOS_A2O_LANE_A_ROLE:-$LANE_A_ROLE}"
+      eng="${MIOS_FRONTIER_LANE_A_ENGINE:-$LANE_A_ENGINE}"
+      mdl="${MIOS_FRONTIER_LANE_A_MODEL:-$LANE_A_MODEL}"
+      eff="${MIOS_FRONTIER_LANE_A_EFFORT:-$LANE_A_EFFORT}"
+      role="${MIOS_FRONTIER_LANE_A_ROLE:-$LANE_A_ROLE}"
       ;;
     b|B|lane_b|LANE_B)
-      eng="${MIOS_A2O_LANE_B_ENGINE:-$LANE_B_ENGINE}"
-      mdl="${MIOS_A2O_LANE_B_MODEL:-$LANE_B_MODEL}"
-      eff="${MIOS_A2O_LANE_B_EFFORT:-$LANE_B_EFFORT}"
-      role="${MIOS_A2O_LANE_B_ROLE:-$LANE_B_ROLE}"
+      eng="${MIOS_FRONTIER_LANE_B_ENGINE:-$LANE_B_ENGINE}"
+      mdl="${MIOS_FRONTIER_LANE_B_MODEL:-$LANE_B_MODEL}"
+      eff="${MIOS_FRONTIER_LANE_B_EFFORT:-$LANE_B_EFFORT}"
+      role="${MIOS_FRONTIER_LANE_B_ROLE:-$LANE_B_ROLE}"
       if lane_b_fallback_on && [ -n "$LANE_B_FALLBACK_ENGINE" ]; then
         eng="$LANE_B_FALLBACK_ENGINE"; mdl="$LANE_B_FALLBACK_MODEL"; eff="$LANE_B_FALLBACK_EFFORT"
       fi

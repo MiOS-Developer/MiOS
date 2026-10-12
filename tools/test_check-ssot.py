@@ -208,7 +208,7 @@ class tsck_TestRealTree(unittest.TestCase):
                          len(tsck_mod.sck_register(self.real)))
 
     def test_the_nine_security_controls_resolve(self):
-        # T-325: these sat under an unclosed [security.nohc_allowlist] header, so
+        # task_269: these sat under an unclosed [security.nohc_allowlist] header, so
         # every one of them silently took its compiled default.
         for key in ("api_require_auth", "api_caller_keys_path", "principal_bind_mode",
                     "rule_of_two_mode", "quarantine_mode", "firewall_high_privilege_verbs",
@@ -260,6 +260,22 @@ def tup_data(drift, max_drift=None, units=(tup_A, tup_B), aliases=None, table=Tr
 
 def tup_only(viols, needle):
     return [v for v in viols if needle in v]
+
+class tup_TestConfiguredCatalog(unittest.TestCase):
+    def test_configured_generator_precedes_local_or_installed_tools(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as catalog:
+            name = "mios-unit-gen" + (".exe" if sys.platform == "win32" else "")
+            path = os.path.join(catalog, name)
+            with open(path, "w") as f:
+                f.write("verification tool")
+            os.chmod(path, 0o755)
+            with patch.dict(os.environ, {"MIOS_NATIVE_BIN_DIR": catalog}):
+                self.assertEqual(path, tup_mod.up_binary_path("/nonexistent/root"))
+                os.remove(path)
+                with self.assertRaisesRegex(RuntimeError, "configured unit generator is missing"):
+                    tup_mod.up_binary_path("/nonexistent/root")
+
 
 class tup_TestHygiene(unittest.TestCase):
     def test_a_clean_register_is_silent(self):
@@ -390,7 +406,7 @@ class tpf_TestIdioms(unittest.TestCase):
 
     def test_an_unconditional_environment_pin_is_found(self):
         # The shape that made agent-pipe bind a retired port.
-        f = self._one("Environment=MIOS_PORT_AGENT_PIPE=8640\n",
+        f = self._one("Environment=MIOS_PORTS_AGENT_PIPE=8640\n",
                       "usr/lib/systemd/system/x.service")
         self.assertIn("usr/lib/systemd/system/x.service:AGENT_PIPE", f)
 
@@ -398,34 +414,34 @@ class tpf_TestIdioms(unittest.TestCase):
         # 8450 is DELIBERATELY wrong -- [ports].llm_light is 8500. A fixture
         # carrying the CORRECT value produces no finding, so the assertion
         # would pass over nothing.
-        self.assertTrue(self._one('P="${MIOS_PORT_LLM_LIGHT:-8450}"\n'))
+        self.assertTrue(self._one('P="${MIOS_PORTS_LLM_LIGHT:-8450}"\n'))
 
     def test_a_python_get_default_is_found(self):
-        self.assertTrue(self._one('p = os.environ.get("MIOS_PORT_LLM_LIGHT", "8450")\n'))
+        self.assertTrue(self._one('p = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8450")\n'))
 
     def test_the_second_literal_of_a_double_fallback_is_found(self):
         # get(K, "correct") or WRONG -- the `or` is what runs when the var is
         # empty, and the first sweep of this gate missed it entirely.
-        f = self._one('p = int(e.get("MIOS_PORT_PGVECTOR", "8600") or 8432)\n')
+        f = self._one('p = int(e.get("MIOS_PORTS_PGVECTOR", "8600") or 8432)\n')
         self.assertIn("usr/libexec/mios/probe:PGVECTOR", f)
 
     def test_a_bare_or_fallback_is_found(self):
-        self.assertTrue(self._one('p = os.environ.get("MIOS_PORT_LLM_LIGHT") or "8450"\n'))
+        self.assertTrue(self._one('p = os.environ.get("MIOS_PORTS_LLM_LIGHT") or "8450"\n'))
 
     def test_the_powershell_table_shape_is_found(self):
-        self.assertTrue(self._one("_MiosPort 'MIOS_PORT_LLM_LIGHT' 8450\n"))
+        self.assertTrue(self._one("_MiosPort 'MIOS_PORTS_LLM_LIGHT' 8450\n"))
 
     def test_the_alias_spelling_is_found(self):
-        self.assertTrue(self._one('p = os.environ.get("MIOS_ARBITER_PORT", "8650")\n'))
+        self.assertTrue(self._one('p = os.environ.get("MIOS_PORTS_ARBITER", "8650")\n'))
 
     def test_an_agreeing_literal_is_not_a_finding(self):
-        self.assertEqual(self._one('p = os.environ.get("MIOS_PORT_LLM_LIGHT", "8500")\n'), {})
+        self.assertEqual(self._one('p = os.environ.get("MIOS_PORTS_LLM_LIGHT", "8500")\n'), {})
 
     def test_a_templated_reference_is_not_a_finding(self):
-        self.assertEqual(self._one('P="${MIOS_PORT_LLM_LIGHT}"\n'), {})
+        self.assertEqual(self._one('P="${MIOS_PORTS_LLM_LIGHT}"\n'), {})
 
     def test_a_comment_is_never_a_finding(self):
-        self.assertEqual(self._one('# MIOS_PORT_LLM_LIGHT used to be 8450\n'), {})
+        self.assertEqual(self._one('# MIOS_PORTS_LLM_LIGHT used to be 8450\n'), {})
 
     def test_a_name_with_no_ports_key_is_ignored(self):
         self.assertEqual(self._one('p = os.environ.get("MIOS_PG_PORT", "5432")\n'), {})
@@ -433,13 +449,13 @@ class tpf_TestIdioms(unittest.TestCase):
 class tpf_TestRegister(unittest.TestCase):
     def test_a_registered_finding_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORT_LLM_LIGHT:-8450}"\n'},
+            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORTS_LLM_LIGHT:-8450}"\n'},
                      register=["usr/libexec/mios/probe:LLM_LIGHT"])
             self.assertEqual(tpf_mod.pf_classify(d, tmp), [])
 
     def test_an_unregistered_finding_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORT_LLM_LIGHT:-8450}"\n'},
+            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORTS_LLM_LIGHT:-8450}"\n'},
                      register=[])
             self.assertTrue(tpf_mod.pf_classify(d, tmp))
 
@@ -453,7 +469,7 @@ class tpf_TestRegister(unittest.TestCase):
 
     def test_a_duplicated_register_entry_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORT_LLM_LIGHT:-8450}"\n'},
+            d = tpf_tree(tmp, {"usr/libexec/mios/probe": 'x = "${MIOS_PORTS_LLM_LIGHT:-8450}"\n'},
                      register=["usr/libexec/mios/probe:LLM_LIGHT"] * 2)
             self.assertTrue(any("twice" in v for v in tpf_mod.pf_classify(d, tmp)))
 
@@ -559,7 +575,7 @@ class tpb_TestShippedTree(unittest.TestCase):
         self.assertTrue(set(tpb_mod.pb_register(self.real)) <= tpb_mod.pb_port_keys(self.real))
 
     def test_the_ports_that_were_wired_are_really_referenced(self):
-        # The four T-318 drains: if any regresses, this fails before the gate does.
+        # The four task_261 drains: if any regresses, this fails before the gate does.
         ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
         for k in ("guacd", "redis", "pxe_hub_api", "forge_ssh"):
             self.assertIn(k, ref, k)
@@ -631,6 +647,35 @@ class tvr_TestVariantRegistry(unittest.TestCase):
 
     def test_each_variant_has_a_page_in_the_manual(self):
         p = os.path.join(tvr__ROOT, "usr/share/man/man7/mios-variants.7")
+        if not os.path.isfile(p):
+            import shutil, subprocess, tempfile
+            with tempfile.TemporaryDirectory() as td:
+                os.makedirs(os.path.join(td, "usr/share/mios"), exist_ok=True)
+                os.makedirs(os.path.join(td, "usr/share/doc/mios/manual"), exist_ok=True)
+                shutil.copy(os.path.join(tvr__ROOT, "usr/share/mios/mios.toml"), os.path.join(td, "usr/share/mios/mios.toml"))
+                shutil.copy(os.path.join(tvr__ROOT, "VERSION"), os.path.join(td, "VERSION"))
+                ch01 = os.path.join(tvr__ROOT, "usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md")
+                if os.path.isfile(ch01):
+                    shutil.copy(ch01, os.path.join(td, "usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md"))
+                gen = shutil.which("mios-gen")
+                if not gen:
+                    exe = ".exe" if os.name == "nt" else ""
+                    for cand in [
+                        os.path.join(tvr__ROOT, "tools/native/target/debug/mios-gen" + exe),
+                        os.path.join(tvr__ROOT, "tools/native/target/release/mios-gen" + exe),
+                        "/usr/libexec/mios/mios-gen",
+                    ]:
+                        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                            gen = cand
+                            break
+                if gen:
+                    subprocess.run([gen, "render-manpages", "--root", td], check=True, capture_output=True)
+                p = os.path.join(td, "usr/share/man/man7/mios-variants.7")
+                self.assertTrue(os.path.isfile(p), "mios-variants(7) is not rendered")
+                body = open(p, encoding="utf-8").read()
+                for spec in self.entries.values():
+                    self.assertIn(spec["title"].replace("-", chr(92) + "-"), body)
+                return
         self.assertTrue(os.path.isfile(p), "mios-variants(7) is not rendered")
         body = open(p, encoding="utf-8").read()
         for spec in self.entries.values():
@@ -1005,7 +1050,7 @@ def tnp_data(nodes, blades=None, vocab=tnp_VOCAB):
         d["blades"] = dict(blades)
     return d
 
-tnp_GPU = {"endpoint": "http://localhost:${MIOS_PORT_SGLANG}/v1",
+tnp_GPU = {"endpoint": "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1",
        "model": "mios-heavy", "lane": "gpu"}
 
 class tnp_TestAliases(unittest.TestCase):
@@ -1060,16 +1105,16 @@ class tnp_TestBlades(unittest.TestCase):
 
 class tnp_TestOffloadability(unittest.TestCase):
     def test_a_baked_local_port_fails(self):
-        n = {"endpoint": "http://localhost:8530/v1", "model": "m", "lane": "gpu"}
+        n = {"endpoint": "http://localhost:8520/v1", "model": "m", "lane": "gpu"}
         out = tnp_mod.np_unmovable_endpoints(tnp_data({"a": n}))
         self.assertTrue(out)
-        self.assertIn("8530", out[0])
+        self.assertIn("8520", out[0])
 
     def test_a_templated_local_port_is_clean(self):
         self.assertEqual(tnp_mod.np_unmovable_endpoints(tnp_data({"a": dict(tnp_GPU)})), [])
 
     def test_a_remote_host_is_clean(self):
-        n = {"endpoint": "http://blade-01.mesh:8530/v1", "model": "m", "lane": "gpu"}
+        n = {"endpoint": "http://blade-01.mesh:8520/v1", "model": "m", "lane": "gpu"}
         self.assertEqual(tnp_mod.np_unmovable_endpoints(tnp_data({"a": n})), [])
 
 class tnp_TestRealTree(unittest.TestCase):
@@ -1193,7 +1238,7 @@ class tbc_TestShippedTree(unittest.TestCase):
 
     def test_the_gpu_lanes_are_capability_gated(self):
         req = tbc_mod.bc_requires(self.real)
-        for svc in ("mios-llm-heavy", "mios-llm-heavy-alt", "mios-llm-worker@"):
+        for svc in ("mios-llm-heavy", "mios-llm-worker@"):
             self.assertIn("gpu-serving", req.get(svc, []), svc)
 
     def test_the_seat_archetype_grants_nothing(self):
@@ -1202,7 +1247,7 @@ class tbc_TestShippedTree(unittest.TestCase):
 
     def test_the_register_is_drained_and_stays_drained(self):
         # This assertion started as "not empty yet" -- a guard that fired the
-        # moment T-319 drained the register. Revisited as designed: empty is now
+        # moment task_266 drained the register. Revisited as designed: empty is now
         # the goal state, so the claim is the stronger one.
         self.assertEqual(tbc_mod.bc_register(self.real), [])
 

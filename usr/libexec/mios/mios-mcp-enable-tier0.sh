@@ -19,7 +19,7 @@ if [ -r /etc/mios/install.env ]; then
     set +u; set -a; . /etc/mios/install.env 2>/dev/null || true; set +a
     [ "$_mios_had_u" = 1 ] && set -u
 fi
-_PGPORT="${MIOS_PORT_PGVECTOR:-8600}"
+_PGPORT="${MIOS_PORTS_PGVECTOR:-8600}"
 
 echo "[3/5] /etc overlay"
 mkdir -p /etc/mios/ai/v1
@@ -45,7 +45,7 @@ JSON
 
 echo "[4/5] restart agent-pipe"
 systemctl restart mios-agent-pipe.service
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do curl -sf http://127.0.0.1:${MIOS_PORT_AGENT_PIPE:-8700}/v1/models >/dev/null 2>&1 && break; sleep 4; done
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do curl -sf http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE:-8700}/v1/models >/dev/null 2>&1 && break; sleep 4; done
 sleep 12
 
 echo "[5/5] verify probes"

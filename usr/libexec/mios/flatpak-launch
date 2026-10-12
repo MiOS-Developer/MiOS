@@ -1,5 +1,5 @@
-#!/bin/sh
-# AI-hint: A robust wrapper for flatpak run that restores missing WSLg, Wayland, X11, and PulseAudio environment variables (DISPLAY, WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS) lost during shell transitions like su, sudo, or nsenter; the launch is always DETACHED so its "dispatched" line is NOT a success confirmation -- the caller (mios-gui) does the authoritative new-window poll.
+#!/bin/bash
+# AI-hint: Restores WSLg/Wayland/X11/PulseAudio variables lost across su/sudo/nsenter, then runs flatpak detached. Dispatch is not success; mios-gui polls for a new window.
 # AI-related: /usr/libexec/mios/flatpak-launch, /usr/libexec/mios/mios-autocenter, /etc/mios/mios.toml, /usr/share/mios/mios.toml, /usr/libexec/mios/mios-as-operator, /usr/libexec/mios/mios-wsl-flatpak-heal, /etc/mios/flatpak-flags/, /usr/share/mios/flatpak-flags/, /etc/mios/wsl-distro, mios-autocenter
 # AI-functions: _mios_fire_autocenter, _q
 
@@ -32,29 +32,48 @@ print(",".join(str(w.get("hwnd")) for w in d.get("windows", [])))' 2>/dev/null)"
     setsid /usr/libexec/mios/mios-autocenter "$_ace" "$_before" >/dev/null 2>&1 &
 }
 
+_FL_DEPTH="${_MIOS_FLATPAK_DEPTH:-0}"
 _FL_REEXEC="${_MIOS_FLATPAK_REEXEC:-0}"
 
 _op_user=""
-if [ -r /usr/share/mios/mios.toml ]; then
-    _op_user="$(awk -F\" '/^\s*username\s*=\s*"/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
+if [ -r /etc/wsl.conf ]; then
+    _op_user="$(awk -F= '/^[[:space:]]*default[[:space:]]*=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' /etc/wsl.conf 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] && [ -r /etc/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /etc/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] && [ -r /usr/share/mios/mios.toml ]; then
+    _op_user="$(awk -F\" '/^[[:space:]]*mios_user[[:space:]]*=/{print $2; exit}' /usr/share/mios/mios.toml 2>/dev/null)"
+fi
+if [ -z "$_op_user" ] || ! id -u "$_op_user" >/dev/null 2>&1; then
+    if id -u mios >/dev/null 2>&1; then
+        _op_user="mios"
+    elif id -u user >/dev/null 2>&1; then
+        _op_user="user"
+    fi
 fi
 [ -z "$_op_user" ] && _op_user="mios"
-_op_uid="$(id -u "$_op_user" 2>/dev/null || echo 1000)"
+_op_uid="$(id -u "$_op_user" 2>/dev/null || echo 992)"
 _my_uid="$(id -u)"
 
 _NEED_REEXEC=0
-if [ "$_FL_REEXEC" != "1" ] \
-   && [ "$_my_uid" != "$_op_uid" ] \
-   && [ "$_my_uid" -lt "$_op_uid" ]; then
-    _NEED_REEXEC=1
+if [ "$_FL_REEXEC" != "1" ] && [ "$_FL_DEPTH" -lt 2 ] && [ "$_my_uid" != "$_op_uid" ]; then
+    # Only re-exec if root (0) or low-UID system service (< 900) without graphical display access
+    if [ "$_my_uid" -eq 0 ] || [ "$_my_uid" -lt 900 ]; then
+        if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] && [ ! -S "/run/user/${_my_uid}/wayland-0" ]; then
+            _NEED_REEXEC=1
+        fi
+    fi
 fi
 
 if [ "$_NEED_REEXEC" = "1" ] \
    && [ -e /mnt/c/Windows/System32/wsl.exe ] \
    && [ -x /usr/libexec/mios/mios-as-operator ]; then
     export _MIOS_FLATPAK_REEXEC=1
+    export _MIOS_FLATPAK_DEPTH=$(( _FL_DEPTH + 1 ))
     _mios_fire_autocenter
-    setsid /usr/libexec/mios/mios-as-operator flatpak run --system \
+    setsid env _MIOS_FLATPAK_DEPTH=$(( _FL_DEPTH + 1 )) _MIOS_FLATPAK_REEXEC=1 \
+        /usr/libexec/mios/mios-as-operator /usr/libexec/mios/flatpak-launch \
         "$APP_ID" "$@" >/dev/null 2>&1 < /dev/null &
     echo "Flatpak-launch: dispatched $APP_ID via mios-as-operator" >&2
     exit 0
@@ -114,6 +133,10 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
 fi
 
 if [ "$IS_WSL" = "1" ]; then
+    # Retire the former MiOS WSLg shrink overrides from already-running shells.
+    # Other explicit operator scale choices remain intact.
+    [ "${GDK_DPI_SCALE:-}" != "0.60" ] || unset GDK_DPI_SCALE
+    [ "${QT_FONT_DPI:-}" != "58" ] || unset QT_FONT_DPI
     : "${WAYLAND_DISPLAY:=wayland-0}"
     : "${DISPLAY:=:0}"
     if [ -z "${PULSE_SERVER:-}" ]; then
@@ -127,6 +150,8 @@ if [ "$IS_WSL" = "1" ]; then
     [ -n "${PULSE_SERVER:-}" ] && export PULSE_SERVER
 
     if [ -z "${WSL_INTEROP:-}" ] || [ ! -S "${WSL_INTEROP:-/nonexistent}" ]; then
+        # Newest socket first: a glob cannot order by mtime.
+        # shellcheck disable=SC2045
         for _ix in $(ls -t /run/WSL/*_interop 2>/dev/null); do
             if [ -S "$_ix" ]; then
                 WSL_INTEROP="$_ix"
@@ -148,6 +173,15 @@ fi
 
 if [ "$IS_WSL" = "1" ] && [ -x /usr/libexec/mios/mios-wsl-flatpak-heal ]; then
     /usr/libexec/mios/mios-wsl-flatpak-heal >/dev/null 2>&1 || true
+fi
+
+# Existing accounts need the same projections as new image users. Keep assets
+# inside user paths exposed to the sandbox, including the cursor in app bodies.
+if [ -x /usr/libexec/mios/mios-cursor-ensure ]; then
+    /usr/libexec/mios/mios-cursor-ensure >/dev/null
+fi
+if [ -x /usr/libexec/mios/mios-theme-render ]; then
+    /usr/libexec/mios/mios-theme-render --gtk --flatpak "$APP_ID" >/dev/null
 fi
 
 EXTRA_FLAGS=""

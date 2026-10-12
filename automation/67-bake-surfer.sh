@@ -96,31 +96,31 @@ with open(p, "w", encoding="utf-8") as f:
     fi
 
     mios_log "Browser.xhtml layout patches"
-    : "${MIOS_COLOR_BG:=#282262}"
-    : "${MIOS_COLOR_ACCENT:=#1A407F}"
-    : "${MIOS_COLOR_SUBTLE:=#B7C9D7}"
+    : "${MIOS_COLORS_BG:=#282262}"
+    : "${MIOS_COLORS_ACCENT:=#1A407F}"
+    : "${MIOS_COLORS_SUBTLE:=#B7C9D7}"
     # A wrong port baked into browser chrome stays invisible until someone
     # opens the sidebar, so an unresolved SSOT value fails the bake.
-    for _v in MIOS_PORT_AGENT_PIPE MIOS_PORT_HERMES MIOS_BROWSER_AI_PROVIDER_URL; do
+    for _v in MIOS_PORTS_AGENT_PIPE MIOS_PORTS_HERMES MIOS_BROWSER_AI_PROVIDER_URL; do
         [ -n "${!_v:-}" ] || { mios_err "${_v} unresolved -- cannot bake browser chrome"; exit 1; }
     done
     cat << EOF > /tmp/browser_xhtml_patch.xml
 <!-- Add sidebar panels for navigation cockpit and AI interaction to browser.xhtml -->
 <hbox flex="1" id="mios-three-pane-container">
-  <vbox id="mios-custom-sidebar" width="220" style="background-color: ${MIOS_COLOR_BG}; border-right: 1px solid ${MIOS_COLOR_SUBTLE};">
+  <vbox id="mios-custom-sidebar" width="220" style="background-color: ${MIOS_COLORS_BG}; border-right: 1px solid ${MIOS_COLORS_SUBTLE};">
     <vbox id="mios-panel-cockpit" flex="1">
       <!-- Nav cockpit & System controls -->
-      <button label="Local Dashboard" oncommand="loadURI('http://localhost:${MIOS_PORT_AGENT_PIPE}/')" />
-      <button label="Container Status" oncommand="loadURI('http://localhost:${MIOS_PORT_HERMES}/v1/cluster/health')" />
+      <button label="Local Dashboard" oncommand="loadURI('http://localhost:${MIOS_PORTS_AGENT_PIPE}/')" />
+      <button label="Container Status" oncommand="loadURI('http://localhost:${MIOS_PORTS_HERMES}/v1/cluster/health')" />
     </vbox>
-    <hbox id="mios-action-area" style="padding: 10px; border-top: 1px solid ${MIOS_COLOR_SUBTLE};">
+    <hbox id="mios-action-area" style="padding: 10px; border-top: 1px solid ${MIOS_COLORS_SUBTLE};">
       <button id="mios-terminal-trigger" label="Launch Terminal" oncommand="launchTerminalAsync()" style="flex: 1;" />
     </hbox>
   </vbox>
   <splitter id="mios-sidebar-splitter" resizebefore="grow" resizeafter="shrink" class="chromeclass-extrachrome" />
   <vbox id="appcontent" flex="1" />
   <splitter id="mios-ai-splitter" resizebefore="grow" resizeafter="shrink" class="chromeclass-extrachrome" />
-  <vbox id="mios-ai-sidebar" width="300" style="background-color: ${MIOS_COLOR_ACCENT};">
+  <vbox id="mios-ai-sidebar" width="300" style="background-color: ${MIOS_COLORS_ACCENT};">
     <!-- Local AI agent panel -->
     <browser id="mios-ai-frame" src="${MIOS_BROWSER_AI_PROVIDER_URL}" flex="1" />
   </vbox>

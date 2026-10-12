@@ -4,7 +4,7 @@
 
 """
 Unit Test Suite for MiOS UID 1000 Enforcement & Systemd User Session Boundary.
-Implements T-965 / AGY-2563.
+Implements task_909 / task_3142.
 """
 
 import os
@@ -62,26 +62,20 @@ class TestUidEnforcement(unittest.TestCase):
 
     def test_sysusers_consolidation_and_security_groups(self):
         root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        conf_10 = os.path.join(root_dir, "usr", "lib", "sysusers.d", "10-mios.conf")
-        conf_50 = os.path.join(root_dir, "usr", "lib", "sysusers.d", "50-mios-users.conf")
+        conf_50 = os.path.join(root_dir, "usr", "lib", "sysusers.d", "50-mios.conf")
 
-        self.assertTrue(os.path.isfile(conf_10), f"Missing {conf_10}")
         self.assertTrue(os.path.isfile(conf_50), f"Missing {conf_50}")
 
-        with open(conf_10, "r", encoding="utf-8") as f:
-            content_10 = f.read()
         with open(conf_50, "r", encoding="utf-8") as f:
             content_50 = f.read()
 
-        # Both must declare identical GECOS "'MiOS' User"
+        # Must declare GECOS "'MiOS' User"
         expected_u = 'u mios 1000:mios "\'MiOS\' User" /var/home/mios /bin/bash'
-        self.assertIn(expected_u, content_10)
         self.assertIn(expected_u, content_50)
 
-        # Both must include all supplementary security groups
+        # Must include all supplementary security groups
         security_groups = ["mios-hermes", "mios-ai", "mios-sys"]
         for grp in security_groups:
-            self.assertIn(f"m mios {grp}", content_10)
             self.assertIn(f"m mios {grp}", content_50)
 
 if __name__ == "__main__":

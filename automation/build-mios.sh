@@ -78,8 +78,8 @@ collect_user_config() {
         fi
     done
 
-    read -p "Enter hostname (default: mios): " MIOS_HOSTNAME
-    MIOS_HOSTNAME="${MIOS_HOSTNAME:-mios}"
+    read -p "Enter hostname (default: mios): " MIOS_IDENTITY_HOSTNAME
+    MIOS_IDENTITY_HOSTNAME="${MIOS_IDENTITY_HOSTNAME:-mios}"
 
     echo ""
     echo "Select base image:"
@@ -102,7 +102,7 @@ collect_user_config() {
 
     echo ""
     read -p "Enter Flatpak app IDs (comma-separated, optional): " MIOS_FLATPAKS_INPUT
-    MIOS_FLATPAKS="${MIOS_FLATPAKS_INPUT}"
+    MIOS_DESKTOP_FLATPAKS="${MIOS_FLATPAKS_INPUT}"
 
     echo ""
     read -p "Configure AI settings? (y/N): " CONFIGURE_AI
@@ -124,9 +124,9 @@ collect_user_config() {
     echo ""
     log_info "Configuration Summary:"
     echo "  Username:     $MIOS_USERNAME"
-    echo "  Hostname:     $MIOS_HOSTNAME"
+    echo "  Hostname:     $MIOS_IDENTITY_HOSTNAME"
     echo "  Base Image:   $MIOS_BASE_IMAGE"
-    echo "  Flatpaks:     ${MIOS_FLATPAKS:-none}"
+    echo "  Flatpaks:     ${MIOS_DESKTOP_FLATPAKS:-none}"
     echo "  AI Model:     $MIOS_AI_MODEL"
     echo "  AI Endpoint:  $MIOS_AI_ENDPOINT"
     echo ""
@@ -221,7 +221,7 @@ queue_environment_files() {
         echo ""
         echo "[user]"
         echo "Name     = \"${MIOS_USERNAME}\""
-        echo "Hostname = \"${MIOS_HOSTNAME}\""
+        echo "Hostname = \"${MIOS_IDENTITY_HOSTNAME}\""
         echo ""
         echo "[image]"
         echo "Base = \"${MIOS_BASE_IMAGE}\""
@@ -231,9 +231,9 @@ queue_environment_files() {
         echo "Local_tag = \"localhost/mios:latest\""
         echo ""
         echo "[flatpaks]"
-        if [[ -n "$MIOS_FLATPAKS" ]]; then
+        if [[ -n "$MIOS_DESKTOP_FLATPAKS" ]]; then
             echo "Install = ["
-            echo "$MIOS_FLATPAKS" | tr ',' '\n' | while read -r f; do
+            echo "$MIOS_DESKTOP_FLATPAKS" | tr ',' '\n' | while read -r f; do
                 f="$(echo "$f" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
                 [[ -z "$f" ]] && continue
                 echo "    \"$f\","
@@ -272,9 +272,9 @@ merge_mios_structure() {
         || log_warn "Some files in /etc were skipped (already exist)"
 
     log_info "Declaring /var directories via tmpfiles.d..."
-    if [[ -f usr/lib/tmpfiles.d/mios.conf ]]; then
-        cp -n usr/lib/tmpfiles.d/mios.conf /usr/lib/tmpfiles.d/ || true
-        systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios.conf || log_warn "tmpfiles creation had warnings"
+    if [[ -f usr/lib/tmpfiles.d/50-mios.conf ]]; then
+        cp -n usr/lib/tmpfiles.d/50-mios.conf /usr/lib/tmpfiles.d/ || true
+        systemd-tmpfiles --create /usr/lib/tmpfiles.d/50-mios.conf || log_warn "tmpfiles creation had warnings"
     fi
 
     log_info "Merging /home skeleton..."
@@ -311,11 +311,13 @@ create_user_account() {
     if id "$MIOS_USERNAME" &>/dev/null; then
         log_warn "User ${MIOS_USERNAME} already exists, updating password..."
         echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
     else
         EXTRA_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
         if getent group docker >/dev/null 2>&1; then EXTRA_GROUPS="$EXTRA_GROUPS,docker"; fi
         useradd -u 1000 -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME" 2>/dev/null || useradd -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME"
         echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
 
         install -d -m 0750 /etc/sudoers.d
         echo "${MIOS_USERNAME} ALL= NOPASSWD:ALL" > "/etc/sudoers.d/${MIOS_USERNAME}"
@@ -374,9 +376,9 @@ GITIGNORE_EOF
 }
 
 set_hostname() {
-    log_info "Setting hostname to: ${MIOS_HOSTNAME}..."
+    log_info "Setting hostname to: ${MIOS_IDENTITY_HOSTNAME}..."
 
-    hostnamectl set-hostname "$MIOS_HOSTNAME"
+    hostnamectl set-hostname "$MIOS_IDENTITY_HOSTNAME"
 
     log "Hostname set successfully"
 }
@@ -394,10 +396,10 @@ build_mios_image() {
         cd ${MIOS_SHARE_DIR}
 
         export MIOS_BASE_IMAGE
-        export MIOS_FLATPAKS
-        export MIOS_USER="${MIOS_USERNAME}"
+        export MIOS_DESKTOP_FLATPAKS
+        export MIOS_IDENTITY_USERNAME="${MIOS_USERNAME}"
         export MIOS_PASSWORD_HASH
-        export MIOS_HOSTNAME
+        export MIOS_IDENTITY_HOSTNAME
 
         SOURCE_DATE_EPOCH=$(git -C "${MIOS_SHARE_DIR:-.}" log -1 --format=%ct 2>/dev/null || date +%s)
         export SOURCE_DATE_EPOCH
@@ -409,10 +411,10 @@ build_mios_image() {
                 --timestamp "$SOURCE_DATE_EPOCH" \
                 --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
                 --build-arg BASE_IMAGE="$MIOS_BASE_IMAGE" \
-                --build-arg MIOS_USER="$MIOS_USERNAME" \
+                --build-arg MIOS_IDENTITY_USERNAME="$MIOS_USERNAME" \
                 --build-arg MIOS_PASSWORD_HASH="$MIOS_PASSWORD_HASH" \
-                --build-arg MIOS_HOSTNAME="$MIOS_HOSTNAME" \
-                --build-arg MIOS_FLATPAKS="$MIOS_FLATPAKS" \
+                --build-arg MIOS_IDENTITY_HOSTNAME="$MIOS_IDENTITY_HOSTNAME" \
+                --build-arg MIOS_DESKTOP_FLATPAKS="$MIOS_DESKTOP_FLATPAKS" \
                 -t localhost/mios:latest . \
                 || { log_error "Build failed"; return 1; }
         fi
@@ -451,7 +453,7 @@ show_summary() {
 
 Configuration:
   Username:     ${MIOS_USERNAME}
-  Hostname:     ${MIOS_HOSTNAME}
+  Hostname:     ${MIOS_IDENTITY_HOSTNAME}
   Config Dir:   ${MIOS_USER_CONFIG_DIR}
 
 Installation Details:

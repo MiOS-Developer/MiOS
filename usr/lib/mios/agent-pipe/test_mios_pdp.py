@@ -81,27 +81,138 @@ def main() -> int:
 
 
 # ==============================================================================
-# Consolidated from test_mios_auth.py (T-1092)
+# mios_pipe.auth middlewares; task_1006 had folded only a placeholder here.
 # ==============================================================================
-# AI-hint: Placeholder test for mios_auth.py.
-def test_stub():
-    pass
+import asyncio
+import json
+import types
+
+from mios_pipe import auth as _auth
+
+
+def _request(path, authorization=None):
+    headers = {} if authorization is None else {"authorization": authorization}
+    return types.SimpleNamespace(url=types.SimpleNamespace(path=path), headers=headers,
+                                 state=types.SimpleNamespace())
+
+
+class _Upstream:
+    """call_next: counts how often the route ran and answers with `body`."""
+
+    def __init__(self, body=b"{}", content_type="application/json", status=200):
+        self.ran = 0
+        self.body, self.content_type, self.status = body, content_type, status
+
+    async def __call__(self, request):
+        self.ran += 1
+
+        async def chunks():
+            yield self.body[:5]
+            yield self.body[5:]
+        return types.SimpleNamespace(
+            headers={"content-type": self.content_type, "content-length": str(len(self.body))},
+            body_iterator=chunks(), status_code=self.status)
+
+
+def _gate(**overrides):
+    policy = dict(api_require_auth=True, auth_open_paths=("/v1/health",),
+                  auth_gated_prefixes=("/v1/", "/a2a"),
+                  check_inbound_principal=lambda tok: {"principal": "op"} if tok == "good" else None)
+    policy.update(overrides)
+    _auth.configure(**policy)
+
+
+def t_auth_gate():
+    _gate(api_require_auth=False)
+    up = _Upstream()
+    asyncio.run(_auth.inbound_auth_mw(_request("/v1/chat/completions"), up))
+    check("auth: gate off -> the route runs without a credential", up.ran == 1)
+
+    _gate()
+    for path in ("/v1/health", "/portal"):
+        up = _Upstream()
+        asyncio.run(_auth.inbound_auth_mw(_request(path), up))
+        check(f"auth: {path} is outside the gate", up.ran == 1)
+
+    up = _Upstream()
+    resp = asyncio.run(_auth.inbound_auth_mw(_request("/v1/models"), up))
+    check("auth: gated path without a credential -> 401", resp.status_code == 401, str(resp.status_code))
+    check("auth: the 401 carries the OpenAI error envelope",
+          json.loads(resp.body)["error"]["code"] == "unauthorized", resp.body.decode())
+    check("auth: the route never ran", up.ran == 0)
+
+    up = _Upstream()
+    req = _request("/a2a/tasks", authorization="Bearer good")
+    asyncio.run(_auth.inbound_auth_mw(req, up))
+    check("auth: Bearer prefix stripped, a valid credential is admitted", up.ran == 1)
+    check("auth: the principal is bound to request.state",
+          getattr(req.state, "mios_principal", None) == {"principal": "op"})
+
+    up = _Upstream()
+    resp = asyncio.run(_auth.inbound_auth_mw(_request("/v1/models", "Bearer bad"), up))
+    check("auth: an unknown credential -> 401", resp.status_code == 401 and up.ran == 0)
+
+    def unreadable(_tok):
+        raise RuntimeError("caller-key store unreadable")
+    _gate(check_inbound_principal=unreadable)
+    up = _Upstream()
+    resp = asyncio.run(_auth.inbound_auth_mw(_request("/v1/models", "Bearer good"), up))
+    check("auth: a failing principal check fails CLOSED", resp.status_code == 401 and up.ran == 0)
+
+
+def t_usage_completeness():
+    class _Mode:
+        def get(self):
+            return "council"
+    _auth.configure(loads_lenient=json.loads, council_mode_var=_Mode(),
+                    usage_estimate=lambda prompt, answer: {"prompt_tokens": 0,
+                                                           "completion_tokens": len(answer.split())})
+    chat = "/v1/chat/completions"
+
+    bare = {"object": "chat.completion", "choices": [{"message": {"content": "two words"}}]}
+    resp = asyncio.run(_auth.usage_completeness_mw(_request(chat), _Upstream(json.dumps(bare).encode())))
+    data = json.loads(resp.body)
+    usage = data.get("usage") or {}
+    check("usage: a completion without usage gets an estimated one",
+          usage.get("completion_tokens") == 2 and usage.get("total_tokens") == 2, str(usage))
+    check("usage: the added usage is normalized",
+          usage.get("prompt_tokens_details") == {"cached_tokens": 0}
+          and usage.get("completion_tokens_details") == {"reasoning_tokens": 0}, str(usage))
+    check("usage: mios_mode is stamped from the council context", data.get("mios_mode") == "council")
+    check("usage: content-length matches the rewritten body",
+          int(resp.headers["content-length"]) == len(resp.body), str(dict(resp.headers)))
+
+    complete = {"object": "chat.completion", "mios_mode": "solo",
+                "choices": [{"message": {"content": "x"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
+                          "prompt_tokens_details": {"cached_tokens": 0},
+                          "completion_tokens_details": {"reasoning_tokens": 0}}}
+    raw = json.dumps(complete).encode()
+    resp = asyncio.run(_auth.usage_completeness_mw(_request(chat), _Upstream(raw)))
+    check("usage: an already-complete response passes byte-identical", resp.body == raw)
+
+    err = json.dumps({"error": {"message": "backend down"}}).encode()
+    resp = asyncio.run(_auth.usage_completeness_mw(_request(chat), _Upstream(err, status=502)))
+    check("usage: an error body is not rewritten and keeps its status",
+          resp.body == err and resp.status_code == 502, str(resp.status_code))
+
+    other = asyncio.run(_auth.usage_completeness_mw(_request("/v1/models"), _Upstream()))
+    check("usage: other routes come back untouched", isinstance(other, types.SimpleNamespace))
+    sse = asyncio.run(_auth.usage_completeness_mw(
+        _request(chat), _Upstream(b"data: {}\n\n", content_type="text/event-stream")))
+    check("usage: a streamed (SSE) completion comes back untouched", isinstance(sse, types.SimpleNamespace))
+
 
 def _run_extra_auth():
-    import os
-    _saved_env = dict(os.environ)
-    try:
-        return 0
-    except SystemExit as _e:
-        return _e.code if _e.code is not None else 0
-    finally:
-        os.environ.clear()
-        os.environ.update(_saved_env)
+    before = _fails
+    t_auth_gate()
+    t_usage_completeness()
+    return 1 if _fails > before else 0
 
 
 
 # ==============================================================================
-# Consolidated from test_mios_authn.py (T-1092)
+# Consolidated from test_mios_authn.py (task_1006)
 # ==============================================================================
 # AI-hint: Unit tests for mios_pipe.access.authn.
 """Unit tests for authentication and caller key management."""

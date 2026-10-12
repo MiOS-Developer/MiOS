@@ -31,9 +31,9 @@ Two modes:
      NULL is JSON null; keep integers (e.g. LIMIT) inline in the SQL string
      (int-coerced by the caller) to avoid text->int inference edge cases.
 
-Env:    MIOS_PG_HOST (127.0.0.1) MIOS_PG_PORT (5432)
-        MIOS_PG_USER (mios)      MIOS_PG_DB (mios)
-        T-068 RLS: MIOS_DB_RLS_ENABLE (off) gates a per-connection owner scope;
+Env:    MIOS_PGVECTOR_HOST (127.0.0.1) MIOS_PG_PORT (5432)
+        MIOS_PGVECTOR_USER (mios)      MIOS_PGVECTOR_DB (mios)
+        task_70 RLS: MIOS_PGVECTOR_RLS_ENABLE (off) gates a per-connection owner scope;
         the owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER.
         When enabled+owner, an owner-bound `set_config('mios.owner_user', ...)` is
         SET first so the schema RLS policies scope rows to that owner. Default-off /
@@ -50,10 +50,10 @@ import socket
 import struct
 import sys
 
-HOST = os.environ.get("MIOS_PG_HOST") or "127.0.0.1"
-PORT = int(os.environ.get("MIOS_PG_PORT") or os.environ.get("MIOS_PORT_PGVECTOR") or "8600")
-USER = os.environ.get("MIOS_PG_USER") or "mios"
-DB = os.environ.get("MIOS_PG_DB") or "mios"
+HOST = os.environ.get("MIOS_PGVECTOR_HOST") or "127.0.0.1"
+PORT = int(os.environ.get("MIOS_PG_PORT") or os.environ.get("MIOS_PORTS_PGVECTOR") or "8600")
+USER = os.environ.get("MIOS_PGVECTOR_USER") or "mios"
+DB = os.environ.get("MIOS_PGVECTOR_DB") or "mios"
 
 RLS_OWNER_GUC = "mios.owner_user"
 
@@ -252,14 +252,14 @@ def _terminate(s: socket.socket) -> None:
 
 def _rls_owner(argv) -> "str | None":
     """The owner to scope THIS invocation's rows to, or None to emit NO scope.
-    Gated by MIOS_DB_RLS_ENABLE (SSOT [pgvector].rls_enable, bridged by userenv.sh),
+    Gated by MIOS_PGVECTOR_RLS_ENABLE (SSOT [pgvector].rls_enable, bridged by userenv.sh),
     the SAME flag the agent-pipe pg path reads -- default-off => None => no change.
     The owner comes from `--owner <v>` (or `--owner=<v>`) else MIOS_PG_RLS_OWNER, so
     the confined consumers (mios-ai / daemon / skills / kg) can scope their reads.
     None whenever RLS is off OR no owner is supplied -> the GUC stays unset -> the
     schema policy is permissive (degrade-open: a confined tool / the daemon is NEVER
     locked out)."""
-    if str(os.environ.get("MIOS_DB_RLS_ENABLE") or "").strip().lower() not in (
+    if str(os.environ.get("MIOS_PGVECTOR_RLS_ENABLE") or "").strip().lower() not in (
             "1", "true", "yes", "on"):
         return None
     owner = ""

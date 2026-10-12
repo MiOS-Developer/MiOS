@@ -19,17 +19,42 @@ if [[ -f /usr/lib/wsl.conf ]]; then
     fi
 fi
 
-if [[ -f /usr/lib/tmpfiles.d/mios.conf ]]; then
-    systemd-tmpfiles --create /usr/lib/tmpfiles.d/mios.conf 2>/dev/null || true
+if [[ -f /usr/lib/tmpfiles.d/50-mios.conf ]]; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/50-mios.conf 2>/dev/null || true
 fi
 
 if [[ -d /mnt/wslg && ! -e /tmp/.X11-unix ]]; then
     ln -sf /mnt/wslg/.X11-unix /tmp/.X11-unix 2>/dev/null || true
 fi
 
+# A WSL export has no OSTree deployment tree. Keep the bootc store pointer
+# usable by linking its absent target to the real exported image store.
+if [[ -d /run/WSL || -f /proc/sys/fs/binfmt_misc/WSLInterop ]]; then
+    python3 - <<'PY'
+import pathlib, sys, tomllib
+sys.path.insert(0, "/usr/lib/mios")
+import mios_toml
+store = pathlib.Path(mios_toml.load_merged()["build"]["bake"]["additional_image_store"])
+if store.is_symlink() and not store.exists():
+    target = store.resolve(strict=False)
+    if not target.is_relative_to("/sysroot"):
+        raise RuntimeError(f"Unexpected bootc store target: {target}")
+    with open("/etc/containers/storage.conf", "rb") as handle:
+        storage = tomllib.load(handle)["storage"]["options"]["additionalimagestores"]
+    candidates = [pathlib.Path(path).resolve() for path in storage
+                  if pathlib.Path(path).resolve() != target
+                  and (pathlib.Path(path) / "overlay-images").is_dir()]
+    if len(candidates) != 1:
+        raise RuntimeError("WSL export requires one existing baked image store")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(candidates[0], target_is_directory=True)
+    print(f"[wsl-init] exported image store: {store} -> {candidates[0]}")
+PY
+fi
+
 
 _repair_podman_subnet() {
-    local eth0_ip eth0_prefix conflict_net podman_net_name
+    local eth0_ip eth0_prefix podman_net_name
 
     [[ -d /run/WSL || -f /proc/sys/fs/binfmt_misc/WSLInterop ]] || return 0
 

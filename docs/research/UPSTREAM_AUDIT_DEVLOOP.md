@@ -80,7 +80,7 @@ Autonomous engineering loops wrap stochastic worker harnesses in deterministic h
 
 ### 3.2 Worktree Isolation & Single-Writer Ownership
 - Upstream tools (`baton`, `ccswarm`) mandate that each worker runs in a separate git worktree with isolated index files.
-- `git_lock.py` and `hooks/owner.sh` enforce a strict **one writer per worktree** invariant, preventing concurrent collisions and cross-agent `git restore` contamination (resolving MON-006, MON-007, MON-014).
+- `git_lock.py` and `hooks/owner.sh` enforce a strict **one writer per worktree** invariant, preventing concurrent collisions and cross-agent `git restore` contamination (resolving task_3375, task_3376, task_3383).
 - Root-walking linters (`tools/drift-checks.py`) strictly exclude `.worktrees/` and `.devloop/run-*/` to prevent test fixture leakage.
 
 ### 3.3 On-Disk State Machines & Context Resets (The Ralph Pattern)
@@ -121,7 +121,7 @@ To unify the developer experience and enable fully autonomous OS maintenance, Mi
 - **Location:** `usr/share/mios/skills/pipeline/SKILL.md` (and agent shims in `.gemini/config/skills/`, `.claude/skills/`).
 - **Contract:** Standardized markdown instructions with YAML frontmatter defining allowed tools, phase transitions, and verification rules.
 - **Sub-Skills:**
-  * `/mios-preflight`: Validates build dependencies, disk headroom, and linker binaries (`MON-008`).
+  * `/mios-preflight`: Validates build dependencies, disk headroom, and linker binaries (`task_3377`).
   * `/mios-drift-gate`: Executes the 209 fitness functions and legibility ratchets.
   * `/mios-build`: Dispatches multi-stage OCI image build and BIB disk renders via daemon.
   * `/bootc-smoke`: Boots the generated artifact in ephemeral QEMU, verifying Greenboot required checks and OpenAI API endpoint responsiveness.
@@ -176,7 +176,7 @@ To unify the developer experience and enable fully autonomous OS maintenance, Mi
 | **Base Tree Immutability** | Lane workers must never mutate base checkout during worktree execution. | Pre/post `git status --porcelain` check; exit code 6 on violation. | **Verified** |
 | **Index Lock Isolation** | Concurrent worker git operations must not collide on `.git/index.lock`. | Dedicated worktree index files + retry backoff in `git_lock.py`. | **Verified** |
 | **Gate Non-Vacuity** | Negative controls must fail only for the planted sentinel. | Sentinel naming (`DEVLOOP-PLANTED-<LANE_ID>`) + copy-back trap. | **Verified** |
-| **Single-Writer Lane** | Worktrees must never host multiple concurrent agent processes. | PID check + worktree lock file in `hooks/owner.sh` (resolving MON-014). | **Verified** |
+| **Single-Writer Lane** | Worktrees must never host multiple concurrent agent processes. | PID check + worktree lock file in `hooks/owner.sh` (resolving task_3383). | **Verified** |
 | **`/var` Persistence** | `/var` must persist state (models, databases, VMs) across reboots. | Verified on ostree deployment; tmpfs forbidden. | **Verified** (Invariant 1) |
 | **UKI vs MOK Boundary** | Kernel cmdline baked into signed UKI; MOK restricted to driver modules. | `automation/76-uki-render.sh` + kargs audit. | **Verified** (Invariant 2) |
 | **Graphics Transport** | `venus` VirtIO GPU restricted to Vulkan/graphics; CUDA requires VFIO passthrough. | CDI toolkit audit (`automation/25-gpu-cdi-toolkits.sh`). | **Verified** (Invariant 3) |
@@ -190,7 +190,7 @@ To unify the developer experience and enable fully autonomous OS maintenance, Mi
 1. **Phase 1: Pipeline MCP & Hook Hardening (Active)**
    - Wire `pipeline_*` tools into `usr/libexec/mios/mios-mcp-server`.
    - Install `.git/hooks/pre-commit` and `pre-push` enforcing Architectural Laws and legibility ceilings.
-   - Deploy `hooks/owner.sh` into devcontainer to prevent duplicate agent spawning (`MON-006`, `MON-014`).
+   - Deploy `hooks/owner.sh` into devcontainer to prevent duplicate agent spawning (`task_3375`, `task_3383`).
 
 2. **Phase 2: Pipeline Supervisor Daemon (`mios-pipelined`)**
    - Implement `usr/libexec/mios/mios-pipelined` managing `podman build` and `bootc-image-builder`.

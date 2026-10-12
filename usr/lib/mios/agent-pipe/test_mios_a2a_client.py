@@ -235,7 +235,7 @@ class TestDiscoveryHelpers(_A2AClientBase):
     that now live in the module (moved verbatim out of server.py)."""
 
     def test_self_peer_url_only_excludes_loopback_on_self_port(self):
-        os.environ.pop("MIOS_PORT_AGENT_PIPE", None)   # falls back to [ports].agent_pipe
+        os.environ.pop("MIOS_PORTS_AGENT_PIPE", None)   # falls back to [ports].agent_pipe
         f = mios_a2a_client._a2a_self_peer_url
         self.assertTrue(f("http://127.0.0.1:8700"))
         self.assertTrue(f("http://localhost:8700/v1"))
@@ -245,13 +245,13 @@ class TestDiscoveryHelpers(_A2AClientBase):
         self.assertFalse(f(""))
 
     def test_self_peer_url_honours_configured_port(self):
-        os.environ["MIOS_PORT_AGENT_PIPE"] = "8650"
+        os.environ["MIOS_PORTS_AGENT_PIPE"] = "8650"
         try:
             f = mios_a2a_client._a2a_self_peer_url
             self.assertTrue(f("http://127.0.0.1:8650"))
             self.assertFalse(f("http://127.0.0.1:8700"))
         finally:
-            os.environ.pop("MIOS_PORT_AGENT_PIPE", None)
+            os.environ.pop("MIOS_PORTS_AGENT_PIPE", None)
 
     def test_fetch_card_falls_through_candidates_and_tags_origin(self):
         client = _FetchClient([

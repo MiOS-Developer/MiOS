@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Declarative systemd-oomd memory pressure configuration, PSI thresholds, and subagent worker eviction (T-820, T-821).
+# AI-hint: Declarative systemd-oomd memory pressure configuration, PSI thresholds, and subagent worker eviction (task_764, task_765).
 # AI-related: etc/systemd/oomd.conf, usr/lib/systemd/oomd.conf.d/10-mios-oomd.conf, tests/test-systemd-oomd-psi.sh
 """Declarative systemd-oomd memory pressure configuration and cgroup2 PSI policies for MiOS.
 

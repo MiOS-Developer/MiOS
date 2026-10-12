@@ -16,7 +16,7 @@ systemctl reset-failed mios-hermes-firstboot.service 2>&1 || true
 systemctl restart mios-hermes-firstboot.service
 sleep 5
 journalctl -u mios-hermes-firstboot.service --since '15 sec ago' \
-    --no-pager 2>&1 | grep -E 'ttyd|MIOS_USER|User=' | tail -5
+    --no-pager 2>&1 | grep -E 'ttyd|MIOS_IDENTITY_USERNAME|User=' | tail -5
 
 echo
 echo "── inspect generated drop-ins ──"

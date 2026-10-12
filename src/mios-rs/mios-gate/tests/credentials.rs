@@ -124,7 +124,7 @@ fn a_stale_register_entry_must_be_shrunk() {
 /// pattern and must stay clean, or the gate pushes people back to literals.
 #[test]
 fn indirected_values_are_not_literals() {
-    for v in ["${MIOS_PG_PASS}", "%d/pgpass", ""] {
+    for v in ["${MIOS_PGVECTOR_PASS}", "%d/pgpass", ""] {
         let d = tempfile::tempdir().unwrap();
         tree(d.path(), &[&format!("Environment=SOME_SECRET={v}")], &[]);
         let (code, out) = run(d.path());

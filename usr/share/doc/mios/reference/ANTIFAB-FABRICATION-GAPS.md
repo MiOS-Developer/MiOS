@@ -5,7 +5,7 @@
 
 > Research/design deliverable. **No `.py` changed** — this doc specifies the
 > fixes with real `file:line` anchors so LANE B can implement them. Two live-
-> falsified P0 fabrications (T-113 / FAB-01 and T-114 / FAB-02) escape the
+> falsified P0 fabrications (task_114 / FAB-01 and task_115 / FAB-02) escape the
 > current native-loop guards. Both guards are pattern-of-omission checks; both
 > real attacks are patterns-of-**commission** the checks don't model.
 
@@ -15,8 +15,8 @@
 
 | ID | Turn | Real tool state | What shipped in the FINAL answer | Why the guard missed |
 |----|------|-----------------|----------------------------------|----------------------|
-| **FAB-01** | T-113 "what games are installed?" | `apps` verb **fired**, returned Linux flatpaks (ptyxis, flatseal, DOSBox…) | A *second* `🤝 apps output (truncated for brevity):` block with **invented** games (FakeGame 5, Sea of Thieves, Cyberpunk 2077, Minecraft, Zelda TotK) each `"version":"1.0.0"` | Guard strips a `🤝 <verb> output` block only when `<verb> ∉ _fired`. Here `apps` **was** fired, so the fabricated *duplicate* survived. |
-| **FAB-02** | T-114 "2024 games" | Real Wikipedia/Polygon fetched | Real data **+** a fabricated "Major 2025 Announcements" section (Starfield DLC, FIFA 26, GoW Ragnarök expansion, Minecraft 1.21), an admission "*widely reported but not captured in the excerpt*", and an IGN citation never fetched | Guard fires only when **zero** sources were fetched **and** a markdown table exists. Here sources *were* fetched (so `_real_norm` non-empty) and the invented section was prose/bullets citing an outlet **by name** (no off-list `http://` URL) → both fire-conditions false. |
+| **FAB-01** | task_114 "what games are installed?" | `apps` verb **fired**, returned Linux flatpaks (ptyxis, flatseal, DOSBox…) | A *second* `🤝 apps output (truncated for brevity):` block with **invented** games (FakeGame 5, Sea of Thieves, Cyberpunk 2077, Minecraft, Zelda TotK) each `"version":"1.0.0"` | Guard strips a `🤝 <verb> output` block only when `<verb> ∉ _fired`. Here `apps` **was** fired, so the fabricated *duplicate* survived. |
+| **FAB-02** | task_115 "2024 games" | Real Wikipedia/Polygon fetched | Real data **+** a fabricated "Major 2025 Announcements" section (Starfield DLC, FIFA 26, GoW Ragnarök expansion, Minecraft 1.21), an admission "*widely reported but not captured in the excerpt*", and an IGN citation never fetched | Guard fires only when **zero** sources were fetched **and** a markdown table exists. Here sources *were* fetched (so `_real_norm` non-empty) and the invented section was prose/bullets citing an outlet **by name** (no off-list `http://` URL) → both fire-conditions false. |
 
 The shared root cause: **both guards key on the wrong axis.** FAB-01's guard
 keys on *verb membership* (`fired` vs not) when the real signal is *content
@@ -241,7 +241,7 @@ style at `:962-964`). Degrade-open everywhere.
 
 The native-loop guard is currently hard-coded "always-on" (`:923` comment) and
 does **not** read the SSOT flag, unlike the chat sibling. Wire it to the same
-gate: `_ANTIFAB_ENABLE`, sourced from `MIOS_ANTIFAB_ENABLE` (bridged from
+gate: `_ANTIFAB_ENABLE`, sourced from `MIOS_VERITY_ANTIFAB_ENABLE` (bridged from
 `[verity].antifab_enable`, `mios.toml:2459`; env plumbing
 `system-sync-env.sh:166-170`). Inject `_ANTIFAB_ENABLE` into `native_loop` via
 `configure()` (add to `_INJECTED`, `:145-167`) or read the env at module load
@@ -367,7 +367,7 @@ Reuse the offline-stub recipe from `test_mios_antifab.py` (no network/DB/image).
    answer degrades-open (untouched); empty `_fetched_corpus` degrades-open.
 
 3. Extend `test_mios_antifab.py` to assert the native-loop guard honors
-   `MIOS_ANTIFAB_ENABLE=false` (passthrough).
+   `MIOS_VERITY_ANTIFAB_ENABLE=false` (passthrough).
 
 ---
 

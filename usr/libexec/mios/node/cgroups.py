@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Dynamic CPU Core Pinning and Cgroup v2 limits controller for mios-node workers.
-# AI-related: src/mios-rs/mios-node/src/cgroups.rs, tests/test-node.py
+# AI-related: src/mios-rs/mios-node/src/exec.rs, tests/test-node.py
 """
 MiOS Dynamic Worker CPU Affinity and Cgroup v2 Resource Controller.
 Manages CPU core affinity, cgroup v2 quotas (cpu.max, memory.max), and enforces Core 0 system reservation.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Cockpit Storage integration module for CephFS tiered CRUSH pools and encrypted volume monitoring.
 # AI-related: usr/libexec/mios/storage/cockpit_ceph.py, tests/test-storage.py
-"""Cockpit Storage Integration for CephFS Tiered Pools & Encrypted Volumes (T-550).
+"""Cockpit Storage Integration for CephFS Tiered Pools & Encrypted Volumes (task_494).
 
 Provides telemetry aggregation and Cockpit Storage UI backend services for
 CephFS NVMe hot pools and HDD cold pools, OSD tree hierarchy, SMART drive health,
@@ -281,7 +281,7 @@ class CockpitCephManager:
         return manifest
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MiOS Cockpit CephFS & Storage Telemetry Backend (T-550)")
+    parser = argparse.ArgumentParser(description="MiOS Cockpit CephFS & Storage Telemetry Backend (task_494)")
     parser.add_argument("--status", action="store_true", help="Output full CephFS cluster and encrypted drive dashboard")
     parser.add_argument("--pools", action="store_true", help="List CephFS tiered pools (NVMe hot vs HDD cold)")
     parser.add_argument("--smart", action="store_true", help="List SMART drive metrics and encryption status")

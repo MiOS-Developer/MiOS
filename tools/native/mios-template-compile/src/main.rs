@@ -1,13 +1,57 @@
-// AI-hint: Native Rust golden round-trip compiler for templates.
-// AI-related: /usr/share/mios/templates/, /usr/share/mios/mios.toml
+// AI-hint: Native Rust golden round-trip compiler for templates (ADR-0021, Law 14).
+// AI-doc: usr/share/doc/mios/manual/tools.md
+// AI-related: /usr/share/mios/templates/, /usr/share/mios/mios.toml, automation/98-drift-checks.sh
 
-use std::collections::HashMap;
+#![forbid(unsafe_code)]
+
+use clap::Parser;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn get_mock_vals(root_path: &Path) -> HashMap<String, String> {
+#[derive(Parser, Debug)]
+#[command(
+    name = "mios-template-compile",
+    version,
+    about = "Golden round-trip compiler for templates -- verifies all templates parse cleanly"
+)]
+pub struct Cli {
+    /// Repository root directory
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+
+    /// Check mode: verify templates are valid (exits 0 on clean, 1 on failure)
+    #[arg(long)]
+    pub check: bool,
+
+    /// Output format (text or json)
+    #[arg(long, default_value = "text")]
+    pub format: String,
+}
+
+pub fn resolve_root(cli_root: Option<&Path>) -> PathBuf {
+    if let Some(r) = cli_root {
+        return r.to_path_buf();
+    }
+    for var in &[
+        "MIOS_DRIFT_ROOT",
+        "MIOS_ROOT",
+        "MIOS_THEME_ROOT",
+        "MIOS_TOML_ROOT",
+    ] {
+        if let Ok(val) = env::var(var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
+    PathBuf::from(".")
+}
+
+pub fn get_mock_vals(root_path: &Path) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let config_path = root_path.join("usr/share/mios/mios.toml");
 
@@ -52,7 +96,23 @@ fn get_mock_vals(root_path: &Path) -> HashMap<String, String> {
     map
 }
 
-fn compile_template(
+pub fn get_registered_templates(root_path: &Path) -> Option<HashSet<String>> {
+    let config_path = root_path.join("usr/share/mios/mios.toml");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(val) = toml::from_str::<toml::Value>(&content) {
+            if let Some(templates_table) = val.get("templates").and_then(|t| t.as_table()) {
+                let mut set = HashSet::new();
+                for (k, _) in templates_table {
+                    set.insert(k.clone());
+                }
+                return Some(set);
+            }
+        }
+    }
+    None
+}
+
+pub fn compile_template(
     name: &str,
     content: &str,
     mock_vals: &HashMap<String, String>,
@@ -79,27 +139,52 @@ fn compile_template(
             }
         }
         "python-module" | "python-test" | "python-tool" => {
-            let res = Command::new("python")
-                .arg("-c")
-                .arg("import sys; compile(sys.stdin.read(), 'src', 'exec')")
-                .env_clear()
-                .spawn();
+            let candidates = if cfg!(target_os = "windows") {
+                vec!["python", "py", "python3"]
+            } else {
+                vec!["python3", "python"]
+            };
 
-            // Allow degrade-open fallback if python process cannot be spawned natively
-            if let Ok(mut child) = res {
-                use std::io::Write;
-                if let Some(ref mut stdin) = child.stdin {
-                    let _ = stdin.write_all(rendered.as_bytes());
+            for cmd in candidates {
+                if let Ok(mut child) = Command::new(cmd)
+                    .arg("-c")
+                    .arg("import sys; compile(sys.stdin.read(), 'src', 'exec')")
+                    .stdin(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                {
+                    use std::io::Write;
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(rendered.as_bytes());
+                    }
+                    if let Ok(output) = child.wait_with_output() {
+                        if !output.status.success() {
+                            let err_msg =
+                                String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            return Some(format!("Python SyntaxError: {}", err_msg));
+                        }
+                        break;
+                    }
                 }
             }
         }
         "bash" | "bash-verb" | "drift-check" | "automation-step" => {
-            if cfg!(not(target_os = "windows")) {
-                let res = Command::new("bash").arg("-n").spawn();
-                if let Ok(mut child) = res {
-                    use std::io::Write;
-                    if let Some(ref mut stdin) = child.stdin {
-                        let _ = stdin.write_all(rendered.as_bytes());
+            if let Ok(mut child) = Command::new("bash")
+                .arg("-n")
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+            {
+                use std::io::Write;
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(rendered.as_bytes());
+                }
+                if let Ok(output) = child.wait_with_output() {
+                    if !output.status.success() {
+                        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        return Some(format!("Bash syntax check failed: {}", err_msg));
                     }
                 }
             }
@@ -110,28 +195,41 @@ fn compile_template(
     None
 }
 
-fn main() {
-    let root_str = env::var("MIOS_THEME_ROOT").unwrap_or_else(|_| ".".to_string());
-    let root_path = PathBuf::from(&root_str);
+pub fn execute(cli: &Cli) -> (i32, Option<String>, Option<String>) {
+    let root_path = resolve_root(cli.root.as_deref());
     let templates_dir = root_path.join("usr/share/mios/templates");
 
     if !templates_dir.is_dir() {
-        eprintln!(
-            "[compile-templates] Templates directory not found: {:?}",
-            templates_dir
-        );
-        std::process::exit(1);
+        if cli.format == "json" {
+            let err_json = serde_json::json!({
+                "status": "error",
+                "subcommand": "compile-templates",
+                "target": "usr/share/mios/templates",
+                "error": format!("Templates directory not found: {:?}", templates_dir)
+            });
+            return (1, None, Some(err_json.to_string()));
+        } else {
+            return (
+                1,
+                None,
+                Some(format!(
+                    "[compile-templates] Templates directory not found: {:?}",
+                    templates_dir
+                )),
+            );
+        }
     }
 
     let mock_vals = get_mock_vals(&root_path);
-    let mut failures: HashMap<String, String> = HashMap::new();
+    let registered_templates = get_registered_templates(&root_path);
+    let mut failures: BTreeMap<String, String> = BTreeMap::new();
     let mut success_count = 0;
 
     let entries = match fs::read_dir(&templates_dir) {
         Ok(e) => e,
         Err(err) => {
-            eprintln!("[compile-templates] Read dir error: {}", err);
-            std::process::exit(1);
+            let msg = format!("[compile-templates] Read dir error: {}", err);
+            return (1, None, Some(msg));
         }
     };
 
@@ -150,6 +248,16 @@ fn main() {
     names.sort();
 
     for fn_str in &names {
+        if let Some(ref registered) = registered_templates {
+            if !registered.contains(fn_str) {
+                failures.insert(
+                    fn_str.clone(),
+                    "Not registered in mios.toml [templates.*]".to_string(),
+                );
+                continue;
+            }
+        }
+
         let path = templates_dir.join(fn_str);
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
@@ -166,21 +274,57 @@ fn main() {
         }
     }
 
-    if !failures.is_empty() {
-        eprintln!(
-            "[compile-templates] FAIL: {} template(s) failed compilation/validation:",
+    let total_templates = success_count + failures.len();
+
+    if cli.format == "json" {
+        if failures.is_empty() {
+            let clean_json = serde_json::json!({
+                "status": "clean",
+                "subcommand": "compile-templates",
+                "target": "usr/share/mios/templates",
+                "templates_count": total_templates,
+                "violations": 0
+            });
+            (0, Some(clean_json.to_string()), None)
+        } else {
+            let drift_json = serde_json::json!({
+                "status": "drift",
+                "subcommand": "compile-templates",
+                "target": "usr/share/mios/templates",
+                "templates_count": total_templates,
+                "violations": failures.len(),
+                "failures": failures
+            });
+            (1, None, Some(drift_json.to_string()))
+        }
+    } else if failures.is_empty() {
+        let msg = format!(
+            "[compile-templates] PASS: All {} templates compiled/validated successfully.",
+            success_count
+        );
+        (0, Some(msg), None)
+    } else {
+        let mut err_msg = format!(
+            "[compile-templates] FAIL: {} template(s) failed compilation/validation:\n",
             failures.len()
         );
         for (fn_str, err) in &failures {
-            eprintln!("  {}: {}", fn_str, err);
+            err_msg.push_str(&format!("    {}: {}\n", fn_str, err));
         }
-        std::process::exit(1);
+        (1, None, Some(err_msg.trim_end().to_string()))
     }
+}
 
-    println!(
-        "[compile-templates] PASS: All {} templates compiled/validated successfully.",
-        success_count
-    );
+fn main() {
+    let cli = Cli::parse();
+    let (code, stdout, stderr) = execute(&cli);
+    if let Some(out) = stdout {
+        println!("{}", out);
+    }
+    if let Some(err) = stderr {
+        eprintln!("{}", err);
+    }
+    std::process::exit(code);
 }
 
 #[cfg(test)]
@@ -215,5 +359,22 @@ mod tests {
         let content = "key = \"{{name}}\"\n";
         let err = compile_template("toml-config", content, &mocks);
         assert!(err.is_none());
+
+        let invalid = "key = \n";
+        let err_inv = compile_template("toml-config", invalid, &mocks);
+        assert!(err_inv.is_some());
+    }
+
+    #[test]
+    fn test_compile_template_yaml() {
+        let mut mocks = HashMap::new();
+        mocks.insert("name".to_string(), "baz".to_string());
+        let content = "name: {{name}}\n";
+        let err = compile_template("yaml", content, &mocks);
+        assert!(err.is_none());
+
+        let invalid = ": invalid: yaml: [";
+        let err_inv = compile_template("yaml", invalid, &mocks);
+        assert!(err_inv.is_some());
     }
 }

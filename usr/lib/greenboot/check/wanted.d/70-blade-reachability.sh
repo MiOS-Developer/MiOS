@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-hint: Non-critical greenboot check that probes blade reachability per ADR-0016 §8 / AGY-1600. Records reachability state without triggering a rollback unless blade_reachability_critical = true.
+# AI-hint: Non-critical greenboot check that probes blade reachability per ADR-0016 §8 / task_2241. Records reachability state without triggering a rollback unless blade_reachability_critical = true.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /usr/lib/greenboot/check/required.d/40-mios-ai-plane.sh
 set -euo pipefail
 
@@ -7,8 +7,7 @@ log()  { echo "[mios-greenboot] $*"; }
 warn() { echo "[mios-greenboot] WARNING: $*" >&2; }
 
 # Sourced globals or defaults
-TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}"
-PORT="${MIOS_PORT_AGENT_PIPE:-8700}"
+PORT="${MIOS_PORTS_AGENT_PIPE:-8700}"
 HOST="${MIOS_BLADE_HOST:-127.0.0.1}"
 
 log "Checking blade reachability at http://${HOST}:${PORT}/v1/cluster/health..."

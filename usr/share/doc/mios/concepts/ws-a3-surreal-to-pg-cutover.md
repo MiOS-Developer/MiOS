@@ -82,7 +82,7 @@ exceptions. The former residuals, all now done:
 Operator: live-test the memory/skill/kanban/RAG/daemon paths in the VM
 (`just build` → boot → `mios-remember add`, `mios-kg lookup`, `mios-skills mine`,
 a multi-task prompt, `mios-rag query`, and check the daemon rolling-report +
-nudger kanban rows land in pg). Optional: flip default `MIOS_DB_BACKEND`
+nudger kanban rows land in pg). Optional: flip default `MIOS_PGVECTOR_DB_BACKEND`
 dual→postgres to drop the now-pointless dead-surreal write *attempts* in the
 agent-pipe (its `_db_read` gate is the one central-path flip I left for the VM
 loop).

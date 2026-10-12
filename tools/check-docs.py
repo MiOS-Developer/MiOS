@@ -151,11 +151,23 @@ sys.path.insert(0, os.path.join(cle__REPO_ROOT, "usr", "lib", "mios"))
 
 import mios_comments
 
+# Every field a consumer reads; comparing hashes alone missed spans and headers.
+cle_FIELDS = ("start_line", "end_line", "kind", "style", "text", "norm", "sha12",
+              "lines", "words", "attach", "anchor_code", "in_header_block")
+
+
 def cle_main():
+    import json
+    import subprocess
     root = os.environ.get("MIOS_DRIFT_ROOT", cle__REPO_ROOT)
-    native_bin = mios_comments._find_native_comment_lex()
+    # The drift gate passes its resolver's answer; set but empty means none was found.
+    native_bin = os.environ.get("MIOS_COMMENT_LEX_BIN", mios_comments._find_native_comment_lex())
 
     if not native_bin:
+        if os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS") == "1":
+            print("[check-comment-lex] ERROR: mios-comment-lex is not built, so the"
+                  " lexers were never compared (MIOS_DRIFT_REQUIRE_TOOLS=1)")
+            return 1
         print("[check-comment-lex] SKIPPED: mios-comment-lex binary not present (optional native tier)")
         return 0
 
@@ -169,7 +181,6 @@ def cle_main():
             continue  # Python files use AST docstring lexer in Python
         files_tested += 1
 
-        # Python lexer pass (force raw reading)
         with open(full, "rb") as fh:
             raw = fh.read()
         py_blocks = mios_comments._lex_generic(
@@ -177,26 +188,32 @@ def cle_main():
             raw.decode("utf-8-sig", errors="replace").replace("\r\n", "\n"),
             mios_comments._style_for(full),
         )
-        py_hashes = sorted([b.sha12 for b in py_blocks])
+        py_rows = [tuple(getattr(b, f) for f in cle_FIELDS) for b in py_blocks]
 
-        # Native lexer pass
         try:
-            import json, subprocess
             proc = subprocess.run([native_bin, full], capture_output=True, check=True)
             records = json.loads(proc.stdout.decode("utf-8"))
-            native_hashes = sorted([r["sha12"] for r in records])
+            native_rows = [tuple(r[f] for f in cle_FIELDS) for r in records]
         except Exception as exc:
             mismatches.append(f"{rel}: native lexer execution failed: {exc}")
             continue
 
-        if py_hashes != native_hashes:
-            mismatches.append(f"{rel}: py hashes {py_hashes} != native hashes {native_hashes}")
+        if py_rows != native_rows:
+            only_py = [r for r in py_rows if r not in native_rows]
+            only_nat = [r for r in native_rows if r not in py_rows]
+            first = (only_py or only_nat or py_rows)[0]
+            mismatches.append(f"{rel}: {len(py_rows)} python vs {len(native_rows)} native"
+                              f" blocks; first differing at lines {first[0]}-{first[1]}:"
+                              f" python-only {only_py[:1]} native-only {only_nat[:1]}")
 
     print(f"[check-comment-lex] Tested {files_tested} non-python source files.")
+    if not files_tested:
+        print("[check-comment-lex] ERROR: no source file was compared, so equivalence is unproven")
+        return 1
     if mismatches:
-        print(f"[check-comment-lex] ERROR: {len(mismatches)} file hash mismatches found:")
+        print(f"[check-comment-lex] ERROR: {len(mismatches)} files lex differently:")
         for m in mismatches[:10]:
-            print(f"  {m}")
+            print(f"  {m[:600]}")
         return 1
 
     print("[check-comment-lex] SUCCESS: Python and native lexers are equivalent!")

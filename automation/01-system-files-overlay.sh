@@ -28,9 +28,24 @@ if [[ -d "${CTX}/usr/share/mios/branding" ]]; then
     fi
 fi
 
+for _vdir in "${CTX}/usr/share/mios/vendored" /usr/share/mios/vendored; do
+    if [[ -d "$_vdir" && -w "$_vdir" ]]; then
+        for _bundle in "$_vdir"/*.tar; do
+            [[ -f "$_bundle" ]] || continue
+            tar -xf "$_bundle" -C "$_vdir"
+        done
+    fi
+done
+
 if [[ -d "${CTX}/usr" ]]; then
     mios_log "Stage 1: overlay usr"
     tar -C "${CTX}/usr" -cf - --exclude='./local' . | tar -C /usr --no-overwrite-dir -xf -
+    if [[ -d /usr/share/mios/vendored && -w /usr/share/mios/vendored ]]; then
+        for _bundle in /usr/share/mios/vendored/*.tar; do
+            [[ -f "$_bundle" ]] || continue
+            tar -xf "$_bundle" -C /usr/share/mios/vendored
+        done
+    fi
 fi
 
 if [[ -d "${CTX}/usr/local" ]]; then
@@ -108,7 +123,7 @@ do
     find "$d" -type d -exec chmod 0755 {} + 2>/dev/null || true
 done
 
-_dev_net_mode="${MIOS_QUADLET_DEV_NETWORK_MODE:-host}"
+_dev_net_mode="${MIOS_WSL2_DEV_VM_QUADLET_NETWORK_MODE:-host}"
 if [[ "${_dev_net_mode}" == "bridge" ]]; then
     mios_log "[wsl2.dev_vm].quadlet_network_mode=bridge"
     shopt -s nullglob
@@ -123,7 +138,7 @@ BDIR="/usr/lib/bootc/bound-images.d"
 install -d -m 0755 "${BDIR}"
 # Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
 # nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (T-1018).
+# succeed and the branch below it was dead on every build (task_962).
 _miosd=""
 for _c in "${MIOS_MIOSD_BIN:-}" \
           /usr/libexec/mios/miosd \
@@ -132,38 +147,13 @@ for _c in "${MIOS_MIOSD_BIN:-}" \
     if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
 done
 
-if [[ -n "$_miosd" ]]; then
-    MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}" "$_miosd" overlay-bind-images --dest "${BDIR}"
-    mios_ok "LBI binding completed via miosd"
-else
-    _MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}"
-    FB_TOKENS="$(grep -E '^[[:space:]]*firstboot_tokens[[:space:]]*=' "${_MIOS_TOML}" 2>/dev/null | sed -E 's/^[^=]*=//; s/[][",]/ /g')"
-    shopt -s nullglob
-    for QDIR in /usr/share/containers/systemd /etc/containers/systemd; do
-        [[ -d "${QDIR}" ]] || continue
-        for q in "${QDIR}"/*.container "${QDIR}"/*/*.container "${QDIR}"/*.image "${QDIR}"/*/*.image; do
-            [[ -f "$q" ]] || continue
-            name="$(basename "$q")"
-            if [[ -n "${FB_TOKENS// /}" ]]; then
-                _img="$(sed -nE 's/^Image=//p' "$q" | head -1)"
-                _fb=""
-                for _tok in ${FB_TOKENS}; do
-                    [[ -n "$_tok" && "$_img" == *"$_tok"* ]] && { _fb=1; break; }
-                done
-                if [[ -n "$_fb" ]]; then
-                    mios_skip "LBI: ${name} (firstboot tier -- web-pulled at first boot, not bound)"
-                    continue
-                fi
-            fi
-            ln -sf "${q}" "${BDIR}/${name}"
-            mios_log "LBI: bound ${name}"
-        done
-    done
-    shopt -u nullglob
-
-    rm -f "${BDIR}/.gitkeep"
-    mios_log "LBI: stripped git-tracking .gitkeep"
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required for overlay-bind-images (task_962)"
+    exit 1
 fi
+
+MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}" "$_miosd" overlay-bind-images --dest "${BDIR}"
+mios_ok "LBI binding completed via miosd"
 
 mios_step "Pathing compatibility symlinks"
 

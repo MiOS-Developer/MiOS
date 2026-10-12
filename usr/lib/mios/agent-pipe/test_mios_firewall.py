@@ -156,7 +156,7 @@ print("test_mios_firewall: ALL PASS")
 
 
 # ==============================================================================
-# Consolidated from test_mios_egress.py (T-1092)
+# Consolidated from test_mios_egress.py (task_1006)
 # ==============================================================================
 # AI-hint: Standalone unit test for tools/generate-egress-firewall (#54 egress firewall): build_ruleset emits a uid-scoped nftables ruleset with the always-al...
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md

@@ -3,7 +3,7 @@
 # AI-related: tests/test-session-migrate.py
 # AI-functions: WindowDescriptor, SessionCheckpoint, WaylandCompositorBridge, SessionCheckpointStore, SessionMigrateEngine, main
 """
-WS-USER (T-560): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol.
+WS-USER (task_504): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol.
 
 Migrates active Wayland desktop sessions and application states seamlessly across cluster blades:
 - Checkpoints running user container/Wayland state via headless compositor bridge (hyprland/sway/gnome).
@@ -327,7 +327,7 @@ class SessionMigrateEngine:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="WS-USER (T-560): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol"
+        description="WS-USER (task_504): Dynamic Cross-Node Wayland Session Checkpoint and Migration Protocol"
     )
     parser.add_argument("--checkpoint", action="store_true", help="Checkpoint active session state")
     parser.add_argument("--restore", action="store_true", help="Restore session on target seat")
