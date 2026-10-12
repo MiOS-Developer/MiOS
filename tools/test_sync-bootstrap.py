@@ -107,7 +107,8 @@ padding = "0"
             manifest = tomllib.load(stream)["bootstrap"]["sync"]
         self.assertTrue(manifest["mirror_files"])
         self.assertEqual(sorted(manifest["mirror_toml_keys"]),
-                         ["bootstrap.windows_install_mode", "theme.padding", "theme.scrollbar_state"])
+                         ["bootstrap.windows_install_mode", "network.bind_all", "network.loopback",
+                          "network.win_tailscale_ip", "theme.padding", "theme.scrollbar_state"])
         self.assertNotIn("installation/mios-mon.py", manifest["mirror_files"])
         self.assertTrue((ROOT / "usr/libexec/mios/mios-mon.py").is_file())
 

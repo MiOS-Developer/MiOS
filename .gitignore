@@ -571,6 +571,7 @@ usr/libexec/*
 /usr/libexec/mios/miosd
 /usr/libexec/mios/xtask
 /usr/libexec/mios/tmux-mcp
+/usr/libexec/mios/*.exe
 !/usr/libexec/mios-boot-diag
 !/usr/libexec/mios-flatpak-install
 !/usr/libexec/mios-grd-setup

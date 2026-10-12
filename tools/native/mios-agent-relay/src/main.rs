@@ -1451,8 +1451,16 @@ fn workspace_lock(path: &Path, name: &str) -> Result<fs::File, String> {
 }
 
 fn workspace_number(config: &Value, name: &str, lower: u64, upper: u64) -> Result<usize, String> {
-    config[name]
-        .as_u64()
+    let val = config.get(name).or_else(|| {
+        if name == "desktop_head_percent" {
+            config.get("head_percent")
+        } else if name == "head_percent" {
+            config.get("desktop_head_percent")
+        } else {
+            None
+        }
+    });
+    val.and_then(|v| v.as_u64())
         .filter(|n| (lower..=upper).contains(n))
         .map(|n| n as usize)
         .ok_or_else(|| format!("invalid [mcp.tmux.workspace].{name}"))

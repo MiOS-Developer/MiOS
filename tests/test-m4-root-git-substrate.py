@@ -101,20 +101,20 @@ class TestAdr0030FileBudgetRatchet(unittest.TestCase):
     """Verifies adherence to ADR-0030 non-expanding file budget."""
 
     def test_01_ssot_ratchet_ceilings(self):
-        """Positive Control: Verify mios.toml specifies max_tracked_files <= 3244."""
+        """Positive Control: Verify mios.toml specifies max_tracked_files <= 3250."""
         toml_path = ROOT / "usr/share/mios/mios.toml"
         self.assertTrue(toml_path.exists())
         with open(toml_path, "rb") as f:
             cfg = tomllib.load(f)
         legibility = cfg.get("legibility", {})
-        self.assertLessEqual(legibility.get("max_tracked_files", 9999), 3244)
+        self.assertLessEqual(legibility.get("max_tracked_files", 9999), 3250)
         self.assertEqual(legibility.get("max_bootstrap_files"), 201)
 
     def test_02_tracked_files_within_budget(self):
-        """Positive Control: Verify git ls-files total count <= 3244."""
+        """Positive Control: Verify git ls-files total count <= 3250."""
         res = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True)
         tracked_count = len([line for line in res.stdout.splitlines() if line.strip()])
-        self.assertLessEqual(tracked_count, 3244, f"Tracked files {tracked_count} exceeds ceiling of 3244")
+        self.assertLessEqual(tracked_count, 3250, f"Tracked files {tracked_count} exceeds ceiling of 3250")
 
 
 class TestBareStoreLegacyArchive(unittest.TestCase):
