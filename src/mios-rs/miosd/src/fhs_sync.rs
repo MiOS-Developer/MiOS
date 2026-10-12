@@ -49,9 +49,9 @@ pub fn is_host_namespace_str(s: &str) -> bool {
     if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
         trimmed = &trimmed[2..];
     }
-    trimmed = trimmed.trim_start_matches(|c| c == '/' || c == '\\');
+    trimmed = trimmed.trim_start_matches(['/', '\\']);
 
-    let first_component = match trimmed.find(|c| c == '/' || c == '\\') {
+    let first_component = match trimmed.find(['/', '\\']) {
         Some(pos) => &trimmed[..pos],
         None => trimmed,
     };
@@ -563,7 +563,7 @@ pub mod windows_service {
                 if handle.is_null() {
                     return Err(std::io::Error::last_os_error());
                 }
-                return Ok(StatusHandle { handle });
+                Ok(StatusHandle { handle })
             }
 
             #[cfg(not(windows))]
@@ -602,7 +602,7 @@ pub mod windows_service {
                 if ret == 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                return Ok(());
+                Ok(())
             }
 
             #[cfg(not(windows))]
@@ -620,6 +620,7 @@ pub use windows_service::*;
 macro_rules! define_windows_service {
     ($ffi_name:ident, $service_main:ident) => {
         #[cfg(windows)]
+        #[allow(clippy::missing_safety_doc)]
         pub unsafe extern "system" fn $ffi_name(argc: u32, argv: *mut *mut u16) {
             let mut args = Vec::with_capacity(argc as usize);
             for i in 0..argc as isize {
@@ -668,10 +669,16 @@ pub fn mios_fhs_sync_service_main(_arguments: Vec<std::ffi::OsString>) {
         });
 
         // Run daemon loop until shutdown signal
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .unwrap();
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("[fhs-sync] Failed to build tokio runtime: {e}");
+                return;
+            }
+        };
 
         rt.block_on(async {
             let root = PathBuf::from("C:\\");
@@ -885,6 +892,7 @@ fn parse_notify_records(buffer: &[u8], bytes_transferred: usize) -> Vec<(u32, St
         let name_start = offset + 12;
         let name_end = name_start + file_name_length;
         if name_end <= bytes_transferred {
+            #[allow(clippy::chunks_exact_to_as_chunks)]
             let u16_slice: Vec<u16> = buffer[name_start..name_end]
                 .chunks_exact(2)
                 .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))

@@ -397,7 +397,7 @@ pub fn plan_workspace(
     root: Option<&Path>,
 ) -> Result<ProvisioningPlan, RdeError> {
     let config = RdeConfig::from_ssot(root)
-        .map_err(|e| RdeError::ConfigError(e))?;
+        .map_err(RdeError::ConfigError)?;
 
     verify_zero_agpl_taint(&config, provider_opt, ide_opt)?;
 
@@ -548,7 +548,7 @@ pub async fn run_down(
     root: Option<&Path>,
 ) -> Result<i32, RdeError> {
     let config = RdeConfig::from_ssot(root)
-        .map_err(|e| RdeError::ConfigError(e))?;
+        .map_err(RdeError::ConfigError)?;
     verify_zero_agpl_taint(&config, None, None)?;
 
     let ws_path = if workspace == "." {
@@ -607,7 +607,7 @@ pub async fn run_down(
 /// Query RDE status.
 pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
     let config = RdeConfig::from_ssot(root)
-        .map_err(|e| RdeError::ConfigError(e))?;
+        .map_err(RdeError::ConfigError)?;
 
     let audit = audit_licenses(&config);
 
@@ -639,7 +639,7 @@ pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Res
 /// Execute license and copyleft taint audit.
 pub fn run_audit(json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
     let config = RdeConfig::from_ssot(root)
-        .map_err(|e| RdeError::ConfigError(e))?;
+        .map_err(RdeError::ConfigError)?;
     let report = audit_licenses(&config);
 
     if json {
@@ -663,7 +663,7 @@ pub fn run_audit(json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
 /// OpenTofu wrapper for infrastructure provisioning (MPL-2.0).
 pub fn run_tofu(args: &[String], root: Option<&Path>) -> Result<i32, RdeError> {
     let config = RdeConfig::from_ssot(root)
-        .map_err(|e| RdeError::ConfigError(e))?;
+        .map_err(RdeError::ConfigError)?;
 
     // Check for planted terraform invocations
     for a in args {
@@ -761,8 +761,10 @@ mod tests {
 
     #[test]
     fn test_coder_agpl_taint_rejected() {
-        let mut config = RdeConfig::default();
-        config.orchestrator = "coder".to_string();
+        let config = RdeConfig {
+            orchestrator: "coder".to_string(),
+            ..Default::default()
+        };
 
         let res = verify_zero_agpl_taint(&config, None, None);
         assert!(res.is_err(), "Coder must be rejected due to AGPL-3.0 taint");

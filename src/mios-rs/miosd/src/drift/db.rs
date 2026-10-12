@@ -874,7 +874,9 @@ mod tests {
         Ok((temp, ctx))
     }
 
+    #[cfg(unix)]
     const COVERAGE_SSOT: &str = "[drift.lint]\npython='python3'\n[ports]\nweb=1\n[verbs.fetch]\nsig='fetch(url)'\n[packages.base]\npkgs=['bash']\n";
+    #[cfg(unix)]
     const COVERAGE_SEED: &str = "import tomllib\n_CANONICAL_SECTIONS = {\n    'drift', 'ports',\n}\ndef get_seeded_sections(data):\n    return [k for k in data if k in _CANONICAL_SECTIONS]\ndef main():\n    data = tomllib.load(open('x', 'rb'))\n    for sec in get_seeded_sections(data):\n        pass\n    verbs = data.get('verbs') or {}\n    packages = data['packages']\nopen('SHOULD-NOT-EXECUTE', 'w')\n";
 
     #[cfg(unix)]
@@ -973,10 +975,12 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     const PROJECTION_SSOT: &str = "[drift.lint]\npython='python3'\n[ports]\nweb=8080\nratio=0.5\n[routing]\nmode='council'\n[routing.domains.web]\ndesc='Web'\nverbs=['fetch']\n[verbs._defaults]\ntier='common'\n[verbs.fetch]\nsig='fetch(url)'\ndesc='Fetch a page'\nhidden_aliases=['get']\n";
     // Mirrors the real seeder's statements: config_kv per allowlisted section
     // (routing minus domains), the verbs._defaults literal row, verb rows, and
     // domain_verb rows guarded by the verb lookup.
+    #[cfg(unix)]
     const PROJECTION_SEED: &str = r#"import json, os, sys, tomllib, psycopg
 _CANONICAL_SECTIONS = {"ports", "routing"}
 data = tomllib.load(open(os.environ["MIOS_TOML"], "rb"))
@@ -998,6 +1002,7 @@ with psycopg.connect("") as conn, conn.cursor() as cur:
             if cur.fetchone():
                 cur.execute("INSERT INTO domain_verb (domain, verb_name, description) VALUES (%s, %s, %s)", (dom, verb, d.get("desc", "")))
 "#;
+    #[cfg(unix)]
     const PROJECTION_MATERIALIZE: &str = r#"import json, psycopg
 out = {}
 with psycopg.connect("") as conn, conn.cursor() as cur:

@@ -1037,6 +1037,7 @@ mod tests {
     }
 
     // No shebang and no extension: the fixture tagger is not itself taggable.
+    #[cfg(unix)]
     const TAGGER_FIXTURE: &str = r#"import re
 EXT = {".sh", ".md"}
 BASENAMES = {"Justfile"}
@@ -1046,6 +1047,7 @@ SKIP_SUFFIX = re.compile(r"\.(png|lock)$", re.I)
 AI_LINE_RE = re.compile(r"^[#/<!;\-*\s]*AI-(?:hint|related|functions):.*?(-->)?\s*$", re.I)
 AI_HINT_TXT_RE = re.compile(r"AI-hint:\s*(.+?)\s*(?:-->)?\s*$", re.I)
 "#;
+    #[cfg(unix)]
     const HINT_POLICY: &str = "[drift.lint]\npython='python3'\n[ai_tag]\nmax_untagged=1\n";
 
     #[cfg(unix)]
