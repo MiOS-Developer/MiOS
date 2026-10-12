@@ -13,8 +13,10 @@ ExecStart=/usr/bin/miosd fhs-sync --daemon --interval 15 --root /
 Restart=always
 RestartSec=5s
 KillMode=process
+LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+

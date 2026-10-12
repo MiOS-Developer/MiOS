@@ -269,6 +269,7 @@ pub fn check_fhs_overlay(root: &Path) -> Report {
     }
 }
 
+#[allow(dead_code)]
 pub fn sync_fhs_overlay(root: &Path) -> std::io::Result<()> {
     for dir in REQUIRED_FHS_DIRS {
         let p = root.join(dir);

@@ -346,8 +346,23 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn strip_verbatim(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = strip_verbatim(&root.canonicalize().map_err(|e| e.to_string())?);
     let plan = load(&root)?;
     let context = preflight(&root, &plan)?;
     if plan_only {
@@ -422,10 +437,21 @@ pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
                         .get(call.tool.as_ref().ok_or("missing native tool")?)
                         .ok_or("native tool not preflighted")?
                 };
+                let root_str = strip_verbatim(&root).to_string_lossy().into_owned();
                 args.extend(
                     call.args
                         .iter()
-                        .map(|arg| arg.replace("{root}", &root.to_string_lossy())),
+                        .map(|arg| {
+                            let replaced = arg.replace("{root}", &root_str);
+                            #[cfg(windows)]
+                            {
+                                replaced.replace('/', "\\")
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                replaced
+                            }
+                        }),
                 );
                 context
                     .run(program, &args)

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3245,
-  "total_metadata_entries": 2898,
-  "total_hints": 2891,
+  "total_files_scanned": 3258,
+  "total_metadata_entries": 2910,
+  "total_hints": 2904,
   "total_functions_indexed": 1483,
-  "total_related_links": 5082,
+  "total_related_links": 5123,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -744,19 +744,6 @@
       "functions": [],
       "doc": null,
       "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
-      "path": "Uninstall-MiOS.ps1",
-      "hint": null,
-      "related": [
-        "mios-bootstrap",
-        "mios-agents",
-        "mios-dev"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
       "has_shebang": false
     },
     {
@@ -3625,15 +3612,6 @@
       "has_shebang": false
     },
     {
-      "path": "mios-build-local.ps1",
-      "hint": "Legacy PowerShell redirector that routes local build commands to build-mios.ps1 to maintain backward compatibility for existing MiOS build scripts and one-liners.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/root.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "pyproject.toml",
       "hint": "Root pyproject.toml configuring strict static typing, linting, and testing for MiOS.",
       "related": [
@@ -3689,6 +3667,15 @@
       "functions": [],
       "doc": null,
       "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/.cargo/config.toml",
+      "hint": "Linker stack size configuration for Windows to match Linux 8MB default stack",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
       "has_shebang": false
     },
     {
@@ -4955,6 +4942,19 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/miosd/src/fhs_sync.rs",
+      "hint": "Runtime FHS Root Overlay and Windows/Linux host-guest topology synchronization engine for miosd.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/system/mios-fhs-sync.service",
+        "/run/mios/fhs-sync.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/miosd/src/lib.rs",
       "hint": "Library module exports for miosd crate.",
       "related": [
@@ -4982,6 +4982,20 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/root.md",
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/miosd/src/rde.rs",
+      "hint": "Decentralized Remote Development Environment (RDE) platform engine (M2: WS-RDE).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        ".devcontainer/devcontainer.json",
+        "usr/bin/mios",
+        "tests/test-rde-engine.py"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/rde.md",
       "comment_style": "slash",
       "has_shebang": false
     },
@@ -5906,6 +5920,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-cua-wayland.py",
+      "hint": "Two-sided verification test suite for MiOS Multimodal Wayland Computer-Use Agent (CUA) Loop.",
+      "related": [
+        "usr/libexec/mios/mios-computer-use",
+        "usr/libexec/mios/ui/libei_input.py"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/ch15-computer-use-and-desktop-control.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-db.py",
       "hint": "Consolidated database test suite: backup/retention, db doctor/corruption, migrations/rollback, SSOT materialization, PG events, streaming replica, autovacuum tuner, pgvector halfvec HNSW, and pgvector vacuum/reindexing.",
       "related": [
@@ -5932,6 +5958,19 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "tests/test-dgm-loop.py",
+      "hint": "Two-sided test suite for the Darwin G\u00f6del Machine (DGM) self-improvement meta-agentic loop and pre-commit gate.",
+      "related": [
+        "usr/libexec/mios/mios-bench",
+        "usr/lib/mios/agent-pipe/mios_pipe/scheduler/bench.py",
+        "usr/share/git-core/templates/hooks/pre-commit.d/10-dgm-bench.sh"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/scheduler.md",
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "tests/test-diff-accrual.py",
@@ -6126,6 +6165,15 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-fhs-sync-e2e.py",
+      "hint": "Comprehensive E2E test suite for native bidirectional FHS root overlay sync daemon (mios-fhs-sync).",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/fhs-sync.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -6583,11 +6631,30 @@
       "has_shebang": true
     },
     {
-      "path": "tests/test-m1-challenger2-adversarial.py",
-      "hint": "Adversarial stress test harness for Milestone 1 (task_328 Persona Synthesis & task_329 Bounded Reflection).",
+      "path": "tests/test-m4-root-git-substrate.py",
+      "hint": "Two-sided verification test suite for Milestone M4: Singular Root-Git Substrate,",
       "related": [
-        "usr/lib/mios/agent-pipe/mios_persona.py",
-        "usr/lib/mios/agent-pipe/mios_deliberate.py"
+        ".gitignore",
+        "usr/share/mios/mios.toml",
+        "tools/drift-checks.py",
+        ".archive/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-m5-sandbox-licensing.py",
+      "hint": "Automated two-sided verification test suite for Milestone M5 (4-Tier Sandbox Execution Ladder & Permissive Licensing).",
+      "related": [
+        "usr/libexec/mios/mios-sandbox-exec",
+        "etc/cdi/nvidia.json",
+        "usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf",
+        "usr/share/containers/systemd/users/mios-microvm-krun@.container",
+        "usr/lib/mios/agent-pipe/mios_isolation.py",
+        "usr/share/mios/mios.toml",
+        "etc/fapolicyd/fapolicyd.rules"
       ],
       "functions": [],
       "doc": null,
@@ -7016,6 +7083,19 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-pgvector-rls.py",
+      "hint": "Two-sided test suite for PostgreSQL 16 + pgvector Row-Level Security (RLS) and Letta/MemGPT 4-tier K-LRU hierarchical memory.",
+      "related": [
+        "usr/lib/mios/agent-pipe/mios_pipe/memory/pg.py",
+        "usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py",
+        "usr/share/mios/postgres/schema-init.sql"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/memory.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-pipewire-aec.py",
       "hint": "Automated unit test suite for PipeWire AEC filter and loopback manager (task_730, task_731).",
       "related": [],
@@ -7175,6 +7255,15 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-rde-engine.py",
+      "hint": "Two-sided verification test suite for MiOS Decentralized RDE Platform Engine (DevPod + OpenTofu + MIT IDE).",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/rde.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-reactive-loop.py",
       "hint": "Automated unit test suite for Reactive Event Loop & Subagent Wakeups (task_597, task_598).",
       "related": [
@@ -7183,15 +7272,6 @@
       ],
       "functions": [],
       "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "tests/test-refine-guard.py",
-      "hint": "Thin entrypoint shim -- the chat-promotion smoke corpus now lives in the canonical consolidated suite tests/test-refine-guards.py ...",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7607,6 +7687,19 @@
       "hint": "Automated unit test suite for WS-ORCH DCI tension-tracking ledger.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_tension.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-tetragon-quarantine.py",
+      "hint": "Automated two-sided verification test suite for Milestone M4 (WS-SEC 4-Tier Zero-Trust Sandbox Ladder & Tetragon eBPF Enforcement).",
+      "related": [
+        "usr/lib/mios/agent-pipe/mios_isolation.py",
+        "usr/share/containers/systemd/mios-enforcer.container",
+        "usr/libexec/mios/ai/audit_chain.py"
       ],
       "functions": [],
       "doc": null,
@@ -10853,15 +10946,6 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/bootc/kargs.d/13-rtx50-vfio-workaround.toml",
-      "hint": "Configures kernel arguments to disable D3 idle states for NVIDIA RTX 50 (Blackwell) GPUs via vfio-pci to prevent power management issues during GPU passthrough.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "usr/lib/bootc/kargs.d/15-rootflags.toml",
       "hint": "Configures kernel arguments for the root filesystem mount, specifically enforcing discard=async and noatime flags to optimize filesystem performance and maintenance on x86_64 systems.",
       "related": [],
@@ -11869,6 +11953,22 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/agent-pipe/mios_isolation.py",
+      "hint": "4-Tier Sandbox Execution Ladder, Tetragon eBPF Enforcement Plane & Law 5 Cryptographic Audit Engine (WS-SEC / Milestone M4).",
+      "related": [
+        "usr/libexec/mios/mios-sandbox-exec",
+        "usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf",
+        "etc/cdi/nvidia.json",
+        "etc/fapolicyd/fapolicyd.rules",
+        "usr/share/containers/systemd/mios-enforcer.container",
+        "usr/libexec/mios/ai/audit_chain.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_jsonsalvage.py",
@@ -16941,6 +17041,19 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-fhs-sync.service",
+      "hint": "Systemd service unit executing miosd fhs-sync in daemon mode to maintain continuous Linux FHS root overlay and host-guest topology parity at runtime.",
+      "related": [
+        "usr/bin/miosd",
+        "/run/mios/fhs-sync.json",
+        "multi-user.target"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-finetune-serve.service",
       "hint": "Systemd unit to host the fine-tuned refiner model as an OpenAI /v1-compatible endpoint on port 11438, allowing the agent-pipe to swap between the high-quality transformer-served adapter and the faster llama.cpp path.",
       "related": [],
@@ -18586,7 +18699,7 @@
     },
     {
       "path": "usr/lib/udev/rules.d/99-kvmfr.rules",
-      "hint": "Defines udev rules to grant the kvm group read/write access to kvmfr character devices, ensuring proper permissions for KVM-based hardware emulation.",
+      "hint": "Defines udev rules to grant the kvm group read/write access to kvmfr character devices (mode 0660).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -19789,6 +19902,19 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/gpu_arbiter.py",
+      "hint": "Dynamic GPU Arbiter state machine (R2 Part B). Coordinates vLLM sleep mode, container pause fallback, sysfs driver binding, and QMP device hotplug for the physical RTX dGPU between AI reasoning workloads and Windows gaming guest (mios-xbox) without host reboots.",
+      "related": [
+        "usr/libexec/mios/mios-policy-arbiter",
+        "usr/share/containers/systemd/mios-llm-heavy.container",
+        "usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/gpu-arbiter.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/graph/traversal.py",
       "hint": "Knowledge Graph triple storage and recursive CTE traversal engine for MiOS RAG and dependency resolution.",
       "related": [
@@ -20169,6 +20295,15 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/launch-sovereign-hypervisor.sh",
+      "hint": "Unified Domain Supervisor Launch Script for MiOS Sovereign Hypervisor.",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/sovereign-hypervisor.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -23200,7 +23335,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-sandbox-exec",
-      "hint": "Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (task_210) a SECCOMP syscall filter based on specified security levels. Before task_210 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.",
+      "hint": "Executes agent-generated code within a bubblewrap-based userspace sandbox, enforcing filesystem isolation, resource limits (cgroups), network restrictions and (T-230) a SECCOMP syscall filter based on specified security levels. Before T-230 the confined process reported `Seccomp: 0`: the filesystem and the network were jailed while mount, ptrace, keyctl and bpf were still reachable from inside. At level=enforce the filter is now mandatory -- if it cannot be built the run is REFUSED, the same stance this script already took for a missing bwrap, because confining a verb with no filter reads as protection while being none. Manual ch62.",
       "related": [
         "/usr/libexec/mios/mios-sandbox-exec",
         "/usr/libexec/mios/mios-seccomp-filter",
@@ -25668,6 +25803,18 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/usb-release.sh",
+      "hint": "Decouples physical boot USB media post-boot in copytoram RAM hypervisor mode.",
+      "related": [
+        "usb-release.service",
+        "RAM-Resident-SystemRescue-Hypervisor-Blueprint.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/user-setup.sh",
       "hint": "MiOS' init-user-space -- initializes XDG user configuration for MiOS.",
       "related": [
@@ -26574,6 +26721,19 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/containers/systemd/mios-enforcer.container",
+      "hint": "MiOS Cilium Tetragon eBPF kernel enforcement plane Quadlet container. (WS-SEC / KENF-01 / task_169 / Milestone M4).",
+      "related": [
+        "usr/lib/mios/agent-pipe/mios_isolation.py",
+        "tests/test-tetragon-quarantine.py",
+        "/etc/tetragon/tetragon.tp.d/20-agent-sandboxing.yaml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/containers/systemd/mios-forge.container",
       "hint": "MiOS mios-forge container. (WS-7 pods-as-SSOT).",
       "related": [],
@@ -26844,6 +27004,15 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/users.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/containers/systemd/users/mios-microvm-krun@.container",
+      "hint": "Quadlet user unit for Tier 3 MicroVM execution via libkrun (<=90ms startup) with hardware acceleration (T-169 / ISOL-01).",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/concepts/container-os-runtime.md",
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -32416,15 +32585,6 @@
     {
       "path": "usr/share/mios/dropins/pcs-location-rules.pcs",
       "hint": "GENERATED Pacemaker location constraint rules from mios.toml [blade.requires] SSOT (task_2236). DO NOT EDIT.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/mios/dropins/virt-gate.conf",
-      "hint": "Configuration for the virt-gate service that enforces exclusion of containerized and WSL2 environments to prevent nested virtualization conflicts in the MiOS networking stack.",
       "related": [],
       "functions": [],
       "doc": null,

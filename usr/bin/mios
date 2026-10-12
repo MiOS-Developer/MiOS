@@ -347,6 +347,7 @@ KNOWN_VERBS = {
     "logs":   ["journalctl", "-u", "miosd.service", "-f"],
     "backup": ["/usr/libexec/mios/mios-backup"],
     "secret": ["/usr/libexec/mios/miosd", "secret"],
+    "rde":    ["/usr/libexec/mios/miosd", "rde"],
     "help":   None,        # special-cased below
 }
 
@@ -625,6 +626,7 @@ def main(argv: list[str]) -> int:
             "  mios user                            initialize user space (dotfiles/XDG)\n"
             "  mios models                          manage first-boot large models (list, sync, add, rm)\n"
             "  mios secret                          secure secrets management & Linux Keyrings\n"
+            "  mios rde [up|down|status]            decentralized remote development environments\n"
             "  mios status                          system status (--json, --yaml, --table)\n"
             "  mios version                         system version & Law conformance\n"
             "  mios health                          system health assessment\n"

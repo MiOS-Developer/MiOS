@@ -10,6 +10,7 @@ pub mod cli;
 pub mod daemon;
 pub mod drift;
 pub mod fhs_sync;
+pub mod rde;
 pub mod native_generator {
     use std::path::Path;
     use std::process::Command;

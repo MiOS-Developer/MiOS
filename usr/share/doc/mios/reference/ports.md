@@ -31,6 +31,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | desktop | ttyd_bash | 8310 |
 | desktop | ttyd_powershell | 8320 |
 | devtools | code_server | 8900 |
+| devtools | devpod_agent | 8910 |
 | edge | adguard_ui | 8050 |
 | edge | adguard_dns (pinned) | 53 |
 | edge | headscale (pinned) | 8085 |

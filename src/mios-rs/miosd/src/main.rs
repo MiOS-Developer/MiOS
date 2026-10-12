@@ -7,6 +7,7 @@
 mod drift;
 use miosd::fhs_sync;
 use miosd::native_generator;
+use miosd::rde;
 mod terminal_runtime {
     #[cfg(target_os = "linux")]
     mod linux {
@@ -714,6 +715,13 @@ enum Commands {
         /// Path to file containing session token
         #[arg(long)]
         token_file: Option<std::path::PathBuf>,
+    },
+    /// Decentralized Remote Development Environment (RDE) platform engine (DevPod + OpenTofu + MIT IDE)
+    Rde {
+        #[command(subcommand)]
+        action: rde::RdeCommand,
+        #[arg(long, default_value = ".")]
+        root: String,
     },
 }
 
@@ -2033,6 +2041,11 @@ async fn main() {
                 eprintln!("[miosd] Config server error: {}", e);
                 std::process::exit(1);
             }
+        }
+        Commands::Rde { action, root } => {
+            let root_path = std::path::Path::new(root);
+            let exit_code = rde::dispatch_action(action, root_path).await;
+            std::process::exit(exit_code);
         }
     }
 }

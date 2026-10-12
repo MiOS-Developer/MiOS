@@ -38,22 +38,42 @@ impl DriftCtx {
             || root.to_string_lossy().starts_with("/tmp/build")
             || root.to_string_lossy().starts_with("C:\\tmp\\build");
 
-        let git_status = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .arg("status")
-            .arg("--porcelain")
-            .output();
+        let is_repo_root = root.join(".git").exists()
+            || match Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["rev-parse", "--show-toplevel"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let toplevel = String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .replace('\\', "/");
+                    let root_str = root.to_string_lossy().replace('\\', "/");
+                    toplevel.trim_end_matches('/').eq_ignore_ascii_case(root_str.trim_end_matches('/'))
+                }
+                _ => false,
+            };
 
-        let (git_ok, incomplete_tree) = match git_status {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let has_deleted = stdout
-                    .lines()
-                    .any(|l| l.starts_with(" D") || l.starts_with("D "));
-                (true, has_deleted)
+        let (git_ok, incomplete_tree) = if is_repo_root {
+            match Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .arg("status")
+                .arg("--porcelain")
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let has_deleted = stdout
+                        .lines()
+                        .any(|l| l.starts_with(" D") || l.starts_with("D "));
+                    (true, has_deleted)
+                }
+                _ => (false, false),
             }
-            _ => (false, false),
+        } else {
+            (false, false)
         };
 
         Self {

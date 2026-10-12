@@ -64,6 +64,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-embed-backfill.service` | `usr/lib/systemd/system` | MiOS' Embedding Backfill Worker |
 | `mios-embed-backfill.timer` | `usr/lib/systemd/system` | MiOS' Embedding Backfill Timer |
 | `mios-endpoint.target` | `usr/lib/systemd/system` | MiOS' Endpoint Role |
+| `mios-enforcer.container` | `usr/share/containers/systemd` | MiOS' Tetragon eBPF Kernel Enforcement Plane (Standalone Out-of-Process Quarantine) |
+| `mios-fhs-sync.service` | `usr/lib/systemd/system` | MiOS' FHS root overlay & host-guest topology runtime sync daemon |
 | `mios-finetune-serve.service` | `usr/lib/systemd/system` | MiOS' fine-tune serve (base+adapter refiner backend) |
 | `mios-firewall-ports.service` | `usr/lib/systemd/system` | MiOS': ensure firewalld has the MiOS service ports open |
 | `mios-firewall.service` | `usr/lib/systemd/system` | MiOS': Declarative nftables container micro-segmentation firewall |
@@ -206,5 +208,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-machines.mount` | `usr/lib/systemd/system` | Virtual Machine and Container Storage (Compatibility) |
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 
-<!-- derived from tracked unit files (198 unit(s)) -->
+<!-- derived from tracked unit files (200 unit(s)) -->
 <!-- /MIOS-GEN:units -->

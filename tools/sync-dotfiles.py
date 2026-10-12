@@ -11,16 +11,17 @@ import stat
 import sys
 import tempfile
 
-_HERE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_raw_file = __file__.replace("\\\\?\\", "")
+_HERE_ROOT = os.path.normpath(os.path.abspath(os.path.join(os.path.dirname(_raw_file), "..")))
 # Data root (MIOS_ROOT, as every other generator sync-generated.sh drives); the
 # resolver library always comes from the checkout this tool ships in.
-REPO_ROOT = os.path.abspath(os.environ.get("MIOS_ROOT") or _HERE_ROOT)
+REPO_ROOT = os.path.normpath(os.path.abspath((os.environ.get("MIOS_ROOT") or _HERE_ROOT).replace("\\\\?\\", "")))
 DOTFILES_DIR = os.path.join(REPO_ROOT, ".dotfiles")
 BOOTSTRAP_ROOT = os.path.abspath(
     os.environ.get("MIOS_BOOTSTRAP_ROOT") or os.path.join(REPO_ROOT, "..", "mios-bootstrap"))
-VENDOR_TOML = os.path.join(REPO_ROOT, "usr/share/mios/mios.toml")
+VENDOR_TOML = os.path.join(REPO_ROOT, "usr", "share", "mios", "mios.toml")
 
-sys.path.insert(0, os.path.join(_HERE_ROOT, "usr/lib/mios"))
+sys.path.insert(0, os.path.normpath(os.path.join(_HERE_ROOT, "usr", "lib", "mios")))
 import mios_toml  # noqa: E402
 
 VSCODE_SETTINGS_SRC = os.path.join(DOTFILES_DIR, "vscode", "settings.json")

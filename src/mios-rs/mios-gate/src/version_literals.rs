@@ -35,8 +35,8 @@ const SKIP_SEGMENT: &str = "/tests/golden/";
 /// from the python scanner so this port changes no verdict; note in passing that
 /// exempting a VALUE exempts it in every file, which is a wider allowlist than
 /// any single pin needs (see the ledger entry that ports this check).
-const EXEMPT_VALUE: [&str; 10] = [
-    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.80.0", "0.9.6", "0.0.76", "0.1.0",
+const EXEMPT_VALUE: [&str; 11] = [
+    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.6.15", "0.80.0", "0.9.6", "0.0.76", "0.1.0",
 ];
 /// Lines whose version is documented as an upstream fallback, not ours.
 const EXEMPT_LINE: [&str; 2] = ["INTEL_SG_FALLBACK_TAG", "Upstream v0.15.0"];

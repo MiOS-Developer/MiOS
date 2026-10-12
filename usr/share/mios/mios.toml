@@ -13462,6 +13462,12 @@ unit = [
     "tests/test-adversarial-igpu-rpc.py",
     "tests/test_adversarial_hardcode_lint.py",
     "tests/test-m5-sandbox-licensing.py",
+    "tests/test-fhs-sync-e2e.py",
+    "tests/test-rde-engine.py",
+    "tests/test-cua-wayland.py",
+    "tests/test-tetragon-quarantine.py",
+    "tests/test-dgm-loop.py",
+    "tests/test-pgvector-rls.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [

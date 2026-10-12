@@ -256,12 +256,29 @@ def _warn_rls_unverified_once() -> None:
         "the owner principal is unverified/spoofable, so RLS is NOT applied; set "
         "principal_bind_mode=enforce for real per-tenant isolation")
 
+def rls_fail_closed(env: Optional[Mapping[str, str]] = None) -> bool:
+    """DB-side RLS fail-closed toggle (SSOT [pgvector].rls_fail_closed ->
+    MIOS_PGVECTOR_RLS_FAIL_CLOSED). When true, unauthenticated queries or queries with
+    unverified principals fail closed by binding an unauthenticated principal, preventing
+    unauthorized reads of tenant rows."""
+    e = env if env is not None else os.environ
+    return str(e.get("MIOS_PGVECTOR_RLS_FAIL_CLOSED", "") or "").strip().lower() in {
+        "1", "true", "yes", "on"}
+
 def _owner_scope(rls_owner: Optional[str],
-                 env: Optional[Mapping[str, str]] = None) -> Optional[tuple[str, dict[str, Any]]]:
+                 env: Optional[Mapping[str, str]] = None,
+                 fail_closed: Optional[bool] = None) -> Optional[tuple[str, dict[str, Any]]]:
+    fc = fail_closed if fail_closed is not None else rls_fail_closed(env)
     owner = str(rls_owner).strip() if rls_owner is not None else ""
-    if not owner or not rls_enabled(env):
+    if not rls_enabled(env):
+        return None
+    if not owner:
+        if fc:
+            return build_set_owner("__unauthenticated__")
         return None
     if not _principal_enforced():
+        if fc:
+            return build_set_owner("__unauthenticated__")
         _warn_rls_unverified_once()
         return None
     return build_set_owner(owner)
@@ -446,7 +463,8 @@ async def _conn(cfg: Optional[dict[str, Any]] = None) -> AsyncIterator[Any]:
 
 async def execute(sql: str, params: Optional[Any] = None,
                   *, fetch: bool = False, cfg: Optional[dict[str, Any]] = None,
-                  rls_owner: Optional[str] = None) -> Any:
+                  rls_owner: Optional[str] = None,
+                  fail_closed: Optional[bool] = None) -> Any:
     if _pg_skip():
         return None
 
@@ -484,7 +502,7 @@ async def execute(sql: str, params: Optional[Any] = None,
     except Exception:  # noqa: BLE001 -- psycopg not installed (pre-cutover)
         return None
     try:
-        scope = _owner_scope(rls_owner)
+        scope = _owner_scope(rls_owner, fail_closed=fail_closed)
         async with _conn(cfg) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 if scope is not None:
@@ -519,14 +537,15 @@ async def _table_columns(table: str, *, cfg: Optional[dict[str, Any]] = None) ->
     return set(cols)
 
 async def insert(table: str, fields: dict[str, Any], *, cfg: Optional[dict[str, Any]] = None,
-                 rls_owner: Optional[str] = None) -> Any:
+                 rls_owner: Optional[str] = None,
+                 fail_closed: Optional[bool] = None) -> Any:
     cols = await _table_columns(table, cfg=cfg)
     if cols:
         fields = {k: v for k, v in fields.items() if k in cols}
     if not fields:
         return None
     sql, params = build_insert(table, fields)
-    return await execute(sql, params, fetch=False, cfg=cfg, rls_owner=rls_owner)
+    return await execute(sql, params, fetch=False, cfg=cfg, rls_owner=rls_owner, fail_closed=fail_closed)
 
 async def recall(qvec: Any, *, table: str = "knowledge", k: int = 3,
                  ef_search: int = 100, owner: Optional[str] = None,
@@ -535,7 +554,8 @@ async def recall(qvec: Any, *, table: str = "knowledge", k: int = 3,
                  rls_owner: Optional[str] = None,
                  query_text: Optional[str] = None,
                  hybrid: bool = False,
-                 rerank: bool = False) -> list[dict[str, Any]]:
+                 rerank: bool = False,
+                 fail_closed: Optional[bool] = None) -> list[dict[str, Any]]:
     if _pg_skip():
         return []
     try:
@@ -544,7 +564,7 @@ async def recall(qvec: Any, *, table: str = "knowledge", k: int = 3,
     except Exception:  # noqa: BLE001
         return []
     try:
-        scope = _owner_scope(rls_owner)
+        scope = _owner_scope(rls_owner, fail_closed=fail_closed)
         dense_rows: list[dict[str, Any]] = []
         sparse_rows: list[dict[str, Any]] = []
 

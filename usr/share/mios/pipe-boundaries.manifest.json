@@ -612,6 +612,7 @@
         "recall_tuning",
         "rid_to_pg_id",
         "rls_enabled",
+        "rls_fail_closed",
         "vector_literal"
       ]
     },
@@ -1025,7 +1026,8 @@
     "usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py": {
       "configure_kwargs": [],
       "public_symbols": [
-        "evaluate_output_quality"
+        "evaluate_output_quality",
+        "get_gpu_arbiter_state"
       ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/routing/oscontrol.py": {
@@ -1513,10 +1515,15 @@
         "aggregate_pass_hat_k",
         "classic_rollup",
         "comb_ratio",
+        "compute_utility",
+        "dgm_gate",
+        "evaluate_swe_bench_lite",
+        "evaluate_tau_bench",
         "iid_pass_hat_k",
         "pass_at_k",
         "pass_hat_k",
-        "percentile"
+        "percentile",
+        "verify_positive_delta"
       ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/scheduler/blades.py": {
