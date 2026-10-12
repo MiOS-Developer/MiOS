@@ -2057,6 +2057,15 @@ def _install_native(source_root, target_root):
     """
     source = Path(source_root).resolve()
     target = Path(target_root).resolve()
+    vdir = source / "usr/share/mios/vendored"
+    if vdir.is_dir():
+        for bundle in sorted(vdir.glob("*.tar")):
+            if bundle.is_file():
+                try:
+                    with tarfile.open(bundle) as tf:
+                        tf.extractall(vdir)
+                except Exception:
+                    pass
     with (source / "usr/share/mios/mios.toml").open("rb") as handle:
         import tomllib
         config = tomllib.load(handle)["mcp"]
@@ -2095,7 +2104,7 @@ def _install_native(source_root, target_root):
         "usr/libexec/mios/ux/theme_sync.py", "usr/libexec/mios/mios-dotfiles-render",
         "usr/libexec/mios/mios-terminal", "usr/libexec/mios/mios-ai-terminal",
         "usr/libexec/mios/mios-mon.py", "usr/bin/mios",
-        "etc/profile.d/mios-prompt.sh", "etc/tmux.conf", "etc/dconf/db/local.d/10-mios-keybindings",
+        "etc/profile.d/50-mios.sh", "etc/tmux.conf", "etc/dconf/db/local.d/10-mios-keybindings",
         "usr/share/mios/tmux/mios-bashrc", "usr/share/mios/tmux/mios-theme.tmux.conf", "usr/share/mios/tmux/mios-keys.tmux.conf",
         "usr/share/mios/theme/templates/oh-my-posh.omp.json.tmpl", "usr/share/mios/oh-my-posh/mios.omp.json",
         "usr/share/mios/hyprland/mios-keys.conf", "usr/share/mios/sway/mios-keys.conf", "usr/share/mios/keybindings/vscode-keybindings.json",
@@ -2103,6 +2112,8 @@ def _install_native(source_root, target_root):
     )
     for relative in runtime_files:
         src, dst = source / relative, target / relative
+        if not src.is_file():
+            continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.resolve() != dst.resolve():
             shutil.copy2(src, dst)
@@ -2111,7 +2122,9 @@ def _install_native(source_root, target_root):
     notices = target / "usr/share/licenses/tmux-mcp"
     notices.mkdir(parents=True, exist_ok=True)
     for name in ("UPSTREAM-README.md", "THIRD-PARTY-NOTICES.txt"):
-        shutil.copy2(source / "usr/share/mios/vendored/tmux-mcp" / name, notices / name)
+        n_src = source / "usr/share/mios/vendored/tmux-mcp" / name
+        if n_src.is_file():
+            shutil.copy2(n_src, notices / name)
     fonts = target / "usr/share/fonts/geist-nerd"
     fonts.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(font_archive) as package:
