@@ -36,6 +36,7 @@ LIBVIRT_SOCKETS=(
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIOS_LIBEXEC="${SCRIPT_DIR}"
 XBOX_XML_DEFAULT="${MIOS_LIBEXEC}/Xbox-Final-NoAutoSelect.xml"
+# shellcheck disable=SC2034
 XBOX_XML_AUTO="${MIOS_LIBEXEC}/Xbox-AutoEnroll.xml"
 XBOX_XML="${XBOX_XML:-$XBOX_XML_DEFAULT}"
 

@@ -29,7 +29,7 @@ if [[ -d "${CTX}/usr/share/mios/branding" ]]; then
 fi
 
 for _vdir in "${CTX}/usr/share/mios/vendored" /usr/share/mios/vendored; do
-    if [[ -d "$_vdir" ]]; then
+    if [[ -d "$_vdir" && -w "$_vdir" ]]; then
         for _bundle in "$_vdir"/*.tar; do
             [[ -f "$_bundle" ]] || continue
             tar -xf "$_bundle" -C "$_vdir"
@@ -40,6 +40,12 @@ done
 if [[ -d "${CTX}/usr" ]]; then
     mios_log "Stage 1: overlay usr"
     tar -C "${CTX}/usr" -cf - --exclude='./local' . | tar -C /usr --no-overwrite-dir -xf -
+    if [[ -d /usr/share/mios/vendored && -w /usr/share/mios/vendored ]]; then
+        for _bundle in /usr/share/mios/vendored/*.tar; do
+            [[ -f "$_bundle" ]] || continue
+            tar -xf "$_bundle" -C /usr/share/mios/vendored
+        done
+    fi
 fi
 
 if [[ -d "${CTX}/usr/local" ]]; then

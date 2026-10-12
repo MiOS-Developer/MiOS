@@ -132,7 +132,7 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL MIOS_PROFILES_DEFAULT MIOS_BAKE_BOUND_IMAGES; \
     echo "[build] MIOS_BAKE_BOUND_IMAGES=${MIOS_BAKE_BOUND_IMAGES}"; \
     mios-gen sync --root /tmp/build; \
-    bash /tmp/build/automation/01-system-files-overlay.sh; \
+    CTX=/tmp/build bash /tmp/build/automation/01-system-files-overlay.sh; \
     install_packages_strict mcp; \
     python3.13 /tmp/build/usr/libexec/mios/mios-mcp-server --install-native --source-root /tmp/build; \
     chmod +x /tmp/build/automation/build.sh /tmp/build/automation/*.sh 2>/dev/null || true; \

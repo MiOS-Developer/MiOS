@@ -1,11 +1,8 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # AI-hint: Two-sided test suite for the Darwin Gödel Machine (DGM) self-improvement meta-agentic loop and pre-commit gate.
 # AI-doc: usr/share/doc/mios/manual/scheduler.md
 # AI-related: usr/libexec/mios/mios-bench, usr/lib/mios/agent-pipe/mios_pipe/scheduler/bench.py, usr/share/git-core/templates/hooks/pre-commit.d/10-dgm-bench.sh
 
-""":"
-exec python3 "$0" "$@"
-"""
 
 from __future__ import annotations
 
