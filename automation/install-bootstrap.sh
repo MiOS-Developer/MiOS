@@ -101,7 +101,7 @@ main() {
 
     local hostkind
     hostkind="$(detect_host_kind)"
-    if [[ "$hostkind" == "unsupported" ]]; then
+    if [[ "${hostkind,,}" == "unsupported" ]]; then
         log_err "Host is not Fedora. 'MiOS' requires a Fedora-based host."
         exit 1
     fi
@@ -187,8 +187,11 @@ main() {
     if [[ -n "${all_pkgs// }" ]]; then
         local dnf_cmd="dnf"
         command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
-        log_info "Executing: $dnf_cmd install -y --skip-unavailable --best [PACKAGES]"
-        $dnf_cmd install -y --skip-unavailable --best $all_pkgs || log_warn "Some packages failed to install."
+        log_info "Executing: $dnf_cmd install -y --best [PACKAGES]"
+        if ! $dnf_cmd install -y --best $all_pkgs; then
+            log_err "Package stack installation failed."
+            return 1
+        fi
         log_ok "Package stack installation complete."
     else
         log_err "No [packages.*] sections found in ${toml_path}!"

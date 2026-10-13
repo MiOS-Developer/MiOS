@@ -1,0 +1,8 @@
+[Context]
+filesystems=xdg-config/gtk-4.0:ro;/etc/gtk-3.0:ro;xdg-data/themes:ro;xdg-data/icons:ro;xdg-config/gtk-3.0:ro;/etc/gtk-4.0:ro;!/usr/share/icons;!/usr/share/themes;!/usr/share/fonts;
+
+[Environment]
+GTK_THEME=adw-gtk3-dark
+ADW_DEBUG_COLOR_SCHEME=prefer-dark
+XCURSOR_SIZE=24
+XCURSOR_THEME=Bibata-Modern-Classic

@@ -13064,7 +13064,7 @@ target_files = 45
 globs = ["usr/libexec/*", "usr/bin/*"]
 
 [legibility.file_budget.domains.docs]  # one manual volume per domain; one ADR log
-max_files = 543
+max_files = 542
 target_files = 40
 globs = ["usr/share/doc/*", "docs/*", ".research/*", ".devloop/*", "*.md"]
 
@@ -13089,7 +13089,7 @@ target_files = 25
 globs = ["etc/*"]
 
 [legibility.file_budget.domains.harness]  # per-harness shims rendered from one source at dev setup
-max_files = 140
+max_files = 131
 target_files = 20
 globs = [".agents/*", "commands/*", ".claude/*", ".github/*", ".forgejo/*", ".devcontainer/*", ".mios/*", ".dotfiles/*"]
 

@@ -244,7 +244,6 @@ pub mod validator {
                 checked_sections.push("meta".to_string());
                 if let Some(meta_table) = meta.as_table() {
                     Self::check_non_empty_str(meta_table, "meta.mios_version", &mut errors);
-                    Self::check_non_empty_str(meta_table, "meta.fedora_version", &mut errors);
                 } else {
                     errors.push(ValidationError::InvalidType {
                         field: "meta".to_string(),
@@ -254,6 +253,20 @@ pub mod validator {
                 }
             } else {
                 errors.push(ValidationError::MissingSection("meta".to_string()));
+            }
+
+            // Fedora belongs to [versions], the canonical SSOT version registry.
+            match root_table.get("versions") {
+                Some(toml::Value::Table(versions)) => {
+                    checked_sections.push("versions".to_string());
+                    Self::check_non_empty_str(versions, "versions.fedora", &mut errors);
+                }
+                Some(value) => errors.push(ValidationError::InvalidType {
+                    field: "versions".into(),
+                    expected: "table".into(),
+                    got: value.type_str().into(),
+                }),
+                None => errors.push(ValidationError::MissingSection("versions".into())),
             }
 
             // 2. Check [identity]
@@ -288,34 +301,86 @@ pub mod validator {
                 checked_sections.push("ports".to_string());
                 if let Some(ports_table) = ports.as_table() {
                     let mut port_map: HashMap<u16, String> = HashMap::new();
+                    let stack_offset = match ports_table.get("stack_id") {
+                        None => 0,
+                        Some(value) => match value.as_integer() {
+                            Some(n) if n >= 0 && n.checked_mul(10000).is_some() => n * 10000,
+                            _ => {
+                                errors.push(ValidationError::InvalidType {
+                                    field: "ports.stack_id".into(),
+                                    expected: "nonnegative integer with representable port offset"
+                                        .into(),
+                                    got: value.type_str().into(),
+                                });
+                                0
+                            }
+                        },
+                    };
                     for (key, val) in ports_table {
+                        let field = format!("ports.{key}");
+                        match key.as_str() {
+                            "stack_id" => continue,
+                            "stale_fallbacks" | "unbound" => {
+                                if !val.as_array().is_some_and(|items| {
+                                    items.iter().all(|item| {
+                                        item.as_str().is_some_and(|s| !s.trim().is_empty())
+                                    })
+                                }) {
+                                    errors.push(ValidationError::InvalidType {
+                                        field,
+                                        expected: "array of nonempty strings".into(),
+                                        got: val.type_str().into(),
+                                    });
+                                }
+                                continue;
+                            }
+                            "categories" => {
+                                if !val.as_table().is_some_and(|categories| {
+                                    categories.values().all(|category| category.is_table())
+                                }) {
+                                    errors.push(ValidationError::InvalidType {
+                                        field,
+                                        expected: "table of category tables".into(),
+                                        got: val.type_str().into(),
+                                    });
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
                         match val.as_integer() {
                             Some(p) => {
-                                if p <= 0 || p > 65535 {
+                                // Match the resolver: DNS remains protocol-pinned at 53.
+                                let resolved = if p == 53 {
+                                    Some(p)
+                                } else {
+                                    p.checked_add(stack_offset)
+                                };
+                                if !(1..=65535).contains(&p)
+                                    || !resolved.is_some_and(|port| (1..=65535).contains(&port))
+                                {
                                     errors.push(ValidationError::PortOutOfRange {
-                                        key: format!("ports.{}", key),
-                                        port: p,
+                                        key: field,
+                                        port: resolved.unwrap_or(i64::MAX),
                                     });
                                 } else {
-                                    let port_u16 = p as u16;
+                                    let port_u16 = resolved.expect("range checked") as u16;
                                     if let Some(existing_key) = port_map.get(&port_u16) {
                                         errors.push(ValidationError::PortCollision {
                                             key1: existing_key.clone(),
-                                            key2: format!("ports.{}", key),
+                                            key2: field,
                                             port: port_u16,
                                         });
                                     } else {
-                                        port_map.insert(port_u16, format!("ports.{}", key));
+                                        port_map.insert(port_u16, field);
                                     }
                                 }
                             }
-                            None => {
-                                errors.push(ValidationError::InvalidType {
-                                    field: format!("ports.{}", key),
-                                    expected: "integer (1..65535)".to_string(),
-                                    got: val.type_str().to_string(),
-                                });
-                            }
+                            None => errors.push(ValidationError::InvalidType {
+                                field,
+                                expected: "integer (1..65535)".into(),
+                                got: val.type_str().into(),
+                            }),
                         }
                     }
                 } else {
@@ -395,7 +460,15 @@ pub mod validator {
             }
 
             // 7. General Law 7 Scan across top-level string fields
-            Self::scan_law7_empty_strings(root_table, "", &mut errors);
+            // Empty vendor defaults are declared optional values, not Law 7 violations.
+            // Derive their exact paths from the SSOT instead of another exemption list.
+            static VENDOR: std::sync::OnceLock<toml::Value> = std::sync::OnceLock::new();
+            let vendor = VENDOR.get_or_init(|| {
+                include_str!("../../../../usr/share/mios/mios.toml")
+                    .parse()
+                    .expect("canonical vendor TOML must parse")
+            });
+            Self::scan_law7_empty_strings(root_table, "", vendor, &mut errors);
 
             let dur = start.elapsed().as_secs_f64() * 1000.0;
             ValidationReport::failure(errors, warnings, checked_sections, dur)
@@ -432,6 +505,7 @@ pub mod validator {
         fn scan_law7_empty_strings(
             table: &toml::map::Map<String, toml::Value>,
             prefix: &str,
+            vendor: &toml::Value,
             errors: &mut Vec<ValidationError>,
         ) {
             for (key, val) in table {
@@ -443,7 +517,14 @@ pub mod validator {
                 match val {
                     toml::Value::String(s) => {
                         // Check if critical configuration key is empty string
+                        let declared_optional = s.is_empty()
+                            && full_path
+                                .split('.')
+                                .try_fold(vendor, |value, part| value.get(part))
+                                .and_then(toml::Value::as_str)
+                                == Some("");
                         if s.trim().is_empty()
+                            && !declared_optional
                             && (full_path.starts_with("identity.")
                                 || full_path.starts_with("meta.")
                                 || full_path.starts_with("security.")
@@ -453,7 +534,7 @@ pub mod validator {
                         }
                     }
                     toml::Value::Table(sub) => {
-                        Self::scan_law7_empty_strings(sub, &full_path, errors);
+                        Self::scan_law7_empty_strings(sub, &full_path, vendor, errors);
                     }
                     _ => {}
                 }
@@ -470,7 +551,8 @@ pub mod validator {
             let sample = r#"
 [meta]
 mios_version = "0.3.0"
-fedora_version = "44"
+[versions]
+fedora = "44"
 
 [identity]
 username = "mios"
@@ -505,7 +587,8 @@ db_path = "/var/lib/mios/state.json"
             let sample = r#"
 [meta]
 mios_version = "0.3.0"
-fedora_version = "44"
+[versions]
+fedora = "44"
 
 [identity]
 username = "mios"
@@ -530,7 +613,8 @@ service_b = 8080
             let sample = r#"
 [meta]
 mios_version = ""
-fedora_version = "44"
+[versions]
+fedora = "44"
 
 [identity]
 username = "mios"
@@ -551,7 +635,8 @@ shell = "/bin/bash"
             let sample = r#"
 [meta]
 mios_version = "0.3.0"
-fedora_version = "44"
+[versions]
+fedora = "44"
 
 [identity]
 username = "mios"
@@ -568,6 +653,211 @@ max_phase_scripts = 50
                 .errors
                 .iter()
                 .any(|e| matches!(e, ValidationError::RatchetViolation { .. })));
+        }
+
+        fn vendor() -> toml::Value {
+            include_str!("../../../../usr/share/mios/mios.toml")
+                .parse()
+                .unwrap()
+        }
+
+        fn report(value: &toml::Value) -> ValidationReport {
+            MiosValidator::validate_str(&toml::to_string(value).unwrap())
+        }
+
+        #[test]
+        fn canonical_vendor_ssot_passes() {
+            let report = report(&vendor());
+            assert!(report.is_valid, "{:?}", report.errors);
+            assert!(report.checked_sections.contains(&"versions".into()));
+            assert!(report.checked_sections.contains(&"ports".into()));
+        }
+
+        #[test]
+        fn resolved_vendor_host_user_layers_pass() {
+            let dir = tempfile::Builder::new()
+                .prefix("mios-config-layers")
+                .tempdir()
+                .unwrap();
+            let vendor_path = dir.path().join("vendor.toml");
+            let host_path = dir.path().join("host.toml");
+            let user_path = dir.path().join("user.toml");
+            std::fs::write(
+                &vendor_path,
+                include_str!("../../../../usr/share/mios/mios.toml"),
+            )
+            .unwrap();
+            std::fs::write(
+                &host_path,
+                "[identity]\nhostname = \"layered-host\"\n[ports]\nstack_id = 1\n",
+            )
+            .unwrap();
+            std::fs::write(
+                &user_path,
+                "[identity]\nfullname = \"Layered Operator\"\nlocation = \"\"\n",
+            )
+            .unwrap();
+            let merged =
+                mios_resolver::layers::merge_layer_files(&[vendor_path, host_path, user_path])
+                    .unwrap();
+            assert_eq!(
+                merged["identity"]["hostname"].as_str(),
+                Some("layered-host")
+            );
+            assert_eq!(
+                merged["identity"]["fullname"].as_str(),
+                Some("Layered Operator")
+            );
+            let report = report(&merged);
+            assert!(report.is_valid, "{:?}", report.errors);
+        }
+
+        #[test]
+        fn canonical_version_is_required_and_typed() {
+            for value in [
+                None,
+                Some(toml::Value::Integer(44)),
+                Some(toml::Value::String(" ".into())),
+            ] {
+                let mut config = vendor();
+                config["versions"].as_table_mut().unwrap().remove("fedora");
+                if let Some(value) = value.clone() {
+                    config["versions"]
+                        .as_table_mut()
+                        .unwrap()
+                        .insert("fedora".into(), value);
+                }
+                let report = report(&config);
+                assert!(!report.is_valid);
+                assert!(
+                    report.errors.iter().any(|error| match (&value, error) {
+                        (None, ValidationError::MissingField(field)) => field == "versions.fedora",
+                        (
+                            Some(toml::Value::Integer(_)),
+                            ValidationError::InvalidType { field, .. },
+                        ) => field == "versions.fedora",
+                        (
+                            Some(toml::Value::String(_)),
+                            ValidationError::Law7EmptyString { field },
+                        ) => field == "versions.fedora",
+                        _ => false,
+                    }),
+                    "{:?}",
+                    report.errors
+                );
+            }
+        }
+
+        #[test]
+        fn invalid_port_types_and_metadata_fail() {
+            for (key, value) in [
+                ("hermes", toml::Value::String("8720".into())),
+                ("stack_id", toml::Value::Integer(-1)),
+                ("stack_id", toml::Value::String("0".into())),
+                ("stack_id", toml::Value::Integer(i64::MAX)),
+                ("stale_fallbacks", toml::Value::Integer(0)),
+                ("unbound", toml::Value::Array(vec![toml::Value::Integer(2)])),
+                ("categories", toml::Value::String("invalid".into())),
+                (
+                    "categories",
+                    toml::Value::Table(
+                        [("bad".into(), toml::Value::Integer(1))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ] {
+                let mut config = vendor();
+                config["ports"][key] = value;
+                let report = report(&config);
+                assert!(!report.is_valid);
+                assert!(report.errors.iter().any(|error| matches!(
+                    error, ValidationError::InvalidType { field, .. } if field == &format!("ports.{key}")
+                )), "{key}: {:?}", report.errors);
+            }
+        }
+
+        #[test]
+        fn invalid_base_and_shifted_ports_fail() {
+            for (base, stack_id) in [
+                (0, 0),
+                (-1, 0),
+                (65536, 0),
+                (65000, 1),
+                (65000, i64::MAX / 10000),
+            ] {
+                let mut config = vendor();
+                config["ports"]["hermes"] = toml::Value::Integer(base);
+                config["ports"]["stack_id"] = toml::Value::Integer(stack_id);
+                let report = report(&config);
+                assert!(!report.is_valid);
+                assert!(
+                    report.errors.iter().any(|error| matches!(
+                        error, ValidationError::PortOutOfRange { key, .. } if key == "ports.hermes"
+                    )),
+                    "{:?}",
+                    report.errors
+                );
+            }
+        }
+
+        #[test]
+        fn service_port_collisions_fail_with_metadata_present() {
+            let mut config = vendor();
+            config["ports"]["hermes"] = config["ports"]["agent_pipe"].clone();
+            let report = report(&config);
+            assert!(!report.is_valid);
+            assert!(
+                report.errors.iter().any(|error| matches!(
+                    error, ValidationError::PortCollision { key1, key2, .. }
+                    if [key1.as_str(), key2.as_str()].contains(&"ports.hermes")
+                        && [key1.as_str(), key2.as_str()].contains(&"ports.agent_pipe")
+                )),
+                "{:?}",
+                report.errors
+            );
+        }
+
+        #[test]
+        fn vendor_optional_values_do_not_allow_new_empty_or_whitespace_fields() {
+            for (section, key, value) in [
+                ("identity", "undeclared", ""),
+                ("security", "undeclared", ""),
+                ("network", "undeclared", ""),
+                ("identity", "location", " "),
+                ("security", "arbiter_allow", "\t"),
+                ("identity", "username", ""),
+                ("meta", "mios_version", ""),
+            ] {
+                let mut config = vendor();
+                config[section]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert(key.into(), toml::Value::String(value.into()));
+                let report = report(&config);
+                assert!(!report.is_valid);
+                assert!(report.errors.iter().any(|error| matches!(
+                    error, ValidationError::Law7EmptyString { field } if field == &format!("{section}.{key}")
+                )), "{section}.{key}: {:?}", report.errors);
+            }
+        }
+
+        #[test]
+        fn syntax_and_missing_file_fail() {
+            assert!(matches!(
+                MiosValidator::validate_str("[invalid").errors.as_slice(),
+                [ValidationError::Syntax(_)]
+            ));
+            let dir = tempfile::Builder::new()
+                .prefix("mios-config-missing")
+                .tempdir()
+                .unwrap();
+            let report = MiosValidator::validate_file(dir.path().join("missing.toml"));
+            assert!(!report.is_valid);
+            assert!(matches!(
+                report.errors.as_slice(),
+                [ValidationError::Syntax(_)]
+            ));
         }
     }
 }
@@ -612,17 +902,10 @@ fn default_shell() -> String {
 pub struct MetaConfig {
     #[serde(default = "default_version")]
     pub mios_version: String,
-    #[serde(default = "default_fedora_version")]
+    /// Compatibility view resolved from [versions].fedora by MiosConfig.
+    /// Read the old field only to detect conflicting input; never emit a second SSOT.
+    #[serde(default, skip_serializing)]
     pub fedora_version: String,
-}
-
-fn default_fedora_version() -> String {
-    if let Ok(ver) = std::env::var("FEDORA_VERSION") {
-        if !ver.is_empty() {
-            return ver;
-        }
-    }
-    "44".into()
 }
 
 fn default_version() -> String {
@@ -699,6 +982,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(try_from = "MiosConfigInput")]
 pub struct MiosConfig {
     #[serde(default)]
     pub meta: MetaConfig,
@@ -712,6 +996,46 @@ pub struct MiosConfig {
     /// Raw TOML table capturing all dynamic/operator-defined sections (e.g. packages, repos, security, network, power, compliance, etc.)
     #[serde(flatten)]
     pub raw: toml::Table,
+}
+
+// Keep the public typed view stable while resolving cross-section values once,
+// after Figment has merged the complete vendor/host/user input.
+#[derive(Deserialize)]
+struct MiosConfigInput {
+    #[serde(default)]
+    meta: MetaConfig,
+    #[serde(default)]
+    identity: IdentityConfig,
+    #[serde(default)]
+    build: BuildConfig,
+    #[serde(default)]
+    node: NodeConfig,
+    #[serde(flatten)]
+    raw: toml::Table,
+}
+
+impl TryFrom<MiosConfigInput> for MiosConfig {
+    type Error = String;
+
+    fn try_from(mut input: MiosConfigInput) -> Result<Self, Self::Error> {
+        let fedora = input.raw.get("versions")
+            .and_then(toml::Value::as_table)
+            .and_then(|versions| versions.get("fedora"))
+            .and_then(toml::Value::as_str)
+            .filter(|version| !version.trim().is_empty())
+            .ok_or("versions.fedora must be a nonempty string; no legacy or host-environment fallback is supported")?;
+        if !input.meta.fedora_version.is_empty() && input.meta.fedora_version != fedora {
+            return Err("meta.fedora_version conflicts with canonical versions.fedora; remove the legacy field".into());
+        }
+        input.meta.fedora_version = fedora.to_string();
+        Ok(Self {
+            meta: input.meta,
+            identity: input.identity,
+            build: input.build,
+            node: input.node,
+            raw: input.raw,
+        })
+    }
 }
 
 impl MiosConfig {
@@ -786,6 +1110,10 @@ mod tests {
         assert!(!config.build.phases.list.is_empty());
         assert_eq!(config.node.port, 8650);
 
+        assert_eq!(
+            config.meta.fedora_version,
+            config.get_string("versions.fedora").unwrap()
+        );
         assert!(config.section("packages").is_some());
         assert!(config.get_value("security.cosign.policy_mode").is_some());
     }
@@ -795,6 +1123,9 @@ mod tests {
         let sample_toml = r#"
 [meta]
 mios_version = "0.3.0"
+
+[versions]
+fedora = "fixture-release"
 
 [node]
 node_id = 202
@@ -818,5 +1149,86 @@ flag = true
         );
         assert_eq!(config.get_i64("foo.bar.number_key"), Some(42));
         assert_eq!(config.get_bool("foo.bar.flag"), Some(true));
+    }
+    fn typed(sample: &str) -> Result<MiosConfig, figment::Error> {
+        Figment::new().merge(Toml::string(sample)).extract()
+    }
+
+    #[test]
+    fn canonical_fedora_resolves_after_layer_merge() {
+        let dir = tempfile::Builder::new()
+            .prefix("mios-config-version")
+            .tempdir()
+            .unwrap();
+        let vendor = dir.path().join("vendor.toml");
+        let host = dir.path().join("host.toml");
+        let user = dir.path().join("user.toml");
+        std::fs::write(&vendor, "[versions]\nfedora = \"vendor-release\"\n").unwrap();
+        std::fs::write(&host, "[versions]\nfedora = \"host-release\"\n").unwrap();
+        std::fs::write(&user, "[versions]\nfedora = \"user-release\"\n").unwrap();
+        let config: MiosConfig = mios_resolver::layers::figment_of(&[vendor, host, user])
+            .extract()
+            .unwrap();
+        assert_eq!(config.meta.fedora_version, "user-release");
+        assert_eq!(
+            config.get_string("versions.fedora").as_deref(),
+            Some("user-release")
+        );
+    }
+
+    #[test]
+    fn typed_file_loading_uses_canonical_version() {
+        let dir = tempfile::Builder::new()
+            .prefix("mios-config-version-file")
+            .tempdir()
+            .unwrap();
+        let path = dir.path().join("mios.toml");
+        std::fs::write(&path, "[versions]\nfedora = \"changed-release\"\n").unwrap();
+        let config = MiosConfig::load_from_path(&path).unwrap();
+        assert_eq!(config.meta.fedora_version, "changed-release");
+        assert_eq!(
+            config.get_string("versions.fedora").as_deref(),
+            Some("changed-release")
+        );
+    }
+
+    #[test]
+    fn missing_malformed_or_legacy_only_fedora_cannot_default() {
+        assert!(MetaConfig::default().fedora_version.is_empty());
+        for sample in [
+            "",
+            "[meta]\nfedora_version = \"legacy-release\"",
+            "[versions]\nfedora = \"\"",
+            "[versions]\nfedora = \"  \"",
+            "[versions]\nfedora = 44",
+            "[versions]\nfedora = false",
+            "versions = \"invalid\"",
+        ] {
+            let error = typed(sample).expect_err("invalid canonical version must fail");
+            assert!(error.to_string().contains("versions.fedora"), "{error}");
+        }
+    }
+
+    #[test]
+    fn legacy_fedora_conflict_fails_and_matching_legacy_is_not_emitted() {
+        let error = typed("[meta]\nfedora_version = \"legacy-release\"\n[versions]\nfedora = \"canonical-release\"")
+            .expect_err("legacy mismatch must not silently override canonical version");
+        assert!(
+            error
+                .to_string()
+                .contains("meta.fedora_version conflicts with canonical versions.fedora"),
+            "{error}"
+        );
+        let config = typed("[meta]\nfedora_version = \"canonical-release\"\n[versions]\nfedora = \"canonical-release\"").unwrap();
+        assert_eq!(config.meta.fedora_version, "canonical-release");
+        let serialized = toml::to_string(&config).unwrap();
+        let document: toml::Value = serialized.parse().unwrap();
+        assert!(document["meta"].get("fedora_version").is_none());
+        assert_eq!(
+            document["versions"]["fedora"].as_str(),
+            Some("canonical-release")
+        );
+        let roundtrip = typed(&serialized).unwrap();
+        assert_eq!(roundtrip.meta.fedora_version, config.meta.fedora_version);
     }
 }

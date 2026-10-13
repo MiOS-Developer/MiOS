@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3258,
+  "total_files_scanned": 3400,
   "total_metadata_entries": 2910,
   "total_hints": 2904,
   "total_functions_indexed": 1483,
-  "total_related_links": 5123,
+  "total_related_links": 5122,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1964,14 +1964,11 @@
     },
     {
       "path": "automation/mios-apply",
-      "hint": "The ONE unified MiOS apply engine -- materializes Git=$ROOT (via lib/root-merge.sh) then",
+      "hint": "Linux apply stage planner; unavailable execution fails closed.",
       "related": [
         "automation/lib/root-merge.sh",
-        "automation/lib/stage-runner.sh",
         "automation/build.sh",
-        "build-mios.sh",
-        "build-mios.ps1",
-        "usr/libexec/mios/mios-apply"
+        "tests/test-install-fhs.py"
       ],
       "functions": [
         "apply_substrate_classes",
@@ -2763,15 +2760,6 @@
         "ROADMAP.md",
         "usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
       ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
-      "path": "docs/design/verbosity-changelist.md",
-      "hint": "Summary record of the MiOS Automation Log-Message Verbosity Audit.",
-      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "xml",
@@ -6395,7 +6383,7 @@
     },
     {
       "path": "tests/test-install-fhs.py",
-      "hint": "Unit test for automation/install-fhs.sh verifying overlay resolution and empty-overlay refusal.",
+      "hint": "Verify Linux overlay refusal, apply plans and core installer routing with positive and negative controls.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -18261,6 +18249,18 @@
         "etc/systemd/oomd.conf",
         "usr/libexec/mios/kernel/oomd_psi.py",
         "tests/test-systemd-oomd-psi.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/system.slice.d/20-cpu-affinity.conf",
+      "hint": "Prioritizes system infrastructure and critical background daemons over untrusted workloads (task_802).",
+      "related": [
+        "automation/24-cpu-affinity.sh",
+        "usr/libexec/mios/mios-core-sched"
       ],
       "functions": [],
       "doc": null,

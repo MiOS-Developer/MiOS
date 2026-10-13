@@ -919,3 +919,4 @@ tests/powershell/*.exe
 !/etc/mios/ai/v1/
 !/etc/mios/ai/v1/a2a-peers.json
 usr/share/mios/windows/MiOS-FhsSync.exe
+usr/share/mios/virtio/*.iso

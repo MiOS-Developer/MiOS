@@ -38,14 +38,9 @@ mios_root_merge() {
     git -C "$root" config "branch.${branch}.remote" origin
     git -C "$root" config "branch.${branch}.merge"  "refs/heads/${branch}"
 
-    if [[ -d "${root%/}/usr/libexec/mios" ]]; then
-        chmod -R +x "${root%/}/usr/libexec/mios/" 2>/dev/null || true
-    fi
-    find "${root%/}/usr/lib/mios" -type f \( -name "*.sh" -o -name "mios-*" \) \
-        ! -name "*.py" ! -name "*.json" ! -name "*.yaml" ! -name "*.md" \
-        -exec chmod +x {} + 2>/dev/null || true
-    find "${root%/}/usr/bin" "${root%/}/usr/local/bin" -maxdepth 1 -name "mios-*" -type f \
-        -exec chmod +x {} + 2>/dev/null || true
+    # Git checkout already restores the tracked executable bits. Recursively
+    # chmodding runtime directories changes data and sourced libraries too,
+    # leaving the root worktree dirty immediately after installation.
 
     return 0
 }

@@ -1,0 +1,7 @@
+{
+  "smt_control": "on",
+  "smt_active": true,
+  "total_cpus": 32,
+  "sched_core_enabled": true,
+  "configured_at": "2026-10-13T15:12:14Z"
+}

@@ -184,6 +184,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-numa-alloc` | MiOS Heterogeneous NUMA Weight Buffer Interleaver and Local Core Affinity Pinner. |
 | `usr/libexec/mios/mios-oci-delta-apply` | stub |
 | `usr/libexec/mios/mios-oci-delta-service.sh` | GAP-5 (task_50) edge distribution wrapper |
+| `usr/libexec/mios/mios-offline-upgrade` | Installs uupd and offline atomic OCI upgrade path with kernel vs userspace soft-reboot differentiation. |
 | `usr/libexec/mios/mios-open-url` | Resolves and launches a URL in the MiOS-defined default browser or a specified override by resolving mios.toml entries and dispatching via mios-gui to the operator's WSLg desktop session. |
 | `usr/libexec/mios/mios-os-control` | The primary entrypoint for MiOS OS-control, providing an OpenAI-compliant tool schema, verb catalog, and skill discovery system derived from mios.toml to allow LLMs to execute system operations... |
 | `usr/libexec/mios/mios-os-recipe` | Executes allowlisted, shell-escaped OS-specific commands defined in mios.toml, handling cross-platform path conversion and security-hardened parameter filtering for MiOS system operations. |
@@ -287,7 +288,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 257 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 258 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)

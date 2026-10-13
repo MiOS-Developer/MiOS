@@ -31,7 +31,7 @@ The P0/P1 spine to a deployable, gap-closed MiOS. Everything below the fold (P2/
 4. **[P1 · agent-pipe correctness]** Migrate raw-`MIOS_TOML` consumers + portal readers, fix user-layer delta write, `db_authoritative` per-section fallback, `to_toml` datetime, memoize resolution. **[CLEARED: `check_raw_toml_readers` (check 13 `check_cli_sql_safety`/`check_raw_toml_readers`) in `automation/98-drift-checks.sh` enforces 0 raw opens; unit tests pass]**
 5. **[P1 · registry correctness]** task_1121 globals non-clobber, both twins (D3, D4) + twin-parity check (D5); event-gate GHCR push/sign (D2); harden empty-name in GitHub + Forgejo (D7, D8). **[CLEARED: task_2448; `check_globals_parity` in `tools/render-globals.py` and `tools/test_render_globals.py` verified]**
 6. **[P1 · infra] Confirm `ghcr.io/mios-dev/mios` is a PUBLIC package** (D12). **[TASK: task_2484]**
-7. **[P1 · coordination, session-bound] Relocate the 3 scratchpad artifacts to `docs/design/`** (E1). **[CLEARED: files tracked at `docs/design/verbosity-changelist.md`, `docs/design/doc-container-runtime.md`, `docs/design/doc-foss-upstream.md`]**
+7. **[P1 · coordination, session-bound] Relocate the 3 scratchpad artifacts to `docs/design/`** (E1). **[CLEARED: files tracked at `docs/design/mios-finalization-plan.md#log-message-verbosity-audit`, `docs/design/doc-container-runtime.md`, `docs/design/doc-foss-upstream.md`]**
 8. **[P1 · deploy] Offline bootstrap source + integrity + real seed + E2E** (G3, G4, G5, G6). **[TASKS: task_2485, task_2486]**
 9. **[P1 · templates gate] Fix match-paths + rebaseline** (C1, C2, C3, C4, C5, C7) so check 46 targets real dirs. **[CLEARED: `check_template_conformance` (check 50 `check_template_conformance`) in `automation/98-drift-checks.sh` enforcing with green ratchet]**
 10. **[P1 · docs] Author the concept docs** (E7/E8; container-os-runtime carries corrections) and **run the full green gate** (E14). **[CLEARED: task_2451; concept docs landed and unmigrated narrative count ratcheted to 0]**
@@ -71,7 +71,7 @@ Phases are **workstreams by theme**; the per-task `[P#]` tag preserves the sourc
 | **[P1]** Harden Forgejo "mirror to GHCR" step (build-mios.yml:154-165) against empty name | agy | mirror asserts non-empty + registry host before login/tag/push; GHCR_TOKEN skip preserved | none | D8 |
 | **[P1] INFRA** Confirm `ghcr.io/mios-dev/mios` is a PUBLIC ghcr package | infra | `skopeo inspect --no-creds` (or anon pull) succeeds; visibility confirmed Public | none (registry) | D12 |
 | **[P1]** Fix check-30 description/output strings (L1731/1800/1802) to match its body; drop false "userenv.sh maps cleanly" wording (logic unchanged) | agy | check-30 messages no longer mention userenv.sh; still passes on HEAD | check 30 (description only) | E4 |
-| **[P1]** Relocate 3 scratchpad artifacts → `docs/design/{verbosity-changelist,doc-container-runtime,doc-foss-upstream}.md`; rewrite AGY-TASKS.md refs off AppData paths | claude-bootstrap | files git-tracked; grep 'AppData' in AGY-TASKS.md = 0; refs resolve | none (out of build + check-46 scope) | E1 (session-bound) |
+| **[P1]** Relocate 3 scratchpad artifacts → `docs/design/mios-finalization-plan.md#log-message-verbosity-audit`, `docs/design/{doc-container-runtime,doc-foss-upstream}.md`; rewrite AGY-TASKS.md refs off AppData paths | claude-bootstrap | files git-tracked; grep 'AppData' in AGY-TASKS.md = 0; refs resolve | none (out of build + check-46 scope) | E1 (session-bound) |
 | **[P1]** Offline bootstrap-overlay clone: export `BOOTSTRAP_REPO=file://$BOOT_DEST` in kickstart `%post` (default still hardcodes github.com) | claude-bootstrap | NIC-off kickstart completes Phase-1 step-2 from USB-staged bootstrap; no github clone attempt | none | G3 |
 | **[P1]** Integrity validation for staged Linux artifacts (Fedora ISO + seed blobs) in stage/FileChecker flow | claude-bootstrap | staging refuses/flags truncated/zero/HTML ISO or seed; FileChecker validates by size+checksum | none | G4 |
 | **[P1] INFRA** Produce real Stage-1 seed blobs on MiOS-DEV (`Build-MiOSSeed.ps1` after a completed `mios build`) | infra | seed dir holds non-empty valid `mios-image.oci.tar` + `mios-rootfs.tar`; New-MiOSISO logs staged seed (Green), not degrade-open | none | G5 |
@@ -187,3 +187,15 @@ Phases are **workstreams by theme**; the per-task `[P#]` tag preserves the sourc
 - **Four architectural corrections** (/var persists, MOK≠UKI, venus≠CUDA, multi-vendor via CDI whole-device) flow into one place — `container-os-runtime.md` (E7) — with A15 propagating them verbatim to AGENTS.md/GEMINI.md and F9 fixing the "super-privileged" inversion.
 - **TPM/LUKS** mechanism (A4/A5/A6) is designed to satisfy the Mini recovery/Tang decisions (F6/F7); `[kargs]` (A1) carries the `video=efifb:off` entry from F6.
 - **MIOS_TOML env schism (B9)** is P0 and must land **before** the B1/B2 consumer migrations, or drift goes red.
+
+<a id="log-message-verbosity-audit"></a>
+
+<!-- AI-hint: Summary record of the MiOS Automation Log-Message Verbosity Audit. -->
+# MiOS Automation — Log-Message Verbosity Audit (Summary Record)
+
+> Status: Applied & verified across all pipeline automation scripts under `automation/`.
+
+## 1. Scope & Execution
+- **Audited Surface:** 67 findings across 40 pipeline scripts under `automation/` and `automation/lib/`.
+- **Core Standard:** Technology-grounded, factual logging with strict removal of unverified action claims, decorative punctuation, and marketing hype words (`successfully`, `Done (bare)`, `BAKED IN`, `pure build-up`).
+- **Status:** 100% applied and enforced across the codebase.

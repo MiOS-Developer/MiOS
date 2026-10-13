@@ -46,18 +46,18 @@
 .agents/skills/dev-loop/reference/goal.py	157	157	1	6	45e08b81dc5e	STAY	local-scoped		0				0
 .agents/skills/dev-loop/reference/goal.py	167	167	1	3	fec28dfeb872	STAY	local-scoped		0				0
 .agents/skills/dev-loop/reference/install.sh	1	6	6	28	dfcf7168dd18	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/harness.md	mios-src:dfcf7168dd18	28	0
-.agents/skills/dev-loop/reference/install.sh	29	29	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	63	63	1	2	a625159d18da	DROP	banner		0				0
-.agents/skills/dev-loop/reference/install.sh	79	79	1	4	2de0c5e1d90a	DROP	banner		0				0
-.agents/skills/dev-loop/reference/install.sh	90	90	1	2	595d991bf42d	DROP	banner		0				0
-.agents/skills/dev-loop/reference/install.sh	106	106	1	2	e5af0b6a2934	DROP	banner		0				0
-.agents/skills/dev-loop/reference/install.sh	117	117	1	1	62f8e1ec095e	DROP	banner		0				0
-.agents/skills/dev-loop/reference/install.sh	130	130	1	3	2ac4a7554795	STAY	local-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	146	146	1	2	265350bea0cc	STAY	local-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	157	157	1	4	9ed3a41ba355	STAY	local-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	170	170	1	5	7647e6400a44	STAY	local-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	183	183	1	2	736e0b02737b	STAY	local-scoped		0				0
-.agents/skills/dev-loop/reference/install.sh	194	194	1	2	330db973f995	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	30	30	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	64	64	1	2	a625159d18da	DROP	banner		0				0
+.agents/skills/dev-loop/reference/install.sh	80	80	1	4	2de0c5e1d90a	DROP	banner		0				0
+.agents/skills/dev-loop/reference/install.sh	91	91	1	2	595d991bf42d	DROP	banner		0				0
+.agents/skills/dev-loop/reference/install.sh	107	107	1	2	e5af0b6a2934	DROP	banner		0				0
+.agents/skills/dev-loop/reference/install.sh	118	118	1	1	62f8e1ec095e	DROP	banner		0				0
+.agents/skills/dev-loop/reference/install.sh	131	131	1	3	2ac4a7554795	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	147	147	1	2	265350bea0cc	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	158	158	1	4	9ed3a41ba355	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	171	171	1	5	7647e6400a44	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	184	184	1	2	736e0b02737b	STAY	local-scoped		0				0
+.agents/skills/dev-loop/reference/install.sh	195	195	1	2	330db973f995	STAY	local-scoped		0				0
 .agents/skills/dev-loop/reference/lifecycle.py	1	1	1	2	c8a5e92d1c7b	STAY	local-scoped		0				0
 .agents/skills/dev-loop/reference/lifecycle.py	2	7	5	33	c71aedbdebbb	STAY	midsize-why		0				0
 .agents/skills/dev-loop/reference/lifecycle.py	122	122	1	9	588e33ce652a	STAY	local-scoped		0				0
@@ -1500,7 +1500,8 @@ automation/lib/packages.sh	284	285	2	19	f80431baa5eb	STAY	local-scoped		0				0
 automation/lib/paths.sh	1	3	3	27	00ba9a9f2a38	STAY	ai-header		0				0
 automation/lib/paths.sh	1	3	3	32	5b12b5216113	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:5b12b5216113	32	1
 automation/lib/root-merge.sh	1	4	4	22	8d76f157648d	STAY	ai-header		0				0
-automation/lib/root-merge.sh	57	57	1	3	06b3d51cf7db	STAY	inline-scoped		0				0
+automation/lib/root-merge.sh	41	43	3	26	a6d5494e0f4f	STAY	midsize-why		0				0
+automation/lib/root-merge.sh	52	52	1	3	06b3d51cf7db	STAY	inline-scoped		0				0
 automation/lib/test_masking.sh	1	2	2	10	bc118908334b	STAY	ai-header		0				0
 automation/lib/ws7-uki-fapolicyd-build.sh	1	3	3	26	0bd7b6df7d96	STAY	ai-header		0				0
 automation/lib/ws7-uki-fapolicyd-build.sh	1	4	4	46	4f4814ea7fe4	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:4f4814ea7fe4	46	1
@@ -2436,6 +2437,9 @@ etc/sysusers.d/cephadm.conf	1	2	2	21	e185f1197ac5	STAY	ai-header		0				0
 etc/tmux.conf	1	1	1	8	3e1061b372ed	STAY	ai-header		0				0
 etc/udisks2/mount_options.conf	1	2	2	15	6c6de1975431	STAY	ai-header		0				0
 etc/udisks2/mount_options.conf	5	5	1	9	6f184afb7815	STAY	local-scoped		0				0
+etc/udisks2/udisks2.conf	2	3	2	14	207a9078df8a	STAY	local-scoped		0				0
+etc/udisks2/udisks2.conf	5	5	1	6	82fc0700af54	STAY	local-scoped		0				0
+etc/udisks2/udisks2.conf	9	9	1	6	640c09cb344b	STAY	local-scoped		0				0
 etc/ups/nut.conf	1	2	2	18	f50939792777	STAY	ai-header		0				0
 etc/ups/ups.conf	1	2	2	18	83a3c8ff5316	STAY	ai-header		0				0
 etc/ups/upsd.conf	1	2	2	18	d28a23eb501b	STAY	ai-header		0				0
@@ -2446,6 +2450,22 @@ etc/usbguard/rules.conf	6	6	1	12	cd2cdc423a21	STAY	local-scoped		0				0
 etc/usbguard/rules.conf	9	9	1	16	e0f089badb34	STAY	local-scoped		0				0
 etc/usbguard/rules.conf	12	12	1	11	1cb6ebe23901	STAY	local-scoped		0				0
 etc/usbguard/rules.conf	15	15	1	8	cdb2730740c3	STAY	local-scoped		0				0
+etc/usbguard/usbguard-daemon.conf	1	9	9	31	d2b079991341	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	12	20	9	31	a580fe3e4a74	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	25	34	10	30	cdd6a93af2fd	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	37	49	13	49	b643e99fa732	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	52	64	13	50	5be06d056f73	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	67	77	11	36	96041204ff44	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	80	93	14	92	10db2f9600b7	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	96	106	11	50	b055aa9992fc	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	109	113	5	42	dcf28e377c9c	STAY	midsize-why		0				0
+etc/usbguard/usbguard-daemon.conf	115	122	8	24	6f4f4df7d531	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	125	132	8	24	97c5f49201ad	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	135	150	16	63	4254b8c0c9e8	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	153	167	15	79	3111c6edd3fb	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	170	179	10	31	366957a0ba9e	MIGRATE	narrative-rationale		0				0
+etc/usbguard/usbguard-daemon.conf	182	184	3	6	407e330fc8fa	STAY	midsize-why		0				0
+etc/usbguard/usbguard-daemon.conf	187	190	4	21	1c590ba54079	STAY	midsize-why		0				0
 etc/wsl-distribution.conf	1	1	1	16	1852ef67ffbb	STAY	ai-header		0				0
 etc/wsl.conf	1	2	2	29	8791245adc81	STAY	ai-header		0				0
 etc/xdg/xdg-desktop-portal/portals.conf	1	2	2	32	e6b1d6cb454c	STAY	ai-header		0				0
@@ -2514,90 +2534,90 @@ installation/mios-install.sh	64	64	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
 installation/mios-install.sh	67	67	1	1	7d29678e1f11	DROP	commented-out-code		0				0
 installation/mios-install.sh	69	69	1	1	7d29678e1f11	DROP	commented-out-code		0				0
 installation/mios-install.sh	112	112	1	2	9e40407d7f29	STAY	inline-scoped		0				0
-installation/mios-install.sh	153	153	1	13	0748c5615370	STAY	inline-scoped		0				0
-installation/mios-install.sh	214	214	1	3	b51456ee7369	STAY	inline-scoped		0				0
-installation/mios-install.sh	229	229	1	3	e2adbf095bde	STAY	inline-scoped		0				0
-installation/mios-install.sh	258	258	1	3	b51456ee7369	STAY	inline-scoped		0				0
-installation/mios-install.sh	270	270	1	3	b51456ee7369	STAY	inline-scoped		0				0
-installation/mios-install.sh	311	315	5	40	6da2a59f653a	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:6da2a59f653a	40	0
-installation/mios-install.sh	322	325	4	27	ad78be7afbd8	STAY	midsize-why		0				0
-installation/mios-install.sh	330	331	2	20	41c5b7b23312	STAY	local-scoped		0				0
-installation/mios-install.sh	338	338	1	3	19af7b00aa0d	STAY	inline-scoped		0				0
-installation/mios-install.sh	342	342	1	12	d359eef3db1c	STAY	local-scoped		0				0
-installation/mios-install.sh	358	370	13	80	5b8f3fb65228	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:5b8f3fb65228	80	0
-installation/mios-install.sh	383	383	1	12	70f0b71f6d1f	STAY	local-scoped		0				0
-installation/mios-install.sh	396	401	6	49	068e7e3bb3a0	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:068e7e3bb3a0	49	0
-installation/mios-install.sh	409	409	1	10	fa09c546bc2d	STAY	local-scoped		0				0
-installation/mios-install.sh	414	414	1	4	d70789e65ffe	STAY	inline-scoped		0				0
-installation/mios-install.sh	421	421	1	7	ab5946620a1b	STAY	local-scoped		0				0
-installation/mios-install.sh	440	443	4	38	15aeb790a053	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:15aeb790a053	38	0
-installation/mios-install.sh	449	449	1	10	fe2cde8ed101	STAY	local-scoped		0				0
-installation/mios-install.sh	454	454	1	14	35f1bb6e38f4	STAY	local-scoped		0				0
-installation/mios-install.sh	464	467	4	10	f69ab6ccb5fd	STAY	midsize-why		0				0
-installation/mios-install.sh	471	471	1	0	d2cb3e7f42b8	DROP	banner		0				0
-installation/mios-install.sh	472	472	1	4	74e110ba5fe1	STAY	inline-scoped		0				0
-installation/mios-install.sh	475	475	1	4	b8f2142c2fb0	STAY	inline-scoped		0				0
-installation/mios-install.sh	476	476	1	1	f2df20b296ad	DROP	banner		0				0
-installation/mios-install.sh	477	477	1	1	378f971b24d8	DROP	banner		0				0
-installation/mios-install.sh	478	478	1	1	476b0a9469b9	DROP	banner		0				0
-installation/mios-install.sh	485	485	1	11	cb3a56ac6afc	STAY	local-scoped		0				0
-installation/mios-install.sh	496	496	1	6	1b91482bf012	STAY	local-scoped		0				0
-installation/mios-install.sh	503	503	1	9	e897c4d8c062	STAY	local-scoped		0				0
-installation/mios-install.sh	516	516	1	5	76c688d981dc	STAY	local-scoped		0				0
-installation/mios-install.sh	542	542	1	1	c614546cb75b	DROP	banner		0				0
-installation/mios-install.sh	566	568	3	1	0689024451fe	DROP	banner		0				0
-installation/mios-install.sh	602	602	1	5	633adad76a4f	STAY	inline-scoped		0				0
-installation/mios-install.sh	617	623	7	48	2c70ad4357de	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:2c70ad4357de	48	0
-installation/mios-install.sh	632	634	3	33	091da86b5721	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:091da86b5721	33	0
-installation/mios-install.sh	645	648	4	38	c6f97d3a19f7	STAY	midsize-why		0				0
-installation/mios-install.sh	673	678	6	55	b9a818a76597	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:b9a818a76597	55	0
-installation/mios-install.sh	683	683	1	6	65d6b4e0cb56	STAY	local-scoped		0				0
-installation/mios-install.sh	691	694	4	25	3b148cf64bbb	STAY	midsize-why		0				0
-installation/mios-install.sh	709	712	4	36	784c81ef7cee	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:784c81ef7cee	36	0
-installation/mios-install.sh	727	727	1	9	3ff76c6b5594	STAY	inline-scoped		0				0
-installation/mios-install.sh	731	733	3	29	48195b5c1444	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:48195b5c1444	29	0
-installation/mios-install.sh	743	746	4	29	396528c076bb	STAY	midsize-why		0				0
-installation/mios-install.sh	762	764	3	24	e56612ccbdaa	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:e56612ccbdaa	24	0
-installation/mios-install.sh	767	769	3	28	bfefb492df49	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:bfefb492df49	28	0
-installation/mios-install.sh	774	775	2	18	2948cf6eddc3	STAY	local-scoped		0				0
-installation/mios-install.sh	823	825	3	5	e314ca2d4c64	STAY	midsize-why		0				0
-installation/mios-install.sh	852	856	5	41	f31e3deee190	STAY	midsize-why		0				0
-installation/mios-install.sh	860	863	4	38	c2b7ca79a0fb	STAY	midsize-why		0				0
-installation/mios-install.sh	873	873	1	12	f4239ae0a949	STAY	local-scoped		0				0
-installation/mios-install.sh	879	881	3	5	1e7337d70e0d	STAY	midsize-why		0				0
-installation/mios-install.sh	900	902	3	5	0e18a8ed73d0	STAY	midsize-why		0				0
-installation/mios-install.sh	988	992	5	42	11d8f6d70117	STAY	midsize-why		0				0
-installation/mios-install.sh	1005	1006	2	22	6a7558388b93	STAY	local-scoped		0				0
-installation/mios-install.sh	1016	1018	3	11	5d32806ff672	STAY	midsize-why		0				0
-installation/mios-install.sh	1046	1050	5	33	addbdd99b274	STAY	midsize-why		0				0
-installation/mios-install.sh	1054	1065	12	64	4f2d2c4fb217	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:4f2d2c4fb217	64	0
-installation/mios-install.sh	1096	1100	5	24	3cef80af8503	STAY	midsize-why		0				0
-installation/mios-install.sh	1124	1125	2	18	b6ff78b571d5	STAY	local-scoped		0				0
-installation/mios-install.sh	1129	1138	10	59	08b6c56b33f0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:08b6c56b33f0	59	0
-installation/mios-install.sh	1178	1178	1	0	3428aab76c18	DROP	banner		0				0
-installation/mios-install.sh	1233	1233	1	7	5c7ec6159e86	STAY	local-scoped		0				0
-installation/mios-install.sh	1236	1236	1	0	3249d0827bd1	DROP	banner		0				0
-installation/mios-install.sh	1241	1241	1	0	3249d0827bd1	DROP	banner		0				0
-installation/mios-install.sh	1245	1245	1	8	ebce4b38362e	STAY	local-scoped		0				0
-installation/mios-install.sh	1253	1256	4	41	b2ec01f39de2	STAY	midsize-why		0				0
-installation/mios-install.sh	1272	1280	9	66	c4263417d6e8	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:c4263417d6e8	66	0
-installation/mios-install.sh	1296	1296	1	9	0f9ccc09d221	STAY	local-scoped		0				0
-installation/mios-install.sh	1316	1323	8	87	e723bdda0f56	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:e723bdda0f56	87	0
-installation/mios-install.sh	1330	1333	4	41	e7372490537c	STAY	midsize-why		0				0
-installation/mios-install.sh	1335	1335	1	1	968e18a5b755	STAY	inline-scoped		0				0
-installation/mios-install.sh	1365	1368	4	39	a3be8dfe5c60	STAY	midsize-why		0				0
-installation/mios-install.sh	1382	1382	1	3	7049f3245d69	STAY	local-scoped		0				0
-installation/mios-install.sh	1394	1394	1	3	7049f3245d69	STAY	local-scoped		0				0
-installation/mios-install.sh	1403	1405	3	19	f16e0b2034c8	STAY	midsize-why		0				0
-installation/mios-install.sh	1439	1441	3	3	2f98b848e13b	STAY	midsize-why		0				0
-installation/mios-install.sh	1475	1477	3	20	5feb5e5ab6dc	STAY	midsize-why		0				0
-installation/mios-install.sh	1480	1480	1	13	667f79261b5b	STAY	local-scoped		0				0
-installation/mios-install.sh	1483	1484	2	12	d85ba3a25a29	STAY	local-scoped		0				0
-installation/mios-install.sh	1487	1488	2	15	d5671558f112	STAY	local-scoped		0				0
-installation/mios-install.sh	1491	1491	1	1	30c4349f8a38	DROP	banner		0				0
-installation/mios-install.sh	1511	1512	2	20	8109b4b19856	STAY	local-scoped		0				0
-installation/mios-install.sh	1569	1569	1	2	3ae312b96103	STAY	inline-scoped		0				0
-installation/mios-install.sh	1575	1575	1	2	3c4f5841f59c	STAY	inline-scoped		0				0
+installation/mios-install.sh	164	164	1	13	0748c5615370	STAY	inline-scoped		0				0
+installation/mios-install.sh	225	225	1	3	b51456ee7369	STAY	inline-scoped		0				0
+installation/mios-install.sh	240	240	1	3	e2adbf095bde	STAY	inline-scoped		0				0
+installation/mios-install.sh	269	269	1	3	b51456ee7369	STAY	inline-scoped		0				0
+installation/mios-install.sh	281	281	1	3	b51456ee7369	STAY	inline-scoped		0				0
+installation/mios-install.sh	322	326	5	40	6da2a59f653a	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:6da2a59f653a	40	0
+installation/mios-install.sh	333	336	4	27	ad78be7afbd8	STAY	midsize-why		0				0
+installation/mios-install.sh	341	342	2	20	41c5b7b23312	STAY	local-scoped		0				0
+installation/mios-install.sh	349	349	1	3	19af7b00aa0d	STAY	inline-scoped		0				0
+installation/mios-install.sh	353	353	1	12	d359eef3db1c	STAY	local-scoped		0				0
+installation/mios-install.sh	369	381	13	80	5b8f3fb65228	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:5b8f3fb65228	80	0
+installation/mios-install.sh	394	394	1	12	70f0b71f6d1f	STAY	local-scoped		0				0
+installation/mios-install.sh	407	412	6	49	068e7e3bb3a0	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:068e7e3bb3a0	49	0
+installation/mios-install.sh	420	420	1	10	fa09c546bc2d	STAY	local-scoped		0				0
+installation/mios-install.sh	425	425	1	4	d70789e65ffe	STAY	inline-scoped		0				0
+installation/mios-install.sh	432	432	1	7	ab5946620a1b	STAY	local-scoped		0				0
+installation/mios-install.sh	451	454	4	38	15aeb790a053	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:15aeb790a053	38	0
+installation/mios-install.sh	460	460	1	10	fe2cde8ed101	STAY	local-scoped		0				0
+installation/mios-install.sh	465	465	1	14	35f1bb6e38f4	STAY	local-scoped		0				0
+installation/mios-install.sh	475	478	4	10	f69ab6ccb5fd	STAY	midsize-why		0				0
+installation/mios-install.sh	482	482	1	0	d2cb3e7f42b8	DROP	banner		0				0
+installation/mios-install.sh	483	483	1	4	74e110ba5fe1	STAY	inline-scoped		0				0
+installation/mios-install.sh	486	486	1	4	b8f2142c2fb0	STAY	inline-scoped		0				0
+installation/mios-install.sh	487	487	1	1	f2df20b296ad	DROP	banner		0				0
+installation/mios-install.sh	488	488	1	1	378f971b24d8	DROP	banner		0				0
+installation/mios-install.sh	489	489	1	1	476b0a9469b9	DROP	banner		0				0
+installation/mios-install.sh	496	496	1	11	cb3a56ac6afc	STAY	local-scoped		0				0
+installation/mios-install.sh	507	507	1	6	1b91482bf012	STAY	local-scoped		0				0
+installation/mios-install.sh	514	514	1	9	e897c4d8c062	STAY	local-scoped		0				0
+installation/mios-install.sh	527	527	1	5	76c688d981dc	STAY	local-scoped		0				0
+installation/mios-install.sh	553	553	1	1	c614546cb75b	DROP	banner		0				0
+installation/mios-install.sh	577	579	3	1	0689024451fe	DROP	banner		0				0
+installation/mios-install.sh	613	613	1	5	633adad76a4f	STAY	inline-scoped		0				0
+installation/mios-install.sh	628	634	7	48	2c70ad4357de	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:2c70ad4357de	48	0
+installation/mios-install.sh	643	645	3	33	091da86b5721	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:091da86b5721	33	0
+installation/mios-install.sh	656	659	4	38	c6f97d3a19f7	STAY	midsize-why		0				0
+installation/mios-install.sh	684	689	6	55	b9a818a76597	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:b9a818a76597	55	0
+installation/mios-install.sh	694	694	1	6	65d6b4e0cb56	STAY	local-scoped		0				0
+installation/mios-install.sh	702	705	4	25	3b148cf64bbb	STAY	midsize-why		0				0
+installation/mios-install.sh	720	723	4	36	784c81ef7cee	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:784c81ef7cee	36	0
+installation/mios-install.sh	738	738	1	9	3ff76c6b5594	STAY	inline-scoped		0				0
+installation/mios-install.sh	742	744	3	29	48195b5c1444	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:48195b5c1444	29	0
+installation/mios-install.sh	754	757	4	29	396528c076bb	STAY	midsize-why		0				0
+installation/mios-install.sh	773	775	3	24	e56612ccbdaa	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:e56612ccbdaa	24	0
+installation/mios-install.sh	778	780	3	28	bfefb492df49	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/installation.md	mios-src:bfefb492df49	28	0
+installation/mios-install.sh	785	786	2	18	2948cf6eddc3	STAY	local-scoped		0				0
+installation/mios-install.sh	834	836	3	5	e314ca2d4c64	STAY	midsize-why		0				0
+installation/mios-install.sh	863	867	5	41	f31e3deee190	STAY	midsize-why		0				0
+installation/mios-install.sh	871	874	4	38	c2b7ca79a0fb	STAY	midsize-why		0				0
+installation/mios-install.sh	884	884	1	12	f4239ae0a949	STAY	local-scoped		0				0
+installation/mios-install.sh	890	892	3	5	1e7337d70e0d	STAY	midsize-why		0				0
+installation/mios-install.sh	911	913	3	5	0e18a8ed73d0	STAY	midsize-why		0				0
+installation/mios-install.sh	999	1003	5	42	11d8f6d70117	STAY	midsize-why		0				0
+installation/mios-install.sh	1016	1017	2	22	6a7558388b93	STAY	local-scoped		0				0
+installation/mios-install.sh	1027	1029	3	11	5d32806ff672	STAY	midsize-why		0				0
+installation/mios-install.sh	1057	1061	5	33	addbdd99b274	STAY	midsize-why		0				0
+installation/mios-install.sh	1065	1076	12	64	4f2d2c4fb217	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/installation.md	mios-src:4f2d2c4fb217	64	0
+installation/mios-install.sh	1107	1111	5	24	3cef80af8503	STAY	midsize-why		0				0
+installation/mios-install.sh	1135	1136	2	18	b6ff78b571d5	STAY	local-scoped		0				0
+installation/mios-install.sh	1140	1149	10	59	08b6c56b33f0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:08b6c56b33f0	59	0
+installation/mios-install.sh	1189	1189	1	0	3428aab76c18	DROP	banner		0				0
+installation/mios-install.sh	1244	1244	1	7	5c7ec6159e86	STAY	local-scoped		0				0
+installation/mios-install.sh	1247	1247	1	0	3249d0827bd1	DROP	banner		0				0
+installation/mios-install.sh	1252	1252	1	0	3249d0827bd1	DROP	banner		0				0
+installation/mios-install.sh	1256	1256	1	8	ebce4b38362e	STAY	local-scoped		0				0
+installation/mios-install.sh	1264	1267	4	41	b2ec01f39de2	STAY	midsize-why		0				0
+installation/mios-install.sh	1283	1291	9	66	c4263417d6e8	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:c4263417d6e8	66	0
+installation/mios-install.sh	1307	1307	1	9	0f9ccc09d221	STAY	local-scoped		0				0
+installation/mios-install.sh	1327	1334	8	87	e723bdda0f56	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/installation.md	mios-src:e723bdda0f56	87	0
+installation/mios-install.sh	1341	1344	4	41	e7372490537c	STAY	midsize-why		0				0
+installation/mios-install.sh	1346	1346	1	1	968e18a5b755	STAY	inline-scoped		0				0
+installation/mios-install.sh	1379	1382	4	39	a3be8dfe5c60	STAY	midsize-why		0				0
+installation/mios-install.sh	1398	1398	1	3	7049f3245d69	STAY	local-scoped		0				0
+installation/mios-install.sh	1420	1420	1	3	7049f3245d69	STAY	local-scoped		0				0
+installation/mios-install.sh	1433	1435	3	19	f16e0b2034c8	STAY	midsize-why		0				0
+installation/mios-install.sh	1484	1486	3	3	2f98b848e13b	STAY	midsize-why		0				0
+installation/mios-install.sh	1520	1522	3	20	5feb5e5ab6dc	STAY	midsize-why		0				0
+installation/mios-install.sh	1525	1525	1	13	667f79261b5b	STAY	local-scoped		0				0
+installation/mios-install.sh	1528	1529	2	12	d85ba3a25a29	STAY	local-scoped		0				0
+installation/mios-install.sh	1532	1533	2	15	d5671558f112	STAY	local-scoped		0				0
+installation/mios-install.sh	1536	1536	1	1	30c4349f8a38	DROP	banner		0				0
+installation/mios-install.sh	1556	1557	2	20	8109b4b19856	STAY	local-scoped		0				0
+installation/mios-install.sh	1614	1614	1	2	3ae312b96103	STAY	inline-scoped		0				0
+installation/mios-install.sh	1620	1620	1	2	3c4f5841f59c	STAY	inline-scoped		0				0
 installation/stage-mios-repo.sh	1	3	3	22	88e34f1f8256	STAY	ai-header		0				0
 installation/stage-mios-repo.sh	17	17	1	10	991af15938fd	STAY	inline-scoped		0				0
 installation/stage-mios-repo.sh	24	24	1	4	9f3579674b1b	STAY	inline-scoped		0				0
@@ -2738,15 +2758,19 @@ src/mios-rs/mios-build/tests/golden_harness.rs	93	93	1	14	ca970a972967	STAY	loca
 src/mios-rs/mios-config/Cargo.toml	1	1	1	3	f8c3aa3cbcc7	STAY	ai-header		0				0
 src/mios-rs/mios-config/src/lib.rs	1	2	2	19	a3040472b231	STAY	ai-header		0				0
 src/mios-rs/mios-config/src/lib.rs	242	242	1	3	f8c4eca4ce82	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	259	259	1	3	c583f782c502	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	286	286	1	6	a29305392890	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	330	330	1	3	81d602527857	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	353	353	1	3	6f1a8a9e25a7	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	377	377	1	5	375d7844e501	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	397	397	1	9	95c0590ef2f7	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	445	445	1	8	420c9f201c76	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	712	712	1	15	18c3148d188b	STAY	local-scoped		0				0
-src/mios-rs/mios-config/src/lib.rs	728	730	3	27	46f0aa3433db	STAY	midsize-why		0				0
+src/mios-rs/mios-config/src/lib.rs	258	258	1	9	6f378059ac11	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	272	272	1	3	c583f782c502	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	299	299	1	6	a29305392890	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	353	353	1	8	8d2e11051c69	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	395	395	1	3	81d602527857	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	418	418	1	3	6f1a8a9e25a7	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	442	442	1	5	375d7844e501	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	462	464	3	32	bb1993e90fbb	MIGRATE	midsize-narrative		0				0
+src/mios-rs/mios-config/src/lib.rs	519	519	1	8	420c9f201c76	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	905	906	2	22	787a99e2d6e6	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	996	996	1	15	18c3148d188b	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	1001	1002	2	19	2455ddf9bb08	STAY	local-scoped		0				0
+src/mios-rs/mios-config/src/lib.rs	1052	1054	3	27	46f0aa3433db	STAY	midsize-why		0				0
 src/mios-rs/mios-gate/Cargo.toml	1	2	2	16	5e2684acb078	STAY	ai-header		0				0
 src/mios-rs/mios-gate/src/artifact.rs	1	2	2	23	27251d1dee97	STAY	ai-header		0				0
 src/mios-rs/mios-gate/src/artifact.rs	29	29	1	7	14417c40d2e6	STAY	local-scoped		0				0
@@ -6721,10 +6745,13 @@ tests/test-image-equivalence.sh	55	55	1	6	953d43538201	DROP	banner		0				0
 tests/test-image-equivalence.sh	59	59	1	11	d1d6c04e56cf	STAY	local-scoped		0				0
 tests/test-image-equivalence.sh	80	80	1	10	2f45d03841e2	STAY	local-scoped		0				0
 tests/test-image-equivalence.sh	93	93	1	9	6c8b97dd77cf	STAY	local-scoped		0				0
-tests/test-install-fhs.py	1	3	3	15	a570ddd4e5d9	STAY	ai-header		0				0
-tests/test-install-fhs.py	4	4	1	11	2df87f28f006	STAY	local-scoped		0				0
-tests/test-install-fhs.py	18	18	1	6	82fefd73ae6a	STAY	local-scoped		0				0
-tests/test-install-fhs.py	26	26	1	13	1e017f4d7326	STAY	local-scoped		0				0
+tests/test-install-fhs.py	1	3	3	20	b8bd5c306999	STAY	ai-header		0				0
+tests/test-install-fhs.py	4	4	1	9	c63d70bd47b9	STAY	local-scoped		0				0
+tests/test-install-fhs.py	21	21	1	6	82fefd73ae6a	STAY	local-scoped		0				0
+tests/test-install-fhs.py	29	29	1	13	1e017f4d7326	STAY	local-scoped		0				0
+tests/test-install-fhs.py	87	88	2	22	31391135df5c	STAY	local-scoped		0				0
+tests/test-install-fhs.py	115	115	1	10	d08edb397a0a	STAY	local-scoped		0				0
+tests/test-install-fhs.py	134	134	1	10	95a4c2c349e5	STAY	local-scoped		0				0
 tests/test-iommu-validator.py	1	3	3	16	e4332e130d3a	STAY	ai-header		0				0
 tests/test-ipkvm-manager.py	1	3	3	21	0de5b6e20375	STAY	ai-header		0				0
 tests/test-ipkvm-manager.py	27	27	1	3	48ac4db19c28	STAY	local-scoped		0				0
@@ -6913,23 +6940,24 @@ tests/test-looking-glass.py	54	54	1	11	9fbd80c10187	STAY	local-scoped		0				0
 tests/test-looking-glass.py	159	162	4	12	e610118e4074	STAY	midsize-why		0				0
 tests/test-looking-glass.py	165	165	1	10	94a254e3f72e	STAY	local-scoped		0				0
 tests/test-m4-root-git-substrate.py	1	5	5	35	cfca86343a77	STAY	ai-header		0				0
-tests/test-m4-root-git-substrate.py	33	34	2	17	8bca60ba6abc	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	43	43	1	10	b150392b062c	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	55	55	1	7	38dd187868c2	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	61	61	1	10	1d8e598f9dfe	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	70	70	1	10	6c49960ccb6c	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	79	80	2	21	bac71a91533e	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	83	83	1	13	f26178ed5000	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	91	91	1	11	dd91351a1433	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	101	101	1	7	66733e7a19ee	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	104	104	1	7	2f9a30753949	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	114	114	1	8	7b25b353a9d0	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	121	121	1	14	a0c133153be0	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	124	124	1	9	ad8dd7200871	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	131	131	1	15	133509bcc203	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	139	139	1	9	50364e06050c	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	142	142	1	10	5f063cfae7f6	STAY	local-scoped		0				0
-tests/test-m4-root-git-substrate.py	148	148	1	4	08678f9fb9a9	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	34	34	1	11	229be1519c7c	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	75	76	2	17	8bca60ba6abc	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	85	85	1	10	b150392b062c	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	97	97	1	7	38dd187868c2	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	103	103	1	10	1d8e598f9dfe	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	112	112	1	10	6c49960ccb6c	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	121	121	1	11	7ed987756435	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	124	124	1	10	34fb2e98ad13	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	132	132	1	11	dd91351a1433	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	142	142	1	7	66733e7a19ee	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	145	145	1	7	2f9a30753949	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	155	155	1	10	20558b2df1e3	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	164	164	1	14	a0c133153be0	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	167	167	1	9	ad8dd7200871	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	174	174	1	15	133509bcc203	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	182	182	1	9	50364e06050c	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	185	185	1	10	5f063cfae7f6	STAY	local-scoped		0				0
+tests/test-m4-root-git-substrate.py	191	191	1	4	08678f9fb9a9	STAY	local-scoped		0				0
 tests/test-m5-sandbox-licensing.py	1	3	3	26	ae6b2e00a96f	STAY	ai-header		0				0
 tests/test-m5-sandbox-licensing.py	4	25	21	178	e09c9f4a6348	MIGRATE	narrative-rationale		0				0
 tests/test-m5-sandbox-licensing.py	39	39	1	2	652a73c43ff5	STAY	inline-scoped		0				0
@@ -17881,6 +17909,7 @@ usr/lib/systemd/system/sshd-keygen@.service.d/disable-sshd-keygen-if-cloud-init-
 usr/lib/systemd/system/sshd-keygen@.service.d/disable-sshd-keygen-if-cloud-init-active.conf	4	8	5	46	2cb52c205a1f	STAY	midsize-why		0				0
 usr/lib/systemd/system/sshd.service.d/10-mios-wsl2.conf	1	1	1	31	cb66e0cde24b	STAY	ai-header		0				0
 usr/lib/systemd/system/system.slice.d/10-oom-protect.conf	1	2	2	15	390d983314d9	STAY	ai-header		0				0
+usr/lib/systemd/system/system.slice.d/20-cpu-affinity.conf	1	2	2	15	175257c454d4	STAY	ai-header		0				0
 usr/lib/systemd/system/systemd-binfmt.service.d/10-wsl.conf	1	1	1	15	3e93b8cec236	STAY	ai-header		0				0
 usr/lib/systemd/system/systemd-hostnamed.service.d/10-remain-after-exit.conf	1	1	1	10	d986a79d11b0	STAY	ai-header		0				0
 usr/lib/systemd/system/systemd-journald.service.d/nice.conf	1	1	1	27	c3e434fe9c54	STAY	ai-header		0				0
@@ -25740,6 +25769,10 @@ usr/share/mios/tmux/mios-theme.tmux.conf	39	39	1	24	8606ad9c7d5c	STAY	inline-sco
 usr/share/mios/tmux/mios-theme.tmux.conf	40	40	1	6	4aef99b8e8c6	DROP	banner		0				0
 usr/share/mios/tmux/mios-theme.tmux.conf	41	41	1	15	5ccfa14f6ef3	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-theme.tmux.conf	43	43	1	36	58f4f085a096	STAY	inline-scoped		0				0
+usr/share/mios/vendored/k3s/k3s-install.sh	1	1	1	1	4db42d68c955	DROP	banner		0				0
+usr/share/mios/vendored/k3s/k3s-install.sh	51	51	1	2	1d8ab8d6d35b	DROP	banner		0				0
+usr/share/mios/vendored/k3s/k3s-install.sh	102	102	1	3	735227ba3228	DROP	banner		0				0
+usr/share/mios/vendored/k3s/k3s-install.sh	299	299	1	8	d48e62d57327	STAY	inline-scoped		0				0
 usr/share/mios/ventoy/autorun/01-sysrescue-firstboot.sh	1	2	2	20	b2d7858967bb	STAY	ai-header		0				0
 usr/share/mios/ventoy/autorun/mios-stage-icons.ps1	1	2	2	24	431b9a43a956	STAY	ai-header		0				0
 usr/share/mios/ventoy/autorun/mios-stage-icons.ps1	22	23	2	24	909261aafe27	STAY	local-scoped		0				0
