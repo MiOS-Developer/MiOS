@@ -920,3 +920,7 @@ tests/powershell/*.exe
 !/etc/mios/ai/v1/a2a-peers.json
 usr/share/mios/windows/MiOS-FhsSync.exe
 usr/share/mios/virtio/*.iso
+
+# Runtime-installed agent CLI payloads (zcode, npm CLIs): built/installed per host by [agent_cli], never tracked.
+/usr/lib/mios/agent-cli/
+/usr/lib/mios/agent-cli/**

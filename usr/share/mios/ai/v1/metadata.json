@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3399,
-  "total_metadata_entries": 2910,
-  "total_hints": 2904,
-  "total_functions_indexed": 1483,
-  "total_related_links": 5122,
+  "total_files_scanned": 3400,
+  "total_metadata_entries": 2911,
+  "total_hints": 2905,
+  "total_functions_indexed": 1484,
+  "total_related_links": 5124,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -34430,6 +34430,20 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/windows.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/mios-ssh-setup.ps1",
+      "hint": "Install and configure the Windows SSH service from resolved MiOS SSOT settings.",
+      "related": [
+        "usr/share/mios/mios.toml [ssh.windows]",
+        "[ports].ssh"
+      ],
+      "functions": [
+        "Install-MiOSWindowsSsh"
+      ],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
