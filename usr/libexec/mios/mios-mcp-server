@@ -1860,6 +1860,139 @@ def _project_agent_wrappers(cfg=None):
         wrapper.chmod(0o755)
 
 
+
+def _download_agent_asset(url, digest, destination, input_cache=None):
+    """Verify a complete upstream payload before any executable is installed."""
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
+        raise ValueError("SSOT agent asset SHA-256 is missing or invalid")
+    cached = Path(input_cache) / digest.lower() if input_cache else None
+    if cached and cached.is_file():
+        shutil.copyfile(cached, destination)
+    else:
+        request = urllib.request.Request(url, headers={"User-Agent": "MiOS-build"})
+        with urllib.request.urlopen(request, timeout=120) as response, Path(destination).open("wb") as output:
+            shutil.copyfileobj(response, output)
+    actual = hashlib.sha256(Path(destination).read_bytes()).hexdigest()
+    if actual.lower() != digest.lower():
+        raise ValueError(f"Agent asset SHA-256 mismatch: {url}")
+
+
+def _install_zcode(cfg, input_cache=None):
+    """Build the first-party CLI distribution once; retain its Windows TUI assets."""
+    recipe = cfg["zcode"]
+    prefix = Path(cfg["linux_prefix"])
+    root = prefix / "zcode"
+    version_id = recipe["source_revision"][:12] + "-node" + recipe["node_version"]
+    destination = root / "versions" / version_id
+    arch = {"x86_64": "x64", "aarch64": "arm64"}.get(platform.machine().lower())
+    if arch is None:
+        raise RuntimeError("No SSOT zcode runtime for this architecture")
+    node_asset = recipe["node_assets"]["linux-" + arch]
+    native = prefix / "native"
+    root.mkdir(parents=True, exist_ok=True)
+    native.mkdir(parents=True, exist_ok=True)
+    proof_path = destination / "mios-provenance.json"
+    expected = {"source_revision": recipe["source_revision"],
+                "source_sha256": recipe["source_sha256"], "node_version": recipe["node_version"],
+                "pnpm_version": recipe["pnpm_version"]}
+    reusable = False
+    if proof_path.is_file():
+        proof = json.loads(proof_path.read_text())
+        reusable = all(proof.get(k) == v for k, v in expected.items())
+    if not reusable:
+        if destination.exists():
+            raise RuntimeError("Existing zcode payload has different or missing provenance")
+        with tempfile.TemporaryDirectory(prefix="mios-zcode-build-") as temporary:
+            stage = Path(temporary)
+            node_archive = stage / "node.tar.xz"
+            source_archive = stage / "source.tar.gz"
+            _download_agent_asset(node_asset["url"], node_asset["sha256"], node_archive, input_cache)
+            _download_agent_asset(recipe["source_url"], recipe["source_sha256"], source_archive, input_cache)
+            node_tree = stage / "node-extract"
+            source_tree = stage / "source-extract"
+            node_tree.mkdir(); source_tree.mkdir()
+            with tarfile.open(node_archive) as archive:
+                archive.extractall(node_tree, filter="data")
+            with tarfile.open(source_archive) as archive:
+                archive.extractall(source_tree, filter="data")
+            node_roots = [p for p in node_tree.iterdir() if p.is_dir()]
+            source_roots = [p for p in source_tree.iterdir() if p.is_dir()]
+            if len(node_roots) != 1 or len(source_roots) != 1:
+                raise RuntimeError("Unexpected upstream agent archive layout")
+            node_root, source = node_roots[0], source_roots[0]
+            node = node_root / "bin/node"
+            if subprocess.check_output([str(node), "--version"], text=True).strip() != "v" + recipe["node_version"]:
+                raise RuntimeError("Verified Node payload has an unexpected version")
+            package = json.loads((source / "package.json").read_text())
+            if package["version"] != recipe["version"]:
+                raise RuntimeError("Pinned zcode source version does not match SSOT")
+            env = {**os.environ, "PATH": str(node_root / "bin") + os.pathsep + os.environ.get("PATH", ""),
+                   "ELECTRON_SKIP_BINARY_DOWNLOAD": "1", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+                   "HUSKY": "0"}
+            pnpm_root = stage / "pnpm"
+            subprocess.run([str(node), str(node_root / "lib/node_modules/npm/bin/npm-cli.js"),
+                            "install", "--prefix", str(pnpm_root), "--no-audit", "--no-fund",
+                            "pnpm@" + recipe["pnpm_version"]], env=env, check=True)
+            pnpm = [str(node), str(pnpm_root / "node_modules/pnpm/bin/pnpm.cjs")]
+            # Upstream build scripts spawn a bare "pnpm"; expose the pinned copy via a staged shim.
+            pnpm_shim = stage / "pnpm-bin"
+            pnpm_shim.mkdir()
+            (pnpm_shim / "pnpm").write_text("#!/bin/sh\nexec " + shlex.quote(pnpm[0]) + " " + shlex.quote(pnpm[1]) + ' "$@"\n')
+            (pnpm_shim / "pnpm").chmod(0o755)
+            env["PATH"] = str(pnpm_shim) + os.pathsep + env["PATH"]
+            subprocess.run([*pnpm, "--filter", "@zcode/cli...", "--filter", "@zcode/server...",
+                            "--filter", "@zcode/web...", "install", "--frozen-lockfile"],
+                           cwd=source, env=env, check=True)
+            # Pinned upstream's TUI asset collector requires packages/shared/dist/index.js, yet shared has
+            # no build script; compile it with its own tsconfig (outDir=dist) without modifying sources.
+            subprocess.run([*pnpm, "--filter", "@zcode/shared", "exec", "tsc", "-p", "tsconfig.json"],
+                           cwd=source, env=env, check=True)
+            subprocess.run([*pnpm, "build:zcode", "--base-url",
+                            (root / "current/distribution").as_uri() + "/"],
+                           cwd=source, env=env, check=True)
+            distribution = source / "dist/zcode"
+            index = json.loads((distribution / "latest.json").read_text())
+            bundle = distribution / "releases" / index["version"] / index["tarball"]
+            if hashlib.sha256(bundle.read_bytes()).hexdigest() != index["sha256"]:
+                raise RuntimeError("Built zcode distribution checksum does not match its index")
+            runtime_tree = stage / "runtime-extract"
+            runtime_tree.mkdir()
+            with tarfile.open(bundle) as archive:
+                archive.extractall(runtime_tree, filter="data")
+            runtime = runtime_tree / "zcode"
+            runner = runtime / "bin/zcode.mjs"
+            result = subprocess.run([str(node), str(runner), "--version"],
+                                    env=env, capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError("Built zcode version probe failed: " + result.stderr[-2000:])
+            completed = stage / "completed"
+            completed.mkdir()
+            shutil.move(str(node_root), completed / "node")
+            shutil.move(str(runtime), completed / "runtime")
+            shutil.move(str(distribution), completed / "distribution")
+            proof = {**expected, "version": index["version"], "distribution_sha256": index["sha256"],
+                     "version_probe": result.stdout.strip()}
+            (completed / "mios-provenance.json").write_text(json.dumps(proof, indent=2) + "\n")
+            destination.parent.mkdir(exist_ok=True)
+            candidate = destination.with_name(destination.name + ".new-" + secrets.token_hex(6))
+            try:
+                shutil.copytree(completed, candidate)
+                os.replace(candidate, destination)
+            finally:
+                if candidate.exists():
+                    shutil.rmtree(candidate)
+    node = destination / "node/bin/node"
+    runner = destination / "runtime/bin/zcode.mjs"
+    subprocess.run([str(node), str(runner), "--version"], check=True)
+    link = root / ("current.new-" + secrets.token_hex(6))
+    link.symlink_to(destination)
+    os.replace(link, root / "current")
+    wrapper = native / "zcode"
+    wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(str(root / "current/node/bin/node")) + " "
+                       + shlex.quote(str(root / "current/runtime/bin/zcode.mjs")) + ' "$@"\n')
+    wrapper.chmod(0o755)
+    return wrapper
+
 def _install_agent_clis():
     """Global immutable Linux payload; runtime refreshes caller configuration only."""
     if os.geteuid() != 0:
@@ -1888,6 +2021,8 @@ def _install_agent_clis():
                 script.write_bytes(reply.read())
             subprocess.run(["bash", str(script), "--dir", str(native)], check=True,
                            env={**os.environ, "HOME": temporary})
+    if any(row["name"] == "zcode" for row in cfg["tools"]):
+        _install_zcode(cfg)
     _project_agent_wrappers(cfg)
     # Linked tool interpreters must also be traversable by every runtime user.
     subprocess.run(["chmod", "-R", "a+rX", str(prefix)], check=True)

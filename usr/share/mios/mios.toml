@@ -2002,7 +2002,7 @@ pie = { x86_64 = true, aarch64 = false }
 target = "x86_64-pc-windows-msvc"
 linker = "lld-link"
 driver = "cargo-xwin"
-driver_version = "0.3.0"
+driver_version = "0.23.1"
 rustflags = ["-C", "target-feature=+crt-static"]
 # OS imports are permitted; external compiler and runtime DLLs are rejected.
 system_dlls = [
@@ -3795,6 +3795,7 @@ successors = ["antigravity"]
 enabled = true
 linux_prefix = "/usr/lib/mios/agent-cli"
 windows_directory = "MiOS\\agents"
+windows_prefix = "C:\\usr\\lib\\mios\\agent-cli"
 node_min_major = 22
 windows_node_package = "OpenJS.NodeJS.LTS"
 windows_uv_installer = "https://astral.sh/uv/install.ps1"
@@ -3814,11 +3815,38 @@ tools = [
   { name = "gemini", package = "@google/gemini-cli", kind = "npm", mcp = true, experimental = false, launch_template = "gemini -p {task} -o json --approval-mode default", required_credentials = ["GEMINI_API_KEY"] },
   { name = "copilot", package = "@github/copilot", kind = "npm", mcp = true, experimental = false, launch_template = "copilot --exec {task}", required_credentials = ["GITHUB_TOKEN"] },
   { name = "opencode", package = "opencode-ai", kind = "npm", mcp = true, experimental = false, launch_template = "opencode run {task}", required_credentials = [] },
+  { name = "zcode", kind = "native", bundle = "cloud", runtime_backend = "cloud", windows_binary = "zcode.cmd", mcp = true, experimental = false, launch_template = "zcode {task}", required_credentials = [] },
   { name = "agy", kind = "native", mcp = true, experimental = false, launch_template = "agy -p {task} --output-format json", required_credentials = ["ANTIGRAVITY_API_KEY"] },
   { name = "aider", kind = "python", mcp = false, experimental = false, launch_template = "aider --message {task}", required_credentials = ["OPENAI_API_KEY"] },
   { name = "jules", kind = "cloud", mcp = false, experimental = false, launch_template = "jules remote new --repo {repo} --session {task}", status_template = "jules remote list --session", result_template = "jules remote pull --session {id}", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GOOGLE_APPLICATION_CREDENTIALS"] },
   { name = "gh-agent-task", kind = "cloud", mcp = false, experimental = false, launch_template = "gh agent-task create {task} -b {base} -R {repo}", status_template = "gh agent-task view {id} --json state,pullRequestUrl", result_template = "gh agent-task view {id} --json pullRequestUrl", branch_rule = "^cloud/[a-zA-Z0-9._-]+$", required_credentials = ["GITHUB_TOKEN"] },
 ]
+
+
+[agent_cli.zcode]
+version = "3.15.1"
+source_revision = "aac4755666d09fdcd70272fcf063c077a639015f"
+source_url = "https://codeload.github.com/zai-org/ZCode/tar.gz/aac4755666d09fdcd70272fcf063c077a639015f"
+source_sha256 = "a77cb72315deb872fb7de183111f3b8887e30c4cff5f99e5c23794238899bee3"
+node_version = "24.21.0"
+pnpm_version = "10.33.2"
+config_relative = ".zcode/cli/config.json"
+
+[agent_cli.zcode.node_assets.linux-arm64]
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz"
+sha256 = "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2"
+
+[agent_cli.zcode.node_assets.linux-x64]
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
+sha256 = "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+
+[agent_cli.zcode.node_assets.win-arm64]
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip"
+sha256 = "8779b1bde1d39f8d420e3b57aa657b39891af434d3de44a919044cec06785921"
+
+[agent_cli.zcode.node_assets.win-x64]
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip"
+sha256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
 
 
 
@@ -8277,6 +8305,7 @@ core = [
   "ghcr.io/open-webui/open-webui:main",
   "quay.io/centos-bootc/bootc-image-builder:latest",
   "quay.io/ceph/ceph:latest",
+  "quay.io/cilium/tetragon:v1.4.2",
   "quay.io/poseidon/matchbox:latest"
 ]
 groups = ["sys", "cuda", "heavy", "extra"]
@@ -8480,6 +8509,73 @@ memory_mb           = "max"
 disk_size_gb        = "max"
 gpu_passthrough     = "max"      # "max" | "none" | "nvidia" | "amd" | "intel"
 rename_distro       = false
+
+# ----------------------------------------------------------------------------
+# [bootstrap.linux] -- Linux self-host/dev bootstrap that runs BEFORE pre-flight
+# (installation/mios-bootstrap-linux.sh). Stage "prereqs" installs everything a
+# Linux host needs to build and develop MiOS images for every platform; stage
+# "overlay" makes / the MiOS git work tree and reconciles host settings. The
+# Windows half of the same contract is [packages.windows] (winget) driven by
+# field/autounattend/Install-MiOSBuildPrereqs.ps1.
+# ----------------------------------------------------------------------------
+[bootstrap.linux]
+# [packages.<name>] categories installed by the prereqs stage.
+categories = [
+    "build-toolchain", "self-build", "windows-cross-build", "containers", "virt",
+    "dev_vm_essentials", "devcontainer", "mcp", "agent_cli", "sbom-tools", "boot", "wintools",
+]
+# Rawhide RPM Fusion / workstation repo packages are wrong for a stable release.
+skip_packages = ["rpmfusion-free-release-rawhide", "rpmfusion-nonfree-release-rawhide", "fedora-workstation-repositories"]
+# Extra package repositories (rpm URLs) and packages that are not in [packages.*].
+extra_repo_rpms = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
+extra_packages  = ["powershell", "tmux", "btop", "git", "rsync", "dnf-plugins-core", "wimlib-utils", "xorriso", "cabextract", "chntpw", "aria2"]
+# Pin dnf's $releasever when the overlay replaces /usr/lib/os-release (ID=mios) so
+# Fedora repositories keep resolving on a host that is still a Fedora install.
+pin_releasever = true
+# Where displaced host files are saved before the overlay replaces them.
+overlay_backup_dir = "/var/lib/mios-build/overlay-backup"
+
+# Host settings the overlay must not lose. mode = "keys": re-apply `keys` inside
+# `section` of an INI-style file after the repo copy lands; "lines-union": add any
+# host lines the repo copy lacks; "lines-prefix": re-add host lines that start
+# with one of `prefixes`.
+[[bootstrap.linux.preserve]]
+path    = "/etc/containers/storage.conf"
+mode    = "keys"
+section = "storage"
+keys    = ["graphroot", "runroot", "driver"]
+
+[[bootstrap.linux.preserve]]
+path    = "/etc/containers/storage.conf"
+mode    = "keys"
+section = "storage.options.overlay"
+keys    = ["mountopt", "mount_program"]
+
+[[bootstrap.linux.preserve]]
+path    = "/usr/share/containers/storage.conf"
+mode    = "keys"
+section = "storage.options.overlay"
+keys    = ["mountopt", "mount_program"]
+
+[[bootstrap.linux.preserve]]
+path    = "/etc/cockpit/cockpit.conf"
+mode    = "keys"
+section = "WebService"
+keys    = ["Origins"]
+
+[[bootstrap.linux.preserve]]
+path    = "/etc/dconf/profile/user"
+mode    = "lines-union"
+
+[[bootstrap.linux.preserve]]
+path     = "/etc/kdump.conf"
+mode     = "lines-prefix"
+prefixes = ["auto_reset_crashkernel"]
+
+[[bootstrap.linux.preserve]]
+path     = "/etc/chrony.conf"
+mode     = "lines-prefix"
+prefixes = ["sourcedir", "confdir", "driftfile", "rtcsync", "ntsdumpdir", "leapsectz", "logdir"]
 
 # ----------------------------------------------------------------------------
 # [wsl2] -- pre-Phase-0 WSL utility VM networking + resource knobs.
@@ -8799,12 +8895,10 @@ title_color  = "white"
 output_color = "cyan"
 
 [btop]
-# Presets accessible via `p` 0-9 inside btop. Format: <boxes>:<mode>:<theme>
-# where mode = 0 (full) or 1 (compact). Slot 4 (proc only) is the MiOS
-# canonical launch (mios-btop.sh runs `btop -p 4` on plain invocation).
-#   0 cpu compact  1 cpu full  2 cpu+mem compact  3 cpu+mem full
-#   4 proc only  <- canonical  5 cpu+mem+net+proc full
-presets              = "cpu:1:default,cpu:0:default,cpu mem:1:default,cpu mem:0:default,proc:0:default,cpu mem net proc:0:default user mios"
+# Upstream syntax: space-separated presets containing comma-separated
+# box:position:graph entries. Preset 0 uses shown_boxes; preset 4 is processes.
+#   1 cpu+proc  2 cpu+mem  3 cpu+mem+net  4 proc  5 cpu+mem+net+proc
+presets              = "cpu:0:default,proc:1:default cpu:0:default,mem:0:default cpu:0:default,mem:0:default,net:0:default proc:0:default cpu:0:default,mem:0:default,net:0:default,proc:1:default"
 
 shown_boxes          = "proc"
 
@@ -11541,6 +11635,18 @@ user          = "agent"
 port          = 2222
 identity_file = "~/.ssh/agent_ssh_key"
 
+
+# Windows uses the same [ports].ssh value as the Linux service.
+# The upstream Windows distribution currently labels its release Preview.
+[ssh.windows]
+root = "C:\\"
+url = "https://github.com/PowerShell/Win32-OpenSSH/releases/download/10.0.0.0p2-Preview/OpenSSH-Win64.zip"
+sha256 = "23f50f3458c4c5d0b12217c6a5ddfde0137210a30fa870e98b29827f7b43aba5"
+install_relative = "usr\\lib\\openssh"
+config_relative = "etc\\ssh"
+listen_address = "0.0.0.0"
+remote_addresses = ["LocalSubnet", "100.64.0.0/10"]
+
 [gitconfig]
 core_editor         = "nano"
 init_default_branch = "main"
@@ -13021,7 +13127,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 327
+max_tracked_mb    = 598
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.

@@ -144,7 +144,7 @@ pub mod names_registry {
             if !matches_consumer_glob(fname) {
                 continue;
             }
-            let content = fs::read_to_string(&path)
+            let content = read_tracked_consumer(&path)
                 .map_err(|error| format!("cannot read tracked consumer {rel}: {error}"))?;
             for line in content.lines() {
                 for m in var_re.find_iter(line) {
@@ -183,6 +183,104 @@ pub mod names_registry {
             out.push('\n');
         }
         Ok(out)
+    }
+
+    /// A tracked symlink contains its destination, not the destination's bytes.
+    /// Image-root absolute links are often dangling in a checkout. Following
+    /// them also lets the builder's host files change a source projection.
+    fn read_tracked_consumer(path: &Path) -> std::io::Result<String> {
+        if fs::symlink_metadata(path)?.file_type().is_symlink() {
+            fs::read_link(path)?
+                .into_os_string()
+                .into_string()
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "non-UTF-8 symlink destination",
+                    )
+                })
+        } else {
+            fs::read_to_string(path)
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    mod tracked_consumer_tests {
+        use super::*;
+        use std::os::unix::fs::symlink;
+        use std::process::Command;
+
+        fn git(root: &Path, args: &[&str]) {
+            let result = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+
+        #[test]
+        fn image_root_symlink_does_not_require_a_deployed_host() {
+            let tree = tempfile::tempdir().unwrap();
+            let root = tree.path();
+            git(root, &["init", "-q"]);
+            fs::write(root.join("source.container"), "Image=${MIOS_TREE_IMAGE}\n").unwrap();
+            symlink(
+                "/usr/share/mios-nonexistent/source.container",
+                root.join("bound.container"),
+            )
+            .unwrap();
+            git(root, &["add", "."]);
+            assert_eq!(render_referenced_vars(root).unwrap(), "MIOS_TREE_IMAGE\n");
+        }
+
+        #[test]
+        fn external_symlink_does_not_import_host_variables() {
+            let tree = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            fs::write(outside.path().join("host.sh"), "echo ${MIOS_HOST_ONLY}\n").unwrap();
+            git(tree.path(), &["init", "-q"]);
+            fs::write(tree.path().join("source.sh"), "echo ${MIOS_TREE_ONLY}\n").unwrap();
+            symlink(
+                outside.path().join("host.sh"),
+                tree.path().join("linked.sh"),
+            )
+            .unwrap();
+            git(tree.path(), &["add", "."]);
+            assert_eq!(
+                render_referenced_vars(tree.path()).unwrap(),
+                "MIOS_TREE_ONLY\n"
+            );
+        }
+
+        #[test]
+        fn missing_tracked_regular_consumer_still_fails() {
+            let tree = tempfile::tempdir().unwrap();
+            git(tree.path(), &["init", "-q"]);
+            fs::write(tree.path().join("missing.sh"), "echo ${MIOS_MISSING}\n").unwrap();
+            git(tree.path(), &["add", "."]);
+            fs::remove_file(tree.path().join("missing.sh")).unwrap();
+            assert!(render_referenced_vars(tree.path())
+                .unwrap_err()
+                .contains("cannot read tracked consumer missing.sh"));
+        }
+
+        #[test]
+        fn symlink_payload_matches_a_flattened_checkout() {
+            let tree = tempfile::tempdir().unwrap();
+            let link = tree.path().join("linked.sh");
+            let destination = "../MIOS_LINK_TARGET/source.sh";
+            symlink(destination, &link).unwrap();
+            assert_eq!(read_tracked_consumer(&link).unwrap(), destination);
+            fs::remove_file(&link).unwrap();
+            fs::write(&link, destination).unwrap();
+            assert_eq!(read_tracked_consumer(&link).unwrap(), destination);
+        }
     }
 
     /// Write via a sibling temp file and rename, as the Python leg does: a reader
