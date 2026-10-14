@@ -28,7 +28,9 @@ Commands:
   status                    List GPUs with role, driver, display state and IOMMU group
   igpu-desktop [--remove]   Make mutter render the desktop on the iGPU (effective at next login)
   reserve-dgpu --plan       Show the vfio-pci reservation that would be written
-  reserve-dgpu --arm --yes  Write vfio-pci + dracut config for the next boot (needs a display on the iGPU)
+  reserve-dgpu --arm --yes [--no-display-check]
+                            Write vfio-pci + dracut config for the next boot. Needs a display on the iGPU,
+                            or --no-display-check when the BIOS makes the iGPU the boot VGA device
   reserve-dgpu --disarm     Remove that configuration
   -h, --help                Show this help
 
@@ -113,9 +115,43 @@ cmd_igpu_desktop() {
     log_info "wrote $UDEV_RULE; mutter picks it up at the next graphical login (current session untouched)"
 }
 
+# True when an iGPU is the PCI device the firmware initialised as primary VGA.
+igpu_is_boot_vga() {
+    local addr vendor device role driver vram card
+    while read -r addr vendor device role driver vram card; do
+        [[ "$role" == igpu && -r "$SYSFS/bus/pci/devices/$addr/boot_vga" && "$(<"$SYSFS/bus/pci/devices/$addr/boot_vga")" == 1 ]] && return 0
+    done < <(detect_gpus)
+    return 1
+}
+
+# Rebuild the running kernel's initramfs so vfio-pci binds the reserved IDs before the GPU drivers load; keep a
+# restorable copy and roll back unless the new image carries the vfio modules AND the ids/softdep config.
+# (Output is captured first: `lsinitrd | grep -q` dies of SIGPIPE under pipefail and reports a false negative.)
+rebuild_initramfs() {
+    command -v dracut >/dev/null || { log_error "dracut missing; vfio would bind too late"; return 1; }
+    local img="/boot/initramfs-$(uname -r).img" bak listing conf
+    bak="$img.mios-pre-vfio"
+    [[ -f "$bak" ]] || cp -a "$img" "$bak"
+    if ! dracut -f "$img" "$(uname -r)"; then
+        cp -a "$bak" "$img"; log_error "dracut failed; original initramfs restored"; return 1
+    fi
+    listing="$(lsinitrd "$img" 2>/dev/null)" || true
+    if ! grep -q 'vfio-pci\.ko' <<<"$listing" || ! grep -q 'etc/modprobe\.d/vfio\.conf' <<<"$listing"; then
+        cp -a "$bak" "$img"; log_error "new initramfs lacks vfio-pci or its modprobe.d config; original restored"; return 1
+    fi
+    conf="$(lsinitrd -f etc/modprobe.d/vfio.conf "$img" 2>/dev/null)" || true
+    if ! grep -q '^options vfio-pci ids=' <<<"$conf"; then
+        cp -a "$bak" "$img"; log_error "initramfs vfio.conf has no ids= line; original restored"; return 1
+    fi
+    log_info "initramfs rebuilt: vfio modules + modprobe.d/vfio.conf present (backup: $bak)"
+}
+
 cmd_reserve_dgpu() {
-    local mode="${1:-}" yes=0 addr vendor device role driver vram card
-    [[ "${2:-}" == --yes ]] && yes=1
+    local mode="${1:-}" yes=0 nodisp=0 addr vendor device role driver vram card a
+    shift || true
+    for a in "$@"; do
+        case "$a" in --yes) yes=1 ;; --no-display-check) nodisp=1 ;; *) log_error "unknown option: $a"; return 1 ;; esac
+    done
     if [[ "$mode" == --disarm ]]; then
         rm -f "$VFIO_CONF" "$DRACUT_CONF"
         command -v dracut >/dev/null && dracut -f >/dev/null 2>&1 || true
@@ -149,13 +185,22 @@ cmd_reserve_dgpu() {
     fi
     [[ "$mode" == --arm ]] || { log_error "use --plan, --arm --yes or --disarm"; return 1; }
     (( igpu_seen )) || { log_error "refusing: no iGPU to host the desktop"; return 1; }
-    igpu_connected "$igpu_card" || { log_error "refusing: no display connected to the iGPU ($igpu_card); the host would boot headless"; return 1; }
+    if ! igpu_connected "$igpu_card"; then
+        # Override only when firmware already makes the iGPU the primary VGA device (BIOS picks it), so the
+        # operator can wire a monitor to it before the reboot; the host stays reachable over ssh/cockpit meanwhile.
+        if (( nodisp )) && igpu_is_boot_vga; then
+            log_info "no display on the iGPU yet, proceeding by request: the iGPU is the firmware boot VGA device"
+        else
+            log_error "refusing: no display connected to the iGPU ($igpu_card). Connect one, or pass --no-display-check if the BIOS selects the iGPU (checked via boot_vga)"; return 1
+        fi
+    fi
     (( yes )) || { log_error "refusing: pass --yes to write boot configuration"; return 1; }
     [[ -f "$VFIO_CONF" ]] && cp -a "$VFIO_CONF" "$VFIO_CONF.backup-$(date +%Y%m%d-%H%M%S)"
     printf '%s' "$conf" >"$VFIO_CONF"
     install -d "$(dirname "$DRACUT_CONF")"
-    printf 'force_drivers+=" vfio_pci vfio vfio_iommu_type1 "\n' >"$DRACUT_CONF"
-    command -v dracut >/dev/null && dracut -f
+    # dracut does not copy /etc/modprobe.d by default: ship the ids= and softdep lines into the initramfs explicitly.
+    printf 'force_drivers+=" vfio_pci vfio vfio_iommu_type1 "\ninstall_items+=" %s "\n' "$VFIO_CONF" >"$DRACUT_CONF"
+    rebuild_initramfs
     log_info "armed: takes effect at next boot (no reboot performed). Undo with: $NAME reserve-dgpu --disarm"
 }
 
