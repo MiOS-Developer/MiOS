@@ -8534,6 +8534,11 @@ extra_packages  = ["powershell", "tmux", "btop", "git", "rsync", "dnf-plugins-co
 pin_releasever = true
 # Where displaced host files are saved before the overlay replaces them.
 overlay_backup_dir = "/var/lib/mios-build/overlay-backup"
+# Host tuning applied by the "tune" stage: tuned profile for a container+VM host, the GNOME power
+# mode that selects it through tuned-ppd, and the desktop-on-iGPU udev rule (mios-gpu-roles).
+tuned_profile  = "mios-host"
+ppd_mode       = "balanced"
+igpu_desktop   = true
 
 # Host settings the overlay must not lose. mode = "keys": re-apply `keys` inside
 # `section` of an INI-style file after the repo copy lands; "lines-union": add any

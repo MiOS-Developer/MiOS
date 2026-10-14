@@ -4133,6 +4133,9 @@ bootstrap.linux.extra_repo_rpms  MIOS_BOOTSTRAP_LINUX_EXTRA_REPO_RPMS
 bootstrap.linux.extra_packages  MIOS_BOOTSTRAP_LINUX_EXTRA_PACKAGES
 bootstrap.linux.pin_releasever  MIOS_BOOTSTRAP_LINUX_PIN_RELEASEVER
 bootstrap.linux.overlay_backup_dir  MIOS_BOOTSTRAP_LINUX_OVERLAY_BACKUP_DIR
+bootstrap.linux.tuned_profile  MIOS_BOOTSTRAP_LINUX_TUNED_PROFILE
+bootstrap.linux.ppd_mode  MIOS_BOOTSTRAP_LINUX_PPD_MODE
+bootstrap.linux.igpu_desktop  MIOS_BOOTSTRAP_LINUX_IGPU_DESKTOP
 bootstrap.linux.preserve  MIOS_BOOTSTRAP_LINUX_PRESERVE
 wsl2.networking_mode  MIOS_WSL2_NETWORKING_MODE
 wsl2.localhost_forwarding  MIOS_WSL2_LOCALHOST_FORWARDING

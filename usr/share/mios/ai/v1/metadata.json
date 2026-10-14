@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3400,
-  "total_metadata_entries": 2911,
-  "total_hints": 2905,
-  "total_functions_indexed": 1484,
-  "total_related_links": 5124,
+  "total_files_scanned": 3404,
+  "total_metadata_entries": 2915,
+  "total_hints": 2909,
+  "total_functions_indexed": 1495,
+  "total_related_links": 5139,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3394,6 +3394,18 @@
       "path": "etc/tmux.conf",
       "hint": "Generated from mios.toml [keybindings] by mios-unit-gen keybindings.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "etc/tuned/ppd.conf",
+      "hint": "tuned-ppd mapping for a MiOS host. GNOME's power-profile switch is translated to tuned profiles by tuned-ppd; without this, selecting \"Balanced\" or \"Performance\" silently replaces mios-host with a stock profile.",
+      "related": [
+        "/usr/lib/tuned/profiles/mios-host/tuned.conf",
+        "/usr/libexec/mios/mios-bootstrap-linux.sh"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -18698,6 +18710,33 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/tuned/profiles/mios-host-performance/tuned.conf",
+      "hint": "GNOME \"Performance\" power mode for a MiOS host: mios-host plus shallower CPU idle states for latency-sensitive guests and builds. Exists because tuned-ppd requires a one-to-one PPD-to-TuneD mapping.",
+      "related": [
+        "/usr/lib/tuned/profiles/mios-host/tuned.conf",
+        "/etc/tuned/ppd.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/tuned/profiles/mios-host/tuned.conf",
+      "hint": "tuned profile for a MiOS workstation host that runs rootless/rootful containers and KVM guests while serving a graphical desktop from the iGPU; discrete GPUs are left to guests (see mios-gpu-roles). Inherits Fedora's virtual-host.",
+      "related": [
+        "/usr/lib/tuned/profiles/virtual-host/tuned.conf",
+        "/etc/tuned/ppd.conf",
+        "/usr/libexec/mios/mios-gpu-roles",
+        "/usr/share/mios/mios.toml",
+        "/usr/libexec/mios/mios-bootstrap-linux.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/udev/rules.d/99-kvmfr.rules",
       "hint": "Defines udev rules to grant the kvm group read/write access to kvmfr character devices (mode 0660).",
       "related": [],
@@ -22048,6 +22087,34 @@
         "log",
         "read_gpu_matrix",
         "build_dropin"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-gpu-roles",
+      "hint": "Classify the host's GPUs into iGPU (desktop) and dGPU (reserved for VMs and containers), put the graphical desktop on the iGPU through a mutter udev tag, and stage or arm whole-device vfio-pci reservation of the dGPU(s) with an IOMMU-group-aware ID list. Arming refuses unless a display is already connected to the iGPU.",
+      "related": [
+        "/usr/libexec/mios/vfio-config.sh",
+        "/usr/libexec/mios/vfio-toggle.sh",
+        "/usr/libexec/mios/vfio-check.sh",
+        "/usr/lib/udev/rules.d/61-mutter.rules",
+        "/etc/modprobe.d/vfio.conf",
+        "/usr/lib/tuned/profiles/mios-host/tuned.conf"
+      ],
+      "functions": [
+        "main",
+        "parse_args",
+        "show_help",
+        "log_info",
+        "log_error",
+        "detect_gpus",
+        "igpu_connected",
+        "group_ids",
+        "cmd_status",
+        "cmd_igpu_desktop",
+        "cmd_reserve_dgpu"
       ],
       "doc": null,
       "comment_style": "hash",

@@ -924,3 +924,14 @@ usr/share/mios/virtio/*.iso
 # Runtime-installed agent CLI payloads (zcode, npm CLIs): built/installed per host by [agent_cli], never tracked.
 /usr/lib/mios/agent-cli/
 /usr/lib/mios/agent-cli/**
+
+# tuned: ship only the MiOS profiles and the PPD mapping; Fedora's own profiles and tuned's runtime state stay untracked.
+!/usr/lib/tuned/
+/usr/lib/tuned/*
+!/usr/lib/tuned/profiles/
+/usr/lib/tuned/profiles/*
+!/usr/lib/tuned/profiles/mios-*/
+!/usr/lib/tuned/profiles/mios-*/**
+!/etc/tuned/
+/etc/tuned/*
+!/etc/tuned/ppd.conf
