@@ -171,6 +171,17 @@ class TestLookingGlassSetup(unittest.TestCase):
         self.assertIn('<model type="ivshmem-plain"/>', xml)
         self.assertIn('<size unit="M">128</size>', xml)
 
+    def test_qemu_cmdline_generation(self):
+        lg = setup_looking_glass.LookingGlassManager(size_mb=128)
+        cmdline = lg.generate_qemu_cmdline()
+        self.assertIn("-object memory-backend-file", cmdline)
+        self.assertIn("size=134217728", cmdline)
+        self.assertIn("-device ivshmem-plain", cmdline)
+
+    def test_shm_file_resolution_fallback(self):
+        res = looking_glass.LookingGlassConfigManager.resolve_shm_file("/dev/kvmfr0")
+        self.assertIn(res, ["/dev/kvmfr0", "/dev/shm/looking-glass"])
+
     def test_mock_shm_validation(self):
         lg = setup_looking_glass.LookingGlassManager()
         self.assertTrue(lg.validate_shm_allocation(mock=True))
