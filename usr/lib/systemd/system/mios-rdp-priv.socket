@@ -1,0 +1,12 @@
+[Unit]
+Description=MiOS RDP root helper socket (PAM mios-rdp + group check, TLS key hand-over, xrdp fallback)
+Documentation=file:///usr/libexec/mios/rdp-native
+
+[Socket]
+ListenSequentialPacket=/run/mios-rdp-priv.sock
+SocketMode=0666
+Accept=yes
+MaxConnections=8
+
+[Install]
+WantedBy=sockets.target

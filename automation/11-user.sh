@@ -16,7 +16,26 @@ if command -v authselect &>/dev/null; then
     authselect apply-changes --force 2>/dev/null || authselect opt-out 2>/dev/null || true
 fi
 
-C_USER="${MIOS_IDENTITY_USERNAME:-mios}"
+# Operator account + password come ONLY from the layered SSOT (vendor < host < user + mios.d,
+# resolved for this build tree) or an explicit build input. No literal fallback: a missing
+# value fails the build, naming the key (usr/libexec/mios/mios-credential).
+_cred_bin=""
+for _c in "${CTX:-}/usr/libexec/mios/mios-credential" "$(dirname "${BASH_SOURCE[0]}")/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
+    [[ -f "$_c" ]] && { _cred_bin="$_c"; break; }
+done
+_ssot_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_mios_cred() { # resolve against THIS tree's vendor SSOT (+ its etc/mios host tier) unless already retargeted
+    [[ -n "$_cred_bin" ]] || { mios_err "mios-credential not found; cannot resolve SSOT credentials"; return 3; }
+    if [[ -n "${MIOS_VENDOR_TOML:-}${MIOS_TOML:-}${MIOS_TOML_ROOT:-}" ]]; then
+        python3 "$_cred_bin" "$@"
+    else
+        MIOS_TOML_ROOT="$_ssot_root" python3 "$_cred_bin" "$@"
+    fi
+}
+C_USER="${MIOS_IDENTITY_USERNAME:-}"
+if [[ -z "$C_USER" ]]; then
+    C_USER="$(_mios_cred username)" || { mios_err "SSOT [identity].username unresolved -- refusing to create an account with a literal name"; exit 1; }
+fi
 
 mios_log "Creating user ${C_USER} via sysusers"
 if [[ "${C_USER}" != "mios" ]]; then
@@ -88,11 +107,9 @@ if getent passwd "${C_USER}" >/dev/null; then
         chmod 0644 "$subfile" 2>/dev/null || true
     done
 
-    pw_hash="${MIOS_USER_PASSWORD_HASH:-}"
-    if [[ -z "$pw_hash" ]]; then
-        pw_hash=$(openssl passwd -6 'mios' 2>/dev/null || true)
-        mios_log "No MIOS_USER_PASSWORD_HASH provided; defaulting to 'mios'"
-    fi
+    # MIOS_USER_PASSWORD_HASH (alias MIOS_PASSWORD_HASH, the name build-mios.sh used to pass)
+    # > [auth].password_hash > sha512-crypt of [identity].default_password. Fail closed.
+    pw_hash="$(_mios_cred hash)" || { mios_err "SSOT password unresolved ([auth].password_hash / [identity].default_password) -- refusing a literal default"; exit 1; }
     if [[ "$pw_hash" =~ ^\$6\$ ]]; then
         echo "${C_USER}:${pw_hash}" | chpasswd -e
         if command -v chage >/dev/null 2>&1; then
@@ -102,7 +119,8 @@ if getent passwd "${C_USER}" >/dev/null; then
         fi
         mios_ok "Password hash baked into /etc/shadow for ${C_USER} (expired via chage -d 0 per ruling Q5)"
     else
-        mios_warn "Pw_hash is not sha512crypt"
+        mios_err "Pw_hash is not sha512crypt"
+        exit 1
     fi
 else
     mios_err "failed to create user ${C_USER}"

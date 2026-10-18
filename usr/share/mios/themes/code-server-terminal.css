@@ -5,14 +5,15 @@
     --mios-safe-bottom: env(safe-area-inset-bottom, 0px);
     --mios-safe-left: env(safe-area-inset-left, 0px);
     --mios-safe-right: env(safe-area-inset-right, 0px);
-    --mios-radius-xs: 4px;
-    --mios-radius-sm: 8px;
-    --mios-radius-md: 12px;
-    --mios-radius-lg: 16px;
+    /* Scale from the one shared surface radius ([desktop.hyprland] decoration.rounding). */
+    --mios-radius-lg: 28px;
+    --mios-radius-xs: calc(var(--mios-radius-lg) / 7);
+    --mios-radius-sm: calc(var(--mios-radius-lg) * 2 / 7);
+    --mios-radius-md: calc(var(--mios-radius-lg) * 3 / 7);
     --mios-radius-pill: 9999px;
-    --mios-border-thin: 1px solid rgba(255, 255, 255, 0.08);
-    --mios-border-subtle: 1px solid rgba(255, 255, 255, 0.05);
-    --mios-glass-bg: rgba(14, 17, 23, 0.88);
+    --mios-border-thin: 1px solid color-mix(in srgb, #E7DFD3 14%, transparent);
+    --mios-border-subtle: 1px solid color-mix(in srgb, #E7DFD3 calc(14% / 2), transparent);
+    --mios-glass-bg: color-mix(in srgb, #282262 88%, transparent);
     --mios-glass-blur: blur(20px);
 }
 

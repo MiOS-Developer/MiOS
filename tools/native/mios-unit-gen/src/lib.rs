@@ -29,9 +29,9 @@ pub struct CpuMitigationsPolicy {
 impl CpuMitigationsPolicy {
     pub fn from_ssot_str(ssot: &str) -> Result<Self, UnitGenError> {
         let doc: toml::Value = toml::from_str(ssot)?;
-        let kargs_tbl = doc.get("kargs").ok_or_else(|| {
-            UnitGenError::GoldenMaster("mios.toml missing [kargs] table".into())
-        })?;
+        let kargs_tbl = doc
+            .get("kargs")
+            .ok_or_else(|| UnitGenError::GoldenMaster("mios.toml missing [kargs] table".into()))?;
         let cpu_tbl = kargs_tbl.get("cpu_mitigations").ok_or_else(|| {
             UnitGenError::GoldenMaster("mios.toml missing [kargs.cpu_mitigations] table".into())
         })?;
@@ -69,7 +69,10 @@ impl CpuMitigationsPolicy {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { required, forbidden })
+        Ok(Self {
+            required,
+            forbidden,
+        })
     }
 }
 
@@ -772,6 +775,19 @@ fn resolve_port_placeholders(key: &str, value: &str, ports: Option<&toml::Value>
 }
 
 /// Render units from SSOT TOML string. Returns map of relative path -> rendered content.
+/// Render unprivileged session units through the same canonical systemd renderer.
+pub fn render_user_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
+    let mut doc: toml::Value = toml::from_str(ssot_toml)?;
+    let users = doc
+        .get("user_units")
+        .cloned()
+        .unwrap_or(toml::Value::Table(Default::default()));
+    doc.as_table_mut()
+        .ok_or_else(|| UnitGenError::GoldenMaster("SSOT must be a table".into()))?
+        .insert("units".into(), users);
+    render_units(&toml::to_string(&doc).map_err(|e| UnitGenError::GoldenMaster(e.to_string()))?)
+}
+
 pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
     let root: SsotRoot = toml::from_str(ssot_toml)?;
     let doc: toml::Value = toml::from_str(ssot_toml)?;
@@ -950,9 +966,23 @@ fn shipped_units(unit_dir: &Path) -> Vec<String> {
 
 /// Render `[units.*]` from the SSOT at `root` and compare it to the shipped tree.
 pub fn project(root: &Path) -> Result<Projection, UnitGenError> {
+    project_scope(root, false)
+}
+pub fn project_user(root: &Path) -> Result<Projection, UnitGenError> {
+    project_scope(root, true)
+}
+fn project_scope(root: &Path, user: bool) -> Result<Projection, UnitGenError> {
     let ssot = fs::read_to_string(root.join("usr/share/mios/mios.toml"))?;
-    let rendered = render_units(&ssot)?;
-    let unit_dir = root.join("usr/lib/systemd/system");
+    let rendered = if user {
+        render_user_units(&ssot)?
+    } else {
+        render_units(&ssot)?
+    };
+    let unit_dir = root.join(if user {
+        "usr/lib/systemd/user"
+    } else {
+        "usr/lib/systemd/system"
+    });
 
     let mut p = Projection::default();
     for (filename, body) in &rendered {

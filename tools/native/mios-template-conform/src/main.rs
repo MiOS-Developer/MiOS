@@ -8,6 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+/// Template-governed source files are text; anything larger is reported, never read whole.
+const MAX_CHECKED_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
 struct CompiledTemplate {
     name: String,
     pattern: Regex,
@@ -95,6 +98,49 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+/// Files the conformance check considers. In a git work tree that is exactly what the tree tracks
+/// plus untracked-but-not-ignored files (the repository may be checked out at `/`, where a walk
+/// would cover the whole operating system); elsewhere a walk that stays on the root's filesystem.
+fn candidate_files(root: &Path, ignore_dirs: &HashSet<&str>) -> Vec<PathBuf> {
+    let toplevel = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+    let is_toplevel = match (toplevel, fs::canonicalize(root)) {
+        (Some(top), Ok(r)) => fs::canonicalize(&top).map(|t| t == r).unwrap_or(false),
+        _ => false,
+    };
+    let git = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .stderr(std::process::Stdio::null())
+        .output();
+    if let (true, Ok(out)) = (is_toplevel, git) {
+        if out.status.success() {
+            return out
+                .stdout
+                .split(|b| *b == 0)
+                .filter(|r| !r.is_empty())
+                .map(|r| root.join(String::from_utf8_lossy(r).as_ref()))
+                .collect();
+        }
+    }
+    WalkDir::new(root)
+        .same_file_system(true)
+        .into_iter()
+        .filter_entry(|e| !ignore_dirs.contains(e.file_name().to_str().unwrap_or("")))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.into_path())
+        .collect()
 }
 
 fn run_conformance(
@@ -189,16 +235,12 @@ fn run_conformance(
     .cloned()
     .collect();
 
-    for entry in WalkDir::new(root_path)
-        .into_iter()
-        .filter_entry(|e| !ignore_dirs.contains(e.file_name().to_str().unwrap_or("")))
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let p = entry.path();
+    // Never read the whole operating system: candidate_files stays within the repository (or the
+    // root's filesystem), and only regular files a template governs are read, within a size bound.
+    // Reading /proc/kcore or VM images whole once drove this tool to 34 GB and got the operator's
+    // session OOM-killed.
+    for p in candidate_files(root_path, &ignore_dirs) {
+        let p = p.as_path();
         let rel_path = match p.strip_prefix(root_path) {
             Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
             Err(_) => continue,
@@ -207,8 +249,22 @@ fn run_conformance(
         if grandfathered.contains(&rel_path) {
             continue;
         }
+        let meta = match fs::symlink_metadata(p) {
+            Ok(m) if m.file_type().is_file() => m,
+            _ => continue, // deleted in the work tree, a symlink, or not a regular file
+        };
 
         checked_count += 1;
+        if !compiled_templates.iter().any(|ct| ct.pattern.is_match(&rel_path)) {
+            continue;
+        }
+        if meta.len() > MAX_CHECKED_FILE_BYTES {
+            unconforming.push((
+                rel_path.clone(),
+                format!("File too large to check ({} bytes > {MAX_CHECKED_FILE_BYTES})", meta.len()),
+            ));
+            continue;
+        }
         let content = match fs::read_to_string(p) {
             Ok(c) => c,
             Err(_) => continue,
@@ -845,6 +901,30 @@ mod tests {
         assert!(err(&["--max-unconforming"]).contains("needs a number"));
         assert!(err(&["--max-unconforming", "x"]).contains("is not a number"));
         assert!(err(&["--llms-txt", "--max-unconforming", "1"]).contains("no meaning"));
+    }
+
+    #[test]
+    fn walk_reads_only_governed_files_within_the_size_bound() {
+        // Regression: a live `--root /` once read /proc/kcore and VM images whole (34 GB, OOM).
+        let dir = std::env::temp_dir().join(format!("mios_conform_bound_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("usr/share/mios")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join("data")).unwrap();
+        fs::write(
+            dir.join("usr/share/mios/mios.toml"),
+            "[ai_tag]\nmax_unconforming = 10\n[templates.py]\nmatch = '^src/.*\\.py$'\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/ok.py"), "# AI-hint: fine\n").unwrap();
+        // ungoverned 4 GiB sparse file: must never be read (it would take 4 GiB of memory)
+        fs::File::create(dir.join("data/disk.img")).unwrap().set_len(4 << 30).unwrap();
+        // governed but oversized sparse file: reported, not read
+        fs::File::create(dir.join("src/huge.py")).unwrap().set_len(9 << 20).unwrap();
+        let (checked, unconforming, _) = run_conformance(&dir, None).unwrap();
+        assert_eq!(checked, 4, "every regular file is counted");
+        assert_eq!(unconforming, 1, "only the oversized governed file is flagged");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A scratch root holding `files`; a trailing `/` makes a directory.

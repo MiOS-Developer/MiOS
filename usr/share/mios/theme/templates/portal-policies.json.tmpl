@@ -1,0 +1,66 @@
+{
+  "policies": {
+    "DisableAppUpdate": @MIOS:desktop.portal.gecko.policies.disable_app_update@,
+    "DisableTelemetry": @MIOS:desktop.portal.gecko.policies.disable_telemetry@,
+    "DisableFirefoxStudies": @MIOS:desktop.portal.gecko.policies.disable_studies@,
+    "DisablePocket": @MIOS:desktop.portal.gecko.policies.disable_pocket@,
+    "DisableFeedbackCommands": @MIOS:desktop.portal.gecko.policies.disable_feedback@,
+    "DontCheckDefaultBrowser": @MIOS:desktop.portal.gecko.policies.disable_default_check@,
+    "DisableFirefoxAccounts": @MIOS:desktop.portal.gecko.policies.disable_firefox_accounts@,
+    "DisableRemoteSettingsAndAcceptSecurityConsequences": true,
+    "DisableRemoteImprovements": true,
+    "NetworkPrediction": false,
+    "CaptivePortal": false,
+    "FirefoxSuggest": {
+      "WebSuggestions": false,
+      "SponsoredSuggestions": false,
+      "ImproveSuggest": false,
+      "Locked": true
+    },
+    "UserMessaging": {
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true,
+      "MoreFromMozilla": false,
+      "FirefoxLabs": false,
+      "Locked": true
+    },
+    "Homepage": {
+      "URL": "@MIOS:desktop.portal.gecko.home_url@",
+      "StartPage": "homepage"
+    },
+    "GenerativeAI": {
+      "Enabled": @MIOS:desktop.portal.gecko.policies.genai_enabled@,
+      "Chatbot": @MIOS:desktop.portal.gecko.policies.genai_chatbot@,
+      "SmartWindow": false,
+      "LinkPreviews": @MIOS:desktop.portal.gecko.policies.genai_link_previews@,
+      "TabGroups": @MIOS:desktop.portal.gecko.policies.genai_tab_groups@,
+      "Locked": @MIOS:desktop.portal.gecko.policies.genai_locked@
+    },
+    "Preferences": {
+      "browser.ml.enable": { "Value": @MIOS:desktop.portal.gecko.ai.ml_engine@, "Status": "locked" },
+      "browser.smartwindow.enabled": { "Value": @MIOS:desktop.portal.gecko.ai.smart_window@, "Status": "locked" },
+      "browser.smartwindow.endpoint": { "Value": "", "Status": "locked" },
+      "browser.smartwindow.searchQuery.endpointURL": { "Value": "", "Status": "locked" },
+      "browser.smartwindow.firstrun.explainerURL": { "Value": "", "Status": "locked" },
+      "browser.ml.modelHubRootUrl": { "Value": "", "Status": "locked" },
+      "browser.region.network.url": { "Value": "", "Status": "locked" },
+      "browser.region.update.enabled": { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.enabled": { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.autoSubmit2": { "Value": false, "Status": "locked" },
+      "datareporting.policy.dataSubmissionEnabled": { "Value": false, "Status": "locked" },
+      "browser.ml.pageAssist.enabled": { "Value": @MIOS:desktop.portal.gecko.ai.page_assist@, "Status": "locked" },
+      "browser.ml.linkPreview.enabled": { "Value": @MIOS:desktop.portal.gecko.ai.link_preview@, "Status": "locked" },
+      "browser.tabs.groups.smart.enabled": { "Value": @MIOS:desktop.portal.gecko.ai.smart_tab_groups@, "Status": "locked" },
+      "browser.ml.chat.enabled": { "Value": @MIOS:desktop.portal.gecko.ai.chat_enabled@, "Status": "locked" },
+      "browser.ml.chat.provider": { "Value": "@MIOS:desktop.portal.gecko.chat_url@", "Status": "locked" },
+      "browser.ml.chat.hideLocalhost": { "Value": false, "Status": "locked" },
+      "browser.ml.chat.shortcuts": { "Value": @MIOS:desktop.portal.gecko.ai.chat_shortcuts@, "Status": "default" },
+      "network.captive-portal-service.enabled": { "Value": false, "Status": "locked" },
+      "network.connectivity-service.enabled": { "Value": false, "Status": "locked" },
+      "dom.push.enabled": { "Value": false, "Status": "locked" },
+      "dom.push.connection.enabled": { "Value": false, "Status": "locked" }
+    }
+  }
+}

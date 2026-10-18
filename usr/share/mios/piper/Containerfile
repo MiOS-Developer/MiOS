@@ -1,4 +1,4 @@
-# AI-hint: Defines the OCI build for localhost/mios-piper, the piper1-gpl (piper-tts) HTTP speech engine of the mios-ai pod: installs piper-tts[http] at the SSOT version, bakes the SSOT voice under /usr/share/piper/voices (Law 12) and runs piper.http_server as the [services.piper] uid/gid.
+# AI-hint: Defines the OCI build for localhost/mios-piper, the piper1-gpl (piper-tts) HTTP speech engine of the mios-ai pod: installs piper-tts[http] at the SSOT version intent ("latest" resolves to PyPI's current release, the wheel proven by PyPI's published sha256 and recorded in /usr/share/piper/MIOS-RESOLVED), bakes the SSOT voice under /usr/share/piper/voices (Law 12) and runs piper.http_server as the [services.piper] uid/gid.
 # AI-related: mios-piper.container, 57-mios-sys-build.sh
 # Every value arrives as a build arg resolved from [services.piper] in
 # /usr/share/mios/mios.toml by the resolver; there are no defaults here (Law 7).
@@ -26,7 +26,8 @@ RUN set -eu; \
         fi; \
     done
 
-RUN pip install "piper-tts[http]==${MIOS_SERVICES_PIPER_VERSION}"
+COPY install-piper.py /usr/libexec/mios-piper/install-piper.py
+RUN python3 /usr/libexec/mios-piper/install-piper.py "${MIOS_SERVICES_PIPER_VERSION}" /usr/share/piper/MIOS-RESOLVED
 
 RUN python3 -m piper.download_voices "${MIOS_SERVICES_PIPER_VOICE}" --download-dir /usr/share/piper/voices \
     && test -s "/usr/share/piper/voices/${MIOS_SERVICES_PIPER_VOICE}.onnx" \
@@ -37,7 +38,8 @@ LABEL org.opencontainers.image.title="mios-piper" \
       org.opencontainers.image.description="MiOS Piper streaming TTS engine (piper1-gpl http_server) with a baked voice" \
       org.opencontainers.image.source="https://github.com/OHF-Voice/piper1-gpl" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.version="${MIOS_SERVICES_PIPER_VERSION}"
+      org.opencontainers.image.version="${MIOS_SERVICES_PIPER_VERSION}" \
+      io.mios.resolved-record="/usr/share/piper/MIOS-RESOLVED"
 
 WORKDIR /usr/share/piper/voices
 USER ${MIOS_SERVICES_PIPER_UID}:${MIOS_SERVICES_PIPER_GID}

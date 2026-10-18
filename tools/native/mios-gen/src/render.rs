@@ -180,6 +180,33 @@ pub mod render_desktop {
         {
             lines.push(format!("NoDisplay={nd}"));
         }
+        if let Some(mt) = cfg
+            .and_then(|t| t.get("mime_type"))
+            .and_then(|v| v.as_str())
+        {
+            lines.push(format!("MimeType={mt}"));
+        }
+        // [[actions]] = { id, name, exec }: desktop-entry-spec additional
+        // application actions (dock/drawer right-click entries). Listed in the
+        // main group as Actions=, each rendered as its own [Desktop Action id]
+        // group after the main group.
+        let actions: Vec<(&str, &str, &str)> = cfg
+            .and_then(|t| t.get("actions"))
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| {
+                        let t = x.as_table()?;
+                        let field = |k: &str| t.get(k).and_then(|v| v.as_str());
+                        Some((field("id")?, field("name")?, field("exec")?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !actions.is_empty() {
+            let ids: String = actions.iter().map(|(id, _, _)| format!("{id};")).collect();
+            lines.push(format!("Actions={ids}"));
+        }
 
         if let Some(tc) = cfg
             .and_then(|t| t.get("trailing_comments"))
@@ -192,9 +219,49 @@ pub mod render_desktop {
             }
         }
 
+        for (id, action_name, action_exec) in &actions {
+            lines.push(String::new());
+            lines.push(format!("[Desktop Action {id}]"));
+            lines.push(format!("Name={action_name}"));
+            lines.push(format!("Exec={action_exec}"));
+        }
+
         let mut out = lines.join("\n");
         out.push('\n');
         out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::render_launcher;
+        use std::collections::BTreeMap;
+
+        #[test]
+        fn mime_type_and_actions_render_as_spec_groups() {
+            let cfg: toml::Value = toml::from_str(
+                r#"
+                title = "Browser"
+                exec_cmd = "browser %u"
+                mime_type = "text/html;x-scheme-handler/https;"
+                actions = [
+                  { id = "new-window", name = "New Window", exec = "browser --new-window" },
+                  { id = "bad" },
+                ]
+                "#,
+            )
+            .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
+            let out = render_launcher("browser", &cfg, &BTreeMap::new());
+            assert!(out.contains("\nMimeType=text/html;x-scheme-handler/https;\n"), "{out}");
+            assert!(out.contains("\nActions=new-window;\n"), "{out}");
+            assert!(
+                out.ends_with("\n\n[Desktop Action new-window]\nName=New Window\nExec=browser --new-window\n"),
+                "{out}"
+            );
+            let plain: toml::Value = toml::from_str("title = \"x\"")
+                .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
+            let out = render_launcher("x", &plain, &BTreeMap::new());
+            assert!(!out.contains("MimeType=") && !out.contains("Actions=") && !out.contains("[Desktop Action"), "{out}");
+        }
     }
 
     pub fn run_render_desktop(root: &Path, check: bool) -> Result<(String, i32), (String, i32)> {
@@ -441,8 +508,13 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         RE.get_or_init(|| Regex::new(r#"['"`$\\{}\r\n]"#).unwrap())
     }
 
+    /// globals.sh / globals.ps1 are committed source projections: only the
+    /// selected root's vendor tier feeds them (root/etc is a deployed host's live
+    /// admin tier, e.g. a saved monitor layout). The developer's user
+    /// tier (~/.config/mios/mios.toml) and loader pointers (MIOS_TOML,
+    /// MIOS_VENDOR_TOML) must not change what --check compares against.
     pub fn build_exports(root: &Path) -> Result<BTreeMap<String, String>, String> {
-        let merged = mios_resolver::resolve_merged(Some(root), false)
+        let merged = mios_resolver::resolve_vendor_projection(root)
             .map_err(|e| format!("failed to resolve merged mios.toml: {e}"))?;
         Ok(mios_resolver::emit::build_globals_map(
             &merged,
@@ -640,6 +712,19 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         format!("$script:{name} = if ($env:{name}) {{ $env:{name} }} else {{ {fallback} }}")
     }
 
+    /// Credential constants (the [identity]/[auth]/[autounattend.service]/[field.sysrescue]
+    /// password plane and any other `*_PASSWORD` / `*_PASSPHRASE` / `*_PASSWORD_HASH` key) are
+    /// NEVER baked into globals.sh / globals.ps1: those files are committed source and are
+    /// sourced by every script. The renderers emit only the NAME (an environment passthrough
+    /// with an empty default) and point at the one fail-closed resolver.
+    pub fn is_credential_name(name: &str) -> bool {
+        const SUFFIXES: [&str; 4] = ["_PASSWORD", "_PASSPHRASE", "_PASSWORD_HASH", "_PASSWD"];
+        SUFFIXES.iter().any(|s| name.ends_with(s))
+    }
+
+    const CREDENTIAL_NOTE_SH: &str = "# credential -- NOT baked from the SSOT (env passthrough only); resolve at use: usr/libexec/mios/mios-credential";
+    const CREDENTIAL_NOTE_PS: &str = "# credential -- NOT baked from the SSOT (env passthrough only); resolve at use: Resolve-MiOSCredentials (MiOS-Provision.lib.ps1) or MIOS_RESOLVED_JSON";
+
     pub fn render_sh(
         exports: &BTreeMap<String, String>,
         names: &[String],
@@ -654,13 +739,17 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
                 continue;
             }
             if let Some(val) = exports.get(name) {
+                let credential = is_credential_name(name);
+                if credential {
+                    lines.push(CREDENTIAL_NOTE_SH.to_string());
+                }
                 if let Some(aliases) = inputs.get(name).filter(|aliases| !aliases.is_empty()) {
                     lines.push(format!(
                         "_mios_input {name} {} || {{ return 1 2>/dev/null || exit 1; }}",
                         aliases.join(" ")
                     ));
                 }
-                lines.push(sh_assign(name, val));
+                lines.push(sh_assign(name, if credential { "" } else { val }));
             }
         }
         lines.push("unset -f _mios_input\n".to_string());
@@ -681,6 +770,11 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
                 continue;
             }
             if let Some(val) = exports.get(name) {
+                let credential = is_credential_name(name);
+                if credential {
+                    lines.push(CREDENTIAL_NOTE_PS.to_string());
+                }
+                let val = if credential { "" } else { val.as_str() };
                 let aliases = inputs.get(name).map(Vec::as_slice).unwrap_or(&[]);
                 lines.push(if aliases.is_empty() {
                     ps_assign(name, val, Some(exports))
@@ -751,6 +845,29 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         problems
     }
 
+    /// globals.sh / globals.ps1 are sourced by login-path scripts: a reset mid-write must leave
+    /// the old file or the new one. Temp file beside the target, fsync, keep mode, rename, fsync dir.
+    fn write_atomic(target: &Path, content: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let dir = target
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no parent directory"))?;
+        fs::create_dir_all(dir)?;
+        let perms = fs::metadata(target).ok().map(|m| m.permissions());
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".mios-globals-")
+            .tempfile_in(dir)?;
+        tmp.write_all(content)?;
+        tmp.as_file().sync_all()?;
+        let perms = perms.unwrap_or_else(|| {
+            use std::os::unix::fs::PermissionsExt;
+            fs::Permissions::from_mode(0o644)
+        });
+        tmp.as_file().set_permissions(perms)?;
+        tmp.persist(target).map_err(|e| e.error)?;
+        fs::File::open(dir)?.sync_all()
+    }
+
     pub fn run_render_globals(root: &Path, check: bool) -> Result<(String, usize), (String, i32)> {
         let toml_path = root.join("usr/share/mios/mios.toml");
         if !toml_path.is_file() {
@@ -761,8 +878,7 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         }
 
         let mut exports = build_exports(root).map_err(|e| (e, 1))?;
-        let merged =
-            mios_resolver::resolve_merged(Some(root), false).map_err(|e| (e.to_string(), 1))?;
+        let merged = mios_resolver::resolve_vendor_projection(root).map_err(|e| (e.to_string(), 1))?;
         let inputs = mios_resolver::names::registry(&merged)
             .map_err(|e| (e, 1))?
             .input_aliases();
@@ -814,10 +930,7 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         if sh_existing.as_deref() != Some(&sh_norm) {
             drifted.push("automation/lib/globals.sh".to_string());
             if !check {
-                if let Some(parent) = sh_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Err(e) = fs::write(&sh_path, &sh_norm) {
+                if let Err(e) = write_atomic(&sh_path, sh_norm.as_bytes()) {
                     return Err((format!("failed to write {}: {e}", sh_path.display()), 1));
                 }
             }
@@ -837,10 +950,7 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         if ps_bytes.as_deref() != Some(&expected_ps_bytes) {
             drifted.push("automation/lib/globals.ps1".to_string());
             if !check {
-                if let Some(parent) = ps_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Err(e) = fs::write(&ps_path, expected_ps_bytes) {
+                if let Err(e) = write_atomic(&ps_path, &expected_ps_bytes) {
                     return Err((format!("failed to write {}: {e}", ps_path.display()), 1));
                 }
             }
@@ -977,6 +1087,44 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
                 .unwrap();
             let idx_ref = names.iter().position(|n| n == "MIOS_URLS_FORGE").unwrap();
             assert!(idx_dep < idx_ref);
+        }
+
+        #[test]
+        fn test_credentials_are_never_baked() {
+            let secret = "fixture-not-a-real-secret";
+            let mut exports = BTreeMap::new();
+            exports.insert("MIOS_IDENTITY_DEFAULT_PASSWORD".to_string(), secret.to_string());
+            exports.insert("MIOS_FIELD_SYSRESCUE_WIPE_PASSPHRASE".to_string(), secret.to_string());
+            exports.insert("MIOS_IDENTITY_USERNAME".to_string(), "fixture-user".to_string());
+            exports.insert("MIOS_AUTH_PASSWORD_POLICY".to_string(), "interactive".to_string());
+            let mut inputs = BTreeMap::new();
+            inputs.insert(
+                "MIOS_IDENTITY_DEFAULT_PASSWORD".to_string(),
+                vec!["MIOS_DEFAULT_PASSWORD".to_string()],
+            );
+            let names = ordered_names(&exports);
+            let sh = render_sh(&exports, &names, "0.0.0", &inputs);
+            let ps = render_ps1(&exports, &names, "0.0.0", &inputs);
+            // negative: the secret value never reaches either projection
+            assert!(!sh.contains(secret), "credential baked into globals.sh");
+            assert!(!ps.contains(secret), "credential baked into globals.ps1");
+            // positive: the names are still declared (env passthrough) and parity holds
+            assert!(sh.contains(": \"${MIOS_IDENTITY_DEFAULT_PASSWORD:=}\""));
+            assert!(sh.contains("_mios_input MIOS_IDENTITY_DEFAULT_PASSWORD MIOS_DEFAULT_PASSWORD"));
+            assert!(ps.contains("$script:MIOS_FIELD_SYSRESCUE_WIPE_PASSPHRASE = if ($env:MIOS_FIELD_SYSRESCUE_WIPE_PASSPHRASE) { $env:MIOS_FIELD_SYSRESCUE_WIPE_PASSPHRASE } else { '' }"));
+            assert!(sh.contains("mios-credential"));
+            // non-credential values are still baked
+            assert!(sh.contains("MIOS_IDENTITY_USERNAME:=fixture-user"));
+            assert!(sh.contains("MIOS_AUTH_PASSWORD_POLICY:=interactive"));
+            // parity: every credential name is declared in BOTH projections
+            for n in ["MIOS_IDENTITY_DEFAULT_PASSWORD", "MIOS_FIELD_SYSRESCUE_WIPE_PASSPHRASE"] {
+                assert!(sh.contains(&format!(": \"${{{n}:=}}\"")), "{n} missing in sh");
+                assert!(ps.contains(&format!("$script:{n} = ")), "{n} missing in ps1");
+            }
+            assert!(is_credential_name("MIOS_AUTOUNATTEND_SERVICE_SVC_PASSWORD"));
+            assert!(is_credential_name("MIOS_AUTH_PASSWORD_HASH"));
+            assert!(!is_credential_name("MIOS_AUTH_PASSWORD_POLICY"));
+            assert!(!is_credential_name("MIOS_WINDOWS_XBOX_USERS_DESKTOP_PASSWORD_REF"));
         }
 
         #[test]
@@ -1406,7 +1554,9 @@ pub mod render_manpages {
         ssot: &Value,
     ) -> Result<(), String> {
         if first != second {
-            return Err("render-manpages: non-deterministic render detected across passes".to_string());
+            return Err(
+                "render-manpages: non-deterministic render detected across passes".to_string(),
+            );
         }
 
         let mut missing_declared = Vec::new();
@@ -1431,7 +1581,9 @@ pub mod render_manpages {
             for item in sc_manpages {
                 if let Some(p) = item.as_str() {
                     if !first.contains_key(p) {
-                        missing_declared.push(format!("{p} (declared in [testing.smoke_components].manpages)"));
+                        missing_declared.push(format!(
+                            "{p} (declared in [testing.smoke_components].manpages)"
+                        ));
                     }
                 }
             }
@@ -1444,7 +1596,8 @@ pub mod render_manpages {
         {
             if !var_entries.is_empty() {
                 let vp = format!("{MAN}/man7/mios-variants.7");
-                if !first.contains_key(&vp) && !missing_declared.iter().any(|m| m.starts_with(&vp)) {
+                if !first.contains_key(&vp) && !missing_declared.iter().any(|m| m.starts_with(&vp))
+                {
                     missing_declared.push(format!("{vp} (declared in [variants.entries])"));
                 }
             }
@@ -1539,7 +1692,10 @@ pub mod render_manpages {
                     .map_err(|e| e.to_string())?;
 
                 if !child_output.status.success() {
-                    return Err(format!("child process exited {:?}", child_output.status.code()));
+                    return Err(format!(
+                        "child process exited {:?}",
+                        child_output.status.code()
+                    ));
                 }
 
                 let mut second_map = BTreeMap::new();
@@ -1642,9 +1798,11 @@ pub mod render_manpages {
                 let res = if full.is_file() {
                     validate_man_page(&full)
                 } else if let Some(ref tvd) = temp_val_dir {
-                    let temp_file = tvd
-                        .path()
-                        .join(Path::new(rel).file_name().unwrap_or(std::ffi::OsStr::new("page.1")));
+                    let temp_file = tvd.path().join(
+                        Path::new(rel)
+                            .file_name()
+                            .unwrap_or(std::ffi::OsStr::new("page.1")),
+                    );
                     if fs::write(&temp_file, body.as_bytes()).is_ok() {
                         validate_man_page(&temp_file)
                     } else {
@@ -1693,8 +1851,14 @@ pub mod render_manpages {
         #[test]
         fn test_verify_identical_passes() {
             let mut pages = BTreeMap::new();
-            pages.insert("usr/share/man/man1/mios.1".to_string(), "content".to_string());
-            pages.insert("usr/share/man/man1/mios-build.1".to_string(), "content".to_string());
+            pages.insert(
+                "usr/share/man/man1/mios.1".to_string(),
+                "content".to_string(),
+            );
+            pages.insert(
+                "usr/share/man/man1/mios-build.1".to_string(),
+                "content".to_string(),
+            );
             let ssot_str = r#"
 [verbs.build]
 description = "build verb"
@@ -1706,9 +1870,15 @@ description = "build verb"
         #[test]
         fn test_verify_non_deterministic_fails() {
             let mut first = BTreeMap::new();
-            first.insert("usr/share/man/man1/mios.1".to_string(), "render A".to_string());
+            first.insert(
+                "usr/share/man/man1/mios.1".to_string(),
+                "render A".to_string(),
+            );
             let mut second = BTreeMap::new();
-            second.insert("usr/share/man/man1/mios.1".to_string(), "render B".to_string());
+            second.insert(
+                "usr/share/man/man1/mios.1".to_string(),
+                "render B".to_string(),
+            );
             let ssot: Value = "".parse().unwrap();
             let err = verify(&first, &second, &ssot).unwrap_err();
             assert!(err.contains("non-deterministic render detected across passes"));
@@ -1751,12 +1921,19 @@ manpages = ["usr/share/man/man1/mios.1", "usr/share/man/man1/mios-test.1"]
 
             // Check mode should succeed without flagging foreign page as orphan
             let check_res = run_render_manpages(root, true, false, None, false);
-            assert!(check_res.is_ok(), "check mode failed with foreign page: {:?}", check_res);
+            assert!(
+                check_res.is_ok(),
+                "check mode failed with foreign page: {:?}",
+                check_res
+            );
 
             // Write mode should not delete foreign page
             let write_res = run_render_manpages(root, false, false, None, false);
             assert!(write_res.is_ok());
-            assert!(foreign_page.exists(), "foreign page ls.1 was deleted by write mode!");
+            assert!(
+                foreign_page.exists(),
+                "foreign page ls.1 was deleted by write mode!"
+            );
         }
     }
 }
@@ -2273,6 +2450,3431 @@ pub mod render_ports {
             assert_eq!(sync_fallbacks(root.path(), &ports, true).len(), 2);
             assert_eq!(fs::read_to_string(&path).unwrap(), "a=${MIOS_PORTS_AGENT_PIPE:-8700}\nb=${MIOS_PORT_AGENT_PIPE:-8700}\nc=${MIOS_PORTS_UNKNOWN:-3}\n");
             assert!(sync_fallbacks(root.path(), &ports, false).is_empty());
+        }
+    }
+}
+
+/// Native Lua projection for current Hyprland; legacy hyprlang remains available for older images.
+pub mod render_hyprland {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
+    use toml::Value;
+
+    /// Lua string literal. JSON escaping is not Lua: `\u00XX` is a Lua 5.3+ escape that
+    /// LuaJIT/5.1 reject, and JSON's `\/` is no Lua escape at all. Emit only escapes every Lua
+    /// dialect reads: `\\ \" \n \r \t`, fixed-width decimal `\ddd` for the other control bytes and
+    /// DEL (three digits, so a following digit is never absorbed); UTF-8 passes through unchanged.
+    fn lua_string(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                    out.push_str(&format!("\\{:03}", c as u32))
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn lua(value: &Value) -> Result<String, String> {
+        Ok(match value {
+            Value::String(s) => lua_string(s),
+            Value::Integer(n) => n.to_string(),
+            Value::Float(n) if n.is_finite() => n.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            Value::Array(items) => format!(
+                "{{{}}}",
+                items
+                    .iter()
+                    .map(lua)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ")
+            ),
+            Value::Table(items) => format!(
+                "{{{}}}",
+                items
+                    .iter()
+                    .map(|(k, v)| Ok(format!(
+                        "[{}] = {}",
+                        lua(&Value::String(k.clone()))?,
+                        lua(v)?
+                    )))
+                    .collect::<Result<Vec<_>, String>>()?
+                    .join(", ")
+            ),
+            _ => {
+                return Err(
+                    "Hyprland Lua projection requires finite scalar/table/array values".into(),
+                )
+            }
+        })
+    }
+    fn at<'a>(value: &'a Value, path: &str) -> Result<&'a Value, String> {
+        path.split('.').try_fold(value, |v, k| {
+            v.get(k).ok_or_else(|| format!("Missing SSOT {path}"))
+        })
+    }
+    fn string(value: &Value, path: &str) -> Result<String, String> {
+        lua(at(value, path)?)
+    }
+    /// The plain (unquoted) string at `path`.
+    fn string_value(value: &Value, path: &str) -> Result<String, String> {
+        at(value, path)?
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("SSOT {path} must be a nonempty string"))
+    }
+
+    /// [desktop.screenshot] (mios-shot) -> its keybinds (hl.bind exec "<binary> <args>"), the no-animation layer rules for
+    /// its freeze / selector / flash surfaces and -- only while [desktop.hyprland.config.ecosystem].enforce_permissions is
+    /// on -- screencopy permissions for the binary, grim and xdg-desktop-portal-hyprland (XDPH runs grim itself). Absent
+    /// or enabled = false: nothing. One mios_section, so a compositor that rejects a rule keeps the rest of the session.
+    fn screenshot_lua(data: &Value) -> Result<String, String> {
+        let Some(shot) = data.get("desktop").and_then(|d| d.get("screenshot")) else {
+            return Ok(String::new());
+        };
+        if shot.get("enabled").and_then(Value::as_bool) == Some(false) {
+            return Ok(String::new());
+        }
+        let binary = string_value(shot, "binary")?;
+        if !binary.starts_with('/') || binary.chars().any(|c| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]~#".contains(c)) {
+            return Err("desktop.screenshot.binary must be an absolute path without shell metacharacters".into());
+        }
+        let mut body = String::new();
+        if let Some(binds) = shot.get("bindings") {
+            for b in binds.as_array().ok_or("desktop.screenshot.bindings must be an array")? {
+                let key = b
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .filter(|k| !k.trim().is_empty())
+                    .ok_or("desktop.screenshot.bindings entries need a nonempty key")?;
+                let args = b.get("args").and_then(Value::as_str).unwrap_or("");
+                if !args
+                    .split_whitespace()
+                    .all(|w| w.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_=.,:".contains(&c)))
+                {
+                    return Err(format!("desktop.screenshot.bindings {key:?}: args must be plain mios-shot words"));
+                }
+                let cmd = std::iter::once(binary.as_str()).chain(args.split_whitespace()).collect::<Vec<_>>().join(" ");
+                body += &format!(
+                    " hl.bind({}, hl.dsp.exec_cmd({}))\n",
+                    lua(&Value::String(key.into()))?,
+                    lua(&Value::String(cmd))?
+                );
+            }
+        }
+        if let Some(ns) = shot.get("no_anim_namespaces") {
+            for n in ns.as_array().ok_or("desktop.screenshot.no_anim_namespaces must be an array")? {
+                let n = n
+                    .as_str()
+                    .filter(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+                    .ok_or("desktop.screenshot.no_anim_namespaces entries must be [A-Za-z0-9_-] layer namespaces")?;
+                body += &format!(" hl.layer_rule({{[\"match\"] = {{[\"namespace\"] = \"^({n})$\"}}, [\"no_anim\"] = true}})\n");
+            }
+        }
+        let enforce = data
+            .get("desktop")
+            .and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("config"))
+            .and_then(|c| c.get("ecosystem"))
+            .and_then(|e| e.get("enforce_permissions"))
+            .and_then(Value::as_bool)
+            == Some(true);
+        if enforce {
+            let mode = shot.get("hyprland_permission").and_then(Value::as_str).unwrap_or("allow");
+            if !matches!(mode, "allow" | "ask" | "deny") {
+                return Err("desktop.screenshot.hyprland_permission must be allow, ask or deny".into());
+            }
+            let exe: String = binary
+                .chars()
+                .flat_map(|c| if ".+*?()[]{}|^$\\".contains(c) { vec!['\\', c] } else { vec![c] })
+                .collect();
+            for re in [exe.as_str(), "/usr/(bin|local/bin)/grim", "/usr/(lib|libexec|lib64)/xdg-desktop-portal-hyprland"] {
+                body += &format!(
+                    " hl.permission({}, \"screencopy\", {})\n",
+                    lua(&Value::String(re.into()))?,
+                    lua(&Value::String(mode.into()))?
+                );
+            }
+        }
+        if body.is_empty() {
+            return Ok(String::new());
+        }
+        Ok(format!("mios_section(\"screenshot\", function()\n{body}end)\n"))
+    }
+
+    /// [desktop.hyprland.hyprglass.config] keys only the MiOS hyprglass patch registers (hyprglass-mios-glass.patch).
+    pub const HYPRGLASS_MIOS_KEYS: &[&str] = &["edge_pass", "edge_pass_width"];
+    /// hyprbars config keys only the MiOS hyprbars patch registers beyond its long-standing overlay keys: the
+    /// hyprglass-drawn tab (glass_plugin, button_glass) and the mobile tabs (mobile_*).
+    pub const HYPRBARS_MIOS_KEYS: &[&str] = &["glass_plugin", "button_glass"];
+
+    /// [desktop.hyprland.hyprbars.mobile] -> the plugin's mobile_* keys (MiOS mobile tabs). Absent = none.
+    /// touch_target >= 44 logical px, palettes are [colors] keys, close_button indexes a [[buttons]] entry whose
+    /// action closes the window, and menu_action opens the shell's window menu (`call mobile toggleControls`).
+    pub fn hyprbars_mobile_keys(bars: &Value, data: &Value) -> Result<toml::map::Map<String, Value>, String> {
+        let mut out = toml::map::Map::new();
+        let Some(m) = bars.get("mobile") else {
+            return Ok(out);
+        };
+        let m = m.as_table().ok_or("[desktop.hyprland.hyprbars.mobile] must be a table")?;
+        let touch = m
+            .get("touch_target")
+            .and_then(Value::as_integer)
+            .filter(|v| (44..=256).contains(v))
+            .ok_or("hyprbars.mobile.touch_target must be 44..=256 logical px (a finger-sized target)")?;
+        let buttons = bars.get("buttons").and_then(Value::as_array).ok_or("hyprbars.buttons must be an array")?;
+        let close = m
+            .get("close_button")
+            .and_then(Value::as_integer)
+            .filter(|i| (0..buttons.len() as i64).contains(i))
+            .ok_or("hyprbars.mobile.close_button must index a [[desktop.hyprland.hyprbars.buttons]] entry")?;
+        let closes = buttons[close as usize].get("action").and_then(Value::as_str).unwrap_or("");
+        if !(closes.contains("window.close") || closes.contains("killactive")) {
+            return Err("hyprbars.mobile.close_button must name the button whose action closes the window".into());
+        }
+        let colour = |k: &str| -> Result<Value, String> {
+            let name = m.get(k).and_then(Value::as_str).ok_or(format!("hyprbars.mobile.{k} must name a [colors] key"))?;
+            let hex = at(data, &format!("colors.{name}"))?
+                .as_str()
+                .and_then(|c| c.strip_prefix('#'))
+                .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+                .ok_or(format!("hyprbars.mobile.{k}: [colors] {name} is not #RRGGBB"))?;
+            Ok(Value::String(format!("rgba({hex}FF)")))
+        };
+        let icon = m.get("menu_icon").and_then(Value::as_str).ok_or("hyprbars.mobile.menu_icon must be a string")?;
+        let action = m
+            .get("menu_action")
+            .and_then(Value::as_str)
+            .filter(|a| a.trim_end().ends_with("call mobile toggleControls"))
+            .ok_or("hyprbars.mobile.menu_action must open the shell's window menu (... call mobile toggleControls)")?;
+        out.insert("mobile_touch_target".into(), Value::Integer(touch));
+        out.insert("mobile_close_button".into(), Value::Integer(close));
+        out.insert("mobile_menu_color".into(), colour("menu_palette")?);
+        out.insert("mobile_menu_icon_color".into(), colour("menu_icon_palette")?);
+        out.insert("mobile_menu_icon".into(), Value::String(icon.into()));
+        out.insert("mobile_menu_action".into(), Value::String(action.into()));
+        Ok(out)
+    }
+
+    fn glass_palette(value: &Value, data: &Value) -> Result<Value, String> {
+        let mut result = value.clone();
+        if let Some(table) = result.as_table_mut() {
+            for (_, item) in table.iter_mut() {
+                *item = glass_palette(item, data)?;
+            }
+            for (role, target) in [
+                ("tint", "tint_color"),
+                ("fresnel", "fresnel_color"),
+                ("bevel", "bevel_color"),
+            ] {
+                let Some(key) = table.remove(&format!("palette_{role}")) else {
+                    continue;
+                };
+                let key = key
+                    .as_str()
+                    .ok_or("Glass palette reference must name a color")?;
+                let color = at(data, &format!("colors.{key}"))?
+                    .as_str()
+                    .ok_or("Glass color must be a string")?;
+                let hex = color
+                    .strip_prefix('#')
+                    .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+                    .ok_or("Invalid glass palette color")?;
+                let alpha = table
+                    .remove(&format!("{role}_alpha"))
+                    .and_then(|v| v.as_float())
+                    .filter(|a| a.is_finite() && (0.0..=1.0).contains(a))
+                    .ok_or("Glass alpha must be 0..1")?;
+                let rgba = (i64::from_str_radix(hex, 16).map_err(|e| e.to_string())? << 8)
+                    | (alpha * 255.0).round() as i64;
+                table.insert(target.into(), Value::Integer(rgba));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Per-output monitor rules from [desktop.hyprland.monitors.<output>] (the table
+    /// mios-displays saves into a mios.d drop-in). Each entry becomes
+    /// `hl.monitor({output = "<output>", ...})` after the catch-all
+    /// [desktop.hyprland.monitor] rule, so a named output overrides it. `primary = true`
+    /// is not a monitor-rule field: it is returned separately and projects to
+    /// cursor.default_monitor. An absent table keeps the single catch-all rule.
+    pub fn monitor_rules(h: &Value) -> Result<(Vec<Value>, Option<String>), String> {
+        let Some(table) = h.get("monitors") else {
+            return Ok((Vec::new(), None));
+        };
+        let table = table
+            .as_table()
+            .ok_or("desktop.hyprland.monitors must be a table keyed by output name")?;
+        let mut rules = Vec::new();
+        let mut primary = None;
+        for (output, spec) in table {
+            if output.is_empty()
+                || !output
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            {
+                return Err(format!(
+                    "desktop.hyprland.monitors.{output}: output must be a connector name [A-Za-z0-9_-]"
+                ));
+            }
+            let mut spec = spec
+                .as_table()
+                .ok_or(format!("desktop.hyprland.monitors.{output} must be a table"))?
+                .clone();
+            if let Some(v) = spec.get("mode") {
+                let m = v
+                    .as_str()
+                    .ok_or(format!("desktop.hyprland.monitors.{output}.mode must be a string"))?;
+                let named = matches!(m, "preferred" | "highres" | "highrr" | "maxwidth");
+                let sized = m
+                    .split_once('x')
+                    .map(|(w, rest)| {
+                        let (hgt, hz) = rest.split_once('@').unwrap_or((rest, "60"));
+                        w.parse::<u32>().is_ok_and(|w| w > 0)
+                            && hgt.parse::<u32>().is_ok_and(|h| h > 0)
+                            && hz.parse::<f64>().is_ok_and(|r| r.is_finite() && r > 0.0)
+                    })
+                    .unwrap_or(false);
+                if !named && !sized {
+                    return Err(format!(
+                        "desktop.hyprland.monitors.{output}.mode must be preferred|highres|highrr|maxwidth or WxH[@Hz]"
+                    ));
+                }
+            }
+            if let Some(v) = spec.get("scale") {
+                let s = v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+                if !s.is_some_and(|s| s.is_finite() && (0.25..=4.0).contains(&s)) {
+                    return Err(format!(
+                        "desktop.hyprland.monitors.{output}.scale must be a number in 0.25..4"
+                    ));
+                }
+            }
+            if let Some(v) = spec.get("transform") {
+                if !v.as_integer().is_some_and(|t| (0..=7).contains(&t)) {
+                    return Err(format!(
+                        "desktop.hyprland.monitors.{output}.transform must be 0..7"
+                    ));
+                }
+            }
+            for key in ["disabled", "primary"] {
+                if spec.get(key).is_some_and(|v| v.as_bool().is_none()) {
+                    return Err(format!(
+                        "desktop.hyprland.monitors.{output}.{key} must be boolean"
+                    ));
+                }
+            }
+            if spec.remove("primary").and_then(|v| v.as_bool()) == Some(true) {
+                if let Some(other) = primary.replace(output.clone()) {
+                    return Err(format!(
+                        "desktop.hyprland.monitors: {other} and {output} are both primary"
+                    ));
+                }
+            }
+            spec.remove("output");
+            let mut rule = toml::map::Map::new();
+            rule.insert("output".into(), Value::String(output.clone()));
+            rule.extend(spec);
+            rules.push(Value::Table(rule));
+        }
+        Ok((rules, primary))
+    }
+
+    /// Chunk preamble. `mios_section` runs one optional section (a compositor plugin) under pcall:
+    /// a plugin that fails to load or rejects its config is logged to stderr and recorded in
+    /// MIOS_SESSION.errors for session.lua to surface, and the rest of the session still loads.
+    const HEADER: &str = "-- AI-hint: Generated by mios-gen render-hyprland from layered mios.toml; edit the SSOT.\n-- AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/render.rs\nlocal mios_state = rawget(_G, \"MIOS_SESSION\") or {}\nlocal function mios_section(name, fn)\n local ok, err = pcall(fn)\n if not ok then\n  local m = \"MiOS: Hyprland \" .. name .. \" section failed: \" .. tostring(err)\n  if io and io.stderr then io.stderr:write(m .. \"\\n\") end\n  mios_state.errors = mios_state.errors or {}\n  table.insert(mios_state.errors, m)\n end\nend\n";
+
+    /// The session entry (usr/share/mios/hyprland/session.lua, also the skel user entry). It must
+    /// never leave an empty session: when the projection fails (mios-gen error, bad SSOT layer,
+    /// non-Lua output) or the chunk errors part way, it falls back to a minimal built-in desktop --
+    /// terminal and launcher binds, mios-desktop.target start/stop -- for whatever the chunk did not
+    /// already register, and surfaces the reason on stderr and as a compositor notification.
+    pub const LOADER: &str = r#"-- AI-hint: Load the native MiOS projection with vendor, host and user SSOT layers; degrade to a minimal session when it fails.
+-- AI-related: tools/native/mios-gen/src/render.rs (render_hyprland::LOADER), usr/share/mios/hyprland/hyprland.lua
+MIOS_SESSION = {}
+local function mios_quote(s)
+ return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+local function mios_load()
+ local errfile = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/mios-hyprland-projection.err"
+ local p = io.popen("/usr/bin/mios-gen render-hyprland --root / --runtime 2>" .. mios_quote(errfile), "r")
+ if not p then
+  return false, "cannot run /usr/bin/mios-gen"
+ end
+ local config = p:read("*a") or ""
+ -- Hyprland can reap the child before pclose; validate the returned Lua instead.
+ p:close()
+ if not config:match("^%-%- AI%-hint:") then
+  local f = io.open(errfile, "r")
+  local detail = f and f:read("*a") or ""
+  if f then f:close() end
+  detail = detail:gsub("%s+$", "")
+  return false, "projection failed: " .. (detail ~= "" and detail or "no Lua output")
+ end
+ local chunk, err = load(config, "=MiOS SSOT")
+ if not chunk then
+  return false, "projection is not valid Lua: " .. tostring(err)
+ end
+ return pcall(chunk)
+end
+local ok, err = mios_load()
+local state = MIOS_SESSION
+local problems = state.errors or {}
+if not ok then
+ table.insert(problems, 1, "MiOS: Hyprland SSOT " .. tostring(err) .. " -- minimal session active")
+ if io and io.stderr then io.stderr:write(problems[1] .. "\n") end
+ if not state.binds then
+  local terminal = "alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal"
+  local launcher = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call drawer toggle"
+  for _, key in ipairs({ "Q", "Return" }) do
+   pcall(hl.bind, "SUPER + " .. key, hl.dsp.exec_cmd(terminal))
+  end
+  for _, key in ipairs({ "SPACE", "R" }) do
+   pcall(hl.bind, "SUPER + " .. key, hl.dsp.exec_cmd(launcher))
+  end
+ end
+ if not state.hooks then
+  hl.on("hyprland.start", function()
+   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES && systemctl --user start mios-desktop.target")
+  end)
+  hl.on("hyprland.shutdown", function()
+   hl.exec_cmd("systemctl --user stop mios-desktop.target")
+  end)
+ end
+end
+if #problems > 0 then
+ local message = table.concat(problems, " | "):sub(1, 900)
+ hl.on("hyprland.start", function()
+  hl.exec_cmd("hyprctl notify 3 60000 0 " .. mios_quote(message))
+ end)
+end
+"#;
+
+    pub fn project(data: &Value) -> Result<String, String> {
+        let h = at(data, "desktop.hyprland")?;
+        let mut config = at(h, "config")?.clone();
+        let acrylic = at(data, "theme.acrylic")?
+            .as_bool()
+            .ok_or("theme.acrylic must be boolean")?;
+        let percent = at(data, "theme.windows.opacity_pct")?
+            .as_integer()
+            .filter(|n| (1..=100).contains(n))
+            .ok_or("theme.windows.opacity_pct must be 1..100")?;
+        let opacity = if acrylic { percent as f64 / 100.0 } else { 1.0 };
+        let decoration = config
+            .get_mut("decoration")
+            .and_then(Value::as_table_mut)
+            .ok_or("decoration must be a table")?;
+        for key in ["active_opacity", "inactive_opacity", "fullscreen_opacity"] {
+            decoration.insert(key.into(), Value::Float(opacity));
+        }
+        for (key, source) in [
+            ("gaps_in", "wm_gaps_inner_px"),
+            ("gaps_out", "wm_gaps_outer_px"),
+            ("border_size", "wm_border_px"),
+        ] {
+            let v = at(data, &format!("theme.edge.{source}"))?;
+            if v.as_integer().is_none_or(|n| n < 0) {
+                return Err(format!("Invalid theme.edge.{source}"));
+            }
+            config
+                .get_mut("general")
+                .and_then(Value::as_table_mut)
+                .ok_or("general must be a table")?
+                .insert(key.into(), v.clone());
+        }
+        let color = |key: &str, alpha: &str| -> Result<Value, String> {
+            let raw = at(data, &format!("colors.{key}"))?
+                .as_str()
+                .ok_or("Color must be a string")?;
+            let hex = raw.strip_prefix('#').ok_or("Color must start with #")?;
+            if hex.len() != 6 || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err("Invalid palette color".into());
+            }
+            Ok(Value::String(format!("rgba({hex}{alpha})")))
+        };
+        config
+            .get_mut("misc")
+            .and_then(Value::as_table_mut)
+            .ok_or("Missing misc desktop settings")?
+            .insert("background_color".into(), color("bg", "ff")?);
+        let mut borders = toml::map::Map::new();
+        borders.insert(
+            "active_border".into(),
+            Value::Array(vec![
+                color("cursor", "ee")?,
+                color("accent", "ee")?,
+                color("success", "ee")?,
+            ]),
+        );
+        // Lua gradients use an explicit colors table.
+        let colors = borders
+            .remove("active_border")
+            .ok_or("Missing border colors")?;
+        let mut active = toml::map::Map::new();
+        active.insert("colors".into(), colors);
+        borders.insert("active_border".into(), Value::Table(active));
+        borders.insert("inactive_border".into(), color("bg", "aa")?);
+        config
+            .get_mut("general")
+            .and_then(Value::as_table_mut)
+            .ok_or("general must be a table")?
+            .insert("col".into(), Value::Table(borders));
+        let (monitor_rules, primary) = monitor_rules(h)?;
+        if let Some(primary) = primary {
+            config
+                .as_table_mut()
+                .ok_or("desktop.hyprland.config must be a table")?
+                .entry("cursor")
+                .or_insert_with(|| Value::Table(toml::map::Map::new()))
+                .as_table_mut()
+                .ok_or("desktop.hyprland.config.cursor must be a table")?
+                .insert("default_monitor".into(), Value::String(primary));
+        }
+        let mut out = String::from(HEADER);
+        // Session lifecycle first: the hyprland.start hook is what starts mios-desktop.target (shell,
+        // portals, agents), so nothing later in the chunk -- a rejected config key, a plugin that
+        // fails to load -- can take it down with it. session.lua reads MIOS_SESSION.hooks/.binds to
+        // decide what its minimal fallback still has to provide.
+        for (event, field) in [
+            ("hyprland.start", "startup"),
+            ("hyprland.shutdown", "shutdown"),
+        ] {
+            out += &format!("hl.on({}, function()\n", lua(&Value::String(event.into()))?);
+            for cmd in at(h, field)?
+                .as_array()
+                .ok_or_else(|| format!("{field} must be an array"))?
+            {
+                if cmd.as_str().is_none_or(|s| s.trim().is_empty()) {
+                    return Err(format!("{field} commands must be nonempty strings"));
+                }
+                out += &format!(" hl.exec_cmd({})\n", lua(cmd)?);
+            }
+            out += "end)\n";
+        }
+        out += "mios_state.hooks = true\n";
+        out += &format!("hl.config({})\nhl.monitor({})\n", lua(&config)?, lua(at(h, "monitor")?)?);
+        for rule in &monitor_rules {
+            out += &format!("hl.monitor({})\n", lua(rule)?);
+        }
+        // Float-first placement ([desktop.hyprland.placement], miosd placement): emitted before
+        // the SSOT window_rules so the PiP/dialog rules after it override its size and position.
+        // `float = false` keeps windows Hyprland already floats (parented dialogs, fixed-size
+        // windows) out of its static size, which is how `miosd placement serve` tells them apart.
+        // The size string mirrors `miosd placement rule-size` (placement::rule_size_expression).
+        if let Some(p) = h
+            .get("placement")
+            .filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true))
+        {
+            let n = |k: &str| -> Result<String, String> {
+                let v = p
+                    .get(k)
+                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .ok_or(format!("desktop.hyprland.placement.{k} must be a positive number"))?;
+                let s = format!("{v:.6}");
+                Ok(s.trim_end_matches('0').trim_end_matches('.').to_owned())
+            };
+            let (r, a) = (n("width_ratio")?, n("aspect")?);
+            let (minw, minh, maxw) = (n("min_width_px")?, n("min_height_px")?, n("max_width_px")?);
+            let (mwr, mhr) = (n("max_width_ratio")?, n("max_height_ratio")?);
+            let cap_w = format!("min(monitor_w*{mwr},{maxw})");
+            let cap_h = format!("monitor_h*{mhr}");
+            let land_w = format!("min(max(monitor_w*{r},{minw}),{cap_w})");
+            let land_h = format!("min(max(({land_w})/{a},{minh}),{cap_h})");
+            let port_h = format!("min(max(monitor_h*{r},{minh}),{cap_h})");
+            let port_w = format!("min(max(({port_h})/{a},{minw}),{cap_w})");
+            let tag = at(p, "open_tag")?
+                .as_str()
+                .filter(|t| {
+                    !t.is_empty()
+                        && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                })
+                .ok_or("desktop.hyprland.placement.open_tag must be [A-Za-z0-9_-]")?;
+            out += &format!(
+                "hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = \"(monitor_w>=monitor_h?min({land_w},monitor_w):min({port_w},monitor_w)) (monitor_w>=monitor_h?min({land_h},monitor_h):min({port_h},monitor_h))\", [\"tag\"] = \"+{tag}\"}})\n"
+            );
+        }
+        for rule in at(h, "window_rules")?.as_array().ok_or("window_rules must be an array")? {
+            if rule.as_table().is_none() {
+                return Err("window_rules entries must be tables".into());
+            }
+            out += &format!("hl.window_rule({})\n", lua(rule)?);
+        }
+        for (key, value) in at(h, "environment")?
+            .as_table()
+            .ok_or("environment must be a table")?
+        {
+            if matches!(key.as_str(), "AQ_DRM_DEVICES" | "WLR_DRM_DEVICES") {
+                continue;
+            }
+            out += &format!(
+                "hl.env({}, {})\n",
+                lua(&Value::String(key.clone()))?,
+                lua(value)?
+            );
+        }
+        let actions = at(data, "keybindings.actions")?
+            .as_array()
+            .ok_or("keybindings.actions must be an array")?;
+        let terminal = actions
+            .iter()
+            .find(|a| a.get("id").and_then(Value::as_str) == Some("terminal"))
+            .ok_or("Missing terminal action")?;
+        for key in ["Q", "Return"] {
+            out += &format!(
+                "hl.bind({} .. \" + {key}\", hl.dsp.exec_cmd({}))\n",
+                string(h, "main_modifier")?,
+                string(terminal, "desktop_command")?
+            );
+        }
+        for key in at(h, "launcher_keys")?
+            .as_array()
+            .ok_or("launcher_keys must be an array")?
+        {
+            out += &format!(
+                "hl.bind({} .. \" + \" .. {}, hl.dsp.exec_cmd({}))\n",
+                string(h, "main_modifier")?,
+                lua(key)?,
+                string(h, "launcher")?
+            );
+        }
+        for action in actions {
+            let modifier = at(data, "keybindings.desktop_modifier")?
+                .as_str()
+                .ok_or("Invalid desktop modifier")?
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" + ");
+            let key = at(action, "key")?.as_str().ok_or("Invalid action key")?;
+            out += &format!(
+                "hl.bind({}, hl.dsp.exec_cmd({}))\n",
+                lua(&Value::String(format!("{modifier} + {key}")))?,
+                string(action, "desktop_command")?
+            );
+        }
+        for bind in at(h, "bindings")?
+            .as_array()
+            .ok_or("bindings must be an array")?
+        {
+            let dispatcher = at(bind, "dispatcher")?
+                .as_str()
+                .ok_or("Invalid dispatcher")?;
+            if dispatcher.split('.').any(|part| {
+                part.is_empty() || !part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+            }) {
+                return Err("Invalid dispatcher identifier".into());
+            }
+            let args = bind.get("args").map(lua).transpose()?.unwrap_or_default();
+            let flags = bind
+                .get("flags")
+                .map(lua)
+                .transpose()?
+                .map(|s| format!(", {s}"))
+                .unwrap_or_default();
+            out += &format!(
+                "hl.bind({}, hl.dsp.{dispatcher}({args}){flags})\n",
+                string(bind, "key")?
+            );
+        }
+        // [desktop.screenshot] (mios-shot): keybinds, no-animation layer rules, screencopy permissions.
+        out += &screenshot_lua(data)?;
+        let count = at(h, "workspace_count")?
+            .as_integer()
+            .filter(|n| (1..=10).contains(n))
+            .ok_or("workspace_count must be 1..10")?;
+        out += &format!("for i = 1, {count} do\n local key = i % 10\n hl.bind({} .. \" + \" .. key, hl.dsp.focus({{ workspace = i }}))\n hl.bind({} .. \" + SHIFT + \" .. key, hl.dsp.window.move({{ workspace = i }}))\nend\n",string(h,"main_modifier")?,string(h,"main_modifier")?);
+        out += "mios_state.binds = true\n";
+        if let Some(glass) = h
+            .get("hyprglass")
+            .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
+        {
+            let path = string(glass, "path")?;
+            out += &format!("mios_section(\"hyprglass\", function()\nhl.plugin.load({path})\nif hl.plugin.hyprglass then\n local hg = hl.plugin.hyprglass\n");
+            if let Some(presets) = glass.get("presets").and_then(Value::as_table) {
+                for (name, preset) in presets {
+                    out += &format!(
+                        " hg.preset({}, {})\n",
+                        lua(&Value::String(name.clone()))?,
+                        lua(&glass_palette(preset, data)?)?
+                    );
+                }
+            }
+            // Keys only the MiOS hyprglass patch knows (hyprglass-mios-glass.patch: the edge pass over every
+            // window) go through their own pcall after everything else, so a plugin without the patch keeps
+            // the rest of its config and the failure is reported, not fatal.
+            let mut config = glass_palette(at(glass, "config")?, data)?;
+            let mut mios_keys = toml::map::Map::new();
+            if let Some(t) = config.as_table_mut() {
+                for k in HYPRGLASS_MIOS_KEYS {
+                    if let Some(v) = t.remove(*k) {
+                        mios_keys.insert((*k).into(), v);
+                    }
+                }
+            }
+            if let Some(gain) = mios_keys.get("edge_pass") {
+                let gain = gain.as_float().or_else(|| gain.as_integer().map(|i| i as f64));
+                if !gain.is_some_and(|g| (0.0..=4.0).contains(&g)) {
+                    return Err("[desktop.hyprland.hyprglass.config] edge_pass must be a gain in 0..=4 (0 = off)".into());
+                }
+            }
+            if let Some(width) = mios_keys.get("edge_pass_width") {
+                let width = width.as_float().or_else(|| width.as_integer().map(|i| i as f64));
+                if !width.is_some_and(|w| (0.0..=256.0).contains(&w)) {
+                    return Err("[desktop.hyprland.hyprglass.config] edge_pass_width must be 0..=256 logical px (0 = edge_thickness x the window's short side)".into());
+                }
+            }
+            out += &format!(" hg.config({})\n", lua(&config)?);
+            for namespace in at(glass, "layers")?
+                .as_array()
+                .ok_or("hyprglass.layers must be an array")?
+            {
+                out += &format!(" hg.layer({})\n", lua(namespace)?);
+            }
+            if !mios_keys.is_empty() {
+                out += &format!(
+                    " local mios_ok, mios_err = pcall(hg.config, {})\n mios_state.hyprglass_mios = mios_ok\n if not mios_ok then error(\"MiOS hyprglass keys (edge pass): \" .. tostring(mios_err)) end\n",
+                    lua(&Value::Table(mios_keys))?
+                );
+            }
+            out += "end\nend)\n";
+        }
+        if let Some(bars) = h
+            .get("hyprbars")
+            .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
+        {
+            let path = string(bars, "path")?;
+            let mut config = at(bars, "config")?.clone();
+            if let Some(cfg) = config.as_table_mut() {
+                // glass_preset = "<name>": the controls tab is the window's own glass. Its frost, tone and
+                // lights come from [desktop.hyprland.hyprglass.presets.<name>] (and that preset's
+                // <default_theme> table), the same values hyprglass draws the window body with; keys the
+                // preset leaves out fall back to hyprglass' own global / theme defaults.
+                if let Some(name) = cfg.remove("glass_preset") {
+                    let name = name.as_str().ok_or("hyprbars glass_preset must name a hyprglass preset")?;
+                    let glass = h.get("hyprglass").ok_or("hyprbars glass_preset needs [desktop.hyprland.hyprglass]")?;
+                    // The tab and its buttons are drawn BY hyprglass (MiOS patches: mios_hyprglass_draw_shape_v1)
+                    // with the window's preset; hyprbars finds the loaded plugin by this path.
+                    if glass.get("enabled").and_then(Value::as_bool) == Some(true) {
+                        cfg.insert("glass_plugin".into(), Value::String(string_value(glass, "path")?));
+                    }
+                    let preset = glass
+                        .get("presets")
+                        .and_then(|p| p.get(name))
+                        .ok_or_else(|| format!("hyprbars glass_preset: hyprglass preset {name} not found"))?;
+                    let preset = glass_palette(preset, data)?;
+                    let theme = glass.get("config").and_then(|c| c.get("default_theme")).and_then(Value::as_str).unwrap_or("dark");
+                    let dark = theme != "light";
+                    let themed = preset.get(theme);
+                    let num = |t: Option<&Value>, k: &str| {
+                        t.and_then(|t| t.get(k)).and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                    };
+                    let shared = |k: &str, d: f64| num(Some(&preset), k).unwrap_or(d);
+                    let toned = |k: &str, d: f64| num(themed, k).or_else(|| num(Some(&preset), k)).unwrap_or(d);
+                    let colour = |k: &str, d: i64| {
+                        themed.and_then(|t| t.get(k)).or_else(|| preset.get(k)).and_then(Value::as_integer).unwrap_or(d)
+                    };
+                    let r3 = |v: f64| Value::Float((v * 1000.0).round() / 1000.0);
+                    let pct = |v: f64| Value::Integer((v * 100.0).round().clamp(0.0, 100.0) as i64);
+                    let rgba = |c: i64| Value::String(format!("rgba({:08X})", c & 0xFFFF_FFFF));
+                    // hyprglass' kernel: radius blur_strength x 12 px, sigma radius / 3, blur_iterations
+                    // H+V passes -> one gaussian of sigma 4 x blur_strength x sqrt(blur_iterations)
+                    let (strength, iterations) = (shared("blur_strength", 2.0), shared("blur_iterations", 3.0).clamp(1.0, 5.0));
+                    cfg.insert("pill_blur_sigma".into(), r3(4.0 * strength * iterations.sqrt()));
+                    cfg.insert("pill_sheen".into(), pct(shared("specular_strength", 0.8)));
+                    cfg.insert("pill_edge".into(), pct(shared("bevel_strength", 0.0)));
+                    cfg.insert("pill_fresnel".into(), pct(shared("fresnel_strength", 0.6)));
+                    cfg.insert("pill_dim".into(), pct(toned("adaptive_dim", if dark { 0.4 } else { 0.0 })));
+                    cfg.insert("pill_brightness".into(), r3(toned("brightness", if dark { 0.82 } else { 1.12 })));
+                    cfg.insert("pill_contrast".into(), r3(toned("contrast", if dark { 0.90 } else { 0.92 })));
+                    cfg.insert("pill_saturation".into(), r3(toned("saturation", if dark { 0.80 } else { 0.85 })));
+                    cfg.insert("pill_vibrancy".into(), r3(toned("vibrancy", if dark { 0.15 } else { 0.12 })));
+                    cfg.insert("pill_bevel_size".into(), r3(shared("bevel_size", 6.0)));
+                    cfg.insert("pill_edge_thickness".into(), r3(shared("edge_thickness", 0.06)));
+                    cfg.insert("pill_glass_tint".into(), rgba(colour("tint_color", 0x8899_aa22)));
+                    cfg.insert("pill_rim_color".into(), rgba(colour("fresnel_color", 0xffff_ff00)));
+                    cfg.insert("pill_bevel_color".into(), rgba(colour("bevel_color", 0xffff_ff00)));
+                }
+                // pill_alpha may name an SSOT percentage (e.g. "theme.opacity", the window colour's opacity).
+                if let Some(path) = cfg.get("pill_alpha").and_then(Value::as_str).map(str::to_owned) {
+                    let v = at(data, &path)?;
+                    let pctv = v
+                        .as_integer()
+                        .map(|i| i as f64)
+                        .or_else(|| v.as_float())
+                        .filter(|v| (0.0..=100.0).contains(v))
+                        .ok_or("hyprbars pill_alpha reference must name a 0..100 percentage")?;
+                    cfg.insert("pill_alpha".into(), Value::Float(pctv / 100.0));
+                }
+                // Palette references -> plugin colors: <role>_palette + <role>_alpha -> <role>_color.
+                for role in ["pill", "pill_rim"] {
+                    let Some(name) = cfg.remove(&format!("{role}_palette")) else { continue };
+                    let name = name.as_str().ok_or("hyprbars palette reference must name a color")?;
+                    let hex = at(data, &format!("colors.{name}"))?
+                        .as_str()
+                        .and_then(|c| c.strip_prefix('#'))
+                        .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+                        .ok_or("Invalid hyprbars palette color")?
+                        .to_owned();
+                    let alpha = cfg
+                        .remove(&format!("{role}_alpha"))
+                        .and_then(|v| v.as_float())
+                        .filter(|a| a.is_finite() && (0.0..=1.0).contains(a))
+                        .ok_or("hyprbars alpha must be 0..1")?;
+                    cfg.insert(format!("{role}_color"), Value::String(format!("rgba({hex}{:02X})", (alpha * 255.0).round() as u8)));
+                }
+            }
+            // Keys only the MiOS hyprbars patch knows: their own pcall'd hl.config after the buttons.
+            let mut mios_keys = toml::map::Map::new();
+            if let Some(t) = config.as_table_mut() {
+                for k in HYPRBARS_MIOS_KEYS {
+                    if let Some(v) = t.remove(*k) {
+                        mios_keys.insert((*k).into(), v);
+                    }
+                }
+            }
+            if let Some(g) = mios_keys.get("button_glass") {
+                let g = g.as_float().or_else(|| g.as_integer().map(|i| i as f64));
+                if !g.is_some_and(|g| (0.0..=1.0).contains(&g)) {
+                    return Err("[desktop.hyprland.hyprbars.config] button_glass must be 0..=1 (0 = flat buttons)".into());
+                }
+            }
+            mios_keys.extend(hyprbars_mobile_keys(bars, data)?);
+            let mut table = toml::map::Map::new();
+            table.insert("hyprbars".into(), config);
+            let mut plugin = toml::map::Map::new();
+            plugin.insert("plugin".into(), Value::Table(table));
+            out += &format!(
+                "mios_section(\"hyprbars\", function()\nhl.plugin.load({path})\nif hl.plugin.hyprbars then\n hl.config({})\n",
+                lua(&Value::Table(plugin))?
+            );
+            let rgb = |key: &str| -> Result<Value, String> {
+                let color = at(data, &format!("colors.{key}"))?.as_str().ok_or("Bar color must be a string")?;
+                let hex = color
+                    .strip_prefix('#')
+                    .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+                    .ok_or("Invalid hyprbars palette color")?;
+                Ok(Value::String(format!("rgb({hex})")))
+            };
+            for button in at(bars, "buttons")?.as_array().ok_or("hyprbars.buttons must be an array")? {
+                let mut b = toml::map::Map::new();
+                let name = |k: &str| at(button, k)?.as_str().ok_or_else(|| format!("hyprbars button {k} must be a palette name"));
+                b.insert("bg_color".into(), rgb(name("palette")?)?);
+                b.insert("fg_color".into(), rgb(name("icon_palette")?)?);
+                b.insert("size".into(), at(button, "size")?.clone());
+                b.insert("icon".into(), at(button, "icon")?.clone());
+                b.insert("action".into(), at(button, "action")?.clone());
+                out += &format!(" hl.plugin.hyprbars.add_button({})\n", lua(&Value::Table(b))?);
+            }
+            if !mios_keys.is_empty() {
+                let mut table = toml::map::Map::new();
+                table.insert("hyprbars".into(), Value::Table(mios_keys));
+                let mut plugin = toml::map::Map::new();
+                plugin.insert("plugin".into(), Value::Table(table));
+                // mios_state.hyprbars_mobile: the plugin took the mobile-tab keys, so the mobile profile may
+                // put its windows on hyprbars:mobile tabs (else the shell draws them).
+                out += &format!(
+                    " local mios_ok, mios_err = pcall(hl.config, {})\n mios_state.hyprbars_mobile = mios_ok\n if not mios_ok then error(\"MiOS hyprbars keys (glass tab, mobile tabs): \" .. tostring(mios_err)) end\n",
+                    lua(&Value::Table(plugin))?
+                );
+            }
+            out += "end\nend)\n";
+        }
+        // Named bezier curves ([desktop.hyprland].curves) the animation leaves below may reference.
+        for curve in h.get("curves").and_then(Value::as_array).into_iter().flatten() {
+            let name = curve
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric()))
+                .ok_or("desktop.hyprland.curves name must be alphanumeric")?;
+            let pts = curve
+                .get("points")
+                .and_then(Value::as_array)
+                .filter(|p| {
+                    p.len() == 2
+                        && p.iter().all(|xy| {
+                            xy.as_array().is_some_and(|v| v.len() == 2 && v.iter().all(|n| n.as_float().or(n.as_integer().map(|i| i as f64)).is_some_and(f64::is_finite)))
+                        })
+                })
+                .ok_or(format!("desktop.hyprland.curves {name} needs points = [[x1, y1], [x2, y2]]"))?;
+            let mut c = toml::map::Map::new();
+            c.insert("type".into(), Value::String("bezier".into()));
+            c.insert("points".into(), Value::Array(pts.clone()));
+            out += &format!("hl.curve({}, {})\n", lua(&Value::String(name.into()))?, lua(&Value::Table(c))?);
+        }
+        // Animation tree leaves ([desktop.hyprland].animations): one hl.animation per entry, so the
+        // compositor's own fades and window motion are timed to the SSOT window effects.
+        for anim in h.get("animations").and_then(Value::as_array).into_iter().flatten() {
+            let leaf = anim
+                .get("leaf")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric()))
+                .ok_or("desktop.hyprland.animations leaf must name an animation tree leaf")?;
+            let mut a = toml::map::Map::new();
+            a.insert("leaf".into(), Value::String(leaf.into()));
+            a.insert("enabled".into(), anim.get("enabled").cloned().unwrap_or(Value::Boolean(true)));
+            for key in ["speed", "bezier", "spring", "style"] {
+                if let Some(v) = anim.get(key) {
+                    a.insert(key.into(), v.clone());
+                }
+            }
+            if !a.contains_key("speed") {
+                return Err(format!("desktop.hyprland.animations {leaf} needs a speed"));
+            }
+            out += &format!("hl.animation({})\n", lua(&Value::Table(a))?);
+        }
+        // Window open/close shader animations ([desktop.hyprland.windowshade], HyprWindowShade).
+        // `// @palette <key>` lines in the vendor shaders are rewritten from [colors] into
+        // $XDG_RUNTIME_DIR at login; a global `_default` tag pair gives every window the SSOT
+        // effect and each override's specific tag outranks it. Layer shells are never animated.
+        if let Some(fx) = h
+            .get("windowshade")
+            .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
+        {
+            let name_ok = |s: &&str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+            let effect = |v: &Value, k: &str| -> Result<String, String> {
+                v.get(k)
+                    .and_then(Value::as_str)
+                    .filter(name_ok)
+                    .map(str::to_owned)
+                    .ok_or(format!("desktop.hyprland.windowshade {k} must name a shader in shader_dir"))
+            };
+            let (open, close) = (effect(fx, "open")?, effect(fx, "close")?);
+            let overrides = fx.get("overrides").and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut names = vec![open.clone(), close.clone()];
+            for o in &overrides {
+                for k in ["open", "close"] {
+                    if o.get(k).is_some() {
+                        names.push(effect(o, k)?);
+                    }
+                }
+            }
+            names.sort();
+            names.dedup();
+            let mut palette = toml::map::Map::new();
+            for (k, v) in at(data, "colors")?.as_table().ok_or("colors must be a table")? {
+                if let Some(hex) = v
+                    .as_str()
+                    .and_then(|c| c.strip_prefix('#'))
+                    .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+                {
+                    palette.insert(k.clone(), Value::String(hex.to_owned()));
+                }
+            }
+            out += &format!(
+                "mios_section(\"windowshade\", function()\nhl.plugin.load({})\nlocal mios_fx = (os.getenv(\"XDG_RUNTIME_DIR\") or \"/tmp\") .. \"/mios-shader-\"\ndo\n local palette = {}\n local src = {} .. \"/\"\n for _, name in ipairs({}) do\n  local i = io.open(src .. name .. \".glsl\", \"r\")\n  if i then\n   local s = i:read(\"a\")\n   i:close()\n   s = s:gsub(\"vec3%b()(;%s*// @palette ([%w_]+))\", function(rest, key)\n    local h = palette[key]\n    if not h then return nil end\n    return string.format(\"vec3(%.4f, %.4f, %.4f)%s\", tonumber(h:sub(1, 2), 16) / 255, tonumber(h:sub(3, 4), 16) / 255, tonumber(h:sub(5, 6), 16) / 255, rest)\n   end)\n   local o = io.open(mios_fx .. name .. \".glsl\", \"w\")\n   if o then o:write(s) o:close() end\n  end\n end\nend\n",
+                string(fx, "path")?,
+                lua(&Value::Table(palette))?,
+                string(fx, "shader_dir")?,
+                lua(&Value::Array(names.into_iter().map(Value::String).collect()))?
+            );
+            for (kind, eff) in [("open", &open), ("close", &close)] {
+                out += &format!("hl.window_rule({{[\"name\"] = \"mios-fx-{kind}\", [\"match\"] = {{[\"class\"] = \".*\"}}, [\"tag\"] = \"+shader_{kind}_default:\" .. mios_fx .. \"{eff}.glsl\"}})\n");
+            }
+            for o in &overrides {
+                let name = o
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(name_ok)
+                    .ok_or("windowshade override name must be [A-Za-z0-9_-]")?;
+                let m = lua(o.get("match").filter(|m| m.is_table()).ok_or("windowshade overrides need a match table")?)?;
+                for kind in ["open", "close"] {
+                    if o.get(kind).is_some() {
+                        let eff = effect(o, kind)?;
+                        out += &format!("hl.window_rule({{[\"name\"] = \"{name}-{kind}\", [\"match\"] = {m}, [\"tag\"] = \"+shader_{kind}:\" .. mios_fx .. \"{eff}.glsl\"}})\n");
+                    }
+                }
+            }
+            out += "end)\n";
+        }
+        // Wobbly floating windows ([desktop.hyprland.mios-wobbly]): every window carries `tag`,
+        // `exclude` matches carry `exclude_tag`; the plugin only deforms floating windows.
+        if let Some(wob) = h
+            .get("mios-wobbly")
+            .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
+        {
+            let tag_of = |k: &str| -> Result<String, String> {
+                wob.get(k)
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+                    .map(str::to_owned)
+                    .ok_or(format!("desktop.hyprland.mios-wobbly.{k} must be [A-Za-z0-9_-]"))
+            };
+            let (tag, skip) = (tag_of("tag")?, tag_of("exclude_tag")?);
+            let mut cfg = wob.get("config").and_then(Value::as_table).cloned().unwrap_or_default();
+            cfg.insert("tag".into(), Value::String(tag.clone()));
+            cfg.insert("exclude_tag".into(), Value::String(skip.clone()));
+            let mut plugin = toml::map::Map::new();
+            plugin.insert("mios_wobbly".into(), Value::Table(cfg));
+            let mut table = toml::map::Map::new();
+            table.insert("plugin".into(), Value::Table(plugin));
+            out += &format!(
+                "mios_section(\"mios-wobbly\", function()\nhl.plugin.load({})\npcall(hl.config, {})\nhl.window_rule({{[\"name\"] = \"mios-wobbly\", [\"match\"] = {{[\"class\"] = \".*\"}}, [\"tag\"] = \"+{tag}\"}})\n",
+                string(wob, "path")?,
+                lua(&Value::Table(table))?
+            );
+            for (n, ex) in wob.get("exclude").and_then(Value::as_array).into_iter().flatten().enumerate() {
+                let m = lua(ex.get("match").filter(|m| m.is_table()).ok_or("mios-wobbly exclude entries need a match table")?)?;
+                out += &format!("hl.window_rule({{[\"name\"] = \"mios-wobbly-skip-{n}\", [\"match\"] = {m}, [\"tag\"] = \"+{skip}\"}})\n");
+            }
+            out += "end)\n";
+        }
+        // Magic lamp ([desktop.hyprland.lamp], inside the mios-wobbly plugin); additive, see lamp_profile below.
+        out += &lamp_profile(data)?;
+        // Mobile layout profile ([desktop.mobile]); additive, see mobile_profile below.
+        out += &mobile_profile(data)?;
+        Ok(out)
+    }
+
+    // ---- Mobile layout profile ([desktop.mobile]) -- mobile lane, additive -----------------------
+    // Self-contained: only `project` calls it (one line, last section). It touches no other section,
+    // escaper or session code and reuses only `lua` for literals.
+
+    /// Runtime chunk start/end markers; tests and tools cut the profile out of a full projection by them.
+    pub const MOBILE_BEGIN: &str = "-- MiOS mobile layout profile ([desktop.mobile])";
+    pub const MOBILE_END: &str = "-- end MiOS mobile layout profile";
+
+    /// Lua body of the profile; `@@KEY@@` placeholders are filled by [`mobile_profile`].
+    const MOBILE_LUA: &str = r#"-- Every output (local or remote per applies_to; remote = connector name starts with a
+-- remote_name_prefixes entry, the RDP virtual display being a Hyprland headless output) is run
+-- through the global scale policy ([desktop.scaling], mios_scale_policy below: density from the
+-- client DPI hint / EDID mm / resolution x viewing distance x orientation). Its scale is applied to
+-- outputs without an operator-saved scale when apply_to allows (deferred to a one-shot timer, never
+-- inside the event), and its mobile flag (logical short side under the breakpoint) selects the
+-- phone profile: a per-output workspace rule (one-window layout, no top gap so the window meets the
+-- shell's shoulders) and a window rule that tiles new windows there. Mobile windows keep the GLOBAL
+-- decoration (rounding, border, shadow, hyprglass) exactly like desktop windows. Their controls:
+-- hyprbars_tab = "mobile" puts them on the window's own glass split into two touch tabs (hyprbars:mobile,
+-- when the plugin took the mobile keys: mios_state.hyprbars_mobile; otherwise the shell draws them),
+-- false hides the hyprbars tab (the shell draws the controls), true keeps the desktop tab. Without
+-- [desktop.scaling] the legacy rule applies (portrait, or narrower than breakpoint_px). Rules are
+-- made when such an output appears and enabled/disabled as outputs come, go, rotate or rescale
+-- (monitor.added/removed/layout_changed); nothing is keyed to an output name except the operator's
+-- saved scales (EXPLICIT). Windows on outputs of an origin in remote_effects.applies_to (the RDP
+-- display) are tagged with the remote glass preset FX (a copy of the desktop preset with fewer blur
+-- passes and no specular/fresnel/chromatic extras: cheaper to render and capture). The verdict is
+-- published for Quickshell (Mobile.qml) in $XDG_RUNTIME_DIR/mios-mobile-outputs.json; remote DPI
+-- hints are read from $XDG_RUNTIME_DIR/mios-display-hints.json ({"outputs": {"<name>": {"dpi": N}}}).
+do
+ local ok, err = pcall(function()
+  local M = {enabled = @@ENABLED@@, portrait = @@PORTRAIT@@, breakpoint = @@BREAKPOINT@@, applies = @@APPLIES@@,
+   prefixes = @@PREFIXES@@, layout = @@LAYOUT@@, gaps_in = @@GAPS_IN@@, gaps_out = @@GAPS_OUT@@,
+   hyprbars_tab = @@HYPRBARS_TAB@@}
+  local config_json = @@JSON@@
+  local S = @@SCALING@@
+  local EXPLICIT = @@EXPLICIT@@
+  local FX = @@FX@@
+@@POLICY_FN@@
+  local rules, fxrules, applied, timers = {}, {}, {}, {}
+  -- The remote glass preset exists only if hyprglass is loaded; without it nothing is tagged.
+  if FX then
+   local hg = hl.plugin and hl.plugin.hyprglass
+   local okp, e = false, "hyprglass not loaded"
+   if hg and type(hg.preset) == "function" then okp, e = pcall(hg.preset, FX.preset, FX.spec) end
+   if not okp then
+    if hg and io and io.stderr then io.stderr:write("MiOS: remote glass preset: " .. tostring(e) .. "\n") end
+    FX = nil
+   elseif type(hg.layer) == "function" then
+    -- shell layers opt in by namespace (<ns>-remote, Mobile.layerNamespace): hyprglass layer presets
+    -- are per namespace, not per output
+    for _, ns in ipairs(FX.layers) do pcall(hg.layer, ns .. "-remote", {preset = FX.preset}) end
+   end
+  end
+  local bars = hl.plugin ~= nil and hl.plugin.hyprbars ~= nil
+  local MS = rawget(_G, "MIOS_SESSION") or {}
+  -- the plugin's split touch tabs need the MiOS patch's mobile keys to have been accepted
+  local mobiletabs = M.hyprbars_tab == "mobile" and bars and MS.hyprbars_mobile == true
+  local nobar = M.hyprbars_tab ~= true and bars
+  local tabs_live = false
+  local function origin(name)
+   for _, p in ipairs(M.prefixes) do
+    if name:sub(1, #p) == p then return "remote" end
+   end
+   return "local"
+  end
+  local function logical(m)
+   local w, h, s = tonumber(m.width) or 0, tonumber(m.height) or 0, tonumber(m.scale) or 1
+   if s <= 0 then s = 1 end
+   if (tonumber(m.transform) or 0) % 2 == 1 then w, h = h, w end
+   return math.floor(w / s + 0.5), math.floor(h / s + 0.5)
+  end
+  local function is_mobile(name, w, h)
+   if not M.enabled or w <= 0 or h <= 0 or not M.applies[origin(name)] then return false end
+   return (M.portrait and h > w) or w < M.breakpoint
+  end
+  local function dpi_hints()
+   local hints, dir = {}, os and os.getenv and os.getenv("XDG_RUNTIME_DIR")
+   local f = dir and io and io.open and io.open(dir .. "/mios-display-hints.json")
+   if not f then return hints end
+   local j = f:read("*a") or ""
+   f:close()
+   local body = j:match('"outputs"%s*:%s*(%b{})') or ""
+   for name, o in body:gmatch('"([%w_%-]+)"%s*:%s*(%b{})') do
+    local d = tonumber(o:match('"dpi"%s*:%s*([%d%.]+)'))
+    if d and d > 0 then hints[name] = d end
+   end
+   return hints
+  end
+  -- Policy verdict for one output; the legacy breakpoint rule when [desktop.scaling] is absent.
+  local function decide(m, name, lw, lh, hints)
+   local cur = tonumber(m.scale) or 1
+   if not S then
+    return {mobile = is_mobile(name, lw, lh), scale = cur, scale_120 = math.floor(cur * 120 + 0.5),
+     logical_width = lw, logical_height = lh, explicit = false, auto_apply = false, source = "legacy", dpi = 0}
+   end
+   local d = mios_scale_policy(S, {width = m.width, height = m.height, pw = m.physical_width, ph = m.physical_height,
+    dpi = hints[name], transform = m.transform, remote = origin(name) == "remote", explicit = EXPLICIT[name]})
+   d.mobile = (M.enabled and M.applies[origin(name)] and d.mobile) and true or false
+   return d
+  end
+  -- Apply the policy scale to a non-explicit output: once per (mode, transform, scale), so a scale
+  -- Hyprland substitutes can never loop, and from a one-shot timer, never inside the event itself.
+  local function schedule(m, name, d)
+   local cur = tonumber(m.scale) or 1
+   if not d.auto_apply or math.abs(cur * 120 - d.scale_120) < 0.5 then return end
+   local key = string.format("%dx%d:%d:%d", tonumber(m.width) or 0, tonumber(m.height) or 0, tonumber(m.transform) or 0, d.scale_120)
+   if applied[name] == key or type(hl.timer) ~= "function" or type(hl.monitor) ~= "function" then return end
+   applied[name] = key
+   local spec = {output = name, scale = d.scale, transform = tonumber(m.transform) or 0,
+    mode = string.format("%dx%d@%.3f", tonumber(m.width) or 0, tonumber(m.height) or 0, tonumber(m.refresh_rate) or 60),
+    position = string.format("%dx%d", tonumber(m.x) or 0, tonumber(m.y) or 0)}
+   timers[name] = hl.timer(function()
+    timers[name] = nil
+    local oka, e = pcall(hl.monitor, spec)
+    if not oka and io and io.stderr then io.stderr:write("MiOS: scale policy: " .. tostring(e) .. "\n") end
+   end, {timeout = 1, type = "oneshot"})
+  end
+  local function apply(name, on)
+   local r = rules[name]
+   if on and not r then
+    local sel = "m[" .. name .. "]"
+    -- layout and gaps only: mobile windows inherit the global decoration (rounding, border, glass)
+    rules[name] = {
+     hl.workspace_rule({workspace = sel, layout = M.layout, gaps_in = M.gaps_in,
+      gaps_out = {top = 0, right = M.gaps_out, bottom = M.gaps_out, left = M.gaps_out}}),
+     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false}, tile = true}),
+    }
+    local tabbed = false
+    if mobiletabs then
+     local okt, rt = pcall(hl.window_rule, {name = "mios-mobile-tabs-" .. name, match = {workspace = sel}, ["hyprbars:mobile"] = true})
+     if okt and rt then table.insert(rules[name], rt) tabbed = true end
+    end
+    if tabbed then
+     tabs_live = true
+    elseif nobar then
+     local okb, rb = pcall(hl.window_rule, {name = "mios-mobile-nobar-" .. name, match = {workspace = sel}, ["hyprbars:no_bar"] = true})
+     if okb and rb then table.insert(rules[name], rb) end
+    end
+   elseif r then
+    for _, rule in ipairs(r) do pcall(rule.set_enabled, rule, on) end
+   end
+  end
+  -- Remote glass preset on every window of a remote_effects output (dynamic tag: a window moved to
+  -- a local output loses it).
+  local function apply_fx(name, on)
+   if not FX then return end
+   local r = fxrules[name]
+   if on and not r then
+    local okr, rr = pcall(hl.window_rule, {name = "mios-remote-fx-" .. name, match = {workspace = "m[" .. name .. "]"},
+     tag = "+hyprglass_preset_" .. FX.preset})
+    if okr and rr then fxrules[name] = rr end
+   elseif r then
+    pcall(r.set_enabled, r, on)
+   end
+  end
+  local function jstr(s)
+   return '"' .. (tostring(s):gsub('[%c"\\]', function(c) return string.format("\\u%04x", c:byte()) end)) .. '"'
+  end
+  local function publish(state)
+   local dir = os and os.getenv and os.getenv("XDG_RUNTIME_DIR")
+   if not dir or not io or not io.open then return end
+   local path = dir .. "/mios-mobile-outputs.json"
+   local names, parts = {}, {}
+   for name in pairs(state) do names[#names + 1] = name end
+   table.sort(names)
+   for _, name in ipairs(names) do
+    local s = state[name]
+    local d = s.d
+    parts[#parts + 1] = string.format('%s: {"mobile": %s, "origin": %s, "logical_width": %d, "logical_height": %d, '
+     .. '"scale": %.6g, "scale_120": %d, "applied_scale": %.6g, "policy_logical_width": %d, "policy_logical_height": %d, '
+     .. '"explicit": %s, "auto_apply": %s, "source": %s, "dpi": %.1f, "glass_preset": %s}',
+     jstr(name), tostring(s.mobile), jstr(s.origin), s.w, s.h,
+     d.scale, d.scale_120, s.applied, d.logical_width, d.logical_height,
+     tostring(d.explicit), tostring(d.auto_apply), jstr(d.source), tonumber(d.dpi) or 0, jstr(s.fx or ""))
+   end
+   local f = io.open(path .. ".new", "w")
+   if not f then return end
+   -- hyprbars_tabs: the plugin draws the mobile controls (hyprbars:mobile rule live); the shell then draws none
+   f:write('{"version": 1, "hyprbars_tabs": ' .. tostring(tabs_live) .. ', "outputs": {' .. table.concat(parts, ", ") .. '}, "config": ' .. config_json .. '}\n')
+   f:close()
+   os.rename(path .. ".new", path)
+  end
+  local function reconcile(added)
+   local state, list = {}, hl.get_monitors() or {}
+   if type(list) ~= "table" then list = {} end
+   if added ~= nil then list[#list + 1] = added end
+   local hints = S and dpi_hints() or {}
+   for i = 1, #list do
+    local m = list[i]
+    local okm, name, w, h = pcall(function() local lw, lh = logical(m) return m.name, lw, lh end)
+    if okm and type(name) == "string" and name:match("^[%w_%-]+$") and not state[name] then
+     local okd, d = pcall(decide, m, name, w, h, hints)
+     if not okd then
+      if io and io.stderr then io.stderr:write("MiOS: scale policy: " .. tostring(d) .. "\n") end
+      d = {mobile = is_mobile(name, w, h), scale = tonumber(m.scale) or 1, scale_120 = 120, logical_width = w,
+       logical_height = h, explicit = false, auto_apply = false, source = "error", dpi = 0}
+     end
+     local fx = FX and FX.applies[origin(name)] and FX.preset or nil
+     state[name] = {mobile = d.mobile, origin = origin(name), w = w, h = h, applied = tonumber(m.scale) or 1, d = d, fx = fx}
+     apply(name, d.mobile)
+     apply_fx(name, fx ~= nil)
+     pcall(schedule, m, name, d)
+    end
+   end
+   for name in pairs(rules) do
+    if not (state[name] and state[name].mobile) then apply(name, false) end
+   end
+   for name in pairs(fxrules) do
+    if not (state[name] and state[name].fx) then apply_fx(name, false) end
+   end
+   publish(state)
+  end
+  local function guarded(fn)
+   return function(...)
+    local okc, e = pcall(fn, ...)
+    if not okc and io and io.stderr then io.stderr:write("MiOS: mobile profile: " .. tostring(e) .. "\n") end
+   end
+  end
+  hl.on("monitor.added", guarded(function(m) reconcile(m) end))
+  hl.on("monitor.removed", guarded(function() reconcile() end))
+  hl.on("monitor.layout_changed", guarded(function() reconcile() end))
+  reconcile()
+ end)
+ if not ok and io and io.stderr then io.stderr:write("MiOS: Hyprland mobile section failed: " .. tostring(err) .. "\n") end
+end
+"#;
+
+    /// Project [desktop.mobile] into the runtime per-output mobile profile (see [`MOBILE_LUA`]).
+    /// An absent table projects nothing; every key is validated here, including the ones only the
+    /// shell reads (they reach Quickshell inside the published JSON).
+    pub fn mobile_profile(data: &Value) -> Result<String, String> {
+        let Some(m) = data.get("desktop").and_then(|d| d.get("mobile")) else {
+            return Ok(String::new());
+        };
+        let t = m.as_table().ok_or("desktop.mobile must be a table")?;
+        let flag = |k: &str| -> Result<bool, String> {
+            t.get(k).and_then(Value::as_bool).ok_or(format!("desktop.mobile.{k} must be a boolean"))
+        };
+        let int = |k: &str, lo: i64, hi: i64| -> Result<i64, String> {
+            t.get(k)
+                .and_then(Value::as_integer)
+                .filter(|v| (lo..=hi).contains(v))
+                .ok_or(format!("desktop.mobile.{k} must be an integer in {lo}..={hi}"))
+        };
+        let strings = |k: &str| -> Result<Vec<String>, String> {
+            t.get(k)
+                .and_then(Value::as_array)
+                .ok_or(format!("desktop.mobile.{k} must be an array of strings"))?
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned).ok_or(format!("desktop.mobile.{k} must be an array of strings")))
+                .collect()
+        };
+        let ident = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+        let (enabled, portrait) = (flag("enabled")?, flag("portrait")?);
+        let breakpoint = int("breakpoint_px", 1, 16384)?;
+        let (gaps_in, gaps_out) = (int("gaps_in_px", 0, 256)?, int("gaps_out_px", 0, 256)?);
+        // Mobile windows follow the GLOBAL decoration (rounding, border, shadow, hyprglass): the old
+        // per-profile overrides squared phone windows off. Absent or "inherit" only.
+        for k in ["window_border", "window_rounding", "window_decorations"] {
+            match t.get(k) {
+                None => {}
+                Some(Value::String(s)) if s == "inherit" => {}
+                Some(_) => {
+                    return Err(format!(
+                        "desktop.mobile.{k}: mobile windows use the global [desktop.hyprland] decoration (rounding, border, glass); remove the key or set \"inherit\""
+                    ))
+                }
+            }
+        }
+        // "mobile" = the window's own glass split into two touch tabs (hyprbars:mobile), false = no hyprbars tab
+        // (the shell draws the controls), true = the desktop tab on phones too.
+        let hyprbars_tab = match t.get("hyprbars_tab") {
+            None => "false".to_string(),
+            Some(Value::Boolean(b)) => b.to_string(),
+            Some(Value::String(s)) if s == "mobile" => "\"mobile\"".to_string(),
+            Some(_) => return Err("desktop.mobile.hyprbars_tab must be \"mobile\", true or false".into()),
+        };
+        let fx = remote_effects(data, t)?;
+        int("notch_gap_px", 0, 256)?;
+        int("shoulder_dot_px", 2, 128)?;
+        flag("app_menu")?;
+        let applies = strings("applies_to")?;
+        if applies.is_empty() || applies.iter().any(|s| s != "local" && s != "remote") {
+            return Err("desktop.mobile.applies_to must list \"local\" and/or \"remote\"".into());
+        }
+        let prefixes = strings("remote_name_prefixes")?;
+        if prefixes.iter().any(|p| !ident(p)) {
+            return Err("desktop.mobile.remote_name_prefixes entries must be [A-Za-z0-9_-]".into());
+        }
+        let layout = t
+            .get("layout")
+            .and_then(Value::as_str)
+            .filter(|s| matches!(*s, "monocle" | "dwindle" | "master" | "scrolling"))
+            .ok_or("desktop.mobile.layout must be monocle|dwindle|master|scrolling")?;
+        for (i, c) in t
+            .get("window_controls")
+            .and_then(Value::as_array)
+            .ok_or("desktop.mobile.window_controls must be an array of tables")?
+            .iter()
+            .enumerate()
+        {
+            for k in ["label", "icon", "action"] {
+                c.get(k)
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or(format!("desktop.mobile.window_controls[{i}].{k} must be a nonempty string"))?;
+            }
+        }
+        let mut applies_t = toml::map::Map::new();
+        for a in &applies {
+            applies_t.insert(a.clone(), Value::Boolean(true));
+        }
+        let json = serde_json::to_string(m).map_err(|e| e.to_string())?;
+        // Global scale policy ([desktop.scaling]); absent = the legacy breakpoint rule above.
+        let (scaling, policy_fn) = if data.get("desktop").and_then(|d| d.get("scaling")).is_some() {
+            let p = crate::display_scale::Policy::from_ssot(data)?;
+            (p.lua_table(), crate::display_scale::LUA.to_string())
+        } else {
+            ("nil".to_string(), String::new())
+        };
+        let explicit = explicit_scales(data)?;
+        let body = MOBILE_LUA
+            .replace("@@ENABLED@@", &enabled.to_string())
+            .replace("@@PORTRAIT@@", &portrait.to_string())
+            .replace("@@BREAKPOINT@@", &breakpoint.to_string())
+            .replace("@@APPLIES@@", &lua(&Value::Table(applies_t))?)
+            .replace(
+                "@@PREFIXES@@",
+                &lua(&Value::Array(prefixes.into_iter().map(Value::String).collect()))?,
+            )
+            .replace("@@LAYOUT@@", &lua(&Value::String(layout.into()))?)
+            .replace("@@GAPS_IN@@", &gaps_in.to_string())
+            .replace("@@GAPS_OUT@@", &gaps_out.to_string())
+            .replace("@@HYPRBARS_TAB@@", &hyprbars_tab)
+            .replace("@@FX@@", &fx)
+            .replace("@@JSON@@", &lua(&Value::String(json))?)
+            .replace("@@SCALING@@", &scaling)
+            .replace("@@EXPLICIT@@", &lua(&Value::Table(explicit))?)
+            .replace("@@POLICY_FN@@\n", &policy_fn);
+        Ok(format!("{MOBILE_BEGIN}\n{body}{MOBILE_END}\n"))
+    }
+
+    /// Preset keys of [desktop.mobile.remote_effects].overrides: only knobs that make the remote glass
+    /// cheaper or plainer (fewer blur passes, weaker optics). Colours stay the base preset's (parity).
+    const REMOTE_FX_KEYS: [&str; 9] = [
+        "blur_iterations",
+        "blur_strength",
+        "specular_strength",
+        "fresnel_strength",
+        "chromatic_aberration",
+        "refraction_strength",
+        "lens_distortion",
+        "bevel_strength",
+        "edge_thickness",
+    ];
+
+    /// [desktop.mobile.remote_effects] -> Lua literal `{preset, applies, spec}` (or `nil`): the remote
+    /// glass preset is the base hyprglass preset ([desktop.hyprland.hyprglass.presets.<base_preset>],
+    /// palette-resolved exactly as the hyprglass section projects it) with `overrides` on top, so it
+    /// keeps the desktop glass' colours and blur strength while doing less work per frame.
+    pub fn remote_effects(data: &Value, mobile: &toml::map::Map<String, Value>) -> Result<String, String> {
+        let Some(fx) = mobile.get("remote_effects") else {
+            return Ok("nil".into());
+        };
+        let fx = fx.as_table().ok_or("desktop.mobile.remote_effects must be a table")?;
+        let enabled = fx
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or("desktop.mobile.remote_effects.enabled must be a boolean")?;
+        let ident = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+        let preset = fx
+            .get("preset")
+            .and_then(Value::as_str)
+            .filter(|s| ident(s))
+            .ok_or("desktop.mobile.remote_effects.preset must name a preset [A-Za-z0-9_-]")?;
+        let base_name = fx
+            .get("base_preset")
+            .and_then(Value::as_str)
+            .filter(|s| ident(s))
+            .ok_or("desktop.mobile.remote_effects.base_preset must name a [desktop.hyprland.hyprglass.presets] entry")?;
+        if preset == base_name {
+            return Err("desktop.mobile.remote_effects.preset must differ from base_preset (it would replace the desktop glass)".into());
+        }
+        let applies: Vec<&str> = fx
+            .get("applies_to")
+            .and_then(Value::as_array)
+            .ok_or("desktop.mobile.remote_effects.applies_to must list \"local\" and/or \"remote\"")?
+            .iter()
+            .map(|v| v.as_str().filter(|s| *s == "local" || *s == "remote"))
+            .collect::<Option<Vec<_>>>()
+            .filter(|v| !v.is_empty())
+            .ok_or("desktop.mobile.remote_effects.applies_to must list \"local\" and/or \"remote\"")?;
+        let overrides = fx
+            .get("overrides")
+            .and_then(Value::as_table)
+            .ok_or("desktop.mobile.remote_effects.overrides must be a table")?;
+        // shell layer namespaces whose `<ns>-remote` variant takes the remote preset (optional)
+        let layers: Vec<&str> = match fx.get("layer_namespaces") {
+            None => Vec::new(),
+            Some(v) => v
+                .as_array()
+                .and_then(|a| a.iter().map(|x| x.as_str().filter(|s| ident(s))).collect::<Option<Vec<_>>>())
+                .ok_or("desktop.mobile.remote_effects.layer_namespaces must list layer namespaces [A-Za-z0-9_-]")?,
+        };
+        let glass = data.get("desktop").and_then(|d| d.get("hyprland")).and_then(|h| h.get("hyprglass"));
+        let base = glass
+            .and_then(|g| g.get("presets"))
+            .and_then(|p| p.get(base_name))
+            .and_then(Value::as_table)
+            .ok_or_else(|| format!("desktop.mobile.remote_effects.base_preset: hyprglass preset {base_name} not found"))?;
+        let num = |v: &Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)).filter(|x| x.is_finite());
+        let mut spec = base.clone();
+        for (k, v) in overrides {
+            if !REMOTE_FX_KEYS.contains(&k.as_str()) {
+                return Err(format!(
+                    "desktop.mobile.remote_effects.overrides.{k}: not a remote glass knob ({})",
+                    REMOTE_FX_KEYS.join(", ")
+                ));
+            }
+            let x = num(v).filter(|x| *x >= 0.0).ok_or(format!("desktop.mobile.remote_effects.overrides.{k} must be a number >= 0"))?;
+            // cheaper, never costlier than the desktop glass
+            if let Some(b) = base.get(k).and_then(num) {
+                if x > b + 1e-9 {
+                    return Err(format!("desktop.mobile.remote_effects.overrides.{k} = {x} exceeds the base preset's {b}"));
+                }
+            }
+            if k == "blur_iterations" {
+                if x < 1.0 || x.fract() != 0.0 {
+                    return Err("desktop.mobile.remote_effects.overrides.blur_iterations must be an integer >= 1".into());
+                }
+                spec.insert(k.clone(), Value::Integer(x as i64));
+            } else {
+                spec.insert(k.clone(), Value::Float(x));
+            }
+        }
+        let glass_on = glass.and_then(|g| g.get("enabled")).and_then(Value::as_bool) == Some(true);
+        if !enabled || !glass_on {
+            return Ok("nil".into());
+        }
+        let spec = glass_palette(&Value::Table(spec), data)?;
+        let mut applies_t = toml::map::Map::new();
+        for a in applies {
+            applies_t.insert(a.to_string(), Value::Boolean(true));
+        }
+        let layers_v = Value::Array(layers.iter().map(|s| Value::String((*s).into())).collect());
+        Ok(format!(
+            "{{preset = {}, applies = {}, layers = {}, spec = {}}}",
+            lua(&Value::String(preset.into()))?,
+            lua(&Value::Table(applies_t))?,
+            lua(&layers_v)?,
+            lua(&spec)?
+        ))
+    }
+
+    /// Outputs whose scale the operator fixed: [desktop.hyprland.monitors.<output>].scale (the
+    /// mios-displays save, e.g. the host tier) and a numeric [remote.rdp].virtual_scale for the
+    /// remote display. The policy never auto-scales these; the saved value is their scale.
+    pub fn explicit_scales(data: &Value) -> Result<toml::map::Map<String, Value>, String> {
+        let ident = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+        let num = |v: &Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)).filter(|s| s.is_finite() && *s > 0.0);
+        let mut out = toml::map::Map::new();
+        if let Some(mons) = data
+            .get("desktop")
+            .and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("monitors"))
+            .and_then(Value::as_table)
+        {
+            for (name, rule) in mons {
+                if let Some(s) = rule.get("scale").and_then(num) {
+                    if !ident(name) {
+                        return Err(format!("desktop.hyprland.monitors.{name}: output must be [A-Za-z0-9_-]"));
+                    }
+                    out.insert(name.clone(), Value::Float(s));
+                }
+            }
+        }
+        if let Some(rdp) = data.get("remote").and_then(|r| r.get("rdp")) {
+            let fixed = rdp.get("virtual_scale").and_then(|v| match v {
+                Value::String(s) => s.trim().parse::<f64>().ok().filter(|s| s.is_finite() && *s > 0.0),
+                other => num(other),
+            });
+            if let (Some(s), Some(name)) = (fixed, rdp.get("virtual_output").and_then(Value::as_str).filter(|n| ident(n))) {
+                out.entry(name.to_string()).or_insert(Value::Float(s));
+            }
+        }
+        Ok(out)
+    }
+
+    #[cfg(test)]
+    mod mobile_tests {
+        use super::*;
+
+        fn vendor() -> Value {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            fs::read_to_string(path).unwrap().parse().unwrap()
+        }
+
+        #[test]
+        fn vendor_profile_projects_runtime_rules_without_output_names() {
+            let data = vendor();
+            let chunk = mobile_profile(&data).unwrap();
+            assert!(chunk.starts_with(MOBILE_BEGIN) && chunk.ends_with(&format!("{MOBILE_END}\n")), "{chunk}");
+            for needle in [
+                "hl.on(\"monitor.added\"",
+                "hl.on(\"monitor.removed\"",
+                "hl.on(\"monitor.layout_changed\"",
+                "hl.workspace_rule({workspace = sel",
+                "tile = true",
+                "breakpoint = 900",
+                "mios-mobile-outputs.json",
+                "local function mios_scale_policy(P, m)",
+                "local S = {enabled = true",
+                "hl.timer(function()",
+                "mios-display-hints.json",
+            ] {
+                assert!(chunk.contains(needle), "missing {needle}: {chunk}");
+            }
+            // Positive: the profile is part of the full projection, once, after every other section.
+            let full = project(&data).unwrap();
+            assert_eq!(full.matches(MOBILE_BEGIN).count(), 1);
+            assert!(full.trim_end().ends_with(MOBILE_END), "mobile profile must close the projection");
+            // Negative: no connector is hardcoded (vendor saves no monitor scales).
+            for name in ["HDMI-A-1", "HEADLESS-MIOS-RDP"] {
+                assert!(!chunk.contains(name), "{name} hardcoded in the mobile profile");
+            }
+            assert!(chunk.contains("local EXPLICIT = {}"), "{chunk}");
+            assert!(!chunk.contains("@@"), "unfilled placeholder: {chunk}");
+            // Without [desktop.scaling] the legacy rule is projected (no policy function).
+            let mut legacy = vendor();
+            legacy["desktop"].as_table_mut().unwrap().remove("scaling");
+            let chunk = mobile_profile(&legacy).unwrap();
+            assert!(chunk.contains("local S = nil") && !chunk.contains("function mios_scale_policy"), "{chunk}");
+        }
+
+        #[test]
+        fn absent_table_projects_nothing_and_bad_values_are_rejected() {
+            let mut data = vendor();
+            data["desktop"].as_table_mut().unwrap().remove("mobile");
+            assert_eq!(mobile_profile(&data).unwrap(), "");
+            assert!(!project(&data).unwrap().contains(MOBILE_BEGIN));
+            for bad in [
+                ("breakpoint_px", Value::Integer(0)),
+                ("breakpoint_px", Value::String("900".into())),
+                ("applies_to", Value::Array(vec![Value::String("phone".into())])),
+                ("applies_to", Value::Array(vec![])),
+                ("remote_name_prefixes", Value::Array(vec![Value::String("HEADLESS]".into())])),
+                ("layout", Value::String("bogus".into())),
+                ("enabled", Value::String("yes".into())),
+                ("window_controls", Value::Array(vec![Value::Table(toml::map::Map::new())])),
+            ] {
+                let mut d = vendor();
+                d["desktop"]["mobile"].as_table_mut().unwrap().insert(bad.0.into(), bad.1.clone());
+                assert!(mobile_profile(&d).is_err(), "{bad:?} accepted");
+            }
+            // A broken [desktop.scaling] is rejected too, not silently ignored.
+            let mut d = vendor();
+            d["desktop"]["scaling"].as_table_mut().unwrap().insert("max_scale".into(), Value::Float(99.0));
+            assert!(mobile_profile(&d).is_err());
+        }
+
+        #[test]
+        fn explicit_scales_come_from_saved_monitors_and_a_fixed_rdp_scale() {
+            let mut d = vendor();
+            assert!(explicit_scales(&d).unwrap().is_empty());
+            let layer: Value = toml::from_str("[monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\nscale = 1\n[monitors.DP-2]\nmode = \"preferred\"\n").unwrap();
+            d["desktop"]["hyprland"]["monitors"] = layer["monitors"].clone();
+            let e = explicit_scales(&d).unwrap();
+            assert_eq!(e.get("HDMI-A-1").and_then(Value::as_float), Some(1.0));
+            assert!(!e.contains_key("DP-2"), "a saved mode without a scale is not explicit: {e:?}");
+            assert!(!e.contains_key("HEADLESS-MIOS-RDP"), "virtual_scale = auto is not explicit");
+            d["remote"]["rdp"].as_table_mut().unwrap().insert("virtual_scale".into(), Value::String("2".into()));
+            assert_eq!(explicit_scales(&d).unwrap().get("HEADLESS-MIOS-RDP").and_then(Value::as_float), Some(2.0));
+            assert!(mobile_profile(&d).unwrap().contains("[\"HDMI-A-1\"] = 1"));
+        }
+
+        /// Runs the projected chunk under a recording `hl` stub. `script` drives monitors through
+        /// MONS / hooks / flush() (runs pending timers; hl.monitor updates the stub monitor like
+        /// Hyprland and fires layout_changed) and calls report(tag).
+        fn simulate_with(chunk: &str, script: &str) -> String {
+            const HARNESS: &str = r#"
+local ws, win, hooks, timers, monitor_calls, presets = {}, {}, {}, {}, {}, {}
+MONS = {{name = "HDMI-A-1", width = 1920, height = 1080, scale = 1, transform = 0, physical_width = 530, physical_height = 300, x = 0, y = 0, refresh_rate = 144.001}}
+hl = {
+ get_monitors = function() local t = {} for i, m in ipairs(MONS) do t[i] = m end return t end,
+ plugin = {hyprglass = {preset = function(n, spec) assert(type(spec) == "table") table.insert(presets, n .. ":iter" .. tostring(spec.blur_iterations) .. ":spec" .. tostring(spec.specular_strength) .. ":tint" .. tostring(spec.dark and spec.dark.tint_color)) end,
+  layer = function(ns, o) table.insert(presets, "layer:" .. ns .. "=" .. tostring(o and o.preset)) end}, hyprbars = {}},
+ workspace_rule = function(s) s.enabled = true table.insert(ws, s) return {set_enabled = function(_, v) s.enabled = v end} end,
+ window_rule = function(s) s.enabled = true table.insert(win, s) return {set_enabled = function(_, v) s.enabled = v end} end,
+ on = function(ev, fn) hooks[ev] = fn end,
+ timer = function(fn, opts) assert(opts.type == "oneshot" and opts.timeout >= 1) table.insert(timers, fn) return {} end,
+ monitor = function(spec)
+  table.insert(monitor_calls, spec.output .. "@" .. string.format("%.4f", spec.scale) .. ":" .. spec.mode .. ":" .. spec.position)
+  for _, m in ipairs(MONS) do if m.name == spec.output then m.scale = spec.scale end end
+ end,
+}
+dofile(os.getenv("CHUNK"))
+function flush()
+ while #timers > 0 do local t = table.remove(timers, 1) t() hooks["monitor.layout_changed"]() end
+end
+function add(m) table.insert(MONS, m) hooks["monitor.added"](m) end
+function remove(name) for i, m in ipairs(MONS) do if m.name == name then table.remove(MONS, i) break end end hooks["monitor.removed"]() end
+function changed() hooks["monitor.layout_changed"]() end
+function report(tag)
+ local out = {}
+ for _, s in ipairs(ws) do out[#out + 1] = "ws " .. s.workspace .. "=" .. tostring(s.enabled) .. ":" .. s.layout .. ":top" .. s.gaps_out.top
+  .. ":deco" .. tostring(s.no_border) .. "/" .. tostring(s.no_rounding) .. "/" .. tostring(s.decorate) .. "/" .. tostring(s.rounding) .. "/" .. tostring(s.border_size) end
+ for _, s in ipairs(win) do out[#out + 1] = "win " .. s.name .. "=" .. tostring(s.enabled) .. ":" .. s.match.workspace .. ":tile" .. tostring(s.tile)
+  .. ":tag" .. tostring(s.tag) .. ":nobar" .. tostring(s["hyprbars:no_bar"]) .. ":rounding" .. tostring(s.rounding) .. ":border" .. tostring(s.border_size) end
+ for _, n in ipairs(presets) do out[#out + 1] = "preset " .. n end
+ for _, c in ipairs(monitor_calls) do out[#out + 1] = "mon " .. c end
+ local f = io.open(os.getenv("XDG_RUNTIME_DIR") .. "/mios-mobile-outputs.json")
+ local j = f and f:read("*a") or "none"
+ if f then f:close() end
+ print(tag .. " | " .. table.concat(out, " ; ") .. " | " .. (j:gsub("\n", "")))
+end
+dofile(os.getenv("SCRIPT"))
+"#;
+            let lua = ["/usr/bin/luajit", "/usr/bin/lua"]
+                .into_iter()
+                .find(|p| Path::new(p).is_file())
+                .expect("a Lua interpreter (luajit or lua) is required for the mobile profile test");
+            let dir = tempfile::tempdir().unwrap();
+            let (c, h, s) = (dir.path().join("chunk.lua"), dir.path().join("harness.lua"), dir.path().join("script.lua"));
+            fs::write(&c, chunk).unwrap();
+            fs::write(&h, HARNESS).unwrap();
+            fs::write(&s, script).unwrap();
+            let out = std::process::Command::new(lua)
+                .arg(&h)
+                .env("CHUNK", &c)
+                .env("SCRIPT", &s)
+                .env("XDG_RUNTIME_DIR", dir.path())
+                .output()
+                .unwrap();
+            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            assert!(out.status.success(), "{text}");
+            assert!(
+                !text.contains("mobile profile:") && !text.contains("mobile section failed") && !text.contains("scale policy:"),
+                "{text}"
+            );
+            for l in text.lines().filter(|l| l.contains(" | ")) {
+                let js = l.rsplit(" | ").next().unwrap();
+                serde_json::from_str::<serde_json::Value>(js).unwrap_or_else(|e| panic!("bad JSON {e}: {js}"));
+            }
+            text
+        }
+        /// RDP attach -> phone resize -> rescale -> landscape phone -> desktop-sized -> detach,
+        /// then a local rotation.
+        fn simulate(chunk: &str) -> String {
+            simulate_with(
+                chunk,
+                r#"
+report("boot")
+local rdp = {name = "HEADLESS-MIOS-RDP", width = 1280, height = 720, scale = 1, transform = 0, physical_width = 0, physical_height = 0, x = 1920, y = 0, refresh_rate = 60}
+add(rdp) flush()
+report("attach")
+rdp.width, rdp.height = 1100, 2080 changed() flush()
+report("phone")
+rdp.scale = 2 changed() flush()
+report("scaled")
+rdp.width, rdp.height, rdp.scale = 2080, 1100, 1 changed() flush()
+report("landscape")
+rdp.width, rdp.height = 1920, 1080 changed() flush()
+report("desktop")
+remove("HEADLESS-MIOS-RDP") flush()
+report("detach")
+MONS[1].transform = 1 changed() flush()
+report("rotated")
+"#,
+            )
+        }
+        fn line<'a>(out: &'a str, tag: &str) -> &'a str {
+            out.lines().find(|l| l.starts_with(&format!("{tag} | "))).unwrap_or_else(|| panic!("no {tag}: {out}"))
+        }
+
+        #[test]
+        fn phone_sized_output_gets_mobile_rules_and_desktop_output_does_not() {
+            let out = simulate(&mobile_profile(&vendor()).unwrap());
+            let rdp_ws = "ws m[HEADLESS-MIOS-RDP]";
+            // Negative controls: the 1920x1080 desktop output and a landscape 1280x720 remote display
+            // get no rules at all, and the desktop output is never given any.
+            let l = line(&out, "boot");
+            assert!(!l.contains("ws ") && !l.contains("win ") && !l.contains("mon "), "{l}");
+            let l = line(&out, "attach");
+            assert!(!l.contains("ws ") && !l.contains("win mios-mobile-") && !l.contains("mon "), "{l}");
+            // ONE glass (operator "Unify the designs"): no window on any output gets a preset of its own
+            assert!(!l.contains("hyprglass_preset_") && !l.contains("mios-remote-fx-"), "{l}");
+            assert!(
+                line(&out, "boot").contains("\"HDMI-A-1\": {\"mobile\": false, \"origin\": \"local\", \"logical_width\": 1920, \"logical_height\": 1080, \"scale\": 1,"),
+                "{out}"
+            );
+            assert!(line(&out, "boot").contains("\"source\": \"edid\""), "{out}");
+            assert!(line(&out, "attach").contains("\"HEADLESS-MIOS-RDP\": {\"mobile\": false, \"origin\": \"remote\""), "{out}");
+            // Positive: the 1100x2080 phone display is scaled 2.5 by the policy (no DPI hint, 0 mm:
+            // the handheld fallback), is mobile, and gets the one-window layout and the tiling rule.
+            let phone = line(&out, "phone");
+            assert!(phone.contains(&format!("{rdp_ws}=true:monocle:top0")), "{phone}");
+            assert!(phone.contains("win mios-mobile-HEADLESS-MIOS-RDP=true:m[HEADLESS-MIOS-RDP]:tiletrue"), "{phone}");
+            assert!(
+                phone.contains("\"HEADLESS-MIOS-RDP\": {\"mobile\": true, \"origin\": \"remote\", \"logical_width\": 1100, \"logical_height\": 2080, \"scale\": 2.5, \"scale_120\": 300, \"applied_scale\": 1, \"policy_logical_width\": 440, \"policy_logical_height\": 832, \"explicit\": false, \"auto_apply\": false, \"source\": \"fallback-handheld\""),
+                "{phone}"
+            );
+            // Remote outputs are not rescaled by default (apply_to = ["local"]: wayvnc 0.9.1).
+            assert!(!phone.contains("mon "), "{phone}");
+            assert!(phone.contains("\"config\": {\"enabled\": true") || phone.contains("\"config\": {\"enabled\":true"), "{phone}");
+            assert!(!phone.contains("ws m[HDMI-A-1]"), "{phone}");
+            // Scale 2 keeps it mobile (550x1040 logical) without registering the rules twice.
+            let scaled = line(&out, "scaled");
+            assert!(scaled.contains("\"logical_width\": 550, \"logical_height\": 1040"), "{scaled}");
+            assert_eq!(scaled.matches(rdp_ws).count(), 1, "{scaled}");
+            // The phone rotated to landscape is still a phone (logical short side 440).
+            assert!(line(&out, "landscape").contains(&format!("{rdp_ws}=true")), "{out}");
+            // Resized to a desktop client, then detached: the rules switch off, not pile up.
+            for tag in ["desktop", "detach"] {
+                let l = line(&out, tag);
+                assert!(l.contains(&format!("{rdp_ws}=false")) && l.contains("mios-mobile-HEADLESS-MIOS-RDP=false"), "{l}");
+                assert_eq!(l.matches(rdp_ws).count(), 1, "{l}");
+            }
+            // A 24" desktop monitor rotated to portrait is NOT a phone (logical short side 1080).
+            let rotated = line(&out, "rotated");
+            assert!(!rotated.contains("ws m[HDMI-A-1]"), "{rotated}");
+            assert!(rotated.contains("\"HDMI-A-1\": {\"mobile\": false"), "{rotated}");
+        }
+
+        #[test]
+        fn applies_to_portrait_and_enabled_gate_the_rules() {
+            let mut d = vendor();
+            d["desktop"]["mobile"]["applies_to"] = Value::Array(vec![Value::String("local".into())]);
+            d["desktop"]["scaling"]["portrait_is_mobile"] = Value::Boolean(true);
+            let out = simulate(&mobile_profile(&d).unwrap());
+            assert!(!line(&out, "phone").contains("ws m[HEADLESS-MIOS-RDP]"), "remote matched with applies_to = [local]: {out}");
+            assert!(line(&out, "rotated").contains("ws m[HDMI-A-1]=true"), "portrait_is_mobile: {out}");
+            let mut d = vendor();
+            d["desktop"]["mobile"]["enabled"] = Value::Boolean(false);
+            let out = simulate(&mobile_profile(&d).unwrap());
+            assert!(!out.contains("ws m["), "disabled profile made rules: {out}");
+            assert!(line(&out, "phone").contains("\"mobile\": false"), "{out}");
+            // Legacy rule (no [desktop.scaling]): portrait remote is mobile, never rescaled.
+            let mut d = vendor();
+            d["desktop"].as_table_mut().unwrap().remove("scaling");
+            let out = simulate(&mobile_profile(&d).unwrap());
+            assert!(line(&out, "phone").contains("ws m[HEADLESS-MIOS-RDP]=true") && line(&out, "phone").contains("\"source\": \"legacy\""), "{out}");
+            assert!(!out.contains("mon "), "{out}");
+        }
+
+        #[test]
+        fn policy_scales_local_non_explicit_outputs_and_never_explicit_ones() {
+            // HDMI-A-1 is saved at scale 1 (host tier) and claims a phone-dense EDID; DP-9 is an
+            // unsaved 27" 4K panel. The policy rescales DP-9 once and never touches HDMI-A-1.
+            let mut d = vendor();
+            let layer: Value = toml::from_str("[monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\nposition = \"0x0\"\nscale = 1\n").unwrap();
+            d["desktop"]["hyprland"]["monitors"] = layer["monitors"].clone();
+            let script = r#"
+MONS[1].physical_width, MONS[1].physical_height = 86, 48
+report("boot")
+add({name = "DP-9", width = 3840, height = 2160, scale = 1, transform = 0, physical_width = 597, physical_height = 336, x = 1920, y = 0, refresh_rate = 60})
+report("added")
+flush()
+report("applied")
+changed() flush()
+report("again")
+"#;
+            let out = simulate_with(&mobile_profile(&d).unwrap(), script);
+            let boot = line(&out, "boot");
+            assert!(boot.contains("\"HDMI-A-1\": {\"mobile\": false, \"origin\": \"local\", \"logical_width\": 1920, \"logical_height\": 1080, \"scale\": 1, \"scale_120\": 120, \"applied_scale\": 1"), "{boot}");
+            assert!(boot.contains("\"explicit\": true, \"auto_apply\": false, \"source\": \"explicit\""), "{boot}");
+            let applied = line(&out, "applied");
+            assert!(applied.contains("mon DP-9@1.6667:3840x2160@60.000:1920x0"), "{applied}");
+            assert!(!applied.contains("mon HDMI-A-1"), "{applied}");
+            assert!(applied.contains("\"DP-9\": {\"mobile\": false, \"origin\": \"local\", \"logical_width\": 2304, \"logical_height\": 1296, \"scale\": 1.66667, \"scale_120\": 200"), "{applied}");
+            // Exactly one hl.monitor call in total: no re-apply loop on later layout changes.
+            assert_eq!(line(&out, "again").matches("mon ").count(), 1, "{out}");
+            // Positive control for the explicit list: without the saved scale HDMI-A-1 IS rescaled.
+            let out = simulate_with(&mobile_profile(&vendor()).unwrap(), script);
+            assert!(line(&out, "applied").contains("mon HDMI-A-1@"), "{out}");
+        }
+
+        /// The MiOS-only plugin keys (hyprglass edge pass; hyprbars glass tab + mobile tabs) are projected in their
+        /// own pcall'd config calls AFTER the plugin's stock keys, so a plugin without the MiOS patch keeps its
+        /// config; the hyprbars tab is pointed at the loaded hyprglass (glass_plugin = its SSOT path).
+        #[test]
+        fn mios_plugin_keys_are_isolated_and_validated() {
+            let mut d = vendor();
+            let h = &mut d["desktop"]["hyprland"];
+            h["hyprglass"]["config"]["edge_pass"] = Value::Float(1.5);
+            h["hyprglass"]["config"]["edge_pass_width"] = Value::Integer(8);
+            h["hyprbars"]["config"]["button_glass"] = Value::Float(0.8);
+            let out = project(&d).unwrap();
+            let glass = &out[out.find("mios_section(\"hyprglass\"").unwrap()..];
+            let glass = &glass[..glass.find("end\nend)").unwrap()];
+            let stock = glass.find(" hg.config(").unwrap();
+            let mios = glass.find("pcall(hg.config, {[\"edge_pass\"] = 1.5, [\"edge_pass_width\"] = 8})").unwrap_or_else(|| panic!("{glass}"));
+            assert!(stock < mios && !glass[stock..mios].contains("edge_pass"), "edge keys leaked into the stock config: {glass}");
+            assert!(glass.contains("mios_state.hyprglass_mios = mios_ok"), "{glass}");
+            let bars = &out[out.find("mios_section(\"hyprbars\"").unwrap()..];
+            let bars = &bars[..bars.find("end\nend)").unwrap()];
+            let path = d["desktop"]["hyprland"]["hyprglass"]["path"].as_str().unwrap().to_string();
+            let ext = bars.find("pcall(hl.config, {[\"plugin\"] = {[\"hyprbars\"] = {").unwrap_or_else(|| panic!("{bars}"));
+            assert!(bars[..ext].contains("add_button"), "MiOS keys must follow the buttons: {bars}");
+            assert!(bars[ext..].contains(&format!("[\"glass_plugin\"] = \"{path}\"")) && bars[ext..].contains("[\"button_glass\"] = 0.8"), "{bars}");
+            assert!(bars[ext..].contains("[\"mobile_touch_target\"] = 44") && bars[ext..].contains("call mobile toggleControls"), "{bars}");
+            assert!(!bars[..ext].contains("glass_plugin") && !bars[..ext].contains("mobile_"), "{bars}");
+            assert!(bars.contains("mios_state.hyprbars_mobile = mios_ok"), "{bars}");
+            // negative controls: out-of-range values and a mobile table that would break the touch tabs
+            for (k, v) in [("edge_pass", Value::Float(-1.0)), ("edge_pass", Value::Float(9.0)), ("edge_pass_width", Value::Integer(-2))] {
+                let mut bad = d.clone();
+                bad["desktop"]["hyprland"]["hyprglass"]["config"][k] = v.clone();
+                assert!(project(&bad).is_err(), "{k} = {v:?} accepted");
+            }
+            let mut bad = d.clone();
+            bad["desktop"]["hyprland"]["hyprbars"]["config"]["button_glass"] = Value::Float(1.5);
+            assert!(project(&bad).is_err());
+            for (k, v) in [("touch_target", Value::Integer(30)), ("close_button", Value::Integer(1)), ("menu_palette", Value::String("nope".into())),
+                           ("menu_action", Value::String("true".into()))] {
+                let mut bad = d.clone();
+                bad["desktop"]["hyprland"]["hyprbars"]["mobile"][k] = v.clone();
+                assert!(project(&bad).is_err(), "hyprbars.mobile.{k} = {v:?} accepted");
+            }
+        }
+
+        /// hyprbars_tab = "mobile": the controls are the window's own glass split into the plugin's two touch tabs
+        /// (hyprbars:mobile) -- only when the plugin accepted the MiOS mobile keys (MIOS_SESSION.hyprbars_mobile);
+        /// otherwise the desktop tab is hidden and the shell draws the tabs (published hyprbars_tabs = false).
+        #[test]
+        fn mobile_windows_get_the_plugin_touch_tabs_when_hyprbars_took_the_mobile_keys() {
+            let mut d = vendor();
+            d["desktop"]["mobile"]["hyprbars_tab"] = Value::String("mobile".into());
+            let chunk = mobile_profile(&d).unwrap();
+            let with = simulate(&format!("MIOS_SESSION = {{hyprbars_mobile = true}}\n{chunk}"));
+            let phone = line(&with, "phone");
+            assert!(phone.contains("win mios-mobile-tabs-HEADLESS-MIOS-RDP=true:m[HEADLESS-MIOS-RDP]"), "{phone}");
+            assert!(!phone.contains("mios-mobile-nobar-"), "plugin tabs AND no_bar: {phone}");
+            assert!(phone.contains("\"hyprbars_tabs\": true"), "{phone}");
+            assert!(line(&with, "boot").contains("\"hyprbars_tabs\": false"), "tabs published before any mobile output: {with}");
+            // negative: a plugin without the MiOS mobile keys -> no hyprbars:mobile rule, the desktop tab hidden
+            let without = simulate(&chunk);
+            let phone = line(&without, "phone");
+            assert!(!phone.contains("mios-mobile-tabs-"), "{phone}");
+            assert!(phone.contains("win mios-mobile-nobar-HEADLESS-MIOS-RDP=true:m[HEADLESS-MIOS-RDP]"), "{phone}");
+            assert!(phone.contains("\"hyprbars_tabs\": false"), "{phone}");
+            for bad in [Value::String("yes".into()), Value::Integer(1)] {
+                d["desktop"]["mobile"]["hyprbars_tab"] = bad.clone();
+                assert!(mobile_profile(&d).is_err(), "hyprbars_tab = {bad:?} accepted");
+            }
+        }
+
+        #[test]
+        fn mobile_windows_inherit_the_global_decoration() {
+            let chunk = mobile_profile(&vendor()).unwrap();
+            // Negative (regression guard): no mobile rule may square windows off or strip their border/glass.
+            for bad in ["no_rounding", "no_border", "decorate =", "rounding = 0", "border_size = 0"] {
+                assert!(!chunk.contains(bad), "mobile profile overrides the global decoration ({bad}): {chunk}");
+            }
+            let out = simulate(&chunk);
+            let phone = line(&out, "phone");
+            // Positive: the phone workspace rule sets layout/gaps only; every decoration key is unset (nil).
+            assert!(phone.contains("ws m[HEADLESS-MIOS-RDP]=true:monocle:top0:deconil/nil/nil/nil/nil"), "{phone}");
+            for l in out.lines().filter(|l| l.contains("win ")) {
+                assert!(!l.contains(":roundingfalse") && !l.contains(":rounding0") && !l.contains(":border0"), "{l}");
+            }
+            // Only the hyprbars tab is hidden on phones (the shoulders carry the controls) ...
+            assert!(phone.contains("win mios-mobile-nobar-HEADLESS-MIOS-RDP=true:m[HEADLESS-MIOS-RDP]:tilenil:tagnil:nobartrue"), "{phone}");
+            assert!(line(&out, "detach").contains("win mios-mobile-nobar-HEADLESS-MIOS-RDP=false"), "{out}");
+            // ... unless hyprbars_tab = true, and never without the hyprbars plugin loaded.
+            let mut d = vendor();
+            d["desktop"]["mobile"]["hyprbars_tab"] = Value::Boolean(true);
+            assert!(!simulate(&mobile_profile(&d).unwrap()).contains("nobar-"), "hyprbars_tab = true still hid the tab");
+            // The old overrides are rejected (a regression would square phone windows again); "inherit" is fine.
+            for k in ["window_rounding", "window_border", "window_decorations"] {
+                for v in [Value::Boolean(false), Value::Boolean(true), Value::Integer(0)] {
+                    let mut d = vendor();
+                    d["desktop"]["mobile"].as_table_mut().unwrap().insert(k.into(), v.clone());
+                    let e = mobile_profile(&d).expect_err(&format!("{k} = {v:?} accepted"));
+                    assert!(e.contains("global [desktop.hyprland] decoration"), "{e}");
+                }
+                let mut d = vendor();
+                d["desktop"]["mobile"].as_table_mut().unwrap().insert(k.into(), Value::String("inherit".into()));
+                assert!(mobile_profile(&d).is_ok(), "{k} = \"inherit\" rejected");
+            }
+            // The vendor SSOT carries none of them.
+            for k in ["window_rounding", "window_border", "window_decorations"] {
+                assert!(vendor()["desktop"]["mobile"].get(k).is_none(), "vendor [desktop.mobile].{k} is back");
+            }
+        }
+
+        #[test]
+        fn remote_outputs_get_the_cheaper_glass_preset_in_parity_with_the_desktop_one() {
+            // The shipped SSOT keeps it OFF: remote and desktop windows and layers use the SAME glass (operator
+            // 2026-10-16, "Unify the designs"); a vendor projection that tags any window with another preset fails.
+            let shipped = vendor();
+            assert_eq!(shipped["desktop"]["mobile"]["remote_effects"]["enabled"].as_bool(), Some(false), "remote glass diverges from the desktop");
+            let unified = simulate(&mobile_profile(&shipped).unwrap());
+            assert!(!unified.contains("hyprglass_preset_") && !unified.contains("preset mios-remote") && !unified.contains("preset layer:"), "{unified}");
+            // The mechanism itself, switched on in a fixture:
+            let mut data = vendor();
+            data["desktop"]["mobile"]["remote_effects"]["enabled"] = Value::Boolean(true);
+            let chunk = mobile_profile(&data).unwrap();
+            let full = project(&data).unwrap();
+            // Parity: the remote preset is the projected desktop preset (same palette-resolved tint) ...
+            let tint = |text: &str, from: &str| -> String {
+                let i = text.find(from).unwrap_or_else(|| panic!("no {from}"));
+                let rest = &text[i..];
+                let j = rest.find("[\"tint_color\"] = ").expect("tint_color") + "[\"tint_color\"] = ".len();
+                rest[j..].split(|c: char| !c.is_ascii_digit()).next().unwrap().to_string()
+            };
+            let base = data["desktop"]["mobile"]["remote_effects"]["base_preset"].as_str().unwrap();
+            assert_eq!(tint(&full, &format!("hg.preset(\"{base}\"")), tint(&chunk, "local FX = "), "remote glass tint differs from the desktop preset");
+            // ... with fewer blur passes and no specular/fresnel/chromatic extras.
+            let out = simulate(&chunk);
+            let phone = line(&out, "phone");
+            assert_eq!(out.matches("preset mios-remote:iter1:spec0").count(), out.lines().filter(|l| l.contains(" | ")).count(), "{out}");
+            assert!(phone.contains("win mios-remote-fx-HEADLESS-MIOS-RDP=true:m[HEADLESS-MIOS-RDP]:tilenil:tag+hyprglass_preset_mios-remote"), "{phone}");
+            assert!(phone.contains("\"glass_preset\": \"mios-remote\""), "{phone}");
+            // Shell layers on the phone opt in by namespace (<ns>-remote) -> the same remote preset.
+            for ns in ["mios-topbar", "mios-dock"] {
+                assert!(out.contains(&format!("preset layer:{ns}-remote=mios-remote")), "{ns}: {out}");
+            }
+            assert!(!out.contains("preset layer:mios-topbar=") && !out.contains("preset layer:mios-dock="), "desktop namespaces remapped: {out}");
+            for tag in ["boot", "rotated"] {
+                let l = line(&out, tag);
+                assert!(!l.contains("m[HDMI-A-1]") && l.contains("\"HDMI-A-1\": {") && l.contains("\"glass_preset\": \"\"}"), "local output tagged: {l}");
+            }
+            assert!(line(&out, "detach").contains("win mios-remote-fx-HEADLESS-MIOS-RDP=false"), "{out}");
+            // Negative controls: disabled -> no preset, no tag; hyprglass not loaded -> nothing tagged.
+            let mut d = data.clone();
+            d["desktop"]["mobile"]["remote_effects"]["enabled"] = Value::Boolean(false);
+            let off = simulate(&mobile_profile(&d).unwrap());
+            assert!(!off.contains("mios-remote-fx-") && !off.contains("preset mios-remote") && !off.contains("preset layer:"), "{off}");
+            let none = simulate_with(&format!("hl.plugin = {{}}\n{chunk}"), "report(\"boot\")\nadd({name = \"HEADLESS-MIOS-RDP\", width = 1100, height = 2080, scale = 1, transform = 0, physical_width = 0, physical_height = 0, x = 0, y = 1080, refresh_rate = 90})\nreport(\"phone\")\n");
+            assert!(!none.contains("mios-remote-fx-") && !none.contains("nobar-"), "{none}");
+            assert!(line(&none, "phone").contains("ws m[HEADLESS-MIOS-RDP]=true"), "{none}");
+            // Bad values are rejected: costlier than the desktop glass, unknown knob, own base, missing base.
+            for (k, v) in [
+                ("overrides", toml::from_str::<Value>("x = { blur_iterations = 3 }").unwrap()["x"].clone()),
+                ("overrides", toml::from_str::<Value>("x = { blur_iterations = 0 }").unwrap()["x"].clone()),
+                ("overrides", toml::from_str::<Value>("x = { tint_alpha = 0.0 }").unwrap()["x"].clone()),
+                ("overrides", toml::from_str::<Value>("x = { specular_strength = -1.0 }").unwrap()["x"].clone()),
+                ("preset", Value::String(base.into())),
+                ("preset", Value::String("bad name".into())),
+                ("base_preset", Value::String("no-such-preset".into())),
+                ("applies_to", Value::Array(vec![Value::String("phone".into())])),
+                ("enabled", Value::String("yes".into())),
+                ("layer_namespaces", Value::Array(vec![Value::String("bad ns".into())])),
+                ("layer_namespaces", Value::String("mios-dock".into())),
+            ] {
+                let mut d = data.clone();
+                d["desktop"]["mobile"]["remote_effects"].as_table_mut().unwrap().insert(k.into(), v.clone());
+                assert!(mobile_profile(&d).is_err(), "remote_effects.{k} = {v:?} accepted");
+            }
+        }
+    }
+    // ---- end mobile layout profile ---------------------------------------------------------------
+
+    // ---- Magic lamp ([desktop.hyprland.lamp]) -- lamp lane, additive ---------------------------------------------
+    // Self-contained like mobile_profile: `project` calls it once, right after the mios-wobbly section, because the
+    // lamp lives in that plugin (one compositor mesh backend). It touches no other section and reuses only `lua`.
+    // The plugin registers plugin:mios_lamp:* and hl.plugin.mios_lamp only once Hyprland has loaded it (the config
+    // is evaluated again after plugin loads), so the body waits for hl.plugin.mios_lamp exactly like the hyprbars
+    // section waits for hl.plugin.hyprbars. Precedence rules key off the plugin's anim_tag: a lamp-launched window gets
+    // HyprWindowShade's windowshade_open shader (pass-through) instead of the global open effect, and no hyprbars tab
+    // while the lamp runs (hyprbars draws it rigidly at the real window box, outside the deformed pass).
+
+    /// Lua for [desktop.hyprland.lamp]; empty when the table is absent or enabled = false.
+    pub fn lamp_profile(data: &Value) -> Result<String, String> {
+        let Some(h) = data.get("desktop").and_then(|d| d.get("hyprland")) else {
+            return Ok(String::new());
+        };
+        let Some(lamp) = h.get("lamp") else {
+            return Ok(String::new());
+        };
+        let t = lamp.as_table().ok_or("desktop.hyprland.lamp must be a table")?;
+        if !t.get("enabled").and_then(Value::as_bool).ok_or("desktop.hyprland.lamp.enabled must be a boolean")? {
+            return Ok(String::new());
+        }
+        let ident = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+        let int = |k: &str, lo: i64, hi: i64| -> Result<i64, String> {
+            t.get(k)
+                .and_then(Value::as_integer)
+                .filter(|v| (lo..=hi).contains(v))
+                .ok_or(format!("desktop.hyprland.lamp.{k} must be an integer in {lo}..={hi}"))
+        };
+        let num = |v: &Value| v.as_float().or(v.as_integer().map(|i| i as f64)).filter(|f| f.is_finite());
+        let word = |k: &str, allowed: &[&str]| -> Result<String, String> {
+            t.get(k)
+                .and_then(Value::as_str)
+                .filter(|s| allowed.contains(s))
+                .map(str::to_owned)
+                .ok_or(format!("desktop.hyprland.lamp.{k} must be one of {allowed:?}"))
+        };
+        let mut events = Vec::new();
+        for e in t.get("events").and_then(Value::as_array).ok_or("desktop.hyprland.lamp.events must be an array")? {
+            let e = e
+                .as_str()
+                .filter(|e| ["launch", "minimize", "restore"].contains(e))
+                .ok_or("desktop.hyprland.lamp.events entries must be \"launch\", \"minimize\" or \"restore\"")?;
+            if !events.contains(&e) {
+                events.push(e);
+            }
+        }
+        // Easing: a [desktop.hyprland].curves name or inline points [[x1, y1], [x2, y2]] (CSS cubic-bezier).
+        let points = match t.get("curve") {
+            Some(Value::String(name)) => h
+                .get("curves")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|c| c.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                .and_then(|c| c.get("points"))
+                .ok_or(format!("desktop.hyprland.lamp.curve names no [desktop.hyprland] curves entry \"{name}\""))?,
+            Some(v) => v,
+            None => return Err("desktop.hyprland.lamp.curve is required".into()),
+        };
+        let bez: Vec<f64> = points
+            .as_array()
+            .filter(|p| p.len() == 2)
+            .map(|p| p.iter().filter_map(Value::as_array).flat_map(|xy| xy.iter().map(num)).collect::<Option<Vec<f64>>>())
+            .flatten()
+            .filter(|v| v.len() == 4 && (0.0..=1.0).contains(&v[0]) && (0.0..=1.0).contains(&v[2]) && (-2.0..=3.0).contains(&v[1]) && (-2.0..=3.0).contains(&v[3]))
+            .ok_or("desktop.hyprland.lamp.curve must be [[x1, y1], [x2, y2]] with x in 0..=1 (or a curves name)")?;
+        let pane = t
+            .get("pane_alpha")
+            .and_then(num)
+            .filter(|v| (0.05..=1.0).contains(v))
+            .ok_or("desktop.hyprland.lamp.pane_alpha must be a number in 0.05..=1")?;
+        let ws = t
+            .get("minimized_workspace")
+            .and_then(Value::as_str)
+            .filter(|s| s.strip_prefix("special:").is_some_and(ident))
+            .ok_or("desktop.hyprland.lamp.minimized_workspace must be special:<name>")?;
+        let tag = t.get("anim_tag").and_then(Value::as_str).filter(|s| ident(s)).ok_or("desktop.hyprland.lamp.anim_tag must be [A-Za-z0-9_-]")?;
+        // One effect on every output, local or remote/mobile: the only value (operator: unified design).
+        if t.get("remote").and_then(Value::as_str) != Some("same") {
+            return Err("desktop.hyprland.lamp.remote must be \"same\" (every output, local or remote, gets the same lamp)".into());
+        }
+        let hide_bars = t.get("hide_hyprbars").and_then(Value::as_bool).ok_or("desktop.hyprland.lamp.hide_hyprbars must be a boolean")?;
+        let shade_open = match t.get("windowshade_open") {
+            None => None,
+            Some(v) => Some(v.as_str().filter(|s| ident(s)).ok_or("desktop.hyprland.lamp.windowshade_open must name a shader in windowshade.shader_dir")?),
+        };
+        let mut cfg = toml::map::Map::new();
+        cfg.insert("enabled".into(), Value::Boolean(true));
+        cfg.insert("events".into(), Value::String(events.join(",")));
+        for (k, lo, hi) in [("duration_open_ms", 50, 5000), ("duration_minimize_ms", 50, 5000), ("duration_restore_ms", 50, 5000), ("mesh_columns", 1, 64), ("mesh_rows", 4, 128), ("launch_timeout_ms", 500, 60000)] {
+            cfg.insert(k.into(), Value::Integer(int(k, lo, hi)?));
+        }
+        cfg.insert("curve".into(), Value::String(bez.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ")));
+        cfg.insert("hidden_dock".into(), Value::String(word("hidden_dock", &["edge", "icon"])?));
+        cfg.insert("fallback_edge".into(), Value::String(word("fallback_edge", &["bottom", "top", "left", "right"])?));
+        cfg.insert("pane_alpha".into(), Value::Float(pane));
+        cfg.insert("minimized_workspace".into(), Value::String(ws.into()));
+        cfg.insert("anim_tag".into(), Value::String(tag.into()));
+        let mut plugin = toml::map::Map::new();
+        plugin.insert("mios_lamp".into(), Value::Table(cfg));
+        let mut table = toml::map::Map::new();
+        table.insert("plugin".into(), Value::Table(plugin));
+
+        let wob = h.get("mios-wobbly").ok_or("desktop.hyprland.lamp needs [desktop.hyprland.mios-wobbly] (its plugin is the lamp's backend)")?;
+        let wob_on = wob.get("enabled").and_then(Value::as_bool) == Some(true);
+        let path = wob.get("path").ok_or("desktop.hyprland.mios-wobbly.path is required for the lamp")?;
+        let mut out = String::from("mios_section(\"mios-lamp\", function()\n");
+        if !wob_on {
+            // the wobble is off: load its plugin for the lamp alone (no window carries the wobble tag)
+            out += &format!("if not hl.plugin.mios_lamp then hl.plugin.load({}) end\n", lua(path)?);
+        }
+        out += &format!("if hl.plugin.mios_lamp then\n hl.config({})\n", lua(&Value::Table(table))?);
+        let on = |k: &str| h.get(k).and_then(|v| v.get("enabled")).and_then(Value::as_bool) == Some(true);
+        if let (Some(name), true) = (shade_open, on("windowshade")) {
+            let dir = h.get("windowshade").and_then(|w| w.get("shader_dir")).ok_or("desktop.hyprland.windowshade.shader_dir is required")?;
+            out += &format!(
+                " local fx = (os.getenv(\"XDG_RUNTIME_DIR\") or \"/tmp\") .. \"/mios-shader-{name}.glsl\"\n do\n  local i = io.open(fx, \"r\")\n  if i then i:close() else\n   local s = io.open({} .. \"/{name}.glsl\", \"r\")\n   if s then local src = s:read(\"a\") s:close() local o = io.open(fx, \"w\") if o then o:write(src) o:close() end end\n  end\n end\n hl.window_rule({{[\"name\"] = \"mios-lamp-shade\", [\"match\"] = {{[\"tag\"] = {}}}, [\"tag\"] = \"+shader_open:\" .. fx}})\n",
+                lua(dir)?,
+                lua(&Value::String(tag.into()))?
+            );
+        }
+        if hide_bars && on("hyprbars") {
+            out += &format!(" hl.window_rule({{[\"name\"] = \"mios-lamp-bars\", [\"match\"] = {{[\"tag\"] = {}}}, [\"hyprbars:no_bar\"] = true}})\n", lua(&Value::String(tag.into()))?);
+        }
+        out += "end\nend)\n";
+        Ok(out)
+    }
+
+    #[cfg(test)]
+    mod lamp_tests {
+        use super::*;
+
+        fn vendor() -> Value {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            fs::read_to_string(path).unwrap().parse().unwrap()
+        }
+
+        #[test]
+        fn vendor_lamp_projects_after_the_wobble_and_waits_for_the_plugin() {
+            let data = vendor();
+            let full = project(&data).unwrap();
+            let wob = full.find("mios_section(\"mios-wobbly\"").expect("wobble section");
+            let lamp = full.find("mios_section(\"mios-lamp\"").expect("lamp section");
+            assert!(lamp > wob, "the lamp section must follow the plugin load");
+            let l = lamp_profile(&data).unwrap();
+            assert!(l.contains("if hl.plugin.mios_lamp then"), "{l}");
+            assert!(l.contains("[\"events\"] = \"launch,minimize,restore\""), "{l}");
+            assert!(l.contains("[\"minimized_workspace\"] = \"special:minimized\""), "{l}");
+            assert!(l.contains("\"+shader_open:\" .. fx") && l.contains("mios-shader-none-open.glsl"), "{l}");
+            assert!(l.contains("[\"hyprbars:no_bar\"] = true"), "{l}");
+            assert!(!l.contains("hl.plugin.load"), "the enabled wobble section already loads the plugin: {l}");
+            // the curve reaches the plugin as four numbers
+            assert!(regex_free_curve(&l).is_some(), "{l}");
+        }
+
+        fn regex_free_curve(l: &str) -> Option<Vec<f64>> {
+            let at = l.find("[\"curve\"] = \"")? + 13;
+            let end = l[at..].find('"')? + at;
+            let v: Vec<f64> = l[at..end].split(' ').map(|s| s.parse().ok()).collect::<Option<_>>()?;
+            (v.len() == 4).then_some(v)
+        }
+
+        #[test]
+        fn lamp_off_or_absent_projects_nothing_and_wobble_off_loads_the_plugin() {
+            let mut data = vendor();
+            data["desktop"]["hyprland"]["lamp"]["enabled"] = Value::Boolean(false);
+            assert_eq!(lamp_profile(&data).unwrap(), "");
+            data["desktop"]["hyprland"].as_table_mut().unwrap().remove("lamp");
+            assert_eq!(lamp_profile(&data).unwrap(), "");
+            let mut data = vendor();
+            data["desktop"]["hyprland"]["mios-wobbly"]["enabled"] = Value::Boolean(false);
+            let l = lamp_profile(&data).unwrap();
+            assert!(l.contains("if not hl.plugin.mios_lamp then hl.plugin.load(\"/usr/lib64/mios/mios-wobbly.so\") end"), "{l}");
+            // windowshade off: no shader rule; hyprbars off: no tab rule
+            let mut data = vendor();
+            data["desktop"]["hyprland"]["windowshade"]["enabled"] = Value::Boolean(false);
+            data["desktop"]["hyprland"]["hyprbars"]["enabled"] = Value::Boolean(false);
+            let l = lamp_profile(&data).unwrap();
+            assert!(!l.contains("shader_open") && !l.contains("no_bar"), "{l}");
+        }
+
+        #[test]
+        fn lamp_curve_by_name_and_inline() {
+            let mut data = vendor();
+            data["desktop"]["hyprland"]["lamp"]["curve"] = Value::String("miosGlassIn".into());
+            let v = regex_free_curve(&lamp_profile(&data).unwrap()).unwrap();
+            assert_eq!(v, vec![0.75, 0.0, 0.9, 0.2]);
+            data["desktop"]["hyprland"]["lamp"]["curve"] = Value::String("noSuchCurve".into());
+            assert!(lamp_profile(&data).unwrap_err().contains("noSuchCurve"));
+        }
+
+        #[test]
+        fn lamp_projection_parses_as_lua() {
+            let data = vendor();
+            let chunk = format!(
+                "local function mios_section(n, f) f() end\nhl = {{ plugin = {{ mios_lamp = {{}} }}, config = function() end, window_rule = function() end }}\n{}",
+                lamp_profile(&data).unwrap()
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("lamp.lua");
+            fs::write(&path, chunk).unwrap();
+            let lua = ["/usr/bin/luajit", "/usr/bin/lua", "/usr/sbin/lua"].into_iter().find(|p| Path::new(p).is_file()).expect("a Lua interpreter");
+            let out = std::process::Command::new(lua).arg(&path).env("XDG_RUNTIME_DIR", dir.path()).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            // the pass-through shader was materialised for the rule (copied from shader_dir when present)
+            let shader = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/hyprland/shaders/none-open.glsl");
+            if shader.is_file() && Path::new("/usr/share/mios/hyprland/shaders/none-open.glsl").is_file() {
+                assert!(dir.path().join("mios-shader-none-open.glsl").is_file());
+            }
+        }
+
+        #[test]
+        fn lamp_rejects_bad_values() {
+            let data = vendor();
+            for (k, v) in [
+                ("enabled", Value::String("yes".into())),
+                ("events", Value::Array(vec![Value::String("close".into())])),
+                ("events", Value::String("minimize".into())),
+                ("duration_minimize_ms", Value::Integer(0)),
+                ("duration_open_ms", Value::Integer(60000)),
+                ("mesh_rows", Value::Integer(2)),
+                ("mesh_columns", Value::Integer(0)),
+                ("curve", Value::Array(vec![Value::Array(vec![Value::Float(1.5), Value::Float(0.0)]), Value::Array(vec![Value::Float(0.2), Value::Float(1.0)])])),
+                ("curve", Value::Array(vec![Value::Float(0.4)])),
+                ("hidden_dock", Value::String("nowhere".into())),
+                ("fallback_edge", Value::String("middle".into())),
+                ("pane_alpha", Value::Float(0.0)),
+                ("pane_alpha", Value::Float(1.5)),
+                ("minimized_workspace", Value::String("minimized".into())),
+                ("minimized_workspace", Value::String("special:bad name".into())),
+                ("anim_tag", Value::String("bad tag".into())),
+                ("remote", Value::String("lighter".into())),
+                ("hide_hyprbars", Value::String("true".into())),
+                ("windowshade_open", Value::String("../x".into())),
+                ("launch_timeout_ms", Value::Integer(10)),
+            ] {
+                let mut d = data.clone();
+                d["desktop"]["hyprland"]["lamp"].as_table_mut().unwrap().insert(k.into(), v.clone());
+                assert!(lamp_profile(&d).is_err(), "lamp.{k} = {v:?} accepted");
+            }
+            // negative control: the untouched vendor table is accepted (the loop above is not vacuous)
+            assert!(!lamp_profile(&data).unwrap().is_empty());
+            // the lamp without its backend table fails loudly
+            let mut d = data.clone();
+            d["desktop"]["hyprland"].as_table_mut().unwrap().remove("mios-wobbly");
+            assert!(lamp_profile(&d).unwrap_err().contains("mios-wobbly"));
+        }
+    }
+    // ---- end magic lamp ------------------------------------------------------------------------------------------
+
+    /// Start the single canonical session with device ordering established before Aquamarine.
+    #[cfg(target_os = "linux")]
+    pub fn session(root: &Path) -> Result<String, String> {
+        use std::{
+            env,
+            os::unix::{fs::FileTypeExt, process::CommandExt},
+            process::Command,
+        };
+        let data = crate::terminal::tmux_theme::tmux_runtime::load_layered(root)?;
+        let h = &data["desktop"]["hyprland"];
+        let runtime = env::var("XDG_RUNTIME_DIR").map_err(|_| "A logind session is required")?;
+        let mut cards = fs::read_dir("/dev/dri")
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                    s.strip_prefix("card")
+                        .is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+                })
+            })
+            .filter(|p| p.metadata().is_ok_and(|m| m.file_type().is_char_device()))
+            .collect::<Vec<_>>();
+        cards.sort();
+        let pci_path = root.join("etc/mios/hyprland/igpu-pci");
+        let selected = if pci_path.is_file() {
+            let pci = fs::read_to_string(pci_path).map_err(|e| e.to_string())?;
+            let pci = pci.trim();
+            if pci.len() != 12
+                || !pci.bytes().enumerate().all(|(i, c)| match i {
+                    4 | 7 => c == b':',
+                    10 => c == b'.',
+                    _ => c.is_ascii_hexdigit(),
+                })
+            {
+                return Err("Invalid iGPU PCI identity".into());
+            }
+            cards
+                .iter()
+                .find(|card| {
+                    fs::canonicalize(
+                        Path::new("/sys/class/drm")
+                            .join(card.file_name().unwrap_or_default())
+                            .join("device"),
+                    )
+                    .is_ok_and(|p| p.file_name().and_then(|s| s.to_str()) == Some(pci))
+                })
+                .cloned()
+                .ok_or("Selected iGPU has no DRM card")?
+        } else if let Some(alias) = h
+            .get("environment")
+            .and_then(|v| v.get("AQ_DRM_DEVICES"))
+            .and_then(Value::as_str)
+            .and_then(|s| fs::canonicalize(s).ok())
+            .filter(|p| cards.contains(p))
+        {
+            alias
+        } else {
+            // Device identities come from the host override or SSOT alias.
+            // A vendor ID alone cannot distinguish an integrated GPU from a discrete GPU.
+            cards
+                .first()
+                .cloned()
+                .ok_or("No DRM device is available for the desktop")?
+        };
+        let mut ordered = vec![selected.clone()];
+        ordered.extend(cards.into_iter().filter(|p| p != &selected));
+        let devices = ordered
+            .iter()
+            .map(|p| p.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(":");
+        let state = env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")))
+            .ok_or("No user state directory")?;
+        let bridge_dir = state.join("mios/theme");
+        let status = Command::new("/usr/libexec/mios/mios-sync-theme")
+            .arg("--bridge-only")
+            .env("MIOS_THEME_OUT_DIR", &bridge_dir)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Shell theme projection failed".into());
+        }
+        let status = Command::new("/usr/libexec/mios/mios-dotfiles-render")
+            .args(["apply", "rofi"])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Launcher theme projection failed".into());
+        }
+        // Keep GTK/libadwaita on their supported settings/CSS path.
+        let status = Command::new("/usr/libexec/mios/mios-theme-render")
+            .args(["--gtk", "--qt"])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Desktop theme projection failed".into());
+        }
+        for (key, value) in [
+            ("color-scheme", data["desktop"]["color_scheme"].as_str()),
+            ("gtk-theme", data["appearance"]["gtk_theme"].as_str()),
+        ] {
+            let status = Command::new("gsettings")
+                .args([
+                    "set",
+                    "org.gnome.desktop.interface",
+                    key,
+                    value.ok_or("Missing desktop appearance setting")?,
+                ])
+                .status()
+                .map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err(format!("Failed to activate {key}"));
+            }
+        }
+        let mut command = Command::new("flock");
+        command
+            .args(["--nonblock", "--close"])
+            .arg(Path::new(&runtime).join("mios-hyprland.lock"))
+            .args([
+                "start-hyprland",
+                "--",
+                "--config",
+                "/usr/share/mios/hyprland/session.lua",
+            ])
+            .env("MIOS_THEME_BRIDGE", bridge_dir.join("theme.json"))
+            .env("AQ_DRM_DEVICES", &devices)
+            .env("WLR_DRM_DEVICES", &devices)
+            .env("XDG_CURRENT_DESKTOP", "Hyprland")
+            .env("XDG_SESSION_DESKTOP", "Hyprland")
+            .env("XDG_SESSION_TYPE", "wayland");
+        for key in [
+            "TMUX",
+            "TMUX_PANE",
+            "TMUX_TMPDIR",
+            "GTK_THEME",
+            "__NV_PRIME_RENDER_OFFLOAD",
+            "__GLX_VENDOR_LIBRARY_NAME",
+            "__VK_LAYER_NV_optimus",
+            "LIBGL_ALWAYS_SOFTWARE",
+            "MESA_LOADER_DRIVER_OVERRIDE",
+            "QT_QUICK_BACKEND",
+        ] {
+            command.env_remove(key);
+        }
+        // Drop the bulk SSOT exports (bwrap argument overflow for every flatpak) except the allowlist.
+        let keep: Vec<&str> = data["desktop"]["hyprland"]["session_env_keep"]
+            .as_array()
+            .ok_or("desktop.hyprland.session_env_keep must be an array")?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        for (key, _) in std::env::vars_os() {
+            let Some(key) = key.to_str() else { continue };
+            if key.starts_with("MIOS_") && key != "MIOS_THEME_BRIDGE" && !keep.contains(&key) {
+                command.env_remove(key);
+            }
+        }
+        if let Ok(pci) = fs::canonicalize(
+            Path::new("/sys/class/drm")
+                .join(selected.file_name().unwrap_or_default())
+                .join("device"),
+        ) {
+            if let Some(pci) = pci.file_name().and_then(|s| s.to_str()) {
+                command.env("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
+            }
+        }
+        Err(format!("Failed to start the desktop: {}", command.exec()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    pub fn session(_: &Path) -> Result<String, String> {
+        Err("Hyprland sessions require Linux".into())
+    }
+
+    /// The session entry is read at every login: a reset mid-write must leave the old file or the
+    /// new one, never a truncated one. Temp file beside the target, fsync, rename, fsync the dir.
+    fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let dir = target.parent().ok_or_else(|| std::io::Error::other("no parent directory"))?;
+        fs::create_dir_all(dir)?;
+        let mode = fs::metadata(target).ok().map(|m| m.permissions());
+        let mut tmp = tempfile::Builder::new().prefix(".mios-render-").tempfile_in(dir)?;
+        tmp.write_all(content.as_bytes())?;
+        tmp.as_file().sync_all()?;
+        let perms = mode.unwrap_or_else(|| {
+            use std::os::unix::fs::PermissionsExt;
+            fs::Permissions::from_mode(0o644)
+        });
+        tmp.as_file().set_permissions(perms)?;
+        tmp.persist(target).map_err(|e| e.error)?;
+        fs::File::open(dir)?.sync_all()
+    }
+
+    pub fn run(root: &Path, check: bool, runtime: bool) -> Result<(String, i32), (String, i32)> {
+        let result = (|| -> Result<String, String> {
+            let data = if runtime {
+                crate::terminal::tmux_theme::tmux_runtime::load_layered(root)?
+            } else {
+                fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+                    .map_err(|e| e.to_string())?
+                    .parse::<Value>()
+                    .map_err(|e| e.to_string())?
+            };
+            let output = project(&data)?;
+            if runtime {
+                return Ok(output);
+            }
+            for (path, content) in [
+                ("usr/share/mios/hyprland/hyprland.lua", output.as_str()),
+                ("etc/skel/.config/hypr/hyprland.lua", LOADER),
+                ("usr/share/mios/hyprland/session.lua", LOADER),
+            ] {
+                let target = root.join(path);
+                if check {
+                    if fs::read_to_string(&target).map_err(|e| format!("{path}: {e}"))? != content {
+                        return Err(format!("Hyprland SSOT drift: {path}"));
+                    }
+                } else {
+                    write_atomic(&target, content).map_err(|e| format!("{path}: {e}"))?;
+                }
+            }
+            Ok("[render-hyprland] Lua projection and user entry match SSOT\n".into())
+        })();
+        result.map(|msg| (msg, 0)).map_err(|e| (e, 1))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        /// A Lua interpreter to prove generated chunks parse: LuaJIT (5.1 syntax, the strictest
+        /// about escapes) on the host, PUC Lua in podman-MiOS-DEV.
+        fn interpreter() -> &'static str {
+            ["/usr/bin/luajit", "/usr/bin/lua", "/usr/sbin/lua"]
+                .into_iter()
+                .find(|p| Path::new(p).is_file())
+                .expect("a Lua interpreter (luajit or lua) is required for the projection parse tests")
+        }
+        fn run_lua(script: &str, env: &[(&str, &str)]) -> (bool, String) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("t.lua");
+            fs::write(&path, script).unwrap();
+            let out = std::process::Command::new(interpreter())
+                .arg(&path)
+                .envs(env.iter().copied())
+                .output()
+                .unwrap();
+            (
+                out.status.success(),
+                format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            )
+        }
+        fn real_ssot() -> Value {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            fs::read_to_string(path).unwrap().parse().unwrap()
+        }
+        const NASTY: &str = "a\u{1}2\u{7f}\u{1b}[0m\t\"q\\\r\n\u{0}9 é ✓";
+
+        #[test]
+        fn screenshot_section_projects_and_parses() {
+            let data = real_ssot();
+            let chunk = project(&data).unwrap();
+            assert!(chunk.contains("mios_section(\"screenshot\", function()\n"), "no screenshot section");
+            assert!(chunk.contains(" hl.bind(\"Print\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\n"), "Print bind");
+            assert!(chunk.contains(" hl.bind(\"SUPER + SHIFT + S\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\n"));
+            assert!(chunk.contains(" hl.layer_rule({[\"match\"] = {[\"namespace\"] = \"^(mios-shot-freeze)$\"}, [\"no_anim\"] = true})\n"));
+            assert!(!chunk.contains("hl.permission("), "permissions are projected only under enforce_permissions");
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("hyprland.lua");
+            fs::write(&path, &chunk).unwrap();
+            let (ok, out) = run_lua(
+                "local f, e = loadfile(os.getenv('CHUNK')) assert(f, e) io.write('parsed')",
+                &[("CHUNK", path.to_str().unwrap())],
+            );
+            assert!(ok && out == "parsed", "{out}");
+        }
+
+        #[test]
+        fn screenshot_section_rejects_unsafe_input_and_honours_switches() {
+            let base = real_ssot();
+            let with = |f: &dyn Fn(&mut Value)| {
+                let mut d = base.clone();
+                f(&mut d);
+                project(&d)
+            };
+            let bad_args: Value = toml::from_str("b = [{ key = \"Print\", args = \"region; rm -rf ~\" }]").unwrap();
+            assert!(with(&|d| d["desktop"]["screenshot"]["bindings"] = bad_args["b"].clone()).is_err(), "shell metacharacters in args");
+            assert!(with(&|d| d["desktop"]["screenshot"]["binary"] = Value::String("mios-shot".into())).is_err(), "relative binary");
+            assert!(with(&|d| d["desktop"]["screenshot"]["binary"] = Value::String("/usr/bin/x $(id)".into())).is_err());
+            let bad_ns: Value = toml::from_str("n = [\"a b\"]").unwrap();
+            assert!(with(&|d| d["desktop"]["screenshot"]["no_anim_namespaces"] = bad_ns["n"].clone()).is_err(), "namespace");
+            let off = with(&|d| d["desktop"]["screenshot"]["enabled"] = Value::Boolean(false)).unwrap();
+            assert!(!off.contains("mios_section(\"screenshot\"") && !off.contains("/usr/bin/mios-shot region"), "enabled = false projects nothing");
+            let gone = with(&|d| {
+                d["desktop"].as_table_mut().unwrap().remove("screenshot");
+            })
+            .unwrap();
+            assert!(!gone.contains("mios_section(\"screenshot\""), "absent table projects nothing");
+            let enforced = with(&|d| {
+                let eco: Value = toml::from_str("enforce_permissions = true").unwrap();
+                d["desktop"]["hyprland"]["config"].as_table_mut().unwrap().insert("ecosystem".into(), eco);
+            })
+            .unwrap();
+            assert_eq!(enforced.matches(" hl.permission(").count(), 3, "binary, grim, XDPH");
+            assert!(enforced.contains(" hl.permission(\"/usr/bin/mios-shot\", \"screencopy\", \"allow\")\n"), "{enforced}");
+            assert!(with(&|d| {
+                let eco: Value = toml::from_str("enforce_permissions = true").unwrap();
+                d["desktop"]["hyprland"]["config"].as_table_mut().unwrap().insert("ecosystem".into(), eco);
+                d["desktop"]["screenshot"]["hyprland_permission"] = Value::String("maybe".into());
+            })
+            .is_err());
+        }
+
+        #[test]
+        fn lua_string_uses_only_portable_escapes() {
+            assert_eq!(lua_string("a\u{1}2"), "\"a\\0012\"");
+            assert_eq!(lua_string("\u{7f}\u{1f}"), "\"\\127\\031\"");
+            assert_eq!(lua_string("é✓"), "\"é✓\"");
+            let escaped = lua_string(NASTY);
+            assert!(!escaped.contains("\\u"), "{escaped}");
+            // Positive control: every Lua dialect reads the literal back byte for byte.
+            let (ok, out) = run_lua(&format!("io.write({escaped})"), &[]);
+            assert!(ok, "{out}");
+            assert_eq!(out, NASTY);
+            // Negative control: the old JSON escaping of the same string is rejected.
+            let json = serde_json::to_string(NASTY).unwrap();
+            assert!(json.contains("\\u0001"));
+            let (ok, out) = run_lua(&format!("io.write({json})"), &[]);
+            assert!(!ok, "JSON escapes unexpectedly parsed: {out}");
+        }
+
+        #[test]
+        fn generated_chunk_with_control_bytes_parses() {
+            let mut data = real_ssot();
+            let rule: Value = toml::from_str(&format!(
+                "r = {{ name = \"ctl\", match = {{ title = {} }}, float = true }}",
+                toml::Value::String(NASTY.into())
+            ))
+            .unwrap();
+            data["desktop"]["hyprland"]["window_rules"]
+                .as_array_mut()
+                .unwrap()
+                .push(rule["r"].clone());
+            let chunk = project(&data).unwrap();
+            assert!(chunk.contains("\\001"), "control byte not escaped");
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("hyprland.lua");
+            fs::write(&path, &chunk).unwrap();
+            let (ok, out) = run_lua(
+                "local f, e = loadfile(os.getenv('CHUNK')) assert(f, e) io.write('parsed')",
+                &[("CHUNK", path.to_str().unwrap())],
+            );
+            assert!(ok && out == "parsed", "{out}");
+            // Negative control: the same chunk with JSON string escapes does not parse.
+            let json = chunk.replace(&lua_string(NASTY), &serde_json::to_string(NASTY).unwrap());
+            assert_ne!(json, chunk);
+            fs::write(&path, &json).unwrap();
+            let (ok, _) = run_lua(
+                "assert(loadfile(os.getenv('CHUNK')))",
+                &[("CHUNK", path.to_str().unwrap())],
+            );
+            assert!(!ok, "JSON-escaped chunk unexpectedly parsed");
+        }
+
+        /// Runs the session entry (LOADER) under a stub `hl` with the projection command replaced
+        /// by `cmd`; reports binds, hook registrations and the commands the start hooks run.
+        fn run_session(cmd: &str, fail_plugin: bool) -> String {
+            const STUB: &str = r#"
+local function auto()
+ return setmetatable({}, { __index = function(t, k) local v = auto() rawset(t, k, v) return v end, __call = function() return auto() end })
+end
+local binds, hooks, execs = {}, {}, {}
+hl = auto()
+hl.bind = function(key) table.insert(binds, key) end
+hl.on = function(event, fn) table.insert(hooks, { event = event, fn = fn }) end
+hl.exec_cmd = function(cmd) table.insert(execs, cmd) end
+if os.getenv("FAIL_PLUGIN") == "1" then
+ hl.plugin.load = function(path) error("cannot load " .. path) end
+end
+dofile(os.getenv("LOADER"))
+for _, b in ipairs(binds) do print("bind " .. b) end
+for _, h in ipairs(hooks) do
+ print("on " .. h.event)
+ if h.event == "hyprland.start" then h.fn() end
+end
+for _, c in ipairs(execs) do print("exec " .. c) end
+"#;
+            let entry = "/usr/bin/mios-gen render-hyprland --root / --runtime";
+            assert_eq!(LOADER.matches(entry).count(), 1);
+            let dir = tempfile::tempdir().unwrap();
+            let loader = dir.path().join("session.lua");
+            fs::write(&loader, LOADER.replace(entry, cmd)).unwrap();
+            let (ok, out) = run_lua(
+                STUB,
+                &[
+                    ("LOADER", loader.to_str().unwrap()),
+                    ("XDG_RUNTIME_DIR", dir.path().to_str().unwrap()),
+                    ("FAIL_PLUGIN", if fail_plugin { "1" } else { "0" }),
+                ],
+            );
+            assert!(ok, "session entry raised: {out}");
+            out
+        }
+
+        #[test]
+        fn session_falls_back_to_a_minimal_desktop_when_the_projection_fails() {
+            let mut data = real_ssot();
+            let dir = tempfile::tempdir().unwrap();
+            let chunk = dir.path().join("chunk.lua");
+            // Positive control: a good projection loads in full, starts the target once, no fallback.
+            fs::write(&chunk, project(&data).unwrap()).unwrap();
+            let good = run_session(&format!("cat '{}'", chunk.display()), false);
+            assert!(good.contains("bind CTRL + ALT + SHIFT + t"), "{good}");
+            assert_eq!(good.matches("on hyprland.start").count(), 1, "{good}");
+            assert_eq!(good.matches("start mios-desktop.target").count(), 1, "{good}");
+            assert!(!good.contains("minimal session") && !good.contains("hyprctl notify"), "{good}");
+            // Negative control: an invalid monitor scale fails the projection; the session still
+            // gets terminal + launcher binds, starts mios-desktop.target and surfaces the error.
+            let layer: Value = toml::from_str("[monitors.HDMI-A-1]\nscale = 9\n").unwrap();
+            data["desktop"]["hyprland"]["monitors"] = layer["monitors"].clone();
+            let err = project(&data).unwrap_err();
+            assert!(err.contains("scale"), "{err}");
+            let errfile = dir.path().join("err.txt");
+            fs::write(&errfile, &err).unwrap();
+            let bad = run_session(&format!("cat '{}' >&2; exit 1", errfile.display()), false);
+            for key in ["bind SUPER + Q", "bind SUPER + Return", "bind SUPER + SPACE", "bind SUPER + R"] {
+                assert!(bad.contains(key), "missing {key}: {bad}");
+            }
+            assert!(bad.contains("on hyprland.shutdown"), "{bad}");
+            assert_eq!(bad.matches("start mios-desktop.target").count(), 1, "{bad}");
+            assert!(bad.contains("exec hyprctl notify 3"), "{bad}");
+            assert!(bad.contains("scale must be a number"), "error not surfaced: {bad}");
+            // Garbage (non-Lua) output degrades the same way.
+            let junk = run_session("echo '-- AI-hint: x' ; echo 'this is not lua ('", false);
+            assert!(junk.contains("bind SUPER + Q") && junk.contains("start mios-desktop.target"), "{junk}");
+        }
+
+        #[test]
+        fn failing_plugin_keeps_binds_and_lifecycle_hooks() {
+            let data = real_ssot();
+            let output = project(&data).unwrap();
+            let hooks = output.find("hl.on(\"hyprland.start\"").unwrap();
+            for plugin in ["hyprglass", "hyprbars", "windowshade", "mios-wobbly"] {
+                let at = output
+                    .find(&format!("mios_section(\"{plugin}\", function()\nhl.plugin.load("))
+                    .unwrap_or_else(|| panic!("{plugin} not wrapped in mios_section"));
+                assert!(hooks < at, "lifecycle hooks must precede {plugin}");
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let chunk = dir.path().join("chunk.lua");
+            fs::write(&chunk, &output).unwrap();
+            let out = run_session(&format!("cat '{}'", chunk.display()), true);
+            // Full SSOT binds, not the fallback: the chunk itself survived the plugin failures.
+            assert!(out.contains("bind CTRL + ALT + SHIFT + t"), "{out}");
+            assert_eq!(out.matches("start mios-desktop.target").count(), 1, "{out}");
+            assert!(out.contains("hyprglass section failed") && out.contains("cannot load"), "{out}");
+            assert!(out.contains("exec hyprctl notify 3"), "{out}");
+            assert!(!out.contains("minimal session"), "{out}");
+        }
+
+        #[test]
+        fn lua_escapes_quotes_and_rejects_unsupported_values() {
+            assert_eq!(
+                lua(&Value::String("a\"b\n".into())).unwrap(),
+                "\"a\\\"b\\n\""
+            );
+            assert!(lua(&Value::Float(f64::NAN)).is_err());
+        }
+        #[test]
+        fn curves_project_and_reject_bad_points() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            data["desktop"]["hyprland"]["curves"] =
+                toml::from_str::<Value>("a = [{ name = \"glassIn\", points = [[0.7, 0.0], [0.84, 0.0]] }]").unwrap()["a"].clone();
+            let output = project(&data).unwrap();
+            assert!(output.contains("hl.curve(\"glassIn\", {[\"points\"] = {{0.7, 0}, {0.84, 0}}, [\"type\"] = \"bezier\"})")
+                || (output.contains("hl.curve(\"glassIn\"") && output.contains("{0.7, 0")), "{output}");
+            data["desktop"]["hyprland"]["curves"] =
+                toml::from_str::<Value>("a = [{ name = \"bad\", points = [[0.7, 0.0]] }]").unwrap()["a"].clone();
+            assert!(project(&data).is_err());
+        }
+        #[test]
+        fn per_output_monitors_project_after_the_catch_all() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            // Backwards compatible: the vendor SSOT ships only the catch-all rule.
+            let vendor = project(&data).unwrap();
+            assert_eq!(vendor.matches("hl.monitor(").count(), 1, "{vendor}");
+            assert!(!vendor.contains("default_monitor"), "{vendor}");
+            let layer: Value = toml::from_str(
+                "[monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\nposition = \"0x0\"\nscale = 1.25\ntransform = 0\nprimary = true\n[monitors.DP-2]\nmode = \"preferred\"\nposition = \"auto-right\"\nscale = 1\ndisabled = true\n",
+            )
+            .unwrap();
+            data["desktop"]["hyprland"]["monitors"] = layer["monitors"].clone();
+            let output = project(&data).unwrap();
+            let lines: Vec<&str> = output.lines().filter(|l| l.starts_with("hl.monitor(")).collect();
+            assert_eq!(lines.len(), 3, "{output}");
+            assert!(lines[0].contains("[\"output\"] = \"\""), "{output}");
+            let hdmi = lines
+                .iter()
+                .find(|l| l.contains("[\"output\"] = \"HDMI-A-1\""))
+                .expect(&output);
+            for field in [
+                "[\"mode\"] = \"1920x1080@144\"",
+                "[\"position\"] = \"0x0\"",
+                "[\"scale\"] = 1.25",
+                "[\"transform\"] = 0",
+            ] {
+                assert!(hdmi.contains(field), "{hdmi}");
+            }
+            assert!(output.contains("[\"output\"] = \"DP-2\""), "{output}");
+            assert!(output.contains("[\"disabled\"] = true"), "{output}");
+            assert!(!output.contains("primary"), "{output}");
+            assert!(output.contains("[\"default_monitor\"] = \"HDMI-A-1\""), "{output}");
+            for bad in [
+                "[monitors.HDMI-A-1]\nmode = \"huge\"\n",
+                "[monitors.HDMI-A-1]\nscale = 9\n",
+                "[monitors.HDMI-A-1]\ntransform = 8\n",
+                "[monitors.\"desc:LG 24\"]\nmode = \"preferred\"\n",
+                "[monitors.A]\nprimary = true\n[monitors.B]\nprimary = true\n",
+            ] {
+                let layer: Value = toml::from_str(bad).unwrap();
+                data["desktop"]["hyprland"]["monitors"] = layer["monitors"].clone();
+                assert!(project(&data).is_err(), "{bad}");
+            }
+        }
+        #[test]
+        fn animation_leaves_project_and_reject_bad_leaves() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            let leaves: Value = toml::from_str(
+                "a = [{ leaf = \"fadeOut\", speed = 5.5, bezier = \"linear\" }, { leaf = \"windowsOut\", speed = 5.5, bezier = \"linear\", style = \"popin 100%\" }]",
+            )
+            .unwrap();
+            data["desktop"]["hyprland"]["animations"] = leaves["a"].clone();
+            let output = project(&data).unwrap();
+            assert!(output.contains("hl.animation({[\"bezier\"] = \"linear\", [\"enabled\"] = true, [\"leaf\"] = \"fadeOut\", [\"speed\"] = 5.5})")
+                || output.contains("[\"leaf\"] = \"fadeOut\""), "{output}");
+            assert!(output.contains("popin 100%"));
+            data["desktop"]["hyprland"]["animations"] = toml::from_str::<Value>("a = [{ leaf = \"fade out\", speed = 1.0 }]").unwrap()["a"].clone();
+            assert!(project(&data).is_err());
+            data["desktop"]["hyprland"]["animations"] = toml::from_str::<Value>("a = [{ leaf = \"fadeIn\" }]").unwrap()["a"].clone();
+            assert!(project(&data).is_err());
+        }
+        #[test]
+        fn glass_alpha_applies_without_floating_filters_and_acrylic_off_is_opaque() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            data["theme"]["windows"]["opacity_pct"] = Value::Integer(73);
+            let output = project(&data).unwrap();
+            assert!(output.contains("[\"active_opacity\"] = 0.73"));
+            assert!(output.contains("[\"fullscreen_opacity\"] = 0.73"));
+            data["theme"]["acrylic"] = Value::Boolean(false);
+            assert!(project(&data).unwrap().contains("[\"active_opacity\"] = 1"));
+            data["theme"]["windows"]["opacity_pct"] = Value::Integer(101);
+            assert!(project(&data).unwrap_err().contains("opacity_pct"));
+        }
+        #[test]
+        fn session_lifecycle_projects_stop_and_rejects_invalid_commands() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            let output = project(&data).unwrap();
+            assert!(output.contains("hyprland.shutdown"));
+            assert!(output.contains("systemctl --user stop mios-desktop.target"));
+            data["desktop"]["hyprland"]["startup"] = Value::Array(vec![Value::Boolean(true)]);
+            assert!(project(&data).unwrap_err().contains("nonempty strings"));
+        }
+
+        #[test]
+        fn real_ssot_projects_and_rejects_invalid_geometry_and_dispatchers() {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            let output = project(&data).unwrap();
+            assert!(output.contains("hl.config("));
+            assert!(output.contains("CTRL + ALT + SHIFT + t"));
+            assert!(!output.contains("autogenerated = true"));
+            data["theme"]["edge"]["wm_border_px"] = Value::Integer(-1);
+            assert!(project(&data).unwrap_err().contains("wm_border_px"));
+            data["theme"]["edge"]["wm_border_px"] = Value::Integer(0);
+            data["desktop"]["hyprland"]["bindings"]
+                .as_array_mut()
+                .unwrap()[0]["dispatcher"] = Value::String("exec_cmd);bad(".into());
+            assert!(project(&data).unwrap_err().contains("dispatcher"));
+        }
+    }
+}
+
+/// Build Hyprglass against the installed compositor SDK, including its hidden Lua ABI.
+pub mod hyprglass_build {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+    };
+    use toml::Value;
+    fn command(program: &str, args: &[String], cwd: &Path) -> Result<(), String> {
+        let status = Command::new(program)
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .map_err(|e| format!("{program}: {e}"))?;
+        if !status.success() {
+            return Err(format!("{program} failed: {status}"));
+        }
+        Ok(())
+    }
+    fn output(program: &str, args: &[&str], cwd: &Path) -> Result<String, String> {
+        let out = Command::new(program)
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(format!(
+                "{program}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+    fn value<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
+        v.get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("Missing plugin key {key}"))
+    }
+    fn find(dir: &Path, prefix: &str, suffix: &str, directory: bool) -> Result<PathBuf, String> {
+        let paths = fs::read_dir(dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() == directory)
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.starts_with(prefix) && s.ends_with(suffix))
+            })
+            .collect::<Vec<_>>();
+        if paths.len() != 1 {
+            return Err(format!(
+                "Expected one SDK {prefix}*{suffix}, found {}",
+                paths.len()
+            ));
+        }
+        Ok(paths[0].clone())
+    }
+    // The upstream layer path masks content alpha but computes optical
+    // highlights against a square. Reuse the compositor's live SSOT radius.
+    fn layer_geometry_source(source: &str) -> Result<String, String> {
+        let include = "#include <hyprland/src/render/OpenGL.hpp>";
+        let old = "    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
+        let replacement = r#"    float cornerRadius = 0.0f;
+    const auto radiusOption = Config::mgr()->getConfigValue("decoration:rounding");
+    if (radiusOption.dataptr && radiusOption.type && *radiusOption.type == typeid(Config::INTEGER)) {
+        const auto radius = reinterpret_cast<Config::INTEGER* const*>(radiusOption.dataptr);
+        cornerRadius = std::clamp(static_cast<float>(**radius) * monitor->m_scale, 0.0f,
+                                 static_cast<float>(std::min(transformBox.w, transformBox.h) * 0.5));
+    }
+    float roundingPower = 2.0f;"#;
+        if source.matches(include).count() != 1 || source.matches(old).count() != 1 {
+            return Err("MiOS layer geometry fix (render.rs layer_geometry_source) no longer matches upstream src/GlassLayerSurface.cpp; update its anchor".into());
+        }
+        Ok(source
+            .replacen(include, "#include <hyprland/src/config/ConfigManager.hpp>\n#include <hyprland/src/render/OpenGL.hpp>", 1)
+            .replacen(old, replacement, 1))
+    }
+
+    #[cfg(test)]
+    mod geometry_tests {
+        use super::*;
+        #[test]
+        fn pinned_layer_fix_reads_live_radius_and_rejects_unreviewed_sources() {
+            let fixture = "#include <hyprland/src/render/OpenGL.hpp>\n    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
+            let fixed = layer_geometry_source(fixture).unwrap();
+            assert!(fixed.contains("getConfigValue(\"decoration:rounding\")"));
+            assert!(fixed.contains("monitor->m_scale"));
+            assert!(fixed.contains("transformBox.h) * 0.5"));
+            assert!(layer_geometry_source(&fixed).is_err());
+            assert!(layer_geometry_source(&fixture.replace("cornerRadius  = 0.0f", "cornerRadius  = 5.0f")).is_err());
+            assert!(layer_geometry_source(&(fixture.to_string() + fixture)).is_err());
+        }
+    }
+
+    /// Upstream repository of a cloned plugin. `source_revision` pins are refused: the policy is
+    /// latest upstream (resolved and logged at build time), so a stale pin cannot silently hold a
+    /// plugin back or be mistaken for what was built.
+    fn upstream_source<'a>(p: &'a Value, plugin: &str) -> Result<&'a str, String> {
+        if p.get("source_revision").is_some() {
+            return Err(format!(
+                "[desktop.hyprland.{plugin}] source_revision is not allowed: plugins build from upstream default-branch HEAD (remove the pin)"
+            ));
+        }
+        value(p, "source_repository")
+    }
+
+    /// The plugin commit hyprpm.toml ([repository] commit_pins = [[hyprland_commit, plugin_commit], ...])
+    /// maps `hyprland` to, None when it has no entry. A malformed hyprpm.toml fails the build.
+    fn hyprpm_pin(text: &str, hyprland: &str) -> Result<Option<String>, String> {
+        let doc: Value = text.parse().map_err(|e| format!("hyprpm.toml: {e}"))?;
+        let Some(pins) = doc.get("repository").and_then(|r| r.get("commit_pins")) else {
+            return Ok(None);
+        };
+        let hex = |s: &str| s.len() == 40 && s.bytes().all(|c| c.is_ascii_hexdigit());
+        let mut found = None;
+        for pin in pins.as_array().ok_or("hyprpm.toml commit_pins must be an array")? {
+            let pair = pin
+                .as_array()
+                .filter(|p| p.len() == 2)
+                .and_then(|p| Some((p[0].as_str()?, p[1].as_str()?)))
+                .filter(|(a, b)| hex(a) && hex(b))
+                .ok_or("hyprpm.toml commit_pins entries must be [hyprland_commit, plugin_commit]")?;
+            if pair.0.eq_ignore_ascii_case(hyprland) {
+                found = Some(pair.1.to_ascii_lowercase()); // the last entry wins, as in hyprpm
+            }
+        }
+        Ok(found)
+    }
+
+    /// Commit of the installed Hyprland release, resolved from its v<version> tag in
+    /// [desktop.hyprland.hyprglass] hyprland_repository (peeled for annotated tags).
+    fn hyprland_commit(h: &Value, installed: &str, cwd: &Path) -> Result<String, String> {
+        let url = value(h, "hyprland_repository")
+            .map_err(|_| "[desktop.hyprland.hyprglass] hyprland_repository is needed to read a plugin's hyprpm.toml".to_string())?;
+        let tag = format!("refs/tags/v{installed}");
+        let listing = output("git", &["ls-remote", url, &tag, &format!("{tag}^{{}}")], cwd)?;
+        let commit = |suffix: &str| {
+            listing.lines().find_map(|l| {
+                let (sha, name) = l.split_once('\t')?;
+                (name == format!("{tag}{suffix}")).then(|| sha.to_string())
+            })
+        };
+        commit("^{}")
+            .or_else(|| commit(""))
+            .ok_or_else(|| format!("Hyprland tag v{installed} not found in {url}"))
+    }
+
+    #[cfg(test)]
+    mod hyprpm_tests {
+        use super::hyprpm_pin;
+        const HL: &str = "efb50993780079460b0cbed1363e2166a2de1d9f";
+        const PIN: &str = "7644cecdb947060682891a0db2a0cdc5c0b9e704";
+        #[test]
+        fn hyprpm_pins_pick_the_installed_release_or_head() {
+            let text = format!(
+                "[repository]\nname = \"x\"\ncommit_pins = [\n  [\"36b2e0cfe0c6094dbc47bd42a437431315bb3087\", \"{PIN}\"], # 0.56.0\n  [\"{HL}\", \"{PIN}\"]  # 0.56.2\n]\n[p]\nbuild = [\"make\"]\n"
+            );
+            assert_eq!(hyprpm_pin(&text, HL).unwrap().as_deref(), Some(PIN));
+            // a Hyprland commit with no entry builds HEAD
+            assert_eq!(hyprpm_pin(&text, "0000000000000000000000000000000000000000").unwrap(), None);
+            // no commit_pins at all: HEAD
+            assert_eq!(hyprpm_pin("[repository]\nname = \"x\"\n", HL).unwrap(), None);
+            // malformed entries fail loudly instead of silently building HEAD
+            assert!(hyprpm_pin("[repository]\ncommit_pins = [[\"abc\", \"def\"]]\n", HL).is_err());
+            assert!(hyprpm_pin("[repository]\ncommit_pins = \"x\"\n", HL).is_err());
+            assert!(hyprpm_pin("not toml [", HL).is_err());
+        }
+    }
+
+    /// Reviewed MiOS patches from the tree, applied in SSOT order. A patch that no longer applies to
+    /// the upstream commit fails the build naming the patch and the commit it was tried against.
+    fn apply_patches(root: &Path, repo: &Path, p: &Value, plugin: &str, revision: &str) -> Result<(), String> {
+        for patch in p.get("patches").and_then(Value::as_array).into_iter().flatten() {
+            let rel = patch.as_str().ok_or("patches entries must be strings")?.trim_start_matches('/');
+            let file = root.join(rel);
+            if !file.is_file() {
+                return Err(format!("{plugin}: MiOS patch {rel} not found under {}", root.display()));
+            }
+            let path = file.display().to_string();
+            output("git", &["apply", "--check", &path], repo).map_err(|e| {
+                format!(
+                    "{plugin}: MiOS patch {rel} no longer applies to upstream {revision}; rebase the patch onto upstream HEAD.\n{e}"
+                )
+            })?;
+            output("git", &["apply", &path], repo)
+                .map_err(|e| format!("{plugin}: applying MiOS patch {rel} failed: {e}"))?;
+            eprintln!("[build-hyprland-plugin] {plugin}: applied {rel}");
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod upstream_tests {
+        use super::*;
+        fn git(dir: &Path, args: &[&str]) {
+            let ok = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        }
+        #[test]
+        fn plugins_build_latest_upstream_and_refuse_pins() {
+            let ssot: Value = toml::from_str(
+                "[a]\nsource_repository = \"https://example.invalid/a.git\"\n[b]\nsource_repository = \"https://example.invalid/b.git\"\nsource_revision = \"0ec4118fa7f6ddda73a90a52066c8a9b2fbf844d\"\n",
+            )
+            .unwrap();
+            assert_eq!(upstream_source(&ssot["a"], "a").unwrap(), "https://example.invalid/a.git");
+            assert!(upstream_source(&ssot["b"], "b").unwrap_err().contains("source_revision is not allowed"));
+            // The shipped SSOT follows the policy for every cloned plugin.
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
+            let data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
+            for plugin in ["hyprglass", "hyprbars", "windowshade"] {
+                upstream_source(&data["desktop"]["hyprland"][plugin], plugin).unwrap();
+            }
+        }
+        #[test]
+        fn stale_patch_fails_loudly_naming_the_patch() {
+            let root = tempfile::tempdir().unwrap();
+            let repo = root.path().join("repo");
+            fs::create_dir_all(&repo).unwrap();
+            fs::write(repo.join("f.txt"), "one\ntwo\n").unwrap();
+            git(&repo, &["init", "-q"]);
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-qm", "init"]);
+            fs::create_dir_all(root.path().join("p")).unwrap();
+            fs::write(root.path().join("p/good.patch"), "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n").unwrap();
+            fs::write(root.path().join("p/stale.patch"), "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n one\n-three\n+THREE\n").unwrap();
+            let good: Value = toml::from_str("patches = [\"p/good.patch\"]").unwrap();
+            apply_patches(root.path(), &repo, &good, "demo", "abc123").unwrap();
+            assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "one\nTWO\n");
+            git(&repo, &["checkout", "-q", "--", "f.txt"]);
+            let stale: Value = toml::from_str("patches = [\"p/stale.patch\"]").unwrap();
+            let err = apply_patches(root.path(), &repo, &stale, "demo", "abc123").unwrap_err();
+            assert!(err.contains("MiOS patch p/stale.patch no longer applies to upstream abc123"), "{err}");
+            assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "one\ntwo\n");
+            let missing: Value = toml::from_str("patches = [\"p/none.patch\"]").unwrap();
+            assert!(apply_patches(root.path(), &repo, &missing, "demo", "abc123").unwrap_err().contains("p/none.patch not found"));
+        }
+    }
+
+    pub fn run(root: &Path, srpm: Option<&Path>) -> Result<String, String> {
+        run_plugin(root, srpm, "hyprglass")
+    }
+
+    /// Build the compositor plugin [desktop.hyprland.<plugin>] against the installed SDK.
+    /// The ABI hold (hyprland_version, lua_version, build_jobs) is [desktop.hyprland.hyprglass]'s,
+    /// shared by every plugin loaded into the same compositor.
+    pub fn run_plugin(root: &Path, srpm: Option<&Path>, plugin: &str) -> Result<String, String> {
+        if !Path::new("/run/.containerenv").exists() {
+            return Err("Run this build inside podman-MiOS-DEV".into());
+        }
+        if plugin.is_empty() || !plugin.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err("Invalid plugin name".into());
+        }
+        let data = crate::terminal::tmux_theme::tmux_runtime::load_layered(root)?;
+        let h = &data["desktop"]["hyprland"]["hyprglass"];
+        let p = data["desktop"]["hyprland"]
+            .get(plugin)
+            .ok_or_else(|| format!("No [desktop.hyprland.{plugin}] in SSOT"))?;
+        if p.get("enabled").and_then(Value::as_bool) != Some(true) {
+            return Ok(format!("{plugin} disabled in SSOT\n"));
+        }
+        let installed = output("rpm", &["-q", "--qf", "%{VERSION}", "hyprland"], root)?;
+        if installed != value(h, "hyprland_version")? {
+            return Err(format!(
+                "Hyprglass ABI hold: installed Hyprland {installed} does not match SSOT"
+            ));
+        }
+        let work = tempfile::Builder::new()
+            .prefix("mios-hyprglass-build-")
+            .tempdir()
+            .map_err(|e| e.to_string())?;
+        let sdk = work.path();
+        let release = output("rpm", &["-E", "%fedora"], root)?;
+        let source = if let Some(path) = srpm {
+            path.canonicalize().map_err(|e| e.to_string())?
+        } else {
+            let package = output("rpm", &["-q", "hyprland"], root)?;
+            command(
+                "dnf",
+                &[
+                    format!("--releasever={release}"),
+                    "download".into(),
+                    "--source".into(),
+                    "--destdir".into(),
+                    sdk.display().to_string(),
+                    package,
+                ],
+                sdk,
+            )?;
+            find(sdk, "hyprland-", ".src.rpm", false)?
+        };
+        command(
+            "dnf",
+            &[
+                format!("--releasever={release}"),
+                "-y".into(),
+                "builddep".into(),
+                source.display().to_string(),
+            ],
+            sdk,
+        )?;
+        let mut rpm = Command::new("rpm2cpio")
+            .arg(&source)
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let status = Command::new("cpio")
+            .args(["-id", "--no-absolute-filenames"])
+            .current_dir(sdk)
+            .stdin(rpm.stdout.take().ok_or("No rpm2cpio stream")?)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() || !rpm.wait().map_err(|e| e.to_string())?.success() {
+            return Err("SDK source extraction failed".into());
+        }
+        let mut includes = vec![
+            "-I/usr/include".to_string(),
+            "-I/usr/include/hyprland".into(),
+            "-I/usr/include/hyprland/protocols".into(),
+            "-I/usr/include/hyprland/src".into(),
+        ];
+        for name in [
+            "hyprutils",
+            "hyprlang",
+            "hyprcursor",
+            "hyprgraphics",
+            "aquamarine",
+        ] {
+            let archive = find(sdk, &format!("{name}-"), ".tar.gz", false)?;
+            command(
+                "tar",
+                &[
+                    "-xzf".into(),
+                    archive.display().to_string(),
+                    "-C".into(),
+                    sdk.display().to_string(),
+                ],
+                sdk,
+            )?;
+            includes.push(format!(
+                "-I{}",
+                find(sdk, &format!("{name}-"), "", true)?
+                    .join("include")
+                    .display()
+            ));
+        }
+        let lua_name = format!("lua-{}", value(h, "lua_version")?);
+        let archive = sdk.join(format!("{lua_name}.tar.gz"));
+        if !archive.is_file() {
+            return Err(format!("Matching {lua_name} missing from compositor SRPM"));
+        }
+        command(
+            "tar",
+            &[
+                "-xzf".into(),
+                archive.display().to_string(),
+                "-C".into(),
+                sdk.display().to_string(),
+            ],
+            sdk,
+        )?;
+        let lua_dir = sdk.join(lua_name);
+        let jobs = h
+            .get("build_jobs")
+            .and_then(Value::as_integer)
+            .filter(|n| (1..=64).contains(n))
+            .ok_or("Invalid hyprglass.build_jobs")?;
+        command(
+            "make",
+            &[
+                "MYCFLAGS=-fPIC -fvisibility=hidden".into(),
+                "linux".into(),
+                format!("-j{jobs}"),
+            ],
+            &lua_dir,
+        )?;
+        includes.push(format!("-I{}", lua_dir.join("src").display()));
+        includes.extend(
+            output(
+                "pkg-config",
+                &[
+                    "--cflags",
+                    "pixman-1",
+                    "libdrm",
+                    "cairo",
+                    "xkbcommon",
+                    "libinput",
+                    "wayland-server",
+                    "pango",
+                    "libzip",
+                    "librsvg-2.0",
+                    "libdisplay-info",
+                ],
+                sdk,
+            )?
+            .split_whitespace()
+            .map(str::to_string),
+        );
+        let repo = sdk.join("source");
+        // Local-source mode: a MiOS-original plugin kept in the tree (`source_path`, repo-relative
+        // under --root) is copied instead of cloned; the image commit is its pin.
+        let local = p
+            .get("source_path")
+            .and_then(Value::as_str)
+            .map(|s| s.trim_start_matches('/').to_owned());
+        let revision: String = if let Some(rel) = &local {
+            if rel.is_empty() || Path::new(rel).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                return Err(format!("Unsafe {plugin} source_path"));
+            }
+            command(
+                "cp",
+                &["-a".into(), root.join(rel).display().to_string(), repo.display().to_string()],
+                sdk,
+            )?;
+            format!("tree:{rel}")
+        } else {
+            // Policy (operator, 2026-10-16): latest upstream, fail loudly. The SSOT names the
+            // repository only; the build takes its default-branch HEAD, logs the resolved commit,
+            // and the reviewed MiOS patches below are the drift gate.
+            let url = upstream_source(p, plugin)?;
+            command(
+                "git",
+                &[
+                    "clone".into(),
+                    "--depth=1".into(),
+                    "--single-branch".into(),
+                    url.into(),
+                    repo.display().to_string(),
+                ],
+                sdk,
+            )?;
+            let head = output("git", &["rev-parse", "HEAD"], &repo)?;
+            eprintln!("[build-hyprland-plugin] {plugin}: {url} default-branch HEAD resolved to {head}");
+            // Latest upstream that builds against the INSTALLED compositor: a plugin repository that
+            // publishes hyprpm.toml commit_pins (Hyprland commit -> plugin commit, the map hyprpm itself
+            // uses; HEAD follows hyprland-git) is moved to the entry for the installed Hyprland release,
+            // whose commit is resolved now from its tag. No hyprpm.toml or no entry keeps HEAD. Nothing is
+            // pinned in the SSOT: the resolved commit is only logged.
+            match fs::read_to_string(repo.join("hyprpm.toml")) {
+                Ok(text) => match hyprpm_pin(&text, &hyprland_commit(h, &installed, sdk)?)? {
+                    Some(pin) if pin != head => {
+                        command("git", &["fetch".into(), "-q".into(), "--depth=1".into(), "origin".into(), pin.clone()], &repo)
+                            .map_err(|e| format!("{plugin}: fetching hyprpm.toml commit {pin} for Hyprland {installed}: {e}"))?;
+                        command("git", &["checkout".into(), "-q".into(), pin.clone()], &repo)?;
+                        eprintln!("[build-hyprland-plugin] {plugin}: hyprpm.toml maps Hyprland {installed} to {pin}; building that (latest for this compositor)");
+                        pin
+                    }
+                    Some(_) => head,
+                    None => {
+                        eprintln!("[build-hyprland-plugin] {plugin}: hyprpm.toml has no entry for Hyprland {installed}; building HEAD");
+                        head
+                    }
+                },
+                Err(_) => head,
+            }
+        };
+        if plugin == "hyprglass" {
+            let layer_source = repo.join("src/GlassLayerSurface.cpp");
+            let patched = layer_geometry_source(&fs::read_to_string(&layer_source).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("hyprglass at {revision}: {e}"))?;
+            fs::write(&layer_source, patched).map_err(|e| e.to_string())?;
+        }
+        // Reviewed MiOS patches from the tree, applied in SSOT order; any drift fails the build.
+        apply_patches(root, &repo, p, plugin, &revision)?;
+        let build = match p.get("source_subdir").and_then(Value::as_str) {
+            Some(sub) if !sub.is_empty() => {
+                if Path::new(sub).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                    return Err("Unsafe source_subdir".into());
+                }
+                repo.join(sub)
+            }
+            _ => repo.clone(),
+        };
+        // The COPR compositor embeds hidden Lua 5.5. Linking system Lua 5.4 corrupts its state.
+        // Keep Lua private; do not bind compositor singleton symbols to plugin-local copies.
+        let libs = format!(
+            "{} -lm -ldl {}",
+            lua_dir.join("src/liblua.a").display(),
+            output(
+                "pkg-config",
+                &[
+                    "--libs",
+                    "pixman-1",
+                    "libdrm",
+                    "egl",
+                    "glesv2",
+                    "wayland-server"
+                ],
+                sdk
+            )?
+        );
+        command(
+            "make",
+            &[
+                format!("-j{jobs}"),
+                format!("INCLUDES={}", includes.join(" ")),
+                format!("LIBS={libs}"),
+                "LDFLAGS=-shared".into(),
+            ],
+            &build,
+        )?;
+        let artifact = build.join(format!("{plugin}.so"));
+        let dynamic = output(
+            "readelf",
+            &["-d", artifact.to_str().ok_or("Invalid artifact path")?],
+            sdk,
+        )?;
+        if dynamic
+            .lines()
+            .any(|line| line.contains("NEEDED") && line.contains("liblua"))
+        {
+            return Err(format!("{plugin} must not depend on the incompatible system Lua"));
+        }
+        let rel = value(p, "path")?.trim_start_matches('/');
+        if Path::new(rel)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!("Unsafe {plugin} install path"));
+        }
+        let target = root.join(rel);
+        fs::create_dir_all(target.parent().ok_or("No plugin parent")?)
+            .map_err(|e| e.to_string())?;
+        // Stage beside the target and rename: a running compositor keeps its mapped inode intact.
+        let staged = target.with_extension("so.new");
+        fs::copy(&artifact, &staged).map_err(|e| e.to_string())?;
+        fs::rename(&staged, &target).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "{plugin} {revision} built for Hyprland {installed}: {}\n",
+            target.display()
+        ))
+    }
+}
+
+/// Projects [host.tuning.profiles.<name>.<section>] to native TuneD INI profiles at
+/// usr/lib/tuned/profiles/<name>/tuned.conf. Section and key order follow the SSOT.
+pub mod render_tuned {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use toml_edit::{Document, Item, Value};
+
+    const HEADER: &str = "# AI-hint: Generated by mios-gen render-tuned from mios.toml [host.tuning.profiles].\n# AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/render.rs\n";
+
+    fn scalar(v: &Value) -> Result<String, String> {
+        match v {
+            Value::String(s) => Ok(s.value().clone()),
+            Value::Integer(i) => Ok(i.value().to_string()),
+            Value::Float(f) => Ok(f.value().to_string()),
+            Value::Boolean(b) => Ok(b.value().to_string()),
+            other => Err(format!("unsupported value {}", other.to_string().trim())),
+        }
+    }
+
+    /// Returns (relative path, rendered file) for every declared profile.
+    pub fn render(toml_text: &str) -> Result<Vec<(PathBuf, String)>, String> {
+        let doc: Document = toml_text.parse().map_err(|e| format!("mios.toml: {e}"))?;
+        let profiles = doc
+            .get("host")
+            .and_then(|h| h.get("tuning"))
+            .and_then(|t| t.get("profiles"))
+            .and_then(Item::as_table_like)
+            .ok_or("[host.tuning.profiles] is not declared")?;
+        let mut out = Vec::new();
+        for (name, profile) in profiles.iter() {
+            let sections = profile
+                .as_table_like()
+                .ok_or(format!("[host.tuning.profiles.{name}] is not a table"))?;
+            let mut text = String::from(HEADER);
+            for (section, keys) in sections.iter() {
+                let keys = keys
+                    .as_table_like()
+                    .ok_or(format!("[host.tuning.profiles.{name}.{section}] is not a table"))?;
+                text.push_str(&format!("\n[{section}]\n"));
+                for (key, item) in keys.iter() {
+                    let value = item
+                        .as_value()
+                        .ok_or(format!("{name}.{section}.{key} is not a value"))
+                        .and_then(|v| scalar(v).map_err(|e| format!("{name}.{section}.{key}: {e}")))?;
+                    text.push_str(&format!("{key}={value}\n"));
+                }
+            }
+            out.push((PathBuf::from(format!("usr/lib/tuned/profiles/{name}/tuned.conf")), text));
+        }
+        Ok(out)
+    }
+
+    pub fn run_render_tuned(root: &Path, check: bool) -> Result<String, (String, i32)> {
+        let toml_path = root.join("usr/share/mios/mios.toml");
+        let text = fs::read_to_string(&toml_path)
+            .map_err(|e| (format!("render-tuned: {}: {e}", toml_path.display()), 1))?;
+        let files = render(&text).map_err(|e| (format!("render-tuned: {e}"), 1))?;
+        let mut drift = Vec::new();
+        for (rel, body) in &files {
+            let path = root.join(rel);
+            if fs::read_to_string(&path).ok().as_deref() == Some(body.as_str()) {
+                continue;
+            }
+            if check {
+                drift.push(rel.display().to_string());
+                continue;
+            }
+            if let Some(dir) = path.parent() {
+                fs::create_dir_all(dir).map_err(|e| (format!("render-tuned: {}: {e}", dir.display()), 1))?;
+            }
+            fs::write(&path, body).map_err(|e| (format!("render-tuned: {}: {e}", path.display()), 1))?;
+        }
+        if !drift.is_empty() {
+            return Err((format!("[render-tuned] DRIFT: {}", drift.join(", ")), 1));
+        }
+        Ok(format!("[render-tuned] {} TuneD profile(s) {}", files.len(), if check { "match" } else { "rendered" }))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::render;
+
+        #[test]
+        fn renders_sections_in_ssot_order() {
+            let files = render(
+                "[host.tuning.profiles.p.main]\nsummary = \"S\"\ninclude = \"virtual-host\"\n[host.tuning.profiles.p.sysctl]\n\"vm.swappiness\" = 10\n",
+            )
+            .unwrap();
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].0.to_str().unwrap(), "usr/lib/tuned/profiles/p/tuned.conf");
+            assert!(files[0].1.ends_with("\n[main]\nsummary=S\ninclude=virtual-host\n\n[sysctl]\nvm.swappiness=10\n"));
+        }
+
+        #[test]
+        fn rejects_missing_table_and_nested_values() {
+            assert!(render("[host]\n").is_err());
+            assert!(render("[host.tuning.profiles.p.cpu]\nx = [1]\n").is_err());
         }
     }
 }

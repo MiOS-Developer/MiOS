@@ -14,7 +14,8 @@ readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
 readonly NC='\033[0m'
 
-readonly BACKUP_SUFFIX=".backup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_SUFFIX=".backup-$(date +%Y%m%d-%H%M%S)"
+readonly BACKUP_SUFFIX
 
 declare -A CPU_INFO
 declare -a ISOLATED_CPUS=()
@@ -58,7 +59,8 @@ detect_cpu_topology() {
     log_info "NUMA nodes: ${CPU_INFO[numa_nodes]}"
 
     for ((node=0; node<${CPU_INFO[numa_nodes]}; node+=1)); do
-        local cpus=$(lscpu | grep "NUMA node${node} CPU(s):" | awk '{print $4}')
+        local cpus
+        cpus=$(lscpu | grep "NUMA node${node} CPU(s):" | awk '{print $4}') || true
         NUMA_MAP[$node]="$cpus"
     done
 
@@ -91,7 +93,8 @@ detect_amd_ccds() {
         log_success "CCD1 (High Freq): CPUs ${CCD_MAP[1]}"
 
         if [[ -f /sys/devices/system/cpu/cpu0/cache/index3/size ]]; then
-            local l3_size=$(cat /sys/devices/system/cpu/cpu0/cache/index3/size)
+            local l3_size
+            l3_size=$(cat /sys/devices/system/cpu/cpu0/cache/index3/size) || true
             log_info "L3 Cache detected: $l3_size"
         fi
     fi
@@ -113,8 +116,8 @@ detect_intel_hybrid() {
 display_cpu_topology() {
     log_header "CPU Topology Visualization"
 
-    local total_cpus=${CPU_INFO[threads]}
-    local smt_enabled=$([[ ${CPU_INFO[threads_per_core]} -eq 2 ]] && echo "Yes" || echo "No")
+    local smt_enabled
+    smt_enabled=$([[ ${CPU_INFO[threads_per_core]} -eq 2 ]] && echo "Yes" || echo "No")
 
     echo -e "${CYAN}+****************************************************************+${NC}"
     echo -e "${CYAN}|${NC} ${BOLD}CPU Configuration${NC}"
@@ -301,11 +304,11 @@ preset_x3d_gaming() {
     local threads_per_ccd=$((${CPU_INFO[threads]} / 2))
 
     for ((cpu=0; cpu<threads_per_ccd; cpu+=1)); do
-        ISOLATED_CPUS+=($cpu)
+        ISOLATED_CPUS+=("$cpu")
     done
 
     for ((cpu=threads_per_ccd; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        HOST_CPUS+=($cpu)
+        HOST_CPUS+=("$cpu")
     done
 
     log_success "Isolated CCD0 (V-Cache): CPUs ${ISOLATED_CPUS[*]}"
@@ -318,11 +321,11 @@ preset_x3d_compute() {
     local threads_per_ccd=$((${CPU_INFO[threads]} / 2))
 
     for ((cpu=0; cpu<threads_per_ccd; cpu+=1)); do
-        HOST_CPUS+=($cpu)
+        HOST_CPUS+=("$cpu")
     done
 
     for ((cpu=threads_per_ccd; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        ISOLATED_CPUS+=($cpu)
+        ISOLATED_CPUS+=("$cpu")
     done
 
     log_success "Host CCD0 (V-Cache): CPUs ${HOST_CPUS[*]}"
@@ -335,11 +338,11 @@ preset_balanced() {
     local half=$((${CPU_INFO[threads]} / 2))
 
     for ((cpu=0; cpu<half; cpu+=1)); do
-        ISOLATED_CPUS+=($cpu)
+        ISOLATED_CPUS+=("$cpu")
     done
 
     for ((cpu=half; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        HOST_CPUS+=($cpu)
+        HOST_CPUS+=("$cpu")
     done
 
     log_success "Isolated: CPUs ${ISOLATED_CPUS[*]}"
@@ -350,7 +353,6 @@ preset_host_priority() {
     log_info "Applying Host Priority preset (Minimal host cores)..."
 
     if [[ -n "${CPU_INFO[has_ccds]}" ]]; then
-        local total_cores=${CPU_INFO[cores]}
         local threads_per_core=${CPU_INFO[threads_per_core]}
 
         HOST_CPUS+=(0 1)
@@ -361,26 +363,24 @@ preset_host_priority() {
         fi
 
         for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-            if [[ ! " ${HOST_CPUS[*]} " =~ " $cpu " ]]; then
-                ISOLATED_CPUS+=($cpu)
+            if [[ " ${HOST_CPUS[*]} " != *" $cpu "* ]]; then
+                ISOLATED_CPUS+=("$cpu")
             fi
         done
 
-        HOST_CPUS=($(printf '%s\n' "${HOST_CPUS[@]}" | sort -n))
-        ISOLATED_CPUS=($(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -n))
+        read -r -d '' -a HOST_CPUS < <(printf '%s\n' "${HOST_CPUS[@]}" | sort -n) || true
+        read -r -d '' -a ISOLATED_CPUS < <(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -n) || true
 
         log_success "Host CPUs (cores 0,1,8,9): ${HOST_CPUS[*]}"
         log_success "VM CPUs (remaining cores): ${ISOLATED_CPUS[*]}"
         log_success "Total: Host ${#HOST_CPUS[@]} threads (4 cores), VMs ${#ISOLATED_CPUS[@]} threads (12 cores)"
     else
-        local vm_cores=$((${CPU_INFO[threads]} - 8))
-
         for ((cpu=0; cpu<8; cpu+=1)); do
-            HOST_CPUS+=($cpu)
+            HOST_CPUS+=("$cpu")
         done
 
         for ((cpu=8; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-            ISOLATED_CPUS+=($cpu)
+            ISOLATED_CPUS+=("$cpu")
         done
 
         log_success "Host: CPUs ${HOST_CPUS[*]}"
@@ -394,11 +394,11 @@ preset_vm_priority() {
     local host_cores=$((${CPU_INFO[threads]} / 4))
 
     for ((cpu=0; cpu<host_cores; cpu+=1)); do
-        HOST_CPUS+=($cpu)
+        HOST_CPUS+=("$cpu")
     done
 
     for ((cpu=host_cores; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        ISOLATED_CPUS+=($cpu)
+        ISOLATED_CPUS+=("$cpu")
     done
 
     log_success "Host: CPUs ${HOST_CPUS[*]}"
@@ -431,26 +431,26 @@ select_by_ccd() {
     case $ccd_choice in
         1)
             for ((cpu=0; cpu<threads_per_ccd; cpu+=1)); do
-                ISOLATED_CPUS+=($cpu)
+                ISOLATED_CPUS+=("$cpu")
             done
             for ((cpu=threads_per_ccd; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-                HOST_CPUS+=($cpu)
+                HOST_CPUS+=("$cpu")
             done
             ;;
         2)
             for ((cpu=0; cpu<threads_per_ccd; cpu+=1)); do
-                HOST_CPUS+=($cpu)
+                HOST_CPUS+=("$cpu")
             done
             for ((cpu=threads_per_ccd; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-                ISOLATED_CPUS+=($cpu)
+                ISOLATED_CPUS+=("$cpu")
             done
             ;;
         3)
             for ((cpu=0; cpu<4; cpu+=1)); do
-                HOST_CPUS+=($cpu)
+                HOST_CPUS+=("$cpu")
             done
             for ((cpu=4; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-                ISOLATED_CPUS+=($cpu)
+                ISOLATED_CPUS+=("$cpu")
             done
             ;;
         *)
@@ -497,13 +497,14 @@ for p in sys.argv[1].split(','):
         parts.append(int(p))
 print(' '.join(map(str, parts)))
 " "$cpus")
-        local cpu_array=($cpu_list)
+        local -a cpu_array
+        read -ra cpu_array <<< "$cpu_list"
         ISOLATED_CPUS+=("${cpu_array[@]}")
     done
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${ISOLATED_CPUS[*]} " =~ " $cpu " ]]; then
-            HOST_CPUS+=($cpu)
+        if [[ " ${ISOLATED_CPUS[*]} " != *" $cpu "* ]]; then
+            HOST_CPUS+=("$cpu")
         fi
     done
 
@@ -530,18 +531,18 @@ select_custom_cores() {
             local start="${BASH_REMATCH[1]}"
             local end="${BASH_REMATCH[2]}"
             for ((cpu=start; cpu<=end; cpu+=1)); do
-                ISOLATED_CPUS+=($cpu)
+                ISOLATED_CPUS+=("$cpu")
             done
         elif [[ "$token" =~ ^[0-9]+$ ]]; then
-            ISOLATED_CPUS+=($token)
+            ISOLATED_CPUS+=("$token")
         fi
     done
 
-    ISOLATED_CPUS=($(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu))
+    read -r -d '' -a ISOLATED_CPUS < <(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu) || true
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${ISOLATED_CPUS[*]} " =~ " $cpu " ]]; then
-            HOST_CPUS+=($cpu)
+        if [[ " ${ISOLATED_CPUS[*]} " != *" $cpu "* ]]; then
+            HOST_CPUS+=("$cpu")
         fi
     done
 
@@ -589,19 +590,19 @@ select_smt_aware() {
             exit 1
         fi
 
-        ISOLATED_CPUS+=($core)
+        ISOLATED_CPUS+=("$core")
 
         if [[ ${CPU_INFO[threads_per_core]} -eq 2 ]]; then
             local sibling=$((core + cores_per_socket))
-            ISOLATED_CPUS+=($sibling)
+            ISOLATED_CPUS+=("$sibling")
         fi
     done
 
-    ISOLATED_CPUS=($(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu))
+    read -r -d '' -a ISOLATED_CPUS < <(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu) || true
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${ISOLATED_CPUS[*]} " =~ " $cpu " ]]; then
-            HOST_CPUS+=($cpu)
+        if [[ " ${ISOLATED_CPUS[*]} " != *" $cpu "* ]]; then
+            HOST_CPUS+=("$cpu")
         fi
     done
 
@@ -621,18 +622,18 @@ select_exclude_cores() {
             local start="${BASH_REMATCH[1]}"
             local end="${BASH_REMATCH[2]}"
             for ((cpu=start; cpu<=end; cpu+=1)); do
-                HOST_CPUS+=($cpu)
+                HOST_CPUS+=("$cpu")
             done
         elif [[ "$token" =~ ^[0-9]+$ ]]; then
-            HOST_CPUS+=($token)
+            HOST_CPUS+=("$token")
         fi
     done
 
-    HOST_CPUS=($(printf '%s\n' "${HOST_CPUS[@]}" | sort -nu))
+    read -r -d '' -a HOST_CPUS < <(printf '%s\n' "${HOST_CPUS[@]}" | sort -nu) || true
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${HOST_CPUS[*]} " =~ " $cpu " ]]; then
-            ISOLATED_CPUS+=($cpu)
+        if [[ " ${HOST_CPUS[*]} " != *" $cpu "* ]]; then
+            ISOLATED_CPUS+=("$cpu")
         fi
     done
 
@@ -653,13 +654,13 @@ select_performance_cores() {
         local start="${BASH_REMATCH[1]}"
         local end="${BASH_REMATCH[2]}"
         for ((cpu=start; cpu<=end; cpu+=1)); do
-            ISOLATED_CPUS+=($cpu)
+            ISOLATED_CPUS+=("$cpu")
         done
     fi
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${ISOLATED_CPUS[*]} " =~ " $cpu " ]]; then
-            HOST_CPUS+=($cpu)
+        if [[ " ${ISOLATED_CPUS[*]} " != *" $cpu "* ]]; then
+            HOST_CPUS+=("$cpu")
         fi
     done
 
@@ -679,16 +680,16 @@ select_from_file() {
     while read -r line; do
         for token in $line; do
             if [[ "$token" =~ ^[0-9]+$ ]]; then
-                ISOLATED_CPUS+=($token)
+                ISOLATED_CPUS+=("$token")
             fi
         done
     done < "$file_path"
 
-    ISOLATED_CPUS=($(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu))
+    read -r -d '' -a ISOLATED_CPUS < <(printf '%s\n' "${ISOLATED_CPUS[@]}" | sort -nu) || true
 
     for ((cpu=0; cpu<${CPU_INFO[threads]}; cpu+=1)); do
-        if [[ ! " ${ISOLATED_CPUS[*]} " =~ " $cpu " ]]; then
-            HOST_CPUS+=($cpu)
+        if [[ " ${ISOLATED_CPUS[*]} " != *" $cpu "* ]]; then
+            HOST_CPUS+=("$cpu")
         fi
     done
 
@@ -765,7 +766,8 @@ configure_isolation() {
 configure_isolcpus() {
     log_info "Configuring kernel isolcpus parameter..."
 
-    local isolcpus_param=$(printf '%s,' "${ISOLATED_CPUS[@]}")
+    local isolcpus_param
+    isolcpus_param=$(printf '%s,' "${ISOLATED_CPUS[@]}")
     isolcpus_param=${isolcpus_param%,}  # Remove trailing comma
 
     if [[ -d /boot/loader/entries ]] && command -v bootctl &>/dev/null; then
@@ -785,7 +787,8 @@ configure_isolcpus_systemd_boot() {
 
     log_info "Updating systemd-boot entries..."
 
-    local entries=$(find /boot/loader/entries -name "*.conf" | grep -v backup | sort)
+    local entries
+    entries=$(find /boot/loader/entries -name "*.conf" | grep -v backup | sort) || true
 
     echo "Found boot entries:"
     echo "$entries" | nl -w2 -s'. '
@@ -842,7 +845,8 @@ configure_isolcpus_grub() {
 configure_systemd_affinity() {
     log_info "Configuring systemd CPUAffinity..."
 
-    local host_cpus=$(printf '%s ' "${HOST_CPUS[@]}")
+    local host_cpus
+    host_cpus=$(printf '%s ' "${HOST_CPUS[@]}")
     host_cpus=${host_cpus% }  # Remove trailing space
 
     local systemd_conf="/etc/systemd/system.conf"
@@ -910,9 +914,10 @@ esac
 exit 0
 EOFHOOK
 
-    local isolated_range=$(printf '%s,' "${ISOLATED_CPUS[@]}")
+    local isolated_range host_range
+    isolated_range=$(printf '%s,' "${ISOLATED_CPUS[@]}")
     isolated_range=${isolated_range%,}
-    local host_range=$(printf '%s,' "${HOST_CPUS[@]}")
+    host_range=$(printf '%s,' "${HOST_CPUS[@]}")
     host_range=${host_range%,}
 
     sed -i "s/ISOLATED_CPUS_PLACEHOLDER/$isolated_range/" "$hook_dir/qemu"
@@ -940,9 +945,10 @@ EOFSCRIPT
     chmod +x /usr/local/bin/cpu-topology
     log_success "Created: cpu-topology"
 
-    local isolated_range=$(printf '%s,' "${ISOLATED_CPUS[@]}")
+    local isolated_range host_range
+    isolated_range=$(printf '%s,' "${ISOLATED_CPUS[@]}")
     isolated_range=${isolated_range%,}
-    local host_range=$(printf '%s,' "${HOST_CPUS[@]}")
+    host_range=$(printf '%s,' "${HOST_CPUS[@]}")
     host_range=${host_range%,}
 
     cat > /usr/local/bin/cpu-isolate << EOFSCRIPT

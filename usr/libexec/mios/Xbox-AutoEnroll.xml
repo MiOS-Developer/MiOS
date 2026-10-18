@@ -31,8 +31,8 @@
       <feature enabled="yes" name="enrolled-keys"/>
       <feature enabled="yes" name="secure-boot"/>
     </firmware>
-    <loader readonly="yes" secure="yes" type="pflash" format="raw">/usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd</loader>
-    <nvram template="/usr/share/edk2/x64/OVMF_VARS.4m.fd" templateFormat="raw" format="raw">/var/lib/libvirt/qemu/nvram/Xbox_VARS.fd</nvram>
+    <loader readonly='yes' secure='yes' type='pflash' format='qcow2'>/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.qcow2</loader>
+    <nvram template='/usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.qcow2' templateFormat='qcow2' format='qcow2'>/var/lib/mios-build/vms/mios-xbox/OVMF_VARS_4M.qcow2</nvram>
     <bootmenu enable="yes"/>
   </os>
   <features>
@@ -60,7 +60,7 @@
     <feature policy="require" name="topoext"/>
     <feature policy="require" name="invtsc"/>
   </cpu>
-  <clock offset="localtime">
+  <clock offset='utc'>
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
     <timer name="hpet" present="no"/>
@@ -75,6 +75,11 @@
   </pm>
   <devices>
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="/var/lib/mios-build/vms/mios-xbox/disk.qcow2"/>
+      <target dev="vda" bus="virtio"/>
+    </disk>
     <disk type="file" device="cdrom">
       <driver name="qemu" type="raw"/>
       <source file="/var/lib/libvirt/images/Win11_25H2_English_x64.iso"/>
@@ -183,6 +188,9 @@
     <channel type="spicevmc">
       <target type="virtio" name="com.redhat.spice.0"/>
     </channel>
+    <channel type="unix">
+      <target type="virtio" name="org.qemu.guest_agent.0"/>
+    </channel>
     <input type="tablet" bus="usb">
       <address type="usb" bus="0" port="1"/>
     </input>
@@ -193,14 +201,19 @@
         <profile name="default-v1"/>
       </backend>
     </tpm>
-    <graphics type="spice" port="-1" tlsPort="-1" autoport="yes">
-      <listen type="address"/>
+    <!-- Looking Glass: SPICE on the fixed [vm.looking_glass] spice_listen:spice_port the client connects to (setup-looking-glass.py). -->
+    <graphics type="spice" port="5930" autoport="no" listen="127.0.0.1">
+      <listen type="address" address="127.0.0.1"/>
       <image compression="off"/>
+    </graphics>
+    <!-- Native VNC console on the emulated display (virt-manager, Cockpit); SPICE above is for Looking Glass. Rendering with setup-looking-glass.py adds passwd from the root-only [vm.looking_glass].vnc_passwd_file. -->
+    <graphics type="vnc" port="-1" autoport="yes" listen="127.0.0.1">
+      <listen type="address" address="127.0.0.1"/>
     </graphics>
     <sound model="ich9">
       <address type="pci" domain="0x0000" bus="0x00" slot="0x1b" function="0x0"/>
     </sound>
-    <audio id="1" type="none"/>
+    <audio id="1" type="spice"/>
     <video>
       <model type="none"/>
     </video>

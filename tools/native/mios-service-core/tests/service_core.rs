@@ -186,7 +186,9 @@ mod host_tmux {
         config["terminal"]["windows"]["glyph_mode"] = json!("auto");
         let rendered = host_tmux_config_with_font(&config, false).unwrap();
         assert!(rendered.contains(config["colors"]["fg"].as_str().unwrap()));
-        assert!(rendered.contains("set -g status-position bottom"));
+        // the SSOT's own placement ([theme.tmux].status_position is the operator's choice, not a fixed default)
+        let position = config["theme"]["tmux"]["status_position"].as_str().unwrap();
+        assert!(rendered.contains(&format!("set -g status-position {position}")));
         assert!(rendered.contains("bind-key h select-pane -L"));
         assert!(rendered.contains("mios.cmd ai"));
         assert!(rendered.contains("mios.cmd agents --watch"));

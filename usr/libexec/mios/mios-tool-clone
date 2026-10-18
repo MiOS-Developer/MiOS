@@ -21,9 +21,11 @@ usage: mios-tool-clone <name> [--as <new-name>] [--force]
 Available system tools:
 USAGE
     if [ -d /usr/libexec/mios ]; then
-        ls -1 /usr/libexec/mios/ 2>/dev/null \
-            | grep -E '^mios-' \
-            | sed 's/^/  /'
+        local tool
+        for tool in /usr/libexec/mios/mios-*; do
+            [ -e "$tool" ] || [ -L "$tool" ] || continue
+            printf '  %s\n' "${tool##*/}"
+        done
     fi
 }
 

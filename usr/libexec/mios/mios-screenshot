@@ -1,9 +1,72 @@
 #!/bin/bash
-# AI-hint: A bash wrapper for capturing the primary Windows monitor as a PNG via mios-pc-control, supporting optional --open and --clipboard flags to provide a unified interface for remote screen capture.
-# AI-related: /usr/libexec/mios/mios-screenshot, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-pc-control, mios-find, mios-open-url, mios-window, mios-windows
+# AI-hint: Screenshot entry point behind the screenshot/snap/prtscr aliases: in a Linux Wayland session it hands off to the native /usr/bin/mios-shot (mios-shot modes and flags pass through; the legacy --clipboard/--open/--window/OUT flags are translated); under WSL it captures the primary Windows monitor as a PNG via mios-pc-control (--open, --clipboard).
+# AI-related: /usr/libexec/mios/mios-screenshot, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-pc-control, mios-find, mios-open-url, mios-window, mios-windows, /usr/bin/mios-shot, usr/share/mios/mios.toml [desktop.screenshot]
 set -euo pipefail
 
 set -u
+
+# Linux Wayland session: the native tool (tools/native/mios-shot). WSL keeps the Windows capture below.
+if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${WSL_DISTRO_NAME:-}" && ! -e /mnt/wslg ]] && command -v mios-shot >/dev/null 2>&1; then
+    # Detect if any legacy flags or bare output paths exist
+    legacy=0
+    has_mode=0
+    case "${1:-}" in region|area|window|active|output|screen|all|probe) has_mode=1 ;; esac
+
+    skip=0
+    for a in "$@"; do
+        if [[ "$skip" == 1 ]]; then skip=0; continue; fi
+        case "$a" in
+            -m|-d|-f|-g|-q) legacy=1; skip=1 ;;
+            -m=*|-d=*|-f=*|-g=*|-q=*) legacy=1 ;;
+            --open|--clipboard|--window|--window=*|--) legacy=1 ;;
+            --output|--geometry|--delay|--file|-o|--format|--quality|--selector|--backend|--window-source) skip=1 ;;
+            --output=*|--geometry=*|--delay=*|--file=*|-o=*|--format=*|--quality=*|--selector=*|--backend=*|--window-source=*) ;;
+            region|area|window|active|output|screen|all|probe) has_mode=1 ;;
+            -*) ;;
+            *) legacy=1 ;;   # a bare output path
+        esac
+    done
+
+    if [[ "$legacy" == 0 ]]; then
+        if [[ "$has_mode" == 0 ]]; then
+            exec mios-shot output "$@"
+        else
+            exec mios-shot "${@:-output}"
+        fi
+    fi
+
+    # Legacy translation
+    args=(output --no-copy) ; open=0 ; out=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --clipboard) args+=(--copy); shift ;;
+            --open)      open=1; shift ;;
+            --window|--window=*)
+                m="${1#--window}"; m="${m#=}"; [[ -z "$m" ]] && { m="${2:-}"; shift; }; shift
+                id="$(hyprctl -j clients 2>/dev/null | python3 -I -c 'import json,sys; m=sys.argv[1].lower(); print(next((c.get("stableId","") for c in json.load(sys.stdin) if m in (c.get("class","")+" "+c.get("title","")).lower()), ""))' "$m")"
+                [[ -n "$id" ]] || { echo "mios-screenshot: no window matches '$m'" >&2; exit 1; }
+                args[0]=window; args+=(--window "$id") ;;
+            --output|-m) args+=(--output "$2"); shift 2 ;;
+            --geometry|-g) args+=(--geometry "$2"); shift 2 ;;
+            --delay|-d) args+=(--delay "$2"); shift 2 ;;
+            --file|-f|-o) out="$2"; shift 2 ;;
+            --file=*|-o=*) out="${1#*=}"; shift ;;
+            --format) args+=(--format "$2"); shift 2 ;;
+            --quality|-q) args+=(--quality "$2"); shift 2 ;;
+            --cursor) args+=(--cursor); shift ;;
+            --no-cursor) args+=(--no-cursor); shift ;;
+            --) shift; out="${1:-}"; shift ;;
+            -*) args+=("$1"); shift ;;
+            *)  out="$1"; shift ;;
+        esac
+    done
+    [[ -n "$out" ]] && args+=(--file "$out")
+    path="$(mios-shot "${args[@]}")" || exit $?
+    [[ -n "$out" ]] && path="$out"
+    [[ "$open" == 1 && -n "$path" ]] && { xdg-open "$path" >/dev/null 2>&1 & }
+    echo "$path"
+    exit 0
+fi
 
 OPEN=0
 CLIPBOARD=0
@@ -85,7 +148,6 @@ if [[ ! -f "$OUT" ]]; then
     fi
 fi
 
-SIZE="$(wc -c < "$OUT" | tr -d ' ' 2>/dev/null || echo ?)"
 echo "[mios-screenshot] saved $OUT" >&2
 
 if [[ "$CLIPBOARD" == "1" ]]; then

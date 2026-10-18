@@ -50,8 +50,9 @@ _run_flatpak() {
             mv "${f}.tr" "$f"
         fi
     done
-    export _FP_OUT="$(cat "$out_file")"
-    export _FP_ERR="$(cat "$err_file")"
+    _FP_OUT="$(cat "$out_file")" || true
+    _FP_ERR="$(cat "$err_file")" || true
+    export _FP_OUT _FP_ERR
     _FP_RC=$rc
     return 0
 }

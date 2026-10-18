@@ -30,17 +30,46 @@ _HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 _SENTINEL = re.compile(r"@MIOS:([a-z0-9_.-]+)@")
 
 _Fixture = collections.namedtuple("_Fixture", "base expected")
-_Surface = collections.namedtuple("_Surface", "name template target section kind fixture policy edge_props")
+_Surface = collections.namedtuple("_Surface", "name template target section kind fixture policy edge_props literals",
+                                  defaults=(None,))
+# [dotfiles.registry.<name>].literals: how a bool token is spelled. "conf" (default) is btop's
+# True/False; "js" is the JSON/JavaScript true/false a policies.json or a prefs file needs.
+_LITERAL_STYLES = ("conf", "js")
 _EdgeProp = collections.namedtuple("_EdgeProp", "name regex pin scope")
 
 
-def _fmt_conf(v):
+def _fmt_conf(v, style=None):
     """Format a TOML scalar for a btop-style conf: bool -> capitalized
     True/False (btop's on-disk form), ints bare, strings verbatim (the
-    template supplies the surrounding quotes)."""
+    template supplies the surrounding quotes). style "js" spells a bool
+    true/false for JSON and JavaScript surfaces."""
     if isinstance(v, bool):
+        if style == "js":
+            return "true" if v else "false"
         return "True" if v else "False"
     return str(v)
+
+
+_EXPORTS_CACHE = {}
+
+
+def _expand_refs(tok, val, merged):
+    """Expand the ${MIOS_*} references an SSOT value makes (e.g. a URL built on
+    [ports]) the way bash would, from the same merged layers. A reference that
+    resolves to nothing fails the render: a rendered file never carries one."""
+    if "${" not in val:
+        return val
+    key = id(merged)
+    if key not in _EXPORTS_CACHE:
+        _EXPORTS_CACHE.clear()
+        _EXPORTS_CACHE[key] = mios_toml.emit_exports(merged)
+    exports = {"__value": val}
+    exports.update(_EXPORTS_CACHE[key])
+    mios_toml.resolve_cross_references(exports)
+    out = exports["__value"]
+    if "${" in out:
+        raise KeyError(f"token @MIOS:{tok}@ = {val!r} keeps an unresolved reference after expansion ({out!r})")
+    return out
 
 
 def _settings(merged, section):
@@ -59,6 +88,9 @@ def _resolved_for(merged, section):
     surface) the section's conf-formatted keys. Section keys never collide
     with palette tokens (they carry the <section>_ prefix)."""
     r = dict(mios_toml.colors(merged))
+    theme = merged["theme"]
+    alpha = round(max(0, min(100, theme["opacity"])) * 255 / 100) if theme["acrylic"] else 255
+    r["bg_alpha"] = r["bg"] + f"{alpha:02X}"
     r.update(_settings(merged, "identity"))
     if section:
         r.update(_settings(merged, section))
@@ -98,10 +130,12 @@ def _walk_path(d, path):
     return curr
 
 
-def _resolve_arbitrary_token(tok, merged):
+def _resolve_arbitrary_token(tok, merged, style=None):
     val = _walk_path(merged, tok)
+    if isinstance(val, (dict, list)):
+        raise KeyError(f"token @MIOS:{tok}@ names a table or array, not a scalar")
     if val is not None:
-        return _fmt_conf(val)
+        return _expand_refs(tok, _fmt_conf(val, style), merged)
     
     if "_" in tok:
         parts = tok.split("_")
@@ -109,12 +143,12 @@ def _resolve_arbitrary_token(tok, merged):
             sec = "_".join(parts[:i])
             key = "_".join(parts[i:])
             val = _walk_path(merged, f"{sec}.{key}")
-            if val is not None:
-                return _fmt_conf(val)
+            if val is not None and not isinstance(val, (dict, list)):
+                return _expand_refs(tok, _fmt_conf(val, style), merged)
     return None
 
 
-def _render_text(tmpl_text, resolved, merged=None):
+def _render_text(tmpl_text, resolved, merged=None, style=None):
     edge = {}
 
     def sub(match):
@@ -126,7 +160,7 @@ def _render_text(tmpl_text, resolved, merged=None):
                 return edge[tok]
         if tok not in resolved:
             if merged is not None:
-                val = _resolve_arbitrary_token(tok, merged)
+                val = _resolve_arbitrary_token(tok, merged, style)
                 if val is not None:
                     return val
             raise KeyError(f"unknown theme/dotfile token @MIOS:{tok}@ (not in [colors] or arbitrary key lookup)")
@@ -641,7 +675,7 @@ def _derive_template(surface, merged):
     """template: the whole rendered file (today's behavior, verbatim)."""
     return _render_text(_read(os.path.join(ROOT, surface.template)),
                         _resolved_for(merged, surface.section),
-                        merged)
+                        merged, surface.literals)
 
 
 def _derive_json_merge(surface, merged):
@@ -851,8 +885,13 @@ def _load_surfaces():
                                  "surface\n")
                 raise SystemExit(3)
             fixture = _Fixture(base, expected)
+        literals = cfg.get("literals")
+        if literals is not None and literals not in _LITERAL_STYLES:
+            sys.stderr.write(f"[mios-dotfiles-render] FATAL: [dotfiles.registry.{name}] literals="
+                             f"{literals!r} -- supported: {', '.join(_LITERAL_STYLES)}\n")
+            raise SystemExit(3)
         out[name] = _Surface(name, tmpl, art, section, kind, fixture, cfg.get("policy"),
-                             _edge_props(name, cfg))
+                             _edge_props(name, cfg), literals)
     if not out:
         sys.stderr.write("[mios-dotfiles-render] FATAL: mios.toml [dotfiles.registry.*] is "
                          "empty/absent -- no surface can be projected. If you just added the "
@@ -1301,11 +1340,27 @@ def main(argv):
         return 2
 
 
+def _expand_names(rest):
+    """A trailing '*' selects every registered surface with that prefix (e.g. portal-*), so a
+    caller never repeats the registry; a pattern that selects nothing is an error, not a no-op."""
+    out = []
+    for name in rest:
+        if name.endswith("*"):
+            hit = [n for n in SURFACES if n.startswith(name[:-1])]
+            if not hit:
+                sys.stderr.write(f"[mios-dotfiles-render] FATAL: {name!r} selects no registered surface\n")
+                raise SystemExit(2)
+            out.extend(hit)
+        else:
+            out.append(name)
+    return out
+
+
 def _dispatch(cmd, rest):
     if cmd == "render":
-        return cmd_render(rest)
+        return cmd_render(_expand_names(rest))
     if cmd == "check":
-        return cmd_check(rest)
+        return cmd_check(_expand_names(rest))
     if cmd == "capture":
         return cmd_capture(rest)
     if cmd == "apply":

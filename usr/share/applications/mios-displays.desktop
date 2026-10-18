@@ -1,0 +1,15 @@
+# AI-hint: App-drawer entry for MiOS Displays, the monitor settings app (arrange outputs, resolution, refresh rate, scale, rotation, enable/disable, primary); Exec mirrors [desktop.topbar.commands].display.
+# AI-related: /usr/bin/mios-displays, /usr/share/mios/displays/Displays.qml, usr/share/mios/mios.toml [desktop.displays]
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Displays
+GenericName=Display Settings
+Comment=Arrange monitors and set resolution, refresh rate, scale and rotation (saved to the mios.toml SSOT)
+Exec=/usr/bin/mios-displays gui
+Icon=preferences-desktop-display
+Categories=Settings;HardwareSettings;
+Keywords=monitor;display;screen;resolution;refresh;scale;rotation;hyprland;mios;
+Terminal=false
+StartupNotify=false
+StartupWMClass=org.quickshell

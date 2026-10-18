@@ -1,0 +1,115 @@
+#!/bin/sh
+# AI-hint: Native MiOS Portal launcher. Runs the Gecko build ([desktop.portal.gecko].binary at
+# [desktop.portal.gecko].install_dir) with MOZ_APP_REMOTINGNAME=mios-portal and --profile ~/.mios-portal.
+# If the Gecko binary is absent, falls back to the legacy QML host (usr/share/mios/portal/Host.qml) in
+# the Qt runtime. Single-instance aware: a second launch without arguments focuses the existing window;
+# a launch with a URL opens it in the running browser. `mios-portal --url` prints the resolved Portal URL and exits.
+# AI-related: usr/share/mios/portal/Host.qml, usr/share/applications/mios-portal.desktop,
+# usr/share/mios/mios.toml [desktop.portal], [desktop.portal.gecko]
+# shellcheck disable=SC2154,SC2088
+set -eu
+
+load() {
+    prefix=$1
+    shift
+    dump=$(mios-toml-get --dump "$@")
+    shift
+    for key in "$@"; do
+        value=$(printf '%s\n' "$dump" | sed -n "s/^$key=//p" | head -n 1)
+        [ -n "$value" ] || { echo "mios-portal: mios.toml is missing $key" >&2; exit 1; }
+        eval "${prefix}_$key=\$value"
+    done
+}
+
+load portal desktop.portal launcher runner host_qml width height surface_opacity_pct
+load gecko desktop.portal.gecko binary install_dir profile_root home_url
+load entry "desktop.launchers.$portal_launcher" startup_wm_class title port_key scheme path
+load web theme.web page_opacity_pct
+
+port=$(mios-toml-get ports "$entry_port_key")
+default_url="$entry_scheme://localhost:$port$entry_path"
+app_id="$gecko_binary"
+[ -n "$app_id" ] || app_id="$entry_startup_wm_class"
+
+case "${1-}" in
+    --url) printf '%s\n' "$default_url"; exit 0 ;;
+    "") target_url="$default_url" ;;
+    http://*|https://*|file://*|about:*) target_url="$1"; shift ;;
+    -*) target_url="" ;;
+    *) target_url="$1"; shift ;;
+esac
+
+# Resolve profile root (~ -> $HOME)
+raw_profile="${MIOS_PORTAL_PROFILE:-$gecko_profile_root}"
+case "$raw_profile" in
+    "~/"*) profile_dir="$HOME/${raw_profile#\~/}" ;;
+    "~") profile_dir="$HOME" ;;
+    *) profile_dir="$raw_profile" ;;
+esac
+
+# Resolve Gecko binary path
+gecko_bin="${MIOS_PORTAL_BIN:-${MIOS_PORTAL_PREFIX:-}${gecko_install_dir}/${gecko_binary}}"
+
+runtime="${XDG_RUNTIME_DIR:-/tmp}"
+run_dir="$runtime/$app_id"
+mkdir -p "$run_dir"
+
+# Primary path: Gecko build
+if [ -x "$gecko_bin" ]; then
+    exec 9>"$run_dir/lock"
+    if ! flock --nonblock 9; then
+        if [ -z "${1-}" ] && [ "$target_url" = "$default_url" ]; then
+            hyprctl eval "hl.dispatch(hl.dsp.focus({window='class:^($app_id)\$'}))" >/dev/null 2>&1 || true
+            exit 0
+        fi
+    fi
+
+    mkdir -p "$profile_dir"
+    export MOZ_APP_REMOTINGNAME="$app_id"
+    export MOZ_ENABLE_WAYLAND=1
+    export MOZ_CRASHREPORTER_DISABLE=1
+    export MOZ_CRASHREPORTER_NO_REPORT=1
+    unset TMUX TMUX_PANE
+
+    if [ -n "$target_url" ]; then
+        exec "$gecko_bin" \
+            --name "$app_id" \
+            --class "$app_id" \
+            --profile "$profile_dir" \
+            "$target_url" "$@"
+    else
+        exec "$gecko_bin" \
+            --name "$app_id" \
+            --class "$app_id" \
+            --profile "$profile_dir" \
+            "$@"
+    fi
+fi
+
+# Fallback path: Host.qml in QtWebEngine runtime
+echo "mios-portal: Gecko build not found at '$gecko_bin', falling back to Host.qml" >&2
+[ -x "$portal_runner" ] || { echo "mios-portal: qml runtime $portal_runner is not installed" >&2; exit 1; }
+[ -f "$portal_host_qml" ] || { echo "mios-portal: Portal host $portal_host_qml is not installed" >&2; exit 1; }
+
+exe="$run_dir/$app_id"
+exec 9>"$run_dir/lock"
+if ! flock --nonblock 9; then
+    hyprctl eval "hl.dispatch(hl.dsp.focus({window='class:^($app_id)\$'}))" >/dev/null 2>&1 || true
+    exit 0
+fi
+if ! cmp -s "$portal_runner" "$exe"; then
+    cp -f "$portal_runner" "$exe.new"
+    chmod 0755 "$exe.new"
+    mv -f "$exe.new" "$exe"
+fi
+
+unset TMUX TMUX_PANE
+QT_QPA_PLATFORM=wayland
+export QT_QPA_PLATFORM
+exec "$exe" "$portal_host_qml" -- \
+    "url=${target_url:-$default_url}" \
+    "title=$entry_title" \
+    "width=$portal_width" \
+    "height=$portal_height" \
+    "page_opacity_pct=$web_page_opacity_pct" \
+    "surface_opacity_pct=$portal_surface_opacity_pct"

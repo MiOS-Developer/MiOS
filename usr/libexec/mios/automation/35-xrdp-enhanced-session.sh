@@ -9,8 +9,13 @@ _MIOS_TOML_GET="$(cd "$(dirname "$0")" && pwd)/../mios-toml-get"
 _mios_toml_value() { "$_MIOS_TOML_GET" "$1" "$2" "${3:-}"; }
 
 PORT="$(_mios_toml_value 'enhanced_session' 'port' '13389')"
-USER_NAME="$(_mios_toml_value 'enhanced_session' 'user' "$(_mios_toml_value 'identity' 'username' 'mios')")"
-PASSWORD="$(_mios_toml_value 'identity' 'default_password' 'mios')"
+# Credentials: layered SSOT only (vendor < host < user). No literal fallback -- fail closed.
+USER_NAME="$(_mios_toml_value 'enhanced_session' 'user' "$(_mios_toml_value 'identity' 'username' '')")"
+PASSWORD="$(_mios_toml_value 'identity' 'default_password' '')"
+if [ -z "$USER_NAME" ] || [ -z "$PASSWORD" ]; then
+    _log "ERROR: required SSOT credential key [enhanced_session].user/[identity].username or [identity].default_password is missing or empty (no built-in default)"
+    exit 3
+fi
 ENABLED="$(_mios_toml_value 'enhanced_session' 'enabled' 'true')"
 
 if [ "$ENABLED" != "true" ]; then

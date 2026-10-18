@@ -61,17 +61,39 @@ collect_user_config() {
     log_info "Collecting user configuration..."
     echo ""
 
-    read -p "Enter username (default: mios): " MIOS_USERNAME
-    MIOS_USERNAME="${MIOS_USERNAME:-mios}"
+    # Defaults are the LAYERED SSOT values (vendor < host < user + mios.d) -- never a literal.
+    local _cred=""
+    for _c in "$(dirname "${BASH_SOURCE[0]}")/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
+        [[ -f "$_c" ]] && { _cred="$_c"; break; }
+    done
+    local _ssot_user=""
+    [[ -n "$_cred" ]] && _ssot_user="$(python3 "$_cred" username 2>/dev/null || true)"
+
+    read -p "Enter username (default: ${_ssot_user:-<none: SSOT [identity].username unset>}): " MIOS_USERNAME
+    MIOS_USERNAME="${MIOS_USERNAME:-$_ssot_user}"
+    if [[ -z "$MIOS_USERNAME" ]]; then
+        log_error "No username given and SSOT [identity].username is unset -- refusing a literal default."
+        return 1
+    fi
 
     while true; do
-        read -sp "Enter password for ${MIOS_USERNAME}: " MIOS_PASSWORD
+        read -sp "Enter password for ${MIOS_USERNAME} (Enter = SSOT [identity].default_password): " MIOS_PASSWORD
         echo ""
+        if [[ -z "$MIOS_PASSWORD" ]]; then
+            # Use the SSOT credential: hash it (never echo it) and keep the plaintext only for chpasswd.
+            MIOS_USER_PASSWORD_HASH="$([[ -n "$_cred" ]] && python3 "$_cred" hash 2>/dev/null || true)"
+            if [[ -z "$MIOS_USER_PASSWORD_HASH" ]]; then
+                log_error "SSOT [identity].default_password is unset -- enter a password."
+                continue
+            fi
+            MIOS_PASSWORD=""
+            break
+        fi
         read -sp "Confirm password: " MIOS_PASSWORD_CONFIRM
         echo ""
 
         if [[ "$MIOS_PASSWORD" == "$MIOS_PASSWORD_CONFIRM" ]]; then
-            MIOS_PASSWORD_HASH=$(openssl passwd -6 "${MIOS_PASSWORD}")
+            MIOS_USER_PASSWORD_HASH=$(printf '%s\n' "$MIOS_PASSWORD" | openssl passwd -6 -stdin)
             break
         else
             log_error "Passwords do not match. Please try again."
@@ -310,13 +332,13 @@ create_user_account() {
 
     if id "$MIOS_USERNAME" &>/dev/null; then
         log_warn "User ${MIOS_USERNAME} already exists, updating password..."
-        echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        echo "${MIOS_USERNAME}:${MIOS_USER_PASSWORD_HASH}" | chpasswd -e
         chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
     else
         EXTRA_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
         if getent group docker >/dev/null 2>&1; then EXTRA_GROUPS="$EXTRA_GROUPS,docker"; fi
         useradd -u 1000 -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME" 2>/dev/null || useradd -m -G "$EXTRA_GROUPS" -s /bin/bash "$MIOS_USERNAME"
-        echo "${MIOS_USERNAME}:${MIOS_PASSWORD}" | chpasswd
+        echo "${MIOS_USERNAME}:${MIOS_USER_PASSWORD_HASH}" | chpasswd -e
         chage -d 0 "$MIOS_USERNAME" 2>/dev/null || true
 
         install -d -m 0750 /etc/sudoers.d
@@ -398,7 +420,9 @@ build_mios_image() {
         export MIOS_BASE_IMAGE
         export MIOS_DESKTOP_FLATPAKS
         export MIOS_IDENTITY_USERNAME="${MIOS_USERNAME}"
-        export MIOS_PASSWORD_HASH
+        # 11-user.sh reads MIOS_USER_PASSWORD_HASH (was exported as MIOS_PASSWORD_HASH, which the
+        # image never read, so it silently fell back to a literal).
+        export MIOS_USER_PASSWORD_HASH
         export MIOS_IDENTITY_HOSTNAME
 
         SOURCE_DATE_EPOCH=$(git -C "${MIOS_SHARE_DIR:-.}" log -1 --format=%ct 2>/dev/null || date +%s)
@@ -412,7 +436,7 @@ build_mios_image() {
                 --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
                 --build-arg BASE_IMAGE="$MIOS_BASE_IMAGE" \
                 --build-arg MIOS_IDENTITY_USERNAME="$MIOS_USERNAME" \
-                --build-arg MIOS_PASSWORD_HASH="$MIOS_PASSWORD_HASH" \
+                --build-arg MIOS_USER_PASSWORD_HASH="$MIOS_USER_PASSWORD_HASH" \
                 --build-arg MIOS_IDENTITY_HOSTNAME="$MIOS_IDENTITY_HOSTNAME" \
                 --build-arg MIOS_DESKTOP_FLATPAKS="$MIOS_DESKTOP_FLATPAKS" \
                 -t localhost/mios:latest . \

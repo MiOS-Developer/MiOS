@@ -46,11 +46,21 @@ fi
 SEPARATOR="================================================================================"
 SUBSEP="--------------------------------------------------------------------------------"
 
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
+
+# Entry names of a directory, one per line, sorted and without dotfiles -- what
+# `ls DIR 2>/dev/null` printed into a pipe; a missing directory prints nothing.
+dir_names() {
+    local entry
+    for entry in "$1"/*; do
+        [[ -e "$entry" || -L "$entry" ]] || continue
+        printf '%s\n' "${entry##*/}"
+    done
+    return 0
+}
 
 print_section() {
     echo -e "\n${SEPARATOR}"
@@ -250,8 +260,6 @@ check_privileges() {
                 nr=$(cat "${hp}/nr_hugepages" 2>/dev/null || echo "0")
                 free_hp=$(cat "${hp}/free_hugepages" 2>/dev/null || echo "0")
                 if [[ "$nr" != "0" ]]; then
-                    size_kb=$(echo "$size" | grep -oE "[0-9]+")
-                    total_hp_mb=$((nr * size_kb / 1024))
                     echo "  ${size}: ${nr} pages reserved, ${free_hp} free"
                 fi
             fi
@@ -267,7 +275,6 @@ check_privileges() {
             if [[ -d "$node" ]]; then
                 node_id=$(basename "$node")
                 mem_total=$(grep "MemTotal" "${node}/meminfo" 2>/dev/null | awk '{print $4}')
-                mem_free=$(grep "MemFree" "${node}/meminfo" 2>/dev/null | awk '{print $4}')
                 cpus=$(cat "${node}/cpulist" 2>/dev/null || echo "")
                 mem_total_gb=$(echo "Scale=1; ${mem_total:-0} / 1024 / 1024" | bc 2>/dev/null || echo "")
                 echo "  ${node_id}: ${mem_total_gb} GB total, CPUs: $cpus"
@@ -399,7 +406,7 @@ check_privileges() {
     echo ""
     echo "STORAGE PASSTHROUGH:"
     if [[ -d /sys/bus/pci/drivers/vfio-pci ]]; then
-        for pci_addr in $(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -E "^[0-9a-f]{4}:"); do
+        for pci_addr in $(dir_names /sys/bus/pci/drivers/vfio-pci | grep -E "^[0-9a-f]{4}:"); do
             class=$(cat "/sys/bus/pci/devices/${pci_addr}/class" 2>/dev/null || echo "")
             if [[ "$class" == "0x010802" || "$class" == "0x010601" ]]; then
                 desc=$(lspci -s "$pci_addr" 2>/dev/null | cut -d: -f3- | sed 's/^ //')
@@ -431,7 +438,7 @@ check_privileges() {
     echo "│"
     echo "│ LIBVIRT NETWORKS:"
     if cmd_exists virsh; then
-        virsh net-list --all 2>/dev/null | grep -vE "^Name|^-" | while read -r name state autostart persistent; do
+        virsh net-list --all 2>/dev/null | grep -vE "^Name|^-" | while read -r name state _; do
             if [[ -n "$name" ]]; then
                 echo "│   $name: $state"
             fi
@@ -443,7 +450,7 @@ check_privileges() {
     echo "NIC PASSTHROUGH:"
     if [[ -d /sys/bus/pci/drivers/vfio-pci ]]; then
         found_nic=0
-        for pci_addr in $(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -E "^[0-9a-f]{4}:"); do
+        for pci_addr in $(dir_names /sys/bus/pci/drivers/vfio-pci | grep -E "^[0-9a-f]{4}:"); do
             class=$(cat "/sys/bus/pci/devices/${pci_addr}/class" 2>/dev/null || echo "")
             if [[ "$class" == 0x0200* ]]; then
                 found_nic=1
@@ -553,7 +560,6 @@ check_privileges() {
     if [[ -d /sys/kernel/iommu_groups ]]; then
         for g in $(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 -type d | sort -V); do
             group_id=$(basename "$g")
-            device_count=$(ls "${g}/devices/" 2>/dev/null | wc -l)
 
             group_status="HOST"
             all_vfio=1
@@ -986,7 +992,6 @@ check_privileges() {
     print_subsection "IRQ Balance Service"
     if cmd_exists systemctl; then
         irqbalance_status=$(systemctl is-active irqbalance 2>/dev/null || echo "Unknown")
-        irqbalance_enabled=$(systemctl is-enabled irqbalance 2>/dev/null || echo "Unknown")
         echo "Irqbalance service: ${irqbalance_status}"
     fi
 
@@ -1038,7 +1043,6 @@ check_privileges() {
     for dev in /sys/bus/pci/devices/*; do
         if [[ -d "$dev" ]]; then
             pci_addr=$(basename "$dev")
-            msi=$(cat "${dev}/msi_bus" 2>/dev/null || echo "")
             irq=$(cat "${dev}/irq" 2>/dev/null || echo "")
             if [[ -d "${dev}/msi_irqs" ]]; then
                 msi_irqs=$(ls "${dev}/msi_irqs" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
@@ -1194,7 +1198,7 @@ check_privileges() {
     print_subsection "Devices Bound to vfio-pci"
     if [[ -d /sys/bus/pci/drivers/vfio-pci ]]; then
         echo ""
-        vfio_devices=$(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -E "^[0-9a-f]{4}:" || true)
+        vfio_devices=$(dir_names /sys/bus/pci/drivers/vfio-pci | grep -E "^[0-9a-f]{4}:" || true)
         if [[ -n "$vfio_devices" ]]; then
             echo "PCI Address      Vendor:Device    Description"
             echo ""
@@ -1625,11 +1629,11 @@ check_privileges() {
     if [[ -d /sys/bus/pci/drivers/vfio-pci ]]; then
         echo ""
         echo "Devices bound to vfio-pci:"
-        ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -E "^[0-9a-f]{4}:" | while read -r addr; do
+        dir_names /sys/bus/pci/drivers/vfio-pci | grep -E "^[0-9a-f]{4}:" | while read -r addr; do
             desc=$(lspci -s "$addr" 2>/dev/null | cut -d: -f3-)
             echo "  ${addr}:${desc}"
         done
-        [[ $(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -cE "^[0-9a-f]{4}:") -eq 0 ]] && echo "  [None]"
+        [[ $(dir_names /sys/bus/pci/drivers/vfio-pci | grep -cE "^[0-9a-f]{4}:") -eq 0 ]] && echo "  [None]"
     fi
 
     print_subsection "libvirt/QEMU Status"
@@ -1668,7 +1672,7 @@ check_privileges() {
     elif [[ -d /sys/fs/cgroup/cpu ]]; then
         echo "Cgroup Version: v1"
         echo "Mounted Controllers:"
-        ls /sys/fs/cgroup/ | grep -v "unified" | tr '\n' ' '
+        dir_names /sys/fs/cgroup | grep -v "unified" | tr '\n' ' '
         echo ""
     else
         echo "Cgroup: [Not detected]"
@@ -1722,7 +1726,7 @@ check_privileges() {
 
     print_subsection "Kernel Security Features"
     echo "Kernel Lockdown: $"
-    echo "Secure Boot: $ ? "Enabled" : "Disabled"}' || echo '[Cannot detect]')"
+    echo "Secure Boot: \$ ? Enabled : Disabled}' || echo '[Cannot detect]')"
     echo "KASLR: $(grep -q "nokaslr" /proc/cmdline && echo 'Disabled' || echo 'Enabled (default)')"
 
     echo ""
@@ -1884,7 +1888,7 @@ check_privileges() {
         echo ""
         for hook in /etc/libvirt/hooks/*; do
             if [[ -f "$hook" && -x "$hook" ]]; then
-                echo ""$hook") hook (first 30 lines) ---"
+                echo "$hook) hook (first 30 lines) ---"
                 head -30 "$hook" 2>/dev/null
                 echo ""
                 echo ""
@@ -2365,16 +2369,13 @@ check_privileges() {
     echo "│ KVM: ${kvm_status}"
 
     iommu_status="DISABLED"
-    iommu_groups=0
     if [[ -d /sys/kernel/iommu_groups ]]; then
         iommu_status="ENABLED"
-        iommu_groups=$(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
     fi
     echo "│ IOMMU: ${iommu_status}"
 
     vfio_status="NOT LOADED"
     lsmod | grep -q "^vfio " && vfio_status="LOADED"
-    vfio_devices=$(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -cE "^[0-9a-f]{4}:" || echo "0")
     echo "│ VFIO: ${vfio_status} bound)"
 
     nested="DISABLED"
@@ -2412,28 +2413,12 @@ check_privileges() {
         [[ $1 == "yes" ]] && echo "✔" || echo "✔"
     }
 
-    hw_virt="no"; grep -qE 'vmx|svm' /proc/cpuinfo && hw_virt="yes"
-    kvm_ok="no"; [[ -c /dev/kvm ]] && kvm_ok="yes"
-    iommu_ok="no"; [[ -d /sys/kernel/iommu_groups ]] && iommu_ok="yes"
-    vfio_mod="no"; lsmod | grep -q "^vfio " && vfio_mod="yes"
-    vfio_iommu="no"; lsmod | grep -q "vfio_iommu_type1" && vfio_iommu="yes"
-
     echo "│ $ CPU Virtualization Extensions"
     echo "│ $ KVM Module Loaded"
     echo "│ $ IOMMU Enabled"
     echo "│ $ VFIO Core Module Loaded"
     echo "│ $ VFIO IOMMU Type1 Driver Loaded"
 
-    gpu_isolated="no"
-    if [[ $vfio_devices -gt 0 ]]; then
-        for addr in $(ls /sys/bus/pci/drivers/vfio-pci/ 2>/dev/null | grep -E "^[0-9a-f]{4}:"); do
-            class=$(cat "/sys/bus/pci/devices/${addr}/class" 2>/dev/null || echo "")
-            if [[ "$class" == 0x030* ]]; then
-                gpu_isolated="yes"
-                break
-            fi
-        done
-    fi
     echo "│ $ GPU Bound to VFIO"
 
     echo "└─────────────────────────────────────────────────────────────────────────────┘"

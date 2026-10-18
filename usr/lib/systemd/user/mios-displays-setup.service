@@ -1,0 +1,14 @@
+[Unit]
+Description=MiOS first-logon display setup (guided Displays app, once per user)
+PartOf=mios-desktop.target
+After=graphical-session.target mios-shell.service
+Requisite=graphical-session.target
+ConditionPathExists=!%S/mios/displays-setup.done
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/mios-displays firstrun
+Restart=no
+
+[Install]
+WantedBy=mios-desktop.target

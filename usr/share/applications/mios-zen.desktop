@@ -1,0 +1,25 @@
+# AI-hint: Zen, the native MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it.
+# AI-related: /usr/libexec/mios/mios-flatpak-run, /usr/libexec/mios/mios-theme-render (apply_web)
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Zen Browser
+GenericName=Web Browser
+Comment=MiOS web browser with SSOT theme and window glass
+Exec=/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding app.zen_browser.zen @@u %u @@
+Icon=app.zen_browser.zen
+Categories=Network;WebBrowser;
+Keywords=web;browser;internet;zen;
+Terminal=false
+StartupNotify=true
+StartupWMClass=zen
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --new-window
+
+[Desktop Action new-private-window]
+Name=New Private Window
+Exec=/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --private-window

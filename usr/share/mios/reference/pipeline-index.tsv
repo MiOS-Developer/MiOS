@@ -52,11 +52,14 @@
 60	script	flatpak-env	automation/60-flatpak-env.sh	MIOS_APPLY_CLASS=universal
 61	script	flatpak-bake	automation/61-flatpak-bake.sh	MIOS_APPLY_CLASS=universal
 62	script	oh-my-posh	automation/62-oh-my-posh.sh	MIOS_APPLY_CLASS=universal
+64	script	bake-fan-control	automation/64-bake-fan-control.sh	MIOS_APPLY_CLASS=universal
 65	script	bake-hyprland	automation/65-bake-hyprland.sh	MIOS_APPLY_CLASS=universal
 66	script	bake-quickshell	automation/66-bake-quickshell.sh	MIOS_APPLY_CLASS=bake-only
-67	script	bake-surfer	automation/67-bake-surfer.sh	MIOS_APPLY_CLASS=bake-only
+67	script	bake-portal	automation/67-bake-portal.sh	MIOS_APPLY_CLASS=universal
 68	script	bake-kvmfr	automation/68-bake-kvmfr.sh	MIOS_APPLY_CLASS=bake-only
 69	script	bake-lookingglass-client	automation/69-bake-lookingglass-client.sh	MIOS_APPLY_CLASS=bake-only
+70	script	bake-wayvnc-upstream	automation/70-bake-wayvnc-upstream.sh	MIOS_APPLY_CLASS=bake-only
+71	script	bake-rdp-server	automation/71-bake-rdp-server.sh	MIOS_APPLY_CLASS=bake-only
 72	script	hermes-agent	automation/72-hermes-agent.sh	MIOS_APPLY_CLASS=universal
 73	script	model-prep	automation/73-model-prep.sh	MIOS_APPLY_CLASS=universal
 75	script	kargs-render	automation/75-kargs-render.sh	MIOS_APPLY_CLASS=bake-only

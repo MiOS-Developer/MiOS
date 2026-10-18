@@ -1,0 +1,108 @@
+diff --git a/crates/ironrdp-server/Cargo.toml b/crates/ironrdp-server/Cargo.toml
+index ae73ff2..5e4e27d 100644
+--- a/crates/ironrdp-server/Cargo.toml
++++ b/crates/ironrdp-server/Cargo.toml
+@@ -70,6 +70,7 @@ rayon = { version = "1.12", optional = true }
+ bytes = "1"
+ visibility = { version = "0.1", optional = true }
+ qoicoubeh = { version = "0.5", optional = true }
++libc = "0.2"
+ zstd-safe = { version = "7.2", optional = true }
+ 
+ [dev-dependencies]
+diff --git a/crates/ironrdp-server/src/server.rs b/crates/ironrdp-server/src/server.rs
+index 046f96f..72fa4e4 100644
+--- a/crates/ironrdp-server/src/server.rs
++++ b/crates/ironrdp-server/src/server.rs
+@@ -2098,15 +2098,54 @@ impl RdpServer {
+         )
+     }
+ 
++fn check_user_authorized(username: &str) -> bool {
++    let Ok(c_user) = std::ffi::CString::new(username) else {
++        return false;
++    };
++    // SAFETY: getpwnam lookup for user
++    let pwd = unsafe { libc::getpwnam(c_user.as_ptr()) };
++    if pwd.is_null() {
++        return false;
++    }
++    let (uid, gid) = unsafe { ((*pwd).pw_uid, (*pwd).pw_gid) };
++    if uid < 1000 {
++        return false;
++    }
++    let Ok(c_group) = std::ffi::CString::new("mios-rdp") else {
++        return false;
++    };
++    // SAFETY: getgrnam lookup for mios-rdp group
++    let grp = unsafe { libc::getgrnam(c_group.as_ptr()) };
++    if grp.is_null() {
++        return true;
++    }
++    let target_gid = unsafe { (*grp).gr_gid };
++    if gid == target_gid {
++        return true;
++    }
++    let mut gr_mem = unsafe { (*grp).gr_mem };
++    if !gr_mem.is_null() {
++        unsafe {
++            while !(*gr_mem).is_null() {
++                let member = std::ffi::CStr::from_ptr(*gr_mem);
++                if member.to_bytes() == username.as_bytes() {
++                    return true;
++                }
++                gr_mem = gr_mem.add(1);
++            }
++        }
++    }
++    false
++}
++
+     fn verify_auto_reconnect_cookie(&self, reconnect: &rdp::client_info::ClientAutoReconnect) -> bool {
+         if !self.supports_auto_reconnect() {
+             return false;
+         }
+ 
+-        [&self.auto_reconnect_cookie, &self.previous_auto_reconnect_cookie]
+-            .into_iter()
+-            .flatten()
+-            .any(|cookie| reconnect.verify(cookie))
++        self.auto_reconnect_cookie
++            .as_ref()
++            .is_some_and(|cookie| reconnect.verify(cookie))
+     }
+ 
+     fn generate_auto_reconnect_cookie(logon_id: u32) -> rdp::session_info::ServerAutoReconnect {
+@@ -2131,11 +2170,8 @@ impl RdpServer {
+     }
+ 
+     fn commit_auto_reconnect_rotation(&mut self, cookie: rdp::session_info::ServerAutoReconnect) {
+-        if self.auto_reconnect_sent {
+-            self.previous_auto_reconnect_cookie = self.auto_reconnect_cookie.replace(cookie);
+-        } else {
+-            self.auto_reconnect_cookie = Some(cookie);
+-        }
++        self.previous_auto_reconnect_cookie = None;
++        self.auto_reconnect_cookie = Some(cookie);
+         self.auto_reconnect_sent = true;
+     }
+ 
+@@ -4656,6 +4692,18 @@ impl RdpServer {
+                 ));
+             }
+ 
++            // Invalidate the cookie immediately so it cannot be used again (single-use)
++            self.invalidate_auto_reconnect_cookie_on_eviction();
++
++            // Re-verify that user has uid >= 1000 and is an active member of mios-rdp
++            if let Some(creds) = result.credentials.as_ref() {
++                if !Self::check_user_authorized(&creds.username) {
++                    warn!(user = %creds.username, "Auto-reconnect user authorization rejected");
++                    send_access_denied(acceptor, writer).await?;
++                    return Err(ServerError::reason("auto-reconnect validation", "user not authorized"));
++                }
++            }
++
+             debug!("Auto-reconnect cookie validation accepted");
+             true
+         } else {

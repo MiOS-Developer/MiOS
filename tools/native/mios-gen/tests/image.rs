@@ -373,6 +373,20 @@ mod cosign_policy {
         env!("CARGO_BIN_EXE_mios-gen")
     }
 
+    const SOUND: &str = "[image]\nname = \"ghcr.io/mios-dev/mios\"\n[security.sigstore]\n\
+        policy_mode = \"insecureAcceptAnything\"\n[[security.sigstore.scopes]]\ntransport = \"docker\"\n\
+        scope = \"ghcr.io/mios-dev\"\ntype = \"sigstoreSigned\"\n\
+        key_paths = [\"/usr/share/pki/containers/mios-cosign.pub\"]\n";
+
+    fn cosign(root: &std::path::Path, check: bool) -> std::process::Output {
+        let mut c = Command::new(bin());
+        c.arg("cosign-policy").arg("--root").arg(root);
+        if check {
+            c.arg("--check");
+        }
+        c.output().expect("must execute mios-gen")
+    }
+
     #[test]
     fn test_cosign_policy_render_and_check() {
         let _tree = super::tree_lock();
@@ -380,52 +394,51 @@ mod cosign_policy {
         let root = dir.path();
         let toml_dir = root.join("usr/share/mios");
         fs::create_dir_all(&toml_dir).unwrap();
-        fs::write(
-            toml_dir.join("mios.toml"),
-            "[security.sigstore]\npolicy_mode = \"insecureAcceptEverything\"\n",
-        )
-        .unwrap();
+        fs::write(toml_dir.join("mios.toml"), SOUND).unwrap();
 
         // 1. Generation mode
-        let out = Command::new(bin())
-            .arg("cosign-policy")
-            .arg("--root")
-            .arg(root)
-            .output()
-            .expect("must execute mios-gen");
-        assert_eq!(out.status.code(), Some(0));
-
+        let out = cosign(root, false);
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
         let policy_path = root.join("usr/lib/containers/policy.json");
-        assert!(policy_path.is_file());
         let content = fs::read_to_string(&policy_path).unwrap();
-        let expected =
-        "{\n  \"default\": [\n    {\n      \"type\": \"insecureAcceptEverything\"\n    }\n  ]\n}\n";
+        let expected = "{\n  \"default\": [\n    {\n      \"type\": \"insecureAcceptAnything\"\n    }\n  ],\n  \"transports\": {\n    \"docker\": {\n      \"ghcr.io/mios-dev\": [\n        {\n          \"keyPath\": \"/usr/share/pki/containers/mios-cosign.pub\",\n          \"signedIdentity\": {\n            \"type\": \"matchRepository\"\n          },\n          \"type\": \"sigstoreSigned\"\n        }\n      ]\n    }\n  }\n}\n";
         assert_eq!(content, expected);
 
         // 2. Check mode - clean
-        let out = Command::new(bin())
-            .arg("cosign-policy")
-            .arg("--root")
-            .arg(root)
-            .arg("--check")
-            .output()
-            .expect("must execute mios-gen");
+        let out = cosign(root, true);
         assert_eq!(out.status.code(), Some(0));
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("[OK] usr/lib/containers/policy.json is in sync with SSOT"));
 
         // 3. Check mode - tampered
         fs::write(&policy_path, "{}").unwrap();
-        let out = Command::new(bin())
-            .arg("cosign-policy")
-            .arg("--root")
-            .arg(root)
-            .arg("--check")
-            .output()
-            .expect("must execute mios-gen");
+        let out = cosign(root, true);
         assert_eq!(out.status.code(), Some(1));
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("out of sync"));
+    }
+
+    /// The renderer is the first of three refusals (gate, bake): an unsound
+    /// SSOT exits 1 and writes nothing, so no policy can ship that names an
+    /// invalid type or accepts a MiOS image unsigned.
+    #[test]
+    fn test_unsound_policies_are_refused_and_not_written() {
+        let _tree = super::tree_lock();
+        for (label, ssot, needle) in [
+            ("invalid type", SOUND.replace("policy_mode = \"insecureAcceptAnything\"", "policy_mode = \"insecureAcceptEverything\""), "insecureAcceptEverything"),
+            ("no MiOS scope", "[image]\nname = \"ghcr.io/mios-dev/mios\"\n[security.sigstore]\npolicy_mode = \"insecureAcceptAnything\"\n".to_string(), "MiOS-owned"),
+            ("unsigned MiOS scope", SOUND.replace("type = \"sigstoreSigned\"\n", "type = \"insecureAcceptAnything\"\n").replace("key_paths = [\"/usr/share/pki/containers/mios-cosign.pub\"]\n", ""), "MiOS-owned"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap();
+            fs::write(root.join("usr/share/mios/mios.toml"), &ssot).unwrap();
+            let out = cosign(root, false);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(1), "{label}: {stderr}");
+            assert!(stderr.contains(needle), "{label}: {stderr}");
+            assert!(!root.join("usr/lib/containers/policy.json").exists(), "{label}: an unsound policy was written");
+        }
     }
 
     #[test]

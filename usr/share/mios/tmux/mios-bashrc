@@ -1,6 +1,17 @@
 # AI-hint: MiOS-owned interactive tmux startup; layered SSOT prompt without sourcing personal shell hooks.
 # AI-related: /etc/profile.d/50-mios.sh, /usr/libexec/mios/mios-gen (render-tmux-theme --runtime), /usr/share/mios/mios.toml
 case $- in *i*) ;; *) return ;; esac
+if [[ "${MIOS_TMUX_HELPER:-}" == 1 ]]; then
+    # A worker has no human prompt hooks. Bash/readline can crash while a
+    # multiline rich prompt is redrawn during rapid desktop/portrait rotation.
+    # Older connected MCP clients may not yet export the new prompt field.
+    # Resolve the same SSOT value without loading personal shell hooks.
+    PS1="${MIOS_TMUX_HELPER_PROMPT:-$(/usr/bin/mios-toml-get mcp.tmux helper_prompt)}"
+    [[ -n "$PS1" ]] || return 1
+    unset PROMPT_COMMAND
+    shopt -s checkwinsize
+    return
+fi
 PS1='MiOS \u@\h:\w\$ '
 [[ -r /etc/profile.d/50-mios.sh ]] && source /etc/profile.d/50-mios.sh || { [[ -r /etc/profile.d/mios-prompt.sh ]] && source /etc/profile.d/mios-prompt.sh; }
 if [[ -x /usr/lib/mios/mcp/.venv/bin/python3 ]]; then

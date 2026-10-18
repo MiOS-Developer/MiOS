@@ -1,0 +1,26 @@
+[Unit]
+Description=MiOS native RDP server (IronRDP, EGFX AVC420 H.264 via Cisco OpenH264) into the live Hyprland session
+Documentation=file:///usr/libexec/mios/mios-rdp file:///home/mios/mios-desktop-work-1/rdp-native-design.md
+PartOf=mios-desktop.target
+After=graphical-session.target
+Requisite=graphical-session.target
+ConditionPathExists=/usr/libexec/mios/rdp-native/mios-rdp-server
+StartLimitIntervalSec=120
+StartLimitBurst=5
+OnFailure=mios-rdp-native-failed.service
+
+[Service]
+Type=exec
+ExecCondition=/usr/libexec/mios/mios-rdp enabled native
+ExecStart=/usr/libexec/mios/mios-rdp native
+Restart=on-failure
+RestartSec=3
+RestartMode=direct
+Nice=-2
+CPUWeight=200
+MemoryMax=1G
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=mios-desktop.target

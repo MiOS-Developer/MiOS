@@ -1,0 +1,7 @@
+[Unit]
+Description=MiOS native RDP server crash-looped: hand [ports].rdp back to xrdp (until reboot or mios-rdp switch native)
+Documentation=file:///usr/libexec/mios/mios-rdp
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/mios/mios-rdp native-failed "mios-rdp-native.service failed"

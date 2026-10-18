@@ -9,14 +9,14 @@ readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
-readonly MAGENTA='\033[0;35m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m' # No Color
 
 readonly VFIO_CONF="/etc/modprobe.d/vfio.conf"
 readonly MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 readonly DRACUT_CONF="/etc/dracut.conf.d/vfio.conf"
-readonly BACKUP_SUFFIX=".backup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_SUFFIX=".backup-$(date +%Y%m%d-%H%M%S)"
+readonly BACKUP_SUFFIX
 
 declare -a SELECTED_DEVICES=()
 declare -a SELECTED_IDS=()
@@ -117,21 +117,21 @@ detect_initramfs() {
 }
 
 get_all_pcie_devices() {
-    local devices=()
+    local pcie_devices=()
 
     while IFS= read -r line; do
-        devices+=("$line")
+        pcie_devices+=("$line")
     done < <(lspci -nn | grep -E "VGA compatible controller|3D controller|Display controller")
 
     while IFS= read -r line; do
-        devices+=("$line")
+        pcie_devices+=("$line")
     done < <(lspci -nn | grep -i "Audio device.*NVIDIA\|Audio device.*AMD\|Audio.*Intel.*Display")
 
     while IFS= read -r line; do
-        devices+=("$line")
+        pcie_devices+=("$line")
     done < <(lspci -nn | grep -E "USB.*NVIDIA|USB.*AMD")
 
-    printf '%s\n' "${devices[@]}"
+    printf '%s\n' "${pcie_devices[@]}"
 }
 
 display_devices() {
@@ -143,16 +143,17 @@ display_devices() {
     echo -e "${CYAN}+****************************************************************+${NC}"
 
     for device in "${dev_array[@]}"; do
-        local pci_addr=$(echo "$device" | awk '{print $1}')
-        local device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])')
-        local device_desc=$(echo "$device" | sed 's/^[^ ]* //' | sed 's/\[.*\]//')
+        local pci_addr device_id device_desc current_driver
+        pci_addr=$(echo "$device" | awk '{print $1}') || true
+        device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])') || true
+        device_desc=$(echo "$device" | sed 's/^[^ ]* //' | sed 's/\[.*\]//') || true
 
-        local current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}')
+        current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}') || true
         [[ -z "$current_driver" ]] && current_driver="${YELLOW}none${NC}"
 
         local iommu_group="N/A"
         if [[ -L "/sys/bus/pci/devices/0000:$pci_addr/iommu_group" ]]; then
-            iommu_group=$(basename $(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group"))
+            iommu_group=$(basename "$(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group")")
         fi
 
         local color=$NC
@@ -198,9 +199,10 @@ select_devices() {
         elif [[ "$selection" == "a" ]]; then
             for i in "${!devices[@]}"; do
                 local device="${devices[$i]}"
-                local pci_addr=$(echo "$device" | awk '{print $1}')
-                local device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])')
-                local current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}')
+                local pci_addr device_id current_driver
+                pci_addr=$(echo "$device" | awk '{print $1}') || true
+                device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])') || true
+                current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}') || true
 
                 SELECTED_DEVICES+=("$pci_addr")
                 SELECTED_IDS+=("$device_id")
@@ -221,9 +223,10 @@ select_devices() {
                 for num in $selection; do
                     local idx=$((num - 1))
                     local device="${devices[$idx]}"
-                    local pci_addr=$(echo "$device" | awk '{print $1}')
-                    local device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])')
-                    local current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}')
+                    local pci_addr device_id current_driver
+                    pci_addr=$(echo "$device" | awk '{print $1}') || true
+                    device_id=$(echo "$device" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])') || true
+                    current_driver=$(lspci -nnk -s "$pci_addr" | grep "Kernel driver in use:" | awk '{print $5}') || true
 
                     SELECTED_DEVICES+=("$pci_addr")
                     SELECTED_IDS+=("$device_id")
@@ -251,12 +254,14 @@ detect_related_devices() {
 
     for pci_addr in "${SELECTED_DEVICES[@]}"; do
         if [[ -L "/sys/bus/pci/devices/0000:$pci_addr/iommu_group" ]]; then
-            local group=$(basename $(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group"))
+            local group
+            group=$(basename "$(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group")") || true
 
             if [[ -z "${seen_groups[$group]}" ]]; then
                 seen_groups[$group]=1
 
-                local group_devices=$(ls "/sys/kernel/iommu_groups/$group/devices/" 2>/dev/null)
+                local group_devices
+                group_devices=$(ls "/sys/kernel/iommu_groups/$group/devices/" 2>/dev/null) || true
 
                 for dev in $group_devices; do
                     local dev_addr="${dev#0000:}"
@@ -270,8 +275,9 @@ detect_related_devices() {
                     done
 
                     if ! $already_selected; then
-                        local dev_info=$(lspci -nns "$dev_addr")
-                        local dev_id=$(echo "$dev_info" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])')
+                        local dev_info dev_id
+                        dev_info=$(lspci -nns "$dev_addr") || true
+                        dev_id=$(echo "$dev_info" | grep -oP '\[\K[0-9a-f]{4}:[0-9a-f]{4}(?=\])') || true
 
                         additional_devices+=("$dev_addr|$dev_id|$dev_info")
                     fi
@@ -311,16 +317,19 @@ analyze_iommu_groups() {
 
     for pci_addr in "${SELECTED_DEVICES[@]}"; do
         if [[ -L "/sys/bus/pci/devices/0000:$pci_addr/iommu_group" ]]; then
-            local group=$(basename $(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group"))
-            local group_size=$(ls "/sys/kernel/iommu_groups/$group/devices/" 2>/dev/null | wc -l)
+            local group
+            group=$(basename "$(readlink "/sys/bus/pci/devices/0000:$pci_addr/iommu_group")") || true
+            local group_size
+            group_size=$(ls "/sys/kernel/iommu_groups/$group/devices/" 2>/dev/null | wc -l) || true
 
             echo -e "${CYAN}+****************************************************************+${NC}"
             echo -e "${CYAN}|${NC} Device: $pci_addr | IOMMU Group: $group | Size: $group_size device(s)"
             echo -e "${CYAN}+****************************************************************+${NC}"
 
             for dev in /sys/kernel/iommu_groups/$group/devices/*; do
-                local dev_id=$(basename "$dev")
-                local dev_info=$(lspci -nns "${dev_id}" | sed 's/^[^ ]* //')
+                local dev_id dev_info
+                dev_id=$(basename "$dev") || true
+                dev_info=$(lspci -nns "${dev_id}" | sed 's/^[^ ]* //') || true
                 echo -e "${CYAN}|${NC} $dev_info"
             done
 
@@ -346,7 +355,8 @@ configure_modprobe() {
         log_info "Backed up existing config to ${VFIO_CONF}${BACKUP_SUFFIX}"
     fi
 
-    local vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
+    local vfio_ids
+    vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
 
     local has_nvidia=false
     local has_amd=false
@@ -437,7 +447,8 @@ configure_mkinitcpio() {
         log_success "Added VFIO modules to mkinitcpio.conf"
     fi
 
-    local hooks_line=$(grep "^HOOKS=" "$MKINITCPIO_CONF")
+    local hooks_line
+    hooks_line=$(grep "^HOOKS=" "$MKINITCPIO_CONF") || true
     if [[ "$hooks_line" =~ kms.*modconf ]]; then
         log_warning "Hook order issue: 'modconf' should come before 'kms'"
         log_info "Current: $hooks_line"
@@ -484,7 +495,8 @@ EOF
 configure_bootloader() {
     log_header "Bootloader Configuration"
 
-    local vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
+    local vfio_ids
+    vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
     local kernel_params="$IOMMU_PARAM iommu=pt vfio-pci.ids=$vfio_ids"
 
     log_info "Kernel parameters to add:"
@@ -516,7 +528,8 @@ configure_systemd_boot() {
 
     log_info "Configuring systemd-boot..."
 
-    local entries=$(find "$BOOT_ENTRIES_DIR" -name "*.conf" 2>/dev/null | grep -v "backup" | sort)
+    local entries
+    entries=$(find "$BOOT_ENTRIES_DIR" -name "*.conf" 2>/dev/null | grep -v "backup" | sort) || true
 
     if [[ -z "$entries" ]]; then
         log_error "No systemd-boot entries found in $BOOT_ENTRIES_DIR"
@@ -669,7 +682,8 @@ EOF
 
     log_info "Creating VFIO verification script..."
 
-    local vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
+    local vfio_ids
+    vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
 
     cat > /usr/local/bin/vfio-verify << EOF
 echo "VFIO Configuration Verification"
@@ -719,7 +733,8 @@ generate_summary() {
     echo ""
 
     echo -e "${BOLD}Kernel Parameters:${NC}"
-    local vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
+    local vfio_ids
+    vfio_ids=$(IFS=,; echo "${SELECTED_IDS[*]}")
     echo "  $IOMMU_PARAM iommu=pt vfio-pci.ids=$vfio_ids"
     echo ""
 

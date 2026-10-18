@@ -19,7 +19,15 @@ mkdir -p /etc/xdg
 cp /usr/share/mios/xdg/user-dirs.defaults /etc/xdg/user-dirs.defaults
 echo "[xdg-setup] Configured /etc/xdg/user-dirs.defaults"
 
-_op_user="${MIOS_IDENTITY_USERNAME:-mios}"
+# Operator account: env, else the layered SSOT [identity].username -- never a literal.
+_op_user="${MIOS_IDENTITY_USERNAME:-}"
+if [ -z "$_op_user" ] && [ -x /usr/libexec/mios/mios-toml-get ]; then
+    _op_user="$(/usr/libexec/mios/mios-toml-get identity username '' 2>/dev/null || true)"
+fi
+if [ -z "$_op_user" ]; then
+    echo "[xdg-setup] ERROR: SSOT [identity].username is missing or empty (no built-in default)" >&2
+    exit 3
+fi
 if ! getent passwd "$_op_user" >/dev/null; then
     echo "[xdg-setup] Operator user $_op_user not found"
 else

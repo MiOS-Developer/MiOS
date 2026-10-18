@@ -9,8 +9,9 @@ Synthesizes complete, schema-compliant autounattend.xml answer files for Windows
 - windowsPE: TPM 2.0, SecureBoot, RAM & CPU hardware check bypasses, display settings.
 - offlineServicing: Driver search path injection for Wi-Fi and storage controllers.
 - specialize: Telemetry disabling, OEM branding, Developer Mode, and Long Paths enablement.
-- oobeSystem: Passwordless/auto-logon 'mios' local admin account, OOBE screen bypass,
-  and FirstLogonCommands for WSL2/Hyper-V platform initialization.
+- oobeSystem: local accounts + persistent AutoLogon resolved from the LAYERED SSOT
+  (usr/lib/mios/mios_credentials.py -- fails closed, no literal account/password),
+  OOBE screen bypass, and FirstLogonCommands for WSL2/Hyper-V platform initialization.
 """
 
 from __future__ import annotations
@@ -18,16 +19,45 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import tempfile
+import types
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from xml.dom import minidom
 
+# Defensive registration in sys.modules for Python 3.14 dataclass processing
+# when loaded via dynamic importlib without caller registration
+if __name__ not in sys.modules:
+    sys.modules[__name__] = types.ModuleType(__name__)
+
+
 UNATTEND_NS = "urn:schemas-microsoft-com:unattend"
 WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+
+def _import_credentials():
+    """usr/lib/mios/mios_credentials (installed or repo-relative) -- the ONE fail-closed resolver."""
+    for libdir in ("/usr/lib/mios", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib", "mios")):
+        libdir = os.path.normpath(libdir)
+        if os.path.isfile(os.path.join(libdir, "mios_credentials.py")):
+            if libdir not in sys.path:
+                sys.path.insert(0, libdir)
+            import mios_credentials  # noqa: PLC0415
+            return mios_credentials
+    raise ImportError("mios_credentials.py not found in /usr/lib/mios or the repo tree")
+
+
+def load_identity_defaults() -> "dict":
+    """Resolved credentials from the LAYERED SSOT (vendor < host < user, + mios.d).
+    Raises mios_credentials.CredentialError (naming the key) when one is missing --
+    there is no literal fallback any more."""
+    mc = _import_credentials()
+    return mc.resolve(mc.load())
+
 
 class Preset(str, Enum):
     DEVELOPER = "developer"
@@ -38,9 +68,21 @@ class Preset(str, Enum):
 class UnattendConfig:
     """Configuration parameters for Windows 11 autounattend generation."""
     preset: Preset = Preset.DEVELOPER
-    username: str = "mios"
+    # No credential defaults: from_ssot() fills these from the layered SSOT, or the caller
+    # passes them explicitly. build_xml_tree() refuses to render with either empty.
+    username: str = ""
     password: Optional[str] = None
-    computer_name: str = "MiOS-Workstation"
+    accounts: List[Dict[str, str]] = field(default_factory=list)
+    autologon_enable: bool = True
+    autologon_user: str = ""
+    autologon_persistent: bool = True
+    autologon_count: int = 9999999
+    # [autounattend.service].svc_user (the RID-500 Administrator). AutoLogon never signs it in
+    # (mios_credentials.resolve and the PowerShell Resolve-MiOSCredentials refuse it the same way).
+    svc_user: str = ""
+    admin_password: Optional[str] = None
+    disable_rid500: bool = True
+    computer_name: str = "MiOS-Host"
     driver_path: str = "M:\\drivers"
     bypass_tpm: bool = True
     bypass_secure_boot: bool = True
@@ -53,6 +95,42 @@ class UnattendConfig:
     enable_wsl2: bool = True
     resolution_x: int = 1920
     resolution_y: int = 1080
+
+def config_from_ssot(**overrides: Any) -> "UnattendConfig":
+    """UnattendConfig with identity/accounts/AutoLogon from the resolved layered SSOT."""
+    mc = _import_credentials()
+    data = mc.load()
+    cred = mc.resolve(data)
+    al = cred["autologon"]
+
+    # Resolve computer_name from layered SSOT:
+    # 1. [autounattend].computer_name (explicit configurator/overlay key)
+    # 2. [identity].hostname (if <= 15 chars and valid NetBIOS)
+    # 3. Default fallback: "MiOS-Xbox" if gaming preset else "MiOS-Host"
+    preset_val = overrides.get("preset", Preset.DEVELOPER)
+    fallback_name = "MiOS-Xbox" if preset_val == Preset.GAMING else "MiOS-Host"
+
+    comp_name = data.get("autounattend", {}).get("computer_name")
+    if not comp_name:
+        h = data.get("identity", {}).get("hostname")
+        if h and len(str(h).strip()) <= 15 and not re.search(r'[\s/\\:*?"<>|]', str(h).strip()):
+            comp_name = str(h).strip()
+    if not comp_name:
+        comp_name = fallback_name
+
+    kw: Dict[str, Any] = dict(
+        username=cred["username"], password=cred["default_password"],
+        accounts=[dict(a) for a in cred["accounts"]],
+        autologon_enable=bool(al["enable"]), autologon_user=al["user"],
+        autologon_persistent=bool(al["persistent"]), autologon_count=int(al["count"]),
+        svc_user=cred["service"]["user"],
+        admin_password=cred.get("service", {}).get("password") or cred.get("default_password"),
+        disable_rid500=True,
+        computer_name=str(comp_name),
+    )
+    kw.update({k: v for k, v in overrides.items() if v is not None})
+    return UnattendConfig(**kw)
+
 
 class UnattendGenerator:
     """Generates schema-compliant autounattend.xml document."""
@@ -140,7 +218,21 @@ class UnattendGenerator:
             "language": "neutral",
             "versionScope": "nonSxS",
         })
-        ET.SubElement(comp_shell, "ComputerName").text = self.config.computer_name
+        c_name = (self.config.computer_name or "").strip()
+        if not c_name:
+            raise ValueError("ComputerName cannot be empty.")
+        if c_name != "*":
+            if len(c_name) > 15:
+                raise ValueError(
+                    f"ComputerName '{c_name}' exceeds 15-character NetBIOS limit (len={len(c_name)}). "
+                    "Shorten computer name to <= 15 characters."
+                )
+            if re.search(r'[\s/\\:*?"<>|]', c_name):
+                raise ValueError(
+                    f"ComputerName '{c_name}' contains illegal NetBIOS characters. "
+                    "Use alphanumeric characters and hyphens only."
+                )
+        ET.SubElement(comp_shell, "ComputerName").text = c_name
         ET.SubElement(comp_shell, "TimeZone").text = "UTC"
 
         oem_info = ET.SubElement(comp_shell, "OEMInformation")
@@ -183,15 +275,34 @@ class UnattendGenerator:
             "versionScope": "nonSxS",
         })
 
-        # AutoLogon
+        # Credentials: fail closed -- never a literal account or password.
+        if not self.config.username:
+            raise ValueError("MiOS SSOT: required credential key 'identity.username' is missing or empty (no built-in default).")
+        if not self.config.password:
+            raise ValueError("MiOS SSOT: required credential key 'identity.default_password' is missing or empty (no built-in default).")
+        accounts = [dict(a) for a in self.config.accounts] or [
+            {"name": self.config.username, "display_name": f"MiOS Operator ({self.config.username})",
+             "group": "Administrators", "password": self.config.password}]
+        for a in accounts:
+            if not a.get("password"):
+                a["password"] = self.config.password
+        al_user = self.config.autologon_user or self.config.username
+        if self.config.autologon_enable and self.config.svc_user and al_user.lower() == self.config.svc_user.lower():
+            raise ValueError(f"MiOS SSOT: autounattend.autologon_user '{al_user}' is the service account "
+                             "([autounattend.service].svc_user, the RID-500 Administrator disabled at setup finalize); "
+                             "AutoLogon must sign in a desktop account.")
+        al_pwd = next((a["password"] for a in accounts if a["name"].lower() == al_user.lower()), "")
+        if self.config.autologon_enable and not al_pwd:
+            raise ValueError(f"MiOS SSOT: autounattend.autologon_user '{al_user}' is not a rendered account, so it has no SSOT password.")
+
+        # AutoLogon (console-style; persistent per SSOT autounattend.autologon_persistent)
         auto_logon = ET.SubElement(comp_oobe_shell, "AutoLogon")
-        ET.SubElement(auto_logon, "Enabled").text = "true"
-        ET.SubElement(auto_logon, "LogonCount").text = "999"
-        ET.SubElement(auto_logon, "Username").text = self.config.username
-        if self.config.password:
-            pwd = ET.SubElement(auto_logon, "Password")
-            ET.SubElement(pwd, "Value").text = self.config.password
-            ET.SubElement(pwd, "PlainText").text = "true"
+        ET.SubElement(auto_logon, "Enabled").text = "true" if self.config.autologon_enable else "false"
+        ET.SubElement(auto_logon, "LogonCount").text = str(self.config.autologon_count)
+        ET.SubElement(auto_logon, "Username").text = al_user
+        pwd = ET.SubElement(auto_logon, "Password")
+        ET.SubElement(pwd, "Value").text = al_pwd
+        ET.SubElement(pwd, "PlainText").text = "true"
 
         # OOBE Bypass flags
         oobe = ET.SubElement(comp_oobe_shell, "OOBE")
@@ -202,16 +313,20 @@ class UnattendGenerator:
         ET.SubElement(oobe, "ProtectYourPC").text = "3"
         ET.SubElement(oobe, "NetworkLocation").text = "Work"
 
-        # UserAccounts
+        # UserAccounts (every SSOT account)
         user_accs = ET.SubElement(comp_oobe_shell, "UserAccounts")
+        if self.config.admin_password:
+            admin_pwd = ET.SubElement(user_accs, "AdministratorPassword")
+            ET.SubElement(admin_pwd, "Value").text = self.config.admin_password
+            ET.SubElement(admin_pwd, "PlainText").text = "true"
         local_accs = ET.SubElement(user_accs, "LocalAccounts")
-        local_acc = ET.SubElement(local_accs, "LocalAccount", attrib={"wcm:action": "add"})
-        ET.SubElement(local_acc, "Name").text = self.config.username
-        ET.SubElement(local_acc, "Group").text = "Administrators"
-        ET.SubElement(local_acc, "DisplayName").text = f"MiOS Operator ({self.config.username})"
-        if self.config.password:
+        for a in accounts:
+            local_acc = ET.SubElement(local_accs, "LocalAccount", attrib={"wcm:action": "add"})
+            ET.SubElement(local_acc, "Name").text = a["name"]
+            ET.SubElement(local_acc, "Group").text = a.get("group") or "Administrators"
+            ET.SubElement(local_acc, "DisplayName").text = a.get("display_name") or a["name"]
             l_pwd = ET.SubElement(local_acc, "Password")
-            ET.SubElement(l_pwd, "Value").text = self.config.password
+            ET.SubElement(l_pwd, "Value").text = a["password"]
             ET.SubElement(l_pwd, "PlainText").text = "true"
 
         # FirstLogonCommands
@@ -220,6 +335,12 @@ class UnattendGenerator:
             ("PowerShell Execution Policy", "powershell.exe -NoProfile -Command \"Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force\""),
             ("MiOS AI Endpoint Variable", "powershell.exe -NoProfile -Command \"[System.Environment]::SetEnvironmentVariable('MIOS_AI_ENDPOINT', 'http://127.0.0.1:8700/v1', 'Machine')\""),
         ]
+        if self.config.autologon_enable and self.config.autologon_persistent:
+            fl_list.append(("Persistent AutoLogon (SSOT autounattend.autologon_persistent)",
+                            "cmd /c reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\" /v AutoLogonCount /f || exit 0"))
+        if self.config.disable_rid500:
+            fl_list.append(("Disable Built-in Administrator (RID-500 at finalize)",
+                            "powershell.exe -NoProfile -Command \"Get-LocalUser | Where-Object { $_.SID.Value -like '*-500' } | Disable-LocalUser\""))
         if self.config.enable_wsl2:
             fl_list.append(("Enable WSL2 & VM Platform", "powershell.exe -NoProfile -Command \"Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform,Microsoft-Windows-Subsystem-Linux -NoRestart\""))
 
@@ -243,11 +364,20 @@ class UnattendGenerator:
         xml_content = self.generate_xml_string()
 
         if output_path and not self.mock:
-            parent = os.path.dirname(output_path)
+            parent = os.path.dirname(os.path.abspath(output_path))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(xml_content)
+            fd, tmp_path = tempfile.mkstemp(prefix=".unattend-", suffix=".tmp", dir=parent or ".")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(xml_content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, output_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
 
         return {
             "status": "success",
@@ -278,9 +408,11 @@ def main() -> int:
         description="MiOS Windows 11 autounattend.xml Generator"
     )
     parser.add_argument("--preset", choices=["developer", "minimal", "gaming"], default="developer", help="Configuration preset")
-    parser.add_argument("--username", default="mios", help="Local Administrator username")
-    parser.add_argument("--password", help="Local Administrator password (plain text)")
-    parser.add_argument("--computer-name", default="MiOS-Workstation", help="NetBIOS / DNS computer name")
+    parser.add_argument("--username", default=None, help="Override [identity].username (default: the layered SSOT value)")
+    parser.add_argument("--password", default=None, help="Override [identity].default_password (default: the layered SSOT value)")
+    parser.add_argument("--admin-password", default=None, help="Override RID-500 Administrator password")
+    parser.add_argument("--no-disable-rid500", dest="disable_rid500", action="store_false", default=True, help="Do not disable RID-500 Administrator")
+    parser.add_argument("--computer-name", default=None, help="NetBIOS / DNS computer name (default: SSOT or 'MiOS-Host')")
     parser.add_argument("--driver-path", default="M:\\drivers", help="Driver staging search path")
     parser.add_argument("--bypass-tpm", action="store_true", default=True, help="Enable TPM 2.0 bypass")
     parser.add_argument("--disable-telemetry", action="store_true", default=True, help="Disable Windows telemetry")
@@ -292,15 +424,35 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    cfg = UnattendConfig(
-        preset=Preset(args.preset),
-        username=args.username,
-        password=args.password,
-        computer_name=args.computer_name,
-        driver_path=args.driver_path,
-        bypass_tpm=args.bypass_tpm,
-        disable_telemetry=args.disable_telemetry,
-    )
+    try:
+        cfg = config_from_ssot(
+            preset=Preset(args.preset),
+            computer_name=args.computer_name,
+            driver_path=args.driver_path,
+            bypass_tpm=args.bypass_tpm,
+            disable_telemetry=args.disable_telemetry,
+            admin_password=args.admin_password,
+            disable_rid500=args.disable_rid500,
+        )
+    except Exception as e:  # CredentialError / unreadable SSOT -> fail closed, naming the key
+        if args.username and args.password:
+            cfg = UnattendConfig(preset=Preset(args.preset), computer_name=args.computer_name or "MiOS-Host",
+                                 driver_path=args.driver_path, bypass_tpm=args.bypass_tpm,
+                                 disable_telemetry=args.disable_telemetry,
+                                 admin_password=args.admin_password,
+                                 disable_rid500=args.disable_rid500)
+        else:
+            print(f"[unattend_gen] ERROR: {e}", file=sys.stderr)
+            return 3
+    if args.username is not None or args.password is not None:
+        # An explicit override names ONE identity account (and AutoLogon to it).
+        cfg.username = args.username if args.username is not None else cfg.username
+        cfg.password = args.password if args.password is not None else cfg.password
+        cfg.accounts = []
+        cfg.autologon_user = cfg.username
+    if args.admin_password is not None:
+        cfg.admin_password = args.admin_password
+    cfg.disable_rid500 = args.disable_rid500
 
     gen = UnattendGenerator(cfg, mock=args.mock)
 

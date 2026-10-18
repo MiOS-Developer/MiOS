@@ -1,0 +1,5 @@
+# AI-hint: MiOS-Portal Linux mozconfig (Surfer configs/linux/mozconfig, which Surfer requires); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Lane-neutral: compile-only options live in configs/lanes/full.mozconfig.
+# AI-related: usr/share/mios/mios.toml, src/mios-portal/configs/lanes/
+# @MIOS:desktop.portal.gecko.name@ keeps Gecko's default GTK toolkit (X11 + Wayland): the artifact lane
+# reuses Mozilla's compiled libxul, and a toolkit that differs from it would desynchronise the
+# preprocessed frontend. Linux-only options that are valid in both lanes go here.

@@ -19,8 +19,8 @@ assert phases.index('fonts') < phases.index('bake-coderun-sandbox')
 sys.path.insert(0, str(root / 'usr/lib/mios'))
 import mios_toml
 exports = mios_toml.emit_exports(config)
-for key in ('cosign_version', 'cosign_release_url'):
-    assert exports['MIOS_SECURITY_SIGSTORE_' + key.upper()] == config['security']['sigstore'][key]
+# cosign floats (the release is resolved at build time); only the release URL is an input.
+assert exports['MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL'] == config['security']['sigstore']['cosign_release_url']
 print(root / font['native_archive'])
 print(font['native_sha256'])
 PY

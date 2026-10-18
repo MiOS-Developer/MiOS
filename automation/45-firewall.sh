@@ -21,10 +21,11 @@ for svc in cockpit ssh mdns; do
     firewall-cmd --permanent --add-service="\$svc" 2>/dev/null || true
 done
 firewall-cmd --permanent --add-port=${MIOS_PORTS_SSH}/tcp 2>/dev/null || true
-firewall-cmd --permanent --add-port=${MIOS_PORTS_RDP}/tcp --add-port=3390/tcp 2>/dev/null || true
+# [ports].rdp is NOT opened here: mios-rdp-firewall.service ([remote.rdp]) opens it on the tailnet zone only.
 firewall-cmd --permanent --add-service=samba --add-service=nfs --add-service=rpc-bind --add-service=mountd 2>/dev/null || true
 firewall-cmd --permanent --add-port=16509/tcp 2>/dev/null || true
-firewall-cmd --permanent --add-port=5900-5999/tcp 2>/dev/null || true
+# 5900-5999 (VNC/SPICE) is NOT opened: VM consoles listen on 127.0.0.1 ([vm] spice_port), guacd reaches
+# them over loopback, and remote desktop is RDP on the tailnet zone only ([remote.rdp]).
 firewall-cmd --permanent --add-port=${MIOS_PORTS_K3S_API}/tcp --add-port=10250/tcp 2>/dev/null || true
 firewall-cmd --permanent --add-port=2224/tcp --add-port=5403-5405/udp 2>/dev/null || true
 firewall-cmd --permanent --add-port=${MIOS_PORTS_HERMES}/tcp 2>/dev/null || true

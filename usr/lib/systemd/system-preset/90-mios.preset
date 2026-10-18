@@ -75,7 +75,9 @@ enable mios-selinux-init.service
 enable mios-sriov-init.service
 enable mios-cdi-detect.service
 enable mios-libvirtd-setup.service
-enable mios-grd-setup.service
+# Obsolete: remote desktop is [remote.rdp] (xrdp, mios-rdp-firewall.service, tailnet zone only).
+enable mios-rdp-priv.socket
+disable mios-grd-setup.service
 # Hyper-V Enhanced Session bring-up: hv_sock module + hv-kvp-daemon +
 # hv-vss-daemon + hv-fcopy-daemon + xrdp on the VMBus vsock transport.
 # ConditionVirtualization=microsoft inside the unit gates the actual
@@ -309,6 +311,8 @@ enable mios-passport-provision.service
 enable mios-pgvector-major-upgrade.service
 enable mios-policy-arbiter.service
 enable mios-powerd.service
+# Coarse CPU-package power for the status island and tmux (RAPL energy_uj stays root-only: PLATYPUS mitigation).
+enable mios-power-sampler.service
 enable mios-pstore.service
 enable mios-registry.service
 enable mios-secret-init.service

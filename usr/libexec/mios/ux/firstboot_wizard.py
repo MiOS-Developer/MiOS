@@ -39,7 +39,7 @@ class WizardState(str, Enum):
 @dataclass
 class WizardConfig:
     """User preferences gathered by firstboot wizard."""
-    username: str = "mios"
+    username: str = ""   # no literal default: step_identity_auth resolves the layered SSOT
     password_hash: Optional[str] = None
     ssh_authorized_keys: List[str] = field(default_factory=list)
     wifi_ssid: Optional[str] = None
@@ -89,8 +89,24 @@ class FirstBootWizardEngine:
         self.state = WizardState.WELCOME
         self.transition_log.append("STEP_WELCOME: MiOS v2026.1 System Initialized")
 
-    def step_identity_auth(self, username: str = "mios", password: str = "mios", ssh_key: Optional[str] = None) -> None:
-        """State 2: Configure operator account and credentials."""
+    @staticmethod
+    def _ssot_identity() -> "tuple[str, str]":
+        """([identity].username, default_password) from the LAYERED SSOT; raises naming the key."""
+        for libdir in ("/usr/lib/mios", os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib", "mios"))):
+            if os.path.isfile(os.path.join(libdir, "mios_credentials.py")):
+                if libdir not in sys.path:
+                    sys.path.insert(0, libdir)
+                import mios_credentials  # noqa: PLC0415
+                cred = mios_credentials.resolve(mios_credentials.load())
+                return cred["username"], cred["default_password"]
+        raise RuntimeError("mios_credentials.py not found; cannot resolve SSOT [identity] credentials")
+
+    def step_identity_auth(self, username: Optional[str] = None, password: Optional[str] = None, ssh_key: Optional[str] = None) -> None:
+        """State 2: Configure operator account and credentials (unset -> layered SSOT [identity]; fail closed)."""
+        if not username or not password:
+            ssot_user, ssot_pw = self._ssot_identity()
+            username = username or ssot_user
+            password = password or ssot_pw
         self.state = WizardState.IDENTITY_AUTH
         self.config.username = username
         self.config.password_hash = self._hash_password(password)
@@ -174,8 +190,8 @@ class FirstBootWizardEngine:
         """Run automated wizard flow using preseed JSON dictionary."""
         self.step_welcome()
         self.step_identity_auth(
-            username=preseed_data.get("username", "user"),
-            password=preseed_data.get("password", "mios"),
+            username=preseed_data.get("username"),
+            password=preseed_data.get("password"),
             ssh_key=preseed_data.get("ssh_key"),
         )
         self.step_network(

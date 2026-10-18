@@ -1,0 +1,14 @@
+# AI-hint: App-drawer entry for mios-shot region capture (touch/phone outputs have no Print key); the short delay lets the drawer close before the freeze.
+# AI-related: /usr/bin/mios-shot, usr/share/mios/quickshell/Shot.qml, usr/share/mios/mios.toml [desktop.screenshot]
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Screenshot
+GenericName=Screenshot Tool
+Comment=Capture a region, a window or the whole screen (save, copy, annotate)
+Exec=/usr/bin/mios-shot region --delay 0.4
+Icon=applets-screenshooter
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;snip;print;screen;grab;mios;
+Terminal=false
+StartupNotify=false

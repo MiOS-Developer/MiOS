@@ -1,18 +1,27 @@
 #!/bin/bash
 # AI-hint: Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation.
-# AI-related: /usr/share/mios/mios.toml [keybindings], /etc/tmux.conf, mios-ai-terminal
+# AI-related: /usr/share/mios/mios.toml [keybindings] [theme.tmux], /etc/tmux.conf, mios-ai-terminal
 
 set -euo pipefail
 
 _mios_action=""
 _mios_head=""
 _mios_workspace=()
+_mios_session=""
+_mios_new=0
+_mios_bare_opt=0
 case "${1:-}" in
-    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]]\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
+    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]] [--session NAME] [--new] [--bare]\nWith no option outside tmux, opens the global session selector ([terminal.sessions]). --session attaches NAME; --new starts a Tmux-OS session; --bare starts a bare Tmux-OS session.\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
     --action) [[ $# -ge 2 ]] || exit 64; _mios_action="$2"; shift 2; _mios_workspace=("$@") ;;
     --agent) shift; [[ $# -ge 1 ]] || exit 64; printf -v _mios_head '%q ' /usr/bin/mios agent "$@" ;;
     --workspace) shift; _mios_action=ai; _mios_workspace=("$@") ;;
-    '') ;;
+    --session) [[ $# -ge 2 && -n "$2" ]] || exit 64; _mios_session="$2"; _mios_action=terminal ;;
+    --new) _mios_new=1; _mios_action=terminal ;;
+    --bare) _mios_new=1; _mios_bare_opt=1; _mios_action=terminal ;;
+    '')
+        if [[ -z "${TMUX:-}" && "$(/usr/bin/mios-toml-get terminal.sessions selector 2>/dev/null)" == true ]]; then
+            exec /usr/bin/miosd sessions --root /
+        fi ;;
     *) printf 'mios-terminal: unsupported option: %s\n' "$1" >&2; exit 64 ;;
 esac
 # The same compiled policy validates both Linux and Windows terminal entry.
@@ -22,6 +31,16 @@ _policy="$(/usr/bin/mios-gen "${_policy_args[@]}")" || { printf 'mios-terminal: 
 mapfile -t _mios_terminal_config <<< "$_policy"
 [[ ${#_mios_terminal_config[@]} == 9 ]] || { printf 'mios-terminal: keybinding configuration unresolved\n' >&2; exit 1; }
 _mios_action="${_mios_terminal_config[6]}"
+if (( _mios_new )); then
+    # Bare Tmux-OS session: [terminal.sessions].new_session_name, then -2, -3, ...
+    _mios_base="$(/usr/bin/mios-toml-get terminal.sessions new_session_name)"
+    _mios_session="$_mios_base"
+    for (( _n = 2; ; _n++ )); do
+        TMUX_TMPDIR="${_mios_terminal_config[8]}" tmux -L "${_mios_terminal_config[0]}" has-session -t "=$_mios_session" 2>/dev/null || break
+        _mios_session="$_mios_base-$_n"
+    done
+fi
+[[ -z "$_mios_session" ]] || _mios_terminal_config[1]="$_mios_session"
 
 export TMUX_TMPDIR="${_mios_terminal_config[8]}"
 
@@ -74,6 +93,12 @@ if [[ -n "${TMUX:-}" ]]; then
     fi
     exec tmux new-window
 fi
+# An SSH client declaring a console TERM (phone apps send "linux") attaches as [theme.tmux].remote_term with
+# COLORTERM=truecolor, so tmux grants it RGB and it draws the MiOS palette instead of 8-colour approximations
+# ([theme.tmux].remote_truecolor_terms). A local console is never changed; any failure keeps the client's own TERM.
+while IFS='=' read -r _k _v; do
+    case "$_k" in TERM|COLORTERM) if [[ "$_v" =~ ^[A-Za-z0-9._+-]+$ ]]; then export "$_k=$_v"; fi ;; esac
+done < <(/usr/libexec/mios/mios-gen tmux-client-env --root / 2>/dev/null || true)
 /usr/bin/miosd terminal-runtime-check --root / >/dev/null  # guards the SSOT namespace below; $TMUX clients keep theirs
 _mios_runtime="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/mios-terminal"
 # A new desktop/SSH session uses the deployed root. Existing tmux invocations
@@ -93,8 +118,10 @@ if ! tmux -L "${_mios_terminal_config[0]}" has-session -t "=${_mios_terminal_con
             tmux -L "${_mios_terminal_config[0]}" has-session -t "=${_mios_terminal_config[1]}"
         fi
     else
+        _mios_bare=()
+        (( _mios_bare_opt )) && _mios_bare=(-e MIOS_SESSION_BARE=1)  # bare Tmux-OS: no workspace/observer panes
         tmux -L "${_mios_terminal_config[0]}" -f "$_mios_runtime/tmux.conf" new-session -d -s "${_mios_terminal_config[1]}" \
-            /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc
+            "${_mios_bare[@]}" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc
     fi
 fi
 tmux -L "${_mios_terminal_config[0]}" source-file "$_mios_runtime/tmux.conf"
@@ -121,4 +148,4 @@ fi
 if [[ -n "$_mios_head" ]]; then
     tmux -L "${_mios_terminal_config[0]}" new-window -n 'MiOS Agent' "$_mios_head"
 fi
-exec tmux -L "${_mios_terminal_config[0]}" attach-session -t "${_mios_terminal_config[1]}"
+exec tmux -L "${_mios_terminal_config[0]}" attach-session -t "=${_mios_terminal_config[1]}"

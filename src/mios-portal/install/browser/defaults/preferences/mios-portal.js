@@ -1,0 +1,109 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* AI-hint: MiOS-Portal default prefs (<install_dir>/browser/defaults/preferences/mios-portal.js): Portal home, sketch layout, glass, autoconfig hook. App-level defaults are read after browser/omni.ja's firefox.js (the GRE defaults/pref/ is read before it and loses every key firefox.js also sets). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]; the Mozilla-AI-off prefs are locked in distribution/policies.json instead.
+   AI-related: usr/share/mios/mios.toml, src/mios-portal/install/distribution/policies.json */
+
+// Home is the Portal; the new tab follows it through mios-autoconfig.cfg.
+pref("browser.startup.homepage", "http://localhost:8700/");
+pref("browser.startup.page", 1);
+pref("browser.aboutwelcome.enabled", false);
+pref("general.config.filename", "mios-autoconfig.cfg");
+pref("general.config.obscure_value", 0);
+pref("general.config.sandbox_enabled", false);
+
+// Sketch layout: vertical tabs in a collapsible left rail with the tools footer, chat on the right.
+pref("sidebar.revamp", true);
+pref("sidebar.verticalTabs", true);
+pref("sidebar.position_start", true);
+pref("sidebar.visibility", "expand-on-hover");
+pref("sidebar.main.tools", "aichat,history,bookmarks");
+pref("browser.ml.chat.sidebar", true);
+pref("mios.portal.chat.end", true);
+pref("mios.portal.chat.autohide", true);
+pref("mios.portal.hide-window-controls", true);
+
+// Compact density, dark MiOS glass behind the pages.
+pref("browser.compactmode.show", true);
+pref("browser.uidensity", 1);
+pref("browser.tabs.allow_transparent_browser", true);
+pref("browser.tabs.inTitlebar", 1);
+pref("layout.css.prefers-color-scheme.content-override", 0);
+pref("ui.systemUsesDarkTheme", 1);
+pref("browser.theme.content-theme", 0);
+pref("browser.theme.toolbar-theme", 0);
+
+// Lockdown Mozilla cloud AI & telemetry defaults
+pref("browser.smartwindow.endpoint", "");
+pref("browser.smartwindow.searchQuery.endpointURL", "");
+pref("browser.smartwindow.firstrun.explainerURL", "");
+pref("browser.ml.modelHubRootUrl", "");
+pref("browser.crashReports.unsubmittedCheck.enabled", false);
+pref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
+
+// Remote settings
+pref("services.settings.server", "");
+pref("services.settings.default_checks", false);
+pref("services.settings.loglevel", "error");
+
+// Normandy / Remote experiments / Studies
+pref("app.normandy.enabled", false);
+pref("app.normandy.api_url", "");
+pref("app.shield.optoutstudies.enabled", false);
+pref("experiments.enabled", false);
+pref("experiments.supported", false);
+
+// Push / WebChannel
+pref("dom.push.enabled", false);
+pref("dom.push.serverURL", "");
+pref("dom.push.connection.enabled", false);
+
+// Telemetry & Healthreport
+pref("toolkit.telemetry.enabled", false);
+pref("toolkit.telemetry.server", "");
+pref("toolkit.telemetry.unified", false);
+pref("toolkit.telemetry.archive.enabled", false);
+pref("datareporting.healthreport.uploadEnabled", false);
+pref("datareporting.policy.dataSubmissionEnabled", false);
+
+// Captive portal detection & Connectivity check
+pref("network.captive-portal-service.enabled", false);
+pref("network.connectivity-service.enabled", false);
+
+// Network prediction, prefetch & DNS
+pref("network.prefetch-next", false);
+pref("network.dns.disablePrefetch", true);
+pref("network.dns.disablePrefetchFromHTTPS", true);
+pref("network.predictor.enabled", false);
+pref("network.http.speculative-parallel-limit", 0);
+
+// Egress / Ads / Shopping / Top Stories / Sponsored Content
+pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+pref("browser.newtabpage.activity-stream.feeds.topsites", false);
+pref("browser.newtabpage.activity-stream.showSponsored", false);
+pref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
+pref("browser.newtabpage.activity-stream.default.sites", "");
+
+// Gecko Media Plugins: no automatic download of OpenH264 (ciscobinary.openh264.org) or Widevine
+// (update.googleapis.com / edgedl.me.gvt1.com) and no signed update check against aus5.mozilla.org
+// (whose content signature also pulls content-signature-2.cdn.mozilla.net). Defaults, not locked:
+// media.eme.enabled is untouched, so DRM playback stays an explicit operator choice.
+pref("media.gmp-manager.updateEnabled", false);
+pref("media.gmp-manager.url", "");
+pref("media.gmp-manager.chromium-update-url", "");
+pref("media.gmp-gmpopenh264.autoupdate", false);
+pref("media.gmp-widevinecdm.autoupdate", false);
+pref("media.gmp-widevinecdm.allow-chromium-update", false);
+
+// Region URL
+pref("browser.region.network.url", "");
+pref("browser.region.update.enabled", false);
+
+// SafeBrowsing remote checks & URL classification
+pref("browser.safebrowsing.downloads.remote.enabled", false);
+pref("browser.safebrowsing.provider.mozilla.updateURL", "");
+pref("browser.safebrowsing.provider.mozilla.gethashURL", "");
+pref("browser.safebrowsing.malware.enabled", false);
+pref("browser.safebrowsing.phishing.enabled", false);
+pref("browser.safebrowsing.blockedURIs.enabled", false);

@@ -41,6 +41,7 @@ def _install_deps(pkgs=None):
 
 try:
     from rich.console import Console, Group
+    from rich.theme import Theme as RichTheme
     from rich.panel import Panel
     from rich.text import Text
     from rich.markup import escape
@@ -65,6 +66,9 @@ except ImportError:
         except ImportError:
             pass
 
+if os.environ.get("TMUX") and os.environ.get("TERM", "").startswith(("tmux", "screen")):
+    os.environ.setdefault("TEXTUAL_COLOR_SYSTEM", "truecolor")
+
 try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
@@ -81,7 +85,12 @@ except ImportError:
 
 IS_WINDOWS = platform.system() == 'Windows'
 if RICH_AVAILABLE:
-    console = Console(safe_box=False)
+    _rich_palette = mios_colors(data=load_merged())
+    _rich_theme = RichTheme({name: _rich_palette[key] for name, key in {
+        "red": "error", "green": "success", "yellow": "warning",
+        "blue": "accent", "cyan": "subtle", "magenta": "earth",
+        "white": "fg", "black": "bg"}.items()})
+    console = Console(safe_box=False, theme=_rich_theme)
 else:
     class FallbackConsole:
         def print(self, *args, **kwargs):
@@ -98,7 +107,29 @@ PIPELINE_MODE = False
 AI_MODE = False
 TAB_CHOICE = None
 
+_MONITOR_CONFIG_CACHE = None
+_AGENT_SNAPSHOT_CACHE = None
+
 def monitor_config():
+    """Reuse parsed SSOT until a layer or fragment changes on disk."""
+    global _MONITOR_CONFIG_CACHE
+    paths = _monitor_layer_paths()
+    stamps = []
+    for path in paths:
+        try:
+            stat = os.stat(path)
+            stamps.append((path, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            stamps.append((path, None, None))
+    signature = tuple(stamps)
+    if _MONITOR_CONFIG_CACHE is None or _MONITOR_CONFIG_CACHE[0] != signature:
+        _MONITOR_CONFIG_CACHE = (signature, _load_monitor_config())
+    return _MONITOR_CONFIG_CACHE[1]
+
+def _load_monitor_config():
+    return load_merged(layers=_monitor_layer_paths())
+
+def _monitor_layer_paths():
     """Use the shared resolver for vendor, host, user and fragment precedence."""
     paths = layer_paths()
     if IS_WINDOWS:
@@ -113,7 +144,7 @@ def monitor_config():
                              if index == 0 else os.path.join(os.path.dirname(path), "mios.d"))
                 expanded.extend(sorted(glob.glob(os.path.join(fragments, "*.toml")), key=os.path.basename))
         paths = list(dict.fromkeys(expanded))
-    return load_merged(layers=paths)
+    return paths
 
 def monitor_sources_config():
     """Read collector cadence, history and Linux identities from the SSOT."""
@@ -406,6 +437,17 @@ def get_sys_info_table():
     return t
 
 def get_agent_and_mcp_data():
+    """Bound native observation startup cost independently of UI frame rate."""
+    global _AGENT_SNAPSHOT_CACHE
+    interval = float(monitor_config().get("terminal", {}).get("monitor", {}).get("agent_poll_s", 5))
+    if interval <= 0:
+        raise ValueError("terminal.monitor.agent_poll_s must be positive")
+    now = time.monotonic()
+    if _AGENT_SNAPSHOT_CACHE is None or now - _AGENT_SNAPSHOT_CACHE[0] >= interval:
+        _AGENT_SNAPSHOT_CACHE = (now, _collect_agent_and_mcp_data())
+    return _AGENT_SNAPSHOT_CACHE[1]
+
+def _collect_agent_and_mcp_data():
     """Use the native sanitized observer; never read another user's private state."""
     try:
         cmd = ["/usr/bin/mios", "agents", "--observe"]
@@ -566,8 +608,8 @@ if TEXTUAL_AVAILABLE:
         return colors, transparent_terminal
 
     SSOT, TRANSPARENT_TERMINAL = load_ssot_colors()
-    SCREEN_BACKGROUND = "transparent" if TRANSPARENT_TERMINAL else SSOT['bg']
-    PANEL_BACKGROUND = "transparent" if TRANSPARENT_TERMINAL else SSOT['surface']
+    SCREEN_BACKGROUND = SSOT['bg']
+    PANEL_BACKGROUND = SSOT['surface']
 
     def make_bar(pct, width=15):
         pct = max(0.0, min(100.0, float(pct)))
@@ -895,6 +937,7 @@ if TEXTUAL_AVAILABLE:
 
         def on_mount(self) -> None:
             self.dark = True
+            self.console.push_theme(_rich_theme)
             custom_theme = Theme(
                 name="mios-ssot",
                 primary=SSOT['subtle'],

@@ -1,0 +1,48 @@
+/* AI-hint: MiOS Cockpit branding (os-release ID=mios selects branding/mios). Login page
+   --color-* variables and the shell's PatternFly v6 tokens take the mios.toml
+   [colors]/[theme.web] palette, so Cockpit matches the desktop in every browser.
+   AI-related: usr/share/mios/mios.toml [theme.web] [dotfiles.registry.cockpit-branding],
+   usr/share/mios/theme/templates/mios-web.css.tmpl, usr/share/mios/branding/icon.png */
+
+#badge {
+    inline-size: 96px;
+    block-size: 96px;
+    background-image: url("logo.png");
+    background-size: contain;
+    background-repeat: no-repeat;
+}
+
+#brand::before {
+    content: "${NAME}";
+}
+
+html:root {
+    --mios-cockpit-raised: color-mix(in srgb, @MIOS:bg@, @MIOS:fg@ @MIOS:theme.web.raised_tint_pct@%);
+    --color-body-background: @MIOS:bg@;
+    --color-background: var(--mios-cockpit-raised);
+    --color-secondary-background: var(--mios-cockpit-raised);
+    --color-input-background: color-mix(in srgb, @MIOS:bg@, @MIOS:fg@ calc(@MIOS:theme.web.raised_tint_pct@% * 2));
+    --color-input: @MIOS:fg@;
+    --color-border: color-mix(in srgb, @MIOS:fg@ @MIOS:theme.shell.outline_opacity_pct@%, transparent);
+    --color-border-light: color-mix(in srgb, @MIOS:fg@ @MIOS:theme.shell.outline_opacity_pct@%, transparent);
+    --color-text: @MIOS:fg@;
+    --color-secondary-text: @MIOS:subtle@;
+    --color-primary: @MIOS:cursor@;
+    --color-primary-active: @MIOS:cursor@;
+    --color-link: @MIOS:cursor@;
+    --color-link-active: @MIOS:cursor@;
+    --color-danger: @MIOS:error@;
+    --color-error: @MIOS:error@;
+    color-scheme: dark;
+}
+
+html:root, html .pf-v6-theme-dark {
+    --pf-t--global--background--color--primary--default: @MIOS:bg@;
+    --pf-t--global--background--color--secondary--default: var(--mios-cockpit-raised);
+    --pf-t--global--background--color--floating--default: var(--mios-cockpit-raised);
+    --pf-t--global--text--color--regular: @MIOS:fg@;
+    --pf-t--global--text--color--subtle: @MIOS:subtle@;
+    --pf-t--global--color--brand--default: @MIOS:cursor@;
+    --pf-t--global--color--brand--hover: @MIOS:warning@;
+    --pf-t--global--border--color--default: color-mix(in srgb, @MIOS:fg@ @MIOS:theme.shell.outline_opacity_pct@%, transparent);
+}

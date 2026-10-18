@@ -238,3 +238,33 @@ shrink-only register also makes a deliberate exception visible instead of silent
   every `check-*`, `generate-*`, `render-*` and `resolve` surface is a binary,
   `tools/native/` holds no crate of its own, and Law 14's "grandfathered"
   clause has nothing left to grandfather.
+
+## Upstream exceptions
+
+The static-linkage rule governs native code MiOS builds from its own workspaces. An upstream
+application MiOS ships as built by its upstream is not MiOS native code, and it may link
+dynamically only through an explicit, scoped exception in `mios.toml`:
+
+- `[build.native.linux].audit_scopes` names the install trees the gate scans in full, beside
+  MiOS's own binaries, without the native-name filter. An ELF in an audit scope is either covered
+  by an exception or audited like MiOS code.
+- Each `[[build.native.linux.exceptions]]` entry names its `binaries`, its one `scope` (a
+  relative path that must be an audit scope) and a `reason`. A listed name is exempt only inside
+  its scope (or a staged copy whose path ends in that scope); the same name anywhere else is
+  audited. An entry without binaries, a relative scope or a reason exempts nothing and is itself a
+  finding.
+- `mios-gate static-linkage --census` reports each exempt binary with `exempt_scope` and
+  `exempt_reason`, so the exception is visible in the audit output, not only in the SSOT.
+
+The one exception today is MiOS-Portal (`[desktop.portal.gecko]`): Firefox built with Surfer and
+installed under `usr/lib/mios/portal` by phase 67. libxul and its helpers link glibc, GTK, Wayland
+and NSS/NSPR by design, and the artifact lane ships Mozilla's own compiled libxul. Scope consequences:
+
+- Removing the exception does not drop the binaries from the scan; they fail as dynamic ELFs.
+- A Gecko release that adds a new shared object fails the gate until the exception lists it, so
+  the scope can only grow by a reviewed SSOT change.
+- `/usr/bin/mios-portal` must stay a launcher (script or symlink) rather than a MiOS crate; a
+  MiOS-built binary of that name would be audited under the native rules like any other.
+- `check_portal_product` (tools/drift-checks.py `portal-product`) fails when the exception stops
+  naming the product binary, `libxul.so` or `plugin-container`, loses its reason, or leaves the
+  audit scopes.

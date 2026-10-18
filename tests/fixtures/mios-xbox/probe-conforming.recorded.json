@@ -1,0 +1,1191 @@
+{
+ "auth_user": "mios-fixture",
+ "autologon": {
+  "auto_admin_logon": "1",
+  "default_user": "mios-fixture",
+  "logon_count": null,
+  "password_sha256": null
+ },
+ "branch": "rs_prerelease",
+ "build": "29683",
+ "desktop_user": {
+  "hive": "signed-in",
+  "name": "mios-fixture",
+  "sid": "S-1-5-21-1-2-3-1001"
+ },
+ "display": [
+  {
+   "device_id": "PCI\\VEN_10DE&DEV_2684&SUBSYS_00000000&REV_A1\\4&1",
+   "inf": "oem12.inf",
+   "name": "NVIDIA GeForce RTX 4090",
+   "provider": "NVIDIA",
+   "version": "32.0.15.9999"
+  },
+  {
+   "device_id": "PCI\\VEN_1AF4&DEV_1050&SUBSYS_11001AF4&REV_01\\3&1",
+   "inf": "oem5.inf",
+   "name": "Red Hat VirtIO GPU DOD controller",
+   "provider": "Red Hat, Inc.",
+   "version": "100.0.0.0"
+  }
+ ],
+ "errors": [],
+ "hypervisor": true,
+ "nested_virt": false,
+ "observations": {
+  "capabilities.OpenSSH.Server": {
+   "state": "Installed"
+  },
+  "components.MiOS-FhsSync": {
+   "present": true,
+   "sha256": "69255062e0a6a7ce2e3b63e57146a39d1cfb2e7280dfd02df6285383b0b74e44"
+  },
+  "components.MiosServiceTool": {
+   "present": true,
+   "sha256": "2c0f02ca478582d85600be5fa20c203c2cdb53552261ea6587f93ae7e82fbd71"
+  },
+  "components.Set-MiOSWallpaper": {
+   "present": true,
+   "sha256": "b8fc91d64d692ed7200d0f0ff021ef33640c295e5cbf455e87bc348f5a9ff517"
+  },
+  "components.mios-agent-relay": {
+   "present": true
+  },
+  "components.mios-looking-glass-idd": {
+   "present": true,
+   "sha256": "f3f378e896fa3984d3090f65568ecb3f8d933642ba25e84c21d06560f910b228"
+  },
+  "components.mios-oscontrol-server": {
+   "present": true,
+   "sha256": "95710b421ecf70e86501e5a31229fc2b42736f03d56cf3dd074dd79fa463d21b"
+  },
+  "components.mios-ssh-setup": {
+   "present": true,
+   "sha256": "fea7db88d5f44d8d525b910566a375946ca47defd1ba5a37c65fb48cd3410ef0"
+  },
+  "components.mios-wallpaperd": {
+   "present": true
+  },
+  "components.miosd": {
+   "present": true
+  },
+  "debloat.services.DiagTrack": {
+   "present": true,
+   "type": "dword",
+   "value": 4
+  },
+  "debloat.services.dmwappushservice": {
+   "present": true,
+   "type": "dword",
+   "value": 4
+  },
+  "drivers.virtio_win.balloon": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.fwcfg": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.netkvm": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.pvpanic": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.viofs": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.viogpudo": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.vioinput": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.viorng": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.vioscsi": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.vioser": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "drivers.virtio_win.viostor": {
+   "present": true,
+   "version": "100.0.0.0"
+  },
+  "features.Microsoft-Hyper-V-All": {
+   "state": "Disabled"
+  },
+  "features.Microsoft-Windows-Subsystem-Linux": {
+   "state": "Enabled"
+  },
+  "features.NetFx3": {
+   "state": "Disabled"
+  },
+  "features.VirtualMachinePlatform": {
+   "state": "Enabled"
+  },
+  "gpu.post_setup": {
+   "present": true,
+   "record": {
+    "devices": [
+     {
+      "device_id": "2684",
+      "driver_provider": "NVIDIA",
+      "installed_driver_version": "32.0.15.9999",
+      "status": "installed",
+      "vendor": "nvidia",
+      "vendor_id": "10DE",
+      "version": "999.99"
+     }
+    ],
+    "schema": 1,
+    "skipped": [],
+    "status": "ok"
+   }
+  },
+  "gpu.script": {
+   "present": true,
+   "sha256": "dd4aef024345c1d2e220a6c51511ab17fa9dcbe5214929d5879db735b89a46a6",
+   "task": {
+    "present": true,
+    "state": "Ready"
+   }
+  },
+  "guest_tools.looking_glass_host": {
+   "service": {
+    "present": true,
+    "start": "Automatic",
+    "status": "Running"
+   }
+  },
+  "guest_tools.qemu_ga": {
+   "service": {
+    "present": true,
+    "start": "Automatic",
+    "status": "Running"
+   }
+  },
+  "guest_tools.spice_vdagent": {
+   "service": {
+    "present": true,
+    "start": "Automatic",
+    "status": "Running"
+   }
+  },
+  "guest_tools.virtio_win_guest_tools": {},
+  "guest_tools.virtiofs": {
+   "service": {
+    "present": true,
+    "start": "Automatic",
+    "status": "Running"
+   }
+  },
+  "guest_tools.winfsp": {},
+  "reg.debloat.profiles.gaming.default_user[0]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[10]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[11]": {
+   "present": false
+  },
+  "reg.debloat.profiles.gaming.default_user[1]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[2]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[3]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[4]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[5]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[6]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[7]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[8]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.default_user[9]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[0]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[10]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[11]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[12]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[13]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[14]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[15]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[16]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[17]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[18]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.software[19]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[1]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[20]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[21]": {
+   "present": true,
+   "type": "dword",
+   "value": 5
+  },
+  "reg.debloat.profiles.gaming.software[22]": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.debloat.profiles.gaming.software[23]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[24]": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.debloat.profiles.gaming.software[2]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[3]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[4]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[5]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[6]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[7]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[8]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.software[9]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.system[0]": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.debloat.profiles.gaming.system[1]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.system[2]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.system[3]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.debloat.profiles.gaming.system[4]": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.desktop_icons_hidden": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.edge_desktop_shortcut": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.preferences.hide_file_extensions": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.preferences.recycle_bin_hidden": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.search_box_mode": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.preferences.task_view_button": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.taskbar_align": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.taskbar_chat": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.preferences.taskbar_end_task": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.preferences.taskbar_widgets": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.preferences.touch_keyboard_button": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.display.apps_light_theme": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.settings.display.no_remote_desktop_wallpaper": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.display.system_light_theme": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.settings.display.transparency": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.display.wallpaper": {
+   "present": true,
+   "type": "sz",
+   "value": ""
+  },
+  "reg.settings.enablements.developer_mode": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.enablements.long_paths": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.enablements.verbose_status": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.input.mouse_speed": {
+   "present": true,
+   "type": "sz",
+   "value": "0"
+  },
+  "reg.settings.input.sticky_keys_flags": {
+   "present": true,
+   "type": "sz",
+   "value": "506"
+  },
+  "reg.settings.privacy.online_speech": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.settings.privacy.restrict_implicit_text": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.settings.privacy.tailored_experiences": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderDocuments": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderDownloads": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderFileExplorer": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.start.folders:AllowPinnedFolderHomeGroup": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderMusic": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderNetwork": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.start.folders:AllowPinnedFolderPersonalFolder": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.start.folders:AllowPinnedFolderPictures": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.folders:AllowPinnedFolderSettings": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.start.folders:AllowPinnedFolderVideos": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.start.pins": {
+   "present": true,
+   "type": "sz",
+   "value": "{\"pinnedList\":[]}"
+  },
+  "reg.xbox.auto_hdr": {
+   "present": true,
+   "type": "sz",
+   "value": "AutoHDREnable=1;"
+  },
+  "reg.xbox.background_capture": {
+   "present": true,
+   "type": "dword",
+   "value": 0
+  },
+  "reg.xbox.device_form": {
+   "present": true,
+   "type": "dword",
+   "value": 46
+  },
+  "reg.xbox.feature_overrides.auto_sr_controls_42550315": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.auto_sr_notifications_55305888": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_35620393": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_35620394": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_38664959": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_38679741": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_39258685": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_40268500": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_40729001": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_40950262": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_41040327": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_41118774": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_41356296": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_42105254": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_42106010": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_42250125": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_43693406": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_44950080": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_45596742": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_45690266": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_45703317": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_46107637": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_47370305": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_47448915": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_47622034": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_48064775": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_48433719": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_48546544": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_49615568": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_50564196": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_50730971": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_53343270": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_55120633": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_55390938": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57048216": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57048218": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57048226": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57048231": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57048237": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57645315": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57703775": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57739723": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57882334": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_57941090": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_58383338": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59162732": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59193521": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59203365": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59213523": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59265307": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59270880": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59275076": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59339532": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59800000": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_59982341": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_60124892": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.base_rollout_60233104": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_49059846": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_55324166": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_55994763": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_57118881": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_57741219": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_58182453": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_58988972": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_58989002": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_58989021": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_59673297": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.bundle_60063638": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.directstorage_nvme_bypass_60786016": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.handheld_compact_mode_ui_50902630": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.handheld_compact_mode_ui_52580392": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.peripheral_haptic_feedback_56784836": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.peripheral_haptic_feedback_58536988": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.peripheral_haptic_feedback_59100632": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.rgb_ambient_lighting_controls_35262205": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.rgb_ambient_lighting_controls_41355275": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_42941381": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_45624564": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_47123936": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_47205210": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_48655351": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49221331": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49256040": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49381526": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49402389": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49793372": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_49820095": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_53397005": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_54792954": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_55345819": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_55495322": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_55844454": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_57156807": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_57259990": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_57900749": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58324036": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58381341": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58423575": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58527096": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58680439": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58778013": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58938944": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_58978959": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.shell_2026_59359094": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.snap_assist_suggestions_41863571": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.snap_assist_suggestions_42589465": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.taskbar_instant_end_task_42592269": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.xbox_fse_58989070": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.feature_overrides.xbox_fse_59765208": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.game_bar": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.xbox.game_mode": {
+   "present": true,
+   "type": "dword",
+   "value": 1
+  },
+  "reg.xbox.hags": {
+   "present": true,
+   "type": "dword",
+   "value": 2
+  },
+  "reg.xbox.home_app": {
+   "present": true,
+   "type": "sz",
+   "value": "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App"
+  },
+  "start.layout_family": {
+   "present": true,
+   "sha256": "9bc43802a063ac9a6a248e0db23083f1ee0f2f9d53684e6bd66b17f40bf389ef"
+  },
+  "store_hydrate.Microsoft.GamingServices": {
+   "present": true,
+   "version": "1.0.0.0"
+  },
+  "users.builtin_administrator": {
+   "enabled": true,
+   "groups": [],
+   "present": true
+  },
+  "users.computer_name": {
+   "value": "MIOS-XBOX-FIX"
+  },
+  "users.desktop": {
+   "enabled": true,
+   "groups": [
+    "Administrators",
+    "Remote Desktop Users"
+   ],
+   "present": true
+  },
+  "users.rid500": {
+   "enabled": false,
+   "present": true
+  }
+ },
+ "probed_at": "2026-10-16T00:00:00Z",
+ "schema": "mios-xbox-probe/1",
+ "third_party_drivers": [],
+ "ubr": 1000
+}

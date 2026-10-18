@@ -1,0 +1,21 @@
+# AI-hint: MiOS vendor config for mios-fanctl (ventulusd client): socket, refresh, client-side override floor, default profile, and header roles applied at service start (ExecStartPost=mios-fanctl apply-roles).
+# AI-related: /usr/bin/mios-fanctl, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/mios.toml [hardware.fan_control]
+# Override per key in /etc/mios/fan-control/mios-fanctl.toml.
+
+[client]
+# /run/ventulus is 0750 root:root + ACL g:wheel:rx (ventulusd.service.d/10-mios.conf).
+socket = "/run/ventulus/ventulus.sock"
+refresh_ms = 1000
+timeout_ms = 5000
+# Overrides below this are refused (never lower than 30 whatever is set here).
+min_override_pct = 30
+default_profile = "mios-default"
+
+# Stable ventulusd header id -> role. "pump" earns the daemon's 30 % floor
+# (70 % on a DC-mode header), is never stopped by identify, and gets stall
+# recovery when a profile drives it. Ids absent on this machine are skipped.
+[roles]
+# ROG CROSSHAIR X870E EXTREME nct6799: firmware curve flat 100 % on both;
+# pwm6 reads ~3300 RPM (AIO pump), pwm7 has no tach (W_PUMP+).
+"hwmon:nct6799:nct6775.656:pwm6:pwm6" = "pump"
+"hwmon:nct6799:nct6775.656:pwm7:pwm7" = "pump"

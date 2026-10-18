@@ -1,0 +1,26 @@
+[Unit]
+Description=MiOS RDP root helper (one request from the native RDP server)
+Documentation=file:///usr/libexec/mios/rdp-native
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/mios/rdp-native/mios-rdp-priv
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=20
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/run/faillock /run/mios /var/lib/mios-rdp
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID

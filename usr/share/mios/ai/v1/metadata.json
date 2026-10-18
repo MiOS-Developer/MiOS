@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 3404,
-  "total_metadata_entries": 2915,
-  "total_hints": 2909,
-  "total_functions_indexed": 1495,
-  "total_related_links": 5139,
+  "total_files_scanned": 3785,
+  "total_metadata_entries": 3113,
+  "total_hints": 3107,
+  "total_functions_indexed": 1690,
+  "total_related_links": 5739,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -175,6 +175,24 @@
       "has_shebang": true
     },
     {
+      "path": ".devloop/GOALS-mios-portal.md",
+      "hint": "MiOS-Portal goal (Firefox + Surfer built as the combined MiOS desktop GUI app); layout sketch /home/mios/mios-desktop-work-1/design-2026-10-16/4-zen-layout.jpg.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/GOALS-mios-xbox.md",
+      "hint": "MiOS-Xbox goal: build new MiOS-Xbox Windows image(s) from the current MiOS-Xbox specs and launch them on MiOS hosts; stopping conditions with positive and negative evidence, non-goals.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": ".devloop/GOALS.md",
       "hint": "Standing MiOS goal: operator objective, measurable stopping conditions with positive and negative evidence, baseline, milestones and non-goals.",
       "related": [],
@@ -285,6 +303,24 @@
     {
       "path": ".devloop/handoff/zcode-live-onboarding-20261007.md",
       "hint": "Onboarding brief that brought the Z.AI/ZCode session into live MiOS development alongside the peer lane.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/plan-mios-portal.md",
+      "hint": "MiOS-Portal plan: research summary, operator questions, resources and risk (2026-10-16).",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/plan-mios-xbox.md",
+      "hint": "MiOS-Xbox build plan: gap analysis, operator questions, conformance gate design, resources and risk (2026-10-16).",
       "related": [],
       "functions": [],
       "doc": null,
@@ -1139,9 +1175,14 @@
     },
     {
       "path": "automation/49-cosign-policy.sh",
-      "hint": "Installs the cosign binary (v2.x), configures Sigstore trust roots, and sets up policy.json to ensure OCI 1.1 bundle compatibility during image builds.",
+      "hint": "Installs cosign, renders the [security.sigstore] container policy, installs the trust anchors it names from the source tree into /usr/share/pki/containers, validates it with skopeo, and activates it in /etc/containers only in image builds.",
       "related": [
-        "mios-cosign"
+        "mios-cosign",
+        "usr/share/mios/mios.toml",
+        "usr/lib/containers/policy.json",
+        "usr/lib/containers/registries.d",
+        "tools/native/mios-resolver/src/sigstore.rs",
+        "tests/test-cosign-trust-anchor.sh"
       ],
       "functions": [],
       "doc": null,
@@ -1229,10 +1270,14 @@
     },
     {
       "path": "automation/58-gnome-remote-desktop.sh",
-      "hint": "Configures GNOME Remote Desktop for Wayland-native RDP support and masks legacy xrdp services to ensure a clean remote desktop environment in MiOS.",
+      "hint": "Remote desktop phase. With [remote.rdp].enabled it installs [packages.remote-desktop] (xrdp + wayvnc) and enables xrdp.service (SSOT-rendered config via /usr/libexec/mios/mios-rdp, PAM gateway auth, TLS) plus mios-rdp-firewall.service (RDP port on the tailnet zone only); the per-session capture (mios-rdp-vnc.service) is pulled in by mios-desktop.target. With it disabled, xrdp stays masked as before.",
       "related": [
         "xrdp.service",
-        "xrdp-sesman.service"
+        "xrdp-sesman.service",
+        "mios-rdp-firewall.service",
+        "/usr/lib/systemd/user/mios-rdp-vnc.service",
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/share/mios/mios.toml [remote.rdp] [packages.remote-desktop]"
       ],
       "functions": [],
       "doc": null,
@@ -1241,7 +1286,7 @@
     },
     {
       "path": "automation/59-tools.sh",
-      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the pinned native code-server with its verified workbench patches, and installs auxiliary scripts like mios-toggle-headless.",
+      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected (\":latest\" resolved at build time) native code-server with its verified workbench patches and the latest digest-verified Satty release (mios-shot's annotation editor), and installs auxiliary scripts like mios-toggle-headless.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
@@ -1276,6 +1321,20 @@
       "has_shebang": true
     },
     {
+      "path": "automation/64-bake-fan-control.sh",
+      "hint": "Bakes the ventulusd fan-control daemon (MIT, Plan-B-Development) from the newest upstream release (or an explicit [build.bake_refs].ventulusd ref) as a static musl binary with the SSOT Rust toolchain, applies MiOS patches from usr/share/mios/fan-control/patches/, and installs /usr/bin/ventulusd, /usr/bin/ventulus-restore-auto and the system-sleep hook.",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "/usr/share/mios/fan-control/",
+        "/usr/share/mios/mios.toml [hardware.fan_control] [build.bake_refs]"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "automation/65-bake-hyprland.sh",
       "hint": "Installs Hyprland tiling compositor, XWayland, window routing helpers, and constructs the base layout configuration inside...",
       "related": [],
@@ -1294,9 +1353,15 @@
       "has_shebang": true
     },
     {
-      "path": "automation/67-bake-surfer.sh",
-      "hint": "Node builder script to pull the zen-browser surfer repository, download the upstream Firefox codebase, apply structural thre...",
-      "related": [],
+      "path": "automation/67-bake-portal.sh",
+      "hint": "Installs MiOS-Portal, the Firefox+Surfer build of mios.toml [desktop.portal.gecko], from the off-image builder's artifact into [desktop.portal.gecko].install_dir: provenance from metrics.json, the artifact's stage proven equal to the CURRENT src/mios-portal by mios-portal-tree verify-stage (one implementation with the builder's stage, fail-closed), tarball + the artifact's install-overlay laid in root-owned and world-readable, then proven equal to the artifact by verify-install; strictly zero network and zero compilation (Law 12).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/",
+        "usr/libexec/mios/mios-portal-tree",
+        "usr/libexec/mios/mios-portal-build",
+        "tests/test-bake-portal.py"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
       "comment_style": "hash",
@@ -1313,10 +1378,42 @@
     },
     {
       "path": "automation/69-bake-lookingglass-client.sh",
-      "hint": "Automates the compilation and installation of the Looking Glass client binary to /usr/bin/ if not already present, handling version detection and toolchain checks during the MiOS build process.",
-      "related": [],
+      "hint": "Builds the Looking Glass client from upstream gnif/LookingGlass and installs it to /usr/bin/looking-glass-client. mios.toml [build.bake_refs].lookingglass = \"latest\" means the tip of the upstream default branch (the IDD era: the Windows guest runs the Looking Glass IDD of the same commit); the resolved commit is only logged and recorded as build output in /usr/share/mios/looking-glass/build.json, never written back to the SSOT.",
+      "related": [
+        "usr/libexec/mios/vfio/setup-looking-glass.py (--write-client-ini; --provision-guest installs the IDD of the recorded commit in the MiOS-Xbox guest)",
+        "usr/share/mios/windows/mios-looking-glass-idd.ps1",
+        "usr/share/mios/mios.toml [build.bake_refs] [vm.looking_glass] [packages.looking-glass-build]"
+      ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "automation/70-bake-wayvnc-upstream.sh",
+      "hint": "Builds wayvnc + neatvnc + aml from the latest upstream default-branch HEADs (no pins; the resolved commits are recorded in build output /usr/libexec/mios/wayvnc/build.json) and installs a self-contained wayvnc (neatvnc/aml linked statically) to /usr/libexec/mios/wayvnc/wayvnc. The RDP bridge prefers it over Fedora's /usr/bin/wayvnc: the Fedora-packaged release exits on any cursor-capture failure (\"Fatal error while capturing\", main.c:1591), which Hyprland 0.56 produces when the pointer is on a scaled output; upstream keeps running without the cursor image.",
+      "related": [
+        "/usr/libexec/mios/mios-rdp-rfb-bridge",
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/share/mios/mios.toml [remote.rdp].wayvnc_binary [packages.wayvnc-build]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "automation/71-bake-rdp-server.sh",
+      "hint": "Builds the MiOS native RDP server (src/mios-rdp-server: mios-rdp-server + mios-rdp-priv) against IronRDP's default-branch HEAD, resolved now and never pinned (the resolved commit, the generated Cargo.lock hash and the enabled features are build output in /usr/libexec/mios/rdp-native/build.json and the SBOM), and installs it to /usr/libexec/mios/rdp-native/. Documented static-policy exceptions (rdp-native-design.md 12): both binaries are x86_64-unknown-linux-gnu, dynamically linked (E1 mios-rdp-server: libEGL/libgbm/libxkbcommon + dlopen of the Cisco libopenh264; E2 mios-rdp-priv: libpam). If the build fails nothing is installed (image) or the last good binary stays (MIOS_RDP_DESTDIR host/dev builds), and [remote.rdp].server = \"native\" falls back to xrdp.",
+      "related": [
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/lib/systemd/user/mios-rdp-native.service",
+        "/usr/lib/systemd/system/mios-rdp-priv.socket",
+        "/usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [packages.rdp-server-build]",
+        "src/mios-rdp-server/"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -1905,6 +2002,23 @@
       "related": [],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "automation/lib/upstream-latest.sh",
+      "hint": "Build-time \"latest\" resolution for upstream inputs: picks the newest upstream release (mios-bake-plan latest-git / git ls-remote), downloads only what an upstream-published checksum proves (GitHub release asset digest, a release checksums file, or the advertised git object id), aborts the build on any mismatch, and records the resolved version + sha256 as build output (version manifest + SBOM binaries.tsv), never in the SSOT.",
+      "related": [
+        "automation/25-gpu-cdi-toolkits.sh",
+        "automation/49-cosign-policy.sh",
+        "automation/56-fonts.sh",
+        "automation/59-tools.sh",
+        "automation/64-bake-fan-control.sh",
+        "tools/native/mios-bake-plan/src/latest.rs",
+        "tests/test-upstream-latest.sh"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/lib.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -3273,39 +3387,12 @@
       "has_shebang": false
     },
     {
-      "path": "etc/skel/.config/gtk-3.0/settings.ini",
-      "hint": "Defines the default GTK3 visual configuration (dark Adwaita theme, Bibata cursor, and GeistMono font) for new user profiles in the MiOS environment.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "semi",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/skel/.config/gtk-4.0/gtk.css",
-      "hint": "Global GTK4 theme stylesheet generated from MiOS SSOT color palette (task_443). */",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "etc/skel/.config/gtk-4.0/mios-edge.css",
       "hint": "GENERATED (mios-dotfiles-render surface gtk4-edge) -- edge-to-edge VTE terminals for GTK 4 from [theme].padding; @imported by the USER gtk.css, whose priority beats the app style.css. */",
       "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "etc/skel/.config/gtk-4.0/settings.ini",
-      "hint": "Defines the default GTK4 visual configuration (dark Adwaita theme, Bibata cursor, and GeistMono font) for new user profiles in the MiOS environment.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "semi",
       "has_shebang": false
     },
     {
@@ -3374,7 +3461,7 @@
     },
     {
       "path": "etc/systemd/resolved.conf.d/10-adguard.conf",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (task_441).",
+      "hint": "Keep host DNS on discovered network links; never forward unicast DNS into the local mDNS listener.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
@@ -3485,7 +3572,7 @@
     },
     {
       "path": "etc/xdg/xdg-desktop-portal/portals.conf",
-      "hint": "Defines the default backend for xdg-desktop-portal interfaces, ensuring all portal features (FileChooser, ScreenCast, etc.) route to the gnome backend as a fallback for both native sessions and WSLg environments.",
+      "hint": "Portal backend order for MiOS: Hyprland first (ScreenCast/Screenshot/GlobalShortcuts -- OBS, browsers and RDP capture need it), then gnome/gtk for the rest; Secret goes to gnome-keyring. A \"default=gnome\" here overrides /usr/share/xdg-desktop-portal/hyprland-portals.conf and leaves screen capture with no sources.",
       "related": [
         "mios-wslg"
       ],
@@ -3667,6 +3754,107 @@
       "functions": [],
       "doc": null,
       "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/configs/common/mozconfig",
+      "hint": "MiOS-Portal common mozconfig (Surfer configs/common/mozconfig); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Surfer fills ${binName}/${appId}/${changeset} from surfer.json.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/surfer.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/configs/lanes/artifact.mozconfig",
+      "hint": "MiOS-Portal artifact-lane project mozconfig; rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; mios-portal-tree stage copies it to the project-root mozconfig when [desktop.portal.builder].lane = \"artifact\".",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/configs/lanes/full.mozconfig",
+      "hint": "MiOS-Portal full-compile-lane project mozconfig (capped fallback); rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; never LTO or PGO.",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/configs/linux/mozconfig",
+      "hint": "MiOS-Portal Linux mozconfig (Surfer configs/linux/mozconfig, which Surfer requires); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Lane-neutral: compile-only options live in configs/lanes/full.mozconfig.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/configs/lanes/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/install/browser/defaults/preferences/mios-portal.js",
+      "hint": "MiOS-Portal default prefs (<install_dir>/browser/defaults/preferences/mios-portal.js): Portal home, sketch layout, glass, autoconfig hook. App-level defaults are read after browser/omni.ja's firefox.js (the GRE defaults/pref/ is read before it and loses every key firefox.js also sets). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]; the Mozilla-AI-off prefs are locked in distribution/policies.json instead.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/distribution/policies.json */"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/install/mios-autoconfig.cfg",
+      "hint": "MiOS-Portal autoconfig: points new-tab to Portal, wires the left rail MiOS apps footer and right-edge local AI chat panel, and enforces complete network isolation / prefs lockdown via lockPref.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/browser/defaults/preferences/mios-portal.js"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "semi",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/src/browser/branding/mios/pref/firefox-branding.js",
+      "hint": "MiOS-Portal branding prefs, a Surfer copy-patch over the pref/firefox-branding.js that Surfer's branding step generates (it hardcodes zen-browser.app URLs). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko].",
+      "related": [
+        "usr/share/mios/mios.toml */"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/src/browser/themes/custom/linux/linux.inc.css",
+      "hint": "MiOS-Portal Linux chrome additions included by browser/themes/linux/browser.css through Surfer's theme include patch; shared rules live in ../shared/shared.inc.css. */",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-portal/src/browser/themes/custom/shared/shared.inc.css",
+      "hint": "MiOS-Portal chrome CSS, baked into omni.ja: Surfer's theme include patch makes",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
       "has_shebang": false
     },
     {
@@ -3895,7 +4083,7 @@
     },
     {
       "path": "src/mios-rs/mios-gate/src/credentials.rs",
-      "hint": "Law-11 extension gate: fails any credential literal baked into a world-readable unit whose exact path:KEY=value is not on the shrink-only register.",
+      "hint": "Law-11 extension gate: fails any credential literal baked into a world-readable unit this tree owns (git-tracked or not ignored; every file outside a checkout) whose exact path:KEY=value is not on the shrink-only register.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/containers/systemd",
@@ -4180,10 +4368,11 @@
     },
     {
       "path": "src/mios-rs/mios-gate/src/sigpolicy.rs",
-      "hint": "Asserts usr/lib/containers/policy.json is byte-identical to what [security.sigstore] projects, the regenerate-and-diff half of Law 8 that this surface never had.",
+      "hint": "Asserts usr/lib/containers/policy.json is the byte-exact, sound projection of [security.sigstore] and that every MiOS trust anchor it names ships under usr/share/pki/containers.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/lib/containers/policy.json",
+        "tools/native/mios-resolver/src/sigstore.rs",
         "tools/native/mios-gen/src/main.rs",
         "automation/49-cosign-policy.sh"
       ],
@@ -4600,6 +4789,19 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/miosd/src/appmenu.rs",
+      "hint": "miosd appmenu: follows Hyprland focus and exports the focused app's real menus (GTK org.gtk.Menus, dbusmenu AppMenu registrar) to $XDG_RUNTIME_DIR/mios/appmenu.json for the top-bar pills.",
+      "related": [
+        "usr/share/mios/quickshell/AppMenu.qml",
+        "usr/lib/systemd/user/mios-appmenu.service",
+        "usr/share/mios/mios.toml [user_units]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/miosd/src/cli.rs",
       "hint": "Entry dispatcher for mios CLI: the binary verb dispatcher, shell completions and the OpenAI-compatible /v1 chat fallback.",
       "related": [
@@ -4986,6 +5188,18 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/miosd/src/placement.rs",
+      "hint": "miosd placement: float-first window placement; new windows open floating and centered at one SSOT-derived size, moved windows tile, Super+V toggles.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland.placement]",
+        "usr/lib/systemd/user/mios-placement.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/miosd/src/rde.rs",
       "hint": "Decentralized Remote Development Environment (RDE) platform engine (M2: WS-RDE).",
       "related": [
@@ -4996,6 +5210,31 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/rde.md",
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/miosd/src/sessions.rs",
+      "hint": "miosd sessions: global tmux session selector, the default entry of every interactive MiOS login (local and tailnet nodes).",
+      "related": [
+        "usr/share/mios/mios.toml [terminal.sessions] [keybindings]",
+        "usr/libexec/mios/mios-terminal"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/miosd/src/wallpaper.rs",
+      "hint": "Wallpaper liveness monitoring and crash supervision daemon for MiOS living wallpaper.",
+      "related": [
+        "usr/lib/systemd/user/mios-wallpaper.service",
+        "tools/native/mios-wallpaperd",
+        "/usr/share/mios/wallpaper/Host.qml"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "slash",
       "has_shebang": false
     },
@@ -5040,6 +5279,20 @@
       "hint": "Makes a suite import the agent pipe from the repository it ships in rather than whatever is installed on the host.",
       "related": [
         "usr/lib/mios/agent-pipe/server.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tests/_mios_xbox_fixtures.py",
+      "hint": "Shared fixture builders for the MiOS-Xbox gate tests: load the fixture xbox-spec.json (or render the live SSOT + staged fragments through mios_toml.load_merged + render_spec when present), and from its items build a conforming rendered-input bundle (answer file with base64 UTF-16 embedded scripts, SetupComplete, .reg, drivers, payload), a real offline image (minimal regf hives filled by hivexregedit --merge, captured with wimlib-imagex), and recorded in-guest probe outputs. Fixture credentials only.",
+      "related": [
+        "tests/test-mios-xbox-conform.py",
+        "tests/test-mios-xbox-probe.py",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/libexec/mios/win/xbox/conform.py"
       ],
       "functions": [],
       "doc": null,
@@ -5095,6 +5348,40 @@
       "has_shebang": true
     },
     {
+      "path": "tests/e2e/tier1_coverage/test_t1_ssot.py",
+      "hint": "Tier-1 e2e coverage of SSOT integrity and the M5 features, each run against the shipped code with positive and negative controls (cosign trust anchor, nerd-font hard fail, greeter tmpfiles whitelist).",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/fixtures/mios-xbox/regen-recorded.py",
+      "hint": "Regenerates the recorded in-guest probe outputs (probe-conforming.recorded.json, probe-legacy.recorded.json) from xbox-spec.fixture.json; run after the fixture spec is re-rendered. The legacy recording encodes the documented state of the legacy VM mios-xbox-current (left taskbar TaskbarAl=0, search box shown, Start_Show* folders, no QEMU-GA/virtio/guest tools, no MiOS components, legacy 'user' autologon, RID-500 enabled, no GPU step record, Insider 29683 rs_prerelease).",
+      "related": [
+        "tests/_mios_xbox_fixtures.py",
+        "tests/test-mios-xbox-probe.py",
+        "/home/mios/.claude memory mios-xbox-guest-access"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/fixtures/oci-mini-registry.py",
+      "hint": "Test-only OCI distribution registry (in-memory, plain HTTP, loopback) just large enough for skopeo to push an image plus its sigstore attachment and pull both back; used by tests/test-cosign-trust-anchor.sh inside a private network namespace.",
+      "related": [
+        "tests/test-cosign-trust-anchor.sh",
+        "automation/49-cosign-policy.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/golden/README.md",
       "hint": "Golden-master CLI cases for the native mios-gen verbs (task_1707 / ADR-0021); every console block below is executed by tools/native/mios-gen/tests/golden.rs.",
       "related": [
@@ -5107,6 +5394,29 @@
       "doc": null,
       "comment_style": "xml",
       "has_shebang": false
+    },
+    {
+      "path": "tests/greeter/mock_greetd.py",
+      "hint": "Mock greetd IPC server for testing the MiOS glass greeter without touching the real greetd.",
+      "related": [
+        "../test-greeter.py",
+        "usr/share/mios/greeter/shell.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/greeter/vkbd.py",
+      "hint": "Minimal pure-Python Wayland virtual-keyboard client (zwp_virtual_keyboard_v1 over the raw wire",
+      "related": [
+        "../test-greeter.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "tests/powershell/Challenge_AST_M2.Tests.ps1",
@@ -5610,6 +5920,21 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-bake-portal.py",
+      "hint": "Hermetic positive and negative controls for MP-3 (67-bake-portal.sh): the positive fixture is a REAL stage of the current src/mios-portal (mios-portal-tree stage) packaged like a builder run; phase 67 installs it root-owned/world-readable from the artifact's own install-overlay and proves the result equals the artifact. Negatives: no stage.json, no Pillow, a drifted tree, a tampered or missing overlay, a wrong ICO hash, weak provenance (metrics), a tampered tarball, an absent tree, unsafe DEST, and a tampered install caught by verify-install.",
+      "related": [
+        "automation/67-bake-portal.sh",
+        "usr/libexec/mios/mios-portal-tree",
+        "usr/libexec/mios/mios-portal-build",
+        "etc/fapolicyd/fapolicyd.rules",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-baremetal-install.py",
       "hint": "Tests for the bare-metal install shim -- argument forwarding to the native mios-install and its failure when absent.",
       "related": [
@@ -5887,6 +6212,21 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-cosign-trust-anchor.sh",
+      "hint": "Hermetic two-sided test of the image-signature trust model: runs the real phase 49 as an image build in a private namespace, then pulls signed, unsigned and foreign-signed images via skopeo from a loopback registry.",
+      "related": [
+        "automation/49-cosign-policy.sh",
+        "tools/native/mios-resolver/src/sigstore.rs",
+        "usr/share/mios/mios.toml",
+        "usr/lib/containers/registries.d",
+        "tests/fixtures/oci-mini-registry.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-council-consensus.py",
       "hint": "Automated unit test suite for 3-Peer Council Swarm & Byzantine Consensus (task_599, task_600).",
       "related": [
@@ -5913,6 +6253,24 @@
       "related": [
         "usr/libexec/mios/kernel/crash_dedupe.py",
         "tests/test-crash-dedupe.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-credential-ssot.py",
+      "hint": "Positive + negative controls for the ONE fail-closed layered-SSOT credential resolution across every MiOS image pipeline (Python/CLI resolver, unattend_gen, the PowerShell answer-file/NTLite/mios-provision/specialize renderers, Render-Sysrescue, the SystemRescue autorun, the kickstart template and the Linux user-creation hash).",
+      "related": [
+        "usr/lib/mios/mios_credentials.py",
+        "usr/libexec/mios/mios-credential",
+        "usr/libexec/mios/win/unattend_gen.py",
+        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1",
+        "field/autounattend/New-MiOSAutounattend.ps1",
+        "field/autounattend/ConvertTo-MiOSPreset.ps1",
+        "field/autounattend/New-MiOSISO.ps1",
+        "field/resources/ventoy/Render-Sysrescue.ps1"
       ],
       "functions": [],
       "doc": null,
@@ -6148,6 +6506,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-everything-no-pin.sh",
+      "hint": "Two-sided test that mios-everything carries no pinned es.exe version: with a stub es.exe that cannot reach Everything, the unreachable message names the latest es.exe and never an SSOT version, and no [paths].everything_cli_version read remains; a mutant that re-reads the pin is caught.",
+      "related": [
+        "usr/libexec/mios/mios-everything",
+        "usr/share/mios/mios.toml [paths]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-expand-from.py",
       "hint": "Smoke-test script to verify the skill engine's expand_from logic by validating that a single step with multiple browser targets correctly fans ...",
       "related": [],
@@ -6214,6 +6584,19 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-flatpak-run-env-strip.py",
+      "hint": "Regression test verifying that mios-flatpak-run strips MIOS_* variables in linear time.",
+      "related": [
+        "usr/libexec/mios/mios-flatpak-run",
+        "usr/lib/mios/userenv.sh",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -6289,6 +6672,19 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-greeter.py",
+      "hint": "End-to-end tests for the MiOS glass greeter WITHOUT touching the real greetd: a mock greetd socket",
+      "related": [
+        "usr/share/mios/greeter/",
+        "usr/libexec/mios/mios-greeter-session",
+        "tools/native/mios-gen/src/greeter.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-hardware-fallback.sh",
       "hint": "Verification suite for automated network and audio fallback manager and alert daemon (task_476, task_2709).",
       "related": [],
@@ -6343,11 +6739,35 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-hyprglass-edge-pass.py",
+      "hint": "\"ALL windows are glass\" (operator 2026-10-16): every window -- Flatpak, RPM, VM viewers, dialogs, modals,",
+      "related": [
+        "usr/share/mios/hyprland/patches/hyprglass-mios-glass.patch",
+        "usr/share/mios/hyprland/patches/hyprbars-overlay.patch"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-hyprland-direct-scanout.sh",
       "hint": "Automated CI verification suite for Hyprland direct scanout, Quickshell initialization, and living wallpaper occlusion engine (task_721, task_722, task_723).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-hyprland-shader-contract.py",
+      "hint": "Regression test verifying the // @duration contract and brace structure of all Hyprland windowshade shaders.",
+      "related": [
+        "usr/share/mios/hyprland/shaders/",
+        "usr/share/mios/mios.toml [desktop.hyprland.windowshade]"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -6417,6 +6837,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-island-sysmon.py",
+      "hint": "Status island system monitor and mobile island geometry. Sysmon.qml (the native sampler: /proc/stat, /proc/meminfo,",
+      "related": [
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "usr/share/mios/quickshell/SysmonItems.qml"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -6792,6 +7224,42 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-mios-gpu-driver.ps1",
+      "hint": "Pester-free behaviour tests for usr/share/mios/windows/xbox/mios-gpu-driver.ps1 (xb-09 / XB-3). Dot-sources the script with -LibraryOnly, replaces its I/O seams (PCI enumeration, bound driver, HTTP, download, Authenticode, extraction, installer) with mocks, and drives Invoke-MiOSGpuDriver against a spec rendered from the merged SSOT (live mios.toml + staged xbox-gpu.toml). No network, no installs. Positive and negative controls; exit 0 only if every case passes.",
+      "related": [
+        "tests/test-mios-gpu-driver.py (renders the spec via mios_toml.load_merged and runs this under pwsh)",
+        "usr/share/mios/windows/xbox/mios-gpu-driver.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tests/test-mios-gpu-driver.py",
+      "hint": "xb-09 / XB-3 gate for the MiOS-Xbox guest GPU driver step. Merges the live vendor SSOT with the staged lane",
+      "related": [
+        "usr/share/mios/windows/xbox/mios-gpu-driver.ps1",
+        "tests/test-mios-gpu-driver.ps1",
+        "usr/lib/mios/mios_toml.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-lamp.py",
+      "hint": "Magic lamp ([desktop.hyprland.lamp], mios-wobbly.so lamp.cpp/lampmath.hpp, and Quickshell DockLamp.qml +",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland.lamp] [desktop.hyprland.hyprbars] [desktop.mobile]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-mios-manual-harvest.sh",
       "hint": "bash Round-trips the documentation harvest loop in a throwaway git fixture -- ledger, harvest, the landed() predicate flipping false to true, p...",
       "related": [
@@ -6803,11 +7271,188 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-mios-portal-build.sh",
+      "hint": "Positive and negative controls for the off-image MiOS-Portal builder (SSOT inputs, heavy.lock, artifact-lane policy, copy-patch check, resolver and signature checks) without building Gecko.",
+      "related": [
+        "usr/libexec/mios/mios-portal-build",
+        "usr/share/mios/portal-build/mios-portal-build-inner",
+        "usr/lib/mios/heavy-lock.sh",
+        "usr/share/mios/mios.toml ([desktop.portal.builder])"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-rdp-bridge.py",
+      "hint": "Unit tests for usr/libexec/mios/mios-rdp-rfb-bridge: client RFB framing (unknown message type closes the connection), PointerEvent forwarding + signed clamping, the single-seat local-cursor policy (no warp per click/hover; one hand-back at detach only when the remote moved it), that hyprctl never runs on the event loop, and the access/firewall side: mios-rdp admits only allowed_users (default the operator), the upgrade scrub removes stale 3389/3390/5900-5999 openings from every zone while keeping the tailnet zone's mios-rdp service (fake firewall-cmd), mios-grd-setup opens no ports and is preset-disabled. Pure in-process / fake binaries: no Hyprland, no real firewalld, no cursor moves; the remote display's placement below the centre of the primary output (group-centred, re-centred after every resize, primary never touched, old right/far placement gone, parity with `mios-gen display-scale --attach-below`), the [desktop.scaling] policy call with legacy fallback and the wayvnc>=0.10 gate for scaled outputs, ServerStream resync after a wayvnc death mid-message, and end to end (fake xrdp <-> bridge <-> fake wayvnc + stateful fake Hyprland) that resizes/rotations/scale changes keep the xrdp connection and a wayvnc crash mid-update is recovered transparently (negative control: wayvnc_restarts = 0 ends the session); the pointer drawn into the frames on a scalable remote output (--render-cursor, cursor pseudo-encodings dropped from SetEncodings; render_cursor = false keeps the RFB cursor), a Hyprland config reload re-placing the phone output via the socket2 configreloaded event (negative: no event = stays displaced), no primary local output = 0,0 never a negative x, adaptive refresh pacing (Pacer: a client taking fewer than half the frames paces the virtual output down to >= 2x its rate, floor min_hz, one keeping up gets target_hz back at once; idle/noise/dwell/resize never change it; end to end a slow fake xrdp is paced 90 -> 30 without losing frames and back to 90 when it speeds up, negative control refresh_pacing = \"fixed\"), and an opt-in live HEADLESS-MIOS-SCALETEST reapply check (MIOS_RDP_LIVE_SCALETEST=1). MIOS_RDP_BRIDGE / MIOS_RDP / MIOS_RDP_TEST_ROOT point the suite at other copies.",
+      "related": [
+        "/usr/libexec/mios/mios-rdp-rfb-bridge",
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/libexec/mios-grd-setup",
+        "/usr/lib/systemd/system-preset/90-mios.preset",
+        "automation/45-firewall.sh",
+        "/usr/share/mios/mios.toml [remote.rdp]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-rdp-native.py",
+      "hint": "Tests for the native RDP server path (rdp-native-design.md 13): the display service of usr/libexec/mios/mios-rdp-rfb-bridge (--display-service JSON-lines protocol against a stateful fake Hyprland: attach creates the headless output with the [desktop.scaling] scale, layout follows DISP resizes/rotations, device_rule maps uinput devices to the remote output only, pace/refresh never touch HDMI-A-1, detach hands the cursor back and lingers/removes the output; negatives: bad device names, layout before attach, mirror refuses resizes), mios-rdp's backend selection (enabled xrdp|native truth table: [remote.rdp].server, missing native binary, crash-loop fallback marker, runtime override; legacy `enabled` unchanged) and native.json (priv TLS/auth, [::]:[ports].rdp, stats path, sub-tables), the SSOT == code defaults rule for [remote.rdp.native|redirect|naming] (mios-rdp-server --print-defaults), and opt-in live end-to-end checks with a private server on 127.0.0.1:18301 + FreeRDP in Xvfb + HEADLESS-MIOS-SCALETEST (MIOS_RDP_NATIVE_LIVE=1; harness in tests/fixtures/mios-rdp/): G1 AVC420 negotiated and acked / no-EGFX client gets bitmaps and no H.264, G6 colour bars dE2000, A1/A3/A4/A6 auth and TLS, D1 resize. MIOS_RDP_BRIDGE / MIOS_RDP / MIOS_RDP_SERVER_BIN point the suite at other copies.",
+      "related": [
+        "usr/libexec/mios/mios-rdp",
+        "usr/libexec/mios/mios-rdp-rfb-bridge",
+        "src/mios-rdp-server/",
+        "usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [remote.rdp.redirect] [remote.rdp.naming]",
+        "tests/fixtures/mios-rdp/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-mios-update-verb.py",
       "hint": "Unit test for mios update verb routing and backend declaration.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-build.py",
+      "hint": "Two-sided tests for the wired MiOS-Xbox build pipeline (build.py + answer.py + fetch.py + worker.py + render_spec users + probe defaults): the payload rendered from the real vendor SSOT (fixture credentials) passes the conformance gate while planted legacy values / service-account autologon / tampered inputs fail with named findings; users follow the operator decision (separate desktop admin, persistent autologon, never the service account or RID 500); the worker XML never carries a hostdev and only attaches the overlay + exchange disk; fetch verifies git-tree / size / converter config; the build stages run in order and always clean the worker up; probe.py defaults to the real rendered SSOT, never the fixture, and fails closed (exit 2) when unreachable. No network, no VM, no real credential.",
+      "related": [
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/libexec/mios/win/xbox/answer.py",
+        "usr/libexec/mios/win/xbox/fetch.py",
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/libexec/mios/win/xbox/render_spec.py",
+        "usr/libexec/mios/win/xbox/probe.py",
+        "usr/libexec/mios/win/xbox/conform.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-capture.py",
+      "hint": "Two-sided tests for the MiOS-Xbox Start layout capture (xb-11) and the build-worker hardening + image-gate negative control it ships with: capture.json is rendered only from the spec's start.folders/start.pins policy items (no credential), a capture account colliding with a real account or a malformed one is refused; verify_capture accepts a consistent record and names each planted defect (other family, unknown family, tampered start2.bin, non-empty grid, policy not in effect); installed assets pass check_assets until start2.bin is altered; one worker session runs exchange -> define -> boot -> quiesce -> prepare -> reboot (new boot id) -> collect and always stops, copies out read-only and undefines, also when collect fails; stage_capture installs into the tree and reports, refusing a bad record; the worker XML strips SPICE audio, uses one CPU socket and no S3/S4 (planted SPICE audio / 8 sockets are refused); the gate's negative control must be NON-CONFORMING. No network, no VM, temp dirs only.",
+      "related": [
+        "usr/libexec/mios/win/xbox/capture.py",
+        "usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1",
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-conform.py",
+      "hint": "Two-sided tests for the MiOS-Xbox offline conformance gate (xb-03/xb-16): a bundle rendered from the fixture xbox-spec.json passes (rendered inputs and a real offline install.wim built with hivexregedit + wimlib-imagex), and every planted legacy value or missing item -- TaskbarAl=0, SearchboxTaskbarMode=1, Start_ShowDownloads/Documents=1, LockedStartLayout, an NVIDIA/AMD/Intel display .inf, a literal/empty/foreign credential, a removed component or virtio driver, a stable-virtio URL, a Start family mismatch, an off-spec SSOT value -- fails with its named finding; a legacy-shaped answer file is reported non-conforming.",
+      "related": [
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "tests/_mios_xbox_fixtures.py",
+        "tests/fixtures/mios-xbox/xbox-spec.fixture.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-features-fragment.py",
+      "hint": "Gate for the staged MiOS-Xbox feature catalogue (research lane, Q3 decision): every Controlled-Feature-",
+      "related": [
+        "/home/mios/mios-desktop-work-1/staged-ssot/xbox-features.toml",
+        "/home/mios/mios-desktop-work-1/staged-ssot/xbox-spec.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-legacy-retired.py",
+      "hint": "Two-sided tests that the legacy MiOS-Xbox paths are gone or refuse (XB-1): every main-repo pipeline file and the bootstrap autounattend tree carry no legacy shell literal (TaskbarAl=0, SearchboxTaskbarMode=1, Start_ShowDownloads/Documents=1, static jpg wallpaper, stable-virtio, -ForceUnsigned, Set-MiOSCustomDefaults/UserOnce) while a planted one is caught; each bootstrap image entry (New-MiOSISO, Build-MiOSXbox[ISO], Deploy-MiOSXbox, Merge-MiOSPresets, ConvertTo-MiOSPreset, New-MiOSAutounattend -SourceIso/-OutIso, mios-build-iso.sh) refuses before doing anything; MiOS-Provision.lib.ps1's global preferences read the [windows.xbox] spec (centered taskbar, hidden search, the 4 Start folders) and refuse when the spec key is missing, and follow a changed spec value (no hardcode).",
+      "related": [
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/libexec/mios/win/xbox/conform.py",
+        "/var/lib/mios-build/repos/mios-bootstrap-build/field/autounattend"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-no-pin.sh",
+      "hint": "Pins gate for the MiOS-Xbox Windows pipeline (xb-04, XB-2): rejects version/build/commit/URL pins in the merged [windows.xbox] SSOT and in the pipeline code (stable-virtio, archive-virtio/virtio-win-0.1.N, fixed UUP build numbers, Looking Glass release/commit pins, versioned release-download URLs, literal *version = \"x.y.z\"). Two-sided: a clean fixture passes, every planted pin fails with its named finding, then the live tree (vendor mios.toml + staged xbox-*.toml fragments through mios_toml.load_merged, plus the pipeline files) is scanned.",
+      "related": [
+        "usr/lib/mios/mios_toml.py",
+        "usr/libexec/mios/win/xbox/",
+        "usr/share/mios/windows/build/",
+        "usr/share/mios/windows/xbox/",
+        "automation/21-virt.sh",
+        "tests/test-everything-no-pin.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-probe.py",
+      "hint": "Two-sided tests for the MiOS-Xbox in-guest WinRM conformance probe (xb-18): the recorded output of a conforming guest evaluates all green against the fixture xbox-spec.json, the recorded legacy-VM output (left taskbar, search box, no QEMU-GA/virtio/components, legacy autologon, RID-500 enabled, no GPU record) is non-conforming with named findings, single planted defects (GPU step failed/mismatched/unexpected, component hash, family) each fail, the WinRM transport stages the read-only guest script in chunks without ever sending a credential, host-side checks are evaluated, and the PowerShell probe parses and covers every item kind without write cmdlets.",
+      "related": [
+        "usr/libexec/mios/win/xbox/probe.py",
+        "usr/share/mios/windows/xbox/mios-xbox-probe.ps1",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "tests/_mios_xbox_fixtures.py",
+        "tests/fixtures/mios-xbox/probe-conforming.recorded.json",
+        "tests/fixtures/mios-xbox/probe-legacy.recorded.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-resolve-latest.py",
+      "hint": "Unit tests for the MiOS-Xbox latest-resolver (xb-06, XB-2) with mocked HTTP only: positive controls",
+      "related": [
+        "usr/libexec/mios/win/xbox/resolve_latest.py",
+        "usr/lib/mios/mios_toml.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-xbox-spec.py",
+      "hint": "Tests for the MiOS-Xbox spec renderer (xb-02): render == layered SSOT merge incl. host- and user-tier overrides (positive); missing taskbar_align, blank credential, dangling ref, duplicate registry owner, GPU vendor mode each fail naming the key (negative).",
+      "related": [
+        "usr/libexec/mios/win/xbox/render_spec.py",
+        "usr/lib/mios/mios_toml.py",
+        "usr/share/mios/mios.toml",
+        "/home/mios/mios-desktop-work-1/staged-ssot/xbox-spec.toml"
+      ],
+      "functions": [
+        "TestXboxSpecRender",
+        "TestXboxSpecNegative"
+      ],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -6837,11 +7482,59 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-mobile-controls-tab.py",
+      "hint": "Mobile window-controls tabs = the desktop controls tab (hyprbars overlay, MiOS patch) split around the status",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland.hyprbars.mobile]",
+        "usr/share/mios/hyprland/patches/hyprbars-overlay.patch"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mobile-glass-parity.py",
+      "hint": "Glass parity of the mobile window-controls tabs (ControlsTab.qml, the shell twin of hyprbars' mobile tabs),",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/ControlsTab.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mobile-layout.py",
+      "hint": "Mobile layout profile ([desktop.mobile]) checks that never touch the live desktop: SSOT keys,",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.mobile]",
+        "tools/native/mios-gen/src/render.rs (mobile_profile)"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-model-bake-ready.py",
       "hint": "Exercise the model-bake readiness gate with complete and planted incomplete model sets, without host writes or downloads.",
       "related": [
         "automation/73-model-prep.sh",
         "usr/share/mios/mios.toml [llamacpp]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-models-firstboot-latest.py",
+      "hint": "Hermetic two-sided tests for mios-models-firstboot floating Hugging Face sources: with a mocked hub (fake curl on PATH, no network) a `resolve/main` entry with no SSOT sha256 is resolved to the current commit + upstream LFS sha256, fetched from that immutable commit, verified and recorded in models.tsv; a mismatching file and an entry with no provable digest are never installed.",
+      "related": [
+        "usr/libexec/mios/mios-models-firstboot",
+        "usr/share/mios/mios.toml [[ai.firstboot_models]]"
       ],
       "functions": [],
       "doc": null,
@@ -6960,6 +7653,18 @@
       "path": "tests/test-node.py",
       "hint": "Consolidated WS-NODE edge-mesh suite: CRDT/GC, cgroups pinning, watchdog, Wasm sandbox+hardware, BLE bootstrap, buffer pool, capabilities, discovery, overlay, scheduler, wire codec, mesh logs, M1/M2 adversarial.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-notify-island.py",
+      "hint": "Island notifications (operator 2026-10-17: \"notifications come in from the top center under the island/topbar/pill",
+      "related": [
+        "usr/share/mios/quickshell/Notifications.qml",
+        "usr/share/mios/quickshell/NotifModel.qml"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -7096,6 +7801,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-piper-latest.py",
+      "hint": "Hermetic two-sided tests for usr/share/mios/piper/install-piper.py: with a mocked PyPI JSON API (file://) and a fake pip (no network), \"latest\" resolves to PyPI's current release, the wheel is checked against PyPI's published sha256 before install and the resolved version is recorded; a wheel whose sha256 differs aborts with nothing installed. Also gates the Containerfile on the installer.",
+      "related": [
+        "usr/share/mios/piper/install-piper.py",
+        "usr/share/mios/piper/Containerfile"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-pipewire-aec.py",
       "hint": "Automated unit test suite for PipeWire AEC filter and loopback manager (task_730, task_731).",
       "related": [],
@@ -7123,6 +7840,51 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-portal-policies-stability.py",
+      "hint": "Regression test suite for Firefox 158 Enterprise Policy engine stability compliance",
+      "related": [
+        "usr/share/mios/theme/templates/portal-policies.json.tmpl",
+        "src/mios-portal/install/distribution/policies.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-portal-probe.py",
+      "hint": "Positive and negative controls for usr/libexec/mios/mios-portal-probe, the MiOS-Portal live layout/egress probe: hermetic checks that its socket sampler sees a non-loopback peer (a connected UDP socket to TEST-NET-1 sends nothing), that its resolver-log parser and loopback test classify hosts right, and that its console patterns are the builder smoke's; with MIOS_PORTAL_LIVE=1 it also runs the probe against the installed app (layout + egress must pass) and plants egress (must fail).",
+      "related": [
+        "usr/libexec/mios/mios-portal-probe",
+        "usr/share/mios/portal-build/mios-portal-build-inner",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-portal-product.py",
+      "hint": "Hermetic positive and negative controls for the MiOS-Portal SSOT spec (mp-01..03): the [desktop.portal.gecko] table renders every src/mios-portal product file through [dotfiles.registry.portal-*]; the portal-product gate rejects a pinned version, a literal colour or port, an unregistered file, a missing Gecko linkage exception and a phase header that disagrees with [build.phases]; the stager fills @BUILD sentinels only in the build copy.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/libexec/mios/mios-dotfiles-render",
+        "usr/libexec/mios/mios-portal-tree",
+        "tools/drift-checks.py",
+        "automation/67-bake-portal.sh"
+      ],
+      "functions": [
+        "Root",
+        "TestRender",
+        "TestGate",
+        "TestStage"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-postcheck-kargs.sh",
       "hint": "bash Runs the 99-postcheck kargs.d gate against fixture roots: the shipped kargs.d passes; a missing dir, an empty dir, malformed TOML and a non-string kargs array each fail.",
       "related": [],
@@ -7132,11 +7894,48 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-power-sampler.py",
+      "hint": "Tests for usr/libexec/mios/mios-power-sampler, the root CPU-package power sampler.",
+      "related": [
+        "usr/libexec/mios/mios-power-sampler",
+        "usr/lib/systemd/system/mios-power-sampler.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-powershell-flatten.sh",
       "hint": "bash Guards the object-pipeline flattening in usr/libexec/mios/mios-powershell (OAI-03).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-profile-gateway-model.py",
+      "hint": "Regression test verifying that 50-mios.sh exports MIOS_AI_GATEWAY_MODEL from MIOS_AI_AGENT_MODEL or unsets it.",
+      "related": [
+        "etc/profile.d/50-mios.sh",
+        "usr/share/mios/ai/system.md",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-profile-motd-guard.py",
+      "hint": "Regression test for the zz-mios-motd snippet of etc/profile.d/50-mios.sh: an interactive non-tmux login shell auto-execs mios-terminal exactly once; nested interactive shells (MIOS_MOTD_SHOWN exported) stay plain shells; tmux panes still run --workspace-ensure.",
+      "related": [
+        "etc/profile.d/50-mios.sh (Snippet: zz-mios-motd.sh)",
+        "usr/libexec/mios/mios-terminal"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7520,6 +8319,18 @@
       "has_shebang": false
     },
     {
+      "path": "tests/test-ssh-windows-latest.sh",
+      "hint": "Hermetic two-sided test for mios-ssh-setup.ps1 floating OpenSSH: with the forge mocked (Invoke-RestMethod / Invoke-WebRequest shadowed, no network namespace) the latest release is resolved, its asset proven by the GitHub-published sha256 and the tag/sha256 recorded; a mismatching archive or a release without a digest throws before anything is installed.",
+      "related": [
+        "usr/share/mios/windows/mios-ssh-setup.ps1",
+        "usr/share/mios/mios.toml [ssh.windows]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-storage-ceph.py",
       "hint": "Consolidated unit test suite for MiOS Storage & Ceph domain (Bcachefs tiering, CephFS provisioning, active-active MDS, and RADOS Gateway).",
       "related": [
@@ -7637,6 +8448,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-sysmon-vfio-adversarial.py",
+      "hint": "Adversarial empirical challenge for Milestone M4 (Sysmon hardware isolation and resource consumption).",
+      "related": [
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "tests/test-island-sysmon.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-systemd-homed-luks.py",
       "hint": "Tests for task_689 & task_690: systemd-homed LUKS2 unlock, key zeroization & migration.",
       "related": [],
@@ -7668,6 +8491,19 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-template-conform-sparse-bound.py",
+      "hint": "Regression test verifying check-template-conformance bounds memory traversal over large sparse files.",
+      "related": [
+        "usr/libexec/mios/check-template-conformance",
+        "usr/share/mios/templates/",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7739,6 +8575,24 @@
       "has_shebang": false
     },
     {
+      "path": "tests/test-theme-render-web-css.py",
+      "hint": "Hermetic tests that mios-theme-render --web never destroys user Gecko CSS (MiOS-owned marker block, timestamped backups) and that AppMenu.qml renders app-supplied strings as plain text.",
+      "related": [
+        "usr/libexec/mios/mios-theme-render (apply_web",
+        "_merge_managed_css",
+        "_write_managed_css)",
+        "usr/share/mios/quickshell/AppMenu.qml"
+      ],
+      "functions": [
+        "TestManagedCss",
+        "TestAppMenuPlainText",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "tests/test-thermal-governor-recovery.sh",
       "hint": "Continuous thermal stress and proactive governor modulation recovery test suite (task_488, task_2721).",
       "related": [],
@@ -7765,6 +8619,18 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-tmux-oom-policy.py",
+      "hint": "Regression test verifying that tmux pane scope drop-in sets OOMPolicy=continue.",
+      "related": [
+        "usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7840,6 +8706,23 @@
         "usr/libexec/mios/win/unattend_gen.py",
         "usr/libexec/mios/win/unattend_validate.py",
         "autounattend.xml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-upstream-latest.sh",
+      "hint": "Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 59-tools (code-server) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, and that a failed integrity check aborts without installing anything.",
+      "related": [
+        "automation/lib/upstream-latest.sh",
+        "automation/25-gpu-cdi-toolkits.sh",
+        "automation/49-cosign-policy.sh",
+        "automation/56-fonts.sh",
+        "automation/59-tools.sh",
+        "automation/64-bake-fan-control.sh",
+        "tools/native/mios-bake-plan/src/latest.rs"
       ],
       "functions": [],
       "doc": null,
@@ -7973,6 +8856,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-wallpaper-per-output.py",
+      "hint": "Wallpaper host contract: one mios-wallpaper layer per output, including outputs added later",
+      "related": [
+        "usr/share/mios/wallpaper/Host.qml",
+        "usr/lib/systemd/user/mios-wallpaper.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-wallpaper-service.py",
       "hint": "Automated unit test suite for WS-LANG mios-wallpaperd native living wallpaper service (task_3425).",
       "related": [
@@ -8082,6 +8977,23 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-xbox-r3-regression.py",
+      "hint": "Comprehensive unit and regression test suite for all MiOS-Xbox R3 requirements (desk-044, desk-045, desk-046, desk-055, desk-056).",
+      "related": [
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/libexec/mios/win/xbox/answer.py",
+        "usr/libexec/mios/vfio/setup-looking-glass.py",
+        "usr/libexec/mios/win/unattend_validate.py",
+        "tests/_mios_xbox_fixtures.py",
+        "tests/test-mios-xbox-conform.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-xdp-fastpath.py",
       "hint": "Automated unit test suite for native eBPF XDP network fastpath and WireGuard router (task_746, task_747).",
       "related": [],
@@ -8089,6 +9001,23 @@
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
       "comment_style": "hash",
       "has_shebang": true
+    },
+    {
+      "path": "tests/test-zen-layout-projection.py",
+      "hint": "Hermetic tests for the operator's Zen layout (design-2026-10-16 sketch 4): MiOS top bar above,",
+      "related": [
+        "usr/share/mios/mios.toml [browser.zen]",
+        "usr/libexec/mios/mios-theme-render (apply_web)"
+      ],
+      "functions": [
+        "zen_layout_problems",
+        "TestZenLayoutPolicy",
+        "TestZenProjection",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
     },
     {
       "path": "tests/test_adversarial_gateway_stress.py",
@@ -8185,6 +9114,19 @@
       "doc": "usr/share/doc/mios/manual/tests.md, usr/share/doc/mios/manual/tests.md, PROJECT.md",
       "comment_style": "hash",
       "has_shebang": true
+    },
+    {
+      "path": "tests/wallpaper/WebCapture.qml",
+      "hint": "Test harness: loads the canonical living-wallpaper.html in QtWebEngine in deterministic mode (steps=N)",
+      "related": [
+        "tests/test-wallpaper-native.py",
+        "usr/share/mios/branding/living-wallpaper.html",
+        "usr/share/mios/wallpaper/Host.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
     },
     {
       "path": "tools/README.md",
@@ -8861,7 +9803,7 @@
     },
     {
       "path": "tools/native/mios-bake-plan/src/latest.rs",
-      "hint": "Floats bake inputs on their newest upstream release: `latest-image <ref>` and `latest-git <url>` print the concrete ref to fetch, using the release shapes in mios.toml [build.float].",
+      "hint": "Floats bake inputs on their newest upstream release: `latest-image <ref>` and `latest-git <url>` print the concrete ref to fetch, using the release shapes in mios.toml [build.float]; `latest-portal` prints the MiOS-Portal Firefox release, its build and source revision, and the npm `latest` Surfer as key=value lines.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -8928,6 +9870,74 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-displays/Cargo.toml",
+      "hint": "Cargo manifest for mios-displays -- the native backend of the MiOS Displays app (list/apply/confirm/revert/save Hyprland monitor layouts through the layered mios.toml SSOT).",
+      "related": [
+        "tools/native/Cargo.toml",
+        "usr/share/mios/mios.toml",
+        "usr/share/mios/displays/Displays.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-displays/src/main.rs",
+      "hint": "mios-displays -- native backend of the MiOS Displays app. Lists Hyprland outputs, applies a validated monitor change live through `hyprctl eval` hl.monitor with a GNOME-style \"keep these settings?\" timed revert (detached watchdog), and saves the confirmed layout as a [desktop.hyprland.monitors] mios.d drop-in that mios-gen render-hyprland re-projects.",
+      "related": [
+        "tools/native/mios-displays/src/model.rs",
+        "usr/share/mios/displays/Displays.qml",
+        "usr/share/mios/mios.toml [desktop.displays] [desktop.hyprland.monitors]",
+        "tools/native/mios-gen/src/render.rs",
+        "usr/share/applications/mios-displays.desktop"
+      ],
+      "functions": [
+        "main",
+        "run",
+        "settings",
+        "hyprctl",
+        "monitors",
+        "cmd_list",
+        "cmd_apply",
+        "cmd_confirm",
+        "cmd_revert",
+        "cmd_save",
+        "cmd_gui",
+        "restore",
+        "write_fragment",
+        "projection_lines",
+        "saved_entries",
+        "merged_fragment",
+        "stage",
+        "save_to"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-displays/src/model.rs",
+      "hint": "Pure model for mios-displays -- parses `hyprctl -j monitors all`, validates a requested monitor change against the live output (mode list, logical-size scale rule, transform, position, last-enabled-output guard), and renders the Hyprland Lua rule and the SSOT drop-in TOML.",
+      "related": [
+        "tools/native/mios-displays/src/main.rs",
+        "tools/native/mios-gen/src/render.rs (render_hyprland::monitor_rules)",
+        "usr/share/mios/mios.toml [desktop.hyprland.monitors]"
+      ],
+      "functions": [
+        "Monitor::from_json",
+        "parse_mode",
+        "Monitor::modes",
+        "Monitor::current_mode",
+        "Change::validate",
+        "lua_rule",
+        "fragment_toml"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-drift-runner/Cargo.toml",
       "hint": "Cargo manifest for mios-drift-runner native Rust drift check runner.",
       "related": [
@@ -8978,6 +9988,115 @@
         "load_vendor",
         "run",
         "main"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/Cargo.toml",
+      "hint": "Native static CLI + ratatui TUI client for the ventulusd fan-control daemon's HTTP-over-Unix-socket API (MiOS fan control).",
+      "related": [
+        "/usr/bin/mios-fanctl",
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/api.rs",
+      "hint": "Minimal HTTP/1.1-over-Unix-socket JSON client for the ventulusd API (no async runtime, no HTTP crate).",
+      "related": [
+        "tools/native/mios-fanctl/src/main.rs",
+        "/run/ventulus/ventulus.sock"
+      ],
+      "functions": [
+        "Client::request",
+        "Client::get",
+        "Client::post",
+        "Client::delete",
+        "parse_response",
+        "decode_chunked"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/config.rs",
+      "hint": "Layered config for mios-fanctl: built-in defaults < vendor /usr/share/mios/fan-control/mios-fanctl.toml < admin /etc/mios/fan-control/mios-fanctl.toml < $MIOS_FANCTL_CONFIG.",
+      "related": [
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/share/mios/mios.toml [hardware.fan_control]"
+      ],
+      "functions": [
+        "load",
+        "load_from",
+        "merge",
+        "effective_floor"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/main.rs",
+      "hint": "mios-fanctl -- CLI + ratatui TUI for the ventulusd fan-control daemon (status, fans, sensors, profiles, time-boxed overrides, pump-role provisioning).",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/share/mios/fan-control/profiles/mios-default.json"
+      ],
+      "functions": [
+        "main",
+        "run",
+        "cmd_status",
+        "cmd_fans",
+        "cmd_sensors",
+        "cmd_override",
+        "cmd_apply_roles",
+        "role_layers",
+        "apply_role_layers",
+        "check_override_pct"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/tui.rs",
+      "hint": "ratatui live dashboard for mios-fanctl: daemon/thermal state, per-header role/mode/duty/RPM, temperatures; read-only, refreshes every client.refresh_ms.",
+      "related": [
+        "tools/native/mios-fanctl/src/view.rs",
+        "tools/native/mios-fanctl/src/api.rs"
+      ],
+      "functions": [
+        "run",
+        "event_loop",
+        "Snapshot::fetch",
+        "draw"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/view.rs",
+      "hint": "Pure presentation helpers shared by the mios-fanctl CLI tables and the TUI (row models built from ventulusd JSON).",
+      "related": [
+        "tools/native/mios-fanctl/src/main.rs",
+        "tools/native/mios-fanctl/src/tui.rs"
+      ],
+      "functions": [
+        "short_header",
+        "mode_label",
+        "fan_rows",
+        "sensor_rows",
+        "duty_bar",
+        "active_profile"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -9039,6 +10158,20 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/display_scale.rs",
+      "hint": "One global display scale policy ([desktop.scaling]) for every output, local and remote: density (client DPI hint > EDID mm > resolution fallback) x viewing-distance class (handheld..desktop by diagonal) x orientation -> a scale Hyprland accepts (1/120 grid, integer logical size) + logical size + mobile flag (logical short side). Rust `compute` and the Lua twin `LUA` (compiled into the Hyprland projection's [desktop.mobile] handler) implement the same arithmetic; a parity test runs both. CLI: mios-gen display-scale.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.scaling] [desktop.mobile] [remote.rdp]",
+        "tools/native/mios-gen/src/render.rs (mobile_profile)",
+        "usr/share/mios/quickshell/Mobile.qml",
+        "usr/libexec/mios/mios-rdp-rfb-bridge"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/docs.rs",
       "hint": "specs/ markdown standardizer and wiki/spec metadata sync: version and RAG timestamps injected from SSOT (ADR-0021 gen category).",
       "related": [
@@ -9055,6 +10188,18 @@
         "standardize_content",
         "run_standardize_docs"
       ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/greeter.rs",
+      "hint": "SSOT projector for greetd's /etc/greetd/config.toml from mios.toml [desktop.greeter]: kind = \"glass\"",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.greeter]",
+        "usr/libexec/mios/mios-greeter-session"
+      ],
+      "functions": [],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -9204,6 +10349,15 @@
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tools.md",
       "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/tests/fixtures/greeter-ssot.toml",
+      "hint": "Test fixture = the staged [desktop.greeter] SSOT fragment (lane greeter); greeter.rs unit tests render from it.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
       "has_shebang": false
     },
     {
@@ -9551,6 +10705,22 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-resolver/src/sigstore.rs",
+      "hint": "Shared containers-policy.json renderer for [security.sigstore] (mios-gen writes, mios-gate checks): valid types, typed scopes, and no policy that accepts a MiOS-namespace image without a MiOS-anchored signature.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/containers/policy.json",
+        "automation/49-cosign-policy.sh",
+        "tools/native/mios-gen/src/main.rs",
+        "src/mios-rs/mios-gate/src/sigpolicy.rs",
+        "tests/test-cosign-trust-anchor.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-resolver/src/walk.rs",
       "hint": "Rust module for walking TOML value trees and yielding dotted path key-value pairs.",
       "related": [],
@@ -9654,6 +10824,31 @@
         "/usr/share/mios/templates/rust",
         "tools/native/mios-service-core/src/dashboard.rs",
         "tools/native/mios-service-core",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-shot/Cargo.toml",
+      "hint": "Cargo manifest for mios-shot -- native Wayland screenshots for MiOS (ext-image-copy-capture with wlr-screencopy and Screenshot-portal fallbacks; frozen-frame region/window/output selection on the glass shell; save, clipboard, notification actions).",
+      "related": [
+        "tools/native/Cargo.toml",
+        "usr/share/mios/mios.toml [desktop.screenshot]",
+        "usr/share/mios/quickshell/Shot.qml",
+        "usr/libexec/mios/mios-screenshot"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-shot/src/main.rs",
+      "hint": "mios-shot -- the MiOS native Linux screenshot tool (Hyprland first, any wlroots-protocol compositor, the",
+      "related": [
         "usr/share/mios/mios.toml"
       ],
       "functions": [],
@@ -10725,6 +11920,18 @@
         "mios-build",
         "mios-rebuild",
         "mios-update"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/bin/mios-portal",
+      "hint": "Native MiOS Portal launcher. Runs the Gecko build ([desktop.portal.gecko].binary at",
+      "related": [
+        "usr/share/mios/portal/Host.qml",
+        "usr/share/applications/mios-portal.desktop"
       ],
       "functions": [],
       "doc": null,
@@ -15380,6 +16587,20 @@
       "has_shebang": true
     },
     {
+      "path": "usr/lib/mios/agent-pipe/test_mios_test_zcode_bundle.py",
+      "hint": "Sibling unit test for the mockname python module, ensuring compliance with drift-check 11.",
+      "related": [
+        "/usr/lib/mios/agent-pipe/mios_pipe/mockname.py",
+        "/usr/lib/mios/agent-pipe/test_mios_mockname.py"
+      ],
+      "functions": [
+        "TestMockName"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/mios/agent-pipe/test_mios_tokenize.py",
       "hint": "Standalone assert-script unit test for mios_tokenize (WS-A5 tokenizer seam). Pure stdlib, no server.py/DB/pytest.",
       "related": [],
@@ -15899,6 +17120,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/mios/heavy-lock.sh",
+      "hint": "Shared heavy-build lock: one flock serialises every memory-heavy MiOS build (Gecko, image, kernel) on a host so two never overlap.",
+      "related": [
+        "usr/libexec/mios/mios-portal-build",
+        "usr/share/mios/mios.toml ([desktop.portal.builder].heavy_lock)"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/mios/ipc/varlink_activator.py",
       "hint": "MiOS system and orchestration module providing varlink activator capabilities.",
       "related": [
@@ -15955,6 +17188,27 @@
       "doc": "usr/share/doc/mios/manual/mios.md",
       "comment_style": "hash",
       "has_shebang": true
+    },
+    {
+      "path": "usr/lib/mios/mios_credentials.py",
+      "hint": "The ONE fail-closed credential resolution over the layered mios.toml SSOT (vendor < host < user + mios.d) -- account names, passwords, service account and persistent AutoLogon for every MiOS image pipeline (Windows answer files/DISM/UUP/ISO via the JSON projection, Linux image/installer/firstboot via the CLI).",
+      "related": [
+        "usr/lib/mios/mios_toml.py",
+        "usr/libexec/mios/mios-credential",
+        "usr/libexec/mios/win/unattend_gen.py",
+        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1 (Resolve-MiOSCredentials -- the PowerShell twin; keep the rules identical)"
+      ],
+      "functions": [
+        "CredentialError",
+        "resolve",
+        "windows_projection",
+        "identity_field",
+        "sysrescue",
+        "password_hash"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
     },
     {
       "path": "usr/lib/mios/mios_db_config.py",
@@ -16022,6 +17276,57 @@
       "has_shebang": true
     },
     {
+      "path": "usr/lib/mios/portal/application.ini",
+      "hint": "MiOS-Portal application metadata (Vendor, Name, RemotingName, CodeName, ID) and disabled Crash Reporter.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "semi",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/portal/browser/defaults/preferences/mios-portal.js",
+      "hint": "MiOS-Portal default prefs (<install_dir>/browser/defaults/preferences/mios-portal.js): Portal home, sketch layout, glass, autoconfig hook. App-level defaults are read after browser/omni.ja's firefox.js (the GRE defaults/pref/ is read before it and loses every key firefox.js also sets). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]; the Mozilla-AI-off prefs are locked in distribution/policies.json instead.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/distribution/policies.json */"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/portal/defaults/pref/channel-prefs.js",
+      "hint": "MiOS-Portal release channel preference.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/portal/mios-autoconfig.cfg",
+      "hint": "MiOS-Portal autoconfig: points new-tab to Portal, wires the left rail MiOS apps footer and right-edge local AI chat panel, and enforces complete network isolation / prefs lockdown via lockPref.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/browser/defaults/preferences/mios-portal.js"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "semi",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/portal/platform.ini",
+      "hint": "MiOS-Portal Gecko platform build metadata.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "semi",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/mios/test_mios_comments.py",
       "hint": "Unit tests for the comment lexer and classifier -- one fixture per classifier rule so every rule is proven to fire, plus lexer tests f...",
       "related": [],
@@ -16076,6 +17381,19 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/kernel.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/modules-load.d/mios-fan-control.conf",
+      "hint": "Autoloads the nct6775 Super-I/O hwmon driver (Nuvoton NCT67xx, incl. the NCT6799D on ASUS AM5 boards) so motherboard fan headers appear as /sys/class/hwmon pwmN/fanN for ventulusd (mios-fan-control).",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service",
+        "/usr/share/mios/fan-control/daemon.toml",
+        "/usr/share/mios/mios.toml [hardware.fan_control]"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -16223,10 +17541,22 @@
     },
     {
       "path": "usr/lib/systemd/resolved.conf.d/10-adguard.conf",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing drop-in (task_441).",
+      "hint": "Keep host DNS on discovered network links; never forward unicast DNS into the local mDNS listener.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system-preset/89-mios-fan-control.preset",
+      "hint": "Enables the MiOS fan-control daemon (ventulusd, alias mios-fan-control.service) at boot; the unit itself is skipped in VMs/containers (ConditionVirtualization=no).",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -16343,18 +17673,6 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/cockpit.socket.d.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/systemd/system/cockpit.socket.d/listen.conf",
-      "hint": "Configures the cockpit.socket drop-in to bind specifically to 0.0.0.0:9090 and enable ReusePort, ensuring IPv4 accessibility from Windows hosts via WSL2 and preventing EADDRINUSE errors during rapid restarts.",
-      "related": [
-        "cockpit.socket",
-        "localhost:9090"
-      ],
-      "functions": [],
-      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -16885,6 +18203,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-console-theme.service",
+      "hint": "Oneshot unit that renders the SSOT [colors] palette for the Linux VT console and applies it with setvtrgb before the first greeter starts.",
+      "related": [
+        "tools/native/mios-gen (render-console-theme)",
+        "usr/share/mios/mios.toml [colors]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-container-gc.service",
       "hint": "Systemd service for automatic OCI container storage LRU garbage collection and pruning.",
       "related": [
@@ -17082,7 +18412,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-firstboot.target",
-      "hint": "Defines the mios-firstboot.target unit to orchestrate initial provisioning services (CDI, libvirtd, and GRD setup) during the first boot sequence of the MiOS system.",
+      "hint": "Defines the mios-firstboot.target unit to orchestrate initial provisioning services (CDI and libvirtd setup; GRD setup is obsolete, remote desktop is [remote.rdp]) during the first boot sequence of the MiOS system.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
@@ -17242,7 +18572,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-grd-setup.service",
-      "hint": "Systemd unit that executes /usr/libexec/mios-grd-setup to initialize GNOME Remote Desktop (GRD) configurations once network and GDM are ready, ensuring remote access is provisioned on first boot.",
+      "hint": "Legacy unit for /usr/libexec/mios-grd-setup (GRD TLS material only; never opens firewall ports). Obsolete: disabled in 90-mios.preset and not wanted by mios-firstboot.target; remote desktop is [remote.rdp] (xrdp via mios-rdp).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
@@ -17568,6 +18898,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-offline-upgrade.service",
+      "hint": "Systemd service that applies an offline atomic bootc/OCI upgrade from removable media under /run/media.",
+      "related": [
+        "man:bootc(8)",
+        "usr/share/doc/mios/manual/offline-upgrade.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-opencode-gateway.service",
       "hint": "Systemd unit that hosts the opencode-gateway on the `opencode_gateway` port, providing a standard OpenAI-compatible /v1 API shim for the opencode CLI to enable multi-agent fan-out and local inference via mios-llm-light.",
       "related": [],
@@ -17701,6 +19043,19 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-power-sampler.service",
+      "hint": "Root CPU-package power sampler. It reads RAPL energy_uj, which stays root-only (the PLATYPUS mitigation), and",
+      "related": [
+        "usr/libexec/mios/mios-power-sampler",
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "usr/libexec/mios/mios-sysmon-line"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -18495,6 +19850,37 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/ventulusd.service",
+      "hint": "Upstream ventulusd (MIT, github.com/Plan-B-Development/ventulusd v5.1.0 @ b7a72ab7) fan-control daemon unit, shipped verbatim; MiOS policy lives in ventulusd.service.d/10-mios.conf (alias mios-fan-control.service).",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "/usr/bin/ventulusd",
+        "/usr/bin/ventulus-restore-auto",
+        "/usr/bin/mios-fanctl",
+        "/usr/share/mios/fan-control/daemon.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+      "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, bare metal only.",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service",
+        "/usr/share/mios/fan-control/daemon.toml",
+        "/usr/share/mios/fan-control/profiles/mios-default.json",
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/bin/mios-fanctl",
+        "/usr/lib/modules-load.d/mios-fan-control.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/user-preset/90-mios.preset",
       "hint": "Defines the user-session startup sequence for MiOS, enabling WSLg compatibility, environment injection, and the critical launcher broker/computer-use server for agent-to-host command execution.",
       "related": [
@@ -18596,15 +19982,6 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/systemd/user/mios-wallpaper.service",
-      "hint": "Systemd user unit for the mios-wallpaper living wallpaper occlusion & rendering daemon.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
       "path": "usr/lib/systemd/user/mios-wsl-env-import.service",
       "hint": "A systemd user service that imports WSLg environment variables (DISPLAY, WAYLAND_DISPLAY, XDG_SESSION_CLASS) into the systemd user-bus and dbus to enable GUI portal functionality and Flatpak integration in WSL.",
       "related": [],
@@ -18662,6 +20039,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf",
+      "hint": "Keeps a tmux pane (and the tmux session around it) alive when one process inside it is OOM-killed: only that process dies, not the whole pane scope.",
+      "related": [
+        "usr/lib/systemd/user/vte-spawn-.scope.d/defaults.conf",
+        "usr/share/mios/mios.toml [terminal]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/zram-generator.conf.d/10-mios.conf",
       "hint": "Configures zram0 parameters for MiOS, setting a dynamic size capped at 32GB and using zstd compression to optimize memory availability for virtualization payloads.",
       "related": [],
@@ -18710,11 +20099,23 @@
       "has_shebang": false
     },
     {
-      "path": "usr/lib/tuned/profiles/mios-host-performance/tuned.conf",
-      "hint": "GNOME \"Performance\" power mode for a MiOS host: mios-host plus shallower CPU idle states for latency-sensitive guests and builds. Exists because tuned-ppd requires a one-to-one PPD-to-TuneD mapping.",
+      "path": "usr/lib/tmpfiles.d/mios-greeter.conf",
+      "hint": "Cache dir where the MiOS glass greeter (runs as greetd) remembers the last user and session.",
       "related": [
-        "/usr/lib/tuned/profiles/mios-host/tuned.conf",
-        "/etc/tuned/ppd.conf"
+        "usr/share/mios/greeter/shell.qml (MIOS_GREETER_STATE)",
+        "usr/libexec/mios/mios-greeter-session"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/tuned/profiles/mios-host-performance/tuned.conf",
+      "hint": "Generated by mios-gen render-tuned from mios.toml [host.tuning.profiles].",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/render.rs"
       ],
       "functions": [],
       "doc": null,
@@ -18723,13 +20124,10 @@
     },
     {
       "path": "usr/lib/tuned/profiles/mios-host/tuned.conf",
-      "hint": "tuned profile for a MiOS workstation host that runs rootless/rootful containers and KVM guests while serving a graphical desktop from the iGPU; discrete GPUs are left to guests (see mios-gpu-roles). Inherits Fedora's virtual-host.",
+      "hint": "Generated by mios-gen render-tuned from mios.toml [host.tuning.profiles].",
       "related": [
-        "/usr/lib/tuned/profiles/virtual-host/tuned.conf",
-        "/etc/tuned/ppd.conf",
-        "/usr/libexec/mios/mios-gpu-roles",
-        "/usr/share/mios/mios.toml",
-        "/usr/libexec/mios/mios-bootstrap-linux.sh"
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/render.rs"
       ],
       "functions": [],
       "doc": null,
@@ -18869,11 +20267,13 @@
     },
     {
       "path": "usr/libexec/mios-grd-setup",
-      "hint": "Initializes GNOME Remote Desktop (GRD) by generating EC TLS certificates, configuring grdctl parameters, optionally setting credentials via MIOS_PASSWORD, and opening RDP ports 3389/8080 in firewalld.",
+      "hint": "Legacy GNOME Remote Desktop (GRD) first-boot setup: generates EC TLS material and points grdctl at it. It NEVER opens firewall ports (RDP is reachable only through [remote.rdp]: xrdp on [ports].rdp, opened on the tailnet zone by mios-rdp-firewall.service) and it does not enable GRD while [remote.rdp].enabled is true. Obsolete on the Hyprland desktop: mios-grd-setup.service is disabled in 90-mios.preset.",
       "related": [
         "/usr/lib/mios/paths.sh",
         "mios-grd-setup.service",
-        "gnome-remote-desktop.service"
+        "gnome-remote-desktop.service",
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/share/mios/mios.toml [remote.rdp]"
       ],
       "functions": [],
       "doc": null,
@@ -21420,6 +22820,20 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/mios-credential",
+      "hint": "CLI over usr/lib/mios/mios_credentials.py -- prints the layered-SSOT account name / sha512 hash, or writes the 0600 MIOS_RESOLVED_JSON the Windows (answer file, DISM, UUP, ISO) pipeline overlays. Fails closed (exit 3) naming the missing key.",
+      "related": [
+        "usr/lib/mios/mios_credentials.py",
+        "automation/11-user.sh",
+        "automation/build-mios.sh",
+        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/mios-cron-director",
       "hint": "A cron-task scheduler that parses system and user rules from TOML files, executing commands via bash while optionally gating execution through a local LLM's YES/NO decision based on system state.",
       "related": [
@@ -22014,6 +23428,19 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/mios-flatpak-run",
+      "hint": "Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole",
+      "related": [
+        "/usr/lib/mios/userenv.sh",
+        "/usr/share/applications/mios-zen.desktop",
+        "mios.toml [browser.zen]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/mios-forgejo-runner-firstboot.sh",
       "hint": "bash Run `forgejo-runner register` once so /srv/mios/forge-runner/.runner AI-related: /usr/libexec/mios/mios-forgejo-runner-fir...",
       "related": [],
@@ -22116,6 +23543,18 @@
         "cmd_igpu_desktop",
         "cmd_reserve_dgpu"
       ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-greeter-session",
+      "hint": "greetd greeter launcher for the MiOS glass greeter. Runs Quickshell (usr/share/mios/greeter)",
+      "related": [
+        "usr/share/mios/greeter/shell.qml",
+        "tools/native/mios-gen/src/greeter.rs"
+      ],
+      "functions": [],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -22563,8 +24002,11 @@
     },
     {
       "path": "usr/libexec/mios/mios-living-wallpaper",
-      "hint": "Daemon script to manage the GPU-accelerated animated living wallpaper on Linux (WBRAND-05).",
-      "related": [],
+      "hint": "Compatibility entry for the shared SSOT-colored Windows/Linux wallpaper host.",
+      "related": [
+        "tools/native/mios-wallpaperd",
+        "usr/share/mios/wallpaper/Host.qml"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -22815,7 +24257,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-models-firstboot",
-      "hint": "FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml, downloads each GGUF with resume, VERIFIES its sha256 (streamed, chunked) and discards the part file on mismatch rather than installing an unverified weight, then writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.",
+      "hint": "FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.",
       "related": [
         "mios-models",
         "mios-models-firstboot.service",
@@ -23229,6 +24671,60 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/mios-portal-build",
+      "hint": "Off-image MiOS-Portal builder: under the heavy-build lock and a systemd-run scope (MemoryMax, no swap) builds localhost/mios-portal-build and runs Surfer + mach in it; output is /var/lib/mios-build/artifacts/mios-portal/<ts>/ (tarball, manifest.json, logs, metrics).",
+      "related": [
+        "usr/share/mios/portal-build/Containerfile",
+        "usr/share/mios/portal-build/mios-portal-build-inner",
+        "usr/lib/mios/heavy-lock.sh",
+        "usr/share/mios/mios.toml ([desktop.portal.builder])"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-portal-probe",
+      "hint": "MiOS-Portal live probe: launches an isolated headless MiOS-Portal (temporary profile, its own memory-capped user scope, Marionette) and checks (layout) the sketch layout against [desktop.portal.gecko.layout] with per-state screenshots and DOM geometry, or (egress) that no DNS lookup or socket leaves loopback, tracking every process of the scope's cgroup (the real firefox-bin and its children, never a wrapper PID).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/",
+        "usr/share/mios/theme/templates/portal-shared.inc.css.tmpl",
+        "tests/test-portal-probe.py"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-portal-tree",
+      "hint": "MiOS-Portal build-copy stager and artifact verifier: copies the SSOT-rendered product tree (src/mios-portal) into a Surfer project, fills the @BUILD:<key>@ version sentinels, selects the lane mozconfig and derives the branding icon set; verify-stage re-derives that exact stage from the current tree (one implementation, bidirectional) and verify-install proves an installed tree equals the artifact.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/libexec/mios/mios-dotfiles-render",
+        "usr/libexec/mios/mios-portal-build",
+        "automation/67-bake-portal.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-power-sampler",
+      "hint": "Root CPU-package power sampler. It reads the RAPL package zone's energy_uj, which stays root-only (0400): that",
+      "related": [
+        "usr/lib/systemd/system/mios-power-sampler.service",
+        "usr/share/mios/quickshell/Sysmon.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/mios-powershell",
       "hint": "Executes PowerShell scripts on Windows via pwsh.exe or powershell.exe, providing a first-class `powershell_run` verb for agents to interact with Windows cmdlets, registry, and COM objects with standardized JSON output. The success stream is FLATTENED through Out-String at an explicit width because the broker runs with no console: PowerShell's default formatter sizes every column against a window width of -1 and renders each object as a BLANK LINE, so an object-returning cmdlet otherwise reaches the model as empty output. Knobs live in mios.toml [powershell]; manual ch57.",
       "related": [
@@ -23294,6 +24790,69 @@
         "_chunks",
         "cmd_ingest",
         "cmd_query",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-rdp",
+      "hint": "[remote.rdp] consumer -- RDP (Windows App / mstsc / FreeRDP) into the operator's LIVE Hyprland session. `render` writes xrdp.ini + sesman.ini to /run/mios/rdp and creates the TLS host cert once; `firewall` opens [ports].rdp only on the tailnet zone; `vnc` runs the RFB bridge inside the session, which per RDP attach creates a client-sized Hyprland headless output (mode \"virtual\") or shares a physical one (mode \"mirror\") through wayvnc on a UNIX socket; `enabled` gates the units.",
+      "related": [
+        "/usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [remote.rdp.redirect] [remote.rdp.naming] [ports].rdp [packages.remote-desktop]",
+        "/usr/lib/systemd/system/xrdp.service.d/10-mios.conf",
+        "/usr/lib/systemd/system/xrdp-sesman.service.d/10-mios.conf",
+        "/usr/lib/systemd/system/mios-rdp-firewall.service",
+        "/usr/lib/systemd/user/mios-rdp-vnc.service",
+        "/usr/lib/systemd/user/mios-rdp-native.service",
+        "/usr/lib/systemd/system/mios-rdp-priv.socket",
+        "/usr/libexec/mios/rdp-native/mios-rdp-server",
+        "automation/58-gnome-remote-desktop.sh",
+        "automation/71-bake-rdp-server.sh"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-rdp-rfb-bridge",
+      "hint": "[remote.rdp] RFB bridge + remote-display manager between xrdp's libvnc (RFB 3.3, server-chosen security) and wayvnc/neatvnc (RFB 3.8). Per RDP attach it starts a wayvnc child; mode \"virtual\" first creates a Hyprland headless output ([remote.rdp].virtual_output, HEADLESS-*) attached below the centre of the primary local output (virtual_attach = \"below-center\", edge-adjacent in logical px, re-centred on every resize/rotation/scale change; several remote outputs are centred as a group), consumes the client's SetDesktopSize, applies mode + the [desktop.scaling] scale (`mios-gen display-scale --remote`) with hl.monitor to that output only, and answers xrdp itself (wayvnc always runs --disable-resizing: its wlr-output-management path rewrote the physical monitor's rule on Hyprland); a Hyprland config reload (socket2 configreloaded) or another remote output coming/going re-applies that output's mode, scale, position and workspace rule (a reload drops the bridge's runtime rules; no primary local output = placed at 0,0, never at a negative x); the pointer is drawn into the frames (wayvnc --render-cursor, cursor pseudo-encodings dropped from xrdp's SetEncodings) when the output can be scaled ([remote.rdp].render_cursor = \"auto\"), because wayvnc's cursor capture fails for good on a scaled Hyprland output; mode \"mirror\" shares a physical output unresized. If wayvnc dies mid-session it is restarted transparently: xrdp's connection is kept, the partial RFB message is completed, the new wayvnc is handshaken by the bridge and asked for a full update. Relays pixels verbatim; frames both RFB directions to inject/rewrite ExtendedDesktopSize replies. Refresh pacing ([remote.rdp].refresh_pacing = \"adaptive\", Pacer): every client starts at target_hz; when it provably takes fewer than half the frames (e.g. a phone over the RDP link, ~11 frames/s of legacy bitmaps) the virtual output's refresh drops to >= 2x the delivered rate (floor min_hz) so the iGPU stops rendering frames nobody receives, and it returns to target_hz as soon as the client keeps up; delivered rate, refresh and pacing are in stats.json.",
+      "related": [
+        "/usr/libexec/mios/mios-rdp",
+        "/usr/lib/systemd/user/mios-rdp-vnc.service",
+        "/usr/share/mios/mios.toml [remote.rdp] [desktop.scaling]",
+        "/usr/bin/mios-gen (display-scale)",
+        "/usr/libexec/mios/wayvnc/wayvnc (automation/70-bake-wayvnc-upstream.sh)",
+        "$XDG_RUNTIME_DIR/mios-display-hints.json"
+      ],
+      "functions": [
+        "handshake",
+        "upstream_handshake",
+        "RFBFramingError",
+        "ClientStream",
+        "ServerStream",
+        "eds_update",
+        "Hypr",
+        "parse_cursorpos",
+        "monitor_at",
+        "should_restore_local",
+        "attach_below",
+        "wayvnc_version",
+        "scaled_capture_ok",
+        "overlay_cursor",
+        "policy_scale",
+        "write_display_hint",
+        "refresh_pacing",
+        "Pacer",
+        "Bridge",
+        "Bridge.reapply",
+        "Bridge._set_refresh",
+        "Bridge._pace",
+        "Bridge._event_action",
+        "valid_scale",
+        "target_scale",
         "main"
       ],
       "doc": null,
@@ -23442,7 +25001,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-screenshot",
-      "hint": "A bash wrapper for capturing the primary Windows monitor as a PNG via mios-pc-control, supporting optional --open and --clipboard flags to provide a unified interface for remote screen capture.",
+      "hint": "Screenshot entry point behind the screenshot/snap/prtscr aliases: in a Linux Wayland session it hands off to the native /usr/bin/mios-shot (mios-shot modes and flags pass through; the legacy --clipboard/--open/--window/OUT flags are translated); under WSL it captures the primary Windows monitor as a PNG via mios-pc-control (--open, --clipboard).",
       "related": [
         "/usr/libexec/mios/mios-screenshot",
         "/etc/mios/mios.toml",
@@ -23451,7 +25010,9 @@
         "mios-find",
         "mios-open-url",
         "mios-window",
-        "mios-windows"
+        "mios-windows",
+        "/usr/bin/mios-shot",
+        "usr/share/mios/mios.toml [desktop.screenshot]"
       ],
       "functions": [],
       "doc": null,
@@ -23845,6 +25406,19 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/mios-sysmon-line",
+      "hint": "Shared status-line emitter for MiOS-Tmux (mios-theme.tmux.conf) and the status island (Sysmon.qml).",
+      "related": [
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "usr/share/mios/tmux/mios-theme.tmux.conf",
+        "tools/native/mios-service-core/src/tmux_theme.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/mios-system-status",
       "hint": "Provides a single JSON blob of hardware (CPU, GPU, RAM, Disk), service status, and model data (via the mios-llm-light API) to the `system_status` verb to prevent the LLM from hallucinating system metrics.",
       "related": [
@@ -23907,7 +25481,7 @@
       "path": "usr/libexec/mios/mios-terminal",
       "hint": "Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation.",
       "related": [
-        "/usr/share/mios/mios.toml [keybindings]",
+        "/usr/share/mios/mios.toml [keybindings] [theme.tmux]",
         "/etc/tmux.conf",
         "mios-ai-terminal"
       ],
@@ -26272,9 +27846,18 @@
     },
     {
       "path": "usr/libexec/mios/vfio/setup-looking-glass.py",
-      "hint": "Looking Glass B6 IVSHMEM shared memory setup and VFIO passthrough validation.",
+      "hint": "Looking Glass IVSHMEM setup, the SSOT [vm.looking_glass] domain profile (SPICE on a fixed port, one spicevmc channel, SPICE audio, SMT topology + topoext, localtime RTC, ivshmem), the client config/args (guest resolution follows the client window via the IDD), IVSHMEM sizing for the largest host mode, the /dev/shm SELinux label, the one-action VM + client launcher, and guest provisioning of the upstream Looking Glass IDD built from the same commit as the client.",
       "related": [
         "tests/test-looking-glass.py",
+        "usr/share/mios/mios.toml [vm.looking_glass] [vm.win11]",
+        "usr/libexec/mios/Xbox-Final-NoAutoSelect.xml",
+        "usr/libexec/mios/Xbox-AutoEnroll.xml",
+        "usr/libexec/mios/virt-apply.sh",
+        "usr/libexec/mios/xbox-repair.sh",
+        "usr/lib/tmpfiles.d/50-mios.conf",
+        "automation/38-selinux.sh",
+        "automation/69-bake-lookingglass-client.sh",
+        "usr/share/mios/windows/mios-looking-glass-idd.ps1",
         "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md"
       ],
       "functions": [],
@@ -26515,6 +28098,264 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/win/xbox/answer.py",
+      "hint": "MiOS-Xbox payload renderer (xb-05/xb-08/xb-10/xb-12): from ONE rendered xbox-spec.json (render_spec.py) plus the verified build inputs, writes everything the image carries -- autounattend.xml (accounts/AutoLogon/locale/disk/Xbox home from the spec, credentials from the layered SSOT only), SetupComplete.cmd + the rendered SYSTEM setup script (guest tools, WinFsp/VirtIO-FS, WebView2, Looking Glass host + IDD, GPU detection task, WinRM for the desktop admin on the host-only subnet, groups, nested-virt features, capabilities), the first-logon script (persistent AutoLogon, Store hydrate task, RID-500 disabled at finalize), the offline registry .reg the worker imports, the credential-free guest spec projection and the MiOS components. No legacy literal, no credential literal outside the answer file, no GPU vendor driver.",
+      "related": [
+        "usr/libexec/mios/win/xbox/render_spec.py",
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/share/mios/windows/build/New-MiOSXboxImage.ps1",
+        "usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [
+        "render_answer_file",
+        "render_registry",
+        "render_setup_script",
+        "render_firstlogon_script",
+        "stage_components",
+        "render_payload",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/build.py",
+      "hint": "THE MiOS-Xbox image build entry (xb-15, XB-1..XB-4): render_spec (layered SSOT -> xbox-spec.json) -> resolve_latest (newest upstream, no pins -> build-manifest.json) -> fetch (download + verify every artefact) -> family (offline: the image's BuildBranch has a captured Start layout) -> answer (autounattend + SetupComplete chain + offline .reg + components from the SAME spec) -> conform rendered gate -> GPU-less worker over WinRM (UUP Dump converter + New-MiOSXboxImage.ps1 DISM servicing + ISO) -> read-only copy-out -> conform image gate -> build-<ts>/ manifest. Every stage fails closed; heavy stages run under the SSOT heavy lock in a MemoryMax scope; the worker never runs next to the target/base VM and never holds a GPU.",
+      "related": [
+        "usr/libexec/mios/win/xbox/render_spec.py",
+        "usr/libexec/mios/win/xbox/resolve_latest.py",
+        "usr/libexec/mios/win/xbox/fetch.py",
+        "usr/libexec/mios/win/xbox/answer.py",
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/share/mios/windows/build/New-MiOSXboxImage.ps1",
+        "usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [
+        "build_layers",
+        "plan",
+        "Build",
+        "stage_render",
+        "stage_resolve",
+        "stage_fetch",
+        "stage_family",
+        "stage_payload",
+        "stage_gate_rendered",
+        "stage_job",
+        "stage_worker",
+        "stage_gate_image",
+        "stage_manifest",
+        "run",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/capture.py",
+      "hint": "MiOS-Xbox Start layout capture (xb-11, XB-1; operator decision \"start2.bin/VisiblePlaces captured per build family on the worker\"). Renders job\\capture.json from xbox-spec.json (family, the start.folders/start.pins registry items the image gets, [windows.xbox.start.capture] account + timeouts), drives one GPU-less worker session (exchange disk -> define -> boot -> quiesce -> MiOS-Xbox-Capture.ps1 prepare -> reboot into the capture account's autologon -> collect -> shutdown -> read-only copy-out -> cleanup), verifies the record (schema, family, hashes, empty exported grid == start.pins, policy in effect) and installs <family>/start2.bin + visibleplaces.json into the MiOS tree atomically with the tree's owner. check_assets() is the build's family gate: a family with no asset, a missing file or a start2.bin that differs from its capture record refuses the build.",
+      "related": [
+        "usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1",
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/share/mios/mios.toml ([windows.xbox.start.layout_assets.*]",
+        "[windows.xbox.start.capture])",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [
+        "CaptureError",
+        "capture_job",
+        "run_capture",
+        "verify_capture",
+        "install_assets",
+        "check_assets",
+        "find_asset"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/conform.py",
+      "hint": "Offline MiOS-Xbox spec-conformance gate (xb-03/xb-16): checks the rendered Windows pipeline inputs (answer file incl. embedded base64 scripts, SetupComplete/first-logon payloads, .reg files, driver set, payload tree) and/or a serviced install.wim (wimlib-imagex info/dir/extract + hivexregedit on SOFTWARE/SYSTEM/Default NTUSER.DAT, driver store) against every xbox-spec.json item, plus a legacy-literal deny-list; exits non-zero with named findings.",
+      "related": [
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/libexec/mios/win/xbox/probe.py",
+        "tests/test-mios-xbox-conform.py",
+        "/.devloop/plan-mios-xbox.md"
+      ],
+      "functions": [
+        "Observations",
+        "parse_reg_text",
+        "parse_script",
+        "parse_answer_file",
+        "collect_rendered",
+        "collect_image",
+        "evaluate",
+        "run_rendered",
+        "run_image",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/fetch.py",
+      "hint": "MiOS-Xbox fetch step (xb-15, XB-2): downloads every artefact resolve_latest.py recorded in build-manifest.json (fresh UUP Dump file list for the resolved update id, virtio-win RPM -> ISO -> w11 driver tree + guest-tools bundle, latest qemu-ga, WinFsp, WebView2 standalone, Looking Glass host + IDD of the client's commit, UUP Dump's Windows converter at the resolved commit) and verifies each against the manifest's integrity anchor (UUP per-file sha256 + Microsoft FileDigest, published md5/sha256, git tree blob ids, Authenticode size now + signature on the worker and in the guest). Nothing unverified is ever kept; any mismatch aborts. Writes inputs.json for answer.py and the worker.",
+      "related": [
+        "usr/libexec/mios/win/xbox/resolve_latest.py",
+        "usr/libexec/mios/win/xbox/answer.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [
+        "Downloader",
+        "fetch_uup",
+        "fetch_virtio",
+        "fetch_file",
+        "fetch_converter",
+        "render_converter_config",
+        "fetch_all",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/probe.py",
+      "hint": "MiOS-Xbox in-guest conformance probe, host side (xb-18, XB-6/XB-3): derives the item list from the same xbox-spec.json as the offline gate, runs usr/share/mios/windows/xbox/mios-xbox-probe.ps1 in the guest over WinRM (read-only; credentials = the SSOT-resolved desktop account from the spec, never printed), optionally checks the host side (qemu-ga guest-ping, listening console ports, Looking Glass shm size), and evaluates the guest's JSON into named findings; `evaluate` replays a recorded probe output offline.",
+      "related": [
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/share/mios/windows/xbox/mios-xbox-probe.ps1",
+        "tests/test-mios-xbox-probe.py",
+        "usr/libexec/mios/vfio/setup-looking-glass.py"
+      ],
+      "functions": [
+        "build_request",
+        "evaluate",
+        "host_checks",
+        "probe_settings",
+        "default_spec",
+        "fixture_spec",
+        "ssot_host_defaults",
+        "run_guest",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/render_spec.py",
+      "hint": "MiOS-Xbox spec renderer: layered SSOT [windows.xbox] (vendor -> host -> user via mios_toml.load_merged) -> resolved xbox-spec.json, the single input of every Windows build step; a missing key or empty credential is a hard failure naming the key.",
+      "related": [
+        "usr/lib/mios/mios_toml.py",
+        "usr/share/mios/mios.toml",
+        "tests/test-mios-xbox-spec.py",
+        "/.devloop/GOALS-mios-xbox.md",
+        "/.devloop/plan-mios-xbox.md"
+      ],
+      "functions": [
+        "render",
+        "render_layers",
+        "resolve_ref",
+        "build_registry",
+        "guest_projection",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/resolve_latest.py",
+      "hint": "MiOS-Xbox latest-resolver (xb-06, XB-2). Resolves, at build time and with no pins, the newest",
+      "related": [
+        "/.devloop/tasks-mios-xbox.jsonl (xb-06",
+        "xb-04",
+        "xb-08",
+        "xb-15)",
+        "usr/lib/mios/mios_toml.py"
+      ],
+      "functions": [
+        "load_config",
+        "resolve_uup",
+        "resolve_virtio",
+        "resolve_qemu_ga",
+        "resolve_lg_host",
+        "resolve_winfsp"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/spec_items.py",
+      "hint": "The ONE MiOS-Xbox spec item model shared by the offline conformance gate (conform.py) and the in-guest WinRM probe (probe.py): loads xbox-spec.json (or the [windows.xbox] SSOT tree), turns it into a flat list of typed check items with evidence locators, canonicalises registry paths/values, and holds the legacy-literal deny-list.",
+      "related": [
+        "usr/libexec/mios/win/xbox/conform.py",
+        "usr/libexec/mios/win/xbox/probe.py",
+        "usr/share/mios/windows/xbox/mios-xbox-probe.ps1",
+        "tests/test-mios-xbox-conform.py",
+        "tests/test-mios-xbox-probe.py"
+      ],
+      "functions": [
+        "load_spec",
+        "items_from_spec",
+        "items_from_rendered",
+        "spec_policy",
+        "canon_reg_path",
+        "canon_value",
+        "value_equal",
+        "deny_hits",
+        "spec_deny_findings",
+        "sha256_text",
+        "Finding"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/win/xbox/worker.py",
+      "hint": "MiOS-Xbox GPU-less DISM build worker (xb-14, Q9): every value from the rendered xbox-spec.json ([windows.xbox.vm.worker], [windows.xbox.build]). The worker domain is derived from the base domain's INACTIVE XML (read-only) on a qcow2 copy-on-write overlay of its disk (the base disk/domain are never written), with every hostdev/ivshmem/TPM/SPICE device stripped (a hostdev is refused), plus ONE exchange disk the host formats and fills (job inputs) and later reads back read-only (ISO, result, logs) with libguestfs. WinRM signs in with the SSOT-declared credential source (the base guest's answer file), never printed. Concurrency/RAM/watchdog guards refuse to start next to the target or base VM.",
+      "related": [
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1",
+        "usr/share/mios/windows/build/New-MiOSXboxImage.ps1",
+        "tests/test-mios-xbox-build.py"
+      ],
+      "functions": [
+        "WorkerConfig",
+        "generate_worker_xml",
+        "validate_worker_xml",
+        "worker_credentials",
+        "preflight",
+        "prepare_exchange",
+        "define",
+        "start",
+        "wait_winrm",
+        "submit_job",
+        "poll_job",
+        "stop",
+        "extract",
+        "cleanup",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/wsl-early",
       "hint": "Executes pre-sysinit fixups for WSL2 by marking the root mount as rshared to enable systemd mount namespaces and manually creating /dev/net/tun and /dev/fuse nodes to ensure cockpit and rootless podman functionality.",
       "related": [
@@ -26592,6 +28433,46 @@
         "/usr/libexec/mios/mios-configurator-launch",
         "mios-configurator-launch",
         "http://localhost:{port}/configure"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-displays.desktop",
+      "hint": "App-drawer entry for MiOS Displays, the monitor settings app (arrange outputs, resolution, refresh rate, scale, rotation, enable/disable, primary); Exec mirrors [desktop.topbar.commands].display.",
+      "related": [
+        "/usr/bin/mios-displays",
+        "/usr/share/mios/displays/Displays.qml",
+        "usr/share/mios/mios.toml [desktop.displays]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-portal.desktop",
+      "hint": "Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:8700/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal].",
+      "related": [
+        "/usr/bin/mios-portal",
+        "/usr/share/mios/portal/Host.qml",
+        "mios.toml [desktop.portal]",
+        "http://localhost:{port}/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-shot.desktop",
+      "hint": "App-drawer entry for mios-shot region capture (touch/phone outputs have no Print key); the short delay lets the drawer close before the freeze.",
+      "related": [
+        "/usr/bin/mios-shot",
+        "usr/share/mios/quickshell/Shot.qml",
+        "usr/share/mios/mios.toml [desktop.screenshot]"
       ],
       "functions": [],
       "doc": null,
@@ -26680,6 +28561,54 @@
       "hint": "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at port 8899 via a web browser.",
       "related": [
         "localhost:8800"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-terminal.desktop",
+      "hint": "Dock/drawer entry for the MiOS terminal; Exec mirrors [keybindings.actions] id=\"terminal\" desktop_command in usr/share/mios/mios.toml (the global session selector).",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.shell].dock_pinned",
+        "usr/libexec/mios/mios-terminal"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-xbox.desktop",
+      "hint": "One action for the MiOS-Xbox VM: setup-looking-glass.py --launch starts the first defined domain of mios.toml [vm.looking_glass].domains (virsh start when it is not running), waits for the IVSHMEM framebuffer and execs looking-glass-client with the SSOT SPICE host/port/audio and shmFile.",
+      "related": [
+        "/usr/libexec/mios/vfio/setup-looking-glass.py",
+        "mios.toml [vm.looking_glass]",
+        "[desktop.hyprland].window_rules mios-looking-glass"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/applications/mios-zen.desktop",
+      "hint": "Zen, the native MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it.",
+      "related": [
+        "/usr/libexec/mios/mios-flatpak-run",
+        "/usr/libexec/mios/mios-theme-render (apply_web)"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/cockpit/branding/mios/branding.css",
+      "hint": "MiOS Cockpit branding (os-release ID=mios selects branding/mios). Login page",
+      "related": [
+        "usr/share/mios/mios.toml [theme.web] [dotfiles.registry.cockpit-branding]"
       ],
       "functions": [],
       "doc": null,
@@ -26789,12 +28718,8 @@
     },
     {
       "path": "usr/share/containers/systemd/mios-enforcer.container",
-      "hint": "MiOS Cilium Tetragon eBPF kernel enforcement plane Quadlet container. (WS-SEC / KENF-01 / task_169 / Milestone M4).",
-      "related": [
-        "usr/lib/mios/agent-pipe/mios_isolation.py",
-        "tests/test-tetragon-quarantine.py",
-        "/etc/tetragon/tetragon.tp.d/20-agent-sandboxing.yaml"
-      ],
+      "hint": "MiOS Cilium Tetragon eBPF kernel enforcement plane: TracingPolicy kprobe sys_enter_connect -> Sigkill quarantines agent network egress. (WS-7 pods-as-SSOT).",
+      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -30046,6 +31971,15 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
+      "hint": "Chapter 89: Glass Desktop, Liquid Shell Controls, Hyper-Converged VM Display Mirroring, and Session Resilience. Covers Hyprland windowshade shaders, per-window glass controls and interior fallbacks, miosd appmenu registrar pills, float-first placement geometry, ventulusd fan safety, Looking Glass IDD dual mirroring, and tmux OOM scope resilience.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/manual/cockpit.socket.d.md",
       "hint": "Manual pages distilled from the source comments of cockpit.socket.d, sanitized, each passage anchored to the comment it came from.",
       "related": [],
@@ -32306,6 +34240,20 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/displays/Displays.qml",
+      "hint": "MiOS Displays -- the monitor settings app (arrange outputs, resolution, refresh rate, scale, rotation, enable/disable, primary) on the SSOT glass Theme. Every change goes through the native backend `mios-displays` (validated live apply via hyprctl eval hl.monitor, \"keep these settings?\" timed revert, save into the [desktop.hyprland.monitors] mios.d drop-in that mios-gen re-projects). IpcHandler \"displays\" drives the same paths for scripted use.",
+      "related": [
+        "tools/native/mios-displays/src/main.rs",
+        "usr/share/mios/quickshell/Theme.qml",
+        "usr/share/mios/mios.toml [desktop.displays] [desktop.hyprland.monitors]",
+        "usr/share/applications/mios-displays.desktop"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/docs/MIOS-ROADMAP-PROGRESS-2026-06-22.md",
       "hint": "Honest progress + state companion to MIOS-ROADMAP-2026-06-22.md, written after the \"/goal continue roadmap\" execution session (2026-06-22). Records what is ACTUALLY done + live-verified vs gated vs residual, and flags the pod-deployment landmine (Pod= on 17 containers, only 2 pods deployed). WS-G honesty reconciliation. Trust THIS + the engineering-blueprint over the triumphant MEMORY.md.",
       "related": [
@@ -32659,6 +34607,32 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/fan-control/daemon.toml",
+      "hint": "MiOS vendor daemon.toml for ventulusd (VENTULUS_CONFIG, set by ventulusd.service.d/10-mios.conf). Strict upstream schema: an unknown key inside a section makes the daemon exit, so only documented keys appear here.",
+      "related": [
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "/usr/share/mios/fan-control/profiles/mios-default.json",
+        "/usr/share/mios/mios.toml [hardware.fan_control]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/fan-control/mios-fanctl.toml",
+      "hint": "MiOS vendor config for mios-fanctl (ventulusd client): socket, refresh, client-side override floor, default profile, and header roles applied at service start (ExecStartPost=mios-fanctl apply-roles).",
+      "related": [
+        "/usr/bin/mios-fanctl",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "/usr/share/mios/mios.toml [hardware.fan_control]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/fastfetch/config.jsonc",
       "hint": "fastfetch config template; mios-dotfiles-render fills its tokens from mios.toml into usr/share/mios/fastfetch/config.jsonc.",
       "related": [],
@@ -32678,6 +34652,67 @@
       "functions": [],
       "doc": null,
       "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/greeter/GlassButton.qml",
+      "hint": "Keyboard-operable glass pill button for the MiOS greeter (Enter/Space activate, focus ring).",
+      "related": [
+        "usr/share/mios/greeter/shell.qml",
+        "usr/share/mios/quickshell/Theme.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/greeter/GlassField.qml",
+      "hint": "Glass text field for the MiOS greeter (label + rounded translucent input, accent ring on focus).",
+      "related": [
+        "usr/share/mios/greeter/shell.qml",
+        "usr/share/mios/quickshell/Theme.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/greeter/Sessions.qml",
+      "hint": "Session catalogue for the MiOS glass greeter: lists *.desktop files in the greetd session",
+      "related": [
+        "usr/share/mios/greeter/shell.qml",
+        "usr/share/wayland-sessions/",
+        "usr/libexec/mios/mios-greeter-session"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/greeter/Users.qml",
+      "hint": "Login-user catalogue for the MiOS glass greeter: human accounts from the passwd database",
+      "related": [
+        "usr/share/mios/greeter/shell.qml",
+        "usr/share/mios/mios.toml [desktop.greeter]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/greeter/shell.qml",
+      "hint": "MiOS glass greeter: a Quickshell greetd client (Quickshell.Services.Greetd) run fullscreen inside",
+      "related": [
+        "usr/libexec/mios/mios-greeter-session",
+        "tools/native/mios-gen/src/greeter.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
       "has_shebang": false
     },
     {
@@ -32944,9 +34979,155 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/hyprland/hyprland.lua",
+      "hint": "Generated by mios-gen render-hyprland from layered mios.toml; edit the SSOT.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/render.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/hyprland/mios-keys.conf",
       "hint": "Generated from mios.toml [keybindings] by mios-unit-gen keybindings.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/Makefile",
+      "hint": "Build mios-wobbly.so. `mios-gen build-hyprland-plugin --name mios-wobbly` (inside",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/tests/model_test.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/tests/lamp_test.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/fxstats.hpp",
+      "hint": "Frame-pacing counters shared by the wobble and the lamp (header-only, inline globals, so main.cpp and",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
+        "tests/test-mios-lamp.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
+      "hint": "Magic lamp for Hyprland 0.56 (MiOS original source; part of mios-wobbly.so, the one MiOS mesh backend).",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+        "usr/share/mios/mios.toml [desktop.hyprland.lamp]",
+        "/home/mios/mios-desktop-work-1/lamp-contract.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.hpp",
+      "hint": "Magic lamp (Compiz-style genie) for minimize / restore / launch-from-dock, inside the mios-wobbly plugin",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
+      "hint": "Pure math + data model of the MiOS magic lamp (no Hyprland or GL dependency, unit-tested by",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+      "hint": "mios-wobbly -- Compiz-style wobbly windows for Hyprland 0.56 (MiOS original source).",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/Makefile",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/fxstats.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/tests/model_test.cpp",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/tests/lamp_test.cpp",
+      "hint": "Unit tests for the magic-lamp mesh math and the dock/launch contract readers (lampmath.hpp, header-only,",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
+        "tests/test-mios-lamp.py",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/Makefile"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/tests/model_test.cpp",
+      "hint": "Host test for the mios-wobbly model (no compositor SDK): `make -C usr/share/mios/hyprland/plugins/mios-wobbly test`.",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp",
+      "hint": "mios-wobbly spring-mass model, kept free of Hyprland types so tests/model_test.cpp can",
+      "related": [
+        "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/tests/model_test.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/session.lua",
+      "hint": "Load the native MiOS projection with vendor, host and user SSOT layers; degrade to a minimal session when it fails.",
+      "related": [
+        "tools/native/mios-gen/src/render.rs (render_hyprland::LOADER)",
+        "usr/share/mios/hyprland/hyprland.lua"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -33196,7 +35377,7 @@
     },
     {
       "path": "usr/share/mios/piper/Containerfile",
-      "hint": "Defines the OCI build for localhost/mios-piper, the piper1-gpl (piper-tts) HTTP speech engine of the mios-ai pod: installs piper-tts[http] at the SSOT version, bakes the SSOT voice under /usr/share/piper/voices (Law 12) and runs piper.http_server as the [services.piper] uid/gid.",
+      "hint": "Defines the OCI build for localhost/mios-piper, the piper1-gpl (piper-tts) HTTP speech engine of the mios-ai pod: installs piper-tts[http] at the SSOT version intent (\"latest\" resolves to PyPI's current release, the wheel proven by PyPI's published sha256 and recorded in /usr/share/piper/MIOS-RESOLVED), bakes the SSOT voice under /usr/share/piper/voices (Law 12) and runs piper.http_server as the [services.piper] uid/gid.",
       "related": [
         "mios-piper.container",
         "57-mios-sys-build.sh"
@@ -33204,6 +35385,57 @@
       "functions": [],
       "doc": null,
       "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/piper/install-piper.py",
+      "hint": "Installs piper-tts[http] into the mios-piper venv: \"latest\" resolves to PyPI's current release, the piper-tts wheel is accepted only against the sha256 PyPI publishes for that file (dependencies by pip's own index-hash check), and the resolved version + sha256 are written to /usr/share/piper/MIOS-RESOLVED as build output.",
+      "related": [
+        "usr/share/mios/piper/Containerfile",
+        "usr/libexec/mios/57-mios-sys-build.sh",
+        "tests/test-piper-latest.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/share/mios/portal-build/Containerfile",
+      "hint": "localhost/mios-portal-build: the off-image, memory-capped builder that turns stock Firefox plus Surfer into the MiOS-Portal Linux tarball (never part of the MiOS image; Law 12).",
+      "related": [
+        "usr/libexec/mios/mios-portal-build",
+        "usr/share/mios/portal-build/mios-portal-build-inner",
+        "usr/share/mios/mios.toml ([desktop.portal.builder])"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/portal-build/mios-portal-build-inner",
+      "hint": "Runs inside localhost/mios-portal-build: resolves the latest Firefox/Surfer/release revision, verifies the signed source, runs surfer download/import/license-check/build, mach package, writes the tarball and a resolved-versions manifest; fails hard on every step.",
+      "related": [
+        "usr/libexec/mios/mios-portal-build",
+        "usr/share/mios/portal-build/Containerfile",
+        "usr/share/mios/mios.toml ([desktop.portal.builder])"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/share/mios/portal/Host.qml",
+      "hint": "Native MiOS Portal window. Standalone qml host (never inside Quickshell) that shows the",
+      "related": [
+        "usr/bin/mios-portal",
+        "usr/share/applications/mios-portal.desktop"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
       "has_shebang": false
     },
     {
@@ -33535,8 +35767,148 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/quickshell/AppDrawer.qml",
+      "hint": "Full-pane glass app drawer: search field, running windows and the installed-app grid.",
+      "related": [
+        "usr/share/mios/quickshell/Sidebar.qml",
+        "usr/share/mios/mios.toml [theme.shell].drawer_*"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/AppMenu.qml",
+      "hint": "Focused-app pills in the top bar row, at the screen's top-left, left of the centred status",
+      "related": [
+        "usr/share/mios/quickshell/MeltPopup.qml",
+        "usr/share/mios/quickshell/PanelWindow.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/quickshell/Config.qml",
-      "hint": "MiOS Quickshell entry point (launched by Hyprland via",
+      "hint": "MiOS shell surfaces share one app drawer and follow compositor output hotplug.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/ControlDot.qml",
+      "hint": "One window-control button drawn exactly as the hyprbars overlay draws its buttons (upstream",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/PanelWindow.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/ControlsTab.qml",
+      "hint": "One mobile window-controls tab: the desktop controls tab (hyprbars overlay, MiOS patch) split in two",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/ControlDot.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/DockHotZone.qml",
+      "hint": "Thin bottom-edge strip that reveals the auto-hidden dock on pointer contact. It also holds",
+      "related": [
+        "usr/share/mios/quickshell/Sidebar.qml",
+        "usr/share/mios/mios.toml [theme.shell].dock_reveal_px"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/DockLamp.qml",
+      "hint": "Magic-lamp dock bridge (lamp-contract.md): publishes per-output dock geometry, icon rects and minimized",
+      "related": [
+        "usr/share/mios/quickshell/Sidebar.qml",
+        "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/EdgeReveal.qml",
+      "hint": "Per-output fullscreen edge reveal. While a real fullscreen window (Hyprland fullscreen",
+      "related": [
+        "usr/share/mios/quickshell/PanelWindow.qml",
+        "usr/share/mios/quickshell/AppMenu.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Emerge.qml",
+      "hint": "Shared \"emerge from the trigger\" morph for every shell popup. The glass body starts as the",
+      "related": [
+        "usr/share/mios/quickshell/MeltPopup.qml",
+        "usr/share/mios/quickshell/AppMenu.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Glass.qml",
+      "hint": "The window-control glass for the shell, resolved from the SAME SSOT keys the desktop window controls",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland.hyprbars] [desktop.hyprland.hyprglass] [colors]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Keymap.qml",
+      "hint": "Super+Escape keybind map: a centered glass overlay listing every desktop binding with its",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland].bindings",
+        "usr/libexec/mios/mios-sync-theme"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/MeltPopup.qml",
+      "hint": "A popup surface that grows out of its trigger (Emerge.qml) on a bar window. Rendered as a",
+      "related": [
+        "usr/share/mios/quickshell/Emerge.qml",
+        "usr/share/mios/quickshell/PanelWindow.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Mobile.qml",
+      "hint": "Per-output mobile layout verdict ([desktop.mobile]) and global scale policy result",
       "related": [
         "usr/share/mios/quickshell/PanelWindow.qml",
         "usr/share/mios/quickshell/Sidebar.qml"
@@ -33548,9 +35920,9 @@
     },
     {
       "path": "usr/share/mios/quickshell/NotifModel.qml",
-      "hint": "MiOS desktop notification toasts (Quickshell layer-shell surface",
+      "hint": "Shared notification settings and view registry for the island notifications (Notifications.qml). Reads",
       "related": [
-        "usr/share/mios/quickshell/Theme.qml",
+        "usr/share/mios/quickshell/Notifications.qml",
         "usr/share/mios/quickshell/Config.qml"
       ],
       "functions": [],
@@ -33560,10 +35932,10 @@
     },
     {
       "path": "usr/share/mios/quickshell/Notifications.qml",
-      "hint": "MiOS desktop notification toast surface (Quickshell layer-shell",
+      "hint": "MiOS notifications: ONE glass blob per output that grows out of the status island. Every notification -- apps",
       "related": [
-        "usr/share/mios/quickshell/Theme.qml",
-        "usr/share/mios/quickshell/Config.qml"
+        "usr/share/mios/quickshell/Config.qml",
+        "usr/share/mios/quickshell/NotifModel.qml"
       ],
       "functions": [],
       "doc": null,
@@ -33572,10 +35944,10 @@
     },
     {
       "path": "usr/share/mios/quickshell/PanelWindow.qml",
-      "hint": "MiOS top status bar (Quickshell layer-shell surface, top-anchored).",
+      "hint": "MiOS status island. Width follows its live contents: drawer mark, workspace, network/sound/battery, system",
       "related": [
         "usr/share/mios/quickshell/Theme.qml",
-        "usr/share/mios/quickshell/Sidebar.qml"
+        "usr/share/mios/quickshell/MeltPopup.qml"
       ],
       "functions": [],
       "doc": null,
@@ -33594,6 +35966,15 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/quickshell/Search.qml",
+      "hint": "SSOT-styled global search over native desktop entries, MiOS actions and the local plocate index.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/quickshell/SecretPrompt.qml",
       "hint": "MiOS Native Wayland Secret & Keyring Prompt Dialog for Quickshell.",
       "related": [
@@ -33606,11 +35987,72 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/mios/quickshell/Sidebar.qml",
-      "hint": "MiOS left-anchored vertical launcher rail (Quickshell layer-shell",
+      "path": "usr/share/mios/quickshell/ShellGeometry.qml",
+      "hint": "Shared live geometry between shell surfaces (no data of its own). The status island",
       "related": [
-        "usr/share/mios/quickshell/Theme.qml",
+        "usr/share/mios/quickshell/PanelWindow.qml",
+        "usr/share/mios/quickshell/AppMenu.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Shot.qml",
+      "hint": "The mios-shot selector, flash and toast endpoints in mios-shell (IPC target \"shot\"). `select <socket>`: mios-shot",
+      "related": [
+        "tools/native/mios-shot/src/main.rs (select_shell",
+        "session_json)",
         "usr/share/mios/quickshell/Config.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Sidebar.qml",
+      "hint": "MiOS dock scope: the app dock (always shown; auto-hidden under a fullscreen window, revealed",
+      "related": [
+        "usr/share/mios/mios.toml [theme.shell] [desktop.mobile] [desktop.hyprland.lamp]",
+        "usr/share/mios/quickshell/Theme.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/Sysmon.qml",
+      "hint": "Native system monitor for the status island ([desktop.topbar.sysmon]): one shared sampler for every output.",
+      "related": [
+        "usr/share/mios/quickshell/SysmonItems.qml",
+        "usr/share/mios/quickshell/SysmonDetails.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/SysmonDetails.qml",
+      "hint": "Details of the island's system monitor (Sysmon.qml), shown in the popup that grows out of the items on",
+      "related": [
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "usr/share/mios/quickshell/SysmonItems.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/SysmonItems.qml",
+      "hint": "The status island's system-monitor items (Sysmon.qml values, [desktop.topbar.sysmon] items / mobile_items):",
+      "related": [
+        "usr/share/mios/quickshell/Sysmon.qml",
+        "usr/share/mios/quickshell/SysmonDetails.qml"
       ],
       "functions": [],
       "doc": null,
@@ -33644,6 +36086,15 @@
       "related": [
         "/usr/share/mios/repos/terra.key"
       ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/rofi/config.rasi",
+      "hint": "MiOS launcher palette, typography and glass derive from mios.toml. */",
+      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -34140,6 +36591,40 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/theme/gecko-userChrome.css",
+      "hint": "MiOS browser chrome for Zen/Firefox profiles (chrome/userChrome.css). Tab panels",
+      "related": [
+        "usr/share/mios/mios.toml [browser.zen] [dotfiles.registry.gecko-chrome]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/mios-colors.sh",
+      "hint": "Apply layered MiOS SSOT colors using the native terminal projector.",
+      "related": [
+        "tools/native/mios-gen/src/terminal.rs",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/mios-web.css",
+      "hint": "Global MiOS web stylesheet. User-origin CSS projected into every MiOS",
+      "related": [
+        "usr/share/mios/mios.toml [theme.web] [dotfiles.registry.web]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/theme/templates/btop-mios.theme.tmpl",
       "hint": "btop theme projected by native build and runtime renderers from the layered mios.toml palette.",
       "related": [],
@@ -34158,6 +36643,17 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/theme/templates/cockpit-branding.css.tmpl",
+      "hint": "MiOS Cockpit branding (os-release ID=mios selects branding/mios). Login page",
+      "related": [
+        "usr/share/mios/mios.toml [theme.web] [dotfiles.registry.cockpit-branding]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/theme/templates/code-server-terminal.css.tmpl",
       "hint": "GENERATED (mios-dotfiles-render surface code-server-terminal) -- the ONE MiOS stylesheet for VS Code and code-server: terminal insets from [theme].padding, plus the MiOS look. */",
       "related": [],
@@ -34170,6 +36666,17 @@
       "path": "usr/share/mios/theme/templates/fastfetch-config.jsonc.tmpl",
       "hint": "fastfetch config template; mios-dotfiles-render fills its tokens from mios.toml into usr/share/mios/fastfetch/config.jsonc.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/gecko-userChrome.css.tmpl",
+      "hint": "MiOS browser chrome for Zen/Firefox profiles (chrome/userChrome.css). Tab panels",
+      "related": [
+        "usr/share/mios/mios.toml [browser.zen] [dotfiles.registry.gecko-chrome]"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -34210,10 +36717,116 @@
     },
     {
       "path": "usr/share/mios/theme/templates/mios-colors.sh.tmpl",
-      "hint": "Configures the terminal's visual identity by emitting OSC escape sequences to apply the MiOS unified color palette (Hokusai) to interactive shells, ensuring consi...",
-      "related": [],
+      "hint": "Apply layered MiOS SSOT colors using the native terminal projector.",
+      "related": [
+        "tools/native/mios-gen/src/terminal.rs",
+        "usr/share/mios/mios.toml"
+      ],
       "functions": [],
-      "doc": "usr/share/doc/mios/manual/profile.d.md",
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/mios-web.css.tmpl",
+      "hint": "Global MiOS web stylesheet. User-origin CSS projected into every MiOS",
+      "related": [
+        "usr/share/mios/mios.toml [theme.web] [dotfiles.registry.web]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-autoconfig.cfg.tmpl",
+      "hint": "MiOS-Portal autoconfig: points new-tab to Portal, wires the left rail MiOS apps footer and right-edge local AI chat panel, and enforces complete network isolation / prefs lockdown via lockPref.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/browser/defaults/preferences/mios-portal.js"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-firefox-branding.js.tmpl",
+      "hint": "MiOS-Portal branding prefs, a Surfer copy-patch over the pref/firefox-branding.js that Surfer's branding step generates (it hardcodes zen-browser.app URLs). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko].",
+      "related": [
+        "usr/share/mios/mios.toml */"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-lane-artifact.mozconfig.tmpl",
+      "hint": "MiOS-Portal artifact-lane project mozconfig; rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; mios-portal-tree stage copies it to the project-root mozconfig when [desktop.portal.builder].lane = \"artifact\".",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-lane-full.mozconfig.tmpl",
+      "hint": "MiOS-Portal full-compile-lane project mozconfig (capped fallback); rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; never LTO or PGO.",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-mozconfig-common.tmpl",
+      "hint": "MiOS-Portal common mozconfig (Surfer configs/common/mozconfig); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Surfer fills ${binName}/${appId}/${changeset} from surfer.json.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/surfer.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-mozconfig-linux.tmpl",
+      "hint": "MiOS-Portal Linux mozconfig (Surfer configs/linux/mozconfig, which Surfer requires); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Lane-neutral: compile-only options live in configs/lanes/full.mozconfig.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/configs/lanes/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-prefs.js.tmpl",
+      "hint": "MiOS-Portal default prefs (<install_dir>/browser/defaults/preferences/mios-portal.js): Portal home, sketch layout, glass, autoconfig hook. App-level defaults are read after browser/omni.ja's firefox.js (the GRE defaults/pref/ is read before it and loses every key firefox.js also sets). Rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]; the Mozilla-AI-off prefs are locked in distribution/policies.json instead.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "src/mios-portal/install/distribution/policies.json */"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/portal-shared.inc.css.tmpl",
+      "hint": "MiOS-Portal chrome CSS, baked into omni.ja: Surfer's theme include patch makes",
+      "related": [
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -34224,6 +36837,15 @@
         "/etc/mios/theme/theme.json",
         "usr/libexec/mios/mios-sync-theme"
       ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/theme/templates/rofi.rasi.tmpl",
+      "hint": "MiOS launcher palette, typography and glass derive from mios.toml. */",
+      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -34295,7 +36917,7 @@
     },
     {
       "path": "usr/share/mios/ventoy/autorun/01-sysrescue-firstboot.sh",
-      "hint": "SystemRescue autorun on the Ventoy stick: generates SSH host keys and enables SSH access for MiOS field deployment.",
+      "hint": "SystemRescue autorun on the Ventoy stick: generates SSH host keys and enables SSH access for MiOS field deployment; credentials come ONLY from the layered SSOT (mios-sysrescue.env / [field.sysrescue] / [identity]), fail closed.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -34361,6 +36983,72 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/wallpaper/Host.qml",
+      "hint": "Native GPU host for the canonical MiOS living wallpaper (renderer = \"native\"): one layer-shell background",
+      "related": [
+        "usr/share/mios/wallpaper/MeshGradient.qml",
+        "usr/share/mios/wallpaper/WebHost.qml",
+        "tools/native/mios-wallpaperd",
+        "[theme.wallpaper]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/wallpaper/MeshGradient.qml",
+      "hint": "Native GPU living wallpaper (one output): the canonical living-wallpaper.html colour ocean rendered with",
+      "related": [
+        "usr/share/mios/wallpaper/Host.qml",
+        "usr/share/mios/wallpaper/shaders/ocean-*.frag",
+        "[theme.wallpaper.motion]",
+        "[theme.wallpaper.native]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/wallpaper/WebHost.qml",
+      "hint": "QtWebEngine host for the canonical Windows MiOS wallpaper HTML (renderer = \"web\"). Kept as the",
+      "related": [
+        "usr/share/mios/wallpaper/Host.qml",
+        "usr/share/mios/branding/living-wallpaper.html",
+        "[theme.wallpaper]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/wallpaper/shaders/ocean-present.frag",
+      "hint": "Native (Qt RHI) port of the PRES pass of usr/share/mios/branding/living-wallpaper.html -- the calm-ocean",
+      "related": [
+        "usr/share/mios/wallpaper/MeshGradient.qml",
+        "usr/share/mios/wallpaper/shaders/ocean-sim.frag"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/wallpaper/shaders/ocean-sim.frag",
+      "hint": "Native (Qt RHI) port of the SIM pass of usr/share/mios/branding/living-wallpaper.html -- advects + diffuses",
+      "related": [
+        "usr/share/mios/wallpaper/MeshGradient.qml",
+        "usr/share/mios/branding/living-wallpaper.html",
+        "[theme.wallpaper.motion]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/web/Containerfile",
       "hint": "Consolidated web tools container image ('mios-web') deriving FROM localhost/mios-base. Combines searxng + firecrawl + crawl4ai.",
       "related": [
@@ -34389,6 +37077,62 @@
       "hint": "Thin shim invoking canonical /usr/libexec/mios/Setup-MiOSLanPortProxy.ps1 with -AiNode switch.",
       "related": [
         "/usr/libexec/mios/Setup-MiOSLanPortProxy.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1",
+      "hint": "MiOS-Xbox Start layout capture on the GPU-less build worker (xb-11, XB-1). Three phases on the throwaway overlay guest, driven only by job\\capture.json (capture.py renders it from xbox-spec.json): prepare (admin over WinRM) refuses unless the worker's BuildBranch is the image's build family, moves legacy Start-layout sources aside, applies exactly the spec's Start policy values (the start.folders / start.pins registry items the image gets), creates a local capture account whose random password is generated here and never leaves the guest (the overlay is deleted afterwards), and arms autologon plus a logon task; user (the capture account's own interactive session) waits until StartMenuExperienceHost has written start2.bin and it is stable, exports the Start layout and reads VisiblePlaces; collect (admin over WinRM) verifies the session owner, the hashes and the policy still in effect, and writes out\\start2.bin + out\\capture.json for the host's read-only copy-out. Every failure throws.",
+      "related": [
+        "usr/libexec/mios/win/xbox/capture.py",
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/share/mios/mios.toml ([windows.xbox.start]",
+        "[windows.xbox.start.capture])"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1",
+      "hint": "MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\\: guest spec, payload, drivers, UUP set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\\. status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.",
+      "related": [
+        "usr/libexec/mios/win/xbox/worker.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/share/mios/windows/build/New-MiOSXboxImage.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1",
+      "hint": "MiOS-Xbox in-guest stages driven by C:\\ProgramData\\MiOS\\xbox-spec.json (the credential-free guest projection staged by answer.py): -Stage Hydrate installs the [windows.xbox.store_hydrate] Store-only packages (winget msstore) and removes its own logon task once every package is provisioned; -Stage Verify records, read-only, the guest-tool services, Store packages, GPU step record, Looking Glass display and RID-500 state into provision-state.json for the host probe. Every name comes from the spec; nothing is hardcoded.",
+      "related": [
+        "usr/libexec/mios/win/xbox/answer.py (renders the first-logon script that registers the hydrate task and calls Verify)",
+        "usr/libexec/mios/win/xbox/probe.py",
+        "usr/share/mios/windows/xbox/mios-gpu-driver.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/build/New-MiOSXboxImage.ps1",
+      "hint": "MiOS-Xbox DISM servicing on the GPU-less build worker (xb-05/07/08/10/11, XB-1..XB-3). Driven ONLY by the credential-free guest projection of xbox-spec.json (render_spec.py) and the payload answer.py rendered from the same spec: verifies every staged installer (sha256 + Authenticode signer) before baking, exports exactly source.edition, requires the captured Start layout of the image's BuildBranch family, injects the virtio-win drivers into install.wim and every boot.wim index (signature-enforced, never forced unsigned) and refuses any GPU vendor display driver, applies the optional-feature/capability lists, imports the rendered offline registry (.reg) into the loaded hives, stages the payload (SetupComplete chain, components, installers, guest spec), copies the rendered autounattend.xml to the media root and masters the ISO. Every failure throws; result.json records what was resolved.",
+      "related": [
+        "usr/libexec/mios/win/xbox/answer.py",
+        "usr/libexec/mios/win/xbox/render_spec.py",
+        "usr/libexec/mios/win/xbox/build.py",
+        "usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1",
+        "usr/libexec/mios/win/xbox/conform.py"
       ],
       "functions": [],
       "doc": null,
@@ -34456,6 +37200,19 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/windows/mios-looking-glass-idd.ps1",
+      "hint": "MiOS-Xbox guest side of Looking Glass: installs the upstream Looking Glass IDD (Indirect Display Driver) build that matches the host client's commit, after verifying the download's SHA-256 and the installer's Authenticode signature, and retires the legacy B-series host service. Never enables test-signing or disables driver signature enforcement.",
+      "related": [
+        "usr/libexec/mios/vfio/setup-looking-glass.py (--provision-guest resolves Url/Sha256/Version for the client's commit and runs this over WinRM)",
+        "automation/69-bake-lookingglass-client.sh",
+        "usr/share/mios/mios.toml [vm.looking_glass]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/windows/mios-native-client-setup.ps1",
       "hint": "Native Windows/CMD and MCP entrypoints into the unprivileged MiOS WSL runtime; shared mobile shortcuts and SSOT fonts, preserving other client settings.",
       "related": [
@@ -34502,7 +37259,7 @@
     },
     {
       "path": "usr/share/mios/windows/mios-ssh-setup.ps1",
-      "hint": "Install and configure the Windows SSH service from resolved MiOS SSOT settings.",
+      "hint": "Install and configure the Windows SSH service from resolved MiOS SSOT settings. The OpenSSH release floats: [ssh.windows].release_api names upstream's latest release, the asset is proven by the sha256 GitHub publishes for it plus the Microsoft Authenticode check, and the resolved tag/sha256 are written to <install>\\mios-openssh-provenance.json (never the SSOT).",
       "related": [
         "usr/share/mios/mios.toml [ssh.windows]",
         "[ports].ssh"
@@ -34581,6 +37338,40 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/mios/windows/xbox/mios-gpu-driver.ps1",
+      "hint": "MiOS-Xbox guest post-setup GPU driver step (XB-3). No GPU vendor driver is ever baked into a MiOS image: at first boot (and every boot until it succeeds) this script enumerates the PCI display-class devices present, maps PCI vendor/device IDs to the vendor (NVIDIA 10DE, AMD 1002, Intel 8086), resolves that vendor's latest driver from its upstream, downloads it over HTTPS from an SSOT-allowlisted host, verifies size + published hash (when the vendor publishes one) + Authenticode (status Valid AND signer organization = the vendor), installs it silently with the vendor's documented switches (NVIDIA: Display.Driver only, no NVIDIA App/telemetry), verifies the device now runs that driver and records vendor/device/version/sha256/source URL in C:\\ProgramData\\MiOS\\gpu-driver.json. Idempotent (an already-current device is skipped) and fails loudly (non-zero exit, status \"failed\" in the record) on any resolver, integrity or install error.",
+      "related": [
+        "/home/mios/mios-desktop-work-1/staged-ssot/xbox-gpu.toml ([windows.xbox.drivers] gpu",
+        "[windows.xbox.gpu*] -- every endpoint",
+        "host allowlist",
+        "signer",
+        "switch and path comes from there via xbox-spec.json)",
+        "usr/libexec/mios/win/xbox/render_spec.py (xb-02",
+        "renders xbox-spec.json)",
+        "tests/test-mios-gpu-driver.ps1",
+        "tests/test-mios-gpu-driver.py",
+        "/.devloop/GOALS-mios-xbox.md XB-3"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/windows/xbox/mios-xbox-probe.ps1",
+      "hint": "MiOS-Xbox in-guest conformance probe (xb-18, XB-6): READ-ONLY. Given the item list derived from the resolved xbox-spec.json (passed as base64 JSON by usr/libexec/mios/win/xbox/probe.py over WinRM), reports what the running guest actually has -- desktop-user hive values (taskbar, Start, Xbox, settings), machine registry, optional features, capabilities, third-party drivers, display adapters, guest-tool services, MiOS component files/tasks/services, Appx packages, local users/autologon/RID-500, computer name, the GPU post-setup record -- as one JSON document. It never changes the guest and never returns a credential (Winlogon DefaultPassword is reported only as a sha256 digest).",
+      "related": [
+        "usr/libexec/mios/win/xbox/probe.py",
+        "usr/libexec/mios/win/xbox/spec_items.py",
+        "tests/test-mios-xbox-probe.py",
+        "usr/share/mios/windows/mios-gpu-driver.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/mios/wsl/dot-wslconfig.template",
       "hint": "Recommended global .wslconfig for MiOS WSL2 host integration.",
       "related": [
@@ -34605,12 +37396,12 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/wayland-sessions/hyprland.desktop",
-      "hint": "Display-manager Wayland session entry for Hyprland; installed by automation/65-bake-hyprland.sh after the hyprland RPM so it wins over the package copy.",
+      "path": "usr/share/wayland-sessions/tmux-console.desktop",
+      "hint": "tuigreet console login without a compositor; opens the MiOS session menu (local, localhost and mesh tmux sessions) before any tmux session or shell starts.",
       "related": [
-        "automation/65-bake-hyprland.sh",
-        "tests/test-hyprland-direct-scanout.sh",
-        "tests/test-quickshell-shell.sh"
+        "usr/libexec/mios/mios-terminal",
+        "src/mios-rs/miosd/src/sessions.rs",
+        "usr/share/mios/mios.toml [terminal.sessions]"
       ],
       "functions": [],
       "doc": null,

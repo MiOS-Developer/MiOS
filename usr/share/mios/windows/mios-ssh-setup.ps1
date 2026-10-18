@@ -1,16 +1,35 @@
-# AI-hint: Install and configure the Windows SSH service from resolved MiOS SSOT settings.
+# AI-hint: Install and configure the Windows SSH service from resolved MiOS SSOT settings. The OpenSSH release floats: [ssh.windows].release_api names upstream's latest release, the asset is proven by the sha256 GitHub publishes for it plus the Microsoft Authenticode check, and the resolved tag/sha256 are written to <install>\mios-openssh-provenance.json (never the SSOT).
 # AI-related: usr/share/mios/mios.toml [ssh.windows], [ports].ssh
 # AI-functions: Install-MiOSWindowsSsh
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$SettingsPath,
-    [Parameter(Mandatory)][string]$AuthorizedKeysPath
+    [Parameter(Mandatory)][string]$AuthorizedKeysPath,
+    # Resolve, download and prove the release, write the provenance record here, then stop
+    # before anything is installed (pre-flight and hermetic tests).
+    [string]$StageOnlyProvenancePath
 )
 $ErrorActionPreference='Stop'
+function Test-SHA256Integrity {
+    param([string]$Path, [string]$Sha256)
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ieq $Sha256
+}
+function Resolve-MiOSOpenSshRelease {
+    # Latest release from the forge; the digest is the one GitHub publishes for the asset.
+    param($Cfg)
+    if($Cfg.release_api -notmatch '^https://'){throw 'SSOT [ssh.windows].release_api is missing'}
+    if([string]::IsNullOrWhiteSpace($Cfg.asset)){throw 'SSOT [ssh.windows].asset is missing'}
+    $release=Invoke-RestMethod -UseBasicParsing -Uri $Cfg.release_api -Headers @{Accept='application/vnd.github+json';'User-Agent'='MiOS'}
+    $asset=@($release.assets | Where-Object { $_.name -eq $Cfg.asset })
+    if($asset.Count -ne 1){throw "Upstream release $($release.tag_name) has no single asset $($Cfg.asset)"}
+    $digest=[regex]::Match([string]$asset[0].digest,'^sha256:([a-fA-F0-9]{64})$')
+    if(-not $digest.Success){throw "Upstream publishes no sha256 for $($Cfg.asset) $($release.tag_name)"}
+    if([string]$asset[0].browser_download_url -notmatch '^https://'){throw 'Upstream asset URL is not https'}
+    [pscustomobject]@{tag=[string]$release.tag_name; url=[string]$asset[0].browser_download_url; sha256=$digest.Groups[1].Value.ToLowerInvariant()}
+}
 $settings=Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
 $cfg=$settings.windows
-if($cfg.sha256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'Resolved SSOT SSH archive checksum is invalid'}
 if([int]$settings.port -lt 1 -or [int]$settings.port -gt 65535){throw 'Resolved SSOT SSH port is invalid'}
 if(-not (Test-Path -LiteralPath $AuthorizedKeysPath -PathType Leaf)){throw 'Operator SSH public keys are required'}
 $keys=Get-Content -LiteralPath $AuthorizedKeysPath
@@ -24,8 +43,16 @@ $staging=Join-Path ([IO.Path]::GetTempPath()) ('mios-ssh-'+[guid]::NewGuid().ToS
 New-Item -ItemType Directory -Path $staging | Out-Null
 try {
     $archive=Join-Path $staging 'openssh.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri $cfg.url -OutFile $archive
-    if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $cfg.sha256){throw 'SSH archive checksum mismatch'}
+    $release=Resolve-MiOSOpenSshRelease $cfg
+    Write-Host "[*] OpenSSH latest release: $($release.tag) ($($release.url))"
+    Invoke-WebRequest -UseBasicParsing -Uri $release.url -OutFile $archive
+    if(-not (Test-SHA256Integrity $archive $release.sha256)){throw "SSH archive checksum mismatch for $($release.tag)"}
+    $provenance=([ordered]@{component='Win32-OpenSSH'; tag=$release.tag; url=$release.url; sha256=$release.sha256; recorded_at=(Get-Date).ToString('o')} | ConvertTo-Json)
+    if($StageOnlyProvenancePath){
+        [IO.File]::WriteAllText($StageOnlyProvenancePath,$provenance,(New-Object Text.UTF8Encoding($false)))
+        Write-Host "[+] OpenSSH $($release.tag) resolved and verified (stage only)."
+        return
+    }
     Expand-Archive -LiteralPath $archive -DestinationPath $staging
     $payload=@(Get-ChildItem -LiteralPath $staging -Recurse -Filter sshd.exe)
     if($payload.Count -ne 1){throw 'SSH archive must contain exactly one server executable'}
@@ -36,6 +63,7 @@ try {
     $service=Get-Service -Name sshd -ErrorAction SilentlyContinue
     if($service -and $service.Status -eq 'Running'){Stop-Service -Name sshd}
     Copy-Item -Path (Join-Path $payload[0].DirectoryName '*') -Destination $install -Recurse -Force
+    [IO.File]::WriteAllText((Join-Path $install 'mios-openssh-provenance.json'),$provenance,(New-Object Text.UTF8Encoding($false)))
     $keyFile=Join-Path $configDir 'administrators_authorized_keys'
     Copy-Item -LiteralPath $AuthorizedKeysPath -Destination $keyFile -Force
     & icacls.exe $keyFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null

@@ -1,0 +1,15 @@
+[Unit]
+Description=MiOS application menu exporter (GTK org.gtk.Menus + dbusmenu AppMenu registrar)
+Documentation=file:///usr/share/doc/mios/manual/root.md
+PartOf=mios-desktop.target
+After=graphical-session.target dbus.socket
+Requisite=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/miosd appmenu serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=mios-desktop.target

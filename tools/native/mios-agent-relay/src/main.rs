@@ -551,7 +551,10 @@ fn succession_config(request: &Value) -> Result<Succession, String> {
         retry_probe_s: number("retry_probe_s")?,
         min_outage_s: number("min_outage_s")?,
         tail_lines: number("tail_lines")? as usize,
-        preferred_holder: name(&cfg["preferred_holder"], "preferred_holder")?,
+        preferred_holder: match cfg["preferred_holder"].as_str() {
+            Some("") => String::new(),
+            _ => name(&cfg["preferred_holder"], "preferred_holder")?,
+        },
         successors: cfg["successors"]
             .as_array()
             .ok_or_else(|| invalid("successors"))?
@@ -998,7 +1001,18 @@ fn evaluate_probe(
         .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(me)));
     // A listed successor takes over; the preferred holder takes a released
     // lease back, never by seizure.
-    let may_take = listed || (released && lease["preferred_holder"].as_str() == Some(me));
+    let open_policy = s.preferred_holder.is_empty() && s.successors.is_empty();
+    let registered = if open_policy {
+        let state = read_json(&contained(directory, "state.json")?)?.unwrap_or_else(|| json!({}));
+        state["agents"]
+            .get(me)
+            .is_some_and(|agent| agent["closed"] != true)
+    } else {
+        false
+    };
+    let may_take = listed
+        || (released && lease["preferred_holder"].as_str() == Some(me))
+        || (open_policy && registered);
     let emit = |verdict: &str, take_over: bool, reason: String, next: u64, extra: Value| {
         let mut o = json!({
             "object": "agent.probe", "probed_at": format_iso(now), "me": me, "holder": holder,
@@ -1490,46 +1504,39 @@ impl WorkspaceRect {
     }
 }
 
-fn workspace_grid(rect: WorkspaceRect, panes: &[String], columns: usize) -> Result<String, String> {
-    if panes.is_empty() {
-        return Err("workspace has no worker panes".into());
-    }
-    let rows = panes.len().div_ceil(columns);
-    if rect.w < columns * 2 - 1 || rect.h < rows * 2 - 1 {
-        return Err("workspace terminal is too small".into());
-    }
-    let mut cells = Vec::new();
-    let mut y = rect.y;
-    for (row, group) in panes.chunks(columns).enumerate() {
-        let h = if row + 1 == rows {
-            rect.y + rect.h - y
-        } else {
-            (rect.h - rows + 1) / rows
+fn workspace_borders(config: &Value, compact: bool) -> Result<Vec<(&'static str, String)>, String> {
+    let prefix = if compact { "compact" } else { "desktop" };
+    let mut result = Vec::new();
+    for (suffix, option, allowed) in [
+        (
+            "border_lines",
+            "pane-border-lines",
+            &[
+                "single", "double", "heavy", "simple", "number", "spaces", "none",
+            ][..],
+        ),
+        (
+            "border_status",
+            "pane-border-status",
+            &["off", "top", "bottom"][..],
+        ),
+        ("border_format", "pane-border-format", &[][..]),
+    ] {
+        let key = format!("{prefix}_{suffix}");
+        // Connections started before this projection retain their cached policy.
+        let Some(value) = config.get(&key) else {
+            continue;
         };
-        let mut x = rect.x;
-        let mut leaves = Vec::new();
-        for (col, pane) in group.iter().enumerate() {
-            let w = if col + 1 == group.len() {
-                rect.x + rect.w - x
-            } else {
-                (rect.w - group.len() + 1) / group.len()
-            };
-            leaves.push(WorkspaceRect { w, h, x, y }.leaf(pane)?);
-            x += w + 1;
+        let value = value
+            .as_str()
+            .ok_or_else(|| format!("workspace.{key} must be a string"))?;
+        if value.contains(['\n', '\r', '\0']) || (!allowed.is_empty() && !allowed.contains(&value))
+        {
+            return Err(format!("invalid workspace.{key}"));
         }
-        let row_rect = WorkspaceRect { h, y, ..rect };
-        cells.push(if leaves.len() == 1 {
-            leaves.remove(0)
-        } else {
-            row_rect.branch(true, &leaves)
-        });
-        y += h + 1;
+        result.push((option, value.to_string()));
     }
-    Ok(if cells.len() == 1 {
-        cells.remove(0)
-    } else {
-        rect.branch(false, &cells)
-    })
+    Ok(result)
 }
 
 fn workspace_compact(config: &Value, w: usize, h: usize) -> Result<bool, String> {
@@ -1540,6 +1547,298 @@ fn workspace_compact(config: &Value, w: usize, h: usize) -> Result<bool, String>
     )
 }
 
+fn workspace_golden(config: &Value, available: usize, longer: bool) -> Result<usize, String> {
+    // Established MCP clients may still carry the pre-phi policy. The exact
+    // mathematical value keeps those connections compatible until they reload.
+    let ratio = match config.get("golden_ratio") {
+        None => (1.0 + 5.0_f64.sqrt()) / 2.0,
+        Some(value) => value
+            .as_f64()
+            .filter(|n| n.is_finite() && *n > 1.0 && *n < 2.0)
+            .ok_or("invalid [mcp.tmux.workspace].golden_ratio")?,
+    };
+    let long = ((available as f64) / ratio).round() as usize;
+    Ok(if longer { long } else { available - long })
+}
+
+// Tmux-OS layout policy ([mcp.tmux.workspace.layout]). Every key is optional:
+// an absent share derives from golden_ratio and the defaults reproduce the
+// established geometry (chat over metrics at left; monitor heading a clockwise
+// golden spiral of workers at right).
+const WORKSPACE_DIRECTIONS: [&str; 4] = ["right", "down", "left", "up"];
+
+#[derive(Clone, Debug)]
+struct WorkspacePolicy {
+    column: Option<f64>,
+    chat: Option<f64>,
+    monitor: Option<f64>,
+    // Floor (cells along the split axis) that keeps a slim monitor readable.
+    monitor_min: usize,
+    spiral: Option<f64>,
+    chat_first: bool,
+    start: usize,
+    clockwise: bool,
+    depth: Option<usize>,
+}
+
+impl WorkspacePolicy {
+    fn cells(
+        &self,
+        config: &Value,
+        share: Option<f64>,
+        available: usize,
+        major: bool,
+    ) -> Result<usize, String> {
+        match share {
+            None => workspace_golden(config, available, major),
+            Some(share) => Ok(((available as f64) * share).round() as usize),
+        }
+    }
+    fn turn(&self, direction: usize) -> usize {
+        if self.clockwise {
+            (direction + 1) % 4
+        } else {
+            (direction + 3) % 4
+        }
+    }
+}
+
+fn workspace_policy(config: &Value) -> Result<WorkspacePolicy, String> {
+    let empty = json!({});
+    let layout = match config.get("layout") {
+        None | Some(Value::Null) => &empty,
+        Some(value) if value.is_object() => value,
+        Some(_) => return Err("[mcp.tmux.workspace.layout] must be a table".into()),
+    };
+    let invalid = |key: &str| format!("invalid [mcp.tmux.workspace.layout].{key}");
+    let share = |key: &str| -> Result<Option<f64>, String> {
+        layout
+            .get(key)
+            .map(|v| {
+                v.as_f64()
+                    .filter(|n| n.is_finite() && (0.1..=0.9).contains(n))
+                    .ok_or_else(|| invalid(key))
+            })
+            .transpose()
+    };
+    let word = |key: &str, default: &'static str| -> Result<String, String> {
+        layout.get(key).map_or(Ok(default.to_string()), |v| {
+            v.as_str().map(str::to_string).ok_or_else(|| invalid(key))
+        })
+    };
+    let chat_first = match layout.get("left_roles") {
+        None => true,
+        Some(roles) => {
+            let roles: Vec<&str> = roles
+                .as_array()
+                .ok_or_else(|| invalid("left_roles"))?
+                .iter()
+                .map(|v| v.as_str().unwrap_or(""))
+                .collect();
+            match roles.as_slice() {
+                ["chat", "metrics"] => true,
+                ["metrics", "chat"] => false,
+                _ => return Err(invalid("left_roles")),
+            }
+        }
+    };
+    let start = word("spiral_start", "down")?;
+    let start = WORKSPACE_DIRECTIONS
+        .iter()
+        .position(|d| *d == start)
+        .ok_or_else(|| invalid("spiral_start"))?;
+    let clockwise = match word("spiral_turn", "clockwise")?.as_str() {
+        "clockwise" => true,
+        "counterclockwise" => false,
+        _ => return Err(invalid("spiral_turn")),
+    };
+    let depth = layout
+        .get("spiral_depth")
+        .map(|v| {
+            v.as_u64()
+                .filter(|n| (1..=8).contains(n))
+                .map(|n| n as usize)
+                .ok_or_else(|| invalid("spiral_depth"))
+        })
+        .transpose()?;
+    let monitor_min = layout.get("monitor_min_rows").map_or(Ok(3), |v| {
+        v.as_u64()
+            .filter(|n| (3..=40).contains(n))
+            .map(|n| n as usize)
+            .ok_or_else(|| invalid("monitor_min_rows"))
+    })?;
+    Ok(WorkspacePolicy {
+        column: share("column_share")?,
+        chat: share("chat_share")?,
+        monitor: share("monitor_share")?,
+        monitor_min,
+        spiral: share("spiral_share")?,
+        chat_first,
+        start,
+        clockwise,
+        depth,
+    })
+}
+
+// Split `rect` across `direction` (0 right, 1 down, 2 left, 3 up: where the
+// remainder goes). The first cell receives `extent` cells along the split axis.
+fn workspace_carve(
+    rect: WorkspaceRect,
+    direction: usize,
+    extent: usize,
+) -> (WorkspaceRect, WorkspaceRect) {
+    let horizontal = direction.is_multiple_of(2);
+    let size = if horizontal { rect.w } else { rect.h };
+    let rest = size - extent - 1;
+    match (horizontal, direction >= 2) {
+        (true, false) => (
+            WorkspaceRect { w: extent, ..rect },
+            WorkspaceRect {
+                w: rest,
+                x: rect.x + extent + 1,
+                ..rect
+            },
+        ),
+        (false, false) => (
+            WorkspaceRect { h: extent, ..rect },
+            WorkspaceRect {
+                h: rest,
+                y: rect.y + extent + 1,
+                ..rect
+            },
+        ),
+        (true, true) => (
+            WorkspaceRect {
+                w: extent,
+                x: rect.x + rest + 1,
+                ..rect
+            },
+            WorkspaceRect { w: rest, ..rect },
+        ),
+        (false, true) => (
+            WorkspaceRect {
+                h: extent,
+                y: rect.y + rest + 1,
+                ..rect
+            },
+            WorkspaceRect { h: rest, ..rect },
+        ),
+    }
+}
+
+// The monitor heads the right region as the spiral's first cell; the remainder
+// is the rectangle the worker spiral subdivides.
+fn workspace_monitor_split(
+    config: &Value,
+    policy: &WorkspacePolicy,
+    right: WorkspaceRect,
+) -> Result<(WorkspaceRect, WorkspaceRect), String> {
+    let horizontal = policy.start.is_multiple_of(2);
+    let size = if horizontal { right.w } else { right.h };
+    if size < 8 {
+        return Err("workspace monitor region is too small".into());
+    }
+    let rest_minimum = if horizontal {
+        workspace_number(config, "worker_min_columns", 3, 100)?
+    } else {
+        workspace_number(config, "minimum_head_rows", 3, 40)?.min(size - 4)
+    };
+    let upper = size.saturating_sub(rest_minimum + 1).max(3);
+    // A slim monitor (monitor_share well below 1/phi) keeps at least
+    // monitor_min_rows; the worker spiral's own minimum still wins.
+    let floor = if horizontal { 3 } else { policy.monitor_min };
+    let extent = policy
+        .cells(config, policy.monitor, size - 1, true)?
+        .clamp(floor.min(upper), upper)
+        .min(size - 2);
+    Ok(workspace_carve(right, policy.start, extent))
+}
+
+// Carve the spiral cell while the remainder rotates (clockwise by default:
+// right/down/left/up). Every split starts from its current rectangle; no old
+// origin is accumulated.
+fn workspace_nested(
+    rect: WorkspaceRect,
+    panes: &[String],
+    direction: usize,
+    config: &Value,
+) -> Result<String, String> {
+    if panes.is_empty() {
+        return Err("workspace has no worker cells".into());
+    }
+    if panes.len() == 1 {
+        return rect.leaf(&panes[0]);
+    }
+    let policy = workspace_policy(config)?;
+    let minimum_columns = workspace_number(config, "worker_min_columns", 3, 100)?;
+    let mut direction = direction % 4;
+    let extent = |direction: usize| -> Result<Option<usize>, String> {
+        let horizontal = direction.is_multiple_of(2);
+        let size = if horizontal { rect.w } else { rect.h };
+        let minimum = if horizontal { minimum_columns } else { 2 };
+        if size <= 2 {
+            return Ok(None);
+        }
+        let first = policy.cells(config, policy.spiral, size - 1, true)?;
+        let rest = (size - 1).saturating_sub(first);
+        Ok((first >= 1 && first.min(rest) >= minimum).then_some(first))
+    };
+    let mut first = extent(direction)?;
+    if first.is_none() {
+        direction = policy.turn(direction);
+        first = extent(direction)?;
+    }
+    let first = first.ok_or("workspace cannot fit its worker reservations")?;
+    let (cell, rest) = workspace_carve(rect, direction, first);
+    let cell = cell.leaf(&panes[0])?;
+    let rest = workspace_nested(rest, &panes[1..], policy.turn(direction), config)?;
+    Ok(rect.branch(
+        direction.is_multiple_of(2),
+        &if direction >= 2 {
+            [rest, cell]
+        } else {
+            [cell, rest]
+        },
+    ))
+}
+
+fn workspace_left_width(config: &Value, w: usize) -> Result<usize, String> {
+    let policy = workspace_policy(config)?;
+    Ok(policy
+        .cells(config, policy.column, w.saturating_sub(1), false)?
+        .clamp(3, w.saturating_sub(4).max(3)))
+}
+
+fn workspace_worker_capacity(
+    config: &Value,
+    w: usize,
+    h: usize,
+    workers: &[String],
+    compact: bool,
+) -> Result<usize, String> {
+    let policy = workspace_policy(config)?;
+    if compact {
+        return Ok(0);
+    }
+    let left = workspace_left_width(config, w)?;
+    let right = WorkspaceRect {
+        w: w - left - 1,
+        h,
+        x: left + 1,
+        y: 0,
+    };
+    let Ok((_, rect)) = workspace_monitor_split(config, &policy, right) else {
+        return Ok(0);
+    };
+    let limit = policy.depth.unwrap_or(workers.len()).min(workers.len());
+    for count in (1..=limit).rev() {
+        if workspace_nested(rect, &workers[..count], policy.turn(policy.start), config).is_ok() {
+            return Ok(count);
+        }
+    }
+    Ok(0)
+}
+
 fn workspace_layout(
     config: &Value,
     w: usize,
@@ -1547,69 +1846,134 @@ fn workspace_layout(
     head: &str,
     workers: &[String],
     observer: Option<&str>,
+    resource: Option<&str>,
 ) -> Result<String, String> {
     let rect = WorkspaceRect { w, h, x: 0, y: 0 };
     if w < 12 || h < 8 {
         return Err("workspace terminal is too small".into());
     }
     let layout = if let Some(observer) = observer {
-        if w * 100 >= h * workspace_number(config, "portrait_ratio_percent", 50, 400)? {
-            let head_pct = workspace_number(config, "head_percent", 20, 70)?;
-            let head_w = (w * head_pct / 100).clamp(3, w.saturating_sub(24).max(3));
-            let observer_w = w - head_w - 1;
-            rect.branch(
-                true,
-                &[
-                    WorkspaceRect { w: head_w, ..rect }.leaf(head)?,
-                    WorkspaceRect {
-                        w: observer_w,
-                        x: head_w + 1,
-                        ..rect
-                    }
-                    .leaf(observer)?,
-                ],
-            )
+        let compact = resource.is_none();
+        let minimum = workspace_number(config, "minimum_head_rows", 3, 40)?.min(h - 4);
+        let policy = workspace_policy(config)?;
+        // Compact/portrait stacks the monitor (observer) above the head agent.
+        // A configured monitor_share slims it there too (floored at
+        // monitor_min_rows) so the agent pane grows; absent, the golden split stays.
+        let top = match policy.monitor {
+            None => workspace_golden(config, h - 1, true)?,
+            Some(_) => policy
+                .cells(config, policy.monitor, h - 1, true)?
+                .max(policy.monitor_min),
+        }
+        .clamp(3, h - minimum - 1);
+        let show_workers = !workers.is_empty() && !compact;
+        let left = if compact {
+            w
         } else {
-            let minimum = workspace_number(config, "minimum_head_rows", 3, 40)?.min(h - 4);
-            let maximum = h
-                .checked_sub(minimum + 1)
-                .filter(|n| *n >= 3)
-                .ok_or("portrait terminal is too short")?;
-            // One split: the monitor takes whatever the head does not.
-            let observer_pct = 100 - workspace_number(config, "head_percent", 20, 70)?;
-            let observer_h = (h * observer_pct / 100).clamp(3, maximum);
-            let head_h = h - observer_h - 1;
-            rect.branch(
+            workspace_left_width(config, w)?
+        };
+        let column = WorkspaceRect { w: left, ..rect };
+        if let Some(resource) = resource {
+            let resource_minimum = workspace_number(config, "resource_min_rows", 3, 40)?;
+            let chat_rows = policy
+                .cells(config, policy.chat, h - 1, true)?
+                .clamp(minimum, h.saturating_sub(resource_minimum + 1).max(minimum));
+            let metrics_rows = h - chat_rows - 1;
+            let (upper, lower) = if policy.chat_first {
+                ((head, chat_rows), (resource, metrics_rows))
+            } else {
+                ((resource, metrics_rows), (head, chat_rows))
+            };
+            let left_layout = column.branch(
                 false,
                 &[
                     WorkspaceRect {
-                        h: observer_h,
-                        ..rect
+                        h: upper.1,
+                        ..column
                     }
-                    .leaf(observer)?,
+                    .leaf(upper.0)?,
                     WorkspaceRect {
-                        h: head_h,
-                        y: observer_h + 1,
-                        ..rect
+                        h: lower.1,
+                        y: upper.1 + 1,
+                        ..column
+                    }
+                    .leaf(lower.0)?,
+                ],
+            );
+            let right = WorkspaceRect {
+                w: w - left - 1,
+                x: left + 1,
+                ..rect
+            };
+            let right_layout = if show_workers {
+                let (monitor, spiral) = workspace_monitor_split(config, &policy, right)?;
+                let monitor = monitor.leaf(observer)?;
+                let spiral = workspace_nested(spiral, workers, policy.turn(policy.start), config)?;
+                right.branch(
+                    policy.start.is_multiple_of(2),
+                    &if policy.start >= 2 {
+                        [spiral, monitor]
+                    } else {
+                        [monitor, spiral]
+                    },
+                )
+            } else {
+                right.leaf(observer)?
+            };
+            rect.branch(true, &[left_layout, right_layout])
+        } else {
+            // Compact layouts always place Agents above chat, including a
+            // landscape SSH viewport whose cell budget is too small for btop.
+            let stack = column.branch(
+                false,
+                &[
+                    WorkspaceRect { h: top, ..column }.leaf(observer)?,
+                    WorkspaceRect {
+                        h: h - top - 1,
+                        y: top + 1,
+                        ..column
                     }
                     .leaf(head)?,
                 ],
-            )
+            );
+            if show_workers {
+                rect.branch(
+                    true,
+                    &[
+                        stack,
+                        workspace_nested(
+                            WorkspaceRect {
+                                w: w - left - 1,
+                                x: left + 1,
+                                ..rect
+                            },
+                            workers,
+                            1,
+                            config,
+                        )?,
+                    ],
+                )
+            } else {
+                stack
+            }
         }
+    } else if workers.is_empty() {
+        rect.leaf(head)?
     } else {
-        let left = (w * workspace_number(config, "head_percent", 20, 70)? / 100).clamp(3, w - 4);
+        let left = workspace_golden(config, w - 1, false)?.clamp(3, w - 4);
         rect.branch(
             true,
             &[
                 WorkspaceRect { w: left, ..rect }.leaf(head)?,
-                workspace_grid(
+                workspace_nested(
                     WorkspaceRect {
                         w: w - left - 1,
                         x: left + 1,
                         ..rect
                     },
                     workers,
-                    2.min(workers.len()),
+                    1,
+                    config,
                 )?,
             ],
         )
@@ -1620,6 +1984,91 @@ fn workspace_layout(
     Ok(format!("{checksum:04x},{layout}"))
 }
 
+// tmux versions differ in whether custom-layout leaf IDs are honored. Recover
+// the planner's spatial order to reconcile by ID without restarting processes.
+fn workspace_layout_order(layout: &str) -> Vec<String> {
+    let tokens: Vec<&str> = layout
+        .split([',', '{', '}', '[', ']'])
+        .filter(|v| !v.is_empty())
+        .collect();
+    let mut cells: Vec<(usize, usize, String)> = tokens
+        .windows(4)
+        .filter_map(|row| {
+            if !row[0].contains('x') {
+                return None;
+            }
+            Some((
+                row[2].parse().ok()?,
+                row[1].parse().ok()?,
+                format!("%{}", row[3].parse::<usize>().ok()?),
+            ))
+        })
+        .collect();
+    cells.sort();
+    cells.into_iter().map(|(_, _, pane)| pane).collect()
+}
+
+// A server's inherited SSH environment does not identify the active viewer.
+// Inspect only the most recently active client's process ancestry, never its
+// environment or command arguments. Unknown platforms use the real cell budget.
+fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool, String> {
+    let clients = workspace_tmux(
+        socket,
+        &[
+            "list-clients",
+            "-F",
+            "#{client_pid}\t#{client_activity}\t#{client_session}\t#{client_width}",
+        ],
+    )?;
+    let parsed: Vec<(bool, u64, u32)> = clients
+        .lines()
+        .filter_map(|line| {
+            let row: Vec<&str> = line.split('\t').collect();
+            if row.len() != 4 || row[2] != session {
+                return None;
+            }
+            let cw = row[3].parse::<usize>().ok()?;
+            Some((cw == w, row[1].parse::<u64>().ok()?, row[0].parse::<u32>().ok()?))
+        })
+        .collect();
+    let has_width_match = parsed.iter().any(|(m, _, _)| *m);
+    let selected = parsed
+        .into_iter()
+        .filter(|(m, _, _)| !has_width_match || *m)
+        .map(|(_, act, pid)| (act, pid))
+        .max();
+    let Some((_, mut pid)) = selected else {
+        return Ok(false);
+    };
+    for _ in 0..24 {
+        let path = PathBuf::from(format!("/proc/{pid}"));
+        let Ok(name) = fs::read_to_string(path.join("comm")) else {
+            break;
+        };
+        if matches!(name.trim(), "sshd" | "sshd-session") {
+            return Ok(true);
+        }
+        let Ok(stat) = fs::read_to_string(path.join("stat")) else {
+            break;
+        };
+        let Some((_, tail)) = stat.rsplit_once(')') else {
+            break;
+        };
+        let Some(parent) = tail
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse::<u32>().ok())
+        else {
+            break;
+        };
+        if parent == 0 || parent == pid {
+            break;
+        }
+        pid = parent;
+    }
+    Ok(false)
+}
+
 fn workspace(request: &Value) -> Result<Value, String> {
     let config = &request["workspace"];
     if config["enabled"] != true {
@@ -1628,9 +2077,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
     let count = workspace_number(config, "worker_panes", 1, 8)?;
     // Validate every layout policy before creating any terminal process.
     workspace_compact(config, 180, 48)?;
-    let sample: Vec<String> = (1..=count).map(|i| format!("%{i}")).collect();
-    workspace_layout(config, 180, 48, "%0", &sample, None)?;
-    workspace_layout(config, 80, 48, "%0", &sample, Some("%99"))?;
+    let sample: Vec<String> = (1..=count.min(4)).map(|i| format!("%{i}")).collect();
+    workspace_layout(config, 180, 48, "%0", &sample, Some("%99"), Some("%98"))?;
+    workspace_layout(config, 80, 48, "%0", &sample, Some("%99"), None)?;
+    workspace_worker_capacity(config, 180, 48, &sample, false)?;
     let socket = string(request, "socket")?;
     let path = Path::new(socket);
     let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -1678,6 +2128,249 @@ fn workspace(request: &Value) -> Result<Value, String> {
     let tmux = |args: &[&str]| workspace_tmux(socket, args);
     let action = string(request, "action")?;
     let mut head = request["head"].as_str().unwrap_or("").to_string();
+    if action == "ensure" {
+        if std::env::var("TMUX_PANE").ok().as_deref() != Some(head.as_str()) {
+            return Err("workspace startup requires its witnessed human pane".into());
+        }
+        let window = tmux(&["display-message", "-p", "-t", &head, "#{window_id}"])?;
+        let _startup = workspace_lock(
+            path,
+            &format!("mios-workspace-ensure-{}.lock", digest(&window)),
+        )?;
+        let managed = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &window,
+            "#{@mios-workspace-head}",
+        ])?;
+        if !managed.is_empty() {
+            let mut resize = request.clone();
+            resize["action"] = json!("resize");
+            resize["head"] = json!(managed);
+            return workspace(&resize);
+        }
+        if !tmux(&["display-message", "-p", "-t", &head, "#{@mios-mcp-owner}"])?.is_empty() {
+            return Ok(json!({"managed":false,"layout":"automation"}));
+        }
+        let rows = tmux(&[
+            "list-panes",
+            "-t",
+            &window,
+            "-F",
+            "#{pane_id}\t#{@mios-mcp-owner}",
+        ])?;
+        let mut workers = Vec::new();
+        let mut owner = String::new();
+        for row in rows.lines() {
+            let Some((pane, candidate)) = row.split_once('\t') else {
+                return Err("invalid startup pane record".into());
+            };
+            if pane == head {
+                continue;
+            }
+            if candidate.is_empty() || (!owner.is_empty() && owner != candidate) {
+                return Ok(json!({"managed":false,"layout":"operator_modified"}));
+            }
+            owner = candidate.to_string();
+            workers.push(json!({"pane":pane}));
+        }
+        if owner.is_empty() {
+            owner = format!("mios-workspace-{}", head.trim_start_matches('%'));
+        }
+        let mut created: Vec<String> = Vec::new();
+        let setup = (|| -> Result<Value, String> {
+            for command in [
+                string(request, "observer_command")?,
+                string(config, "resource_command")?,
+            ] {
+                let pane = tmux(&[
+                    "split-window",
+                    "-d",
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "-t",
+                    &head,
+                    command,
+                ])?;
+                created.push(pane.clone());
+                tmux(&["set-option", "-p", "-t", &pane, "@mios-mcp-owner", &owner])?;
+                tmux(&["select-layout", "-t", &window, "tiled"])?;
+            }
+            let mut adopt = request.clone();
+            adopt["action"] = json!("adopt");
+            adopt["owner"] = json!(owner);
+            adopt["observer"] = json!(created[0]);
+            adopt["resource"] = json!(created[1]);
+            adopt["workers"] = json!(workers);
+            workspace(&adopt)
+        })();
+        if setup.is_err() {
+            for pane in created {
+                let _ = tmux(&["kill-pane", "-t", &pane]);
+            }
+        }
+        return setup;
+    }
+    if action == "adopt" {
+        // Adoption is explicit and witnessed; it never claims a peer/human pane.
+        if std::env::var("TMUX_PANE").ok().as_deref() != Some(head.as_str()) {
+            return Err("workspace adoption requires its original human head".into());
+        }
+        let observer = string(request, "observer")?;
+        let resource = string(request, "resource")?;
+        let owner = string(request, "owner")?;
+        let workers = request["workers"]
+            .as_array()
+            .ok_or("missing adoption workers")?;
+        let window = tmux(&["display-message", "-p", "-t", &head, "#{window_id}"])?;
+        if tmux(&["display-message", "-p", "-t", &head, "#{session_name}"])?
+            != string(request, "session")?
+        {
+            return Err("workspace adoption session changed".into());
+        }
+        let existing = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &window,
+            "#{@mios-workspace-head}",
+        ])?;
+        if !existing.is_empty() && existing != head {
+            return Err("window belongs to another workspace".into());
+        }
+        let mut expected = vec![head.clone(), observer.to_string(), resource.to_string()];
+        for worker in workers {
+            expected.push(string(worker, "pane")?.to_string());
+        }
+        let original_len = expected.len();
+        expected.sort();
+        expected.dedup();
+        let mut present: Vec<String> = tmux(&["list-panes", "-t", &window, "-F", "#{pane_id}"])?
+            .lines()
+            .map(str::to_string)
+            .collect();
+        present.sort();
+        if expected.len() != original_len || present != expected {
+            return Err("workspace adoption contains unowned or duplicate panes".into());
+        }
+        for pane in expected.iter().filter(|p| **p != head) {
+            if tmux(&["display-message", "-p", "-t", pane, "#{@mios-mcp-owner}"])? != owner {
+                return Err("workspace adoption ownership changed".into());
+            }
+        }
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &window,
+            "@mios-workspace-head",
+            &head,
+        ])?;
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &window,
+            "@mios-workspace-view",
+            "auto",
+        ])?;
+        tmux(&["set-option", "-w", "-t", &window, "window-size", "latest"])?;
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &head,
+            "@mios-workspace-head",
+            &head,
+        ])?;
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &head,
+            "@mios-workspace-window",
+            &window,
+        ])?;
+        for (name, pane) in [("observer", observer), ("resource", resource)] {
+            tmux(&[
+                "set-option",
+                "-w",
+                "-t",
+                &window,
+                &format!("@mios-workspace-{name}"),
+                pane,
+            ])?;
+            tmux(&[
+                "set-option",
+                "-p",
+                "-t",
+                pane,
+                &format!("@mios-workspace-{name}-for"),
+                &head,
+            ])?;
+        }
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &window,
+            "@mios-workspace-observer-command",
+            string(request, "observer_command")?,
+        ])?;
+        for (index, worker) in workers.iter().enumerate() {
+            let pane = string(worker, "pane")?;
+            tmux(&[
+                "set-option",
+                "-p",
+                "-t",
+                pane,
+                "@mios-workspace-worker",
+                &head,
+            ])?;
+            tmux(&[
+                "set-option",
+                "-p",
+                "-t",
+                pane,
+                "@mios-workspace-slot",
+                &(index + 1).to_string(),
+            ])?;
+        }
+        let witness = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &head,
+            "#{socket_path},#{pid},#{session_id}",
+        ])?;
+        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
+        let command = format!(
+            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
+            quote(&witness),
+            quote(&head),
+            quote(
+                request["adapter_python"]
+                    .as_str()
+                    .unwrap_or(string(config, "tui_python")?)
+            ),
+            quote(string(request, "adapter")?),
+            quote(&head),
+            quote(socket)
+        );
+        tmux(&[
+            "set-hook",
+            "-w",
+            "-t",
+            &window,
+            "window-resized[100]",
+            &format!("run-shell -b {}", quote(&command)),
+        ])?;
+        let mut resize = request.clone();
+        resize["action"] = json!("resize");
+        return workspace(&resize);
+    }
     if action == "open" {
         let session = string(request, "session")?;
         let _opening = workspace_lock(
@@ -1921,10 +2614,15 @@ fn workspace(request: &Value) -> Result<Value, String> {
             ])?;
             let shell_quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
             let hook_command = format!(
-                "env TMUX={} TMUX_PANE={} {} --workspace-resize {} {}",
+                "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
                 shell_quote(&witness),
                 shell_quote(&head),
-                string(request, "adapter")?,
+                shell_quote(
+                    request["adapter_python"]
+                        .as_str()
+                        .unwrap_or(string(config, "tui_python")?)
+                ),
+                shell_quote(string(request, "adapter")?),
                 shell_quote(&head),
                 shell_quote(socket)
             );
@@ -2057,6 +2755,38 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     if !matches!(action, "resize" | "focus" | "view") {
         return Err("unknown workspace action".into());
+    }
+    // Re-entering an existing workspace upgrades its hook as well as its
+    // geometry, including installations whose overlay scripts are mode 0644.
+    if let Some(adapter) = request["adapter"].as_str() {
+        let witness = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &head,
+            "#{socket_path},#{pid},#{session_id}",
+        ])?;
+        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
+        let interpreter = request["adapter_python"]
+            .as_str()
+            .unwrap_or(string(config, "tui_python")?);
+        let command = format!(
+            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
+            quote(&witness),
+            quote(&head),
+            quote(interpreter),
+            quote(adapter),
+            quote(&head),
+            quote(socket)
+        );
+        tmux(&[
+            "set-hook",
+            "-w",
+            "-t",
+            window,
+            "window-resized[100]",
+            &format!("run-shell -b {}", quote(&command)),
+        ])?;
     }
     if fields[6] == "1" {
         return Ok(json!({"managed":true,"zoomed":true}));
@@ -2192,7 +2922,16 @@ fn workspace(request: &Value) -> Result<Value, String> {
             &view,
         ])?;
     }
-    let compact = view == "compact" || workspace_compact(config, w, h)?;
+    let left_width = workspace_left_width(config, w)?;
+    let compact = view == "compact"
+        || (config["remote_compact"] == true && workspace_remote_viewer(socket, fields[0], w)?)
+        || workspace_compact(config, w, h)?
+        || left_width < workspace_number(config, "resource_min_columns", 20, 200)?
+        || h < workspace_number(config, "minimum_head_rows", 3, 40)?
+            + workspace_number(config, "resource_min_rows", 3, 40)?
+            + 1;
+    let borders = workspace_borders(config, compact)?;
+    let visible_workers = workspace_worker_capacity(config, w, h, &workers, compact)?;
     let portrait =
         compact && w * 100 < h * workspace_number(config, "portrait_ratio_percent", 50, 400)?;
     let mut active = tmux(&[
@@ -2218,11 +2957,38 @@ fn workspace(request: &Value) -> Result<Value, String> {
             return Err("pane is not a member of this workspace".into());
         };
     }
+    let mut resource = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        window,
+        "#{@mios-workspace-resource}",
+    ])?;
+    if !resource.is_empty() {
+        let alive = tmux(&["display-message", "-p", "-t", &resource, "#{pane_id}"])
+            .map(|p| p == resource)
+            .unwrap_or(false);
+        if alive {
+            match tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &resource,
+                "#{@mios-workspace-resource-for}",
+            ]) {
+                Ok(owner) if owner == head => {}
+                Ok(_) => return Err("workspace resource ownership changed".into()),
+                Err(_) => resource.clear(),
+            }
+        } else {
+            resource.clear();
+        }
+    }
     // Refuse to move panes the operator added to the managed window.
     let present = tmux(&["list-panes", "-t", window, "-F", "#{pane_id}"])?;
     if present
         .lines()
-        .any(|p| p != observer && !members.iter().any(|m| m == p))
+        .any(|p| p != observer && p != resource && !members.iter().any(|m| m == p))
     {
         return Ok(json!({"managed":true,"layout":"operator_modified"}));
     }
@@ -2352,7 +3118,9 @@ fn workspace(request: &Value) -> Result<Value, String> {
         ])?;
     }
     for pane in &members {
-        let destination = if !compact || pane == &active {
+        let destination = if pane == &active
+            || (!compact && (pane == &head || workers[..visible_workers].contains(pane)))
+        {
             window.to_string()
         } else {
             tmux(&["display-message", "-p", "-t", &anchor, "#{window_id}"])?
@@ -2367,43 +3135,75 @@ fn workspace(request: &Value) -> Result<Value, String> {
             tmux(&["select-layout", "-t", &destination, "tiled"])?;
         }
     }
+    if !compact && resource.is_empty() {
+        resource = tmux(&[
+            "new-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &format!("={storage}:"),
+            "-n",
+            "MiOS Processes",
+            string(config, "resource_command")?,
+        ])?;
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &resource,
+            "@mios-workspace-resource-for",
+            &head,
+        ])?;
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            window,
+            "@mios-workspace-resource",
+            &resource,
+        ])?;
+    }
+    let shown_workers = &workers[..visible_workers];
     let layout = workspace_layout(
         config,
         w,
         h,
         if compact { &active } else { &head },
-        &workers,
-        if compact { Some(observer) } else { None },
+        shown_workers,
+        Some(observer),
+        if compact { None } else { Some(&resource) },
     )?;
-    let observer_window = tmux(&["display-message", "-p", "-t", observer, "#{window_id}"])?;
-    if compact && observer_window != window {
-        if portrait {
-            tmux(&["join-pane", "-d", "-b", "-v", "-s", observer, "-t", &active])?;
-        } else {
-            tmux(&["join-pane", "-d", "-h", "-s", observer, "-t", &active])?;
-        }
-    } else if !compact && observer_window == window {
+    if tmux(&["display-message", "-p", "-t", observer, "#{window_id}"])? != window {
         tmux(&[
-            "break-pane",
+            "join-pane",
             "-d",
             "-s",
             observer,
             "-t",
-            &format!("={storage}:"),
-            "-n",
-            "MiOS AI Agents",
+            if compact { &active } else { &head },
         ])?;
-    } else if !compact
-        && tmux(&["display-message", "-p", "-t", observer, "#{session_name}"])? != storage
-    {
-        tmux(&[
-            "move-window",
-            "-d",
-            "-s",
-            &observer_window,
-            "-t",
-            &format!("={storage}:"),
-        ])?;
+    }
+    if !resource.is_empty() {
+        let location = tmux(&["display-message", "-p", "-t", &resource, "#{window_id}"])?;
+        if compact && location == window {
+            tmux(&[
+                "break-pane",
+                "-d",
+                "-s",
+                &resource,
+                "-t",
+                &format!("={storage}:"),
+                "-n",
+                "MiOS Processes",
+            ])?;
+        } else if !compact && location != window {
+            tmux(&["join-pane", "-d", "-s", &resource, "-t", &head])?;
+        }
+    }
+    for (key, value) in borders {
+        tmux(&["set-option", "-w", "-t", window, key, &value])?;
     }
     tmux(&["select-layout", "-t", window, &layout])?;
     // Older tmux releases ignore pane IDs in a saved layout and assign cells
@@ -2427,28 +3227,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
         })
         .collect::<Result<_, String>>()?;
     cells.sort();
-    let mut desired = if portrait {
-        vec![if compact {
-            observer.to_string()
-        } else {
-            active.clone()
-        }]
-    } else {
-        vec![if compact {
-            active.clone()
-        } else {
-            head.clone()
-        }]
-    };
-    if compact {
-        desired.push(if portrait {
-            active.clone()
-        } else {
-            observer.to_string()
-        });
-    } else {
-        desired.extend(workers.iter().cloned());
-    }
+    let desired = workspace_layout_order(&layout);
     for (i, pane) in desired.iter().enumerate() {
         if cells[i].2 != *pane {
             let j = cells
@@ -2483,12 +3262,20 @@ fn workspace(request: &Value) -> Result<Value, String> {
         "@mios-workspace-active",
         &active,
     ])?;
+    tmux(&[
+        "set-option",
+        "-w",
+        "-t",
+        window,
+        "@mios-workspace-viewport",
+        &format!("{w}x{h}"),
+    ])?;
     if action == "focus" {
         tmux(&["select-window", "-t", window])?;
         tmux(&["select-pane", "-t", &active])?;
     }
     Ok(
-        json!({"managed":true,"layout":if portrait {"portrait"} else if compact {"compact"} else {"desktop"},"head":head,"active":active,"workers":workers,"observer":observer}),
+        json!({"managed":true,"layout":if portrait {"portrait"} else if compact {"compact"} else {"desktop"},"head":head,"active":active,"workers":workers,"observer":observer,"resource":resource}),
     )
 }
 
@@ -3252,6 +4039,31 @@ mod succession {
     }
 
     #[test]
+    fn neutral_policy_requires_registration_authentication_and_a_released_lease() {
+        let (_temporary, dir) = registry();
+        register(&dir, "terminal:worker-1");
+        register(&dir, "terminal:worker-2");
+        let mut cfg = config();
+        cfg["succession"]["preferred_holder"] = json!("");
+        cfg["succession"]["successors"] = json!([]);
+        let probe = |id: &str| {
+            call_with(&dir, json!({"action":"probe","agent_id":id}), cfg.clone()).unwrap()
+        };
+        assert_eq!(probe("unregistered")["take_over"], false);
+        assert_eq!(probe("terminal:worker-1")["take_over"], true);
+        let mut request = json!({"action":"lease","subaction":"acquire","agent_id":"terminal:worker-1","token":"incorrect-token"});
+        assert!(call_with(&dir, request.clone(), cfg.clone()).is_err());
+        request["token"] = json!(token("terminal:worker-1"));
+        call_with(&dir, request.clone(), cfg.clone()).unwrap();
+        assert_eq!(probe("terminal:worker-2")["take_over"], false);
+        request["subaction"] = json!("release");
+        call_with(&dir, request, cfg.clone()).unwrap();
+        let request = json!({"action":"lease","subaction":"acquire","agent_id":"terminal:worker-2","token":token("terminal:worker-2")});
+        call_with(&dir, request, cfg).unwrap();
+        assert_eq!(holder_of(&dir), "terminal:worker-2");
+    }
+
+    #[test]
     fn verdict_held_by_me_and_released_targeting() {
         let (_t, dir) = registry();
         plant_lease(
@@ -3789,5 +4601,419 @@ mod succession {
         let mut long = publish;
         long["note"] = json!("x".repeat(300));
         assert!(call(&dir, long).is_err());
+    }
+}
+
+#[cfg(test)]
+mod responsive_workspace {
+    use super::*;
+
+    fn config() -> Value {
+        json!({"head_percent":38,"desktop_head_percent":38,"desktop_min_columns":160,
+            "desktop_min_rows":40,"portrait_ratio_percent":200,"minimum_head_rows":16,
+            "worker_min_columns":12,"resource_min_columns":60,"resource_min_rows":8,"golden_ratio":(1.0+5.0_f64.sqrt())/2.0})
+    }
+
+    #[test]
+    fn desktop_has_chat_above_processes_and_agents_to_the_right() {
+        let cfg = config();
+        let workers = vec!["%3".into(), "%4".into(), "%5".into(), "%6".into()];
+        for (width, height) in [(160, 48), (272, 61), (320, 90)] {
+            assert!(!workspace_compact(&cfg, width, height).unwrap());
+            let layout =
+                workspace_layout(&cfg, width, height, "%0", &workers, Some("%1"), Some("%2"))
+                    .unwrap();
+            let order = workspace_layout_order(&layout);
+            assert_eq!(&order[..3], &["%0", "%1", "%2"]);
+            assert_eq!(order.len(), 7);
+            let mut ids = order.clone();
+            ids.sort();
+            ids.dedup();
+            assert_eq!(ids.len(), 7, "pane IDs must occur exactly once");
+            let left = workspace_golden(&cfg, width - 1, false).unwrap();
+            let right = width - left - 1;
+            assert!((right as f64 - ((1.0 + 5.0_f64.sqrt()) / 2.0) * left as f64).abs() < 1.4);
+            assert!(
+                layout.contains(&format!("{left}x{height},0,0[")),
+                "{layout}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_and_portrait_detach_workers_without_reducing_chat_width() {
+        let cfg = config();
+        let workers = vec!["%3".into(), "%4".into(), "%5".into(), "%6".into()];
+        for (width, height) in [(89, 44), (61, 70), (46, 18), (30, 12)] {
+            assert!(workspace_compact(&cfg, width, height).unwrap());
+            let layout =
+                workspace_layout(&cfg, width, height, "%0", &workers, Some("%1"), None).unwrap();
+            assert_eq!(workspace_layout_order(&layout), vec!["%1", "%0"]);
+            assert!(
+                layout.contains(&format!("{width}x{height},0,0[")),
+                "{layout}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_scaling_is_derived_from_the_viewport_not_previous_geometry() {
+        let cfg = config();
+        let workers = vec!["%3".into(), "%4".into()];
+        let original =
+            workspace_layout(&cfg, 272, 61, "%0", &workers, Some("%1"), Some("%2")).unwrap();
+        for (w, h) in [(89, 44), (61, 70), (160, 48), (320, 90), (89, 44)] {
+            workspace_layout(&cfg, w, h, "%0", &workers, Some("%1"), None).unwrap();
+            assert_eq!(
+                workspace_layout(&cfg, 272, 61, "%0", &workers, Some("%1"), Some("%2")).unwrap(),
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_geometry_and_pane_ids_are_rejected() {
+        let cfg = config();
+        assert!(workspace_layout(&cfg, 11, 8, "%0", &[], Some("%1"), None).is_err());
+        assert!(workspace_layout(&cfg, 89, 44, "operator-pane", &[], Some("%1"), None).is_err());
+        assert!(workspace_nested(
+            WorkspaceRect {
+                w: 3,
+                h: 3,
+                x: 0,
+                y: 0
+            },
+            &["%1".into(), "%2".into()],
+            0,
+            &cfg
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod tmuxos_layout_tests {
+    use super::*;
+
+    fn config() -> Value {
+        json!({"head_percent":38,"desktop_head_percent":38,"desktop_min_columns":160,
+            "desktop_min_rows":40,"portrait_ratio_percent":200,"minimum_head_rows":16,
+            "worker_min_columns":12,"resource_min_columns":60,"resource_min_rows":8,
+            "golden_ratio":(1.0+5.0_f64.sqrt())/2.0,
+            "layout":{"left_roles":["chat","metrics"],"column_share":0.3819660112501051,
+                "chat_share":0.6180339887498949,"monitor_share":0.6180339887498949,
+                "spiral_share":0.6180339887498949,"spiral_start":"down",
+                "spiral_turn":"clockwise","spiral_depth":4}})
+    }
+
+    // Parse a tmux custom layout into (pane, x, y, w, h) leaves.
+    fn leaves(layout: &str) -> Vec<(String, usize, usize, usize, usize)> {
+        let body = layout.split_once(',').unwrap().1;
+        let tokens: Vec<&str> = body
+            .split([',', '{', '}', '[', ']'])
+            .filter(|v| !v.is_empty())
+            .collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + 2 < tokens.len() {
+            if let Some((w, h)) = tokens[i].split_once('x') {
+                let next = tokens.get(i + 3);
+                if next.is_some_and(|t| !t.contains('x')) {
+                    out.push((
+                        format!("%{}", next.unwrap()),
+                        tokens[i + 1].parse().unwrap(),
+                        tokens[i + 2].parse().unwrap(),
+                        w.parse().unwrap(),
+                        h.parse().unwrap(),
+                    ));
+                    i += 4;
+                    continue;
+                }
+            }
+            i += 3;
+        }
+        out
+    }
+
+    fn cell<'a>(
+        cells: &'a [(String, usize, usize, usize, usize)],
+        pane: &str,
+    ) -> &'a (String, usize, usize, usize, usize) {
+        cells.iter().find(|c| c.0 == pane).unwrap()
+    }
+
+    fn workers(n: usize) -> Vec<String> {
+        (3..3 + n).map(|i| format!("%{i}")).collect()
+    }
+
+    #[test]
+    fn explicit_golden_policy_matches_derived_geometry() {
+        let mut bare = config();
+        bare.as_object_mut().unwrap().remove("layout");
+        for (w, h) in [(160, 48), (200, 56), (272, 61), (320, 90)] {
+            let ws = workers(4);
+            assert_eq!(
+                workspace_layout(&config(), w, h, "%0", &ws, Some("%1"), Some("%2")).unwrap(),
+                workspace_layout(&bare, w, h, "%0", &ws, Some("%1"), Some("%2")).unwrap(),
+                "{w}x{h}"
+            );
+        }
+    }
+
+    #[test]
+    fn sketch_geometry_chat_metrics_left_monitor_spiral_right() {
+        let cfg = config();
+        let (w, h) = (200, 56);
+        let ws = workers(4);
+        let count = workspace_worker_capacity(&cfg, w, h, &ws, false).unwrap();
+        let layout =
+            workspace_layout(&cfg, w, h, "%0", &ws[..count], Some("%1"), Some("%2")).unwrap();
+        let cells = leaves(&layout);
+        for c in &cells {
+            println!("{} {},{} {}x{}", c.0, c.1, c.2, c.3, c.4);
+        }
+        let (chat, metrics, monitor) = (cell(&cells, "%0"), cell(&cells, "%2"), cell(&cells, "%1"));
+        // LEFT: chat above metrics, one column of golden-minor width.
+        assert_eq!((chat.1, chat.2), (0, 0));
+        assert_eq!((metrics.1, metrics.2), (0, chat.4 + 1));
+        assert_eq!(chat.3, metrics.3);
+        assert_eq!(chat.4 + metrics.4 + 1, h);
+        assert!(chat.4 > metrics.4);
+        let left = chat.3;
+        assert!(((w - left - 1) as f64 / left as f64 - 1.618).abs() < 0.05);
+        // RIGHT: monitor heads the region at the top, full width.
+        assert_eq!(
+            (monitor.1, monitor.2, monitor.3),
+            (left + 1, 0, w - left - 1)
+        );
+        // Spiral: every worker below the monitor; cells shrink by ~phi.
+        assert_eq!(cells.len(), 3 + count);
+        let mut areas = Vec::new();
+        for pane in &ws[..count] {
+            let c = cell(&cells, pane);
+            assert!(c.1 > left && c.2 > monitor.4, "{pane} outside spiral");
+            areas.push(c.3 * c.4);
+        }
+        assert!(areas.windows(2).all(|a| a[0] >= a[1]), "{areas:?}");
+        // No overlap and full coverage of the window.
+        let covered: usize = cells.iter().map(|c| c.3 * c.4).sum();
+        let borders = w * h - covered;
+        assert!(borders < w + h * 8, "{borders}");
+    }
+
+    #[test]
+    fn roles_ratios_direction_and_depth_follow_ssot() {
+        let mut cfg = config();
+        cfg["layout"]["left_roles"] = json!(["metrics", "chat"]);
+        cfg["layout"]["chat_share"] = json!(0.7);
+        cfg["layout"]["spiral_start"] = json!("up");
+        cfg["layout"]["spiral_depth"] = json!(2);
+        let ws = workers(4);
+        let (w, h) = (200, 56);
+        let count = workspace_worker_capacity(&cfg, w, h, &ws, false).unwrap();
+        assert_eq!(count, 2);
+        let layout =
+            workspace_layout(&cfg, w, h, "%0", &ws[..count], Some("%1"), Some("%2")).unwrap();
+        let cells = leaves(&layout);
+        let (chat, metrics, monitor) = (cell(&cells, "%0"), cell(&cells, "%2"), cell(&cells, "%1"));
+        assert_eq!(metrics.2, 0);
+        assert_eq!(chat.2, metrics.4 + 1);
+        assert_eq!(chat.4, (55.0_f64 * 0.7).round() as usize);
+        // "up": the monitor sits at the bottom of the right region.
+        assert_eq!(monitor.2 + monitor.4, h);
+        assert!(monitor.2 > 0);
+        // Counter-clockwise spiral still yields a valid, distinct layout.
+        cfg["layout"]["spiral_turn"] = json!("counterclockwise");
+        let ccw = workspace_layout(&cfg, w, h, "%0", &ws[..2], Some("%1"), Some("%2")).unwrap();
+        assert_ne!(ccw, layout);
+        assert_eq!(leaves(&ccw).len(), 5);
+    }
+
+    #[test]
+    fn invalid_layout_policy_is_rejected_before_spawning() {
+        for (key, value) in [
+            ("left_roles", json!(["chat", "chat"])),
+            ("column_share", json!(0.95)),
+            ("spiral_start", json!("sideways")),
+            ("spiral_turn", json!("widdershins")),
+            ("spiral_depth", json!(0)),
+            ("monitor_min_rows", json!(1)),
+            ("monitor_min_rows", json!("eight")),
+        ] {
+            let mut cfg = config();
+            cfg["layout"][key] = value;
+            assert!(workspace_policy(&cfg).is_err(), "{key}");
+        }
+        let mut cfg = config();
+        cfg["layout"] = json!("golden");
+        assert!(workspace_policy(&cfg).is_err());
+    }
+
+    // Operator sketch 3 ("slim this!" -> "Bigger Agents pane sizing"): the
+    // monitor is a slim golden strip (1/phi^3) above the agents spiral.
+    fn slim_config() -> Value {
+        let mut cfg = config();
+        cfg["layout"]["monitor_share"] = json!(0.2360679774997897);
+        cfg["layout"]["monitor_min_rows"] = json!(8);
+        cfg
+    }
+
+    // (monitor area, agents area, monitor rows, worker cells)
+    fn right_areas(cfg: &Value, w: usize, h: usize) -> (usize, usize, usize, usize) {
+        let ws = workers(4);
+        let count = workspace_worker_capacity(cfg, w, h, &ws, false).unwrap();
+        let layout =
+            workspace_layout(cfg, w, h, "%0", &ws[..count], Some("%1"), Some("%2")).unwrap();
+        let cells = leaves(&layout);
+        let monitor = cell(&cells, "%1");
+        let agents: usize = ws[..count]
+            .iter()
+            .map(|p| {
+                let c = cell(&cells, p);
+                c.3 * c.4
+            })
+            .sum();
+        (monitor.3 * monitor.4, agents, monitor.4, count)
+    }
+
+    #[test]
+    fn slim_monitor_gives_agents_the_right_region() {
+        for (w, h) in [(160, 48), (200, 56), (272, 61), (320, 90)] {
+            let (monitor, agents, rows, count) = right_areas(&slim_config(), w, h);
+            println!(
+                "{w}x{h}: monitor {rows} rows area {monitor}, agents {agents} ({count} cells)"
+            );
+            assert!(count >= 1, "{w}x{h}");
+            assert!(
+                monitor < agents,
+                "{w}x{h}: monitor {monitor} >= agents {agents}"
+            );
+            let want = (((h - 1) as f64) * 0.2360679774997897).round() as usize;
+            assert_eq!(rows, want.max(8), "{w}x{h}");
+        }
+        // The floor keeps a short desktop terminal's monitor readable.
+        let (_, _, rows, _) = right_areas(&slim_config(), 200, 40);
+        assert_eq!(rows, 9);
+        let mut tall_floor = slim_config();
+        tall_floor["layout"]["monitor_min_rows"] = json!(12);
+        let (_, _, rows, _) = right_areas(&tall_floor, 200, 40);
+        assert_eq!(rows, 12);
+    }
+
+    #[test]
+    fn monitor_larger_than_agents_is_detected() {
+        // Negative control: the previous 1/phi monitor dwarfs the agents.
+        let (monitor, agents, _, _) = right_areas(&config(), 200, 56);
+        assert!(
+            monitor > agents,
+            "control lost: monitor {monitor} agents {agents}"
+        );
+        let (monitor, agents, _, _) = right_areas(&slim_config(), 200, 56);
+        assert!(monitor < agents);
+    }
+
+    // Compact/portrait: the monitor stacks above the head agent; the slim
+    // policy must shrink it there as well (rows of observer vs head).
+    fn compact_rows(cfg: &Value, w: usize, h: usize) -> (usize, usize) {
+        assert!(workspace_compact(cfg, w, h).unwrap(), "{w}x{h} not compact");
+        let layout = workspace_layout(cfg, w, h, "%0", &workers(4), Some("%1"), None).unwrap();
+        let cells = leaves(&layout);
+        (cell(&cells, "%1").4, cell(&cells, "%0").4)
+    }
+
+    #[test]
+    fn slim_monitor_applies_to_compact_and_portrait() {
+        for (w, h) in [(89, 44), (61, 70), (46, 30), (120, 39)] {
+            let (monitor, head) = compact_rows(&slim_config(), w, h);
+            let want = ((((h - 1) as f64) * 0.2360679774997897).round() as usize).max(8);
+            assert_eq!(monitor, want.min(h - 16 - 1), "{w}x{h}");
+            assert!(monitor < head, "{w}x{h}: monitor {monitor} >= head {head}");
+        }
+        // Floor keeps a short portrait monitor readable.
+        let (monitor, _) = compact_rows(&slim_config(), 46, 30);
+        assert_eq!(monitor, 8);
+    }
+
+    #[test]
+    fn compact_without_monitor_share_keeps_golden_split() {
+        // Negative control: no monitor_share -> the established 1/phi monitor
+        // (larger than the head), so the slim assertion above is meaningful.
+        let mut cfg = config();
+        cfg["layout"]
+            .as_object_mut()
+            .unwrap()
+            .remove("monitor_share");
+        let (monitor, head) = compact_rows(&cfg, 61, 70);
+        assert_eq!(monitor, workspace_golden(&cfg, 69, true).unwrap());
+        assert!(
+            monitor > head,
+            "control lost: monitor {monitor} head {head}"
+        );
+    }
+
+    #[test]
+    fn ssot_layout_keeps_monitor_below_agents() {
+        // Fails when the shipped SSOT regrows the monitor past the agents spiral.
+        let path =
+            std::env::var("MIOS_SSOT_TOML").unwrap_or_else(|_| "/usr/share/mios/mios.toml".into());
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Some(start) = text.find("\n[mcp.tmux.workspace.layout]\n") else {
+            return;
+        };
+        let body = &text[start + 1..];
+        let body = &body[body.find('\n').unwrap() + 1..];
+        let body = &body[..body.find("\n[").unwrap_or(body.len())];
+        let mut cfg = config();
+        for line in body.lines() {
+            let line = line.split('#').next().unwrap().trim();
+            if let Some((k, v)) = line.split_once('=') {
+                let (k, v) = (k.trim(), v.trim());
+                if let Ok(n) = v.parse::<u64>() {
+                    cfg["layout"][k] = json!(n);
+                } else if let Ok(n) = v.parse::<f64>() {
+                    cfg["layout"][k] = json!(n);
+                }
+            }
+        }
+        for (w, h) in [(160, 48), (200, 56), (320, 90)] {
+            let (monitor, agents, _, _) = right_areas(&cfg, w, h);
+            assert!(
+                monitor < agents,
+                "{w}x{h}: SSOT monitor {monitor} >= agents {agents}"
+            );
+        }
+        // Compact (landscape SSH) and portrait (phone): the slim monitor
+        // stacks above a taller head agent, still floored at monitor_min_rows.
+        let floor = cfg["layout"]["monitor_min_rows"].as_u64().unwrap_or(3) as usize;
+        for (w, h) in [(89, 44), (61, 70), (46, 30)] {
+            let (monitor, head) = compact_rows(&cfg, w, h);
+            assert!(
+                monitor < head,
+                "{w}x{h}: SSOT monitor {monitor} >= head {head}"
+            );
+            assert!(
+                monitor >= floor.min(h - 16 - 1),
+                "{w}x{h}: monitor {monitor} < floor {floor}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod border_policy_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_border_modes_validate_before_applying() {
+        let mut config = json!({"desktop_border_lines":"double", "compact_border_lines":"single", "desktop_border_status":"top", "compact_border_status":"off", "desktop_border_format":"╭─ #{pane_title} ─╮"});
+        assert_eq!(workspace_borders(&config, false).unwrap()[0].1, "double");
+        assert_eq!(workspace_borders(&config, true).unwrap()[0].1, "single");
+        config["desktop_border_lines"] = json!("rounded");
+        assert!(workspace_borders(&config, false).is_err());
+        config["desktop_border_lines"] = json!("double");
+        config["desktop_border_format"] = json!("title\nrun-shell bad");
+        assert!(workspace_borders(&config, false).is_err());
     }
 }

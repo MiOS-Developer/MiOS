@@ -51,7 +51,7 @@ _gtk_theme=$(_toml_get appearance.gtk_theme "adw-gtk3-dark")
 _adw_color=$(_toml_get appearance.adw_color_scheme "prefer-dark")
 _curs_theme=$(_toml_get appearance.cursor_theme "Bibata-Modern-Classic")
 _curs_size=$(_toml_get appearance.cursor_size "24")
-_xcurs_path=$(_toml_get appearance.xcursor_path '~/.icons:~/.local/share/icons:/usr/share/icons:/usr/share/pixmaps')
+_xcurs_path=$(_toml_get appearance.xcursor_path \~/.icons:\~/.local/share/icons:/usr/share/icons:/usr/share/pixmaps)
 _log "appearance: GTK_THEME=$_gtk_theme ADW=$_adw_color XCURSOR_THEME=$_curs_theme size=$_curs_size"
 
 if [ "$SKIP_OVERRIDE_APPLY" = 0 ]; then

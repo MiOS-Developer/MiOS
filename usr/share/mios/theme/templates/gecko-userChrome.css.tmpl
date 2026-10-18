@@ -1,0 +1,91 @@
+/* AI-hint: MiOS browser chrome for Zen/Firefox profiles (chrome/userChrome.css). Tab panels
+   stay transparent so pages composited by browser.tabs.allow_transparent_browser show the
+   window glass; toolbars take the shell glass fill from mios.toml [theme.shell]/[colors].
+   AI-related: usr/share/mios/mios.toml [browser.zen] [dotfiles.registry.gecko-chrome],
+   usr/share/mios/theme/templates/mios-web.css.tmpl, usr/libexec/mios/mios-theme-render (apply_web) */
+
+:root {
+  --mios-chrome-fill: color-mix(in srgb, @MIOS:bg@ @MIOS:theme.shell.fill_opacity_pct@%, transparent);
+  --zen-main-browser-background: var(--mios-chrome-fill) !important;
+  --zen-themed-toolbar-bg: var(--mios-chrome-fill) !important;
+  --toolbar-bgcolor: var(--mios-chrome-fill) !important;
+  --zen-primary-color: @MIOS:cursor@ !important;
+  --toolbar-color: @MIOS:fg@ !important;
+}
+
+#main-window, #browser, #tabbrowser-tabbox, #tabbrowser-tabpanels, .browserContainer, .browserStack, browser {
+  background-color: transparent !important;
+}
+
+/* Compact mode: the floating tab popout is a glass slab at a golden-ratio share of the
+   window height, vertically centred, instead of a full-height column of dead space. */
+:root[zen-compact-mode='true'] #navigator-toolbox:not([animate='true']) {
+  height: calc(100% * @MIOS:browser.zen.compact_height_ratio@) !important;
+  top: calc(100% * (1 - @MIOS:browser.zen.compact_height_ratio@) / 2) !important;
+  bottom: auto !important;
+}
+:root[zen-compact-mode='true'] #navigator-toolbox .zen-toolbar-background {
+  background: var(--mios-chrome-fill) !important;
+  border: 1px solid color-mix(in srgb, @MIOS:subtle@ @MIOS:theme.shell.outline_opacity_pct@%, transparent) !important;
+  border-radius: @MIOS:desktop.hyprland.config.decoration.rounding@px !important;
+}
+
+/* Right-hand AI chat sidebar (Firefox sidebar-box with browser.ml.chat, docked to the end by
+   sidebar.position_start=false while Zen's vertical tabs stay left). With the SSOT pref
+   mios.zen.ai-sidebar.autohide it overlays the page instead of shrinking it: collapsed to a
+   @MIOS:browser.zen.ai_sidebar_peek_px@px edge strip, it slides in on hover/focus and back out when
+   the pointer leaves, so web content stays edge-to-edge. Ctrl+Alt+X opens/closes it. */
+@media -moz-pref("mios.zen.ai-sidebar.autohide") {
+  #tabbrowser-tabbox[sidebar-positionend] {
+    position: relative !important;
+  }
+  #tabbrowser-tabbox[sidebar-positionend] > #sidebar-splitter {
+    display: none !important;
+  }
+  #tabbrowser-tabbox[sidebar-positionend] > #sidebar-box:not([hidden='true']) {
+    position: absolute !important;
+    inset-block: 0 !important;
+    inset-inline-end: 0 !important;
+    z-index: 10 !important;
+    width: @MIOS:browser.zen.ai_sidebar_width_px@px !important;
+    min-width: @MIOS:browser.zen.ai_sidebar_width_px@px !important;
+    max-width: 100% !important;
+    background: var(--mios-chrome-fill) !important;
+    border-inline-start: 1px solid color-mix(in srgb, @MIOS:subtle@ @MIOS:theme.shell.outline_opacity_pct@%, transparent) !important;
+    border-radius: @MIOS:desktop.hyprland.config.decoration.rounding@px 0 0 @MIOS:desktop.hyprland.config.decoration.rounding@px !important;
+    border-inline-start-color: color-mix(in srgb, @MIOS:cursor@ 70%, transparent) !important;
+    transform: translateX(calc(100% - @MIOS:browser.zen.ai_sidebar_peek_px@px));
+    opacity: 0.35;
+    transition: transform 220ms ease, opacity 220ms ease;
+  }
+  #tabbrowser-tabbox[sidebar-positionend] > #sidebar-box:not([hidden='true']):is(:hover, :focus-within) {
+    border-inline-start-color: color-mix(in srgb, @MIOS:subtle@ @MIOS:theme.shell.outline_opacity_pct@%, transparent) !important;
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* Essentials (Zen's pinned-app tiles) at the BOTTOM of the left tab sidebar, just above the
+   workspace/foot buttons, gated by the SSOT pref mios.zen.essentials-bottom. Zen absolutely
+   positions the essentials grid at the top of #tabbrowser-tabs and pads the workspace by its
+   measured height (inline padding-top); this re-anchors the grid to the bottom and moves that
+   reserve to padding-bottom. One grid row = 46px tile + 4px tile padding + 4px gap, plus 4px of
+   container padding; Zen caps Essentials at 12 = 3 rows of 4. */
+@media -moz-pref("mios.zen.essentials-bottom") {
+  #tabbrowser-tabs .zen-essentials-container {
+    top: auto !important;
+    bottom: 0 !important;
+  }
+  #tabbrowser-tabs zen-workspace {
+    padding-top: 0 !important;
+  }
+  #tabbrowser-tabs:has(.zen-essentials-container:not([hidden]) > :nth-child(1)) zen-workspace {
+    padding-bottom: calc(1 * 54px + 4px) !important;
+  }
+  #tabbrowser-tabs:has(.zen-essentials-container:not([hidden]) > :nth-child(5)) zen-workspace {
+    padding-bottom: calc(2 * 54px + 4px) !important;
+  }
+  #tabbrowser-tabs:has(.zen-essentials-container:not([hidden]) > :nth-child(9)) zen-workspace {
+    padding-bottom: calc(3 * 54px + 4px) !important;
+  }
+}

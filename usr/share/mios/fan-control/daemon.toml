@@ -1,0 +1,23 @@
+# AI-hint: MiOS vendor daemon.toml for ventulusd (VENTULUS_CONFIG, set by ventulusd.service.d/10-mios.conf). Strict upstream schema: an unknown key inside a section makes the daemon exit, so only documented keys appear here.
+# AI-related: /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/fan-control/profiles/mios-default.json, /usr/share/mios/mios.toml [hardware.fan_control]
+# Settings changed through the API land in /var/lib/ventulus/runtime.toml and
+# shadow these. To override this file, copy it to /etc/ventulus/daemon.toml and
+# set VENTULUS_CONFIG=/etc/ventulus/daemon.toml in /etc/mios/fan-control.env.
+
+[polling]
+poll_interval_ms = 1000
+
+[profiles]
+# The daemon's own store (/var/lib/ventulus/profiles) is always searched first,
+# then these in order, so /etc/ventulus/profiles/mios-default.json overrides the
+# vendor profile of the same name.
+search_dirs = ["/etc/ventulus/profiles", "/usr/share/mios/fan-control/profiles"]
+
+[shutdown]
+# Exit minimum for fans with no firmware mode to go back to (none on nct6799:
+# every header there is handed back to its recorded pwm_enable).
+exit_floor_pct = 50
+
+[safety]
+# A coolant sensor at or above this forces every fan to 100 %.
+coolant_limit_c = 60

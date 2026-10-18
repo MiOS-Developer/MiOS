@@ -11,7 +11,9 @@ use std::process::ExitCode;
 
 mod ai;
 mod btop_theme;
+mod display_scale;
 mod docs;
+mod greeter;
 mod image;
 mod indexes;
 mod metal_vs_hosted;
@@ -24,7 +26,7 @@ use ai::{ai_manifest, pipe_boundaries};
 use docs::{standardize_docs, sync_wiki};
 use image::{bib_configs, cargo_manifests};
 use indexes::{adr_index, gate_index, pipeline_index, roadmap_index};
-use render::{render_desktop, render_globals, render_manpages, render_ports};
+use render::{render_desktop, render_globals, render_manpages, render_ports, render_tuned};
 use terminal::{fastfetch, tmux_theme};
 
 #[derive(Parser, Debug)]
@@ -105,6 +107,13 @@ enum Commands {
         /// Compare the archive with the recomputed dropped set by path, mode and content; write nothing.
         #[arg(long)]
         check: bool,
+    },
+    /// Print the TERM/COLORTERM an SSH client must attach to MiOS-Tmux with ([theme.tmux].remote_truecolor_terms):
+    /// nothing when the client keeps its own (local consoles, unlisted or already-truecolor TERMs).
+    #[command(name = "tmux-client-env")]
+    TmuxClientEnv {
+        #[arg(long)]
+        root: Option<PathBuf>,
     },
     /// Render the complete Windows host tmux configuration from layered SSOT.
     RenderHostTmux {
@@ -254,6 +263,111 @@ enum Commands {
         root: Option<PathBuf>,
 
         /// Check mode: verify committed .desktop files are in sync without modifying them
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Project the Linux virtual-console RGB palette from layered SSOT.
+    #[command(name = "render-console-theme")]
+    RenderConsoleTheme {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Emit palette escapes for the current terminal or Linux virtual console.
+    #[command(name = "terminal-colors")]
+    TerminalColors {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        term: String,
+    },
+
+    /// Build Hyprglass with the installed compositor's exact SDK and Lua ABI.
+    #[command(name = "build-hyprglass")]
+    BuildHyprglass {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        srpm: Option<PathBuf>,
+    },
+
+    /// Build the compositor plugin [desktop.hyprland.<name>] with the same SDK and ABI hold.
+    #[command(name = "build-hyprland-plugin")]
+    BuildHyprlandPlugin {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        srpm: Option<PathBuf>,
+    },
+
+    /// Launch the canonical iGPU-first MiOS Hyprland desktop session.
+    #[command(name = "hyprland-session")]
+    HyprlandSession {
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+
+    /// Global display scale policy ([desktop.scaling]) for one output: scale Hyprland accepts,
+    /// logical size and mobile flag as one JSON line. Contract: docs in display_scale.rs.
+    #[command(name = "display-scale")]
+    DisplayScale {
+        /// SSOT root (layered vendor/host/user); default $MIOS_ROOT or /
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Mode width in pixels (unrotated, as Hyprland reports it)
+        #[arg(long)]
+        width: i64,
+        /// Mode height in pixels (unrotated)
+        #[arg(long)]
+        height: i64,
+        /// EDID physical size WxH in mm (0x0 = unknown)
+        #[arg(long = "phys-mm")]
+        phys_mm: Option<String>,
+        /// Client DPI hint (RDP: from the xrdp journal)
+        #[arg(long)]
+        dpi: Option<f64>,
+        /// Hyprland transform 0..7 (odd = rotated 90/270)
+        #[arg(long, default_value_t = 0)]
+        transform: i64,
+        /// The output is a remote display (RDP virtual output)
+        #[arg(long)]
+        remote: bool,
+        /// Output name: an operator-saved scale for it in the SSOT makes it explicit
+        #[arg(long)]
+        output: Option<String>,
+        /// Explicit scale (overrides --output lookup); never auto-scaled
+        #[arg(long = "explicit-scale")]
+        explicit_scale: Option<f64>,
+        /// Main display logical rect X,Y,W,H: adds "position" centred under its bottom edge
+        #[arg(long = "attach-below")]
+        attach_below: Option<String>,
+    },
+
+    /// Project the current native Hyprland Lua configuration from SSOT.
+    #[command(name = "render-hyprland")]
+    RenderHyprland {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        runtime: bool,
+    },
+
+    /// Renders usr/lib/tuned/profiles/<name>/tuned.conf from mios.toml [host.tuning.profiles]
+    #[command(name = "render-tuned")]
+    RenderTuned {
+        /// Repository root directory
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Check mode: report drift without writing
         #[arg(long)]
         check: bool,
     },
@@ -438,6 +552,28 @@ enum Commands {
         out: Option<PathBuf>,
     },
 
+    /// Projects greetd's config.toml from [desktop.greeter]: the MiOS glass Quickshell greeter
+    /// (usr/libexec/mios/mios-greeter-session, tuigreet fallback) or plain tuigreet.
+    /// Prints to stdout unless --out is given; never writes /etc implicitly.
+    #[command(name = "render-greetd", aliases = ["greetd"])]
+    RenderGreetd {
+        /// Repository root whose vendor+host SSOT layers are read
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Filesystem the config will run on; launcher, greeter and cage are probed there
+        #[arg(long, default_value = "/")]
+        sysroot: PathBuf,
+
+        /// Atomically write the projection to this path (mode/owner of an existing file kept)
+        #[arg(long, conflicts_with = "check")]
+        out: Option<PathBuf>,
+
+        /// Compare this file with the projection; exit 1 on drift
+        #[arg(long)]
+        check: Option<PathBuf>,
+    },
+
     /// Renders Fastfetch system banner JSONC configuration from host/AI metadata
     #[command(name = "render-fastfetch", aliases = ["fastfetch", "fastfetch-gen"])]
     RenderFastfetch {
@@ -493,42 +629,14 @@ fn run_cosign_policy(root: &Path, check_mode: bool) -> Result<(), (String, i32)>
     if !vendor.is_file() {
         return Err((format!("{} not found", vendor.display()), 1));
     }
-    let target_path = root.join("usr/lib/containers/policy.json");
-    let val = mios_resolver::resolve_merged(Some(root), false).map_err(|e| (e.to_string(), 1))?;
-
-    let sigstore = val
-        .get("security")
-        .and_then(|s| s.get("sigstore"))
-        .and_then(|s| s.as_table())
-        .ok_or_else(|| {
-            (
-                "mios.toml declares no [security.sigstore] table".to_string(),
-                1,
-            )
-        })?;
-
-    let policy_mode = sigstore
-        .get("policy_mode")
-        .and_then(|p| p.as_str())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            (
-                "[security.sigstore].policy_mode is absent or not a string".to_string(),
-                1,
-            )
-        })?;
-
-    let json_val = serde_json::json!({
-        "default": [
-            {
-                "type": policy_mode
-            }
-        ]
-    });
-    let rendered = serde_json::to_string_pretty(&json_val)
-        .map_err(|e| (format!("Failed to format JSON: {e}"), 1))?
-        + "\n";
+    let target_path = root.join(mios_resolver::sigstore::ARTIFACT);
+    // An in-tree projection: vendor tier only, never this host's /etc or $HOME
+    // layers. The shared renderer refuses an invalid requirement type and any
+    // policy under which a MiOS-owned image is accepted without a MiOS-anchored
+    // signature, so an unsound policy is never written.
+    let rendered = mios_resolver::sigstore::render_root(root)
+        .map_err(|e| (format!("[security.sigstore]: {e}"), 1))?
+        .json;
 
     if check_mode {
         if !target_path.is_file() {
@@ -557,8 +665,10 @@ fn run_cosign_policy(root: &Path, check_mode: bool) -> Result<(), (String, i32)>
             )
         })?;
     }
-    fs::write(&target_path, rendered.as_bytes())
-        .map_err(|e| (format!("Failed to write {}: {e}", target_path.display()), 1))?;
+    if fs::read_to_string(&target_path).ok().as_deref() != Some(rendered.as_str()) {
+        greeter::write_atomic(&target_path, &rendered)
+            .map_err(|e| (format!("Failed to write {}: {e}", target_path.display()), 1))?;
+    }
 
     println!("Generated {}", target_path.display());
     Ok(())
@@ -747,6 +857,33 @@ fn run_egress_firewall(root: &Path, check: bool) -> Result<(), (String, i32)> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let (subcommand, target, result) = match cli.command {
+        Commands::DisplayScale {
+            root,
+            width,
+            height,
+            phys_mm,
+            dpi,
+            transform,
+            remote,
+            output,
+            explicit_scale,
+            attach_below,
+        } => {
+            return match display_scale::run_cli(
+                root.or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
+                display_scale::CliArgs { width, height, phys_mm, dpi, transform, remote, output, explicit_scale, attach_below },
+                cli.format == "json",
+            ) {
+                Ok(text) => {
+                    println!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[display-scale] {error}");
+                    ExitCode::from(2)
+                }
+            };
+        }
         Commands::Dashboard {
             root,
             resolved_stdin,
@@ -866,6 +1003,42 @@ fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("[mios-gen names] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::TmuxClientEnv { root } => {
+            let root = resolve_root(root);
+            let result = terminal::tmux_theme::tmux_runtime::load_layered(&root)
+                .and_then(|merged| tmux_theme::TmuxThemeEngine::from_toml(&merged, None, None));
+            return match result {
+                Ok(engine) => {
+                    let term = env::var("TERM").unwrap_or_default();
+                    let mut dirs: Vec<PathBuf> = Vec::new();
+                    if let Some(d) = env::var_os("TERMINFO") {
+                        dirs.push(PathBuf::from(d));
+                    }
+                    if let Some(h) = env::var_os("HOME") {
+                        dirs.push(PathBuf::from(h).join(".terminfo"));
+                    }
+                    if let Some(list) = env::var_os("TERMINFO_DIRS") {
+                        dirs.extend(env::split_paths(&list).filter(|d| !d.as_os_str().is_empty()));
+                    }
+                    for d in ["/etc/terminfo", "/usr/share/terminfo", "/usr/lib/terminfo", "/lib/terminfo"] {
+                        dirs.push(PathBuf::from(d));
+                    }
+                    if let Some((term, colorterm)) =
+                        engine.remote_client_env(&term, tmux_theme::is_remote_terminal())
+                    {
+                        // tmux refuses a client whose TERM has no terminfo: never trade a working TERM for that.
+                        if mios_service_core::tmux_theme::terminfo_exists(&term, &dirs) {
+                            println!("TERM={term}\nCOLORTERM={colorterm}");
+                        }
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[tmux-client-env] {error}");
                     ExitCode::FAILURE
                 }
             };
@@ -1014,6 +1187,124 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::RenderConsoleTheme { root, check, out } => {
+            let r = resolve_root(root);
+            (
+                "render-console-theme",
+                "usr/share/mios/theme/console-palette",
+                match terminal::console::run(&r, check, out.as_deref()) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::TerminalColors { root, term } => {
+            let r = resolve_root(root);
+            let result = terminal::tmux_theme::tmux_runtime::load_layered(&r)
+                .and_then(|data| terminal::console::escapes(&data, &term));
+            (
+                "terminal-colors",
+                "stdout",
+                match result {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::BuildHyprlandPlugin { name, root, srpm } => {
+            let r = resolve_root(root);
+            (
+                "build-hyprland-plugin",
+                "usr/lib64/mios",
+                match render::hyprglass_build::run_plugin(&r, srpm.as_deref(), name.as_str()) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::BuildHyprglass { root, srpm } => {
+            let r = resolve_root(root);
+            (
+                "build-hyprglass",
+                "usr/lib64/mios/hyprglass.so",
+                match render::hyprglass_build::run(&r, srpm.as_deref()) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::HyprlandSession { root } => {
+            let r = resolve_root(root);
+            (
+                "hyprland-session",
+                "desktop",
+                match render::render_hyprland::session(&r) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::RenderHyprland {
+            root,
+            check,
+            runtime,
+        } => {
+            let r = resolve_root(root);
+            (
+                "render-hyprland",
+                "usr/share/mios/hyprland/hyprland.lua",
+                match render::render_hyprland::run(&r, check, runtime) {
+                    Ok((msg, _)) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err((msg, code)) => Err((msg, code)),
+                },
+            )
+        }
+        Commands::RenderTuned { root, check } => {
+            let r = resolve_root(root);
+            (
+                "render-tuned",
+                "usr/lib/tuned/profiles/*/tuned.conf",
+                match render_tuned::run_render_tuned(&r, check) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            println!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err((msg, code)) => Err((msg, code)),
+                },
+            )
+        }
         Commands::RenderGlobals { root, check } => {
             let r = resolve_root(root);
             (
@@ -1041,7 +1332,13 @@ fn main() -> ExitCode {
             (
                 "render-manpages",
                 "usr/share/man/**",
-                match render_manpages::run_render_manpages(&r, check, validate, out_dir.as_deref(), list) {
+                match render_manpages::run_render_manpages(
+                    &r,
+                    check,
+                    validate,
+                    out_dir.as_deref(),
+                    list,
+                ) {
                     Ok((msg, _)) => {
                         if cli.format != "json" && !msg.is_empty() {
                             println!("{msg}");
@@ -1299,6 +1596,36 @@ fn main() -> ExitCode {
                                 );
                                 println!("  Saved config: {}", res.target.display());
                             }
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::RenderGreetd {
+            root,
+            sysroot,
+            out,
+            check,
+        } => {
+            let r = resolve_root(root);
+            let stdout = out.is_none() && check.is_none();
+            let mode = match (out, check) {
+                (Some(p), _) => greeter::Mode::Write(p),
+                (None, Some(p)) => greeter::Mode::Check(p),
+                (None, None) => greeter::Mode::Stdout,
+            };
+            (
+                "render-greetd",
+                "/etc/greetd/config.toml",
+                match greeter::run(&r, &sysroot, mode) {
+                    Ok(res) => {
+                        for why in &res.degraded {
+                            eprintln!("[greetd] WARNING: glass greeter degraded to tuigreet: {why}");
+                        }
+                        if cli.format != "json" && !stdout {
+                            println!("[greetd] greeter = {} (projection {} bytes)", res.effective, res.text.len());
                         }
                         Ok(())
                     }

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-# AI-hint: FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml, downloads each GGUF with resume, VERIFIES its sha256 (streamed, chunked) and discards the part file on mismatch rather than installing an unverified weight, then writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.
+# AI-hint: FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.
 # AI-related: mios-models, mios-models-firstboot.service, /usr/share/mios/mios.toml
 import sys
 import hashlib
 import os
 import subprocess
 import pathlib
+import json
+import re
+import time
 try:
     import tomllib
 except ImportError:
@@ -23,6 +26,14 @@ if os.name == 'nt':
     MODELS_DIR = pathlib.Path("C:/var/lib/mios/llamacpp/models")
     SENTINEL = pathlib.Path("C:/var/lib/mios/.models-firstboot-done")
     PROGRESS = pathlib.Path("C:/var/lib/mios/.models-firstboot-progress")
+if os.environ.get("MIOS_MODELS_DIR"):
+    MODELS_DIR = pathlib.Path(os.environ["MIOS_MODELS_DIR"])
+if os.environ.get("MIOS_MODELS_STATE_DIR"):
+    _state = pathlib.Path(os.environ["MIOS_MODELS_STATE_DIR"])
+    SENTINEL = _state / ".models-firstboot-done"
+    PROGRESS = _state / ".models-firstboot-progress"
+HF_ENDPOINT = os.environ.get("MIOS_HF_ENDPOINT", "https://huggingface.co").rstrip("/")
+LEDGER_NAME = "models.tsv"
 
 if SENTINEL.exists():
     print(f"Sentinel {SENTINEL} exists. FBM provisioner already completed.")
@@ -50,6 +61,48 @@ def _sha256_file(path, chunk=1024 * 1024):
     except OSError:
         return None
     return h.hexdigest()
+
+
+_HF_RESOLVE = re.compile(r"^https://huggingface\.co/(?P<repo>[^/]+/[^/]+)/resolve/(?P<rev>[^/]+)/(?P<path>.+)$")
+
+
+def _resolve_hf(source):
+    """(immutable url, commit, sha256) for a Hugging Face resolve/<rev> source, from the
+    revision API's LFS metadata (the upstream-published digest); None when not HF.
+    Raises RuntimeError when it is HF but the digest cannot be obtained."""
+    m = _HF_RESOLVE.match(source)
+    if not m:
+        return None
+    repo, rev, path = m.group("repo"), m.group("rev"), m.group("path")
+    api = f"{HF_ENDPOINT}/api/models/{repo}/revision/{rev}?blobs=true"
+    res = subprocess.run(["curl", "-fsSL", "--retry", "3", "--max-time", "60", api],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"revision API unreachable (curl exit {res.returncode})")
+    try:
+        meta = json.loads(res.stdout)
+    except ValueError:
+        raise RuntimeError("revision API returned no JSON")
+    commit = meta.get("sha", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(commit)):
+        raise RuntimeError("revision API returned no commit id")
+    for sib in meta.get("siblings") or []:
+        if sib.get("rfilename") == path:
+            digest = ((sib.get("lfs") or {}).get("sha256") or "").lower()
+            if re.fullmatch(r"[0-9a-f]{64}", digest):
+                return f"{HF_ENDPOINT}/{repo}/resolve/{commit}/{path}", commit, digest
+            raise RuntimeError(f"{path} has no LFS sha256 at {commit}")
+    raise RuntimeError(f"{path} is not in {repo}@{commit}")
+
+
+def _record(name, source, commit, digest):
+    """Provisioning output: what was actually installed, never written to the SSOT."""
+    ledger = MODELS_DIR / LEDGER_NAME
+    new = not ledger.exists()
+    with open(ledger, "a") as fh:
+        if new:
+            fh.write("name\tsource\tcommit\tsha256\trecorded_at\n")
+        fh.write(f"{name}\t{source}\t{commit}\t{digest}\t{time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
 
 
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,31 +141,44 @@ else:
             print(f"Model {name} already exists. Skipping.")
             continue
             
+        commit = ""
+        if not sha256:
+            try:
+                resolved = _resolve_hf(source)
+            except RuntimeError as e:
+                print(f"WARN: {name}: upstream digest unavailable ({e}); not downloading an unverifiable weight")
+                continue
+            if resolved is None:
+                print(f"ERROR: {name}: no sha256 and {source} publishes none; refusing an unverified weight")
+                continue
+            source, commit, sha256 = resolved
+            print(f"Resolved {name} -> {commit[:12]} (upstream sha256 {sha256[:16]}...)")
+
         print(f"Downloading {name} from {source}...")
         part_dest = MODELS_DIR / f"{name}.part"
         cmd = ["curl", "-fL", "-C", "-", "--retry", "3", "--max-time", "1800", "-o", str(part_dest), source]
-        
+
         res = subprocess.run(cmd)
         if res.returncode != 0:
             print(f"WARN: Failed to download {name} (curl exit {res.returncode})")
             continue
-        if sha256:
-            print(f"Verifying sha256 for {name}...")
-            actual = _sha256_file(part_dest)
-            if actual is None:
-                print(f"WARN: could not read {part_dest} to verify; discarding")
-                part_dest.unlink(missing_ok=True)
-                continue
-            if actual.lower() != str(sha256).strip().lower():
-                # An unverified weight file must never be installed under a
-                # name the lanes will load. Drop the part file so the next run
-                # re-downloads instead of resuming a poisoned partial.
-                print(f"ERROR: sha256 MISMATCH for {name}")
-                print(f"       expected {str(sha256).strip().lower()}")
-                print(f"       actual   {actual.lower()}")
-                part_dest.unlink(missing_ok=True)
-                continue
-            print(f"  sha256 OK ({actual[:16]}...)")
+        print(f"Verifying sha256 for {name}...")
+        actual = _sha256_file(part_dest)
+        if actual is None:
+            print(f"WARN: could not read {part_dest} to verify; discarding")
+            part_dest.unlink(missing_ok=True)
+            continue
+        if actual.lower() != str(sha256).strip().lower():
+            # An unverified weight file must never be installed under a
+            # name the lanes will load. Drop the part file so the next run
+            # re-downloads instead of resuming a poisoned partial.
+            print(f"ERROR: sha256 MISMATCH for {name}")
+            print(f"       expected {str(sha256).strip().lower()}")
+            print(f"       actual   {actual.lower()}")
+            part_dest.unlink(missing_ok=True)
+            continue
+        print(f"  sha256 OK ({actual[:16]}...)")
+        _record(name, source, commit, actual.lower())
         part_dest.rename(dest)
         print(f"Successfully provisioned {name}")
             

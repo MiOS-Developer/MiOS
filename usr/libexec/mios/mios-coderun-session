@@ -102,7 +102,8 @@ _snap_git_stash() {
 do_start() {
     _require_session
     local project="$PROJECTS_ROOT/$SESSION"
-    local snap="$SNAPSHOTS_ROOT/$SESSION/start-$(date +%s)"
+    local snap
+    snap="$SNAPSHOTS_ROOT/$SESSION/start-$(date +%s)"
     mkdir -p "$project" "$SNAPSHOTS_ROOT/$SESSION"
     echo "[mios-coderun-session] starting sandbox for session '$SESSION'"
     echo "  project root: $project"
@@ -175,7 +176,8 @@ do_stop() {
 do_snap() {
     _require_session
     local project="$PROJECTS_ROOT/$SESSION"
-    local snap="$SNAPSHOTS_ROOT/$SESSION/manual-$(date +%s)"
+    local snap
+    snap="$SNAPSHOTS_ROOT/$SESSION/manual-$(date +%s)"
     mkdir -p "$SNAPSHOTS_ROOT/$SESSION"
     if _is_btrfs "$project"; then
         _snap_btrfs "$project" "$snap"

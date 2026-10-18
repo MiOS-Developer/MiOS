@@ -20,10 +20,20 @@ name="$(_db_name)"
 if [ -z "$name" ]; then
     name="$(getent passwd 2>/dev/null | awk -F: '$3>=1000 && $3<65000 && $7 ~ /(bash|zsh|fish)$/ {print $3":"$1}' | sort -n | head -1 | cut -d: -f2)"
 fi
-[ -z "$name" ] && name="user"
+if [ -z "$name" ]; then
+    # Layered SSOT [identity].username -- never a literal account name.
+    _tg="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/mios-toml-get"
+    [ -x "$_tg" ] || _tg=/usr/libexec/mios/mios-toml-get
+    name="$("$_tg" identity username '' 2>/dev/null)"
+fi
+if [ -z "$name" ]; then
+    echo "mios-login-account: no login account in the DB, /etc/passwd or SSOT [identity].username" >&2
+    exit 3
+fi
 
 if [ "${1:-}" = "password" ]; then
-    printf '%s' "$name"
+    # The password is the layered-SSOT credential ([identity].default_password); it is never
+    # advertised (the old behaviour printed the account NAME, matching a retired user/user seed).
     exit 0
 fi
 printf '%s' "$name"

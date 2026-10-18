@@ -142,15 +142,18 @@ fn corpus(root: &Path) -> Option<Vec<String>> {
     )
 }
 
-/// Exact generated assignments for upstream version pins. Their values belong
-/// to the named SSOT key, rather than the MiOS release identity. Only these two
-/// generated files may use the assignments; changed values and authored glue
-/// continue through the ordinary literal check.
-fn upstream_projection_lines(root: &Path) -> Result<HashSet<String>, String> {
+/// Exact generated assignments of SSOT values that carry a version literal.
+/// Such a value belongs to the named SSOT key -- an upstream pin
+/// ([build.native.windows].driver_version) or an upstream release cited in
+/// prose ([windows.xbox.research.sources].vive) -- not to the MiOS release
+/// identity, and the SSOT itself is outside this check's scan. Only these two
+/// generated files may use the assignments, and only byte-exact: a hand-changed
+/// value, or the same text in authored glue, continues through the ordinary
+/// literal check.
+fn upstream_projection_lines(root: &Path, pattern: &Regex) -> Result<HashSet<String>, String> {
     let merged = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
     let names = mios_resolver::names::registry(&merged)?;
-    let version = Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
-        .map_err(|e| e.to_string())?;
+    let version = pattern;
     let mut lines = HashSet::new();
     for entry in names.entries {
         if !entry.emitted || entry.key == "meta.mios_version" {
@@ -190,16 +193,16 @@ pub fn check(root: &Path) -> Report {
     if files.is_empty() {
         return cannot_run("the tracked corpus is empty, so this check proved nothing");
     }
-    let projected = match upstream_projection_lines(root) {
+    let Ok(pat) = Regex::new(r"\bv?0\.[0-9]+\.[0-9]+\b") else {
+        return cannot_run("the version-literal pattern did not compile");
+    };
+    let projected = match upstream_projection_lines(root, &pat) {
         Ok(lines) => lines,
         Err(error) => {
             return cannot_run(&format!(
                 "cannot verify generated SSOT version pins: {error}"
             ))
         }
-    };
-    let Ok(pat) = Regex::new(r"\bv?0\.[0-9]+\.[0-9]+\b") else {
-        return cannot_run("the version-literal pattern did not compile");
     };
 
     let mut findings: Vec<String> = Vec::new();
@@ -303,6 +306,40 @@ mod tests {
             !check(tmp.path()).ok,
             "extra authored literals on the projection remain checked"
         );
+    }
+
+    /// A version cited in SSOT prose projects into the generated globals too.
+    /// The exact projection line is the SSOT's, not an authored literal; the
+    /// same text hand-edited, or written in authored glue, is still a finding.
+    #[test]
+    fn a_cited_upstream_version_in_ssot_prose_projects_cleanly() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("usr/share/mios")).unwrap();
+        std::fs::write(
+            tmp.path().join(SSOT),
+            "[meta]\nmios_version='0.3.0'\n[research.sources]\nvive='ViVeTool v0.3.4 (github.com/x/ViVe/releases/tag/v0.3.4)'\n",
+        )
+        .unwrap();
+        let lib = tmp.path().join("automation/lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let sh = ": \"${MIOS_RESEARCH_SOURCES_VIVE:=ViVeTool v0.3.4 (github.com/x/ViVe/releases/tag/v0.3.4)}\"\n";
+        let ps = "$script:MIOS_RESEARCH_SOURCES_VIVE = if ($env:MIOS_RESEARCH_SOURCES_VIVE) { $env:MIOS_RESEARCH_SOURCES_VIVE } else { 'ViVeTool v0.3.4 (github.com/x/ViVe/releases/tag/v0.3.4)' }\n";
+        std::fs::write(lib.join("globals.sh"), sh).unwrap();
+        std::fs::write(lib.join("globals.ps1"), ps).unwrap();
+        let add = |dir: &Path| {
+            for args in [vec!["init", "-q"], vec!["add", "."]] {
+                assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success());
+            }
+        };
+        add(tmp.path());
+        let r = check(tmp.path());
+        assert!(r.ok, "exact projections of SSOT prose must be clean: {:?}", r.findings);
+        std::fs::write(lib.join("globals.sh"), sh.replace("v0.3.4 (", "v0.3.5 (")).unwrap();
+        assert!(!check(tmp.path()).ok, "a hand-changed projection line must fail");
+        std::fs::write(lib.join("globals.sh"), sh).unwrap();
+        std::fs::write(tmp.path().join("automation/authored.sh"), sh).unwrap();
+        add(tmp.path());
+        assert!(!check(tmp.path()).ok, "the same text in authored glue must fail");
     }
 
     #[test]

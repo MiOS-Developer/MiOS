@@ -749,3 +749,143 @@ pub mod tmux_theme {
         }
     }
 }
+
+/// Kernel-console and terminal palettes share the layered SSOT ANSI slots.
+pub mod console {
+    use std::{fs, path::Path};
+    use toml::Value;
+    fn palette(data: &Value) -> Result<Vec<String>, String> {
+        let colors = data
+            .get("colors")
+            .and_then(Value::as_table)
+            .ok_or("Missing colors")?;
+        (0..16)
+            .map(|i| {
+                let prefix = format!("ansi_{i}_");
+                let mut found = colors.iter().filter(|(key, _)| key.starts_with(&prefix));
+                let (_, value) = found
+                    .next()
+                    .ok_or_else(|| format!("Missing {prefix} color"))?;
+                if found.next().is_some() {
+                    return Err(format!("Ambiguous {prefix} color"));
+                }
+                let s = value.as_str().ok_or("Color must be a string")?;
+                if s.len() != 7
+                    || !s.starts_with('#')
+                    || !s[1..].bytes().all(|c| c.is_ascii_hexdigit())
+                {
+                    return Err(format!("Invalid {prefix} color"));
+                }
+                Ok(s.to_string())
+            })
+            .collect()
+    }
+    pub fn rgb(data: &Value) -> Result<String, String> {
+        let colors = palette(data)?;
+        let mut rows = Vec::new();
+        for channel in 0..3 {
+            rows.push(
+                colors
+                    .iter()
+                    .map(|color| {
+                        u8::from_str_radix(&color[1 + channel * 2..3 + channel * 2], 16)
+                            .map(|n| n.to_string())
+                            .map_err(|e| e.to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(","),
+            );
+        }
+        Ok(rows.join("\n") + "\n")
+    }
+    pub fn escapes(data: &Value, term: &str) -> Result<String, String> {
+        if term.is_empty() || term == "dumb" {
+            return Ok(String::new());
+        }
+        let colors = palette(data)?;
+        let mut out = String::new();
+        for (i, color) in colors.iter().enumerate() {
+            if term == "linux" {
+                out += &format!("\x1b]P{i:x}{}", &color[1..]);
+            } else {
+                out += &format!("\x1b]4;{i};{color}\x07");
+            }
+        }
+        if term == "linux" {
+            out += "\x1b[37;40m";
+        } else {
+            for (code, key) in [(10, "fg"), (11, "bg"), (12, "cursor")] {
+                let color = data["colors"]
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("Missing {key}"))?;
+                if color.len() != 7
+                    || !color.starts_with('#')
+                    || !color[1..].bytes().all(|c| c.is_ascii_hexdigit())
+                {
+                    return Err(format!("Invalid {key} color"));
+                }
+                out += &format!("\x1b]{code};{color}\x07");
+            }
+        }
+        Ok(out)
+    }
+    pub fn run(root: &Path, check: bool, out: Option<&Path>) -> Result<String, String> {
+        let data = super::tmux_theme::tmux_runtime::load_layered(root)?;
+        let text = rgb(&data)?;
+        let path = out
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.join("usr/share/mios/theme/console-palette"));
+        if check {
+            if fs::read_to_string(&path).map_err(|e| e.to_string())? != text {
+                return Err("Console palette drift".into());
+            }
+        } else {
+            fs::create_dir_all(path.parent().ok_or("No palette parent")?)
+                .map_err(|e| e.to_string())?;
+            fs::write(&path, text).map_err(|e| e.to_string())?;
+        }
+        Ok(format!(
+            "Console palette matches SSOT: {}\n",
+            path.display()
+        ))
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        fn data() -> Value {
+            let colors = (0..16)
+                .map(|i| format!("ansi_{i}_slot = '#123456'\n"))
+                .collect::<String>();
+            format!("[colors]\nfg='#abcdef'\nbg='#123456'\ncursor='#654321'\n{colors}")
+                .parse()
+                .unwrap()
+        }
+        #[test]
+        fn rgb_rows_and_terminal_protocols_are_distinct() {
+            let data = data();
+            let rows = rgb(&data).unwrap();
+            assert_eq!(rows.lines().count(), 3);
+            assert!(rows.starts_with("18,18,18"));
+            assert!(escapes(&data, "linux")
+                .unwrap()
+                .starts_with("\x1b]P0123456"));
+            assert!(escapes(&data, "xterm")
+                .unwrap()
+                .contains("\x1b]10;#abcdef\x07"));
+            assert!(escapes(&data, "dumb").unwrap().is_empty());
+        }
+        #[test]
+        fn malformed_or_ambiguous_slots_fail_before_output() {
+            let mut first = data();
+            first["colors"]["ansi_0_slot"] = Value::String("#12bad".into());
+            assert!(rgb(&first).is_err());
+            let mut second = data();
+            second["colors"]
+                .as_table_mut()
+                .unwrap()
+                .insert("ansi_0_other".into(), Value::String("#abcdef".into()));
+            assert!(rgb(&second).unwrap_err().contains("Ambiguous"));
+        }
+    }
+}

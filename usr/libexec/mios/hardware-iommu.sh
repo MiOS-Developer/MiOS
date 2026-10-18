@@ -106,7 +106,8 @@ show_gpu_details() {
     echo -e "\n${BOLD}${MAGENTA}GPU Passthrough Analysis${NC}"
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
-    local gpus=$(lspci | grep -E "VGA|3D")
+    local gpus
+    gpus=$(lspci | grep -E "VGA|3D") || true
 
     if [ -z "$gpus" ]; then
         echo "No GPUs detected"
@@ -114,8 +115,9 @@ show_gpu_details() {
     fi
 
     while IFS= read -r gpu; do
-        local pci_id=$(echo "$gpu" | awk '{print $1}')
-        local gpu_name=$(echo "$gpu" | cut -d: -f3-)
+        local pci_id gpu_name
+        pci_id=$(echo "$gpu" | awk '{print $1}')
+        gpu_name=$(echo "$gpu" | cut -d: -f3-)
 
         echo -e "${BOLD}GPU:${NC} $gpu_name"
         echo -e "${BOLD}PCI Address:${NC} $pci_id"
@@ -159,7 +161,8 @@ show_usb_controllers() {
     echo -e "\n${BOLD}${YELLOW}USB Controller Groups${NC}"
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
-    local usb_controllers=$(lspci | grep -i usb)
+    local usb_controllers
+    usb_controllers=$(lspci | grep -i usb) || true
 
     if [ -z "$usb_controllers" ]; then
         echo "No USB controllers detected"
@@ -167,8 +170,9 @@ show_usb_controllers() {
     fi
 
     while IFS= read -r controller; do
-        local pci_id=$(echo "$controller" | awk '{print $1}')
-        local ctrl_name=$(echo "$controller" | cut -d: -f3-)
+        local pci_id ctrl_name
+        pci_id=$(echo "$controller" | awk '{print $1}')
+        ctrl_name=$(echo "$controller" | cut -d: -f3-)
 
         for d in /sys/kernel/iommu_groups/*/devices/*; do
             if [ -e "$d" ] && [[ "$d" == *"$pci_id"* ]]; then
@@ -184,7 +188,8 @@ show_usb_controllers() {
 }
 
 export_to_file() {
-    local output="$HOME/iommu-topology-$(date +%Y%m%d_%H%M%S).txt"
+    local output
+    output="$HOME/iommu-topology-$(date +%Y%m%d_%H%M%S).txt"
 
     {
         echo "IOMMU Topology Report"

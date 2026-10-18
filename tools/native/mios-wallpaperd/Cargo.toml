@@ -10,6 +10,8 @@ name = "mios-wallpaperd"
 path = "src/main.rs"
 
 [dependencies]
+toml.workspace = true
+mios-resolver = { path = "../mios-resolver" }
 mios-service-core = { path = "../mios-service-core" }
 
 [target.'cfg(windows)'.dependencies]

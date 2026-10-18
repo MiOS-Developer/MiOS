@@ -338,8 +338,17 @@ def write_atomic(path, text):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
+            fh.flush()
+            # Durable before the rename: a reset after rename must not leave an empty file
+            # (a hard reset once left mios.toml at 0 bytes and every login failed).
+            os.fsync(fh.fileno())
         os.chmod(tmp, mode)
         os.replace(tmp, path)
+        dirfd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)

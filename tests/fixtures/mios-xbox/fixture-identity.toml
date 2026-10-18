@@ -1,0 +1,6 @@
+# Test-only fixture credentials (never a real secret).
+[identity]
+username = "mios-fixture"
+default_password = "Fixture-Only-Pw-7x!"
+hostname = "MIOS-XBOX-FIX"
+fullname = "MiOS Fixture"

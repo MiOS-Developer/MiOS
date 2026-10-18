@@ -14,12 +14,12 @@ echo -e "${GREEN}╚════════════════════
 
 if [ "$EUID" -eq 0 ]; then
     SUDO=""
-    USER_HOME=$(getent passwd "${SUDO_USER}" | cut -d: -f6)
-    ACTUAL_USER=${SUDO_USER}
+    # The invoking user's home/name were never read; the lookup stays so a root run
+    # without a resolvable SUDO_USER still stops under set -euo pipefail as before.
+    getent passwd "${SUDO_USER}" | cut -d: -f6 >/dev/null
 else
     SUDO="sudo"
-    USER_HOME=$HOME
-    ACTUAL_USER=$USER
+    : "$HOME" "$USER"
 fi
 
 echo -e "${BLUE}[1/6] Checking for OVMF firmware files...${NC}"
@@ -170,7 +170,7 @@ cat > /tmp/Xbox-fixed.xml << 'XMLEOF'
     <feature policy="require" name="topoext"/>
     <feature policy="require" name="invtsc"/>
   </cpu>
-  <clock offset="localtime">
+  <clock offset='utc'>
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
     <timer name="hpet" present="no"/>
@@ -296,8 +296,8 @@ cat > /tmp/Xbox-fixed.xml << 'XMLEOF'
         <profile name="default-v1"/>
       </backend>
     </tpm>
-    <graphics type="vnc" port="-1" autoport="yes">
-      <listen type="address"/>
+    <graphics type="spice" port="5900" autoport="no" listen="127.0.0.1">
+      <listen type="address" address="127.0.0.1"/>
     </graphics>
     <sound model="ich9">
       <address type="pci" domain="0x0000" bus="0x00" slot="0x1b" function="0x0"/>
@@ -373,6 +373,9 @@ _MAC="${MIOS_VM_MAC:-52:54:00:9d:56:d9}" # Keep stable default if not provided
 
 sed -i "s|{{MIOS_VM_UUID}}|$_UUID|g" /tmp/Xbox-fixed.xml
 sed -i "s|{{MIOS_VM_MAC}}|$_MAC|g" /tmp/Xbox-fixed.xml
+# Looking Glass profile from mios.toml [vm.looking_glass]: SPICE (never VNC) on the port the client
+# dials, one spicevmc channel, SPICE audio, SMT topology + topoext, localtime RTC.
+/usr/libexec/mios/vfio/setup-looking-glass.py --render /tmp/Xbox-fixed.xml /tmp/Xbox-fixed.xml --vcpus template
 
 echo -e "${GREEN}[ok] XML configuration created${NC}"
 

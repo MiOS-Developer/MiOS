@@ -1,0 +1,176 @@
+#!/bin/sh
+# AI-hint: greetd greeter launcher for the MiOS glass greeter. Runs Quickshell (usr/share/mios/greeter)
+# fullscreen inside cage and FALLS BACK to the tuigreet command given after "--" whenever the glass
+# greeter cannot start (missing cage/qs/greeter/GREETD_SOCK), is not "ready" within --start-timeout,
+# stops heart-beating for --heartbeat-timeout, crashes, exits without greetd launching a session, or
+# the operator presses F10 ("Text login"). Thin POSIX glue only (no bashisms, no shared state) so the
+# fallback still works when most of the system is broken. The greetd config that calls this is
+# projected by `mios-gen render-greetd` from mios.toml [desktop.greeter].
+# AI-related: usr/share/mios/greeter/shell.qml, tools/native/mios-gen/src/greeter.rs,
+#   usr/share/mios/mios.toml [desktop.greeter], tests/greeter/test-greeter.py
+#
+# Usage: mios-greeter-session [--greeter-dir DIR] [--sessions D1:D2] [--default-session ID]
+#          [--start-timeout SEC] [--heartbeat-timeout SEC] [--outputs extend|last]
+#          [--wallpaper FILE] -- FALLBACK_COMMAND [ARGS...]
+# Status protocol (file in a private temp dir, path exported as MIOS_GREETER_STATUS):
+#   "ready" (rewritten every few seconds = heartbeat) | "launched" | "fallback".
+# Test overrides (never set by the projected greetd config): MIOS_GREETER_CAGE, MIOS_GREETER_QS,
+#   MIOS_GREETER_DRY_RUN=1 (power actions only print), MIOS_GREETER_STATE.
+
+greeter_dir=/usr/share/mios/greeter
+sessions=/usr/share/wayland-sessions:/usr/share/xsessions
+default_session=hyprland
+start_timeout=20
+heartbeat_timeout=30
+outputs=extend
+wallpaper=
+
+log() {
+    printf 'mios-greeter-session: %s\n' "$*" >&2
+    command -v logger >/dev/null 2>&1 && logger -t mios-greeter-session -- "$*" 2>/dev/null
+    return 0
+}
+
+is_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --) shift; break ;;
+        --greeter-dir|--sessions|--default-session|--start-timeout|--heartbeat-timeout|--outputs|--wallpaper)
+            if [ $# -lt 2 ]; then log "option $1 has no value"; shift; continue; fi
+            case "$1" in
+                --greeter-dir) greeter_dir=$2 ;;
+                --sessions) sessions=$2 ;;
+                --default-session) default_session=$2 ;;
+                --start-timeout) start_timeout=$2 ;;
+                --heartbeat-timeout) heartbeat_timeout=$2 ;;
+                --outputs) outputs=$2 ;;
+                --wallpaper) wallpaper=$2 ;;
+            esac
+            shift 2 ;;
+        *) log "ignoring unknown option $1"; shift ;;
+    esac
+done
+is_uint "$start_timeout" || start_timeout=20
+is_uint "$heartbeat_timeout" || heartbeat_timeout=30
+
+# "$@" is now the fallback argv and is never modified again. It must exist even if the projected
+# command line was mangled, so an empty one becomes plain tuigreet.
+if [ $# -eq 0 ]; then
+    set -- /usr/bin/tuigreet --time --asterisks --remember --remember-user-session --sessions "$sessions"
+fi
+
+pid=
+workdir=
+reason=
+
+stop_greeter() {
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        # Remember cage's clients first: a hung (even SIGSTOPped) greeter must not outlive cage.
+        kids=$(pgrep -P "$pid" 2>/dev/null)
+        kill -TERM "$pid" 2>/dev/null
+        i=0
+        while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+        kill -KILL "$pid" 2>/dev/null
+        # shellcheck disable=SC2086 # one PID per word
+        [ -n "$kids" ] && kill -KILL $kids 2>/dev/null
+    fi
+    [ -n "$pid" ] && wait "$pid" 2>/dev/null
+    pid=
+    [ -n "$workdir" ] && rm -rf "$workdir"
+    workdir=
+}
+
+# greetd stopping us is not a greeter failure: stop the child and leave.
+trap 'stop_greeter; exit 143' TERM INT HUP
+
+fallback_now() {
+    log "glass greeter unavailable ($reason); starting text greeter: $*"
+    stop_greeter
+    trap - TERM INT HUP
+    # A failed exec ends a POSIX shell, so check first: a missing fallback becomes stock tuigreet.
+    if ! command -v "$1" >/dev/null 2>&1; then
+        log "fallback $1 not executable; using /usr/bin/tuigreet"
+        set -- /usr/bin/tuigreet --time --asterisks --remember --remember-user-session --sessions "$sessions"
+    fi
+    exec "$@"
+}
+
+cage=${MIOS_GREETER_CAGE:-/usr/bin/cage}
+qs=${MIOS_GREETER_QS:-/usr/bin/qs}
+
+if [ ! -x "$cage" ]; then reason="compositor $cage missing"; fallback_now "$@"; fi
+if [ ! -x "$qs" ]; then reason="quickshell $qs missing"; fallback_now "$@"; fi
+if [ ! -r "$greeter_dir/shell.qml" ]; then reason="$greeter_dir/shell.qml missing"; fallback_now "$@"; fi
+if [ -z "${GREETD_SOCK:-}" ] || [ ! -S "$GREETD_SOCK" ]; then reason="GREETD_SOCK not a socket"; fallback_now "$@"; fi
+
+workdir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/mios-greeter.XXXXXX" 2>/dev/null) || workdir=
+if [ -z "$workdir" ]; then reason="cannot create status dir"; fallback_now "$@"; fi
+status="$workdir/status"
+
+# Same GPU the desktop uses: the host's iGPU identity first (etc/mios/hyprland/igpu-pci), then the
+# udev /dev/dri/igpu alias; otherwise wlroots picks.
+if [ -z "${WLR_DRM_DEVICES:-}" ]; then
+    card=
+    if [ -r /etc/mios/hyprland/igpu-pci ]; then
+        want=$(cat /etc/mios/hyprland/igpu-pci 2>/dev/null)
+        for c in /sys/class/drm/card[0-9]*; do
+            case "$c" in *-*) continue ;; esac
+            [ "$(basename "$(readlink -f "$c/device" 2>/dev/null)")" = "$want" ] && card="/dev/dri/$(basename "$c")" && break
+        done
+    fi
+    [ -z "$card" ] && [ -e /dev/dri/igpu ] && card=$(readlink -f /dev/dri/igpu)
+    [ -n "$card" ] && [ -c "$card" ] && export WLR_DRM_DEVICES="$card"
+fi
+
+export MIOS_GREETER_STATUS="$status"
+export MIOS_GREETER_SESSION_DIRS="$sessions"
+export MIOS_GREETER_DEFAULT_SESSION="$default_session"
+[ -n "$wallpaper" ] && export MIOS_GREETER_WALLPAPER="$wallpaper"
+export QT_QPA_PLATFORM=wayland
+unset DISPLAY
+
+cage_mode=
+[ "$outputs" = last ] && cage_mode="-m last"
+# shellcheck disable=SC2086 # cage_mode is intentionally word-split ("" or "-m last")
+"$cage" -s -d $cage_mode -- "$qs" -p "$greeter_dir" &
+pid=$!
+log "started glass greeter (pid $pid, cage $cage, greeter $greeter_dir)"
+
+now() { date +%s; }
+state() { [ -r "$status" ] && head -n 1 "$status" 2>/dev/null; }
+
+# 1. Wait for the first "ready".
+deadline=$(( $(now) + start_timeout ))
+while :; do
+    st=$(state)
+    [ "$st" = ready ] && break
+    case "$st" in launched|fallback) break ;; esac
+    if ! kill -0 "$pid" 2>/dev/null; then break; fi
+    if [ "$(now)" -ge "$deadline" ]; then reason="not ready within ${start_timeout}s"; fallback_now "$@"; fi
+    sleep 0.2
+done
+
+# 2. Supervise: heartbeat = the greeter rewrites "ready" every few seconds.
+while kill -0 "$pid" 2>/dev/null; do
+    st=$(state)
+    case "$st" in launched|fallback) ;; *)
+        age=$(( $(now) - $(stat -c %Y "$status" 2>/dev/null || echo 0) ))
+        if [ "$age" -gt "$heartbeat_timeout" ]; then reason="no heartbeat for ${age}s"; fallback_now "$@"; fi
+    esac
+    sleep 1
+done
+wait "$pid"
+rc=$?
+pid=
+
+st=$(state)
+case "$st" in
+    launched)
+        log "greetd accepted the session; greeter done"
+        rm -rf "$workdir"
+        exit 0 ;;
+    fallback) reason="operator chose text login" ;;
+    *) reason="greeter exited (status ${rc}, state '${st:-none}') without launching a session" ;;
+esac
+fallback_now "$@"

@@ -1,6 +1,6 @@
 #!/bin/bash
-# AI-hint: Initializes GNOME Remote Desktop (GRD) by generating EC TLS certificates, configuring grdctl parameters, optionally setting credentials via MIOS_PASSWORD, and opening RDP ports 3389/8080 in firewalld.
-# AI-related: /usr/lib/mios/paths.sh, mios-grd-setup.service, gnome-remote-desktop.service
+# AI-hint: Legacy GNOME Remote Desktop (GRD) first-boot setup: generates EC TLS material and points grdctl at it. It NEVER opens firewall ports (RDP is reachable only through [remote.rdp]: xrdp on [ports].rdp, opened on the tailnet zone by mios-rdp-firewall.service) and it does not enable GRD while [remote.rdp].enabled is true. Obsolete on the Hyprland desktop: mios-grd-setup.service is disabled in 90-mios.preset.
+# AI-related: /usr/lib/mios/paths.sh, mios-grd-setup.service, gnome-remote-desktop.service, /usr/libexec/mios/mios-rdp, /usr/share/mios/mios.toml [remote.rdp]
 set -euo pipefail
 source /usr/lib/mios/paths.sh
 
@@ -21,16 +21,17 @@ fi
 grdctl --system rdp set-tls-key "$GRD_DIR/rdp-tls.key" 2>/dev/null || true
 grdctl --system rdp set-tls-cert "$GRD_DIR/rdp-tls.crt" 2>/dev/null || true
 
-if [[ -n "${MIOS_PASSWORD:-}" ]]; then
+rdp_enabled="$(/usr/libexec/mios/mios-toml-get remote.rdp enabled false 2>/dev/null || echo false)"
+if [[ "$rdp_enabled" == true ]]; then
+    echo "[remote.rdp].enabled=true: RDP is served by xrdp (mios-rdp); GRD is not enabled"
+elif [[ -n "${MIOS_PASSWORD:-}" ]]; then
     grdctl --system rdp set-credentials mios "$MIOS_PASSWORD" 2>/dev/null || true
     grdctl --system rdp enable 2>/dev/null || true
     systemctl enable --now gnome-remote-desktop.service 2>/dev/null || true
 fi
 
-if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null 2>&1; then
-    firewall-cmd --add-port=3389/tcp --add-port=8080/tcp 2>/dev/null || true
-    firewall-cmd --permanent --add-port=3389/tcp --add-port=8080/tcp 2>/dev/null || true
-fi
+# No firewall changes here: never open 3389/8080 (or any RDP port) in the default zone.
+# Reachability is mios-rdp-firewall.service's job ([remote.rdp], tailnet zone only).
 
 mkdir -p "$(dirname "$SENTINEL")"
 touch "$SENTINEL"

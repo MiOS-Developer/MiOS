@@ -1,0 +1,294 @@
+{
+  "summary": {
+    "total_runs": 11,
+    "last_run_timestamp": "2026-10-14T17:55:13.986232+00:00",
+    "last_candidate": "http://127.0.0.1:8649/v1",
+    "total_queries_mirrored": 36,
+    "total_mutations_blocked": 16,
+    "total_divergences": 12,
+    "average_parity_score": 0.8295,
+    "last_verdict": "PASS"
+  },
+  "runs": [
+    {
+      "timestamp": "2026-10-14T17:55:04.972946+00:00",
+      "live_url": "http://127.0.0.1:40559/v1",
+      "candidate_url": "http://127.0.0.1:39629/v1",
+      "total_queries": 4,
+      "blocked_mutations": 0,
+      "mirrored_queries": 4,
+      "status_parity_count": 4,
+      "schema_pass_count": 4,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 2.15,
+      "avg_cand_latency_ms": 1.62,
+      "p95_latency_delta_ms": 1.35,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:06.075588+00:00",
+      "live_url": "http://127.0.0.1:36767/v1",
+      "candidate_url": "http://127.0.0.1:33131/v1",
+      "total_queries": 4,
+      "blocked_mutations": 0,
+      "mirrored_queries": 4,
+      "status_parity_count": 4,
+      "schema_pass_count": 4,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 4.45,
+      "avg_cand_latency_ms": 2.25,
+      "p95_latency_delta_ms": 3.67,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:07.173648+00:00",
+      "live_url": "http://127.0.0.1:32919/v1",
+      "candidate_url": "http://127.0.0.1:36609/v1",
+      "total_queries": 4,
+      "blocked_mutations": 0,
+      "mirrored_queries": 4,
+      "status_parity_count": 3,
+      "schema_pass_count": 0,
+      "divergence_count": 4,
+      "parity_score": 0.375,
+      "avg_live_latency_ms": 5.08,
+      "avg_cand_latency_ms": 2.53,
+      "p95_latency_delta_ms": 4.09,
+      "divergences": [
+        {
+          "request_id": "q-0001",
+          "endpoint": "GET /v1/models",
+          "reasons": [
+            "Status code mismatch: Live=200, Candidate=500",
+            "Candidate schema invalid: Candidate returned HTTP status 500",
+            "Candidate request failed: HTTP 500: Internal Server Error"
+          ]
+        },
+        {
+          "request_id": "q-0002",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0003",
+          "endpoint": "POST /v1/embeddings",
+          "reasons": [
+            "Candidate schema invalid: Expected object == 'list', got 'None'; Expected non-empty 'data' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0004",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        }
+      ],
+      "verdict": "FAIL"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:08.272288+00:00",
+      "live_url": "http://127.0.0.1:37001/v1",
+      "candidate_url": "http://127.0.0.1:44325/v1",
+      "total_queries": 4,
+      "blocked_mutations": 0,
+      "mirrored_queries": 4,
+      "status_parity_count": 3,
+      "schema_pass_count": 0,
+      "divergence_count": 4,
+      "parity_score": 0.375,
+      "avg_live_latency_ms": 4.3,
+      "avg_cand_latency_ms": 2.29,
+      "p95_latency_delta_ms": 3.81,
+      "divergences": [
+        {
+          "request_id": "q-0001",
+          "endpoint": "GET /v1/models",
+          "reasons": [
+            "Status code mismatch: Live=200, Candidate=500",
+            "Candidate schema invalid: Candidate returned HTTP status 500",
+            "Candidate request failed: HTTP 500: Internal Server Error"
+          ]
+        },
+        {
+          "request_id": "q-0002",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0003",
+          "endpoint": "POST /v1/embeddings",
+          "reasons": [
+            "Candidate schema invalid: Expected object == 'list', got 'None'; Expected non-empty 'data' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0004",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        }
+      ],
+      "verdict": "FAIL"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:08.874539+00:00",
+      "live_url": "http://127.0.0.1:44241/v1",
+      "candidate_url": "http://127.0.0.1:35679/v1",
+      "total_queries": 4,
+      "blocked_mutations": 0,
+      "mirrored_queries": 4,
+      "status_parity_count": 3,
+      "schema_pass_count": 0,
+      "divergence_count": 4,
+      "parity_score": 0.375,
+      "avg_live_latency_ms": 5.36,
+      "avg_cand_latency_ms": 3.96,
+      "p95_latency_delta_ms": 4.09,
+      "divergences": [
+        {
+          "request_id": "q-0001",
+          "endpoint": "GET /v1/models",
+          "reasons": [
+            "Status code mismatch: Live=200, Candidate=500",
+            "Candidate schema invalid: Candidate returned HTTP status 500",
+            "Candidate request failed: HTTP 500: Internal Server Error"
+          ]
+        },
+        {
+          "request_id": "q-0002",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0003",
+          "endpoint": "POST /v1/embeddings",
+          "reasons": [
+            "Candidate schema invalid: Expected object == 'list', got 'None'; Expected non-empty 'data' list, got NoneType; Missing required 'model' field"
+          ]
+        },
+        {
+          "request_id": "q-0004",
+          "endpoint": "POST /v1/chat/completions",
+          "reasons": [
+            "Candidate schema invalid: Missing required 'id' field in chat completion; Expected non-empty 'choices' list, got NoneType; Missing required 'model' field"
+          ]
+        }
+      ],
+      "verdict": "FAIL"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:09.979750+00:00",
+      "live_url": "http://127.0.0.1:39927/v1",
+      "candidate_url": "http://127.0.0.1:36007/v1",
+      "total_queries": 5,
+      "blocked_mutations": 3,
+      "mirrored_queries": 2,
+      "status_parity_count": 2,
+      "schema_pass_count": 2,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 3.46,
+      "avg_cand_latency_ms": 3.33,
+      "p95_latency_delta_ms": 0.94,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:10.583271+00:00",
+      "live_url": "http://127.0.0.1:46303/v1",
+      "candidate_url": "http://127.0.0.1:38809/v1",
+      "total_queries": 5,
+      "blocked_mutations": 3,
+      "mirrored_queries": 2,
+      "status_parity_count": 2,
+      "schema_pass_count": 2,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 3.23,
+      "avg_cand_latency_ms": 2.85,
+      "p95_latency_delta_ms": 1.38,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:11.686146+00:00",
+      "live_url": "http://127.0.0.1:40169/v1",
+      "candidate_url": "http://127.0.0.1:38103/v1",
+      "total_queries": 5,
+      "blocked_mutations": 3,
+      "mirrored_queries": 2,
+      "status_parity_count": 2,
+      "schema_pass_count": 2,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 3.34,
+      "avg_cand_latency_ms": 2.81,
+      "p95_latency_delta_ms": 0.8,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:12.782889+00:00",
+      "live_url": "http://127.0.0.1:37123/v1",
+      "candidate_url": "http://127.0.0.1:39401/v1",
+      "total_queries": 5,
+      "blocked_mutations": 3,
+      "mirrored_queries": 2,
+      "status_parity_count": 2,
+      "schema_pass_count": 2,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 3.17,
+      "avg_cand_latency_ms": 3.14,
+      "p95_latency_delta_ms": 0.18,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:13.388037+00:00",
+      "live_url": "http://127.0.0.1:44521/v1",
+      "candidate_url": "http://127.0.0.1:8649/v1",
+      "total_queries": 6,
+      "blocked_mutations": 2,
+      "mirrored_queries": 4,
+      "status_parity_count": 4,
+      "schema_pass_count": 4,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 3.24,
+      "avg_cand_latency_ms": 1.93,
+      "p95_latency_delta_ms": 1.91,
+      "divergences": [],
+      "verdict": "PASS"
+    },
+    {
+      "timestamp": "2026-10-14T17:55:13.986232+00:00",
+      "live_url": "http://127.0.0.1:44777/v1",
+      "candidate_url": "http://127.0.0.1:8649/v1",
+      "total_queries": 6,
+      "blocked_mutations": 2,
+      "mirrored_queries": 4,
+      "status_parity_count": 4,
+      "schema_pass_count": 4,
+      "divergence_count": 0,
+      "parity_score": 1.0,
+      "avg_live_latency_ms": 1.97,
+      "avg_cand_latency_ms": 1.66,
+      "p95_latency_delta_ms": 1.18,
+      "divergences": [],
+      "verdict": "PASS"
+    }
+  ]
+}

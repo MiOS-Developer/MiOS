@@ -1,0 +1,71 @@
+/* AI-hint: Global MiOS web stylesheet. User-origin CSS projected into every MiOS
+   browser (Epiphany's profile user-stylesheet.css; Zen/Firefox chrome/userContent.css).
+   Forced rules are !important with an id-weight specificity guard (:not(#mios-web-a)...),
+   so they win at user AND author injection levels (Epiphany injects at author level):
+   page surfaces and text take the mios.toml [colors]/[theme.web] palette on every site;
+   the site layer below remaps common design systems so raised surfaces stay legible.
+   AI-related: usr/share/mios/mios.toml [theme.web] [dotfiles.registry.web],
+   usr/libexec/mios/mios-theme-render (apply_web), usr/share/mios/branding/mios-app-shell.css */
+
+:root {
+  color-scheme: dark !important;
+  accent-color: #1A407F !important;
+  scrollbar-color: color-mix(in srgb, #E7DFD3 40%, transparent) transparent !important;
+  /* WebKitGTK paints an opaque view under every page, so a translucent page would blend
+     with white; pages there stay opaque. */
+  --mios-web-page-alpha: 100%;
+}
+
+/* Gecko with browser.tabs.allow_transparent_browser composites the page over the
+   window, so the compositor glass (Hyprglass on Linux, acrylic on Windows) shows through. */
+@supports (-moz-appearance: none) {
+  :root { --mios-web-page-alpha: 62%; }
+}
+
+:root {
+  --mios-web-page: color-mix(in srgb, #282262 var(--mios-web-page-alpha), transparent);
+  --mios-web-raised: color-mix(in srgb, color-mix(in srgb, #282262, #E7DFD3 8%) var(--mios-web-page-alpha), transparent);
+}
+
+html:not(#mios-web-a):not(#mios-web-b), html:not(#mios-web-a):not(#mios-web-b) > body {
+  background-color: var(--mios-web-page) !important;
+  color: #E7DFD3 !important;
+}
+
+/* Unstyled links only; sites that colour their own links keep them. */
+a:link { color: #F35C15; }
+a:visited { color: #B7C9D7; }
+
+::selection {
+  background-color: color-mix(in srgb, #1A407F 45%, transparent) !important;
+  color: #E7DFD3 !important;
+}
+
+/* Site layer: full-page containers and design tokens that repaint the page surface. */
+html:not(#mios-web-a):not(#mios-web-b) :is(ytd-app, ytd-page-manager, ytd-browse, ytd-two-column-browse-results-renderer,
+  #masthead-container, ytd-masthead, #masthead-container #background, #frosted-glass,
+  tp-yt-app-drawer #contentContainer, #guide-content, ytd-mini-guide-renderer, #chips-wrapper) {
+  background: transparent !important;
+}
+html, html[dark], [dark] {
+  --yt-spec-base-background: var(--mios-web-page) !important;
+  --yt-spec-general-background-a: var(--mios-web-page) !important;
+  --yt-spec-general-background-b: var(--mios-web-page) !important;
+  --yt-spec-general-background-c: var(--mios-web-raised) !important;
+  --yt-spec-raised-background: var(--mios-web-raised) !important;
+  --yt-spec-menu-background: var(--mios-web-raised) !important;
+  --yt-spec-text-primary: #E7DFD3 !important;
+}
+:root, .pf-v6-theme-dark, .pf-v5-theme-dark {
+  --pf-t--global--background--color--primary--default: var(--mios-web-page) !important;
+  --pf-t--global--background--color--secondary--default: var(--mios-web-raised) !important;
+  --pf-t--global--background--color--floating--default: var(--mios-web-raised) !important;
+  --pf-t--global--text--color--regular: #E7DFD3 !important;
+  --pf-t--global--color--brand--default: #F35C15 !important;
+  --pf-v5-global--BackgroundColor--100: var(--mios-web-page) !important;
+  --pf-v5-global--BackgroundColor--200: var(--mios-web-raised) !important;
+  --pf-v5-global--Color--100: #E7DFD3 !important;
+  --bgColor-default: var(--mios-web-page) !important;
+  --bgColor-muted: var(--mios-web-raised) !important;
+  --fgColor-default: #E7DFD3 !important;
+}

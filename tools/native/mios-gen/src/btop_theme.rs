@@ -189,7 +189,7 @@ pub fn run_render_btop_theme(
         let disk_content = fs::read_to_string(&target_path)
             .map_err(|e| format!("Failed to read {}: {}", target_path.display(), e))?;
         BtopThemeEngine::validate_theme_content(&disk_content).map_err(|errs| errs.join("; "))?;
-        if disk_content != to_write {
+        if disk_content.replace("\r\n", "\n") != to_write {
             return Err(format!(
                 "btop theme drifted from SSOT projection at {}",
                 target_path.display()

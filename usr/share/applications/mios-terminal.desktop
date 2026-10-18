@@ -1,0 +1,15 @@
+# AI-hint: Dock/drawer entry for the MiOS terminal; Exec mirrors [keybindings.actions] id="terminal" desktop_command in usr/share/mios/mios.toml (the global session selector).
+# AI-related: usr/share/mios/mios.toml [desktop.shell].dock_pinned, usr/libexec/mios/mios-terminal
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MiOS Terminal
+GenericName=Terminal
+Comment=MiOS tmux desktop with the global session selector
+Exec=alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;
+Keywords=shell;tmux;console;command;
+Terminal=false
+StartupNotify=false
+StartupWMClass=Alacritty

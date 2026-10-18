@@ -100,10 +100,8 @@ _ES_STDERR="$(tr -d '\r' < "$_ES_ERR" 2>/dev/null)"; rm -f "$_ES_ERR"
 
 if [ -z "$RAW" ]; then
     if printf '%s' "$_ES_STDERR" | grep -qiE 'IPC window not found|make sure Everything is running|Error 8'; then
-        _ES_VER="$("$(cd "$(dirname "$0")" && pwd)/mios-toml-get" paths everything_cli_version "" 2>/dev/null)"
-        _REC=""
-        [ -n "$_ES_VER" ] && _REC=" (recommended: es.exe $_ES_VER)"
-        _MSG="Everything UNREACHABLE -- es.exe could not connect ($_ES_STDERR). Install an es.exe whose version matches the running Everything${_REC}, point EVERYTHING_CLI or mios.toml [paths].everything_cli at it, and ensure Everything is running."
+        # No pinned es.exe version: the right es.exe is the newest one for the running Everything.
+        _MSG="Everything UNREACHABLE -- es.exe could not connect ($_ES_STDERR). Install the latest es.exe from voidtools for the running Everything, point EVERYTHING_CLI or mios.toml [paths].everything_cli at it, and ensure Everything is running."
         if [ "$JSON" -eq 1 ]; then
             printf '{"ok":false,"verb":"everything_search","query":%s,"error":"everything_unreachable","detail":%s,"results":[]}\n' \
                 "$(printf '%s' "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \

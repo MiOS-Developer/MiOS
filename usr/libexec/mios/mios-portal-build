@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# AI-hint: Off-image MiOS-Portal builder: under the heavy-build lock and a systemd-run scope (MemoryMax, no swap) builds localhost/mios-portal-build and runs Surfer + mach in it; output is /var/lib/mios-build/artifacts/mios-portal/<ts>/ (tarball, manifest.json, logs, metrics).
+# AI-related: usr/share/mios/portal-build/Containerfile, usr/share/mios/portal-build/mios-portal-build-inner, usr/lib/mios/heavy-lock.sh, usr/share/mios/mios.toml ([desktop.portal.builder])
+# AI-doc: usr/share/doc/mios/manual/automation.md
+#
+# Usage:
+#   mios-portal-build [build] [--lane artifact|full] [--product-tree DIR] [--smoke-copy DIR] [--no-smoke]
+#   mios-portal-build smoke --run DIR [--smoke-copy DIR]
+#   mios-portal-build resolve           print the latest upstream versions (no build, no lock)
+#   mios-portal-build stage --out DIR   resolve and stage the product project into DIR (no build, no lock)
+#   mios-portal-build config            print the SSOT inputs this builder would use
+#
+# Every input comes from [desktop.portal.builder] (plus the Portal launcher entry and [ports]);
+# a missing key stops the run. --lane overrides the SSOT lane for one run and is recorded.
+# The product comes from src/mios-portal through `mios-portal-tree stage` (versions filled from this
+# run's resolution); --product-tree takes an already staged project instead; with neither, the
+# spike placeholder project is generated inside the builder.
+set -Eeuo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+HERE="$(dirname "$SELF")"
+LIBDIR=/usr/lib/mios; [ -r "$LIBDIR/heavy-lock.sh" ] || LIBDIR="$HERE/../../lib/mios"
+SHAREDIR=/usr/share/mios/portal-build; [ -r "$SHAREDIR/mios-portal-build-inner" ] || SHAREDIR="$HERE/../../share/mios/portal-build"
+log() { printf '[mios-portal-build] %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+ssot_inputs() { # shell assignments for every PB_* input, or a non-zero exit naming the missing key
+    MIOS_LIB="$LIBDIR" python3 -I - <<'PY'
+import os, shlex, sys
+sys.path.insert(0, os.environ["MIOS_LIB"])
+import mios_toml
+d = mios_toml.load_merged()
+def get(path):
+    node = d
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            sys.exit("mios-portal-build: SSOT key %s is missing" % path)
+        node = node[part]
+    return node
+b = "desktop.portal.builder."
+launcher = get("desktop.portal.launcher")
+L = "desktop.launchers.%s." % launcher
+port = get("ports." + get(L + "port_key"))
+out = {
+    "PB_IMAGE": get(b + "image"), "PB_CONTAINERFILE_DIR": get(b + "containerfile_dir"),
+    "PB_BASE": get(b + "base_image"), "PB_PACKAGES": " ".join(get(b + "packages")),
+    "PB_LANE": get(b + "lane"), "PB_ARTIFACT_APP_NAME": get(b + "artifact_app_name"),
+    "PB_JOBS": get(b + "jobs"), "PB_CARGO_JOBS": get(b + "cargo_jobs"),
+    "PB_SCOPE_MEM": get(b + "scope_memory_max"), "PB_SCOPE_SWAP": get(b + "scope_swap_max"),
+    "PB_CMEM": get(b + "container_memory"), "PB_CMEMSWAP": get(b + "container_memory_swap"),
+    "PB_CPUS": get(b + "container_cpus"), "PB_NICE": get(b + "nice"), "PB_IONICE": get(b + "ionice_class"),
+    "PB_LOCK": get(b + "heavy_lock"), "PB_WORK": get(b + "work_root"), "PB_ART": get(b + "artifact_root"),
+    "PB_MIN_FREE_GB": get(b + "min_free_gb"), "PB_PRODUCT_TREE": get(b + "product_tree"),
+    "PB_PRODUCT_DETAILS": get(b + "product_details_url"), "PB_ARCHIVE": get(b + "archive_url"),
+    "PB_NPM": get(b + "npm_registry_url"), "PB_SURFER_PKG": get(b + "surfer_package"),
+    "PB_KEY_FPR": get(b + "release_key_fingerprint"),
+    "PB_VENDOR": get(b + "placeholder.vendor"), "PB_APPID": get(b + "placeholder.app_id"),
+    "PB_BRAND": get(b + "placeholder.brand"),
+    "PB_NAME": get(L + "title"), "PB_BIN": get(L + "startup_wm_class"), "PB_ICON_SRC": get(L + "icon"),
+    "PB_PORTAL_URL": "%s://localhost:%s%s" % (get(L + "scheme"), port, get(L + "path")),
+}
+if int(out["PB_JOBS"]) > 6:
+    sys.exit("mios-portal-build: [desktop.portal.builder].jobs > 6 is refused on this host")
+for k, v in out.items():
+    print("%s=%s" % (k, shlex.quote(str(v))))
+PY
+}
+
+INPUT_VARS=(PB_LANE PB_ARTIFACT_APP_NAME PB_JOBS PB_CARGO_JOBS PB_MIN_FREE_GB PB_PRODUCT_DETAILS
+    PB_ARCHIVE PB_NPM PB_SURFER_PKG PB_KEY_FPR PB_VENDOR PB_APPID PB_BRAND PB_NAME PB_BIN)
+
+CMD=build; LANE_OVERRIDE=""; PRODUCT_OVERRIDE=""; SMOKE_COPY=""; NO_SMOKE=""; RUN_DIR=""; STAGE_OUT=""
+case "${1:-}" in build|smoke|resolve|config|stage) CMD=$1; shift ;; esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --lane) LANE_OVERRIDE=${2:?}; shift 2 ;;
+        --product-tree) PRODUCT_OVERRIDE=${2:?}; shift 2 ;;
+        --smoke-copy) SMOKE_COPY=${2:?}; shift 2 ;;
+        --no-smoke) NO_SMOKE=1; shift ;;
+        --run) RUN_DIR=${2:?}; shift 2 ;;
+        --out) STAGE_OUT=${2:?}; shift 2 ;;
+        *) die "unknown argument $1" ;;
+    esac
+done
+
+_inputs="$(ssot_inputs)" || die "SSOT inputs unresolved"
+# TD-1: eval-safe, input=shlex-quoted values from the SSOT reader above, not agent-controlled
+eval "$_inputs"
+[ -z "$LANE_OVERRIDE" ] || PB_LANE=$LANE_OVERRIDE
+case "$PB_LANE" in artifact|full) ;; *) die "lane '$PB_LANE' is neither artifact nor full" ;; esac
+[ -z "$PRODUCT_OVERRIDE" ] || PB_PRODUCT_TREE=$PRODUCT_OVERRIDE
+export "${INPUT_VARS[@]}"
+
+TREE_TOOL="$HERE/mios-portal-tree"
+BAKE_PLAN=/usr/libexec/mios/mios-bake-plan
+
+resolve_versions() { # resolve_versions FILE: key=value lines (the @BUILD:<key>@ vocabulary); fails hard
+    local out=$1
+    # Prefer the SSOT Rust resolver once it carries the portal lookup; the binary is probed by
+    # content, never invoked with a guessed argument (an unknown argument regenerates projections).
+    if [ -x "$BAKE_PLAN" ] && grep -aq 'latest-portal' "$(readlink -f "$BAKE_PLAN")"; then
+        "$BAKE_PLAN" latest-portal >"$out" || die "mios-bake-plan latest-portal failed"
+    else
+        bash "$SHAREDIR/mios-portal-build-inner" resolve-env >"$out" || die "upstream version resolution failed"
+    fi
+    grep -qE '^firefox_version=[0-9]+\.[0-9]+' "$out" || die "resolution produced no firefox_version"
+}
+
+stage_product() { # stage_product DIR VERSIONS: src/mios-portal -> a filled Surfer project in DIR
+    local out=$1 versions=$2
+    [ -x "$TREE_TOOL" ] || die "$TREE_TOOL is missing"
+    rm -rf "$out"
+    # The lane goes INTO the stage (and its manifest), so phase 67's verify-stage re-derives it.
+    python3 -I "$TREE_TOOL" stage --out "$out" --versions "$versions" --lane "$PB_LANE" || die "mios-portal-tree stage failed"
+}
+
+case "$CMD" in
+    config) printf '%s\n' "$_inputs"; [ -z "$LANE_OVERRIDE" ] || echo "PB_LANE=$PB_LANE  # --lane override"; exit 0 ;;
+    resolve) exec bash "$SHAREDIR/mios-portal-build-inner" resolve ;;
+    stage)
+        [ -n "$STAGE_OUT" ] || die "stage needs --out DIR"
+        mkdir -p "$(dirname "$STAGE_OUT")"
+        resolve_versions "$STAGE_OUT.versions.env"
+        stage_product "$STAGE_OUT" "$STAGE_OUT.versions.env"
+        echo "$STAGE_OUT"; exit 0 ;;
+esac
+
+check_watchdog() {
+    local st
+    st=$(cat /sys/class/watchdog/watchdog0/state 2>/dev/null || echo absent)
+    [ "$st" != active ] || die "watchdog0 is ACTIVE after the run; stop and investigate"
+    log "watchdog0: $st"
+}
+
+free_gb() { echo $(( $(df --output=avail -k "$1" | tail -1) / 1024 / 1024 )); }
+
+# ---------------------------------------------------------------- outside the scope
+if [ "${MIOS_PORTAL_BUILD_SCOPED:-}" != 1 ]; then
+    command -v systemd-run >/dev/null || die "systemd-run is required for the memory cap"
+    [ -d "$PB_WORK" ] && [ -w "$PB_WORK" ] || die "$PB_WORK must exist and be writable by $(id -un)"
+    [ -d "$PB_ART" ] && [ -w "$PB_ART" ] || die "$PB_ART must exist and be writable by $(id -un)"
+    [ "$(free_gb "$PB_WORK")" -ge "$PB_MIN_FREE_GB" ] || die "$PB_WORK has $(free_gb "$PB_WORK") GB free (need >= $PB_MIN_FREE_GB)"
+    # shellcheck source=/usr/lib/mios/heavy-lock.sh
+    . "$LIBDIR/heavy-lock.sh"
+    TS=$(date -u +%Y%m%dT%H%M%SZ)
+    rc=0
+    mios_heavy_lock_exec "$PB_LOCK" systemd-run --user --scope --quiet --collect \
+        --unit "mios-portal-build-$TS" -p MemoryMax="$PB_SCOPE_MEM" -p MemorySwapMax="$PB_SCOPE_SWAP" -p Delegate=yes \
+        -- env MIOS_PORTAL_BUILD_SCOPED=1 MIOS_PORTAL_BUILD_TS="$TS" \
+        nice -n "$PB_NICE" ionice -c "$PB_IONICE" "$SELF" "$CMD" \
+        ${LANE_OVERRIDE:+--lane "$LANE_OVERRIDE"} ${PRODUCT_OVERRIDE:+--product-tree "$PRODUCT_OVERRIDE"} \
+        ${SMOKE_COPY:+--smoke-copy "$SMOKE_COPY"} ${NO_SMOKE:+--no-smoke} ${RUN_DIR:+--run "$RUN_DIR"} || rc=$?
+    check_watchdog
+    exit "$rc"
+fi
+
+# ---------------------------------------------------------------- inside the scope
+SCOPE_CG="/sys/fs/cgroup$(awk -F: '$1=="0"{print $3}' /proc/self/cgroup)"
+[ -r "$SCOPE_CG/memory.max" ] || die "not inside a memory-capped cgroup ($SCOPE_CG)"
+log "scope $SCOPE_CG memory.max=$(cat "$SCOPE_CG/memory.max") swap.max=$(cat "$SCOPE_CG/memory.swap.max")"
+TS=${MIOS_PORTAL_BUILD_TS:?}
+STORE="$PB_WORK/storage"; RUNROOT="${XDG_RUNTIME_DIR:?}/mios-portal-build"
+mkdir -p "$STORE" "$RUNROOT" "$PB_WORK/work/inputs"
+PODMAN=(env -u CONTAINER_HOST -u DOCKER_HOST podman --root "$STORE" --runroot "$RUNROOT")
+RUN_ARGS=(--rm --cgroups=split --memory "$PB_CMEM" --memory-swap "$PB_CMEMSWAP" --cpus "$PB_CPUS"
+    --userns=keep-id --user "$(id -u):$(id -g)" -e HOME=/work/home)
+for v in "${INPUT_VARS[@]}"; do RUN_ARGS+=(-e "$v"); done
+
+build_image() {
+    log "building $PB_IMAGE from $PB_CONTAINERFILE_DIR (base $PB_BASE)"
+    "${PODMAN[@]}" build --memory "$PB_CMEM" --memory-swap "$PB_CMEMSWAP" --layers \
+        --build-arg MIOS_PORTAL_BUILD_BASE="$PB_BASE" --build-arg MIOS_PORTAL_BUILD_PACKAGES="$PB_PACKAGES" \
+        -t "$PB_IMAGE" "$PB_CONTAINERFILE_DIR"
+}
+
+run_smoke() { # run_smoke RUN_DIR
+    local run=$1 f
+    local rc
+    set +e
+    "${PODMAN[@]}" run "${RUN_ARGS[@]}" --network=host -v "$PB_WORK/work:/work:Z" -v "$run:/out:Z" \
+        "$PB_IMAGE" smoke portal-blank=about:blank portal-home="$PB_PORTAL_URL" 2>&1 | tee "$run/smoke.log"
+    rc=${PIPESTATUS[0]}
+    set -e
+    if [ -n "$SMOKE_COPY" ]; then
+        for f in "$run"/smoke/portal-*.png; do [ -e "$f" ] && cp "$f" "$SMOKE_COPY/"; done
+    fi
+    return "$rc"
+}
+
+if [ "$CMD" = smoke ]; then
+    [ -d "$RUN_DIR" ] || die "smoke needs --run DIR"
+    rc=0; run_smoke "$RUN_DIR" || rc=$?
+    exit "$rc"
+fi
+
+RUN="$PB_ART/$TS"
+mkdir -p "$RUN"
+T_START=$SECONDS
+set +e
+build_image 2>&1 | tee "$RUN/image.log"; rc=${PIPESTATUS[0]}
+set -e
+[ "$rc" -eq 0 ] || die "builder image build failed (see $RUN/image.log)"
+T_IMAGE=$((SECONDS - T_START))
+
+cp "$PB_ICON_SRC" "$PB_WORK/work/inputs/icon.png"
+resolve_versions "$RUN/versions.env"
+PRODUCT_MOUNT=(); PRODUCT_KIND=placeholder
+STAGE="$PB_WORK/work/inputs/product"
+if [ -n "$PRODUCT_OVERRIDE" ]; then
+    [ -f "$PRODUCT_OVERRIDE/surfer.json" ] || die "--product-tree $PRODUCT_OVERRIDE has no surfer.json"
+    # Copied, not bind-mounted, so the source tree is never relabelled for the container.
+    rm -rf "$STAGE"; cp -a "$PRODUCT_OVERRIDE" "$STAGE"; PRODUCT_KIND="override:$PRODUCT_OVERRIDE"
+elif [ -f "$PB_PRODUCT_TREE/surfer.json" ]; then
+    stage_product "$STAGE" "$RUN/versions.env"; PRODUCT_KIND="staged:$PB_PRODUCT_TREE"
+fi
+[ "$PRODUCT_KIND" = placeholder ] || PRODUCT_MOUNT=(-v "$STAGE:/product:ro,Z")
+log "lane=$PB_LANE product=$PRODUCT_KIND"
+# memory.peak counts page cache (unpacking and git-adding the tree fills it, and it is reclaimable);
+# sample the scope's anonymous memory too, which is what the cap has to hold.
+( max=0; while :; do a=$(awk '$1=="anon"{print $2}' "$SCOPE_CG/memory.stat" 2>/dev/null); a=${a:-0}
+    [ "$a" -le "$max" ] || { max=$a; echo "$max" >"$RUN/.anon_peak"; }; sleep 1; done ) &
+SAMPLER=$!
+set +e
+"${PODMAN[@]}" run "${RUN_ARGS[@]}" -e PB_ICON=/work/inputs/icon.png "${PRODUCT_MOUNT[@]}" \
+    -v "$PB_WORK/work:/work:Z" -v "$RUN:/out:Z" "$PB_IMAGE" build 2>&1 | tee "$RUN/build.log"
+rc=${PIPESTATUS[0]}
+set -e
+kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null || true
+if [ "$rc" -eq 0 ] && [ "${PRODUCT_KIND%%:*}" = staged ]; then
+    # The run must verify exactly as phase 67 will verify it (same tool, same tree).
+    python3 -I "$TREE_TOOL" verify-stage --stage "$RUN/stage.json" --overlay "$RUN/install-overlay" 2>&1 \
+        | tee "$RUN/verify-stage.log"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { log "verify-stage of the run failed"; rc=4; }
+fi
+ANON_PEAK=$(cat "$RUN/.anon_peak" 2>/dev/null || echo 0); rm -f "$RUN/.anon_peak"
+T_BUILD=$((SECONDS - T_START - T_IMAGE))
+PEAK=$(cat "$SCOPE_CG/memory.peak" 2>/dev/null || echo 0)
+EVENTS=$(tr '\n' ' ' <"$SCOPE_CG/memory.events" 2>/dev/null || true)
+SMOKE_RC=skipped
+if [ "$rc" -eq 0 ] && [ -z "$NO_SMOKE" ]; then
+    SMOKE_RC=0; run_smoke "$RUN" || SMOKE_RC=$?
+fi
+FFV=$(sed -n 's/^firefox_version=//p' "$RUN/versions.env")
+size_of() { "$@" 2>/dev/null | awk 'END{print $1+0}'; }
+M_DISK_WORK=$(size_of du -sxb "$PB_WORK/work/ff-$FFV")
+M_DISK_STORE=$(size_of "${PODMAN[@]}" unshare du -sxb "$STORE")
+M_FREE_GB=$(free_gb "$PB_WORK")
+M_TS="$TS"
+M_LANE="$PB_LANE"
+M_LANE_OVERRIDE="$LANE_OVERRIDE"
+M_EXIT="$rc"
+M_SMOKE="$SMOKE_RC"
+M_T_IMAGE="$T_IMAGE"
+M_T_BUILD="$T_BUILD"
+M_SCOPE_MEM="$PB_SCOPE_MEM"
+M_PEAK="${PEAK:-0}"
+M_EVENTS="$EVENTS"
+M_PRODUCT="$PRODUCT_KIND"
+M_ANON_PEAK="${ANON_PEAK:-0}"
+export M_TS M_LANE M_LANE_OVERRIDE M_EXIT M_SMOKE M_T_IMAGE M_T_BUILD M_SCOPE_MEM M_PEAK M_EVENTS M_DISK_WORK M_DISK_STORE M_FREE_GB M_PRODUCT M_ANON_PEAK
+python3 -I - "$RUN/metrics.json" <<'PY'
+import json, os, sys
+e = os.environ
+json.dump({"ts": e["M_TS"], "lane": e["M_LANE"], "lane_override": e["M_LANE_OVERRIDE"] or None,
+           "product": e["M_PRODUCT"], "exit": int(e["M_EXIT"]), "smoke": e["M_SMOKE"],
+           "seconds_image": int(e["M_T_IMAGE"]), "seconds_build": int(e["M_T_BUILD"]),
+           "scope_memory_max": e["M_SCOPE_MEM"], "peak_memory_bytes": int(e["M_PEAK"] or 0),
+           "peak_anon_bytes_sampled_1s": int(e["M_ANON_PEAK"] or 0),
+           "memory_events": e["M_EVENTS"].strip(), "disk_work_bytes": int(e["M_DISK_WORK"] or 0),
+           "disk_image_store_bytes": int(e["M_DISK_STORE"] or 0), "free_gb_after": int(e["M_FREE_GB"])},
+          open(sys.argv[1], "w"), indent=2)
+PY
+log "run $RUN: exit=$rc smoke=$SMOKE_RC peak=$((PEAK / 1048576)) MiB (anon $((ANON_PEAK / 1048576)) MiB) image=${T_IMAGE}s build=${T_BUILD}s"
+echo "$RUN"
+[ "$rc" -eq 0 ] || exit "$rc"
+[ "$SMOKE_RC" = 0 ] || [ "$SMOKE_RC" = skipped ] || exit 3

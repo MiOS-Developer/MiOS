@@ -1,0 +1,14 @@
+[Unit]
+Description=MiOS float-first window placement (centered floating size, tile on move)
+PartOf=mios-desktop.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/miosd placement serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=mios-desktop.target

@@ -24,8 +24,13 @@
     * Everything is a convex blend of palette colours x gentle (<=1.07) light + a soft shoulder,
       so NOTHING clips or peaks. WebGL2 + EXT_color_buffer_float required; else a WebGL1 fallback.
 
-    palette params: a0..a15 (SSOT ansi_0..ansi_15) ; bg fg for the mode grade
+    palette params: a0..a15 (SSOT ansi_0..ansi_15) ; bg fg for the mode grade ; w0..w15 role weights
     mode:  ?mode=dark | ?mode=light   (else prefers-color-scheme -> DE theme -> dark).
+    motion params (SSOT [theme.wallpaper.motion], shared with the native Linux host usr/share/mios/wallpaper/Host.qml):
+      fps (steps/s, 30) speed (sim s per wall s, 0.40) intro (login spill ms, 3500) dpr (DPR cap, 1.5)
+      sim (sim grid / canvas, 0.6) n (wandering emitters, 24). Defaults below == the SSOT values.
+    deterministic test params: t0 (start sim time) steps (run exactly N fixed steps t = t0 + k*speed/fps, then
+      freeze and expose the frame as window.__miosWpCapture, a PNG data URL).
 -->
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
@@ -67,6 +72,12 @@
   var WDEF = [1.00,0.30,0.60,0.55,0.85,0.35,0.70,0.95,0.55,0.22,0.30,0.28,0.45,0.22,0.55,0.18];
   var wgt = new Float32Array(N);
   for (var wi = 0; wi < N; wi++) { var wv = parseFloat(qp.get("w" + wi)); wgt[wi] = isNaN(wv) ? WDEF[wi] : Math.max(0, Math.min(1, wv)); }
+  // ── Motion contract (SSOT [theme.wallpaper.motion]; the native Linux host reads the same keys) ─────────
+  function qnum(k, def, lo, hi) { var v = parseFloat(qp.get(k)); return isNaN(v) ? def : Math.max(lo, Math.min(hi, v)); }
+  var FPS_Q = qnum("fps", 30, 1, 240), SPEED = qnum("speed", 0.40, 0, 10), INTRO_MS = qnum("intro", 3500, 0, 60000);
+  var NEMIT = Math.round(qnum("n", 24, 1, 64));
+  var T0 = qnum("t0", 0, 0, 1e7), STEPS = Math.round(qnum("steps", 0, 0, 1e6));
+  function introAt(ms) { return INTRO_MS > 0 ? Math.min(1, ms / INTRO_MS) : 1; }
   var bgHex = "#" + (qp.get("bg") || qp.get("a0") || DEF[0]).replace(/^#/, "");
   var fgHex = "#" + (qp.get("fg") || qp.get("a7") || DEF[7]).replace(/^#/, "");
   var m = (qp.get("mode") || "").toLowerCase();
@@ -115,11 +126,11 @@
     return p;
   }
 
-  var DPR_CAP = 1.5, SIM_SCALE = 0.6;
+  var DPR_CAP = qnum("dpr", 1.5, 0.25, 8), SIM_SCALE = qnum("sim", 0.6, 0.05, 2);
   function dpr() { return Math.min(window.devicePixelRatio || 1, DPR_CAP); }
 
   // ════════════════ PRIMARY: WebGL2 advection-feedback colour-ocean ════════════════
-  var gl2 = canvas.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "low-power" });
+  var gl2 = canvas.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "low-power", preserveDrawingBuffer: STEPS > 0 });
   if (gl2 && gl2.getExtension("EXT_color_buffer_float")) {
     runAdvection(gl2);
   } else {
@@ -136,7 +147,7 @@
       + "out vec4 o;\n" + NOISE + "\n"
       + "void emit(vec2 uv, out vec3 sc, out float sw){\n"
       + "  sc=vec3(0.0); sw=0.0;\n"
-      + "  for(int k=0;k<24;k++){ float i=float(k);\n"
+      + "  for(int k=0;k<" + NEMIT + ";k++){ float i=float(k);\n"
       + "    int ci=k-(k/16)*16; float wk=u_w[ci];\n"                     // this colour's role weight
       + "    vec2 seed=fract(sin(vec2(i*12.9+1.7, i*78.2+3.1))*43758.5);\n"
       + "    float ph=seed.x*40.0; float amp=0.34+0.10*seed.y;\n"        // organic, non-orbital calm wander
@@ -240,16 +251,16 @@
       if (mq.addEventListener) mq.addEventListener("change", onC); else if (mq.addListener) mq.addListener(onC);
     }
 
-    var FPS=30, minDelta=1000/FPS, last=0, t0=performance.now();
-    function step() {
-      var t = (performance.now() - t0) / 1000 * 0.40, asp = W / H;   // zen pace: slow, meditative time
+    var FPS=FPS_Q, minDelta=1000/FPS, last=0, t0=performance.now();
+    function step(t, intro) {
+      var asp = W / H;   // t: zen pace (slow, meditative sim time = wall seconds * SPEED)
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[1-readi]); gl.viewport(0,0,simW,simH);
       gl.useProgram(sim); bindQuad(sim);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texs[readi]);
       gl.uniform1i(gl.getUniformLocation(sim,"u_prev"), 0);
       gl.uniform2f(gl.getUniformLocation(sim,"u_sim"), simW, simH);
       gl.uniform1f(gl.getUniformLocation(sim,"u_time"), t);
-      gl.uniform1f(gl.getUniformLocation(sim,"u_dt"), 1.0/30.0);
+      gl.uniform1f(gl.getUniformLocation(sim,"u_dt"), 1.0/FPS);
       gl.uniform1f(gl.getUniformLocation(sim,"u_asp"), asp);
       gl.uniform3fv(gl.getUniformLocation(sim,"u_pal"), pal);
       gl.uniform1fv(gl.getUniformLocation(sim,"u_w"), wgt);
@@ -261,15 +272,26 @@
       gl.uniform2f(gl.getUniformLocation(pres,"u_res"), W, H);
       gl.uniform2f(gl.getUniformLocation(pres,"u_sim"), simW, simH);
       gl.uniform1f(gl.getUniformLocation(pres,"u_time"), t);
-      gl.uniform1f(gl.getUniformLocation(pres,"u_intro"), Math.min(1,(performance.now()-t0)/3500));
+      gl.uniform1f(gl.getUniformLocation(pres,"u_intro"), intro);
       gl.uniform1f(gl.getUniformLocation(pres,"u_asp"), asp);
       gl.uniform3fv(gl.getUniformLocation(pres,"u_pal"), pal);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       readi = 1 - readi;
     }
-    function frame() { requestAnimationFrame(frame); var now=performance.now(); if (now-last<minDelta) return; last=now; step(); }
+    function live() { var now = performance.now(); step(T0 + (now - t0) / 1000 * SPEED, introAt(now - t0)); }
+    if (STEPS > 0) {   // deterministic: exactly STEPS fixed steps, then freeze + expose the frame
+      var k = 0;
+      var fixed = function () {
+        if (k >= STEPS) { window.__miosWpCapture = canvas.toDataURL("image/png"); return; }
+        k++; step(T0 + k * SPEED / FPS, introAt(k * 1000 / FPS));
+        requestAnimationFrame(fixed);
+      };
+      requestAnimationFrame(fixed);
+      return;
+    }
+    function frame() { requestAnimationFrame(frame); var now=performance.now(); if (now-last<minDelta) return; last=now; live(); }
     requestAnimationFrame(frame);
-    setInterval(function () { if (performance.now()-last >= 180) { last=performance.now(); step(); } }, 180);
+    setInterval(function () { if (performance.now()-last >= 180) { last=performance.now(); live(); } }, 180);
   }
 
   // ════════════════ FALLBACK: WebGL1 single-pass colour-ocean (full 16 palette) ════════════════
@@ -311,8 +333,8 @@
     function rs(){ canvas.width=Math.round(window.innerWidth*dpr()); canvas.height=Math.round(window.innerHeight*dpr()); gl.viewport(0,0,canvas.width,canvas.height); gl.uniform2f(uR,canvas.width,canvas.height); gl.uniform1f(uA,canvas.width/canvas.height); }
     window.addEventListener("resize", rs); rs();
     if (!m && window.matchMedia) { var mq=window.matchMedia("(prefers-color-scheme: light)"); var oc=function(e){ darkMode=!e.matches; gl.uniform1f(uD,darkMode?1.0:0.0); document.body.style.background=darkMode?bgHex:fgHex; }; if(mq.addEventListener)mq.addEventListener("change",oc); else if(mq.addListener)mq.addListener(oc); }
-    var FPS=30, minDelta=1000/FPS, last=0, t0=performance.now();
-    function draw(){ gl.uniform1f(uT,(performance.now()-t0)/1000*0.40); gl.uniform1f(uIn,Math.min(1,(performance.now()-t0)/3500)); gl.drawArrays(gl.TRIANGLES,0,6); }
+    var FPS=FPS_Q, minDelta=1000/FPS, last=0, t0=performance.now();
+    function draw(){ gl.uniform1f(uT,T0+(performance.now()-t0)/1000*SPEED); gl.uniform1f(uIn,introAt(performance.now()-t0)); gl.drawArrays(gl.TRIANGLES,0,6); }
     function frame(){ requestAnimationFrame(frame); var now=performance.now(); if(now-last<minDelta) return; last=now; draw(); }
     requestAnimationFrame(frame);
     setInterval(function(){ if(performance.now()-last>=180){ last=performance.now(); draw(); } }, 180);

@@ -278,41 +278,34 @@ def pg_array(lst):
         escaped.append(f'"{item_str}"')
     return "{" + ",".join(escaped) + "}"
 
-user_pw = "user"
-user_hash = subprocess.run(["openssl", "passwd", "-6", user_pw], capture_output=True, text=True).stdout.strip()
-accounts.append({
-    "name": "user",
-    "display": "User",
-    "kind": "user",
-    "groups": "wheel,libvirt,kvm,video,render,input,dialout,docker",
-    "is_admin": True,
-    "os_targets": "both",
-    "password_hash": user_hash,
-    "enabled": True,
-    "uid": None,
-    "gid": None,
-    "raw_password": user_pw,
-    "email": "user@localhost",
-    "pronouns": None,
-    "bio": "Default operator account",
-    "likes": [],
-    "role": "operator",
-    "job": "System Operator",
-    "strengths": []
-})
+def _sha512(pw):
+    """sha512-crypt via openssl, password on STDIN (never argv)."""
+    r = subprocess.run(["openssl", "passwd", "-6", "-stdin"], input=pw + "\n", capture_output=True, text=True)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out.startswith("$6$") else None
+
+# Credentials: the ONE fail-closed layered-SSOT resolution (usr/lib/mios/mios_credentials.py).
+# The retired literal "user"/"user" operator seed is gone: every account below comes from the
+# merged SSOT ([identity] + [[autounattend.accounts]]), and a missing key aborts the seed.
+try:
+    import mios_credentials
+    _cred = mios_credentials.resolve(merged)
+except Exception as _e:  # CredentialError names the missing key
+    sys.stderr.write(f"FATAL: SSOT credentials unresolved -- account seeding aborted: {_e}\n")
+    sys.exit(3)
 
 ident = merged.get("identity", {})
 user_sec = merged.get("user", {})
 if isinstance(ident, dict) and ident.get("username"):
-    username = ident.get("username")
-    fullname = ident.get("fullname", "User")
-    default_pw = ident.get("default_password", "user")
+    username = _cred["username"]
+    fullname = _cred["fullname"]
+    default_pw = _cred["default_password"]
     raw_groups = ident.get("groups", ["wheel"])
     groups = ",".join(raw_groups) if isinstance(raw_groups, list) else str(raw_groups)
     
     pwhash = env_pwhash
     if not pwhash and default_pw:
-        pwhash = subprocess.run(["openssl", "passwd", "-6", default_pw], capture_output=True, text=True).stdout.strip()
+        pwhash = _sha512(default_pw)
         
     likes = user_sec.get("likes", [])
     if isinstance(likes, str):
@@ -351,14 +344,16 @@ if isinstance(autounattend, dict):
             name = a.get("name")
             if not name:
                 continue
+            if str(name).lower() == str(_cred["username"]).lower():
+                continue  # the [identity] operator row above already carries this account
             display = a.get("display_name", name)
-            password = a.get("password")
+            password = a.get("password") or _cred["default_password"]  # "" -> inherit (one SSOT chain)
             group = a.get("group", "Users")
             is_admin = True if group.lower() in ("admin", "administrators", "wheel") else False
             
             pwhash = None
             if password:
-                pwhash = subprocess.run(["openssl", "passwd", "-6", password], capture_output=True, text=True).stdout.strip()
+                pwhash = _sha512(password)
                 
             likes = a.get("likes", [])
             if isinstance(likes, str):
@@ -464,8 +459,7 @@ for a in accounts:
             import hashlib
             ntlm_hash = hashlib.new('md4', raw_pwd.encode('utf-16le')).hexdigest().upper()
         except Exception:
-            if raw_pwd == "user":
-                ntlm_hash = "329153F560EB493C0E18F8E56B9C47F7"
+            pass  # md4 unavailable (OpenSSL 3 legacy provider off): no NT hash is derived
 
     sql_identity = """
     WITH inserted_user AS (

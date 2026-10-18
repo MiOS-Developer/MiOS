@@ -506,40 +506,47 @@ pub mod theme {
 }
 pub mod watchdog {
     use super::state::HardwareState;
+    use std::fs::File;
+    use std::io::Write;
     use std::path::{Path, PathBuf};
 
+    /// Linux watchdog "magic close": writing 'V' before closing disarms the timer.
+    const MAGIC_CLOSE: &[u8] = b"V";
+
+    /// Hardware watchdog client. Opening a watchdog device ARMS the board timer, so the device is
+    /// used only when explicitly configured (`--watchdog-dev`), the descriptor is held open for the
+    /// daemon's lifetime, and dropping the monitor disarms it. The former open/write/close per
+    /// tick left the SP5100 TCO armed and hard-reset the host 60 s after any short run (unit tests
+    /// in the privileged build container included).
     pub struct HardwareMonitor {
-        watchdog_dev: PathBuf,
-        active: bool,
+        watchdog_dev: Option<PathBuf>,
+        device: Option<File>,
         last_ping_ts: u64,
     }
 
     impl HardwareMonitor {
         pub fn new(dev_path: Option<String>) -> Self {
-            let watchdog_dev =
-                PathBuf::from(dev_path.unwrap_or_else(|| "/dev/watchdog".to_string()));
-            let active = watchdog_dev.exists();
             Self {
-                watchdog_dev,
-                active,
+                watchdog_dev: dev_path.filter(|p| !p.is_empty()).map(PathBuf::from),
+                device: None,
                 last_ping_ts: 0,
             }
         }
 
-        pub fn ping_and_sample(&mut self, current_ts: u64) -> HardwareState {
-            let mut watchdog_active = self.active;
-            if self.watchdog_dev.exists() {
-                // Attempt to write heartbeat byte to /dev/watchdog
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&self.watchdog_dev)
-                {
-                    use std::io::Write;
-                    let _ = f.write_all(b"\0");
-                    let _ = f.flush();
-                    watchdog_active = true;
+        fn ping(&mut self) -> bool {
+            if self.device.is_none() {
+                if let Some(path) = &self.watchdog_dev {
+                    self.device = std::fs::OpenOptions::new().write(true).open(path).ok();
                 }
             }
+            match self.device.as_mut() {
+                Some(f) => f.write_all(b"\0").and_then(|_| f.flush()).is_ok(),
+                None => false,
+            }
+        }
+
+        pub fn ping_and_sample(&mut self, current_ts: u64) -> HardwareState {
+            let watchdog_active = self.ping();
             self.last_ping_ts = current_ts;
 
             let (gpu_util, gpu_detected) = Self::sample_gpu();
@@ -567,15 +574,46 @@ pub mod watchdog {
         }
     }
 
+    impl Drop for HardwareMonitor {
+        fn drop(&mut self) {
+            if let Some(f) = self.device.as_mut() {
+                let _ = f.write_all(MAGIC_CLOSE);
+                let _ = f.flush();
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
 
+        // Tests never name a real watchdog device: opening one arms the host's hardware timer.
+        fn temp_device(tag: &str) -> PathBuf {
+            let p = std::env::temp_dir().join(format!("miosd-wdt-{tag}-{}", std::process::id()));
+            File::create(&p).expect("temp device");
+            p
+        }
+
         #[test]
-        fn test_hardware_monitor_tick() {
+        fn unconfigured_monitor_never_opens_a_device() {
             let mut monitor = HardwareMonitor::new(None);
             let state = monitor.ping_and_sample(1724688000);
             assert_eq!(state.last_watchdog_ping_ts, 1724688000);
+            assert!(!state.watchdog_active);
+            assert!(monitor.device.is_none());
+        }
+
+        #[test]
+        fn configured_monitor_pings_and_disarms_on_drop() {
+            let path = temp_device("ping");
+            {
+                let mut monitor = HardwareMonitor::new(Some(path.display().to_string()));
+                assert!(monitor.ping_and_sample(1).watchdog_active);
+                assert!(monitor.ping_and_sample(2).watchdog_active);
+            }
+            let written = std::fs::read(&path).expect("read back");
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(written, b"\0\0V", "two keepalives, then the magic close");
         }
     }
 }

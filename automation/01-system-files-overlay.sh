@@ -61,7 +61,7 @@ fi
 
 if [[ -d "${CTX}/etc" ]]; then
     mios_log "Stage 3: overlay etc"
-    tar -C "${CTX}/etc" -cf - --exclude='./containers/systemd' --exclude='./systemd' . | tar -C /etc --no-overwrite-dir -xf -
+    tar -C "${CTX}/etc" -cf - --exclude='./containers/systemd' --exclude='./systemd' --exclude='./mios/keys' . | tar -C /etc --no-overwrite-dir -xf -
 fi
 
 if [[ -f "${CTX}/etc/wsl.conf" ]]; then

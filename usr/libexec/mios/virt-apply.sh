@@ -76,6 +76,9 @@ TEMP_XML="/tmp/Xbox-final-rendered.xml"
 sed -e "s|{{MIOS_VM_UUID}}|$_UUID|g" \
     -e "s|{{MIOS_VM_MAC}}|$_MAC|g" \
     "$XML_FILE" > "$TEMP_XML"
+# Looking Glass profile from mios.toml [vm.looking_glass] + [vm.win11].vcpus: SPICE on the fixed
+# port the client dials, one spicevmc channel, SPICE audio, SMT topology + topoext, localtime RTC.
+/usr/libexec/mios/vfio/setup-looking-glass.py --render "$TEMP_XML" "$TEMP_XML" --vcpus template
 
 if virsh define "$TEMP_XML"; then
     echo -e "${GREEN}[ok] Configuration applied${NC}"
@@ -130,7 +133,7 @@ echo -e "  ${CYAN}[ok]${NC} Emulator: C0-1, C16-17"
 echo -e "  ${CYAN}[ok]${NC} Topology: 6 cores × 2 threads"
 echo -e "  ${CYAN}[ok]${NC} ${BOLD}${GREEN}Secure Boot: Vendor keys enrolled${NC}"
 echo -e "  ${CYAN}[ok]${NC} Network: virtio (high performance)"
-echo -e "  ${CYAN}[ok]${NC} Audio: none (optimized)"
+echo -e "  ${CYAN}[ok]${NC} Display/audio: SPICE for Looking Glass ([vm.looking_glass])"
 echo -e "  ${CYAN}[ok]${NC} Memory balloon: none"
 echo
 

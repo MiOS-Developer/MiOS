@@ -129,7 +129,8 @@ igpu_is_boot_vga() {
 # (Output is captured first: `lsinitrd | grep -q` dies of SIGPIPE under pipefail and reports a false negative.)
 rebuild_initramfs() {
     command -v dracut >/dev/null || { log_error "dracut missing; vfio would bind too late"; return 1; }
-    local img="/boot/initramfs-$(uname -r).img" bak listing conf
+    local img bak listing conf
+    img="/boot/initramfs-$(uname -r).img"
     bak="$img.mios-pre-vfio"
     [[ -f "$bak" ]] || cp -a "$img" "$bak"
     if ! dracut -f "$img" "$(uname -r)"; then

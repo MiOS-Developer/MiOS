@@ -1,0 +1,63 @@
+{
+  "id": "mios-default",
+  "name": "MiOS default (quiet: -30 %)",
+  "version": 8,
+  "description": "MiOS vendor profile. Drives only headers identified with confidence: pwm4 on the ROG CROSSHAIR X870E EXTREME nct6799 (the one tach-reporting fan on a normal firmware curve) from k10temp Tctl, never below 30 % (the cpu label puts it under the daemon hard 30 % floor). pwm6/pwm7 are pump headers (firmware flat 100 %) and every other header stays on firmware control. Members absent on other boards are skipped by the daemon.",
+  "controls": [
+    {
+      "id": "case_fans",
+      "name": "Case / radiator fans (CPU Tctl)",
+      "mode": "curve",
+      "curve_id": "mios_cpu_conservative",
+      "manual_output_pct": 60.0,
+      "members": [
+        {
+          "source": "hwmon",
+          "member_id": "hwmon:nct6799:nct6775.656:pwm4:pwm4",
+          "member_label": "nct6799 pwm4 (fan4, CPU-temp fan)"
+        }
+      ],
+      "step_up_pct": 100.0,
+      "step_down_pct": 100.0,
+      "offset_pct": 0.0,
+      "minimum_pct": 30.0,
+      "start_pct": 0.0,
+      "stop_pct": 0.0
+    }
+  ],
+  "curves": [
+    {
+      "id": "mios_cpu_conservative",
+      "name": "CPU Tctl conservative",
+      "type": "graph",
+      "sensor_id": "hwmon:k10temp:0000:00:18.3:Tctl",
+      "hysteresis_c": 3.0,
+      "points": [
+        {
+          "temp_c": 40.0,
+          "output_pct": 30.0
+        },
+        {
+          "temp_c": 55.0,
+          "output_pct": 31.5
+        },
+        {
+          "temp_c": 65.0,
+          "output_pct": 38.5
+        },
+        {
+          "temp_c": 75.0,
+          "output_pct": 52.5
+        },
+        {
+          "temp_c": 85.0,
+          "output_pct": 70.0
+        },
+        {
+          "temp_c": 90.0,
+          "output_pct": 100.0
+        }
+      ]
+    }
+  ]
+}

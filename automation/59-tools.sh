@@ -1,6 +1,6 @@
 #!/bin/bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Sets executable permissions for the core mios- CLI tools, bakes the pinned native code-server with its verified workbench patches, and installs auxiliary scripts like mios-toggle-headless.
+# AI-hint: Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected (":latest" resolved at build time) native code-server with its verified workbench patches and the latest digest-verified Satty release (mios-shot's annotation editor), and installs auxiliary scripts like mios-toggle-headless.
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 # shellcheck disable=SC1090  # log.sh resolves at runtime: build ctx or installed
@@ -29,24 +29,48 @@ done
 
 [[ -f "/usr/bin/mios-dash" ]] || ln -sf /usr/libexec/mios/mios-dashboard /usr/bin/mios-dash 2>/dev/null || true
 
-# code-server, native: the [image.sidecars].code_server release (the pin the
-# mios-code-server sidecar runs), its workbench stylesheet and both workbench.js
-# patches baked and verified. A container that cannot run the sidecar (the
-# devcontainer, Codespaces, a cloud session) starts this one on [ports].code_server;
-# an upstream release that moves a patch anchor fails the build.
+# code-server, native: the [image.sidecars].code_server release (":latest" floats
+# to upstream's newest release, resolved here), its workbench stylesheet and both
+# workbench.js patches baked and verified. A container that cannot run the sidecar
+# (the devcontainer, Codespaces, a cloud session) starts this one on
+# [ports].code_server; an upstream release that moves a patch anchor fails the build.
+# The RPM is accepted only against the sha256 GitHub publishes for that asset, and
+# the resolved version is build output (version manifest + SBOM), not SSOT.
 mios_log "Install and bake code-server"
 _src="$(cd "${SCRIPT_DIR}/.." && pwd)"
 _toml_get() { MIOS_TOML_ROOT="$_src" python3 "$_src/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
-_cs_image="$(_toml_get image.sidecars code_server)"
-_cs_version="${_cs_image##*:}"
-[[ "$_cs_image" == *:* && "$_cs_version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
-    || { mios_err "[image.sidecars].code_server '${_cs_image}' has no pinned release tag"; exit 1; }
-case "$(uname -m)" in
-    x86_64)  _cs_arch=amd64 ;;
-    aarch64) _cs_arch=arm64 ;;
-    *) mios_err "No code-server RPM for $(uname -m)"; exit 1 ;;
-esac
-dnf install -y "https://github.com/coder/code-server/releases/download/v${_cs_version}/code-server-${_cs_version}-${_cs_arch}.rpm"
+# shellcheck source=automation/lib/upstream-latest.sh
+source "${SCRIPT_DIR}/lib/upstream-latest.sh"
+_cs_repo="https://github.com/coder/code-server.git"
+# _cs_fetch_rpm IMAGE DIR: resolve the release IMAGE names (":latest" -> upstream's
+# newest) and fetch its RPM into DIR, proven by GitHub's published sha256.
+# Sets _cs_version, _cs_arch and _cs_sha.
+_cs_fetch_rpm() {
+    local image="$1" dir="$2"
+    _cs_version="${image##*:}"
+    [[ "$image" == *:* ]] || _cs_version=latest
+    if [[ "$_cs_version" == latest ]]; then
+        _cs_version="$(mios_latest_git_ref "$_cs_repo")" \
+            || { mios_err "code-server: newest release could not be resolved"; exit 1; }
+        _cs_version="${_cs_version#v}"
+    fi
+    [[ "$_cs_version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+        || { mios_err "[image.sidecars].code_server '${image}' resolved to non-release '${_cs_version}'"; exit 1; }
+    case "$(uname -m)" in
+        x86_64)  _cs_arch=amd64 ;;
+        aarch64) _cs_arch=arm64 ;;
+        *) mios_err "No code-server RPM for $(uname -m)"; exit 1 ;;
+    esac
+    _cs_sha="$(mios_fetch_gh_release_asset "$_cs_repo" "v${_cs_version}" "code-server-${_cs_version}-${_cs_arch}.rpm" \
+                "${dir}/code-server-${_cs_version}-${_cs_arch}.rpm" "code-server ${_cs_version}")" \
+        || { mios_ul_pass $? || { mios_err "code-server ${_cs_version}: no verified RPM"; exit 1; }; }
+}
+_cs_dl="$(mktemp -d)"
+_cs_fetch_rpm "$(_toml_get image.sidecars code_server)" "$_cs_dl"
+dnf install -y "${_cs_dl}/code-server-${_cs_version}-${_cs_arch}.rpm"
+rm -rf -- "$_cs_dl"
+mios_record_resolved code-server "$_cs_version" \
+    "https://github.com/coder/code-server/releases/tag/v${_cs_version}" "$_cs_sha"
 _cs_scrollbar="$(_toml_get theme.edge code_server_scrollbar_px)"
 _cs_perimeter="$(_toml_get theme.edge code_server_perimeter_px)"
 [[ -n "$_cs_scrollbar" && -n "$_cs_perimeter" ]] \
@@ -57,6 +81,30 @@ _cs_bake=(--target /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench
 python3 "$_src/usr/libexec/mios/mios-vscode-custom-css" patch "${_cs_bake[@]}"
 python3 "$_src/usr/libexec/mios/mios-vscode-custom-css" verify "${_cs_bake[@]}"
 mios_ok "code-server ${_cs_version} baked and verified"
+
+# Satty (MPL-2.0, Satty-org/Satty): mios-shot's annotation editor ([desktop.screenshot].editors), run as its own
+# program and never linked. The newest upstream release (resolved here, never pinned in the SSOT); its prebuilt
+# satty-<arch>-unknown-linux-gnu.tar.gz is accepted only against the sha256 GitHub publishes for that asset, the
+# licence must still be MPL-2.0, and the resolved version is build output (version manifest + SBOM).
+_satty_repo="$(_toml_get desktop.screenshot satty_repository 2>/dev/null || true)"
+if [[ -n "$_satty_repo" ]]; then
+    mios_log "Install satty (latest release)"
+    _satty_tag="$(mios_latest_git_ref "${_satty_repo%.git}.git")" \
+        || { mios_err "satty: newest release could not be resolved"; exit 1; }
+    _satty_asset="satty-$(uname -m)-unknown-linux-gnu.tar.gz"
+    _satty_dl="$(mktemp -d)"
+    _satty_sha="$(mios_fetch_gh_release_asset "$_satty_repo" "$_satty_tag" "$_satty_asset" \
+                    "${_satty_dl}/${_satty_asset}" "satty ${_satty_tag}")" \
+        || { mios_ul_pass $? || { mios_err "satty ${_satty_tag}: no verified ${_satty_asset}"; exit 1; }; }
+    tar -xzf "${_satty_dl}/${_satty_asset}" -C "$_satty_dl" ./satty ./LICENSE
+    grep -q '^Mozilla Public License Version 2.0' "${_satty_dl}/LICENSE" \
+        || { mios_err "satty LICENSE is no longer MPL-2.0 -- refusing to bake"; exit 1; }
+    install -D -m 0755 "${_satty_dl}/satty" /usr/bin/satty
+    install -D -m 0644 "${_satty_dl}/LICENSE" /usr/share/licenses/satty/LICENSE
+    rm -rf -- "$_satty_dl"
+    mios_record_resolved satty "${_satty_tag#v}" "${_satty_repo%.git}/releases/tag/${_satty_tag}" "$_satty_sha"
+    mios_ok "satty ${_satty_tag} installed (mios-shot annotation editor)"
+fi
 
 if [ -f "/usr/libexec/mios/mios-vscode-custom-css" ]; then
     chmod +x "/usr/libexec/mios/mios-vscode-custom-css"

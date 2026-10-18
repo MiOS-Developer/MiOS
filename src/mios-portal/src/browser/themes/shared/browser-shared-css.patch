@@ -1,0 +1,14 @@
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index 2287d8f9fd..d8bbb3aa16 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -34,6 +34,9 @@
+ @import url("chrome://browser/skin/UITour.css");
+ @import url("chrome://browser/skin/formautofill-notification.css");
+ 
++%include ../custom/shared/shared.inc.css
++
++
+ :root,
+ body {
+   height: 100%;

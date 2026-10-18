@@ -155,6 +155,11 @@ mod host {
     }
 
     fn read_wallpaper_url() -> String {
+        if let Ok(data) = mios_resolver::resolve_merged(None, false) {
+            if let Ok(url) = super::wallpaper_url(&data, true) {
+                return url;
+            }
+        }
         crate::util::reg_read_sz(super::WALLPAPER_URL_KEY, super::WALLPAPER_URL_VALUE)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| super::WALLPAPER_URL_FALLBACK.to_string())
@@ -253,7 +258,7 @@ impl WallpaperConfig {
             .unwrap_or_else(|_| "/usr/share/mios/branding/living-wallpaper.html".to_string());
         let framerate = mios_service_core::ssot::require_port("theme.wallpaper.framerate")
             .map(|p| p as u32)
-            .unwrap_or(60);
+            .unwrap_or(30);
         Self {
             html_path,
             framerate,
@@ -278,9 +283,392 @@ fn main() {
     }
 }
 
-#[cfg(not(windows))]
+// AI-hint: Both native hosts use the same SSOT-colored HTML; Linux supplies a Wayland background surface.
+fn file_url(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/:-._~".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+fn wallpaper_url(data: &toml::Value, windows: bool) -> Result<String, String> {
+    let config = &data["theme"]["wallpaper"];
+    let path_key = if windows {
+        "windows_html_path"
+    } else {
+        "html_path"
+    };
+    let path = config
+        .get(path_key)
+        .and_then(toml::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or("Wallpaper HTML path is missing")?;
+    let palette = data
+        .get("colors")
+        .and_then(toml::Value::as_table)
+        .ok_or("Wallpaper palette is missing")?;
+    let hex = |value: &toml::Value| -> Result<String, String> {
+        value
+            .as_str()
+            .and_then(|s| s.strip_prefix('#'))
+            .filter(|h| h.len() == 6 && h.bytes().all(|c| c.is_ascii_hexdigit()))
+            .map(str::to_owned)
+            .ok_or("Wallpaper colors must be #RRGGBB".into())
+    };
+    let mut query = Vec::new();
+    for slot in 0..16 {
+        let prefix = format!("ansi_{slot}_");
+        let matches = palette
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!("Wallpaper needs exactly one ANSI slot {slot}"));
+        }
+        query.push(format!("a{slot}={}", hex(matches[0].1)?));
+    }
+    for role in ["bg", "fg"] {
+        query.push(format!(
+            "{role}={}",
+            hex(palette.get(role).ok_or("Missing wallpaper anchor color")?)?
+        ));
+    }
+    let mode = data["theme"]["mode"]
+        .as_str()
+        .filter(|m| matches!(*m, "dark" | "light"))
+        .ok_or("Wallpaper mode must be dark or light")?;
+    query.push(format!("mode={mode}"));
+    query.extend(motion_query(config)?);
+    Ok(format!("{}?{}", file_url(path), query.join("&")))
+}
+
+/// The living-wallpaper motion contract shared by the Windows HTML and the native Linux host: the same URL
+/// query keys on both platforms, from [theme.wallpaper] framerate, [theme.wallpaper.motion] and
+/// [theme.wallpaper.native] (the HTML ignores the native-only `nsim`).
+fn motion_query(config: &toml::Value) -> Result<Vec<String>, String> {
+    let num = |table: &toml::Value, key: &str, lo: f64, hi: f64| -> Result<f64, String> {
+        let v = table
+            .get(key)
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+            .ok_or(format!("Wallpaper motion key {key} is missing or not a number"))?;
+        if v.is_finite() && (lo..=hi).contains(&v) {
+            Ok(v)
+        } else {
+            Err(format!("Wallpaper motion key {key} = {v} is outside {lo}..={hi}"))
+        }
+    };
+    let motion = config
+        .get("motion")
+        .ok_or("Wallpaper [theme.wallpaper.motion] is missing")?;
+    let native = config
+        .get("native")
+        .ok_or("Wallpaper [theme.wallpaper.native] is missing")?;
+    let fmt = |v: f64| {
+        let s = format!("{v:.6}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let mut q = vec![
+        format!("fps={}", fmt(num(config, "framerate", 1.0, 240.0)?)),
+        format!("speed={}", fmt(num(motion, "speed", 0.0, 10.0)?)),
+        format!("intro={}", fmt(num(motion, "intro_ms", 0.0, 60000.0)?)),
+        format!("dpr={}", fmt(num(motion, "dpr_cap", 0.25, 8.0)?)),
+        format!("sim={}", fmt(num(motion, "sim_scale", 0.05, 2.0)?)),
+        // The native SIM shader unrolls a constant 24-emitter loop (as the HTML compiles it), so 24 is the cap.
+        format!("n={}", fmt(num(motion, "emitters", 1.0, 24.0)?.round())),
+        format!("nsim={}", fmt(num(native, "sim_scale", 0.02, 2.0)?)),
+    ];
+    let weights = motion
+        .get("weights")
+        .and_then(toml::Value::as_array)
+        .filter(|w| w.len() == 16)
+        .ok_or("Wallpaper motion weights must list 16 role weights (ansi_0..ansi_15)")?;
+    for (slot, w) in weights.iter().enumerate() {
+        let w = w
+            .as_float()
+            .or_else(|| w.as_integer().map(|i| i as f64))
+            .filter(|w| (0.0..=1.0).contains(w))
+            .ok_or(format!("Wallpaper weight w{slot} must be a number in 0..=1"))?;
+        q.push(format!("w{slot}={}", fmt(w)));
+    }
+    Ok(q)
+}
+
+/// Linux host for the configured renderer: "native" (GPU shaders, Host.qml) or "web" (QtWebEngine, WebHost.qml).
+fn linux_host(config: &toml::Value) -> Result<&str, String> {
+    let key = match config.get("renderer").and_then(toml::Value::as_str) {
+        Some("native") => "linux_host",
+        Some("web") => "linux_web_host",
+        other => return Err(format!("Wallpaper renderer must be \"native\" or \"web\", not {other:?}")),
+    };
+    config
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or(format!("Missing Linux wallpaper {key}"))
+}
+
+#[cfg(target_os = "linux")]
+fn check_wayland_socket(runtime: &std::path::Path) -> bool {
+    use std::os::unix::net::UnixStream;
+    let display_names: Vec<String> = if let Ok(val) = std::env::var("WAYLAND_DISPLAY") {
+        if !val.trim().is_empty() {
+            vec![val.trim().to_string()]
+        } else {
+            vec!["wayland-1".to_string(), "wayland-0".to_string()]
+        }
+    } else {
+        vec!["wayland-1".to_string(), "wayland-0".to_string()]
+    };
+
+    for name in display_names {
+        let sock_path = runtime.join(&name);
+        if sock_path.exists() && UnixStream::connect(&sock_path).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_wayland(runtime: &std::path::Path, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if check_wayland_socket(runtime) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    check_wayland_socket(runtime)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_main() -> Result<(), String> {
+    use std::{
+        env,
+        path::Path,
+        process::Command,
+        time::{Duration, Instant},
+    };
+    let data = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
+    let url = wallpaper_url(&data, false)?;
+    match env::args().nth(1).as_deref() {
+        Some("--url") => {
+            println!("{url}");
+            return Ok(());
+        }
+        None | Some("host") => {}
+        _ => return Err("Usage: mios-wallpaperd [host | --url]".into()),
+    }
+    if data["branding"]["living_wallpaper"].as_bool() != Some(true) {
+        return Ok(());
+    }
+    let runtime = env::var_os("XDG_RUNTIME_DIR").ok_or("A Wayland login session is required")?;
+    let runtime_path = Path::new(&runtime);
+    let config = &data["theme"]["wallpaper"];
+    let runner = config["linux_runner"]
+        .as_str()
+        .ok_or("Missing Linux wallpaper runner")?;
+    let host = linux_host(config)?;
+    if !Path::new(host).is_file() {
+        return Err("Linux wallpaper host is not installed".into());
+    }
+
+    println!("[mios-wallpaperd] Starting wallpaper supervisor daemon for {host}...");
+    let mut backoff_secs = 2u64;
+    let min_backoff = 2u64;
+    let max_backoff = 30u64;
+    let stability_threshold = Duration::from_secs(60);
+
+    loop {
+        // 1. Wayland socket readiness check
+        if !wait_for_wayland(runtime_path, Duration::from_secs(5)) {
+            eprintln!(
+                "[mios-wallpaperd] Wayland display socket not ready; waiting {backoff_secs}s before retry..."
+            );
+            std::thread::sleep(Duration::from_secs(backoff_secs));
+            backoff_secs = (backoff_secs * 2).min(max_backoff);
+            continue;
+        }
+
+        println!("[mios-wallpaperd] Spawning wallpaper host process under flock...");
+        let start_time = Instant::now();
+        let mut child = match Command::new("flock")
+            .args(["--nonblock", "--close"])
+            .arg(runtime_path.join("mios-wallpaper.lock"))
+            .arg(runner)
+            .arg(host)
+            .arg("--")
+            .arg(&url)
+            .env("QT_QPA_PLATFORM", "wayland")
+            .env("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell")
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[mios-wallpaperd] Failed to spawn wallpaper process: {e}");
+                std::thread::sleep(Duration::from_secs(backoff_secs));
+                backoff_secs = (backoff_secs * 2).min(max_backoff);
+                continue;
+            }
+        };
+
+        let pid = child.id();
+        println!("[mios-wallpaperd] Wallpaper process running (PID {pid})");
+
+        let mut exit_status = None;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit_status = Some(status);
+                    break;
+                }
+                Ok(None) => {
+                    if start_time.elapsed() >= stability_threshold && backoff_secs > min_backoff {
+                        println!(
+                            "[mios-wallpaperd] Process ran stably for {:?}; resetting backoff to {min_backoff}s.",
+                            start_time.elapsed()
+                        );
+                        backoff_secs = min_backoff;
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                Err(e) => {
+                    eprintln!("[mios-wallpaperd] Error waiting on child PID {pid}: {e}");
+                    break;
+                }
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+        if let Some(status) = exit_status {
+            if elapsed >= stability_threshold {
+                backoff_secs = min_backoff;
+            }
+
+            if status.success() {
+                println!(
+                    "[mios-wallpaperd] Child PID {pid} exited normally (code 0) after {:?}.",
+                    elapsed
+                );
+                std::thread::sleep(Duration::from_secs(min_backoff));
+            } else {
+                eprintln!(
+                    "[mios-wallpaperd] Child PID {pid} exited with {:?} (uptime: {:?}). Applying backoff {backoff_secs}s before restart...",
+                    status, elapsed
+                );
+                std::thread::sleep(Duration::from_secs(backoff_secs));
+                backoff_secs = (backoff_secs * 2).min(max_backoff);
+            }
+        }
+    }
+}
+#[cfg(target_os = "linux")]
 fn main() {
-    eprintln!("mios-wallpaperd is a Windows-only service daemon.");
+    if let Err(error) = linux_main() {
+        eprintln!("mios-wallpaperd: {error}");
+        std::process::exit(1);
+    }
+}
+#[cfg(not(any(windows, target_os = "linux")))]
+fn main() {
+    eprintln!("This platform has no native wallpaper host.");
+}
+
+#[cfg(test)]
+mod shared_wallpaper_tests {
+    use super::*;
+    fn fixture() -> toml::Value {
+        let mut colors = toml::map::Map::new();
+        for slot in 0..16 {
+            colors.insert(
+                format!("ansi_{slot}_slot"),
+                toml::Value::String(format!("#{slot:06X}")),
+            );
+        }
+        colors.insert("bg".into(), toml::Value::String("#123456".into()));
+        colors.insert("fg".into(), toml::Value::String("#ABCDEF".into()));
+        let mut doc:toml::Value=toml::from_str("[theme]\nmode='dark'\n[theme.wallpaper]\nhtml_path='/usr/share/MiOS Wallpaper/living.html'\nwindows_html_path='C:/Windows/Web/MiOS/living.html'\nrenderer='native'\nlinux_host='/h/Host.qml'\nlinux_web_host='/h/WebHost.qml'\nframerate=30\n[theme.wallpaper.motion]\nspeed=0.4\nintro_ms=3500\ndpr_cap=1.5\nsim_scale=0.6\nemitters=24\nweights=[1.0,0.3,0.6,0.55,0.85,0.35,0.7,0.95,0.55,0.22,0.3,0.28,0.45,0.22,0.55,0.18]\n[theme.wallpaper.native]\nsim_scale=0.25\n").unwrap();
+        doc.as_table_mut()
+            .unwrap()
+            .insert("colors".into(), toml::Value::Table(colors));
+        doc
+    }
+    #[test]
+    fn both_platforms_project_every_ansi_slot_and_share_query() {
+        let doc = fixture();
+        let linux = wallpaper_url(&doc, false).unwrap();
+        let windows = wallpaper_url(&doc, true).unwrap();
+        assert!(linux.starts_with("file:///usr/share/MiOS%20Wallpaper/"));
+        assert!(windows.starts_with("file:///C:/Windows/"));
+        assert_eq!(
+            linux.split_once('?').unwrap().1,
+            windows.split_once('?').unwrap().1
+        );
+        for slot in 0..16 {
+            assert!(linux.contains(&format!("a{slot}={slot:06X}")));
+        }
+    }
+    #[test]
+    fn motion_contract_is_shared_and_validated() {
+        let doc = fixture();
+        let linux = wallpaper_url(&doc, false).unwrap();
+        let windows = wallpaper_url(&doc, true).unwrap();
+        for key in [
+            "fps=30", "speed=0.4", "intro=3500", "dpr=1.5", "sim=0.6", "n=24", "nsim=0.25", "w0=1",
+            "w7=0.95", "w15=0.18",
+        ] {
+            assert!(linux.contains(&format!("&{key}")), "{key} missing from {linux}");
+            assert!(windows.contains(&format!("&{key}")), "{key} missing from {windows}");
+        }
+        // Negative controls: a missing table, a short weight list, an out-of-range value, too many emitters.
+        let mut doc = fixture();
+        doc["theme"]["wallpaper"].as_table_mut().unwrap().remove("motion");
+        assert!(wallpaper_url(&doc, false).unwrap_err().contains("motion"));
+        let mut doc = fixture();
+        doc["theme"]["wallpaper"]["motion"]["weights"] = toml::Value::Array(vec![toml::Value::Float(0.5); 15]);
+        assert!(wallpaper_url(&doc, false).unwrap_err().contains("16"));
+        let mut doc = fixture();
+        doc["theme"]["wallpaper"]["motion"]["speed"] = toml::Value::Float(-1.0);
+        assert!(wallpaper_url(&doc, false).unwrap_err().contains("speed"));
+        let mut doc = fixture();
+        doc["theme"]["wallpaper"]["motion"]["emitters"] = toml::Value::Integer(32);
+        assert!(wallpaper_url(&doc, false).unwrap_err().contains("emitters"));
+    }
+    #[test]
+    fn renderer_selects_the_native_or_web_host() {
+        let mut doc = fixture();
+        assert_eq!(linux_host(&doc["theme"]["wallpaper"]).unwrap(), "/h/Host.qml");
+        doc["theme"]["wallpaper"]["renderer"] = toml::Value::String("web".into());
+        assert_eq!(linux_host(&doc["theme"]["wallpaper"]).unwrap(), "/h/WebHost.qml");
+        doc["theme"]["wallpaper"]["renderer"] = toml::Value::String("chromium".into());
+        assert!(linux_host(&doc["theme"]["wallpaper"]).is_err());
+        doc["theme"]["wallpaper"].as_table_mut().unwrap().remove("renderer");
+        assert!(linux_host(&doc["theme"]["wallpaper"]).is_err());
+    }
+    #[test]
+    fn malformed_or_duplicate_slots_are_rejected() {
+        let mut doc = fixture();
+        doc["colors"]["ansi_4_slot"] = toml::Value::String("#bad".into());
+        assert!(wallpaper_url(&doc, false).is_err());
+        let mut doc = fixture();
+        doc["colors"]
+            .as_table_mut()
+            .unwrap()
+            .insert("ansi_4_other".into(), toml::Value::String("#123456".into()));
+        assert!(wallpaper_url(&doc, false).unwrap_err().contains("slot 4"));
+    }
 }
 
 /// Windows-service controller (session 0). It cannot draw on the user's desktop itself, so it keeps a

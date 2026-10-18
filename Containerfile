@@ -12,6 +12,9 @@ COPY etc/                  /ctx/etc/
 COPY VERSION               /ctx/VERSION
 COPY config/artifacts/     /ctx/config/artifacts/
 COPY tools/                /ctx/tools/
+COPY src/                  /ctx/src/
+# desk-038 F1: Minimal staged Portal artifact directory (never whole /artifacts symlink store)
+COPY .staged-portal/       /ctx/artifacts/portal/
 COPY MiOS.md               /ctx/rootmd/MiOS.md
 COPY AGENTS.md             /ctx/rootmd/AGENTS.md
 COPY CLAUDE.md             /ctx/rootmd/CLAUDE.md
@@ -61,6 +64,7 @@ COPY --from=rust-builder /out/usr/ /usr/
 # SSOT inside the build ([identity].username/hostname, [ai].model/embed_model).
 ARG MIOS_IDENTITY_USERNAME
 ARG MIOS_IDENTITY_HOSTNAME
+# desk-038 F2: Operator credential hash is passed via --secret id=mios_user_password_hash, never ARG.
 ARG MIOS_DESKTOP_FLATPAKS=
 ARG MIOS_AI_MODEL
 ARG MIOS_AI_EMBED_MODEL
@@ -87,9 +91,14 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     --mount=type=cache,dst=/var/cache/dnf5,sharing=locked \
     --mount=type=cache,dst=/var/cache/dnf,sharing=locked \
+    --mount=type=secret,id=mios_user_password_hash,required=false \
     set -ex; \
+    if [ -f /run/secrets/mios_user_password_hash ]; then \
+        MIOS_USER_PASSWORD_HASH="$(cat /run/secrets/mios_user_password_hash)"; \
+        export MIOS_USER_PASSWORD_HASH; \
+    fi; \
     install -d -m 0755 /tmp/build; \
-    cp -a /ctx/automation /ctx/usr /ctx/etc /ctx/VERSION /ctx/config /ctx/tools /ctx/Justfile /ctx/.dotfiles /tmp/build/; \
+    cp -a /ctx/automation /ctx/usr /ctx/etc /ctx/VERSION /ctx/config /ctx/tools /ctx/Justfile /ctx/.dotfiles /ctx/src /ctx/artifacts /tmp/build/; \
     if [ -d /ctx/.git ]; then \
         cp -a /ctx/.git /tmp/build/.git 2>/dev/null && echo "[ctx] .git -> /tmp/build" \
             || echo "[ctx] WARN: .git copy failed"; \

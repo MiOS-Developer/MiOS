@@ -3,6 +3,16 @@
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 # ============================================================================
+# Native compositor startup uses the SSOT device once, avoiding alias duplicates.
+if command -v mios-toml-get >/dev/null 2>&1; then
+    _mios_drm_device="$(mios-toml-get desktop.hyprland.environment AQ_DRM_DEVICES "" 2>/dev/null)"
+    if [ -n "$_mios_drm_device" ] && [ -e "$_mios_drm_device" ]; then
+        export AQ_DRM_DEVICES="$_mios_drm_device"
+        export WLR_DRM_DEVICES="$_mios_drm_device"
+    fi
+    unset _mios_drm_device
+fi
+
 # Snippet: 00-mios-pre-bootc.sh
 # ============================================================================
 _mios_profile_step() {
@@ -532,77 +542,7 @@ _mios_profile_step
 # Snippet: mios-colors.sh
 # ============================================================================
 _mios_profile_step() {
-# AI-hint: Configures the terminal's visual identity by emitting OSC escape sequences to apply the MiOS unified color palette (Hokusai) to interactive shells, ensuring consi...
-# AI-doc: usr/share/doc/mios/manual/profile.d.md
-# shellcheck shell=sh
-
-[ -t 1 ] || return 0
-case "${TERM:-}" in linux|dumb|"") return 0 ;; esac
-[ -n "${MIOS_COLORS_APPLIED:-}" ] && return 0
-if [ -r /etc/mios/install.env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . /etc/mios/install.env 2>/dev/null
-    set +a
-fi
-
-# Helper: emit OSC <code>;<value> with the trailing BEL terminator.
-_mios_osc() { printf '\033]%s;%s\007' "$1" "$2"; }
-
-# Palette resolution -- read every slot from MIOS_ANSI_* / MIOS_COLOR_*
-# (set by userenv.sh from mios.toml [colors]; defaults emitted from
-# globals.sh / vendor /usr/share/mios/mios.toml). The hardcoded fallback
-# in each ${VAR:-...} keeps a stock terminal painted correctly even if
-# userenv.sh hasn't been sourced yet (e.g. earliest /etc/profile.d order).
-_a0="${MIOS_COLORS_ANSI_0_BLACK:-#282262}"
-_a1="${MIOS_COLORS_ANSI_1_RED:-#DC271B}"
-_a2="${MIOS_COLORS_ANSI_2_GREEN:-#3E7765}"
-_a3="${MIOS_COLORS_ANSI_3_YELLOW:-#F35C15}"
-_a4="${MIOS_COLORS_ANSI_4_BLUE:-#1A407F}"
-_a5="${MIOS_COLORS_ANSI_5_MAGENTA:-#734F39}"
-_a6="${MIOS_COLORS_ANSI_6_CYAN:-#B7C9D7}"
-_a7="${MIOS_COLORS_ANSI_7_WHITE:-#E7DFD3}"
-_a8="${MIOS_COLORS_ANSI_8_BRIGHT_BLACK:-#948E8E}"
-_a9="${MIOS_COLORS_ANSI_9_BRIGHT_RED:-#FF6B5C}"
-_a10="${MIOS_COLORS_ANSI_10_BRIGHT_GREEN:-#5FAA8E}"
-_a11="${MIOS_COLORS_ANSI_11_BRIGHT_YELLOW:-#FF8540}"
-_a12="${MIOS_COLORS_ANSI_12_BRIGHT_BLUE:-#3D6BA8}"
-_a13="${MIOS_COLORS_ANSI_13_BRIGHT_MAGENTA:-#9D7660}"
-_a14="${MIOS_COLORS_ANSI_14_BRIGHT_CYAN:-#E0E0E0}"
-_a15="${MIOS_COLORS_ANSI_15_BRIGHT_WHITE:-#FFFFFF}"
-_fg="${MIOS_COLORS_FG:-#E7DFD3}"
-_bg="${MIOS_COLORS_BG:-#282262}"
-_cur="${MIOS_COLORS_CURSOR:-#F35C15}"
-_sel="${MIOS_COLORS_ACCENT:-#1A407F}"
-
-# ── ANSI 16-color slots (OSC 4 ; <0..15> ; <#rgb>) ────────────────────────
-_mios_osc 4 "0;${_a0}"
-_mios_osc 4 "1;${_a1}"
-_mios_osc 4 "2;${_a2}"
-_mios_osc 4 "3;${_a3}"
-_mios_osc 4 "4;${_a4}"
-_mios_osc 4 "5;${_a5}"
-_mios_osc 4 "6;${_a6}"
-_mios_osc 4 "7;${_a7}"
-_mios_osc 4 "8;${_a8}"
-_mios_osc 4 "9;${_a9}"
-_mios_osc 4 "10;${_a10}"
-_mios_osc 4 "11;${_a11}"
-_mios_osc 4 "12;${_a12}"
-_mios_osc 4 "13;${_a13}"
-_mios_osc 4 "14;${_a14}"
-_mios_osc 4 "15;${_a15}"
-
-# ── Defaults (foreground / background / cursor / highlight) ───────────────
-_mios_osc 10 "${_fg}"
-_mios_osc 11 "${_bg}"
-_mios_osc 12 "${_cur}"
-_mios_osc 17 "${_sel}"
-
-unset -f _mios_osc
-unset _a0 _a1 _a2 _a3 _a4 _a5 _a6 _a7 _a8 _a9 _a10 _a11 _a12 _a13 _a14 _a15
-unset _fg _bg _cur _sel
-export MIOS_COLORS_APPLIED=1
+[ -r /usr/share/mios/theme/mios-colors.sh ] && . /usr/share/mios/theme/mios-colors.sh
 }
 _mios_profile_step
 
@@ -673,6 +613,8 @@ _mios_rust_env() {
 case "$-" in
     *i*) ;;
     *)
+        _orig_am="${MIOS_AI_AGENT_MODEL:-}"
+        _orig_gm="${MIOS_AI_GATEWAY_MODEL:-}"
         if [ -r /usr/lib/mios/userenv.sh ] || [ -r /usr/share/mios/tools/lib/userenv.sh ]; then
             for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
                 if [ -r "$_ue" ]; then
@@ -681,9 +623,14 @@ case "$-" in
                     break
                 fi
             done
-            export MIOS_AI_ENDPOINT MIOS_AI_MODEL MIOS_AI_KEY BROWSER="${BROWSER:-/usr/libexec/mios/mios-open-url}" MIOS_BROWSER="${MIOS_BROWSER:-/usr/libexec/mios/mios-open-url}"
-            _mios_rust_env
         fi
+        [ -n "$_orig_am" ] && export MIOS_AI_AGENT_MODEL="$_orig_am"
+        [ -n "$_orig_gm" ] && export MIOS_AI_GATEWAY_MODEL="$_orig_gm"
+        _mios_gm="${MIOS_AI_GATEWAY_MODEL:-${MIOS_AI_AGENT_MODEL:-}}"
+        if [ -n "$_mios_gm" ]; then export MIOS_AI_GATEWAY_MODEL="$_mios_gm"; else unset MIOS_AI_GATEWAY_MODEL; fi
+        unset _mios_gm _orig_am _orig_gm
+        export MIOS_AI_ENDPOINT MIOS_AI_MODEL MIOS_AI_KEY BROWSER="${BROWSER:-/usr/libexec/mios/mios-open-url}" MIOS_BROWSER="${MIOS_BROWSER:-/usr/libexec/mios/mios-open-url}"
+        _mios_rust_env
         unset -f _mios_rust_env
         return 0 2>/dev/null || exit 0
         ;;
@@ -708,6 +655,8 @@ _mios_source_if_readable /etc/mios/install.env
 
 _mios_source_if_readable "${HOME}/.config/mios/env"
 
+_orig_am="${MIOS_AI_AGENT_MODEL:-}"
+_orig_gm="${MIOS_AI_GATEWAY_MODEL:-}"
 for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     if [ -r "$_ue" ]; then
         # shellcheck source=usr/lib/mios/userenv.sh
@@ -716,9 +665,17 @@ for _ue in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
     fi
 done
 unset _ue
+[ -n "$_orig_am" ] && export MIOS_AI_AGENT_MODEL="$_orig_am"
+[ -n "$_orig_gm" ] && export MIOS_AI_GATEWAY_MODEL="$_orig_gm"
+unset _orig_am _orig_gm
 
 export MIOS_AI_ENDPOINT="${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/v1}"
-export MIOS_AI_GATEWAY_MODEL="${MIOS_AI_GATEWAY_MODEL:-MiOS-Agent}"
+# The gateway model is the SSOT agent model ([ai] agent_model, exported above as MIOS_AI_AGENT_MODEL);
+# a hard-coded name drifts from what the agent-pipe advertises and agents refuse to launch.
+_mios_gm="${MIOS_AI_GATEWAY_MODEL:-${MIOS_AI_AGENT_MODEL:-}}"
+# Unset rather than empty: `mios agent` / agy then fill it from the resolved SSOT.
+if [ -n "$_mios_gm" ]; then export MIOS_AI_GATEWAY_MODEL="$_mios_gm"; else unset MIOS_AI_GATEWAY_MODEL; fi
+unset _mios_gm
 export MIOS_AI_MODEL="${MIOS_AI_MODEL:-granite4.1:8b}"
 export MIOS_AI_EMBED_MODEL="${MIOS_AI_EMBED_MODEL:-nomic-embed-text}"
 if [ -z "${MIOS_AI_KEY:-}" ] && [ -r /etc/mios/hermes/api.env ]; then
@@ -1379,39 +1336,30 @@ _mios_profile_step
 # Snippet: zz-mios-motd.sh
 # ============================================================================
 _mios_profile_step() {
-# shellcheck shell=bash
-# AI-hint: Dispatches the interactive shell startup verb defined in mios.toml [terminal.startup] to the terminal on login, ensuring the MiOS dashboard or "mini" view is ren...
-# AI-doc: usr/share/doc/mios/manual/profile.d.md
-
-[ -n "${PS1:-}" ] || return 0
+# AI-hint: Enter the shared native terminal workspace for every interactive local or SSH shell.
+# AI-related: usr/share/mios/mios.toml [terminal.startup], usr/libexec/mios/mios-terminal
+case $- in *i*) ;; *) return 0 ;; esac
 [ -t 0 ] && [ -t 1 ] || return 0
-[ -z "${MIOS_MOTD_SHOWN:-}" ] || return 0
-[ -z "${TMUX:-}" ] || return 0
+[ "${MIOS_TMUX_HELPER:-}" != 1 ] || return 0
 [ -z "${STY:-}" ] || return 0
 [ -z "${MIOS_SKIP_MOTD:-}" ] || return 0
-
-_mios_startup_verb() {
-    local verb
-    verb="$(/usr/bin/mios-toml-get terminal.startup linux)" || return
-    if [ -z "$verb" ]; then
-        verb="$(/usr/bin/mios-toml-get terminal.startup verb)" || return
-    fi
-    case "$verb" in
-        ''|*[!a-zA-Z0-9_-]*) printf '[FAIL] Invalid or missing resolved terminal.startup.linux\n' >&2; return 1 ;;
-    esac
-    printf '%s' "$verb"
-}
-
-_mios_verb="$(_mios_startup_verb)" || return 1
-if [ -n "$_mios_verb" ]; then
-    if type mios 2>/dev/null | head -1 | grep -q 'function'; then
-        mios "$_mios_verb"
+[ "${MIOS_SESSION_BARE:-}" != 1 ] || return 0  # bare Tmux-OS session (mios-terminal --new): no workspace panes
+if [ -n "${TMUX:-}" ]; then
+    local _mios_terminal_python
+    _mios_terminal_python="$(/usr/bin/mios-toml-get mcp python)" || return 1
+    "$_mios_terminal_python" /usr/libexec/mios/mios-mcp-server --workspace-ensure
+else
+    # Re-entry guard: auto-exec once per login. The exported flag reaches every
+    # nested interactive shell, which must stay a plain shell. It is checked
+    # here, not above, so tmux panes (which inherit it from the server) still
+    # run --workspace-ensure.
+    [ -z "${MIOS_MOTD_SHOWN:-}" ] || return 0
+    MIOS_MOTD_SHOWN=1
+    export MIOS_MOTD_SHOWN
+    if [ "$(/usr/bin/mios-toml-get terminal.startup auto_attach)" = true ]; then
+        exec /usr/libexec/mios/mios-terminal
     fi
 fi
-
-MIOS_MOTD_SHOWN=1
-export MIOS_MOTD_SHOWN
-unset _mios_verb
 }
 _mios_profile_step
 

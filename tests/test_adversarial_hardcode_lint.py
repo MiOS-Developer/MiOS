@@ -566,6 +566,63 @@ class TestChallenge4ErrorBehaviorAndParity(HardcodeLintAdversarialTestBase):
         self.assertIn("PASS: 1 file(s) scanned", r_res.stdout)
 
 
+class TestNativeShimNeverRecurses(unittest.TestCase):
+    """The native-binary shim must never exec the script itself.
+
+    /usr/libexec/mios/mios-hardcode-lint is one of its candidates; on a
+    repo-as-root host that path is this script, and once it was executable the
+    shim re-ran itself without end until the OOM killer stopped it.
+    """
+
+    def _clean(self, d):
+        p = os.path.join(d, "clean.sh")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\necho ok\n")
+        return p
+
+    def test_itself_as_native_bin_runs_the_python_scan(self):
+        with tempfile.TemporaryDirectory() as d:
+            # The repo layout the shim resolves mios_toml from: usr/libexec/mios -> usr/lib/mios.
+            os.makedirs(os.path.join(d, "usr", "libexec", "mios"))
+            os.makedirs(os.path.join(d, "usr", "lib"))
+            os.symlink(os.path.join(_ROOT, "usr", "lib", "mios"), os.path.join(d, "usr", "lib", "mios"))
+            shim = os.path.join(d, "usr", "libexec", "mios", "mios-hardcode-lint")
+            shutil.copy2(_ORACLE_PATH, shim)
+            os.chmod(shim, 0o755)
+            os.symlink(shim, os.path.join(d, "alias"))
+            # A self-exec goes through the shebang's `env python3`: count it on PATH,
+            # and stop a recursing shim at depth 3 so this test cannot fork-bomb.
+            bindir = os.path.join(d, "bin")
+            os.makedirs(bindir)
+            count = os.path.join(d, "self-execs")
+            with open(os.path.join(bindir, "python3"), "w", encoding="utf-8") as f:
+                f.write(f"#!/bin/sh\necho x >> {count}\n"
+                        f"[ \"$(wc -l < {count})\" -gt 3 ] && exit 99\nexec {sys.executable} \"$@\"\n")
+            os.chmod(os.path.join(bindir, "python3"), 0o755)
+            for target in (shim, os.path.join(d, "alias")):
+                env = {k: v for k, v in os.environ.items() if k != "MIOS_HARDCODE_LINT_NO_NATIVE"}
+                env.update(MIOS_HARDCODE_LINT_BIN=target, PATH=bindir + os.pathsep + env.get("PATH", ""))
+                p = subprocess.run([sys.executable, "-I", shim, self._clean(d)], env=env,
+                                   capture_output=True, text=True, timeout=60)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertFalse(os.path.exists(count), f"the shim exec'd itself via {target}")
+
+    def test_a_native_bin_is_told_not_to_delegate_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "fake-native")
+            seen = os.path.join(d, "seen")
+            with open(fake, "w", encoding="utf-8") as f:
+                f.write(f"#!/bin/sh\nprintf '%s' \"$MIOS_HARDCODE_LINT_NO_NATIVE\" > {seen}\nexit 7\n")
+            os.chmod(fake, 0o755)
+            env = {k: v for k, v in os.environ.items() if k != "MIOS_HARDCODE_LINT_NO_NATIVE"}
+            env["MIOS_HARDCODE_LINT_BIN"] = fake
+            p = subprocess.run([sys.executable, "-I", _ORACLE_PATH, self._clean(d)], env=env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 7, "the shim must delegate to a real native binary")
+            with open(seen, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "1")
+
+
 def main() -> int:
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
@@ -574,6 +631,7 @@ def main() -> int:
     suite.addTests(loader.loadTestsFromTestCase(TestChallenge2DateAttributionVsValues))
     suite.addTests(loader.loadTestsFromTestCase(TestChallenge3IpAddressHeuristics))
     suite.addTests(loader.loadTestsFromTestCase(TestChallenge4ErrorBehaviorAndParity))
+    suite.addTests(loader.loadTestsFromTestCase(TestNativeShimNeverRecurses))
 
     print("=" * 80)
     print("MiOS Hardcode-Lint Adversarial Challenge Test Harness")

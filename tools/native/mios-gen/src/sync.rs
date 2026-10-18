@@ -140,8 +140,10 @@ impl Context {
             ("MIOS_TOML", "usr/share/mios/mios.toml"),
             ("MIOS_VENDOR_TOML", "usr/share/mios/mios.toml"),
             ("MIOS_VENDOR_TOML_D", "usr/lib/mios/mios.d"),
-            ("MIOS_HOST_TOML", "etc/mios/mios.toml"),
-            ("MIOS_HOST_TOML_D", "etc/mios/mios.d"),
+            // Build-time projections are vendor-only: the root's etc/ is the live admin
+            // tier on a deployed host, never an input to shipped files.
+            ("MIOS_HOST_TOML", ".mios-absent-host.toml"),
+            ("MIOS_HOST_TOML_D", ".mios-absent-host.d"),
             ("MIOS_USER_TOML", ".mios-absent.toml"),
             ("MIOS_USER_TOML_D", ".mios-absent.d"),
             ("MIOS_DRIFT_ROOT", ""),

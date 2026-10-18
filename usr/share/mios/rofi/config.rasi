@@ -1,0 +1,25 @@
+/* AI-hint: MiOS launcher palette, typography and glass derive from mios.toml. */
+configuration {
+    modi: "drun,run";
+    show-icons: true;
+    font: "GeistMono Nerd Font Mono 12";
+}
+* {
+    background-color: #28226280;
+    text-color: #E7DFD3;
+    border-color: #1A407F;
+    spacing: 8px;
+}
+window {
+    border: 1px;
+    border-radius: 28px;
+    padding: 8px;
+}
+mainbox, inputbar, listview, element, element-text, element-icon {
+    background-color: transparent;
+}
+element selected {
+    background-color: #1A407F;
+    text-color: #E7DFD3;
+}
+entry { placeholder: "Search applications"; }

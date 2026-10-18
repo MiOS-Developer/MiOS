@@ -1,0 +1,26 @@
+# AI-hint: Cargo manifest for mios-shot -- native Wayland screenshots for MiOS (ext-image-copy-capture with wlr-screencopy and Screenshot-portal fallbacks; frozen-frame region/window/output selection on the glass shell; save, clipboard, notification actions).
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml [desktop.screenshot], usr/share/mios/quickshell/Shot.qml, usr/libexec/mios/mios-screenshot
+
+[package]
+name = "mios-shot"
+version.workspace = true
+edition.workspace = true
+description = "Native Wayland screenshot tool for MiOS (capture, freeze, select, save, copy, notify)"
+license = "MIT"
+
+[[bin]]
+name = "mios-shot"
+path = "src/main.rs"
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+serde_json = { workspace = true }
+toml = { workspace = true }
+libc = "0.2"
+memmap2 = "0.9"
+rustix = { version = "1.1", features = ["fs", "pipe"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }

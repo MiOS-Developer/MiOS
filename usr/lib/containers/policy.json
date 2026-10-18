@@ -1,7 +1,23 @@
 {
   "default": [
     {
-      "type": "insecureAcceptEverything"
+      "type": "insecureAcceptAnything"
     }
-  ]
+  ],
+  "transports": {
+    "docker": {
+      "ghcr.io/mios-dev": [
+        {
+          "keyPaths": [
+            "/usr/share/pki/containers/mios-cosign.pub",
+            "/usr/share/pki/containers/mios-cosign-backup.pub"
+          ],
+          "signedIdentity": {
+            "type": "matchRepository"
+          },
+          "type": "sigstoreSigned"
+        }
+      ]
+    }
+  }
 }

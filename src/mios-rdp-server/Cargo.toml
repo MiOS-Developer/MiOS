@@ -1,0 +1,27 @@
+# MiOS native RDP server workspace (rdp-native-design.md section 2.3).
+# Built by automation/71-bake-rdp-server.sh in MiOS-DEV: the IronRDP default-branch HEAD is
+# resolved at build time and cloned to ../ironrdp next to this workspace (no pins, no committed
+# Cargo.lock: the SSOT latest-upstream rule; the resolved commits go to build.json).
+[workspace]
+resolver = "3"
+members = ["crates/mios-rdp-server", "crates/mios-rdp-priv"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 0
+strip = "debuginfo"
+panic = "abort"
+
+# iteration builds (no LTO); the bake uses release
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

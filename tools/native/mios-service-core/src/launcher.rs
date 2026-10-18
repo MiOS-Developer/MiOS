@@ -109,6 +109,10 @@ pub fn host_tmux_config_with_font(config: &Value, font_verified: bool) -> Result
     let mut doc: toml::Value =
         toml::Value::try_from(config).map_err(|e| format!("Invalid tmux SSOT: {e}"))?;
     let mut engine = crate::tmux_theme::TmuxThemeEngine::from_toml(&doc, None, None)?;
+    // Native Windows owns its host workspace; Linux callbacks run in its guest tmux server.
+    engine.workspace_startup = None;
+    // /usr/libexec/mios/mios-sysmon-line exists only on Linux: the host status line has no sysmon segment.
+    engine.sysmon = false;
     let mode = text(config, "/terminal/windows/glyph_mode")?;
     match mode.as_str() {
         "ascii" => engine.style = "minimal".into(),

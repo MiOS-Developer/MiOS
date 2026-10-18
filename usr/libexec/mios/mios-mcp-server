@@ -501,24 +501,27 @@ def _human_tmux_context(socket_path=None, pane=None):
         "#{socket_path}\t#{session_name}\t#{pane_id}\t#{window_id}\t#{pid}"],
         capture_output=True, text=True, timeout=3, check=True)
     fields = result.stdout.rstrip("\n").split("\t")
-    if len(fields) == 5 and fields[1] != keys["terminal_session"]:
+    if len(fields) == 5 and fields[1].startswith("mios-workspace-"):
         # Compact views park the head/workers in a separate session. Only
         # accept a pane whose managed main window witnesses the same head.
         tags = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", pane,
             "#{@mios-workspace-head}\t#{@mios-workspace-worker}\t#{@mios-workspace-window}"], text=True, timeout=3).rstrip('\n').split('\t')
         head = tags[0] or (tags[1] if len(tags) > 1 else "")
-        if re.fullmatch(r"%\d+", head):
+        main = tags[2] if len(tags) > 2 and re.fullmatch(r"@\d+", tags[2]) else ""
+        if not main and re.fullmatch(r"%\d+", head):
             main = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", head,
                 "#{@mios-workspace-window}"], text=True, timeout=3).strip()
-            if re.fullmatch(r"@\d+", main):
-                witness = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", main,
-                    "#{session_name}\t#{@mios-workspace-head}"], text=True, timeout=3).strip().split('\t')
-                if len(witness) == 2 and witness[1] == head:
-                    fields[1] = witness[0]
+        if re.fullmatch(r"@\d+", main):
+            witness = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", main,
+                "#{session_name}\t#{@mios-workspace-head}"], text=True, timeout=3).strip().split('\t')
+            if len(witness) == 2 and (not head or witness[1] == head):
+                fields[1] = witness[0]
+                fields[3] = main
     if (len(fields) != 5 or fields[0] != str(path) or fields[2] != pane
             or not re.fullmatch(r"@\d+", fields[3]) or not fields[4].isdigit()
             or (witnessed and fields[4] != ambient[1])
-            or (not witnessed and fields[1] != keys["terminal_session"])):
+            or fields[1].startswith("mios-workspace-")
+            or (not native and not witnessed and fields[1] != keys["terminal_session"])):
         raise ValueError("desktop pane is not in the native MiOS session")
     return {"socket": str(path), "pane": pane, "window": fields[3], "session": fields[1],
             "tmux": f"{path},{fields[4]},0"}
@@ -600,7 +603,7 @@ def _workspace_call(action, ui=None, **arguments):
                 cwd = "/tmp"
         arguments["directory"] = cwd
 
-    request = {"action": action, "workspace": data["mcp"]["tmux"]["workspace"],
+    request = {"action": action, "adapter": os.path.abspath(__file__), "adapter_python": data["mcp"]["python"], "workspace": data["mcp"]["tmux"]["workspace"],
                "human_socket": data["keybindings"]["socket_name"],
                "session": session, **arguments}
     if ui:
@@ -651,6 +654,11 @@ class _TmuxBridge:
         self.start_lock = asyncio.Lock()
         self.visible = None
         self.visible_slots = {}
+        self.retirement_tasks = {}
+        retention = config.get("completed_pane_timeout_s", 0)
+        if type(retention) is not int or retention < 0:
+            raise ValueError("[mcp.tmux].completed_pane_timeout_s must be a non-negative integer")
+        self.completed_pane_timeout_s = retention
         self.owner_id = secrets.token_hex(16)
         self.desktop = desktop
 
@@ -716,9 +724,17 @@ class _TmuxBridge:
             # Keep every locale tmux consults: a non-UTF-8 client turns -F tabs
             # into "_", and upstream's slot registry scan then finds no panes.
             self.env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LC_CTYPE") if k in os.environ}
+            prompt = self.config["helper_prompt"]
+            term = self.config["helper_term"]
+            if (not isinstance(prompt, str) or not 1 <= len(prompt) <= 40
+                    or any(not 32 <= ord(char) <= 126 or char in "$`\\" for char in prompt)):
+                raise ValueError("[mcp.tmux].helper_prompt must be short literal ASCII text")
+            if not isinstance(term, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,63}", term):
+                raise ValueError("[mcp.tmux].helper_term must be a terminal name")
             self.env.update({"HOME": self.directory.name, "TMUX_TMPDIR": self.socket_dir.name,
-                             "NO_COLOR": "1", "TERM": "dumb", "HISTFILE": os.devnull,
-                             "MIOS_THEME_PROJECTED": "1",
+                             "NO_COLOR": "1", "TERM": term, "HISTFILE": os.devnull,
+                             "MIOS_TMUX_HELPER_PROMPT": prompt,
+                             "MIOS_THEME_PROJECTED": "1", "MIOS_TMUX_HELPER": "1",
                              "MIOS_OMP_THEME": os.path.join(self.directory.name, "mios.omp.json")})
             # A non-secret pointer connects nested workers to the caller's shared
             # agent registry while HOME and credentials remain private.
@@ -786,6 +802,12 @@ class _TmuxBridge:
                 try:
                     await self.stop.wait()
                 finally:
+                    pending_retirements = list(self.retirement_tasks.values())
+                    self.retirement_tasks.clear()
+                    for retirement in pending_retirements:
+                        retirement.cancel()
+                    if pending_retirements:
+                        await asyncio.gather(*pending_retirements, return_exceptions=True)
                     if self.visible:
                         await self._visible_retire("all")
         except Exception as error:
@@ -851,7 +873,7 @@ class _TmuxBridge:
                 return physical
             shell_env = " ".join(shlex.quote(f"{k}={v}") for k, v in self.env.items()
                                  if k != "TMUX_TMPDIR")
-            command = 'exec env -i ' + shell_env + ' TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
+            command = 'exec env -i ' + shell_env + ' MIOS_TMUX_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
             reserved = _workspace_call("claim", ui, slot=slot, owner=self.owner_id, command=command)
             if reservation_only and not reserved.get("managed"):
                 return None
@@ -862,35 +884,56 @@ class _TmuxBridge:
                     tmux("set-option", "-p", "-t", created, key, value)
                 tmux("select-pane", "-t", created, "-T", f"MiOS worker {slot}")
                 workspace_head = tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-head}")
+                if not re.fullmatch(r"%\d+", workspace_head):
+                    workspace_head = tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-worker}")
                 if re.fullmatch(r"%\d+", workspace_head):
                     tmux("set-option", "-p", "-t", created, "@mios-workspace-worker", workspace_head)
+                    if not reserved.get("pane"):
+                        tmux("set-option", "-p", "-t", created, "@mios-workspace-slot", str(physical))
+                        tmux("set-option", "-p", "-t", created, "@mios-workspace-dynamic", "1")
                     _workspace_call("resize", {**ui, "pane": workspace_head}, observer_command=_WORKSPACE_OBSERVER_COMMAND)
                 else:
                     tmux("select-layout", "-t", ui["window"], "tiled")
             except BaseException:
                 tmux("kill-pane", "-t", created)
                 raise
-            self.visible_slots[slot] = {"pane": created, "upstream": physical}
+            self.visible_slots[slot] = {"pane": created, "upstream": physical, "dynamic": not bool(reserved.get("pane"))}
             return physical
         finally:
             os.close(fd)
 
     async def _visible_retire(self, slot):
+        resized_heads = set()
         for local in (list(self.visible_slots) if slot == "all" else [slot]):
             record = self.visible_slots.get(local)
             if not record:
                 continue
             # Retire by witnessed pane ID, not a global upstream slot shared by peers.
             result = await asyncio.to_thread(subprocess.run, ["tmux", "-S", self.visible["socket"],
-                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}"],
+                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}\t#{@mios-workspace-worker}\t#{@mios-workspace-dynamic}"],
                 capture_output=True, text=True, timeout=3)
-            if result.returncode == 0 and result.stdout.strip() == self.owner_id:
-                released = await asyncio.to_thread(_workspace_call, "release", self.visible,
-                                                   slot=local, owner=self.owner_id, pane=record["pane"])
-                if not released.get("managed"):
-                    await asyncio.to_thread(subprocess.run, ["tmux", "-S", self.visible["socket"],
-                        "kill-pane", "-t", record["pane"]], capture_output=True, timeout=3, check=True)
+            if result.returncode == 0:
+                parts = result.stdout.rstrip("\n").split("\t")
+                owner = parts[0] if parts else ""
+                w_head = parts[1] if len(parts) > 1 else ""
+                is_dyn = record.get("dynamic") or (len(parts) > 2 and parts[2] == "1")
+                if owner == self.owner_id:
+                    released = {} if is_dyn else await asyncio.to_thread(
+                        _workspace_call, "release", self.visible,
+                        slot=local, owner=self.owner_id, pane=record["pane"])
+                    if not released.get("managed"):
+                        await asyncio.to_thread(subprocess.run, ["tmux", "-S", self.visible["socket"],
+                            "kill-pane", "-t", record["pane"]], capture_output=True, timeout=3, check=True)
+                        if re.fullmatch(r"%\d+", w_head):
+                            resized_heads.add(w_head)
             self.visible_slots.pop(local, None)
+        for w_head in resized_heads:
+            try:
+                await asyncio.to_thread(
+                    _workspace_call, "resize", {**self.visible, "pane": w_head},
+                    observer_command=_WORKSPACE_OBSERVER_COMMAND)
+            except Exception:
+                pass
 
     async def _upstream_call(self, upstream, args, read_timeout_seconds=None):
         """Keep each head's local slot numbers separate in a shared desktop window."""
@@ -927,7 +970,7 @@ class _TmuxBridge:
                     raise ValueError("worker moved outside its managed workspace")
                 # Upstream scopes helpers to its own window. A compact workspace
                 # uses only its witnessed observer or parking anchor for that scope.
-                for option in ("@mios-workspace-observer", "@mios-workspace-anchor"):
+                for option in ("@mios-workspace-observer", "@mios-workspace-resource", "@mios-workspace-anchor"):
                     candidate = await asyncio.to_thread(field, main, "#{" + option + "}")
                     if re.fullmatch(r"%\d+", candidate) and await asyncio.to_thread(field, candidate, "#{window_id}") == window:
                         anchor = candidate
@@ -1024,8 +1067,55 @@ class _TmuxBridge:
                     continue
         return None
 
+    def _schedule_retirement(self, slot, completed=False):
+        """Retain output, then reclaim only this connection's proven idle shell."""
+        previous = self.retirement_tasks.pop(slot, None)
+        if previous is not None:
+            previous.cancel()
+        if not self.completed_pane_timeout_s or self.stop.is_set():
+            return
+        task = asyncio.create_task(self._retire_completed(slot, completed), name=f"mios-pane-retention-{slot}")
+        self.retirement_tasks[slot] = task
+
+    async def _retire_completed(self, slot, completed):
+        idle_since = time.monotonic() if completed else None
+        delay = self.completed_pane_timeout_s
+        try:
+            while not self.stop.is_set():
+                await asyncio.sleep(delay)
+                async with self.slot_locks[slot]:
+                    if self.stop.is_set() or self.retirement_tasks.get(slot) is not asyncio.current_task():
+                        return
+                    result = await self._upstream_call("pane-state", {"slot": slot}, read_timeout_seconds=10)
+                    state = self._payload(result)
+                    if not isinstance(state, dict):
+                        return
+                    # Waiting agent/REPL processes remain occupied. Ownership and pane
+                    # identity are rechecked by the native upstream before each action.
+                    if not self._idle_shell(state):
+                        idle_since = None
+                        continue
+                    if idle_since is None:
+                        idle_since = time.monotonic()
+                        continue
+                    if time.monotonic() - idle_since >= delay:
+                        await self._upstream_call("close-pane", {"slot": slot}, read_timeout_seconds=10)
+                        return
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # A moved or replaced pane is never eligible for guessed cleanup.
+            sys.stderr.write(f"[mios-mcp] pane retention {slot} deferred: {type(error).__name__}\n")
+            return
+        finally:
+            if self.retirement_tasks.get(slot) is asyncio.current_task():
+                self.retirement_tasks.pop(slot, None)
+
     async def _call_locked(self, upstream, args, slot):
         from mcp import types
+        previous_retirement = self.retirement_tasks.pop(slot, None)
+        if previous_retirement is not None:
+            previous_retirement.cancel()
         t0 = time.monotonic()
         try:
             result = await self._upstream_call(upstream, args,
@@ -1058,6 +1148,11 @@ class _TmuxBridge:
                             break
                         except Exception:
                             pass
+        if (type(slot) is int and upstream != "close-pane"
+                and (upstream in self.creators or previous_retirement is not None)
+                and not (isinstance(data, dict) and data.get("timedOut"))):
+            self._schedule_retirement(slot, completed=(upstream == "execute-command"
+                                      and isinstance(data, dict) and type(data.get("exitCode")) is int))
         if data is not None and isinstance(data, (dict, list)):
             wire["structuredContent"] = data
         return types.CallToolResult.model_validate(wire)
@@ -1095,7 +1190,17 @@ class _TmuxBridge:
         if not {"list-slots", "pane-state", "execute-command"} <= set(self.names.values()):
             raise ValueError("nested workflow requires allowed slot discovery, state and execution tools")
         async with self.allocation_lock:
-            for slot in ([requested] if requested is not None else self.slot_locks):
+            candidates = [requested] if requested is not None else list(self.slot_locks)
+            if requested is None:
+                # Prefer unused slots over a just-completed peer's shell. Fast
+                # concurrent workflows must not collapse onto the same slot.
+                listed = await self._upstream_call("list-slots", {}, read_timeout_seconds=10)
+                rows = self._payload(listed)
+                if listed.is_error or not isinstance(rows, list):
+                    raise RuntimeError("cannot verify helper slot availability")
+                occupied = {row.get("slot") for row in rows}
+                candidates.sort(key=lambda slot: slot in occupied)
+            for slot in candidates:
                 lock = self.slot_locks[slot]
                 if lock.locked():
                     continue
@@ -1765,6 +1870,12 @@ def _project_agent_clients(home=None):
     """Refresh only our server entry in the caller's client files, without credentials."""
     cfg = mios_toml.load_merged()["mcp"]
     home = Path(home or Path.home())
+    # Native projection preserves unrelated operator preferences and credentials.
+    interaction = subprocess.run(["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                                  "--root", "/", "--home", str(home), "--runtime"],
+                                 capture_output=True, text=True, timeout=15)
+    if interaction.returncode:
+        raise RuntimeError("Native client interaction projection failed: " + interaction.stderr.strip())
     entry = {"command": cfg["python"], "args": ["/usr/libexec/mios/mios-mcp-server"]}
     exports = mios_toml.emit_exports()
     endpoint = os.environ.get("MIOS_AI_ENDPOINT") or exports.get("MIOS_AI_ENDPOINT")
@@ -1774,7 +1885,8 @@ def _project_agent_clients(home=None):
 
     def save(relative, key, value):
         path = home / relative
-        data = json.loads(path.read_text()) if path.exists() else {}
+        prior = path.read_text() if path.exists() else ""
+        data = json.loads(prior) if prior.strip() else {}  # an empty client file is a fresh one
         data.setdefault(key, {})["mios-control"] = value
         if relative == ".claude.json":
             env = data.setdefault("env", {})
@@ -1790,6 +1902,17 @@ def _project_agent_clients(home=None):
                      ".gemini/antigravity-cli/mcp_config.json", ".cursor/mcp.json"):
         save(relative, "mcpServers", entry)
     save(".copilot/mcp-config.json", "mcpServers", {**entry, "type": "local", "tools": ["*"]})
+    # The native client uses mcp.servers, rather than the legacy mcpServers map.
+    zpath = home / _agent_cli_config()["zcode"]["config_relative"]
+    prior = zpath.read_text() if zpath.exists() else ""
+    zdata = json.loads(prior) if prior.strip() else {}
+    zdata.setdefault("mcp", {}).setdefault("servers", {})["mios-control"] = {
+        **entry, "type": "stdio", "enabled": True,
+    }
+    ztext = json.dumps(zdata, indent=2, sort_keys=True) + "\n"
+    zpath.parent.mkdir(parents=True, exist_ok=True)
+    if prior != ztext:
+        mios_toml.write_atomic(str(zpath), ztext)
     # Detect the installed dialect rather than rewriting an existing v1 user's configuration as v2.
     opencode = Path(_agent_cli_config()["linux_prefix"]) / "npm/bin/opencode"
     v2 = False
@@ -2283,6 +2406,27 @@ def _install_native(source_root, target_root):
 def main() -> int:
     from importlib.metadata import version
 
+    if sys.argv[1:] == ["--workspace-ensure"]:
+        if not mios_toml.load_merged()["mcp"]["tmux"]["workspace"].get("global_sessions", False):
+            return 0
+        socket = os.environ.get("TMUX", "").rsplit(",", 2)[0]
+        pane = os.environ.get("TMUX_PANE")
+        if not socket or not pane or os.environ.get("MIOS_TMUX_HELPER") == "1":
+            return 0
+        # Bare Tmux-OS sessions (mios-terminal --bare) carry MIOS_SESSION_BARE=1 in their session
+        # environment; hooks fire with the server's environment, so ask tmux for the pane's session.
+        bare = subprocess.run(["tmux", "-S", socket, "show-environment", "-t", pane, "MIOS_SESSION_BARE"],
+                              capture_output=True, text=True)
+        if bare.stdout.strip() == "MIOS_SESSION_BARE=1":
+            return 0
+        try:
+            ui = _human_tmux_context(socket, pane)
+            if ui:
+                _workspace_call("ensure", ui, observer_command=_WORKSPACE_OBSERVER_COMMAND)
+        except Exception as e:
+            sys.stderr.write(f"[mios-mcp] workspace-ensure error: {e}\n")
+            return 0
+        return 0
     if sys.argv[1:] == ["--monitor-request"]:
         print(json.dumps(_monitor_ui_request()))
         return 0

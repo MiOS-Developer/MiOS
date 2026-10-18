@@ -13,8 +13,9 @@ compositor -- with NO ydotool dependency (ydotool is AGPLv3 + seat-wide):
                token for unattended re-use. Self-written `evdev`/uinput backend
                as the compositor-agnostic fallback (our own code -> MIT-clean,
                works on wlroots + headless seats too).
-  * CAPTURE -- one-shot Screenshot portal, with grim / gnome-screenshot /
-               spectacle CLI fallbacks (all FOSS, offline).
+  * CAPTURE -- the native mios-shot (ext-image-copy-capture / wlr-screencopy, no
+               flash/sound/notification) first, then the one-shot Screenshot portal,
+               with grim / gnome-screenshot / spectacle CLI fallbacks (all FOSS, offline).
   * GROUND  -- AT-SPI2 a11y tree FIRST (role/name/text, no pixels, deterministic),
                vision grounding (mios-pc-vision -> qwen3-vl:4b baseline or the
                UI-TARS-1.5-7B vLLM `mios-grounding` lane) only when the tree is
@@ -52,7 +53,7 @@ CONFIG (layered mios.toml, per-user > /etc > vendor):
     [computer_use]
     executor_endpoint = ""           # federation: drive a remote desktop
     input_backend     = "auto"       # auto | portal | uinput
-    capture_backend   = "auto"       # auto | portal | grim | gnome | spectacle
+    capture_backend   = "auto"       # auto | native | portal | grim | gnome | spectacle
     restore_token_path = "$XDG_STATE_HOME/mios/cu-restore-token"
 """
 from __future__ import annotations
@@ -304,6 +305,13 @@ def _capture(out_path: str) -> int:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    def _native():
+        # mios-shot (tools/native/mios-shot): every output in one image, quiet (no flash, sound, clipboard or
+        # notification), written atomically to out.
+        return bool(os.environ.get("WAYLAND_DISPLAY")) and shutil.which("mios-shot") and subprocess.run(
+            ["mios-shot", "all", "--quiet", "--no-copy", "--file", str(out)], capture_output=True, timeout=30
+        ).returncode == 0
+
     def _grim():
         return shutil.which("grim") and subprocess.run(
             ["grim", str(out)], capture_output=True
@@ -358,14 +366,15 @@ def _capture(out_path: str) -> int:
         return out.is_file() and out.stat().st_size > 0
 
     order = {
-        "auto": [_portal, _grim, _gnome, _spectacle, _wsl_windows],
+        "auto": [_native, _portal, _grim, _gnome, _spectacle, _wsl_windows],
+        "native": [_native],
         "portal": [_portal],
         "grim": [_grim],
         "gnome": [_gnome],
         "spectacle": [_spectacle],
         "wsl": [_wsl_windows],
         "windows": [_wsl_windows],
-    }.get(backend, [_portal, _grim, _gnome, _spectacle, _wsl_windows])
+    }.get(backend, [_native, _portal, _grim, _gnome, _spectacle, _wsl_windows])
 
     for fn in order:
         try:
@@ -374,7 +383,7 @@ def _capture(out_path: str) -> int:
                 return 0
         except Exception:
             continue
-    _die("no working capture backend (install grim / gnome-screenshot / spectacle, "
+    _die("no working capture backend (install mios-shot / grim / gnome-screenshot / spectacle, "
          "or enable the Screenshot portal)")
     return 1
 

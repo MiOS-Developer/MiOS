@@ -1,0 +1,1 @@
+{"fps": {"HDMI-A-1": {"median": 65, "min": 10, "max": 68, "n": 10}, "HEADLESS-MIOS-SCALETEST": {"median": 75, "min": 16, "max": 79, "n": 10}}, "gpu_busy": 98.7, "gfx": [[90.3, "5329", "Hyprland"], [30.5, "1580449", "qml"], [29.2, "3472296", "zen"], [17.6, "3820131", "Hyprland"], [0.4, "3820312", "quickshell"], [0.3, "5384", "quickshell"]]}

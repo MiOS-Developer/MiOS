@@ -1,0 +1,647 @@
+#!/usr/bin/env bash
+# AI-hint: [remote.rdp] consumer -- RDP (Windows App / mstsc / FreeRDP) into the operator's LIVE Hyprland session. `render` writes xrdp.ini + sesman.ini to /run/mios/rdp and creates the TLS host cert once; `firewall` opens [ports].rdp only on the tailnet zone; `vnc` runs the RFB bridge inside the session, which per RDP attach creates a client-sized Hyprland headless output (mode "virtual") or shares a physical one (mode "mirror") through wayvnc on a UNIX socket; `enabled` gates the units.
+# AI-related: /usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [remote.rdp.redirect] [remote.rdp.naming] [ports].rdp [packages.remote-desktop], /usr/lib/systemd/system/xrdp.service.d/10-mios.conf, /usr/lib/systemd/system/xrdp-sesman.service.d/10-mios.conf, /usr/lib/systemd/system/mios-rdp-firewall.service, /usr/lib/systemd/user/mios-rdp-vnc.service, /usr/lib/systemd/user/mios-rdp-native.service, /usr/lib/systemd/system/mios-rdp-priv.socket, /usr/libexec/mios/rdp-native/mios-rdp-server, automation/58-gnome-remote-desktop.sh, automation/71-bake-rdp-server.sh
+# AI-doc: usr/share/doc/mios/manual/automation.md
+#
+# Chain: client --TLS/RDP--> xrdp (:[ports].rdp, PAM auth via xrdp-sesman in
+# gateway mode, no session spawned) --UNIX socket--> mios-rdp-rfb-bridge (RFB
+# 3.3 <-> 3.8, xrdp's libvnc cannot speak 3.8) --UNIX socket--> wayvnc (user
+# unit; started per RDP attach). mode="virtual": wayvnc captures a dedicated
+# HEADLESS-* output of the same Hyprland that follows the client's size and
+# orientation (xrdp DISP -> SetDesktopSize -> wlr-output-management custom mode)
+# while the physical monitor is never touched; mode="mirror": the physical output
+# with resizing disabled. Both sockets live in the operator's 0700
+# $XDG_RUNTIME_DIR, so only the operator and root (xrdp) reach them.
+set -euo pipefail
+
+TOML_GET="${MIOS_TOML_GET:-/usr/libexec/mios/mios-toml-get}"
+RUN_DIR=/run/mios/rdp
+SVC=mios-rdp
+
+log() { printf '[mios-rdp] %s\n' "$*" >&2; }
+
+load_cfg() {
+    local json
+    json="$("$TOML_GET" --section remote.rdp 2>/dev/null || echo '{}')"
+    eval "$(printf '%s' "$json" | python3 -I -c '
+import json, shlex, sys
+raw = sys.stdin.read().strip() or "{}"
+try:
+    d = json.loads(raw)
+except ValueError:
+    d = {}
+defaults = {
+    "enabled": True, "operator_uid": 1000, "allowed_users": [], "allowed_group": "",
+    "stale_ports": ["3389/tcp", "3390/tcp", "5900-5999/tcp"],
+    "allow_tailscale": True, "tailscale_interface": "tailscale0",
+    "tailscale_cidrs": ["100.64.0.0/10", "fd7a:115c:a1e0::/48"],
+    "allow_lan": False, "lan_cidrs": [], "security_layer": "tls",
+    "tls_protocols": "TLSv1.2, TLSv1.3", "cert_dir": "/var/lib/mios-rdp",
+    "cert_days": 3650, "keyboard_layout": "us", "output": "",
+    "target_hz": 90, "refresh_pacing": "adaptive", "min_hz": 30,
+    "capture_dmabuf": True, "render_cursor": "auto", "stats_seconds": 60,
+    "max_bpp": 32, "gfx": False, "dynamic_resize": True,
+    "mode": "virtual", "virtual_output": "HEADLESS-MIOS-RDP", "virtual_attach": "below-center",
+    "virtual_workspace": "remote", "virtual_initial_mode": "1280x720",
+    "keep_virtual_output": False, "linger_seconds": 20, "virtual_scale": "auto",
+    "scale_dpi_hint": True, "scale_reference_dpi": 120, "min_logical_short_px": 400,
+    "small_screen_px": 1300, "small_screen_scale": 2.0, "max_scale": 3.0, "size_align": 0,
+    "output_scale": True, "wayvnc_binary": "auto", "wayvnc_restarts": 5,
+    "server": "xrdp", "native_binary": "auto",
+}
+# target_hz (refresh ceiling of the remote display + wayvnc -f); a layered legacy max_fps counts only when
+# no tier sets target_hz. refresh_pacing/min_hz are validated by the bridge (Pacer).
+if "target_hz" not in d and "max_fps" in d:
+    d["target_hz"] = d["max_fps"]
+try:
+    hz = int(d.get("target_hz", 90))
+except (TypeError, ValueError):
+    hz = 0
+if not 1 <= hz <= 240:
+    print("invalid [remote.rdp].target_hz %r; using 90" % (d.get("target_hz"),), file=sys.stderr)
+    hz = 90
+d["target_hz"] = hz
+if d.get("server", "xrdp") not in ("xrdp", "native"):
+    print("invalid [remote.rdp].server %r; using xrdp" % (d.get("server"),), file=sys.stderr)
+    d["server"] = "xrdp"
+merged = {k: d.get(k, dv) for k, dv in defaults.items()}
+# sub-tables of the native server (rdp-native-design.md 9); defaults live in mios-rdp-server and must equal the SSOT
+for sub in ("native", "redirect", "naming"):
+    v = d.get(sub)
+    merged[sub] = v if isinstance(v, dict) else {}
+print("RDP_JSON=%s" % shlex.quote(json.dumps(merged)))
+for k, dv in defaults.items():
+    v = d.get(k, dv)
+    if isinstance(v, dict):
+        continue
+    if isinstance(v, bool):
+        v = "true" if v else "false"
+    elif isinstance(v, list):
+        v = " ".join(str(x) for x in v)
+    print("RDP_%s=%s" % (k.upper(), shlex.quote(str(v))))
+')"
+    RDP_PORT="${MIOS_PORTS_RDP:-$("$TOML_GET" ports rdp 8300 2>/dev/null || echo 8300)}"
+    [[ "$RDP_PORT" =~ ^[0-9]+$ ]] || { log "invalid [ports].rdp '$RDP_PORT'"; exit 1; }
+    [[ "$RDP_OPERATOR_UID" =~ ^[0-9]+$ ]] || { log "invalid operator_uid"; exit 1; }
+    VNC_DIR="/run/user/${RDP_OPERATOR_UID}/mios-rdp"
+    VNC_SOCK="${VNC_DIR}/wayvnc.sock"   # wayvnc (RFB 3.8), reachable only by the bridge
+    FRONT_SOCK="${VNC_DIR}/rfb.sock"    # mios-rdp-rfb-bridge (RFB 3.3 for xrdp libvnc)
+    case "$RDP_MODE" in virtual|mirror) ;; *) log "invalid [remote.rdp].mode '$RDP_MODE' (virtual|mirror)"; exit 1 ;; esac
+    # Dynamic resize (rotation, window resize) arrives over the DISP dynamic channel, which needs
+    # drdynvc. Without GFX, cap the colour depth at 24 bpp: xrdp only negotiates GFX for 32 bpp
+    # sessions, so drdynvc carries DISP while bitmap updates stay on the classic path.
+    XRDP_DRDYNVC=false; XRDP_MAX_BPP="$RDP_MAX_BPP"
+    if [[ "$RDP_GFX" == true ]]; then
+        XRDP_DRDYNVC=true
+    elif [[ "$RDP_DYNAMIC_RESIZE" == true ]]; then   # mirror too: harmless there (wayvnc refuses, xrdp fits the client to the server)
+        XRDP_DRDYNVC=true
+        (( XRDP_MAX_BPP > 24 )) && XRDP_MAX_BPP=24
+    fi
+}
+
+ACCESS_GROUP=mios-rdp   # managed: members = [remote.rdp].allowed_users (default: the operator only)
+
+# Accounts xrdp-sesman may admit: allowed_users, or the operator alone. Every one of them
+# attaches to the OPERATOR's live session, so the default is the operator only.
+admitted_users() { # -> one valid account name per line
+    local u out=()
+    for u in ${RDP_ALLOWED_USERS:-}; do
+        if [[ ! "$u" =~ ^[a-z_][a-z0-9_.-]*[$]?$ ]] || ! getent passwd "$u" >/dev/null; then
+            log "allowed_users: '${u}' is not an account; ignored"; continue
+        fi
+        [[ "$(getent passwd "$u" | cut -d: -f3)" == 0 ]] && { log "allowed_users: root is never admitted"; continue; }
+        out+=("$u")
+    done
+    ((${#out[@]})) || out=("$OP_USER")
+    printf '%s\n' "${out[@]}" | sort -u
+}
+
+operator_identity() {
+    local ent members
+    ent="$(getent passwd "$RDP_OPERATOR_UID")" || { log "no account with uid ${RDP_OPERATOR_UID}"; exit 1; }
+    OP_USER="${ent%%:*}"
+    if [[ -n "$RDP_ALLOWED_GROUP" ]]; then
+        # Legacy opt-in: every PAM user of an existing group (all of them see the operator's session).
+        ALLOWED_GROUP="$RDP_ALLOWED_GROUP"
+        getent group "$ALLOWED_GROUP" >/dev/null || { log "allowed_group '$ALLOWED_GROUP' does not exist"; exit 1; }
+        ADMITTED="every member of group ${ALLOWED_GROUP}"
+        return 0
+    fi
+    ALLOWED_GROUP="$ACCESS_GROUP"
+    members="$(admitted_users | paste -sd, -)"
+    getent group "$ACCESS_GROUP" >/dev/null || groupadd -r "$ACCESS_GROUP" \
+        || { log "cannot create group ${ACCESS_GROUP}"; exit 1; }
+    # Exact membership on every render: users added by hand (or by an older allowed_users) are dropped.
+    gpasswd -M "$members" "$ACCESS_GROUP" >/dev/null || { log "cannot set members of ${ACCESS_GROUP}"; exit 1; }
+    ADMITTED="$members"
+}
+
+ensure_cert() {
+    CERT="${RDP_CERT_DIR}/cert.pem"
+    KEY="${RDP_CERT_DIR}/key.pem"
+    install -d -m 0700 -o root -g root "$RDP_CERT_DIR"
+    if [[ -s "$CERT" && -s "$KEY" ]] && openssl x509 -in "$CERT" -noout -checkend 86400 >/dev/null 2>&1; then
+        return 0
+    fi
+    local cn san
+    cn="$(hostname -s 2>/dev/null || hostname)"
+    san="DNS:${cn}"
+    local fq; fq="$(hostname -f 2>/dev/null || true)"
+    [[ -n "$fq" && "$fq" != "$cn" ]] && san="${san},DNS:${fq}"
+    log "generating TLS host certificate for ${cn} in ${RDP_CERT_DIR}"
+    ( umask 077
+      openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days "$RDP_CERT_DAYS" \
+          -subj "/CN=${cn}" -addext "subjectAltName=${san}" \
+          -addext "extendedKeyUsage=serverAuth" \
+          -keyout "${KEY}.new" -out "${CERT}.new" >/dev/null 2>&1 )
+    mv -f "${KEY}.new" "$KEY"; mv -f "${CERT}.new" "$CERT"
+    chmod 0600 "$KEY"; chmod 0644 "$CERT"
+    command -v restorecon >/dev/null && restorecon -R "$RDP_CERT_DIR" 2>/dev/null || true
+}
+
+cmd_render() {
+    load_cfg
+    [[ "$RDP_ENABLED" == true ]] || { log "[remote.rdp].enabled=false; refusing to start xrdp"; exit 1; }
+    # xrdp.service and xrdp-sesman.service both render at start: serialise the group edit and the .new files.
+    install -d -m 0755 /run/lock
+    exec 9>/run/lock/mios-rdp-render.lock
+    flock -w 30 9 || { log "render lock busy"; exit 1; }
+    operator_identity
+    ensure_cert
+    install -d -m 0755 -o root -g root "$RUN_DIR"
+    chmod 0755 "$RUN_DIR"
+    umask 027
+    cat > "${RUN_DIR}/xrdp.ini.new" <<EOF
+; Rendered by /usr/libexec/mios/mios-rdp from /usr/share/mios/mios.toml [remote.rdp] -- do not edit.
+[Globals]
+ini_version=1
+fork=true
+port=${RDP_PORT}
+tcp_nodelay=true
+tcp_keepalive=true
+security_layer=${RDP_SECURITY_LAYER}
+crypt_level=high
+certificate=${CERT}
+key_file=${KEY}
+ssl_protocols=${RDP_TLS_PROTOCOLS}
+autorun=MiOS-Live
+allow_channels=true
+allow_multimon=false
+bitmap_cache=true
+bitmap_compression=true
+bulk_compression=true
+max_bpp=${XRDP_MAX_BPP}
+new_cursors=true
+use_fastpath=both
+hidelogwindow=true
+require_credentials=false
+pamerrortxt=MiOS: authentication failed
+
+[Logging]
+LogFile=xrdp.log
+LogLevel=INFO
+EnableSyslog=true
+
+[Channels]
+rdpdr=false
+rdpsnd=false
+# GFX (RFX/H.264) rides on drdynvc; with the VNC backend its surfaces stay black. With gfx=false
+# drdynvc stays on only for DISP (client resize/rotation, [remote.rdp].dynamic_resize)
+# and max_bpp is capped at 24 so xrdp never negotiates GFX.
+drdynvc=${XRDP_DRDYNVC}
+cliprdr=true
+rail=false
+xrdpvr=false
+
+; The only session: the operator's running Hyprland desktop via the UNIX socket
+; of mios-rdp-rfb-bridge (xrdp libvnc speaks RFB 3.3 only; wayvnc needs 3.8). pamusername/pampassword make xrdp-sesman authenticate the login
+; (PAM + [Security] group check) before the socket is ever opened.
+[MiOS-Live]
+name=MiOS live desktop (${OP_USER})
+lib=libvnc.so
+username=ask
+password=ask
+pamusername=same
+pampassword=same
+port=${FRONT_SOCK}
+EOF
+    cat > "${RUN_DIR}/sesman.ini.new" <<EOF
+; Rendered by /usr/libexec/mios/mios-rdp from /usr/share/mios/mios.toml [remote.rdp] -- do not edit.
+; Gateway-auth only: xrdp never asks sesman to start an X session.
+[Globals]
+EnableUserWindowManager=false
+UserWindowManager=startwm.sh
+DefaultWindowManager=startwm.sh
+ReconnectScript=reconnectwm.sh
+
+[Security]
+AllowRootLogin=false
+MaxLoginRetry=3
+TerminalServerUsers=${ALLOWED_GROUP}
+TerminalServerAdmins=${ALLOWED_GROUP}
+AlwaysGroupCheck=true
+RestrictOutboundClipboard=all
+RestrictInboundClipboard=all
+SessionSockdirGroup=xrdp
+
+[Sessions]
+X11DisplayOffset=10
+MaxSessions=1
+KillDisconnected=false
+DisconnectedTimeLimit=0
+IdleTimeLimit=0
+Policy=Default
+
+[Logging]
+LogFile=xrdp-sesman.log
+LogLevel=INFO
+EnableSyslog=true
+
+[Xorg]
+param=/usr/bin/false
+
+[Xvnc]
+param=/usr/bin/false
+EOF
+    mv -f "${RUN_DIR}/xrdp.ini.new" "${RUN_DIR}/xrdp.ini"
+    mv -f "${RUN_DIR}/sesman.ini.new" "${RUN_DIR}/sesman.ini"
+    log "rendered ${RUN_DIR}/{xrdp,sesman}.ini (port ${RDP_PORT}, admitted: ${ADMITTED} via group ${ALLOWED_GROUP}, socket ${FRONT_SOCK}); xrdp-sesman logs each authenticated user + source IP"
+}
+
+_fw() { firewall-cmd "$@" >/dev/null 2>&1; }
+
+_rich() { # zone family cidr
+    local fam=ipv4; [[ "$3" == *:* ]] && fam=ipv6
+    printf 'rule family="%s" source address="%s" service name="%s" accept' "$fam" "$3" "$SVC"
+}
+
+cmd_firewall() {
+    load_cfg
+    command -v firewall-cmd >/dev/null || { log "firewalld not installed"; exit 0; }
+    firewall-cmd --state >/dev/null 2>&1 || { log "firewalld not running"; exit 0; }
+    if ! firewall-cmd --permanent --get-services | tr ' ' '\n' | grep -qx "$SVC"; then
+        _fw --permanent --new-service="$SVC"
+    fi
+    _fw --permanent --service="$SVC" --set-short="MiOS RDP"
+    _fw --permanent --service="$SVC" --set-description="RDP into the MiOS live desktop (xrdp, [remote.rdp])"
+    local p
+    for p in $(firewall-cmd --permanent --service="$SVC" --get-ports); do
+        _fw --permanent --service="$SVC" --remove-port="$p"
+    done
+    _fw --permanent --service="$SVC" --add-port="${RDP_PORT}/tcp"
+
+    # Scrub every zone first: the service, any rich rule naming it, a bare port
+    # opening of [ports].rdp, and [remote.rdp].stale_ports (3389/3390/5900-5999
+    # opened plainly by older 45-firewall.sh / mios-grd-setup runs). The only RDP
+    # opening that survives is the one re-added below (mios-rdp on the tailnet zone).
+    local z r sp
+    for z in $(firewall-cmd --permanent --get-zones); do
+        _fw --permanent --zone="$z" --remove-service="$SVC" || true
+        _fw --permanent --zone="$z" --remove-port="${RDP_PORT}/tcp" || true
+        for sp in $RDP_STALE_PORTS; do
+            [[ "$sp" =~ ^[0-9]+(-[0-9]+)?/(tcp|udp)$ ]] || { log "stale_ports: '${sp}' ignored"; continue; }
+            if firewall-cmd --permanent --zone="$z" --query-port="$sp" >/dev/null 2>&1; then
+                _fw --permanent --zone="$z" --remove-port="$sp" && log "removed stale ${sp} from zone ${z}"
+            fi
+        done
+        while IFS= read -r r; do
+            [[ -n "$r" ]] && _fw --permanent --zone="$z" --remove-rich-rule="$r"
+        done < <(firewall-cmd --permanent --zone="$z" --list-rich-rules 2>/dev/null | grep -F "service name=\"${SVC}\"" || true)
+    done
+
+    local def opened=()
+    def="$(firewall-cmd --get-default-zone)"
+    if [[ "$RDP_ENABLED" == true && "$RDP_ALLOW_TAILSCALE" == true ]]; then
+        local tz cidr
+        tz="$(firewall-cmd --permanent --get-zone-of-interface="$RDP_TAILSCALE_INTERFACE" 2>/dev/null || true)"
+        [[ "$tz" == "no zone" ]] && tz=""
+        if [[ -n "$tz" && "$tz" != "$def" && "$tz" != public && "$tz" != drop && "$tz" != block ]]; then
+            _fw --permanent --zone="$tz" --add-service="$SVC"
+            opened+=("zone ${tz} (${RDP_TAILSCALE_INTERFACE})")
+        else
+            tz="${tz:-$def}"
+            for cidr in $RDP_TAILSCALE_CIDRS; do
+                _fw --permanent --zone="$tz" --add-rich-rule="$(_rich "$tz" x "$cidr")"
+            done
+            opened+=("zone ${tz} from ${RDP_TAILSCALE_CIDRS}")
+        fi
+    fi
+    if [[ "$RDP_ENABLED" == true && "$RDP_ALLOW_LAN" == true && -n "${RDP_LAN_CIDRS// }" ]]; then
+        local dev lz zones=("$def") cidr
+        while read -r dev; do
+            lz="$(firewall-cmd --get-zone-of-interface="$dev" 2>/dev/null || true)"
+            [[ -n "$lz" && "$lz" != "no zone" ]] && zones+=("$lz")
+        done < <(ip -o route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev") print $(i+1)}' | sort -u)
+        for lz in $(printf '%s\n' "${zones[@]}" | sort -u); do
+            for cidr in $RDP_LAN_CIDRS; do
+                _fw --permanent --zone="$lz" --add-rich-rule="$(_rich "$lz" x "$cidr")"
+            done
+            opened+=("zone ${lz} from ${RDP_LAN_CIDRS}")
+        done
+    fi
+    _fw --reload
+    if ((${#opened[@]})); then
+        log "RDP ${RDP_PORT}/tcp open on: ${opened[*]}"
+    else
+        log "RDP ${RDP_PORT}/tcp closed everywhere (enabled=${RDP_ENABLED})"
+    fi
+}
+
+# Newest Hyprland SESSION instance whose lock-file PID is alive -> "signature wayland-N". Nested
+# instances (started inside another Wayland/X session: WAYLAND_DISPLAY or DISPLAY in their initial
+# environment, e.g. a test compositor running as a window) are never the operator's session.
+_live_instance() {
+    local rt="$1" lock pid wl best="" bestt=0 t
+    for lock in "$rt"/hypr/*/hyprland.lock; do
+        [[ -r "$lock" ]] || continue
+        pid="$(sed -n 1p "$lock")"; wl="$(sed -n 2p "$lock")"
+        [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || continue
+        if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -Eq '^(WAYLAND_DISPLAY|DISPLAY)=.'; then continue; fi
+        [[ -n "$wl" && -S "$rt/$wl" ]] || continue
+        t="$(stat -c %Y "$lock")"
+        if (( t >= bestt )); then bestt="$t"; best="$(basename "$(dirname "$lock")") $wl"; fi
+    done
+    [[ -n "$best" ]] && printf '%s\n' "$best"
+}
+
+# bridge.json for mios-rdp-rfb-bridge (atomic) in $VNC_DIR: the merged [remote.rdp] table plus the
+# wayvnc argv. $1 = runtime dir, $2 = wayvnc config path.
+_bridge_json() {
+    # Primary local output (the remote display attaches below its centre): the host tier
+    # [desktop.hyprland.monitors.<name>].primary = true.
+    local rt="$1" cfg="$2" mons_json
+    mons_json="$("$TOML_GET" --section desktop.hyprland.monitors 2>/dev/null || echo '{}')"
+    printf '%s' "$RDP_JSON" | VNC_DIR="$VNC_DIR" VNC_SOCK="$VNC_SOCK" FRONT_SOCK="$FRONT_SOCK" RT="$rt" \
+        WAYVNC_CFG="$cfg" MONS_JSON="$mons_json" python3 -I -c '
+import json, os, sys
+c = json.load(sys.stdin)
+e = os.environ
+try:
+    mons = json.loads(e.get("MONS_JSON") or "{}")
+except ValueError:
+    mons = {}
+prim = [n for n, m in (mons.items() if isinstance(mons, dict) else []) if isinstance(m, dict) and m.get("primary") is True]
+c["primary_output"] = sorted(prim)[0] if prim else ""
+# wayvnc_binary "auto": the upstream build (automation/70-bake-wayvnc-upstream.sh) when installed,
+# else the distro package. wayvnc < 0.10 exits on a scaled output; the bridge then keeps scale 1.
+wb = str(c.get("wayvnc_binary") or "auto")
+if wb == "auto":
+    up = "/usr/libexec/mios/wayvnc/wayvnc"
+    wb = up if os.access(up, os.X_OK) else "/usr/bin/wayvnc"
+# -f target_hz: capture at the remote display refresh. -g (capture_dmabuf): frames are copied into
+# GPU dmabufs (no CPU readback on the Hyprland main loop; with shm every captured frame stalled the
+# compositor ~13-22 ms and the local outputs dropped frames).
+wayvnc_cmd = [wb, "-C", e["WAYVNC_CFG"], "-u", "-S", e["VNC_DIR"] + "/control.sock",
+              "-f", str(c["target_hz"]), "-k", str(c["keyboard_layout"]), "-L", "info"]
+if c.get("capture_dmabuf", True) is True:
+    wayvnc_cmd.append("-g")
+if not c.get("output_scale", True):
+    wayvnc_cmd.append("--render-cursor")
+c.update(runtime_dir=e["RT"], vnc_sock=e["VNC_SOCK"], listen=e["FRONT_SOCK"], wayvnc_argv=wayvnc_cmd)
+tmp = e["VNC_DIR"] + "/bridge.json.tmp"
+with open(tmp, "w") as f:
+    json.dump(c, f, indent=1)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, e["VNC_DIR"] + "/bridge.json")
+'
+}
+
+cmd_vnc() {
+    load_cfg
+    [[ "$(id -u)" == "$RDP_OPERATOR_UID" ]] || { log "not the operator (uid ${RDP_OPERATOR_UID})"; exit 1; }
+    local rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" inst
+    if inst="$(_live_instance "$rt")"; then
+        export HYPRLAND_INSTANCE_SIGNATURE="${inst%% *}" WAYLAND_DISPLAY="${inst##* }"
+    fi
+    [[ -n "${WAYLAND_DISPLAY:-}" && -S "$rt/${WAYLAND_DISPLAY}" ]] || { log "no live Wayland session"; exit 1; }
+    if [[ "$RDP_MODE" == virtual && "$RDP_VIRTUAL_OUTPUT" != HEADLESS-* ]]; then
+        log "[remote.rdp].virtual_output must start with HEADLESS- (wayvnc resizes only headless outputs)"; exit 1
+    fi
+    install -d -m 0700 "$VNC_DIR"
+    rm -f -- "$VNC_SOCK" "$FRONT_SOCK" "$VNC_DIR/control.sock"
+    local cfg="$VNC_DIR/wayvnc.config"
+    : > "$cfg"   # pin an empty config: a stray ~/.config/wayvnc/config must not re-enable TCP or relax auth
+    # The bridge starts wayvnc per RDP attach and appends -o <output>, --disable-resizing (mirror) and the socket.
+    _bridge_json "$rt" "$cfg"
+    log "bridge on ${FRONT_SOCK} (mode ${RDP_MODE}$([[ "$RDP_MODE" == virtual ]] && echo ", output ${RDP_VIRTUAL_OUTPUT}" || echo ", output ${RDP_OUTPUT:-focused}")) in ${WAYLAND_DISPLAY} (${HYPRLAND_INSTANCE_SIGNATURE:-?})"
+    umask 077
+    exec python3 -I /usr/libexec/mios/mios-rdp-rfb-bridge --config "$VNC_DIR/bridge.json"
+}
+
+
+NATIVE_DIR="${MIOS_RDP_NATIVE_DIR:-/usr/libexec/mios/rdp-native}"
+FALLBACK_MARKER="${MIOS_RDP_STATE_DIR:-/run/mios/rdp}/fallback"          # native crash loop (mios-rdp-priv)
+OVERRIDE="${MIOS_RDP_STATE_DIR:-/run/mios/rdp}/server-override"        # runtime trial of `mios-rdp switch` (root); gone at reboot
+
+native_binary() { # -> path of mios-rdp-server or nothing
+    local b="$RDP_NATIVE_BINARY"
+    [[ "$b" == auto || -z "$b" ]] && b="$NATIVE_DIR/mios-rdp-server"
+    [[ -x "$b" ]] && printf '%s\n' "$b"
+}
+
+# Which server serves [ports].rdp: [remote.rdp].server, a runtime override from `mios-rdp switch`,
+# and the automatic fallback (native binary missing, or the crash-loop marker written by mios-rdp-priv).
+backend() {
+    local want="$RDP_SERVER" o
+    if [[ -r "$OVERRIDE" ]]; then
+        o="$(head -c 16 "$OVERRIDE" | tr -cd 'a-z')"
+        [[ "$o" == xrdp || "$o" == native ]] && want="$o"
+    fi
+    if [[ "$want" == native ]]; then
+        if [[ -e "$FALLBACK_MARKER" ]]; then echo xrdp; return; fi
+        if [[ -z "$(native_binary)" ]]; then echo xrdp; return; fi
+    fi
+    echo "$want"
+}
+
+cmd_enabled() {
+    load_cfg
+    [[ "$RDP_ENABLED" == true ]] || exit 1
+    if [[ "$(id -u)" != 0 && "$(id -u)" != "$RDP_OPERATOR_UID" ]]; then exit 1; fi
+    case "${1:-}" in
+        "") exit 0 ;;                                  # legacy: RDP enabled at all
+        xrdp|native) [[ "$(backend)" == "$1" ]] && exit 0 || exit 1 ;;
+        *) log "enabled: unknown backend '${1}' (xrdp|native)"; exit 2 ;;
+    esac
+}
+
+# native.json for mios-rdp-server ($VNC_DIR, atomic): the merged [remote.rdp] table (also the display
+# service's config), its native/redirect/naming sub-tables, and runtime facts.
+_native_json() {
+    local rt="$1" bin="$2" mons_json
+    mons_json="$("$TOML_GET" --section desktop.hyprland.monitors 2>/dev/null || echo '{}')"
+    printf '%s' "$RDP_JSON" | VNC_DIR="$VNC_DIR" RT="$rt" MONS_JSON="$mons_json" PORT="$RDP_PORT" BIN="$bin" python3 -I -c '
+import json, os, sys
+c = json.load(sys.stdin)
+e = os.environ
+try:
+    mons = json.loads(e.get("MONS_JSON") or "{}")
+except ValueError:
+    mons = {}
+prim = [n for n, m in (mons.items() if isinstance(mons, dict) else []) if isinstance(m, dict) and m.get("primary") is True]
+c["primary_output"] = sorted(prim)[0] if prim else ""
+n = c.get("native") or {}
+listen_addr = "127.0.0.1:%s" % e["PORT"] if c.get("allow_loopback") else "[::]:%s" % e["PORT"]
+bind_dev = "" if (c.get("allow_loopback") or c.get("allow_lan")) else c.get("tailscale_interface", "tailscale0")
+c.update(
+    listen=listen_addr, bind_device=bind_dev, runtime_dir=e["RT"], stats_path=e["VNC_DIR"] + "/stats.json",
+    tls_source="priv", auth="priv", priv_socket="/run/mios-rdp-priv.sock",
+    display_service=["python3", "-I", "/usr/libexec/mios/mios-rdp-rfb-bridge", "--display-service"],
+    display_config=e["VNC_DIR"] + "/native.json",
+    server_binary=e["BIN"],
+)
+tmp = e["VNC_DIR"] + "/native.json.tmp"
+with open(tmp, "w") as f:
+    json.dump(c, f, indent=1)
+    f.flush()
+    os.fsync(f.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, e["VNC_DIR"] + "/native.json")
+'
+}
+
+cmd_native() {
+    load_cfg
+    [[ "$(id -u)" == "$RDP_OPERATOR_UID" ]] || { log "not the operator (uid ${RDP_OPERATOR_UID})"; exit 1; }
+    local bin rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" inst
+    bin="$(native_binary)" || true
+    [[ -n "$bin" ]] || { log "native server not installed ($NATIVE_DIR); xrdp stays the server"; exit 1; }
+    if inst="$(_live_instance "$rt")"; then
+        export HYPRLAND_INSTANCE_SIGNATURE="${inst%% *}" WAYLAND_DISPLAY="${inst##* }"
+    fi
+    [[ -n "${WAYLAND_DISPLAY:-}" && -S "$rt/${WAYLAND_DISPLAY}" ]] || { log "no live Wayland session"; exit 1; }
+    if [[ "$RDP_MODE" == virtual && "$RDP_VIRTUAL_OUTPUT" != HEADLESS-* ]]; then
+        log "[remote.rdp].virtual_output must start with HEADLESS-"; exit 1
+    fi
+    install -d -m 0700 "$VNC_DIR"
+    _native_json "$rt" "$bin"
+    log "native server $bin on [::]:${RDP_PORT} (mode ${RDP_MODE}, output ${RDP_VIRTUAL_OUTPUT}) in ${WAYLAND_DISPLAY} (${HYPRLAND_INSTANCE_SIGNATURE:-?})"
+    umask 077
+    exec "$bin" --config "$VNC_DIR/native.json"
+}
+
+# Native server crash-looped (OnFailure of mios-rdp-native.service): xrdp takes over until reboot or
+# `mios-rdp switch native`; mios-rdp-priv writes the marker and starts xrdp (root).
+cmd_native_failed() {
+    load_cfg
+    python3 -I - "${1:-native server failed}" <<'PY' || log "mios-rdp-priv FALLBACK failed"
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+s.settimeout(10)
+s.connect("/run/mios-rdp-priv.sock")
+s.send(b"FALLBACK\0" + sys.argv[1].encode()[:200])
+print("mios-rdp-priv: " + s.recv(256).decode(errors="replace"))
+PY
+    systemctl --user start --no-block mios-rdp-vnc.service || true
+    command -v notify-send >/dev/null && notify-send -a MiOS "Remote desktop" "The native RDP server failed; the xrdp path took over." || true
+}
+
+# Root: runtime switch between the servers (a trial: reboot returns to [remote.rdp].server).
+# Refuses while a client is attached. --persist does not edit the SSOT; it prints the edit to make.
+cmd_switch() {
+    load_cfg
+    [[ "$(id -u)" == 0 ]] || { log "switch needs root (sudo mios-rdp switch native|xrdp)"; exit 1; }
+    local to="${1:-}" user st attached
+    [[ "$to" == native || "$to" == xrdp ]] || { log "usage: mios-rdp switch native|xrdp [--persist]"; exit 2; }
+    user="$(getent passwd "$RDP_OPERATOR_UID" | cut -d: -f1)"
+    st="/run/user/${RDP_OPERATOR_UID}/mios-rdp/stats.json"
+    attached="$(python3 -I -c 'import json,sys,time
+try:
+    d = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    d = {}
+fresh = time.time() - float(d.get("time", 0)) < 10
+print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) else "no")' "$st")"
+    if [[ "$attached" == yes && "${2:-}" != --force ]]; then
+        log "a client is attached (stats.json); not switching (try again when it detaches)"; exit 1
+    fi
+    if [[ "$to" == native && -z "$(native_binary)" ]]; then log "native server not installed"; exit 1; fi
+    install -d -m 0755 "$(dirname "$OVERRIDE")"
+    chmod 0755 "$(dirname "$OVERRIDE")"
+    rm -f "$FALLBACK_MARKER"
+    printf '%s\n' "$to" > "${OVERRIDE}.new" && chmod 0644 "${OVERRIDE}.new" && mv -f "${OVERRIDE}.new" "$OVERRIDE"
+    logger -t mios-rdp "switching the RDP server to $to (runtime trial; reboot returns to [remote.rdp].server = ${RDP_SERVER})"
+    local um=(systemctl --user --machine="${user}@.host")
+    if [[ "$to" == native ]]; then
+        "${um[@]}" stop mios-rdp-vnc.service || true
+        systemctl stop xrdp.service xrdp-sesman.service || true
+        "${um[@]}" start mios-rdp-native.service
+    else
+        "${um[@]}" stop mios-rdp-native.service || true
+        systemctl start xrdp-sesman.service xrdp.service
+        "${um[@]}" start mios-rdp-vnc.service
+    fi
+    log "RDP server is now $(backend) on ${RDP_PORT}"
+    [[ "${2:-}" == --persist ]] && log "to persist: set [remote.rdp].server = '$to' in /usr/share/mios/mios.toml (under the toml lock)"
+    return 0
+}
+
+cmd_status() {
+    load_cfg
+    local st="/run/user/${RDP_OPERATOR_UID}/mios-rdp/stats.json"
+    echo "configured: ${RDP_SERVER}   active backend: $(backend)   native binary: $(native_binary || echo none)"
+    [[ -e "$FALLBACK_MARKER" ]] && echo "fallback marker: $(cat "$FALLBACK_MARKER" 2>/dev/null)"
+    [[ -r "$OVERRIDE" ]] && echo "runtime override: $(cat "$OVERRIDE")"
+    python3 -I -c 'import json,sys
+try:
+    d = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+keys = ("server", "attached", "output", "fps", "output_hz", "codec", "bitrate_kbps", "frames_in_flight")
+print("stats: " + ", ".join("%s=%s" % (k, d.get(k)) for k in keys if k in d))
+neg = d.get("negotiated") or {}
+if neg:
+    print("negotiated: " + json.dumps(neg))' "$st" 2>/dev/null || true
+}
+
+# .rdp file for mstsc / Windows App on Windows (no redirection UI there).
+cmd_rdp_file() {
+    load_cfg
+    local host; host="$(tailscale status --json 2>/dev/null | python3 -I -c 'import json,sys
+try:
+    print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))
+except Exception:
+    pass' 2>/dev/null)"
+    [[ -n "$host" ]] || host="$(hostname -f 2>/dev/null || hostname)"
+    cat <<EOF
+full address:s:${host}:${RDP_PORT}
+username:s:$(getent passwd "$RDP_OPERATOR_UID" | cut -d: -f1)
+authentication level:i:2
+prompt for credentials:i:0
+enablecredsspsupport:i:0
+negotiate security layer:i:1
+dynamic resolution:i:1
+audiomode:i:0
+audiocapturemode:i:1
+camerastoredirect:s:*
+encode redirected video capture:i:1
+redirected video capture encoding quality:i:1
+redirectclipboard:i:1
+drivestoredirect:s:*
+redirectlocation:i:1
+redirectsmartcards:i:1
+redirectprinters:i:0
+redirectcomports:i:0
+EOF
+}
+
+case "${1:-}" in
+    render)   cmd_render ;;
+    cert)     load_cfg; ensure_cert ;;
+    firewall) cmd_firewall ;;
+    vnc)      cmd_vnc ;;
+    bridge-config)  # bridge-config DIR: write DIR/bridge.json only (tests / inspection; no session needed)
+              load_cfg; VNC_DIR="${2:?usage: mios-rdp bridge-config DIR}"; VNC_SOCK="$VNC_DIR/wayvnc.sock"
+              FRONT_SOCK="$VNC_DIR/rfb.sock"; _bridge_json "$VNC_DIR" "$VNC_DIR/wayvnc.config" ;;
+    enabled)  cmd_enabled "${2:-}" ;;
+    native)   cmd_native ;;
+    native-failed) cmd_native_failed "${2:-}" ;;
+    native-config)  # native-config DIR: write DIR/native.json only (tests / inspection; no session needed)
+              load_cfg; VNC_DIR="${2:?usage: mios-rdp native-config DIR}"; _native_json "$VNC_DIR" "$(native_binary || echo none)" ;;
+    switch)   cmd_switch "${2:-}" "${3:-}" ;;
+    status)   cmd_status ;;
+    backend)  load_cfg; backend ;;
+    rdp-file) cmd_rdp_file ;;
+    *) echo "usage: mios-rdp {render|cert|firewall|vnc|native|enabled [xrdp|native]|switch native|xrdp|status|backend|rdp-file|bridge-config DIR|native-config DIR}" >&2; exit 2 ;;
+esac

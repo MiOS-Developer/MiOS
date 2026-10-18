@@ -398,8 +398,8 @@ class TestOsImageProvides(unittest.TestCase):
         mutants = {
             "no verify": sh.replace('mios-vscode-custom-css" verify "${_cs_bake[@]}"', 'mios-vscode-custom-css" true'),
             "masked patch": sh.replace('patch "${_cs_bake[@]}"', 'patch "${_cs_bake[@]}" || true'),
-            "a version literal": sh.replace("download/v${_cs_version}/code-server-${_cs_version}",
-                                            "download/v4.139.1/code-server-4.139.1"),
+            "a version literal": sh.replace('"${_cs_dl}/code-server-${_cs_version}-',
+                                            '"${_cs_dl}/code-server-4.139.1-'),
             "no SSOT pin": sh.replace("_toml_get image.sidecars code_server", "echo ghcr.io/coder/code-server:latest"),
         }
         for name, text in mutants.items():

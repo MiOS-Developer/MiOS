@@ -1,0 +1,7 @@
+# AI-hint: tuigreet console login without a compositor; opens the MiOS session menu (local, localhost and mesh tmux sessions) before any tmux session or shell starts.
+# AI-related: usr/libexec/mios/mios-terminal, src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions]
+[Desktop Entry]
+Name=MiOS Terminal Console
+Comment=Choose a local or mesh tmux session (or a plain shell) without starting the graphical desktop
+Exec=/usr/libexec/mios/mios-terminal
+Type=Application

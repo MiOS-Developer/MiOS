@@ -3,9 +3,27 @@
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 
-DEFAULT_USER="user"
-DEFAULT_HOST="user"
-DEFAULT_USER_FULLNAME="User"
+# Credentials have NO literal default: [identity].username / default_password / fullname come
+# from the LAYERED mios.toml (vendor < /etc/mios + mios.d < ~/.config/mios + mios.d) when one
+# is present on this host; otherwise the operator must type them (empty is refused).
+# ONE reader: usr/libexec/mios/mios-credential over usr/lib/mios/mios_credentials.py (the same
+# layered resolver the image build, 11-user.sh and the Windows projection use) -- no private
+# TOML parser here. This tree's vendor file is used when present (fresh host before the overlay).
+_MIOS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+_mios_cred() { # mios-credential <args...>; empty output + non-zero when unavailable/unresolved
+    local bin="" c
+    for c in "${_MIOS_HERE}/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
+        [[ -f "$c" ]] && { bin="$c"; break; }
+    done
+    [[ -n "$bin" ]] || return 3
+    if [[ -z "${MIOS_VENDOR_TOML:-}${MIOS_TOML:-}${MIOS_TOML_ROOT:-}" && -f "${_MIOS_HERE}/../usr/share/mios/mios.toml" ]]; then
+        MIOS_VENDOR_TOML="${_MIOS_HERE}/../usr/share/mios/mios.toml" python3 "$bin" "$@"
+    else
+        python3 "$bin" "$@"
+    fi
+}
+DEFAULT_USER="$(_mios_cred identity username 2>/dev/null || true)"
+DEFAULT_USER_FULLNAME="$(_mios_cred identity fullname 2>/dev/null || true)"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
 # shellcheck disable=SC2034
@@ -76,11 +94,20 @@ prompt_password() {
         read -rs pw1; echo >&2
         printf '%sConfirm:%s ' "${_BOLD}" "${_RESET}" >&2
         read -rs pw2; echo >&2
+        if [[ "$pw1" == "$pw2" && -z "$pw1" ]]; then
+            # Enter twice = the layered-SSOT credential: hashed by mios-credential (sha512-crypt),
+            # never handled here in plaintext. Empty stdout tells the caller to use SSOT_PASSWORD_HASH.
+            if SSOT_PASSWORD_HASH="$(_mios_cred hash 2>/dev/null)" && [[ "$SSOT_PASSWORD_HASH" == '$6$'* ]]; then
+                printf '%s' "$SSOT_PASSWORD_HASH" > "${SSOT_HASH_FILE}"
+                echo ""
+                return 0
+            fi
+        fi
         if [[ "$pw1" == "$pw2" && -n "$pw1" ]]; then
             echo "$pw1"
             return 0
         fi
-        log_warn "Passwords don't match or are empty."
+        log_warn "Passwords don't match or are empty (no SSOT [identity].default_password to fall back to)."
     done
 }
 
@@ -110,9 +137,15 @@ main() {
     check_network
 
     LINUX_USER="$(prompt_default 'Linux username' "${DEFAULT_USER}")"
+    while [[ -z "$LINUX_USER" ]]; do
+        log_warn "No SSOT [identity].username found -- a Linux username is required."
+        LINUX_USER="$(prompt_default 'Linux username' "")"
+    done
     HOSTNAME_VAL="$(prompt_default 'Hostname' "${DEFAULT_HOST}")"
     USER_FULLNAME="$(prompt_default 'Full name (GECOS)' "${DEFAULT_USER_FULLNAME}")"
-    USER_PASSWORD="$(prompt_password 'Password')"
+    SSOT_HASH_FILE="$(mktemp)"; trap 'rm -f "${SSOT_HASH_FILE:-}"' EXIT
+    USER_PASSWORD="$(prompt_password 'Password (Enter twice = SSOT [identity].default_password)')"
+    SSOT_PASSWORD_HASH="$(cat "$SSOT_HASH_FILE" 2>/dev/null || true)"; rm -f "$SSOT_HASH_FILE"
 
     log_phase "Review profile"
     printf "  User: %s\n  Host: %s\n  Mode: Total Root Overlay\n\n" "$LINUX_USER" "$HOSTNAME_VAL"
@@ -140,7 +173,12 @@ main() {
         log_info "Creating '$LINUX_USER' (groups: $existing_groups)"
         useradd -u 1000 -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER" 2>/dev/null || useradd -m -G "$existing_groups" -s "$DEFAULT_USER_SHELL" -c "$USER_FULLNAME" "$LINUX_USER"
     fi
-    echo "$LINUX_USER:$USER_PASSWORD" | chpasswd
+    if [[ -z "$USER_PASSWORD" && "${SSOT_PASSWORD_HASH:-}" == '$6$'* ]]; then
+        printf '%s:%s\n' "$LINUX_USER" "$SSOT_PASSWORD_HASH" | chpasswd -e
+    else
+        printf '%s:%s\n' "$LINUX_USER" "$USER_PASSWORD" | chpasswd
+    fi
+    unset USER_PASSWORD SSOT_PASSWORD_HASH
     chage -d 0 "$LINUX_USER" 2>/dev/null || true
     log_ok "User profile applied."
 

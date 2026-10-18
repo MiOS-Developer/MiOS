@@ -3,7 +3,7 @@
 
 Welcome to the comprehensive, All-in-One User Manual and System Documentation for **MiOS** (pronounced *"MyOS"*).
 
-This manual assembles the 88-chapter documentation suite. Each chapter is an authored file under [`manual/`](manual/); this page carries the table of contents and the machine-checked chapter index.
+This manual assembles the 89-chapter documentation suite. Each chapter is an authored file under [`manual/`](manual/); this page carries the table of contents and the machine-checked chapter index.
 
 ---
 
@@ -395,6 +395,14 @@ This manual assembles the 88-chapter documentation suite. Each chapter is an aut
   * [Proactive Thermal Regulation](manual/ch88-proactive-thermal-governor.md#88_proactive_thermal_regulation_architecture): Sysfs thermal rate-of-rise tracking.
   * [PID Control and Rate-of-Rise](manual/ch88-proactive-thermal-governor.md#88_pid_control_and_rate_of_rise): Predictive throttling prior to hardware trip points.
   * [Dynamic Power Cap Actuation](manual/ch88-proactive-thermal-governor.md#88_dynamic_power_cap_actuation): Real-time modulation of CPU/GPU power limits.
+* **[Chapter 89: Glass Desktop, Liquid Shell Controls, and Session Resilience](manual/ch89-glass-desktop-and-session-resilience.md)**
+  * [Glass Window Effects](manual/ch89-glass-desktop-and-session-resilience.md#89_glass_window_effects): Hyprland windowshade shaders, the duration contract and fade gamma.
+  * [Per-Window Glass Controls](manual/ch89-glass-desktop-and-session-resilience.md#89_per_window_glass_controls): Focus and proximity tabs, the glass pill and dynamic tab yielding.
+  * [Top-Bar App-Menu Pills](manual/ch89-glass-desktop-and-session-resilience.md#89_topbar_appmenu_pills): miosd appmenu registrar and the Quickshell tab slide IPC.
+  * [Float-First Window Placement](manual/ch89-glass-desktop-and-session-resilience.md#89_float_first_window_placement): Golden-ratio sizing and drag-to-tile.
+  * [Fan Control Safety Model](manual/ch89-glass-desktop-and-session-resilience.md#89_fan_control_safety_model): ventulusd, curve clamping and firmware preservation.
+  * [Looking Glass IDD Mirroring](manual/ch89-glass-desktop-and-session-resilience.md#89_looking_glass_idd_mirroring): Non-exclusive IDD and dual VNC/SPICE display mirroring.
+  * [Traversal OOM Resilience](manual/ch89-glass-desktop-and-session-resilience.md#89_kernel_traversal_oom_resilience): The /proc/kcore traversal root cause and tmux scope OOMPolicy.
 
 ---
 
@@ -495,6 +503,7 @@ their AI-hint headers, so a missing or hint-less chapter turns the
 | `usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md` | Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (task_485, task_2718). Covers shadow execution mechanics, query mirroring architecture, mutation guarding,... |
 | `usr/share/doc/mios/manual/ch87-socket-activation-handoff.md` | Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (task_486, task_2719). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD... |
 | `usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md` | Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (task_487, task_2720, task_488, task_2721). Details proactive PID thermal regulation, sysfs... |
+| `usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md` | Chapter 89: Glass Desktop, Liquid Shell Controls, Hyper-Converged VM Display Mirroring, and Session Resilience. Covers Hyprland windowshade shaders, per-window glass controls and interior fallbacks,... |
 
-<!-- derived from the AI-hint headers of 88 file(s) matching usr/share/doc/mios/manual/ch*.md -->
+<!-- derived from the AI-hint headers of 89 file(s) matching usr/share/doc/mios/manual/ch*.md -->
 <!-- /MIOS-GEN:index:usr/share/doc/mios/manual/ch*.md -->
