@@ -4454,8 +4454,7 @@ report("again")
         let bez: Vec<f64> = points
             .as_array()
             .filter(|p| p.len() == 2)
-            .map(|p| p.iter().filter_map(Value::as_array).flat_map(|xy| xy.iter().map(num)).collect::<Option<Vec<f64>>>())
-            .flatten()
+            .and_then(|p| p.iter().filter_map(Value::as_array).flat_map(|xy| xy.iter().map(num)).collect::<Option<Vec<f64>>>())
             .filter(|v| v.len() == 4 && (0.0..=1.0).contains(&v[0]) && (0.0..=1.0).contains(&v[2]) && (-2.0..=3.0).contains(&v[1]) && (-2.0..=3.0).contains(&v[3]))
             .ok_or("desktop.hyprland.lamp.curve must be [[x1, y1], [x2, y2]] with x in 0..=1 (or a curves name)")?;
         let pane = t
@@ -5345,6 +5344,14 @@ pub mod hyprglass_build {
         value(p, "source_repository")
     }
 
+    fn plugin_build_system<'a>(p: &'a Value, plugin: &str) -> Result<&'a str, String> {
+        match p.get("build_system") {
+            None => Ok("make"),
+            Some(Value::String(system)) if system == "make" || system == "cmake" => Ok(system),
+            _ => Err(format!("{plugin} build_system must be make or cmake")),
+        }
+    }
+
     /// The plugin commit hyprpm.toml ([repository] commit_pins = [[hyprland_commit, plugin_commit], ...])
     /// maps `hyprland` to, None when it has no entry. A malformed hyprpm.toml fails the build.
     fn hyprpm_pin(text: &str, hyprland: &str) -> Result<Option<String>, String> {
@@ -5433,6 +5440,16 @@ pub mod hyprglass_build {
     #[cfg(test)]
     mod upstream_tests {
         use super::*;
+        #[test]
+        fn plugin_build_system_accepts_cmake_and_rejects_invalid_configuration() {
+            let data: Value = toml::from_str("[default]\n[make]\nbuild_system = 'make'\n[cmake]\nbuild_system = 'cmake'\n[unknown]\nbuild_system = 'other'\n[wrong_type]\nbuild_system = 1\n").unwrap();
+            assert_eq!(plugin_build_system(&data["default"], "test").unwrap(), "make");
+            assert_eq!(plugin_build_system(&data["make"], "test").unwrap(), "make");
+            assert_eq!(plugin_build_system(&data["cmake"], "hypr3d").unwrap(), "cmake");
+            for key in ["unknown", "wrong_type"] {
+                assert!(plugin_build_system(&data[key], "hypr3d").unwrap_err().contains("hypr3d build_system must be make or cmake"));
+            }
+        }
         fn git(dir: &Path, args: &[&str]) {
             let ok = Command::new("git")
                 .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
@@ -5505,6 +5522,7 @@ pub mod hyprglass_build {
         if p.get("enabled").and_then(Value::as_bool) != Some(true) {
             return Ok(format!("{plugin} disabled in SSOT\n"));
         }
+        let build_system = plugin_build_system(p, plugin)?;
         let installed = output("rpm", &["-q", "--qf", "%{VERSION}", "hyprland"], root)?;
         if installed != value(h, "hyprland_version")? {
             return Err(format!(
@@ -5735,17 +5753,47 @@ pub mod hyprglass_build {
                 sdk
             )?
         );
-        command(
-            "make",
-            &[
-                format!("-j{jobs}"),
-                format!("INCLUDES={}", includes.join(" ")),
-                format!("LIBS={libs}"),
-                "LDFLAGS=-shared".into(),
-            ],
-            &build,
-        )?;
-        let artifact = build.join(format!("{plugin}.so"));
+        let artifact = match build_system {
+            "make" => {
+                command(
+                    "make",
+                    &[
+                        format!("-j{jobs}"),
+                        format!("INCLUDES={}", includes.join(" ")),
+                        format!("LIBS={libs}"),
+                        "LDFLAGS=-shared".into(),
+                    ],
+                    &build,
+                )?;
+                build.join(format!("{plugin}.so"))
+            }
+            "cmake" => {
+                let directory = sdk.join("cmake-build");
+                command(
+                    "cmake",
+                    &[
+                        "-S".into(), build.display().to_string(),
+                        "-B".into(), directory.display().to_string(),
+                        "-DCMAKE_BUILD_TYPE=Release".into(),
+                        "-DHYPRLAND_HEADERS=/usr".into(),
+                        format!("-DHYPRLAND_LUA_ROOT={}", lua_dir.display()),
+                        "-DHYPRLAND_USE_COMPOSITOR_GRAPHICS=ON".into(),
+                        format!("-DCMAKE_CXX_FLAGS={}", includes.join(" ")),
+                    ],
+                    sdk,
+                )?;
+                command("cmake", &[
+                    "--build".into(), directory.display().to_string(),
+                    "--parallel".into(), jobs.to_string(),
+                ], sdk)?;
+                command("ctest", &[
+                    "--test-dir".into(), directory.display().to_string(),
+                    "--output-on-failure".into(), "--no-tests=error".into(),
+                ], sdk)?;
+                directory.join(format!("{plugin}.so"))
+            }
+            other => return Err(format!("Unsupported {plugin} build_system {other}")),
+        };
         let dynamic = output(
             "readelf",
             &["-d", artifact.to_str().ok_or("Invalid artifact path")?],

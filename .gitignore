@@ -982,6 +982,7 @@ usr/share/mios/virtio/*.iso
 !/usr/share/mios/rofi/config.rasi
 
 !/usr/share/mios/hyprland/session.lua
+!/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
 
 !/usr/share/mios/theme/console-palette
 
