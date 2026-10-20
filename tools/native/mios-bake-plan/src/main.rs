@@ -62,7 +62,7 @@ fn resolve_image_val(
     let s1 = var_fallback_re.replace_all(val, |caps: &regex::Captures| {
         let var_name = &caps[1];
         let fallback = &caps[2];
-        if let Ok(v) = env::var(var_name) {
+        if let Some(v) = env::var(var_name).ok().filter(|v| !v.is_empty()) {
             return v;
         }
         if let Some(v) = ssot.get(var_name) {
@@ -72,7 +72,7 @@ fn resolve_image_val(
         }
         if var_name.starts_with("MIOS_") && var_name.ends_with("_IMAGE") {
             let key = var_name[5..var_name.len() - 6].to_lowercase();
-            if let Some(sc) = sidecars.get(&key) {
+            if let Some(sc) = sidecars.get(&key).filter(|v| !v.is_empty()) {
                 return sc.clone();
             }
         }
@@ -81,7 +81,7 @@ fn resolve_image_val(
 
     let s2 = var_simple_re.replace_all(&s1, |caps: &regex::Captures| {
         let var_name = &caps[1];
-        if let Ok(v) = env::var(var_name) {
+        if let Some(v) = env::var(var_name).ok().filter(|v| !v.is_empty()) {
             return v;
         }
         if let Some(v) = ssot.get(var_name) {
@@ -91,7 +91,7 @@ fn resolve_image_val(
         }
         if var_name.starts_with("MIOS_") && var_name.ends_with("_IMAGE") {
             let key = var_name[5..var_name.len() - 6].to_lowercase();
-            if let Some(sc) = sidecars.get(&key) {
+            if let Some(sc) = sidecars.get(&key).filter(|v| !v.is_empty()) {
                 return sc.clone();
             }
         }
@@ -924,6 +924,50 @@ mod tests {
             &empty
         )
         .contains('$'));
+    }
+
+    #[test]
+    fn empty_image_overrides_preserve_ssot_sidecar_and_literal_fallbacks() {
+        let name = "MIOS_BAKE_EMPTY_PROBE_IMAGE";
+        let previous = env::var_os(name);
+        unsafe { env::set_var(name, "") };
+        let simple = format!("${{{name}}}");
+        let fallback = format!("${{{name}:-docker.io/example/fallback:latest}}");
+        let empty = BTreeMap::new();
+        let ssot = BTreeMap::from([(name.to_string(), "docker.io/example/ssot:latest".into())]);
+        let sidecars = BTreeMap::from([(
+            "bake_empty_probe".to_string(),
+            "docker.io/example/sidecar:latest".into(),
+        )]);
+        let results = [
+            resolve_image_val(&simple, &empty, &ssot),
+            resolve_image_val(&fallback, &empty, &ssot),
+            resolve_image_val(&simple, &sidecars, &empty),
+            resolve_image_val(&fallback, &sidecars, &empty),
+            resolve_image_val(&fallback, &empty, &empty),
+            resolve_image_val(&simple, &empty, &empty),
+        ];
+        match previous {
+            Some(value) => unsafe { env::set_var(name, value) },
+            None => unsafe { env::remove_var(name) },
+        }
+        assert_eq!(
+            results,
+            [
+                "docker.io/example/ssot:latest",
+                "docker.io/example/ssot:latest",
+                "docker.io/example/sidecar:latest",
+                "docker.io/example/sidecar:latest",
+                "docker.io/example/fallback:latest",
+                simple.as_str(),
+            ]
+        );
+        let blank_sidecars = BTreeMap::from([("bake_empty_probe".to_string(), String::new())]);
+        assert_eq!(
+            resolve_image_val(&fallback, &blank_sidecars, &empty),
+            "docker.io/example/fallback:latest"
+        );
+        assert_eq!(resolve_image_val(&simple, &blank_sidecars, &empty), simple);
     }
 
     #[test]

@@ -3372,3 +3372,10 @@ so long. Let a run finish.
 - The operator is currently locked out of their remote SSH connection to the host.
 - Do not count on the operator reaching the host over SSH, or running or approving anything that needs a shell there. Work that needs that access is blocked until the operator restores it.
 - Reach the operator through their chat sessions, not through anything that depends on SSH. The same notice is posted on PR #62 (issuecomment-6207279015).
+
+## 2026-10-20 development recovery: empty bake-image overrides
+- Inspected the native relay: 14 prior participants offline, no pending messages; registered a separate development identity without taking the coordinator lease. Preserved all retained integration, layout, verification and bootstrap changes. Root retains its pre-existing btop change.
+- Continued task_994: empty environment and sidecar image overrides now fall through to nonempty SSOT, sidecar or literal defaults. Unresolved simple placeholders remain visible for diagnostics. No SSOT constants or deployment changes.
+- The new regression failed against the original resolver (six empty strings) and passed after the fix. All 23 bake-plan tests and strict all-target Clippy passed inside podman-MiOS-DEV. Restarted the existing stopped builder for verification.
+- CI registry remains red on nine unregistered suites and three RDP fixture scripts; desktop/hardware suites need proper classification. Full image, bootstrap, Windows and runtime goals remain open.
+- Operator added live nested Hyprland verification of Hyprglass plus Hypr3D, including chronological screenshot evidence; that work is active.
