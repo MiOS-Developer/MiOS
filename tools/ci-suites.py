@@ -236,13 +236,27 @@ def cmd_check(root: str, ci: dict) -> int:
                         " it is not a harness -- a suite listed here runs nowhere"
                         " and never touches [ci].max_exempt_suites")
 
+    # Helpers take arguments from a registered suite. Restrict their namespace
+    # and require a live owner so this cannot become an exemption for new suites.
+    helpers = ci.get("fixture_helpers") or {}
+    for path, owner in sorted(helpers.items()):
+        if (not path.startswith("tests/fixtures/") or ".." in Path(path).parts
+                or Path(path).name.startswith(("test-", "test_"))):
+            viol.append(f"[ci.fixture_helpers] {path} is not a fixture helper")
+        if not os.path.isfile(os.path.join(root, path)):
+            viol.append(f"[ci.fixture_helpers] {path} does not exist")
+        if owner not in reg:
+            viol.append(f"[ci.fixture_helpers] {path} owner {owner} runs in no tier")
+        if path in reg or path in exempt or path in runners:
+            viol.append(f"[ci.fixture_helpers] {path} has conflicting classifications")
+
     try:
         suites = _tracked(root)
     except GitUnavailable as exc:
         suites = []
         viol.append(f"cannot enumerate tracked suites: {exc}")
     for path in suites:
-        if path in reg or path in exempt or path in runners:
+        if path in reg or path in exempt or path in runners or path in helpers:
             continue
         viol.append(f"{path} is tracked but runs in no tier and is not exempt")
 

@@ -83,6 +83,27 @@ class TestRegistryReader(unittest.TestCase):
                     MOD.cmd_check(d, ci)
                 self.assertEqual(stale, "stale skip" in out.getvalue(), out.getvalue())
 
+    def test_fixture_helpers_require_a_registered_owner_and_fixture_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            helper = "tests/fixtures/rdp/meter.sh"
+            Path(d, helper).parent.mkdir(parents=True)
+            Path(d, helper).write_text("#!/bin/sh\nseconds=$1\n")
+            Path(d, "tests/test-rdp.py").write_text("")
+            for path, owner, expected in (
+                    (helper, "tests/test-rdp.py", None),
+                    (helper, "tests/not-registered.py", "runs in no tier"),
+                    ("tests/test-rdp.py", "tests/test-rdp.py", "not a fixture helper"),
+                    ("tests/fixtures/gone.sh", "tests/test-rdp.py", "does not exist")):
+                ci = self._ci(tiers={"unit": ["tests/test-rdp.py"]},
+                              fixture_helpers={path: owner})
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    MOD.cmd_check(d, ci)
+                diagnostics = out.getvalue()
+                if expected:
+                    self.assertIn(expected, diagnostics)
+                else:
+                    self.assertNotIn("[ci.fixture_helpers]", diagnostics)
+
     def test_a_suite_in_two_tiers_fails(self):
         ci = self._ci(tiers={"lint": ["automation/lint-json.sh"],
                              "gate": ["automation/lint-json.sh"]})
