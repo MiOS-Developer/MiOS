@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=MiOS Hyprland
-Comment=MiOS SSOT desktop with Quickshell and iGPU-first rendering
-Exec=/usr/bin/mios-gen hyprland-session
+Name=MiOS-Desktop (default iGPU)
+Comment=MiOS Hyprland and Quickshell; igpu hardware profile
+Exec=/usr/bin/mios-gen hyprland-session --hardware-profile igpu
 TryExec=/usr/bin/mios-gen
 Type=Application
 DesktopNames=Hyprland
