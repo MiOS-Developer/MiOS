@@ -3426,3 +3426,10 @@ so long. Let a run finish.
 - Verification in private offscreen test environments: dock 5 passed; power 8 passed; sysmon 7 passed with 5 explicit live-workstation tests skipped. Those skips are not hardware passes; the current native dGPU boot intentionally does not satisfy VFIO-only workstation assertions. No live compositor or driver ownership was changed.
 - Power tests now close temporary files and consumer reads. All 8 pass with ResourceWarning treated as an error. A separate relocated checkout fixture passes with both declared sampler consumers and fails the expected cpu_package_uw assertion when its local consumer is emptied, proving it does not validate the installed host file instead.
 - Receipts: /var/lib/mios-build/mios-desktop-ci-fixture-controls.json and mios-desktop-ci-consumer-controls.json. The original shared worktree edits remain untouched. Full CI, capture bake integration, current-boot guest/frame pacing and global task completion remain open.
+
+
+## 2026-10-21 installed profile review fix
+
+- Installed the tested static generator (SHA256 17fbce2e068a8a820fee1eec0b4d0f04167d7efa7a1b2177d72050fcfece162f) and generated session headers atomically after confirming the old generator hash and matching live hardware-profile tables. Prior binaries and entries are preserved under /var/lib/mios-build/mios-hardware-profile-install, with receipt.json recording both profile results.
+- The live installed BLS entries pass the generator's root-level check before and after installation. Both authenticated-user dry-runs pass: iGPU selects card1; dGPU selects card0 then card1. Compositor, configuration and target are identical. No desktop restart, driver rebinding, viewer launch, boot-option change or service reload was needed.
+- The current running compositor remains the remembered iGPU session in the native dGPU boot. Actual dGPU session rendering and VM/Looking Glass measurement require the appropriate next login/boot; the operator's logout timing question remains unanswered. The broader goal remains active.
