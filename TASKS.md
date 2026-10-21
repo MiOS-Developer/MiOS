@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1759 |
-| in_progress | 64 |
+| in_progress | 65 |
 | completed | 1827 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3691 |
+| total | 3692 |
 
 0 record(s) carry at least one override.
 
@@ -1326,6 +1326,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3543` Hyper-V blocker: os-release VERSION_ID follows upstream; MiOS's release moves to IMAGE_VERSION (WS-DEPLOY | P0 | S) -- pending · P0 · size S
 - `task_3545` P0-9 phase B: MiOS-DEV runs on the Hyper-V provider as a MiOS VM with real bootc upgrade and rollback; the WSL provider stays supported (WS-DEPLOY | P0 | L) -- pending · P0 · size L · depends_on task_3526
 - `task_3580` P2-11: GCE runs MiOS natively via an SSOT-generated Ignition auto-rebase from Fedora CoreOS (WS-DEPLOY | P2 | M) -- pending · P2 · size M
+- `task_3692` Deploy Bazzite VM with RTX 4090 and verified Looking Glass Wayland capture -- in_progress · owner mios-session-continuity · P0 · size L
 
 ### Epic task_3524
 

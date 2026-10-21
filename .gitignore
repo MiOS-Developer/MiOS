@@ -1005,3 +1005,6 @@ usr/share/mios/virtio/*.iso
 # Verified desktop profile deliverable fingerprints
 !.devloop_artifacts/
 !.devloop_artifacts/manifest.json
+
+# Complete source replacements for verified Linux capture/input fixes.
+!/usr/share/mios/looking-glass/source/**

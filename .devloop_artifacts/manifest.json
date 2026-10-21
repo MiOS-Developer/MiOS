@@ -1,22 +1,22 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-21T19:09:59.378991",
-  "total_artifacts": 10,
+  "last_updated": "2026-10-21T19:12:33.048040",
+  "total_artifacts": 20,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "de1eb419fcd8048c35219d9150ceaeb71405d12dab85a6b18693c1e23e7d93fd",
-      "size_bytes": 26191,
-      "created_at": "2026-10-21T19:09:59.377003",
+      "sha256": "c6e88f5890560dfafba5f354b46b0ae8d949306ef98acfb70e807cebeb1d87af",
+      "size_bytes": 26304,
+      "created_at": "2026-10-21T19:12:33.040022",
       "metadata": {}
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "ff6adc7d3feb33d10dc479835ea51753e12464b058fd3bb17a8fd7b7d810ca23",
-      "size_bytes": 571792,
-      "created_at": "2026-10-21T19:09:59.377402",
+      "sha256": "23543f545ab36e298a630da12d43e8e6ff91728f20edbc022efb6e9dbd91ce1a",
+      "size_bytes": 574960,
+      "created_at": "2026-10-21T19:12:33.040498",
       "metadata": {}
     },
     {
@@ -81,6 +81,86 @@
       "sha256": "e202276c8ad2643d349aac00f4bc2eaaea1aa946ae8b28e597405d8401e6540f",
       "size_bytes": 33931,
       "created_at": "2026-10-21T19:09:59.378989",
+      "metadata": {}
+    },
+    {
+      "path": "TASKS.md",
+      "artifact_type": "doc",
+      "sha256": "02a19e56ba249f28f5c6eda4e91d5210024047f7dd9fa42ffc7de6330bd2ab1d",
+      "size_bytes": 544575,
+      "created_at": "2026-10-21T19:12:33.040855",
+      "metadata": {}
+    },
+    {
+      "path": "tasks.jsonl",
+      "artifact_type": "config",
+      "sha256": "2e6ea1868725ad2f51909552245f46492eb5857e7cbddd63c947f6f6f40f3b75",
+      "size_bytes": 14515204,
+      "created_at": "2026-10-21T19:12:33.046914",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/README.md",
+      "artifact_type": "doc",
+      "sha256": "720afb39d58129c5ce68e4c32eb9c8ddaaeccd5053423341ae63d6d10618a94c",
+      "size_bytes": 3524,
+      "created_at": "2026-10-21T19:12:33.047066",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/client-wayland-input.c",
+      "artifact_type": "code",
+      "sha256": "5bb511d0636bbb45cb8070d57ac5f1c2a244e641e0533c78a653c13d17881b21",
+      "size_bytes": 21791,
+      "created_at": "2026-10-21T19:12:33.047201",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-app.c",
+      "artifact_type": "code",
+      "sha256": "4a0b621576f327a987e4e34e5b99d79e8df06f7645931bb9661fae78d428a376",
+      "size_bytes": 34528,
+      "created_at": "2026-10-21T19:12:33.047340",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-capture.h",
+      "artifact_type": "code",
+      "sha256": "d86e82968411f9a37a7179190f14cf614ad4731ee7db609df4a8e90b2d7e576b",
+      "size_bytes": 5157,
+      "created_at": "2026-10-21T19:12:33.047468",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-pipewire.c",
+      "artifact_type": "code",
+      "sha256": "72c2c6c397c5375b9fa2aedfc5387599ac9f2b6a020afbb4f5097330ffd74be3",
+      "size_bytes": 18722,
+      "created_at": "2026-10-21T19:12:33.047630",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-portal.c",
+      "artifact_type": "code",
+      "sha256": "08ed8d75908a2167a1e27229bb028170ff08eb4fb9a53c5085db33243fa62095",
+      "size_bytes": 11943,
+      "created_at": "2026-10-21T19:12:33.047769",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/test-cursor.c",
+      "artifact_type": "code",
+      "sha256": "9f6f82c719f8f646e117fb914b9ac1f1eeaba38686197a7026522b3584cc8509",
+      "size_bytes": 2833,
+      "created_at": "2026-10-21T19:12:33.047903",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/test-hover.c",
+      "artifact_type": "code",
+      "sha256": "9f7dbc434428512ec50a51bb7110b672f569d58211a1e258d8abcd86549cd708",
+      "size_bytes": 1677,
+      "created_at": "2026-10-21T19:12:33.048038",
       "metadata": {}
     }
   ]
