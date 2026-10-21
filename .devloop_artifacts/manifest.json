@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-21T19:12:33.048040",
-  "total_artifacts": 20,
+  "last_updated": "2026-10-21T19:17:02.423239",
+  "total_artifacts": 23,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -14,9 +14,9 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "23543f545ab36e298a630da12d43e8e6ff91728f20edbc022efb6e9dbd91ce1a",
-      "size_bytes": 574960,
-      "created_at": "2026-10-21T19:12:33.040498",
+      "sha256": "46956033937feb441909f715b5d7b5f8c499ff54573d7c971b9d47059ecd244d",
+      "size_bytes": 576353,
+      "created_at": "2026-10-21T19:17:02.422632",
       "metadata": {}
     },
     {
@@ -161,6 +161,30 @@
       "sha256": "9f7dbc434428512ec50a51bb7110b672f569d58211a1e258d8abcd86549cd708",
       "size_bytes": 1677,
       "created_at": "2026-10-21T19:12:33.048038",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-docklamp-adversarial.py",
+      "artifact_type": "test",
+      "sha256": "568a70ff2a3a4cfd589e5995d5b11041cb424cba97c542e0e54a51a81c2194fe",
+      "size_bytes": 11162,
+      "created_at": "2026-10-21T19:17:02.422886",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-power-sampler.py",
+      "artifact_type": "test",
+      "sha256": "4647cefd0c7a841b14aeee144954563fe9a96034cd41c893a4be6e85991889bf",
+      "size_bytes": 5906,
+      "created_at": "2026-10-21T19:17:02.423070",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-sysmon-vfio-adversarial.py",
+      "artifact_type": "test",
+      "sha256": "dc863b4d3b3fc25ed7c45ead63b53ccd9a01a746accb1841593bec1816666926",
+      "size_bytes": 19421,
+      "created_at": "2026-10-21T19:17:02.423237",
       "metadata": {}
     }
   ]

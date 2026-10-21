@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# AI-hint: Adversarial fixture tests for dock restore identity, expiry, and invalid inputs.
+# AI-related: usr/share/mios/quickshell/DockLamp.qml, tests/test-mios-lamp.py
 """Adversarial challenge test harness for DockLamp.qml restoringWindows logic."""
 
 import json
@@ -10,7 +12,8 @@ import time
 import unittest
 
 QS = shutil.which("quickshell")
-QS_DIR = "/usr/share/mios/quickshell"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+QS_DIR = os.path.join(ROOT, "usr/share/mios/quickshell")
 
 SHELL_QML = """import QtQuick
 import Quickshell
@@ -48,7 +51,11 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         self.log_path = os.path.join(self.tmp, "qs.log")
         self.procs = []
         self.logs = []
-        self.env = dict(os.environ)
+        runtime = os.path.join(self.tmp, "runtime")
+        os.makedirs(runtime, mode=0o700)
+        self.env = dict(os.environ, XDG_RUNTIME_DIR=runtime)
+        for key in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY"):
+            self.env.pop(key, None)
 
     def tearDown(self):
         for f in self.logs:
@@ -65,7 +72,7 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         with open(self.fixture_json, "w", encoding="utf-8") as f:
             json.dump(fixture_dict, f)
         self.env = dict(
-            os.environ,
+            self.env,
             QT_QPA_PLATFORM="offscreen",
             MIOS_DOCK_ICONS_JSON=self.dock_json,
             MIOS_LAMP_LAUNCH_JSON=self.launch_json,
@@ -83,6 +90,9 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         self.procs.append(p)
 
     def call_ipc(self, *args: str) -> str:
+        if self.procs and self.procs[-1].poll() is not None:
+            with open(self.log_path, encoding="utf-8") as log:
+                self.fail("Dock fixture exited before IPC:\n" + log.read())
         r = subprocess.run(
             [QS, "ipc", "--path", self.shell_qml, "call", "docklamp", *args],
             env=self.env,
@@ -128,7 +138,7 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         self.assertEqual(st["minimized_windows"][0]["address"], "0xdeadbeef01")
 
         # Initiate restore
-        res_cmd = self.call_ipc("restore", "0xdeadbeef01")
+        res_cmd = self.call_ipc("restore", "0xdeadbeef01", "fixture")
         self.assertIn("0xdeadbeef01", res_cmd)
 
         # Simulate Hyprland moving window away from special:minimized (fixture now empty)
@@ -162,10 +172,10 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         self.wait_state(lambda s: len(s.get("minimized_windows", [])) == 1)
 
         # Call restore multiple times rapidly
-        self.call_ipc("restore", "0x55aa112233")
-        self.call_ipc("restore", "0x55aa112233")
-        self.call_ipc("restore", "0x55AA112233") # Uppercase
-        self.call_ipc("restore", "55aa112233")   # Missing 0x prefix
+        self.call_ipc("restore", "0x55aa112233", "fixture")
+        self.call_ipc("restore", "0x55aa112233", "fixture")
+        self.call_ipc("restore", "0x55AA112233", "fixture") # Uppercase
+        self.call_ipc("restore", "55aa112233", "fixture")   # Missing 0x prefix
 
         # Clear fixture
         self.update_fixture({"clients": []})
@@ -187,7 +197,7 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
         self.wait_state(lambda s: len(s.get("minimized_windows", [])) == 2)
 
         # Restore W1 at t = 0
-        self.call_ipc("restore", "0x1111")
+        self.call_ipc("restore", "0x1111", "fixture")
         # Clear W1 from fixture immediately
         self.update_fixture({
             "clients": [
@@ -197,7 +207,7 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
 
         # Wait 450ms, then restore W2
         time.sleep(0.45)
-        self.call_ipc("restore", "0x2222")
+        self.call_ipc("restore", "0x2222", "fixture")
         # Clear W2 from fixture
         self.update_fixture({"clients": []})
 
@@ -241,7 +251,7 @@ class DockLampRestoringAdversarialTest(unittest.TestCase):
             "undefined"
         ]
         for bad in bad_addrs:
-            self.call_ipc("restore", bad)
+            self.call_ipc("restore", bad, "fixture")
 
         st = self.get_state()
         self.assertEqual(len(st.get("minimized_windows", [])), 0, f"No invalid address should be recorded in minimized_windows, got {st.get('minimized_windows')}")

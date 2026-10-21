@@ -24,8 +24,9 @@ import time
 import unittest
 
 QS = shutil.which("quickshell")
-SYSMON_QML = "/usr/share/mios/quickshell/Sysmon.qml"
-THEME_QML = "/usr/share/mios/quickshell/Theme.qml"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SYSMON_QML = os.path.join(ROOT, "usr/share/mios/quickshell/Sysmon.qml")
+THEME_QML = os.path.join(ROOT, "usr/share/mios/quickshell/Theme.qml")
 LIVE_CONFIG_QML = "/usr/share/mios/quickshell/Config.qml"
 
 libc = ctypes.CDLL(None)

@@ -6,6 +6,7 @@
 # AI-related: usr/libexec/mios/mios-power-sampler, usr/lib/systemd/system/mios-power-sampler.service,
 # usr/share/mios/quickshell/Sysmon.qml, usr/libexec/mios/mios-sysmon-line
 import os
+from pathlib import Path
 import stat
 import subprocess
 import tempfile
@@ -13,7 +14,8 @@ import threading
 import time
 import unittest
 
-SAMPLER = "/usr/libexec/mios/mios-power-sampler"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAMPLER = os.path.join(ROOT, "usr/libexec/mios/mios-power-sampler")
 
 
 def zone(root, name, idx="intel-rapl:0", energy=1_000_000, rng=262_143_328_850):
@@ -53,7 +55,7 @@ class Positive(unittest.TestCase):
             th.join()
             self.assertEqual(p.returncode, 0, p.stderr)
             f = os.path.join(out, "cpu_package_uw")
-            uw = int(open(f).read())
+            uw = int(Path(f).read_text())
             self.assertEqual(uw % 100_000, 0, "quantised to 0.1 W")
             self.assertTrue(20_000_000 <= uw <= 26_000_000, uw)
             self.assertEqual(stat.S_IMODE(os.stat(f).st_mode), 0o644)
@@ -68,7 +70,7 @@ class Positive(unittest.TestCase):
             p, _ = run(d, out)
             th.join()
             self.assertEqual(p.returncode, 0, p.stderr)
-            uw = int(open(os.path.join(out, "cpu_package_uw")).read())
+            uw = int((Path(out) / "cpu_package_uw").read_text())
             self.assertTrue(4_000_000 <= uw <= 5_200_000, uw)
 
 
@@ -87,7 +89,7 @@ class Negative(unittest.TestCase):
             zone(d, "core", idx="intel-rapl:0:0")               # a subzone only, no package
             out = os.path.join(d, "out")
             os.makedirs(out)
-            open(os.path.join(out, "cpu_package_uw"), "w").write("9999999\n")
+            (Path(out) / "cpu_package_uw").write_text("9999999\n")
             p, _ = run(d, out)
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertFalse(os.path.exists(os.path.join(out, "cpu_package_uw")), "a stale value must be withdrawn")
@@ -118,8 +120,8 @@ class LiveSystem(unittest.TestCase):
             self.assertEqual(os.stat(f).st_mode & 0o044, 0, f + " is readable by group/other")
 
     def test_consumers_use_the_sampler(self):
-        qml = open("/usr/share/mios/quickshell/Sysmon.qml").read()
-        line = open("/usr/libexec/mios/mios-sysmon-line").read()
+        qml = (Path(ROOT) / "usr/share/mios/quickshell/Sysmon.qml").read_text()
+        line = (Path(ROOT) / "usr/libexec/mios/mios-sysmon-line").read_text()
         self.assertIn("/run/mios/power/cpu_package_uw", qml)
         self.assertIn("/run/mios/power/cpu_package_uw", line)
         self.assertNotIn("powercap/intel-rapl:0/energy_uj", line)
