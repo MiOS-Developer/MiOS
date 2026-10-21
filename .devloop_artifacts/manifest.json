@@ -1,0 +1,87 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2026-10-21T19:09:59.378991",
+  "total_artifacts": 10,
+  "artifacts": [
+    {
+      "path": ".gitignore",
+      "artifact_type": "config",
+      "sha256": "de1eb419fcd8048c35219d9150ceaeb71405d12dab85a6b18693c1e23e7d93fd",
+      "size_bytes": 26191,
+      "created_at": "2026-10-21T19:09:59.377003",
+      "metadata": {}
+    },
+    {
+      "path": ".devloop/LEDGER.md",
+      "artifact_type": "doc",
+      "sha256": "ff6adc7d3feb33d10dc479835ea51753e12464b058fd3bb17a8fd7b7d810ca23",
+      "size_bytes": 571792,
+      "created_at": "2026-10-21T19:09:59.377402",
+      "metadata": {}
+    },
+    {
+      "path": "tools/native/mios-gen/src/main.rs",
+      "artifact_type": "code",
+      "sha256": "a8c3d6e822ea1d7fdfbdf5c19f5ff45642c309bcaef269ccc277bdf210a03127",
+      "size_bytes": 112523,
+      "created_at": "2026-10-21T19:09:59.377584",
+      "metadata": {}
+    },
+    {
+      "path": "tools/native/mios-gen/src/render.rs",
+      "artifact_type": "code",
+      "sha256": "cd6d13366fd7414376bb35d8ebb646b25ea2a74f69e7ed3d26529bb563fa1039",
+      "size_bytes": 294438,
+      "created_at": "2026-10-21T19:09:59.377801",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/mios.toml",
+      "artifact_type": "config",
+      "sha256": "3a959ac7ae9e40c570b4b014c841d84b827c16572a2ef48f0839054e4e4e9266",
+      "size_bytes": 926644,
+      "created_at": "2026-10-21T19:09:59.378395",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/hyprland/hyprland.lua",
+      "artifact_type": "config",
+      "sha256": "03cf774df6a19691e7183b0b888c9ddf7d84b43214999636cb4004611eed4b94",
+      "size_bytes": 33425,
+      "created_at": "2026-10-21T19:09:59.378512",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/wayland-sessions/hyprland.desktop",
+      "artifact_type": "config",
+      "sha256": "3ef15621d3cd8ae2945d201cfd8857ea53e2ed742c5a500433bd08a9b0851153",
+      "size_bytes": 408,
+      "created_at": "2026-10-21T19:09:59.378635",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/wayland-sessions/mios-desktop-dgpu.desktop",
+      "artifact_type": "config",
+      "sha256": "a628537e276eda6c83f85fb634fbf1746e60e0ec0bffde5eefc4bd4f8993c065",
+      "size_bytes": 407,
+      "created_at": "2026-10-21T19:09:59.378732",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/doc/mios/manual.md",
+      "artifact_type": "doc",
+      "sha256": "f0b4a42441c2cd1a0542ab2967ab8695f27df24a12ccc2a72897c2df1cfdc2c2",
+      "size_bytes": 81896,
+      "created_at": "2026-10-21T19:09:59.378868",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
+      "artifact_type": "doc",
+      "sha256": "e202276c8ad2643d349aac00f4bc2eaaea1aa946ae8b28e597405d8401e6540f",
+      "size_bytes": 33931,
+      "created_at": "2026-10-21T19:09:59.378989",
+      "metadata": {}
+    }
+  ]
+}

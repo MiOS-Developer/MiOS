@@ -519,6 +519,7 @@ etc/sysctl.d/*
 !/usr/share/cockpit/branding/mios/**
 !/usr/share/wayland-sessions/
 !/usr/share/wayland-sessions/hyprland.desktop
+!/usr/share/wayland-sessions/mios-desktop-dgpu.desktop
 !/usr/share/wayland-sessions/tmux-console.desktop
 !/usr/share/pki/
 /usr/share/pki/*
@@ -1000,3 +1001,7 @@ usr/share/mios/virtio/*.iso
 /etc/mios/keys/
 # Public repository signing keys named *.key stay tracked (PGP PUBLIC KEY BLOCKs only).
 !/usr/share/mios/repos/*.key
+
+# Verified desktop profile deliverable fingerprints
+!.devloop_artifacts/
+!.devloop_artifacts/manifest.json

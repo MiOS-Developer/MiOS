@@ -458,3 +458,57 @@ MiOS resolved this vulnerability at both the application and systemd architectur
    ```
 
 With `OOMPolicy=continue`, if a runaway compiler, language model, or build script triggers an OOM event, the Linux kernel terminates only that offending child process. The scope remains healthy, the parent shell stays responsive, and the developer's tmux session is preserved without interruption.
+
+
+---
+
+### <a name="89_desktop_hardware_profiles"></a>89.8 Desktop Hardware Profiles
+
+The login choices `MiOS-Desktop (default iGPU)` and `MiOS-Desktop dGPU (NVIDIA)`
+use the same Hyprland configuration, Quickshell and `mios-desktop.target`.
+Only the selected hardware profile and DRM device order differ. Their generated
+desktop entries live in `/usr/share/wayland-sessions/`; the launcher is
+`/usr/bin/mios-gen hyprland-session`.
+
+The SSOT tables are `[desktop.hyprland.hardware_profiles.igpu]` and
+`[desktop.hyprland.hardware_profiles.dgpu]`. Each declares its desktop-file
+name, visible name, PCI identity or identity file, DRM alias and whether to
+include other DRM devices after the selected GPU. PCI identity takes precedence
+over the alias. A missing requested GPU fails with an error; it does not silently
+select another GPU.
+
+An explicit login choice (`--hardware-profile`) takes precedence over the
+`mios.desktop.gpu=` kernel argument. Without either, the launcher uses
+`desktop.hyprland.hardware_profile`, whose vendor default is `igpu`.
+A remembered iGPU login choice therefore still starts the iGPU desktop after a
+dGPU boot. Select the dGPU login choice to render that desktop on the dGPU.
+
+For existing hosts using BLS type-1 entries, generate the two hardware boot
+choices from the installed kernel entry:
+
+```sh
+mios-gen render-hyprland --boot-entry /boot/loader/entries/<existing-kernel-entry>.conf
+mios-gen render-hyprland --boot-entry /boot/loader/entries/<existing-kernel-entry>.conf --check
+mios-gen hyprland-session --hardware-profile dgpu --dry-run
+```
+
+The generator retains the source kernel, initrd, root filesystem and remaining
+kernel options. Profile `boot_remove` and `boot_append` arrays describe only
+the hardware differences. It refuses to replace boot entries it did not generate.
+An explicit `--root` reads that root's vendor TOML, so staging and review do not
+read the builder's installed configuration.
+
+Signed UKI entries are rejected: their hardware command lines must be built and
+signed through the image pipeline. The BLS generator does not modify signed UKIs.
+
+A whole GPU assigned to a VM cannot also render the host desktop. The iGPU boot
+profile retains VFIO reservation for the guest. On the development host, the dGPU
+boot profile instead loads the available Nouveau driver; it does not install a
+proprietary driver. Changing the login choice does not detach a running VM's GPU
+or change driver ownership. Boot the appropriate hardware profile before login.
+
+VRR is configured through `[desktop.hyprland.config.misc] vrr` and requires an
+enabled adaptive-sync output. Confirm the live output with `hyprctl monitors -j`.
+A guest compositor frame-rate measurement does not establish Looking Glass
+delivery rate; verify the existing viewer's image, cursor movement and frame
+statistics separately.
