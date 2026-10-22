@@ -16085,6 +16085,8 @@ unit = [
     "tests/test-zen-layout-projection.py",
     "tests/test-mios-rdp-native.py",
     "tests/test-xbox-r3-regression.py",
+    "tests/test-mios-xbox-legacy-retired.py",
+    "tests/test-power-sampler.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [
