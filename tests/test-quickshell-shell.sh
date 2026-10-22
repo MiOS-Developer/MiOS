@@ -57,7 +57,7 @@ fi
 # 3. Theme.qml SSOT & FileView bridge
 echo "[test-quickshell-shell] Test 3: SSOT Theme bridge in Theme.qml"
 THEME_QML="$QML_DIR/Theme.qml"
-if grep -q 'path: "/etc/mios/theme/theme.json"' "$THEME_QML" && \
+if grep -Fq 'path: QS.Quickshell.env("MIOS_THEME_BRIDGE") || "/etc/mios/theme/theme.json"' "$THEME_QML" && \
    grep -q 'watchChanges: true' "$THEME_QML" && \
    grep -q 'JSON.parse' "$THEME_QML"; then
     _pass "Theme.qml dynamically watches /etc/mios/theme/theme.json via Quickshell.Io FileView"
@@ -95,10 +95,16 @@ fi
 # 6. Wayland Session Desktop Entry
 echo "[test-quickshell-shell] Test 6: Display Manager Wayland session"
 SESSION_DESKTOP="$REPO_ROOT/usr/share/wayland-sessions/hyprland.desktop"
-if [[ -f "$SESSION_DESKTOP" ]] && grep -q "Exec=Hyprland" "$SESSION_DESKTOP"; then
+if [[ -f "$SESSION_DESKTOP" ]] && grep -q "Exec=/usr/bin/mios-gen hyprland-session --hardware-profile igpu" "$SESSION_DESKTOP"; then
     _pass "Wayland session entry hyprland.desktop is present and valid"
 else
     _fail "Wayland session entry hyprland.desktop is invalid or missing"
+fi
+DGPU_DESKTOP="$REPO_ROOT/usr/share/wayland-sessions/mios-desktop-dgpu.desktop"
+if [[ -f "$DGPU_DESKTOP" ]] && grep -q "Exec=/usr/bin/mios-gen hyprland-session --hardware-profile dgpu" "$DGPU_DESKTOP"; then
+    _pass "dGPU session uses the shared launcher with its explicit hardware profile"
+else
+    _fail "dGPU session entry is invalid or missing"
 fi
 
 echo "[test-quickshell-shell] === Test Results: $pass passed, $fail failed ==="

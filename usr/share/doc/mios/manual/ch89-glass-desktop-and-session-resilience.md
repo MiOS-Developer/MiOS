@@ -6,6 +6,41 @@
 
 This chapter documents the graphics shaders, liquid shell controls, window management geometry, hardware fan safety governors, hyper-converged virtual machine display mirroring, and process scope resilience layers implemented across [`usr/share/mios/hyprland/shaders/`](file:///usr/share/mios/hyprland/shaders/), [`src/mios-rs/miosd/`](file:///src/mios-rs/miosd/), [`usr/share/mios/quickshell/`](file:///usr/share/mios/quickshell/), [`usr/share/mios/windows/mios-looking-glass-idd.ps1`](file:///usr/share/mios/windows/mios-looking-glass-idd.ps1), and [`usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf`](file:///usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf).
 
+### Default graphical sessions
+
+The login choices **MiOS iGPU (default)** and **MiOS dGPU** start the same
+Hyprland configuration, Quickshell surfaces and glass effects. The entries in
+`/usr/share/wayland-sessions/` call `mios-gen hyprland-session` with an explicit
+hardware profile. Device identity and ordering come from
+`[desktop.hyprland.hardware_profiles]` in `/usr/share/mios/mios.toml`, with the
+usual host and user overrides. A selected GPU must have a matching native DRM
+device; a GPU bound to `vfio-pci` for a guest cannot render the host desktop.
+Select its native-driver boot profile before choosing the dGPU login session.
+
+The launcher passes the selected GPU to the compositor. The startup hook also
+imports `AQ_DRM_DEVICES`, `WLR_DRM_DEVICES`, `DRI_PRIME` and
+`MIOS_DESKTOP_HARDWARE_PROFILE` into the user service manager so Quickshell and
+desktop services use that selection. Logout stops both `mios-desktop.target`
+and `graphical-session.target`, releasing the old session's desktop services.
+
+Hyprglass renders the desktop glass material. The MiOS Hypr3DGlass integration
+uses `/usr/lib64/mios/hypr3d.so`, declared in `[desktop.hyprland.hypr3d]`, for the
+3D view. **Super+G** toggles that view in either GPU session; the chord and enable
+switch are exposed in the local configurator. The engine loads on first use,
+outside configuration parsing. It reuses its loaded instance after a reload.
+An unavailable optional engine leaves the desktop shell usable. The image build uses the existing compositor ABI
+hold and `build-hyprland-plugin --name hypr3d` with the tracked MiOS glass patch.
+
+The live desktop wallpaper blends three rectilinear projections in both the
+3D background and glass reflections. This preserves its top-down capture
+coordinates without collapsing the image at the top and bottom of a sphere
+or exposing hard cube-face boundaries. Authored panorama files
+retain equirectangular sampling. Mirrored panorama wrapping is off by default;
+`desktop.hyprland.hypr3d.config.world.panorama_mirror` controls that explicit
+effect for panorama files. The renderer's CTest regression runs the shared GLSL
+mapping in an offscreen EGL context and checks orientation, both poles, and
+color continuity across projection boundaries using an asymmetric texture.
+
 ```mermaid
 flowchart TD
     subgraph CompositorPlane ["Hyprland Compositor & Shaders"]

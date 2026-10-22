@@ -18,6 +18,7 @@ for _gen in ux/wm_config_gen.py desktop/gpu_terminal.py win/wt_profile_inject.py
     python3 "/usr/libexec/mios/${_gen}" --write-fixture /
 done
 /usr/libexec/mios/mios-gen build-hyprglass --root /
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d
 /usr/libexec/mios/mios-gen render-hyprland --root /
 # Project the user session from the same SSOT before registering the login entry.
 while IFS= read -r _unit; do

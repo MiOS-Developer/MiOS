@@ -44,10 +44,10 @@ if not ok then
  end
  if not state.hooks then
   hl.on("hyprland.start", function()
-   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES && systemctl --user start mios-desktop.target")
+   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && systemctl --user start mios-desktop.target")
   end)
   hl.on("hyprland.shutdown", function()
-   hl.exec_cmd("systemctl --user stop mios-desktop.target")
+   hl.exec_cmd("systemctl --user stop mios-desktop.target graphical-session.target")
   end)
  end
 end

@@ -7727,8 +7727,8 @@ window_rules = [
   # this rule only keeps miosd placement from re-tiling it when dragged).
   { name = "mios-looking-glass", match = { class = "^(looking-glass-client)$" }, float = true, center = true },
 ]
-startup = ["dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES && systemctl --user start mios-desktop.target"]
-shutdown = ["systemctl --user stop mios-desktop.target"]
+startup = ["dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && systemctl --user start mios-desktop.target"]
+shutdown = ["systemctl --user stop mios-desktop.target graphical-session.target"]
 bindings = [
   { key = "SUPER + Super_L", dispatcher = "exec_cmd", args = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call search toggle", flags = { release = true } , label = "Global search" },
   { key = "SUPER + Super_R", dispatcher = "exec_cmd", args = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call search toggle", flags = { release = true } , label = "Global search" },
@@ -8107,8 +8107,23 @@ bindings = [
 
 # Hardware profiles share the compositor, shell, theme, bindings and services.
 # pci is optional host/user identity; pci_file preserves the existing host selector.
+# Hypr3DGlass shares the compositor ABI and Hyprglass material with the flat desktop.
+# The MiOS patch supplies the glass pass and compositor graphics/Lua build integration.
+[desktop.hyprland.hypr3d]
+enabled = true
+source_repository = "https://github.com/samine825/Hypr3D.git"
+build_system = "cmake"
+path = "/usr/lib64/mios/hypr3d.so"
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch"]
+toggle_key = "SUPER + G"
+
+[desktop.hyprland.hypr3d.config]
+
+[desktop.hyprland.hypr3d.config.world]
+panorama_mirror = false
+
 [desktop.hyprland.hardware_profiles.igpu]
-name = "MiOS-Desktop (default iGPU)"
+name = "MiOS iGPU (default)"
 session_file = "hyprland.desktop"
 boot_title = "MiOS-Desktop (default iGPU)"
 boot_remove = ["mios.desktop.gpu="]
@@ -8119,7 +8134,7 @@ pci_file = "/etc/mios/hyprland/igpu-pci"
 include_other_devices = false
 
 [desktop.hyprland.hardware_profiles.dgpu]
-name = "MiOS-Desktop dGPU (NVIDIA)"
+name = "MiOS dGPU"
 session_file = "mios-desktop-dgpu.desktop"
 boot_title = "MiOS-Desktop dGPU (NVIDIA)"
 boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids="]
@@ -10000,7 +10015,7 @@ wallpaper           = ""                                    # optional image pat
 session_dirs        = ["/usr/share/wayland-sessions", "/usr/share/xsessions"]  # passed to both greeters (tuigreet --sessions, glass session list)
 tuigreet            = "/usr/bin/tuigreet"                   # the real tuigreet binary (NOT the /usr/local/bin/tuigreet helper wrapper)
 tuigreet_args       = ["--time", "--asterisks", "--remember", "--remember-user-session"]  # flags before --sessions/--cmd, same as the live config
-session_cmd         = "/usr/local/bin/start-hyprland-igpu"  # tuigreet --cmd: what tuigreet starts when no session file is chosen
+session_cmd         = "/usr/bin/mios-gen hyprland-session --hardware-profile igpu"  # tuigreet --cmd: default iGPU session
 
 [theme.cursor_windows]
 base_size           = 24

@@ -2848,10 +2848,10 @@ if not ok then
  end
  if not state.hooks then
   hl.on("hyprland.start", function()
-   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES && systemctl --user start mios-desktop.target")
+   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && systemctl --user start mios-desktop.target")
   end)
   hl.on("hyprland.shutdown", function()
-   hl.exec_cmd("systemctl --user stop mios-desktop.target")
+   hl.exec_cmd("systemctl --user stop mios-desktop.target graphical-session.target")
   end)
  end
 end
@@ -3098,6 +3098,7 @@ end
             .ok_or("workspace_count must be 1..10")?;
         out += &format!("for i = 1, {count} do\n local key = i % 10\n hl.bind({} .. \" + \" .. key, hl.dsp.focus({{ workspace = i }}))\n hl.bind({} .. \" + SHIFT + \" .. key, hl.dsp.window.move({{ workspace = i }}))\nend\n",string(h,"main_modifier")?,string(h,"main_modifier")?);
         out += "mios_state.binds = true\n";
+        out += &hypr3d_profile(data)?;
         if let Some(glass) = h
             .get("hyprglass")
             .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
@@ -4641,6 +4642,33 @@ report("again")
     }
     // ---- end magic lamp ------------------------------------------------------------------------------------------
 
+    /// Load the 3D engine on demand, outside configuration parsing. Reloads
+    /// replace its toggle binding without initializing the engine again.
+    fn hypr3d_profile(data: &Value) -> Result<String, String> {
+        let Some(plugin) = hardware_profile_table(data)?.get("hypr3d") else {
+            return Ok(String::new());
+        };
+        let table = plugin.as_table().ok_or("desktop.hyprland.hypr3d must be a table")?;
+        if !table.get("enabled").and_then(Value::as_bool)
+            .ok_or("desktop.hyprland.hypr3d.enabled must be boolean")? {
+            return Ok(String::new());
+        }
+        let path = table.get("path").and_then(Value::as_str)
+            .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
+                && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
+            .ok_or("desktop.hyprland.hypr3d.path must be an absolute FHS path")?;
+        let key = table.get("toggle_key").and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty() && !s.chars().any(char::is_control))
+            .ok_or("desktop.hyprland.hypr3d.toggle_key must be a nonempty key chord")?;
+        let config = table.get("config").filter(|v| v.is_table())
+            .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        Ok(format!(
+            "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, function()\n  mios_section(\"hypr3d\", function()\n   if not hl.plugin.hypr3d then hl.plugin.load({}) end\n   if hl.plugin.hypr3d then\n    hl.plugin.hypr3d.config({})\n    hl.plugin.hypr3d.toggle()\n   end\n  end)\n end)\nend)\n",
+            lua(&Value::String(key.into()))?, lua(&Value::String(key.into()))?,
+            lua(&Value::String(path.into()))?, lua(config)?,
+        ))
+    }
+
     fn hardware_profile_data(root: &Path) -> Result<Value,String> {
         if root == Path::new("/") {
             crate::terminal::tmux_theme::tmux_runtime::load_layered(root)
@@ -5100,6 +5128,57 @@ report("again")
             bad = d.clone();
             bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["name"] = Value::String("GPU\nExec=bad".into());
             assert!(session_entries(&bad).is_err());
+        }
+
+        #[test]
+        fn hypr3d_reload_reuses_plugin_and_preserves_desktop_after_load_failure() {
+            let chunk = hypr3d_profile(&real_ssot()).unwrap();
+            let preamble = r#"
+local loads, toggles, failures = 0, 0, 0
+local bound = {}
+hl = {plugin = {}, unbind = function(k) bound[k] = nil end,
+ bind = function(k, f) bound[k] = f end}
+hl.plugin.load = function(path)
+ assert(path == '/usr/lib64/mios/hypr3d.so')
+ loads = loads + 1
+ hl.plugin.hypr3d = {config = function(c) assert(type(c) == 'table') end,
+  toggle = function() toggles = toggles + 1 end}
+end
+local function mios_section(name, fn)
+ assert(name == 'hypr3d')
+ if not pcall(fn) then failures = failures + 1 end
+end
+"#;
+            let control = r#"
+assert(loads == 0)
+bound['SUPER + G']()
+assert(loads == 1 and toggles == 1)
+bound['SUPER + G']()
+assert(loads == 1 and toggles == 2)
+hl.plugin.hypr3d = nil
+hl.plugin.load = function() error('missing engine') end
+"#;
+            let script = preamble.to_owned() + &chunk + &chunk + control + &chunk
+                + "bound['SUPER + G']()\nassert(failures == 1)\nio.write('desktop survives')";
+            let (ok, out) = run_lua(&script, &[]);
+            assert!(ok && out == "desktop survives", "{out}");
+        }
+
+        #[test]
+        fn hypr3d_disabled_and_invalid_settings_are_handled() {
+            let mut data = real_ssot();
+            data["desktop"]["hyprland"]["hypr3d"]["enabled"] = Value::Boolean(false);
+            assert!(hypr3d_profile(&data).unwrap().is_empty());
+            for (key, value) in [
+                ("enabled", Value::String("yes".into())),
+                ("path", Value::String("../hypr3d.so".into())),
+                ("toggle_key", Value::String("\n".into())),
+                ("config", Value::String("bad".into())),
+            ] {
+                let mut bad = real_ssot();
+                bad["desktop"]["hyprland"]["hypr3d"][key] = value;
+                assert!(hypr3d_profile(&bad).is_err(), "accepted invalid {key}");
+            }
         }
 
         #[test]
