@@ -29,6 +29,7 @@ pub struct Greeter {
     pub tuigreet: String,
     pub tuigreet_args: Vec<String>,
     pub session_cmd: String,
+    pub boot_sync: bool,
 }
 
 #[derive(Debug)]
@@ -135,6 +136,7 @@ impl Greeter {
             tuigreet: abs(t, "tuigreet")?,
             tuigreet_args: list(t, "tuigreet_args")?,
             session_cmd: abs(t, "session_cmd")?,
+            boot_sync: crate::render::desktop_boot::enabled(doc)?,
         })
     }
 
@@ -193,7 +195,9 @@ impl Greeter {
             }
         }
         let effective = if self.kind == "glass" && degraded.is_empty() { "glass" } else { "tuigreet" };
-        let argv = if effective == "glass" { self.glass_argv() } else { self.tuigreet_argv() };
+        let argv = if self.boot_sync {
+            vec!["/usr/bin/mios-gen".into(), "hyprland-greeter".into(), "--kind".into(), effective.into()]
+        } else if effective == "glass" { self.glass_argv() } else { self.tuigreet_argv() };
         let command = argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ");
         let mut text = String::new();
         text.push_str("# AI-hint: greetd configuration projected by `mios-gen render-greetd` from mios.toml [desktop.greeter].\n");
@@ -208,6 +212,43 @@ impl Greeter {
         text.push_str(&format!("user = {}\n", Value::String(self.user.clone())));
         Rendered { effective: effective.into(), degraded, text }
     }
+}
+
+fn boot_settings(doc: &Value, cmdline: &str, kind: Option<&str>) -> Result<(Greeter, String, Vec<String>), String> {
+    let mut g = Greeter::from_doc(doc)?;
+    let profile = crate::render::desktop_boot::boot_profile(doc, cmdline)?;
+    let file = doc["desktop"]["hyprland"]["hardware_profiles"][&profile]["session_file"]
+        .as_str().filter(|v| v.ends_with(".desktop") && !v.contains('/') && !v.contains(".."))
+        .ok_or("Invalid GPU session file")?;
+    g.default_session = file.trim_end_matches(".desktop").into();
+    g.session_cmd = format!("/usr/bin/mios-gen hyprland-session --hardware-profile {profile}");
+    // A global boot-selected cache gives every username the same initial GPU.
+    // The chooser can still select another GPU, which becomes a boot request.
+    g.tuigreet_args.retain(|a| a != "--remember-user-session" && a != "--remember-session");
+    g.tuigreet_args.push("--remember-session".into());
+    let effective = kind.unwrap_or(&g.kind);
+    let argv = match effective {
+        "tuigreet" => g.tuigreet_argv(), "glass" => g.glass_argv(),
+        _ => return Err("Invalid greeter kind".into()),
+    };
+    Ok((g, profile, argv))
+}
+
+/// Resolve the booted GPU before either login UI reads its remembered session.
+pub fn runtime(kind: Option<&str>, dry_run: bool) -> Result<String, String> {
+    use std::os::unix::process::CommandExt;
+    let doc = mios_resolver::resolve_projection(Path::new("/")).map_err(|e| e.to_string())?;
+    let (g, profile, argv) = boot_settings(&doc,
+        &fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?, kind)?;
+    let file = format!("{}.desktop",g.default_session);
+    if dry_run {
+        return Ok(serde_json::json!({"hardware_profile":profile,"session_file":file,"argv":argv}).to_string());
+    }
+    write_atomic(Path::new("/var/lib/greetd/tuigreet-lastsession-path"),
+        &format!("/usr/share/wayland-sessions/{file}"))?;
+    let mut command = std::process::Command::new(&argv[0]);
+    command.args(&argv[1..]).env("MIOS_GREETER_BOOT_SESSION", &g.default_session);
+    Err(format!("Failed to start boot-selected greeter: {}", command.exec()))
 }
 
 /// greetd runs the command through /bin/sh, so every argument is shell-quoted when needed.
@@ -271,6 +312,39 @@ mod tests {
     use super::*;
 
     const FRAGMENT: &str = include_str!("../tests/fixtures/greeter-ssot.toml");
+
+    #[test]
+    fn gpu_boot_choices_set_both_greeters_and_override_stale_session_memory() {
+        let mut doc: Value = FRAGMENT.parse().unwrap();
+        doc["desktop"].as_table_mut().unwrap().insert("hyprland".into(), toml::toml! {
+            hardware_profile = "igpu"
+            [boot_sync]
+            enabled = true
+            [hardware_profiles.igpu]
+            session_file = "hyprland.desktop"
+            [hardware_profiles.dgpu]
+            session_file = "mios-desktop-dgpu.desktop"
+        }.into());
+        for (profile, file) in [("igpu", "hyprland"), ("dgpu", "mios-desktop-dgpu")] {
+            for kind in ["glass", "tuigreet"] {
+                let (g, chosen, args) = boot_settings(&doc, &format!("quiet mios.desktop.gpu={profile}"), Some(kind)).unwrap();
+                assert_eq!(chosen,profile);
+                assert_eq!(g.default_session,file);
+                assert_eq!(g.session_cmd,format!("/usr/bin/mios-gen hyprland-session --hardware-profile {profile}"));
+                assert!(!args.iter().any(|v| v == "--remember-user-session"));
+                assert!(args.iter().any(|v| v == "--remember-session"));
+                assert!(args.windows(2).any(|v| v[0] == "--cmd" && v[1] == g.session_cmd));
+                if kind == "glass" {
+                    assert!(args.windows(2).any(|v| v[0] == "--default-session" && v[1] == file));
+                }
+            }
+        }
+        let sys = sysroot(true,true,true);
+        let output = Greeter::from_doc(&doc).unwrap().render(sys.path());
+        assert!(output.text.contains("/usr/bin/mios-gen hyprland-greeter --kind glass"));
+        assert!(boot_settings(&doc,"mios.desktop.gpu=unknown",Some("tuigreet")).is_err());
+        assert!(boot_settings(&doc,"mios.desktop.gpu=dgpu",Some("unknown")).is_err());
+    }
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()

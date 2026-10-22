@@ -196,6 +196,28 @@ class Glass(unittest.TestCase):
         self.addCleanup(r.close)
         return r
 
+    def test_boot_gpu_overrides_stale_glass_session_memory(self):
+        for profile, selected, stale in (
+            ("igpu", "hyprland", "mios-desktop-dgpu"),
+            ("dgpu", "mios-desktop-dgpu", "hyprland"),
+        ):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(prefix="mios-gpu-greeter-") as work:
+                for name in ("hyprland", "mios-desktop-dgpu"):
+                    shutil.copy(os.path.join(ROOT, "usr/share/wayland-sessions", name + ".desktop"), work)
+                state = os.path.join(work, "state.json")
+                with open(state, "w") as stream:
+                    json.dump({"session": stale}, stream)
+                r = self.rig(env={"MIOS_GREETER_STATE": state, "MIOS_GREETER_BOOT_SESSION": selected},
+                             launcher_args=("--greeter-dir", GREETER, "--sessions", work,
+                                            "--default-session", selected))
+                r.wait_ready()
+                r.keys("key:Down", "key:Tab", "text:hunter2", "key:Enter", allow_close=True)
+                self.assertEqual(r.wait_exit(20), 0, r.output())
+                start = [m for m in r.transcript_msgs() if m.get("type") == "start_session"]
+                self.assertEqual(len(start), 1)
+                self.assertEqual(start[0]["cmd"], ["/usr/bin/mios-gen", "hyprland-session",
+                                                   "--hardware-profile", profile])
+
     def test_login_wrong_then_right_password_launches_hyprland_without_fallback(self):
         r = self.rig()
         r.wait_ready()

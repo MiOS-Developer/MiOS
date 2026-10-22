@@ -8122,6 +8122,9 @@ toggle_key = "SUPER + G"
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
 
+[desktop.hyprland.boot_sync]
+enabled = true  # GRUB chooses the login default; choosing another GPU session reboots into its managed boot entry.
+
 [desktop.hyprland.hardware_profiles.igpu]
 name = "MiOS iGPU (default)"
 session_file = "hyprland.desktop"
@@ -10015,7 +10018,7 @@ wallpaper           = ""                                    # optional image pat
 session_dirs        = ["/usr/share/wayland-sessions", "/usr/share/xsessions"]  # passed to both greeters (tuigreet --sessions, glass session list)
 tuigreet            = "/usr/bin/tuigreet"                   # the real tuigreet binary (NOT the /usr/local/bin/tuigreet helper wrapper)
 tuigreet_args       = ["--time", "--asterisks", "--remember", "--remember-user-session"]  # flags before --sessions/--cmd, same as the live config
-session_cmd         = "/usr/bin/mios-gen hyprland-session --hardware-profile igpu"  # tuigreet --cmd: default iGPU session
+session_cmd         = "/usr/bin/mios-gen hyprland-session"  # Boot command line chooses the default GPU.
 
 [theme.cursor_windows]
 base_size           = 24

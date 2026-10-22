@@ -14,6 +14,7 @@ mod btop_theme;
 mod display_scale;
 mod docs;
 mod greeter;
+use render::desktop_boot;
 mod image;
 mod indexes;
 mod metal_vs_hosted;
@@ -315,6 +316,27 @@ enum Commands {
         #[arg(long)]
         hardware_profile: Option<String>,
         /// Report device selection without starting a compositor.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Run the login chooser with the GPU profile selected at boot.
+    #[command(name = "hyprland-greeter")]
+    HyprlandGreeter {
+        #[arg(long, value_parser = ["glass", "tuigreet"])]
+        kind: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Select the matching managed GRUB entry; reboot when GPU ownership changes.
+    #[command(name = "hyprland-boot-profile")]
+    HyprlandBootProfile {
+        #[arg(long, value_parser = ["igpu", "dgpu"])]
+        hardware_profile: String,
+        /// Configure the next boot without immediately rebooting.
+        #[arg(long)]
+        prepare_only: bool,
         #[arg(long)]
         dry_run: bool,
     },
@@ -1262,6 +1284,14 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::HyprlandGreeter { kind, dry_run } => (
+            "hyprland-greeter", "desktop",
+            greeter::runtime(kind.as_deref(), dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
+        Commands::HyprlandBootProfile { hardware_profile, prepare_only, dry_run } => (
+            "hyprland-boot-profile", "desktop",
+            desktop_boot::select(&hardware_profile, prepare_only, dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
         Commands::HyprlandSession { root, hardware_profile, dry_run } => {
             let r = resolve_root(root);
             (

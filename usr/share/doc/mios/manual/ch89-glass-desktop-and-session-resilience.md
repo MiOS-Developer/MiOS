@@ -15,7 +15,16 @@ hardware profile. Device identity and ordering come from
 `[desktop.hyprland.hardware_profiles]` in `/usr/share/mios/mios.toml`, with the
 usual host and user overrides. A selected GPU must have a matching native DRM
 device; a GPU bound to `vfio-pci` for a guest cannot render the host desktop.
-Select its native-driver boot profile before choosing the dGPU login session.
+Its native-driver boot profile releases it for the dGPU login session.
+
+With `desktop.hyprland.boot_sync.enabled`, selecting either MiOS GPU entry in
+GRUB also selects that GPU in the login chooser. The native greeter resolves
+`mios.desktop.gpu` before reading session memory. Choosing the other GPU at
+login saves its managed GRUB entry and reboots after authentication, so the
+driver owns the device before the compositor starts. The selected entry is
+also the subsequent GRUB default. Username memory is retained. This requires
+administrator authorization for the native boot-selection verb; it never
+rebinds a live GPU. Both greeter implementations use the same boot profile.
 
 The launcher passes the selected GPU to the compositor. The startup hook also
 imports `AQ_DRM_DEVICES`, `WLR_DRM_DEVICES`, `DRI_PRIME` and

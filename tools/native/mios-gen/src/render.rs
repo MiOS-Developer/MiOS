@@ -2455,6 +2455,115 @@ pub mod render_ports {
 }
 
 /// Native Lua projection for current Hyprland; legacy hyprlang remains available for older images.
+/// Boot/session coupling uses only administrator-owned projection layers.
+pub mod desktop_boot {
+    use std::{fs, os::unix::fs::MetadataExt, path::Path, process::Command};
+    use toml::Value;
+
+    pub fn enabled(data: &Value) -> Result<bool, String> {
+        match data.get("desktop").and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("boot_sync")).and_then(|b| b.get("enabled")) {
+            None => Ok(false),
+            Some(v) => v.as_bool().ok_or_else(|| "desktop.hyprland.boot_sync.enabled must be boolean".into()),
+        }
+    }
+
+    pub fn boot_profile(data: &Value, cmdline: &str) -> Result<String, String> {
+        let count = cmdline.split_whitespace().filter(|v| v.starts_with("mios.desktop.gpu=")).count();
+        if count > 1 { return Err("Ambiguous desktop GPU boot profile".into()); }
+        super::render_hyprland::profile_name(data, None, cmdline)
+    }
+
+    fn validate_entry(profile: &str, source: &str) -> Result<Vec<String>, String> {
+        if !matches!(profile, "igpu" | "dgpu") ||
+            !source.starts_with("# AI-hint: Generated MiOS desktop hardware boot profile;") ||
+            source.lines().any(|l| l.trim_start().starts_with("efi ")) {
+            return Err("GPU switching requires a managed BLS linux/initrd entry".into());
+        }
+        let opts: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("options ")).collect();
+        if opts.len() != 1 || opts[0].split_whitespace()
+            .filter(|v| v.starts_with("mios.desktop.gpu=")).collect::<Vec<_>>() !=
+            vec![format!("mios.desktop.gpu={profile}").as_str()] {
+            return Err("Boot entry GPU identity does not match the requested session".into());
+        }
+        let kernels: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("linux ")).collect();
+        let initrds: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("initrd ")).collect();
+        if kernels.len() != 1 || initrds.is_empty() { return Err("Boot entry lacks a kernel or initrd".into()); }
+        let files: Vec<String> = kernels.into_iter().chain(initrds).flat_map(str::split_whitespace)
+            .filter(|v| !v.starts_with('$')).map(str::to_string).collect();
+        if files.len() < 2 || files.iter().any(|v| !v.starts_with('/') ||
+            Path::new(v).components().any(|c| c == std::path::Component::ParentDir)) {
+            return Err("Boot entry contains an invalid kernel or initrd path".into());
+        }
+        Ok(files)
+    }
+
+    /// The privileged verb accepts no root, executable, environment or entry path
+    /// from the caller. User TOML is never read by this operation.
+    pub fn select(profile: &str, prepare_only: bool, dry_run: bool) -> Result<String, String> {
+        let data = mios_resolver::resolve_projection(Path::new("/")).map_err(|e| e.to_string())?;
+        if !enabled(&data)? { return Err("Desktop GPU boot synchronization is disabled".into()); }
+        if !matches!(profile, "igpu" | "dgpu") { return Err("Unsupported desktop GPU profile".into()); }
+        let entry = format!("mios-desktop-{profile}");
+        let path = format!("/boot/loader/entries/{entry}.conf");
+        let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        for file in validate_entry(profile, &source)? {
+            let path = Path::new("/boot").join(file.trim_start_matches('/'));
+            if !path.is_file() { return Err(format!("Boot artifact missing: {}", path.display())); }
+        }
+        let current = boot_profile(&data, &fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?)?;
+        let reboot = current != profile;
+        if dry_run {
+            return Ok(serde_json::json!({"current_profile":current,"requested_profile":profile,
+                "grub_entry":entry,"reboot_required":reboot,"prepare_only":prepare_only}).to_string());
+        }
+        if fs::metadata("/proc/self").map_err(|e| e.to_string())?.uid() != 0 {
+            return Err("Changing the GPU boot profile requires root".into());
+        }
+        let run = |program: &str, args: &[&str]| -> Result<(),String> {
+            let result = Command::new(program).args(args).env_clear()
+                .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").output().map_err(|e| e.to_string())?;
+            if result.status.success() { Ok(()) }
+            else { Err(format!("{program}: {}",String::from_utf8_lossy(&result.stderr).trim())) }
+        };
+        run("/usr/sbin/grub2-set-default", &[&entry])?;
+        run("/usr/sbin/grub2-reboot", &[&entry])?;
+        let env = Command::new("/usr/sbin/grub2-editenv").arg("list").env_clear()
+            .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").output().map_err(|e| e.to_string())?;
+        let env = String::from_utf8_lossy(&env.stdout);
+        if !env.lines().any(|v| v == format!("saved_entry={entry}")) ||
+            !env.lines().any(|v| v == format!("next_entry={entry}")) {
+            return Err("GRUB did not retain the selected GPU boot entry".into());
+        }
+        if reboot && !prepare_only { run("/usr/bin/systemctl", &["reboot"])?; }
+        Ok(format!("GRUB selected {entry}; reboot required: {reboot}"))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn managed_entries_reject_wrong_profile_uki_and_path_traversal() {
+            let src = "# AI-hint: Generated MiOS desktop hardware boot profile;\nlinux /vmlinuz\ninitrd /initrd $tuned_initrd\noptions root=UUID=keep mios.desktop.gpu=dgpu\n";
+            assert_eq!(validate_entry("dgpu", src).unwrap(), vec!["/vmlinuz", "/initrd"]);
+            for bad in [src.replace("=dgpu", "=igpu"), src.replace("/initrd", "/../initrd"),
+                format!("{src}efi /signed.efi\n"), format!("{src}options duplicate\n"),
+                src.replace("# AI-hint:", "# unmanaged:")] {
+                assert!(validate_entry("dgpu", &bad).is_err(), "{bad}");
+            }
+            assert!(validate_entry("../../escape", src).is_err());
+        }
+        #[test]
+        fn boot_choice_overrides_config_and_rejects_ambiguous_command_line() {
+            let data: Value = "[desktop.hyprland]\nhardware_profile='igpu'\n[desktop.hyprland.hardware_profiles.igpu]\n[desktop.hyprland.hardware_profiles.dgpu]\n".parse().unwrap();
+            assert_eq!(boot_profile(&data,"quiet mios.desktop.gpu=dgpu").unwrap(),"dgpu");
+            assert_eq!(boot_profile(&data,"quiet").unwrap(),"igpu");
+            assert!(boot_profile(&data,"mios.desktop.gpu=dgpu mios.desktop.gpu=igpu").is_err());
+            assert!(boot_profile(&data,"mios.desktop.gpu=missing").is_err());
+        }
+    }
+}
+
 pub mod render_hyprland {
     use std::{
         fs,
@@ -4683,7 +4792,7 @@ report("again")
             .filter(|h| h.is_table()).ok_or_else(|| "Missing or invalid desktop.hyprland table".into())
     }
 
-    fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
+    pub(super) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
         let h = hardware_profile_table(data)?;
         let name = requested.or_else(|| cmdline.split_whitespace()
             .find_map(|arg| arg.strip_prefix("mios.desktop.gpu=")))
@@ -4818,6 +4927,21 @@ report("again")
         let h = hardware_profile_table(&data)?;
         let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
         let profile = profile_name(&data, hardware_profile, &cmdline)?;
+        if !dry_run && root == Path::new("/") && super::desktop_boot::enabled(&data)? {
+            let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
+            // This operation only changes managed boot choices. Device ownership
+            // changes at boot, before a compositor opens either DRM device.
+            let status = Command::new("/usr/bin/sudo")
+                .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
+                    "--hardware-profile", &profile])
+                .status().map_err(|e| format!("GPU boot selection failed: {e}"))?;
+            if !status.success() {
+                return Err("GPU boot selection requires administrator authorization; the desktop was not started".into());
+            }
+            if profile != current {
+                return Ok(format!("Rebooting into the {profile} desktop hardware profile\n"));
+            }
+        }
         let cfg = h.get("hardware_profiles").and_then(|p| p.get(&profile));
         let mut cards = fs::read_dir("/dev/dri").map_err(|e| e.to_string())?
             .filter_map(Result::ok).map(|e| e.path())

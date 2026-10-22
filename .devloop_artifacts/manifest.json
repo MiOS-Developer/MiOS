@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-22T00:11:14.848539+00:00",
-  "total_artifacts": 28,
+  "last_updated": "2026-10-22T00:30:00.468916+00:00",
+  "total_artifacts": 31,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -14,33 +14,33 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "a903c4fcf278423038c5317ef657bd8f918e35527e12526d0c68037398c33d83",
-      "size_bytes": 580029,
-      "created_at": "2026-10-22T00:11:14.848539+00:00",
+      "sha256": "480912e771e07d7b301079f69434ff8970250619fbc2b98346bf8d73125efaa8",
+      "size_bytes": 582403,
+      "created_at": "2026-10-22T00:30:00.468916+00:00",
       "metadata": {}
     },
     {
       "path": "tools/native/mios-gen/src/main.rs",
       "artifact_type": "code",
-      "sha256": "a8c3d6e822ea1d7fdfbdf5c19f5ff45642c309bcaef269ccc277bdf210a03127",
-      "size_bytes": 112523,
-      "created_at": "2026-10-21T19:09:59.377584",
+      "sha256": "985c3aa99abfb007067f39f53c0236978595e97247d5236b35096454fdc930cb",
+      "size_bytes": 113740,
+      "created_at": "2026-10-22T00:30:00.468916+00:00",
       "metadata": {}
     },
     {
       "path": "tools/native/mios-gen/src/render.rs",
       "artifact_type": "code",
-      "sha256": "8dec67f3a7be34b899c466e8a59cfefc1bba687b0c775f3567648483463c9b5e",
-      "size_bytes": 298429,
-      "created_at": "2026-10-22T00:11:14.848539+00:00",
+      "sha256": "91940aee064fc321d5ce35058a4ee3cce2c940b5f758c6e0e0ddb34ff8e64802",
+      "size_bytes": 305975,
+      "created_at": "2026-10-22T00:30:00.468916+00:00",
       "metadata": {}
     },
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "763e2a8e09bb5ccb10bdf91098d92700b56685e13ca6488dcef63c202fa06430",
-      "size_bytes": 927274,
-      "created_at": "2026-10-22T00:11:14.848539+00:00",
+      "sha256": "5d91ba23380869c9fecb0a4229d5ed4312f878107f21b9c61f53834e9b961d0b",
+      "size_bytes": 927402,
+      "created_at": "2026-10-22T00:30:00.468916+00:00",
       "metadata": {}
     },
     {
@@ -78,9 +78,9 @@
     {
       "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
       "artifact_type": "doc",
-      "sha256": "2b0ded3a97f1c7b940c86c77f25551a5594bd58801578df3ce2866261ef66c9e",
-      "size_bytes": 36215,
-      "created_at": "2026-10-22T00:11:14.848539+00:00",
+      "sha256": "ec412836ce43d601bc6e0a3ba13ce81b7218ca78e6dda05ecb6432d734ec3def",
+      "size_bytes": 36817,
+      "created_at": "2026-10-22T00:30:00.468916+00:00",
       "metadata": {}
     },
     {
@@ -207,9 +207,9 @@
       "path": "usr/share/mios/configurator/mios.html",
       "artifact_type": "config",
       "metadata": {},
-      "sha256": "4091fadac14a363f5a3a3fc75a3c7f12052852e68aa1f3743775e3554e6d515e",
-      "size_bytes": 410236,
-      "created_at": "2026-10-22T00:11:14.848539+00:00"
+      "sha256": "e6f22029a4de1a8caf8b1aecb03c3e5bae51fde86792cb7fcf9eafa98ea872b6",
+      "size_bytes": 410414,
+      "created_at": "2026-10-22T00:30:00.468916+00:00"
     },
     {
       "path": "usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch",
@@ -226,6 +226,30 @@
       "sha256": "dbead925986554888053e853d644af0adece6f126b81cba65d587ef7ce057da2",
       "size_bytes": 2698,
       "created_at": "2026-10-22T00:11:14.848539+00:00"
+    },
+    {
+      "path": "tests/test-greeter.py",
+      "artifact_type": "code",
+      "metadata": {},
+      "sha256": "e5fa7575eec4306af157d74e352c6138c87434a4ecba025c3f8885addbe8bdcf",
+      "size_bytes": 18599,
+      "created_at": "2026-10-22T00:30:00.468916+00:00"
+    },
+    {
+      "path": "tools/native/mios-gen/src/greeter.rs",
+      "artifact_type": "code",
+      "metadata": {},
+      "sha256": "aa2f384153bfc2c271c960110012df2f31d50e9176a7768c3d83bc6d0ae607df",
+      "size_bytes": 21832,
+      "created_at": "2026-10-22T00:30:00.468916+00:00"
+    },
+    {
+      "path": "usr/share/mios/greeter/shell.qml",
+      "artifact_type": "config",
+      "metadata": {},
+      "sha256": "d69671c8711185508bbfc0830be82f52c67dfc444893b6e4b351317feaf12be1",
+      "size_bytes": 25124,
+      "created_at": "2026-10-22T00:30:00.468916+00:00"
     }
   ]
 }
