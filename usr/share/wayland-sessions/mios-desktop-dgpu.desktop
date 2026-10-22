@@ -3,7 +3,7 @@
 [Desktop Entry]
 Name=MiOS dGPU
 Comment=MiOS Hyprland and Quickshell; dgpu hardware profile
-Exec=/usr/bin/mios-gen hyprland-session --root / --hardware-profile dgpu
+Exec=/usr/bin/mios-gen hyprland-session --hardware-profile dgpu
 TryExec=/usr/bin/mios-gen
 Type=Application
 DesktopNames=Hyprland
