@@ -2455,6 +2455,115 @@ pub mod render_ports {
 }
 
 /// Native Lua projection for current Hyprland; legacy hyprlang remains available for older images.
+/// Boot/session coupling uses only administrator-owned projection layers.
+pub mod desktop_boot {
+    use std::{fs, os::unix::fs::MetadataExt, path::Path, process::Command};
+    use toml::Value;
+
+    pub fn enabled(data: &Value) -> Result<bool, String> {
+        match data.get("desktop").and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("boot_sync")).and_then(|b| b.get("enabled")) {
+            None => Ok(false),
+            Some(v) => v.as_bool().ok_or_else(|| "desktop.hyprland.boot_sync.enabled must be boolean".into()),
+        }
+    }
+
+    pub fn boot_profile(data: &Value, cmdline: &str) -> Result<String, String> {
+        let count = cmdline.split_whitespace().filter(|v| v.starts_with("mios.desktop.gpu=")).count();
+        if count > 1 { return Err("Ambiguous desktop GPU boot profile".into()); }
+        super::render_hyprland::profile_name(data, None, cmdline)
+    }
+
+    fn validate_entry(profile: &str, source: &str) -> Result<Vec<String>, String> {
+        if !matches!(profile, "igpu" | "dgpu") ||
+            !source.starts_with("# AI-hint: Generated MiOS desktop hardware boot profile;") ||
+            source.lines().any(|l| l.trim_start().starts_with("efi ")) {
+            return Err("GPU switching requires a managed BLS linux/initrd entry".into());
+        }
+        let opts: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("options ")).collect();
+        if opts.len() != 1 || opts[0].split_whitespace()
+            .filter(|v| v.starts_with("mios.desktop.gpu=")).collect::<Vec<_>>() !=
+            vec![format!("mios.desktop.gpu={profile}").as_str()] {
+            return Err("Boot entry GPU identity does not match the requested session".into());
+        }
+        let kernels: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("linux ")).collect();
+        let initrds: Vec<_> = source.lines().filter_map(|l| l.strip_prefix("initrd ")).collect();
+        if kernels.len() != 1 || initrds.is_empty() { return Err("Boot entry lacks a kernel or initrd".into()); }
+        let files: Vec<String> = kernels.into_iter().chain(initrds).flat_map(str::split_whitespace)
+            .filter(|v| !v.starts_with('$')).map(str::to_string).collect();
+        if files.len() < 2 || files.iter().any(|v| !v.starts_with('/') ||
+            Path::new(v).components().any(|c| c == std::path::Component::ParentDir)) {
+            return Err("Boot entry contains an invalid kernel or initrd path".into());
+        }
+        Ok(files)
+    }
+
+    /// The privileged verb accepts no root, executable, environment or entry path
+    /// from the caller. User TOML is never read by this operation.
+    pub fn select(profile: &str, prepare_only: bool, dry_run: bool) -> Result<String, String> {
+        let data = mios_resolver::resolve_projection(Path::new("/")).map_err(|e| e.to_string())?;
+        if !enabled(&data)? { return Err("Desktop GPU boot synchronization is disabled".into()); }
+        if !matches!(profile, "igpu" | "dgpu") { return Err("Unsupported desktop GPU profile".into()); }
+        let entry = format!("mios-desktop-{profile}");
+        let path = format!("/boot/loader/entries/{entry}.conf");
+        let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        for file in validate_entry(profile, &source)? {
+            let path = Path::new("/boot").join(file.trim_start_matches('/'));
+            if !path.is_file() { return Err(format!("Boot artifact missing: {}", path.display())); }
+        }
+        let current = boot_profile(&data, &fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?)?;
+        let reboot = current != profile;
+        if dry_run {
+            return Ok(serde_json::json!({"current_profile":current,"requested_profile":profile,
+                "grub_entry":entry,"reboot_required":reboot,"prepare_only":prepare_only}).to_string());
+        }
+        if fs::metadata("/proc/self").map_err(|e| e.to_string())?.uid() != 0 {
+            return Err("Changing the GPU boot profile requires root".into());
+        }
+        let run = |program: &str, args: &[&str]| -> Result<(),String> {
+            let result = Command::new(program).args(args).env_clear()
+                .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").output().map_err(|e| e.to_string())?;
+            if result.status.success() { Ok(()) }
+            else { Err(format!("{program}: {}",String::from_utf8_lossy(&result.stderr).trim())) }
+        };
+        run("/usr/sbin/grub2-set-default", &[&entry])?;
+        run("/usr/sbin/grub2-reboot", &[&entry])?;
+        let env = Command::new("/usr/sbin/grub2-editenv").arg("list").env_clear()
+            .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").output().map_err(|e| e.to_string())?;
+        let env = String::from_utf8_lossy(&env.stdout);
+        if !env.lines().any(|v| v == format!("saved_entry={entry}")) ||
+            !env.lines().any(|v| v == format!("next_entry={entry}")) {
+            return Err("GRUB did not retain the selected GPU boot entry".into());
+        }
+        if reboot && !prepare_only { run("/usr/bin/systemctl", &["reboot"])?; }
+        Ok(format!("GRUB selected {entry}; reboot required: {reboot}"))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn managed_entries_reject_wrong_profile_uki_and_path_traversal() {
+            let src = "# AI-hint: Generated MiOS desktop hardware boot profile;\nlinux /vmlinuz\ninitrd /initrd $tuned_initrd\noptions root=UUID=keep mios.desktop.gpu=dgpu\n";
+            assert_eq!(validate_entry("dgpu", src).unwrap(), vec!["/vmlinuz", "/initrd"]);
+            for bad in [src.replace("=dgpu", "=igpu"), src.replace("/initrd", "/../initrd"),
+                format!("{src}efi /signed.efi\n"), format!("{src}options duplicate\n"),
+                src.replace("# AI-hint:", "# unmanaged:")] {
+                assert!(validate_entry("dgpu", &bad).is_err(), "{bad}");
+            }
+            assert!(validate_entry("../../escape", src).is_err());
+        }
+        #[test]
+        fn boot_choice_overrides_config_and_rejects_ambiguous_command_line() {
+            let data: Value = "[desktop.hyprland]\nhardware_profile='igpu'\n[desktop.hyprland.hardware_profiles.igpu]\n[desktop.hyprland.hardware_profiles.dgpu]\n".parse().unwrap();
+            assert_eq!(boot_profile(&data,"quiet mios.desktop.gpu=dgpu").unwrap(),"dgpu");
+            assert_eq!(boot_profile(&data,"quiet").unwrap(),"igpu");
+            assert!(boot_profile(&data,"mios.desktop.gpu=dgpu mios.desktop.gpu=igpu").is_err());
+            assert!(boot_profile(&data,"mios.desktop.gpu=missing").is_err());
+        }
+    }
+}
+
 pub mod render_hyprland {
     use std::{
         fs,
@@ -2848,10 +2957,10 @@ if not ok then
  end
  if not state.hooks then
   hl.on("hyprland.start", function()
-   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES && systemctl --user start mios-desktop.target")
+   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && systemctl --user start mios-desktop.target")
   end)
   hl.on("hyprland.shutdown", function()
-   hl.exec_cmd("systemctl --user stop mios-desktop.target")
+   hl.exec_cmd("systemctl --user stop mios-desktop.target graphical-session.target")
   end)
  end
 end
@@ -3098,6 +3207,7 @@ end
             .ok_or("workspace_count must be 1..10")?;
         out += &format!("for i = 1, {count} do\n local key = i % 10\n hl.bind({} .. \" + \" .. key, hl.dsp.focus({{ workspace = i }}))\n hl.bind({} .. \" + SHIFT + \" .. key, hl.dsp.window.move({{ workspace = i }}))\nend\n",string(h,"main_modifier")?,string(h,"main_modifier")?);
         out += "mios_state.binds = true\n";
+        out += &hypr3d_profile(data)?;
         if let Some(glass) = h
             .get("hyprglass")
             .filter(|v| v.get("enabled").and_then(Value::as_bool) == Some(true))
@@ -4454,8 +4564,7 @@ report("again")
         let bez: Vec<f64> = points
             .as_array()
             .filter(|p| p.len() == 2)
-            .map(|p| p.iter().filter_map(Value::as_array).flat_map(|xy| xy.iter().map(num)).collect::<Option<Vec<f64>>>())
-            .flatten()
+            .and_then(|p| p.iter().filter_map(Value::as_array).flat_map(|xy| xy.iter().map(num)).collect::<Option<Vec<f64>>>())
             .filter(|v| v.len() == 4 && (0.0..=1.0).contains(&v[0]) && (0.0..=1.0).contains(&v[2]) && (-2.0..=3.0).contains(&v[1]) && (-2.0..=3.0).contains(&v[3]))
             .ok_or("desktop.hyprland.lamp.curve must be [[x1, y1], [x2, y2]] with x in 0..=1 (or a curves name)")?;
         let pane = t
@@ -4642,78 +4751,259 @@ report("again")
     }
     // ---- end magic lamp ------------------------------------------------------------------------------------------
 
-    /// Start the single canonical session with device ordering established before Aquamarine.
-    #[cfg(target_os = "linux")]
-    pub fn session(root: &Path) -> Result<String, String> {
-        use std::{
-            env,
-            os::unix::{fs::FileTypeExt, process::CommandExt},
-            process::Command,
+    /// The Lua load API declares configuration; live loading uses native IPC.
+    fn hypr3d_profile(data: &Value) -> Result<String, String> {
+        let Some(plugin) = hardware_profile_table(data)?.get("hypr3d") else {
+            return Ok(String::new());
         };
-        let data = crate::terminal::tmux_theme::tmux_runtime::load_layered(root)?;
-        let h = &data["desktop"]["hyprland"];
-        let runtime = env::var("XDG_RUNTIME_DIR").map_err(|_| "A logind session is required")?;
-        let mut cards = fs::read_dir("/dev/dri")
-            .map_err(|e| e.to_string())?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
-                    s.strip_prefix("card")
-                        .is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
-                })
-            })
-            .filter(|p| p.metadata().is_ok_and(|m| m.file_type().is_char_device()))
-            .collect::<Vec<_>>();
-        cards.sort();
-        let pci_path = root.join("etc/mios/hyprland/igpu-pci");
-        let selected = if pci_path.is_file() {
-            let pci = fs::read_to_string(pci_path).map_err(|e| e.to_string())?;
-            let pci = pci.trim();
-            if pci.len() != 12
-                || !pci.bytes().enumerate().all(|(i, c)| match i {
-                    4 | 7 => c == b':',
-                    10 => c == b'.',
-                    _ => c.is_ascii_hexdigit(),
-                })
-            {
-                return Err("Invalid iGPU PCI identity".into());
+        let table = plugin.as_table().ok_or("desktop.hyprland.hypr3d must be a table")?;
+        if !table.get("enabled").and_then(Value::as_bool)
+            .ok_or("desktop.hyprland.hypr3d.enabled must be boolean")? {
+            return Ok(String::new());
+        }
+        let path = table.get("path").and_then(Value::as_str)
+            .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
+                && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
+            .ok_or("desktop.hyprland.hypr3d.path must be an absolute FHS path")?;
+        let key = table.get("toggle_key").and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty() && !s.chars().any(char::is_control))
+            .ok_or("desktop.hyprland.hypr3d.toggle_key must be a nonempty key chord")?;
+        let config = table.get("config").filter(|v| v.is_table())
+            .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        let _ = (path, lua(config)?); // Validate operator settings before projecting the binding.
+        Ok(format!(
+            "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\nend)\n",
+            lua(&Value::String(key.into()))?, lua(&Value::String(key.into()))?,
+        ))
+    }
+
+    pub fn toggle_3d(root: &Path) -> Result<String, String> {
+        use std::process::Command;
+        let data = hardware_profile_data(root)?;
+        if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
+        let plugin = &data["desktop"]["hyprland"]["hypr3d"];
+        let path = plugin["path"].as_str().ok_or("Missing 3D engine path")?;
+        let ipc = |args: &[&str]| Command::new("/usr/bin/hyprctl").args(args).output()
+            .map_err(|e| format!("Compositor IPC failed: {e}"));
+        let probe = "assert(hl.plugin.hypr3d, 'Hypr3DGlass is not loaded')";
+        if !ipc(&["eval", probe])?.status.success() {
+            let loaded = ipc(&["plugin", "load", path])?;
+            // Another concurrent toggle may have completed the same load.
+            if !loaded.status.success() && !ipc(&["eval",probe])?.status.success() {
+                return Err(format!("Cannot load Hypr3DGlass: {}{}",
+                    String::from_utf8_lossy(&loaded.stdout), String::from_utf8_lossy(&loaded.stderr)));
             }
-            cards
-                .iter()
-                .find(|card| {
-                    fs::canonicalize(
-                        Path::new("/sys/class/drm")
-                            .join(card.file_name().unwrap_or_default())
-                            .join("device"),
-                    )
-                    .is_ok_and(|p| p.file_name().and_then(|s| s.to_str()) == Some(pci))
-                })
-                .cloned()
-                .ok_or("Selected iGPU has no DRM card")?
-        } else if let Some(alias) = h
-            .get("environment")
-            .and_then(|v| v.get("AQ_DRM_DEVICES"))
-            .and_then(Value::as_str)
-            .and_then(|s| fs::canonicalize(s).ok())
-            .filter(|p| cards.contains(p))
-        {
-            alias
+        }
+        let expr = format!("(function() local p=assert(hl.plugin.hypr3d); p.config({}); p.toggle(); return p.active() end)()",
+            lua(&plugin["config"])?);
+        let result = ipc(&["eval", &expr])?;
+        if !result.status.success() {
+            return Err(format!("Cannot toggle Hypr3DGlass: {}{}",
+                String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr)));
+        }
+        Ok(String::from_utf8_lossy(&result.stdout).trim().into())
+    }
+
+    fn hardware_profile_data(root: &Path) -> Result<Value,String> {
+        if root == Path::new("/") {
+            crate::terminal::tmux_theme::tmux_runtime::load_layered(root)
         } else {
-            // Device identities come from the host override or SSOT alias.
-            // A vendor ID alone cannot distinguish an integrated GPU from a discrete GPU.
-            cards
-                .first()
-                .cloned()
-                .ok_or("No DRM device is available for the desktop")?
-        };
+            fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+                .map_err(|e| e.to_string())?.parse::<Value>().map_err(|e| e.to_string())
+        }
+    }
+
+    fn hardware_profile_table(data: &Value) -> Result<&Value,String> {
+        data.get("desktop").and_then(|d| d.get("hyprland"))
+            .filter(|h| h.is_table()).ok_or_else(|| "Missing or invalid desktop.hyprland table".into())
+    }
+
+    pub(super) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
+        let h = hardware_profile_table(data)?;
+        let name = requested.or_else(|| cmdline.split_whitespace()
+            .find_map(|arg| arg.strip_prefix("mios.desktop.gpu=")))
+            .or_else(|| h.get("hardware_profile").and_then(Value::as_str))
+            .unwrap_or("igpu");
+        if name.is_empty() || !name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
+            return Err("Invalid desktop hardware profile".into());
+        }
+        if (name != "igpu" && h.get("hardware_profiles").is_none()) ||
+            h.get("hardware_profiles").is_some_and(|p| p.get(name).is_none()) {
+            return Err(format!("Unknown desktop hardware profile: {name}"));
+        }
+        Ok(name.into())
+    }
+
+    fn order_session_cards(
+        profile: &str, cards: &[(PathBuf, String)], pci: Option<&str>,
+        alias: Option<&Path>, include_others: bool,
+    ) -> Result<Vec<PathBuf>, String> {
+        let selected = if let Some(pci) = pci.filter(|p| !p.is_empty()) {
+            if pci.len() != 12 || !pci.bytes().enumerate().all(|(i,c)| match i {
+                4 | 7 => c == b':', 10 => c == b'.', _ => c.is_ascii_hexdigit(),
+            }) {
+                return Err("Invalid GPU PCI identity".into());
+            }
+            cards.iter().find(|(_, id)| id == pci).map(|(p,_)| p.clone())
+        } else {
+            alias.and_then(|alias| cards.iter().find(|(p,_)| p == alias).map(|(p,_)| p.clone()))
+        }.ok_or_else(|| format!(
+            "Hardware profile {profile} has no matching DRM device; select its native-driver boot profile first. A GPU assigned to a VM cannot render this desktop."
+        ))?;
         let mut ordered = vec![selected.clone()];
-        ordered.extend(cards.into_iter().filter(|p| p != &selected));
-        let devices = ordered
-            .iter()
-            .map(|p| p.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(":");
+        if include_others {
+            ordered.extend(cards.iter().filter(|(p,_)| p != &selected).map(|(p,_)| p.clone()));
+        }
+        Ok(ordered)
+    }
+
+    fn session_entries(data: &Value) -> Result<Vec<(String,String)>, String> {
+        let Some(profiles) = hardware_profile_table(data)?.get("hardware_profiles") else { return Ok(vec![]) };
+        let profiles = profiles.as_table().ok_or("hardware_profiles must be a table")?;
+        let mut entries = Vec::new();
+        let mut files = std::collections::BTreeSet::new();
+        for (id, cfg) in profiles {
+            profile_name(data, Some(id), "")?;
+            let file = cfg.get("session_file").and_then(Value::as_str).ok_or("hardware profile needs session_file")?;
+            if !file.ends_with(".desktop") || file.contains('/') || file.contains("..") ||
+                !file.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c)) ||
+                !files.insert(file.to_string()) {
+                return Err("Invalid or duplicate hardware profile session_file".into());
+            }
+            let name = cfg.get("name").and_then(Value::as_str).ok_or("hardware profile needs name")?;
+            if name.is_empty() || name.chars().any(char::is_control) {
+                return Err("Invalid desktop session name".into());
+            }
+            entries.push((format!("usr/share/wayland-sessions/{file}"), format!(
+                "# AI-hint: Generated MiOS desktop session; hardware profile is the only session difference.\n# AI-related: /usr/share/mios/mios.toml, /usr/share/mios/hyprland/session.lua\n[Desktop Entry]\nName={name}\nComment=MiOS Hyprland and Quickshell; {id} hardware profile\nExec=/usr/bin/mios-gen hyprland-session --hardware-profile {id}\nTryExec=/usr/bin/mios-gen\nType=Application\nDesktopNames=Hyprland\n"
+            )));
+        }
+        Ok(entries)
+    }
+
+    fn boot_entries(data: &Value, source: &str) -> Result<Vec<(String, String)>, String> {
+        // Existing BLS type-1 hosts retain their kernel/initrd/root options. Signed UKIs
+        // must be rebuilt through the image pipeline; never mutate their signed command line.
+        if source.lines().any(|l| l.trim_start().starts_with("efi ")) ||
+            source.lines().filter(|l| l.starts_with("title ")).count() != 1 ||
+            source.lines().filter(|l| l.starts_with("linux ")).count() != 1 ||
+            source.lines().filter(|l| l.starts_with("options ")).count() != 1 ||
+            !source.lines().any(|l| l.starts_with("initrd ")) {
+            return Err("Boot profiles require an existing BLS type-1 linux/initrd entry; signed UKIs use the image build pipeline".into());
+        }
+        let h = hardware_profile_table(data)?;
+        let profiles = h.get("hardware_profiles").and_then(Value::as_table).ok_or("Missing desktop hardware profiles")?;
+        let options = source.lines().find_map(|l| l.strip_prefix("options ")).unwrap();
+        let mut entries = Vec::new();
+        for (id,cfg) in profiles {
+            profile_name(data,Some(id),"")?;
+            let title = cfg.get("boot_title").and_then(Value::as_str).ok_or("hardware profile needs boot_title")?;
+            if title.is_empty() || title.chars().any(char::is_control) { return Err("Invalid boot profile title".into()); }
+            let args = |key: &str| -> Result<Vec<&str>,String> {
+                cfg.get(key).and_then(Value::as_array).ok_or_else(|| format!("hardware profile needs {key}"))?
+                    .iter().map(|v| v.as_str().filter(|s| !s.is_empty() && !s.chars().any(char::is_whitespace) && !s.chars().any(char::is_control))
+                        .ok_or_else(|| format!("Invalid hardware boot argument in {key}"))).collect()
+            };
+            let remove = args("boot_remove")?;
+            let append = args("boot_append")?;
+            let mut options: Vec<&str> = options.split_whitespace().filter(|arg| !remove.iter().any(|rule|
+                if rule.ends_with('=') { arg.starts_with(rule) } else { arg == rule }
+            )).collect();
+            options.extend(append);
+            let mut out = "# AI-hint: Generated MiOS desktop hardware boot profile; kernel and initrd retained from the selected host entry.\n".to_string();
+            for line in source.lines() {
+                if line.starts_with("title ") { out += &format!("title {title}\n"); }
+                else if line.starts_with("options ") { out += &format!("options {}\n",options.join(" ")); }
+                else { out += line; out.push('\n'); }
+            }
+            entries.push((format!("boot/loader/entries/mios-desktop-{id}.conf"),out));
+        }
+        Ok(entries)
+    }
+
+    pub fn run_boot_profiles(root: &Path, entry: &Path, check: bool) -> Result<(String,i32),(String,i32)> {
+        let result = (|| -> Result<String,String> {
+            let data = hardware_profile_data(root)?;
+            let source = fs::read_to_string(entry).map_err(|e| e.to_string())?;
+            for (path,content) in boot_entries(&data,&source)? {
+                let target = root.join(&path);
+                if check {
+                    if fs::read_to_string(&target).map_err(|e| format!("{path}: {e}"))? != content {
+                        return Err(format!("Desktop hardware boot profile drift: {path}"));
+                    }
+                } else {
+                    if let Ok(old) = fs::read_to_string(&target) {
+                        if !old.starts_with("# AI-hint: Generated MiOS desktop hardware boot profile;") {
+                            return Err(format!("Refusing to replace an unowned boot entry: {path}"));
+                        }
+                    }
+                    write_atomic(&target,&content).map_err(|e| format!("{path}: {e}"))?;
+                }
+            }
+            Ok("[render-hyprland] Desktop hardware boot profiles match SSOT\n".into())
+        })();
+        result.map(|s| (s,0)).map_err(|s| (s,1))
+    }
+
+    /// Start the canonical desktop with only the selected hardware device order changed.
+    #[cfg(target_os = "linux")]
+    pub fn session(root: &Path, hardware_profile: Option<&str>, dry_run: bool) -> Result<String, String> {
+        use std::{env, os::unix::{fs::FileTypeExt, process::CommandExt}, process::Command};
+        let data = hardware_profile_data(root)?;
+        let h = hardware_profile_table(&data)?;
+        let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
+        let profile = profile_name(&data, hardware_profile, &cmdline)?;
+        if !dry_run && root == Path::new("/") && super::desktop_boot::enabled(&data)? {
+            let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
+            // This operation only changes managed boot choices. Device ownership
+            // changes at boot, before a compositor opens either DRM device.
+            if profile != current {
+                let status = Command::new("/usr/bin/sudo")
+                    .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
+                        "--hardware-profile", &profile])
+                    .status().map_err(|e| format!("GPU boot selection failed: {e}"))?;
+                if !status.success() {
+                    return Err("GPU boot selection requires administrator authorization; the desktop was not started".into());
+                }
+                return Ok(format!("Rebooting into the {profile} desktop hardware profile\n"));
+            }
+        }
+        let cfg = h.get("hardware_profiles").and_then(|p| p.get(&profile));
+        let mut cards = fs::read_dir("/dev/dri").map_err(|e| e.to_string())?
+            .filter_map(Result::ok).map(|e| e.path())
+            .filter(|p| p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                s.strip_prefix("card").is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+            }))
+            .filter(|p| p.metadata().is_ok_and(|m| m.file_type().is_char_device()))
+            .map(|p| {
+                let pci = fs::canonicalize(Path::new("/sys/class/drm").join(p.file_name().unwrap()).join("device"))
+                    .ok().and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_string)).unwrap_or_default();
+                (p,pci)
+            }).collect::<Vec<_>>();
+        cards.sort();
+        let identity_file = cfg.and_then(|c| c.get("pci_file")).and_then(Value::as_str)
+            .unwrap_or("/etc/mios/hyprland/igpu-pci");
+        if !identity_file.starts_with('/') || Path::new(identity_file).components().any(|c| c == std::path::Component::ParentDir) {
+            return Err("GPU identity file must be an absolute FHS path".into());
+        }
+        let identity = cfg.and_then(|c| c.get("pci")).and_then(Value::as_str)
+            .filter(|s| !s.is_empty()).map(str::to_string)
+            .or_else(|| fs::read_to_string(root.join(identity_file.trim_start_matches('/'))).ok().map(|s| s.trim().to_string()));
+        let alias = cfg.and_then(|c| c.get("device")).and_then(Value::as_str)
+            .or_else(|| h.get("environment").and_then(|e| e.get("AQ_DRM_DEVICES")).and_then(Value::as_str))
+            .and_then(|s| fs::canonicalize(s).ok());
+        let ordered = order_session_cards(&profile, &cards, identity.as_deref(), alias.as_deref(),
+            cfg.and_then(|c| c.get("include_other_devices")).and_then(Value::as_bool).unwrap_or(false))?;
+        let selected = ordered[0].clone();
+        let devices = ordered.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(":");
+        if dry_run {
+            return serde_json::to_string_pretty(&serde_json::json!({
+                "hardware_profile": profile, "devices": ordered,
+                "compositor": "start-hyprland", "config": "/usr/share/mios/hyprland/session.lua",
+                "desktop_target": "mios-desktop.target"
+            })).map_err(|e| e.to_string());
+        }
+        let runtime = env::var("XDG_RUNTIME_DIR").map_err(|_| "A logind session is required")?;
         let state = env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")))
@@ -4802,6 +5092,7 @@ report("again")
                 command.env_remove(key);
             }
         }
+        command.env("MIOS_DESKTOP_HARDWARE_PROFILE", &profile);
         if let Ok(pci) = fs::canonicalize(
             Path::new("/sys/class/drm")
                 .join(selected.file_name().unwrap_or_default())
@@ -4814,7 +5105,7 @@ report("again")
         Err(format!("Failed to start the desktop: {}", command.exec()))
     }
     #[cfg(not(target_os = "linux"))]
-    pub fn session(_: &Path) -> Result<String, String> {
+    pub fn session(_: &Path, _: Option<&str>, _: bool) -> Result<String, String> {
         Err("Hyprland sessions require Linux".into())
     }
 
@@ -4865,7 +5156,17 @@ report("again")
                     write_atomic(&target, content).map_err(|e| format!("{path}: {e}"))?;
                 }
             }
-            Ok("[render-hyprland] Lua projection and user entry match SSOT\n".into())
+            for (path, content) in session_entries(&data)? {
+                let target = root.join(&path);
+                if check {
+                    if fs::read_to_string(&target).map_err(|e| format!("{path}: {e}"))? != content {
+                        return Err(format!("Desktop hardware session drift: {path}"));
+                    }
+                } else {
+                    write_atomic(&target, &content).map_err(|e| format!("{path}: {e}"))?;
+                }
+            }
+            Ok("[render-hyprland] Lua projection and desktop hardware sessions match SSOT\n".into())
         })();
         result.map(|msg| (msg, 0)).map_err(|e| (e, 1))
     }
@@ -4901,6 +5202,124 @@ report("again")
             fs::read_to_string(path).unwrap().parse().unwrap()
         }
         const NASTY: &str = "a\u{1}2\u{7f}\u{1b}[0m\t\"q\\\r\n\u{0}9 é ✓";
+
+        #[test]
+        fn desktop_profile_explicit_root_is_isolated_and_invalid_tables_return_errors() {
+            let dir=tempfile::tempdir().unwrap();
+            let path=dir.path().join("usr/share/mios/mios.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path,"[desktop.hyprland]\nhardware_profile='fixture'\n").unwrap();
+            assert_eq!(hardware_profile_data(dir.path()).unwrap()["desktop"]["hyprland"]["hardware_profile"].as_str(),Some("fixture"));
+            let source="title Test\nlinux /kernel\ninitrd /initrd\noptions root=UUID=keep\n";
+            for text in ["", "desktop='invalid'", "[desktop]\nhyprland='invalid'"] {
+                let d: Value=text.parse().unwrap();
+                assert!(profile_name(&d,None,"").is_err());
+                assert!(session_entries(&d).is_err());
+                assert!(boot_entries(&d,source).is_err());
+            }
+        }
+
+        #[test]
+        fn desktop_boot_profiles_keep_root_and_kernel_and_reject_signed_uki() {
+            let d=real_ssot();
+            let src="title Fedora\nversion test\nlinux /vmlinuz-test\ninitrd /initramfs-test.img $tuned_initrd\noptions root=UUID=keep ro $tuned_params amd_iommu=on rd.driver.pre=vfio-pci vfio-pci.ids=10de:2684,10de:22ba\n";
+            let entries=boot_entries(&d,src).unwrap();
+            assert_eq!(entries.len(),2);
+            let igpu=&entries.iter().find(|(p,_)| p.ends_with("-igpu.conf")).unwrap().1;
+            let dgpu=&entries.iter().find(|(p,_)| p.ends_with("-dgpu.conf")).unwrap().1;
+            for output in [igpu,dgpu] {
+                assert!(output.contains("linux /vmlinuz-test\n"));
+                assert!(output.contains("initrd /initramfs-test.img $tuned_initrd\n"));
+                assert!(output.contains("root=UUID=keep ro $tuned_params amd_iommu=on"));
+            }
+            assert!(igpu.contains("vfio-pci.ids=10de:2684,10de:22ba"));
+            assert!(!dgpu.contains("vfio-pci.ids=10de") && !dgpu.contains("rd.driver.pre=vfio-pci"));
+            assert!(dgpu.contains("vfio-pci.ids= rd.driver.blacklist=vfio-pci nouveau.modeset=1"));
+            assert!(boot_entries(&d,"title UKI\nefi /EFI/Linux/signed.efi\noptions quiet\n").is_err());
+            let mut bad=d.clone();
+            bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["boot_append"]=Value::Array(vec![Value::String("arg\ninitrd /bad".into())]);
+            assert!(boot_entries(&bad,src).is_err());
+            assert!(boot_entries(&d,&format!("{src}options duplicate\n")).is_err());
+        }
+
+        #[test]
+        fn desktop_hardware_profiles_share_session_and_select_devices_strictly() {
+            let d = real_ssot();
+            assert_eq!(profile_name(&d, None, "").unwrap(), "igpu");
+            assert_eq!(profile_name(&d, None, "quiet mios.desktop.gpu=dgpu").unwrap(), "dgpu");
+            assert_eq!(profile_name(&d, Some("igpu"), "mios.desktop.gpu=dgpu").unwrap(), "igpu");
+            assert!(profile_name(&d, Some("missing"), "").is_err());
+            let mut legacy=d.clone();
+            legacy["desktop"]["hyprland"].as_table_mut().unwrap().remove("hardware_profiles");
+            assert!(profile_name(&legacy, Some("dgpu"), "").is_err());
+            assert_eq!(profile_name(&legacy, Some("igpu"), "").unwrap(),"igpu");
+            assert!(profile_name(&d, Some("dgpu;exec"), "").is_err());
+            let cards = vec![(PathBuf::from("/dev/dri/card1"),"0000:10:00.0".into()),
+                (PathBuf::from("/dev/dri/card2"),"0000:01:00.0".into())];
+            assert_eq!(order_session_cards("igpu",&cards,Some("0000:10:00.0"),None,false).unwrap(),
+                vec![PathBuf::from("/dev/dri/card1")]);
+            assert_eq!(order_session_cards("dgpu",&cards,Some("0000:01:00.0"),None,true).unwrap(),
+                vec![PathBuf::from("/dev/dri/card2"),PathBuf::from("/dev/dri/card1")]);
+            assert!(order_session_cards("dgpu",&cards,Some("0000:02:00.0"),Some(Path::new("/dev/dri/card1")),true).is_err());
+            assert!(order_session_cards("dgpu",&cards,Some("../../bad!"),None,true).is_err());
+            assert!(order_session_cards("dgpu",&cards,None,None,true).is_err());
+            let entries = session_entries(&d).unwrap();
+            assert_eq!(entries.len(),2);
+            for (_,text) in &entries {
+                assert!(text.contains("Exec=/usr/bin/mios-gen hyprland-session --hardware-profile "));
+                assert!(text.contains("DesktopNames=Hyprland\n"));
+            }
+            let mut bad = d.clone();
+            bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["session_file"] = Value::String("../escape.desktop".into());
+            assert!(session_entries(&bad).is_err());
+            bad = d.clone();
+            bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["session_file"] = Value::String("hyprland.desktop".into());
+            assert!(session_entries(&bad).is_err());
+            bad = d.clone();
+            bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["name"] = Value::String("GPU\nExec=bad".into());
+            assert!(session_entries(&bad).is_err());
+        }
+
+        #[test]
+        fn hypr3d_binding_dispatches_native_toggle_without_loading_during_config() {
+            let chunk = hypr3d_profile(&real_ssot()).unwrap();
+            let preamble = r#"
+local bindings, failures = 0, 0
+local bound = {}
+hl = {plugin = {}, unbind = function(k) bound[k] = nil end,
+ bind = function(k, dispatcher) bindings = bindings + 1; bound[k] = dispatcher end,
+ dsp = {exec_cmd = function(cmd)
+  assert(cmd == '/usr/bin/mios-gen hyprland-3d-toggle')
+  return {command = cmd}
+ end}}
+hl.plugin.load = function() error('configuration must not load the live engine') end
+local function mios_section(name, fn)
+ assert(name == 'hypr3d')
+ if not pcall(fn) then failures = failures + 1 end
+end
+"#;
+            let script = preamble.to_owned() + &chunk + &chunk
+                + "assert(bindings == 2 and failures == 0)\nassert(bound['SUPER + G'].command == '/usr/bin/mios-gen hyprland-3d-toggle')\nio.write('desktop survives')";
+            let (ok, out) = run_lua(&script, &[]);
+            assert!(ok && out == "desktop survives", "{out}");
+        }
+
+        #[test]
+        fn hypr3d_disabled_and_invalid_settings_are_handled() {
+            let mut data = real_ssot();
+            data["desktop"]["hyprland"]["hypr3d"]["enabled"] = Value::Boolean(false);
+            assert!(hypr3d_profile(&data).unwrap().is_empty());
+            for (key, value) in [
+                ("enabled", Value::String("yes".into())),
+                ("path", Value::String("../hypr3d.so".into())),
+                ("toggle_key", Value::String("\n".into())),
+                ("config", Value::String("bad".into())),
+            ] {
+                let mut bad = real_ssot();
+                bad["desktop"]["hyprland"]["hypr3d"][key] = value;
+                assert!(hypr3d_profile(&bad).is_err(), "accepted invalid {key}");
+            }
+        }
 
         #[test]
         fn screenshot_section_projects_and_parses() {
@@ -5345,6 +5764,14 @@ pub mod hyprglass_build {
         value(p, "source_repository")
     }
 
+    fn plugin_build_system<'a>(p: &'a Value, plugin: &str) -> Result<&'a str, String> {
+        match p.get("build_system") {
+            None => Ok("make"),
+            Some(Value::String(system)) if system == "make" || system == "cmake" => Ok(system),
+            _ => Err(format!("{plugin} build_system must be make or cmake")),
+        }
+    }
+
     /// The plugin commit hyprpm.toml ([repository] commit_pins = [[hyprland_commit, plugin_commit], ...])
     /// maps `hyprland` to, None when it has no entry. A malformed hyprpm.toml fails the build.
     fn hyprpm_pin(text: &str, hyprland: &str) -> Result<Option<String>, String> {
@@ -5433,6 +5860,16 @@ pub mod hyprglass_build {
     #[cfg(test)]
     mod upstream_tests {
         use super::*;
+        #[test]
+        fn plugin_build_system_accepts_cmake_and_rejects_invalid_configuration() {
+            let data: Value = toml::from_str("[default]\n[make]\nbuild_system = 'make'\n[cmake]\nbuild_system = 'cmake'\n[unknown]\nbuild_system = 'other'\n[wrong_type]\nbuild_system = 1\n").unwrap();
+            assert_eq!(plugin_build_system(&data["default"], "test").unwrap(), "make");
+            assert_eq!(plugin_build_system(&data["make"], "test").unwrap(), "make");
+            assert_eq!(plugin_build_system(&data["cmake"], "hypr3d").unwrap(), "cmake");
+            for key in ["unknown", "wrong_type"] {
+                assert!(plugin_build_system(&data[key], "hypr3d").unwrap_err().contains("hypr3d build_system must be make or cmake"));
+            }
+        }
         fn git(dir: &Path, args: &[&str]) {
             let ok = Command::new("git")
                 .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
@@ -5505,6 +5942,7 @@ pub mod hyprglass_build {
         if p.get("enabled").and_then(Value::as_bool) != Some(true) {
             return Ok(format!("{plugin} disabled in SSOT\n"));
         }
+        let build_system = plugin_build_system(p, plugin)?;
         let installed = output("rpm", &["-q", "--qf", "%{VERSION}", "hyprland"], root)?;
         if installed != value(h, "hyprland_version")? {
             return Err(format!(
@@ -5735,17 +6173,47 @@ pub mod hyprglass_build {
                 sdk
             )?
         );
-        command(
-            "make",
-            &[
-                format!("-j{jobs}"),
-                format!("INCLUDES={}", includes.join(" ")),
-                format!("LIBS={libs}"),
-                "LDFLAGS=-shared".into(),
-            ],
-            &build,
-        )?;
-        let artifact = build.join(format!("{plugin}.so"));
+        let artifact = match build_system {
+            "make" => {
+                command(
+                    "make",
+                    &[
+                        format!("-j{jobs}"),
+                        format!("INCLUDES={}", includes.join(" ")),
+                        format!("LIBS={libs}"),
+                        "LDFLAGS=-shared".into(),
+                    ],
+                    &build,
+                )?;
+                build.join(format!("{plugin}.so"))
+            }
+            "cmake" => {
+                let directory = sdk.join("cmake-build");
+                command(
+                    "cmake",
+                    &[
+                        "-S".into(), build.display().to_string(),
+                        "-B".into(), directory.display().to_string(),
+                        "-DCMAKE_BUILD_TYPE=Release".into(),
+                        "-DHYPRLAND_HEADERS=/usr".into(),
+                        format!("-DHYPRLAND_LUA_ROOT={}", lua_dir.display()),
+                        "-DHYPRLAND_USE_COMPOSITOR_GRAPHICS=ON".into(),
+                        format!("-DCMAKE_CXX_FLAGS={}", includes.join(" ")),
+                    ],
+                    sdk,
+                )?;
+                command("cmake", &[
+                    "--build".into(), directory.display().to_string(),
+                    "--parallel".into(), jobs.to_string(),
+                ], sdk)?;
+                command("ctest", &[
+                    "--test-dir".into(), directory.display().to_string(),
+                    "--output-on-failure".into(), "--no-tests=error".into(),
+                ], sdk)?;
+                directory.join(format!("{plugin}.so"))
+            }
+            other => return Err(format!("Unsupported {plugin} build_system {other}")),
+        };
         let dynamic = output(
             "readelf",
             &["-d", artifact.to_str().ok_or("Invalid artifact path")?],

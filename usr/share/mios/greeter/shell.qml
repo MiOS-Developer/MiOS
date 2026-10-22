@@ -78,7 +78,9 @@ ShellRoot {
             try {
                 const st = JSON.parse(text())
                 if (st.user && login.username.length === 0) login.setUser(st.user)
-                if (st.session) { login.rememberedSession = st.session; login.syncSession() }
+                if (st.session && shell.env("MIOS_GREETER_BOOT_SESSION", "").length === 0) {
+                    login.rememberedSession = st.session; login.syncSession()
+                }
             } catch (e) { /* first boot or unreadable: defaults stand */ }
         }
     }

@@ -2791,16 +2791,74 @@ fn workspace(request: &Value) -> Result<Value, String> {
     if fields[6] == "1" {
         return Ok(json!({"managed":true,"zoomed":true}));
     }
-    let w = fields[3].parse::<usize>().map_err(|e| e.to_string())?;
-    let h = fields[4].parse::<usize>().map_err(|e| e.to_string())?;
+    // A window-level `window-size largest|smallest` overrides the global
+    // `latest` and pins the window to the wrong client (desktop vs phone).
+    // Re-assert `latest`, then re-read the size so this pass lays out for the
+    // client the operator is actually using (resize, rotation, client switch).
+    tmux(&["set-option", "-w", "-t", window, "window-size", "latest"])?;
+    let size = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        window,
+        "#{window_width}\t#{window_height}",
+    ])?;
+    let (sw, sh) = size.split_once('\t').unwrap_or((fields[3], fields[4]));
+    let w = sw.parse::<usize>().map_err(|e| e.to_string())?;
+    let h = sh.parse::<usize>().map_err(|e| e.to_string())?;
     // The observer pane can exit or be closed by the operator. Every later step
     // joins/breaks it, so a dead id made each window-resized hook fail with
     // "can't find pane". Rebuild it in this head's storage session.
     let mut observer_id = fields[5].to_string();
-    let observer_alive = !observer_id.is_empty()
+    let mut observer_alive = !observer_id.is_empty()
         && tmux(&["display-message", "-p", "-t", &observer_id, "#{pane_id}"])
             .map(|p| p == observer_id)
             .unwrap_or(false);
+    // MiOS: exactly one observer per head. A failed liveness probe (tmux busy,
+    // timeout) used to create another "MiOS AI Agents" window on every
+    // client-resized hook while the old ones kept running, so resizing forked
+    // unbounded observer TUIs (each polling git/agents) and pegged the CPU.
+    // Reuse a live pane already tagged for this head -- preferring the one shown
+    // in the head window, then the recorded one -- and close the duplicates.
+    {
+        let head_s: &str = &head;
+        let window_id = tmux(&["display-message", "-p", "-t", window, "#{window_id}"]).unwrap_or_default();
+        let tagged = tmux(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{@mios-workspace-observer-for}\t#{pane_dead}\t#{window_id}",
+        ])
+        .unwrap_or_default();
+        let mut live: Vec<(String, String)> = tagged
+            .lines()
+            .filter_map(|line| {
+                let f: Vec<&str> = line.split('\t').collect();
+                (f.len() == 4 && f[1] == head_s && f[2] == "0")
+                    .then(|| (f[0].to_string(), f[3].to_string()))
+            })
+            .collect();
+        if !live.is_empty() {
+            live.sort_by_key(|(pane, win)| {
+                if !window_id.is_empty() && *win == window_id {
+                    0
+                } else if *pane == observer_id {
+                    1
+                } else {
+                    2
+                }
+            });
+            let keep = live[0].0.clone();
+            for (extra, _) in live.iter().skip(1) {
+                let _ = tmux(&["kill-pane", "-t", extra]);
+            }
+            if keep != observer_id || !observer_alive {
+                tmux(&["set-option", "-w", "-t", window, "@mios-workspace-observer", &keep])?;
+            }
+            observer_id = keep;
+            observer_alive = true;
+        }
+    }
     if !observer_alive {
         let command = tmux(&[
             "display-message",

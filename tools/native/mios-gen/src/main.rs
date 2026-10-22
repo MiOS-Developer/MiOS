@@ -14,6 +14,7 @@ mod btop_theme;
 mod display_scale;
 mod docs;
 mod greeter;
+use render::desktop_boot;
 mod image;
 mod indexes;
 mod metal_vs_hosted;
@@ -306,11 +307,42 @@ enum Commands {
         srpm: Option<PathBuf>,
     },
 
-    /// Launch the canonical iGPU-first MiOS Hyprland desktop session.
+    /// Launch the canonical MiOS desktop with the selected GPU hardware profile.
     #[command(name = "hyprland-session")]
     HyprlandSession {
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Select a named hardware profile without changing desktop configuration.
+        #[arg(long)]
+        hardware_profile: Option<String>,
+        /// Report device selection without starting a compositor.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Load and toggle the live 3D engine through compositor IPC.
+    #[command(name = "hyprland-3d-toggle")]
+    Hyprland3dToggle,
+
+    /// Run the login chooser with the GPU profile selected at boot.
+    #[command(name = "hyprland-greeter")]
+    HyprlandGreeter {
+        #[arg(long, value_parser = ["glass", "tuigreet"])]
+        kind: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Select the matching managed GRUB entry; reboot when GPU ownership changes.
+    #[command(name = "hyprland-boot-profile")]
+    HyprlandBootProfile {
+        #[arg(long, value_parser = ["igpu", "dgpu"])]
+        hardware_profile: String,
+        /// Configure the next boot without immediately rebooting.
+        #[arg(long)]
+        prepare_only: bool,
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Global display scale policy ([desktop.scaling]) for one output: scale Hyprland accepts,
@@ -358,6 +390,9 @@ enum Commands {
         check: bool,
         #[arg(long)]
         runtime: bool,
+        /// Project separate hardware boot choices from this existing BLS type-1 entry.
+        #[arg(long)]
+        boot_entry: Option<PathBuf>,
     },
 
     /// Renders usr/lib/tuned/profiles/<name>/tuned.conf from mios.toml [host.tuning.profiles]
@@ -1253,12 +1288,28 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::HyprlandSession { root } => {
-            let r = resolve_root(root);
+        Commands::Hyprland3dToggle => (
+            "hyprland-3d-toggle", "desktop",
+            render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
+        Commands::HyprlandGreeter { kind, dry_run } => (
+            "hyprland-greeter", "desktop",
+            greeter::runtime(kind.as_deref(), dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
+        Commands::HyprlandBootProfile { hardware_profile, prepare_only, dry_run } => (
+            "hyprland-boot-profile", "desktop",
+            desktop_boot::select(&hardware_profile, prepare_only, dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
+        Commands::HyprlandSession { root, hardware_profile, dry_run } => {
+            // Runtime launcher started by greetd from $HOME: never resolve the SSOT
+            // relative to the working directory. Default to the live root.
+            let r = root
+                .or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("/"));
             (
                 "hyprland-session",
                 "desktop",
-                match render::render_hyprland::session(&r) {
+                match render::render_hyprland::session(&r, hardware_profile.as_deref(), dry_run) {
                     Ok(msg) => {
                         if cli.format != "json" {
                             print!("{msg}");
@@ -1273,12 +1324,16 @@ fn main() -> ExitCode {
             root,
             check,
             runtime,
+            boot_entry,
         } => {
             let r = resolve_root(root);
             (
                 "render-hyprland",
                 "usr/share/mios/hyprland/hyprland.lua",
-                match render::render_hyprland::run(&r, check, runtime) {
+                match if let Some(entry) = boot_entry.as_deref() {
+                    if runtime { Err(("boot-entry and runtime cannot be combined".into(), 1)) }
+                    else { render::render_hyprland::run_boot_profiles(&r, entry, check) }
+                } else { render::render_hyprland::run(&r, check, runtime) } {
                     Ok((msg, _)) => {
                         if cli.format != "json" {
                             print!("{msg}");

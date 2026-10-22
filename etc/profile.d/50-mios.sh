@@ -3,8 +3,9 @@
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 # ============================================================================
-# Native compositor startup uses the SSOT device once, avoiding alias duplicates.
-if command -v mios-toml-get >/dev/null 2>&1; then
+# Preserve the device order chosen by an explicit graphical session.
+# Shell initialization supplies the legacy default only when no selection exists.
+if [ -z "${MIOS_DESKTOP_HARDWARE_PROFILE:-}" ] && [ -z "${AQ_DRM_DEVICES:-}" ] && command -v mios-toml-get >/dev/null 2>&1; then
     _mios_drm_device="$(mios-toml-get desktop.hyprland.environment AQ_DRM_DEVICES "" 2>/dev/null)"
     if [ -n "$_mios_drm_device" ] && [ -e "$_mios_drm_device" ]; then
         export AQ_DRM_DEVICES="$_mios_drm_device"

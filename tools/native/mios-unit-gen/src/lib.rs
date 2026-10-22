@@ -274,6 +274,62 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
             }
             tmux += &format!("bind-key {key} {}\n", string(binding, "command")?);
         }
+        // Touch: long-press / right-click opens a menu of the actions a phone cannot chord.
+        // Wheel and border-drag keep tmux's stock root bindings (mouse on).
+        // Menu entries reuse the (platform-resolved) command of the matching bound key, so a
+        // Windows host render never carries Linux-only run-shell paths.
+        let bound = |key: &str, fallback: &str| -> String {
+            config_value(config, "keybindings", "tmux")
+                .ok()
+                .and_then(|t| t.get("bindings").and_then(toml::Value::as_array).cloned())
+                .and_then(|bs| {
+                    bs.iter()
+                        .find(|b| b.get("key").and_then(toml::Value::as_str) == Some(key))
+                        .and_then(|b| b.get("command").and_then(toml::Value::as_str))
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| fallback.to_owned())
+        };
+        let quote = |c: String| format!("\"{}\"", c.replace('\\', "\\\\").replace('"', "\\\""));
+        let next_cmd = quote(bound("o", "select-pane -t :.+"));
+        let view_cmd = quote(bound("f", "resize-pane -Z"));
+        let menu = format!(
+            "display-menu -T 'MiOS' -x M -y M 'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
+        );
+        if config_bool(config, "keybindings", "mouse")? {
+            tmux += &format!("bind-key -T root MouseDown3Pane {menu}\nbind-key -T root MouseDown3Status {menu}\n");
+        }
+        // One accept chord for every agent CLI (mobile-safe, no Ctrl-K): tmux receives it
+        // (extended-keys csi-u) and sends the key the focused CLI's adapter expects.
+        let agent = config_value(config, "keybindings", "agent")?;
+        if let Some(chord) = agent.get("accept_chord").and_then(toml::Value::as_str) {
+            let mut command = format!("send-keys {chord}");
+            for adapter in agent
+                .get("adapters")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .rev()
+            {
+                let kind = string(adapter, "kind")?;
+                let keys = adapter
+                    .get("accept_keys")
+                    .and_then(toml::Value::as_array)
+                    .map(|k| k.iter().filter_map(toml::Value::as_str).collect::<Vec<_>>().join(" "))
+                    .unwrap_or_default();
+                if !kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    || keys.is_empty()
+                {
+                    return Err(UnitGenError::GoldenMaster(format!(
+                        "[keybindings.agent].adapters invalid adapter: {kind}"
+                    )));
+                }
+                command = format!(
+                    "if-shell -F '#{{m:*{kind}*,#{{pane_current_command}} #{{pane_title}}}}' 'send-keys {keys}' \"{command}\""
+                );
+            }
+            tmux += &format!("bind-key -n {chord} {command}\n");
+        }
     }
     let passthrough = config_value(config, "keybindings", "vscode_passthrough_commands")?
         .as_array()

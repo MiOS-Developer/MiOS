@@ -1,6 +1,6 @@
 [Unit]
 Description=MiOS native RDP server (IronRDP, EGFX AVC420 H.264 via Cisco OpenH264) into the live Hyprland session
-Documentation=file:///usr/libexec/mios/mios-rdp file:///home/mios/mios-desktop-work-1/rdp-native-design.md
+Documentation=file:///usr/libexec/mios/mios-rdp
 PartOf=mios-desktop.target
 After=graphical-session.target
 Requisite=graphical-session.target

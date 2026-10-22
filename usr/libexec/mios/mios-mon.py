@@ -1583,6 +1583,20 @@ if TEXTUAL_AVAILABLE:
                                 a_log.styles.height = "100%"
             except Exception: pass
 
+        def on_click(self, event) -> None:
+            # Touch: compact/phone views hide the tab strip and have no F1-F5 keys, so
+            # tapping a plain status/heading line cycles to the next view. Tables,
+            # inputs and logs keep their own tap behaviour (row select, focus, scroll).
+            if not self.has_class("compact"):
+                return
+            try:
+                widget, _ = self.get_widget_at(event.screen_x, event.screen_y)
+            except Exception:
+                return
+            if getattr(widget, "id", None) in {"client-intro", "client-status", "relay-count", "worker-count",
+                                               "receipt", "agent-error", "system-status"}:
+                self.cycle_view(1)
+
         def on_resize(self, event) -> None:
             self.apply_responsive_layout(event.size.width, event.size.height)
 

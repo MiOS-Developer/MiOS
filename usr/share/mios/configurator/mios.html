@@ -3206,7 +3206,16 @@
         <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
         <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
         <label>Completed agent pane timeout (seconds; zero keeps panes) <input data-key="mcp.tmux.completed_pane_timeout_s" data-type="int" type="number" min="0"></label>
-        <label>Hyprland DRM device <input data-key="desktop.hyprland.environment.AQ_DRM_DEVICES" type="text"></label>
+        <label>Default GPU profile <select data-key="desktop.hyprland.hardware_profile"><option value="igpu">iGPU (default)</option><option value="dgpu">dGPU</option></select></label>
+        <label>Synchronize GRUB and GPU login sessions <input data-key="desktop.hyprland.boot_sync.enabled" data-type="bool" type="checkbox"></label>
+        <label>iGPU device <input data-key="desktop.hyprland.hardware_profiles.igpu.device" type="text"></label>
+        <label>dGPU device <input data-key="desktop.hyprland.hardware_profiles.dgpu.device" type="text"></label>
+        <label>iGPU PCI identity (empty uses the identity file) <input data-key="desktop.hyprland.hardware_profiles.igpu.pci" type="text"></label>
+        <label>dGPU PCI identity (empty uses the identity file) <input data-key="desktop.hyprland.hardware_profiles.dgpu.pci" type="text"></label>
+        <label>Hypr3DGlass enabled <input data-key="desktop.hyprland.hypr3d.enabled" data-type="bool" type="checkbox"></label>
+        <label>Hypr3DGlass toggle <input data-key="desktop.hyprland.hypr3d.toggle_key" type="text"></label>
+        <label>Mirror authored panorama <input data-key="desktop.hyprland.hypr3d.config.world.panorama_mirror" data-type="bool" type="checkbox"></label>
+        <p>Both GPU sessions run the same Hyprland and Quickshell desktop with Hyprglass and Hypr3DGlass. With GRUB synchronization enabled, choosing another GPU at login reboots into its matching driver profile after authentication.</p>
 
         <label>Hyprland layout <input data-key="desktop.hyprland.config.general.layout" type="text"></label>
         <label>Hyprland monitor scale (every output) <input data-key="desktop.hyprland.monitor.scale" data-type="float" type="number" min="0.25" step="0.25"></label>

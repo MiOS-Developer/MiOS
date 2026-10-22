@@ -5,13 +5,10 @@ After=graphical-session.target
 Requisite=graphical-session.target
 
 [Service]
-Type=simple
+Type=exec
 ExecStart=/usr/bin/mios-wallpaperd host
-Restart=always
-RestartSec=5
-TimeoutStopSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=20
+Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=mios-desktop.target

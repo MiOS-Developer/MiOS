@@ -999,3 +999,7 @@ usr/share/mios/virtio/*.iso
 /etc/mios/keys/
 # Public repository signing keys named *.key stay tracked (PGP PUBLIC KEY BLOCKs only).
 !/usr/share/mios/repos/*.key
+
+!/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
+
+!/usr/share/wayland-sessions/mios-desktop-dgpu.desktop
