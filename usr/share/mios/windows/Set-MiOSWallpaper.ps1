@@ -94,27 +94,9 @@ if (-not (Get-ItemProperty -Path $wp -Name 'Enabled' -ErrorAction SilentlyContin
 Write-Host "[+] HKLM\SOFTWARE\MiOS\WallpaperUrl set from mios.toml [colors] SSOT (mode=$Mode):" -ForegroundColor Green
 Write-Host "    $url"
 
-# Generate static fallback wallpaper from SSOT bg color so DISM / cold boot / fallback is never Windows blue bloom
-try {
-    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-    $bgHex = $resolved['bg']
-    $bmp = New-Object System.Drawing.Bitmap 1920, 1080
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.ColorTranslator]::FromHtml($bgHex))
-    $g.FillRectangle($brush, 0, 0, 1920, 1080)
-    $destDir = 'C:\Windows\Web\Wallpaper\MiOS'
-    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-    $destFile = Join-Path $destDir 'mios-wallpaper.jpg'
-    $bmp.Save($destFile, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-    $g.Dispose(); $bmp.Dispose(); $brush.Dispose()
-    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper -Value $destFile -Force -ErrorAction SilentlyContinue
-
-    # Replace Windows default img0.jpg if present
-    $img0 = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
-    if (Test-Path $img0) {
-        Copy-Item $destFile $img0 -Force -ErrorAction SilentlyContinue
-    }
-} catch { }
+# No static desktop background: the MiOS-Xbox spec ([windows.xbox.settings.display] wallpaper = "",
+# living_wallpaper = true) makes the living wallpaper the only visual. The offline registry the
+# image is serviced with sets Control Panel\Desktop Wallpaper to ""; nothing here writes an image file.
 
 # Ensure upstream Windows native iGPU / low-power preference (GpuPreference=1;)
 # targeting generic Power-Saving / Integrated GPU (Intel, AMD, Qualcomm, virtual) for wallpaper host and WebView2 processes.

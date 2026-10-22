@@ -1,0 +1,29 @@
+{
+  "name": "@MIOS:desktop.portal.gecko.name@",
+  "vendor": "@MIOS:desktop.portal.gecko.vendor@",
+  "appId": "@MIOS:desktop.portal.gecko.app_id@",
+  "binaryName": "@MIOS:desktop.portal.gecko.binary@",
+  "version": {
+    "product": "firefox",
+    "version": "@BUILD:firefox_version@"
+  },
+  "buildOptions": {
+    "windowsUseSymbolicLinks": false
+  },
+  "addons": {},
+  "brands": {
+    "@MIOS:desktop.portal.gecko.brand@": {
+      "backgroundColor": "@MIOS:bg@",
+      "brandShorterName": "@MIOS:desktop.portal.gecko.short_name@",
+      "brandShortName": "@MIOS:desktop.portal.gecko.name@",
+      "brandFullName": "@MIOS:desktop.portal.gecko.name@",
+      "release": {
+        "displayVersion": "@BUILD:firefox_version@"
+      }
+    }
+  },
+  "license": {
+    "licenseType": "@MIOS:desktop.portal.gecko.license@",
+    "ignoredFiles": [".*\\.json"]
+  }
+}

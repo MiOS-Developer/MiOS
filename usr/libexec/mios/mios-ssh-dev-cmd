@@ -52,7 +52,7 @@ if [[ -z "$user" ]]; then
     _acct="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/mios-login-account"
     [[ -r "$_acct" ]] || _acct=/usr/libexec/mios/mios-login-account
     user="$(bash "$_acct" 2>/dev/null)"
-    [[ -z "$user" ]] && user="user"
+    [[ -z "$user" ]] && { echo "mios-ssh-dev-cmd: no login account resolvable (DB / passwd / SSOT [identity].username)" >&2; exit 3; }
 fi
 
 pflag=""; [[ -n "$port" && "$port" != "22" ]] && pflag="-p $port "

@@ -130,6 +130,11 @@ Environment=MIOS_AGENT_MEMORY_RECALL=1
 # in updates/, python3-httpx already installed). Switching to dnf
 # packages is the v1 follow-up; for the scaffold commit we ride the
 # hermes-agent venv to skip a package-list bump in the same change.
+# The unprivileged service binds its peer-credential UDS in its own runtime directory;
+# /run itself is root-owned and read-only under ProtectSystem=strict.
+Environment=MIOS_AGENT_PIPE_SOCKET=/run/mios-agent-pipe/agent-pipe.sock
+RuntimeDirectory=mios-agent-pipe
+RuntimeDirectoryMode=0750
 ExecStart=/usr/lib/mios/agents/.venv/bin/python3 -u /usr/lib/mios/agent-pipe/server.py
 
 Restart=on-failure

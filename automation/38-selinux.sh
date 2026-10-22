@@ -3,6 +3,7 @@
 # AI-hint: Executes build-time SELinux policy fixes by applying specific booleans, fcontexts, and compiling custom policy modules to resolve known Fedora Rawhide and systemd 260 denials.
 set -euo pipefail
 
+# shellcheck disable=SC1090  # log.sh resolves at runtime: build ctx or installed
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 
 mios_log "Applying SELinux build-time fixes"
@@ -28,11 +29,15 @@ fcontext -a -t accountsd_var_lib_t '/usr/share/accountsservice/interfaces(/.*)?'
 fcontext -a -t ceph_var_lib_t '/var/lib/ceph(/.*)?'
 fcontext -a -t ceph_log_t '/var/log/ceph(/.*)?'
 fcontext -a -t xdm_var_lib_t '/var/lib/gnome-remote-desktop(/.*)?'
+fcontext -a -t svirt_tmpfs_t '/dev/shm/looking-glass'
 port -a -t websm_port_t -p tcp 8090
 EOSEM
     restorecon -v /boot/bootupd-state.json 2>/dev/null || true
     restorecon -R /usr/share/accountsservice 2>/dev/null || true
     restorecon -R /var/lib/gnome-remote-desktop 2>/dev/null || true
+    # Looking Glass framebuffer (mios.toml [vm.looking_glass] shm_path / shm_selinux_type): QEMU (svirt_t)
+    # gets EACCES on the tmpfiles-created file while it carries the /dev/shm default tmpfs_t.
+    restorecon /dev/shm/looking-glass 2>/dev/null || true
     mios_ok "Booleans and fcontexts applied"
 fi
 

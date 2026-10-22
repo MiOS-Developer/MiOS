@@ -4,6 +4,7 @@
 # bare store .archive/, and standing verification gates.
 # AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/
 import fnmatch
+import tempfile
 import os
 import subprocess
 import sys
@@ -27,6 +28,47 @@ def find_mios_root() -> Path:
 
 
 ROOT = find_mios_root()
+
+
+class TestRootMergeModes(unittest.TestCase):
+    """A root merge must preserve Git executable bits and stay content-clean."""
+
+    def test_root_merge_preserves_tracked_modes(self):
+        with tempfile.TemporaryDirectory(prefix="mios-root-merge-") as temp:
+            base = Path(temp)
+            source, target = base / "source", base / "root"
+            source.mkdir()
+            config = source / "usr/libexec/mios/config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text("{}\n")
+            config.chmod(0o644)
+            executable = config.with_name("mios-example")
+            executable.write_text("#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+            library = source / "usr/lib/mios"
+            library.mkdir(parents=True)
+            (library / "paths.sh").write_text("# sourced library\n")
+            (library / "paths.sh").chmod(0o644)
+            for args in (
+                ["init", "-b", "main"],
+                ["add", "usr"],
+                ["-c", "user.name=MiOS", "-c", "user.email=mios@example.invalid",
+                 "commit", "-m", "root merge fixture"],
+            ):
+                subprocess.run(["git", "-C", str(source), *args], check=True,
+                               capture_output=True)
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; mios_root_merge "$2" "$3" main',
+                 "mios-root-merge", str(ROOT / "automation/lib/root-merge.sh"),
+                 str(target), str(source)],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((target / config.relative_to(source)).stat().st_mode & 0o777, 0o644)
+            self.assertEqual((target / executable.relative_to(source)).stat().st_mode & 0o777, 0o755)
+            self.assertEqual((target / "usr/lib/mios/paths.sh").stat().st_mode & 0o777, 0o644)
+            diff = subprocess.run(["git", "-C", str(target), "diff", "--exit-code"],
+                                  capture_output=True, text=True)
+            self.assertEqual(diff.returncode, 0, diff.stdout + diff.stderr)
 
 
 class TestLevelGitignoreIsolation(unittest.TestCase):
@@ -76,15 +118,14 @@ class TestLevelGitignoreIsolation(unittest.TestCase):
 
 
 class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
-    r"""Verifies that the repository operates from authorized root paths per
-    the Operator's Singular Root Axiom (C:\ = .git and .git = ./ROOT)."""
+    """Verify that the deployed host root contains MiOS's git metadata."""
 
-    def test_01_repository_overlaid_on_host_c_root(self):
-        r"""Positive Control: Verify that .git resides at host C:\ root per Operator Axiom."""
-        host_c_git = Path("C:/.git")
+    def test_01_repository_overlaid_on_host_root(self):
+        """Linux uses /.git; Windows uses the host system drive root."""
+        host_root = Path(os.environ.get("SystemDrive", "C:") + "/") if os.name == "nt" else Path("/")
         self.assertTrue(
-            host_c_git.exists(),
-            r"Host C:\ must contain a .git directory (Operator Axiom: C:\ = .git and .git = ./ROOT)"
+            (host_root / ".git").exists(),
+            f"Host root {host_root} must contain .git (MiOS is a root filesystem overlay)",
         )
 
     def test_02_worktree_reports_zero_untracked_host_folders(self):
@@ -111,10 +152,12 @@ class TestAdr0030FileBudgetRatchet(unittest.TestCase):
         self.assertEqual(legibility.get("max_bootstrap_files"), 201)
 
     def test_02_tracked_files_within_budget(self):
-        """Positive Control: Verify git ls-files total count <= 3250."""
-        res = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True)
-        tracked_count = len([line for line in res.stdout.splitlines() if line.strip()])
-        self.assertLessEqual(tracked_count, 3250, f"Tracked files {tracked_count} exceeds ceiling of 3250")
+        """Positive Control: Every tracked path counts against the SSOT ceiling."""
+        with (ROOT / "usr/share/mios/mios.toml").open("rb") as stream:
+            ceiling = tomllib.load(stream)["legibility"]["max_tracked_files"]
+        res = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True, check=True)
+        tracked_count = len([path for path in res.stdout.split(chr(0)) if path])
+        self.assertLessEqual(tracked_count, ceiling, f"Tracked files {tracked_count} exceeds SSOT ceiling of {ceiling}")
 
 
 class TestBareStoreLegacyArchive(unittest.TestCase):

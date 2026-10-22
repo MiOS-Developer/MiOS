@@ -1,0 +1,19 @@
+# AI-hint: Cargo manifest for mios-displays -- the native backend of the MiOS Displays app (list/apply/confirm/revert/save Hyprland monitor layouts through the layered mios.toml SSOT).
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, usr/share/mios/displays/Displays.qml
+
+[package]
+name = "mios-displays"
+version.workspace = true
+edition.workspace = true
+description = "Monitor settings backend for the MiOS Displays app (Hyprland, SSOT-persisted)"
+license = "MIT"
+
+[[bin]]
+name = "mios-displays"
+path = "src/main.rs"
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }

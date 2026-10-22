@@ -6,11 +6,18 @@ import asyncio
 import re
 import unicodedata
 
+from mios_toml import colors, load_merged
 from rich.text import Text
 from textual import on
 from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import DataTable, Input, Static
+
+
+def _theme_css(css):
+    """Resolve each widget color from the same layered SSOT as the parent app."""
+    palette = colors(data=load_merged())
+    return re.sub(r"@MIOS:([a-z]+)@", lambda match: palette[match[1]], css)
 
 
 def clean(value, limit=100):
@@ -49,16 +56,16 @@ class ClientView(Vertical):
             super().__init__()
             self.name = name
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = _theme_css("""
     ClientView {
         height: 1fr;
         padding: 0 1;
-        overflow-y: auto;
+        overflow-y: hidden;
         overflow-x: hidden;
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0;
         scrollbar-background: transparent;
-        scrollbar-color: #1A407F;
+        scrollbar-color: @MIOS:accent@;
         background: transparent;
     }
     ScrollBar {
@@ -83,11 +90,11 @@ class ClientView(Vertical):
         background: transparent;
     }
     ScrollBarThumb {
-        background: #1A407F;
-        color: #1A407F;
+        background: @MIOS:accent@;
+        color: @MIOS:accent@;
     }
     ScrollBarThumb:hover {
-        background: #F35C15;
+        background: @MIOS:warning@;
     }
     DataTable {
         height: auto;
@@ -98,16 +105,16 @@ class ClientView(Vertical):
         overflow-y: hidden;
         background: transparent;
     }
-    DataTable > .datatable--header { background: #1A407F; color: #E7DFD3; text-style: bold; }
+    DataTable > .datatable--header { background: @MIOS:accent@; color: @MIOS:fg@; text-style: bold; }
     DataTable > .datatable--odd-row { background: transparent; }
     DataTable > .datatable--even-row { background: transparent; }
-    DataTable > .datatable--cursor { background: #1A407F; color: #E7DFD3; }
+    DataTable > .datatable--cursor { background: @MIOS:accent@; color: @MIOS:fg@; }
     #client-intro { height: 2; }
-    #client-table { height: auto; min-height: 2; }
+    #client-table { height: 1fr; min-height: 0; overflow-y: auto; }
     #client-input, #client-status { height: 1; }
     #client-input { border: none; padding: 0; background: transparent; }
-    #client-status { color: #F35C15; }
-    """
+    #client-status { color: @MIOS:warning@; }
+    """)
 
     def __init__(self, agents, **kwargs):
         super().__init__(**kwargs)
@@ -118,6 +125,12 @@ class ClientView(Vertical):
         yield DataTable(id="client-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
         yield Input(placeholder="Client number / name", id="client-input")
         yield Static("Arrows + Enter, or type a client", id="client-status", markup=False)
+
+    def on_resize(self, event):
+        # The list scrolls independently; input stays inside the pane even
+        # while a remote keyboard reduces the usable viewport.
+        self.query_one("#client-intro").display = self.size.height >= 5
+        self.query_one("#client-status").display = self.size.height >= 2
 
     def on_mount(self):
         table = self.query_one(DataTable)
@@ -156,7 +169,7 @@ class ClientView(Vertical):
 
 class AgentView(Vertical):
     """Separate registered peers from detected tmux processes and receipts."""
-    DEFAULT_CSS = """
+    DEFAULT_CSS = _theme_css("""
     AgentView {
         height: 1fr;
         padding: 0 1;
@@ -165,7 +178,7 @@ class AgentView(Vertical):
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0;
         scrollbar-background: transparent;
-        scrollbar-color: #1A407F;
+        scrollbar-color: @MIOS:accent@;
         background: transparent;
     }
     ScrollBar {
@@ -190,11 +203,11 @@ class AgentView(Vertical):
         background: transparent;
     }
     ScrollBarThumb {
-        background: #1A407F;
-        color: #1A407F;
+        background: @MIOS:accent@;
+        color: @MIOS:accent@;
     }
     ScrollBarThumb:hover {
-        background: #F35C15;
+        background: @MIOS:warning@;
     }
     DataTable {
         height: auto;
@@ -205,16 +218,16 @@ class AgentView(Vertical):
         overflow-y: hidden;
         background: transparent;
     }
-    DataTable > .datatable--header { background: #1A407F; color: #E7DFD3; text-style: bold; }
+    DataTable > .datatable--header { background: @MIOS:accent@; color: @MIOS:fg@; text-style: bold; }
     DataTable > .datatable--odd-row { background: transparent; }
     DataTable > .datatable--even-row { background: transparent; }
-    DataTable > .datatable--cursor { background: #1A407F; color: #E7DFD3; }
+    DataTable > .datatable--cursor { background: @MIOS:accent@; color: @MIOS:fg@; }
     #relay-count, #worker-count, #receipt, #agent-error { height: 1; }
     #peer-table { height: auto; min-height: 2; }
     #worker-table { height: auto; min-height: 2; }
-    #receipt { color: #948E8E; }
-    #agent-error { color: #F35C15; }
-    """
+    #receipt { color: @MIOS:muted@; }
+    #agent-error { color: @MIOS:warning@; }
+    """)
 
     def __init__(self, observer, refresh_s=2, **kwargs):
         super().__init__(**kwargs)
@@ -289,7 +302,7 @@ class AgentView(Vertical):
 
 class SystemSummary(Vertical):
     """Fixed tables reuse MiOS Monitor's existing hardware/service collectors."""
-    DEFAULT_CSS = """
+    DEFAULT_CSS = _theme_css("""
     SystemSummary {
         height: 1fr;
         padding: 0 1;
@@ -298,7 +311,7 @@ class SystemSummary(Vertical):
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0;
         scrollbar-background: transparent;
-        scrollbar-color: #1A407F;
+        scrollbar-color: @MIOS:accent@;
         background: transparent;
     }
     ScrollBar {
@@ -315,11 +328,11 @@ class SystemSummary(Vertical):
         background: transparent;
     }
     ScrollBarThumb {
-        background: #1A407F;
-        color: #1A407F;
+        background: @MIOS:accent@;
+        color: @MIOS:accent@;
     }
     ScrollBarThumb:hover {
-        background: #F35C15;
+        background: @MIOS:warning@;
     }
     DataTable {
         height: auto;
@@ -330,14 +343,14 @@ class SystemSummary(Vertical):
         overflow-y: hidden;
         background: transparent;
     }
-    DataTable > .datatable--header { background: #1A407F; color: #E7DFD3; text-style: bold; }
+    DataTable > .datatable--header { background: @MIOS:accent@; color: @MIOS:fg@; text-style: bold; }
     DataTable > .datatable--odd-row { background: transparent; }
     DataTable > .datatable--even-row { background: transparent; }
-    DataTable > .datatable--cursor { background: #1A407F; color: #E7DFD3; }
+    DataTable > .datatable--cursor { background: @MIOS:accent@; color: @MIOS:fg@; }
     #metric-table { height: auto; min-height: 2; }
     #summary-services { height: auto; min-height: 2; }
-    #system-status { height: 1; color: #F35C15; }
-    """
+    #system-status { height: 1; color: @MIOS:warning@; }
+    """)
 
     def __init__(self, telemetry, services, **kwargs):
         super().__init__(**kwargs)

@@ -43,6 +43,17 @@ class TestThemeLiveRender(unittest.TestCase):
             self.assertIn(needle, css.replace(needle, "--window-bg-color: #000000;"))
         self.assertNotIn(":root", _theme.render_gtk_css(palette, edge_import=False))
 
+    def test_glass_uses_ssot_background_without_fading_foreground(self):
+        palette = _theme.mios_toml.colors({"colors": {"bg": "#123456", "fg": "#ABCDEF"}})
+        css = _theme.render_gtk_css(palette, opacity=0.5)
+        self.assertIn("--window-bg-color: rgba(18, 52, 86, 0.5);", css)
+        self.assertIn("--window-fg-color: #ABCDEF;", css)
+        for role in ("view", "dialog", "popover", "sidebar", "secondary-sidebar", "headerbar-backdrop"):
+            name = role + "-color" if role.endswith("backdrop") else role + "-bg-color"
+            self.assertIn("--" + name + ": rgba(18, 52, 86, 0.5);", css)
+        self.assertIn("--dialog-fg-color: #ABCDEF;", css)
+        self.assertIn("--window-bg-color: #123456;", _theme.render_gtk_css(palette, opacity=1))
+
     def test_flatpak_projection_preserves_user_css_and_settings(self):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
@@ -52,7 +63,8 @@ class TestThemeLiveRender(unittest.TestCase):
             gtk.mkdir(parents=True)
             (gtk / "gtk.css").write_text("label { font-weight: bold; }\n")
             (gtk / "settings.ini").write_text("[Settings]\ngtk-enable-animations=false\n")
-            data = {"appearance": {"gtk_theme": "operator-dark"}, "theme": {
+            data = {"desktop": {"hyprland": {"config": {"decoration": {"rounding": 28}}}},
+                    "appearance": {"gtk_theme": "operator-dark"}, "theme": {
                 "font": {"family": "Operator Font", "size": 14},
                 "cursor_linux": {"theme": "Operator-Cursor", "size": 32}}}
             expand = lambda value: str(home) + value[1:] if value.startswith("~") else value
@@ -71,6 +83,36 @@ class TestThemeLiveRender(unittest.TestCase):
             self.assertEqual(settings["Settings"]["gtk-cursor-theme-size"], "32")
             self.assertEqual(settings["Settings"]["gtk-enable-animations"], "false")
             self.assertTrue((host / "gtk-3.0/mios-colors.css").is_file())
+
+    def test_qt_activation_preserves_settings_and_uses_requested_roots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "config"
+            qt = root / "qt6ct"
+            qt.mkdir(parents=True)
+            config = qt / "qt6ct.conf"
+            config.write_text("[Interface]\ncursor_flash_time=900\n")
+            colors = _theme.mios_toml.colors({"colors": {"bg": "#123456"}})
+            _theme.apply_qt(colors, roots=[str(root)])
+            settings = configparser.ConfigParser()
+            settings.read(config)
+            self.assertEqual(settings["Appearance"]["custom_palette"], "true")
+            self.assertEqual(settings["Interface"]["cursor_flash_time"], "900")
+            self.assertEqual(settings["Interface"]["stylesheets"], str(qt / "qss/mios.qss"))
+            palette = Path(settings["Appearance"]["color_scheme_path"])
+            self.assertIn("#123456", palette.read_text())
+            self.assertTrue((root / "qt5ct/qt5ct.conf").exists())
+            dry = Path(temp) / "dry"
+            _theme.apply_qt(colors, dry_run=True, roots=[str(dry)])
+            self.assertFalse(dry.exists())
+
+    def test_shared_radius_reaches_toolkits_and_rejects_invalid_values(self):
+        palette = _theme.mios_toml.colors({"colors": {"bg": "#123456"}})
+        for render in (_theme.render_gtk_css, _theme.render_qt_qss):
+            self.assertIn("border-radius: 28px;", render(palette, radius=28))
+            self.assertIn("border-radius: 0px;", render(palette, radius=0))
+            for invalid in (-1, True, 2.5):
+                with self.assertRaisesRegex(ValueError, "Surface radius"):
+                    render(palette, radius=invalid)
 
     def test_flatpak_id_rejects_path_escape(self):
         with self.assertRaisesRegex(ValueError, "Invalid Flatpak"):

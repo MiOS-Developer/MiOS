@@ -385,7 +385,7 @@ mod pipe_boundaries {
         );
         assert!(
             stdout.contains(
-                "usr/share/mios/pipe-boundaries.manifest.json matches the tree (108 modules)."
+                "usr/share/mios/pipe-boundaries.manifest.json matches the tree (107 modules)."
             ),
             "Expected success message not found in stdout: {}",
             stdout

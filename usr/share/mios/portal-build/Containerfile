@@ -1,0 +1,32 @@
+# AI-hint: localhost/mios-portal-build: the off-image, memory-capped builder that turns stock Firefox plus Surfer into the MiOS-Portal Linux tarball (never part of the MiOS image; Law 12).
+# AI-related: usr/libexec/mios/mios-portal-build, usr/share/mios/portal-build/mios-portal-build-inner, usr/share/mios/mios.toml ([desktop.portal.builder])
+# AI-doc: usr/share/doc/mios/manual/automation.md
+# Base image and package list come from [desktop.portal.builder]; there are no defaults here,
+# so a missing SSOT key fails the build instead of silently picking something (an empty FROM is
+# a parse error; an empty package list fails the RUN below).
+ARG MIOS_PORTAL_BUILD_BASE
+FROM ${MIOS_PORTAL_BUILD_BASE}
+ARG MIOS_PORTAL_BUILD_PACKAGES
+
+LABEL org.opencontainers.image.title="mios-portal-build"
+LABEL org.opencontainers.image.description="MiOS-Portal Gecko builder: Surfer + mach, run under a memory-capped scope; output is a tarball and a resolved-versions manifest."
+
+# Latest distro toolchain at image build time (dnf upgrade first); versions are recorded in the
+# run manifest, never pinned here.
+RUN dnf5 -y upgrade --refresh \
+    && dnf5 -y install --setopt=install_weak_deps=0 --setopt=tsflags=nodocs \
+        ${MIOS_PORTAL_BUILD_PACKAGES:?[desktop.portal.builder].packages required} \
+    && dnf5 clean all \
+    && rm -rf /var/cache/* /var/log/dnf5* /tmp/*
+
+ENV LANG=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MOZBUILD_STATE_PATH=/work/mozbuild \
+    npm_config_cache=/work/npm-cache \
+    npm_config_update_notifier=false \
+    npm_config_fund=false \
+    npm_config_audit=false
+
+COPY mios-portal-build-inner /usr/local/libexec/mios-portal-build-inner
+WORKDIR /work
+ENTRYPOINT ["/usr/local/libexec/mios-portal-build-inner"]

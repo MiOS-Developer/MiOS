@@ -613,10 +613,40 @@ fn m_gtk4(cx: &Cx, path: &Path, p: &mut Probe) {
     let skel = path.with_file_name("gtk.css");
     let import = format!("@import url(\"{name}\")");
     match fs::read_to_string(&skel) {
-        Ok(t) if t.contains(&import) => p.fact(format!("gtk.css:{import}")),
-        Ok(_) => p.drift("gtk.css_import", "missing", import),
+        Ok(t) => match import_chain(path, &t, &name) {
+            Some(chain) => p.fact(format!("gtk.css:{chain}")),
+            None => p.drift("gtk.css_import", "missing", import),
+        },
         Err(_) => p.drift("gtk.css", "missing", skel.display().to_string()),
     }
+}
+
+/// GTK resolves `@import` transitively, so gtk.css may reach the edge sheet
+/// through a sibling it imports (gtk.css -> mios-colors.css -> mios-edge.css,
+/// as mios-theme-render writes it). Follows sibling `@import url("x")` lines
+/// in the same directory, cycle-safe, and returns the chain that reaches `want`.
+fn import_chain(path: &Path, gtk_css: &str, want: &str) -> Option<String> {
+    static IMP: OnceLock<Regex> = OnceLock::new();
+    let rx = re(&IMP, r#"@import\s+url\(\s*"([^"/]+)"\s*\)"#);
+    let mut seen = vec!["gtk.css".to_string()];
+    let mut queue = vec![(gtk_css.to_string(), String::new())];
+    while let Some((text, via)) = queue.pop() {
+        for c in rx.captures_iter(&text) {
+            let target = c[1].to_string();
+            let hop = format!("{via}@import url(\"{target}\")");
+            if target == want {
+                return Some(hop);
+            }
+            if seen.contains(&target) {
+                continue;
+            }
+            seen.push(target.clone());
+            if let Ok(t) = fs::read_to_string(path.with_file_name(&target)) {
+                queue.push((t, format!("{hop}->")));
+            }
+        }
+    }
+    None
 }
 
 fn m_fastfetch(cx: &Cx, path: &Path, p: &mut Probe) {
@@ -1021,6 +1051,26 @@ mod tests {
             n += 1;
         }
         assert!(n >= 10, "padding-cases.tsv gave only {n} rows");
+    }
+
+    #[test]
+    fn gtk_import_is_followed_transitively() {
+        let d = scratch("import");
+        let edge = d.join("mios-edge.css");
+        fs::write(d.join("mios-colors.css"), "@import url(\"mios-edge.css\");\n").unwrap_or_default();
+        fs::write(d.join("loop.css"), "@import url(\"loop.css\");\n").unwrap_or_default();
+        let direct = import_chain(&edge, "@import url(\"mios-edge.css\");", "mios-edge.css");
+        let via = import_chain(&edge, "@import url(\"mios-colors.css\");", "mios-edge.css");
+        let cyc = import_chain(&edge, "@import url(\"loop.css\");", "mios-edge.css");
+        let none = import_chain(&edge, "@define-color a #000;", "mios-edge.css");
+        let _ = fs::remove_dir_all(&d);
+        assert_eq!(direct.as_deref(), Some("@import url(\"mios-edge.css\")"));
+        assert_eq!(
+            via.as_deref(),
+            Some("@import url(\"mios-colors.css\")->@import url(\"mios-edge.css\")")
+        );
+        assert_eq!(cyc, None);
+        assert_eq!(none, None);
     }
 
     #[test]

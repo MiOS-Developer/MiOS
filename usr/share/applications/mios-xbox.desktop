@@ -1,0 +1,15 @@
+# AI-hint: One action for the MiOS-Xbox VM: setup-looking-glass.py --launch starts the first defined domain of mios.toml [vm.looking_glass].domains (virsh start when it is not running), waits for the IVSHMEM framebuffer and execs looking-glass-client with the SSOT SPICE host/port/audio and shmFile.
+# AI-related: /usr/libexec/mios/vfio/setup-looking-glass.py, mios.toml [vm.looking_glass], [desktop.hyprland].window_rules mios-looking-glass
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MiOS-Xbox
+GenericName=Windows Gaming VM
+Comment=Start the MiOS-Xbox VM and show it in Looking Glass
+Exec=/usr/libexec/mios/vfio/setup-looking-glass.py --launch
+Icon=input-gaming
+Categories=System;Emulator;Game;
+Keywords=xbox;windows;vm;looking;glass;gaming;kvm;vfio;
+Terminal=false
+StartupNotify=false
+StartupWMClass=looking-glass-client

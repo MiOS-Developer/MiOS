@@ -19,20 +19,21 @@
    these two files the same way it already inlines _portal_theme_css()'s
    :root override -- see design spec §12/§4). */
 
-:root {
-  /* Fallback only -- real values come from mios-theme.css's :root block. */
-  --mios-bg:        var(--mios-bg,        #282262);
-  --mios-fg:        var(--mios-fg,        #E7DFD3);
-  --mios-accent:    var(--mios-accent,    #1A407F);
-  --mios-cursor:    var(--mios-cursor,    #F35C15);
-  --mios-success:   var(--mios-success,   #3E7765);
-  --mios-warning:   var(--mios-warning,   #F35C15);
-  --mios-error:     var(--mios-error,     #DC271B);
-  --mios-subtle:    var(--mios-subtle,    #B7C9D7);
-  --mios-muted:     var(--mios-muted,     #948E8E);
-  --mios-radius:    var(--mios-radius,    10px);
-  --mios-opacity:   var(--mios-opacity,   0.5);
-  --mios-font-family: var(--mios-font-family, 'GeistMono Nerd Font Mono', 'Geist Mono', ui-monospace, monospace);
+:where(:root) {
+  /* Zero-specificity SSOT fallbacks: mios-theme.css's :root wins in any load order. */
+  --mios-bg:          #282262;
+  --mios-fg:          #E7DFD3;
+  --mios-accent:      #1A407F;
+  --mios-cursor:      #F35C15;
+  --mios-success:     #3E7765;
+  --mios-warning:     #F35C15;
+  --mios-error:       #DC271B;
+  --mios-subtle:      #B7C9D7;
+  --mios-muted:       #948E8E;
+  --mios-radius:      28px;
+  --mios-opacity:     calc(50 / 100);
+  --mios-border-thin: 1px solid color-mix(in srgb, var(--mios-subtle) 14%, transparent);
+  --mios-font-family: 'GeistMono Nerd Font Mono', ui-monospace, monospace;
 }
 
 /* ── App window frame ────────────────────────────────────────────────────
@@ -47,7 +48,7 @@
   background: color-mix(in srgb, var(--mios-bg) calc(var(--mios-opacity) * 100%), transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  border: 1px solid var(--mios-subtle);
+  border: var(--mios-border-thin);
   border-radius: var(--mios-radius);
   color: var(--mios-fg);
   font-family: var(--mios-font-family);
@@ -112,7 +113,7 @@
 .mios-vtabs .mios-vtab {
   width: 36px;
   height: 36px;
-  border-radius: calc(var(--mios-radius) / 2);
+  border-radius: var(--mios-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,7 +130,7 @@
 /* ── Frosted panel/card (Terminals / Swarm / Services / Apps grids) ────── */
 .mios-panel {
   background: color-mix(in srgb, var(--mios-bg) 88%, transparent);
-  border: 1px solid var(--mios-subtle);
+  border: var(--mios-border-thin);
   border-radius: var(--mios-radius);
   padding: 16px;
 }

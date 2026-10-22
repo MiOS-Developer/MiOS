@@ -1,0 +1,137 @@
+#!/usr/bin/python3 -I
+# AI-hint: Root CPU-package power sampler. It reads the RAPL package zone's energy_uj, which stays root-only (0400): that
+# is the kernel's PLATYPUS mitigation, CVE-2020-8694 and CVE-2020-12912, so unprivileged code never gets fine-grained
+# energy readings. It publishes one coarse value: the average package power over >= 1 s, quantised to 0.1 W. The value is
+# written as integer microwatts (the hwmon power*_input format) to /run/mios/power/cpu_package_uw (0644, atomic replace).
+# The status island (Sysmon.qml) and mios-sysmon-line read that file instead of energy_uj.
+# Interval: [desktop.topbar.sysmon].power_interval_s, never below 1 s.
+# AI-related: usr/lib/systemd/system/mios-power-sampler.service, usr/share/mios/quickshell/Sysmon.qml,
+# usr/libexec/mios/mios-sysmon-line, usr/share/mios/mios.toml [desktop.topbar.sysmon], tests/test-power-sampler.py
+"""Publish a coarse CPU package power reading for unprivileged readers without exposing RAPL energy_uj."""
+
+import glob
+import os
+import signal
+import sys
+import time
+
+sys.path.insert(0, "/usr/lib/mios")
+
+ROOT = os.environ.get("MIOS_POWER_ROOT", "")             # tests: a fixture sysfs root
+OUT_DIR = os.environ.get("MIOS_POWER_DIR", "/run/mios/power")
+OUT_NAME = "cpu_package_uw"
+MIN_INTERVAL_S = 1.0          # the coarseness floor: never publish finer than this, whatever the SSOT says
+QUANTUM_UW = 100_000          # 0.1 W
+REDISCOVER_S = 60.0
+
+
+def interval_s():
+    """[desktop.topbar.sysmon].power_interval_s from the layered SSOT, clamped to the 1 s floor."""
+    v = os.environ.get("MIOS_POWER_INTERVAL_S")
+    if v is None:
+        try:
+            import mios_toml
+            v = mios_toml.get("desktop.topbar.sysmon", "power_interval_s", 1)
+        except Exception:
+            v = 1
+    try:
+        return max(MIN_INTERVAL_S, float(v))
+    except (TypeError, ValueError):
+        return MIN_INTERVAL_S
+
+
+def read_int(path):
+    with open(path, encoding="ascii") as f:
+        return int(f.read().strip())
+
+
+def package_zone():
+    """(energy_uj path, max_energy_range_uj) of the first RAPL package zone, or None."""
+    for z in sorted(glob.glob(ROOT + "/sys/class/powercap/intel-rapl:*")):
+        if z.count(":") != 1:                                   # intel-rapl:0, not the intel-rapl:0:0 subzones
+            continue
+        try:
+            with open(z + "/name", encoding="ascii") as f:
+                if not f.read().strip().startswith("package"):
+                    continue
+            rng = 0
+            try:
+                rng = read_int(z + "/max_energy_range_uj")
+            except (OSError, ValueError):
+                pass
+            read_int(z + "/energy_uj")
+            return z + "/energy_uj", rng
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def quantised_uw(e0, t0, e1, t1, rng):
+    """Average power in microwatts between two readings, rounded to QUANTUM_UW; None if unusable."""
+    dt = t1 - t0
+    if dt <= 0:
+        return None
+    de = e1 - e0
+    if de < 0:                                                  # the counter wrapped
+        if rng <= 0:
+            return None
+        de += rng
+    uw = de / dt                                                # uJ/s == uW
+    if not 0 < uw < 2_000 * 1_000_000:
+        return None
+    return int(round(uw / QUANTUM_UW)) * QUANTUM_UW
+
+
+def publish(uw):
+    os.makedirs(OUT_DIR, mode=0o755, exist_ok=True)
+    final = os.path.join(OUT_DIR, OUT_NAME)
+    tmp = final + ".tmp"
+    with open(tmp, "w", encoding="ascii") as f:
+        f.write("%d\n" % uw)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, final)
+
+
+def withdraw():
+    try:
+        os.unlink(os.path.join(OUT_DIR, OUT_NAME))
+    except FileNotFoundError:
+        pass
+
+
+def main():
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    once = "--once" in sys.argv[1:]
+    step = interval_s()
+    zone = package_zone()
+    if zone is None:
+        withdraw()
+        print("mios-power-sampler: no RAPL package zone; nothing to publish", file=sys.stderr)
+        return 0
+    path, rng = zone
+    e0, t0 = read_int(path), time.monotonic()
+    last_discover = t0
+    while True:
+        time.sleep(step)
+        try:
+            e1, t1 = read_int(path), time.monotonic()
+        except (OSError, ValueError):
+            withdraw()
+            zone = package_zone()
+            if zone is None:
+                return 0
+            path, rng = zone
+            e0, t0 = read_int(path), time.monotonic()
+            continue
+        uw = quantised_uw(e0, t0, e1, t1, rng)
+        if uw is not None:
+            publish(uw)
+        e0, t0 = e1, t1
+        if once:
+            return 0
+        if t1 - last_discover >= REDISCOVER_S:                  # SSOT edits to the interval take effect here
+            step, last_discover = interval_s(), t1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

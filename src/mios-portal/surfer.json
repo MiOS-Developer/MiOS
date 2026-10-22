@@ -1,0 +1,29 @@
+{
+  "name": "MiOS Portal",
+  "vendor": "MiOS",
+  "appId": "os.mios.portal",
+  "binaryName": "mios-portal",
+  "version": {
+    "product": "firefox",
+    "version": "@BUILD:firefox_version@"
+  },
+  "buildOptions": {
+    "windowsUseSymbolicLinks": false
+  },
+  "addons": {},
+  "brands": {
+    "mios": {
+      "backgroundColor": "#282262",
+      "brandShorterName": "Portal",
+      "brandShortName": "MiOS Portal",
+      "brandFullName": "MiOS Portal",
+      "release": {
+        "displayVersion": "@BUILD:firefox_version@"
+      }
+    }
+  },
+  "license": {
+    "licenseType": "MPL-2.0",
+    "ignoredFiles": [".*\\.json"]
+  }
+}

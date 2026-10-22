@@ -4913,6 +4913,212 @@ def check_memory_poisoning_scan() -> int:
     print(f"[drift-checks] memory-poisoning scan enabled (mode={mode}, judge={judge_mode}) matching SSOT")
     return 0
 
+def check_portal_product() -> int:
+    """MiOS-Portal (MP-1 / MP-4): one SSOT spec, a product tree that only renders from it, and an
+    explicit linkage exception. Fails on a pinned version, a literal colour or port, an
+    unrendered or unregistered product file, a missing or unscoped Gecko exception, or a phase
+    whose MIOS_APPLY_CLASS header disagrees with [build.phases]."""
+    import os, re, sys, tomllib
+
+    root = os.environ.get("MIOS_DRIFT_ROOT", ".")
+    toml_path = os.path.join(root, "usr/share/mios/mios.toml")
+    tree_rel = "src/mios-portal"
+    if not os.path.isfile(toml_path):
+        print("portal-product: usr/share/mios/mios.toml is missing, so nothing was checked", file=sys.stderr)
+        return 1
+    with open(toml_path, "rb") as fh:
+        ssot = tomllib.load(fh)
+    viol = []
+
+    def table(*path):
+        t = ssot
+        for p in path:
+            t = t.get(p) if isinstance(t, dict) else None
+        return t if isinstance(t, dict) else None
+
+    gecko = table("desktop", "portal", "gecko")
+    builder = table("desktop", "portal", "builder")
+    if gecko is None or builder is None:
+        print("portal-product: [desktop.portal.gecko] or [desktop.portal.builder] is missing", file=sys.stderr)
+        return 1
+
+    # Pins: the SSOT names upstreams, never a version of them (Law 7; resolved at build time).
+    full_version = re.compile(r"^v?\d+(\.\d+)+(esr|[ab]\d+)?$")
+    def walk(t, where):
+        for k, v in t.items():
+            here = f"{where}.{k}"
+            if isinstance(v, dict):
+                walk(v, here)
+            elif isinstance(v, str):
+                if full_version.match(v.strip()):
+                    viol.append(f"[{where}].{k} = {v!r} pins a version; the build resolves it")
+                if "version" in k and v != "latest":
+                    viol.append(f"[{where}].{k} is a version key; MiOS-Portal versions are resolved, not declared")
+                if re.search(r"://[^/\s]*:\d+", v):
+                    viol.append(f"[{where}].{k} = {v!r} carries a port literal; use ${{MIOS_PORTS_*}}")
+                if re.search(r"#[0-9A-Fa-f]{3,8}\b", v):
+                    viol.append(f"[{where}].{k} = {v!r} carries a colour literal; colours come from [colors]")
+    walk(gecko, "desktop.portal.gecko")
+    walk(builder, "desktop.portal.builder")
+
+    need = ("name", "vendor", "app_id", "binary", "brand", "profile_name", "profile_root",
+            "install_dir", "icon_source", "license", "source_repo", "phase_script",
+            "home_url", "newtab_url", "chat_url")
+    for k in need:
+        if not isinstance(gecko.get(k), str) or not gecko.get(k):
+            viol.append(f"[desktop.portal.gecko].{k} is missing")
+    for sub in ("layout", "policies", "ai"):
+        if not isinstance(gecko.get(sub), dict):
+            viol.append(f"[desktop.portal.gecko.{sub}] is missing")
+    if gecko.get("profile_root") != "~/." + str(gecko.get("profile_name")):
+        viol.append("[desktop.portal.gecko].profile_root must be ~/.<profile_name> (where runtime --profile puts it)")
+    if not os.path.isfile(os.path.join(root, str(gecko.get("icon_source", "")))):
+        viol.append(f"[desktop.portal.gecko].icon_source {gecko.get('icon_source')!r} does not exist")
+
+    # Linkage (MP-4): an explicit, scoped exception for the Gecko install tree.
+    linux = table("build", "native", "linux") or {}
+    scope = str(gecko.get("install_dir", "")).lstrip("/")
+    audit = linux.get("audit_scopes") if isinstance(linux.get("audit_scopes"), list) else []
+    if scope not in audit:
+        viol.append(f"[build.native.linux].audit_scopes does not audit {scope!r}")
+    exc = [e for e in (linux.get("exceptions") or []) if isinstance(e, dict) and e.get("scope") == scope]
+    if not exc:
+        viol.append(f"no [[build.native.linux.exceptions]] is scoped to {scope!r}")
+    else:
+        names = set()
+        for e in exc:
+            names.update(e.get("binaries") or [])
+            if e.get("binary"):
+                names.add(e["binary"])
+            if not str(e.get("reason", "")).strip():
+                viol.append(f"the {scope!r} linkage exception has no reason")
+        for b in (gecko.get("binary"), "libxul.so"):
+            if b not in names:
+                viol.append(f"the {scope!r} linkage exception does not name {b!r}")
+
+    # Registry: every product file renders through [dotfiles.registry.portal-*].
+    reg = table("dotfiles", "registry") or {}
+    targets, templates = {}, []
+    for n, c in reg.items():
+        if isinstance(c, dict) and str(c.get("target", "")).startswith(tree_rel + "/"):
+            targets[c["target"]] = n
+            templates.append(c.get("template", ""))
+            if not n.startswith("portal-"):
+                viol.append(f"[dotfiles.registry.{n}] renders into {tree_rel}/ but is not named portal-*")
+    for need_n in ("portal-surfer", "portal-chrome", "portal-policies", "portal-prefs",
+                   "portal-mozconfig-common", "portal-mozconfig-linux", "portal-branding-prefs"):
+        if need_n not in reg:
+            viol.append(f"[dotfiles.registry.{need_n}] is missing")
+    for t in templates:
+        if not os.path.isfile(os.path.join(root, t)):
+            viol.append(f"portal template {t} is missing")
+
+    fx_version = re.compile(r"(?<![\w.])1\d\d\.\d+(?:\.\d+)?(?:esr|[ab]\d+)?(?![\w.])")
+    semver = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?![\w.])")
+    hex_colour = re.compile(r"#[0-9A-Fa-f]{3,8}\b|\b(?:rgba?|hsla?)\(\s*\d")
+    port = re.compile(r"localhost:\d|://[^/\s'\"]*:\d+")
+    moz_cloud = re.compile(r"(?:https?|wss?)://[^\s'\"<>)]*(?:mozilla\.(?:org|com|net|ai)|firefox\.com|mozgcp\.net)(?!/MPL/2\.0)", re.IGNORECASE)
+    moz_ai_hosts = re.compile(
+        r"(?:(?:https?|wss?)://[^\s'\"<>)]*(?:fastly-mlpa\.net|mlpa\.fastly\.net|model-hub\.[^\s'\"/]+|smartwindow\.[^\s'\"/]+|mozilla\.ai|mozilla-ai\.[^\s'\"/]+)[^\s'\"<>)]*)"
+        r"|(?<![\w.])(?:[a-z0-9-]+\.)*(?:fastly-mlpa\.net|mlpa\.fastly\.net|mozilla\.ai|(?:model-hub|smartwindow|mozilla-ai)\.(?:[a-z0-9-]+\.)*(?:org|com|net|ai|io|dev|cloud))\b",
+        re.IGNORECASE,
+    )
+    def check_moz_hosts(rel, text):
+        for n, line in enumerate(text.splitlines(), 1):
+            m = moz_cloud.search(line)
+            if m:
+                viol.append(f"{rel}:{n}: Mozilla cloud/telemetry host {m.group(0)!r} is forbidden in MiOS-Portal (Law 5)")
+            m_ai = moz_ai_hosts.search(line)
+            if m_ai and not m:
+                viol.append(f"{rel}:{n}: Mozilla AI host {m_ai.group(0)!r} is forbidden in MiOS-Portal (Law 5)")
+    def literals(rel, text):
+        check_moz_hosts(rel, text)
+        for n, line in enumerate(text.splitlines(), 1):
+            for what, rx in (("version", fx_version), ("version", semver),
+                             ("colour", hex_colour), ("port", port)):
+                m = rx.search(line)
+                if m:
+                    viol.append(f"{rel}:{n}: literal {what} {m.group(0)!r} -- it must come from the SSOT")
+    for t in templates:
+        p = os.path.join(root, t)
+        if os.path.isfile(p):
+            text = open(p, encoding="utf-8").read()
+            literals(t, text)
+            if t.endswith("portal-surfer.json.tmpl"):
+                for field in ('"version": "@BUILD:firefox_version@"', '"displayVersion": "@BUILD:firefox_version@"'):
+                    if field not in text:
+                        viol.append(f"{t}: {field} is gone -- surfer.json versions are filled at build time only")
+
+    # The tree: rendered targets, plus Surfer's own theme include patches and MiOS's empty Linux
+    # include, verbatim. Anything else is an unrendered (ungated) product file.
+    verbatim = {
+        f"{tree_rel}/src/browser/themes/shared/browser-shared-css.patch",
+        f"{tree_rel}/src/browser/themes/shared/jar-inc-mn.patch",
+        f"{tree_rel}/src/browser/themes/linux/browser-css.patch",
+        f"{tree_rel}/src/browser/themes/linux/jar-mn.patch",
+        f"{tree_rel}/src/browser/themes/custom/linux/linux.inc.css",
+    }
+    allowed_ext = (".patch", ".js", ".css", ".ftl", ".json", ".cfg", ".mozconfig")
+    tree = os.path.join(root, tree_rel)
+    if not os.path.isdir(tree):
+        viol.append(f"{tree_rel}/ is missing -- render it (mios-dotfiles-render render portal-...)")
+    else:
+        seen = set()
+        for d, _ds, fs in os.walk(tree):
+            for f in fs:
+                rel = os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
+                seen.add(rel)
+                if not (f.endswith(allowed_ext) or f == "mozconfig"):
+                    viol.append(f"{rel}: not a product-tree file type (patch/js/css/ftl/json/cfg/mozconfig only)")
+                    continue
+                if rel not in targets and rel not in verbatim:
+                    viol.append(f"{rel}: neither rendered by [dotfiles.registry.portal-*] nor a verbatim Surfer resource")
+                text = open(os.path.join(d, f), encoding="utf-8", errors="replace").read()
+                if rel in verbatim:
+                    literals(rel, text)
+                else:
+                    check_moz_hosts(rel, text)
+                if "@MIOS:" in text:
+                    viol.append(f"{rel}: carries an unrendered @MIOS: token")
+                # surfer license-check: MPL header on every js/css that Surfer copies into engine/.
+                if rel.startswith(f"{tree_rel}/src/") and f.endswith((".js", ".css")) \
+                        and "This Source Code Form is subject to the terms of the Mozilla Public" not in text[:400]:
+                    viol.append(f"{rel}: no MPL-2.0 header (surfer license-check)")
+        for rel in sorted(set(targets) | verbatim):
+            if rel not in seen:
+                viol.append(f"{rel}: missing from the product tree")
+
+    # The image phase: header agrees with [build.phases], and it never fetches or compiles Gecko.
+    script = str(gecko.get("phase_script", ""))
+    phases = (table("build", "phases") or {}).get("list") or []
+    entry = next((p for p in phases if isinstance(p, dict) and p.get("script") == script), None)
+    spath = os.path.join(root, "automation", script)
+    if entry is None:
+        viol.append(f"[build.phases] has no phase for {script!r}")
+    elif not os.path.isfile(spath):
+        viol.append(f"automation/{script} is missing")
+    else:
+        body = open(spath, encoding="utf-8").read()
+        m = re.search(r"^# MIOS_APPLY_CLASS=(\S+)", body, re.M)
+        if not m or m.group(1) != entry.get("apply_class"):
+            viol.append(f"automation/{script}: MIOS_APPLY_CLASS={m.group(1) if m else None} but [build.phases] says {entry.get('apply_class')!r}")
+        for rx, why in ((r"MIOS_SURFER_", "a MIOS_SURFER_* default"), (r"npx surfer|npm (run|install)|mach build|surfer (download|build)", "an in-image Gecko fetch or compile (Law 12)"),
+                        (r":=#|#[0-9A-Fa-f]{6}\b", "a colour fallback"), (r"(?<![\w.])1\d\d\.\d+(?![\w.])", "a version fallback")):
+            for n, line in enumerate(body.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(rx, line):
+                    viol.append(f"automation/{script}:{n}: {why}")
+
+    if viol:
+        for v in viol:
+            print(f"    {v}", file=sys.stderr)
+        return 1
+    print(f"[drift-checks] portal-product: [desktop.portal.gecko] spec, {len(targets)} rendered + "
+          f"{len(verbatim)} verbatim product file(s), linkage exception and phase header verified")
+    return 0
+
+
 _SUBCOMMAND_NAMES = (
     "agent-schema", "gate-registry",
     "firstboot-tier", "bound-image-store", "cephfs-ssot", "verb-stub-backends", "no-bare-port-literals",
@@ -4936,7 +5142,7 @@ _SUBCOMMAND_NAMES = (
     "ps-port-fallback-ssot", "ps-encoding-and-bom", "unit-security",
     "unit-dependency-closure", "docs-ratchet", "generator-host-parity",
     "doc-port-scheme", "blade-reconcile-schema", "memory-poisoning-scan",
-    "preset-roster-complete",
+    "preset-roster-complete", "portal-product",
 )
 SUBCOMMANDS = {k: globals()["check_" + k.replace("-", "_")] for k in _SUBCOMMAND_NAMES}
 

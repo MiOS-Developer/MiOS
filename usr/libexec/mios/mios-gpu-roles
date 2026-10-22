@@ -1,0 +1,229 @@
+#!/bin/bash
+# AI-hint: Classify the host's GPUs into iGPU (desktop) and dGPU (reserved for VMs and containers), put the graphical desktop on the iGPU through a mutter udev tag, and stage or arm whole-device vfio-pci reservation of the dGPU(s) with an IOMMU-group-aware ID list. Arming refuses unless a display is already connected to the iGPU.
+# AI-related: /usr/libexec/mios/vfio-config.sh, /usr/libexec/mios/vfio-toggle.sh, /usr/libexec/mios/vfio-check.sh, /usr/lib/udev/rules.d/61-mutter.rules, /etc/modprobe.d/vfio.conf, /usr/lib/tuned/profiles/mios-host/tuned.conf
+# AI-functions: main, parse_args, show_help, log_info, log_error, detect_gpus, igpu_connected, group_ids, cmd_status, cmd_igpu_desktop, cmd_reserve_dgpu
+
+set -euo pipefail
+
+NAME="mios-gpu-roles"
+CONF="${MIOS_GPU_ROLES_CONF:-/etc/mios/gpu-roles.conf}"
+UDEV_RULE="${MIOS_GPU_UDEV_RULE:-/etc/udev/rules.d/61-mios-mutter-primary-gpu.rules}"
+VFIO_CONF="${MIOS_VFIO_CONF:-/etc/modprobe.d/vfio.conf}"
+DRACUT_CONF="${MIOS_VFIO_DRACUT_CONF:-/etc/dracut.conf.d/mios-vfio.conf}"
+SYSFS="${MIOS_SYSFS:-/sys}"
+IGPU_MAX_VRAM_MIB="${MIOS_IGPU_MAX_VRAM_MIB:-2048}"
+
+# Optional host overrides (PCI addresses, space separated): MIOS_IGPU_PCI, MIOS_DGPU_PCI.
+# shellcheck source=/dev/null
+[[ -r "$CONF" ]] && source "$CONF"
+
+log_info()  { printf '[%s] INFO: %s\n' "$NAME" "$*" >&2; }
+log_error() { printf '[%s] ERROR: %s\n' "$NAME" "$*" >&2; }
+
+show_help() {
+    cat <<EOF
+Usage: $NAME <command> [options]
+
+Commands:
+  status                    List GPUs with role, driver, display state and IOMMU group
+  igpu-desktop [--remove]   Make mutter render the desktop on the iGPU (effective at next login)
+  reserve-dgpu --plan       Show the vfio-pci reservation that would be written
+  reserve-dgpu --arm --yes [--no-display-check]
+                            Write vfio-pci + dracut config for the next boot. Needs a display on the iGPU,
+                            or --no-display-check when the BIOS makes the iGPU the boot VGA device
+  reserve-dgpu --disarm     Remove that configuration
+  -h, --help                Show this help
+
+Roles: NVIDIA = dGPU; Intel at 00:02.0 = iGPU; AMD with <= \${IGPU_MAX_VRAM_MIB} MiB VRAM = iGPU.
+Override with MIOS_IGPU_PCI / MIOS_DGPU_PCI in $CONF.
+EOF
+}
+
+# Prints one line per GPU: <pci-addr> <vendor> <device> <role> <driver> <vram-mib|-> <drm-card|->
+detect_gpus() {
+    local dev addr class vendor device driver role vram card
+    for dev in "$SYSFS"/bus/pci/devices/*; do
+        class="$(<"$dev/class")"
+        [[ "$class" == 0x0300* || "$class" == 0x0302* ]] || continue
+        addr="$(basename "$dev")"
+        vendor="$(<"$dev/vendor")"; device="$(<"$dev/device")"
+        driver="-"; [[ -L "$dev/driver" ]] && driver="$(basename "$(readlink "$dev/driver")")"
+        card="-"; vram="-"
+        for c in "$dev"/drm/card[0-9]*; do [[ -e "$c" ]] && card="$(basename "$c")"; done
+        [[ -r "$dev/mem_info_vram_total" ]] && vram="$(( $(<"$dev/mem_info_vram_total") / 1048576 ))"
+        case "$vendor" in
+            0x10de) role=dgpu ;;
+            0x8086) [[ "$addr" == 0000:00:02.0 ]] && role=igpu || role=dgpu ;;
+            0x1002) if [[ "$vram" != "-" && "$vram" -le "$IGPU_MAX_VRAM_MIB" ]]; then role=igpu; else role=dgpu; fi ;;
+            *) role=dgpu ;;
+        esac
+        [[ " ${MIOS_IGPU_PCI:-} " == *" $addr "* ]] && role=igpu
+        [[ " ${MIOS_DGPU_PCI:-} " == *" $addr "* ]] && role=dgpu
+        printf '%s %s %s %s %s %s %s\n' "$addr" "${vendor#0x}" "${device#0x}" "$role" "$driver" "$vram" "$card"
+    done
+}
+
+# True when any connector of the given DRM card reports "connected".
+igpu_connected() {
+    local card="$1" s
+    [[ "$card" != "-" ]] || return 1
+    for s in "$SYSFS"/class/drm/"$card"-*/status; do
+        [[ -r "$s" && "$(<"$s")" == connected ]] && return 0
+    done
+    return 1
+}
+
+# vendor:device IDs of every non-bridge function in the IOMMU group of $1 (whole group is reserved together).
+group_ids() {
+    local addr="$1" g d class
+    g="$SYSFS/bus/pci/devices/$addr/iommu_group/devices"
+    [[ -d "$g" ]] || { log_error "$addr has no IOMMU group (is the IOMMU enabled?)"; return 1; }
+    for d in "$g"/*; do
+        class="$(<"$d/class")"
+        [[ "$class" == 0x0604* || "$class" == 0x0600* ]] && continue
+        printf '%s:%s\n' "$(<"$d/vendor")" "$(<"$d/device")" | sed 's/0x//g'
+    done
+}
+
+cmd_status() {
+    local addr vendor device role driver vram card disp grp
+    printf '%-13s %-9s %-6s %-9s %-9s %-8s %s\n' PCI ID ROLE DRIVER VRAM-MiB DISPLAY IOMMU-GROUP
+    while read -r addr vendor device role driver vram card; do
+        disp=no; igpu_connected "$card" && disp=yes
+        grp="$(basename "$(readlink "$SYSFS/bus/pci/devices/$addr/iommu_group" 2>/dev/null || echo ?)")"
+        printf '%-13s %-9s %-6s %-9s %-9s %-8s %s\n' "$addr" "$vendor:$device" "$role" "$driver" "$vram" "$disp" "$grp"
+    done < <(detect_gpus)
+    [[ -f "$UDEV_RULE" ]] && echo "desktop-on-iGPU rule: $UDEV_RULE" || echo "desktop-on-iGPU rule: not installed"
+    [[ -f "$VFIO_CONF" ]] && echo "vfio reservation:    $VFIO_CONF ($(grep -c . "$VFIO_CONF") lines)" || echo "vfio reservation:    not armed"
+}
+
+cmd_igpu_desktop() {
+    if [[ "${1:-}" == --remove ]]; then
+        rm -f "$UDEV_RULE"; udevadm control --reload 2>/dev/null || true
+        log_info "removed $UDEV_RULE (effective at next login)"; return 0
+    fi
+    local addr vendor device role driver vram card found=0 rules=""
+    while read -r addr vendor device role driver vram card; do
+        [[ "$role" == igpu ]] || continue
+        found=1
+        rules+="SUBSYSTEM==\"drm\", ENV{DEVTYPE}==\"drm_minor\", KERNEL==\"card*\", SUBSYSTEMS==\"pci\", ATTRS{vendor}==\"0x${vendor}\", ATTRS{device}==\"0x${device}\", TAG+=\"mutter-device-preferred-primary\""$'\n'
+    done < <(detect_gpus)
+    (( found )) || { log_error "no iGPU detected; nothing to prefer"; return 1; }
+    install -d "$(dirname "$UDEV_RULE")"
+    printf '# AI-hint: Generated by mios-gpu-roles: render the GNOME desktop on the iGPU.\n%s' "$rules" >"$UDEV_RULE"
+    udevadm control --reload 2>/dev/null || true
+    log_info "wrote $UDEV_RULE; mutter picks it up at the next graphical login (current session untouched)"
+}
+
+# True when an iGPU is the PCI device the firmware initialised as primary VGA.
+igpu_is_boot_vga() {
+    local addr vendor device role driver vram card
+    while read -r addr vendor device role driver vram card; do
+        [[ "$role" == igpu && -r "$SYSFS/bus/pci/devices/$addr/boot_vga" && "$(<"$SYSFS/bus/pci/devices/$addr/boot_vga")" == 1 ]] && return 0
+    done < <(detect_gpus)
+    return 1
+}
+
+# Rebuild the running kernel's initramfs so vfio-pci binds the reserved IDs before the GPU drivers load; keep a
+# restorable copy and roll back unless the new image carries the vfio modules AND the ids/softdep config.
+# (Output is captured first: `lsinitrd | grep -q` dies of SIGPIPE under pipefail and reports a false negative.)
+rebuild_initramfs() {
+    command -v dracut >/dev/null || { log_error "dracut missing; vfio would bind too late"; return 1; }
+    local img bak listing conf
+    img="/boot/initramfs-$(uname -r).img"
+    bak="$img.mios-pre-vfio"
+    [[ -f "$bak" ]] || cp -a "$img" "$bak"
+    if ! dracut -f "$img" "$(uname -r)"; then
+        cp -a "$bak" "$img"; log_error "dracut failed; original initramfs restored"; return 1
+    fi
+    listing="$(lsinitrd "$img" 2>/dev/null)" || true
+    if ! grep -q 'vfio-pci\.ko' <<<"$listing" || ! grep -q 'etc/modprobe\.d/vfio\.conf' <<<"$listing"; then
+        cp -a "$bak" "$img"; log_error "new initramfs lacks vfio-pci or its modprobe.d config; original restored"; return 1
+    fi
+    conf="$(lsinitrd -f etc/modprobe.d/vfio.conf "$img" 2>/dev/null)" || true
+    if ! grep -q '^options vfio-pci ids=' <<<"$conf"; then
+        cp -a "$bak" "$img"; log_error "initramfs vfio.conf has no ids= line; original restored"; return 1
+    fi
+    log_info "initramfs rebuilt: vfio modules + modprobe.d/vfio.conf present (backup: $bak)"
+}
+
+cmd_reserve_dgpu() {
+    local mode="${1:-}" yes=0 nodisp=0 addr vendor device role driver vram card a
+    shift || true
+    for a in "$@"; do
+        case "$a" in --yes) yes=1 ;; --no-display-check) nodisp=1 ;; *) log_error "unknown option: $a"; return 1 ;; esac
+    done
+    if [[ "$mode" == --disarm ]]; then
+        rm -f "$VFIO_CONF" "$DRACUT_CONF"
+        command -v dracut >/dev/null && dracut -f >/dev/null 2>&1 || true
+        log_info "vfio reservation removed; reboot to return the dGPU(s) to the host"; return 0
+    fi
+    local ids=() drivers=() addrs=() vendors=() igpu_card="-" igpu_seen=0
+    while read -r addr vendor device role driver vram card; do
+        if [[ "$role" == igpu ]]; then igpu_seen=1; [[ "$card" != "-" ]] && igpu_card="$card"; continue; fi
+        addrs+=("$addr"); drivers+=("$driver"); vendors+=("$vendor")
+        while read -r id; do ids+=("$id"); done < <(group_ids "$addr")
+    done < <(detect_gpus)
+    ((${#addrs[@]})) || { log_error "no dGPU detected"; return 1; }
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | sort -u)
+    local idlist; idlist="$(IFS=,; echo "${ids[*]}")"
+    local softdeps="" v
+    for v in $(printf '%s\n' "${vendors[@]}" | sort -u); do
+        case "$v" in
+            10de) for d in nouveau nvidia; do softdeps+="softdep $d pre: vfio-pci"$'\n'; done ;;
+            1002) softdeps+="softdep amdgpu pre: vfio-pci"$'\n' ;;
+            8086) for d in i915 xe; do softdeps+="softdep $d pre: vfio-pci"$'\n'; done ;;
+        esac
+    done
+    local conf="options vfio-pci ids=${idlist} disable_vga=1"$'\n'"${softdeps}"
+    if [[ "$mode" == --plan || -z "$mode" ]]; then
+        echo "dGPU(s): ${addrs[*]}   IOMMU-group IDs: $idlist"
+        echo "would write $VFIO_CONF:"; sed 's/^/    /' <<<"$conf"
+        echo "would write $DRACUT_CONF: force_drivers+=\" vfio_pci vfio vfio_iommu_type1 \"  then: dracut -f"
+        igpu_connected "$igpu_card" && echo "iGPU display: connected (arm would be allowed)" \
+            || echo "iGPU display: NOT connected -- move the monitor to the motherboard output before arming"
+        return 0
+    fi
+    [[ "$mode" == --arm ]] || { log_error "use --plan, --arm --yes or --disarm"; return 1; }
+    (( igpu_seen )) || { log_error "refusing: no iGPU to host the desktop"; return 1; }
+    if ! igpu_connected "$igpu_card"; then
+        # Override only when firmware already makes the iGPU the primary VGA device (BIOS picks it), so the
+        # operator can wire a monitor to it before the reboot; the host stays reachable over ssh/cockpit meanwhile.
+        if (( nodisp )) && igpu_is_boot_vga; then
+            log_info "no display on the iGPU yet, proceeding by request: the iGPU is the firmware boot VGA device"
+        else
+            log_error "refusing: no display connected to the iGPU ($igpu_card). Connect one, or pass --no-display-check if the BIOS selects the iGPU (checked via boot_vga)"; return 1
+        fi
+    fi
+    (( yes )) || { log_error "refusing: pass --yes to write boot configuration"; return 1; }
+    [[ -f "$VFIO_CONF" ]] && cp -a "$VFIO_CONF" "$VFIO_CONF.backup-$(date +%Y%m%d-%H%M%S)"
+    printf '%s' "$conf" >"$VFIO_CONF"
+    install -d "$(dirname "$DRACUT_CONF")"
+    # dracut does not copy /etc/modprobe.d by default: ship the ids= and softdep lines into the initramfs explicitly.
+    printf 'force_drivers+=" vfio_pci vfio vfio_iommu_type1 "\ninstall_items+=" %s "\n' "$VFIO_CONF" >"$DRACUT_CONF"
+    rebuild_initramfs
+    log_info "armed: takes effect at next boot (no reboot performed). Undo with: $NAME reserve-dgpu --disarm"
+}
+
+parse_args() {
+    CMD="${1:-}"; shift || true
+    ARGS=("$@")
+    case "$CMD" in
+        -h|--help|"") show_help; exit 0 ;;
+        status|igpu-desktop|reserve-dgpu) ;;
+        *) log_error "Unknown command: $CMD"; exit 1 ;;
+    esac
+}
+
+main() {
+    case "$CMD" in
+        status) cmd_status ;;
+        igpu-desktop) cmd_igpu_desktop "${ARGS[@]:-}" ;;
+        reserve-dgpu) cmd_reserve_dgpu "${ARGS[@]:-}" ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    parse_args "$@"
+    main
+fi

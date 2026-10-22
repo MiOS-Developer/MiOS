@@ -1,0 +1,9 @@
+# MiOS Vendored Asset Manifest
+updated_at=2026-07-31T16:41:07Z
+k3s=v1.36.2+k3s1
+k3s_selinux=v0.1.1-rc2
+bibata_cursor=v2.0.7
+nerd_fonts=v3.4.0
+geist_font=v1.3.0
+hermes_agent=daa1befaf61f2e2f3f0643818cfd6b32e2b51b10
+tmux_mcp=v2.0.0@d9e45cfe72cff75f7ba923c32ac35a19f424effb

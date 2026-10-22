@@ -224,3 +224,57 @@ fn secret_keys_explicit_key_is_caught_as_literal() {
         "{out}"
     );
 }
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git {args:?} failed");
+}
+
+const FOREIGN: &str = "[Service]\nEnvironment=VIRTSECRETD_ARGS=\"--timeout 120\"\n";
+
+/// This tree is also a live root, so an RPM's unit sits next to MiOS's under
+/// usr/lib/systemd/system. In a checkout the gate scans what git owns: the
+/// ignored foreign unit is not MiOS's surface, while a new MiOS unit that is
+/// untracked but not ignored still is.
+#[test]
+fn in_a_checkout_only_owned_units_are_scanned() {
+    let d = tempfile::tempdir().unwrap();
+    tree(d.path(), &["Environment=POSTGRES_PASSWORD=mios"], &[PIN]);
+    fs::write(
+        d.path().join(".gitignore"),
+        "usr/lib/systemd/system/*\n!usr/lib/systemd/system/mios-*.service\n",
+    )
+    .unwrap();
+    fs::write(d.path().join("usr/lib/systemd/system/virtsecretd.service"), FOREIGN).unwrap();
+    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["add", "."]);
+    let (code, out) = run(d.path());
+    assert_eq!(code, 0, "an ignored foreign unit must not be scanned: {out}");
+
+    fs::write(
+        d.path().join("usr/lib/systemd/system/mios-new.service"),
+        "[Service]\nEnvironment=MIOS_API_KEY=abcd1234\n",
+    )
+    .unwrap();
+    let (code, out) = run(d.path());
+    assert_eq!(code, 1, "an untracked, non-ignored MiOS unit must be scanned: {out}");
+    assert!(out.contains("mios-new.service:MIOS_API_KEY=abcd1234"), "{out}");
+}
+
+/// Outside a checkout there is no ownership record, so every unit is scanned:
+/// the same foreign line is a finding there (the false positive's mechanism).
+#[test]
+fn outside_a_checkout_every_unit_is_scanned() {
+    let d = tempfile::tempdir().unwrap();
+    tree(d.path(), &["Environment=POSTGRES_PASSWORD=mios"], &[PIN]);
+    fs::write(d.path().join("usr/lib/systemd/system/virtsecretd.service"), FOREIGN).unwrap();
+    let (code, out) = run(d.path());
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("VIRTSECRETD_ARGS"), "{out}");
+}

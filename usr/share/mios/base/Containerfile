@@ -42,7 +42,7 @@ COPY --from=mios /usr/libexec/mios/mios-ai-terminal /usr/libexec/mios/mios-ai-te
 COPY --from=mios /usr/libexec/mios/mios-dashboard /usr/libexec/mios/mios-dashboard
 COPY --from=mios /usr/libexec/mios/mios-mon.py /usr/libexec/mios/mios-mon.py
 COPY --from=mios /usr/bin/mios /usr/bin/mios
-COPY --from=mios /etc/profile.d/mios-prompt.sh /etc/profile.d/mios-prompt.sh
+COPY --from=mios /etc/profile.d/50-mios.sh /etc/profile.d/50-mios.sh
 COPY --from=mios /etc/tmux.conf /etc/tmux.conf
 COPY --from=mios /usr/share/mios/tmux/ /usr/share/mios/tmux/
 COPY --from=mios /usr/share/mios/keybindings/ /usr/share/mios/keybindings/
@@ -51,7 +51,10 @@ COPY --from=mios /usr/share/mios/oh-my-posh/mios.omp.json /usr/share/mios/oh-my-
 COPY --from=mios /usr/share/fonts/geist/ /usr/share/fonts/geist/
 COPY --from=mios /usr/share/fonts/geist-nerd/ /usr/share/fonts/geist-nerd/
 COPY --from=mios /usr/share/fonts/nerd-symbols/ /usr/share/fonts/nerd-symbols/
-RUN /usr/lib/mios/mcp/.venv/bin/python3 -c 'from mcp import Client; import uvicorn' \
+# bootc bases can leave /root pointing at an unpopulated /var/roothome.
+# Package installers need that directory even before the first system boot.
+RUN install -d -m 0700 "$(realpath -m /root)" \
+    && /usr/lib/mios/mcp/.venv/bin/python3 -c 'from mcp import Client; import uvicorn' \
     && /usr/libexec/mios/tmux-mcp --version \
     && /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install \
     && fc-cache -f

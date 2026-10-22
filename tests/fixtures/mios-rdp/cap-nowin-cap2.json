@@ -1,0 +1,24 @@
+{
+  "capture_wait_ms_p50": 15.46,
+  "convert_ms_p50": 9.716,
+  "convert_ms_p95": 29.685,
+  "cpu_cores": 0.00795537252083728,
+  "encode_ms_p50": 0.0,
+  "encode_ms_p95": 0.0,
+  "fps": 32.81591164845378,
+  "frames": 330,
+  "info": {
+    "format": "XR24",
+    "low_priority_context": true,
+    "modifier": "0x020000000056bb03",
+    "planes": 2,
+    "render_node": "/dev/dri/renderD128",
+    "renderer": "AMD Ryzen 9 9950X3D 16-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 7.2.10-200.fc44.x86_64)",
+    "size": [
+      1100,
+      2080
+    ]
+  },
+  "output": "HEADLESS-MIOS-SCALETEST",
+  "seconds": 10.056097284
+}

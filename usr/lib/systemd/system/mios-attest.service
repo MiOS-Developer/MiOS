@@ -20,3 +20,7 @@ ProtectHome=yes
 PrivateTmp=yes
 StandardOutput=journal
 StandardError=journal
+
+[Install]
+# Stays inert until Keylime replaces it: ConditionPathExists above keeps it from starting.
+WantedBy=multi-user.target

@@ -34,6 +34,20 @@ _UNIT_EXT = ('.service', '.socket', '.container', '.timer', '.conf')
 _CODE_EXT = ('.py', '.sh', '.bash', '.toml', '.yml', '.yaml', '.ps1', '.psm1') + _UNIT_EXT
 
 
+def _is_self(path: str) -> bool:
+    """True when `path` is this script (or a link to it), not a native build.
+
+    The candidate list includes /usr/libexec/mios/mios-hardcode-lint, which on a
+    repo-as-root host IS this script. While it was mode 0644 the exec failed and
+    the Python scan ran; made executable, the shim re-ran itself without end
+    until the OOM killer stopped it (98-drift-checks check_no_hardcode).
+    """
+    try:
+        return os.path.samefile(path, os.path.abspath(__file__))
+    except OSError:
+        return False
+
+
 def _try_native_bin(args_list: list[str]) -> None:
     if os.environ.get("MIOS_HARDCODE_LINT_NO_NATIVE") == "1":
         return
@@ -50,14 +64,16 @@ def _try_native_bin(args_list: list[str]) -> None:
             os.path.join("/usr/bin", exe),
             os.path.join("/usr/local/bin", exe),
         ):
-            if os.path.isfile(candidate):
+            if os.path.isfile(candidate) and not _is_self(candidate):
                 bin_path = candidate
                 break
-    if bin_path and os.path.isfile(bin_path):
+    if bin_path and os.path.isfile(bin_path) and not _is_self(bin_path):
+        # The child never delegates again, so no chain of shims can recurse.
+        env = dict(os.environ, MIOS_HARDCODE_LINT_NO_NATIVE="1")
         try:
-            res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr)
+            res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr, env=env)
             sys.exit(res.returncode)
-        except Exception:
+        except OSError:
             pass
 
 

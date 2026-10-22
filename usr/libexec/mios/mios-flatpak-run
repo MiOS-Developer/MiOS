@@ -1,0 +1,10 @@
+#!/bin/sh
+# AI-hint: Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole
+#          resolved SSOT (thousands of MIOS_* variables); flatpak forwards each one to bwrap and
+#          aborts past bwrap's 9000-argument limit. Sandboxed apps do not read MIOS_*.
+# AI-related: /usr/lib/mios/userenv.sh, /usr/share/applications/mios-zen.desktop, mios.toml [browser.zen]
+set -eu
+# One sed pass emits "-u NAME" for every MIOS_* variable. (Building the list in a shell loop was
+# quadratic: ~1.6 s per launch with ~3,700 exports.)
+# shellcheck disable=SC2046  # word-split the -u NAME pairs
+exec env $(env | sed -n 's/^\(MIOS_[A-Za-z0-9_]*\)=.*/-u \1/p') /usr/bin/flatpak run "$@"

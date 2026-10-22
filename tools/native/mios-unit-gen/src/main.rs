@@ -1,6 +1,7 @@
 // AI-hint: CLI driver for mios-unit-gen rendering systemd unit files from SSOT.
 use mios_unit_gen::{
-    drift_register, project, project_deployment, render_keybindings, render_units, DeploymentKind,
+    drift_register, project, project_deployment, project_user, render_keybindings, render_units,
+    render_user_units, DeploymentKind,
 };
 use std::env;
 use std::fs;
@@ -103,14 +104,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Render one unit, or list what [units.*] covers. This is how a drift entry
     // is diagnosed and drained: `--render x.service | diff - usr/lib/systemd/system/x.service`.
     if args.iter().any(|a| a == "--list") {
-        for name in render_units(&read_ssot(&root))?.keys() {
+        for name in (if args.iter().any(|a| a == "--user") {
+            render_user_units(&read_ssot(&root))?
+        } else {
+            render_units(&read_ssot(&root))?
+        })
+        .keys()
+        {
             println!("{name}");
         }
         return Ok(());
     }
     if let Some(i) = args.iter().position(|a| a == "--render") {
         let want = args.get(i + 1).map(String::as_str).unwrap_or("");
-        let rendered = render_units(&read_ssot(&root))?;
+        let rendered = if args.iter().any(|a| a == "--user") {
+            render_user_units(&read_ssot(&root))?
+        } else {
+            render_units(&read_ssot(&root))?
+        };
         match rendered.get(want) {
             Some(body) => print!("{body}"),
             None => {
@@ -124,14 +135,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A drift check must COMPARE. This one used to render into memory and
     // return; --selftest diffed the tree against a copy of itself.
     if args.iter().any(|a| a == "--check" || a == "--selftest") {
-        let p = project(&root)?;
+        let p = if args.iter().any(|a| a == "--user") {
+            project_user(&root)?
+        } else {
+            project(&root)?
+        };
         let declared = p.faithful.len() + p.drifted.len() + p.missing.len();
         if declared == 0 {
             eprintln!("mios-unit-gen: rendered 0 units from [units.*] -- SSOT empty or unreadable");
             std::process::exit(1);
         }
 
-        let register = drift_register(&read_ssot(&root))?;
+        let register = if args.iter().any(|a| a == "--user") {
+            Vec::new()
+        } else {
+            drift_register(&read_ssot(&root))?
+        };
         let unexpected: Vec<&String> = p.drifted.iter().filter(|f| !register.contains(f)).collect();
         // Shrink-only: an entry that no longer drifts must LEAVE the register,
         // or the register stops measuring anything and starts hiding the next one.

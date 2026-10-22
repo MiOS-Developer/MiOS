@@ -396,6 +396,11 @@ etc/dconf/profile/*
 !/etc/skel/.config/gtk-4.0/*
 !/etc/skel/.config/alacritty/
 !/etc/skel/.config/alacritty/alacritty.toml
+!/etc/skel/.var/
+!/etc/skel/.var/app/
+!/etc/skel/.var/app/com.spotify.Client/
+!/etc/skel/.var/app/com.spotify.Client/config/
+!/etc/skel/.var/app/com.spotify.Client/config/spotify-flags.conf
 # Per-user templates, owned here since bootstrap stopped carrying them (Law 15).
 !/etc/skel/.config/mios/
 !/etc/skel/.config/mios/mios.toml
@@ -474,6 +479,7 @@ etc/sysctl.d/*
 !/usr/bin/mios-build
 !/usr/bin/mios-chrome
 !/usr/bin/mios-deploy
+!/usr/bin/mios-portal
 !/usr/bin/mios-pull
 !/usr/bin/mios-rebuild
 !/usr/bin/mios-update
@@ -505,8 +511,21 @@ etc/sysctl.d/*
 !/usr/share/mios/**
 !/usr/share/applications/
 !/usr/share/applications/mios-*.desktop
+!/usr/share/cockpit/
+/usr/share/cockpit/*
+!/usr/share/cockpit/branding/
+/usr/share/cockpit/branding/*
+!/usr/share/cockpit/branding/mios/
+!/usr/share/cockpit/branding/mios/**
 !/usr/share/wayland-sessions/
 !/usr/share/wayland-sessions/hyprland.desktop
+!/usr/share/wayland-sessions/tmux-console.desktop
+!/usr/share/pki/
+/usr/share/pki/*
+!/usr/share/pki/containers/
+/usr/share/pki/containers/*
+!/usr/share/pki/containers/mios-cosign.pub
+!/usr/share/pki/containers/mios-cosign-backup.pub
 
 
 !/usr/share/applications/mios-*.desktop
@@ -571,6 +590,10 @@ usr/libexec/*
 /usr/libexec/mios/miosd
 /usr/libexec/mios/xtask
 /usr/libexec/mios/tmux-mcp
+/usr/libexec/mios/rdp-native/
+/usr/libexec/mios/rdp-native/mios-rdp-server
+/usr/libexec/mios/rdp-native/mios-rdp-priv
+/usr/libexec/mios/rdp-native/build.json
 /usr/libexec/mios/*.exe
 !/usr/libexec/mios-boot-diag
 !/usr/libexec/mios-flatpak-install
@@ -752,6 +775,8 @@ usr/lib/systemd/user/*
 !/usr/lib/systemd/user/mios-*.timer
 !/usr/lib/systemd/user/mios-*.target
 !/usr/lib/systemd/user/mios-*.path
+!/usr/lib/systemd/user/tmux-spawn-.scope.d/
+!/usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf
 !/usr/lib/systemd/user/mios-*.socket
 !/usr/lib/systemd/user/*.service.d/
 !/usr/lib/systemd/user/*.service.d/**
@@ -768,6 +793,7 @@ usr/lib/systemd/system/*
 !/usr/lib/systemd/system/miosd.service
 !/usr/lib/systemd/system/var-*.mount
 !/usr/lib/systemd/system/hermes-agent.service
+!/usr/lib/systemd/system/ventulusd.service
 !/usr/lib/systemd/system/*.service.d/
 !/usr/lib/systemd/system/*.service.d/**
 !/usr/lib/systemd/system/subagent.slice
@@ -796,6 +822,7 @@ usr/lib/sysusers.d/*
 !/usr/lib/tmpfiles.d/
 usr/lib/tmpfiles.d/*
 !/usr/lib/tmpfiles.d/50-mios.conf
+!/usr/lib/tmpfiles.d/mios-greeter.conf
 
 !/usr/lib/udev/
 usr/lib/udev/*
@@ -865,6 +892,7 @@ usr/lib/node_modules/
 **/.DS_Store
 **/Thumbs.db
 /artifacts/
+/.staged-portal/
 logs/
 *.log
 **/*.rpmnew
@@ -896,8 +924,21 @@ etc/profile.d/80-systemd-osc-context.sh
 /src/*
 !/src/autounattend/
 /src/autounattend/*
+# MiOS-Portal product tree: rendered from [desktop.portal.gecko] and committed (check_portal_product).
+!/src/mios-portal/
+!/src/mios-portal/**
 !/src/mios-rs/
 !/src/mios-rs/**
+
+# Native RDP server (IronRDP workspace): source committed, target/ ignored
+!/src/mios-rdp-server/
+!/src/mios-rdp-server/**
+/src/mios-rdp-server/target/
+/src/mios-rdp-server/**/target/
+
+# Quickshell patch and property update group leak gate
+!/src/quickshell/
+!/src/quickshell/**
 
 
 tools/native/target/
@@ -919,3 +960,49 @@ tests/powershell/*.exe
 !/etc/mios/ai/v1/
 !/etc/mios/ai/v1/a2a-peers.json
 usr/share/mios/windows/MiOS-FhsSync.exe
+usr/share/mios/virtio/*.iso
+
+# Runtime-installed agent CLI payloads (zcode, npm CLIs): built/installed per host by [agent_cli], never tracked.
+/usr/lib/mios/agent-cli/
+/usr/lib/mios/agent-cli/**
+
+# tuned: ship only the MiOS profiles and the PPD mapping; Fedora's own profiles and tuned's runtime state stay untracked.
+!/usr/lib/tuned/
+/usr/lib/tuned/*
+!/usr/lib/tuned/profiles/
+/usr/lib/tuned/profiles/*
+!/usr/lib/tuned/profiles/mios-*/
+!/usr/lib/tuned/profiles/mios-*/**
+!/etc/tuned/
+/etc/tuned/*
+!/etc/tuned/ppd.conf
+
+!/usr/share/mios/theme/templates/rofi.rasi.tmpl
+
+!/usr/share/mios/rofi/config.rasi
+
+!/usr/share/mios/hyprland/session.lua
+
+!/usr/share/mios/theme/console-palette
+
+!/usr/share/mios/theme/mios-colors.sh
+!/usr/share/mios/quickshell/Search.qml
+# Per-build record of the resolved upstream Looking Glass commit (written at bake time; never a pin).
+/usr/share/mios/looking-glass/build.json
+
+# Private keys and signing material are never committed, wherever they appear (MiOS cosign keys live
+# root-only in /etc/mios/keys; only *.pub trust anchors under usr/share/pki are tracked).
+*.key
+*.pem
+*.p12
+*.pfx
+/etc/mios/keys/
+# Public repository signing keys named *.key stay tracked (PGP PUBLIC KEY BLOCKs only).
+!/usr/share/mios/repos/*.key
+
+!/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
+
+!/usr/share/wayland-sessions/mios-desktop-dgpu.desktop
+
+# Dev-loop isolated worktrees (.agents/workflows/dev-loop.md step 3)
+.worktrees/

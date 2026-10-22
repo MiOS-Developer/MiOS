@@ -1,9 +1,10 @@
-// AI-hint: Law-11 extension gate: fails any credential literal baked into a world-readable unit whose exact path:KEY=value is not on the shrink-only register.
+// AI-hint: Law-11 extension gate: fails any credential literal baked into a world-readable unit this tree owns (git-tracked or not ignored; every file outside a checkout) whose exact path:KEY=value is not on the shrink-only register.
 // AI-related: usr/share/mios/mios.toml, usr/share/containers/systemd, usr/lib/systemd/system, tools/native/mios-gen/src/pod_quadlets.rs
 
 use crate::Report;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const CHECK: &str = "credential-literals";
 
@@ -97,7 +98,7 @@ fn credential_pairs(line: &str) -> Vec<(&str, &str)> {
     out
 }
 
-fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -112,6 +113,51 @@ fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// The unit files this tree owns.
+///
+/// In a checkout that is what git tracks, or would track (untracked but not
+/// ignored, so a new MiOS unit is scanned before it is added). This repository
+/// is also a live root: on a deployed host usr/lib/systemd/system holds every
+/// RPM's units next to MiOS's, and the libvirt `virtsecretd.service` line
+/// `VIRTSECRETD_ARGS="--timeout 120"` (SECRET inside the daemon's name) read as
+/// a MiOS credential literal. Those files are ignored by .gitignore, which is
+/// how the tree already says they are not its own. Outside a checkout (an
+/// exported tree, a test fixture) every file under the unit directories is the
+/// tree's own, as before.
+fn owned_unit_files(root: &Path) -> Result<(usize, Vec<PathBuf>), String> {
+    let present = UNIT_DIRS.iter().filter(|d| root.join(d).is_dir()).count();
+    if !root.join(".git").exists() {
+        let mut files = Vec::new();
+        for d in UNIT_DIRS {
+            walk(&root.join(d), &mut files);
+        }
+        return Ok((present, files));
+    }
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"])
+        .args(UNIT_DIRS)
+        .output()
+        .map_err(|e| format!("cannot run git ls-files: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git ls-files failed, so the owned unit corpus is unknown: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let mut files: Vec<PathBuf> = out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| root.join(String::from_utf8_lossy(s).as_ref()))
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok((present, files))
+}
+
 pub fn check(root: &Path) -> Report {
     let ssot = root.join("usr/share/mios/mios.toml");
     if !ssot.is_file() {
@@ -124,15 +170,10 @@ pub fn check(root: &Path) -> Report {
         return cannot_run("usr/share/mios/mios.toml did not parse");
     };
 
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    let mut present_dirs = 0usize;
-    for d in UNIT_DIRS {
-        let full = root.join(d);
-        if full.is_dir() {
-            present_dirs += 1;
-            walk(&full, &mut files);
-        }
-    }
+    let (present_dirs, files) = match owned_unit_files(root) {
+        Ok(v) => v,
+        Err(why) => return cannot_run(why),
+    };
     // An empty scan is not a clean scan: a moved unit directory would otherwise
     // report "no credential literals" forever.
     if present_dirs == 0 || files.is_empty() {

@@ -1,0 +1,18 @@
+# AI-hint: Test fixture = the staged [desktop.greeter] SSOT fragment (lane greeter); greeter.rs unit tests render from it.
+[desktop.greeter]
+kind                = "glass"                               # "glass" (Quickshell greeter, tuigreet fallback) | "tuigreet" (text greeter only)
+fallback            = "tuigreet"                            # only "tuigreet" is supported; the launcher execs it on any glass-greeter failure
+vt                  = 1                                     # greetd [terminal].vt
+user                = "greetd"                              # greetd [default_session].user (the account the greeter runs as)
+launcher            = "/usr/libexec/mios/mios-greeter-session"  # glass launcher; if absent/not executable on the target, render-greetd degrades to kind = "tuigreet"
+greeter_dir         = "/usr/share/mios/greeter"             # Quickshell config dir (shell.qml); also probed before choosing "glass"
+compositor          = "cage"                                # kiosk compositor the glass greeter runs in; only "cage" is supported (probed at /usr/bin/cage)
+outputs             = "extend"                              # cage output mode: "extend" (all outputs) | "last" (last connected output only)
+start_timeout_s     = 20                                    # launcher falls back to tuigreet if the greeter is not "ready" within this many seconds
+heartbeat_timeout_s = 30                                    # ... or if the greeter stops refreshing its "ready" heartbeat for this long (hung UI)
+default_session     = "hyprland"                            # wayland-sessions desktop-file id preselected (MiOS Hyprland); remembered choice wins
+wallpaper           = ""                                    # optional image path behind the glass card; "" = theme gradient only
+session_dirs        = ["/usr/share/wayland-sessions", "/usr/share/xsessions"]  # passed to both greeters (tuigreet --sessions, glass session list)
+tuigreet            = "/usr/bin/tuigreet"                   # the real tuigreet binary (NOT the /usr/local/bin/tuigreet helper wrapper)
+tuigreet_args       = ["--time", "--asterisks", "--remember", "--remember-user-session"]  # flags before --sessions/--cmd, same as the live config
+session_cmd         = "/usr/local/bin/start-hyprland-igpu"  # tuigreet --cmd: what tuigreet starts when no session file is chosen

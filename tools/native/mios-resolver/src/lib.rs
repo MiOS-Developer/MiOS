@@ -120,6 +120,7 @@ pub mod model {
 }
 pub mod palette;
 pub mod ports;
+pub mod sigstore;
 pub mod walk;
 
 use crate::error::ResolverError;
@@ -169,12 +170,23 @@ pub fn resolve_below_user(root_dir: Option<&Path>) -> Result<Value, ResolverErro
 
 /// Deterministic source projections use only the selected root's vendor and
 /// host layers. Process loader pointers and the developer's home cannot alter them.
+/// (Policy readers such as mios-gate host_parity rely on the host layer being included;
+/// generators that write tracked files use [`resolve_vendor_projection`].)
 pub fn resolve_projection(root: &Path) -> Result<Value, ResolverError> {
+    projection_of(root, &[("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"), ("etc/mios/mios.toml", "etc/mios/mios.d")])
+}
+
+/// The VENDOR tier only (usr/share/mios/mios.toml + usr/lib/mios/mios.d), for generators
+/// that write tracked/shipped files (render-globals, man pages, policy.json). On a deployed
+/// host the repo root is `/`, so root/etc/mios is the live admin tier -- e.g. the per-output
+/// monitor layout mios-displays saves -- and must never be baked into a shipped projection.
+pub fn resolve_vendor_projection(root: &Path) -> Result<Value, ResolverError> {
+    projection_of(root, &[("usr/share/mios/mios.toml", "usr/lib/mios/mios.d")])
+}
+
+fn projection_of(root: &Path, tiers: &[(&str, &str)]) -> Result<Value, ResolverError> {
     let mut layer_paths = Vec::new();
-    for (file, directory) in [
-        ("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"),
-        ("etc/mios/mios.toml", "etc/mios/mios.d"),
-    ] {
+    for (file, directory) in tiers {
         let path = root.join(file);
         if path.is_file() {
             layer_paths.push(path);
@@ -356,5 +368,34 @@ pub mod runtime {
             assert!(expand_refs_with("http://localhost:${MIOS_PORT_B}/", look).is_err());
             assert_eq!(expand_refs_with("no refs", look).unwrap(), "no refs");
         }
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::{resolve_projection, resolve_vendor_projection};
+    use std::fs;
+
+    #[test]
+    fn vendor_projection_reads_only_the_vendor_tier() {
+        let root = tempfile::tempdir().unwrap();
+        let p = |rel: &str, body: &str| {
+            let path = root.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        };
+        p("usr/share/mios/mios.toml", "[a]\nv = 1\n");
+        p("usr/lib/mios/mios.d/10-x.toml", "[a]\nfrag = true\n");
+        // A deployed host's admin tier (e.g. a saved monitor layout) must not leak in.
+        p("etc/mios/mios.toml", "[a]\nv = 2\n");
+        p("etc/mios/mios.d/50-displays.toml", "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\n");
+        let merged = resolve_vendor_projection(root.path()).unwrap();
+        assert_eq!(merged["a"]["v"].as_integer(), Some(1));
+        assert_eq!(merged["a"]["frag"].as_bool(), Some(true));
+        assert!(merged.get("desktop").is_none(), "{merged:?}");
+        // The policy projection keeps the host layer.
+        let layered = resolve_projection(root.path()).unwrap();
+        assert_eq!(layered["a"]["v"].as_integer(), Some(2));
+        assert!(layered.get("desktop").is_some());
     }
 }

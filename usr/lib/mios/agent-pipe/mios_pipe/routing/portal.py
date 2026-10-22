@@ -356,8 +356,8 @@ h1{margin:0;font-size:24px;letter-spacing:.5px}h1 b{color:var(--accent)}
 border-radius:9px;padding:7px 12px;font-size:13px;cursor:pointer;transition:.15s}
 .btn:hover,.btn.active{border-color:var(--accent);color:var(--accent)}
 .btn.active{background:color-mix(in srgb,var(--accent) 15%,var(--card2))}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#1a1230;font-weight:700}
-.btn.primary:hover{background:color-mix(in srgb,var(--accent) 84%,#fff);color:#1a1230}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:700}
+.btn.primary:hover{background:color-mix(in srgb,var(--accent) 84%,var(--fg));color:var(--bg)}
 .drop{position:absolute;right:0;top:110%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;min-width:200px;display:none;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .drop.open{display:block}
 .drop label{display:flex;justify-content:space-between;align-items:center;padding:7px 8px;font-size:13px;color:var(--mut);gap:10px}
@@ -453,8 +453,8 @@ width:min(720px,100%);max-height:86vh;overflow:auto;padding:20px 22px}
 .kv{display:flex;gap:10px;font-size:13px;margin:6px 0;color:var(--mut)}
 .kv b{color:var(--fg);font-weight:600;min-width:90px}
 .kv code{font-family:ui-monospace,Menlo,monospace;color:var(--fg);word-break:break-all}
-pre{background:#06090d;border:1px solid var(--line);border-radius:9px;padding:12px;
-font-size:12px;max-height:340px;overflow:auto;color:#aeb9c4;white-space:pre-wrap}
+pre{background:color-mix(in srgb,var(--bg) 85%,black);border:1px solid var(--line);border-radius:9px;padding:12px;
+font-size:12px;max-height:340px;overflow:auto;color:var(--mut);white-space:pre-wrap}
 .x{float:right;background:transparent;border:0;color:var(--mut);font-size:22px;cursor:pointer}
 footer{color:var(--mut);font-size:12px;text-align:center;padding:16px}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--card2);
@@ -495,8 +495,8 @@ letter-spacing:.5px}
    layer with transform:translateZ(0) (cards D + E) keeps it GLUED inside its
    frame. So: overflow:hidden box + translateZ(0) on the iframe. */
 .embed-box{border:1px solid color-mix(in srgb,var(--info) 35%,var(--line));
-border-radius:9px;background:#06090d;position:relative;height:480px;overflow:hidden}
-.embed-box iframe{display:block;width:100%;height:100%;border:0;background:#06090d;
+border-radius:9px;background:color-mix(in srgb,var(--bg) 85%,black);position:relative;height:480px;overflow:hidden}
+.embed-box iframe{display:block;width:100%;height:100%;border:0;background:color-mix(in srgb,var(--bg) 85%,black);
 transform:translateZ(0)}
 /* terminal embed = ttyd's OWN page (operator: "use ttyd's own page") in the same
    iframe. ttyd auto-fits its terminal to the iframe box, so there is no custom
@@ -1420,3 +1420,49 @@ async def portal_configure_page(request: Request):
 async def portal_page(request: Request):
     """Portal dashboard page. Calls portal_page_logic (same module)."""
     return await portal_page_logic(request)
+
+@portal_router.get("/v1", response_class=HTMLResponse)
+async def portal_v1_chat_page(request: Request):
+    """Local OpenAI-compatible chat front-end for MiOS-Portal sidebar."""
+    fg = str(_pcfg("colors", "fg") or "#E7DFD3")
+    bg = str(_pcfg("colors", "bg") or "#282262")
+    cursor = str(_pcfg("colors", "cursor") or "#F35C15")
+    accent = str(_pcfg("colors", "accent") or _pcfg("colors", "cursor") or "#F35C15")
+    html = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>MiOS AI Chat</title>
+<style>
+  :root { color-scheme: dark; --fg: __FG__; --bg: __BG__; --accent: __CURSOR__; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: transparent; color: var(--fg); display: flex; flex-direction: column; height: 100vh; }
+  #mios-chat-panel { flex: 1; display: flex; flex-direction: column; padding: 10px; gap: 10px; min-height: 0; }
+  #mios-chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  #mios-chat-form { display: flex; gap: 6px; }
+  #mios-chat-input { flex: 1; height: 34px; padding: 0 10px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); background: color-mix(in srgb, var(--bg) 65%, transparent); color: inherit; }
+  #mios-chat-send { height: 34px; padding: 0 12px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; font-weight: 600; cursor: pointer; }
+</style></head><body>
+<div id="mios-chat-panel">
+  <div id="mios-chat-messages"><div class="msg">MiOS AI ready.</div></div>
+  <form id="mios-chat-form"><input id="mios-chat-input" type="text" placeholder="Ask MiOS AI..." autocomplete="off"><button id="mios-chat-send" type="submit">Send</button></form>
+</div>
+<script>
+const form = document.getElementById("mios-chat-form");
+const input = document.getElementById("mios-chat-input");
+const msgs = document.getElementById("mios-chat-messages");
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = "";
+  const u = document.createElement("div"); u.className = "msg"; u.textContent = q; msgs.appendChild(u);
+  const a = document.createElement("div"); a.className = "msg"; a.textContent = "..."; msgs.appendChild(a);
+  try {
+    const r = await fetch("/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "mios", messages: [{ role: "user", content: q }] }) });
+    const j = await r.json();
+    a.textContent = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || JSON.stringify(j);
+  } catch (err) {
+    a.textContent = "Error: " + err;
+  }
+});
+</script></body></html>"""
+    html = html.replace("__FG__", fg).replace("__BG__", bg).replace("__CURSOR__", cursor)
+    return HTMLResponse(html)

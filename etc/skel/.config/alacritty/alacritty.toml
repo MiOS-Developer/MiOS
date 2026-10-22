@@ -10,3 +10,34 @@ family = 'GeistMono Nerd Font Mono'
 
 [font]
 size = 12.0
+
+[colors]
+transparent_background_colors = true
+
+[colors.primary]
+background = "#282262"
+foreground = "#E7DFD3"
+
+[colors.cursor]
+text = "#282262"
+cursor = "#F35C15"
+
+[colors.normal]
+black = "#282262"
+red = "#DC271B"
+green = "#3E7765"
+yellow = "#F35C15"
+blue = "#1A407F"
+magenta = "#734F39"
+cyan = "#B7C9D7"
+white = "#E7DFD3"
+
+[colors.bright]
+black = "#948E8E"
+red = "#FF6B5C"
+green = "#5FAA8E"
+yellow = "#FF8540"
+blue = "#3D6BA8"
+magenta = "#9D7660"
+cyan = "#E0E0E0"
+white = "#FFFFFF"

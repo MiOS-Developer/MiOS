@@ -1,0 +1,785 @@
+#!/usr/bin/env python3
+# AI-hint: MiOS-Portal live probe: launches an isolated headless MiOS-Portal (temporary profile, its own memory-capped user scope, Marionette) and checks (layout) the sketch layout against [desktop.portal.gecko.layout] with per-state screenshots and DOM geometry, or (egress) that no DNS lookup or socket leaves loopback, tracking every process of the scope's cgroup (the real firefox-bin and its children, never a wrapper PID).
+# AI-related: usr/share/mios/mios.toml, src/mios-portal/install/, usr/share/mios/theme/templates/portal-shared.inc.css.tmpl, tests/test-portal-probe.py
+# AI-doc: usr/share/doc/mios/manual/automation.md
+"""Probe a MiOS-Portal build headless, in an instance of its own.
+
+  mios-portal-probe layout --out DIR [--app DIR] [--url URL] [--width W] [--height H]
+  mios-portal-probe egress --out DIR [--app DIR] [--url URL] [--seconds N] [--plant-url URL]
+
+Both start the app from --app (default [desktop.portal.gecko].install_dir) with a fresh profile in
+DIR, inside `systemd-run --user --scope` (MemoryMax from --memory, no swap), with no display (the
+operator's session is never touched), and stop the scope afterwards. Every expectation comes from
+the SSOT; nothing is defaulted. Exit 0 only when every check passed; each failure is printed and
+recorded in DIR/result.json.
+
+layout: four states (tabs collapsed + chat hidden, tabs expanded by hovering the rail, chat
+revealed by hovering the right edge, chat hidden again), one screenshot each. It checks the tab
+rail is vertical and on the start side, the apps footer shows every [layout].tools entry when
+expanded, the centre (the selected page) runs edge to edge from the collapsed rail (overlaid, never
+shrunk, by the hovered rail under expand-on-hover; widened by collapsing it otherwise), the chat panel sits on the end side, is
+chat_width_px wide when revealed and shows exactly chat_peek_px at chat_peek_opacity when hidden,
+overlays the page instead of shrinking it, and that the screenshots of opposite states differ.
+
+egress: loads the URL (default home_url) and watches for --seconds (default 45): every socket of
+every process in the scope's cgroup is sampled twice a second, and Gecko's own resolver log
+(MOZ_LOG nsHostResolver) lists every host name it resolved. Any non-loopback peer or any resolved
+name other than a loopback name fails. It also fails when no firefox-bin was ever tracked (the
+probe would prove nothing) and when the console shows a `Policies:` error or a refused
+preference override. --plant-url opens an extra page: the negative control, which must fail.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+
+_SELF = os.path.abspath(__file__)
+ROOT = os.environ.get("MIOS_THEME_ROOT") or os.path.abspath(os.path.join(os.path.dirname(_SELF), "..", "..", ".."))
+sys.path.insert(0, os.path.join(ROOT, "usr/lib/mios"))
+import mios_toml  # noqa: E402
+
+LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
+# The same three the builder smoke rejects (mios-portal-build-inner SMOKE_CONSOLE_FAILURES).
+CONSOLE_FAILURES = (
+    re.compile(r"console\.error: Policies:"),
+    re.compile(r"Preference not allowed for stability reasons"),
+    re.compile(r"Ignoring preference override"),
+)
+
+
+def die(msg):
+    sys.stderr.write(f"[mios-portal-probe] FAIL: {msg}\n")
+    raise SystemExit(1)
+
+
+# ------------------------------------------------------------------ SSOT
+def ssot():
+    merged = mios_toml.load_merged(mios_toml.layer_paths())
+    gecko = mios_toml.section(merged, "desktop.portal.gecko")
+    layout = mios_toml.section(merged, "desktop.portal.gecko.layout")
+    if not gecko or not layout:
+        die("mios.toml has no [desktop.portal.gecko] / [desktop.portal.gecko.layout]")
+    exports = mios_toml.emit_exports(merged)
+
+    def url(key):
+        v = exports.get("MIOS_DESKTOP_PORTAL_GECKO_" + key.upper())
+        if not v or "${" in v:
+            die(f"[desktop.portal.gecko].{key} does not resolve ({v!r})")
+        return v
+
+    need = ("vertical_tabs", "tabs_at_start", "tools", "chat_at_end", "chat_autohide", "chat_width_px",
+            "chat_peek_px", "chat_peek_opacity", "chat_transition_ms", "uidensity", "hide_window_controls")
+    missing = [k for k in need if k not in layout]
+    if missing:
+        die(f"[desktop.portal.gecko.layout] lacks {', '.join(missing)}")
+    for k in ("install_dir", "binary"):
+        if not gecko.get(k):
+            die(f"[desktop.portal.gecko].{k} is unset")
+    return {"gecko": gecko, "layout": layout, "home_url": url("home_url"), "chat_url": url("chat_url")}
+
+
+# ------------------------------------------------------------------ Marionette (protocol 3)
+class Marionette:
+    def __init__(self, port, timeout=90):
+        deadline, last = time.time() + timeout, None
+        while time.time() < deadline:
+            try:
+                self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+                break
+            except OSError as e:
+                last = e
+                time.sleep(0.5)
+        else:
+            raise RuntimeError(f"marionette port {port} never opened: {last}")
+        self.sock.settimeout(120)
+        self.buf, self.msgid = b"", 0
+        self._recv()
+
+    def _recv(self):
+        while b":" not in self.buf:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise RuntimeError("marionette closed")
+            self.buf += chunk
+        n, rest = self.buf.split(b":", 1)
+        n = int(n)
+        while len(rest) < n:
+            chunk = self.sock.recv(1 << 20)
+            if not chunk:
+                raise RuntimeError("marionette closed")
+            rest += chunk
+        self.buf = rest[n:]
+        return json.loads(rest[:n])
+
+    def cmd(self, name, params=None):
+        self.msgid += 1
+        data = json.dumps([0, self.msgid, name, params or {}]).encode()
+        self.sock.sendall(str(len(data)).encode() + b":" + data)
+        while True:
+            msg = self._recv()
+            if msg[0] == 1 and msg[1] == self.msgid:
+                if msg[2]:
+                    raise RuntimeError(f"{name}: {msg[2]}")
+                return msg[3]
+
+    def js(self, script, args=None, ctx="chrome"):
+        self.cmd("Marionette:SetContext", {"value": ctx})
+        r = self.cmd("WebDriver:ExecuteScript", {"script": script, "args": args or []})
+        return r.get("value") if isinstance(r, dict) else r
+
+    def screenshot(self):
+        self.cmd("Marionette:SetContext", {"value": "chrome"})
+        r = self.cmd("WebDriver:TakeScreenshot", {"full": False, "hash": False, "scroll": False})
+        return base64.b64decode(r.get("value") if isinstance(r, dict) else r)
+
+    def quit(self):
+        try:
+            self.cmd("Marionette:Quit", {"flags": ["eForceQuit"]})
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------ the instance
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class Instance:
+    """One headless app in its own user scope; every PID in the scope's cgroup is the app."""
+
+    def __init__(self, app, binary, out, url, width, height, memory, moz_log=False):
+        self.app, self.out, self.url = app, out, url
+        exe = os.path.join(app, binary) if os.path.exists(os.path.join(app, binary)) else os.path.join(app, "firefox")
+        if not os.access(exe, os.X_OK):
+            die(f"{exe} is not executable")
+        self.exe = exe
+        self.width, self.height, self.memory, self.moz_log = width, height, memory, moz_log
+        self.unit = f"mios-portal-probe-{os.getpid()}-{int(time.time())}"
+        self.m = None
+        self.proc = None
+        self.seen = {}   # pid -> comm, every process ever seen in the scope
+
+    def __enter__(self):
+        self.profile = tempfile.mkdtemp(prefix="profile-", dir=self.out)
+        port = _free_port()
+        with open(os.path.join(self.profile, "user.js"), "w", encoding="utf-8") as fh:
+            fh.write(f'user_pref("marionette.port", {port});\n')
+        env = {k: v for k, v in os.environ.items() if k not in ("WAYLAND_DISPLAY", "DISPLAY", "MOZ_LOG", "MOZ_LOG_FILE")}
+        env.update(MOZ_HEADLESS="1", MOZ_HEADLESS_WIDTH=str(self.width), MOZ_HEADLESS_HEIGHT=str(self.height),
+                   MOZ_DBUS_REMOTE="0", MOZ_CRASHREPORTER_DISABLE="1")
+        if self.moz_log:
+            # sync: unbuffered, so a lookup right before quit is on disk (a buffered log lost its tail).
+            env.update(MOZ_LOG="sync,timestamp,nsHostResolver:5", MOZ_LOG_FILE=os.path.join(self.out, "moz-resolver.log"))
+        self.console = open(os.path.join(self.out, "console.log"), "w", encoding="utf-8")
+        self.proc = subprocess.Popen(
+            ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit", self.unit,
+             "-p", f"MemoryMax={self.memory}", "-p", "MemorySwapMax=0", "--",
+             self.exe, "--headless", "--marionette", "--remote-allow-system-access", "--no-remote",
+             "--profile", self.profile, self.url],
+            env=env, stdout=self.console, stderr=subprocess.STDOUT)
+        self.m = Marionette(port)
+        self.m.cmd("WebDriver:NewSession", {"capabilities": {"alwaysMatch": {"moz:accessibilityChecks": False}}})
+        self.sample_pids()
+        return self
+
+    def cgroup(self):
+        r = subprocess.run(["systemctl", "--user", "show", "-p", "ControlGroup", "--value", self.unit + ".scope"],
+                           capture_output=True, text=True)
+        cg = r.stdout.strip()
+        return "/sys/fs/cgroup" + cg if cg else ""
+
+    def pids(self):
+        cg = self.cgroup()
+        try:
+            with open(os.path.join(cg, "cgroup.procs"), encoding="ascii") as fh:
+                return [int(x) for x in fh.read().split()]
+        except (OSError, ValueError):
+            return []
+
+    def sample_pids(self):
+        for pid in self.pids():
+            try:
+                with open(f"/proc/{pid}/comm", encoding="utf-8") as fh:
+                    self.seen.setdefault(pid, fh.read().strip())
+            except OSError:
+                pass
+
+    def __exit__(self, *exc):
+        if self.m:
+            self.m.quit()
+        try:
+            self.proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            pass
+        subprocess.call(["systemctl", "--user", "stop", self.unit + ".scope"], stderr=subprocess.DEVNULL)
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        self.console.close()
+        shutil.rmtree(self.profile, ignore_errors=True)
+        state = subprocess.run(["systemctl", "--user", "is-active", self.unit + ".scope"],
+                               capture_output=True, text=True).stdout.strip()
+        self.scope_after = state or "gone"
+        return False
+
+    def wait_started(self, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.m.js("return !!(window.gBrowserInit && gBrowserInit.delayedStartupFinished);"):
+                return
+            time.sleep(0.5)
+        raise RuntimeError("browser window never finished delayed startup")
+
+    def hover(self, x, y):
+        """A real (native) pointer move into the headless widget: :hover and the sidebar's
+        expand-on-hover react exactly as they do under a mouse. A coordinate in (0, 1) is a fraction
+        of the window, a negative one counts from the far edge, anything else is CSS pixels."""
+        return self.m.js(
+            "const [x,y]=arguments; const wu=window.windowUtils; const s=window.devicePixelRatio;"
+            "const at=(v,n)=> (v > 0 && v < 1) ? v*n : (v < 0 ? n + v : v);"
+            "const X=(window.mozInnerScreenX + at(x, window.innerWidth))*s;"
+            "const Y=(window.mozInnerScreenY + at(y, window.innerHeight))*s;"
+            "wu.sendNativeMouseEvent(X, Y, wu.NATIVE_MOUSE_MESSAGE_MOVE, 0, 0, document.documentElement, null);"
+            "return [X,Y];", [x, y])
+
+
+# ------------------------------------------------------------------ layout
+_MEASURE = r"""
+const box = (sel) => {
+  const e = document.querySelector(sel);
+  if (!e) return null;
+  const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+  return {x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, bottom: r.bottom,
+          hidden: e.hidden || cs.display == "none",
+          opacity: parseFloat(cs.opacity), transform: cs.transform, position: cs.position};
+};
+const scBox = box("#sidebar-container");
+const railRight = scBox ? scBox.right : window.innerWidth;
+const sm = document.querySelector("sidebar-main");
+const wrapperBox = (() => {
+  if (!sm || !sm.shadowRoot) return null;
+  const w = sm.shadowRoot.querySelector(".wrapper");
+  if (!w) return null;
+  const r = w.getBoundingClientRect(), cs = getComputedStyle(w);
+  return {
+    x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, bottom: r.bottom,
+    backdropFilter: cs.backdropFilter || "",
+    backgroundImage: cs.backgroundImage || "",
+    borderRadius: cs.borderRadius || ""
+  };
+})();
+const tools = [];
+if (sm && sm.shadowRoot) {
+  for (const b of sm.shadowRoot.querySelectorAll(".tools-and-extensions:not(.overflow-button) moz-button[view]")) {
+    const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+    const inViewport = r.width > 0 && r.height > 0 && r.top >= -0.5 && r.left >= -0.5 &&
+                       r.bottom <= window.innerHeight + 0.5 && r.right <= railRight + 0.5;
+    tools.push({
+      view: b.getAttribute("view"),
+      miosApp: b.getAttribute("data-mios-app") || "",
+      label: b.getAttribute("label") || b.getAttribute("aria-label") || b.getAttribute("title") || "",
+      x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, bottom: r.bottom,
+      shown: cs.display != "none" && cs.visibility != "hidden" && inViewport
+    });
+  }
+}
+const chat = (() => {
+  const sbr = box("#sidebar-box");
+  const aiBrowser = document.getElementById("ai-window-browser");
+  const aiDoc = aiBrowser && aiBrowser.contentDocument;
+  if (aiDoc && aiDoc.location && aiDoc.location.href.startsWith("chrome://browser/content/aiwindow/aiWindow.html")) {
+    const bRect = aiBrowser.getBoundingClientRect();
+    const ox = bRect.x, oy = bRect.y;
+    const ebox = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect(), cs = aiDoc.defaultView.getComputedStyle(el);
+      return {
+        x: ox + r.x,
+        y: oy + r.y,
+        w: r.width,
+        h: r.height,
+        shown: !el.hidden && cs.display != "none" && cs.visibility != "hidden" && r.width > 0 && r.height > 0
+      };
+    };
+    const aiWin = aiDoc.querySelector("ai-window");
+    const sr = aiWin && aiWin.shadowRoot;
+    const bcRaw = sr && sr.getElementById("browser-container");
+    const abRaw = sr && sr.getElementById("aichat-browser");
+    const bc = (bcRaw && bcRaw.getBoundingClientRect().height > 0) ? bcRaw : (abRaw || bcRaw);
+    const sb = sr && sr.getElementById("ai-window-smartbar");
+    const urlInput = sb && (sb.querySelector("#urlbar-input") || sb.querySelector(".urlbar-input-box") || sb);
+    const cta = sb && sb.querySelector("input-cta");
+    const ms = sb && sb.querySelector("input-model-select");
+    const msBtn = ms && ms.shadowRoot && ms.shadowRoot.querySelector(".input-model-select-button");
+    const msItems = ms && ms.shadowRoot ? Array.from(
+      ms.shadowRoot.querySelectorAll("button.model-item, panel-item[data-choice]")
+    ).map(it => {
+      const lblNode = it.querySelector && it.querySelector(".model-item-label");
+      return {
+        choice: it.getAttribute("data-choice") || "",
+        label: ((lblNode && lblNode.textContent) || it.getAttribute("data-mios-label") || it.getAttribute("label") || it.textContent || "").trim()
+      };
+    }) : [];
+    const msLabel = (msBtn && (msBtn.getAttribute("label") || msBtn.label || msBtn.textContent || "")).trim();
+    const bodyText = ((aiDoc.body && aiDoc.body.innerText) || "") + " " + ((sr && sr.textContent) || "");
+    const titleEl = document.getElementById("mios-chat-title");
+    return {
+      loaded: true,
+      smartWindow: true,
+      mode: (aiWin && aiWin.getAttribute("mode")) || "",
+      href: aiDoc.location.href,
+      title: (titleEl && titleEl.textContent) || "",
+      panel: ebox(aiWin),
+      messages: ebox(bc),
+      input: ebox(urlInput),
+      send: ebox(cta),
+      modelSelect: Object.assign(ebox(ms) || {}, {
+        label: msLabel,
+        brand: (msBtn && msBtn.getAttribute("data-mios-brand")) || "",
+        model: (msBtn && msBtn.getAttribute("data-mios-model")) || "",
+        miosAi: msLabel.includes("MiOS-AI") && msItems.some(i => i.label.includes("MiOS-AI")),
+        choices: msItems
+      }),
+      summarizeShown: false,
+      remoteBrowserShown: false,
+      hasNotFound: bodyText.includes("Not Found") || bodyText.includes('"detail"')
+    };
+  }
+  const sb = document.getElementById("sidebar");
+  const sdoc = sb && sb.contentDocument;
+  if (!sdoc || !sdoc.location) return {loaded: false};
+  const cbox = (id) => {
+    const el = sdoc.getElementById(id);
+    if (!el) return null;
+    const r = el.getBoundingClientRect(), cs = sdoc.defaultView.getComputedStyle(el);
+    return {
+      x: (sbr ? sbr.x : 0) + r.x,
+      y: (sbr ? sbr.y : 0) + r.y,
+      w: r.width, h: r.height,
+      shown: !el.hidden && cs.display != "none" && cs.visibility != "hidden" && r.width > 0 && r.height > 0
+    };
+  };
+  const sumBtn = cbox("summarize-button");
+  const bodyText = (sdoc.body && sdoc.body.innerText) || "";
+  return {
+    loaded: true,
+    smartWindow: false,
+    href: sdoc.location.href,
+    title: (sdoc.getElementById("mios-chat-title") && sdoc.getElementById("mios-chat-title").textContent) || "",
+    panel: cbox("mios-chat-panel"),
+    messages: cbox("mios-chat-messages"),
+    input: cbox("mios-chat-input"),
+    send: cbox("mios-chat-send"),
+    summarizeShown: !!(sumBtn && sumBtn.shown),
+    remoteBrowserShown: Array.from(sdoc.querySelectorAll("#browser-container browser")).some(b => { const r = b.getBoundingClientRect(), cs = sdoc.defaultView.getComputedStyle(b); return cs.display != "none" && r.width > 0 && r.height > 0; }),
+    hasNotFound: bodyText.includes("Not Found") || bodyText.includes('"detail"')
+  };
+})();
+const P = Services.prefs;
+const pref = (k) => { const t = P.getPrefType(k); return t == 128 ? P.getBoolPref(k) : t == 64 ? P.getIntPref(k) : t == 32 ? P.getStringPref(k) : null; };
+return {
+  inner: {w: window.innerWidth, h: window.innerHeight},
+  tabCount: (window.gBrowser && window.gBrowser.tabs && window.gBrowser.tabs.length) || 1,
+  autoconfig: {file: pref("general.config.filename"), lockedServer: P.prefIsLocked("services.settings.server")},
+  expanded: !!(sm && sm.expanded),
+  sidebarOpen: SidebarController.isOpen, sidebarId: SidebarController.currentID,
+  uidensity: document.documentElement.getAttribute("uidensity"),
+  prefs: Object.fromEntries(["sidebar.revamp", "sidebar.verticalTabs", "sidebar.position_start", "sidebar.visibility",
+    "sidebar.main.tools", "browser.uidensity", "browser.ml.chat.provider", "browser.smartwindow.enabled",
+    "browser.smartwindow.endpoint", "mios.portal.chat.end",
+    "mios.portal.chat.autohide", "mios.portal.hide-window-controls"].map(k => [k, pref(k)])),
+  content: (() => { const r = gBrowser.selectedBrowser.getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, bottom: r.bottom}; })(),
+  wrapperBox,
+  boxes: Object.fromEntries(["#sidebar-container", "#vertical-tabs", "#TabsToolbar", "#tabbrowser-tabbox",
+    "#sidebar-box", ".titlebar-buttonbox-container"].map(s => [s, box(s)])),
+  tools,
+  chat,
+};
+"""
+
+FIREFOX_BUILTIN_TOOLS = {
+    "viewBookmarksSidebar", "viewHistorySidebar", "viewCustomizeSidebar",
+    "viewTabsSidebar", "viewMegalistSidebar", "viewGenaiChatSidebar",
+}
+
+
+def check_footer_tools(state_name, state, rail_box):
+    errs = []
+    tools = state.get("tools") or []
+    inner_h = (state.get("inner") or {}).get("h", 0)
+    rail_right = (rail_box or {}).get("right", 0)
+    if len(tools) < 3:
+        errs.append(f"{state_name}: apps footer has {len(tools)} button(s), expected >= 3 MiOS apps: {tools}")
+        return errs
+    for b in tools:
+        v = str(b.get("view") or "")
+        if v in FIREFOX_BUILTIN_TOOLS or not v.startswith("mios-app-") or not b.get("miosApp"):
+            errs.append(f"{state_name}: footer button {v!r} is a Firefox built-in tool, not a MiOS app: {b}")
+        in_bounds = (
+            b.get("shown")
+            and b.get("w", 0) > 0
+            and b.get("h", 0) > 0
+            and b.get("x", -1) >= -0.5
+            and b.get("y", -1) >= -0.5
+            and b.get("y", 0) + b.get("h", 0) <= inner_h + 0.5
+            and b.get("x", 0) + b.get("w", 0) <= rail_right + 0.5
+        )
+        if not in_bounds:
+            errs.append(
+                f"{state_name}: footer MiOS app {v!r} is clipped or off-screen "
+                f"(box={b}, window_h={inner_h}, rail_right={rail_right})"
+            )
+    return errs
+
+
+def check_chat_surface(rv_state):
+    errs = []
+    chat = rv_state.get("chat") or {}
+    sbr = (rv_state.get("boxes") or {}).get("#sidebar-box") or {}
+    inner_h = (rv_state.get("inner") or {}).get("h", 0)
+    href = str(chat.get("href") or "")
+    valid_href = (
+        href.startswith("chrome://browser/content/aiwindow/aiWindow.html")
+        or href.startswith("chrome://browser/content/genai/chat.html")
+    )
+    if not chat.get("loaded") or not valid_href:
+        errs.append(f"chat-revealed: chat document not loaded: {chat}")
+        return errs
+    if chat.get("summarizeShown"):
+        errs.append(f"chat-revealed: Firefox 'Summarize page' button (#summarize-button) is still visible: {chat}")
+    if chat.get("hasNotFound"):
+        errs.append(f"chat-revealed: chat panel contains 'Not Found' 404 error text: {chat}")
+    if chat.get("remoteBrowserShown"):
+        errs.append(f"chat-revealed: nested remote <browser> is still visible in #browser-container: {chat}")
+    for key, min_w in (("panel", 150), ("messages", 150), ("input", 100), ("send", 30)):
+        box = chat.get(key) or {}
+        ok = (
+            box.get("shown")
+            and box.get("w", 0) >= min_w
+            and box.get("h", 0) >= 20
+            and box.get("x", -1) >= sbr.get("x", 0) - 2
+            and box.get("x", 0) + box.get("w", 0) <= sbr.get("right", 0) + 2
+            and box.get("y", 0) + box.get("h", 0) <= inner_h + 2
+        )
+        if not ok:
+            errs.append(f"chat-revealed: chat {key!r} is missing, hidden, or out of #sidebar-box bounds: {box} vs {sbr}")
+    if chat.get("smartWindow") or "modelSelect" in chat:
+        ms = chat.get("modelSelect") or {}
+        ms_ok = (
+            ms.get("shown")
+            and ms.get("w", 0) >= 40
+            and ms.get("h", 0) >= 18
+            and ms.get("miosAi") is True
+        )
+        if not ms_ok:
+            errs.append(f"chat-revealed: native Smart Window MiOS-AI model selector invalid or hidden: {ms}")
+    return errs
+
+
+def _settle(inst, layout, extra=0.0):
+    time.sleep(max(1.2, 3 * float(layout["chat_transition_ms"]) / 1000.0) + extra)
+
+
+def cmd_layout(args):
+    spec = ssot()
+    L = spec["layout"]
+    out = os.path.abspath(args.out)
+    os.makedirs(out, exist_ok=True)
+    app = args.app or spec["gecko"]["install_dir"]
+    peek, width = int(L["chat_peek_px"]), int(L["chat_width_px"])
+    problems, states, shots = [], {}, {}
+
+    def check(cond, msg):
+        if not cond:
+            problems.append(msg)
+
+    with Instance(app, spec["gecko"]["binary"], out, args.url or spec["home_url"], args.width, args.height,
+                  args.memory) as inst:
+        inst.wait_started()
+        _settle(inst, L, 2.0)
+        seq = (("tabs-collapsed", (0.5, 0.5)),
+               ("tabs-expanded", (8, 0.5)),
+               ("chat-revealed", (-max(1, peek // 2), 0.5)),
+               ("chat-hidden", (0.5, 0.5)))
+        for name, (x, y) in seq:
+            inst.hover(x, y)
+            _settle(inst, L)
+            states[name] = inst.m.js(_MEASURE)
+            png = inst.m.screenshot()
+            shots[name] = hashlib.sha256(png).hexdigest()
+            with open(os.path.join(out, f"{name}.png"), "wb") as fh:
+                fh.write(png)
+        # Verify sidebar height grows dynamically when a second tab is opened.
+        inst.m.js(
+            "gBrowser.addTab(arguments[0], {triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()});"
+            "return gBrowser.tabs.length;",
+            [args.url or spec["home_url"]]
+        )
+        time.sleep(0.4)
+        states["tabs-two-tabs"] = inst.m.js(_MEASURE)
+        inst.sample_pids()
+    scope_after = inst.scope_after
+
+    c, e, rv, hd, t2 = (
+        states["tabs-collapsed"],
+        states["tabs-expanded"],
+        states["chat-revealed"],
+        states["chat-hidden"],
+        states["tabs-two-tabs"],
+    )
+    W, H = c["inner"]["w"], c["inner"]["h"]
+    B = lambda st, k: st["boxes"].get(k) or {}
+    # Vertical tabs on the start side, horizontal strip gone, floating and scaling with tab count.
+    if L["vertical_tabs"]:
+        check(c["prefs"]["sidebar.verticalTabs"] is True, f"sidebar.verticalTabs is {c['prefs']['sidebar.verticalTabs']} (SSOT vertical_tabs=true)")
+        vt = B(c, "#vertical-tabs")
+        check(vt and not vt.get("hidden") and vt.get("w", 0) > 0 and vt.get("h", 0) >= 60, f"#vertical-tabs not rendered as a rail: {vt}")
+        ts = B(c, "#TabsToolbar")
+        check(not ts or ts.get("hidden") or ts.get("h", 0) <= 1, f"horizontal #TabsToolbar still rendered: {ts}")
+    sc, tb = B(c, "#sidebar-container"), B(c, "#tabbrowser-tabbox")
+    if L["tabs_at_start"]:
+        check(sc and abs(sc.get("x", -1)) < 1,
+              f"tab rail is not on the start side: rail {sc}, page {tb}")
+    # Floating Hyprglass left rail: does not stretch full window height, and grows when a tab is added.
+    check(sc.get("y", 0) > 20 and sc.get("h", H) < H - 40,
+          f"left Zen Sidebar is not floating (expected y > 20 and h < {H - 40}): {sc}")
+    wbox = c.get("wrapperBox") or {}
+    check("blur" in str(wbox.get("backdropFilter") or ""),
+          f"left Zen Sidebar .wrapper lacks Hyprglass backdrop-filter blur: {wbox}")
+    sc2 = B(t2, "#sidebar-container")
+    check(sc2.get("h", 0) >= sc.get("h", 0) + 25,
+          f"left Zen Sidebar height did not grow with tab count (1 tab={sc.get('h')}px vs 2 tabs={sc2.get('h')}px)")
+    # Collapsible: hovering the rail expands it (apps footer visible), leaving collapses it.
+    check(not c["expanded"] and e["expanded"], f"rail expanded state collapsed={c['expanded']} hovered={e['expanded']} (want False/True)")
+    sce = B(e, "#sidebar-container")
+    check(sce.get("w", 0) > sc.get("w", 0) + 40, f"rail width collapsed {sc.get('w')} vs expanded {sce.get('w')}")
+    # Full-frame webpage: spans the entire Portal window frame (0..W, 0..H) in every state.
+    pc, pe = c["content"], e["content"]
+    check(abs(pc["x"]) <= 1 and abs(pc["right"] - W) <= 1 and abs(pc["y"]) <= 1 and abs(pc["h"] - H) <= 1,
+          f"webpage does not fill the entire Portal window frame (0..{W}, 0..{H}): {pc}")
+    check(abs(pe["w"] - W) <= 1 and abs(pe["h"] - H) <= 1,
+          f"expanding the floating rail shrank the full-frame webpage: {pe}")
+    problems.extend(check_footer_tools("tabs-collapsed", c, sc))
+    problems.extend(check_footer_tools("tabs-expanded", e, sce))
+    problems.extend(check_chat_surface(rv))
+    check(bool((rv.get("chat") or {}).get("smartWindow")),
+          f"chat panel is not running native Smart Window (aiWindow.html): {rv.get('chat')}")
+    # Chat on the end side, auto-hidden to a peek strip, overlaying the page.
+    if L["chat_at_end"]:
+        for name, st in (("chat-hidden", hd), ("chat-revealed", rv)):
+            sb = B(st, "#sidebar-box")
+            check(sb and not sb.get("hidden"), f"{name}: chat panel (#sidebar-box) is not open")
+        sbr = B(rv, "#sidebar-box")
+        check(abs(sbr.get("right", 0) - W) < 1 and sbr.get("x", 0) > B(rv, "#tabbrowser-tabbox").get("x", 0),
+              f"chat panel is not on the end side: {sbr}")
+        check(str(rv["sidebarId"]) == "viewGenaiChatSidebar", f"the open sidebar panel is {rv['sidebarId']}, not the chat")
+    if L["chat_autohide"]:
+        sbh, sbr = B(hd, "#sidebar-box"), B(rv, "#sidebar-box")
+        vis_h, vis_r = W - sbh.get("x", W), W - sbr.get("x", W)
+        check(abs(vis_h - peek) <= 1, f"hidden chat shows {vis_h:.1f}px, SSOT chat_peek_px={peek}")
+        check(abs(sbh.get("opacity", -1) - float(L["chat_peek_opacity"])) < 0.02,
+              f"hidden chat opacity {sbh.get('opacity')}, SSOT chat_peek_opacity={L['chat_peek_opacity']}")
+        check(abs(vis_r - width) <= 1 and abs(sbr.get("w", 0) - width) <= 1,
+              f"revealed chat is {vis_r:.1f}px visible / {sbr.get('w')}px wide, SSOT chat_width_px={width}")
+        check(abs(sbr.get("opacity", 0) - 1.0) < 0.02, f"revealed chat opacity {sbr.get('opacity')}")
+        check(abs(rv["content"]["w"] - hd["content"]["w"]) < 1, "revealing the chat resized the page (it must overlay it)")
+    if L["hide_window_controls"]:
+        bb = B(c, ".titlebar-buttonbox-container")
+        check(not bb or bb.get("hidden"), f"window controls are rendered: {bb}")
+    if int(L["uidensity"]) == 1:
+        check(c["uidensity"] == "compact", f"uidensity attribute is {c['uidensity']!r}, SSOT uidensity=1 (compact)")
+    check(c["prefs"]["browser.ml.chat.provider"] == spec["chat_url"],
+          f"browser.ml.chat.provider {c['prefs']['browser.ml.chat.provider']!r} is not SSOT chat_url {spec['chat_url']!r}")
+    check(c["prefs"]["browser.smartwindow.endpoint"] == spec["chat_url"],
+          f"browser.smartwindow.endpoint {c['prefs']['browser.smartwindow.endpoint']!r} is not SSOT chat_url {spec['chat_url']!r}")
+    check(c["autoconfig"]["file"] and c["autoconfig"]["lockedServer"],
+          f"the autoconfig file did not run (general.config.filename={c['autoconfig']['file']!r}, lockPref not applied)")
+    # The screenshots of opposite states must differ.
+    check(shots["tabs-collapsed"] != shots["tabs-expanded"], "tabs-collapsed and tabs-expanded screenshots are identical")
+    check(shots["chat-hidden"] != shots["chat-revealed"], "chat-hidden and chat-revealed screenshots are identical")
+    check(scope_after in ("gone", "inactive", "failed"), f"probe scope still {scope_after} after quit")
+
+    result = {"mode": "layout", "app": app, "ssot_layout": L, "chat_url": spec["chat_url"], "screenshots": shots,
+              "states": states, "scope_after": scope_after, "problems": problems, "ok": not problems}
+    with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2, default=str)
+    for p in problems:
+        sys.stderr.write(f"[mios-portal-probe] layout: {p}\n")
+    print(f"[mios-portal-probe] layout {'OK' if not problems else 'FAILED'}: {len(problems)} problem(s); "
+          + ", ".join(f"{k}={v[:12]}" for k, v in shots.items()) + f"; scope {scope_after}")
+    return 0 if not problems else 1
+
+
+# ------------------------------------------------------------------ egress
+def _proc_net(kind):
+    """{inode: (remote_ip, remote_port, state)} for /proc/net/<kind> (the probe's network namespace)."""
+    out = {}
+    try:
+        with open(f"/proc/net/{kind}", encoding="ascii") as fh:
+            next(fh)
+            for line in fh:
+                f = line.split()
+                rem, st, inode = f[2], f[3], int(f[9])
+                hexip, hexport = rem.split(":")
+                raw = bytes.fromhex(hexip)
+                if len(raw) == 4:
+                    ip = ipaddress.IPv4Address(raw[::-1])
+                else:
+                    ip = ipaddress.IPv6Address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+                out[inode] = (ip, int(hexport, 16), st)
+    except OSError:
+        pass
+    return out
+
+
+def _is_local(ip):
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_unspecified
+
+
+def socket_peers(pids):
+    """Non-loopback peers of every socket the given processes hold."""
+    tables = {}
+    for kind in ("tcp", "tcp6", "udp", "udp6"):
+        tables.update(_proc_net(kind))
+    peers = set()
+    for pid in pids:
+        try:
+            fds = os.listdir(f"/proc/{pid}/fd")
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                link = os.readlink(f"/proc/{pid}/fd/{fd}")
+            except OSError:
+                continue
+            if not link.startswith("socket:["):
+                continue
+            ent = tables.get(int(link[8:-1]))
+            if ent and not _is_local(ent[0]):
+                peers.add(f"{ent[0]}:{ent[1]} (state {ent[2]}, pid {pid})")
+    return peers
+
+
+_RESOLVE = re.compile(r"Resolving host \[([^\]<]+)\]")
+
+
+def resolved_hosts(out):
+    hosts = set()
+    for fn in os.listdir(out):
+        if not fn.startswith("moz-resolver.log"):
+            continue
+        with open(os.path.join(out, fn), encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                for h in _RESOLVE.findall(line):
+                    hosts.add(h.strip().lower())
+    return hosts
+
+
+def _host_is_local(h):
+    if h in LOOPBACK_NAMES or h.endswith(".localhost"):
+        return True
+    try:
+        return _is_local(ipaddress.ip_address(h.strip("[]")))
+    except ValueError:
+        return False
+
+
+def cmd_egress(args):
+    spec = ssot()
+    out = os.path.abspath(args.out)
+    os.makedirs(out, exist_ok=True)
+    for fn in os.listdir(out):
+        if fn.startswith("moz-resolver.log"):
+            os.remove(os.path.join(out, fn))
+    app = args.app or spec["gecko"]["install_dir"]
+    url = args.url or spec["home_url"]
+    problems, peers, samples = [], set(), 0
+    with Instance(app, spec["gecko"]["binary"], out, url, args.width, args.height, args.memory, moz_log=True) as inst:
+        inst.wait_started()
+        if args.plant_url:
+            inst.m.js("gBrowser.addTab(arguments[0], {triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()}); return 1;",
+                      [args.plant_url])
+        deadline = time.time() + args.seconds
+        while time.time() < deadline:
+            inst.sample_pids()
+            peers |= socket_peers(inst.pids())
+            samples += 1
+            time.sleep(0.5)
+        tracked = dict(inst.seen)
+    scope_after = inst.scope_after
+    hosts = resolved_hosts(out)
+    bad_hosts = sorted(h for h in hosts if not _host_is_local(h))
+    with open(os.path.join(out, "console.log"), encoding="utf-8", errors="replace") as fh:
+        console_bad = [ln.rstrip() for ln in fh if any(p.search(ln) for p in CONSOLE_FAILURES)]
+
+    if "firefox-bin" not in tracked.values() and not any(v.startswith("firefox") for v in tracked.values()):
+        problems.append(f"no firefox-bin process was ever tracked in the scope ({tracked}); the probe proved nothing")
+    # Canary: the page the probe itself loaded must show up as a lookup, or the log saw nothing.
+    canary = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if not any(fn.startswith("moz-resolver.log") for fn in os.listdir(out)):
+        problems.append("Gecko wrote no resolver log; DNS lookups were not observable")
+    elif canary and canary not in hosts:
+        problems.append(f"the resolver log does not show the probe's own page host {canary!r}; DNS observation is broken")
+    if bad_hosts:
+        problems.append("DNS lookups of non-loopback hosts: " + ", ".join(bad_hosts))
+    if peers:
+        problems.append("sockets to non-loopback peers: " + ", ".join(sorted(peers)))
+    if console_bad:
+        problems.append("console: " + " | ".join(console_bad[:5]))
+    if scope_after not in ("gone", "inactive", "failed"):
+        problems.append(f"probe scope still {scope_after} after quit")
+
+    result = {"mode": "egress", "app": app, "url": url, "plant_url": args.plant_url, "seconds": args.seconds,
+              "samples": samples, "canary_host": canary, "tracked_processes": {str(k): v for k, v in sorted(tracked.items())},
+              "resolved_hosts": sorted(hosts), "non_loopback_hosts": bad_hosts, "non_loopback_peers": sorted(peers),
+              "console_failures": console_bad, "scope_after": scope_after, "problems": problems, "ok": not problems}
+    with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    for p in problems:
+        sys.stderr.write(f"[mios-portal-probe] egress: {p}\n")
+    print(f"[mios-portal-probe] egress {'OK' if not problems else 'FAILED'}: {len(tracked)} process(es) tracked "
+          f"({', '.join(sorted(set(tracked.values())))}), {samples} socket sample(s) over {args.seconds}s, "
+          f"{len(hosts)} resolved name(s) ({', '.join(sorted(hosts)) or 'none'}); scope {scope_after}")
+    return 0 if not problems else 1
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="mios-portal-probe", description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("layout", "egress"):
+        p = sub.add_parser(name)
+        p.add_argument("--out", required=True)
+        p.add_argument("--app", help="app dir (default [desktop.portal.gecko].install_dir)")
+        p.add_argument("--url")
+        p.add_argument("--width", type=int, default=1440)
+        p.add_argument("--height", type=int, default=900)
+        p.add_argument("--memory", default="3G", help="MemoryMax of the probe's scope")
+        if name == "egress":
+            p.add_argument("--seconds", type=int, default=45)
+            p.add_argument("--plant-url", help="negative control: also open this page")
+    args = ap.parse_args(argv)
+    return {"layout": cmd_layout, "egress": cmd_egress}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

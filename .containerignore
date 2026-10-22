@@ -13,3 +13,5 @@
 **/.cargo/registry
 **/.cargo/git
 **/.cargo/bin
+etc/mios/keys
+etc/mios/keys/**

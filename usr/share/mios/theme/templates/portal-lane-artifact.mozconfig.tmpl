@@ -1,0 +1,8 @@
+# AI-hint: MiOS-Portal artifact-lane project mozconfig; rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; mios-portal-tree stage copies it to the project-root mozconfig when [desktop.portal.builder].lane = "artifact".
+# AI-related: usr/share/mios/mios.toml
+# Frontend-only build over Mozilla's compiled libxul for the resolved release revision. The builder
+# exports MOZ_ARTIFACT_REVISION (mios-bake-plan latest-portal firefox_revision). Compile-only
+# options (linker, LTO, ccache, hardening) are not valid without a compile environment.
+ac_add_options --enable-artifact-builds
+ac_add_options --with-app-name=@MIOS:desktop.portal.builder.artifact_app_name@
+mk_add_options MOZ_PARALLEL_BUILD=@MIOS:desktop.portal.builder.jobs@

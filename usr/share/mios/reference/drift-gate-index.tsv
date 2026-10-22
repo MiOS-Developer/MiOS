@@ -239,3 +239,4 @@
 238	check_tracked_readable	every tracked file is present and readable, so no corpus-scanning gate drops one in silence
 239	check_leaked_fixtures	no transient test fixtures or dump files are committed in git
 240	check_native_twinless	every native miosd drift Check with no bash twin in main() runs in this gate
+241	check_portal_product	MiOS-Portal spec, rendered product tree, scoped Gecko linkage exception and phase header verified

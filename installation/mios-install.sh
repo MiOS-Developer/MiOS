@@ -128,6 +128,17 @@ resolve_build_mios_sh() {
     fi
 }
 
+resolve_install_core() {
+    local mode="$1"
+    case "$mode" in
+        fhs|bootc) ;;
+        *) die "Internal installer mode must be fhs or bootc: $mode" ;;
+    esac
+    REQUIRES_ROOT=1
+    ENV+=("INSTALL_MODE=$mode")
+    CMD=(do_install_core "$mode")
+}
+
 resolve_fedora() {
     TYPE="${TYPE:-fhs}"
     [[ "$TYPE" == "fhs" ]] || die "Target 'fedora' only supports"
@@ -1356,7 +1367,10 @@ trigger_mios_install() {
             log_info "Merging bootstrap system folders (etc, usr) to /"
             for d in etc usr; do
                 if [[ -d "${bootstrap_src}/${d}" ]]; then
-                    cp -a "${bootstrap_src}/${d}/." "/${d}/" 2>/dev/null || true
+                    if ! cp -a "${bootstrap_src}/${d}/." "/${d}/"; then
+                        log_err "Failed to apply bootstrap overlay: ${d}/"
+                        return 1
+                    fi
                 fi
             done
             [[ "${bootstrap_src}" == "${bootstrap_tmp}" ]] && rm -rf "${bootstrap_tmp}"
@@ -1368,36 +1382,52 @@ trigger_mios_install() {
             # sense inside the OCI build pipeline, not on a running FHS host.
             log_phase "Phase-2 -- FHS package install (from mios.toml)"
             local toml_path
-            toml_path="$(_resolve_mios_toml)"
-            if [[ -z "$toml_path" ]]; then
+            if ! toml_path="$(_resolve_mios_toml)" || [[ -z "$toml_path" ]]; then
                 log_err "mios.toml not found -- package installation skipped"
                 return 1
             fi
 
             local repo_pkgs
-            repo_pkgs=$(get_packages_from_toml "repos")
+            if ! repo_pkgs=$(get_packages_from_toml "repos"); then
+                log_err "Failed to resolve repository packages from mios.toml"
+                return 1
+            fi
             if [[ -n "$repo_pkgs" ]]; then
                 log_info "Setting up additional repos..."
                 spin_start "Installing repo packages"
                 # shellcheck disable=SC2086
-                $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
+                if ! $dnf_cmd install -y $repo_pkgs; then
+                    spin_stop
+                    log_err "Repository package installation failed"
+                    return 1
+                fi
                 spin_stop
-                $dnf_cmd makecache --refresh 2>/dev/null || true
+                if ! $dnf_cmd makecache --refresh; then
+                    log_err "Repository metadata refresh failed"
+                    return 1
+                fi
                 log_ok "Repos configured"
             fi
 
             local pkgs
-            pkgs=$(get_all_packages_except)
+            if ! pkgs=$(get_all_packages_except); then
+                log_err "Failed to resolve system packages from mios.toml"
+                return 1
+            fi
             if [[ -n "$pkgs" ]]; then
                 log_info "Installing full 'MiOS' component stack..."
                 spin_start "dnf install (this takes several minutes)"
                 # shellcheck disable=SC2086
-                $dnf_cmd install -y --skip-unavailable --best $pkgs 2>&1 \
-                    | grep -E '^\s*(Installing|Upgrading|Removing|Error|Warning|Nothing)' || true
+                if ! $dnf_cmd install -y --best $pkgs; then
+                    spin_stop
+                    log_err "System package installation failed"
+                    return 1
+                fi
                 spin_stop
                 log_ok "Package installation complete"
             else
-                log_warn "No packages extracted from mios.toml"
+                log_err "No system packages resolved from mios.toml"
+                return 1
             fi
 
             # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.
@@ -1405,29 +1435,44 @@ trigger_mios_install() {
             # declared in usr/lib/tmpfiles.d/mios*.conf.
             log_phase "Phase-3 -- System init (sysusers + tmpfiles + daemon-reload)"
 
-            log_info "Ensuring executable permissions on all core binaries and scripts..."
-            chmod +x /automation/*.sh /usr/bin/mios* 2>/dev/null || true
-            find /usr/libexec/mios -type f -exec chmod +x {} + 2>/dev/null || true
-
             log_info "Synchronizing environment configuration..."
             if [[ -f "/usr/libexec/mios/system-sync-env.sh" ]]; then
-                /usr/libexec/mios/system-sync-env.sh 2>/dev/null || log_warn "system-sync-env.sh failed"
+                if ! /usr/libexec/mios/system-sync-env.sh; then
+                    log_err "Environment synchronization failed"
+                    return 1
+                fi
             fi
 
             spin_start "Running systemd-sysusers"
-            systemctl-sysusers 2>/dev/null || systemd-sysusers 2>/dev/null || log_warn "systemd-sysusers not available"
+            if ! systemd-sysusers; then
+                spin_stop
+                log_err "System user provisioning failed"
+                return 1
+            fi
             spin_stop
             spin_start "Running systemd-tmpfiles --create"
-            systemd-tmpfiles --create 2>/dev/null || log_warn "systemd-tmpfiles failed"
+            if ! systemd-tmpfiles --create; then
+                spin_stop
+                log_err "Persistent directory provisioning failed"
+                return 1
+            fi
             spin_stop
             if [[ -f "/automation/15-render-quadlets.sh" ]]; then
                 spin_start "Rendering Quadlet container files"
-                (cd /automation && ./15-render-quadlets.sh) 2>/dev/null || log_warn "15-render-quadlets.sh failed"
+                if ! (cd /automation && ./15-render-quadlets.sh); then
+                    spin_stop
+                    log_err "Quadlet rendering failed"
+                    return 1
+                fi
                 spin_stop
             fi
             if systemctl is-system-running --quiet 2>/dev/null; then
                 spin_start "Reloading systemd daemon"
-                systemctl daemon-reload
+                if ! systemctl daemon-reload; then
+                    spin_stop
+                    log_err "Systemd daemon reload failed"
+                    return 1
+                fi
                 spin_stop
                 log_ok "Systemd daemon reloaded"
             fi
@@ -1599,4 +1644,8 @@ for _kv in "${ENV[@]:-}"; do
 done
 
 log_phase "Launching: ${TARGET}${TYPE:+ (--type ${TYPE})}${STAGE:+ (--stage ${STAGE})}"
-exec "${CMD[@]}"
+if [[ "$TARGET" == "_install_core" ]]; then
+    "${CMD[@]}"
+else
+    exec "${CMD[@]}"
+fi

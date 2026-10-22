@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1755 |
-| in_progress | 50 |
+| pending | 1759 |
+| in_progress | 64 |
 | completed | 1827 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3673 |
+| total | 3691 |
 
 0 record(s) carry at least one override.
 
@@ -2501,6 +2501,29 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_1194` Author automation/lint-python.sh, the missing peer of lint-shell.sh -- completed · P1 · size M
 - `task_1200` Negative test for 38-ssot-lint.sh + check_soft_mode_not_committed -- completed · P2 · size S
+
+## WS-LINUX-INSTALL
+
+### No epic
+
+- `task_3674` Linux installer failure: deployed MiOS root lacks Git metadata and project sources -- in_progress · owner mios-root-overlay · P1 · size M
+- `task_3675` Linux root-merge failure: recursive chmod corrupts tracked executable modes -- in_progress · owner mios-root-overlay · P1 · size M
+- `task_3676` Linux installer failure: native runtime catalog is absent after overlay -- in_progress · owner mios-root-overlay · P1 · size M
+- `task_3677` Linux installer failure: MiOS services remain disabled and local AI plane unavailable -- in_progress · owner mios-root-overlay · P1 · size M
+- `task_3678` Linux native validation failure: canonical SSOT is rejected by obsolete schema assumptions -- in_progress · owner mios-ssot-validation · P1 · size M
+- `task_3679` Linux root verification failure: test requires Windows C:/.git on POSIX -- in_progress · owner mios-root-checks · P1 · size M
+- `task_3680` Linux repository gate failure: tracked file count exceeds shrink-only SSOT budget -- in_progress · owner mios-root-checks · P1 · size M
+- `task_3681` Linux apply engine failure: universal stages omitted and placeholder apply reports success -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3682` Linux installer failure: core dispatch calls undefined resolve_install_core -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3683` Linux source gate failures: five SSOT domain file ceilings exceeded -- pending · P1 · size L
+- `task_3684` Linux typed configuration failure: Fedora compatibility view ignores canonical SSOT -- in_progress · owner mios-ssot-validation · P1 · size M
+- `task_3685` Linux installer failure: failed bootstrap overlay copy is reported as success -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3686` Linux installer failure: failed package installation is reported as success -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3687` Linux installer failure: account and persistent-state provisioning errors are suppressed -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3688` Linux bootstrap failure: unsupported host classification bypasses rejection -- in_progress · owner mios-linux-installer · P1 · size M
+- `task_3689` Linux native installer failure: compatibility aliases overwrite root source shims -- pending · owner mios-native-aliases · P1 · size M
+- `task_3690` Linux root projection failure: sync stages unrelated installed host artifacts -- pending · owner mios-projection-scope · P0 · size M
+- `task_3691` Linux provisioning failure: tmpfiles requires undeclared nixbld group -- pending · owner mios-root-overlay · P1 · size S
 
 ## WS-LOG
 

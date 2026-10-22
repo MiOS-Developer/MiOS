@@ -5,6 +5,7 @@
 set -uo pipefail
 
 ENV_FILE=/etc/mios/install.env
+# shellcheck source=/dev/null  # host-written runtime env, not a repo file
 [ -r "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
 
 MODE="${1:-apply}"

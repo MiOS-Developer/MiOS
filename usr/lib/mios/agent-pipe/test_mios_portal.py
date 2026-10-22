@@ -313,6 +313,13 @@ def test_portal_page_logic():
     finally:
         mios_portal.PORTAL_REQUIRE_LOGIN = saved
 
+def test_portal_v1_chat_page():
+    page = asyncio.run(mios_portal.portal_v1_chat_page(_Req(None)))
+    html = bytes(page.body).decode("utf-8")
+    check("v1 chat page -> HTTP 200", getattr(page, "status_code", 200) == 200)
+    check("v1 chat page -> contains SSOT colors",
+          "#E7DFD3" in html and "#282262" in html and "#F35C15" in html)
+
 def main():
     test_token_roundtrip()
     test_authed_flag()
@@ -328,6 +335,7 @@ def main():
     test_portal_login_logic()
     test_portal_login_page_logic()
     test_portal_page_logic()
+    test_portal_v1_chat_page()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

@@ -60,11 +60,14 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | 60 | flatpak-env | `60-flatpak-env.sh` | yes | universal |
 | 61 | flatpak-bake | `61-flatpak-bake.sh` | yes | universal |
 | 62 | oh-my-posh | `62-oh-my-posh.sh` | no | universal |
+| 64 | bake-fan-control | `64-bake-fan-control.sh` | no | universal |
 | 65 | bake-hyprland | `65-bake-hyprland.sh` | yes | universal |
 | 66 | bake-quickshell | `66-bake-quickshell.sh` | yes | universal |
-| 67 | bake-surfer | `67-bake-surfer.sh` | no | universal |
+| 67 | bake-portal | `67-bake-portal.sh` | yes | universal |
 | 68 | bake-kvmfr | `68-bake-kvmfr.sh` | no | universal |
 | 69 | bake-lookingglass-client | `69-bake-lookingglass-client.sh` | no | universal |
+| 70 | bake-wayvnc-upstream | `70-bake-wayvnc-upstream.sh` | no | universal |
+| 71 | bake-rdp-server | `71-bake-rdp-server.sh` | no | universal |
 | 72 | hermes-agent | `72-hermes-agent.sh` | yes | universal |
 | 73 | model-prep | `73-model-prep.sh` | yes | universal |
 | 75 | kargs-render | `75-kargs-render.sh` | yes | universal |
@@ -85,5 +88,5 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | 98 | drift-checks | `98-drift-checks.sh` | yes | containerfile |
 | 99 | postcheck | `99-postcheck.sh` | yes | containerfile |
 
-<!-- derived from usr/share/mios/mios.toml [build.phases].list (77 phases) -->
+<!-- derived from usr/share/mios/mios.toml [build.phases].list (80 phases) -->
 <!-- /MIOS-GEN:pipeline -->

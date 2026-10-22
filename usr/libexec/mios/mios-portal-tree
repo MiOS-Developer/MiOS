@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+# AI-hint: MiOS-Portal build-copy stager and artifact verifier: copies the SSOT-rendered product tree (src/mios-portal) into a Surfer project, fills the @BUILD:<key>@ version sentinels, selects the lane mozconfig and derives the branding icon set; verify-stage re-derives that exact stage from the current tree (one implementation, bidirectional) and verify-install proves an installed tree equals the artifact.
+# AI-related: usr/share/mios/mios.toml, usr/libexec/mios/mios-dotfiles-render, usr/libexec/mios/mios-portal-build, automation/67-bake-portal.sh
+"""Stage the MiOS-Portal product tree for a build, and verify what a build produced.
+
+  mios-portal-tree stage --out DIR --versions FILE [--lane LANE]
+  mios-portal-tree check-import --project DIR [--engine DIR]
+  mios-portal-tree verify-stage --stage STAGE.json [--overlay DIR]
+  mios-portal-tree verify-install --run RUN_DIR --dest DIR --binary NAME [--root-owned]
+
+The committed tree carries no version: the resolved values arrive only here, in the build copy,
+through @BUILD:<key>@ sentinels. `stage` and `verify-stage` share one implementation of the stage
+(sentinel fill, lane mozconfig, branding icons), so an artifact verifies against the current tree
+exactly when the tree would stage to the same bytes. Every failure exits non-zero; nothing is
+defaulted and nothing is skipped (no Pillow -> fail).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+
+_SELF = os.path.abspath(__file__)
+ROOT = os.environ.get("MIOS_THEME_ROOT") or os.path.abspath(os.path.join(os.path.dirname(_SELF), "..", "..", ".."))
+os.environ.setdefault("MIOS_TOML_ROOT", ROOT)
+sys.path.insert(0, os.path.join(ROOT, "usr/lib/mios"))
+import mios_toml  # noqa: E402
+
+TREE = "src/mios-portal"
+STAGE_MANIFEST = "mios-portal-stage.json"
+_BUILD = re.compile(r"@BUILD:([a-z0-9_]+)@")
+_MIOS = re.compile(r"@MIOS:[a-z0-9_.-]+@")
+_VERSION_KEY = re.compile(r"^[a-z0-9_]+$")
+# Surfer's branding step requires these (src/commands/patches/branding-patch.ts REQUIRED_FILES and
+# setupImages); the 512 px one also feeds the .ico files.
+_LOGO_SIZES = (16, 22, 24, 32, 48, 64, 128, 256, 512)
+_ICO_SIZES = {"firefox.ico": (16, 24, 32, 48, 64, 128, 256), "firefox64.ico": (16, 32, 48, 64)}
+# Staged and installed files are world-readable whatever the caller's umask (077 on MiOS hosts):
+# a 0600 icon in the package is unreadable to the user who runs the browser.
+_FILE_MODE, _EXEC_MODE, _DIR_MODE = 0o644, 0o755, 0o755
+
+
+def _die(msg: str) -> "None":
+    sys.stderr.write(f"[mios-portal-tree] FAIL: {msg}\n")
+    raise SystemExit(1)
+
+
+def _merged():
+    return mios_toml.load_merged(mios_toml.layer_paths())
+
+
+def _table(merged, name):
+    t = mios_toml.section(merged, name)
+    if not t:
+        _die(f"mios.toml has no [{name}]")
+    return t
+
+
+def _portal_surfaces(merged):
+    reg = mios_toml.section(merged, "dotfiles.registry")
+    names = [n for n, c in reg.items() if isinstance(c, dict) and str(c.get("target", "")).startswith(TREE + "/")]
+    if not names:
+        _die(f"no [dotfiles.registry.*] surface renders into {TREE}/")
+    return names
+
+
+def _read_versions(path):
+    out = {}
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, val = line.partition("=")
+            if not sep or not _VERSION_KEY.match(key) or not val:
+                _die(f"{path}:{n}: expected key=value, got {line!r}")
+            out[key] = val
+    if not out:
+        _die(f"{path} holds no resolved version")
+    return out
+
+
+def _sha256_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fill(rel, raw, versions, filled):
+    """The build copy of one product file: @BUILD:<key>@ filled from `versions`, byte-exact otherwise.
+    Binary files (a NUL in the first 8 KiB) pass through untouched."""
+    if b"\0" in raw[:8192]:
+        return raw
+    text = raw.decode("utf-8")
+    missing = sorted({k for k in _BUILD.findall(text) if k not in versions})
+    if missing:
+        _die(f"{rel} needs @BUILD:{missing[0]}@ but the resolved versions do not carry it")
+
+    def sub(m):
+        filled.add(m.group(1))
+        return versions[m.group(1)]
+
+    new = _BUILD.sub(sub, text)
+    if _MIOS.search(new):
+        _die(f"{rel} still carries an unrendered @MIOS:...@ token")
+    return new.encode("utf-8")
+
+
+def derive_icons(src_png):
+    """The branding icon set as {file name: bytes}. The ONE implementation: `stage` writes these bytes
+    and `verify-stage` hashes them, so the builder and phase 67 can never disagree on a size list."""
+    try:
+        from PIL import Image
+    except ImportError:
+        _die("python3-pillow is required to derive (and verify) the branding icons")
+    if not os.path.isfile(src_png):
+        _die(f"[desktop.portal.gecko].icon_source {src_png} does not exist")
+
+    def png(im):
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
+
+    out = {}
+    with Image.open(src_png) as im:
+        im = im.convert("RGBA")
+        for size in _LOGO_SIZES:
+            out[f"logo{size}.png"] = png(im.resize((size, size), Image.LANCZOS))
+        big = im.resize((512, 512), Image.LANCZOS)
+        out["logo.png"] = out["logo-mac.png"] = png(big)
+        for name, sizes in _ICO_SIZES.items():
+            buf = io.BytesIO()
+            big.save(buf, format="ICO", sizes=[(s, s) for s in sizes])
+            out[name] = buf.getvalue()
+    return out
+
+
+def _identity(merged):
+    gecko = _table(merged, "desktop.portal.gecko")
+    brand, icon = gecko.get("brand"), gecko.get("icon_source")
+    if not brand or not icon:
+        _die("[desktop.portal.gecko] needs brand and icon_source")
+    return gecko, brand, os.path.join(ROOT, icon)
+
+
+def expected_stage(merged, versions, lane):
+    """{relative path: sha256} of the stage `stage` would write for this tree, versions and lane, plus
+    the set of @BUILD keys it filled. Computed in memory from the current tree."""
+    src = os.path.join(ROOT, TREE)
+    if not os.path.isdir(src):
+        _die(f"{src} is absent -- render it with mios-dotfiles-render render")
+    files, filled = {}, set()
+    for d, _ds, fs in os.walk(src):
+        for f in fs:
+            p = os.path.join(d, f)
+            rel = os.path.relpath(p, src)
+            with open(p, "rb") as fh:
+                files[rel] = _sha256_bytes(_fill(rel, fh.read(), versions, filled))
+    lane_rel = os.path.join("configs", "lanes", f"{lane}.mozconfig")
+    if not lane or lane_rel not in files:
+        _die(f"lane {lane!r} has no {TREE}/{lane_rel}")
+    files["mozconfig"] = files[lane_rel]
+    _gecko, brand, icon = _identity(merged)
+    for name, data in derive_icons(icon).items():
+        files[os.path.join("configs", "branding", brand, name)] = _sha256_bytes(data)
+    return files, filled
+
+
+def _write(path, data, mode=_FILE_MODE):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    os.chmod(path, mode)
+
+
+def cmd_stage(args):
+    merged = _merged()
+    gecko, brand, icon = _identity(merged)
+    builder = _table(merged, "desktop.portal.builder")
+    src = os.path.join(ROOT, TREE)
+    if not os.path.isdir(src):
+        _die(f"{src} is absent -- render it with mios-dotfiles-render render")
+    # The committed render must be current: a stale tree would build yesterday's SSOT.
+    renderer = os.path.join(ROOT, "usr/libexec/mios/mios-dotfiles-render")
+    # Vendor layer only, exactly as check_dotfiles_projection gates the committed render.
+    env = dict(os.environ, MIOS_THEME_ROOT=ROOT, MIOS_TOML_ROOT=ROOT,
+               MIOS_VENDOR_TOML=os.path.join(ROOT, "usr/share/mios/mios.toml"),
+               MIOS_HOST_TOML="/nonexistent.toml", MIOS_USER_TOML="/nonexistent.toml")
+    env.pop("MIOS_TOML", None)
+    rc = subprocess.call([sys.executable, "-I", renderer, "check", *_portal_surfaces(merged)], env=env)
+    if rc != 0:
+        _die("the committed product tree drifted from the SSOT (mios-dotfiles-render check)")
+    out = os.path.abspath(args.out)
+    if os.path.exists(out) and os.listdir(out):
+        _die(f"{out} exists and is not empty -- stage into a fresh directory")
+    versions = _read_versions(args.versions)
+    lane = args.lane or builder.get("lane")
+
+    filled = set()
+    for d, _ds, fs in os.walk(src):
+        for f in fs:
+            p = os.path.join(d, f)
+            rel = os.path.relpath(p, src)
+            with open(p, "rb") as fh:
+                _write(os.path.join(out, rel), _fill(rel, fh.read(), versions, filled))
+    lane_file = os.path.join(out, "configs", "lanes", f"{lane}.mozconfig")
+    if not lane or not os.path.isfile(lane_file):
+        _die(f"lane {lane!r} has no configs/lanes/<lane>.mozconfig")
+    shutil.copyfile(lane_file, os.path.join(out, "mozconfig"))
+    os.chmod(os.path.join(out, "mozconfig"), _FILE_MODE)
+    bdir = os.path.join(out, "configs", "branding", brand)
+    os.makedirs(os.path.join(bdir, "content"), exist_ok=True)
+    for name, data in derive_icons(icon).items():
+        _write(os.path.join(bdir, name), data)
+    for d, ds, _fs in os.walk(out):
+        for x in ds:
+            os.chmod(os.path.join(d, x), _DIR_MODE)
+    os.chmod(out, _DIR_MODE)
+
+    files = {os.path.relpath(os.path.join(d, f), out): _sha256(os.path.join(d, f))
+             for d, _ds, fs in os.walk(out) for f in fs}
+    # Self-check: what landed on disk is exactly what verify-stage will re-derive later.
+    expect, expect_filled = expected_stage(merged, versions, lane)
+    if files != expect or filled != expect_filled:
+        diff = sorted(set(files) ^ set(expect)) + sorted(k for k in files if k in expect and files[k] != expect[k])
+        _die("stage and verify-stage disagree (non-deterministic stage): " + ", ".join(diff[:10]))
+    manifest = {
+        "product": gecko.get("name"),
+        "binary": gecko.get("binary"),
+        "brand": brand,
+        "icon_source": gecko.get("icon_source"),
+        "lane": lane,
+        "resolved": {k: versions[k] for k in sorted(filled)},
+        "files": files,
+    }
+    with open(os.path.join(out, STAGE_MANIFEST), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.chmod(os.path.join(out, STAGE_MANIFEST), _FILE_MODE)
+    print(f"[mios-portal-tree] staged {TREE} -> {out} (lane {lane}; "
+          + ", ".join(f"{k}={versions[k]}" for k in sorted(filled)) + ")")
+    return 0
+
+
+def cmd_verify_stage(args):
+    """Bidirectional: the artifact's stage manifest must equal the stage of the CURRENT tree (same
+    files, same hashes, same filled versions), and its install overlay must equal the staged install/."""
+    try:
+        with open(args.stage, encoding="utf-8") as fh:
+            stage = json.load(fh)
+    except (OSError, ValueError) as e:
+        _die(f"{args.stage}: {e}")
+    files, resolved, lane = stage.get("files"), stage.get("resolved"), stage.get("lane")
+    if not isinstance(files, dict) or not files:
+        _die(f"{args.stage} lists no staged files")
+    if not isinstance(resolved, dict) or not resolved or not all(isinstance(v, str) and v for v in resolved.values()):
+        _die(f"{args.stage} records no resolved versions")
+    if not isinstance(lane, str) or not lane:
+        _die(f"{args.stage} records no lane")
+    expect, filled = expected_stage(_merged(), resolved, lane)
+    problems = []
+    for rel in sorted(set(expect) - set(files)):
+        problems.append(f"{rel}: produced by the current tree, absent from the artifact's stage")
+    for rel in sorted(set(files) - set(expect)):
+        problems.append(f"{rel}: in the artifact's stage, not produced by the current tree")
+    for rel in sorted(set(files) & set(expect)):
+        if files[rel] != expect[rel]:
+            problems.append(f"{rel}: artifact {files[rel][:12]}, current tree {expect[rel][:12]}")
+    if set(resolved) != filled:
+        problems.append(f"resolved versions {sorted(resolved)} differ from the sentinels the tree fills {sorted(filled)}")
+    overlay_n = 0
+    if args.overlay:
+        if not os.path.isdir(args.overlay):
+            _die(f"install overlay {args.overlay} is absent")
+        staged = {rel[len("install/"):]: h for rel, h in files.items() if rel.startswith("install/")}
+        found = {}
+        for d, _ds, fs in os.walk(args.overlay):
+            for f in fs:
+                p = os.path.join(d, f)
+                found[os.path.relpath(p, args.overlay)] = _sha256(p)
+        overlay_n = len(found)
+        for rel in sorted(set(staged) - set(found)):
+            problems.append(f"install/{rel}: staged, missing from the artifact's install overlay")
+        for rel in sorted(set(found) - set(staged)):
+            problems.append(f"install/{rel}: in the artifact's install overlay, never staged")
+        for rel in sorted(set(found) & set(staged)):
+            if found[rel] != staged[rel]:
+                problems.append(f"install/{rel}: overlay {found[rel][:12]} is not the staged {staged[rel][:12]}")
+    if problems:
+        for p in problems:
+            sys.stderr.write(f"[mios-portal-tree] stage mismatch: {p}\n")
+        _die(f"{len(problems)} difference(s) between {args.stage} and the current {TREE}")
+    print(f"[mios-portal-tree] verify-stage: {len(files)} staged file(s) equal the current {TREE} (lane {lane}, "
+          + ", ".join(f"{k}={v}" for k, v in sorted(resolved.items()))
+          + (f"; overlay {overlay_n} file(s) equal" if args.overlay else "") + ")")
+    return 0
+
+
+def _strip1(name):
+    parts = name.split("/", 1)
+    return parts[1] if len(parts) == 2 else ""
+
+
+def cmd_verify_install(args):
+    """The installed tree is the artifact: every tarball entry (first path component stripped) and every
+    install-overlay file is present with the same bytes, nothing else is there but the binary link,
+    and (with --root-owned) everything is root-owned, world-readable and not group/other-writable."""
+    run, dest = os.path.abspath(args.run), os.path.abspath(args.dest)
+    try:
+        with open(os.path.join(run, "manifest.json"), encoding="utf-8") as fh:
+            man = json.load(fh)
+        pkg, want, exe = man["package"]["file"], man["package"]["sha256"], man["package"]["executable"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        _die(f"{run}/manifest.json: {e}")
+    tarball = os.path.join(run, pkg)
+    if _sha256(tarball) != want:
+        _die(f"{tarball} sha256 is not the manifest's")
+    problems, expected = [], {}
+    n_files = 0
+    overlay = os.path.join(run, "install-overlay")
+    overlay_files = set()
+    if os.path.isdir(overlay):
+        for d, ds, fs in os.walk(overlay):
+            for f in fs:
+                overlay_files.add(os.path.relpath(os.path.join(d, f), overlay))
+    with tarfile.open(tarball, mode="r:*") as tf:
+        for m in tf:
+            rel = _strip1(m.name.rstrip("/"))
+            if not rel:
+                continue
+            p = os.path.join(dest, rel)
+            expected[rel] = m
+            if m.isdir():
+                if not os.path.isdir(p) or os.path.islink(p):
+                    problems.append(f"{rel}/: directory missing")
+            elif m.issym():
+                if not os.path.islink(p) or os.readlink(p) != m.linkname:
+                    problems.append(f"{rel}: symlink to {m.linkname} missing or retargeted")
+            elif m.isfile():
+                n_files += 1
+                if os.path.islink(p) or not os.path.isfile(p):
+                    problems.append(f"{rel}: file missing")
+                    continue
+                if rel in overlay_files:
+                    continue
+                h = hashlib.sha256()
+                fh = tf.extractfile(m)
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+                if h.hexdigest() != _sha256(p):
+                    problems.append(f"{rel}: installed bytes differ from the artifact")
+            else:
+                problems.append(f"{rel}: unexpected tar member type in the artifact")
+    overlay = os.path.join(run, "install-overlay")
+    n_overlay = 0
+    if os.path.isdir(overlay):
+        for d, ds, fs in os.walk(overlay):
+            for x in ds:
+                expected.setdefault(os.path.relpath(os.path.join(d, x), overlay), None)
+            for f in fs:
+                rel = os.path.relpath(os.path.join(d, f), overlay)
+                n_overlay += 1
+                expected[rel] = None
+                p = os.path.join(dest, rel)
+                if os.path.islink(p) or not os.path.isfile(p) or _sha256(p) != _sha256(os.path.join(overlay, f if d == overlay else os.path.join(os.path.relpath(d, overlay), f))):
+                    problems.append(f"{rel}: installed overlay file differs from the artifact's install-overlay")
+    link = os.path.join(dest, args.binary)
+    exe_base = os.path.basename(exe)
+    if args.binary != exe_base:
+        expected[args.binary] = None
+        if not os.path.islink(link) or os.readlink(link) != exe_base:
+            problems.append(f"{args.binary}: not a symlink to {exe_base}")
+    for d, ds, fs in os.walk(dest):
+        for x in ds + fs:
+            p = os.path.join(d, x)
+            rel = os.path.relpath(p, dest)
+            if rel not in expected:
+                problems.append(f"{rel}: installed but not part of the artifact")
+            if args.root_owned:
+                st = os.lstat(p)
+                if st.st_uid != 0 or st.st_gid != 0:
+                    problems.append(f"{rel}: owned by {st.st_uid}:{st.st_gid}, not root")
+                if not stat.S_ISLNK(st.st_mode):
+                    if st.st_mode & 0o022:
+                        problems.append(f"{rel}: group/other-writable ({oct(st.st_mode & 0o7777)})")
+                    if not st.st_mode & 0o004 or (stat.S_ISDIR(st.st_mode) and not st.st_mode & 0o001):
+                        problems.append(f"{rel}: not world-readable ({oct(st.st_mode & 0o7777)})")
+    if args.root_owned:
+        st = os.lstat(dest)
+        if st.st_uid != 0 or st.st_mode & 0o022 or not st.st_mode & 0o005:
+            problems.append(f"{dest}: owner {st.st_uid}, mode {oct(st.st_mode & 0o7777)} (want root, 0755)")
+    if problems:
+        for p in problems[:200]:
+            sys.stderr.write(f"[mios-portal-tree] install mismatch: {p}\n")
+        _die(f"{len(problems)} difference(s) between {dest} and the artifact {run}")
+    print(f"[mios-portal-tree] verify-install: {dest} == {os.path.basename(run)} "
+          f"({n_files} tarball file(s), {n_overlay} overlay file(s), sha256 {want[:12]}"
+          + (", root-owned, world-readable" if args.root_owned else "") + ")")
+    return 0
+
+
+def cmd_check_import(args):
+    """Surfer only console.error()s a copy-patch it could not link, so every non-.patch file under
+    the project's src/ must now exist at the same path under engine/."""
+    project = os.path.abspath(args.project)
+    engine = os.path.abspath(args.engine or os.path.join(project, "engine"))
+    src = os.path.join(project, "src")
+    if not os.path.isdir(src) or not os.path.isdir(engine):
+        _die(f"{src} or {engine} is absent")
+    expected, missing = 0, []
+    for dirpath, _dirs, files in os.walk(src):
+        for fn in files:
+            if fn.endswith(".patch"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), src)
+            expected += 1
+            if not os.path.exists(os.path.join(engine, rel)):
+                missing.append(rel)
+    if not expected:
+        _die(f"{src} holds no copy-patch, so the check proved nothing")
+    if missing:
+        _die("surfer import did not place: " + ", ".join(sorted(missing)))
+    print(f"[mios-portal-tree] {expected} copy-patch file(s) present in {engine}")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="mios-portal-tree", description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    st = sub.add_parser("stage", help="copy the product tree into a fresh Surfer project and fill it")
+    st.add_argument("--out", required=True)
+    st.add_argument("--versions", required=True, help="key=value lines from `mios-bake-plan latest-portal`")
+    st.add_argument("--lane", help="the builder's lane when it overrides [desktop.portal.builder].lane")
+    ci = sub.add_parser("check-import", help="verify Surfer linked every copy-patch into engine/")
+    ci.add_argument("--project", required=True)
+    ci.add_argument("--engine")
+    vs = sub.add_parser("verify-stage", help="an artifact's stage.json equals the stage of the current tree")
+    vs.add_argument("--stage", required=True)
+    vs.add_argument("--overlay", help="the artifact's install-overlay/, checked against the staged install/")
+    vi = sub.add_parser("verify-install", help="an installed tree equals the artifact it came from")
+    vi.add_argument("--run", required=True)
+    vi.add_argument("--dest", required=True)
+    vi.add_argument("--binary", required=True, help="[desktop.portal.gecko].binary, the launcher symlink name")
+    vi.add_argument("--root-owned", action="store_true")
+    args = ap.parse_args(argv)
+    return {"stage": cmd_stage, "check-import": cmd_check_import, "verify-stage": cmd_verify_stage,
+            "verify-install": cmd_verify_install}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

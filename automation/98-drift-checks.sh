@@ -97,16 +97,25 @@ _gate_bin() {
     # Folded from 13 copies.  ONE resolution order for the native gate, because
     # a copy that forgot the debug path made check_version_ssot violate
     # unconditionally in CI (which builds `cargo build -p mios-gate`, debug).
-    local c
-    for c in "${MIOS_GATE_BIN:-}" \
+    # An explicit MIOS_GATE_BIN always wins.  Otherwise the NEWEST built gate is used: a stale
+    # target/debug binary left behind by an older checkout must not shadow a fresh release or
+    # installed build (it ran yesterday's gate logic against today's tree).
+    if [[ -n "${MIOS_GATE_BIN:-}" && -x "${MIOS_GATE_BIN}" ]]; then
+        printf '%s' "$MIOS_GATE_BIN"; return 0
+    fi
+    local c best=""
+    for c in "$ROOT/src/mios-rs/target/x86_64-unknown-linux-musl/release/mios-gate" \
              "$ROOT/src/mios-rs/target/release/mios-gate" \
              "$ROOT/src/mios-rs/target/debug/mios-gate" \
              "$ROOT/src/mios-rs/target/release/mios-gate.exe" \
              "$ROOT/src/mios-rs/target/debug/mios-gate.exe" \
-             /usr/libexec/mios/mios-gate; do
-        [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
+             /usr/libexec/mios/mios-gate \
+             /usr/bin/mios-gate; do
+        [[ -x "$c" ]] || continue
+        if [[ -z "$best" || "$c" -nt "$best" ]]; then best="$c"; fi
     done
-    return 1
+    [[ -n "$best" ]] || return 1
+    printf '%s' "$best"
 }
 
 _unit_gen_bin() {
@@ -2003,6 +2012,19 @@ check_target_languages() {
     fi
 }
 
+# MiOS-Portal (MP-1/MP-4): [desktop.portal.gecko] spec, src/mios-portal renders only from it,
+# scoped Gecko linkage exception, phase header == [build.phases]; tools/drift-checks.py portal-product.
+check_portal_product() {
+    _need_python || return 0
+    local out
+    if out="$(MIOS_DRIFT_ROOT="$ROOT" python3 "$ROOT/tools/drift-checks.py" portal-product 2>&1)"; then
+        echo "[98-drift-checks]   MiOS-Portal spec, rendered product tree, scoped Gecko linkage exception and phase header verified"
+        echo "[98-drift-checks]   ${out}"
+    else
+        _violations_from "check_portal_product: " "$out"
+    fi
+}
+
 # Law 14 (TARGET-LANGUAGES) / task_3441: enforce static Linux linkage for native binaries
 # --- static linkage gate: asserts absence of PT_INTERP and DT_NEEDED on Linux release binaries ---
 check_static_linkage() {
@@ -2200,10 +2222,32 @@ check_curl_retry() {
     local py_script="
 import glob, re, os
 
+import subprocess
 root = '$ROOT'
-files = glob.glob(os.path.join(root, '**/Containerfile*'), recursive=True) + \
-        glob.glob(os.path.join(root, 'automation/**/*.sh'), recursive=True) + \
-        glob.glob(os.path.join(root, 'usr/libexec/mios/**/*.sh'), recursive=True)
+
+def repo_files(root):
+    # The repository can be checked out at the filesystem root: a recursive glob would walk the whole operating
+    # system. In a git work tree use exactly what it tracks plus untracked, not-ignored files.
+    try:
+        top = subprocess.run(['git', '-C', root, 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+        if top.returncode == 0 and os.path.realpath(top.stdout.strip()) == os.path.realpath(root):
+            out = subprocess.run(['git', '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], capture_output=True)
+            if out.returncode == 0:
+                return [p for p in out.stdout.decode('utf-8', 'ignore').split('\0') if p]
+    except OSError:
+        pass
+    return None
+
+listed = repo_files(root)
+if listed is not None:
+    files = [os.path.join(root, p) for p in listed
+             if os.path.basename(p).startswith('Containerfile')
+             or (p.startswith('automation/') and p.endswith('.sh'))
+             or (p.startswith('usr/libexec/mios/') and p.endswith('.sh'))]
+else:
+    files = glob.glob(os.path.join(root, '**/Containerfile*'), recursive=True) + \
+            glob.glob(os.path.join(root, 'automation/**/*.sh'), recursive=True) + \
+            glob.glob(os.path.join(root, 'usr/libexec/mios/**/*.sh'), recursive=True)
 
 unretried = []
 for path in files:
@@ -4001,6 +4045,7 @@ main() {
     check_tracked_readable
     check_leaked_fixtures
     check_native_twinless
+    check_portal_product
     _assert_read_only "the gate run (re-run each check alone to name the writer)"
 
     set -e

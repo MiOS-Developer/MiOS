@@ -381,6 +381,7 @@ passage carries an anchor back to the comment it came from.
 | `usr/share/doc/mios/manual/ch86-shadow-candidate-testing.md` | Chapter 86: Shadow Dual-Process Candidate Daemon Validator and Query Mirroring Harness (task_485, task_2718). Covers shadow execution mechanics, query mirroring architecture, mutation guarding,... |
 | `usr/share/doc/mios/manual/ch87-socket-activation-handoff.md` | Chapter 87: Zero-Downtime Systemd Socket Handoff (sd_listen_fds) Daemon Swapper for Agent-Pipe (task_486, task_2719). Covers systemd socket activation, file descriptor inheritance, SCM_RIGHTS FD... |
 | `usr/share/doc/mios/manual/ch88-proactive-thermal-governor.md` | Chapter 88: Proactive PID Thermal Daemon, Dynamic CPU/GPU Power Cap Modulator, and Thermal Stress Recovery (task_487, task_2720, task_488, task_2721). Details proactive PID thermal regulation, sysfs... |
+| `usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md` | Chapter 89: Glass Desktop, Liquid Shell Controls, Hyper-Converged VM Display Mirroring, and Session Resilience. Covers Hyprland windowshade shaders, per-window glass controls and interior fallbacks,... |
 | `usr/share/doc/mios/manual/cockpit.socket.d.md` | Manual pages distilled from the source comments of cockpit.socket.d, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/conf.d.md` | Manual pages distilled from the source comments of conf.d, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/config.md` | Manual pages distilled from the source comments of config, sanitized, each passage anchored to the comment it came from. |
@@ -451,5 +452,5 @@ passage carries an anchor back to the comment it came from.
 | `usr/share/doc/mios/manual/workflows.md` | Manual pages distilled from the source comments of workflows, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/xdg-desktop-portal.md` | Manual pages distilled from the source comments of xdg-desktop-portal, sanitized, each passage anchored to the comment it came from. |
 
-<!-- derived from the AI-hint headers of 203 file(s) matching usr/share/doc/mios/manual/*.md -->
+<!-- derived from the AI-hint headers of 204 file(s) matching usr/share/doc/mios/manual/*.md -->
 <!-- /MIOS-GEN:index:usr/share/doc/mios/manual/*.md -->

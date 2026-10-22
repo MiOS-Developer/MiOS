@@ -25,5 +25,5 @@ allow perm=execute dir=/var/lib/mios/ai/ : ftype=application/x-sharedlib
 allow perm=execute dir=/srv/ai/mcp/ : ftype=application/x-executable
 allow perm=execute dir=/srv/ai/mcp/ : ftype=application/x-sharedlib
 allow perm=execute path=/usr/bin/quickshell : all
-allow perm=execute dir=/usr/lib/mios/webshell/ : all
+allow perm=execute dir=/usr/lib/mios/portal/ : all
 deny_audit perm=execute : all

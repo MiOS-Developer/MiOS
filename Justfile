@@ -179,13 +179,26 @@ drift-gate:
 
 
 
+# The operator credential is resolved on the BUILD HOST from its layered SSOT (this tree's vendor
+# usr/share/mios/mios.toml < /etc/mios/mios.toml + mios.d < ~/.config/mios/mios.toml + mios.d) and
+# passed as a sha512-crypt hash; an unresolved credential fails the build (no literal default).
 build: preflight flight-status
+    _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
+    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
+    rm -rf .staged-portal && mkdir -p .staged-portal; \
+    _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \
+    if [ -n "$_portal_run" ] && [ -d "$_portal_run" ]; then \
+        cp -a "$_portal_run"/* .staged-portal/; \
+    fi; \
+    export MIOS_USER_PASSWORD_HASH; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
-        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
         --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
-        -t {{LOCAL}} .
+        -t {{LOCAL}} .; _rc=$?; rm -rf .staged-portal; exit $_rc
     @echo "[OK] Built: {{LOCAL}}"
 
 build-logged: artifact
@@ -195,24 +208,44 @@ build-logged: artifact
     @echo "[START] CHECKPOINT: Starting 'MiOS' build" | tee -a "${LOG_FILE}"
     @echo "Unified log will be available at: ${LOG_FILE}" | tee -a "${LOG_FILE}"
     @echo "" | tee -a "${LOG_FILE}"
-    @set -o pipefail; podman build --retry 5 --retry-delay 3s --no-cache --network=host \
+    @set -o pipefail; _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
+    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
+    rm -rf .staged-portal && mkdir -p .staged-portal; \
+    _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \
+    if [ -n "$_portal_run" ] && [ -d "$_portal_run" ]; then \
+        cp -a "$_portal_run"/* .staged-portal/; \
+    fi; \
+    export MIOS_USER_PASSWORD_HASH; \
+    podman build --retry 5 --retry-delay 3s --no-cache --network=host \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
-        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
         --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
-        -t {{LOCAL}} . 2>&1 | tee -a "${LOG_FILE}"
+        -t {{LOCAL}} . 2>&1 | tee -a "${LOG_FILE}"; _rc=${PIPESTATUS[0]}; rm -rf .staged-portal; [ $_rc -eq 0 ] || exit $_rc
     @echo "" | tee -a "${LOG_FILE}"
     @echo "[OK] CHECKPOINT: 'MiOS' build complete" | tee -a "${LOG_FILE}"
     @echo "Unified log available at: ${LOG_FILE}" | tee -a "${LOG_FILE}"
     @echo ""
 
 build-verbose: artifact
+    _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
+    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
+    rm -rf .staged-portal && mkdir -p .staged-portal; \
+    _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \
+    if [ -n "$_portal_run" ] && [ -d "$_portal_run" ]; then \
+        cp -a "$_portal_run"/* .staged-portal/; \
+    fi; \
+    export MIOS_USER_PASSWORD_HASH; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
-        --build-arg MIOS_IDENTITY_USERNAME={{env_var_or_default("MIOS_IDENTITY_USERNAME", "")}} \
+        --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
         --build-arg MIOS_IDENTITY_HOSTNAME={{env_var_or_default("MIOS_IDENTITY_HOSTNAME", "")}} \
-        -t {{LOCAL}} .
+        -t {{LOCAL}} .; _rc=$?; rm -rf .staged-portal; exit $_rc
 
 embed-log:
     @echo "[START] Finding most recent build log"
@@ -236,6 +269,21 @@ embed-log:
 artifact:
     ./automation/ai-bootstrap.sh
     @echo "[OK] Artifacts, UKB, and Wiki refreshed"
+
+# MiOS-Portal Gecko build, off-image (Law 12): heavy.lock + systemd-run scope (MemoryMax, no swap)
+# + podman caps, all from [desktop.portal.builder]. Output: <artifact_root>/<ts>/ with the
+# tarball, manifest.json (resolved Firefox/Surfer/revision/toolchain), metrics.json and logs.
+# Pass extra flags through, e.g. `just portal-build --lane full` or `--no-smoke`.
+portal-build *ARGS:
+    ./usr/libexec/mios/mios-portal-build build {{ARGS}}
+
+# Install a MiOS-Portal artifact on THIS host exactly as the image does: phase 67 proves the run's
+# stage equals the current src/mios-portal (verify-stage), lays the tarball and the run's own
+# install-overlay into [desktop.portal.gecko].install_dir root-owned, and proves the result equals
+# the artifact (verify-install --root-owned). `just portal-install <artifact_root>/<ts>`; no argument
+# = the newest run (which must still pass every check).
+portal-install RUN="":
+    sudo env {{ if RUN != "" { "MIOS_PORTAL_ARTIFACT_DIR=" + RUN } else { "" } }} bash ./automation/67-bake-portal.sh
 
 # `manual` is gone on purpose: tools/generate-manual.py OWNED the whole file, so
 # running it dropped manual.md's H1, its table of contents and now the MIOS-GEN
@@ -439,3 +487,7 @@ new type name:
 vendored-size:
     @echo "[vendored-size] Reporting total size of usr/share/mios/vendored/"
     @du -sh usr/share/mios/vendored/* 2>/dev/null || du -sh usr/share/mios/vendored 2>/dev/null || echo "Vendored dir clean"
+
+clean:
+    rm -rf .staged-portal
+

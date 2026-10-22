@@ -1,0 +1,111 @@
+{
+  "build": "29683",
+  "captured_at": "2026-10-17T14:58:54.5682232Z",
+  "captured_on": "mios-xbox-worker",
+  "edition": "Professional",
+  "family": "rs_prerelease",
+  "family_source": "BuildBranch",
+  "folders": [
+    "PersonalFolder",
+    "Network",
+    "FileExplorer",
+    "Settings"
+  ],
+  "neutralized_legacy": [
+    "C:\\Users\\Default\\AppData\\Local\\Microsoft\\Windows\\Shell\\LayoutModification.xml",
+    "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Start\\ConfigureStartPins",
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GamingConfiguration\\StartupToGamingHome",
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GamingConfiguration\\GamingHomeApp",
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\legalnoticetext",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Start",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\TaskbarAl=1",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\AppData",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Cache",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Cookies",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Desktop",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Favorites",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\History",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Local AppData",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\My Music",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\My Pictures",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\My Video",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\NetHood",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Personal",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\PrintHood",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Programs",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Recent",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\SendTo",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Start Menu",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Startup",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\Templates",
+    "Registry::HKEY_USERS\\MIOS_CAP_DEF\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\{374DE290-123F-4565-9164-39C4925E467B}"
+  ],
+  "opened_start": false,
+  "pinned_export": {
+    "pinnedList": []
+  },
+  "policy_observed": [
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderDocuments",
+      "value": 0
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderDownloads",
+      "value": 0
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderFileExplorer",
+      "value": 1
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderHomeGroup",
+      "value": 0
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderMusic",
+      "value": 0
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderNetwork",
+      "value": 1
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderPersonalFolder",
+      "value": 1
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderPictures",
+      "value": 0
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderSettings",
+      "value": 1
+    },
+    {
+      "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+      "name": "AllowPinnedFolderVideos",
+      "value": 0
+    },
+    {
+      "key": "Policies\\Microsoft\\Windows\\Explorer",
+      "name": "ConfigureStartPins",
+      "value": "{\"pinnedList\":[]}"
+    }
+  ],
+  "schema": "mios-xbox-start-capture/1",
+  "start2": "usr/share/mios/windows/xbox/rs_prerelease/start2.bin",
+  "start2_sha256": "e162abf83a8fcf980192462cd4bc9779cdd6951f273f93316bb6dd70dc9f812f",
+  "start2_size": 3836,
+  "ubr": "1000",
+  "visible_places": null,
+  "visible_places_note": "Windows wrote no VisiblePlaces value: the Start folder row is enforced by the start.folders policy (Policy CSP AllowPinnedFolder*), which was in effect during the capture (policy_observed)"
+}

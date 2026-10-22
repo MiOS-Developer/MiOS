@@ -119,5 +119,40 @@
   "terminal.integrated.allowMnemonics": false,
   "terminal.integrated.commandsToSkipShell": [
     "-workbench.action.toggleSidebarVisibility"
-  ]
+  ],
+  "npm.autoDetect": "off",
+  "task.autoDetect": "off",
+  "search.followSymlinks": false,
+  "search.useIgnoreFiles": true,
+  "files.exclude": {
+    "proc": true,
+    "sys": true,
+    "dev": true,
+    "run": true
+  },
+  "search.exclude": {
+    "proc/**": true,
+    "sys/**": true,
+    "dev/**": true,
+    "run/**": true,
+    "var/lib/mios-build/**": true,
+    "var/lib/containers/**": true,
+    "var/lib/libvirt/**": true,
+    "var/cache/**": true,
+    "var/log/journal/**": true,
+    "tmp/**": true
+  },
+  "files.watcherExclude": {
+    "**/proc/**": true,
+    "**/sys/**": true,
+    "**/dev/**": true,
+    "**/run/**": true,
+    "**/var/lib/mios-build/**": true,
+    "**/var/lib/containers/**": true,
+    "**/var/lib/libvirt/**": true,
+    "**/var/cache/**": true,
+    "**/var/log/journal/**": true,
+    "**/tmp/**": true,
+    "**/.git/objects/**": true
+  }
 }

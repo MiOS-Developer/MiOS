@@ -1,0 +1,3890 @@
+{
+ "debloat_services": [
+  {
+   "name": "DiagTrack",
+   "start": 4
+  },
+  {
+   "name": "dmwappushservice",
+   "start": 4
+  }
+ ],
+ "feature_overrides": [
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 42550315,
+   "name": "auto_sr_controls_42550315"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 55305888,
+   "name": "auto_sr_notifications_55305888"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 35620393,
+   "name": "base_rollout_35620393"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 35620394,
+   "name": "base_rollout_35620394"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 38664959,
+   "name": "base_rollout_38664959"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 38679741,
+   "name": "base_rollout_38679741"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 39258685,
+   "name": "base_rollout_39258685"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 40268500,
+   "name": "base_rollout_40268500"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 40729001,
+   "name": "base_rollout_40729001"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 40950262,
+   "name": "base_rollout_40950262"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 41040327,
+   "name": "base_rollout_41040327"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 41118774,
+   "name": "base_rollout_41118774"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 41356296,
+   "name": "base_rollout_41356296"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 42105254,
+   "name": "base_rollout_42105254"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 42106010,
+   "name": "base_rollout_42106010"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 42250125,
+   "name": "base_rollout_42250125"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 43693406,
+   "name": "base_rollout_43693406"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 44950080,
+   "name": "base_rollout_44950080"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 45596742,
+   "name": "base_rollout_45596742"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 45690266,
+   "name": "base_rollout_45690266"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 45703317,
+   "name": "base_rollout_45703317"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 46107637,
+   "name": "base_rollout_46107637"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 47370305,
+   "name": "base_rollout_47370305"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 47448915,
+   "name": "base_rollout_47448915"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 47622034,
+   "name": "base_rollout_47622034"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 48064775,
+   "name": "base_rollout_48064775"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 48433719,
+   "name": "base_rollout_48433719"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 48546544,
+   "name": "base_rollout_48546544"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 49615568,
+   "name": "base_rollout_49615568"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 50564196,
+   "name": "base_rollout_50564196"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 50730971,
+   "name": "base_rollout_50730971"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 53343270,
+   "name": "base_rollout_53343270"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 55120633,
+   "name": "base_rollout_55120633"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 55390938,
+   "name": "base_rollout_55390938"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57048216,
+   "name": "base_rollout_57048216"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57048218,
+   "name": "base_rollout_57048218"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57048226,
+   "name": "base_rollout_57048226"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57048231,
+   "name": "base_rollout_57048231"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57048237,
+   "name": "base_rollout_57048237"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57645315,
+   "name": "base_rollout_57645315"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57703775,
+   "name": "base_rollout_57703775"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57739723,
+   "name": "base_rollout_57739723"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57882334,
+   "name": "base_rollout_57882334"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 57941090,
+   "name": "base_rollout_57941090"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 58383338,
+   "name": "base_rollout_58383338"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59162732,
+   "name": "base_rollout_59162732"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59193521,
+   "name": "base_rollout_59193521"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59203365,
+   "name": "base_rollout_59203365"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59213523,
+   "name": "base_rollout_59213523"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59265307,
+   "name": "base_rollout_59265307"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59270880,
+   "name": "base_rollout_59270880"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59275076,
+   "name": "base_rollout_59275076"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59339532,
+   "name": "base_rollout_59339532"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59800000,
+   "name": "base_rollout_59800000"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 59982341,
+   "name": "base_rollout_59982341"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 60124892,
+   "name": "base_rollout_60124892"
+  },
+  {
+   "enabled": true,
+   "group": "base_rollout",
+   "id": 60233104,
+   "name": "base_rollout_60233104"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 49059846,
+   "name": "bundle_49059846"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 55324166,
+   "name": "bundle_55324166"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 55994763,
+   "name": "bundle_55994763"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 57118881,
+   "name": "bundle_57118881"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 57741219,
+   "name": "bundle_57741219"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 58182453,
+   "name": "bundle_58182453"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 58988972,
+   "name": "bundle_58988972"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 58989002,
+   "name": "bundle_58989002"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 58989021,
+   "name": "bundle_58989021"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 59673297,
+   "name": "bundle_59673297"
+  },
+  {
+   "enabled": true,
+   "group": "bundle",
+   "id": 60063638,
+   "name": "bundle_60063638"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 60786016,
+   "name": "directstorage_nvme_bypass_60786016"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 50902630,
+   "name": "handheld_compact_mode_ui_50902630"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 52580392,
+   "name": "handheld_compact_mode_ui_52580392"
+  },
+  {
+   "enabled": true,
+   "group": "hardware",
+   "id": 56784836,
+   "name": "peripheral_haptic_feedback_56784836"
+  },
+  {
+   "enabled": true,
+   "group": "hardware",
+   "id": 58536988,
+   "name": "peripheral_haptic_feedback_58536988"
+  },
+  {
+   "enabled": true,
+   "group": "hardware",
+   "id": 59100632,
+   "name": "peripheral_haptic_feedback_59100632"
+  },
+  {
+   "enabled": true,
+   "group": "hardware",
+   "id": 35262205,
+   "name": "rgb_ambient_lighting_controls_35262205"
+  },
+  {
+   "enabled": true,
+   "group": "hardware",
+   "id": 41355275,
+   "name": "rgb_ambient_lighting_controls_41355275"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 42941381,
+   "name": "shell_2026_42941381"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 45624564,
+   "name": "shell_2026_45624564"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 47123936,
+   "name": "shell_2026_47123936"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 47205210,
+   "name": "shell_2026_47205210"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 48655351,
+   "name": "shell_2026_48655351"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49221331,
+   "name": "shell_2026_49221331"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49256040,
+   "name": "shell_2026_49256040"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49381526,
+   "name": "shell_2026_49381526"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49402389,
+   "name": "shell_2026_49402389"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49793372,
+   "name": "shell_2026_49793372"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 49820095,
+   "name": "shell_2026_49820095"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 53397005,
+   "name": "shell_2026_53397005"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 54792954,
+   "name": "shell_2026_54792954"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 55345819,
+   "name": "shell_2026_55345819"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 55495322,
+   "name": "shell_2026_55495322"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 55844454,
+   "name": "shell_2026_55844454"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 57156807,
+   "name": "shell_2026_57156807"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 57259990,
+   "name": "shell_2026_57259990"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 57900749,
+   "name": "shell_2026_57900749"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58324036,
+   "name": "shell_2026_58324036"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58381341,
+   "name": "shell_2026_58381341"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58423575,
+   "name": "shell_2026_58423575"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58527096,
+   "name": "shell_2026_58527096"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58680439,
+   "name": "shell_2026_58680439"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58778013,
+   "name": "shell_2026_58778013"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58938944,
+   "name": "shell_2026_58938944"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 58978959,
+   "name": "shell_2026_58978959"
+  },
+  {
+   "enabled": true,
+   "group": "shell_2026",
+   "id": 59359094,
+   "name": "shell_2026_59359094"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 41863571,
+   "name": "snap_assist_suggestions_41863571"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 42589465,
+   "name": "snap_assist_suggestions_42589465"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 42592269,
+   "name": "taskbar_instant_end_task_42592269"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 58989070,
+   "name": "xbox_fse_58989070"
+  },
+  {
+   "enabled": true,
+   "group": "xbox_shell",
+   "id": 59765208,
+   "name": "xbox_fse_59765208"
+  }
+ ],
+ "layers": [
+  "usr/share/mios/mios.toml",
+  "staged-ssot/xbox-spec.toml (spec lane draft 2026-10-16)",
+  "staged-ssot/xbox-gpu.toml (gpu lane draft)",
+  "staged-ssot/xbox-gates.toml",
+  "tests/fixtures/mios-xbox/fixture-identity.toml"
+ ],
+ "region": {
+  "input_locale": "0409:00000409",
+  "timezone": "UTC",
+  "ui_language": "en-US"
+ },
+ "registry": [
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "TaskbarAl",
+   "owner": "preferences.taskbar_align",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+   "name": "SearchboxTaskbarMode",
+   "owner": "preferences.search_box_mode",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "TaskbarDa",
+   "owner": "preferences.taskbar_widgets",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "TaskbarMn",
+   "owner": "preferences.taskbar_chat",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "ShowTaskViewButton",
+   "owner": "preferences.task_view_button",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\TabletTip\\1.7",
+   "name": "TipbandDesiredVisibility",
+   "owner": "preferences.touch_keyboard_button",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\TaskbarDeveloperSettings",
+   "name": "TaskbarEndTask",
+   "owner": "preferences.taskbar_end_task",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "HideIcons",
+   "owner": "preferences.desktop_icons_hidden",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
+   "name": "{645FF040-5081-101B-9F08-00AA002F954E}",
+   "owner": "preferences.recycle_bin_hidden",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\EdgeUpdate",
+   "name": "CreateDesktopShortcutDefault",
+   "owner": "preferences.edge_desktop_shortcut",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+   "name": "HideFileExt",
+   "owner": "preferences.hide_file_extensions",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 46,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows NT\\CurrentVersion\\OEM",
+   "name": "DeviceForm",
+   "owner": "xbox.device_form",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App",
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\GamingConfiguration",
+   "name": "GamingHomeApp",
+   "owner": "xbox.home_app",
+   "type": "REG_SZ"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\GameBar",
+   "name": "AutoGameModeEnabled",
+   "owner": "xbox.game_mode",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\GameBar",
+   "name": "UseNexusForGameBarEnabled",
+   "owner": "xbox.game_bar",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+   "name": "HistoricalCaptureEnabled",
+   "owner": "xbox.background_capture",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\DirectX\\UserGpuPreferences",
+   "kv_field": "AutoHDREnable",
+   "name": "DirectXUserGlobalSettings",
+   "owner": "xbox.auto_hdr",
+   "type": "REG_SZ"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\GraphicsDrivers",
+   "name": "HwSchMode",
+   "owner": "xbox.hags",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Privacy",
+   "name": "TailoredExperiencesWithDiagnosticDataEnabled",
+   "owner": "settings.privacy.tailored_experiences",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy",
+   "name": "HasAccepted",
+   "owner": "settings.privacy.online_speech",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\InputPersonalization",
+   "name": "RestrictImplicitTextCollection",
+   "owner": "settings.privacy.restrict_implicit_text",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+   "name": "AppsUseLightTheme",
+   "owner": "settings.display.apps_light_theme",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+   "name": "SystemUsesLightTheme",
+   "owner": "settings.display.system_light_theme",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+   "name": "EnableTransparency",
+   "owner": "settings.display.transparency",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": "",
+   "hive": "DEFAULT_USER",
+   "key": "Control Panel\\Desktop",
+   "name": "Wallpaper",
+   "owner": "settings.display.wallpaper",
+   "type": "REG_SZ"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows NT\\Terminal Services",
+   "name": "fNoRemoteDesktopWallpaper",
+   "owner": "settings.display.no_remote_desktop_wallpaper",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": "506",
+   "hive": "DEFAULT_USER",
+   "key": "Control Panel\\Accessibility\\StickyKeys",
+   "name": "Flags",
+   "owner": "settings.input.sticky_keys_flags",
+   "type": "REG_SZ"
+  },
+  {
+   "data": "0",
+   "hive": "DEFAULT_USER",
+   "key": "Control Panel\\Mouse",
+   "name": "MouseSpeed",
+   "owner": "settings.input.mouse_speed",
+   "type": "REG_SZ"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\CurrentVersion\\AppModelUnlock",
+   "name": "AllowDevelopmentWithoutDevLicense",
+   "owner": "settings.enablements.developer_mode",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FileSystem",
+   "name": "LongPathsEnabled",
+   "owner": "settings.enablements.long_paths",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+   "name": "VerboseStatus",
+   "owner": "settings.enablements.verbose_status",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderDocuments",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderDownloads",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderFileExplorer",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderHomeGroup",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderMusic",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderNetwork",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderPersonalFolder",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderPictures",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderSettings",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "name": "AllowPinnedFolderVideos",
+   "owner": "start.folders",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": "{\"pinnedList\":[]}",
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\Explorer",
+   "name": "ConfigureStartPins",
+   "owner": "start.pins",
+   "type": "REG_SZ"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42550315",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.auto_sr_controls_42550315",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55305888",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.auto_sr_notifications_55305888",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\35620393",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_35620393",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\35620394",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_35620394",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\38664959",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_38664959",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\38679741",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_38679741",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\39258685",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_39258685",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\40268500",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_40268500",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\40729001",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_40729001",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\40950262",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_40950262",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\41040327",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_41040327",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\41118774",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_41118774",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\41356296",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_41356296",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42105254",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_42105254",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42106010",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_42106010",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42250125",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_42250125",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\43693406",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_43693406",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\44950080",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_44950080",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\45596742",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_45596742",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\45690266",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_45690266",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\45703317",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_45703317",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\46107637",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_46107637",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\47370305",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_47370305",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\47448915",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_47448915",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\47622034",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_47622034",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\48064775",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_48064775",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\48433719",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_48433719",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\48546544",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_48546544",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49615568",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_49615568",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\50564196",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_50564196",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\50730971",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_50730971",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\53343270",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_53343270",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55120633",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_55120633",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55390938",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_55390938",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57048216",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57048216",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57048218",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57048218",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57048226",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57048226",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57048231",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57048231",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57048237",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57048237",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57645315",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57645315",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57703775",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57703775",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57739723",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57739723",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57882334",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57882334",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57941090",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_57941090",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58383338",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_58383338",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59162732",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59162732",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59193521",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59193521",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59203365",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59203365",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59213523",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59213523",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59265307",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59265307",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59270880",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59270880",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59275076",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59275076",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59339532",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59339532",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59800000",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59800000",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59982341",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_59982341",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\60124892",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_60124892",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\60233104",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.base_rollout_60233104",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49059846",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_49059846",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55324166",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_55324166",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55994763",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_55994763",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57118881",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_57118881",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57741219",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_57741219",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58182453",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_58182453",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58988972",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_58988972",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58989002",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_58989002",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58989021",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_58989021",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59673297",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_59673297",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\60063638",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.bundle_60063638",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\60786016",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.directstorage_nvme_bypass_60786016",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\50902630",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.handheld_compact_mode_ui_50902630",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\52580392",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.handheld_compact_mode_ui_52580392",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\56784836",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.peripheral_haptic_feedback_56784836",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58536988",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.peripheral_haptic_feedback_58536988",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59100632",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.peripheral_haptic_feedback_59100632",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\35262205",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.rgb_ambient_lighting_controls_35262205",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\41355275",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.rgb_ambient_lighting_controls_41355275",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42941381",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_42941381",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\45624564",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_45624564",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\47123936",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_47123936",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\47205210",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_47205210",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\48655351",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_48655351",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49221331",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49221331",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49256040",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49256040",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49381526",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49381526",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49402389",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49402389",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49793372",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49793372",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\49820095",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_49820095",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\53397005",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_53397005",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\54792954",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_54792954",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55345819",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_55345819",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55495322",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_55495322",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\55844454",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_55844454",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57156807",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_57156807",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57259990",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_57259990",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\57900749",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_57900749",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58324036",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58324036",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58381341",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58381341",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58423575",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58423575",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58527096",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58527096",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58680439",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58680439",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58778013",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58778013",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58938944",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58938944",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58978959",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_58978959",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59359094",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.shell_2026_59359094",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\41863571",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.snap_assist_suggestions_41863571",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42589465",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.snap_assist_suggestions_42589465",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\42592269",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.taskbar_instant_end_task_42592269",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\58989070",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.xbox_fse_58989070",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8\\59765208",
+   "name": "EnabledState",
+   "owner": "xbox.feature_overrides.xbox_fse_59765208",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\DataCollection",
+   "name": "AllowTelemetry",
+   "owner": "debloat.profiles.gaming.software[0]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\DataCollection",
+   "name": "MaxTelemetryAllowed",
+   "owner": "debloat.profiles.gaming.software[1]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\DataCollection",
+   "name": "DoNotShowFeedbackNotifications",
+   "owner": "debloat.profiles.gaming.software[2]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\CloudContent",
+   "name": "DisableWindowsConsumerFeatures",
+   "owner": "debloat.profiles.gaming.software[3]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\CloudContent",
+   "name": "DisableConsumerAccountStateContent",
+   "owner": "debloat.profiles.gaming.software[4]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\CloudContent",
+   "name": "DisableCloudOptimizedContent",
+   "owner": "debloat.profiles.gaming.software[5]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\CloudContent",
+   "name": "DisableSoftLanding",
+   "owner": "debloat.profiles.gaming.software[6]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\WindowsCopilot",
+   "name": "TurnOffWindowsCopilot",
+   "owner": "debloat.profiles.gaming.software[7]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\WindowsAI",
+   "name": "DisableAIDataAnalysis",
+   "owner": "debloat.profiles.gaming.software[8]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\Explorer",
+   "name": "DisableSearchBoxSuggestions",
+   "owner": "debloat.profiles.gaming.software[9]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\System",
+   "name": "EnableActivityFeed",
+   "owner": "debloat.profiles.gaming.software[10]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\System",
+   "name": "PublishUserActivities",
+   "owner": "debloat.profiles.gaming.software[11]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\System",
+   "name": "UploadUserActivities",
+   "owner": "debloat.profiles.gaming.software[12]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\OneDrive",
+   "name": "DisableFileSyncNGSC",
+   "owner": "debloat.profiles.gaming.software[13]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Windows\\Windows Feeds",
+   "name": "EnableFeeds",
+   "owner": "debloat.profiles.gaming.software[14]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Policies\\Microsoft\\Dsh",
+   "name": "AllowNewsAndInterests",
+   "owner": "debloat.profiles.gaming.software[15]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info",
+   "name": "DisabledByGroupPolicy",
+   "owner": "debloat.profiles.gaming.software[16]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+   "name": "LocalAccountTokenFilterPolicy",
+   "owner": "debloat.profiles.gaming.software[17]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+   "name": "ConsentPromptBehaviorAdmin",
+   "owner": "debloat.profiles.gaming.software[18]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\DirectStorage",
+   "name": "ForceBypassIO",
+   "owner": "debloat.profiles.gaming.software[19]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\DirectStorage",
+   "name": "GpuDecompressionThreshold",
+   "owner": "debloat.profiles.gaming.software[20]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 5,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\Dwm",
+   "name": "OverlayTestMode",
+   "owner": "debloat.profiles.gaming.software[21]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\Dwm",
+   "name": "ForceEffectMode",
+   "owner": "debloat.profiles.gaming.software[22]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\Dwm",
+   "name": "CompositionPolicy",
+   "owner": "debloat.profiles.gaming.software[23]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 2,
+   "hive": "SOFTWARE",
+   "key": "Microsoft\\Windows\\Dwm",
+   "name": "MicaEffect",
+   "owner": "debloat.profiles.gaming.software[24]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\Session Manager\\Power",
+   "name": "HiberbootEnabled",
+   "owner": "debloat.profiles.gaming.system[0]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\GraphicsDrivers",
+   "name": "HwSchPriority",
+   "owner": "debloat.profiles.gaming.system[1]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\GraphicsDrivers",
+   "name": "EnableSER",
+   "owner": "debloat.profiles.gaming.system[2]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Control\\GraphicsDrivers",
+   "name": "DirectFlip",
+   "owner": "debloat.profiles.gaming.system[3]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 1,
+   "hive": "SYSTEM",
+   "key": "ControlSet001\\Services\\stornvme\\Parameters\\Device",
+   "name": "EnablePerformanceMode",
+   "owner": "debloat.profiles.gaming.system[4]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "ContentDeliveryAllowed",
+   "owner": "debloat.profiles.gaming.default_user[0]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "SilentInstalledAppsEnabled",
+   "owner": "debloat.profiles.gaming.default_user[1]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "SystemPaneSuggestionsEnabled",
+   "owner": "debloat.profiles.gaming.default_user[2]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "PreInstalledAppsEnabled",
+   "owner": "debloat.profiles.gaming.default_user[3]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "OemPreInstalledAppsEnabled",
+   "owner": "debloat.profiles.gaming.default_user[4]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "SubscribedContent-338388Enabled",
+   "owner": "debloat.profiles.gaming.default_user[5]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "SubscribedContent-338389Enabled",
+   "owner": "debloat.profiles.gaming.default_user[6]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+   "name": "SubscribedContent-310093Enabled",
+   "owner": "debloat.profiles.gaming.default_user[7]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",
+   "name": "Enabled",
+   "owner": "debloat.profiles.gaming.default_user[8]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+   "name": "BingSearchEnabled",
+   "owner": "debloat.profiles.gaming.default_user[9]",
+   "type": "REG_DWORD"
+  },
+  {
+   "data": 0,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+   "name": "CortanaConsent",
+   "owner": "debloat.profiles.gaming.default_user[10]",
+   "type": "REG_DWORD"
+  },
+  {
+   "delete": true,
+   "hive": "DEFAULT_USER",
+   "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+   "name": "OneDriveSetup",
+   "owner": "debloat.profiles.gaming.default_user[11]"
+  }
+ ],
+ "resolved": {
+  "settings.input.keyboard_ref": "us",
+  "settings.region.language_ref": "en_US.UTF-8",
+  "settings.region.timezone_ref": "UTC",
+  "source.language_ref": "en_US.UTF-8",
+  "users.builtin_administrator.password_ref": "<credential>",
+  "users.computer_name_ref": "MIOS-XBOX-FIX",
+  "users.desktop.display_name_ref": "MiOS Fixture",
+  "users.desktop.name_ref": "mios-fixture",
+  "users.desktop.password_ref": "<credential>",
+  "vm.display_ref": {
+   "client": "/usr/bin/looking-glass-client",
+   "client_auto_resize": false,
+   "client_ini": "/etc/looking-glass-client.ini",
+   "clock_offset": "localtime",
+   "connect": "qemu:///system",
+   "domains": [
+    "mios-xbox-current",
+    "Xbox"
+   ],
+   "enabled": true,
+   "idd_exclusive": false,
+   "mirror_displays": true,
+   "shm_name": "looking-glass",
+   "shm_path": "/dev/shm/looking-glass",
+   "shm_selinux_type": "svirt_tmpfs_t",
+   "shm_size_mb": 128,
+   "sound_model": "ich9",
+   "spice_audio": true,
+   "spice_channel": "com.redhat.spice.0",
+   "spice_listen": "127.0.0.1",
+   "spice_port": 5930,
+   "start_timeout_s": 120,
+   "threads_per_core": 2,
+   "topoext": true,
+   "vnc_console": true,
+   "vnc_listen": "127.0.0.1",
+   "vnc_passwd_file": "/etc/mios/vm/vnc.passwd"
+  },
+  "vm.memory_kib_ref": 25165824,
+  "vm.vcpus_ref": 12
+ },
+ "schema": 1,
+ "source": {
+  "arch": "amd64",
+  "build": "latest",
+  "channel": "dev",
+  "edition": "professional",
+  "language": "en-us",
+  "provider": "uupdump"
+ },
+ "spec": {
+  "baked": {
+   "webview2": {
+    "channel": "evergreen",
+    "install_at": "SetupComplete",
+    "installer": "standalone",
+    "upstream": "https://go.microsoft.com/fwlink/?linkid=2124701"
+   }
+  },
+  "components": {
+   "dest_dir": "C:\\Program Files\\MiOS",
+   "not_shipped": [
+    "deploy-mios-hyperv-m.ps1",
+    "mios-tailscale-serve.ps1",
+    "mios-wsl-keepalive.ps1",
+    "mios-wsl-session-task.ps1",
+    "mios-ai-node.ps1",
+    "mios-ai.ps1"
+   ],
+   "ship": [
+    {
+     "kind": "native",
+     "name": "mios-wallpaperd",
+     "source": "build.native.windows:mios-wallpaperd"
+    },
+    {
+     "kind": "script",
+     "name": "Set-MiOSWallpaper",
+     "source": "usr/share/mios/windows/Set-MiOSWallpaper.ps1"
+    },
+    {
+     "kind": "native",
+     "name": "miosd",
+     "source": "build.native.windows:miosd"
+    },
+    {
+     "kind": "native",
+     "name": "mios-agent-relay",
+     "source": "build.native.windows:mios-agent-relay"
+    },
+    {
+     "kind": "binary",
+     "name": "MiosServiceTool",
+     "source": "usr/share/mios/windows/MiosServiceTool.exe"
+    },
+    {
+     "kind": "config",
+     "name": "MiOS-FhsSync",
+     "source": "usr/share/mios/windows/MiOS-FhsSync.cfg"
+    },
+    {
+     "kind": "script",
+     "name": "mios-looking-glass-idd",
+     "source": "usr/share/mios/windows/mios-looking-glass-idd.ps1"
+    },
+    {
+     "kind": "script",
+     "name": "mios-ssh-setup",
+     "source": "usr/share/mios/windows/mios-ssh-setup.ps1"
+    },
+    {
+     "kind": "script",
+     "name": "mios-oscontrol-server",
+     "source": "usr/share/mios/windows/mios-oscontrol-server.ps1"
+    }
+   ]
+  },
+  "debloat": {
+   "enable": true,
+   "profile": "gaming",
+   "profiles": {
+    "gaming": {
+     "default_user": [
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "ContentDeliveryAllowed",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "SilentInstalledAppsEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "SystemPaneSuggestionsEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "PreInstalledAppsEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "OemPreInstalledAppsEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "SubscribedContent-338388Enabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "SubscribedContent-338389Enabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+       "name": "SubscribedContent-310093Enabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",
+       "name": "Enabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+       "name": "BingSearchEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+       "name": "CortanaConsent",
+       "type": "REG_DWORD"
+      },
+      {
+       "delete": true,
+       "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+       "name": "OneDriveSetup"
+      }
+     ],
+     "services": [
+      {
+       "name": "DiagTrack",
+       "start": 4
+      },
+      {
+       "name": "dmwappushservice",
+       "start": 4
+      }
+     ],
+     "software": [
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Windows\\DataCollection",
+       "name": "AllowTelemetry",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\DataCollection",
+       "name": "MaxTelemetryAllowed",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\DataCollection",
+       "name": "DoNotShowFeedbackNotifications",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\CloudContent",
+       "name": "DisableWindowsConsumerFeatures",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\CloudContent",
+       "name": "DisableConsumerAccountStateContent",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\CloudContent",
+       "name": "DisableCloudOptimizedContent",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\CloudContent",
+       "name": "DisableSoftLanding",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\WindowsCopilot",
+       "name": "TurnOffWindowsCopilot",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\WindowsAI",
+       "name": "DisableAIDataAnalysis",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\Explorer",
+       "name": "DisableSearchBoxSuggestions",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Windows\\System",
+       "name": "EnableActivityFeed",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Windows\\System",
+       "name": "PublishUserActivities",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Windows\\System",
+       "name": "UploadUserActivities",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Policies\\Microsoft\\Windows\\OneDrive",
+       "name": "DisableFileSyncNGSC",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Windows\\Windows Feeds",
+       "name": "EnableFeeds",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Policies\\Microsoft\\Dsh",
+       "name": "AllowNewsAndInterests",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info",
+       "name": "DisabledByGroupPolicy",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+       "name": "LocalAccountTokenFilterPolicy",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 0,
+       "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+       "name": "ConsentPromptBehaviorAdmin",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Microsoft\\DirectStorage",
+       "name": "ForceBypassIO",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Microsoft\\DirectStorage",
+       "name": "GpuDecompressionThreshold",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 5,
+       "key": "Microsoft\\Windows\\Dwm",
+       "name": "OverlayTestMode",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 2,
+       "key": "Microsoft\\Windows\\Dwm",
+       "name": "ForceEffectMode",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "Microsoft\\Windows\\Dwm",
+       "name": "CompositionPolicy",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 2,
+       "key": "Microsoft\\Windows\\Dwm",
+       "name": "MicaEffect",
+       "type": "REG_DWORD"
+      }
+     ],
+     "system": [
+      {
+       "data": 0,
+       "key": "ControlSet001\\Control\\Session Manager\\Power",
+       "name": "HiberbootEnabled",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "ControlSet001\\Control\\GraphicsDrivers",
+       "name": "HwSchPriority",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "ControlSet001\\Control\\GraphicsDrivers",
+       "name": "EnableSER",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "ControlSet001\\Control\\GraphicsDrivers",
+       "name": "DirectFlip",
+       "type": "REG_DWORD"
+      },
+      {
+       "data": 1,
+       "key": "ControlSet001\\Services\\stornvme\\Parameters\\Device",
+       "name": "EnablePerformanceMode",
+       "type": "REG_DWORD"
+      }
+     ]
+    }
+   }
+  },
+  "drivers": {
+   "deny_display_providers": [
+    "NVIDIA",
+    "Advanced Micro Devices",
+    "ATI Technologies",
+    "Intel"
+   ],
+   "gpu": "detect",
+   "gpu_step": "usr/share/mios/windows/mios-gpu-driver.ps1",
+   "looking_glass_idd": {
+    "channel": "stable",
+    "install_at": "SetupComplete",
+    "installer": "usr/share/mios/windows/mios-looking-glass-idd.ps1",
+    "upstream": "looking-glass"
+   },
+   "virtio_win": {
+    "arch": "amd64",
+    "channel": "latest",
+    "inf": [
+     "viostor",
+     "vioscsi",
+     "netkvm",
+     "balloon",
+     "vioser",
+     "viorng",
+     "pvpanic",
+     "viofs",
+     "viogpudo",
+     "vioinput",
+     "fwcfg"
+    ],
+    "os_dir": "w11",
+    "targets": [
+     "install.wim",
+     "boot.wim"
+    ],
+    "upstream": "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso"
+   }
+  },
+  "enable": true,
+  "features": {
+   "capabilities_add": [
+    "OpenSSH.Server"
+   ],
+   "disable": [
+    "Microsoft-Hyper-V-All",
+    "NetFx3"
+   ],
+   "enable": [],
+   "enable_if_nested_virt": [
+    "Microsoft-Windows-Subsystem-Linux",
+    "VirtualMachinePlatform"
+   ]
+  },
+  "gate": {
+   "staging_roots": [
+    "Windows/Setup/Scripts",
+    "ProgramData/MiOS"
+   ]
+  },
+  "gpu": {
+   "install_stage": "setupcomplete-task",
+   "record_path": "C:\\ProgramData\\MiOS\\gpu-driver.json",
+   "script_path": "C:\\Program Files\\MiOS\\windows\\mios-gpu-driver.ps1",
+   "skip_vendor_ids": [
+    "1AF4",
+    "1B36",
+    "1234",
+    "15AD",
+    "1414",
+    "80EE"
+   ],
+   "spec_path": "C:\\ProgramData\\MiOS\\xbox-spec.json",
+   "task_name": "MiOS\\MiOS-GpuDriver",
+   "vendors": {
+    "amd": {
+     "channel": "latest",
+     "components": [],
+     "download_hosts": [
+      "drivers.amd.com"
+     ],
+     "extract": true,
+     "index_pages": [
+      "https://www.amd.com/en/support/downloads/drivers.html/graphics/radeon-rx/radeon-rx-9000-series/amd-radeon-rx-9070-xt.html",
+      "https://www.amd.com/en/support/downloads/drivers.html/graphics/radeon-rx/radeon-rx-7000-series/amd-radeon-rx-7900-xtx.html"
+     ],
+     "install_args": [
+      "-INSTALL",
+      "-OUTPUT",
+      "{logfile}",
+      "-LOG",
+      "{logfile}"
+     ],
+     "installer": "Setup.exe",
+     "package_regex": "https://drivers\\.amd\\.com/drivers/whql-amd-software-adrenalin-edition-(?<version>\\d+\\.\\d+\\.\\d+)-win11-[a-z]\\.exe",
+     "provider_regex": "^Advanced Micro Devices",
+     "reboot_exit_codes": [],
+     "recommended_regex": "Adrenalin\\s+(?<version>\\d+\\.\\d+\\.\\d+)\\s*\\(WHQL Recommended\\)",
+     "referer": "https://www.amd.com/",
+     "resolver": "amd-driver-pages",
+     "signer_org_regex": "^Advanced Micro Devices,? Inc\\.?$",
+     "success_exit_codes": [
+      0
+     ],
+     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+     "vendor_id": "1002"
+    },
+    "intel": {
+     "components": [],
+     "download_hosts": [
+      "downloadmirror.intel.com"
+     ],
+     "extract": false,
+     "hash_regex": "(?is)SHA-?512.{0,400}?\\b(?<hash>[0-9a-fA-F]{128})\\b",
+     "index_pages": [
+      "https://www.intel.com/content/www/us/en/download/785597/intel-arc-graphics-windows.html"
+     ],
+     "install_args": [
+      "-s",
+      "--overwrite"
+     ],
+     "installer": "",
+     "label_regex": "gfx_win_(?<version>\\d+\\.\\d+)\\.exe",
+     "mirror_dir_regex": "https://downloadmirror\\.intel\\.com/\\d+/",
+     "package_regex": "https://downloadmirror\\.intel\\.com/\\d+/gfx_win_(?<version>\\d+\\.\\d+)\\.exe",
+     "provider_regex": "^Intel",
+     "reboot_exit_codes": [],
+     "require_published_hash": true,
+     "resolver": "intel-download-center",
+     "signer_org_regex": "^Intel Corporation$",
+     "success_exit_codes": [
+      0
+     ],
+     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+     "vendor_id": "8086"
+    },
+    "nvidia": {
+     "components": [
+      "Display.Driver"
+     ],
+     "download_field": "DownloadURLAdmin",
+     "download_hosts": [
+      "us.download.nvidia.com",
+      "international.download.nvidia.com",
+      "international-gfe.download.nvidia.com"
+     ],
+     "extract": false,
+     "install_args": [
+      "-s",
+      "-n",
+      "{components}",
+      "-log:{logdir}",
+      "-loglevel:6"
+     ],
+     "installer": "",
+     "lookup_params": {
+      "dch": "1",
+      "gIsB": "1",
+      "iLp": "0",
+      "is6": "1",
+      "isCRD": "0",
+      "lg": "1033",
+      "osC": "10.0",
+      "prvMd": "0",
+      "upCRD": "0"
+     },
+     "lookup_url": "https://gfwsl.geforce.com/nvidia_web_services/controller.gfeclientcontent.NG.php/com.nvidia.services.GFEClientContent_NG.getDispDrvrByDevid/",
+     "provider_regex": "^NVIDIA$",
+     "reboot_exit_codes": [
+      1
+     ],
+     "require_whql": true,
+     "resolver": "nvidia-devid-lookup",
+     "signer_org_regex": "^NVIDIA Corporation$",
+     "success_exit_codes": [
+      0,
+      1
+     ],
+     "vendor_id": "10DE"
+    }
+   },
+   "work_dir": "C:\\ProgramData\\MiOS\\gpu-driver"
+  },
+  "guest_tools": {
+   "looking_glass_host": {
+    "channel": "stable",
+    "install_at": "SetupComplete",
+    "service": "Looking Glass (host)",
+    "upstream": "looking-glass"
+   },
+   "qemu_ga": {
+    "channel": "latest",
+    "package": "qemu-ga-x86_64.msi",
+    "service": "QEMU-GA",
+    "upstream": "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-qemu-ga/"
+   },
+   "spice_vdagent": {
+    "from": "guest_tools.virtio_win_guest_tools",
+    "service": "spice-agent"
+   },
+   "virtio_win_guest_tools": {
+    "file": "virtio-win-guest-tools.exe",
+    "from": "drivers.virtio_win",
+    "install_at": "SetupComplete"
+   },
+   "virtiofs": {
+    "from": "drivers.virtio_win",
+    "requires": [
+     "winfsp"
+    ],
+    "service": "VirtioFsSvc"
+   },
+   "winfsp": {
+    "asset": "winfsp-*.msi",
+    "channel": "latest",
+    "install_at": "SetupComplete",
+    "upstream": "https://github.com/winfsp/winfsp"
+   }
+  },
+  "preferences": {
+   "desktop_icons_hidden": 1,
+   "edge_desktop_shortcut": 0,
+   "hide_file_extensions": 0,
+   "recycle_bin_hidden": 1,
+   "search_box_mode": 0,
+   "task_view_button": 1,
+   "taskbar_align": 1,
+   "taskbar_chat": 0,
+   "taskbar_end_task": 1,
+   "taskbar_widgets": 0,
+   "touch_keyboard_button": 1
+  },
+  "probe": {
+   "connect_timeout_s": 5,
+   "operation_timeout_s": 120,
+   "python": "/var/lib/mios-build/venv/bin/python",
+   "read_timeout_s": 180,
+   "transport": "ntlm",
+   "winrm_port": 5985
+  },
+  "registry_map": {
+   "preferences.desktop_icons_hidden": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "HideIcons",
+    "type": "REG_DWORD"
+   },
+   "preferences.edge_desktop_shortcut": {
+    "hive": "SOFTWARE",
+    "key": "Policies\\Microsoft\\EdgeUpdate",
+    "name": "CreateDesktopShortcutDefault",
+    "type": "REG_DWORD"
+   },
+   "preferences.hide_file_extensions": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "HideFileExt",
+    "type": "REG_DWORD"
+   },
+   "preferences.recycle_bin_hidden": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
+    "name": "{645FF040-5081-101B-9F08-00AA002F954E}",
+    "type": "REG_DWORD"
+   },
+   "preferences.search_box_mode": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+    "name": "SearchboxTaskbarMode",
+    "type": "REG_DWORD"
+   },
+   "preferences.task_view_button": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "ShowTaskViewButton",
+    "type": "REG_DWORD"
+   },
+   "preferences.taskbar_align": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "TaskbarAl",
+    "type": "REG_DWORD"
+   },
+   "preferences.taskbar_chat": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "TaskbarMn",
+    "type": "REG_DWORD"
+   },
+   "preferences.taskbar_end_task": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\TaskbarDeveloperSettings",
+    "name": "TaskbarEndTask",
+    "type": "REG_DWORD"
+   },
+   "preferences.taskbar_widgets": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+    "name": "TaskbarDa",
+    "type": "REG_DWORD"
+   },
+   "preferences.touch_keyboard_button": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\TabletTip\\1.7",
+    "name": "TipbandDesiredVisibility",
+    "type": "REG_DWORD"
+   },
+   "settings.display.apps_light_theme": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+    "name": "AppsUseLightTheme",
+    "type": "REG_DWORD"
+   },
+   "settings.display.no_remote_desktop_wallpaper": {
+    "hive": "SOFTWARE",
+    "key": "Policies\\Microsoft\\Windows NT\\Terminal Services",
+    "name": "fNoRemoteDesktopWallpaper",
+    "type": "REG_DWORD"
+   },
+   "settings.display.system_light_theme": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+    "name": "SystemUsesLightTheme",
+    "type": "REG_DWORD"
+   },
+   "settings.display.transparency": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+    "name": "EnableTransparency",
+    "type": "REG_DWORD"
+   },
+   "settings.display.wallpaper": {
+    "hive": "DEFAULT_USER",
+    "key": "Control Panel\\Desktop",
+    "name": "Wallpaper",
+    "type": "REG_SZ"
+   },
+   "settings.enablements.developer_mode": {
+    "hive": "SOFTWARE",
+    "key": "Microsoft\\Windows\\CurrentVersion\\AppModelUnlock",
+    "name": "AllowDevelopmentWithoutDevLicense",
+    "type": "REG_DWORD"
+   },
+   "settings.enablements.long_paths": {
+    "hive": "SYSTEM",
+    "key": "ControlSet001\\Control\\FileSystem",
+    "name": "LongPathsEnabled",
+    "type": "REG_DWORD"
+   },
+   "settings.enablements.verbose_status": {
+    "hive": "SOFTWARE",
+    "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+    "name": "VerboseStatus",
+    "type": "REG_DWORD"
+   },
+   "settings.input.mouse_speed": {
+    "hive": "DEFAULT_USER",
+    "key": "Control Panel\\Mouse",
+    "name": "MouseSpeed",
+    "type": "REG_SZ"
+   },
+   "settings.input.sticky_keys_flags": {
+    "hive": "DEFAULT_USER",
+    "key": "Control Panel\\Accessibility\\StickyKeys",
+    "name": "Flags",
+    "type": "REG_SZ"
+   },
+   "settings.privacy.online_speech": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy",
+    "name": "HasAccepted",
+    "type": "REG_DWORD"
+   },
+   "settings.privacy.restrict_implicit_text": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\InputPersonalization",
+    "name": "RestrictImplicitTextCollection",
+    "type": "REG_DWORD"
+   },
+   "settings.privacy.tailored_experiences": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Privacy",
+    "name": "TailoredExperiencesWithDiagnosticDataEnabled",
+    "type": "REG_DWORD"
+   },
+   "xbox.auto_hdr": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\DirectX\\UserGpuPreferences",
+    "kv_field": "AutoHDREnable",
+    "name": "DirectXUserGlobalSettings",
+    "type": "REG_SZ"
+   },
+   "xbox.background_capture": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+    "name": "HistoricalCaptureEnabled",
+    "type": "REG_DWORD"
+   },
+   "xbox.device_form": {
+    "hive": "SOFTWARE",
+    "key": "Microsoft\\Windows NT\\CurrentVersion\\OEM",
+    "name": "DeviceForm",
+    "type": "REG_DWORD",
+    "when": "xbox.device_form_spoof"
+   },
+   "xbox.game_bar": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\GameBar",
+    "name": "UseNexusForGameBarEnabled",
+    "type": "REG_DWORD"
+   },
+   "xbox.game_mode": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\GameBar",
+    "name": "AutoGameModeEnabled",
+    "type": "REG_DWORD"
+   },
+   "xbox.hags": {
+    "hive": "SYSTEM",
+    "key": "ControlSet001\\Control\\GraphicsDrivers",
+    "name": "HwSchMode",
+    "type": "REG_DWORD"
+   },
+   "xbox.home_app": {
+    "hive": "DEFAULT_USER",
+    "key": "Software\\Microsoft\\Windows\\CurrentVersion\\GamingConfiguration",
+    "name": "GamingHomeApp",
+    "type": "REG_SZ"
+   }
+  },
+  "settings": {
+   "display": {
+    "apps_light_theme": 0,
+    "living_wallpaper": true,
+    "no_remote_desktop_wallpaper": 1,
+    "system_light_theme": 0,
+    "transparency": 1,
+    "wallpaper": ""
+   },
+   "enablements": {
+    "developer_mode": 1,
+    "long_paths": 1,
+    "verbose_status": 1
+   },
+   "input": {
+    "keyboard_ref": "locale.keyboard_layout",
+    "mouse_speed": "0",
+    "sticky_keys_flags": "506"
+   },
+   "oobe": {
+    "hide_eula": true,
+    "hide_local_account_screen": true,
+    "hide_oem_registration": true,
+    "hide_online_account_screens": true,
+    "hide_wireless_setup": true,
+    "protect_your_pc": 3
+   },
+   "power": {
+    "hibernate": false,
+    "monitor_timeout_ac_min": 0,
+    "scheme": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+    "standby_timeout_ac_min": 0
+   },
+   "privacy": {
+    "online_speech": 0,
+    "restrict_implicit_text": 1,
+    "tailored_experiences": 0
+   },
+   "region": {
+    "keyboard_map": {
+     "de": "0407:00000407",
+     "fr": "040c:0000040c",
+     "gb": "0809:00000809",
+     "us": "0409:00000409"
+    },
+    "language_ref": "locale.language",
+    "timezone_map": {
+     "America/Chicago": "Central Standard Time",
+     "America/Denver": "Mountain Standard Time",
+     "America/Los_Angeles": "Pacific Standard Time",
+     "America/New_York": "Eastern Standard Time",
+     "Etc/UTC": "UTC",
+     "Europe/Berlin": "W. Europe Standard Time",
+     "Europe/London": "GMT Standard Time",
+     "Europe/Paris": "Romance Standard Time",
+     "UTC": "UTC"
+    },
+    "timezone_ref": "locale.timezone"
+   }
+  },
+  "source": {
+   "arch": "amd64",
+   "build": "latest",
+   "channel": "dev",
+   "edition": "professional",
+   "language_ref": "locale.language",
+   "provider": "uupdump"
+  },
+  "spec_schema": 1,
+  "start": {
+   "folder_policy_hive": "SOFTWARE",
+   "folder_policy_key": "Microsoft\\PolicyManager\\current\\device\\Start",
+   "folder_policy_prefix": "AllowPinnedFolder",
+   "folders": [
+    "PersonalFolder",
+    "Network",
+    "FileExplorer",
+    "Settings"
+   ],
+   "folders_universe": [
+    "Documents",
+    "Downloads",
+    "FileExplorer",
+    "HomeGroup",
+    "Music",
+    "Network",
+    "PersonalFolder",
+    "Pictures",
+    "Settings",
+    "Videos"
+   ],
+   "layout_assets": {
+    "ge_release": {
+     "start2": "usr/share/mios/windows/xbox/ge_release/start2.bin",
+     "visible_places": "usr/share/mios/windows/xbox/ge_release/visibleplaces.json"
+    },
+    "rs_prerelease": {
+     "start2": "usr/share/mios/windows/xbox/rs_prerelease/start2.bin",
+     "visible_places": "usr/share/mios/windows/xbox/rs_prerelease/visibleplaces.json"
+    }
+   },
+   "layout_family_source": "BuildBranch",
+   "pins": [],
+   "pins_policy_hive": "SOFTWARE",
+   "pins_policy_key": "Policies\\Microsoft\\Windows\\Explorer",
+   "taskbar_pins": []
+  },
+  "store_hydrate": {
+   "packages": [
+    {
+     "name": "Microsoft.GamingServices",
+     "store_id": "9MWPM2CQNLHN"
+    }
+   ],
+   "stage": "first_logon"
+  },
+  "users": {
+   "builtin_administrator": {
+    "disable_at": "finalize",
+    "password_ref": "identity.default_password"
+   },
+   "computer_name_ref": "identity.hostname",
+   "desktop": {
+    "autologon": true,
+    "autologon_persistent": true,
+    "display_name_ref": "identity.fullname",
+    "groups": [
+     "Administrators",
+     "Remote Desktop Users"
+    ],
+    "name_ref": "identity.username",
+    "password_ref": "identity.default_password"
+   }
+  },
+  "vm": {
+   "disk_allocation": "thin",
+   "disk_format": "qcow2",
+   "disk_size": "128G",
+   "display_ref": "vm.looking_glass",
+   "memory_kib_ref": "vm.win11.memory_kib",
+   "name": "mios-xbox",
+   "pool": "mios-build",
+   "vcpus_ref": "vm.win11.vcpus",
+   "video_model": "virtio",
+   "worker": {
+    "gpu_passthrough": false,
+    "memory_gib": 8,
+    "name": "mios-xbox-worker",
+    "overlay_of": "mios-xbox-current"
+   }
+  },
+  "xbox": {
+   "auto_hdr": 1,
+   "background_capture": 0,
+   "device_form": 46,
+   "device_form_spoof": true,
+   "enable": true,
+   "feature_overrides": {
+    "auto_sr_controls_42550315": {
+     "desc": "Auto Super Resolution (Auto SR) controls",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 42550315
+    },
+    "auto_sr_notifications_55305888": {
+     "desc": "Auto Super Resolution notifications",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 55305888
+    },
+    "base_rollout_35620393": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 35620393
+    },
+    "base_rollout_35620394": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 35620394
+    },
+    "base_rollout_38664959": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 38664959
+    },
+    "base_rollout_38679741": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 38679741
+    },
+    "base_rollout_39258685": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 39258685
+    },
+    "base_rollout_40268500": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 40268500
+    },
+    "base_rollout_40729001": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 40729001
+    },
+    "base_rollout_40950262": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 40950262
+    },
+    "base_rollout_41040327": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 41040327
+    },
+    "base_rollout_41118774": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 41118774
+    },
+    "base_rollout_41356296": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 41356296
+    },
+    "base_rollout_42105254": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 42105254
+    },
+    "base_rollout_42106010": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 42106010
+    },
+    "base_rollout_42250125": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 42250125
+    },
+    "base_rollout_43693406": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 43693406
+    },
+    "base_rollout_44950080": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 44950080
+    },
+    "base_rollout_45596742": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 45596742
+    },
+    "base_rollout_45690266": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 45690266
+    },
+    "base_rollout_45703317": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 45703317
+    },
+    "base_rollout_46107637": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 46107637
+    },
+    "base_rollout_47370305": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 47370305
+    },
+    "base_rollout_47448915": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 47448915
+    },
+    "base_rollout_47622034": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 47622034
+    },
+    "base_rollout_48064775": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 48064775
+    },
+    "base_rollout_48433719": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 48433719
+    },
+    "base_rollout_48546544": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 48546544
+    },
+    "base_rollout_49615568": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 49615568
+    },
+    "base_rollout_50564196": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 50564196
+    },
+    "base_rollout_50730971": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 50730971
+    },
+    "base_rollout_53343270": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 53343270
+    },
+    "base_rollout_55120633": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 55120633
+    },
+    "base_rollout_55390938": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 55390938
+    },
+    "base_rollout_57048216": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57048216
+    },
+    "base_rollout_57048218": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57048218
+    },
+    "base_rollout_57048226": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57048226
+    },
+    "base_rollout_57048231": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57048231
+    },
+    "base_rollout_57048237": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57048237
+    },
+    "base_rollout_57645315": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57645315
+    },
+    "base_rollout_57703775": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57703775
+    },
+    "base_rollout_57739723": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57739723
+    },
+    "base_rollout_57882334": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57882334
+    },
+    "base_rollout_57941090": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 57941090
+    },
+    "base_rollout_58383338": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 58383338
+    },
+    "base_rollout_59162732": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59162732
+    },
+    "base_rollout_59193521": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59193521
+    },
+    "base_rollout_59203365": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59203365
+    },
+    "base_rollout_59213523": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59213523
+    },
+    "base_rollout_59265307": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59265307
+    },
+    "base_rollout_59270880": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59270880
+    },
+    "base_rollout_59275076": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59275076
+    },
+    "base_rollout_59339532": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59339532
+    },
+    "base_rollout_59800000": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59800000
+    },
+    "base_rollout_59982341": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 59982341
+    },
+    "base_rollout_60124892": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 60124892
+    },
+    "base_rollout_60233104": {
+     "desc": "base Xbox/gaming rollout set",
+     "enabled": true,
+     "group": "base_rollout",
+     "id": 60233104
+    },
+    "bundle_49059846": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 49059846
+    },
+    "bundle_55324166": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 55324166
+    },
+    "bundle_55994763": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 55994763
+    },
+    "bundle_57118881": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 57118881
+    },
+    "bundle_57741219": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 57741219
+    },
+    "bundle_58182453": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 58182453
+    },
+    "bundle_58988972": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 58988972
+    },
+    "bundle_58989002": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 58989002
+    },
+    "bundle_58989021": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 58989021
+    },
+    "bundle_59673297": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 59673297
+    },
+    "bundle_60063638": {
+     "desc": "Xbox/gaming feature bundle rollout",
+     "enabled": true,
+     "group": "bundle",
+     "id": 60063638
+    },
+    "directstorage_nvme_bypass_60786016": {
+     "desc": "Native NVMe bypass for DirectStorage 2.1",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 60786016
+    },
+    "handheld_compact_mode_ui_50902630": {
+     "desc": "Handheld compact-mode UI",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 50902630
+    },
+    "handheld_compact_mode_ui_52580392": {
+     "desc": "Handheld compact-mode UI",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 52580392
+    },
+    "peripheral_haptic_feedback_56784836": {
+     "desc": "Peripheral haptic feedback",
+     "enabled": true,
+     "group": "hardware",
+     "id": 56784836
+    },
+    "peripheral_haptic_feedback_58536988": {
+     "desc": "Peripheral haptic feedback",
+     "enabled": true,
+     "group": "hardware",
+     "id": 58536988
+    },
+    "peripheral_haptic_feedback_59100632": {
+     "desc": "Peripheral haptic feedback",
+     "enabled": true,
+     "group": "hardware",
+     "id": 59100632
+    },
+    "rgb_ambient_lighting_controls_35262205": {
+     "desc": "RGB ambient lighting controls",
+     "enabled": true,
+     "group": "hardware",
+     "id": 35262205
+    },
+    "rgb_ambient_lighting_controls_41355275": {
+     "desc": "RGB ambient lighting controls",
+     "enabled": true,
+     "group": "hardware",
+     "id": 41355275
+    },
+    "shell_2026_42941381": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 42941381
+    },
+    "shell_2026_45624564": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 45624564
+    },
+    "shell_2026_47123936": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 47123936
+    },
+    "shell_2026_47205210": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 47205210
+    },
+    "shell_2026_48655351": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 48655351
+    },
+    "shell_2026_49221331": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49221331
+    },
+    "shell_2026_49256040": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49256040
+    },
+    "shell_2026_49381526": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49381526
+    },
+    "shell_2026_49402389": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49402389
+    },
+    "shell_2026_49793372": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49793372
+    },
+    "shell_2026_49820095": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 49820095
+    },
+    "shell_2026_53397005": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 53397005
+    },
+    "shell_2026_54792954": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 54792954
+    },
+    "shell_2026_55345819": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 55345819
+    },
+    "shell_2026_55495322": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 55495322
+    },
+    "shell_2026_55844454": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 55844454
+    },
+    "shell_2026_57156807": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 57156807
+    },
+    "shell_2026_57259990": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 57259990
+    },
+    "shell_2026_57900749": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 57900749
+    },
+    "shell_2026_58324036": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58324036
+    },
+    "shell_2026_58381341": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58381341
+    },
+    "shell_2026_58423575": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58423575
+    },
+    "shell_2026_58527096": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58527096
+    },
+    "shell_2026_58680439": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58680439
+    },
+    "shell_2026_58778013": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58778013
+    },
+    "shell_2026_58938944": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58938944
+    },
+    "shell_2026_58978959": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 58978959
+    },
+    "shell_2026_59359094": {
+     "desc": "2026 Start/taskbar/File Explorer shell overhaul rollout",
+     "enabled": true,
+     "group": "shell_2026",
+     "id": 59359094
+    },
+    "snap_assist_suggestions_41863571": {
+     "desc": "Snap Assist suggestions",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 41863571
+    },
+    "snap_assist_suggestions_42589465": {
+     "desc": "Snap Assist suggestions",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 42589465
+    },
+    "taskbar_instant_end_task_42592269": {
+     "desc": "Instant End Task on taskbar",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 42592269
+    },
+    "xbox_fse_58989070": {
+     "desc": "Xbox Full Screen Experience (FSE) - Copilot/taskbar replacement",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 58989070
+    },
+    "xbox_fse_59765208": {
+     "desc": "Xbox Full Screen Experience (FSE)",
+     "enabled": true,
+     "group": "xbox_shell",
+     "id": 59765208
+    }
+   },
+   "game_bar": 1,
+   "game_mode": 1,
+   "hags": 2,
+   "home_app": "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App",
+   "override_hive": "SYSTEM",
+   "override_key": "ControlSet001\\Control\\FeatureManagement\\Overrides\\8",
+   "override_state": 2,
+   "start_on_startup": true
+  }
+ },
+ "users": {
+  "builtin_administrator": {
+   "disable_at": "finalize",
+   "password": "Fixture-Only-Pw-7x!"
+  },
+  "computer_name": "MIOS-XBOX-FIX",
+  "desktop": {
+   "autologon": true,
+   "autologon_persistent": true,
+   "display_name": "MiOS Fixture",
+   "groups": [
+    "Administrators",
+    "Remote Desktop Users"
+   ],
+   "name": "mios-fixture",
+   "password": "Fixture-Only-Pw-7x!"
+  }
+ }
+}

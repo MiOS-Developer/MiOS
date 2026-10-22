@@ -13,7 +13,7 @@ import sys
 from typing import Any, Dict, Optional
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
+_ROOT = os.path.normpath(os.path.join(_HERE, "..", "..", ".."))
 _LIB = os.path.join(_ROOT, "usr", "lib", "mios")
 if os.path.isdir(_LIB) and _LIB not in sys.path:
     sys.path.insert(0, _LIB)
@@ -33,7 +33,7 @@ def resolve_colors() -> Dict[str, str]:
         layers = [p for p in [vendor, host, user] if os.path.isfile(p)]
         if not layers:
             layers = [os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")]
-        return dict(mios_toml.colors(mios_toml.load_merged(layers)))
+        return dict(mios_toml.colors(mios_toml.load_merged()))
 
     return {
         "bg": "#282262",
@@ -185,7 +185,7 @@ def main() -> int:
     render_script = os.path.join(_HERE, "mios-theme-render")
     render_executed = False
     if os.path.isfile(render_script) and os.access(render_script, os.X_OK):
-        cmd = [render_script]
+        cmd = [render_script, "--gtk", "--qt"]
         if args.dry_run:
             cmd.append("--dry-run")
         try:

@@ -1,0 +1,25 @@
+/* AI-hint: MiOS launcher palette, typography and glass derive from mios.toml. */
+configuration {
+    modi: "drun,run";
+    show-icons: true;
+    font: "@MIOS:theme.font.family@ @MIOS:theme.font.size@";
+}
+* {
+    background-color: @MIOS:bg_alpha@;
+    text-color: @MIOS:fg@;
+    border-color: @MIOS:accent@;
+    spacing: @MIOS:theme.shell.edge_margin_px@px;
+}
+window {
+    border: 1px;
+    border-radius: @MIOS:desktop.hyprland.config.decoration.rounding@px;
+    padding: @MIOS:theme.shell.edge_margin_px@px;
+}
+mainbox, inputbar, listview, element, element-text, element-icon {
+    background-color: transparent;
+}
+element selected {
+    background-color: @MIOS:accent@;
+    text-color: @MIOS:fg@;
+}
+entry { placeholder: "Search applications"; }

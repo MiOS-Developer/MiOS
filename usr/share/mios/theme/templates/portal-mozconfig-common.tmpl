@@ -1,0 +1,20 @@
+# AI-hint: MiOS-Portal common mozconfig (Surfer configs/common/mozconfig); rendered by mios-dotfiles-render from mios.toml [desktop.portal.gecko]. Surfer fills ${binName}/${appId}/${changeset} from surfer.json.
+# AI-related: usr/share/mios/mios.toml, src/mios-portal/surfer.json
+# Surfer concatenates this file, configs/linux/mozconfig, the project-root mozconfig (the lane file)
+# and its own block (--with-branding, --enable-update-channel). Lane-neutral options only.
+ac_add_options --enable-application=browser
+export MOZ_APP_BASENAME=${binName}
+ac_add_options --with-distribution-id=${appId}
+# Wayland app_id / X11 WM class and remoting name; without it the non-release update channel
+# Surfer sets would append "-<channel>".
+export MOZ_APP_REMOTINGNAME=@MIOS:desktop.portal.gecko.binary@
+
+# Published sources (MPL-2.0).
+export MOZ_INCLUDE_SOURCE_INFO=1
+export MOZ_SOURCE_REPO=@MIOS:desktop.portal.gecko.source_repo@
+export MOZ_SOURCE_CHANGESET=${changeset}
+
+# The image is the updater; nothing reports to Mozilla.
+ac_add_options --disable-updater
+mk_add_options MOZ_TELEMETRY_REPORTING=
+mk_add_options MOZ_DATA_REPORTING=

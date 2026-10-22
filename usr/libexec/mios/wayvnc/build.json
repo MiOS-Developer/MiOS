@@ -1,0 +1,16 @@
+{
+  "version": "wayvnc: v0.11-dev-b286ab9 (HEAD)",
+  "built_at": "2026-10-16T21:08:18Z",
+  "wayvnc": {
+    "repo": "https://github.com/any1/wayvnc.git",
+    "commit": "b286ab91d0f41056317fb942e20fd117c2561228"
+  },
+  "neatvnc": {
+    "repo": "https://github.com/any1/neatvnc.git",
+    "commit": "a4c67ec07a344901d68719ada63d323012fe077b"
+  },
+  "aml": {
+    "repo": "https://github.com/any1/aml.git",
+    "commit": "ce4b82d5888a87110054b95414bd3068224d2b91"
+  }
+}

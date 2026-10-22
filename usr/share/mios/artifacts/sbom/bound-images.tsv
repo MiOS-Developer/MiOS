@@ -5,6 +5,7 @@ quay.io/centos-bootc/bootc-image-builder:latest	local	extra	1.0
 docker.io/adguard/adguardhome:latest	local	extra	1.0
 quay.io/ceph/ceph:latest	local	heavy	1.0
 ghcr.io/mostlygeek/llama-swap:cuda	local	cuda	1.0
+quay.io/cilium/tetragon:v1.4.2	local	extra	1.0
 codeberg.org/forgejo/forgejo:latest	local	extra	1.0
 code.forgejo.org/forgejo/runner:latest	local	extra	1.0
 docker.io/guacamole/guacamole:latest	local	extra	1.0

@@ -1,4 +1,4 @@
-// AI-hint: Floats bake inputs on their newest upstream release: `latest-image <ref>` and `latest-git <url>` print the concrete ref to fetch, using the release shapes in mios.toml [build.float].
+// AI-hint: Floats bake inputs on their newest upstream release: `latest-image <ref>` and `latest-git <url>` print the concrete ref to fetch, using the release shapes in mios.toml [build.float]; `latest-portal` prints the MiOS-Portal Firefox release, its build and source revision, and the npm `latest` Surfer as key=value lines.
 //! Registries that publish no `latest` tag, and git projects whose releases are
 //! tags, still need one concrete ref to fetch. "The biggest tag" is wrong on real
 //! data: lowercase alpha series sort above uppercase release series, and every
@@ -256,7 +256,118 @@ pub fn resolve_git(url: &str, policy: &Policy) -> Result<String, String> {
         .ok_or_else(|| format!("{url} has no release tag and no default branch"))
 }
 
-/// `latest-image <ref>` / `latest-git <url>`. None when neither subcommand was asked for.
+/// The MiOS-Portal upstreams, read from [desktop.portal.builder]: Mozilla's product-details and
+/// release archive, and the npm registry that publishes Surfer. URLs only -- no version.
+pub struct PortalSources {
+    pub product_details: String,
+    pub archive: String,
+    pub npm_registry: String,
+    pub surfer_package: String,
+}
+
+impl PortalSources {
+    pub fn from_value(ssot: &toml::Value) -> Result<PortalSources, String> {
+        let t = ssot
+            .get("desktop")
+            .and_then(|d| d.get("portal"))
+            .and_then(|p| p.get("builder"))
+            .ok_or("mios.toml has no [desktop.portal.builder] -- nothing says where MiOS-Portal's upstreams are")?;
+        let key = |k: &str| -> Result<String, String> {
+            t.get(k)
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or(format!("[desktop.portal.builder].{k} is missing or empty"))
+        };
+        Ok(PortalSources {
+            product_details: key("product_details_url")?,
+            archive: key("archive_url")?,
+            npm_registry: key("npm_registry_url")?,
+            surfer_package: key("surfer_package")?,
+        })
+    }
+}
+
+/// A top-level JSON string field. Upstream bodies are flat where these are read.
+pub fn parse_json_string(json: &str, key: &str) -> Option<String> {
+    Regex::new(&format!(r#""{}"\s*:\s*"([^"]+)""#, regex::escape(key)))
+        .ok()?
+        .captures(json)
+        .map(|c| c[1].to_string())
+}
+
+/// A Firefox RELEASE version: 158.0 or 158.0.1. Betas (159.0b3), nightlies (160.0a1) and ESR
+/// (153.5.0esr) are other products and never win.
+pub fn is_firefox_release(v: &str) -> bool {
+    Regex::new(r"^\d+\.\d+(\.\d+)?$")
+        .expect("latest: literal regex")
+        .is_match(v)
+}
+
+/// releases["firefox-<version>"].build_number from product-details firefox.json: which candidate
+/// build Mozilla shipped as that release.
+pub fn parse_release_build(json: &str, version: &str) -> Option<u32> {
+    Regex::new(&format!(
+        r#""firefox-{}"\s*:\s*\{{[^}}]*?"build_number"\s*:\s*(\d+)"#,
+        regex::escape(version)
+    ))
+    .ok()?
+    .captures(json)?[1]
+        .parse()
+        .ok()
+}
+
+/// source.revision (a full 40-hex changeset) from a candidate build's buildhub.json.
+pub fn parse_buildhub_revision(json: &str) -> Option<String> {
+    Regex::new(r#""source"\s*:\s*\{[^}]*?"revision"\s*:\s*"([0-9a-f]{40})""#)
+        .expect("latest: literal regex")
+        .captures(json)
+        .map(|c| c[1].to_string())
+}
+
+/// The latest Firefox release, the candidate build it shipped from, that build's source revision
+/// (MOZ_ARTIFACT_REVISION) and the npm `latest` Surfer, as key=value pairs. Every lookup must
+/// succeed: a failure is an error, never a remembered or default version.
+pub fn resolve_portal(
+    src: &PortalSources,
+    fetch: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<Vec<(String, String)>, String> {
+    let versions_url = format!("{}/firefox_versions.json", src.product_details);
+    let version = parse_json_string(&fetch(&versions_url)?, "LATEST_FIREFOX_VERSION")
+        .ok_or(format!("{versions_url} has no LATEST_FIREFOX_VERSION"))?;
+    if !is_firefox_release(&version) {
+        return Err(format!("{versions_url}: LATEST_FIREFOX_VERSION {version:?} is not a release version"));
+    }
+    let releases_url = format!("{}/firefox.json", src.product_details);
+    let build = parse_release_build(&fetch(&releases_url)?, &version)
+        .ok_or(format!("{releases_url} lists no build_number for firefox-{version}"))?;
+    let buildhub_url = format!(
+        "{}/candidates/{version}-candidates/build{build}/linux-x86_64/en-US/buildhub.json",
+        src.archive
+    );
+    let revision = parse_buildhub_revision(&fetch(&buildhub_url)?)
+        .ok_or(format!("{buildhub_url} has no 40-hex source.revision"))?;
+    let npm_url = format!("{}/{}/latest", src.npm_registry, src.surfer_package);
+    let surfer = parse_json_string(&fetch(&npm_url)?, "version")
+        .filter(|v| Regex::new(r"^\d+\.\d+\.\d+$").expect("latest: literal regex").is_match(v))
+        .ok_or(format!("{npm_url} has no release `version`"))?;
+    eprintln!("mios-bake-plan: firefox {version} build{build} rev {revision}; surfer {surfer}");
+    Ok(vec![
+        ("firefox_version".into(), version),
+        ("firefox_build".into(), build.to_string()),
+        ("firefox_revision".into(), revision),
+        ("surfer_version".into(), surfer),
+    ])
+}
+
+fn curl(url: &str) -> Result<String, String> {
+    run(
+        "curl",
+        &["-fsSL", "--retry", "3", "--connect-timeout", "20", url],
+    )
+}
+
+/// `latest-image <ref>` / `latest-git <url>` / `latest-portal`. None when no such subcommand was asked for.
 pub fn dispatch(args: &[String], root: &Path) -> Option<i32> {
     let finish = |r: Result<String, String>| match r {
         Ok(v) => {
@@ -269,6 +380,25 @@ pub fn dispatch(args: &[String], root: &Path) -> Option<i32> {
         }
     };
     let (sub, arg) = (args.get(1).map(String::as_str), args.get(2));
+    if sub == Some("latest-portal") {
+        let resolved = mios_resolver::layers::create_figment(Some(root))
+            .extract::<toml::Value>()
+            .map_err(|e| format!("mios.toml did not resolve: {e}"))
+            .and_then(|v| PortalSources::from_value(&v))
+            .and_then(|src| resolve_portal(&src, &curl));
+        return Some(match resolved {
+            Ok(pairs) => {
+                for (k, v) in pairs {
+                    println!("{k}={v}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("mios-bake-plan: {e}");
+                1
+            }
+        });
+    }
     if !matches!(sub, Some("latest-image" | "latest-git")) {
         return None;
     }
@@ -441,6 +571,68 @@ mod tests {
             Some("https://forge.example/o/p")
         );
         assert_eq!(parse_tag_name("{}"), None);
+    }
+
+    /// Bodies shaped like the live upstreams on 2026-10-16 (recorded inputs, not policy).
+    fn portal_fetch(url: &str) -> Result<String, String> {
+        if url.ends_with("/firefox_versions.json") {
+            Ok("{\"FIREFOX_DEVEDITION\": \"159.0b3\",\n \"FIREFOX_ESR\": \"153.5.0esr\",\n \"LATEST_FIREFOX_VERSION\": \"158.0\"}".into())
+        } else if url.ends_with("/firefox.json") {
+            Ok("{\"releases\": {\"firefox-158.0\": {\n \"build_number\": 2,\n \"version\": \"158.0\"},\n \"firefox-158.0b1\": {\"build_number\": 1}}}".into())
+        } else if url.ends_with("/158.0-candidates/build2/linux-x86_64/en-US/buildhub.json") {
+            Ok("{\"build\": {\"date\": \"x\"}, \"source\": {\"product\": \"firefox\", \"repository\": \"https://hg.example/r\", \"revision\": \"eb9a6e3a736802c8e080a76c44dc81f409d99d54\", \"tree\": \"mozilla-release\"}}".into())
+        } else if url.ends_with("/@zen-browser/surfer/latest") {
+            Ok("{\"name\":\"@zen-browser/surfer\",\"version\":\"1.14.9\",\"dist\":{}}".into())
+        } else {
+            Err(format!("unexpected fetch {url}"))
+        }
+    }
+
+    fn portal_sources() -> PortalSources {
+        let root = std::env::var_os("MIOS_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+        let text = std::fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+            .expect("the repo's mios.toml is readable");
+        PortalSources::from_value(&text.parse().expect("mios.toml parses"))
+            .expect("[desktop.portal.builder] names the upstreams")
+    }
+
+    #[test]
+    fn positive_control_portal_resolves_every_upstream_from_the_ssot_urls() {
+        let got = resolve_portal(&portal_sources(), &portal_fetch).unwrap();
+        let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("firefox_version"), Some("158.0"));
+        assert_eq!(get("firefox_build"), Some("2"));
+        assert_eq!(get("firefox_revision"), Some("eb9a6e3a736802c8e080a76c44dc81f409d99d54"));
+        assert_eq!(get("surfer_version"), Some("1.14.9"));
+    }
+
+    #[test]
+    fn negative_control_a_failed_lookup_is_an_error_not_a_fallback() {
+        let src = portal_sources();
+        let down = |_: &str| -> Result<String, String> { Err("curl: (6) could not resolve".into()) };
+        assert!(resolve_portal(&src, &down).is_err());
+        let no_key = |u: &str| -> Result<String, String> {
+            if u.ends_with("/firefox_versions.json") { Ok("{}".into()) } else { portal_fetch(u) }
+        };
+        assert!(resolve_portal(&src, &no_key).unwrap_err().contains("LATEST_FIREFOX_VERSION"));
+        let beta = |u: &str| -> Result<String, String> {
+            if u.ends_with("/firefox_versions.json") {
+                Ok("{\"LATEST_FIREFOX_VERSION\": \"159.0b3\"}".into())
+            } else {
+                portal_fetch(u)
+            }
+        };
+        assert!(resolve_portal(&src, &beta).unwrap_err().contains("not a release"));
+        let no_rev = |u: &str| -> Result<String, String> {
+            if u.ends_with("buildhub.json") { Ok("{\"source\": {\"revision\": \"abc\"}}".into()) } else { portal_fetch(u) }
+        };
+        assert!(resolve_portal(&src, &no_rev).unwrap_err().contains("source.revision"));
+        let mut broken: toml::Value = "[desktop.portal.builder]\nproduct_details_url = \"\"\n".parse().unwrap();
+        assert!(PortalSources::from_value(&broken).is_err());
+        broken = "x = 1".parse().unwrap();
+        assert!(PortalSources::from_value(&broken).is_err());
     }
 
     #[test]

@@ -1,0 +1,20 @@
+# AI-hint: Oneshot unit that renders the SSOT [colors] palette for the Linux VT console and applies it with setvtrgb before the first greeter starts.
+# AI-related: tools/native/mios-gen (render-console-theme), usr/share/mios/mios.toml [colors]
+[Unit]
+Description=MiOS SSOT Linux console palette
+After=systemd-vconsole-setup.service
+Before=getty-pre.target greetd.service display-manager.service
+ConditionPathExists=/dev/tty0
+
+[Service]
+Type=oneshot
+RuntimeDirectory=mios-console-theme
+ExecStartPre=/usr/bin/mios-gen render-console-theme --root / --out /run/mios-console-theme/palette
+ExecStart=/usr/bin/setvtrgb /run/mios-console-theme/palette
+StandardInput=null
+StandardOutput=tty
+TTYPath=/dev/tty0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=getty-pre.target

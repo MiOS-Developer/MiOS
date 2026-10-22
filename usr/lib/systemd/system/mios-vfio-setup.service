@@ -9,6 +9,10 @@ Before=libvirtd.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# SSOT [vm.looking_glass]: label the /dev/shm framebuffer svirt_tmpfs_t (QEMU EACCES otherwise) and
+# project the client config before libvirtd can start the VM.
+ExecStartPre=-/usr/libexec/mios/vfio/setup-looking-glass.py --ensure-selinux
+ExecStartPre=-/usr/libexec/mios/vfio/setup-looking-glass.py --write-client-ini
 ExecStart=/usr/libexec/mios/vfio/setup-looking-glass.py --verify
 
 [Install]

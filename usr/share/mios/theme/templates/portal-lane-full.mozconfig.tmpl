@@ -1,0 +1,18 @@
+# AI-hint: MiOS-Portal full-compile-lane project mozconfig (capped fallback); rendered by mios-dotfiles-render from mios.toml [desktop.portal.builder]; never LTO or PGO.
+# AI-related: usr/share/mios/mios.toml
+# Memory-capped compile: lld, no LTO, no PGO, no debug symbols, no tests. The jobs come from the
+# builder table and stay inside its MemoryMax scope.
+mk_add_options MOZ_MAKE_FLAGS="-j@MIOS:desktop.portal.builder.jobs@"
+mk_add_options MOZ_PARALLEL_BUILD=@MIOS:desktop.portal.builder.jobs@
+export CARGO_BUILD_JOBS=@MIOS:desktop.portal.builder.cargo_jobs@
+ac_add_options --with-app-name=${binName}
+ac_add_options --with-user-appdir=.@MIOS:desktop.portal.gecko.profile_name@
+ac_add_options --enable-release
+ac_add_options --enable-optimize
+ac_add_options --disable-debug
+ac_add_options --disable-debug-symbols
+ac_add_options --disable-tests
+ac_add_options --disable-lto
+ac_add_options --enable-linker=lld
+ac_add_options --disable-crashreporter
+ac_add_options --without-wasm-sandboxed-libraries

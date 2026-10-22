@@ -286,10 +286,59 @@ mod tests {
         );
     }
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvGuard {
+        vars: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn new(names: &[&'static str]) -> Self {
+            let vars = names
+                .iter()
+                .map(|&name| (name, env::var(name).ok()))
+                .collect();
+            Self { vars }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (name, val) in &self.vars {
+                if let Some(v) = val {
+                    env::set_var(name, v);
+                } else {
+                    env::remove_var(name);
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_resolve_layer_paths_order() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempdir().unwrap();
         let root = dir.path();
+
+        // Hermetic isolation: guarantee ambient host ~/.config/mios/mios.toml and /etc/profile.d/50-mios.sh vars are not resolved
+        let _guard = EnvGuard::new(&[
+            "MIOS_TOML",
+            "MIOS_VENDOR_TOML",
+            "MIOS_HOST_TOML",
+            "MIOS_VENDOR_TOML_D",
+            "MIOS_HOST_TOML_D",
+            "MIOS_USER_TOML",
+            "MIOS_USER_TOML_D",
+            "MIOS_TOML_ROOT",
+        ]);
+        env::remove_var("MIOS_TOML");
+        env::remove_var("MIOS_VENDOR_TOML");
+        env::remove_var("MIOS_HOST_TOML");
+        env::remove_var("MIOS_VENDOR_TOML_D");
+        env::remove_var("MIOS_HOST_TOML_D");
+        env::remove_var("MIOS_TOML_ROOT");
+        env::set_var("MIOS_USER_TOML", root.join("nonexistent-user.toml"));
+        env::set_var("MIOS_USER_TOML_D", root.join("nonexistent-user-d"));
 
         let vendor_dir = root.join("usr/share/mios");
         let vendor_d_dir = root.join("usr/lib/mios/mios.d");
@@ -319,6 +368,7 @@ mod tests {
         assert_eq!(paths[2], normalize_path(&frag2));
         assert_eq!(paths[3], normalize_path(&h_file));
     }
+
 
     fn layer_files(bodies: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
         let dir = tempdir().unwrap();
@@ -374,8 +424,8 @@ mod tests {
 
     #[test]
     fn test_xdg_config_home_empty_string_falls_back() {
-        let orig_xdg = env::var("XDG_CONFIG_HOME");
-        let orig_user = env::var("MIOS_USER_TOML");
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = EnvGuard::new(&["XDG_CONFIG_HOME", "MIOS_USER_TOML"]);
         env::remove_var("MIOS_USER_TOML");
         env::set_var("XDG_CONFIG_HOME", "");
 
@@ -389,16 +439,6 @@ mod tests {
             !user_str.starts_with("/mios/mios.toml"),
             "user path unexpectedly started with bare /mios/mios.toml: {user_str}"
         );
-
-        if let Ok(v) = orig_xdg {
-            env::set_var("XDG_CONFIG_HOME", v);
-        } else {
-            env::remove_var("XDG_CONFIG_HOME");
-        }
-        if let Ok(v) = orig_user {
-            env::set_var("MIOS_USER_TOML", v);
-        } else {
-            env::remove_var("MIOS_USER_TOML");
-        }
     }
+
 }

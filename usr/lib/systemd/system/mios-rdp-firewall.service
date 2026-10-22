@@ -1,0 +1,14 @@
+[Unit]
+Description=MiOS RDP firewall: open [ports].rdp on the tailnet zone only ([remote.rdp])
+Documentation=file:///usr/libexec/mios/mios-rdp
+After=firewalld.service
+Wants=firewalld.service
+ConditionPathExists=/usr/bin/firewall-cmd
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/mios/mios-rdp firewall
+
+[Install]
+WantedBy=multi-user.target

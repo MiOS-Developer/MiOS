@@ -1411,7 +1411,7 @@ mod tests {
 
         // On non-windows or null handle, set_service_status behaves safely
         #[cfg(not(windows))]
-        assert!(handle.set_service_status(status).is_ok());
+        assert!(_handle.set_service_status(status).is_ok());
     }
 
     #[tokio::test]

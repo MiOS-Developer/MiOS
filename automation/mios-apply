@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# AI-hint: The ONE unified MiOS apply engine -- materializes Git=$ROOT (via lib/root-merge.sh) then
+# AI-hint: Linux apply stage planner; unavailable execution fails closed.
 # AI-functions: apply_substrate_classes, apply_list_stages, main
-# AI-related: automation/lib/root-merge.sh, automation/lib/stage-runner.sh, automation/build.sh, build-mios.sh, build-mios.ps1, usr/libexec/mios/mios-apply
+# AI-related: automation/lib/root-merge.sh, automation/build.sh, tests/test-install-fhs.py
 set -uo pipefail
 
 APPLY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # automation/
@@ -10,10 +10,10 @@ MIOS_ROOT="${MIOS_ROOT:-/}"
 
 apply_substrate_classes() {
     case "$1" in
-        oci-bake)   echo "Universal bake-only dev-only boot-only" ;;
-        bootc-live) echo "Universal boot-only" ;;
-        wsl-dev)    echo "Universal dev-only" ;;
-        fhs-host)   echo "Universal boot-only" ;;
+        oci-bake)   echo "universal bake-only dev-only boot-only" ;;
+        bootc-live) echo "universal boot-only" ;;
+        wsl-dev)    echo "universal dev-only" ;;
+        fhs-host)   echo "universal boot-only" ;;
         *)          echo "" ;;
     esac
 }
@@ -35,18 +35,26 @@ apply_list_stages() {
 }
 
 main() {
+    if [ -z "$(apply_substrate_classes "$MIOS_SUBSTRATE")" ]; then
+        echo "[FAIL] mios-apply: unknown MIOS_SUBSTRATE='$MIOS_SUBSTRATE'" >&2
+        return 2
+    fi
     case "${1:-}" in
         --list-stages)
-            if [ -z "$(apply_substrate_classes "$MIOS_SUBSTRATE")" ]; then
-                echo "[mios-apply] unknown MIOS_SUBSTRATE='$MIOS_SUBSTRATE'" >&2
+            if [ "$#" -ne 1 ]; then
+                echo "[FAIL] mios-apply: --list-stages accepts no arguments" >&2
                 return 2
             fi
             apply_list_stages
             ;;
+        "")
+            echo "[FAIL] mios-apply: execution is not implemented (substrate=$MIOS_SUBSTRATE root=$MIOS_ROOT)" >&2
+            echo "[FAIL] No overlay or installation stages were applied; --list-stages only plans stages." >&2
+            return 1
+            ;;
         *)
-            echo "[mios-apply] substrate=$MIOS_SUBSTRATE root=$MIOS_ROOT" >&2
-            echo "[mios-apply] full-apply lands in Phase 2; use" >&2
-            return 0
+            echo "[FAIL] mios-apply: unsupported argument '$1'; only --list-stages is available" >&2
+            return 2
             ;;
     esac
 }

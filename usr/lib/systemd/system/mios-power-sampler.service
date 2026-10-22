@@ -1,0 +1,49 @@
+# AI-hint: Root CPU-package power sampler. It reads RAPL energy_uj, which stays root-only (the PLATYPUS mitigation), and
+# publishes a coarse average of >= 1 s, quantised to 0.1 W, to /run/mios/power/cpu_package_uw for the status island and
+# mios-sysmon-line. It runs as root with no capabilities: the root uid only needs owner read on the 0400 sysfs files.
+# AI-related: usr/libexec/mios/mios-power-sampler, usr/share/mios/quickshell/Sysmon.qml, usr/libexec/mios/mios-sysmon-line,
+# usr/lib/systemd/system-preset/90-mios.preset, tests/test-power-sampler.py
+[Unit]
+Description=MiOS coarse CPU package power sampler (RAPL stays root-only)
+ConditionPathExistsGlob=/sys/class/powercap/intel-rapl:*
+ConditionVirtualization=!container
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/mios/mios-power-sampler
+Restart=on-failure
+RestartSec=5s
+User=root
+RuntimeDirectory=mios/power
+RuntimeDirectoryMode=0755
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0022
+CPUQuota=2%
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

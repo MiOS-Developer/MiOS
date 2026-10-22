@@ -62,28 +62,104 @@ fn resolve_pie_policy(root: &Path, arch: &str) -> bool {
     arch == "x86_64"
 }
 
-/// Load approved dynamic linkage exceptions from SSOT.
-fn load_exceptions(root: &Path) -> BTreeSet<String> {
-    let ssot_path = root.join("usr/share/mios/mios.toml");
-    let mut exceptions = BTreeSet::new();
-    if let Ok(content) = std::fs::read_to_string(&ssot_path) {
-        if let Ok(val) = content.parse::<toml::Value>() {
-            if let Some(list) = val
-                .get("build")
-                .and_then(|b| b.get("native"))
-                .and_then(|n| n.get("linux"))
-                .and_then(|l| l.get("exceptions"))
-                .and_then(|e| e.as_array())
-            {
-                for item in list {
-                    if let Some(name) = item.get("binary").and_then(|b| b.as_str()) {
-                        exceptions.insert(name.to_string());
-                    }
-                }
-            }
+/// One approved dynamic-linkage exception ([[build.native.linux.exceptions]]): upstream binaries
+/// MiOS ships but does not build, exempt only inside `scope` (relative to the image root).
+#[derive(Clone, Debug)]
+struct Exception {
+    binaries: BTreeSet<String>,
+    scope: PathBuf,
+    reason: String,
+}
+
+/// What the SSOT says the gate audits beyond MiOS's own native workspaces: the exceptions, and the
+/// upstream install trees ([build.native.linux].audit_scopes) that are scanned in full whether or
+/// not an exception covers them, so removing an exception makes its binaries fail instead of
+/// silently leaving the scan.
+#[derive(Default)]
+struct Policy {
+    exceptions: Vec<Exception>,
+    audit_scopes: Vec<PathBuf>,
+    /// Malformed SSOT entries: each is a finding, so a broken exception can never exempt anything.
+    errors: Vec<String>,
+}
+
+fn relative_scope(raw: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(raw.trim_end_matches('/'));
+    let ok = !raw.is_empty()
+        && p.is_relative()
+        && p.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+    ok.then_some(p)
+}
+
+/// Load approved dynamic linkage exceptions and audit scopes from SSOT.
+fn load_policy(root: &Path) -> Policy {
+    let mut policy = Policy::default();
+    let Some(linux) = std::fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+        .ok()
+        .and_then(|c| c.parse::<toml::Value>().ok())
+        .and_then(|v| v.get("build")?.get("native")?.get("linux").cloned())
+    else {
+        return policy;
+    };
+    for raw in linux.get("audit_scopes").and_then(|a| a.as_array()).into_iter().flatten() {
+        match raw.as_str().and_then(relative_scope) {
+            Some(p) => policy.audit_scopes.push(p),
+            None => policy.errors.push(format!(
+                "[build.native.linux].audit_scopes entry {raw} is not a relative path under the image root"
+            )),
         }
     }
-    exceptions
+    for (i, item) in linux
+        .get("exceptions")
+        .and_then(|e| e.as_array())
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let mut binaries: BTreeSet<String> = item
+            .get("binaries")
+            .and_then(|b| b.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|b| b.as_str().map(str::to_string))
+            .collect();
+        if let Some(one) = item.get("binary").and_then(|b| b.as_str()) {
+            binaries.insert(one.to_string());
+        }
+        let scope = item.get("scope").and_then(|s| s.as_str()).and_then(relative_scope);
+        let reason = item
+            .get("reason")
+            .and_then(|r| r.as_str())
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        match scope {
+            Some(scope) if !binaries.is_empty() && !reason.is_empty() => {
+                if !policy.audit_scopes.contains(&scope) {
+                    policy.errors.push(format!(
+                        "[[build.native.linux.exceptions]] #{i} scope {} is not in [build.native.linux].audit_scopes, so nothing would audit it",
+                        scope.display()
+                    ));
+                }
+                policy.exceptions.push(Exception { binaries, scope, reason });
+            }
+            _ => policy.errors.push(format!(
+                "[[build.native.linux.exceptions]] #{i} needs binaries, a relative scope and a reason; it exempts nothing"
+            )),
+        }
+    }
+    policy
+}
+
+/// The exception that exempts `path`: its file name is listed AND it sits inside that exception's
+/// scope -- under root/<scope>, or in any tree whose path ends in <scope> (a staged artifact).
+fn exemption<'a>(path: &Path, root: &Path, policy: &'a Policy) -> Option<&'a Exception> {
+    let name = path.file_name()?.to_str()?;
+    policy.exceptions.iter().find(|e| {
+        e.binaries.contains(name)
+            && (path.starts_with(root.join(&e.scope))
+                || path.ancestors().skip(1).any(|a| a.ends_with(&e.scope)))
+    })
 }
 
 /// What the audit records about one ELF whatever the policy says of it: the
@@ -201,14 +277,10 @@ fn check_single_binary(
     path: &Path,
     arch_override: Option<&str>,
     root: &Path,
-    exceptions: &BTreeSet<String>,
+    policy: &Policy,
     findings: &mut Vec<String>,
 ) -> bool {
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default();
-    if exceptions.contains(file_name) {
+    if exemption(path, root, policy).is_some() {
         return true;
     }
 
@@ -285,8 +357,8 @@ fn collect_elf_files_recursive_bounded(dir: &Path, out: &mut Vec<PathBuf>, depth
 }
 
 pub fn check(opts: &Options) -> Report {
-    let exceptions = load_exceptions(&opts.root);
-    let mut findings = Vec::new();
+    let policy = load_policy(&opts.root);
+    let mut findings = policy.errors.clone();
 
     if let Some(ref binary_path) = opts.binary {
         if !binary_path.is_file() {
@@ -300,15 +372,25 @@ pub fn check(opts: &Options) -> Report {
             binary_path,
             opts.arch.as_deref(),
             &opts.root,
-            &exceptions,
+            &policy,
             &mut findings,
-        );
+        ) && policy.errors.is_empty();
 
+        let exception = exemption(binary_path, &opts.root, &policy);
         let summary = if ok {
-            format!(
-                "binary {} verified as static ELF (no PT_INTERP, no DT_NEEDED)",
-                binary_path.display()
-            )
+            if let Some(e) = exception {
+                format!(
+                    "binary {} approved dynamic exception ({}) under scope {}",
+                    binary_path.display(),
+                    e.reason,
+                    e.scope.display()
+                )
+            } else {
+                format!(
+                    "binary {} verified as static ELF (no PT_INTERP, no DT_NEEDED)",
+                    binary_path.display()
+                )
+            }
         } else {
             format!(
                 "static linkage audit failed for binary {}: {} violation(s)",
@@ -328,6 +410,16 @@ pub fn check(opts: &Options) -> Report {
 
     let binaries = match scanned(opts) {
         Ok(b) => b,
+        // A malformed exception is a finding even when there is nothing to scan yet.
+        Err(_) if !findings.is_empty() => {
+            return Report {
+                check: CHECK.to_string(),
+                ok: false,
+                could_not_run: None,
+                summary: format!("static linkage policy is malformed: {} finding(s)", findings.len()),
+                findings,
+            }
+        }
         Err(report) => return report,
     };
 
@@ -336,7 +428,7 @@ pub fn check(opts: &Options) -> Report {
             b,
             opts.arch.as_deref(),
             &opts.root,
-            &exceptions,
+            &policy,
             &mut findings,
         );
     }
@@ -363,15 +455,68 @@ pub fn check(opts: &Options) -> Report {
     }
 }
 
+/// Executable names built by the SSOT's native workspaces ([build.native].workspaces): each member's
+/// package name plus any [[bin]] names. None when they cannot be derived (no SSOT or workspace in
+/// the root), in which case the directory scan keeps every ELF file.
+fn native_binary_names(root: &Path) -> Option<std::collections::HashSet<String>> {
+    let ssot: toml::Value = std::fs::read_to_string(root.join("usr/share/mios/mios.toml")).ok()?.parse().ok()?;
+    let workspaces = ssot.get("build")?.get("native")?.get("workspaces")?.as_array()?;
+    let mut names = std::collections::HashSet::new();
+    for ws in workspaces.iter().filter_map(|w| w.as_str()) {
+        let ws_dir = root.join(ws);
+        let Some(manifest) = std::fs::read_to_string(ws_dir.join("Cargo.toml"))
+            .ok()
+            .and_then(|t| t.parse::<toml::Value>().ok())
+        else {
+            continue;
+        };
+        let members = manifest
+            .get("workspace")
+            .and_then(|w| w.get("members"))
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for member in members.iter().filter_map(|m| m.as_str()) {
+            let Some(crate_toml) = std::fs::read_to_string(ws_dir.join(member).join("Cargo.toml"))
+                .ok()
+                .and_then(|t| t.parse::<toml::Value>().ok())
+            else {
+                continue;
+            };
+            if let Some(name) = crate_toml.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()) {
+                names.insert(name.to_string());
+            }
+            for bin in crate_toml.get("bin").and_then(|b| b.as_array()).into_iter().flatten() {
+                if let Some(name) = bin.get("name").and_then(|n| n.as_str()) {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+    }
+    (!names.is_empty()).then_some(names)
+}
+
 /// The standalone Linux release ELF binaries a directory scan audits.
 fn scanned(opts: &Options) -> Result<Vec<PathBuf>, Report> {
     let mut binaries = Vec::new();
 
-    // 1. Installed FHS directories in root
+    // 1. Installed FHS directories in root -- only the binaries MiOS's own native workspaces build.
+    // usr/bin also holds the distribution's executables (and on a host where the repo is checked out
+    // at `/`, every installed package), which this policy does not govern.
+    let native = native_binary_names(&opts.root);
     for sub in &["usr/bin", "usr/libexec/mios"] {
         let p = opts.root.join(sub);
         if p.is_dir() {
-            collect_elf_files_recursive(&p, &mut binaries);
+            let mut found = Vec::new();
+            collect_elf_files_recursive(&p, &mut found);
+            if let Some(names) = &native {
+                found.retain(|f| {
+                    f.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| names.contains(n))
+                });
+            }
+            binaries.extend(found);
         }
     }
 
@@ -408,10 +553,25 @@ fn scanned(opts: &Options) -> Result<Vec<PathBuf>, Report> {
 
     // 4. If root itself contains regular ELF files (e.g. test directory or flat output)
     if opts.root.is_dir() {
-        collect_elf_files_flat(&opts.root, &mut binaries);
+        let mut found = Vec::new();
+        collect_elf_files_flat(&opts.root, &mut found);
         let bin_sub = opts.root.join("bin");
         if bin_sub.is_dir() {
-            collect_elf_files_recursive(&bin_sub, &mut binaries);
+            // On merged-/usr systems `bin` is a symlink to usr/bin: the same native-name filter applies.
+            collect_elf_files_recursive(&bin_sub, &mut found);
+        }
+        if let Some(names) = &native {
+            found.retain(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| names.contains(n)));
+        }
+        binaries.extend(found);
+    }
+
+    // 5. Upstream install trees named by the SSOT, in full and without the native-name filter:
+    // every ELF there is either an exception inside its own scope or audited as MiOS code.
+    for scope in &load_policy(&opts.root).audit_scopes {
+        let p = opts.root.join(scope);
+        if p.is_dir() {
+            collect_elf_files_recursive(&p, &mut binaries);
         }
     }
 
@@ -442,7 +602,7 @@ pub fn census(opts: &Options) -> (String, u8) {
         Some(_) => Vec::new(),
         None => scanned(opts).unwrap_or_default(),
     };
-    let exceptions = load_exceptions(&opts.root);
+    let policy = load_policy(&opts.root);
     let mut dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut binaries = Vec::new();
     for path in &targets {
@@ -452,13 +612,14 @@ pub fn census(opts: &Options) -> (String, u8) {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let facts = elf_facts(&data).unwrap_or_default();
-        let exempt = exceptions.contains(&name);
+        let exception = exemption(path, &opts.root, &policy);
+        let exempt = exception.is_some();
         let mut reasons = Vec::new();
         let passed = check_single_binary(
             path,
             opts.arch.as_deref(),
             &opts.root,
-            &exceptions,
+            &policy,
             &mut reasons,
         );
         for lib in &facts.needed {
@@ -483,6 +644,8 @@ pub fn census(opts: &Options) -> (String, u8) {
             "interpreter": facts.interp,
             "needed": facts.needed,
             "exempt": exempt,
+            "exempt_scope": exception.map(|e| e.scope.display().to_string()),
+            "exempt_reason": exception.map(|e| e.reason.clone()),
             "verdict": verdict,
         }));
     }
@@ -879,5 +1042,118 @@ mod tests {
         );
         assert_eq!(report.code(), 0);
         assert!(report.summary.contains("1 standalone Linux release binary"));
+    }
+
+    /// A root with an SSOT that audits usr/lib/mios/portal and (optionally) exempts Gecko there.
+    fn gecko_root(exception: Option<&str>) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let ssot = tmp.path().join("usr/share/mios");
+        std::fs::create_dir_all(&ssot).unwrap();
+        let mut text = String::from("[build.native.linux]\naudit_scopes = [\"usr/lib/mios/portal\"]\n");
+        if let Some(ex) = exception {
+            text.push_str(ex);
+        }
+        std::fs::write(ssot.join("mios.toml"), text).unwrap();
+        let portal = tmp.path().join("usr/lib/mios/portal");
+        std::fs::create_dir_all(portal.join("gmp-clearkey/0.1")).unwrap();
+        for name in ["mios-portal", "libxul.so", "plugin-container"] {
+            std::fs::write(portal.join(name), make_needs_libfoo()).unwrap();
+        }
+        std::fs::write(portal.join("gmp-clearkey/0.1/libclearkey.so"), make_dynamic_needed()).unwrap();
+        tmp
+    }
+
+    const GECKO: &str = "[[build.native.linux.exceptions]]\nscope = \"usr/lib/mios/portal\"\nreason = \"upstream Gecko\"\nbinaries = [\"mios-portal\", \"libxul.so\", \"plugin-container\", \"libclearkey.so\"]\n";
+
+    fn opts(root: &Path) -> Options {
+        Options { root: root.to_path_buf(), binary: None, arch: Some("x86_64".into()) }
+    }
+
+    #[test]
+    fn positive_control_census_lists_gecko_binaries_in_scope_as_exempt() {
+        let tmp = gecko_root(Some(GECKO));
+        let (text, code) = census(&opts(tmp.path()));
+        assert_eq!(code, 0, "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let bins = v["census"]["binaries"].as_array().unwrap();
+        assert_eq!(bins.len(), 4, "{text}");
+        for b in bins {
+            assert_eq!(b["exempt"], true, "{b}");
+            assert_eq!(b["verdict"], "exempt");
+            assert_eq!(b["exempt_scope"], "usr/lib/mios/portal");
+            assert_eq!(b["exempt_reason"], "upstream Gecko");
+        }
+    }
+
+    #[test]
+    fn negative_control_an_unlisted_dynamic_elf_in_scope_fails() {
+        let tmp = gecko_root(Some(GECKO));
+        std::fs::write(tmp.path().join("usr/lib/mios/portal/libsneaky.so"), make_needs_libfoo()).unwrap();
+        let report = check(&opts(tmp.path()));
+        assert_eq!(report.code(), 1);
+        assert!(report.findings.iter().any(|f| f.contains("libsneaky.so")), "{:?}", report.findings);
+        assert_eq!(report.findings.len(), 1, "only the unlisted one: {:?}", report.findings);
+    }
+
+    #[test]
+    fn negative_control_removing_the_exception_fails_the_binaries_in_scope() {
+        let tmp = gecko_root(None);
+        let report = check(&opts(tmp.path()));
+        assert_eq!(report.code(), 1, "{:?}", report.findings);
+        assert_eq!(report.findings.len(), 4, "{:?}", report.findings);
+        assert!(report.findings.iter().any(|f| f.contains("libxul.so")));
+    }
+
+    #[test]
+    fn negative_control_a_listed_name_outside_its_scope_is_not_exempt() {
+        let tmp = gecko_root(Some(GECKO));
+        let elsewhere = tmp.path().join("libxul.so");
+        std::fs::write(&elsewhere, make_needs_libfoo()).unwrap();
+        let report = check(&Options { binary: Some(elsewhere), ..opts(tmp.path()) });
+        assert_eq!(report.code(), 1, "{:?}", report.findings);
+        // The same name inside a staged copy of the scope is exempt.
+        let staged = tmp.path().join("stage/usr/lib/mios/portal");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::write(staged.join("libxul.so"), make_needs_libfoo()).unwrap();
+        let report = check(&Options { binary: Some(staged.join("libxul.so")), ..opts(tmp.path()) });
+        assert_eq!(report.code(), 0, "{:?}", report.findings);
+    }
+
+    #[test]
+    fn negative_control_an_exception_without_a_reason_exempts_nothing() {
+        let tmp = gecko_root(Some(&GECKO.replace("reason = \"upstream Gecko\"\n", "")));
+        let report = check(&opts(tmp.path()));
+        assert_eq!(report.code(), 1);
+        assert!(report.findings.iter().any(|f| f.contains("needs binaries, a relative scope and a reason")));
+        let tmp = gecko_root(Some(&GECKO.replace("usr/lib/mios/portal", "/abs/portal")));
+        assert_eq!(check(&opts(tmp.path())).code(), 1);
+    }
+
+    #[test]
+    fn the_shipped_ssot_exempts_gecko_only_inside_the_portal_install_dir() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let policy = load_policy(&root);
+        assert!(policy.errors.is_empty(), "{:?}", policy.errors);
+        let gecko = policy
+            .exceptions
+            .iter()
+            .find(|e| e.binaries.contains("libxul.so"))
+            .expect("[[build.native.linux.exceptions]] names libxul.so");
+        // Executables the Firefox 158 artifact actually ships (it has no plugin-container).
+        for name in ["mios-portal", "firefox-bin", "pingsender"] {
+            assert!(gecko.binaries.contains(name), "{name} is not exempt");
+        }
+        assert_eq!(gecko.scope, PathBuf::from("usr/lib/mios/portal"));
+        assert!(gecko.reason.len() > 20);
+        assert!(policy.audit_scopes.contains(&gecko.scope));
+    }
+
+    #[test]
+    fn positive_control_single_binary_approved_exception_succeeds() {
+        let tmp = gecko_root(Some(GECKO));
+        let portal = tmp.path().join("usr/lib/mios/portal/mios-portal");
+        let report = check(&Options { binary: Some(portal), ..opts(tmp.path()) });
+        assert_eq!(report.code(), 0, "{:?}", report.findings);
+        assert!(report.summary.contains("approved dynamic exception"), "{:?}", report.summary);
     }
 }

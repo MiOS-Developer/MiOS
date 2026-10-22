@@ -49,6 +49,17 @@ if [[ "${1:-}" != --mios-flatpak-session ]]; then
 fi
 shift
 
+# Bubblewrap disables further user namespaces inside apply_extra's sandbox.
+# OCI builders mount /proc/sys read-only, which prevents that sandbox-local
+# setting. Give this build process a writable bind mount of only the user
+# namespace controls; bubblewrap applies the setting in its child namespace.
+# Restore the original mount when this script finishes.
+if findmnt -T /proc/sys/user -n -o VFS-OPTIONS | grep -Eq '(^|,)ro(,|$)'; then
+    mount --bind /proc/sys/user /proc/sys/user
+    trap 'umount /proc/sys/user' EXIT
+    mount -o remount,bind,rw /proc/sys/user
+fi
+
 mios_log "Selected refs: ${FLATPAK_LIST}"
 mios_log "System-wide install"
 

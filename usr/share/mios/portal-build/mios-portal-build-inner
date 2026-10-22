@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+# AI-hint: Runs inside localhost/mios-portal-build: resolves the latest Firefox/Surfer/release revision, verifies the signed source, runs surfer download/import/license-check/build, mach package, writes the tarball and a resolved-versions manifest; fails hard on every step.
+# AI-related: usr/libexec/mios/mios-portal-build, usr/share/mios/portal-build/Containerfile, usr/share/mios/mios.toml ([desktop.portal.builder])
+# AI-doc: usr/share/doc/mios/manual/automation.md
+#
+# Usage (the host wrapper sets every PB_* input from the SSOT; none has a default):
+#   mios-portal-build-inner resolve            print the resolved upstream versions as JSON
+#   mios-portal-build-inner build              resolve, verify, build, package -> /out
+#   mios-portal-build-inner smoke NAME=URL...  headless screenshots of the packaged build -> /out/smoke
+#   mios-portal-build-inner verify-sums | policy-check DIR LANE | copy-patch-check DIR   (test hooks)
+#
+# Mounts: /work (project, engine, objdir, caches; read-write), /out (this run's output dir),
+#         /product (optional rendered product tree, read-only).
+set -Eeuo pipefail
+
+T0=$SECONDS
+CACHE=${PB_CACHE:-/work/cache}
+CUR_STEP="" STEP_T0=0
+STEPS=/out/steps.tsv
+export GIT_AUTHOR_NAME="MiOS Portal Build" GIT_AUTHOR_EMAIL=build@mios.local
+export GIT_COMMITTER_NAME="MiOS Portal Build" GIT_COMMITTER_EMAIL=build@mios.local
+log() { printf '[portal-build +%ss] %s\n' "$((SECONDS - T0))" "$*" >&2; }
+record() { [ -z "$CUR_STEP" ] || printf '%s\t%s\t%s\n' "$CUR_STEP" "$((SECONDS - STEP_T0))" "$1" >>"$STEPS" 2>/dev/null || true; }
+die() { log "ERROR: ${CUR_STEP:+step $CUR_STEP: }$*"; record 1; exit 1; }
+trap 'rc=$?; log "ERROR: ${CUR_STEP:+step $CUR_STEP: }command failed (exit $rc): $BASH_COMMAND"; record "$rc"' ERR
+need() { local v; for v in "$@"; do [ -n "${!v:-}" ] || die "input $v is unset (its SSOT key is missing)"; done; }
+fetch() { curl -fsSL --proto '=https' --retry 3 --retry-all-errors --connect-timeout 20 "$@"; }
+json() { python3 -I -c "import json,sys; d=json.load(sys.stdin); $1" "${@:2}"; }
+
+step() { # step NAME CMD... : run under errexit (never in a || context), time and record it
+    CUR_STEP="$1" STEP_T0=$SECONDS
+CACHE=${PB_CACHE:-/work/cache}
+    shift
+    log "step $CUR_STEP: start"
+    "$@"
+    record 0
+    log "step $CUR_STEP: ok in $((SECONDS - STEP_T0))s"
+    CUR_STEP=""
+}
+
+check_free() {
+    local avail_gb
+    avail_gb=$(( $(df --output=avail -k /work | tail -1) / 1024 / 1024 ))
+    [ "$avail_gb" -ge "$PB_MIN_FREE_GB" ] || die "only ${avail_gb} GB free under /work (need >= ${PB_MIN_FREE_GB})"
+}
+
+# ---------------------------------------------------------------- resolve
+resolve() {
+    need PB_PRODUCT_DETAILS PB_ARCHIVE PB_NPM PB_SURFER_PKG
+    local body
+    body=$(fetch "$PB_PRODUCT_DETAILS/firefox_versions.json") || die "product-details lookup failed"
+    FF_VER=$(printf '%s' "$body" | json 'print(d["LATEST_FIREFOX_VERSION"])') || die "product-details has no LATEST_FIREFOX_VERSION"
+    [[ "$FF_VER" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "latest Firefox '$FF_VER' is not a release version"
+    body=$(fetch "$PB_PRODUCT_DETAILS/firefox.json") || die "product-details release list lookup failed"
+    FF_BUILD=$(printf '%s' "$body" | json 'print(d["releases"]["firefox-"+sys.argv[1]]["build_number"])' "$FF_VER") \
+        || die "no build_number for firefox-$FF_VER"
+    [[ "$FF_BUILD" =~ ^[0-9]+$ ]] || die "build_number '$FF_BUILD' is not a number"
+    body=$(fetch "$PB_NPM/${PB_SURFER_PKG//\//%2f}") || die "npm registry lookup for $PB_SURFER_PKG failed"
+    SURFER_VER=$(printf '%s' "$body" | json 'print(d["dist-tags"]["latest"])') || die "$PB_SURFER_PKG has no latest dist-tag"
+    [[ "$SURFER_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Surfer latest '$SURFER_VER' is not a release version"
+    BUILDHUB_URL="$PB_ARCHIVE/candidates/${FF_VER}-candidates/build${FF_BUILD}/linux-x86_64/en-US/buildhub.json"
+    body=$(fetch "$BUILDHUB_URL") || die "buildhub.json lookup failed: $BUILDHUB_URL"
+    read -r HG_REV HG_TREE BH_VER BUILD_ID < <(printf '%s' "$body" | json \
+        'print(d["source"]["revision"], d["source"]["tree"], d["target"]["version"], d["build"]["id"])') \
+        || die "buildhub.json is missing source/target fields"
+    [ "$BH_VER" = "$FF_VER" ] || die "buildhub.json is for $BH_VER, not $FF_VER"
+    [[ "$HG_REV" =~ ^[0-9a-f]{40}$ ]] || die "buildhub revision '$HG_REV' is not a full sha"
+    [ "$HG_TREE" = mozilla-release ] || die "buildhub tree '$HG_TREE' is not mozilla-release"
+}
+
+resolved_env() { # key=value lines for mios-portal-tree stage (@BUILD:<key>@ sentinels)
+    printf '%s=%s\n' firefox_version "$FF_VER" firefox_build_number "$FF_BUILD" firefox_build_id "$BUILD_ID" \
+        firefox_revision "$HG_REV" mozilla_tree "$HG_TREE" surfer_version "$SURFER_VER" surfer_package "$PB_SURFER_PKG"
+}
+
+resolved_json() {
+    python3 -I -c 'import json,sys; k=sys.argv[1::2]; v=sys.argv[2::2]; print(json.dumps(dict(zip(k,v)), indent=2))' \
+        firefox "$FF_VER" firefox_build "$FF_BUILD" firefox_build_id "$BUILD_ID" \
+        mozilla_release_revision "$HG_REV" mozilla_tree "$HG_TREE" buildhub "$BUILDHUB_URL" \
+        surfer "$SURFER_VER" surfer_package "$PB_SURFER_PKG"
+}
+
+# ---------------------------------------------------------------- verify source
+verify_sums() { # KEY -> trust-anchor check -> signed SHA512SUMS -> expected source sha512
+    need PB_KEY_FPR
+    local rel="$PB_ARCHIVE/releases/$FF_VER" c="$CACHE/ff-$FF_VER" g
+    mkdir -p "$c"
+    g=$(mktemp -d); export GNUPGHOME="$g"
+    fetch -o "$c/KEY" "$rel/KEY" || die "KEY download failed"
+    fetch -o "$c/SHA512SUMS" "$rel/SHA512SUMS" || die "SHA512SUMS download failed"
+    fetch -o "$c/SHA512SUMS.asc" "$rel/SHA512SUMS.asc" || die "SHA512SUMS.asc download failed"
+    gpg --batch --quiet --import "$c/KEY" 2>/dev/null || die "KEY import failed"
+    local fpr
+    fpr=$(gpg --batch --with-colons --fingerprint | awk -F: '$1=="fpr"{print $10; exit}')
+    [ "$fpr" = "$PB_KEY_FPR" ] || die "release KEY primary fingerprint $fpr is not the SSOT trust anchor"
+    gpg --batch --status-fd 1 --verify "$c/SHA512SUMS.asc" "$c/SHA512SUMS" 2>/dev/null >"$g/status" || die "SHA512SUMS signature does not verify"
+    awk -v want="$PB_KEY_FPR" '$2=="VALIDSIG" && $NF==want {ok=1} END{exit !ok}' "$g/status" \
+        || die "SHA512SUMS VALIDSIG is not from the SSOT trust anchor"
+    TARBALL_NAME="firefox-$FF_VER.source.tar.xz"
+    SRC_SHA512=$(awk -v f="source/$TARBALL_NAME" '$2==f{print $1}' "$c/SHA512SUMS")
+    [[ "$SRC_SHA512" =~ ^[0-9a-f]{128}$ ]] || die "SHA512SUMS has no entry for source/$TARBALL_NAME"
+    rm -rf "$g"; unset GNUPGHOME
+}
+
+fetch_source() { # the tarball, reused only when it matches the signed sha512
+    local rel="$PB_ARCHIVE/releases/$FF_VER"
+    TARBALL="$CACHE/ff-$FF_VER/$TARBALL_NAME"
+    if [ -f "$TARBALL" ] && [ "$(sha512sum "$TARBALL" | cut -d' ' -f1)" = "$SRC_SHA512" ]; then
+        log "verified cached $TARBALL_NAME"
+    else
+        rm -f "$TARBALL" "$TARBALL.part"
+        fetch -o "$TARBALL.part" "$rel/source/$TARBALL_NAME" || die "source download failed"
+        [ "$(sha512sum "$TARBALL.part" | cut -d' ' -f1)" = "$SRC_SHA512" ] || { rm -f "$TARBALL.part"; die "source tarball sha512 mismatch"; }
+        mv "$TARBALL.part" "$TARBALL"
+    fi
+}
+
+# ---------------------------------------------------------------- project
+P=""      # project dir
+ENGINE="" # engine dir
+OBJ=""    # objdir
+
+placeholder_project() {
+    need PB_NAME PB_VENDOR PB_APPID PB_BIN PB_BRAND PB_ICON
+    log "no rendered product tree: using the spike placeholder project (MiOS branding placeholders)"
+    local b="$P/configs/branding/$PB_BRAND" s
+    mkdir -p "$P/configs/common" "$P/configs/linux" "$b/content" "$P/src/browser/branding/$PB_BRAND/pref"
+    for s in 16 22 24 32 48 64 128 256 512; do
+        magick "$PB_ICON" -background none -resize "${s}x${s}" "$b/logo$s.png"
+    done
+    cp "$b/logo512.png" "$b/logo.png"; cp "$b/logo512.png" "$b/logo-mac.png"
+    magick "$b/logo256.png" -define icon:auto-resize=256,64,48,32,16 "$b/firefox.ico"
+    cp "$b/firefox.ico" "$b/firefox64.ico"
+    cat >"$P/configs/common/mozconfig" <<'EOF'
+ac_add_options --enable-application=browser
+export MOZ_APP_REMOTINGNAME=${binName}
+export MOZ_SOURCE_CHANGESET=${changeset}
+ac_add_options --disable-updater
+EOF
+    : >"$P/configs/linux/mozconfig"
+    # Copy-patch (runs after Surfer's branding step): replaces the generated branding prefs,
+    # which point at zen-browser.app, with empty MiOS ones.
+    cat >"$P/src/browser/branding/$PB_BRAND/pref/firefox-branding.js" <<'EOF'
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+pref("startup.homepage_override_url", "");
+pref("startup.homepage_welcome_url", "");
+pref("startup.homepage_welcome_url.additional", "");
+pref("app.releaseNotesURL", "");
+pref("app.releaseNotesURL.aboutDialog", "");
+pref("app.update.url.manual", "");
+pref("app.update.url.details", "");
+pref("browser.shell.checkDefaultBrowser", false);
+EOF
+    python3 -I - "$P/surfer.json" <<'PY'
+import json, os, sys
+e = os.environ
+cfg = {
+    "name": e["PB_NAME"], "vendor": e["PB_VENDOR"], "appId": e["PB_APPID"], "binaryName": e["PB_BIN"],
+    "version": {"product": "firefox", "version": ""},
+    "buildOptions": {"windowsUseSymbolicLinks": False}, "addons": {},
+    "brands": {e["PB_BRAND"]: {"backgroundColor": "", "brandShorterName": e["PB_NAME"],
+               "brandShortName": e["PB_NAME"], "brandFullName": e["PB_NAME"], "release": {"displayVersion": ""}}},
+    "license": {"licenseType": "MPL-2.0", "ignoredFiles": [".*\\.json"]},
+}
+json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+PY
+}
+
+lane_mozconfig() { # project-root mozconfig: the lane, appended after common + linux by Surfer
+    need PB_LANE PB_JOBS PB_CARGO_JOBS PB_ARTIFACT_APP_NAME
+    {
+        echo "# Lane: $PB_LANE (written by mios-portal-build-inner from [desktop.portal.builder])"
+        echo "mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-mios"
+        case "$PB_LANE" in
+            artifact)
+                echo "ac_add_options --enable-artifact-builds"
+                echo "ac_add_options --with-app-name=$PB_ARTIFACT_APP_NAME"
+                ;;
+            full)
+                echo 'ac_add_options --with-app-name=${binName}'
+                echo "ac_add_options --enable-optimize"
+                echo "ac_add_options --disable-debug-symbols"
+                echo "ac_add_options --enable-linker=lld"
+                echo "ac_add_options --disable-tests"
+                echo "ac_add_options --without-wasm-sandboxed-libraries"
+                echo "mk_add_options MOZ_MAKE_FLAGS=-j$PB_JOBS"
+                echo "mk_add_options MOZ_PARALLEL_BUILD=$PB_JOBS"
+                echo "export MOZ_PARALLEL_BUILD=$PB_JOBS"
+                echo "export CARGO_BUILD_JOBS=$PB_CARGO_JOBS"
+                ;;
+            *) die "lane '$PB_LANE' is neither artifact nor full" ;;
+        esac
+    } >"$P/mozconfig"
+}
+
+set_version_and_lane() { # unstaged trees: the builder writes the lane mozconfig and the resolved version
+    lane_mozconfig
+    # The resolved version lands only in this build copy of surfer.json.
+    python3 -I - "$P/surfer.json" "$FF_VER" "$PB_BRAND" <<'PY'
+import json, sys
+p, ver, brand = sys.argv[1:4]
+c = json.load(open(p))
+c.setdefault("version", {})["product"] = "firefox"
+c["version"]["version"] = ver
+c["version"].pop("candidate", None)
+b = c.get("brands", {}).get(brand)
+if b is None:
+    sys.exit("surfer.json has no brand %r" % brand)
+b.setdefault("release", {})["displayVersion"] = ver
+json.dump(c, open(p, "w"), indent=2)
+PY
+}
+
+setup_project() {
+    need PB_BRAND
+    P=/work/ff-$FF_VER/project; ENGINE=$P/engine; OBJ=$ENGINE/obj-mios
+    mkdir -p "$P" /work/mozbuild /work/npm-cache /work/home
+    # Product files are re-laid every run; engine/, node_modules/ and .surfer/ persist.
+    rm -rf "$P/configs" "$P/src" "$P/mozconfig" "$P/surfer.json"
+    if [ -f /product/surfer.json ] && [ -f /product/mozconfig ]; then
+        # A staged project (mios-portal-tree stage): versions filled, lane mozconfig and branding in place.
+        log "using the staged product project at /product"
+        PRODUCT_SOURCE=staged
+        cp -a /product/surfer.json /product/mozconfig "$P/"
+        cp -a /product/configs /product/src "$P/"
+        [ -f /product/mios-portal-stage.json ] && cp /product/mios-portal-stage.json /out/stage.json
+        [ -d /product/install ] && { rm -rf /out/install-overlay; cp -a /product/install /out/install-overlay; }
+        read -r PB_BIN PB_BRAND STAGED_VER PB_NAME_RENDERED < <(json \
+            'b=list(d["brands"]); assert len(b)==1, "one brand"; print(d["binaryName"], b[0], d["version"]["version"], d["name"].replace(" ","_"))' \
+            <"$P/surfer.json") || die "staged surfer.json lacks binaryName, version or a single brand"
+        PB_NAME=${PB_NAME_RENDERED//_/ }
+        [ "$STAGED_VER" = "$FF_VER" ] || die "staged Firefox $STAGED_VER is not the version resolved now ($FF_VER)"
+        if grep -q -- '^ac_add_options --enable-artifact-builds' "$P/mozconfig"; then STAGED_LANE=artifact; else STAGED_LANE=full; fi
+        [ "$STAGED_LANE" = "$PB_LANE" ] || die "staged mozconfig is the $STAGED_LANE lane, the builder runs $PB_LANE"
+        # The objdir is the builder's concern; everything else is the product's.
+        printf '\n# objdir (mios-portal-build-inner)\nmk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-mios\n' >>"$P/mozconfig"
+    elif [ -f /product/surfer.json ]; then
+        grep -q '@BUILD:' /product/surfer.json && die "/product is an unstaged tree (@BUILD: sentinels); stage it with mios-portal-tree stage"
+        log "using the rendered product tree at /product"
+        PRODUCT_SOURCE=product-tree
+        cp -a /product/surfer.json "$P/"
+        [ -d /product/configs ] && cp -a /product/configs "$P/"
+        [ -d /product/src ] && cp -a /product/src "$P/"
+        [ -f "$P/configs/common/mozconfig" ] || die "product tree has no configs/common/mozconfig"
+        [ -f "$P/configs/linux/mozconfig" ] || die "product tree has no configs/linux/mozconfig"
+        # Identity comes from the rendered surfer.json, not the placeholder inputs.
+        read -r PB_BIN PB_BRAND PB_NAME_RENDERED < <(json \
+            'b=list(d["brands"]); assert len(b)==1, "one brand"; print(d["binaryName"], b[0], d["name"].replace(" ","_"))' \
+            <"$P/surfer.json") || die "rendered surfer.json lacks binaryName or a single brand"
+        PB_NAME=${PB_NAME_RENDERED//_/ }
+    else
+        PRODUCT_SOURCE=placeholder
+        placeholder_project
+    fi
+    [ "$PRODUCT_SOURCE" = staged ] || set_version_and_lane
+    cat >"$P/package.json" <<EOF
+{ "name": "mios-portal-build", "private": true, "dependencies": { "$PB_SURFER_PKG": "$SURFER_VER" } }
+EOF
+    printf 'engine/\nnode_modules/\n.surfer/\n' >"$P/.gitignore"
+    mkdir -p "$P/.surfer"
+    printf '"%s"' "$PB_BRAND" >"$P/.surfer/dynamicConfig.brand.json"
+    printf '"dev"' >"$P/.surfer/dynamicConfig.buildMode.json"   # release mode would add --enable-optimize/--enable-rust-simd
+    ( cd "$P" && npm install --no-audit --no-fund --loglevel=error ) || die "npm install of $PB_SURFER_PKG@$SURFER_VER failed"
+    local got
+    got=$(json 'print(d["version"])' <"$P/node_modules/$PB_SURFER_PKG/package.json")
+    [ "$got" = "$SURFER_VER" ] || die "installed Surfer $got is not the resolved $SURFER_VER"
+    # Surfer reads `git rev-parse HEAD` of the project for MOZ_SOURCE_CHANGESET.
+    ( cd "$P"
+      [ -d .git ] || git init -q
+      git add -A
+      git -c user.name="MiOS Portal Build" -c user.email=build@mios.local commit -qm "mios-portal build input" --allow-empty ) \
+        || die "project git commit failed"
+    SURFER="$P/node_modules/.bin/surfer"
+}
+
+guard_policy() { # LTO/PGO never; artifact lane refuses compiled-code changes
+    local f bad
+    if grep -RhsE -- '--enable-lto|MOZ_PGO|--enable-profile-generate|--enable-profile-use' \
+        "$P/mozconfig" "$P/configs" >/dev/null; then
+        die "mozconfig enables LTO or PGO (forbidden on this host)"
+    fi
+    [ "$PB_LANE" = artifact ] || return 0
+    local compiled='\.(c|cc|cpp|cxx|h|hh|hpp|hxx|m|mm|rs|s|S|asm|idl|webidl|ipdl|ipdlh)$|(^|/)(Cargo\.toml|Cargo\.lock|[^/]*\.configure)$'
+    bad=""
+    while IFS= read -r -d '' f; do
+        case "$f" in
+            *.patch) bad+=$(grep -E '^\+\+\+ b/' "$f" | sed 's#^+++ b/##' | grep -E "$compiled" | sed "s#^#$f: #" || true) ;;
+            *) printf '%s\n' "${f#"$P"/src/}" | grep -qE "$compiled" && bad+="$f"$'\n' ;;
+        esac
+    done < <(find "$P/src" -type f -print0 2>/dev/null)
+    [ -z "$bad" ] || die "artifact lane cannot carry compiled-code changes (needs the full lane):"$'\n'"$bad"
+}
+
+# ---------------------------------------------------------------- surfer steps
+surfer_download() {
+    if [ -f "$ENGINE/toolkit/moz.build" ] && [ "$(cat "$ENGINE/.mios-source-sha512" 2>/dev/null)" = "$SRC_SHA512" ]; then
+        log "engine/ already holds the verified $FF_VER source: resetting it to stock"
+        git -C "$ENGINE" reset -q
+        git -C "$ENGINE" checkout -q .
+        git -C "$ENGINE" clean -fdxq -e /obj-mios/ -e /.mios-source-sha512
+        return 0
+    fi
+    rm -rf "$ENGINE"
+    mkdir -p "$P/.surfer/engine"
+    ln -f "$TARBALL" "$P/.surfer/engine/$TARBALL_NAME" 2>/dev/null || cp "$TARBALL" "$P/.surfer/engine/$TARBALL_NAME"
+    [ "$(sha512sum "$P/.surfer/engine/$TARBALL_NAME" | cut -d' ' -f1)" = "$SRC_SHA512" ] || die "cached tarball for Surfer does not match SHA512SUMS"
+    ( cd "$P" && "$SURFER" download )
+    [ -f "$ENGINE/toolkit/moz.build" ] || die "surfer download left no engine/toolkit/moz.build"
+    git -C "$ENGINE" rev-parse -q --verify HEAD >/dev/null || die "engine/ is not a git tree (mach artifact mode needs one)"
+    rm -f "$P/.surfer/engine/$TARBALL_NAME"
+    printf '%s' "$SRC_SHA512" >"$ENGINE/.mios-source-sha512"
+}
+
+surfer_import() {
+    ( cd "$P" && "$SURFER" import )
+    check_copy_patches
+}
+
+check_copy_patches() {
+    # Surfer only logs a failed copy-patch; every non-patch file under src/ must now be a link in engine/.
+    local f rel missing=""
+    while IFS= read -r -d '' f; do
+        rel=${f#"$P"/src/}
+        case "$rel" in *.patch) continue ;; esac
+        [ -L "$ENGINE/$rel" ] && [ "$(readlink -f "$ENGINE/$rel")" = "$(readlink -f "$f")" ] || missing+="  $rel"$'\n'
+    done < <(find "$P/src" -type f -print0)
+    [ -z "$missing" ] || die "copy-patches missing from engine/ after import:"$'\n'"$missing"
+    local n
+    n=$(find "$P/src" -type f -name '*.patch' | wc -l)
+    [ "$(cat "$P/.surfer/patchCount" 2>/dev/null || echo x)" = "$n" ] || die "Surfer recorded $(cat "$P/.surfer/patchCount" 2>/dev/null) patches, src/ has $n"
+}
+
+surfer_license() { ( cd "$P" && "$SURFER" license-check ); }
+
+surfer_build() {
+    check_free
+    local env_args=()
+    [ "$PB_LANE" != artifact ] || env_args=(MOZ_ARTIFACT_REVISION="$HG_REV")
+    ( cd "$P" && env "${env_args[@]}" "$SURFER" build --skip-patch-check -j "$PB_JOBS" )
+    if [ "$PB_LANE" = full ] && grep -q -- "--enable-artifact-builds" "$ENGINE/mozconfig"; then
+        die "full lane rendered an artifact mozconfig"
+    fi
+    APP_NAME=$(python3 -I -c 'import re,sys; m=re.search(r"\x27MOZ_APP_NAME\x27: \x27([^\x27]+)\x27", open(sys.argv[1]).read()); print(m.group(1) if m else "")' "$OBJ/config.status")
+    REMOTING_NAME=$(python3 -I -c 'import re,sys; m=re.search(r"\x27MOZ_APP_REMOTINGNAME\x27: \x27([^\x27]+)\x27", open(sys.argv[1]).read()); print(m.group(1) if m else "")' "$OBJ/config.status")
+    [ -n "$APP_NAME" ] || die "config.status has no MOZ_APP_NAME"
+    # Mozilla's artifact package ships <artifact_app_name>/<artifact_app_name>-bin; any other app name
+    # makes mach package drop the executables (mp-04 spike, Firefox 158).
+    if [ "$PB_LANE" = artifact ] && [ "$APP_NAME" != "$PB_ARTIFACT_APP_NAME" ]; then
+        die "artifact lane needs MOZ_APP_NAME=$PB_ARTIFACT_APP_NAME, the product configured '$APP_NAME' (--with-app-name or MOZ_APP_BASENAME)"
+    fi
+    [ -d "$OBJ/dist/bin" ] || die "build left no $OBJ/dist/bin"
+}
+
+sanitize_package() {
+    local pkg=$1 surfer_json=$2 d top
+    d=$(mktemp -d /work/pkg-sanitize.XXXXXX)
+    tar -xJf "$pkg" -C "$d"
+    top=$(find "$d" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)
+    [ -n "$top" ] || { rm -rf "$d"; die "package $pkg has no top-level directory"; }
+    python3 -I - "$d/$top" "$surfer_json" <<'PY'
+import json, os, re, sys
+root, sj = sys.argv[1], sys.argv[2]
+cfg = json.load(open(sj, encoding="utf-8"))
+vendor = cfg.get("vendor") or "MiOS"
+name = cfg.get("name") or "MiOS Portal"
+app_id = cfg.get("appId") or "os.mios.portal"
+bin_name = cfg.get("binaryName") or "mios-portal"
+
+app_ini = os.path.join(root, "application.ini")
+if os.path.isfile(app_ini):
+    txt = open(app_ini, encoding="utf-8").read()
+    if "AI-hint:" not in txt:
+        txt = "; AI-hint: MiOS-Portal application metadata (Vendor, Name, RemotingName, CodeName, ID) and disabled Crash Reporter.\n" + txt
+    txt = re.sub(r"^Vendor=.*$", f"Vendor={vendor}", txt, flags=re.M)
+    txt = re.sub(r"^Name=.*$", f"Name={name}", txt, flags=re.M)
+    txt = re.sub(r"^RemotingName=.*$", f"RemotingName={bin_name}", txt, flags=re.M)
+    txt = re.sub(r"^CodeName=.*$", f"CodeName={name}", txt, flags=re.M)
+    txt = re.sub(r"^ID=.*$", f"ID={app_id}", txt, flags=re.M)
+    txt = re.sub(r"^Enabled=.*$", "Enabled=0", txt, flags=re.M)
+    txt = re.sub(r"^ServerURL=.*$", "ServerURL=", txt, flags=re.M)
+    open(app_ini, "w", encoding="utf-8").write(txt)
+
+plat_ini = os.path.join(root, "platform.ini")
+if os.path.isfile(plat_ini):
+    txt = open(plat_ini, encoding="utf-8").read()
+    if "AI-hint:" not in txt:
+        txt = "; AI-hint: MiOS-Portal Gecko platform build metadata.\n" + txt
+    open(plat_ini, "w", encoding="utf-8").write(txt)
+
+chan_js = os.path.join(root, "defaults", "pref", "channel-prefs.js")
+if os.path.isfile(chan_js):
+    txt = open(chan_js, encoding="utf-8").read()
+    if "AI-hint:" not in txt:
+        txt = "// AI-hint: MiOS-Portal release channel preference.\n" + txt
+    open(chan_js, "w", encoding="utf-8").write(txt)
+PY
+    tar -cJf "$pkg.new" -C "$d" "$top"
+    mv "$pkg.new" "$pkg"
+    rm -rf "$d"
+}
+
+mach_package() {
+    # A kept objdir still holds the previous run's package (possibly under another app name).
+    find "$OBJ/dist" -maxdepth 1 -type f -name '*.linux-x86_64.*' -delete 2>/dev/null || true
+    ( cd "$ENGINE" && ./mach package )
+    mapfile -t PKGS < <(find "$OBJ/dist" -maxdepth 1 -type f -name '*.linux-x86_64.tar.xz')
+    [ "${#PKGS[@]}" -eq 1 ] || die "expected one dist/*.linux-x86_64.tar.xz, found ${#PKGS[@]}"
+    sanitize_package "${PKGS[0]}" "$P/surfer.json"
+}
+
+# ---------------------------------------------------------------- outputs
+write_outputs() {
+    local pkg=${PKGS[0]} base
+    base=$(basename "$pkg")
+    cp "$pkg" "/out/$base"
+    tar -tJf "/out/$base" >/out/package-files.txt
+    APP_EXE=$(awk -F/ -v b="$PB_BIN" 'NF==2 && ($2==b || $2=="firefox") {print; exit}' /out/package-files.txt)
+    [ -n "$APP_EXE" ] || die "package has no top-level $PB_BIN or firefox executable"
+    python3 -I - "/out/manifest.json" "/out/$base" <<PY
+import hashlib, json, os, platform, subprocess, sys
+out, pkg = sys.argv[1], sys.argv[2]
+def ver(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.strip().splitlines()[0]
+    except Exception:
+        return ""
+h = hashlib.sha256()
+with open(pkg, "rb") as f:
+    for chunk in iter(lambda: f.read(1 << 20), b""):
+        h.update(chunk)
+osr = dict(l.rstrip().split("=", 1) for l in open("/etc/os-release") if "=" in l)
+steps = [l.rstrip("\n").split("\t") for l in open("/out/steps.tsv")]
+m = {
+    "product": {"name": "$PB_NAME", "binary": "$PB_BIN", "brand": "$PB_BRAND", "source": "$PRODUCT_SOURCE"},
+    "lane": "$PB_LANE",
+    "app_name": "$APP_NAME", "remoting_name": "$REMOTING_NAME",
+    "resolved": json.loads('''$(resolved_json)'''),
+    "source": {"tarball": "$TARBALL_NAME", "sha512": "$SRC_SHA512", "signature_key": "$PB_KEY_FPR"},
+    "package": {"file": os.path.basename(pkg), "sha256": h.hexdigest(), "bytes": os.path.getsize(pkg),
+                "executable": "$APP_EXE"},
+    "toolchain": {
+        "builder_os": osr.get("PRETTY_NAME", "").strip('"'), "python": platform.python_version(),
+        "node": ver("node", "--version"), "npm": ver("npm", "--version"),
+        "rustc": ver("rustc", "--version"), "cargo": ver("cargo", "--version"),
+        "clang": ver("clang", "--version"), "lld": ver("ld.lld", "--version"),
+        "cbindgen": ver("cbindgen", "--version"), "git": ver("git", "--version"),
+    },
+    "steps": [{"name": s[0], "seconds": int(s[1]), "exit": int(s[2])} for s in steps],
+}
+json.dump(m, open(out, "w"), indent=2)
+print(json.dumps(m["resolved"]))
+PY
+}
+
+do_build() {
+    need PB_LANE PB_JOBS PB_MIN_FREE_GB
+    : >"$STEPS"
+    check_free
+    step resolve resolve
+    log "resolved: Firefox $FF_VER build$FF_BUILD rev $HG_REV, Surfer $SURFER_VER"
+    resolved_json >/out/resolved.json
+    step verify-sums verify_sums
+    step fetch-source fetch_source
+    step setup-project setup_project
+    step policy guard_policy
+    step surfer-download surfer_download
+    step surfer-import surfer_import
+    step surfer-license-check surfer_license
+    step surfer-build surfer_build
+    step mach-package mach_package
+    write_outputs
+    log "done: /out/$(basename "${PKGS[0]}")"
+}
+
+# ---------------------------------------------------------------- smoke
+# Console lines that fail the smoke (mios-portal-probe CONSOLE_FAILURES matches the same three).
+SMOKE_CONSOLE_FAILURES='console\.error: Policies:|Preference not allowed for stability reasons|Ignoring preference override'
+do_smoke() {
+    local pkg d exe spec name url rc=0
+    pkg=$(find /out -maxdepth 1 -name '*.linux-x86_64.tar.xz' | head -1)
+    [ -n "$pkg" ] || die "no package in /out to smoke-test"
+    d=$(mktemp -d /work/smoke.XXXXXX)
+    tar -xJf "$pkg" -C "$d"
+    exe=$(json 'print(d["package"]["executable"])' </out/manifest.json)
+    [ -x "$d/$exe" ] || die "packaged executable $exe is not executable"
+    if [ -d /out/install-overlay ]; then
+        # The product's install/ files (policies, default prefs, autoconfig) laid into the app dir.
+        cp -a /out/install-overlay/. "$d/$(dirname "$exe")/"
+        log "smoke: applied install-overlay: $(cd /out/install-overlay && find . -type f | tr '\n' ' ')"
+    fi
+    mkdir -p /out/smoke
+    "$d/$exe" --version | tee /out/smoke/version.txt
+    for spec in "$@"; do
+        name=${spec%%=*}; url=${spec#*=}
+        rm -rf "$d/profile"; mkdir -p "$d/profile"
+        log "smoke: $name <- $url"
+        if MOZ_DBUS_REMOTE=0 MOZ_CRASHREPORTER_DISABLE=1 timeout 180 "$d/$exe" --headless --no-remote \
+            --profile "$d/profile" --window-size=1280,820 --screenshot "/out/smoke/$name.png" "$url" \
+            >"/out/smoke/$name.log" 2>&1 && [ -s "/out/smoke/$name.png" ]; then
+            # A refused policy or pref override means the shipped lockdown is not what runs.
+            if grep -nE "$SMOKE_CONSOLE_FAILURES" "/out/smoke/$name.log" >&2; then
+                log "smoke: $name FAILED: refused policy or preference override (see smoke/$name.log)"; rc=1
+            else
+                log "smoke: $name ok ($(stat -c %s "/out/smoke/$name.png") bytes, no refused policy)"
+            fi
+        else
+            log "smoke: $name FAILED (see smoke/$name.log)"; rc=1
+        fi
+    done
+    rm -rf "$d"
+    return "$rc"
+}
+
+case "${1:-}" in
+    resolve) resolve; resolved_json ;;
+    resolve-env) resolve; resolved_env ;;
+    verify-sums) resolve; verify_sums; printf '%s  %s\n' "$SRC_SHA512" "$TARBALL_NAME" ;;
+    policy-check) P=${2:?project dir}; PB_LANE=${3:?lane}; guard_policy; echo "policy ok ($PB_LANE)" ;;
+    copy-patch-check) P=${2:?project dir}; ENGINE=$P/engine; check_copy_patches; echo "copy-patches ok" ;;
+    build) do_build ;;
+    smoke) shift; do_smoke "$@" ;;
+    *) echo "usage: $0 resolve|build|smoke NAME=URL...|verify-sums|policy-check DIR LANE|copy-patch-check DIR" >&2; exit 2 ;;
+esac

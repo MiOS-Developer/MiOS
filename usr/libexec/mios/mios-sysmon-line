@@ -1,0 +1,138 @@
+#!/bin/bash
+# AI-hint: Shared status-line emitter for MiOS-Tmux (mios-theme.tmux.conf) and the status island (Sysmon.qml).
+# Reads the line the live Sysmon.qml singleton publishes every sample ($XDG_RUNTIME_DIR/mios-sysmon.line) so MiOS-Tmux and the desktop/mobile
+# topbar status island display the exact same source, item order, icons, and CPU/GPU wattage; falls back to
+# reading /proc and /sys counters directly when mios-shell is not running.
+# --compact COLS: the narrow (phone) MiOS-Tmux segment: the compact field Sysmon.qml publishes ([desktop.topbar.sysmon]
+# mobile_items as icon+value, no watts), keeping the leading items that fit in COLS columns (0 = all), as the mobile
+# island drops items from the end. Builtins only on this path too (tmux runs it every status-interval).
+# AI-related: usr/share/mios/quickshell/Sysmon.qml, usr/share/mios/tmux/mios-theme.tmux.conf, tools/native/mios-service-core/src/tmux_theme.rs
+
+set -uo pipefail
+shopt -s extglob
+
+ascii=0 compact=0 cols=0
+while (( $# )); do
+    case "$1" in
+        --ascii) ascii=1 ;;
+        --compact) compact=1; if [[ "${2:-}" =~ ^[0-9]+$ ]]; then cols=$((10#$2)); shift; fi ;;
+    esac
+    shift
+done
+# ${#var} counts characters (= terminal columns for these glyphs) only in a UTF-8 locale.
+(( compact )) && LC_ALL=C.UTF-8
+
+uid="${UID:-$(id -u)}"
+rdir="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+[[ -d "$rdir" && -w "$rdir" ]] || rdir="/tmp/mios-sysmon-$uid"
+cache="$rdir/mios-sysmon.line"
+
+to_ascii() {
+    sed -e 's/󰻠 /CPU /g' -e 's/󰍛 /RAM /g' -e 's/󰢮 /GPU /g' -e 's/󰔏 //g' -e 's/°/C/g' -e 's/󰁅 /D:/g' -e 's/󰁝/U:/g'
+}
+# The compact form of a full line (a publisher without the compact field, or the fallback below): no watts,
+# icon+value, one space between items -- the format Sysmon.qml's compactLine uses.
+compact_of() {
+    local s=$1
+    s=${s// +([0-9])W/}
+    s=${s//󰻠 /󰻠}; s=${s//󰍛 /󰍛}; s=${s//󰢮 /󰢮}; s=${s//󰔏 /󰔏}; s=${s//󰁅 /󰁅}; s=${s// 󰁝/󰁝}
+    REPLY=${s//+( )/ }
+}
+ascii_compact() {
+    local s=$1
+    s=${s//󰻠/CPU}; s=${s//󰍛/RAM}; s=${s//󰢮/GPU}; s=${s//󰔏/}; s=${s//°/C}; s=${s//󰁅/}; s=${s//󰁝//}
+    REPLY=$s
+}
+# The leading items of a compact line that fit in $2 columns (0 = all).
+fit() {
+    local out="" next item
+    local -a items
+    read -ra items <<< "$1"
+    for item in "${items[@]}"; do
+        next=${out:+$out }$item
+        (( $2 == 0 || ${#next} <= $2 )) || break
+        out=$next
+    done
+    REPLY=$out
+}
+# emit FULL COMPACT HAVE_COMPACT: print the requested form of the published (or sampled) values.
+emit() {
+    if (( compact )); then
+        local c=$2
+        (( $3 )) || { compact_of "$1"; c=$REPLY; }
+        (( ascii )) && { ascii_compact "$c"; c=$REPLY; }
+        fit "$c" "$cols"
+        printf '%s\n' "$REPLY"
+    elif (( ascii )); then
+        printf '%s\n' "$1" | to_ascii
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+# The live shell (Sysmon.qml) rewrites "$cache" every sample as "EPOCH<TAB>LINE<TAB>COMPACT" (older shells:
+# "EPOCH<TAB>LINE"): read it with builtins only. Split by hand: read's IFS would merge an empty field's tabs.
+now=${EPOCHSECONDS:-0}   # builtin: no strftime / timezone load, no process spawn (each costs ~25 ms here)
+rec=""
+if [[ -r "$cache" ]] && { IFS= read -r rec < "$cache" 2>/dev/null || [[ -n "$rec" ]]; } && [[ "$rec" == *$'\t'* ]]; then
+    ts=${rec%%$'\t'*} rest=${rec#*$'\t'}
+    line=${rest%%$'\t'*} have_compact=0 compact_line=""
+    [[ "$rest" == *$'\t'* ]] && { have_compact=1; compact_line=${rest#*$'\t'}; }
+    if [[ "$ts" =~ ^[0-9]+$ ]] && (( now - ts <= 5 )) && { [[ -n "$line" ]] || (( compact && have_compact )); }; then
+        emit "$line" "$compact_line" "$have_compact"
+        exit 0
+    fi
+fi
+
+# Fallback when mios-shell is not running
+mkdir -p "$rdir" 2>/dev/null || true  # read /proc and /sys directly
+read -r _ u n s idle iow irq sirq st _ < /proc/stat 2>/dev/null || exit 0
+tot=$(( u + n + s + idle + iow + irq + sirq + st ))
+idl=$(( idle + iow ))
+prev_file="$rdir/mios-sysmon.prev"
+rapl_e=0   # RAPL energy_uj stays root-only (PLATYPUS): CPU watts come from the root sampler's coarse value
+now_ms=$(date +%s%3N)
+cpu_pct=0
+cpu_w=""
+if [[ -r "$prev_file" ]]; then
+    read -r p_tot p_idl p_rapl p_ms < "$prev_file" 2>/dev/null || true
+    dtot=$(( tot - ${p_tot:-0} ))
+    didl=$(( idl - ${p_idl:-0} ))
+    (( dtot > 0 )) && cpu_pct=$(( 100 * (dtot - didl) / dtot ))
+    dms=$(( now_ms - ${p_ms:-0} ))
+fi
+uw=""
+[[ -r /run/mios/power/cpu_package_uw ]] && read -r uw < /run/mios/power/cpu_package_uw 2>/dev/null || true
+if [[ "$uw" =~ ^[0-9]+$ ]]; then
+    w=$(( (uw + 500000) / 1000000 ))
+    (( w > 0 && w < 2000 )) && cpu_w=" ${w}W"
+fi
+printf '%s %s %s %s\n' "$tot" "$idl" "$rapl_e" "$now_ms" > "$prev_file.tmp.$$" 2>/dev/null && mv -f "$prev_file.tmp.$$" "$prev_file" 2>/dev/null || true
+
+ram_pct=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{if(t>0) printf "%d", 100*(t-a)/t}' /proc/meminfo 2>/dev/null || echo 0)
+gpu_str=""
+for c in /sys/class/drm/card*; do
+    [[ -r "$c/device/gpu_busy_percent" ]] || continue
+    drv=$(readlink -f "$c/device/driver" 2>/dev/null || true); drv=${drv##*/}
+    [[ "$drv" == "vfio-pci" || "$drv" == "pci-stub" ]] && continue
+    read -r gbusy < "$c/device/gpu_busy_percent" 2>/dev/null || continue
+    gw=""
+    # An APU's amdgpu power sensor (gpu_metrics table v2/v3; a dGPU's is v1) is the whole socket's, CPU included.
+    apu_rev=$(od -An -tu1 -j2 -N1 "$c/device/gpu_metrics" 2>/dev/null); apu_rev=${apu_rev// /}
+    [[ "$apu_rev" == 2 || "$apu_rev" == 3 ]] && { gpu_str="  󰢮 ${gbusy}%"; break; }
+    for hp in "$c"/device/hwmon/hwmon*/power1_average "$c"/device/hwmon/hwmon*/power1_input; do
+        if [[ -r "$hp" ]]; then
+            read -r raw < "$hp" 2>/dev/null || true
+            if [[ "${raw:-0}" =~ ^[0-9]+$ ]] && (( raw > 0 )); then
+                if (( raw >= 1000000 )); then w=$(( raw / 1000000 )); elif (( raw >= 1000 )); then w=$(( raw / 1000 )); else w=$raw; fi
+                (( w > 0 && w < 2000 )) && gw=" ${w}W"
+            fi
+            break
+        fi
+    done
+    gpu_str="  󰢮 ${gbusy}%${gw}"
+    break
+done
+line="󰻠 ${cpu_pct}%${cpu_w}  󰍛 ${ram_pct}%${gpu_str}"
+printf '%s\n' "$line" > "$cache.tmp.$$" 2>/dev/null && mv -f "$cache.tmp.$$" "$cache" 2>/dev/null || true
+emit "$line" "" 0

@@ -1,0 +1,6 @@
+[Unit]
+Description=MiOS graphical user session
+Wants=mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service
+Requires=graphical-session.target
+After=graphical-session.target
+BindsTo=graphical-session.target

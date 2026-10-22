@@ -1,0 +1,20 @@
+[Unit]
+Description=MiOS RDP remote display of the live Hyprland session (per-attach wayvnc + RFB bridge on UNIX sockets, fronted by xrdp)
+Documentation=man:wayvnc(1) man:xrdp.ini(5)
+PartOf=mios-desktop.target
+After=graphical-session.target
+Requisite=graphical-session.target
+ConditionPathExists=/usr/bin/wayvnc
+StartLimitIntervalSec=120
+StartLimitBurst=30
+
+[Service]
+Type=exec
+ExecCondition=/usr/libexec/mios/mios-rdp enabled xrdp
+ExecStart=/usr/libexec/mios/mios-rdp vnc
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=mios-desktop.target

@@ -422,11 +422,19 @@
     ]
   },
   {
+    "ordinal": 64,
+    "script": "64-bake-fan-control.sh",
+    "stage": "container",
+    "deps": [
+      "62-oh-my-posh.sh"
+    ]
+  },
+  {
     "ordinal": 65,
     "script": "65-bake-hyprland.sh",
     "stage": "container",
     "deps": [
-      "62-oh-my-posh.sh"
+      "64-bake-fan-control.sh"
     ]
   },
   {
@@ -439,7 +447,7 @@
   },
   {
     "ordinal": 67,
-    "script": "67-bake-surfer.sh",
+    "script": "67-bake-portal.sh",
     "stage": "container",
     "deps": [
       "66-bake-quickshell.sh"
@@ -450,7 +458,7 @@
     "script": "68-bake-kvmfr.sh",
     "stage": "container",
     "deps": [
-      "67-bake-surfer.sh"
+      "67-bake-portal.sh"
     ]
   },
   {
@@ -462,11 +470,19 @@
     ]
   },
   {
+    "ordinal": 70,
+    "script": "70-bake-wayvnc-upstream.sh",
+    "stage": "container",
+    "deps": [
+      "69-bake-lookingglass-client.sh"
+    ]
+  },
+  {
     "ordinal": 72,
     "script": "72-hermes-agent.sh",
     "stage": "container",
     "deps": [
-      "69-bake-lookingglass-client.sh"
+      "70-bake-wayvnc-upstream.sh"
     ]
   },
   {

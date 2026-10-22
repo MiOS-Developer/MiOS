@@ -502,7 +502,7 @@ end
 settings.set("clink.customprompt", __PROMPT__)
 '@
 $cmdPrompt = $cmdPrompt.Replace('__BIN__', ($BinDirectory | ConvertTo-Json -Compress)).Replace('__COMMAND__',(('call "' + (Join-Path $BinDirectory 'mios.cmd') + '" project') | ConvertTo-Json -Compress)).Replace('__PROMPT__',((Join-Path $clinkDirectory 'themes\mios-ssot.clinkprompt') | ConvertTo-Json -Compress)).Replace('__CODEPAGE__', [string][int]$config['theme']['terminal']['windows_codepage'])
-$agentRoot = Join-Path $env:ProgramData $config['agent_cli']['windows_directory']
+$agentRoot = $config['agent_cli']['windows_prefix']
 $agentPaths = @((Join-Path $env:ProgramFiles 'nodejs'),(Join-Path $agentRoot 'npm'),(Join-Path $agentRoot 'native'),(Join-Path $agentRoot 'bin')) -join ';'
 $cmdPrompt = $cmdPrompt.Replace('__AGENTPATH__', ($agentPaths | ConvertTo-Json -Compress))
 $palette = $config['colors']

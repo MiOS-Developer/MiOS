@@ -494,7 +494,6 @@ fn override_dropin_with_last_value_tampering_fails_closed() {
     assert!(check_err.contains("spectre_v2=auto"), "{check_err}");
 }
 
-
 #[test]
 fn deployment_cli_writes_then_checks_the_requested_root() {
     let temp = tempfile::tempdir().unwrap();
@@ -721,4 +720,52 @@ fn bootc_install_config_projects_install_and_rejects_unknown_filesystems() {
         "[bootc_install]\nroot_fs_type = \"xfs\"\nroot_min_gb = 0\nroot_padding_gb = 2\n"
     )
     .is_err());
+}
+
+/// User services must never be projected into the system manager's directory.
+#[test]
+fn user_scope_isolated_and_detects_missing_and_drift() {
+    use mios_unit_gen::{project_user, render_user_units};
+    let temp = tempfile::tempdir().unwrap();
+    let doc = r#"
+[units."same.service".Service]
+ExecStart = "/bin/system"
+[user_units."same.service".Service]
+ExecStart = "/bin/user"
+[user_units."session.target".Unit]
+Wants = "same.service"
+"#;
+    write_fixture(temp.path(), "usr/share/mios/mios.toml", doc);
+    write_fixture(
+        temp.path(),
+        "usr/lib/systemd/system/same.service",
+        "[Service]\nExecStart=/bin/system\n",
+    );
+    let rendered = render_user_units(doc).unwrap();
+    assert!(rendered["same.service"].contains("ExecStart=/bin/user"));
+    let missing = project_user(temp.path()).unwrap();
+    assert_eq!(missing.missing, ["same.service", "session.target"]);
+    for (name, body) in &rendered {
+        write_fixture(temp.path(), &format!("usr/lib/systemd/user/{name}"), body);
+    }
+    let good = project_user(temp.path()).unwrap();
+    assert_eq!(good.faithful.len(), 2);
+    assert!(good.drifted.is_empty());
+    write_fixture(
+        temp.path(),
+        "usr/lib/systemd/user/same.service",
+        "[Service]\nExecStart=/bin/wrong\n",
+    );
+    assert_eq!(project_user(temp.path()).unwrap().drifted, ["same.service"]);
+    assert_eq!(project(temp.path()).unwrap().faithful, ["same.service"]);
+}
+
+#[test]
+fn shipped_user_session_units_match_ssot() {
+    let p = mios_unit_gen::project_user(&root()).unwrap();
+    assert!(p.missing.is_empty(), "{:?}", p.missing);
+    assert!(p.drifted.is_empty(), "{:?}", p.drifted);
+    assert!(p.faithful.contains(&"mios-shell.service".into()));
+    assert!(p.faithful.contains(&"mios-desktop.target".into()));
+    assert!(p.faithful.contains(&"mios-wallpaper.service".into()));
 }

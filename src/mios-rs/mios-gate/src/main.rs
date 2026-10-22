@@ -102,7 +102,7 @@ const USAGE: &str = "usage: mios-gate <check> [--root DIR] [--format text|json]\
                      \x20      mios-gate static-linkage [--root DIR] [--format text|json] [--binary PATH] [--arch ARCH] [--census]\n\
                      checks: artifact, artifact-recipes, build-tool-dispatch, canonical-bools, credential-literals,\n\
                              doc-refs-headers, doc-refs-resolve, drift-stubs, gate-registry, generator-host-parity,\n\
-                             image-equivalence, image-freshness, module-test-coverage, negative-coverage,\n\
+                             image-equivalence, image-freshness, module-test-coverage, native-policy, negative-coverage,\n\
                              no-inert-ssot-tables, phase-ratchet, phase-registry, profile-integrity,\n\
                              powershell-parse, powershell-analyze, projection-coverage, protected-refs,\n\
                              ratchet-direction, render-coverage, root-fhs-overlay, rust-categories, shell-lint,\n\
@@ -197,12 +197,20 @@ fn main() -> ExitCode {
         eprint!("mios-gate: no check named\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     };
-    let root = std::path::PathBuf::from(root.unwrap_or_else(|| ".".to_string()));
+    let root = std::path::PathBuf::from(root.unwrap_or_else(|| {
+        if !std::path::Path::new("usr/share/mios/mios.toml").is_file()
+            && std::path::Path::new("/usr/share/mios/mios.toml").is_file()
+        {
+            "/".to_string()
+        } else {
+            ".".to_string()
+        }
+    }));
     if name != "image-equivalence" && (ssot.is_some() || profile.is_some() || allow_tree_only) {
         eprint!("mios-gate: --ssot, --profile and --allow-tree-only belong to image-equivalence\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     }
-    if name != "static-linkage" && (binary.is_some() || arch.is_some() || census) {
+    if name != "static-linkage" && name != "native-policy" && (binary.is_some() || arch.is_some() || census) {
         eprint!("mios-gate: --binary, --arch and --census belong to static-linkage\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     }
@@ -251,7 +259,7 @@ fn main() -> ExitCode {
         "rust-categories" => rust_categories::check(&root),
         "shell-lint" => shell_lint::check(&root),
         "signature-policy" => sigpolicy::check(&root),
-        "static-linkage" => static_linkage::check(&static_linkage::Options {
+        "static-linkage" | "native-policy" => static_linkage::check(&static_linkage::Options {
             root: root.clone(),
             binary: binary.map(std::path::PathBuf::from),
             arch,

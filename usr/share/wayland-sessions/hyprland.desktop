@@ -1,8 +1,9 @@
-# AI-hint: Display-manager Wayland session entry for Hyprland; installed by automation/65-bake-hyprland.sh after the hyprland RPM so it wins over the package copy.
-# AI-related: automation/65-bake-hyprland.sh, tests/test-hyprland-direct-scanout.sh, tests/test-quickshell-shell.sh
+# AI-hint: Generated MiOS desktop session; hardware profile is the only session difference.
+# AI-related: /usr/share/mios/mios.toml, /usr/share/mios/hyprland/session.lua
 [Desktop Entry]
-Name=Hyprland
-Comment=An intelligent dynamic tiling Wayland compositor
-Exec=Hyprland
+Name=MiOS iGPU (default)
+Comment=MiOS Hyprland and Quickshell; igpu hardware profile
+Exec=/usr/bin/mios-gen hyprland-session --root / --hardware-profile igpu
+TryExec=/usr/bin/mios-gen
 Type=Application
 DesktopNames=Hyprland

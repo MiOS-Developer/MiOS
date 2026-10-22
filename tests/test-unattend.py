@@ -17,7 +17,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -61,7 +61,8 @@ class TestUnattendGen(unittest.TestCase):
     def test_generate_xml_tree_structure(self):
         cfg = unattend_gen.UnattendConfig(
             preset=unattend_gen.Preset.DEVELOPER,
-            username="mios",
+            username="fixture-user",
+            password="fixture-pass-1",
             computer_name="MiOS-DevNode",
             driver_path="M:\\drivers",
             bypass_tpm=True,
@@ -87,6 +88,7 @@ class TestUnattendGen(unittest.TestCase):
         cfg = unattend_gen.UnattendConfig(
             preset=unattend_gen.Preset.MINIMAL,
             username="operator",
+            password="fixture-pass-1",
         )
         gen = unattend_gen.UnattendGenerator(cfg, mock=False)
         res = gen.run(output_path=out_file)
@@ -102,7 +104,8 @@ class TestUnattendGen(unittest.TestCase):
         test_args = [
             "unattend_gen.py",
             "--preset", "developer",
-            "--username", "mios",
+            "--username", "fixture-user",
+            "--password", "fixture-pass-1",
             "--computer-name", "MiOS-Test",
             "--mock",
             "--json",
@@ -115,11 +118,79 @@ class TestUnattendGen(unittest.TestCase):
         test_args = [
             "unattend_gen.py",
             "--emit-xml",
+            "--username", "fixture-user",
+            "--password", "fixture-pass-1",
             "--mock",
         ]
         with patch.object(sys, "argv", test_args):
             exit_code = unattend_gen.main()
             self.assertEqual(exit_code, 0)
+
+    def test_default_computer_name_netbios_compliance(self):
+        """Positive control: default UnattendConfig produces <= 15-char NetBIOS compliant ComputerName."""
+        cfg = unattend_gen.UnattendConfig(
+            preset=unattend_gen.Preset.DEVELOPER,
+            username="fixture-user",
+            password="fixture-pass-1",
+        )
+        self.assertLessEqual(len(cfg.computer_name), 15)
+        self.assertNotRegex(cfg.computer_name, r'[\s/\\:*?"<>|]')
+        gen = unattend_gen.UnattendGenerator(cfg, mock=True)
+        xml_str = gen.generate_xml_string()
+
+        # Verify schema validator accepts default generated XML
+        val = unattend_validate.UnattendValidator(strict=False)
+        res = val.validate_xml_string(xml_str)
+        self.assertTrue(res.valid, f"Default XML failed validation: {res.errors}")
+        self.assertNotIn("UNATTEND-039", [e.rule_id for e in res.errors])
+
+    def test_computer_name_netbios_limits_rejected(self):
+        """Negative control: ComputerName exceeding 15 chars or with illegal characters is rejected."""
+        bad_names = [
+            "MiOS-Workstation",               # 16 chars (NetBIOS limit is 15)
+            "TOO_LONG_COMPUTER_NAME_OVER_15", # 30 chars
+            "Name With Space",                # spaces forbidden
+            "Bad:Char*",                      # illegal character ':'
+            "",                               # empty forbidden
+        ]
+        for bad in bad_names:
+            with self.subTest(computer_name=bad):
+                cfg = unattend_gen.UnattendConfig(
+                    username="fixture-user",
+                    password="fixture-pass-1",
+                    computer_name=bad,
+                )
+                gen = unattend_gen.UnattendGenerator(cfg, mock=True)
+                with self.assertRaises(ValueError) as ctx:
+                    gen.build_xml_tree()
+                self.assertIn("ComputerName", str(ctx.exception))
+
+    def test_config_from_ssot_computer_name_override(self):
+        """Positive control: config_from_ssot respects custom SSOT computer_name."""
+        fake_data = {
+            "identity": {"username": "fixture-user", "default_password": "fixture-pass-1", "hostname": "custom-host"},
+            "autounattend": {
+                "autologon_enable": True,
+                "autologon_user": "fixture-user",
+                "autologon_persistent": True,
+                "autologon_count": 9999999,
+                "computer_name": "SSOT-NODE",
+            },
+            "autounattend.service": {"enable": False, "svc_user": "", "svc_password": ""},
+        }
+        with patch.object(unattend_gen, "load_identity_defaults") as mock_cred,              patch.object(unattend_gen, "_import_credentials") as mock_import:
+            mock_mc = MagicMock()
+            mock_mc.load.return_value = fake_data
+            mock_mc.resolve.return_value = {
+                "username": "fixture-user",
+                "default_password": "fixture-pass-1",
+                "accounts": [],
+                "service": {"enable": False, "user": "", "password": ""},
+                "autologon": {"enable": True, "user": "fixture-user", "password": "fixture-pass-1", "persistent": True, "count": 9999999},
+            }
+            mock_import.return_value = mock_mc
+            cfg = unattend_gen.config_from_ssot()
+            self.assertEqual(cfg.computer_name, "SSOT-NODE")
 
 
 # ============================================================================

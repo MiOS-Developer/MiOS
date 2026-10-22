@@ -1,0 +1,2134 @@
+#!/usr/bin/env python3
+# AI-hint: [remote.rdp] RFB bridge + remote-display manager between xrdp's libvnc (RFB 3.3, server-chosen security) and wayvnc/neatvnc (RFB 3.8). Per RDP attach it starts a wayvnc child; mode "virtual" first creates a Hyprland headless output ([remote.rdp].virtual_output, HEADLESS-*) attached below the centre of the primary local output (virtual_attach = "below-center", edge-adjacent in logical px, re-centred on every resize/rotation/scale change; several remote outputs are centred as a group), consumes the client's SetDesktopSize, applies mode + the [desktop.scaling] scale (`mios-gen display-scale --remote`) with hl.monitor to that output only, and answers xrdp itself (wayvnc always runs --disable-resizing: its wlr-output-management path rewrote the physical monitor's rule on Hyprland); a Hyprland config reload (socket2 configreloaded) or another remote output coming/going re-applies that output's mode, scale, position and workspace rule (a reload drops the bridge's runtime rules; no primary local output = placed at 0,0, never at a negative x); the pointer is drawn into the frames (wayvnc --render-cursor, cursor pseudo-encodings dropped from xrdp's SetEncodings) when the output can be scaled ([remote.rdp].render_cursor = "auto"), because wayvnc's cursor capture fails for good on a scaled Hyprland output; mode "mirror" shares a physical output unresized. If wayvnc dies mid-session it is restarted transparently: xrdp's connection is kept, the partial RFB message is completed, the new wayvnc is handshaken by the bridge and asked for a full update. Relays pixels verbatim; frames both RFB directions to inject/rewrite ExtendedDesktopSize replies. Refresh pacing ([remote.rdp].refresh_pacing = "adaptive", Pacer): every client starts at target_hz; when it provably takes fewer than half the frames (e.g. a phone over the RDP link, ~11 frames/s of legacy bitmaps) the virtual output's refresh drops to >= 2x the delivered rate (floor min_hz) so the iGPU stops rendering frames nobody receives, and it returns to target_hz as soon as the client keeps up; delivered rate, refresh and pacing are in stats.json.
+# AI-related: /usr/libexec/mios/mios-rdp, /usr/lib/systemd/user/mios-rdp-vnc.service, /usr/share/mios/mios.toml [remote.rdp] [desktop.scaling], /usr/bin/mios-gen (display-scale), /usr/libexec/mios/wayvnc/wayvnc (automation/70-bake-wayvnc-upstream.sh), $XDG_RUNTIME_DIR/mios-display-hints.json
+# AI-functions: handshake, upstream_handshake, RFBFramingError, ClientStream, ServerStream, eds_update, Hypr, parse_cursorpos, monitor_at, should_restore_local, attach_below, wayvnc_version, scaled_capture_ok, overlay_cursor, policy_scale, write_display_hint, refresh_pacing, Pacer, Bridge, Bridge.reapply, Bridge._set_refresh, Bridge._pace, Bridge._event_action, valid_scale, target_scale, main
+"""xrdp (RFB 3.3) <-> wayvnc (RFB 3.8) bridge on UNIX sockets, plus the remote display.
+
+Both sockets live in the operator's 0700 runtime dir; wayvnc's own socket is
+never handed to anything but this bridge. Authentication happens in front, in
+xrdp-sesman (PAM + group); the RFB hop itself carries security type None.
+
+virtual mode (default): the RDP client gets its own Hyprland output, never the
+physical monitor. Lifecycle per attach:
+  1. hl.workspace_rule / hl.monitor rules for the output, `hyprctl output create
+     headless <name>`, attached below the centre of the primary local output
+     (virtual_attach = "below-center"): top edge flush with its bottom edge, so the
+     cursor and windows cross the shared edge both ways;
+  2. wayvnc -o <name> --disable-resizing: wayvnc's own resize path uses
+     wlr-output-management, whose configuration re-lists every head; Hyprland 0.56
+     then replaced the PHYSICAL monitor's rule (preferred 60 Hz, auto position);
+  3. xrdp's SetDesktopSize (initial size and every DISP resize/rotation) is
+     consumed by the bridge, applied with hl.monitor to the virtual output only
+     (mode + [desktop.scaling] scale + re-centred position), and answered to xrdp
+     (ServerStream);
+  3b. wayvnc exiting while xrdp is still connected (e.g. the Fedora-packaged release's fatal cursor-capture
+     error on a scaled output) is recovered: the bridge completes the RFB message
+     xrdp was receiving, starts a new wayvnc, handshakes it itself, replays xrdp's
+     SetPixelFormat/SetEncodings and requests a full update (wayvnc_restarts per minute);
+  3c. a Hyprland config reload re-evaluates the projection (catch-all monitor rule
+     "preferred, auto, 1") and drops the bridge's runtime hl.monitor/workspace rules: the
+     socket2 watcher sees configreloaded and re-applies mode + scale + position (Bridge.reapply,
+     debounced and verified); a remote sibling output added/removed re-centres the group;
+  4. detach: wayvnc is stopped FIRST (it would otherwise fall back to capturing
+     the physical output), then the output is removed after linger_seconds
+     unless another attach arrives or keep_virtual_output is set;
+  5. refresh pacing (refresh_pacing = "adaptive"): the output starts at target_hz and
+     follows the delivered rate per stats window (Pacer) -- a client taking fewer than
+     half the frames gets a refresh >= 2x what it takes (floor min_hz), one keeping up
+     gets target_hz back at once -- so frames nobody receives are never rendered.
+
+Single seat: remote pointer input moves the one Hyprland cursor onto the remote
+display. The local position is saved at attach and handed back once at detach,
+only if the remote client sent pointer input and the cursor is still on the
+remote display (never per click/hover). hyprctl runs in worker threads only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+V33 = b"RFB 003.003\n"
+V38 = b"RFB 003.008\n"
+SEC_NONE = 1
+BUF = 1 << 18
+MSG_SET_DESKTOP_SIZE = 251
+STATS_WINDOW = 2.0  # seconds per delivered-FPS window (stats.json refresh and Pacer input)
+DEBUG = bool(os.environ.get("MIOS_RDP_DEBUG"))  # trace server size rects
+
+
+def log(msg: str) -> None:
+    print(f"[mios-rdp-bridge] {msg}", file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------- scale policy
+
+def valid_scale(w: int, h: int, target: float) -> float:
+    """Largest scale <= target that Hyprland accepts for a WxH mode.
+
+    Hyprland 0.56 keeps scales on a 1/120 grid and refuses (with an on-screen
+    notification, then a substitute) any scale whose logical size is fractional.
+    """
+    best = 1.0
+    for k in range(120, int(target * 120 + 1e-6) + 1):
+        if (w * 120) % k == 0 and (h * 120) % k == 0:
+            best = k / 120
+    return best
+
+
+def target_scale(cfg: dict, w: int, h: int, dpi: float | None) -> float:
+    raw = cfg.get("virtual_scale", "auto")
+    short = min(w, h)
+    long_side = max(w, h)
+    aspect = long_side / max(1, short)
+
+    if str(raw).strip().lower() != "auto":
+        try:
+            t = float(raw)
+        except ValueError:
+            t = 1.0
+    else:
+        ref_dpi = float(cfg.get("scale_reference_dpi", 120))
+        small_thresh = int(cfg.get("small_screen_px", 1300))
+        if dpi and cfg.get("scale_dpi_hint", True):
+            if dpi >= 130:
+                t = dpi / ref_dpi
+            else:
+                t = 1.0
+        elif h > w:
+            # Portrait orientation: mobile phone or vertical tablet
+            target_logical_width = float(cfg.get("mobile_logical_width", 420))
+            t = max(float(cfg.get("small_screen_scale", 2.0)), short / target_logical_width)
+        elif aspect >= 1.85 and short <= small_thresh:
+            # Landscape mobile phone (e.g. 2400x1080, 2556x1178)
+            target_logical_height = float(cfg.get("mobile_logical_height", 420))
+            t = max(float(cfg.get("small_screen_scale", 2.0)), short / target_logical_height)
+        elif short < int(cfg.get("small_screen_px", 900)):
+            t = float(cfg.get("small_screen_scale", 2.0))
+        elif short >= 2160:
+            # 4K UHD desktop
+            t = float(cfg.get("uhd_scale", 2.0))
+        else:
+            t = 1.0
+
+        min_short = float(cfg.get("min_logical_short_px", 360))
+        if min_short > 0:
+            t = min(t, short / min_short)
+        t = min(t, float(cfg.get("max_scale", 3.0)))
+    return valid_scale(w, h, max(1.0, t))
+
+
+def xrdp_dpi_hint(since: float) -> float | None:
+    """DPI xrdp logged for the attaching client ("... over N mm (D DPI)")."""
+    try:
+        out = subprocess.run(
+            ["journalctl", "-q", "-o", "cat", "-u", "xrdp.service",
+             f"--since=@{int(since)}", "-g", "monitor height is"],
+            capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    hits = re.findall(r"\((\d+) DPI\)", out)
+    return float(hits[-1]) if hits else None
+
+
+def wayvnc_version(binary: str) -> tuple[int, int, int] | None:
+    """(major, minor, patch) from `wayvnc --version` ("wayvnc: v0.11-dev-..." / "wayvnc: MAJOR.MINOR.PATCH")."""
+    try:
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"wayvnc:?\s+v?(\d+)\.(\d+)(?:\.(\d+))?", out.stdout + out.stderr)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)) if m else None
+
+
+def scaled_capture_ok(version: tuple[int, int, int] | None) -> bool:
+    """wayvnc < 0.10 exits on any cursor-capture failure (main.c on_cursor_capture_done ->
+    SCREENCOPY_FATAL -> wayvnc_exit), which Hyprland 0.56 produces while the pointer is on a
+    scaled output; 0.10+ only logs it. Unknown version = not safe."""
+    return version is not None and version >= (0, 10, 0)
+
+
+def overlay_cursor(cfg: dict, argv: list[str], scaled_ok: bool) -> bool:
+    """Whether wayvnc composites the pointer into the captured frames (--render-cursor).
+
+    wayvnc's cursor capture (ext-image-copy-capture cursor session, sent to xrdp as the RFB
+    Cursor pseudo-encoding) fails on a scaled Hyprland 0.56 output ("Failed to capture cursor.
+    The source probably went away") and wayvnc 0.10+ never retries it, so a phone on a scaled
+    remote output saw no pointer at all. [remote.rdp].render_cursor: "auto" (default) = overlay in
+    virtual mode whenever the output can be scaled (output_scale and a wayvnc that survives it);
+    true/false force it. An explicit -r/--render-cursor already in wayvnc_argv counts as true."""
+    if "--render-cursor" in argv or "-r" in argv:
+        return True
+    raw = cfg.get("render_cursor", "auto")
+    val = str(raw).strip().lower()
+    if raw is True or val in ("true", "yes", "on", "1"):
+        return True
+    if raw is False or val in ("false", "no", "off", "0"):
+        return False
+    if val != "auto":
+        log(f"unknown [remote.rdp].render_cursor {raw!r}; using auto")
+    return cfg.get("mode", "virtual") == "virtual" and bool(cfg.get("output_scale", True)) and scaled_ok
+
+
+def policy_scale(cfg: dict, w: int, h: int, dpi: float | None, vout: str) -> tuple[float, dict]:
+    """Scale of the remote output from the global [desktop.scaling] policy
+    (`mios-gen display-scale --remote`); explicit [remote.rdp].virtual_scale is honoured by the
+    policy itself (--output). Falls back to the legacy target_scale if the CLI is unusable."""
+    cmd = [str(cfg.get("display_scale_cmd", "/usr/bin/mios-gen")), "display-scale",
+           "--width", str(w), "--height", str(h), "--remote", "--output", vout, "--format", "json"]
+    if dpi:
+        cmd += ["--dpi", str(int(round(dpi)))]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        j = json.loads(p.stdout) if p.returncode == 0 else None
+        s = float(j["scale"]) if isinstance(j, dict) else None
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        p, j, s = None, None, None
+    if s is None or not (1.0 <= s <= 10.0):
+        why = (p.stderr.strip()[:200] if p is not None else "not runnable") or f"rc {p.returncode}"
+        log(f"display-scale policy unavailable ({why}); legacy [remote.rdp] scale")
+        return target_scale(cfg, w, h, dpi), {"source": "legacy"}
+    v = valid_scale(w, h, s)
+    if abs(v - s) > 1e-6:
+        log(f"policy scale {s:g} is not valid for {w}x{h}; using {v:g}")
+    return v, j
+
+
+def target_hz(cfg: dict) -> int:
+    """[remote.rdp].target_hz: refresh of the remote display (virtual output mode WxH@hz) and
+    wayvnc's capture rate (-f, set by mios-rdp). A legacy max_fps counts when target_hz is absent."""
+    raw = cfg.get("target_hz", cfg.get("max_fps", 90))
+    try:
+        hz = int(raw)
+    except (TypeError, ValueError):
+        hz = 0
+    if not 1 <= hz <= 240:
+        log(f"invalid [remote.rdp].target_hz {raw!r}; using 90")
+        return 90
+    return hz
+
+
+def with_refresh(mode: str, hz: int) -> str:
+    """"WxH" -> "WxH@hz"; an explicit "@..." in mode is kept."""
+    return mode if "@" in mode else f"{mode}@{hz}"
+
+
+def refresh_pacing(cfg: dict) -> tuple[str, int]:
+    """([remote.rdp].refresh_pacing, min_hz): "adaptive" (default) lets the remote display's refresh follow
+    what the RDP client takes (Pacer), never below min_hz and never above target_hz; "fixed" keeps target_hz."""
+    raw = str(cfg.get("refresh_pacing", "adaptive")).strip().lower()
+    if raw not in ("adaptive", "fixed"):
+        log(f"unknown [remote.rdp].refresh_pacing {cfg.get('refresh_pacing')!r}; using adaptive")
+        raw = "adaptive"
+    try:
+        floor = int(cfg.get("min_hz", 30))
+    except (TypeError, ValueError):
+        floor = 0
+    if not 1 <= floor <= 240:
+        log(f"invalid [remote.rdp].min_hz {cfg.get('min_hz')!r}; using 30")
+        floor = 30
+    return raw, floor
+
+
+class Pacer:
+    """Adaptive refresh of the remote display ([remote.rdp].refresh_pacing = "adaptive").
+
+    Hyprland renders the virtual output on every damaged frame up to its refresh, and on the 2-CU iGPU a
+    1100x2080 glass + living-wallpaper frame costs about as much as a local 1080p one: measured with the
+    remote display under motion, HDMI-A-1 fell from 77 to 25 FPS at 90 Hz while xrdp delivered only ~11
+    frames/s to a phone (the RDP link / legacy bitmap codec is the limit, 1.4 MB per full frame). Frames
+    the client never takes are pure iGPU cost, so the refresh follows the delivered rate (one stats window
+    each, FramebufferUpdates relayed to xrdp):
+      * the client keeps up (a window delivers >= UP x refresh): straight back to target_hz;
+      * the client is the limit (DOWN_WINDOWS windows deliver < DOWN x refresh, above IDLE): down to the
+        lowest level >= HEADROOM x delivered, never below the floor (min_hz);
+      * an idle screen (<= IDLE frames/s: nothing damaged, nothing rendered) keeps the refresh, and two
+        changes are at least DWELL seconds apart.
+    The delivered rate is never lowered: the refresh stays >= HEADROOM x what the client takes."""
+
+    LEVELS = (30, 45, 60, 75, 90, 120, 144, 165, 240)
+    UP = 0.75
+    DOWN = 0.5
+    HEADROOM = 2.0
+    IDLE = 2.0
+    DOWN_WINDOWS = 3
+    DWELL = 4.0
+
+    def __init__(self, target: int, floor: int) -> None:
+        self.target = int(target)
+        self.floor = max(1, min(int(floor), self.target))
+        self.levels = sorted({self.floor, self.target} | {lv for lv in self.LEVELS if self.floor < lv < self.target})
+        self.hz = self.target
+        self.low = 0
+        self.changed = float("-inf")
+
+    def level_for(self, fps: float) -> int:
+        need = max(float(self.floor), fps * self.HEADROOM)
+        return next((lv for lv in self.levels if lv >= need - 1e-6), self.target)
+
+    def update(self, fps: float, now: float) -> int | None:
+        """One window's delivered frames/s -> the new refresh, or None (unchanged)."""
+        if now - self.changed < self.DWELL:
+            return None
+        if fps >= self.UP * self.hz:
+            self.low = 0
+            return self._set(self.target, now) if self.hz < self.target else None
+        want = self.level_for(fps)
+        if self.IDLE < fps < self.DOWN * self.hz and want < self.hz:
+            self.low += 1
+            return self._set(want, now) if self.low >= self.DOWN_WINDOWS else None
+        self.low = 0
+        return None
+
+    def _set(self, hz: int, now: float) -> int:
+        self.hz, self.low, self.changed = hz, 0, now
+        return hz
+
+
+class Stats:
+    """Delivered-frame counters of one attach: frames relayed to xrdp (FramebufferUpdates), xrdp's
+    update requests and bytes, sampled into rates. Pure bookkeeping on the event loop."""
+
+    def __init__(self, now: float) -> None:
+        self.bytes = 0
+        self.t0 = self.t = now
+        self.last = (0, 0, 0)  # (updates, requests, bytes) at self.t
+        self.rate = {"fps": 0.0, "requests_per_s": 0.0, "mb_per_s": 0.0}
+        self.peak_fps = 0.0
+
+    def sample(self, now: float, updates: int, requests: int) -> dict:
+        dt = now - self.t
+        if dt > 0:
+            u, r, b = self.last
+            self.rate = {"fps": round((updates - u) / dt, 1), "requests_per_s": round((requests - r) / dt, 1),
+                         "mb_per_s": round((self.bytes - b) / dt / 1e6, 2)}
+            self.peak_fps = max(self.peak_fps, self.rate["fps"])
+        self.t, self.last = now, (updates, requests, self.bytes)
+        return self.rate
+
+
+def write_stats(runtime_dir: str, doc: dict) -> None:
+    """$XDG_RUNTIME_DIR/mios-rdp/stats.json (atomic)."""
+    d = os.path.join(runtime_dir, "mios-rdp")
+    try:
+        os.makedirs(d, exist_ok=True)
+        tmp = os.path.join(d, "stats.json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, os.path.join(d, "stats.json"))
+    except OSError:
+        pass
+
+
+def attach_below(primary: tuple[int, int, int, int], widths: list[int]) -> list[tuple[int, int]]:
+    """Positions (logical px) of remote outputs of the given logical widths placed side by side,
+    centred as a group under the primary output's bottom edge and flush with it (no gap)."""
+    px, py, pw, ph = primary
+    x = px + (pw - sum(widths)) // 2  # floor, same as mios-gen display-scale (div_euclid)
+    out = []
+    for w in widths:
+        out.append((x, py + ph))
+        x += w
+    return out
+
+
+def write_display_hint(runtime_dir: str, output: str, dpi: float | None) -> None:
+    """Record the client DPI for the Hyprland scaling handler ($XDG_RUNTIME_DIR/mios-display-hints.json,
+    {"outputs": {name: {"dpi": N}}}), atomically; dpi None removes the entry."""
+    path = os.path.join(runtime_dir, "mios-display-hints.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or not isinstance(data.get("outputs"), dict):
+            data = {"outputs": {}}
+    except (OSError, ValueError):
+        data = {"outputs": {}}
+    outs = data["outputs"]
+    if dpi:
+        if outs.get(output) == {"dpi": int(round(dpi))}:
+            return
+        outs[output] = {"dpi": int(round(dpi))}
+    elif output in outs:
+        del outs[output]
+    else:
+        return
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        fd = os.open(runtime_dir, os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        log(f"display hint not written: {e}")
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------- RFB handshake
+
+async def _fail_client(w: asyncio.StreamWriter, reason: str) -> None:
+    raw = reason.encode()
+    w.write(struct.pack(">II", 0, len(raw)) + raw)  # RFB 3.3 connection-failed
+    try:
+        await w.drain()
+    except ConnectionError:
+        pass
+    finally:
+        w.close()
+
+
+async def handshake(cr, cw, ur, uw) -> bool:
+    """Upstream (wayvnc) to 3.8 + None; downstream (xrdp) to 3.3 + None."""
+    sver = await ur.readexactly(12)
+    if not sver.startswith(b"RFB 003."):
+        await _fail_client(cw, "upstream is not an RFB server")
+        return False
+    cw.write(V33)
+    await cw.drain()
+    await cr.readexactly(12)  # xrdp answers "RFB 003.003\n"
+    up = V38 if sver >= V38 else sver
+    uw.write(up)
+    await uw.drain()
+    n = (await ur.readexactly(1))[0]
+    if n == 0:
+        ln = struct.unpack(">I", await ur.readexactly(4))[0]
+        reason = (await ur.readexactly(ln)).decode(errors="replace")
+        await _fail_client(cw, f"wayvnc refused: {reason}")
+        return False
+    types = await ur.readexactly(n)
+    if SEC_NONE not in types:
+        await _fail_client(cw, "wayvnc demands authentication on its private socket")
+        return False
+    uw.write(bytes([SEC_NONE]))
+    await uw.drain()
+    if up == V38:
+        res = struct.unpack(">I", await ur.readexactly(4))[0]
+        if res != 0:
+            ln = struct.unpack(">I", await ur.readexactly(4))[0]
+            reason = (await ur.readexactly(ln)).decode(errors="replace")
+            await _fail_client(cw, f"wayvnc security failed: {reason}")
+            return False
+    cw.write(struct.pack(">I", SEC_NONE))  # 3.3: server-chosen None, no SecurityResult
+    await cw.drain()
+    return True
+
+
+async def upstream_handshake(ur, uw) -> tuple[int, int]:
+    """Bridge-only handshake with a (re)started wayvnc: 3.8 + None + shared ClientInit; the
+    ServerInit is consumed here (xrdp already has one). Returns the server's framebuffer size."""
+    sver = await ur.readexactly(12)
+    if not sver.startswith(b"RFB 003."):
+        raise ConnectionError("upstream is not an RFB server")
+    up = V38 if sver >= V38 else sver
+    uw.write(up)
+    await uw.drain()
+    if up == V38:
+        n = (await ur.readexactly(1))[0]
+        if n == 0:
+            raise ConnectionError("wayvnc refused the connection")
+        if SEC_NONE not in await ur.readexactly(n):
+            raise ConnectionError("wayvnc demands authentication on its private socket")
+        uw.write(bytes([SEC_NONE]))
+        await uw.drain()
+        if struct.unpack(">I", await ur.readexactly(4))[0] != 0:
+            raise ConnectionError("wayvnc security failed")
+    elif struct.unpack(">I", await ur.readexactly(4))[0] != SEC_NONE:
+        raise ConnectionError("wayvnc chose a security type other than None")
+    uw.write(b"\x01")  # ClientInit: shared
+    await uw.drain()
+    w, h = struct.unpack(">HH", await ur.readexactly(4))
+    await ur.readexactly(16)  # pixel format: xrdp's own SetPixelFormat is replayed
+    await ur.readexactly(struct.unpack(">I", await ur.readexactly(4))[0])
+    return w, h
+
+
+class RFBFramingError(Exception):
+    """The client->server stream can no longer be framed; the session must end."""
+
+
+class ClientStream:
+    """Frames the client->server RFB stream (after ClientInit) to spot SetDesktopSize.
+
+    Bytes are forwarded unchanged; only a single-screen SetDesktopSize may have
+    its size rounded down to `align` (so fractional scales stay possible), and in
+    virtual mode it is consumed here (the bridge resizes the headless output).
+    RFB client messages carry no generic length field, so an unknown message type
+    cannot be skipped: it raises RFBFramingError and the connection is closed
+    (forwarding a guessed byte count would desynchronise every later message).
+    PointerEvent coordinates are clamped (read signed, so a wrapped negative
+    coordinate becomes 0) into the current server framebuffer; on_pointer is a
+    pure notification (no I/O, never blocks or drops the event).
+    """
+
+    FIXED = {0: 20, 3: 10, 4: 8, 5: 6, 150: 10}
+
+    def __init__(self, align: int, on_resize, intercept: bool = False, on_pixel_format=None,
+                 server_fb=None, on_pointer=None, drop_encodings=()) -> None:
+        self.buf = bytearray()
+        self.init_done = False
+        self.raw = False
+        self.failed = ""
+        self.align = max(0, int(align))
+        self.on_resize = on_resize
+        self.intercept = intercept  # virtual mode: SetDesktopSize is answered by the bridge, never by wayvnc
+        self.on_pixel_format = on_pixel_format
+        # neatvnc 0.9 (raw encoder, pixel_to_cpixel) segfaults on an update request larger than
+        # its framebuffer -- which xrdp sends right after a resize, before wayvnc caught up.
+        self.server_fb = server_fb
+        self.on_pointer = on_pointer
+        # encodings removed from xrdp's SetEncodings: the cursor pseudo-encodings when wayvnc draws
+        # the pointer into the frames itself (no second, client-side cursor)
+        self.drop_encodings = frozenset(drop_encodings)
+        # last SetPixelFormat / SetEncodings, replayed to a restarted wayvnc
+        self.setup: dict[int, bytes] = {}
+        self.requests = 0  # FramebufferUpdateRequests seen (delivered-FPS stats)
+
+    def _need(self) -> int | None:
+        b = self.buf
+        if not b:
+            return None
+        t = b[0]
+        if t in self.FIXED:
+            return self.FIXED[t]
+        if t == 2:
+            return None if len(b) < 4 else 4 + 4 * struct.unpack(">H", b[2:4])[0]
+        if t == 6:
+            return None if len(b) < 8 else 8 + abs(struct.unpack(">i", b[4:8])[0])
+        if t == 248:
+            return None if len(b) < 9 else 9 + b[8]
+        if t == MSG_SET_DESKTOP_SIZE:
+            return None if len(b) < 8 else 8 + 16 * b[6]
+        return -1
+
+    def feed(self, data: bytes) -> bytes:
+        if self.failed:
+            raise RFBFramingError(f"{self.failed}; connection already closed")
+        if self.raw:
+            return data
+        self.buf += data
+        out = bytearray()
+        if not self.init_done:
+            out += self.buf[:1]  # ClientInit (shared flag)
+            del self.buf[:1]
+            self.init_done = True
+        while self.buf:
+            need = self._need()
+            if need is None or (need > 0 and len(self.buf) < need):
+                break
+            if need < 0:
+                t = self.buf[0]
+                self.buf.clear()
+                self.failed = f"unknown client message type {t}"  # nothing more is forwarded
+                raise RFBFramingError(f"unknown client message type {t}; closing the connection")
+            msg = bytearray(self.buf[:need])
+            del self.buf[:need]
+            if msg[0] == 3:
+                self.requests += 1
+            if msg[0] == 3 and self.server_fb:
+                fw, fh = self.server_fb()
+                if fw and fh:
+                    x, y, w, h = struct.unpack(">HHHH", msg[2:10])
+                    x, y = min(x, fw - 1), min(y, fh - 1)
+                    w, h = max(1, min(w, fw - x)), max(1, min(h, fh - y))
+                    struct.pack_into(">HHHH", msg, 2, x, y, w, h)
+            if msg[0] == 5:
+                if self.server_fb:
+                    fw, fh = self.server_fb()
+                    if fw and fh:
+                        raw_x, raw_y = struct.unpack(">hh", msg[2:6])
+                        px = max(0, min(raw_x, fw - 1))
+                        py = max(0, min(raw_y, fh - 1))
+                        struct.pack_into(">HH", msg, 2, px, py)
+                if self.on_pointer:
+                    self.on_pointer(msg[1])  # notification only: the event is always forwarded
+            if msg[0] == 2 and self.drop_encodings:
+                msg = self._filter_encodings(msg)
+            if msg[0] in (0, 2):
+                self.setup[msg[0]] = bytes(msg)
+            if msg[0] == 0 and self.on_pixel_format:
+                self.on_pixel_format(msg[4])  # bits-per-pixel of SetPixelFormat
+            if msg[0] == MSG_SET_DESKTOP_SIZE:
+                msg = self._desktop_size(msg)
+                if self.intercept:
+                    continue
+            out += msg
+        return bytes(out)
+
+    def _filter_encodings(self, msg: bytearray) -> bytearray:
+        n = struct.unpack(">H", msg[2:4])[0]
+        encs = struct.unpack(f">{n}i", msg[4:4 + 4 * n])
+        keep = [e for e in encs if e not in self.drop_encodings]
+        if len(keep) == n:
+            return msg
+        return bytearray(struct.pack(">BxH", 2, len(keep)) + struct.pack(f">{len(keep)}i", *keep))
+
+    def _desktop_size(self, msg: bytearray) -> bytearray:
+        w, h = struct.unpack(">HH", msg[2:6])
+        n = msg[6]
+        if n == 1 and self.align > 1:
+            aw, ah = w - w % self.align, h - h % self.align
+            if (aw, ah) != (w, h) and aw > 0 and ah > 0:
+                struct.pack_into(">HH", msg, 2, aw, ah)
+                struct.pack_into(">HH", msg, 8 + 8, aw, ah)  # screen[0] w,h after id(4) x(2) y(2)
+                log(f"client asked {w}x{h}; aligned to {aw}x{ah}")
+                w, h = aw, ah
+        self.on_resize(w, h, n)
+        return msg
+
+ENC_RAW, ENC_COPYRECT, ENC_CURSOR, ENC_DESKTOP_SIZE, ENC_EDS = 0, 1, -239, -223, -308
+ENC_XCURSOR = -240
+CURSOR_ENCODINGS = (ENC_CURSOR, ENC_XCURSOR)
+
+
+def eds_update(reason: int, status: int, w: int, h: int) -> bytes:
+    """A FramebufferUpdate holding one ExtendedDesktopSize rect (single screen at 0,0)."""
+    return (struct.pack(">BBH", 0, 0, 1) + struct.pack(">HHHHi", reason, status, w, h, ENC_EDS)
+            + struct.pack(">B3x", 1) + struct.pack(">IHHHHI", 1, 0, 0, w, h, 0))
+
+
+class ServerStream:
+    """Frames the server->client RFB stream (wayvnc -> xrdp) in virtual mode.
+
+    wayvnc runs with --disable-resizing (its own resize path goes through
+    wlr-output-management, which on Hyprland rewrites the PHYSICAL monitor's rule), so
+    neatvnc neither advertises ExtendedDesktopSize nor answers SetDesktopSize. The
+    bridge does both on its behalf:
+      * right after ServerInit it injects an initial-geometry ExtendedDesktopSize
+        update, which tells xrdp the server can be resized;
+      * a client SetDesktopSize is answered at once (reason 1 = this client,
+        status 0) at the next message boundary -- xrdp gives up on the resize if the
+        update it reads next is not the reply -- and the output mode follows;
+      * until wayvnc reports the new size, its size rects still carrying the old
+        size are rewritten to the target, so xrdp never "resizes the client back";
+      * if Hyprland never reaches the size, the real size is announced (reason 0)
+        and xrdp fits the client to it.
+    Injections happen only at message boundaries. Unknown encodings end framing
+    (raw passthrough, resizing disabled for the session).
+    """
+
+    def __init__(self, expect: tuple[int, int] | None = None) -> None:
+        # expect: the output's real pixel size per Hyprland. wayvnc 0.10+ may announce a scaled
+        # output's LOGICAL size in ServerInit and correct it with an ExtendedDesktopSize right after;
+        # xrdp is shown the real size from the start instead.
+        self.expect = expect
+        self.small = bytearray()
+        self.state = "init"
+        self.need = 24
+        self.skip = 0
+        self.after = "msg"
+        self.rects = 0
+        self.bpp = 4
+        self.fb = (0, 0)
+        self.raw = False
+        self.target: tuple[int, int] | None = None  # size promised to xrdp, not yet seen from wayvnc
+        self.drop = False  # the payload being skipped is withheld from xrdp
+        self.queue: list[bytes] = []
+        self.writer: asyncio.StreamWriter | None = None
+        self.updates = 0  # FramebufferUpdates relayed to xrdp (= frames delivered)
+
+    @property
+    def boundary(self) -> bool:
+        return self.state == "msg" and not self.small and not self.skip
+
+    def inject(self, data: bytes) -> None:
+        if self.raw:
+            return
+        if self.boundary and self.writer is not None:
+            self.writer.write(data)
+        else:
+            self.queue.append(data)
+
+    def set_bpp(self, bits: int) -> None:
+        self.bpp = 4 if bits in (24, 32) else max(1, (bits + 7) // 8)
+
+    def _rect_done(self) -> None:
+        self.rects -= 1
+        if self.rects > 0:
+            self.state, self.need = "rect", 12
+        else:
+            self.state, self.need = "msg", 1
+
+    def _skip_then(self, n: int, after: str) -> None:
+        self.skip = n
+        if after == "rect":
+            self._rect_done()
+        else:
+            self.state, self.need = "msg", 1
+        # state already points at what follows the skipped payload
+
+    def feed(self, data: bytes) -> bytes:
+        if self.raw:
+            return data
+        out = bytearray()
+        i, n = 0, len(data)
+        while i < n:
+            if self.skip:
+                k = min(self.skip, n - i)
+                if not self.drop:
+                    out += data[i:i + k]
+                i += k
+                self.skip -= k
+                if not self.skip:
+                    self.drop = False
+                if not self.skip and self.boundary and self.queue:
+                    out += b"".join(self.queue)
+                    self.queue.clear()
+                continue
+            k = min(self.need - len(self.small), n - i)
+            self.small += data[i:i + k]
+            i += k
+            if len(self.small) < self.need:
+                break
+            self._handle(out)
+            if self.raw:
+                out += data[i:]
+                break
+            if self.boundary and self.queue:
+                out += b"".join(self.queue)
+                self.queue.clear()
+        return bytes(out)
+
+    def _handle(self, out: bytearray) -> None:
+        b = self.small
+        st = self.state
+        if st == "init":
+            self.need = 24 + struct.unpack(">I", b[20:24])[0]
+            self.state = "init2"
+            if self.need > 24:
+                return
+            st = "init2"
+        if st == "init2":
+            self.fb = struct.unpack(">HH", b[0:4])
+            if self.expect and self.expect != self.fb and all(self.expect):
+                log(f"wayvnc announced {self.fb[0]}x{self.fb[1]}; the output is "
+                    f"{self.expect[0]}x{self.expect[1]}, shown to xrdp until wayvnc catches up")
+                struct.pack_into(">HH", b, 0, *self.expect)
+                self.fb = self.expect
+                self.target = self.expect
+            self.set_bpp(b[4])
+            out += b
+            self.small = bytearray()
+            self.state, self.need = "msg", 1
+            out += eds_update(0, 0, *self.fb)  # initial geometry: "this server can be resized"
+            return
+        if st == "msg":
+            t = b[0]
+            hdr = {0: 4, 1: 6, 2: 1, 3: 8, 150: 1, 248: 9}.get(t)
+            if hdr is None:
+                log(f"unknown server message type {t}; passing through, resizing disabled")
+                self.raw = True
+                out += b
+                self.small = bytearray()
+                return
+            if hdr > 1:
+                self.state, self.need = "hdr", hdr
+                return
+            out += b
+            self.small = bytearray()
+            self.need = 1
+            return
+        if st == "hdr":
+            t = b[0]
+            out += b
+            self.small = bytearray()
+            if t == 0:
+                self.updates += 1
+                self.rects = struct.unpack(">H", b[2:4])[0]
+                if self.rects:
+                    self.state, self.need = "rect", 12
+                else:
+                    self.state, self.need = "msg", 1
+            elif t == 1:
+                self._skip_then(6 * struct.unpack(">H", b[4:6])[0], "msg")
+            elif t == 3:
+                self._skip_then(abs(struct.unpack(">i", b[4:8])[0]), "msg")
+            elif t == 248:
+                self._skip_then(b[8], "msg")
+            return
+        if st == "rect":
+            x, y, w, h, enc = struct.unpack(">HHHHi", b[:12])
+            if DEBUG and enc != ENC_RAW:
+                log(f"S2C rect enc={enc} x={x} y={y} {w}x{h} fb={self.fb} target={self.target}")
+            if enc in (ENC_RAW, ENC_COPYRECT) and self.target is not None:
+                if (w, h) == self.target or (x == 0 and y == 0 and (w, h) == self.target):
+                    # wayvnc has started delivering rects of the new target geometry
+                    self.fb = self.target
+                    self.target = None
+                    out += b
+                    self.small = bytearray()
+                    self._skip_then(w * h * self.bpp if enc == ENC_RAW else 4, "rect")
+                elif x + w > self.target[0] or y + h > self.target[1]:
+                    # pixels of the OLD framebuffer after xrdp was promised the new size: xrdp drops
+                    # the connection on rects outside its layout (and pixman rejects empty ones), so
+                    # each becomes a single black pixel at 0,0
+                    out += struct.pack(">HHHHi", 0, 0, 1, 1, ENC_RAW) + bytes(self.bpp)
+                    self.small = bytearray()
+                    self.drop = True
+                    self._skip_then(w * h * self.bpp if enc == ENC_RAW else 4, "rect")
+                    if not self.skip:
+                        self.drop = False
+                else:
+                    out += b
+                    self.small = bytearray()
+                    self._skip_then(w * h * self.bpp if enc == ENC_RAW else 4, "rect")
+            elif enc == ENC_RAW:
+                out += b
+                self.small = bytearray()
+                self._skip_then(w * h * self.bpp, "rect")
+            elif enc == ENC_COPYRECT:
+                out += b
+                self.small = bytearray()
+                self._skip_then(4, "rect")
+            elif enc == ENC_CURSOR:
+                out += b
+                self.small = bytearray()
+                self._skip_then(w * h * self.bpp + ((w + 7) // 8) * h, "rect")
+            elif enc == ENC_DESKTOP_SIZE:  # always re-encoded as ExtendedDesktopSize (same rect slot)
+                self.fb = (w, h)
+                self.small = bytearray()
+                out += eds_update(0, 0, *self._seen((w, h)))[4:]
+                self._rect_done()
+            elif enc == ENC_EDS:
+                self.state, self.need = "eds", 16
+            else:
+                log(f"unexpected encoding {enc}; passing through, resizing disabled")
+                self.raw = True
+                out += b
+                self.small = bytearray()
+            return
+        if st == "eds":
+            nscr = b[12]
+            full = 16 + 16 * nscr
+            if len(b) < full:
+                self.need = full
+                return
+            x, y, w, h = struct.unpack(">HHHH", b[:8])
+            self.fb = (w, h)
+            msg = bytearray(b)
+            if x != 1:
+                tw, th = self._seen((w, h))
+                if (tw, th) != (w, h):
+                    struct.pack_into(">HH", msg, 4, tw, th)
+                    if nscr == 1:
+                        struct.pack_into(">HH", msg, 16 + 8, tw, th)  # screen[0] w,h
+                if nscr == 1:
+                    # xrdp compares layouts INCLUDING screen id/flags and "resizes the client back"
+                    # (deactivate/reactivate) on any mismatch; keep the id the bridge announced.
+                    struct.pack_into(">I", msg, 16, 1)
+                    struct.pack_into(">I", msg, 16 + 12, 0)
+            out += msg
+            self.small = bytearray()
+            self._rect_done()
+
+    def resync(self) -> bytes:
+        """The upstream (wayvnc) died: bytes that complete the server message xrdp is in the middle
+        of (zero padding for a forwarded payload, a 1x1 black raw rect for every rect still owed),
+        after which the stream is at a message boundary again. Partially read headers were never
+        forwarded and are dropped. Raises RFBFramingError if xrdp cannot be resynchronised."""
+        if self.raw or self.state in ("init", "init2"):
+            raise RFBFramingError("server stream not framed; cannot resume after a wayvnc restart")
+        out = bytearray()
+        if self.skip:
+            if not self.drop:
+                out += bytes(self.skip)
+            self.skip = 0
+            self.drop = False
+        self.small = bytearray()
+        if self.state in ("rect", "eds") and self.rects > 0:
+            filler = struct.pack(">HHHHi", 0, 0, 1, 1, ENC_RAW) + bytes(self.bpp)
+            out += filler * self.rects
+        self.rects = 0
+        self.state, self.need = "msg", 1
+        if self.queue:
+            out += b"".join(self.queue)
+            self.queue.clear()
+        return bytes(out)
+
+    def _seen(self, size: tuple[int, int]) -> tuple[int, int]:
+        """Size to show xrdp for a server size rect: the promised target until wayvnc catches up."""
+        if self.target is None:
+            return size
+        if size == self.target:
+            self.target = None
+            return size
+        return self.target
+
+    def request(self, w: int, h: int) -> None:
+        self.target = (w, h)
+        self.inject(eds_update(1, 0, w, h))
+
+
+async def _pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter, xform=None) -> None:
+    try:
+        while True:
+            data = await r.read(BUF)
+            if not data:
+                break
+            if xform is not None:
+                data = xform(data)
+                if not data:
+                    continue
+            w.write(data)
+            await w.drain()
+    except (ConnectionError, asyncio.IncompleteReadError):
+        pass
+    except RFBFramingError as e:
+        log(str(e))
+    except Exception as e:  # a framing bug must be visible, not a silent disconnect
+        import traceback
+        log(f"relay error: {e!r}\n{traceback.format_exc()}")
+    finally:
+        try:
+            w.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------- Hyprland
+
+HYPRCTL_TIMEOUT = 2.0  # seconds; every call runs off the event loop (asyncio.to_thread)
+
+
+def nested_compositor(pid: int) -> bool:
+    """True if Hyprland pid was started INSIDE another Wayland/X session (WAYLAND_DISPLAY or DISPLAY
+    in its initial environment): a nested test compositor (a window on the desktop), never the
+    operator's session. A session Hyprland started from a tty has neither."""
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read().split(b"\0")
+    except OSError:
+        return False
+    return any(e.startswith((b"WAYLAND_DISPLAY=", b"DISPLAY=")) and len(e.split(b"=", 1)[1]) > 0 for e in env)
+
+
+class Hypr:
+    """hyprctl against the newest live Hyprland SESSION instance (re-resolved per attach): nested
+    Hyprland instances (test compositors running as a window, nested_compositor) are skipped, so a
+    nested test instance started after the session never captures the remote display.
+
+    All methods block (subprocess); the Bridge only calls them through
+    asyncio.to_thread so frame forwarding on the event loop never waits on hyprctl.
+    """
+
+    def __init__(self, rt: str, pin: str = "") -> None:
+        self.rt = rt
+        self.sig = ""
+        self.env = dict(os.environ)
+        # test instances only (display service config "hypr_instance"): one named instance, nested or not
+        self.pin = pin
+
+    def resolve(self) -> bool:
+        best, bestt = None, -1.0
+        base = os.path.join(self.rt, "hypr")
+        try:
+            names = os.listdir(base)
+        except OSError:
+            names = []
+        if self.pin:
+            names = [n for n in names if n == self.pin]
+        for name in names:
+            lock = os.path.join(base, name, "hyprland.lock")
+            try:
+                with open(lock) as f:
+                    lines = f.read().split("\n")
+                pid, wl = int(lines[0]), lines[1].strip()
+                os.kill(pid, 0)
+                if not wl or not os.path.exists(os.path.join(self.rt, wl)):
+                    continue
+                if nested_compositor(pid) and not self.pin:
+                    continue
+                t = os.stat(lock).st_mtime
+            except (OSError, ValueError, IndexError):
+                continue
+            if t >= bestt:
+                best, bestt = (name, wl), t
+        if not best:
+            return False
+        self.sig = best[0]
+        self.env["HYPRLAND_INSTANCE_SIGNATURE"], self.env["WAYLAND_DISPLAY"] = best
+        return True
+
+    def ctl(self, *args: str) -> str:
+        try:
+            return subprocess.run(["hyprctl", *args], capture_output=True, text=True,
+                                  env=self.env, timeout=HYPRCTL_TIMEOUT).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            log(f"hyprctl {args[0]} failed: {e}")
+            return ""
+
+    def eval(self, lua: str) -> bool:
+        out = self.ctl("eval", lua)
+        if out != "ok":
+            log(f"hyprctl eval refused: {out!r} for {lua}")
+            return False
+        return True
+
+    def monitors(self) -> list[dict]:
+        try:
+            return json.loads(self.ctl("-j", "monitors", "all") or "[]")
+        except ValueError:
+            return []
+
+    def monitor(self, name: str) -> dict | None:
+        return next((m for m in self.monitors() if m.get("name") == name), None)
+
+    def socket2(self) -> str:
+        return os.path.join(self.rt, "hypr", self.sig, ".socket2.sock")
+
+    def cursorpos(self) -> tuple[int, int] | None:
+        return parse_cursorpos(self.ctl("cursorpos"))
+
+    def warp_local(self, x: int, y: int, monitor: str) -> bool:
+        """Give the seat back to a local output: focus that monitor, then put the cursor at x,y
+        (in this order: focusing a monitor may warp the cursor to its centre)."""
+        ok = self.eval(f"hl.dispatch(hl.dsp.focus({{monitor = {lua_str(monitor)}}}))")
+        return self.eval(f"hl.dispatch(hl.dsp.cursor.move({{x = {int(x)}, y = {int(y)}}}))") and ok
+
+
+def lua_str(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def parse_cursorpos(raw: str) -> tuple[int, int] | None:
+    """`hyprctl cursorpos` ("X, Y") -> (X, Y); anything else -> None."""
+    parts = raw.split(",")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0].strip()), int(parts[1].strip())
+    except ValueError:
+        return None
+
+
+def _logical_rect(m: dict) -> tuple[int, int, int, int]:
+    """Layout rect (x, y, w, h) of a hyprctl monitor in logical (scaled) pixels."""
+    sc = float(m.get("scale") or 1) or 1.0
+    w, h = int(m.get("width", 0)), int(m.get("height", 0))
+    if int(m.get("transform", 0)) % 2:
+        w, h = h, w
+    return int(m.get("x", 0)), int(m.get("y", 0)), round(w / sc), round(h / sc)
+
+
+def monitor_at(mons: list[dict], pos: tuple[int, int] | None) -> str | None:
+    """Name of the enabled monitor whose layout rect contains pos."""
+    if pos is None:
+        return None
+    px, py = pos
+    for m in mons:
+        if m.get("disabled"):
+            continue
+        x, y, w, h = _logical_rect(m)
+        if x <= px < x + w and y <= py < y + h:
+            return m.get("name")
+    return None
+
+
+def should_restore_local(remote_pointer: bool, saved: tuple[int, int, str] | None,
+                         cursor_now: tuple[int, int] | None, mons: list[dict], vout: str) -> bool:
+    """Detach-time decision: give the seat cursor back to the local operator only if the
+    remote client sent pointer input this attach, a local position was saved at attach,
+    and the cursor is STILL on the remote display (the operator has not taken it back);
+    the saved local monitor must still exist."""
+    if not remote_pointer or saved is None:
+        return False
+    if monitor_at(mons, cursor_now) != vout:
+        return False
+    return any(m.get("name") == saved[2] and not m.get("disabled") for m in mons)
+
+
+# ---------------------------------------------------------------- sessions
+
+class Bridge:
+    """One remote display, one RDP client at a time.
+
+    Single seat: Hyprland has ONE pointer and ONE keyboard focus. wayvnc injects the
+    remote client's input through virtual-pointer/keyboard on that same seat, so remote
+    pointer input necessarily moves the operator's cursor onto the remote display while
+    the client uses it. The bridge never warps on button release or hover (that would
+    fight both users on every event); it saves the local position at attach and gives
+    the cursor + monitor focus back once, at detach, and only if the remote client
+    moved it and it is still on the remote display.
+    """
+
+    def __init__(self, cfg: dict) -> None:
+        self.cfg = cfg
+        self.mode = cfg.get("mode", "virtual")
+        self.vout = cfg.get("virtual_output", "HEADLESS-MIOS-RDP")
+        self.hypr = Hypr(cfg["runtime_dir"], str(cfg.get("hypr_instance") or ""))
+        self.lock = asyncio.Lock()
+        self.current: asyncio.Task | None = None
+        self.linger: asyncio.Task | None = None
+        self.detach_task: asyncio.Task | None = None
+        self.position = (0, 0)
+        self.dpi: float | None = None
+        self.sstream: ServerStream | None = None
+        self.saved_local: tuple[int, int, str] | None = None  # (x, y, monitor) before the remote client
+        self.remote_pointer = False  # the remote client sent pointer input since saved_local
+        self.output_gone = False  # virtual_output was removed: end the session, never restart wayvnc
+        self.wayvnc_ok: bool | None = None  # configured wayvnc survives a scaled output (checked once)
+        self.wayvnc_ver: tuple[int, int, int] | None = None
+        # (w, h, scale) the bridge last gave virtual_output: re-applied after a Hyprland config
+        # reload (which re-evaluates the projection's monitor rules and drops the bridge's
+        # hl.monitor rule: the catch-all "preferred, auto, 1" would move the phone off the primary)
+        self.applied: tuple[int, int, float] | None = None
+        self.reapply_task: asyncio.Task | None = None
+        self.reapply_restate = False
+        self.overlay = False  # wayvnc draws the pointer into the frames this session
+        self._warned: set[str] = set()
+        self.hz = target_hz(cfg)  # remote display refresh ceiling ([remote.rdp].target_hz)
+        self.pacing, self.min_hz = refresh_pacing(cfg)
+        self.out_hz = self.hz  # refresh the virtual output runs at now (Pacer; target_hz when "fixed")
+        self.pacer: Pacer | None = None
+        self.stats: Stats | None = None
+
+    def _warn_once(self, key: str, msg: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            log(msg)
+
+    async def _call(self, fn, *args):
+        """Run a blocking Hypr/journal call in a worker thread (never on the event loop)."""
+        return await asyncio.to_thread(fn, *args)
+
+    # -- local cursor (single seat) -------------------------------------------
+    def _on_pointer(self, button_mask: int) -> None:
+        """ClientStream hook: pure bookkeeping on the event loop, no I/O, no warps."""
+        if not self.remote_pointer:
+            self.remote_pointer = True
+
+    async def _save_local(self) -> None:
+        """At attach: remember where the local operator's cursor is (once per remote use)."""
+        if self.saved_local is not None:
+            return  # a replacing client keeps the position saved by the first one
+        pos = await self._call(self.hypr.cursorpos)
+        mons = await self._call(self.hypr.monitors)
+        name = monitor_at(mons, pos)
+        if pos is not None and name and name != self.vout:
+            self.saved_local = (pos[0], pos[1], name)
+        self.remote_pointer = False
+
+    async def _restore_local(self) -> None:
+        """At detach: hand the cursor back if the remote client left it on the remote display."""
+        saved, moved = self.saved_local, self.remote_pointer
+        self.saved_local, self.remote_pointer = None, False
+        if saved is None or not moved:
+            return
+        cur = await self._call(self.hypr.cursorpos)
+        mons = await self._call(self.hypr.monitors)
+        if self.current is not None:  # a new client attached meanwhile: it owns the remote display
+            self.saved_local, self.remote_pointer = saved, moved
+            return
+        if should_restore_local(moved, saved, cur, mons, self.vout):
+            await self._call(self.hypr.warp_local, *saved)
+            log(f"remote client left the cursor on {self.vout}; returned it to {saved[2]} {saved[0]},{saved[1]}")
+
+    # -- virtual output -------------------------------------------------------
+    def _is_remote(self, name: str) -> bool:
+        """Remote displays placed as one group: virtual_output and <virtual_output>-* siblings."""
+        return name == self.vout or name.startswith(self.vout + "-")
+
+    def _primary_rect(self, mons: list[dict]) -> tuple[int, int, int, int] | None:
+        """Logical rect of the primary LOCAL output: [desktop.hyprland.monitors.*].primary (mios-rdp
+        passes its name as primary_output), else the local output at 0,0, else the first local one."""
+        local = [m for m in mons if not m.get("disabled") and not str(m.get("name", "")).startswith("HEADLESS-")]
+        want = str(self.cfg.get("primary_output", "")).strip()
+        pick = next((m for m in local if m.get("name") == want), None) if want else None
+        if pick is None:
+            pick = next((m for m in local if (m.get("x"), m.get("y")) == (0, 0)), None) or (local[0] if local else None)
+            if want and pick is not None:
+                self._warn_once(f"primary:{want}", f"primary output {want} is not an enabled local output; "
+                                f"attaching below {pick.get('name')}")
+        return _logical_rect(pick) if pick else None
+
+    def _layout(self, mons: list[dict], own: tuple[int, int, float] | None = None) -> dict[str, tuple[int, int]]:
+        """Target logical positions of every remote output. own = (w, h, scale) about to be applied to
+        virtual_output (its current size otherwise). virtual_attach: "below-center" (default) | "XxY"."""
+        attach = str(self.cfg.get("virtual_attach", "below-center")).strip().lower()
+        m = re.fullmatch(r"(-?\d+)x(-?\d+)", attach)
+        if m:
+            return {self.vout: (int(m.group(1)), int(m.group(2)))}
+        if attach != "below-center":
+            log(f"unknown [remote.rdp].virtual_attach {attach!r}; using below-center")
+        live = {mon.get("name"): mon for mon in mons if not mon.get("disabled")}
+        group = sorted({n for n in live if n and self._is_remote(n)} | {self.vout})
+        widths = []
+        for name in group:
+            if name == self.vout and own is not None:
+                w, h, sc = own
+                widths.append(round(w / (sc or 1.0)))
+            elif name in live:
+                widths.append(_logical_rect(live[name])[2])
+            else:
+                widths.append(0)
+        primary = self._primary_rect(mons)
+        if primary is None:
+            # no enabled local output (headless host, all monitors off): never centre on a 0-wide
+            # rect at 0,0 (that put the phone at a negative x); the group starts at 0,0 instead
+            self._warn_once("noprimary", "no enabled local output to attach below; remote output(s) at 0x0")
+            return dict(zip(group, attach_below((0, 0, sum(widths), 0), widths)))
+        self._warned.discard("noprimary")
+        return dict(zip(group, attach_below(primary, widths)))
+
+    def _place(self, own: tuple[int, int, float] | None = None) -> tuple[int, int]:
+        """Blocking (worker thread): compute the group layout, move the OTHER remote outputs whose
+        position changed, and return/remember virtual_output's position (applied by the caller with
+        its mode + scale). Local outputs are never touched."""
+        mons = self.hypr.monitors()
+        targets = self._layout(mons, own)
+        for name, (x, y) in targets.items():
+            if name == self.vout or not self._is_remote(name):
+                continue
+            mon = next((mm for mm in mons if mm.get("name") == name), None)
+            if mon is None or (mon.get("x"), mon.get("y")) == (x, y):
+                continue
+            mode = f"{mon.get('width')}x{mon.get('height')}"
+            if mon.get("refreshRate"):
+                mode += f"@{float(mon['refreshRate']):.3f}"
+            self.hypr.eval(
+                f"hl.monitor({{output = {lua_str(name)}, mode = {lua_str(mode)}, "
+                f"position = {lua_str(f'{x}x{y}')}, scale = {float(mon.get('scale') or 1):.6f}, "
+                f"transform = {int(mon.get('transform', 0))}}})")
+        self.position = targets.get(self.vout, self.position)
+        return self.position
+
+    def _monitor_rule(self, mode: str, scale: float) -> bool:
+        x, y = self.position
+        mode = with_refresh(mode, self.out_hz)
+        return self.hypr.eval(
+            f"hl.monitor({{output = {lua_str(self.vout)}, mode = {lua_str(mode)}, "
+            f"position = {lua_str(f'{x}x{y}')}, scale = {scale:.6f}, transform = 0}})")
+
+    def _set_refresh(self, hz: int, why: str) -> bool:
+        """Blocking (worker thread): run virtual_output at hz (same mode, scale and position). True if a
+        rule was applied (the live refresh differed)."""
+        self.out_hz = int(hz)
+        m = self.hypr.monitor(self.vout)
+        if not m or self.applied is None:
+            return False
+        if abs(float(m.get("refreshRate") or 0) - self.out_hz) < 0.5:
+            return False
+        w, h, sc = self.applied
+        ok = self._monitor_rule(f"{w}x{h}", sc)
+        log(f"{why}: {self.vout} refresh {float(m.get('refreshRate') or 0):g} -> {self.out_hz} Hz"
+            + ("" if ok else " (refused)"))
+        return ok
+
+    def _vout_size(self) -> tuple[int, int] | None:
+        """Blocking (worker thread): virtual_output's pixel mode."""
+        m = self.hypr.monitor(self.vout)
+        return (int(m.get("width", 0)), int(m.get("height", 0))) if m else None
+
+    def _recenter(self, mode: str) -> None:
+        """Blocking (worker thread): after Hyprland applied a mode/scale, place virtual_output from
+        its ACTUAL logical size (Hyprland may substitute a scale) and fix the position if needed."""
+        m = self.hypr.monitor(self.vout)
+        if not m:
+            return
+        sc = float(m.get("scale") or 1.0)
+        pos = self._place(None)
+        if (m.get("x"), m.get("y")) != pos:
+            self._monitor_rule(mode, sc)
+            log(f"{self.vout} re-centred at {pos[0]}x{pos[1]} (scale {sc:g})")
+
+    def _workspace_rule(self) -> None:
+        ws = str(self.cfg.get("virtual_workspace", "")).strip()
+        if ws:
+            sel = ws if re.fullmatch(r"\d+|name:.+", ws) else f"name:{ws}"
+            self.hypr.eval(f"hl.workspace_rule({{workspace = {lua_str(sel)}, "
+                           f"monitor = {lua_str(self.vout)}, default = true}})")
+
+    def reapply(self, why: str, restate: bool = False) -> bool:
+        """Blocking (worker thread): put virtual_output back to the mode, scale and below-centre
+        position the bridge gave it (self.applied) if Hyprland moved, resized or rescaled it -- a
+        config reload re-evaluates the projection, whose catch-all monitor rule replaces the
+        bridge's runtime hl.monitor rule. restate also re-adds the workspace rule (a reload drops
+        it too). True if a rule was applied. Local outputs are never touched."""
+        if self.applied is None:
+            return False
+        m = self.hypr.monitor(self.vout)
+        if not m:
+            return False
+        if restate:
+            self._workspace_rule()
+        w, h, sc = self.applied
+        pos = self._place((w, h, sc))
+        cur = (int(m.get("width", 0)), int(m.get("height", 0)), float(m.get("scale") or 1.0),
+               (m.get("x"), m.get("y")), int(m.get("transform", 0)), float(m.get("refreshRate") or 0))
+        if cur[:2] == (w, h) and abs(cur[2] - sc) < 1e-3 and cur[3] == pos and cur[4] == 0 \
+                and abs(cur[5] - self.out_hz) < 0.5:
+            return False
+        self._monitor_rule(f"{w}x{h}", sc)
+        log(f"{why}: {self.vout} was {cur[0]}x{cur[1]}@{cur[5]:g} scale {cur[2]:g} at {cur[3][0]}x{cur[3][1]}; "
+            f"re-applied {w}x{h}@{self.out_hz} scale {sc:g} at {pos[0]}x{pos[1]}")
+        return True
+
+    async def _reapply_soon(self, why: str, restate: bool) -> None:
+        """Debounced reapply after a Hyprland event (never inside the event read loop); verified a
+        few times because Hyprland applies reloaded monitor rules on a later frame."""
+        self.reapply_restate = self.reapply_restate or restate
+        if self.reapply_task is not None and not self.reapply_task.done():
+            return
+        self.reapply_task = asyncio.ensure_future(self._reapply_run(why))
+
+    async def _reapply_run(self, why: str) -> None:
+        ss = self.sstream
+        want = self.applied[:2] if self.applied else None
+        if ss is not None and want and ss.target is None and ss.fb == want:
+            ss.target = want  # hide a transient reload mode from xrdp (it would resize the client)
+        try:
+            await asyncio.sleep(float(self.cfg.get("reapply_delay_seconds", 0.3)))
+            for _ in range(4):
+                restate, self.reapply_restate = self.reapply_restate, False
+                if not await self._call(self.reapply, why, restate):
+                    break
+                await asyncio.sleep(0.5)
+        finally:
+            if ss is not None and want and ss.target == want and ss.fb == want:
+                ss.target = None
+
+    def ensure_virtual(self) -> bool:
+        """Blocking (worker thread): create the headless output unless it exists."""
+        m = self.hypr.monitor(self.vout)
+        if m:
+            if self.applied is None:
+                self.applied = (int(m.get("width", 0)), int(m.get("height", 0)), float(m.get("scale") or 1.0))
+            return True
+        init = str(self.cfg.get("virtual_initial_mode", "1280x720"))
+        mm = re.fullmatch(r"(\d+)x(\d+)(?:@.*)?", init)
+        iw, ih = (int(mm.group(1)), int(mm.group(2))) if mm else (1280, 720)
+        self._place((iw, ih, 1.0))
+        self._workspace_rule()  # re-stated before every create: Hyprland did not reuse it for a re-added output
+        self._monitor_rule(init, 1.0)
+        out = self.hypr.ctl("output", "create", "headless", self.vout)
+        for _ in range(30):
+            if self.hypr.monitor(self.vout):
+                self.applied = (iw, ih, 1.0)
+                log(f"created virtual output {self.vout} at {self.position[0]}x{self.position[1]} ({out})")
+                return True
+            time.sleep(0.1)
+        log(f"could not create virtual output {self.vout}: {out!r}")
+        return False
+
+    def remove_virtual(self, why: str) -> None:
+        """Blocking (worker thread)."""
+        if self.hypr.monitor(self.vout):
+            log(f"removing virtual output {self.vout} ({why}): {self.hypr.ctl('output', 'remove', self.vout)}")
+        write_display_hint(self.cfg["runtime_dir"], self.vout, None)
+
+    async def _linger_remove(self, seconds: float) -> None:
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+        async with self.lock:
+            if self.current is None or self.current.done():
+                await self._call(self.remove_virtual, f"no client for {seconds:g}s")
+        self.linger = None
+
+    def detached(self) -> None:
+        if self.mode != "virtual":
+            return
+        self.detach_task = asyncio.ensure_future(self._after_detach())
+
+    async def _after_detach(self) -> None:
+        # Cursor first: once the output is removed Hyprland relocates the cursor itself.
+        await self._restore_local()
+        if self.cfg.get("keep_virtual_output", False) or self.current is not None:
+            return
+        secs = float(self.cfg.get("linger_seconds", 20))
+        if secs <= 0:
+            await self._call(self.remove_virtual, "client detached")
+        else:
+            self.linger = asyncio.ensure_future(self._linger_remove(secs))
+
+    def _physical(self) -> list:
+        return sorted((m.get("name"), m.get("width"), m.get("height"), round(m.get("refreshRate", 0), 2),
+                       m.get("scale"), m.get("x"), m.get("y"), m.get("transform"))
+                      for m in self.hypr.monitors() if not self._is_remote(m.get("name", "")))
+
+    def _scaled_capture_ok(self) -> bool:
+        """Blocking: whether the configured wayvnc survives a scaled output (checked once)."""
+        if self.wayvnc_ok is None:
+            argv = self.cfg.get("wayvnc_argv") or ["/usr/bin/wayvnc"]
+            self.wayvnc_ver = wayvnc_version(argv[0])
+            self.wayvnc_ok = scaled_capture_ok(self.wayvnc_ver)
+        return self.wayvnc_ok
+
+    async def resize(self, w: int, h: int) -> None:
+        """Client SetDesktopSize: mode + policy scale + bottom-centre position of the virtual output
+        via hl.monitor, then confirm to xrdp."""
+        ss = self.sstream
+        if ss is None or ss.raw:
+            return
+        ss.request(w, h)  # xrdp needs the reply in the very next update it reads
+        if self.dpi is None and self.cfg.get("scale_dpi_hint", True):
+            self.dpi = await self._call(xrdp_dpi_hint, time.time() - 60)
+        if self.dpi:
+            await self._call(write_display_hint, self.cfg["runtime_dir"], self.vout, self.dpi)
+        want, info = await self._call(policy_scale, self.cfg, w, h, self.dpi, self.vout)
+        scale = want
+        if abs(want - 1.0) > 1e-3:
+            if not self.cfg.get("output_scale", True):
+                log(f"policy scale {want:g} not applied ([remote.rdp].output_scale = false)")
+                scale = 1.0
+            elif not await self._call(self._scaled_capture_ok):
+                ver = ".".join(map(str, self.wayvnc_ver)) if self.wayvnc_ver else "unknown"
+                log(f"policy scale {want:g} not applied: wayvnc {ver} exits on a scaled output "
+                    "(cursor capture); install the upstream build (automation/70-bake-wayvnc-upstream.sh)")
+                scale = 1.0
+        before = await self._call(self._physical)
+        self.applied = (w, h, scale)
+        await self._call(self._place, (w, h, scale))
+        await self._call(self._monitor_rule, f"{w}x{h}", scale)
+        got = None
+        for _ in range(30):
+            m = await self._call(self.hypr.monitor, self.vout)
+            got = (m.get("width"), m.get("height")) if m else None
+            if got == (w, h):
+                break
+            await asyncio.sleep(0.1)
+        if got != (w, h) and ss.target == (w, h):
+            ss.target = None
+            if got and all(got):
+                self.applied = (int(got[0]), int(got[1]), scale)  # never re-push a mode Hyprland refused
+            ss.inject(eds_update(0, 0, *(got or ss.fb)))  # tell xrdp the real size; it fits the client
+            log(f"{self.vout} did not reach {w}x{h} (is {got}); announced the real size")
+            return
+        if got == (w, h):
+            ss.fb = (w, h)
+            ss.target = None
+        await self._call(self._recenter, f"{w}x{h}")
+        after = await self._call(self._physical)
+        if before != after:
+            log(f"WARNING: local outputs changed during the virtual resize: {before} -> {after}")
+        m = await self._call(self.hypr.monitor, self.vout)
+        sc = float(m.get("scale") or scale) if m else scale
+        self.applied = (w, h, sc)  # Hyprland may have substituted the scale: keep what it accepted
+        orient = "portrait" if h > w else "landscape"
+        log(f"{self.vout} now {w}x{h} {orient} at scale {sc:g} (logical {round(w / sc)}x{round(h / sc)}, "
+            f"at {self.position[0]}x{self.position[1]}, policy {want:g} {info.get('source', '?')}, "
+            f"mobile {info.get('mobile', '?')}, dpi hint {self.dpi or 'none'})")
+
+    # -- capture target -------------------------------------------------------
+    def mirror_output(self) -> str:
+        """Blocking (worker thread)."""
+        out = str(self.cfg.get("output", "")).strip()
+        if out:
+            return out
+        mons = [m for m in self.hypr.monitors()
+                if not m.get("disabled") and m.get("name") != self.vout]
+        f = [m["name"] for m in mons if m.get("focused")] or [m["name"] for m in mons]
+        return f[0] if f else ""
+
+    # -- one RDP attach -------------------------------------------------------
+    async def attach(self, cr, cw) -> None:
+        old, self.current = self.current, asyncio.current_task()
+        if old and not old.done():
+            log("new client attached; closing the previous one (the remote display stays)")
+            old.cancel()
+            try:
+                await old
+            except (asyncio.CancelledError, Exception):
+                pass
+        try:
+            await self._session(cr, cw)
+        finally:
+            if self.current is asyncio.current_task():
+                self.current = None
+                self.detached()
+
+    async def _spawn_wayvnc(self, target: str, extra: list[str]):
+        """Start wayvnc on the private socket and connect: (child, reader, writer) or None."""
+        sock = self.cfg["vnc_sock"]
+        try:
+            os.unlink(sock)
+        except FileNotFoundError:
+            pass
+        argv = [*self.cfg["wayvnc_argv"], *extra, "-o", target, sock]
+        child = await asyncio.create_subprocess_exec(*argv, env=self.hypr.env)
+        for _ in range(100):  # up to 10 s for wayvnc's socket
+            if os.path.exists(sock) or child.returncode is not None:
+                break
+            await asyncio.sleep(0.1)
+        if child.returncode is not None or not os.path.exists(sock):
+            log(f"wayvnc did not start (rc {child.returncode})")
+            await self._stop(child)
+            return None
+        try:
+            ur, uw = await asyncio.open_unix_connection(sock, limit=BUF)
+        except OSError as e:
+            log(f"upstream {sock} unavailable: {e}")
+            await self._stop(child)
+            return None
+        return child, ur, uw
+
+    async def _session(self, cr, cw) -> None:
+        started = time.time()
+        if not self.hypr.resolve():
+            await _fail_client(cw, "no live Hyprland session")
+            return
+        async with self.lock:
+            if self.mode == "virtual":
+                if self.linger:
+                    self.linger.cancel()
+                    self.linger = None
+                if self.detach_task and not self.detach_task.done():
+                    try:  # a previous detach may still be handing the cursor back
+                        await asyncio.wait_for(asyncio.shield(self.detach_task), timeout=3)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+                await self._save_local()
+                # every client starts at target_hz; the Pacer lowers it only once this client proves slower
+                self.out_hz = self.hz
+                self.pacer = Pacer(self.hz, self.min_hz) if self.pacing == "adaptive" else None
+                if not await self._call(self.ensure_virtual):
+                    await _fail_client(cw, "could not create the remote display")
+                    return
+                # NEVER let wayvnc resize through wlr-output-management: on Hyprland 0.56 its
+                # configuration (which re-lists every head) replaced the physical monitor's rule
+                # (HDMI-A-1 fell to preferred 60 Hz / auto position on the next re-arrangement).
+                # Resizes must be applied by the bridge via hl.monitor on the virtual output only.
+                target, extra = self.vout, ["--disable-resizing"]
+                self.position = await self._call(self._position_of_existing)
+                await self._call(self._set_refresh, self.hz, "new client")  # a lingering output may be paced down
+            else:
+                target, extra = await self._call(self.mirror_output), ["--disable-resizing"]
+        if not target:
+            await _fail_client(cw, "no output to share")
+            return
+        argv = list(self.cfg.get("wayvnc_argv") or [])
+        scaled_ok = await self._call(self._scaled_capture_ok) if self.mode == "virtual" else False
+        self.overlay = overlay_cursor(self.cfg, argv, scaled_ok)
+        if self.overlay and not ("--render-cursor" in argv or "-r" in argv):
+            extra = [*extra, "--render-cursor"]
+        self.dpi = await self._call(xrdp_dpi_hint, started - 30) if self.mode == "virtual" else None
+        self.output_gone = False
+        up = await self._spawn_wayvnc(target, extra)
+        if up is None:
+            await _fail_client(cw, "live desktop capture did not start")
+            return
+        child, ur, uw = up
+        link = {"child": child, "ur": ur, "uw": uw, "up": False}
+        watch = None
+        try:
+            try:
+                ok = await asyncio.wait_for(handshake(cr, cw, ur, uw), timeout=15)
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+                log(f"handshake failed: {e!r}")
+                ok = False
+            if not ok:
+                uw.close()
+                cw.close()
+                return
+            link["up"] = True
+            log(f"client attached ({self.mode}: {target}, wayvnc pid {child.pid}, pointer "
+                + ("drawn into the frames" if self.overlay else "as the RFB cursor") + ")")
+            virtual = self.mode == "virtual"
+            expect = await self._call(self._vout_size) if virtual else None
+            self.sstream = ServerStream(expect) if virtual else None
+            if self.sstream:
+                self.sstream.writer = cw
+            stream = ClientStream(int(self.cfg.get("size_align", 0)) if virtual else 0,
+                                  self._on_resize, intercept=virtual,
+                                  on_pixel_format=self.sstream.set_bpp if self.sstream else None,
+                                  server_fb=(lambda: self.sstream.fb) if self.sstream else None,
+                                  on_pointer=self._on_pointer if virtual else None,
+                                  drop_encodings=CURSOR_ENCODINGS if self.overlay else ())
+            tasks = [asyncio.ensure_future(self._c2s(cr, stream, link)),
+                     asyncio.ensure_future(self._s2c(cw, link, target, extra, stream))]
+            if virtual:
+                watch = asyncio.ensure_future(self._watch_events(link))
+                tasks.append(watch)
+            self.stats = Stats(time.monotonic())
+            stats_task = asyncio.ensure_future(self._stats_loop(stream, target))
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            stats_task.cancel()
+            st = self.stats
+            if st is not None and time.monotonic() - st.t0 > 1:
+                log(f"attach stats: peak {st.peak_fps:g} frames/s delivered (target {self.hz} Hz, "
+                    f"pacing {self.pacing}, refresh at detach {self.out_hz} Hz)")
+            names = ["xrdp closed", "wayvnc closed", "output removed"]
+            log("session ended: " + ", ".join(names[tasks.index(t)] for t in done))
+            for t in pending:
+                t.cancel()
+            for wr in (link["uw"], cw):
+                try:
+                    wr.close()
+                except Exception:
+                    pass
+            log("client detached")
+        finally:
+            if watch:
+                watch.cancel()
+            if self.reapply_task is not None and not self.reapply_task.done():
+                self.reapply_task.cancel()
+            await self._stop(link["child"])
+
+    async def _c2s(self, cr, stream: ClientStream, link: dict) -> None:
+        """xrdp -> wayvnc. While wayvnc is being restarted (link["up"] false) client messages are
+        dropped (SetPixelFormat/SetEncodings are recorded by ClientStream and replayed)."""
+        try:
+            while True:
+                data = await cr.read(BUF)
+                if not data:
+                    break
+                data = stream.feed(data)
+                if not data or not link["up"]:
+                    continue
+                try:
+                    link["uw"].write(data)
+                    await link["uw"].drain()
+                except (ConnectionError, OSError):
+                    link["up"] = False  # the wayvnc side notices EOF and recovers
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        except RFBFramingError as e:
+            log(str(e))
+        except Exception as e:  # a framing bug must be visible, not a silent disconnect
+            import traceback
+            log(f"relay error: {e!r}\n{traceback.format_exc()}")
+
+    async def _s2c(self, cw, link: dict, target: str, extra: list[str], stream: ClientStream) -> None:
+        """wayvnc -> xrdp, restarting wayvnc transparently (virtual mode) when it goes away while
+        xrdp is still connected."""
+        ss = self.sstream
+        attempts: list[float] = []
+        while True:
+            try:
+                while True:
+                    try:
+                        data = await link["ur"].read(BUF)
+                    except (ConnectionError, OSError):
+                        data = b""
+                    if not data:
+                        break
+                    if ss is not None:
+                        data = ss.feed(data)
+                    if data:
+                        if self.stats is not None:
+                            self.stats.bytes += len(data)
+                        cw.write(data)
+                        await cw.drain()
+            except (ConnectionError, OSError):
+                return  # xrdp side gone
+            except RFBFramingError as e:
+                log(str(e))
+                return
+            except Exception as e:
+                import traceback
+                log(f"relay error: {e!r}\n{traceback.format_exc()}")
+                return
+            link["up"] = False
+            if ss is None or self.output_gone or cw.is_closing():
+                return
+            rc = await self._stop(link["child"])
+            log(f"wayvnc exited (rc {rc}) while the client is attached; restarting it, xrdp stays connected")
+            try:
+                fill = ss.resync()
+                if fill:
+                    cw.write(fill)
+                    await cw.drain()
+            except RFBFramingError as e:
+                log(str(e))
+                return
+            except (ConnectionError, OSError):
+                return
+            limit = max(0, int(self.cfg.get("wayvnc_restarts", 5)))
+            while True:
+                now = time.monotonic()
+                attempts = [t for t in attempts if now - t < 60]
+                if len(attempts) >= limit:
+                    log(f"wayvnc failed {len(attempts)} time(s) within 60 s ([remote.rdp].wayvnc_restarts = {limit}); ending the session")
+                    return
+                attempts.append(now)
+                await asyncio.sleep(min(0.25 * len(attempts), 2.0))
+                if self.output_gone or cw.is_closing():
+                    return
+                if await self._restart_upstream(link, target, extra, stream):
+                    break
+
+    async def _restart_upstream(self, link: dict, target: str, extra: list[str], stream: ClientStream) -> bool:
+        ss = self.sstream
+        try:
+            link["uw"].close()
+        except Exception:
+            pass
+        up = await self._spawn_wayvnc(target, extra)
+        if up is None:
+            return False
+        child, ur, uw = up
+        link.update(child=child, ur=ur, uw=uw)
+        try:
+            sw, sh = await asyncio.wait_for(upstream_handshake(ur, uw), timeout=10)
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError) as e:
+            log(f"restarted wayvnc handshake failed: {e!r}")
+            await self._stop(child)
+            return False
+        real = await self._call(self._vout_size) or (sw, sh)
+        if ss.target is None and real != ss.fb:
+            # the output changed while wayvnc was down: tell xrdp (reason 0), it fits the client
+            ss.fb = real
+            ss.inject(eds_update(0, 0, *real))
+        if ss.target is None and (sw, sh) != ss.fb:
+            ss.target = ss.fb  # mask a stale (logical) ServerInit size until wayvnc reports the real one
+        fw, fh = min(sw, ss.fb[0]), min(sh, ss.fb[1])  # neatvnc 0.9 crashes on requests beyond its fb
+        replay = b"".join(stream.setup[k] for k in (0, 2) if k in stream.setup)
+        try:
+            uw.write(replay + struct.pack(">BBHHHH", 3, 0, 0, 0, max(1, fw), max(1, fh)))
+            await uw.drain()
+        except (ConnectionError, OSError) as e:
+            log(f"restarted wayvnc refused the replay: {e!r}")
+            await self._stop(child)
+            return False
+        link["up"] = True
+        log(f"wayvnc restarted (pid {child.pid}, server {sw}x{sh}, client {ss.fb[0]}x{ss.fb[1]}); "
+            "full update requested")
+        return True
+
+    def _position_of_existing(self) -> tuple[int, int]:
+        """Blocking (worker thread)."""
+        m = self.hypr.monitor(self.vout)
+        return (m.get("x", 0), m.get("y", 0)) if m else self.position
+
+    def _on_resize(self, w: int, h: int, screens: int) -> None:
+        log(f"client SetDesktopSize {w}x{h} ({screens} screen(s))")
+        if self.mode != "virtual":
+            return  # mirror: forwarded to wayvnc, which refuses (resizing disabled)
+        if screens == 1:
+            asyncio.ensure_future(self.resize(w, h))
+        elif self.sstream:
+            self.sstream.inject(eds_update(1, 3, *self.sstream.fb))  # 3 = invalid screen layout
+
+    def _event_action(self, ev: str, data: str) -> str | None:
+        """Hyprland socket2 event -> "gone" (virtual_output removed), "reload" (config reloaded: the
+        bridge's monitor + workspace rules are gone), "place" (a remote output came or went: the
+        group is re-centred) or None."""
+        names = data.split(",")
+        if ev in ("monitorremoved", "monitorremovedv2") and self.vout in names:
+            return "gone"
+        if ev == "configreloaded":
+            return "reload"
+        if ev in ("monitoradded", "monitoraddedv2", "monitorremoved", "monitorremovedv2") \
+                and any(self._is_remote(n) for n in names):
+            return "place"
+        return None
+
+    async def _stats_loop(self, stream: "ClientStream", target: str) -> None:
+        """Delivered-FPS counter: $XDG_RUNTIME_DIR/mios-rdp/stats.json every 2 s, a log line every
+        [remote.rdp].stats_seconds (0 = no log lines). Event loop only; file write in a thread."""
+        try:
+            every = max(0.0, float(self.cfg.get("stats_seconds", 60)))
+        except (TypeError, ValueError):
+            every = 60.0
+        last_log = time.monotonic()
+        while True:
+            await asyncio.sleep(STATS_WINDOW)
+            st, ss = self.stats, self.sstream
+            if st is None:
+                return
+            now = time.monotonic()
+            rate = st.sample(now, ss.updates if ss is not None else 0, stream.requests)
+            await self._pace(rate["fps"], now)
+            doc = {"output": target, "target_hz": self.hz, "output_hz": self.out_hz, "pacing": self.pacing,
+                   "since": round(now - st.t0, 1),
+                   "frames": ss.updates if ss is not None else None, "requests": stream.requests,
+                   "bytes": st.bytes, "peak_fps": st.peak_fps, "time": time.time(), **rate}
+            await self._call(write_stats, self.cfg.get("runtime_dir", ""), doc)
+            if every and now - last_log >= every:
+                last_log = now
+                log(f"stats {target}: {rate['fps']:g} frames/s delivered (target {self.hz}, refresh {self.out_hz}), "
+                    f"{rate['requests_per_s']:g} requests/s, {rate['mb_per_s']:g} MB/s")
+
+    async def _pace(self, fps: float, now: float) -> None:
+        """Feed one stats window to the Pacer and apply its refresh (virtual mode; never while a client
+        resize or a reload re-apply is in flight -- those own the mode until they finish)."""
+        pc, ss = self.pacer, self.sstream
+        if pc is None or ss is None or ss.raw or ss.target is not None or self.applied is None:
+            return
+        if self.reapply_task is not None and not self.reapply_task.done():
+            return
+        hz = pc.update(fps, now)
+        if hz is None or hz == self.out_hz:
+            return
+        why = (f"pacing: the client takes {fps:g} frames/s" if hz < self.out_hz
+               else f"pacing: the client keeps up ({fps:g} frames/s)")
+        await self._call(self._set_refresh, hz, why)
+
+    async def _watch_events(self, link: dict) -> None:
+        """Stop wayvnc the moment the virtual output disappears (it would fall back to HDMI);
+        the session then ends instead of restarting wayvnc. A config reload or another remote
+        output coming/going re-applies virtual_output's mode, scale and position (reapply)."""
+        try:
+            r, w = await asyncio.open_unix_connection(self.hypr.socket2())
+        except OSError:
+            r = w = None
+        try:
+            while True:
+                if r is None:  # no event socket: poll
+                    await asyncio.sleep(0.5)
+                    gone = not await self._call(self.hypr.monitor, self.vout)
+                else:
+                    line = await r.readline()
+                    if not line:
+                        r = None
+                        continue
+                    ev, _, data = line.decode(errors="replace").strip().partition(">>")
+                    act = self._event_action(ev, data)
+                    gone = act == "gone"
+                    if act == "reload":
+                        await self._reapply_soon("Hyprland config reloaded", restate=True)
+                    elif act == "place":
+                        await self._reapply_soon(f"remote output {ev.removesuffix('v2')[7:]}", restate=False)
+                if gone:
+                    self.output_gone = True
+                    log(f"{self.vout} was removed; stopping capture before wayvnc can fall back")
+                    if link["child"].returncode is None:
+                        link["child"].kill()
+                    return
+        finally:
+            if w is not None:
+                w.close()
+
+    @staticmethod
+    async def _stop(child) -> int | None:
+        if child.returncode is None:
+            try:
+                child.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(child.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                child.kill()
+                await child.wait()
+        return child.returncode
+
+    async def shutdown(self) -> None:
+        if self.current and not self.current.done():
+            self.current.cancel()
+            try:
+                await self.current
+            except (asyncio.CancelledError, Exception):
+                pass
+        if self.detach_task and not self.detach_task.done():
+            try:  # hand the cursor back before the remote display goes away
+                await asyncio.wait_for(self.detach_task, timeout=5)
+            except (asyncio.TimeoutError, Exception):
+                pass
+        if self.linger:
+            self.linger.cancel()
+        if self.mode == "virtual" and not self.cfg.get("keep_virtual_output", False):
+            if self.hypr.resolve():
+                await self._call(self.remove_virtual, "service stopping")
+
+
+# ---------------------------------------------------------------- display service (native server)
+
+class DisplayService(Bridge):
+    """`--display-service`: the remote-output policy of the RFB path for the native RDP server
+    (mios-rdp-server, IronRDP + H.264 EGFX), as JSON lines on stdin (requests) / stdout (replies
+    with the request "id"; events without one). One implementation of the output policy for both
+    servers: headless output attached below the primary (virtual_attach), [desktop.scaling] scale
+    (policy_scale), refresh pacing (Pacer), workspace rule, re-apply after a Hyprland config reload,
+    cursor save/hand-back, and hl.device rules that map the remote touch/pen devices to the remote
+    output before the server creates them. Capture, encode and input are the server's own (it never
+    asks wayvnc to resize anything, so the physical outputs are never re-listed)."""
+
+    def __init__(self, cfg: dict) -> None:
+        super().__init__(cfg)
+        self.device_rules: list[str] = []
+        self.watch: asyncio.Task | None = None
+        self.attached = False
+        self._mirror = ""
+        self.hints_dir = str(cfg.get("hints_dir") or cfg.get("runtime_dir", ""))
+
+    def _emit(self, doc: dict) -> None:
+        sys.stdout.write(json.dumps(doc) + "\n")
+        sys.stdout.flush()
+
+    def remove_virtual(self, why: str) -> None:
+        """Blocking (worker thread)."""
+        if self.hypr.monitor(self.vout):
+            log(f"removing virtual output {self.vout} ({why}): {self.hypr.ctl('output', 'remove', self.vout)}")
+        write_display_hint(self.hints_dir, self.vout, None)
+
+    def _applied_doc(self) -> dict:
+        m = self.hypr.monitor(self.vout if self.mode == "virtual" else self._mirror)
+        if not m:
+            return {"ok": False, "error": f"{self.vout} not present"}
+        return {"ok": True, "output": m.get("name"), "width": int(m.get("width", 0)), "height": int(m.get("height", 0)),
+                "scale": float(m.get("scale") or 1.0), "x": int(m.get("x", 0)), "y": int(m.get("y", 0)),
+                "hz": int(round(float(m.get("refreshRate") or self.out_hz)))}
+
+    def _apply_device_rule(self, name: str) -> bool:
+        """Blocking: map an input device (Hyprland's lower-case, '-' name) to the remote output."""
+        out = self.vout if self.mode == "virtual" else self._mirror
+        return self.hypr.eval(f"hl.device({{name = {lua_str(name)}, output = {lua_str(out)}}})")
+
+    async def _apply_layout(self, w: int, h: int, dpi: float | None) -> dict:
+        if self.mode != "virtual":
+            return await self._call(self._applied_doc)
+        align = int(self.cfg.get("size_align", 0) or 0)
+        if align > 1:
+            w, h = max(align, w - w % align), max(align, h - h % align)
+        w, h = w - (w % 2), h - (h % 2)  # H.264 4:2:0 needs even sizes
+        if dpi:
+            self.dpi = float(dpi)
+            await self._call(write_display_hint, self.hints_dir, self.vout, self.dpi)
+        want, info = await self._call(policy_scale, self.cfg, w, h, self.dpi, self.vout)
+        scale = want if self.cfg.get("output_scale", True) else 1.0
+        before = await self._call(self._physical)
+        self.applied = (w, h, scale)
+        await self._call(self._place, (w, h, scale))
+        await self._call(self._monitor_rule, f"{w}x{h}", scale)
+        got = None
+        for _ in range(30):
+            m = await self._call(self.hypr.monitor, self.vout)
+            got = (m.get("width"), m.get("height")) if m else None
+            if got == (w, h):
+                break
+            await asyncio.sleep(0.1)
+        await self._call(self._recenter, f"{w}x{h}")
+        after = await self._call(self._physical)
+        if before != after:
+            log(f"WARNING: local outputs changed during the virtual resize: {before} -> {after}")
+        m = await self._call(self.hypr.monitor, self.vout)
+        if m:
+            self.applied = (int(m.get("width", w)), int(m.get("height", h)), float(m.get("scale") or scale))
+        doc = await self._call(self._applied_doc)
+        if got != (w, h):
+            log(f"{self.vout} did not reach {w}x{h} (is {got})")
+        orient = "portrait" if h > w else "landscape"
+        log(f"{self.vout} now {doc.get('width')}x{doc.get('height')} {orient} at scale {doc.get('scale')} "
+            f"(policy {want:g} {info.get('source', '?')}, dpi hint {self.dpi or 'none'}) at {doc.get('x')}x{doc.get('y')}")
+        return doc
+
+    async def _attach(self, w: int, h: int) -> dict:
+        if not await self._call(self.hypr.resolve):
+            return {"ok": False, "error": "no live Hyprland session"}
+        async with self.lock:
+            if self.mode == "virtual":
+                if self.linger:
+                    self.linger.cancel()
+                    self.linger = None
+                if self.detach_task and not self.detach_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self.detach_task), timeout=3)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+                await self._save_local()
+                self.out_hz = self.hz
+                self.pacer = Pacer(self.hz, self.min_hz) if self.pacing == "adaptive" else None
+                if not await self._call(self.ensure_virtual):
+                    return {"ok": False, "error": "could not create the remote display"}
+                self.position = await self._call(self._position_of_existing)
+                await self._call(self._set_refresh, self.hz, "new client")
+            else:
+                self._mirror = await self._call(self.mirror_output)
+                if not self._mirror:
+                    return {"ok": False, "error": "no output to share"}
+        self.current = asyncio.get_running_loop().create_future()  # "a client is attached" for linger/hand-back
+        self.attached = True
+        self.remote_pointer = True  # native input is not observed here: hand-back decides by cursor position
+        if self.watch is None or self.watch.done():
+            self.watch = asyncio.ensure_future(self._watch())
+        return await self._apply_layout(w, h, None)
+
+    async def _detach(self) -> dict:
+        fut, self.current = self.current, None
+        if fut is not None and not fut.done():
+            fut.set_result(None)
+        self.attached = False
+        if self.watch is not None:
+            self.watch.cancel()
+            self.watch = None
+        self.detached()
+        return {"ok": True}
+
+    async def _watch(self) -> None:
+        """socket2: re-apply mode/scale/position/workspace and device rules after a config reload or when
+        another remote output comes/goes; report the remote output's removal."""
+        try:
+            r, w = await asyncio.open_unix_connection(self.hypr.socket2())
+        except OSError:
+            return
+        try:
+            while True:
+                line = await r.readline()
+                if not line:
+                    return
+                ev, _, data = line.decode(errors="replace").strip().partition(">>")
+                act = self._event_action(ev, data)
+                if act == "gone":
+                    log(f"{self.vout} was removed")
+                    self._emit({"event": "gone", "output": self.vout})
+                elif act == "reload":
+                    await self._reapply_soon("Hyprland config reloaded", restate=True)
+                    for name in list(self.device_rules):
+                        await self._call(self._apply_device_rule, name)
+                    self._emit({"event": "reapplied"})
+                elif act == "place":
+                    await self._reapply_soon(f"remote output {ev.removesuffix('v2')[7:]}", restate=False)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            w.close()
+
+    async def handle(self, req: dict) -> dict:
+        op = req.get("op")
+        if op == "hello":
+            return {"ok": True, "service": "mios-rdp display", "version": 1, "mode": self.mode, "output": self.vout,
+                    "target_hz": self.hz, "pacing": self.pacing}
+        if op == "attach":
+            return await self._attach(int(req.get("width", 1280)), int(req.get("height", 720)))
+        if op == "layout":
+            if not self.attached:
+                return {"ok": False, "error": "not attached"}
+            return await self._apply_layout(int(req.get("width", 0)), int(req.get("height", 0)), req.get("dpi"))
+        if op == "pace":
+            fps = float(req.get("fps", 0.0))
+            if self.pacer is not None and self.applied is not None and self.mode == "virtual" \
+                    and (self.reapply_task is None or self.reapply_task.done()):
+                hz = self.pacer.update(fps, time.monotonic())
+                if hz is not None and hz != self.out_hz:
+                    why = (f"pacing: the client takes {fps:g} frames/s" if hz < self.out_hz
+                           else f"pacing: the client keeps up ({fps:g} frames/s)")
+                    await self._call(self._set_refresh, hz, why)
+            return {"ok": True, "hz": self.out_hz}
+        if op == "refresh":
+            hz = max(self.min_hz, min(self.hz, int(req.get("hz", self.hz))))
+            if self.mode == "virtual" and self.applied is not None:
+                await self._call(self._set_refresh, hz, str(req.get("why", "server request")))
+                if self.pacer is not None:
+                    self.pacer.hz = hz
+            return {"ok": True, "hz": self.out_hz}
+        if op == "device_rule":
+            name = str(req.get("name", ""))
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._()-]{0,63}", name):
+                return {"ok": False, "error": f"bad device name {name!r}"}
+            ok = await self._call(self._apply_device_rule, name)
+            if ok and name not in self.device_rules:
+                self.device_rules.append(name)
+            return {"ok": True, "applied": ok}
+        if op == "detach":
+            return await self._detach()
+        if op == "quit":
+            await self._detach()
+            await self.shutdown()
+            return {"ok": True, "quit": True}
+        return {"ok": False, "error": f"unknown op {op!r}"}
+
+
+async def display_service(cfg: dict) -> int:
+    ds = DisplayService(cfg)
+    if ds.mode == "virtual" and ds.hypr.resolve() and not cfg.get("keep_virtual_output", False):
+        await asyncio.to_thread(ds.remove_virtual, "stale from a previous run")
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader()
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+    stop = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    log(f"display service for {ds.vout} (mode {ds.mode}, target {ds.hz} Hz, pacing {ds.pacing})")
+    while not stop.is_set():
+        rd = asyncio.ensure_future(reader.readline())
+        st = asyncio.ensure_future(stop.wait())
+        done, _ = await asyncio.wait({rd, st}, return_when=asyncio.FIRST_COMPLETED)
+        if st in done:
+            rd.cancel()
+            break
+        st.cancel()
+        line = rd.result()
+        if not line:
+            break  # the server went away
+        try:
+            req = json.loads(line)
+        except ValueError:
+            continue
+        try:
+            rep = await ds.handle(req)
+        except Exception as e:  # never die on one bad request
+            import traceback
+            log(f"display service {req.get('op')!r} failed: {e!r}\n{traceback.format_exc()}")
+            rep = {"ok": False, "error": repr(e)}
+        rep["id"] = req.get("id")
+        ds._emit(rep)
+        if rep.get("quit"):
+            return 0
+    await ds._detach()
+    await ds.shutdown()
+    return 0
+
+
+async def serve(cfg: dict) -> int:
+    bridge = Bridge(cfg)
+    listen = cfg["listen"]
+    if bridge.hypr.resolve() and not cfg.get("keep_virtual_output", False):
+        await asyncio.to_thread(bridge.remove_virtual, "stale from a previous run")
+    try:
+        os.unlink(listen)
+    except FileNotFoundError:
+        pass
+    old = os.umask(0o177)
+    try:
+        server = await asyncio.start_unix_server(bridge.attach, path=listen, limit=BUF)
+    finally:
+        os.umask(old)
+    os.chmod(listen, 0o600)
+    log(f"listening on {listen} (mode {bridge.mode}"
+        + (f", virtual output {bridge.vout})" if bridge.mode == "virtual" else ")"))
+    if bridge.mode == "virtual":
+        ok = await asyncio.to_thread(bridge._scaled_capture_ok)
+        ver = ".".join(map(str, bridge.wayvnc_ver)) if bridge.wayvnc_ver else "unknown"
+        log(f"wayvnc {(cfg.get('wayvnc_argv') or ['?'])[0]} {ver}: scaled remote output "
+            + ("supported" if ok else "NOT supported (scale stays 1; build automation/70-bake-wayvnc-upstream.sh)")
+            + f"; attach {cfg.get('virtual_attach', 'below-center')} of {cfg.get('primary_output') or 'the local output at 0,0'}")
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    await stop.wait()
+    server.close()
+    await bridge.shutdown()
+    try:
+        os.unlink(listen)
+    except FileNotFoundError:
+        pass
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True, help="JSON written by mios-rdp vnc (or mios-rdp native)")
+    ap.add_argument("--display-service", action="store_true",
+                    help="serve the remote-output policy to mios-rdp-server as JSON lines on stdin/stdout")
+    a = ap.parse_args()
+    with open(a.config) as f:
+        cfg = json.load(f)
+    if cfg.get("mode") == "virtual" and not str(cfg.get("virtual_output", "")).startswith("HEADLESS-"):
+        log("virtual_output must start with HEADLESS- (wayvnc resizes only headless outputs)")
+        return 2
+    if a.display_service:
+        return asyncio.run(display_service(cfg))
+    return asyncio.run(serve(cfg))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -5,6 +5,9 @@
 #![warn(clippy::unwrap_used, clippy::panic, clippy::todo)]
 
 mod drift;
+mod appmenu;
+mod placement;
+mod sessions;
 use miosd::fhs_sync;
 use miosd::native_generator;
 use miosd::rde;
@@ -286,8 +289,13 @@ mod terminal_runtime {
             let caller = std::fs::metadata("/proc/self").map_err(|e| e.to_string())?;
             let uid = uid.unwrap_or(caller.uid());
             let gid = gid.unwrap_or(caller.gid());
-            if uid == 0 {
-                return Err("MiOS terminal requires an unprivileged user".into());
+            let allow_root = doc
+                .get("terminal")
+                .and_then(|v| v.get("allow_root_session"))
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false);
+            if uid == 0 && !allow_root {
+                return Err("MiOS terminal root sessions are disabled by SSOT".into());
             }
             linux::check(Path::new(base), human, uid, gid, repair)
         }
@@ -343,6 +351,24 @@ enum Commands {
         name: Option<String>,
         #[arg(long, value_parser = ["pass", "fail", "warn", "skip", "missing"])]
         status: Option<String>,
+    },
+    /// Float-first window placement on Hyprland ([desktop.hyprland.placement])
+    Placement {
+        #[command(subcommand)]
+        action: placement::PlacementCommand,
+    },
+    /// Global tmux session selector across this node and tailnet MiOS nodes ([terminal.sessions])
+    Sessions {
+        #[arg(long, default_value = "/")]
+        root: String,
+        /// Print the discovered nodes and sessions as JSON instead of opening the selector
+        #[arg(long)]
+        list: bool,
+    },
+    /// Real application menus of the focused window (GTK org.gtk.Menus + dbusmenu registrar)
+    Appmenu {
+        #[command(subcommand)]
+        action: appmenu::AppmenuAction,
     },
     /// Verify or explicitly repair the SSOT tmux namespace without restarting sessions
     TerminalRuntimeCheck {
@@ -676,6 +702,21 @@ enum Commands {
         /// Optional hardware watchdog device path
         #[arg(long)]
         watchdog_dev: Option<String>,
+    },
+    /// Monitor desktop wallpaper liveness and safely restart on crashes
+    WallpaperWatch {
+        /// Optional wallpaper runner binary
+        #[arg(long)]
+        runner: Option<String>,
+        /// Optional wallpaper host QML file
+        #[arg(long)]
+        host: Option<String>,
+        /// Optional wallpaper URL override
+        #[arg(long)]
+        url: Option<String>,
+        /// XDG runtime directory override
+        #[arg(long)]
+        runtime_dir: Option<std::path::PathBuf>,
     },
     /// Validate SSOT mios.toml syntax, schema, port collisions, Law 7, and ratchets
     Check {
@@ -1333,7 +1374,10 @@ async fn main() {
             std::process::exit(0);
         } else if is_check {
             let report = fhs_sync::audit(&root_path);
-            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).unwrap_or_default()
+            );
             std::process::exit(if report.ok { 0 } else { 1 });
         } else if is_daemon {
             let interval = args
@@ -1379,7 +1423,10 @@ async fn main() {
                 fhs_sync::print_status(&root_path);
             } else if *check {
                 let report = fhs_sync::audit(&root_path);
-                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                );
                 std::process::exit(if report.ok { 0 } else { 1 });
             } else if *daemon {
                 fhs_sync::run_daemon(root_path, *interval).await;
@@ -1573,6 +1620,24 @@ async fn main() {
                     eprintln!("[miosd] Windows build: {error}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::Placement { action } => {
+            if let Err(error) = placement::run(action) {
+                eprintln!("[miosd] placement: {error}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Sessions { root, list } => {
+            if let Err(error) = sessions::run(std::path::Path::new(root), *list) {
+                eprintln!("[miosd] sessions: {error}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Appmenu { action } => {
+            if let Err(error) = appmenu::run(action).await {
+                eprintln!("[miosd] appmenu: {error}");
+                std::process::exit(1);
             }
         }
         Commands::TerminalRuntimeCheck {
@@ -1913,6 +1978,68 @@ async fn main() {
 
             if let Err(e) = supervisor.run(shutdown).await {
                 eprintln!("[miosd] Daemon supervisor error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::WallpaperWatch {
+            runner,
+            host,
+            url,
+            runtime_dir,
+        } => {
+            let rt = runtime_dir.clone().unwrap_or_else(|| {
+                std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("/run/user/1000"))
+            });
+
+            let data = mios_resolver::resolve_merged(None, false).ok();
+            let config = data
+                .as_ref()
+                .and_then(|d| d.get("theme"))
+                .and_then(|t| t.get("wallpaper"));
+
+            let r = runner.clone().unwrap_or_else(|| {
+                config
+                    .and_then(|c| c.get("linux_runner"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/usr/lib64/qt6/bin/qml")
+                    .to_string()
+            });
+
+            let h = host.clone().unwrap_or_else(|| {
+                config
+                    .and_then(|c| c.get("linux_host"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/usr/share/mios/wallpaper/Host.qml")
+                    .to_string()
+            });
+
+            let u = url.clone().unwrap_or_else(|| {
+                "file:///usr/share/MiOS%20Wallpaper/living.html".to_string()
+            });
+
+            let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let s_clone = shutdown.clone();
+
+            tokio::spawn(async move {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
+                        sigterm.recv().await;
+                        s_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                    s_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+
+            if let Err(e) = miosd::wallpaper::supervise_loop(&r, &h, &u, &rt, shutdown) {
+                eprintln!("[miosd] Wallpaper supervisor error: {e}");
                 std::process::exit(1);
             }
         }
@@ -2961,7 +3088,8 @@ fn run_firewall_ports() -> Result<(), Box<dyn std::error::Error>> {
         ("GUACAMOLE", "tcp"),
         ("CEPH_DASHBOARD", "tcp"),
         ("K3S_API", "tcp"),
-        ("RDP", "tcp"),
+        // RDP is deliberately absent: mios-rdp-firewall.service opens [ports].rdp on the
+        // tailnet zone only ([remote.rdp]); it must never be opened in the public zone.
         ("FORGE_HTTP", "tcp"),
         ("FORGE_SSH", "tcp"),
         ("COCKPIT_LINK", "tcp"),

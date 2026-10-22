@@ -54,8 +54,6 @@ _resolve_remote_for() {
     echo "$_default_remote"
 }
 
-REMOTE="${MIOS_FLATPAK_REMOTE:-$_default_remote}"
-
 if [ -x /usr/libexec/mios/mios-flatpak-init ]; then
     /usr/libexec/mios/mios-flatpak-init >/dev/null 2>&1 || true
 fi

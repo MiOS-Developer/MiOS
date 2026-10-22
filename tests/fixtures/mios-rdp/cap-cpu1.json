@@ -1,0 +1,33 @@
+{
+  "capture_wait_ms_p50": 15.277,
+  "convert_ms_p50": 1.147,
+  "convert_ms_p95": 1.653,
+  "cpu_cores": 0.2538926575103984,
+  "encode_ms_p50": 0.0,
+  "encode_ms_p95": 0.0,
+  "fps": 61.27409411569852,
+  "frames": 613,
+  "info": {
+    "compositor_modifiers": [
+      "0x20000000056bb03",
+      "0x200000000401b03",
+      "0x200000000401603",
+      "0x200000000000901",
+      "0x0",
+      "0xffffffffffffff"
+    ],
+    "format": "XR24",
+    "low_priority_context": false,
+    "modifier": "0x0 (LINEAR udmabuf)",
+    "path": "cpu (4 threads)",
+    "planes": 1,
+    "render_node": "",
+    "renderer": "",
+    "size": [
+      1100,
+      2080
+    ]
+  },
+  "output": "HEADLESS-MIOS-SCALETEST",
+  "seconds": 10.004227869
+}

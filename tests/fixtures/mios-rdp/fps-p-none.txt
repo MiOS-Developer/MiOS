@@ -1,0 +1,11 @@
+qml: FPS {"HDMI-A-1":52}
+qml: FPS {"HDMI-A-1":49}
+qml: FPS {"HDMI-A-1":55}
+qml: FPS {"HDMI-A-1":54}
+qml: FPS {"HDMI-A-1":51}
+qml: FPS {"HDMI-A-1":51}
+qml: FPS {"HDMI-A-1":51}
+qml: FPS {"HDMI-A-1":54}
+qml: FPS {"HDMI-A-1":56}
+qml: FPS {"HDMI-A-1":56}
+qml: FPS {"HDMI-A-1":50}

@@ -48,6 +48,10 @@ class LookingGlassConfigManager:
         allow_dma: bool = True,
     ) -> None:
         self.vm_name = vm_name
+        # Keep the configured path: generated INI files, keybinding rules and
+        # launch arguments must not depend on which device exists on the host
+        # at generation time (kvmfr is only loaded in the VFIO boot profile).
+        # The /dev/shm fallback is applied only at runtime (effective_shm_file).
         self.shm_file = shm_file
         self.escape_key = escape_key
         self.full_screen = full_screen
@@ -62,6 +66,17 @@ class LookingGlassConfigManager:
         self.fractional_scale = fractional_scale
         self.allow_dma = allow_dma
         self.spice_socket = self.resolve_spice_socket(vm_name, spice_socket)
+
+    @staticmethod
+    def resolve_shm_file(shm_file: str) -> str:
+        """Resolves shared memory file path, falling back to /dev/shm/looking-glass if default KVMFR device is missing."""
+        if shm_file == DEFAULT_SHM_FILE and not os.path.exists(DEFAULT_SHM_FILE) and os.path.exists(FALLBACK_SHM_FILE):
+            return FALLBACK_SHM_FILE
+        return shm_file
+
+    def effective_shm_file(self) -> str:
+        """The path the client will open right now (applies the runtime fallback)."""
+        return self.resolve_shm_file(self.shm_file)
 
     @staticmethod
     def resolve_spice_socket(vm_name: str, explicit_path: Optional[str] = None) -> str:
@@ -201,23 +216,28 @@ class LookingGlassConfigManager:
                 "mock": True,
             }
 
-        if not os.path.exists(self.shm_file):
+        path = self.effective_shm_file()
+        if not os.path.exists(path):
             return {
                 "status": "fail",
-                "path": self.shm_file,
-                "error": f"Shared memory device {self.shm_file} not found",
+                "path": path,
+                "error": f"Shared memory device {path} not found",
                 "mock": False,
             }
 
-        st = os.stat(self.shm_file)
+        st = os.stat(path)
         mode_ok = (st.st_mode & 0o777) == 0o660
-        return {
+        result = {
             "status": "pass" if mode_ok else "fail",
-            "path": self.shm_file,
+            "path": path,
             "accessible": mode_ok,
             "mode": oct(st.st_mode),
             "mock": False,
         }
+        if path != self.shm_file:
+            result["configured_path"] = self.shm_file
+            result["fallback"] = True
+        return result
 
     def generate_hyprland_rules(
         self,
@@ -249,13 +269,19 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{kb
         self,
         extra_args: Optional[List[str]] = None,
         config_path: Optional[str] = None,
+        resolve_fallback: bool = False,
     ) -> List[str]:
-        """Builds Looking Glass client launch command argument list."""
+        """Builds Looking Glass client launch command argument list.
+
+        resolve_fallback=True is for an immediate launch on this host: it applies
+        the /dev/shm fallback when /dev/kvmfr0 is missing. Leave it False when
+        the arguments are stored (scripts, rules) for a later boot.
+        """
         cmd = ["looking-glass-client"]
         if config_path:
             cmd.extend(["-C", config_path])
         else:
-            cmd.extend(["-f", self.shm_file])
+            cmd.extend(["-f", self.effective_shm_file() if resolve_fallback else self.shm_file])
             cmd.extend([f"spice:host={self.spice_socket}", "spice:port=0"])
             cmd.extend([f"input:escapeKey={self.escape_key}"])
             if self.full_screen:

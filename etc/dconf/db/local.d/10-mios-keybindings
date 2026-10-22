@@ -2,22 +2,22 @@
 
 [org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-terminal]
 name='MiOS Terminal'
-command='alacritty -e /usr/libexec/mios/mios-terminal'
+command='alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal'
 binding='<Control><Alt><Shift>t'
 
 [org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-ai]
 name='MiOS AI'
-command='alacritty -e /usr/libexec/mios/mios-terminal --action ai'
+command='alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action ai'
 binding='<Control><Alt><Shift>a'
 
 [org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-agents]
 name='MiOS Agents'
-command='alacritty -e /usr/libexec/mios/mios-terminal --action agents'
+command='alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action agents'
 binding='<Control><Alt><Shift>g'
 
 [org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/mios-system]
 name='MiOS System Monitor'
-command='alacritty -e /usr/libexec/mios/mios-terminal --action system'
+command='alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action system'
 binding='<Control><Alt><Shift>m'
 
 [org/gnome/settings-daemon/plugins/media-keys]

@@ -1,0 +1,26 @@
+diff --git a/Makefile b/Makefile
+index c1e8575..3ac6189 100644
+--- a/Makefile
++++ b/Makefile
+@@ -8,7 +8,9 @@
+ # command line, which produces duplicate-definition errors. Letting pkg-config
+ # decide keeps it to one tree; do not add -I paths for Hyprland by hand.
+ 
+-TARGET  := HyprWindowShade.so
++# MiOS: built by `mios-gen build-hyprland-plugin --name windowshade`, which passes the
++# compositor SDK include path and the private Lua 5.5 archive as INCLUDES / LIBS.
++TARGET  := windowshade.so
+ SRC     := $(wildcard *.cpp)
+ 
+ # -fno-gnu-unique is REQUIRED, not an optimisation. Inline-function statics and
+@@ -19,8 +21,8 @@ SRC     := $(wildcard *.cpp)
+ #
+ # -O3 is deliberate: hkGLDrawTex/hkUseShader run per textured surface per frame.
+ CXXFLAGS += -shared -fPIC -O3 -std=c++23 -fno-gnu-unique
+-CXXFLAGS += $(shell pkg-config --cflags hyprland)
+-LDLIBS   += -lGLESv2 -lEGL -lGL
++CXXFLAGS += $(INCLUDES)
++LDLIBS   += $(LIBS)
+ 
+ all: $(TARGET)
+ 

@@ -1,0 +1,15 @@
+# AI-hint: Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:8700/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal].
+# AI-related: /usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, mios.toml [desktop.portal], http://localhost:{port}/
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MiOS Portal
+GenericName=Agent Portal
+Comment=The MiOS Portal (agents, services, settings) in a native glass window
+Exec=/usr/bin/mios-portal
+Icon=/usr/share/mios/portal/icon-192.png
+Categories=Network;System;Utility;
+Keywords=mios;portal;agent;ai;services;dashboard;
+Terminal=false
+StartupNotify=true
+StartupWMClass=mios-portal

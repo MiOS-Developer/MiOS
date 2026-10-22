@@ -1,0 +1,53 @@
+[package]
+name = "mios-rdp-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "MiOS native RDP server: IronRDP + EGFX AVC420 (Cisco OpenH264) from the live Hyprland session"
+
+[features]
+default = []
+# Test builds only: accept one random per-run password from --test-password-file instead of PAM.
+test-auth = []
+
+[dependencies]
+ironrdp-server = { path = "../../../ironrdp/crates/ironrdp-server", features = ["egfx", "helper"] }
+ironrdp-egfx = { path = "../../../ironrdp/crates/ironrdp-egfx" }
+ironrdp-cliprdr = { path = "../../../ironrdp/crates/ironrdp-cliprdr" }
+ironrdp-displaycontrol = { path = "../../../ironrdp/crates/ironrdp-displaycontrol" }
+ironrdp-pdu = { path = "../../../ironrdp/crates/ironrdp-pdu" }
+ironrdp-core = { path = "../../../ironrdp/crates/ironrdp-core" }
+ironrdp-dvc = { path = "../../../ironrdp/crates/ironrdp-dvc" }
+ironrdp-svc = { path = "../../../ironrdp/crates/ironrdp-svc" }
+ironrdp-rdpei = { path = "../../../ironrdp/crates/ironrdp-rdpei" }
+ironrdp-rdpsnd = { path = "../../../ironrdp/crates/ironrdp-rdpsnd" }
+ironrdp-rdpeai = { path = "../../../ironrdp/crates/ironrdp-rdpeai" }
+ironrdp-rdpdr = { path = "../../../ironrdp/crates/ironrdp-rdpdr" }
+ironrdp-rdpecam = { path = "../../../ironrdp/crates/ironrdp-rdpecam" }
+ironrdp-rdpel = { path = "../../../ironrdp/crates/ironrdp-rdpel" }
+ironrdp-graphics = { path = "../../../ironrdp/crates/ironrdp-graphics" }
+tokio = { version = "1", features = ["rt", "net", "macros", "sync", "time", "io-util", "signal"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+async-trait = "0.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+libc = "0.2"
+rand = "0.9"
+bytes = "1"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+gbm = { version = "0.18", default-features = false }
+khronos-egl = { version = "6", features = ["static"] }
+glow = "0.18"
+openh264-sys2 = { version = "0.9", default-features = false, features = ["libloading"] }
+xkbcommon = { version = "0.9", default-features = false }
+png = "0.18"
+memmap2 = "0.9"
+sha2 = "0.10"

@@ -10,7 +10,8 @@ _mios_toml_value() { "$_MIOS_TOML_GET" "$1" "$2" "${3:-}"; }
 PW="$(_mios_toml_value 'identity' 'default_password' 'mios')"
 
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    export XDG_RUNTIME_DIR
 fi
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"

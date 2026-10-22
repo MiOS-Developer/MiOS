@@ -20,6 +20,7 @@ _load_layers() {
     local layer
     for layer in "${LAYERS[@]}"; do
         [[ -r "$layer" ]] || continue
+        # shellcheck source=/dev/null  # SSOT env layers are host/user runtime files
         . "$layer"
     done
 }
@@ -28,6 +29,7 @@ _load_toml_layers() {
     local userenv_lib
     for userenv_lib in /usr/lib/mios/userenv.sh /usr/share/mios/tools/lib/userenv.sh; do
         if [[ -r "$userenv_lib" ]]; then
+            # shellcheck source=/dev/null  # first readable of two install locations
             . "$userenv_lib"
             return 0
         fi

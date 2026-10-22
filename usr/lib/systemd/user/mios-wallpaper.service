@@ -1,23 +1,14 @@
-# AI-hint: Systemd user unit for the mios-wallpaper living wallpaper occlusion & rendering daemon.
-# AI-doc: usr/share/doc/mios/manual/ch68-living-wallpaper-shaders-and-ssot-theme-engine.md
 [Unit]
-# /usr/lib/systemd/user/mios-wallpaper.service
-#
-# Living wallpaper background rendering daemon with Wayland layer-shell occlusion
-# awareness and low-priority Vulkan compute queue scheduling. Suspends rendering
-# to 0 FPS (0% GPU load) when desktop is occluded by open windows to preserve 98%+
-# GPU capacity for local AI inference lanes.
-Description='MiOS' Living Wallpaper Occlusion Engine Daemon
-Documentation=man:mios-wallpaperd file:///usr/libexec/mios/ux/wallpaperd.py
+Description=MiOS shared Windows and Linux living wallpaper
+PartOf=mios-desktop.target
 After=graphical-session.target
-PartOf=graphical-session.target
+Requisite=graphical-session.target
 
 [Service]
-Type=simple
-Environment=PATH=/usr/libexec/mios:/usr/libexec/mios/ux:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/usr/libexec/mios/ux/wallpaperd.py --daemon
+Type=exec
+ExecStart=/usr/bin/mios-wallpaperd host
 Restart=on-failure
-RestartSec=2s
+RestartSec=2
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=mios-desktop.target

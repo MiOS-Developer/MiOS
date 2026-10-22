@@ -7,8 +7,6 @@ set -euo pipefail
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly MAGENTA='\033[0;35m'
 readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
@@ -43,29 +41,33 @@ EOF
     echo -e "${BOLD}Uptime:${NC}   $(uptime -p)"
 
     print_header "CPU"
-    local cpu_model=$(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | xargs)
-    local cpu_cores=$(nproc)
-    local cpu_threads=$(grep -c processor /proc/cpuinfo)
+    local cpu_model cpu_cores cpu_threads
+    cpu_model=$(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | xargs) || true
+    cpu_cores=$(nproc) || true
+    cpu_threads=$(grep -c processor /proc/cpuinfo) || true
     echo -e "${BOLD}Model:${NC}    $cpu_model"
     echo -e "${BOLD}Cores:${NC}    $cpu_cores physical, $cpu_threads threads"
 
     if grep -q -E '(vmx|svm)' /proc/cpuinfo; then
-        local virt_type=$(grep -o -E '(vmx|svm)' /proc/cpuinfo | head -1)
+        local virt_type
+        virt_type=$(grep -o -E '(vmx|svm)' /proc/cpuinfo | head -1) || true
         echo -e "${BOLD}Virt:${NC}     ${GREEN}[ok]${NC} Enabled ($virt_type)"
     else
         echo -e "${BOLD}Virt:${NC}     ${RED}[x]${NC} Not detected"
     fi
 
     print_header "MEMORY"
-    local mem_total=$(free -h | awk '/^Mem:/ {print $2}')
-    local mem_used=$(free -h | awk '/^Mem:/ {print $3}')
-    local mem_avail=$(free -h | awk '/^Mem:/ {print $7}')
+    local mem_total mem_used mem_avail
+    mem_total=$(free -h | awk '/^Mem:/ {print $2}') || true
+    mem_used=$(free -h | awk '/^Mem:/ {print $3}') || true
+    mem_avail=$(free -h | awk '/^Mem:/ {print $7}') || true
     echo -e "${BOLD}Total:${NC}    $mem_total"
     echo -e "${BOLD}Used:${NC}     $mem_used"
     echo -e "${BOLD}Avail:${NC}    $mem_avail"
 
     print_header "GRAPHICS"
-    local gpu_count=$(lspci | grep -c -E "VGA|3D" || echo "0")
+    local gpu_count
+    gpu_count=$(lspci | grep -c -E "VGA|3D" || echo "0")
     if [ "$gpu_count" -gt 0 ]; then
         lspci | grep -E "VGA|3D" | while read -r line; do
             echo -e "${BOLD}GPU:${NC}      ${line#*: }"
@@ -81,12 +83,14 @@ EOF
     print_header "STORAGE"
     df -h / | tail -1 | awk '{printf "'"${BOLD}"'Root:'"${NC}"'     %s total, %s used, %s free (%s)\n", $2, $3, $4, $5}'
 
-    local disk_count=$(lsblk -d -o TYPE | grep -c disk || echo "0")
+    local disk_count
+    disk_count=$(lsblk -d -o TYPE | grep -c disk || echo "0")
     echo -e "${BOLD}Disks:${NC}    $disk_count detected"
 
     print_header "VIRTUALIZATION"
     if [ -d /sys/kernel/iommu_groups ]; then
-        local iommu_groups=$(ls -1 /sys/kernel/iommu_groups/ | wc -l)
+        local iommu_groups
+        iommu_groups=$(ls -1 /sys/kernel/iommu_groups/ | wc -l) || true
         echo -e "${BOLD}IOMMU:${NC}    ${GREEN}[ok]${NC} Enabled ($iommu_groups groups)"
 
         if [ "$gpu_count" -gt 0 ]; then
@@ -145,12 +149,18 @@ EOF
     fi
 
     print_header "NETWORK"
-    local iface_count=$(ls /sys/class/net/ | grep -v lo | wc -l)
+    # Count /sys/class/net entries whose name does not contain "lo" (same filter as the old ls | grep -v lo).
+    local iface_count=0 net_if
+    for net_if in /sys/class/net/*; do
+        [[ -e "$net_if" || -L "$net_if" ]] || continue
+        [[ "${net_if##*/}" == *lo* ]] || iface_count=$((iface_count + 1))
+    done
     echo -e "${BOLD}Ifaces:${NC}   $iface_count detected"
     ip -br addr show | grep -v "lo " | while read -r line; do
-        local iface=$(echo $line | awk '{print $1}')
-        local ip=$(echo $line | awk '{print $3}' | cut -d/ -f1)
-        local state=$(echo $line | awk '{print $2}')
+        local iface ip state
+        iface=$(echo $line | awk '{print $1}') || true
+        ip=$(echo $line | awk '{print $3}' | cut -d/ -f1) || true
+        state=$(echo $line | awk '{print $2}') || true
         if [ "$state" = "UP" ]; then
             echo -e "          ${GREEN}[ok]${NC} $iface: $ip"
         else

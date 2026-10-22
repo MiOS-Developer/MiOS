@@ -55,63 +55,60 @@ if [ -d /tmp/geist-font ]; then
     record_version geist-font "git-main" "https://github.com/vercel/geist-font"
 fi
 
-mios_log "Installing Symbols-Only Nerd Font"
-mkdir -p /usr/share/fonts/nerd-symbols
-NERD_TAG=$( (scurl -s https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest \
-            | grep -Po '"tag_name": "\K.*?(?=")') 2>/dev/null || true)
-NERD_FALLBACK_TAG="v3.4.0"
-if [ -z "$NERD_TAG" ]; then
-    mios_warn "Api.github.com release-tag lookup empty"
-    NERD_TAG="$NERD_FALLBACK_TAG"
-fi
-record_version nerd-symbols-font "$NERD_TAG" \
-    "https://github.com/ryanoasis/nerd-fonts/releases/tag/${NERD_TAG}"
-
-if command -v unzip >/dev/null 2>&1; then
-    NERD_URL="https://github.com/ryanoasis/nerd-fonts/releases/download/${NERD_TAG}/NerdFontsSymbolsOnly.zip"
+# shellcheck source=automation/lib/upstream-latest.sh
+source "${SCRIPT_DIR}/lib/upstream-latest.sh"
+# No fallback tag: the newest release is resolved here and a download is
+# accepted only against the sha256 GitHub publishes for the release asset.
+_install_nerd_symbols() {
+    mios_log "Installing Symbols-Only Nerd Font"
+    mkdir -p /usr/share/fonts/nerd-symbols
+    NERD_REPO="https://github.com/ryanoasis/nerd-fonts.git"
+    NERD_ASSET="NerdFontsSymbolsOnly.zip"
     download_ok=false
+    sha=""
+    NERD_TAG=""
     if [ -f "/usr/share/mios/vendored/fonts/nerd.tar.xz" ]; then
         mios_log "Found offline vendored nerd.tar.xz, using it"
         tar -xf "/usr/share/mios/vendored/fonts/nerd.tar.xz" -C /usr/share/fonts/nerd-symbols 2>/dev/null || true
+        NERD_TAG="vendored"; sha="$(sha256sum /usr/share/mios/vendored/fonts/nerd.tar.xz | awk '{print $1}')"
         download_ok=true
     elif [ -f "/usr/share/mios/vendored/NerdFontsSymbolsOnly.zip" ]; then
         mios_log "Found offline vendored NerdFontsSymbolsOnly.zip, using it"
         cp /usr/share/mios/vendored/NerdFontsSymbolsOnly.zip /tmp/nerd-symbols.zip
+        NERD_TAG="vendored"; sha="$(sha256sum /tmp/nerd-symbols.zip | awk '{print $1}')"
         download_ok=true
     elif [ -f "/usr/share/mios/vendored/nerd-symbols.zip" ]; then
         mios_log "Found offline vendored nerd-symbols.zip, using it"
         cp /usr/share/mios/vendored/nerd-symbols.zip /tmp/nerd-symbols.zip
+        NERD_TAG="vendored"; sha="$(sha256sum /tmp/nerd-symbols.zip | awk '{print $1}')"
         download_ok=true
-    elif scurl -fsL --max-time 90 "$NERD_URL" -o /tmp/nerd-symbols.zip 2>/dev/null; then
-        download_ok=true
+    elif NERD_TAG="$(mios_latest_git_ref "$NERD_REPO")"; then
+        if sha="$(mios_fetch_gh_release_asset "$NERD_REPO" "$NERD_TAG" "$NERD_ASSET" /tmp/nerd-symbols.zip "nerd-fonts ${NERD_TAG}")"; then
+            download_ok=true
+        else
+            mios_ul_pass $? || true
+        fi
+    else
+        mios_warn "nerd-fonts: newest release could not be resolved"
     fi
 
     if [ "$download_ok" = true ]; then
         if [ -f /tmp/nerd-symbols.zip ]; then
-            unzip -o -q /tmp/nerd-symbols.zip "*.ttf" "*.otf" -d /usr/share/fonts/nerd-symbols 2>/dev/null || true
+            if command -v unzip >/dev/null 2>&1; then
+                unzip -o -q /tmp/nerd-symbols.zip "*.ttf" "*.otf" -d /usr/share/fonts/nerd-symbols 2>/dev/null || true
+            else
+                mios_warn "Unzip unavailable"
+            fi
         fi
-
-        sbom_dir="/usr/share/mios/artifacts/sbom"
-        mkdir -p "$sbom_dir"
-        sha=""
-        if command -v sha256sum >/dev/null 2>&1; then
-            for _asset in /tmp/nerd-symbols.zip /usr/share/mios/vendored/fonts/nerd.tar.xz; do
-                if [ -f "$_asset" ]; then
-                    sha="$(sha256sum "$_asset" | awk '{print $1}')"
-                    break
-                fi
-            done
-        fi
-        printf '%s\t%s\t%s\n' "NerdFontsSymbolsOnly" "${NERD_TAG}" "${sha:-unknown}" >> "${sbom_dir}/binaries.tsv"
-
+        mios_record_resolved NerdFontsSymbolsOnly "$NERD_TAG" \
+            "https://github.com/ryanoasis/nerd-fonts/releases/tag/${NERD_TAG}" "$sha"
         rm -f /tmp/nerd-symbols.zip
         mios_ok "Symbols-Only Nerd Font ${NERD_TAG} installed"
     else
-        mios_warn "Symbols-Only Nerd Font download failed"
+        die "Symbols-Only Nerd Font not installed (no verified artefact)"
     fi
-else
-    mios_warn "Unzip unavailable"
-fi
+}
+_install_nerd_symbols
 
 fc-cache -f /usr/share/fonts/geist /usr/share/fonts/nerd-symbols 2>/dev/null || true
 

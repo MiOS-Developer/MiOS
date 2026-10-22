@@ -1,0 +1,1906 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c02a3da2..b42ff23c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -101,7 +101,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ pkg_check_modules(PIXMAN REQUIRED IMPORTED_TARGET pixman-1)
+ pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
+ pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
+-pkg_check_modules(HYPRGRAPHICS REQUIRED IMPORTED_TARGET hyprgraphics)
++# MiOS supplies the installed compositor's matching headers and resolves
++# its graphics symbols from the compositor. Distribution pkg-config may
++# describe an older libhyprgraphics ABI than the compositor already loaded.
++option(HYPRLAND_USE_COMPOSITOR_GRAPHICS "Resolve graphics symbols from the compositor" OFF)
++if(NOT HYPRLAND_USE_COMPOSITOR_GRAPHICS)
++    pkg_check_modules(HYPRGRAPHICS REQUIRED IMPORTED_TARGET hyprgraphics)
++endif()
+
+ add_library(hypr3d SHARED
+     src/main.cpp
+@@ -131,7 +137,6 @@ target_include_directories(hypr3d
+ )
+
+ target_link_libraries(hypr3d PRIVATE
+-    PkgConfig::HYPRGRAPHICS
+     PkgConfig::PIXMAN
+     PkgConfig::LIBDRM
+     PkgConfig::XKBCOMMON
+@@ -139,8 +144,35 @@ target_link_libraries(hypr3d PRIVATE
+     EGL
+     dl
+ )
++if(NOT HYPRLAND_USE_COMPOSITOR_GRAPHICS)
++    target_link_libraries(hypr3d PRIVATE PkgConfig::HYPRGRAPHICS)
++endif()
+
+ set_target_properties(hypr3d PROPERTIES
+     PREFIX ""
+     OUTPUT_NAME "hypr3d"
+ )
++
++# MiOS explicit generated content-type declaration
++target_compile_options(hypr3d PRIVATE -include "${HYPRLAND_PROTOCOLS_INCLUDE}/content-type-v1.hpp")
++
++# Use the compositor-matched private Lua API; the system Lua may have another ABI.
++set(HYPRLAND_LUA_ROOT "" CACHE PATH "Compositor-matched Lua source containing src/lua.h and src/liblua.a")
++if(NOT EXISTS "${HYPRLAND_LUA_ROOT}/src/lua.h" OR NOT EXISTS "${HYPRLAND_LUA_ROOT}/src/liblua.a")
++    message(FATAL_ERROR "Pass -DHYPRLAND_LUA_ROOT with the compositor-matched PIC Lua archive")
++endif()
++target_include_directories(hypr3d BEFORE PRIVATE "${HYPRLAND_LUA_ROOT}/src")
++target_link_libraries(hypr3d PRIVATE "${HYPRLAND_LUA_ROOT}/src/liblua.a")
++target_link_options(hypr3d PRIVATE "LINKER:--exclude-libs,liblua.a")
++
++include(CTest)
++if(BUILD_TESTING)
++    add_executable(mios-bsp-regression tests/mios-bsp-regression.cpp src/World/Camera.cpp src/World/Outline.cpp)
++    get_target_property(HYPR3D_TEST_INCLUDES hypr3d INCLUDE_DIRECTORIES)
++    target_include_directories(mios-bsp-regression PRIVATE ${HYPR3D_TEST_INCLUDES})
++    target_compile_options(mios-bsp-regression PRIVATE -ffunction-sections -fdata-sections)
++    target_link_options(mios-bsp-regression PRIVATE "LINKER:--gc-sections")
++    target_link_libraries(mios-bsp-regression PRIVATE EGL GLESv2)
++    add_test(NAME mios-bsp-regression COMMAND mios-bsp-regression)
++    set_tests_properties(mios-bsp-regression PROPERTIES TIMEOUT 5)
++endif()
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 6c667e04..73e8fbed 100644
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -832,7 +832,7 @@ bool CWindowCapture::makeSnapshotPopup(const WP<Desktop::View::CPopup>& popup,
+     return true;
+ }
+
+-bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force) {
++bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force, bool picking) {
+     if (!layer || !monitor)
+         return false;
+
+@@ -896,7 +896,7 @@ bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& mon
+         snapshot.alphaValid &&
+         (snapshot.alphaW * 4 != PW || snapshot.alphaH * 4 != PH);
+
+-    if (!snapshot.alphaValid || SIZE_CHANGED || snapshot.maskAge % 32 == 1) {
++    if (picking && (!snapshot.alphaValid || SIZE_CHANGED || snapshot.maskAge % 32 == 1)) {
+         auto* GLFB = dynamic_cast<Render::GL::CGLFramebuffer*>(fb.get());
+
+         // The layer sits at its box position inside the monitor-sized
+diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
+index 619d6a65..6f92072d 100644
+--- a/src/HyprlandCompat/WindowCapture.hpp
++++ b/src/HyprlandCompat/WindowCapture.hpp
+@@ -116,7 +116,7 @@ class CWindowCapture {
+
+     // Same for a layer-shell surface (panel/bar): monitor-sized capture at
+     // the layer's monitor-local box, no decorations, no off-screen pull.
+-    bool makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force = false);
++    bool makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force = false, bool picking = true);
+
+     // A window's popup (menu, tooltip), captured at its own box; `box` is
+     // its monitor-local box.
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 7cbe2909..3b347fed 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -2,6 +2,7 @@
+
+ #include "../../third_party/font8x8_basic.h"
+
++#include <array>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -31,6 +32,49 @@ namespace {
+
+ constexpr float PI = 3.14159265358979323846f;
+
++// One mapping for the visible environment and glass reflections. Captured
++// Hyprland layers use logical top-down texture coordinates. A flat wallpaper
++// is a cube-face image, not an equirectangular panorama with collapsed poles.
++constexpr const char* ENVIRONMENT_UV_GLSL = R"GLSL(
++vec2 miosEnvironmentUV(vec3 ray, bool liveWallpaper, float mirror) {
++    ray = normalize(ray);
++    if (!liveWallpaper) {
++        float u = fract(0.5 + atan(ray.x, -ray.z) / 6.28318530718);
++        u = mix(u, 1.0 - abs(2.0 * u - 1.0), mirror);
++        return vec2(u, 0.5 - asin(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
++    }
++    vec3 a = abs(ray);
++    vec2 face;
++    if (a.z >= a.x && a.z >= a.y)
++        face = vec2(ray.z < 0.0 ? ray.x : -ray.x, -ray.y) / a.z;
++    else if (a.x >= a.y)
++        face = vec2(ray.x > 0.0 ? ray.z : -ray.z, -ray.y) / a.x;
++    else
++        face = vec2(ray.x, ray.y > 0.0 ? -ray.z : ray.z) / a.y;
++    return face * 0.5 + 0.5;
++}
++
++vec4 miosEnvironmentColor(sampler2D image, vec3 ray, bool liveWallpaper, float mirror, float lod) {
++    if (!liveWallpaper)
++        return textureLod(image, miosEnvironmentUV(ray, false, mirror), lod);
++    ray = normalize(ray);
++    vec3 a = abs(ray);
++    // Blend the three rectilinear projections before selecting a face.
++    // Their weights vanish at sign changes, so there is no cube seam or pole.
++    vec3 weights = a * a * a * a;
++    weights /= weights.x + weights.y + weights.z;
++    vec2 x = vec2(ray.x > 0.0 ? ray.z : -ray.z, -ray.y) / max(a.x, 0.000001);
++    vec2 y = vec2(ray.x, ray.y > 0.0 ? -ray.z : ray.z) / max(a.y, 0.000001);
++    vec2 z = vec2(ray.z < 0.0 ? ray.x : -ray.x, -ray.y) / max(a.z, 0.000001);
++    x = clamp(x * 0.5 + 0.5, vec2(0.0), vec2(1.0));
++    y = clamp(y * 0.5 + 0.5, vec2(0.0), vec2(1.0));
++    z = clamp(z * 0.5 + 0.5, vec2(0.0), vec2(1.0));
++    return textureLod(image, x, lod) * weights.x
++         + textureLod(image, y, lod) * weights.y
++         + textureLod(image, z, lod) * weights.z;
++}
++)GLSL";
++
+ // Real ground plane. The camera is constrained above this level and the grid
+ // is drawn on this plane, not on a ceiling. Windows live above it.
+ constexpr float FLOOR_Y = Camera::kFloorY;
+@@ -54,6 +98,11 @@ struct SWPoly {
+     std::vector<SWVert> verts;
+     unsigned int        tex = 0;
+     float               alpha = 1.0f; // the window's room alpha (g_fsFade etc.)
++    bool glassWall = false;
++    bool glassFace = false; // walls keep their existing appearance
++    std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
++    std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
++    std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
+ };
+
+ // Split a polygon by a plane. Pieces on the positive side go to `front`,
+@@ -69,15 +118,22 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
+     front.alpha    = poly.alpha;
+     back.tex       = poly.tex;
+     back.alpha     = poly.alpha;
++    front.glassWall = back.glassWall = poly.glassWall;
++    front.glassFace = back.glassFace = poly.glassFace;
++    front.glassUV = back.glassUV = poly.glassUV;
++    front.glassSurface = back.glassSurface = poly.glassSurface;
++    front.glassMetrics = back.glassMetrics = poly.glassMetrics;
+     hasFront = hasBack = false;
+
+     const size_t COUNT = poly.verts.size();
+-    if (COUNT < 3 || COUNT > 32)
++    if (COUNT < 3)
+         return;
+
+-    float dist[32];
+-    for (size_t i = 0; i < COUNT; ++i)
++    std::vector<float> dist(COUNT);
++    for (size_t i = 0; i < COUNT; ++i) {
+         dist[i] = dot(poly.verts[i].p - pl, n);
++        if (std::abs(dist[i]) < 1e-4f) dist[i] = 0.f;
++    }
+
+     for (size_t i = 0; i < COUNT; ++i) {
+         const size_t J = (i + 1) % COUNT;
+@@ -119,63 +175,71 @@ struct SBspNode {
+ };
+
+ static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
+-    if (polys.empty())
+-        return;
+-
+-    // Node plane from the first polygon.
+-    const Vec3 A = polys[0].verts[0].p;
+-    const Vec3 B = polys[0].verts[1].p;
+-    const Vec3 C = polys[0].verts[2].p;
+-    node.p = A;
+-    node.n = normalize(cross(B - A, C - A));
+-
+-    std::vector<SWPoly> frontList, backList;
+-
+-    for (auto& POLY : polys) {
+-        float dist[32];
+-        const size_t COUNT = std::min<size_t>(POLY.verts.size(), 32);
+-
+-        bool pos = false, neg = false;
+-        for (size_t i = 0; i < COUNT; ++i) {
+-            dist[i] = dot(POLY.verts[i].p - node.p, node.n);
+-            pos = pos || dist[i] > 1e-4f;
+-            neg = neg || dist[i] < -1e-4f;
++    if (polys.empty()) return;
++    // Reject degenerate fragments before choosing a plane (zero normals
++    // incorrectly classify every other polygon as coplanar).
++    const auto planeNormal = [](const SWPoly& p) {
++        if (p.verts.size() < 3) return Vec3{};
++        for (size_t i=1; i+1<p.verts.size(); ++i) {
++            const auto n=cross(p.verts[i].p-p.verts[0].p,p.verts[i+1].p-p.verts[0].p);
++            if (dot(n,n)>1e-14f) return normalize(n);
+         }
+-
+-        if (!pos) {
+-            node.coplanar.push_back(std::move(POLY));
+-        } else if (!neg) {
+-            frontList.push_back(std::move(POLY));
+-        } else {
+-            SWPoly front, back;
+-            bool hasFront = false, hasBack = false;
+-            bspSplitPoly(POLY, node.p, node.n, front, back, hasFront, hasBack);
+-
+-            if (hasFront)
+-                frontList.push_back(std::move(front));
+-            if (hasBack)
+-                backList.push_back(std::move(back));
+-            // Fully straddling polygons lose nothing: both pieces carry the
+-            // texture onward.
++        return Vec3{};
++    };
++    polys.erase(std::remove_if(polys.begin(),polys.end(),[&](const SWPoly& p) {
++        const auto n=planeNormal(p); return dot(n,n)<0.5f;
++    }),polys.end());
++    if (polys.empty()) return;
++    size_t best=0, bestCost=~size_t(0);
++    const size_t candidates=std::min<size_t>(polys.size(),16);
++    for (size_t k=0;k<candidates;++k) {
++        const size_t index=k*polys.size()/candidates;
++        const auto point=polys[index].verts[0].p, normal=planeNormal(polys[index]);
++        size_t front=0,back=0,split=0;
++        for (const auto& p:polys) {
++            bool pos=false,neg=false;
++            for (const auto& v:p.verts) {
++                const float d=dot(v.p-point,normal);
++                pos=pos || d>1e-4f; neg=neg || d < -1e-4f;
++            }
++            front+=pos; back+=neg; split+=pos&&neg;
++        }
++        const size_t cost=std::max(front,back)+split*4;
++        if (cost<bestCost) {bestCost=cost;best=index;}
++    }
++    node.p=polys[best].verts[0].p; node.n=planeNormal(polys[best]);
++    std::vector<SWPoly> frontList,backList;
++    for (size_t index = 0; index < polys.size(); ++index) {
++        auto& p = polys[index];
++        // Always consume the splitter. Floating-point error in a clipped
++        // polygon can classify its own vertices off its computed plane.
++        // Re-inserting it unchanged makes the BSP recurse without progress.
++        if (index == best) {
++            node.coplanar.push_back(std::move(p));
++            continue;
++        }
++        bool pos=false,neg=false;
++        for (const auto& v:p.verts) {
++            const float d=dot(v.p-node.p,node.n);
++            pos=pos || d>1e-4f; neg=neg || d < -1e-4f;
++        }
++        if (!pos&&!neg) node.coplanar.push_back(std::move(p));
++        else if (!pos) backList.push_back(std::move(p));
++        else if (!neg) frontList.push_back(std::move(p));
++        else {
++            SWPoly f,b;bool hf=false,hb=false;
++            bspSplitPoly(p,node.p,node.n,f,b,hf,hb);
++            if(hf) frontList.push_back(std::move(f));
++            if(hb) backList.push_back(std::move(b));
+         }
+     }
+-
+-    constexpr int MAX_DEPTH = 12;
+-
+-    if (depth < MAX_DEPTH && !frontList.empty()) {
+-        node.front = std::make_unique<SBspNode>();
+-        bspBuild(*node.front, frontList, depth + 1);
+-    } else {
+-        for (auto& P : frontList)
+-            node.coplanar.push_back(std::move(P));
++    // Never relabel unfinished subtrees as coplanar. Slab walls routinely
++    // exceed the former depth-12 cutoff and made that shortcut visible.
++    if (!frontList.empty()) {
++        node.front=std::make_unique<SBspNode>(); bspBuild(*node.front,frontList,depth+1);
+     }
+-
+-    if (depth < MAX_DEPTH && !backList.empty()) {
+-        node.back = std::make_unique<SBspNode>();
+-        bspBuild(*node.back, backList, depth + 1);
+-    } else {
+-        for (auto& P : backList)
+-            node.coplanar.push_back(std::move(P));
++    if (!backList.empty()) {
++        node.back=std::make_unique<SBspNode>(); bspBuild(*node.back,backList,depth+1);
+     }
+ }
+
+@@ -206,6 +270,11 @@ static GLuint compileShader(
+     if (!shader)
+         return 0;
+
++    std::string expanded(source);
++    const std::string marker = "MIOS_ENVIRONMENT_UV";
++    if (const auto at = expanded.find(marker); at != std::string::npos)
++        expanded.replace(at, marker.size(), ENVIRONMENT_UV_GLSL);
++    source = expanded.c_str();
+     glShaderSource(
+         shader,
+         1,
+@@ -368,6 +437,28 @@ static void appendQuad(
+     );
+ }
+
++std::vector<float> buildEnvironmentDome() {
++    // Structural tessellation, not a wallpaper resolution: the original
++    // GPU texture stays live and keeps its output dimensions. Duplicate
++    // seam vertices carry u=0 and u=1 so no triangle crosses the UV wrap.
++    constexpr int longitudeSegments = 96, latitudeSegments = 48;
++    std::vector<float> dome;
++    auto vertex = [&](int x, int y) {
++        const float u = float(x) / longitudeSegments;
++        const float v = float(y) / latitudeSegments;
++        const float lon = (u - 0.5f) * 2.f * PI;
++        const float lat = (0.5f - v) * PI;
++        dome.insert(dome.end(), {std::sin(lon) * std::cos(lat),
++                    std::sin(lat), -std::cos(lon) * std::cos(lat), u, v});
++    };
++    for (int y = 0; y < latitudeSegments; ++y)
++        for (int x = 0; x < longitudeSegments; ++x) {
++            vertex(x,y); vertex(x+1,y); vertex(x+1,y+1);
++            vertex(x,y); vertex(x+1,y+1); vertex(x,y+1);
++        }
++    return dome;
++}
++
+ } // namespace
+
+ GLScene::GLScene() {
+@@ -403,8 +494,10 @@ uniform mat4 uMVP;
+ uniform vec4 uUVRect;
+
+ out vec2 vUV;
++out vec3 vWorldPosition;
+
+ void main() {
++    vWorldPosition = aPosition; // glass BSP vertices are already in world space
+     gl_Position = uMVP * vec4(aPosition, 1.0);
+     vUV = aUV * uUVRect.zw + uUVRect.xy;
+ }
+@@ -412,19 +505,610 @@ void main() {
+
+     static constexpr const char* sceneFragmentShader = R"GLSL(
+ #version 300 es
+-
+-precision mediump float;
+-
++precision highp float;
+ in vec2 vUV;
+-
+ uniform sampler2D uTexture;
+ uniform int uTextured;
+ uniform int uPremult;
+ uniform vec4 uColor;
+-
++uniform sampler2D uGlassBackground;
++uniform sampler2D uGlassEnvironment;
++uniform bool uGlassHasEnvironment;
++uniform bool uGlassLiveWallpaper;
++MIOS_ENVIRONMENT_UV
++uniform float uGlassMirror;
++uniform vec3 uGlassEye;
++in vec3 vWorldPosition;
++uniform int uGlassFace;
++uniform int uGlassWall;
++uniform vec4 uGlassUV;
++uniform vec2 uGlassViewport;
++uniform vec4 uGlassSurface;
++uniform vec4 uGlassMetrics;
+ out vec4 fragColor;
+
++
++
++/*
++ * Apple-style Liquid Glass Fragment Shader — Thick-glass refraction model
++ *
++ * The window is modeled as a thick convex glass slab:
++ *   - Center: flat surface → clean frosted blur, no distortion
++ *   - Edges: curved surface → refraction pulls in content from beyond
++ *     the window boundary, creating natural color bleeding
++ *
++ * Rendering layers:
++ * 1. Edge refraction via smooth outward direction (optionally along the edges,
++ *    optionally rim-only) + exponential proximity
++ * 2. Chromatic aberration (per-channel refraction scale)
++ * 3. Edge raw-texture blend for vivid color pickup
++ * 4. Subtle center dome lens magnification
++ * 5. Frosted tint (brightness boost + desaturation)
++ * 6. Configurable color tint overlay
++ * 7. Bevel (thin lit line at the edge)
++ * 8. Fresnel edge glow (white or tinted by the background)
++ * 9. Specular highlight (top)
++ * 10. Inner shadow (bottom rim)
++ */
++
++uniform sampler2D tex;
++vec2 fullSize;
++vec2 invFullSize;      // = 1.0 / fullSize, hoisted out of the per-pixel divisions below
++vec4 radii;            // per-corner radius: top-left, top-right, bottom-right, bottom-left
++const vec2 uvPadding = vec2(0.0);
++
++uniform float refractionStrength;
++uniform float chromaticAberration;
++uniform float fresnelStrength;
++uniform float specularStrength;
++uniform float glassOpacity;
++uniform float edgeThickness;
++float invBezelWidthPx; // = 1.0 / (edgeThickness * minDim), hoisted per-draw
++uniform vec3 tintColor;
++uniform float tintAlpha;
++uniform float lensDistortion;
++float lensMaxPx;       // = lensDistortion * minDim * 0.006, hoisted per-draw
++uniform float brightness;
++uniform float contrast;
++uniform float saturation;
++uniform float vibrancy;
++uniform float vibrancyDarkness;
++uniform float adaptiveDim;
++uniform float adaptiveBoost;
++const float roundingPower = 2.0;
++const float invRoundingPower = 0.5; // = 1.0 / roundingPower, hoisted per-draw
++uniform float refractionFlow;
++uniform float refractionSpread;
++uniform float fresnelTint;
++uniform float bevelStrength;
++uniform float bevelSize;
++const float monitorScale = 1.0;
++uniform vec3 fresnelColor;
++uniform float fresnelColorAlpha;
++uniform vec3 bevelColor;
++uniform float bevelColorAlpha;
++uniform float bevelTint;
++uniform float bevelAngle;
++uniform float bevelShadow;
++uniform float specularAngle;
++
++uniform sampler2D maskTex;
++const int useMask = 0;
++const vec2 maskUVOffset = vec2(0.0);
++const vec2 maskUVScale = vec2(1.0);
++const float maskAlphaThreshold = 0.0;
++const int maskMode = 0;          // 0 = alpha threshold, 1 = protocol region
++const int regionRectCount = 0;   // 0..16
++vec4 regionRects[16];  // box-local pixels: xy = offset from box top-left, zw = size
++
++// Subsurface item glass only: the rounded-box SDF (getCornerSDF below) is
++// evaluated over this sub-rect of the drawn box instead of the full box —
++// the item's blur-region extents, which can be smaller than its own surface
++// box (e.g. a capsule pill inside a wider hit-test area). Box-local pixels,
++// same space as regionRects. Windows and alpha-mask layers pass offset (0,0)
++// and size == fullSize, so the SDF is unchanged from the old whole-box math.
++const vec2 glassBoxOffsetPx = vec2(0.0);
++vec2 glassBoxSizePx;
++
++// Maps this fragment's own box UV into the sample texture's normalized space
++// before uvPadding is applied. Identity (offset 0, scale 1) unless the sample
++// texture covers a smaller area than this box — PROTOCOL_REGION layers only,
++// where the background is only ever sampled/blurred inside the blur region's
++// bounding box (see GlassRenderer::sampleBackground callers in GlassLayerSurface.cpp).
++const vec2 sampleUVOffset = vec2(0.0);
++const vec2 sampleUVScale = vec2(1.0);
++
++vec2 v_texcoord;
++vec4 hgColor;
++
++// ============================================================================
++// TEXTURE SAMPLING (window UV -> padded texture UV)
++// ============================================================================
++
++// Box UV -> sample-texture-local UV (undoes sampleUVOffset/uvScale's
++// shrink before the padding remap below sees it).
++vec2 toSampleBoxUV(vec2 wuv) {
++    return (wuv - sampleUVOffset) / sampleUVScale;
++}
++
++vec2 toTexUV(vec2 wuv) {
++    return wuv * (1.0 - 2.0 * uvPadding) + uvPadding;
++}
++
++// Screen mapping uses the inverse UV Jacobian, preserving perspective/roll.
++mat2 hgUVToScreen;
++vec4 sampleBlurred(vec2 wuv) {
++    vec2 shift = hgUVToScreen * (wuv - v_texcoord);
++    vec2 screen = (gl_FragCoord.xy + shift) / uGlassViewport;
++    vec2 pad = 0.5 / uGlassViewport;
++    vec2 spread = vec2(2.0) / uGlassViewport;
++    // Compact frosted filter; not the desktop's separable Gaussian pipeline.
++    vec4 c = texture(uGlassBackground, clamp(screen, pad, 1.0-pad)) * 0.40;
++    c += texture(uGlassBackground, clamp(screen+vec2(spread.x,0.0),pad,1.0-pad))*0.15;
++    c += texture(uGlassBackground, clamp(screen-vec2(spread.x,0.0),pad,1.0-pad))*0.15;
++    c += texture(uGlassBackground, clamp(screen+vec2(0.0,spread.y),pad,1.0-pad))*0.15;
++    c += texture(uGlassBackground, clamp(screen-vec2(0.0,spread.y),pad,1.0-pad))*0.15;
++    return c;
++}
++
++// ============================================================================
++// SDF
++// ============================================================================
++
++float lpNorm(vec2 v, float p, float invP) {
++    // Exact identity: pow(x^2+y^2, 0.5) == length(v) when p == 2.0 (the
++    // Hyprland default). Native sqrt is a single correctly-rounded hardware
++    // op vs. two pow()s (exp2/log2-based) + a third pow() for the outer root.
++    if (p == 2.0) return length(v);
++    return pow(pow(abs(v.x), p) + pow(abs(v.y), p), invP);
++}
++
++// Quadrant lookup for the per-corner radius. p is measured from the box
++// center (as getRoundedBoxSDF/getBevelSDF compute it below): negative y is
++// the top half (v_texcoord grows downward — see the specular highlight's
++// 1.0 - uv.y), negative x is the left half. cornerRadii is (top-left,
++// top-right, bottom-right, bottom-left).
++float pickCornerRadius(vec2 p, vec4 cornerRadii) {
++    float top    = p.x < 0.0 ? cornerRadii.x : cornerRadii.y;
++    float bottom = p.x < 0.0 ? cornerRadii.w : cornerRadii.z;
++    return p.y < 0.0 ? top : bottom;
++}
++
++// posPx/boxSizePx: pixel-space position relative to (and size of) the box the
++// SDF is measured against — the glass box (see glassBoxOffsetPx/SizePx above),
++// not necessarily the fragment's full drawn box.
++float getRoundedBoxSDF(vec2 posPx, vec2 boxSizePx, vec4 cornerRadii) {
++    vec2 p = posPx - boxSizePx * 0.5;
++    vec2 halfSize = boxSizePx * 0.5;
++    float r = pickCornerRadius(p, cornerRadii);
++    float clampedR = min(r, min(halfSize.x, halfSize.y));
++    vec2 q = abs(p) - halfSize + clampedR;
++    return min(max(q.x, q.y), 0.0) + lpNorm(max(q, 0.0), roundingPower, invRoundingPower) - clampedR;
++}
++
++float getCornerSDF(vec2 uv) {
++    vec2 boxLocalPx = uv * fullSize - glassBoxOffsetPx;
++    return getRoundedBoxSDF(boxLocalPx, glassBoxSizePx, radii);
++}
++
++// Edge distance for the bevel, crease-free. Inside the window, getCornerSDF is
++// max(q.x, q.y) - r: the distance to whichever edge is nearer. That has a crease
++// along each corner's 45-degree diagonal, so the edge refraction (and anything
++// else driven by edgeProximity) shows a straight seam in all four corners.
++//
++// Here the contour lines are rounded rectangles that match the window outline
++// exactly at the edge (depth 0) and get rounder going inward: at depth d the box
++// is inset by d and its corner radius is r + d. The radius only grows, so the
++// top and side bevels always blend round the corner. Per pixel the depth is a
++// closed-form quadratic in the corner zone:
++//   |a + 2d| = r + d,  a = |p| - halfSize + r   =>   7d^2 + (4(ax+ay) - 2r) d + |a|^2 - r^2 = 0
++// and the plain straight-edge distance elsewhere. Past depth (h - r) / 2, with h
++// the smaller half-size, the radius would outgrow the inset box: from there the
++// contours are stadiums, i.e. the plain distance to the box rounded by h (so a
++// capsule gets its exact distance everywhere).
++float getBevelSDF(vec2 uv) {
++    vec2  H = glassBoxSizePx * 0.5;
++    float h = min(H.x, H.y);
++    vec2  signedP = uv * fullSize - glassBoxOffsetPx - H;
++    float r = min(pickCornerRadius(signedP, radii), h);
++    vec2  p = abs(signedP);
++    vec2  a = p - H + r;
++    float d = min(r - a.x, r - a.y);                      // straight-edge depth
++    float B = 4.0 * (a.x + a.y) - 2.0 * r;
++    float C = dot(a, a) - r * r;
++    float disc = B * B - 28.0 * C;
++    if (disc >= 0.0) {
++        float dc = (-B + sqrt(disc)) / 14.0;
++        if (a.x + 2.0 * dc >= 0.0 && a.y + 2.0 * dc >= 0.0)
++            d = dc;                                        // in a corner zone: the rounded contour
++    }
++    vec2 s = p - H + h;
++    return -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
++}
++
++// ============================================================================
++// REFRACTION DIRECTION
++// Pixel-space direction toward window center — perfectly smooth everywhere,
++// no SDF gradient needed (optional edge-following blend below). On straight edges the perpendicular pixel distance
++// dominates, giving approximately edge-normal direction. At corners it
++// naturally follows the diagonal.
++// ============================================================================
++
++vec2 refractionDir(vec2 uv) {
++    vec2 toCenterPx = (vec2(0.5) - uv) * fullSize;
++    float len = length(toCenterPx);
++    return len > 0.1 ? toCenterPx / len : vec2(0.0);
++}
++
++// Smooth edge-following field: points into the box, hugging each edge's normal
++// away from the corners and blending crease-free through the diagonals.
++vec2 edgeDir(vec2 posPx) {
++    vec2 halfSize = fullSize * 0.5;
++    vec2 n = abs(posPx) / halfSize;
++    vec2 g = sign(posPx) * pow(n, vec2(7.0)) / halfSize;
++    float len = length(g);
++    return len > 0.0 ? -g / len : vec2(0.0);   // points INTO the box
++}
++
++// light direction for a clockwise angle in degrees, 0 = from the top (screen y grows downward)
++vec2 lightDir(float angleDeg) {
++    float a = radians(angleDeg);
++    return vec2(sin(a), -cos(a));
++}
++
++// exact outward normal from the SDF gradient; only meaningful right at the edge
++vec2 sdfOutwardNormal(vec2 uv) {
++    vec2 h = vec2(1.0) / fullSize;
++    vec2 grad = vec2(
++        getCornerSDF(uv + vec2(h.x, 0.0)) - getCornerSDF(uv - vec2(h.x, 0.0)),
++        getCornerSDF(uv + vec2(0.0, h.y)) - getCornerSDF(uv - vec2(0.0, h.y))
++    );
++    float len = length(grad);
++    return len > 0.0 ? grad / len : vec2(0.0, -1.0);
++}
++
++// ============================================================================
++// MAIN — Thick-glass refraction model
++// ============================================================================
++
++void hgMaterial() {
++    vec2 uv = v_texcoord;
++
++    // Layers only: sample the temp FBO to get the rendered surface pixel.
++    // Discard fully transparent fragments so glass only covers visible content.
++    // For windows, hasMask is false and this block is skipped entirely.
++    vec4 surfacePixel = vec4(0.0);
++    bool hasMask = (useMask == 1);
++    if (hasMask) {
++        vec2 maskUV = uv * maskUVScale + maskUVOffset;
++        surfacePixel = texture(maskTex, clamp(maskUV, 0.001, 0.999));
++
++        if (maskMode == 1) {
++            vec2 pixelPos = uv * fullSize;
++            bool insideRegion = false;
++            for (int i = 0; i < regionRectCount; i++) {
++                vec4 r = regionRects[i];
++                if (pixelPos.x >= r.x && pixelPos.y >= r.y &&
++                    pixelPos.x <= r.x + r.z && pixelPos.y <= r.y + r.w) {
++                    insideRegion = true;
++                    break;
++                }
++            }
++            if (!insideRegion) { hgColor = surfacePixel; return; } // premultiplied, output as-is
++        } else if (surfacePixel.a < maskAlphaThreshold) {
++            discard;
++        }
++    }
++
++    float cornerSdf    = getCornerSDF(uv);
++    float cornerAlpha  = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
++
++    if (maskMode == 1) {
++        // Subsurface items: the glass box (glassBoxOffsetPx/SizePx) can be
++        // smaller than the item's own drawn box/region — e.g. a capsule glass
++        // shape inside a rectangular blur region. Outside it, fall back to the
++        // plain surface pixel instead of dropping it (a hard discard here would
++        // silently delete client content, like an icon, that simply isn't under
++        // the glass). cornerAlpha fades smoothly across the boundary (the same
++        // curve already used for glassA below), so this is an antialiased
++        // "glass * coverage, surface over" blend, not a hard cutover — the
++        // actual blend happens in the hasMask composite at the bottom of main().
++        if (cornerAlpha < 0.001) {
++            hgColor = surfacePixel;
++            return;
++        }
++    } else {
++        // Windows, and alpha-mask layers: no surface pixel to fall back to
++        // outside the glass shape, so this is exactly the old hard-edged cutoff.
++        if (cornerSdf > 0.0) discard;
++        if (cornerAlpha < 0.001) discard;
++    }
++
++    float minDim = min(fullSize.x, fullSize.y);
++    float bezelWidthPx = edgeThickness * minDim;
++
++    // ========================================
++    // EDGE PROXIMITY + DIRECTION
++    // edgeProximity: 1.0 at boundary, exponential decay inward
++    // inwardDir: pixel-space direction toward center (smooth everywhere)
++    // Clamped to 1.0: cornerSdf can be positive here (maskMode==1's glass box
++    // can be smaller than fullSize, so fragments just outside it still reach
++    // this code with cornerAlpha > 0.001), and exp() of a positive value would
++    // otherwise overshoot every effect that scales off edgeProximity.
++    // ========================================
++    // crease-free bevel distance, so the edge has no seam along the corner diagonals;
++    // it assumes circular corners, so a superellipse outline keeps the exact SDF
++    float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
++    float edgeProximity = min(exp(bevelSdf * invBezelWidthPx), 1.0);
++    vec2 inwardDir = refractionDir(uv);
++    vec2 posPx = (uv - 0.5) * fullSize; // pixel-space position for the edge-flow direction below
++
++    // ========================================
++    // EDGE REFRACTION
++    // Offset sampling UV inward (toward center) at edges — like looking
++    // through the curved thick edge of a glass slab. This compresses
++    // and distorts what's already behind the window, without reaching
++    // beyond the window boundary.
++    // ========================================
++    float refractionPx = refractionStrength * 50.0;
++    float lensFalloff = edgeProximity;
++    if (refractionSpread < 0.999) {
++        // rim-only lens: window the exponential tail so the centre stays flat
++        float depth = -bevelSdf;
++        float tailWindow = 1.0 - smoothstep(1.5 * bezelWidthPx, 3.0 * bezelWidthPx, depth);
++        lensFalloff = mix(edgeProximity * tailWindow, edgeProximity, refractionSpread);
++    }
++    float refractionMag = lensFalloff * refractionPx;
++    vec2 dir = inwardDir;
++    if (refractionFlow > 0.001) {
++        // pull along the edges instead of toward the centre
++        vec2 mixedDir = mix(inwardDir, edgeDir(posPx), refractionFlow);
++        float mixedLen = length(mixedDir);
++        dir = mixedLen > 0.0001 ? mixedDir / mixedLen : inwardDir;
++    }
++    vec2 baseOffset = dir * refractionMag * invFullSize;
++
++    // ========================================
++    // CHROMATIC ABERRATION — per-channel refraction scale
++    // Blue refracts more than red → natural spectral fringing at edges.
++    // ========================================
++    float chromaSpread = chromaticAberration * 0.35;
++    vec2 offsetR = baseOffset * (1.0 - chromaSpread);
++    vec2 offsetG = baseOffset;
++    vec2 offsetB = baseOffset * (1.0 + chromaSpread);
++
++    // ========================================
++    // CENTER DOME LENS (subtle magnification in the flat interior)
++    // Fades near edges so it doesn't interfere with edge refraction.
++    // ========================================
++    vec2 domeUV = vec2(0.0);
++    if (lensDistortion > 0.001) {
++        vec2 c = (uv - 0.5) * 2.0;
++        vec2 dGrad = vec2(
++            -4.0 * c.x * (1.0 - c.y * c.y),
++            -4.0 * c.y * (1.0 - c.x * c.x)
++        );
++        float lensFade = 1.0 - edgeProximity;
++        domeUV = dGrad * lensMaxPx * lensFade * invFullSize;
++    }
++
++    // ========================================
++    // BACKGROUND SAMPLING (frosted blur only)
++    // Nearby color influence comes naturally from the Gaussian blur
++    // kernel crossing the window boundary — no explicit raw sampling.
++    // ========================================
++    vec3 color;
++    vec2 uvR = uv + offsetR + domeUV;
++    vec2 uvG = uv + offsetG + domeUV;
++    vec2 uvB = uv + offsetB + domeUV;
++
++    if (chromaticAberration > 0.001 && edgeProximity > 0.01) {
++        color.r = sampleBlurred(uvR).r;
++        color.g = sampleBlurred(uvG).g;
++        color.b = sampleBlurred(uvB).b;
++    } else {
++        color = sampleBlurred(uvG).rgb;
++    }
++
++    // ========================================
++    // FROSTED TINT (per-theme tone mapping)
++    // ========================================
++    float blurredLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
++
++    // Frosted desaturation
++    color = mix(vec3(blurredLum), color, saturation);
++
++    // Tight smoothstep range maps the blur-compressed luminance (~0.3-0.7)
++    // to the full [0,1] adaptive range, creating visible per-region differentiation
++    float lumCurve = smoothstep(0.25, 0.55, blurredLum);
++
++    // Dim: multiplicative — effective at darkening bright areas
++    color *= brightness * (1.0 - adaptiveDim * lumCurve);
++
++    // Boost: additive lift — multiplicative can't brighten near-black content
++    color += vec3(adaptiveBoost * (1.0 - lumCurve) * 0.5);
++
++    // Contrast (pivot around midpoint)
++    color = mix(vec3(0.5), color, contrast);
++
++    // Vibrancy (selective saturation boost scaled by existing saturation)
++    float currentLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
++    float sat = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
++    float darkFactor = 1.0 - vibrancyDarkness * (1.0 - blurredLum);
++    color = mix(vec3(currentLum), color, 1.0 + vibrancy * sat * darkFactor);
++
++    // ========================================
++    // COLOR TINT OVERLAY
++    // ========================================
++    color = mix(color, tintColor, tintAlpha);
++
++    // ========================================
++    // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
++    // ========================================
++    if (bevelStrength > 0.001) {
++        float sizePx = max(bevelSize * monitorScale, 1.0);   // logical px, uniform across monitor scales
++        float core = 0.25 * sizePx;
++        float tail = sizePx;
++        float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
++
++        // lit side faces the light, the far side fades out and can be shadowed
++        float facing = clamp(dot(sdfOutwardNormal(uv), lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
++
++        vec3 bevelLight = vec3(1.0);
++        if (bevelColorAlpha > 0.001) bevelLight = mix(vec3(1.0), bevelColor, bevelColorAlpha);   // a dark colour gives a dark line
++        if (bevelTint > 0.001) {
++            float maxC = max(max(color.r, color.g), color.b);
++            bevelLight = mix(bevelLight, maxC > 0.001 ? color / maxC : vec3(1.0), bevelTint);
++        }
++
++        color = mix(color, bevelLight, ring * facing * bevelStrength);
++        if (bevelShadow > 0.001)
++            color = mix(color, vec3(0.0), ring * (1.0 - facing) * bevelShadow);
++    }
++
++    // ========================================
++    // FRESNEL RIM GLOW (edge zone)
++    // ========================================
++    if (fresnelStrength > 0.001) {
++        float fresnel = edgeProximity * edgeProximity * fresnelStrength * 0.15;
++        vec3 fresnelLight = vec3(1.0);
++        if (fresnelColorAlpha > 0.001) fresnelLight = mix(vec3(1.0), fresnelColor, fresnelColorAlpha);   // chosen colour, then the tint below
++        if (fresnelTint > 0.001) {
++            // rim light in the background's own hue, at full brightness so the gain matches white
++            float maxC = max(max(color.r, color.g), color.b);
++            fresnelLight = mix(fresnelLight, maxC > 0.001 ? color / maxC : vec3(1.0), fresnelTint);
++        }
++        color += fresnelLight * fresnel;
++    }
++
++    // ========================================
++    // SPECULAR — subtle top highlight (edge zone)
++    // ========================================
++    if (specularStrength > 0.001) {
++        float specT = max(1.0 - uv.y, 0.0);
++        if (abs(specularAngle) > 0.001) {
++            // rotate the highlight gradient toward the light: at angle 0, lightDir gives
++            // (0,-1) and dot(uv-0.5, L) = 0.5-uv.y, so 0.5+dot(...) reduces to 1-uv.y exactly
++            vec2 L = lightDir(specularAngle);
++            specT = clamp(0.5 + dot(uv - 0.5, L), 0.0, 1.0);
++        }
++        float topBias = pow(specT, 2.0);
++        float spec = topBias * edgeProximity * edgeProximity * specularStrength * 0.08;
++        color += vec3(1.0, 0.99, 0.97) * spec;
++    }
++
++    // ========================================
++    // INNER SHADOW (bottom rim)
++    // ========================================
++    {
++        float bottomBias = pow(uv.y, 2.0);
++        float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
++        color *= 1.0 - shadow;
++    }
++
++    // float framebuffers (FP16 under wide-gamut cm) store unbounded values and
++    // the glass re-samples its own output: unclamped color diverges over frames
++    color = clamp(color, 0.0, 1.0);
++    float glassA = clamp(glassOpacity * cornerAlpha, 0.0, 1.0);
++
++    if (hasMask) {
++        // Layers only: composite the rendered surface over the glass effect
++        // in a single pass. surfacePixel is premultiplied alpha from Hyprland's
++        // surface rendering, so we unpremultiply before the 'over' blend.
++        float surfA = surfacePixel.a;
++        vec3 surfRGB = surfA > 0.001 ? surfacePixel.rgb / surfA : vec3(0.0);
++
++        float compA = surfA + glassA * (1.0 - surfA);
++        vec3 compRGB = compA > 0.001
++            ? (surfRGB * surfA + color * glassA * (1.0 - surfA)) / compA
++            : vec3(0.0);
++
++        // Hyprland's compositor expects premultiplied alpha (blend GL_ONE, GL_ONE_MINUS_SRC_ALPHA).
++        hgColor = vec4(compRGB * compA, compA);
++    } else {
++        // Windows: output the glass effect alone, surface is rendered separately by Hyprland.
++        // Premultiplied: without this, a fading window's glass keeps full RGB contribution
++        // because the GL_ONE source factor adds raw color regardless of alpha.
++        hgColor = vec4(color * glassA, glassA);
++    }
++}
++
+ void main() {
++    if (uTextured != 0 && uGlassWall != 0) {
++        vec4 t=texture(uTexture,vUV);
++        vec3 surface=t.rgb/max(t.a,0.001);
++        // Sides are glass, not opaque strips of the captured application.
++        vec3 rgb=mix(vec3(0.12,0.16,0.24),surface,0.35)*uColor.rgb;
++        float a=min(t.a,0.22)*uColor.a;
++        fragColor=vec4(uPremult!=0 ? rgb*a:rgb,a);
++        return;
++    }
++    if (uTextured != 0 && uGlassFace != 0) {
++        vec4 content = texture(uTexture, vUV);
++        vec2 capture = (vUV-uGlassUV.xy)/uGlassUV.zw;
++        capture.y = 1.0-capture.y;
++        v_texcoord = (capture-uGlassSurface.xy)/uGlassSurface.zw;
++        fullSize = max(uGlassMetrics.xy, vec2(1.0));
++        invFullSize = 1.0/fullSize;
++        glassBoxSizePx = fullSize;
++        radii = vec4(uGlassMetrics.z);
++        invBezelWidthPx = 1.0/max(edgeThickness*min(fullSize.x,fullSize.y),1.0);
++        lensMaxPx = lensDistortion*min(fullSize.x,fullSize.y)*0.006;
++        vec2 dx = dFdx(v_texcoord), dy = dFdy(v_texcoord);
++        float det = dx.x*dy.y-dy.x*dx.y;
++        hgUVToScreen = abs(det)>1e-12 ? inverse(mat2(dx,dy)) : mat2(0.0);
++        float capturedLuma=dot(content.rgb/max(content.a,0.001),vec3(0.2126,0.7152,0.0722));
++        float capturedDetail=fwidth(capturedLuma);
++        float sd = getCornerSDF(v_texcoord);
++        if (sd > 0.0) {
++            // A snapshot can retain opaque pixels in a rounded client corner.
++            // Cut that corner using the same live compositor radius as the
++            // slab walls. Only pixels outside the client box are decorations.
++            if (all(greaterThanEqual(v_texcoord, vec2(0.0))) &&
++                all(lessThanEqual(v_texcoord, vec2(1.0)))) discard;
++            // Decorations/shadows: preserve the captured pixels, no lens.
++            float a=content.a*uColor.a;
++            vec3 rgb=content.rgb/max(content.a,0.001)*uColor.rgb;
++            fragColor=vec4(uPremult!=0 ? rgb*a : rgb,a);
++            return;
++        }
++        hgMaterial();
++        if (uGlassHasEnvironment) {
++            // Environment reflection, distinct from the transmitted scene
++            // copy. World-space derivatives keep it correct after rotation
++            // and BSP clipping; Schlick's dielectric Fresnel grows at grazing
++            // angles instead of painting a fixed screen-space highlight.
++            vec3 normal = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
++            vec3 view = normalize(uGlassEye - vWorldPosition);
++            normal = faceforward(normal, -view, normal);
++            vec3 ray = reflect(-view, normal);
++            // n=1.5 glass against air has normal-incidence reflectance 0.04.
++            float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(normal, view), 0.0), 5.0);
++            hgColor.rgb = mix(hgColor.rgb, miosEnvironmentColor(uGlassEnvironment, ray, uGlassLiveWallpaper, uGlassMirror, 0.0).rgb, fresnel);
++        }
++        // Opaque snapshots otherwise hide the entire material. This deliberate
++        // appearance transform makes flat client backgrounds transmissive.
++        // It is not a recovered client alpha channel or semantic text mask.
++        vec3 straight=content.rgb/max(content.a,0.001);
++        float luma=dot(straight,vec3(0.2126,0.7152,0.0722));
++        float chroma=max(max(straight.r,straight.g),straight.b)-min(min(straight.r,straight.g),straight.b);
++        float ink=clamp(smoothstep(0.14,0.52,luma)+chroma*0.65,0.0,1.0);
++        float detail=smoothstep(0.025,0.16,capturedDetail);
++        float transmissionWeight=mix(mix(0.16,0.82,ink),0.98,detail);
++        float surfaceA=content.a*transmissionWeight;
++        float compA=surfaceA+hgColor.a*(1.0-surfaceA);
++        vec3 rgb=(straight*surfaceA+hgColor.rgb*(1.0-surfaceA))/max(compA,0.001);
++        // Edge light remains above opaque client content (MiOS edge-pass intent).
++        float e=min(exp(getBevelSDF(v_texcoord)*invBezelWidthPx),1.0);
++        float rim=e*e;
++        vec3 hue=hgColor.rgb/max(max(hgColor.r,hgColor.g),max(hgColor.b,0.001));
++        rgb += mix(vec3(1.0),hue,fresnelTint)*rim*fresnelStrength*0.15*content.a;
++        rgb += vec3(1.0,0.99,0.97)*pow(max(1.0-v_texcoord.y,0.0),2.0)*rim*specularStrength*0.08*content.a;
++        float a=compA*uColor.a;
++        rgb=clamp(rgb,0.0,1.0)*uColor.rgb;
++        fragColor=vec4(uPremult!=0 ? rgb*a : rgb,a);
++        return;
++    }
+     vec4 c = uTextured != 0 ? texture(uTexture, vUV) * uColor : uColor;
+
+     // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
+@@ -568,57 +1252,42 @@ void main() {
+     if (!m_blitProgram)
+         return false;
+
++    // A camera-centred UV sphere: translation never moves the environment,
++    // while yaw, pitch, roll, zoom and the reverse view share the scene basis.
+     static constexpr const char* panoramaVertexShader = R"GLSL(
+ #version 300 es
+-
+-layout(location = 0) in vec2 aPosition;
+-
+-out vec2 vNdc;
+-
+-void main() {
+-    vNdc = aPosition;
+-    gl_Position = vec4(aPosition, 0.0, 1.0);
+-}
+-)GLSL";
+-
+-    static constexpr const char* panoramaFragmentShader = R"GLSL(
+-#version 300 es
+-
+-// highp is mandatory here: mediump cannot represent the longitude with texel
+-// precision, and the atan2 discontinuity at the +-pi wrap point then shows up
+-// as a one-pixel seam.
+ precision highp float;
+-
+-in vec2 vNdc;
+-
++layout(location = 0) in vec3 aPosition;
++layout(location = 1) in vec2 aUV;
+ uniform vec3 uFwd;
+ uniform vec3 uRight;
+ uniform vec3 uUp;
+ uniform float uTanHalfX;
+ uniform float uTanHalfY;
++out vec2 vUV;
++out vec3 vDirection;
++void main() {
++    vec3 view = vec3(dot(aPosition, uRight), dot(aPosition, uUp), dot(aPosition, uFwd));
++    gl_Position = vec4(view.x / uTanHalfX, view.y / uTanHalfY, view.z * 0.999, view.z);
++    vUV = aUV;
++    vDirection = aPosition;
++}
++)GLSL";
++    static constexpr const char* panoramaFragmentShader = R"GLSL(
++#version 300 es
++precision highp float;
++in vec2 vUV;
++in vec3 vDirection;
+ uniform float uLod;
++uniform float uMirror;
++uniform bool uLiveWallpaper;
+ uniform sampler2D uPanorama;
+-
+ out vec4 fragColor;
+-
++MIOS_ENVIRONMENT_UV
+ void main() {
+-    // Reconstruct the view ray for this pixel from the camera basis, then
+-    // sample the equirectangular panorama. fract() keeps u strictly inside
+-    // [0, 1) so the wrap point never rides the texture's outer edge.
+-    vec3 dir = normalize(
+-        uFwd + uRight * (vNdc.x * uTanHalfX) + uUp * (vNdc.y * uTanHalfY));
+-
+-    float lon = atan(dir.x, -dir.z);
+-    float lat = asin(clamp(dir.y, -1.0, 1.0));
+-
+-    vec2 uv = vec2(
+-        fract(0.5 + lon / 6.28318530718),
+-        0.5 - lat / 3.14159265359);
+-
+-    // textureLod with an analytically computed level: the implicit derivative
+-    // of u explodes at the atan2 wrap point, which made the GPU pick a coarse
+-    // mip for exactly one pixel -- the seam. An explicit LOD never spikes.
+-    fragColor = vec4(textureLod(uPanorama, uv, uLod).rgb, 1.0);
++    // Explicit LOD avoids seam derivative spikes. Live layer FBOs have no
++    // mip chain and use level zero; file panoramas keep analytic filtering.
++    fragColor = vec4(miosEnvironmentColor(uPanorama, vDirection, uLiveWallpaper, uMirror, uLod).rgb, 1.0);
+ }
+ )GLSL";
+
+@@ -690,6 +1359,27 @@ void main() {
+             "uPremult"
+         );
+
++    m_glassBackground = glGetUniformLocation(m_sceneProgram, "uGlassBackground");
++    m_glassEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassEnvironment");
++    m_glassHasEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassHasEnvironment");
++    m_glassLiveWallpaper = glGetUniformLocation(m_sceneProgram, "uGlassLiveWallpaper");
++    m_glassEye = glGetUniformLocation(m_sceneProgram, "uGlassEye");
++    m_glassFace = glGetUniformLocation(m_sceneProgram, "uGlassFace");
++    m_glassWall = glGetUniformLocation(m_sceneProgram, "uGlassWall");
++    m_glassUV = glGetUniformLocation(m_sceneProgram, "uGlassUV");
++    m_glassViewport = glGetUniformLocation(m_sceneProgram, "uGlassViewport");
++    m_glassSurface = glGetUniformLocation(m_sceneProgram, "uGlassSurface");
++    m_glassMetrics = glGetUniformLocation(m_sceneProgram, "uGlassMetrics");
++    m_glassMirror = glGetUniformLocation(m_sceneProgram, "uGlassMirror");
++    for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
++        m_glassParameters[i] = glGetUniformLocation(m_sceneProgram, GLASS_PARAMETERS[i].uniform);
++    m_glassColors[0] = glGetUniformLocation(m_sceneProgram, "tintColor");
++    m_glassColors[1] = glGetUniformLocation(m_sceneProgram, "fresnelColor");
++    m_glassColors[2] = glGetUniformLocation(m_sceneProgram, "bevelColor");
++    m_glassAlphas[0] = glGetUniformLocation(m_sceneProgram, "tintAlpha");
++    m_glassAlphas[1] = glGetUniformLocation(m_sceneProgram, "fresnelColorAlpha");
++    m_glassAlphas[2] = glGetUniformLocation(m_sceneProgram, "bevelColorAlpha");
++
+     m_blitTexture =
+         glGetUniformLocation(
+             m_blitProgram,
+@@ -743,6 +1433,8 @@ void main() {
+             m_panoramaProgram,
+             "uLod"
+         );
++    m_panoramaMirrorLoc = glGetUniformLocation(m_panoramaProgram, "uMirror");
++    m_panoramaLiveWallpaper = glGetUniformLocation(m_panoramaProgram, "uLiveWallpaper");
+
+     m_panoramaSampler =
+         glGetUniformLocation(
+@@ -770,6 +1462,12 @@ void main() {
+ }
+
+ bool GLScene::createMeshes() {
++    const auto dome = buildEnvironmentDome();
++    glGenVertexArrays(1, &m_domeVAO);
++    glGenBuffers(1, &m_domeVBO);
++    setupMeshVAO(m_domeVAO, m_domeVBO, dome);
++    m_domeVertexCount = static_cast<int>(dome.size() / 5);
++
+     // Unit window quad, centred on the origin, facing +Z (the pose windows
+     // are modelled in). Per-window position and size come from the model
+     // matrix, so every window is independently placeable and scalable.
+@@ -803,6 +1501,24 @@ bool GLScene::createMeshes() {
+         -0.5f, 0.0f, -0.5f
+     );
+
++    // Centre platform: a disc on the ground plane, opaque while the rest of the
++    // floor is translucent. Same vertex layout as the floor (pos + uv).
++    {
++        std::vector<float> disc;
++        constexpr int kSegments = 96;
++        for (int i = 0; i < kSegments; ++i) {
++            const float a0 = 2.0f * PI * static_cast<float>(i) / kSegments;
++            const float a1 = 2.0f * PI * static_cast<float>(i + 1) / kSegments;
++            disc.insert(disc.end(), {0.f, 0.f, 0.f, .5f, .5f,
++                                     std::cos(a0), 0.f, -std::sin(a0), .5f, .5f,
++                                     std::cos(a1), 0.f, -std::sin(a1), .5f, .5f});
++        }
++        glGenVertexArrays(1, &m_discVAO);
++        glGenBuffers(1, &m_discVBO);
++        setupMeshVAO(m_discVAO, m_discVBO, disc);
++        m_discVertexCount = static_cast<int>(disc.size() / 5);
++    }
++
+     glGenVertexArrays(1, &m_floorVAO);
+     glGenBuffers(1, &m_floorVBO);
+
+@@ -1019,6 +1735,16 @@ bool GLScene::ensureSceneFramebuffer(
+
+     glBindTexture(GL_TEXTURE_2D, 0);
+
++    if (!m_glassColor)
++        glGenTextures(1, &m_glassColor);
++    glBindTexture(GL_TEXTURE_2D, m_glassColor);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    glBindTexture(GL_TEXTURE_2D, 0);
++
+     glBindRenderbuffer(GL_RENDERBUFFER, m_sceneDepth);
+
+     glRenderbufferStorage(
+@@ -1128,14 +1854,29 @@ void GLScene::drawFloor(
+     glCullFace(GL_BACK);
+     glFrontFace(GL_CCW);
+
++    // The ground is translucent so the living wallpaper shows through it; only
++    // the centre platform stays solid.
++    glEnable(GL_BLEND);
++    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
++    const GLboolean oldDepthMask = GL_TRUE;
++    glDepthMask(GL_FALSE);
+     drawQuad(
+         m_floorVAO,
+         m_floorVertexCount,
+         vp * model,
+         0,
+         fullUV,
+-        0.018f, 0.026f, 0.040f, 1.0f
++        0.018f, 0.026f, 0.040f, 0.10f
++    );
++    drawQuad(
++        m_discVAO,
++        m_discVertexCount,
++        vp * Mat4::translation({0.0f, FLOOR_Y - 0.015f, 0.0f}) * Mat4::scale({2.5f, 1.0f, 2.5f}),
++        0,
++        fullUV,
++        0.018f, 0.026f, 0.040f, 0.90f
+     );
++    glDepthMask(oldDepthMask);
+
+     glCullFace(static_cast<GLenum>(oldCullMode));
+     glFrontFace(static_cast<GLenum>(oldFrontFace));
+@@ -1500,7 +2241,7 @@ void GLScene::refreshPlayer() {
+ }
+
+ void GLScene::drawPanorama(float aspect) {
+-    if (!m_panoramaTex || !m_panoramaProgram)
++    if ((!m_environmentTex && !m_panoramaTex) || !m_panoramaProgram)
+         return;
+
+     glUseProgram(m_panoramaProgram);
+@@ -1535,7 +2276,7 @@ void GLScene::drawPanorama(float aspect) {
+     // 2*tanX / screenWidth radians.
+     float lod = 0.0f;
+
+-    if (m_panoramaW > 0 && m_sceneWidth > 0) {
++    if (!m_environmentTex && m_panoramaW > 0 && m_sceneWidth > 0) {
+         const float texelsPerPixel =
+             static_cast<float>(m_panoramaW) / (2.0f * PI) *
+             (2.0f * TANY * aspect) / static_cast<float>(m_sceneWidth);
+@@ -1549,18 +2290,23 @@ void GLScene::drawPanorama(float aspect) {
+     glUniform1f(m_panoramaTanX, TANY * aspect);
+     glUniform1f(m_panoramaTanY, TANY);
+     glUniform1f(m_panoramaLod, lod);
++    glUniform1f(m_panoramaMirrorLoc, m_panoramaMirror ? 1.f : 0.f);
++    glUniform1i(m_panoramaLiveWallpaper, m_environmentTex != 0);
+
+     glActiveTexture(GL_TEXTURE0);
+-    glBindTexture(GL_TEXTURE_2D, m_panoramaTex);
++    glBindTexture(GL_TEXTURE_2D, m_environmentTex ? m_environmentTex : m_panoramaTex);
+     glUniform1i(m_panoramaSampler, 0);
+
+     // Pure background: no depth interaction, everything else draws on top.
+     glDisable(GL_DEPTH_TEST);
+     glDepthMask(GL_FALSE);
+
+-    glBindVertexArray(m_fullscreenVAO);
+-    glDrawArrays(GL_TRIANGLES, 0, 6);
++    const bool culled = glIsEnabled(GL_CULL_FACE);
++    glDisable(GL_CULL_FACE); // the camera is inside the dome
++    glBindVertexArray(m_domeVAO);
++    glDrawArrays(GL_TRIANGLES, 0, m_domeVertexCount);
+     glBindVertexArray(0);
++    if (culled) glEnable(GL_CULL_FACE);
+
+     glDepthMask(GL_TRUE);
+     glEnable(GL_DEPTH_TEST);
+@@ -1650,6 +2396,11 @@ void GLScene::drawWindows(
+         SWinSlab slab;
+         slab.front.tex   = window.texture;
+         slab.front.alpha = window.alpha;
++        slab.front.glassFace = window.glassMetrics[3] > 0.5f;
++        slab.front.glassSurface = window.glassSurface;
++        slab.front.glassMetrics = window.glassMetrics;
++        slab.front.glassUV = {window.u0, window.v0,
++                             window.u1 - window.u0, window.v1 - window.v0};
+
+         for (int c = 0; c < 4; ++c) {
+             SWVert V{
+@@ -1683,6 +2434,10 @@ void GLScene::drawWindows(
+             // so the two never stack through a translucent window.
+             slab.back.tex   = window.texture;
+             slab.back.alpha = window.alpha;
++            slab.back.glassFace = slab.front.glassFace;
++            slab.back.glassSurface = slab.front.glassSurface;
++            slab.back.glassMetrics = slab.front.glassMetrics;
++            slab.back.glassUV = slab.front.glassUV;
+
+             for (int c = 0; c < 4; ++c) {
+                 SWVert V{
+@@ -1732,6 +2487,7 @@ void GLScene::drawWindows(
+                     SWPoly wall;
+                     wall.tex   = window.texture;
+                     wall.alpha = window.alpha;
++                    wall.glassWall = slab.front.glassFace;
+
+                     wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
+                     wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
+@@ -1744,7 +2500,17 @@ void GLScene::drawWindows(
+                 }
+             };
+
+-            if (window.outlines && !window.outlines->empty()) {
++            if (slab.front.glassFace) {
++                // Extrude the same surface the face shader masks. Do not trace
++                // screenshot alpha: opaque cached glass/shadows can enlarge it.
++                const auto& S=window.glassSurface;
++                const auto& M=window.glassMetrics;
++                auto loop=roundedRectLoop(std::max(1,static_cast<int>(M[0])),
++                    std::max(1,static_cast<int>(M[1])),M[2],1.f,8);
++                for (auto& P:loop.pts) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
++                for (auto& P:loop.uvs) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
++                EMIT_WALLS(loop.pts,loop.uvs);
++            } else if (window.outlines && !window.outlines->empty()) {
+                 for (const auto& LOOP : *window.outlines)
+                     EMIT_WALLS(LOOP.pts, LOOP.uvs);
+             } else {
+@@ -1792,7 +2558,7 @@ void GLScene::drawWindows(
+         for (auto& P : S.inner)
+             polys.push_back(std::move(P));
+
+-        polys.push_back(std::move(S.fromBehind ? S.back : S.front));
++        polys.push_back(std::move(S.fromBehind && !S.back.verts.empty() ? S.back : S.front));
+     }
+
+     if (polys.empty())
+@@ -1837,7 +2603,7 @@ void GLScene::drawWindows(
+     glUniform1i(m_scenePremult, m_windowsPremultiplied ? 1 : 0);
+
+     glEnable(GL_DEPTH_TEST);
+-    glDepthMask(GL_TRUE);
++    glDepthMask(GL_FALSE); // BSP owns translucent window order; retain opaque depth test.
+     glEnable(GL_BLEND);
+     if (m_windowsPremultiplied)
+         glBlendFuncSeparate(
+@@ -1855,6 +2621,31 @@ void GLScene::drawWindows(
+
+     glActiveTexture(GL_TEXTURE0);
+
++    GLint oldTexture1 = 0, oldTexture2 = 0, oldReadFBO = 0;
++    glActiveTexture(GL_TEXTURE2);
++    glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTexture2);
++    const GLuint environment = m_environmentTex ? m_environmentTex : m_panoramaTex;
++    glBindTexture(GL_TEXTURE_2D, environment);
++    glUniform1i(m_glassEnvironment, 2);
++    glUniform1f(m_glassMirror, m_panoramaMirror ? 1.f : 0.f);
++    for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
++        glUniform1f(m_glassParameters[i], m_glassConfig.values[i]);
++    for (size_t i = 0; i < 3; ++i) {
++        const uint32_t c = m_glassConfig.colors[i];
++        glUniform3f(m_glassColors[i], ((c >> 24) & 255) / 255.f, ((c >> 16) & 255) / 255.f, ((c >> 8) & 255) / 255.f);
++        glUniform1f(m_glassAlphas[i], (c & 255) / 255.f);
++    }
++    glUniform1i(m_glassHasEnvironment, environment != 0);
++    glUniform1i(m_glassLiveWallpaper, m_environmentTex != 0);
++    glUniform3f(m_glassEye, m_camera.position.x, m_camera.position.y, m_camera.position.z);
++    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldReadFBO);
++    glActiveTexture(GL_TEXTURE1);
++    glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTexture1);
++    glBindTexture(GL_TEXTURE_2D, m_glassColor);
++    glActiveTexture(GL_TEXTURE0);
++    glUniform1i(m_glassBackground, 1);
++    glUniform2f(m_glassViewport, static_cast<float>(m_sceneWidth), static_cast<float>(m_sceneHeight));
++
+     // Consecutive polys with the same texture and alpha merge into ONE
+     // upload + draw: a depth slab adds ~100 wall quads per window, and a
+     // draw call per wall quad would sink the frame. Only CONSECUTIVE polys
+@@ -1865,7 +2656,12 @@ void GLScene::drawWindows(
+     for (size_t i = 0; i < ordered.size();) {
+         size_t j = i;
+         while (j < ordered.size() && ordered[j].tex == ordered[i].tex &&
+-               ordered[j].alpha == ordered[i].alpha)
++               ordered[j].alpha == ordered[i].alpha &&
++               ordered[j].glassFace == ordered[i].glassFace &&
++               ordered[j].glassWall == ordered[i].glassWall &&
++               ordered[j].glassUV == ordered[i].glassUV &&
++               ordered[j].glassSurface == ordered[i].glassSurface &&
++               ordered[j].glassMetrics == ordered[i].glassMetrics)
+             ++j;
+
+         verts.clear();
+@@ -1900,12 +2696,40 @@ void GLScene::drawWindows(
+         glUniform1i(m_sceneTextured, 1);
+         glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
+
++        // Do not sample the framebuffer we are drawing into. Refresh the
++        // separate copy per face batch so nearer panes refract farther panes.
++        // During the desktop morph retain the original alpha pipeline.
++        const auto& uv = ordered[i].glassUV;
++        const bool glass = ordered[i].glassFace && !m_windowsPremultiplied &&
++                           std::abs(uv[2]) > 1e-6f && std::abs(uv[3]) > 1e-6f;
++        glUniform1i(m_glassFace, glass ? 1 : 0);
++        glUniform1i(m_glassWall, ordered[i].glassWall && !m_windowsPremultiplied ? 1 : 0);
++        if (glass) {
++            glUniform4f(m_glassUV, uv[0], uv[1], uv[2], uv[3]);
++            const auto& S = ordered[i].glassSurface;
++            const auto& M = ordered[i].glassMetrics;
++            glUniform4f(m_glassSurface, S[0], S[1], S[2], S[3]);
++            glUniform4f(m_glassMetrics, M[0], M[1], M[2], M[3]);
++            glActiveTexture(GL_TEXTURE1);
++            glBindTexture(GL_TEXTURE_2D, m_glassColor);
++            glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneFBO);
++            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_sceneWidth, m_sceneHeight);
++            glActiveTexture(GL_TEXTURE0);
++        }
+         glDrawArrays(GL_TRIANGLES, 0,
+                      static_cast<GLint>(verts.size() / 5));
+
+         i = j;
+     }
+
++    glUniform1i(m_glassFace, 0);
++    glUniform1i(m_glassWall, 0);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(oldReadFBO));
++    glActiveTexture(GL_TEXTURE2);
++    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(oldTexture2));
++    glActiveTexture(GL_TEXTURE1);
++    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(oldTexture1));
++    glActiveTexture(GL_TEXTURE0);
+     glBindVertexArray(0);
+     glBindBuffer(GL_ARRAY_BUFFER, 0);
+     glBindTexture(GL_TEXTURE_2D, 0);
+@@ -2764,6 +3588,11 @@ void GLScene::shutdown() {
+ }
+
+ void GLScene::destroyGLObjects() {
++    m_environmentTex = 0; // borrowed, released by the layer capture owner
++    if (m_domeVBO) glDeleteBuffers(1, &m_domeVBO);
++    if (m_domeVAO) glDeleteVertexArrays(1, &m_domeVAO);
++    m_domeVBO = m_domeVAO = 0;
++    m_domeVertexCount = 0;
+     if (m_textVBO) {
+         glDeleteBuffers(1, &m_textVBO);
+         m_textVBO = 0;
+@@ -2827,6 +3656,10 @@ void GLScene::destroyGLObjects() {
+         m_floorVBO = 0;
+     }
+
++    if (m_discVAO) {
++        glDeleteVertexArrays(1, &m_discVAO);
++        m_discVAO = 0;
++    }
+     if (m_floorVAO) {
+         glDeleteVertexArrays(1, &m_floorVAO);
+         m_floorVAO = 0;
+@@ -2847,6 +3680,11 @@ void GLScene::destroyGLObjects() {
+         m_sceneDepth = 0;
+     }
+
++    if (m_glassColor) {
++        glDeleteTextures(1, &m_glassColor);
++        m_glassColor = 0;
++    }
++
+     if (m_sceneColor) {
+         glDeleteTextures(1, &m_sceneColor);
+         m_sceneColor = 0;
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 083d93f2..04c2a2d2 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -7,6 +7,7 @@
+ #include "World/Picking.hpp"
+
+ #include <algorithm>
++#include <array>
+ #include <cstdint>
+ #include <filesystem>
+ #include <memory>
+@@ -27,6 +28,53 @@ static constexpr int kPointerVerts = 15;
+ // WindowRender entries and reads back what the crosshair hit.
+ class GLScene {
+   public:
++    // Shared Hyprglass material settings, supplied by the MiOS SSOT projector.
++    struct SGlassParameter {
++        const char* key;
++        const char* uniform;
++        float initial, minimum, maximum;
++    };
++    inline static constexpr auto GLASS_PARAMETERS = std::to_array<SGlassParameter>({
++        {"refraction_strength", "refractionStrength", .40f, 0.f, 10.f},
++        {"chromatic_aberration", "chromaticAberration", .35f, 0.f, 4.f},
++        {"fresnel_strength", "fresnelStrength", .8f, 0.f, 4.f},
++        {"specular_strength", "specularStrength", .6f, 0.f, 4.f},
++        {"glass_opacity", "glassOpacity", .92f, 0.f, 1.f},
++        {"edge_thickness", "edgeThickness", .035f, 0.f, 1.f},
++        {"lens_distortion", "lensDistortion", .25f, 0.f, 10.f},
++        {"brightness", "brightness", .95f, 0.f, 4.f},
++        {"contrast", "contrast", 1.f, 0.f, 4.f},
++        {"saturation", "saturation", .95f, 0.f, 4.f},
++        {"vibrancy", "vibrancy", .15f, 0.f, 4.f},
++        {"vibrancy_darkness", "vibrancyDarkness", .5f, 0.f, 1.f},
++        {"adaptive_dim", "adaptiveDim", .1f, 0.f, 1.f},
++        {"adaptive_boost", "adaptiveBoost", .04f, 0.f, 1.f},
++        {"refraction_flow", "refractionFlow", .75f, 0.f, 1.f},
++        {"refraction_spread", "refractionSpread", .35f, 0.f, 1.f},
++        {"fresnel_tint", "fresnelTint", .5f, 0.f, 1.f},
++        {"bevel_strength", "bevelStrength", .45f, 0.f, 4.f},
++        {"bevel_size", "bevelSize", 2.f, 0.f, 256.f},
++        {"bevel_tint", "bevelTint", .45f, 0.f, 1.f},
++        {"bevel_angle", "bevelAngle", -35.f, -360.f, 360.f},
++        {"bevel_shadow", "bevelShadow", .1f, 0.f, 1.f},
++        {"specular_angle", "specularAngle", 0.f, -360.f, 360.f},
++        {"blur_sigma", "blurSigma", 1.095445f, 0.f, 256.f},
++    });
++    inline static constexpr std::array<const char*, 3> GLASS_COLORS{
++        "tint_color", "fresnel_color", "bevel_color"};
++    struct SGlassConfig {
++        std::array<float, GLASS_PARAMETERS.size()> values = [] {
++            std::array<float, GLASS_PARAMETERS.size()> result{};
++            for (size_t i = 0; i < result.size(); ++i)
++                result[i] = GLASS_PARAMETERS[i].initial;
++            return result;
++        }();
++        std::array<uint32_t, 3> colors{0x1c14402e, 0xffffff00, 0xffffff00};
++    };
++    void setPanoramaMirror(bool on) { m_panoramaMirror = on; }
++    const SGlassConfig& glassConfig() const { return m_glassConfig; }
++    void setGlassConfig(const SGlassConfig& config) { m_glassConfig = config; }
++
+     // One window as it should appear in the 3D world. Carries exactly what a
+     // draw and a pick both need, so the renderer cannot reach into compositor
+     // state and the two can never disagree about what is on screen.
+@@ -48,6 +96,9 @@ class GLScene {
+         // texture so a caller with a tightly-fit texture needs no bookkeeping.
+         float u0 = 0.f, v0 = 0.f, u1 = 1.f, v1 = 1.f;
+
++        // Actual surface rect in normalized top-down capture-box coordinates.
++        std::array<float,4> glassSurface{0.f,0.f,1.f,1.f};
++        std::array<float,4> glassMetrics{800.f,600.f,12.f,0.f};
+         float alpha = 1.0f;
+
+         // Depth slab: thickness in world units, extruded BACKWARDS along the
+@@ -80,6 +131,9 @@ class GLScene {
+     // image is (re)loaded lazily inside render() when the file changes.
+     // Equirectangular mapping around the camera.
+     void setPanoramaPath(const std::string& path);
++    // Borrowed from the background-layer capture owner until the next render.
++    // Zero restores the optional file panorama; this class never deletes it.
++    void setEnvironmentTexture(unsigned int texture) { m_environmentTex = texture; }
+
+     // What the crosshair currently points at, or 0 for "nothing". Ray is cast
+     // through the centre of the screen from the camera, never from the OS
+@@ -310,6 +364,7 @@ class GLScene {
+
+     unsigned int m_sceneFBO = 0;
+     unsigned int m_sceneColor = 0;
++    unsigned int m_glassColor = 0; // independent scene-backdrop copy
+     unsigned int m_sceneDepth = 0;
+
+     unsigned int m_sceneProgram = 0;
+@@ -352,6 +407,18 @@ class GLScene {
+     int m_sceneColorUniform = -1;
+     int m_sceneUVRect = -1;
+     int m_scenePremult = -1;
++    int m_glassBackground = -1, m_glassFace = -1, m_glassWall = -1;
++    int m_glassEnvironment = -1, m_glassHasEnvironment = -1, m_glassEye = -1;
++    int m_glassLiveWallpaper = -1, m_panoramaLiveWallpaper = -1;
++    int m_glassUV = -1, m_glassViewport = -1;
++    int m_glassSurface = -1, m_glassMetrics = -1;
++    SGlassConfig m_glassConfig;
++    unsigned int m_discVAO = 0, m_discVBO = 0;
++    int m_discVertexCount = 0;
++    int m_glassMirror = -1, m_panoramaMirrorLoc = -1;
++    bool m_panoramaMirror = false;
++    std::array<int, GLASS_PARAMETERS.size()> m_glassParameters{};
++    std::array<int, 3> m_glassColors{}, m_glassAlphas{};
+
+     int m_blitTexture = -1;
+     int m_blitAlpha = -1;
+@@ -370,6 +437,9 @@ class GLScene {
+     std::filesystem::file_time_type m_panoramaMtime{};
+     bool m_panoramaMtimeValid = false;
+     unsigned int m_panoramaTex = 0;
++    unsigned int m_environmentTex = 0;
++    unsigned int m_domeVAO = 0, m_domeVBO = 0;
++    int m_domeVertexCount = 0;
+     int m_panoramaW = 0;
+
+     int  m_width = 0, m_height = 0;
+diff --git a/src/main.cpp b/src/main.cpp
+index 14dce494..d6d9d69b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -90,6 +90,8 @@ static InputController g_input;
+ static World3D::CWorld g_world;
+ static AimFocus        g_aim;
+ static Compat::CWindowCapture g_capture;
++// Background layers belong to the environment, never the window/picking list.
++static Compat::CWindowCapture g_environmentCapture;
+
+ static bool g_active = false;
+
+@@ -1449,6 +1451,8 @@ static void startFramePump() {
+                 // destroy GL objects here, outside any render pass.
+                 if (g_captureReleasePending && !g_active) {
+                     g_capture.releaseAll();
++                    g_scene.setEnvironmentTexture(0);
++                    g_environmentCapture.releaseAll();
+                     g_captureReleasePending = false;
+                 }
+
+@@ -1625,6 +1629,31 @@ static void serviceCapture() {
+
+     g_capturing = true;
+
++    // Keep the background's FBO alive independently from window retention.
++    // Only a full-output background layer can become the environment; bars,
++    // overlays and client windows can never be captured into the dome.
++    PHLLS background;
++    for (const auto& list : MON->m_layerSurfaceLayers)
++        for (const auto& ref : list) {
++            const auto layer = ref.lock();
++            if (!layer || !layer->visible() || layer->m_layer != 0) continue;
++            const auto box = layer->surfaceLogicalBox();
++            if (box && box->w >= MON->m_size.x * 0.95 &&
++                box->h >= MON->m_size.y * 0.95) background = layer;
++        }
++    g_scene.setEnvironmentTexture(0);
++    std::vector<std::uintptr_t> environmentIds;
++    if (background) {
++        const auto id = reinterpret_cast<std::uintptr_t>(background.get());
++        if (g_environmentCapture.makeSnapshotLayer(background, MON, true, false)) {
++            if (const auto* snapshot = g_environmentCapture.get(id)) {
++                g_scene.setEnvironmentTexture(snapshot->texID);
++                environmentIds.push_back(id);
++            }
++        }
++    }
++    g_environmentCapture.retainOnly(environmentIds);
++
+     const auto INFOS = Compat::enumerateEligibleWindows(MON, g_cfgUnderLayers);
+
+     if (g_viewMorphArmed) {
+@@ -2065,6 +2094,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+             (LAST_FS_WIN && entity.id == Compat::windowId(LAST_FS_WIN));
+
+         render.alpha = IS_FS_WINDOW ? 1.0f : g_fsFade;
++        // Mask glass with the client surface, never the shadow/decorated quad.
++        if (auto W = Compat::findWindowById(entity.id);
++            W && entity.logicalWidth > 0.f && entity.logicalHeight > 0.f &&
++            SNAPSHOT->surfaceSize.x > 0.0 && SNAPSHOT->surfaceSize.y > 0.0) {
++            render.glassSurface = {
++                static_cast<float>(SNAPSHOT->surfaceOffset.x / entity.logicalWidth),
++                static_cast<float>(SNAPSHOT->surfaceOffset.y / entity.logicalHeight),
++                static_cast<float>(SNAPSHOT->surfaceSize.x / entity.logicalWidth),
++                static_cast<float>(SNAPSHOT->surfaceSize.y / entity.logicalHeight)};
++            render.glassMetrics = {static_cast<float>(SNAPSHOT->surfaceSize.x),
++                static_cast<float>(SNAPSHOT->surfaceSize.y),
++                std::max(0.f, static_cast<float>(W->rounding())), 1.f};
++        }
++
+
+         // Depth slab (windows.depth): silhouette source priority -- the
+         // outline traced from the snapshot texture's real alpha (exact
+@@ -3454,6 +3497,8 @@ static void deactivate3D() {
+     resetMovementKeys();
+
+     g_capture.releaseAll();
++    g_scene.setEnvironmentTexture(0);
++    g_environmentCapture.releaseAll();
+     Compat::setPointerCapture(false);
+
+     unghostWindows();
+@@ -3592,6 +3637,8 @@ static void enter3D() {
+     }
+
+     g_capture.releaseAll();
++    g_scene.setEnvironmentTexture(0);
++    g_environmentCapture.releaseAll();
+
+     resetMovementKeys();
+
+@@ -6355,11 +6402,44 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: world.monitor must be a string");
+         if (!SET_BOOL(idx, "under_layers", g_cfgUnderLayers, "world.under_layers"))
+             return luaL_error(L, "hypr3d.config: world.under_layers must be a boolean");
++        {
++            bool mirror = false;
++            if (!SET_BOOL(idx, "panorama_mirror", mirror, "world.panorama_mirror"))
++                return luaL_error(L, "hypr3d.config: world.panorama_mirror must be a boolean");
++            g_scene.setPanoramaMirror(mirror);
++        }
+         if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
+             return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
+         lua_pop(L, 1);
+     }
+
++    idx = SECTION("glass", "glass");
++    if (idx == -1)
++        return luaL_error(L, "hypr3d.config: glass must be a table");
++    if (idx > 0) {
++        // Shared MiOS glass material (the hyprglass preset). Values are clamped
++        // to each parameter's range; colours are 0xRRGGBBAA integers.
++        auto glass = g_scene.glassConfig();
++        for (size_t i = 0; i < GLScene::GLASS_PARAMETERS.size(); ++i) {
++            const auto& P = GLScene::GLASS_PARAMETERS[i];
++            float v = glass.values[i];
++            if (!SET_NUM(idx, P.key, v, P.key))
++                return luaL_error(L, "hypr3d.config: glass.%s must be a number", P.key);
++            glass.values[i] = std::clamp(v, P.minimum, P.maximum);
++        }
++        for (size_t i = 0; i < GLScene::GLASS_COLORS.size(); ++i) {
++            lua_getfield(L, idx, GLScene::GLASS_COLORS[i]);
++            if (!lua_isnil(L, -1)) {
++                if (!lua_isnumber(L, -1))
++                    return luaL_error(L, "hypr3d.config: glass.%s must be a number", GLScene::GLASS_COLORS[i]);
++                glass.colors[i] = static_cast<uint32_t>(std::clamp<double>(lua_tonumber(L, -1), 0.0, 4294967295.0));
++            }
++            lua_pop(L, 1);
++        }
++        g_scene.setGlassConfig(glass);
++        lua_pop(L, 1);
++    }
++
+     idx = SECTION("windows", "windows");
+     if (idx == -1)
+         return luaL_error(L, "hypr3d.config: windows must be a table");
+diff --git a/var/lib/mios-build/mios-graphical-sessions/renderer-changes-final/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+new file mode 100644
+index 00000000..b6596045
+--- /dev/null
++++ b/tests/mios-bsp-regression.cpp
+@@ -0,0 +1,208 @@
++// AI-hint: Geometry regression for translucent glass-window BSP termination and material preservation.
++// AI-related: src/Render/GLScene.cpp, src/World/Camera.cpp
++#include "../src/Render/GLScene.cpp"
++
++#include <stdexcept>
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++
++static void require(bool condition) {
++    if (!condition)
++        throw std::runtime_error("glass BSP regression failed");
++}
++
++static void environmentSamplingRegression() {
++    using namespace H3D;
++    EGLDisplay display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
++    require(display != EGL_NO_DISPLAY && eglInitialize(display, nullptr, nullptr));
++    const EGLint configAttrs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8,
++        EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
++    EGLConfig config;
++    EGLint count = 0;
++    require(eglChooseConfig(display, configAttrs, &config, 1, &count) && count == 1);
++    const EGLint surfaceAttrs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
++    const EGLint contextAttrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
++    EGLSurface surface = eglCreatePbufferSurface(display, config, surfaceAttrs);
++    require(eglBindAPI(EGL_OPENGL_ES_API));
++    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttrs);
++    require(surface != EGL_NO_SURFACE && context != EGL_NO_CONTEXT);
++    require(eglMakeCurrent(display, surface, surface, context));
++    const GLuint vs = compileShader(GL_VERTEX_SHADER, R"GLSL(#version 300 es
++void main() {
++    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
++    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
++}
++)GLSL");
++    const GLuint fs = compileShader(GL_FRAGMENT_SHADER, R"GLSL(#version 300 es
++precision highp float;
++uniform vec3 ray;
++uniform bool live;
++uniform float mirror;
++uniform bool sampleImage;
++uniform sampler2D wallpaper;
++out vec4 color;
++MIOS_ENVIRONMENT_UV
++void main() {
++ color = sampleImage ? miosEnvironmentColor(wallpaper, ray, live, mirror, 0.0)
++                     : vec4(miosEnvironmentUV(ray, live, mirror), 0.0, 1.0);
++}
++)GLSL");
++    require(vs && fs);
++    const GLuint program = linkProgram(vs, fs);
++    require(program != 0);
++    glUseProgram(program);
++    glViewport(0, 0, 1, 1);
++    const auto expect = [&](Vec3 ray, bool live, float u, float v, float mirror = 0.f) {
++        glUniform3f(glGetUniformLocation(program, "ray"), ray.x, ray.y, ray.z);
++        glUniform1i(glGetUniformLocation(program, "live"), live);
++        glUniform1f(glGetUniformLocation(program, "mirror"), mirror);
++        glDrawArrays(GL_TRIANGLES, 0, 3);
++        std::array<unsigned char, 4> pixel{};
++        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
++        if (glGetError() != GL_NO_ERROR || std::abs(pixel[0]/255.f-u) > 0.009f ||
++            std::abs(pixel[1]/255.f-v) > 0.009f)
++            throw std::runtime_error("environment UV regression: expected " +
++                std::to_string(u) + "," + std::to_string(v) + " got " +
++                std::to_string(pixel[0]/255.f) + "," + std::to_string(pixel[1]/255.f));
++    };
++    // Captures are top-down: looking above/below the horizon must select
++    // the top/bottom of the wallpaper, without the old mirrored wrap.
++    expect({0, 0.5f, -1}, true, 0.5f, 0.25f);
++    expect({0, -0.5f, -1}, true, 0.5f, 0.75f);
++    expect({0.5f, 0, -1}, true, 0.75f, 0.5f, 1.f);
++    // Both poles have a regular image centre and neighbourhood, not a
++    // latitude singularity. File panoramas retain equirectangular UVs.
++    expect({0, 1, 0}, true, 0.5f, 0.5f);
++    expect({0, -1, 0}, true, 0.5f, 0.5f);
++    expect({0.1f, 1, 0.1f}, true, 0.55f, 0.45f);
++    expect({0.1f, -1, 0.1f}, true, 0.55f, 0.55f);
++    expect({1, 0, -1}, false, 0.625f, 0.5f);
++    // An asymmetric labelled-color image tests the actual texture sampler,
++    // including continuity when crossing what used to be a cube-face seam.
++    GLuint texture = 0;
++    glGenTextures(1, &texture);
++    glBindTexture(GL_TEXTURE_2D, texture);
++    const unsigned char pixels[] = {255,0,0,255, 0,255,0,255,
++                                   0,0,255,255, 255,255,0,255};
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glUniform1i(glGetUniformLocation(program, "sampleImage"), 1);
++    glUniform1i(glGetUniformLocation(program, "wallpaper"), 0);
++    glUniform1i(glGetUniformLocation(program, "live"), 1);
++    const auto sample = [&](Vec3 ray) {
++        glUniform3f(glGetUniformLocation(program, "ray"), ray.x, ray.y, ray.z);
++        glDrawArrays(GL_TRIANGLES, 0, 3);
++        std::array<unsigned char, 4> pixel{};
++        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
++        return pixel;
++    };
++    require(sample({0, 0.5f, -1})[2] < 30);
++    require(sample({0, -0.5f, -1})[2] > 100);
++    for (const auto& pair : std::array<std::array<Vec3,2>,3>{{
++        {{{1,0,-0.999f}, {0.999f,0,-1}}},
++        {{{0.001f,1,0.001f}, {-0.001f,1,-0.001f}}},
++        {{{0.001f,-1,0.001f}, {-0.001f,-1,-0.001f}}}
++    }}) {
++        const auto left = sample(pair[0]), right = sample(pair[1]);
++        for (int channel = 0; channel < 3; ++channel)
++            if (std::abs(int(left[channel])-int(right[channel])) > 5)
++                throw std::runtime_error("environment seam regression");
++    }
++    glDeleteTextures(1, &texture);
++    glDeleteProgram(program);
++    glDeleteShader(vs);
++    glDeleteShader(fs);
++    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    eglDestroyContext(display, context);
++    eglDestroySurface(display, surface);
++    eglTerminate(display);
++}
++
++int main() {
++    environmentSamplingRegression();
++    using namespace H3D;
++    const auto dome = buildEnvironmentDome();
++    require(dome.size() == 96u * 48u * 6u * 5u);
++    bool forward = false, north = false, south = false, seam0 = false, seam1 = false;
++    for (size_t i = 0; i < dome.size(); i += 5) {
++        const Vec3 point{dome[i], dome[i+1], dome[i+2]};
++        require(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z));
++        require(std::abs(dot(point, point) - 1.f) < 1e-5f);
++        const float u = dome[i+3], v = dome[i+4];
++        require(u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f);
++        if (u == 0.5f && v == 0.5f) {
++            forward = true;
++            require(std::abs(point.x) < 1e-6f && std::abs(point.z + 1.f) < 1e-6f);
++        }
++        if (v == 0.f) { north = true; require(point.y > 0.99999f); }
++        if (v == 1.f) { south = true; require(point.y < -0.99999f); }
++        if (u == 0.f && v == 0.5f) { seam0 = true; require(point.z > 0.99999f); }
++        if (u == 1.f && v == 0.5f) { seam1 = true; require(point.z > 0.99999f); }
++    }
++    require(forward && north && south && seam0 && seam1);
++    for (size_t i = 0; i < dome.size(); i += 15) {
++        const float a = dome[i+3], b = dome[i+8], c = dome[i+13];
++        require(std::max({a,b,c}) - std::min({a,b,c}) <= 1.f/96.f + 1e-6f);
++    }
++
++    // The same rounded outline used by glass slab walls. MiOS's live
++    // radius is supplied at draw time, not replaced with a 3D-only radius.
++    const auto rounded = roundedRectLoop(640, 400, 28.f, 1.f, 8);
++    require(rounded.pts.size() >= 32 && rounded.uvs.size() == rounded.pts.size());
++    for (const auto& point : rounded.pts) {
++        const float x = point.x * 640.f, y = point.y * 400.f;
++        const float cx = x < 320.f ? 28.f : 612.f;
++        const float cy = y < 200.f ? 28.f : 372.f;
++        require(std::abs(std::hypot(x-cx, y-cy) - 28.f) < 0.002f);
++        require(x >= -0.001f && x <= 640.001f && y >= -0.001f && y <= 400.001f);
++    }
++    require(roundedRectLoop(0, 400, 28.f, 1.f, 8).pts.empty());
++
++    SWPoly warped;
++    warped.tex = 7;
++    warped.alpha = 0.65f;
++    warped.glassFace = true;
++    warped.glassUV = {0.1f, 0.2f, 0.8f, 0.6f};
++    warped.glassSurface = {0.05f, 0.05f, 0.9f, 0.9f};
++    warped.glassMetrics = {640.f, 400.f, 24.f, 1.f};
++    // Rounding/clipping can leave the fourth vertex off the plane selected
++    // from the first triangle. The splitter must still leave the input set.
++    warped.verts = {{{0,0,0},0,0}, {{1,0,0},1,0},
++                    {{1,1,0},1,1}, {{0,1,0.001f},0,1}};
++    std::vector<SWPoly> polys{warped};
++    SBspNode node;
++    bspBuild(node, polys, 0);
++    int emitted = 0;
++    bspTraverse(node, {0,0,3}, [&](const SWPoly& p) {
++        ++emitted;
++        require(p.tex == warped.tex && p.alpha == warped.alpha);
++        require(p.glassFace && p.glassMetrics == warped.glassMetrics);
++        require(p.verts.size() == 4);
++    });
++    require(emitted == 1 && !node.front && !node.back);
++
++    SWPoly line = warped;
++    for (auto& v : line.verts) v.p = {};
++    polys = {line};
++    SBspNode empty;
++    bspBuild(empty, polys, 0);
++    require(empty.coplanar.empty() && !empty.front && !empty.back);
++
++    SWPoly front, back;
++    bool hasFront = false, hasBack = false;
++    bspSplitPoly(warped, {0.5f,0,0}, {1,0,0}, front, back, hasFront, hasBack);
++    require(hasFront && hasBack);
++    for (const auto* p : {&front, &back}) {
++        require(p->tex == warped.tex && p->alpha == warped.alpha);
++        require(p->glassFace == warped.glassFace);
++        require(p->glassUV == warped.glassUV);
++        require(p->glassSurface == warped.glassSurface);
++        require(p->glassMetrics == warped.glassMetrics);
++        for (const auto& v : p->verts)
++            require(v.u >= 0.f && v.u <= 1.f && v.v >= 0.f && v.v <= 1.f);
++    }
++}

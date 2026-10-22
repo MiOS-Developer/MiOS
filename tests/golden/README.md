@@ -245,7 +245,7 @@ $ mios-gen render-manpages --root [CWD]/nonexistent --check
 Error: generate-render-manpages: render-manpages: [CWD]/nonexistent/usr/share/mios/mios.toml could not be read: [..]
 
 $ mios-gen render-manpages --check --validate
-[render-manpages] [..] page(s) validated
+[render-manpages] [..] page(s) rendered and validated
 [render-manpages] [..] page(s) verified
 ```
 

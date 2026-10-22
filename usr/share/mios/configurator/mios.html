@@ -1246,6 +1246,48 @@
       </div>
     </details>
 
+    <details class="section" id="adv-fan-control">
+      <summary>Hardware &middot; Fan control (ventulusd) <span class="phase-badge">hardware.fan_control</span></summary>
+      <div class="section-body">
+        <p style="color: var(--muted); font-size: 12px; margin: 0 0 12px;">
+          Motherboard fan curves via ventulusd (MIT) and the mios-fanctl CLI/TUI. Only headers with
+          control = curve are taken from firmware; everything else stays on the BIOS curve and every
+          taken header is handed back on stop or crash. Floors below 30 % are refused.
+        </p>
+        <div class="grid">
+          <fieldset>
+            <legend>[hardware.fan_control] &mdash; service</legend>
+            <label for="f-fan-enabled">enabled</label>
+            <input type="text" id="f-fan-enabled" data-key="hardware.fan_control.enabled" data-type="bool" placeholder="true">
+
+            <label for="f-fan-profile">profile (ventulusd profile id)</label>
+            <input type="text" id="f-fan-profile" data-key="hardware.fan_control.profile" placeholder="mios-default">
+
+            <label for="f-fan-modules">modules (CSV, modules-load.d)</label>
+            <input type="text" id="f-fan-modules" data-key="hardware.fan_control.modules" data-array="csv" placeholder="nct6775">
+
+            <label for="f-fan-poll">poll_interval_ms</label>
+            <input type="text" id="f-fan-poll" data-key="hardware.fan_control.poll_interval_ms" data-type="int" placeholder="1000">
+          </fieldset>
+
+          <fieldset>
+            <legend>Safety floors &amp; sensors</legend>
+            <label for="f-fan-min">min_fan_pct (CPU/case fans, never below 30)</label>
+            <input type="text" id="f-fan-min" data-key="hardware.fan_control.min_fan_pct" data-type="int" placeholder="30">
+
+            <label for="f-fan-pump-min">pump_min_pct</label>
+            <input type="text" id="f-fan-pump-min" data-key="hardware.fan_control.pump_min_pct" data-type="int" placeholder="60">
+
+            <label for="f-fan-coolant">coolant_limit_c (forces 100 % at or above)</label>
+            <input type="text" id="f-fan-coolant" data-key="hardware.fan_control.coolant_limit_c" data-type="int" placeholder="60">
+
+            <label for="f-fan-cpu-sensor">cpu_sensor (ventulusd sensor id)</label>
+            <input type="text" id="f-fan-cpu-sensor" data-key="hardware.fan_control.cpu_sensor" placeholder="hwmon:k10temp:0000:00:18.3:Tctl">
+          </fieldset>
+        </div>
+      </div>
+    </details>
+
     <details class="section" id="adv-converge">
       <summary>Resource Convergence &middot; queue, LoRA, scratchpad <span class="phase-badge">Part 10 &middot; converge</span></summary>
       <div class="section-body">
@@ -1826,6 +1868,34 @@
             <input type="text" id="f-a2a-mdns-refresh-sec" data-key="a2a.mdns_refresh_sec" data-type="int" placeholder="300">
             <label for="f-mcp-proto">mcp.protocol_version (MCP revision token declared on the initialize handshake)</label>
             <input type="text" id="f-mcp-proto" data-key="mcp.protocol_version" placeholder="2025-11-25">
+            <fieldset>
+              <legend>Responsive terminal workspace</legend>
+              <label>Apply to human tmux sessions <input type="text" data-key="mcp.tmux.workspace.global_sessions" data-type="bool"></label>
+              <label>Enter tmux from local and interactive SSH shells <input type="text" data-key="terminal.startup.auto_attach" data-type="bool"></label>
+              <label>Allow a caller-owned root terminal <input type="text" data-key="terminal.allow_root_session" data-type="bool"></label>
+              <label>Desktop border lines <input type="text" data-key="mcp.tmux.workspace.desktop_border_lines"></label>
+              <label>Compact border lines <input type="text" data-key="mcp.tmux.workspace.compact_border_lines"></label>
+              <label>Desktop border status <input type="text" data-key="mcp.tmux.workspace.desktop_border_status"></label>
+              <label>Compact border status <input type="text" data-key="mcp.tmux.workspace.compact_border_status"></label>
+              <label>Desktop border format <input type="text" data-key="mcp.tmux.workspace.desktop_border_format"></label>
+              <label>Compact border format <input type="text" data-key="mcp.tmux.workspace.compact_border_format"></label>
+              <label>Golden ratio <input type="text" data-key="mcp.tmux.workspace.golden_ratio" data-type="float"></label>
+              <label>Remote compact <input type="text" data-key="mcp.tmux.workspace.remote_compact" data-type="bool"></label>
+              <label>Resource min columns <input type="text" data-key="mcp.tmux.workspace.resource_min_columns" data-type="int"></label>
+              <label>Resource min rows <input type="text" data-key="mcp.tmux.workspace.resource_min_rows" data-type="int"></label>
+              <label>Resource command <input type="text" data-key="mcp.tmux.workspace.resource_command"></label>
+              <label>Desktop min columns <input type="text" data-key="mcp.tmux.workspace.desktop_min_columns" data-type="int"></label>
+              <label>Desktop min rows <input type="text" data-key="mcp.tmux.workspace.desktop_min_rows" data-type="int"></label>
+              <label>Tmux-OS left column roles, top to bottom (chat,metrics | metrics,chat) <input type="text" data-key="mcp.tmux.workspace.layout.left_roles" data-array="csv" placeholder="chat,metrics"></label>
+              <label>Left column width share (0.1-0.9) <input type="text" data-key="mcp.tmux.workspace.layout.column_share" data-type="float" placeholder="0.3819660112501051"></label>
+              <label>Chat share of left column (0.1-0.9) <input type="text" data-key="mcp.tmux.workspace.layout.chat_share" data-type="float" placeholder="0.6180339887498949"></label>
+              <label>Monitor share of right region (0.1-0.9) <input type="text" data-key="mcp.tmux.workspace.layout.monitor_share" data-type="float" placeholder="0.6180339887498949"></label>
+              <label>Monitor minimum rows, floor of a slim monitor (3-40) <input type="text" data-key="mcp.tmux.workspace.layout.monitor_min_rows" data-type="int" placeholder="3"></label>
+              <label>Spiral cell share (0.1-0.9) <input type="text" data-key="mcp.tmux.workspace.layout.spiral_share" data-type="float" placeholder="0.6180339887498949"></label>
+              <label>Spiral start after monitor (right|down|left|up) <input type="text" data-key="mcp.tmux.workspace.layout.spiral_start" placeholder="down"></label>
+              <label>Spiral turn (clockwise|counterclockwise) <input type="text" data-key="mcp.tmux.workspace.layout.spiral_turn" placeholder="clockwise"></label>
+              <label>Spiral depth, worker cells shown (1-8) <input type="text" data-key="mcp.tmux.workspace.layout.spiral_depth" data-type="int" placeholder="4"></label>
+            </fieldset>
             <label for="f-mcp-tmux-enabled">mcp.tmux.enabled (native terminal tools in MiOS MCP)</label>
             <input type="text" id="f-mcp-tmux-enabled" data-key="mcp.tmux.enabled" data-type="bool">
             <label for="f-mcp-tmux-binary">mcp.tmux.binary (installed upstream executable)</label>
@@ -1888,6 +1958,24 @@
             <div class="checkbox-row"><input type="checkbox" id="f-net-cockpit" data-key="network.allow_cockpit"><label for="f-net-cockpit">allow_cockpit (9090/tcp)</label></div>
             <div class="checkbox-row"><input type="checkbox" id="f-net-ssh" data-key="network.allow_ssh"><label for="f-net-ssh">allow_ssh (2222/tcp)</label></div>
             <div class="checkbox-row"><input type="checkbox" id="f-net-libvirt" data-key="network.allow_libvirt_bridge"><label for="f-net-libvirt">allow_libvirt_bridge (VM networking)</label></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>MiOS-Xbox VM &amp; Looking Glass ([vm.looking_glass])</legend>
+            <label for="f-lg-spice-port">spice_port (VM SPICE server and the client both use it)</label>
+            <input type="text" id="f-lg-spice-port" data-key="vm.looking_glass.spice_port" data-type="int" placeholder="5900">
+            <label for="f-lg-spice-listen">spice_listen</label>
+            <input type="text" id="f-lg-spice-listen" data-key="vm.looking_glass.spice_listen" placeholder="127.0.0.1">
+            <label for="f-lg-spice-audio">spice_audio (guest audio over SPICE)</label>
+            <input type="text" id="f-lg-spice-audio" data-key="vm.looking_glass.spice_audio" data-type="bool" placeholder="true">
+            <label for="f-lg-threads">threads_per_core (guest SMT; AMD adds topoext)</label>
+            <input type="text" id="f-lg-threads" data-key="vm.looking_glass.threads_per_core" data-type="int" placeholder="2">
+            <label for="f-lg-clock">clock_offset (Windows: localtime)</label>
+            <input type="text" id="f-lg-clock" data-key="vm.looking_glass.clock_offset" placeholder="localtime">
+            <label for="f-lg-shm-size">shm_size_mb (IVSHMEM framebuffer)</label>
+            <input type="text" id="f-lg-shm-size" data-key="vm.looking_glass.shm_size_mb" data-type="int" placeholder="128">
+            <label for="f-lg-vcpus">[vm.win11] vcpus (template VM)</label>
+            <input type="text" id="f-lg-vcpus" data-key="vm.win11.vcpus" data-type="int" placeholder="12">
           </fieldset>
         </div>
       </div>
@@ -2071,6 +2159,142 @@
       </div>
     </details>
 
+    <details class="section" id="adv-remote-rdp">
+      <summary>Remote &middot; RDP into the live desktop <span class="phase-badge">remote.rdp</span></summary>
+      <div class="section-body">
+        <p style="color: var(--muted); font-size: 12px; margin: 0 0 12px;">
+          Lets the Microsoft <b>Windows App</b> (iPhone, iPad, Android, Mac, Windows) or any RDP client attach to the
+          operator's <b>running</b> Hyprland session: xrdp on <code>[ports].rdp</code> (TLS, PAM login checked by
+          xrdp-sesman against <code>allowed_group</code>) bridges over private UNIX sockets to wayvnc inside the session.
+          In the default <b>virtual</b> mode the client gets its own client-sized display of the session.
+          The port opens only on the Tailscale zone; LAN access is an explicit opt-in and the public zone is never opened.
+        </p>
+        <div class="grid">
+          <fieldset>
+            <legend>[remote.rdp] &mdash; access</legend>
+            <label for="f-rdp-enabled">enabled</label>
+            <input type="text" id="f-rdp-enabled" data-key="remote.rdp.enabled" data-type="bool" placeholder="true">
+
+            <label for="f-rdp-uid">operator_uid (whose live session is shared)</label>
+            <input type="text" id="f-rdp-uid" data-key="remote.rdp.operator_uid" data-type="int" placeholder="1000">
+
+            <label for="f-rdp-group">allowed_group (empty = operator's primary group)</label>
+            <input type="text" id="f-rdp-group" data-key="remote.rdp.allowed_group" placeholder="">
+
+            <label for="f-rdp-ts">allow_tailscale</label>
+            <input type="text" id="f-rdp-ts" data-key="remote.rdp.allow_tailscale" data-type="bool" placeholder="true">
+
+            <label for="f-rdp-tsif">tailscale_interface</label>
+            <input type="text" id="f-rdp-tsif" data-key="remote.rdp.tailscale_interface" placeholder="tailscale0">
+
+            <label for="f-rdp-tscidr">tailscale_cidrs (CSV, used only when the interface has no zone)</label>
+            <input type="text" id="f-rdp-tscidr" data-key="remote.rdp.tailscale_cidrs" data-array="csv" placeholder="100.64.0.0/10,fd7a:115c:a1e0::/48">
+
+            <label for="f-rdp-lan">allow_lan (opt-in, source-restricted to lan_cidrs)</label>
+            <input type="text" id="f-rdp-lan" data-key="remote.rdp.allow_lan" data-type="bool" placeholder="false">
+
+            <label for="f-rdp-lancidr">lan_cidrs (CSV)</label>
+            <input type="text" id="f-rdp-lancidr" data-key="remote.rdp.lan_cidrs" data-array="csv" placeholder="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12">
+          </fieldset>
+
+          <fieldset>
+            <legend>Transport &amp; capture</legend>
+            <label for="f-rdp-sec">security_layer</label>
+            <input type="text" id="f-rdp-sec" data-key="remote.rdp.security_layer" placeholder="tls">
+
+            <label for="f-rdp-tls">tls_protocols</label>
+            <input type="text" id="f-rdp-tls" data-key="remote.rdp.tls_protocols" placeholder="TLSv1.2, TLSv1.3">
+
+            <label for="f-rdp-certdir">cert_dir (self-signed host cert, made on first start)</label>
+            <input type="text" id="f-rdp-certdir" data-key="remote.rdp.cert_dir" placeholder="/var/lib/mios-rdp">
+
+            <label for="f-rdp-certdays">cert_days</label>
+            <input type="text" id="f-rdp-certdays" data-key="remote.rdp.cert_days" data-type="int" placeholder="3650">
+
+            <label for="f-rdp-kb">keyboard_layout (wayvnc -k)</label>
+            <input type="text" id="f-rdp-kb" data-key="remote.rdp.keyboard_layout" placeholder="us">
+
+            <label for="f-rdp-out">output (mode = mirror; empty = focused monitor)</label>
+            <input type="text" id="f-rdp-out" data-key="remote.rdp.output" placeholder="">
+
+            <label for="f-rdp-fps">max_fps</label>
+            <input type="text" id="f-rdp-fps" data-key="remote.rdp.max_fps" data-type="int" placeholder="30">
+
+            <label for="f-rdp-bpp">max_bpp (capped at 24 while dynamic_resize is on and gfx is off)</label>
+            <input type="text" id="f-rdp-bpp" data-key="remote.rdp.max_bpp" data-type="int" placeholder="32">
+
+            <label for="f-rdp-gfx">gfx (RDP GFX/H.264; surfaces stay black with the wayvnc backend)</label>
+            <input type="text" id="f-rdp-gfx" data-key="remote.rdp.gfx" data-type="bool" placeholder="false">
+
+            <label for="f-rdp-dynres">dynamic_resize (follow client resize/rotation via the DISP channel)</label>
+            <input type="text" id="f-rdp-dynres" data-key="remote.rdp.dynamic_resize" data-type="bool" placeholder="true">
+          </fieldset>
+
+          <fieldset>
+            <legend>Remote display (mode = virtual)</legend>
+            <p style="color: var(--muted); font-size: 11.5px; margin: 0 0 6px;">
+              <b>virtual</b>: each RDP client gets its own headless output of the live Hyprland session, sized and
+              oriented by the client (portrait/landscape, rotations); the physical monitor is never changed.
+              <b>mirror</b>: share a physical monitor as-is (the client letterboxes/stretches it).
+            </p>
+            <label for="f-rdp-mode">mode</label>
+            <select id="f-rdp-mode" data-key="remote.rdp.mode">
+              <option value="virtual">virtual &mdash; client-sized remote display (default)</option>
+              <option value="mirror">mirror &mdash; share the physical monitor</option>
+            </select>
+
+            <label for="f-rdp-vout">virtual_output (must start with HEADLESS-)</label>
+            <input type="text" id="f-rdp-vout" data-key="remote.rdp.virtual_output" placeholder="HEADLESS-MIOS-RDP">
+
+            <label for="f-rdp-vpos">virtual_position (right | far | XxY)</label>
+            <input type="text" id="f-rdp-vpos" data-key="remote.rdp.virtual_position" placeholder="right">
+
+            <label for="f-rdp-vgap">far_gap_px</label>
+            <input type="text" id="f-rdp-vgap" data-key="remote.rdp.far_gap_px" data-type="int" placeholder="10000">
+
+            <label for="f-rdp-vws">virtual_workspace (empty = next free id)</label>
+            <input type="text" id="f-rdp-vws" data-key="remote.rdp.virtual_workspace" placeholder="remote">
+
+            <label for="f-rdp-vinit">virtual_initial_mode</label>
+            <input type="text" id="f-rdp-vinit" data-key="remote.rdp.virtual_initial_mode" placeholder="1280x720">
+
+            <label for="f-rdp-vkeep">keep_virtual_output (never remove on detach)</label>
+            <input type="text" id="f-rdp-vkeep" data-key="remote.rdp.keep_virtual_output" data-type="bool" placeholder="false">
+
+            <label for="f-rdp-linger">linger_seconds (keep after detach so a reconnect lands on the same windows)</label>
+            <input type="text" id="f-rdp-linger" data-key="remote.rdp.linger_seconds" data-type="int" placeholder="20">
+
+            <label for="f-rdp-oscale">output_scale (apply virtual_scale to the output for DPI/scale auto-scaling)</label>
+            <input type="text" id="f-rdp-oscale" data-key="remote.rdp.output_scale" data-type="bool" placeholder="true">
+
+            <label for="f-rdp-vscale">virtual_scale ("auto" or a number)</label>
+            <input type="text" id="f-rdp-vscale" data-key="remote.rdp.virtual_scale" placeholder="auto">
+
+            <label for="f-rdp-dpihint">scale_dpi_hint (use the DPI xrdp logs for the client)</label>
+            <input type="text" id="f-rdp-dpihint" data-key="remote.rdp.scale_dpi_hint" data-type="bool" placeholder="true">
+
+            <label for="f-rdp-refdpi">scale_reference_dpi</label>
+            <input type="text" id="f-rdp-refdpi" data-key="remote.rdp.scale_reference_dpi" data-type="int" placeholder="120">
+
+            <label for="f-rdp-minshort">min_logical_short_px</label>
+            <input type="text" id="f-rdp-minshort" data-key="remote.rdp.min_logical_short_px" data-type="int" placeholder="400">
+
+            <label for="f-rdp-smallpx">small_screen_px (no DPI hint: phone/tablet below this)</label>
+            <input type="text" id="f-rdp-smallpx" data-key="remote.rdp.small_screen_px" data-type="int" placeholder="900">
+
+            <label for="f-rdp-smallscale">small_screen_scale</label>
+            <input type="text" id="f-rdp-smallscale" data-key="remote.rdp.small_screen_scale" data-type="float" placeholder="2.0">
+
+            <label for="f-rdp-maxscale">max_scale</label>
+            <input type="text" id="f-rdp-maxscale" data-key="remote.rdp.max_scale" data-type="float" placeholder="3.0">
+
+            <label for="f-rdp-align">size_align (0 = exact client size)</label>
+            <input type="text" id="f-rdp-align" data-key="remote.rdp.size_align" data-type="int" placeholder="0">
+          </fieldset>
+        </div>
+      </div>
+    </details>
+
     <details class="section" id="adv-color-presets">
       <summary>Color presets · jump-to baselines <span class="phase-badge">Phase 4 · Overlay</span></summary>
       <div class="section-body">
@@ -2156,6 +2380,8 @@
             <legend>[appearance] — GTK / libadwaita theme + cursor</legend>
             <label for="f-app-gtk">gtk_theme (GTK3 + libadwaita color-scheme target)</label>
             <input type="text" id="f-app-gtk" data-key="appearance.gtk_theme" placeholder="adw-gtk3-dark">
+            <label for="f-app-icon">icon_theme (GTK icon theme; matches /usr/share/icons/)</label>
+            <input type="text" id="f-app-icon" data-key="appearance.icon_theme" placeholder="Adwaita">
             <label for="f-app-adw">adw_color_scheme (ADW color-scheme for libadwaita apps)</label>
             <input type="text" id="f-app-adw" data-key="appearance.adw_color_scheme" placeholder="prefer-dark">
             <label for="f-app-cursor">cursor_theme (XCURSOR_THEME; matches /usr/share/icons/)</label>
@@ -2965,6 +3191,160 @@
       </fieldset>
       <fieldset>
         <legend>theme.edge (edge-to-edge terminal chrome)</legend>
+        <label>Balanced CPU governor <input data-key="host.tuning.profiles.mios-host.cpu.governor" type="text"></label>
+        <label>Balanced CPU energy preference <input data-key="host.tuning.profiles.mios-host.cpu.energy_performance_preference" type="text"></label>
+        <label>Performance CPU governor <input data-key="host.tuning.profiles.mios-host-performance.cpu.governor" type="text"></label>
+        <label>Performance CPU energy preference <input data-key="host.tuning.profiles.mios-host-performance.cpu.energy_performance_preference" type="text"></label>
+
+        <label>Agent monitoring poll interval (seconds) <input data-key="terminal.monitor.agent_poll_s" data-type="float" type="number" min="0.1" step="0.1"></label>
+
+        <label>Client fullscreen projection enabled <input data-key="agent_cli.interaction.enabled" data-type="bool" type="text"></label>
+        <label>Native client screen mode <input data-key="agent_cli.interaction.clients.agy.values.altScreenMode" type="text"></label>
+        <label>Alternate terminal buffer <input data-key="agent_cli.interaction.clients.gemini.values.ui.useAlternateBuffer" data-type="bool" type="text"></label>
+        <label>Responses client screen mode <input data-key="agent_cli.interaction.clients.codex.values.tui.alternate_screen" type="text"></label>
+        <label>Pending-action prefix key <input data-key="keybindings.agent.accept_key" type="text"></label>
+        <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
+        <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
+        <label>Completed agent pane timeout (seconds; zero keeps panes) <input data-key="mcp.tmux.completed_pane_timeout_s" data-type="int" type="number" min="0"></label>
+        <label>Default GPU profile <select data-key="desktop.hyprland.hardware_profile"><option value="igpu">iGPU (default)</option><option value="dgpu">dGPU</option></select></label>
+        <label>Synchronize GRUB and GPU login sessions <input data-key="desktop.hyprland.boot_sync.enabled" data-type="bool" type="checkbox"></label>
+        <label>iGPU device <input data-key="desktop.hyprland.hardware_profiles.igpu.device" type="text"></label>
+        <label>dGPU device <input data-key="desktop.hyprland.hardware_profiles.dgpu.device" type="text"></label>
+        <label>iGPU PCI identity (empty uses the identity file) <input data-key="desktop.hyprland.hardware_profiles.igpu.pci" type="text"></label>
+        <label>dGPU PCI identity (empty uses the identity file) <input data-key="desktop.hyprland.hardware_profiles.dgpu.pci" type="text"></label>
+        <label>Hypr3DGlass enabled <input data-key="desktop.hyprland.hypr3d.enabled" data-type="bool" type="checkbox"></label>
+        <label>Hypr3DGlass toggle <input data-key="desktop.hyprland.hypr3d.toggle_key" type="text"></label>
+        <label>Mirror authored panorama <input data-key="desktop.hyprland.hypr3d.config.world.panorama_mirror" data-type="bool" type="checkbox"></label>
+        <p>Both GPU sessions run the same Hyprland and Quickshell desktop with Hyprglass and Hypr3DGlass. With GRUB synchronization enabled, choosing another GPU at login reboots into its matching driver profile after authentication.</p>
+
+        <label>Hyprland layout <input data-key="desktop.hyprland.config.general.layout" type="text"></label>
+        <label>Hyprland monitor scale (every output) <input data-key="desktop.hyprland.monitor.scale" data-type="float" type="number" min="0.25" step="0.25"></label>
+        <label>Hyprland monitor mode (every output: preferred | highres | highrr | WxH@Hz) <input data-key="desktop.hyprland.monitor.mode" type="text" placeholder="preferred"></label>
+        <label>Hyprland monitor position (every output: auto | XxY) <input data-key="desktop.hyprland.monitor.position" type="text" placeholder="auto"></label>
+        <p>Per-output monitors ([desktop.hyprland.monitors.&lt;output&gt;], projected after the every-output rule). The Displays app (mios-displays) saves its layout as a mios.d drop-in that outranks this file for the same output.</p>
+        <div id="monitor-grid"></div>
+        <div class="checkbox-row"><input type="text" id="monitor-add-name" placeholder="HDMI-A-1" style="max-width:180px"><button type="button" id="monitor-add">Add output</button></div>
+        <label>Displays app confirm countdown (seconds; 0 = no automatic revert) <input data-key="desktop.displays.confirm_seconds" data-type="int" type="number" min="0"></label>
+        <label>Displays app save tier <select data-key="desktop.displays.save_tier"><option>host</option><option>user</option></select></label>
+        <label>First-logon display setup: pixel density for 100 % scale (recommended scale = output dpi / this) <input data-key="desktop.displays.setup.reference_dpi" data-type="int" type="number" min="48"></label>
+        <label>Hyprland keyboard layout <input data-key="desktop.hyprland.config.input.kb_layout" type="text"></label>
+        <label>Hyprland launcher <input data-key="desktop.hyprland.launcher" type="text"></label>
+        <p>Window placement: new windows open floating and centred at one size from the monitor's usable area (logical pixels, so the monitor scale carries DPI); dragging a placed window drops it into the tiling layout; Super+V floats the active window at the same size or tiles it.</p>
+        <label>Float-first window placement <input type="text" data-key="desktop.hyprland.placement.enabled" data-type="bool"></label>
+        <label>Placement scope <select data-key="desktop.hyprland.placement.scope"><option>all</option><option>empty_workspace</option></select></label>
+        <label>Placement long-side fraction of usable area <input data-key="desktop.hyprland.placement.width_ratio" data-type="float" type="number" min="0.1" max="1" step="0.001"></label>
+        <label>Placement aspect ratio (long / short) <input data-key="desktop.hyprland.placement.aspect" data-type="float" type="number" min="1" step="0.01"></label>
+        <label>Placement minimum width (pixels) <input data-key="desktop.hyprland.placement.min_width_px" data-type="int" type="number" min="1"></label>
+        <label>Placement minimum height (pixels) <input data-key="desktop.hyprland.placement.min_height_px" data-type="int" type="number" min="1"></label>
+        <label>Placement maximum width (pixels) <input data-key="desktop.hyprland.placement.max_width_px" data-type="int" type="number" min="1"></label>
+        <label>Placement maximum width (usable-area fraction) <input data-key="desktop.hyprland.placement.max_width_ratio" data-type="float" type="number" min="0.1" max="1" step="0.01"></label>
+        <label>Placement maximum height (usable-area fraction) <input data-key="desktop.hyprland.placement.max_height_ratio" data-type="float" type="number" min="0.1" max="1" step="0.01"></label>
+        <label>Placement maximum physical width (mm; zero disables) <input data-key="desktop.hyprland.placement.max_width_mm" data-type="int" type="number" min="0"></label>
+        <label>Tile a placed window once it is moved <input type="text" data-key="desktop.hyprland.placement.tile_on_move" data-type="bool"></label>
+        <label>Move distance that counts as a drag (pixels) <input data-key="desktop.hyprland.placement.move_threshold_px" data-type="int" type="number" min="1"></label>
+        <label>Drag settle time before tiling (ms) <input data-key="desktop.hyprland.placement.settle_ms" data-type="int" type="number" min="0"></label>
+        <label>Placed-window poll interval (ms) <input data-key="desktop.hyprland.placement.poll_ms" data-type="int" type="number" min="20"></label>
+        <label>Placement size match tolerance (pixels) <input data-key="desktop.hyprland.placement.size_tolerance_px" data-type="int" type="number" min="0"></label>
+        <label>Placement rule tag <input data-key="desktop.hyprland.placement.open_tag" type="text"></label>
+        <label>Placement managed-window tag <input data-key="desktop.hyprland.placement.managed_tag" type="text"></label>
+        <label>Top pill height (pixels) <input data-key="theme.shell.top_height_px" data-type="int" type="number" min="1"></label>
+        <label>Top pill width (pixels) <input data-key="theme.shell.top_width_px" data-type="int" type="number" min="1"></label>
+        <label>Shared surface radius (pixels) <input data-key="desktop.hyprland.config.decoration.rounding" data-type="int" type="number" min="0"></label>
+        <label>Glass panel fill (%) <input data-key="theme.shell.fill_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Surface outline opacity (%) <input data-key="theme.shell.outline_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Shell edge margin (pixels) <input data-key="theme.shell.edge_margin_px" data-type="int" type="number" min="0"></label>
+        <label>Shell popup animation (ms) <input data-key="desktop.topbar.popup_ms" data-type="int" type="number" min="0"></label>
+        <label>Top bar reveals over fullscreen windows (top-edge hot zone) <input type="text" data-key="desktop.topbar.fullscreen_reveal" data-type="bool"></label>
+        <label>Top bar fullscreen reveal zone (pixels) <input data-key="desktop.topbar.fullscreen_reveal_px" data-type="int" type="number" min="1"></label>
+        <label>Top bar fullscreen hide delay (ms) <input data-key="desktop.topbar.fullscreen_hide_delay_ms" data-type="int" type="number" min="0"></label>
+        <label>Window controls reveal <select data-key="desktop.hyprland.hyprbars.config.reveal_on"><option>focus+proximity</option><option>focus</option><option>proximity</option><option>always</option></select></label>
+        <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
+        <label>Window controls glass frost <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_blur" data-type="bool"></label>
+        <label>Window controls glass (hyprglass preset; frost, tint and lights follow it) <input type="text" data-key="desktop.hyprland.hyprbars.config.glass_preset"></label>
+        <label>Window controls colour-layer opacity (SSOT percentage key, e.g. theme.opacity) <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_alpha"></label>
+        <label>Window controls merge into window (pixels) <input data-key="desktop.hyprland.hyprbars.config.pill_merge" data-type="int" type="number" min="0" max="24"></label>
+        <label>Window controls hide window shadow under tab <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_shadow_comp" data-type="bool"></label>
+        <label>Window controls yield to bar/dock/neighbours (draw inside the window) <input type="text" data-key="desktop.hyprland.hyprbars.config.tab_yield" data-type="bool"></label>
+        <label>Window controls yield to layers (namespaces) <input type="text" data-key="desktop.hyprland.hyprbars.config.yield_layers"></label>
+        <label>Window open/close effects <input type="text" data-key="desktop.hyprland.windowshade.enabled" data-type="bool"></label>
+        <label>Window open effect <select data-key="desktop.hyprland.windowshade.open"><option>glass-dissolve-open</option><option>ember-burn-open</option><option>glide-open</option><option>none-open</option></select></label>
+        <label>Window close effect <select data-key="desktop.hyprland.windowshade.close"><option>glass-dissolve-close</option><option>ember-burn-close</option><option>glide-close</option><option>none-close</option></select></label>
+        <label>Wobbly floating windows <input type="text" data-key="desktop.hyprland.mios-wobbly.enabled" data-type="bool"></label>
+        <label>Wobble spring stiffness (1/s&sup2;) <input data-key="desktop.hyprland.mios-wobbly.config.spring_k" data-type="float" type="number" min="10" max="3000" step="10"></label>
+        <label>Wobble friction (1/s) <input data-key="desktop.hyprland.mios-wobbly.config.friction" data-type="float" type="number" min="0.5" max="100" step="0.5"></label>
+        <label>Wobble maximum stretch (short-side fraction) <input data-key="desktop.hyprland.mios-wobbly.config.max_stretch" data-type="float" type="number" min="0.05" max="1" step="0.01"></label>
+        <label>Dock height (pixels) <input data-key="theme.shell.dock_height_px" data-type="int" type="number" min="1"></label>
+        <p>The dock stays visible and hides only for fullscreen applications, where the bottom edge reveals it as an overlay above the window (optional auto-hide keeps it hidden until the pointer touches the bottom edge everywhere). The app drawer grows out of the dock and shrinks back into it.</p>
+        <label>Dock reveals over fullscreen windows (bottom-edge hot zone) <input type="text" data-key="theme.shell.dock_fullscreen_reveal" data-type="bool"></label>
+        <label>Auto-hide dock <input type="text" data-key="theme.shell.dock_autohide" data-type="bool"></label>
+        <label>Dock reveal zone (pixels) <input data-key="theme.shell.dock_reveal_px" data-type="int" type="number" min="1"></label>
+        <label>Dock hide delay (ms) <input data-key="theme.shell.dock_hide_delay_ms" data-type="int" type="number" min="0"></label>
+        <label>Full-pane app drawer <input type="text" data-key="theme.shell.drawer_full_pane" data-type="bool"></label>
+        <label>Full-pane drawer margin (pixels) <input data-key="theme.shell.drawer_pane_margin_px" data-type="int" type="number" min="0"></label>
+        <label>Full-pane drawer glass fill (%) <input data-key="theme.shell.drawer_fill_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>App drawer width (screen fraction) <input data-key="theme.shell.drawer_width_fraction" data-type="float" type="number" min="0.1" max="1" step="0.01"></label>
+        <label>App drawer height (screen fraction) <input data-key="theme.shell.drawer_height_fraction" data-type="float" type="number" min="0.1" max="1" step="0.01"></label>
+        <label>App tile size <input data-key="theme.shell.app_tile_px" data-type="int" type="number" min="32"></label>
+        <label>App icon size <input data-key="theme.shell.app_icon_px" data-type="int" type="number" min="16"></label>
+        <label>Notification width (pixels) <input data-key="theme.shell.notification_width_px" data-type="int" type="number" min="120"></label>
+        <label>Notification card opacity (%) <input data-key="theme.shell.notification_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Hover highlight opacity (%) <input data-key="theme.shell.hover_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Selection highlight opacity (%) <input data-key="theme.shell.selection_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Modal backdrop opacity (%) <input data-key="theme.shell.scrim_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Title font step (pixels) <input data-key="theme.shell.title_font_step_px" data-type="int" type="number" min="0"></label>
+        <label>All windows glass opacity (%) <input data-key="theme.windows.opacity_pct" data-type="int" type="number" min="1" max="100"></label>
+        <label>Web page background over glass (%) <input data-key="theme.web.page_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Web text selection opacity (%) <input data-key="theme.web.selection_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Web scrollbar opacity (%) <input data-key="theme.web.scrollbar_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Web raised surface tint (%) <input data-key="theme.web.raised_tint_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Portal window width (pixels) <input data-key="desktop.portal.width" data-type="int" type="number" min="320"></label>
+        <label>Portal window height (pixels) <input data-key="desktop.portal.height" data-type="int" type="number" min="240"></label>
+        <label>Portal cards and header over glass (%) <input data-key="desktop.portal.surface_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Zen compact tab popout height (window fraction) <input data-key="browser.zen.compact_height_ratio" data-type="float" type="number" min="0.2" max="1" step="0.001"></label>
+        <label>Zen AI chat sidebar width (pixels) <input data-key="browser.zen.ai_sidebar_width_px" data-type="int" type="number" min="200"></label>
+        <label>Zen AI chat sidebar hidden edge strip (pixels) <input data-key="browser.zen.ai_sidebar_peek_px" data-type="int" type="number" min="1"></label>
+        <label>Global search width <input data-key="theme.search.width_px" data-type="int" type="number" min="200"></label>
+        <label>Search top position (screen fraction) <input data-key="theme.search.top_fraction" data-type="float" type="number" min="0" max="0.8" step="0.01"></label>
+        <label>Global search row height <input data-key="theme.search.row_height_px" data-type="int" type="number" min="24"></label>
+        <label>Visible search rows <input data-key="theme.search.visible_rows" data-type="int" type="number" min="1"></label>
+        <label>Search result limit <input data-key="theme.search.result_limit" data-type="int" type="number" min="1"></label>
+        <label>Search debounce (ms) <input data-key="theme.search.debounce_ms" data-type="int" type="number" min="0"></label>
+        <label>File search minimum characters <input data-key="theme.search.file_min_chars" data-type="int" type="number" min="1"></label>
+        <label>Hyprglass build jobs <input data-key="desktop.hyprland.hyprglass.build_jobs" data-type="int" type="number" min="1"></label>
+        <label>Hyprglass source <input data-key="desktop.hyprland.hyprglass.source_repository" type="text"></label>
+        <label>Hyprglass source revision <input data-key="desktop.hyprland.hyprglass.source_revision" type="text"></label>
+        <label>Hyprglass Lua ABI <input data-key="desktop.hyprland.hyprglass.lua_version" type="text"></label>
+        <label>Glass inherits <input data-key="desktop.hyprland.hyprglass.presets.mios.inherits" type="text"></label>
+        <label>Glass blur strength <input data-key="desktop.hyprland.hyprglass.presets.mios.blur_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass blur iterations <input data-key="desktop.hyprland.hyprglass.presets.mios.blur_iterations" data-type="float" type="number" step="0.01"></label>
+        <label>Glass refraction strength <input data-key="desktop.hyprland.hyprglass.presets.mios.refraction_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass refraction flow <input data-key="desktop.hyprland.hyprglass.presets.mios.refraction_flow" data-type="float" type="number" step="0.01"></label>
+        <label>Glass refraction spread <input data-key="desktop.hyprland.hyprglass.presets.mios.refraction_spread" data-type="float" type="number" step="0.01"></label>
+        <label>Glass lens distortion <input data-key="desktop.hyprland.hyprglass.presets.mios.lens_distortion" data-type="float" type="number" step="0.01"></label>
+        <label>Glass chromatic aberration <input data-key="desktop.hyprland.hyprglass.presets.mios.chromatic_aberration" data-type="float" type="number" step="0.01"></label>
+        <label>Glass fresnel strength <input data-key="desktop.hyprland.hyprglass.presets.mios.fresnel_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass specular strength <input data-key="desktop.hyprland.hyprglass.presets.mios.specular_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass bevel strength <input data-key="desktop.hyprland.hyprglass.presets.mios.bevel_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass bevel size <input data-key="desktop.hyprland.hyprglass.presets.mios.bevel_size" data-type="float" type="number" step="0.01"></label>
+        <label>Glass edge thickness <input data-key="desktop.hyprland.hyprglass.presets.mios.edge_thickness" data-type="float" type="number" step="0.01"></label>
+        <label>Glass glass opacity <input data-key="desktop.hyprland.hyprglass.presets.mios.glass_opacity" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark brightness <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.brightness" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark contrast <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.contrast" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark saturation <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.saturation" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark adaptive dim <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.adaptive_dim" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark palette tint (palette name) <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.palette_tint" type="text"></label>
+        <label>Glass dark tint alpha <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.tint_alpha" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark palette fresnel (palette name) <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.palette_fresnel" type="text"></label>
+        <label>Glass dark fresnel alpha <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.fresnel_alpha" data-type="float" type="number" step="0.01"></label>
+        <label>Glass dark palette bevel (palette name) <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.palette_bevel" type="text"></label>
+        <label>Glass dark bevel alpha <input data-key="desktop.hyprland.hyprglass.presets.mios.dark.bevel_alpha" data-type="float" type="number" step="0.01"></label>
+        <label>Window shadow enabled <input data-key="desktop.hyprland.config.decoration.shadow.enabled" data-type="bool" type="checkbox"></label>
+        <label>Window shadow range <input data-key="desktop.hyprland.config.decoration.shadow.range" data-type="int" type="number" min="0"></label>
+        <label>Window shadow render power <input data-key="desktop.hyprland.config.decoration.shadow.render_power" data-type="int" type="number" min="1" max="4"></label>
+        <label>Window shadow offset <input data-key="desktop.hyprland.config.decoration.shadow.offset" type="text"></label>
+        <label>Window shadow colour <input data-key="desktop.hyprland.config.decoration.shadow.color" type="text"></label>
+        <label>Inactive window shadow colour <input data-key="desktop.hyprland.config.decoration.shadow.color_inactive" type="text"></label>
+
         <div class="checkbox-row">
           <input type="checkbox" id="f-edge-enforce" data-key="theme.edge.enforce">
           <label for="f-edge-enforce">enforce (the dotfiles renderer refuses an inset literal on an edge surface)</label>
@@ -3033,6 +3413,9 @@
       </fieldset>
       <fieldset>
         <legend>theme.tmux</legend>
+        <label>Pane border lines <input type="text" data-key="theme.tmux.pane_border_lines"></label>
+        <label>Popup border lines <input type="text" data-key="theme.tmux.popup_border_lines"></label>
+        <label>Menu border lines <input type="text" data-key="theme.tmux.menu_border_lines"></label>
         <label>Style <select data-key="theme.tmux.style"><option>rounded</option><option>powerline</option><option>minimal</option></select></label>
         <label>Status position <select data-key="theme.tmux.status_position"><option>bottom</option><option>top</option></select></label>
         <label>Glyph mode <select data-key="theme.tmux.glyph_mode"><option>auto</option><option>nerd</option><option>ascii</option></select></label>
@@ -3837,6 +4220,7 @@ const PACKAGES = [
   { name: "freeipa",               default: true,  group: "iam",     desc: "FreeIPA identity domain client" },
   { name: "wintools",              default: true,  group: "interop", desc: "Windows interop (clipboard, RDP, smbclient)" },
   { name: "android",               default: true,  group: "interop", desc: "android-tools, scrcpy, waydroid" },
+  { name: "remote-desktop",        default: true,  group: "interop", desc: "xrdp + wayvnc: RDP (Windows App on iOS/Android) into the live Hyprland session ([remote.rdp])" },
   // gaming
   { name: "gaming",                default: true,  group: "gaming",  desc: "gamemode, vulkan-tools (base gaming utilities)" },
   { name: "steam",                 default: true,  group: "gaming",  desc: "Steam + Proton + Wine + Lutris + gamescope (SteamOS surface)" },
@@ -4496,6 +4880,8 @@ function refreshFromData() {
       renderRaw();
     });
   }
+  // Per-output monitors ([desktop.hyprland.monitors.<output>]).
+  renderMonitors();
   // Flatpak checkboxes
   renderFlatpaks();
   // Color palette pickers (defaults populate from COLOR_DEFAULTS when no
@@ -4529,6 +4915,64 @@ function parseFlatpakInput(raw) {
 }
 
 // ── Color palette: render the [colors] fieldset and bind inputs ──────────────
+// [desktop.hyprland.monitors.<output>] rows: parseToml keeps each as its own
+// DATA section, so fields bind straight into DATA like the quadlet grid.
+const MONITOR_PREFIX = "desktop.hyprland.monitors.";
+const MONITOR_FIELDS = [
+  { key: "mode", label: "mode", type: "text", placeholder: "1920x1080@60" },
+  { key: "position", label: "position", type: "text", placeholder: "0x0" },
+  { key: "scale", label: "scale", type: "float", placeholder: "1" },
+  { key: "transform", label: "transform (0-7)", type: "int", placeholder: "0" },
+  { key: "disabled", label: "disabled", type: "bool" },
+  { key: "primary", label: "primary", type: "bool" },
+];
+function renderMonitors() {
+  const grid = document.getElementById("monitor-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const outputs = Object.keys(DATA).filter(s => s.startsWith(MONITOR_PREFIX)).sort();
+  for (const sec of outputs) {
+    const name = sec.slice(MONITOR_PREFIX.length);
+    const box = document.createElement("fieldset");
+    box.innerHTML = `<legend>${escapeHtml(name)}</legend>`;
+    for (const f of MONITOR_FIELDS) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      const v = DATA[sec][f.key];
+      if (f.type === "bool") { input.type = "checkbox"; input.checked = v === true; }
+      else { input.type = f.type === "text" ? "text" : "number"; input.placeholder = f.placeholder; if (v !== undefined) input.value = String(v); }
+      if (f.type === "float") input.step = "0.05";
+      input.addEventListener(f.type === "bool" ? "change" : "input", () => {
+        if (f.type === "bool") { if (input.checked) DATA[sec][f.key] = true; else delete DATA[sec][f.key]; }
+        else if (input.value === "") delete DATA[sec][f.key];
+        else if (f.type === "int") DATA[sec][f.key] = parseInt(input.value, 10);
+        else if (f.type === "float") DATA[sec][f.key] = parseFloat(input.value);
+        else DATA[sec][f.key] = input.value.trim();
+        renderRaw();
+      });
+      label.append(`${f.label} `, input);
+      box.appendChild(label);
+    }
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.textContent = `Remove ${name}`;
+    rm.addEventListener("click", () => { delete DATA[sec]; renderMonitors(); renderRaw(); });
+    box.appendChild(rm);
+    grid.appendChild(box);
+  }
+}
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("monitor-add")?.addEventListener("click", () => {
+    const input = document.getElementById("monitor-add-name");
+    const name = (input.value || "").trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) { showStatus("Output names are connector names like HDMI-A-1 or DP-2", "error"); return; }
+    DATA[MONITOR_PREFIX + name] = DATA[MONITOR_PREFIX + name] || { mode: "preferred", position: "auto", scale: 1 };
+    input.value = "";
+    renderMonitors();
+    renderRaw();
+  });
+});
+
 function renderColors() {
   const named = document.getElementById("colors-named");
   const ansi  = document.getElementById("colors-ansi");

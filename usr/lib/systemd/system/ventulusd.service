@@ -1,0 +1,305 @@
+# AI-hint: Upstream ventulusd (MIT, github.com/Plan-B-Development/ventulusd v5.1.0 @ b7a72ab7) fan-control daemon unit, shipped verbatim; MiOS policy lives in ventulusd.service.d/10-mios.conf (alias mios-fan-control.service).
+# AI-related: /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/bin/ventulusd, /usr/bin/ventulus-restore-auto, /usr/bin/mios-fanctl, /usr/share/mios/fan-control/daemon.toml
+[Unit]
+Description=Ventulus Fan Control Daemon
+After=local-fs.target
+# Ensure cdc_acm is loaded before we start so that DeviceAllow=char-ttyACM
+# can resolve the device group from /proc/devices. Without this, starting
+# before cdc_acm loads (common on boot, before USB enumeration) leaves the
+# cgroup filter without a ttyACM rule, and the daemon gets EPERM when the
+# OpenFanController appears shortly after. See systemd.resource-control(5).
+Wants=modprobe@cdc_acm.service
+After=modprobe@cdc_acm.service
+
+# No start rate limit (DEC-387). It was 5 starts per 60 s, after which the unit
+# stayed failed until someone ran `systemctl reset-failed` — so a fault that
+# recurred quickly left the machine with no fan daemon at all, and DEC-272
+# rejected a watchdog for exactly that reason: restarting a wedge that keeps
+# coming back would burn the budget. The exponential backoff under Restart=
+# below paces restarts instead, slowing a fault that keeps recurring to one start
+# a minute without ever giving up. A [Unit]-section directive since systemd v230.
+StartLimitIntervalSec=0
+
+[Service]
+# DEC-387 (`TS-d`): the daemon reports its own readiness. It sends READY=1 once
+# the profile engine is ticking, the API is serving and its signal handlers are
+# live, so `systemctl start` (and multi-user.target, which is ordered after this
+# unit) waits for a daemon that is actually controlling the fans.
+Type=notify
+# Only the daemon's own process may notify. It spawns no children in production;
+# this says so to the service manager as well. Its tokio worker threads share
+# its PID, so a ping sent from one is attributed to it (measured on systemd 261).
+NotifyAccess=main
+# [SAFETY] The watchdog (DEC-387, `TS-d`). The daemon sends WATCHDOG=1 from each
+# COMPLETED profile-engine tick and from nowhere else, so it fires when the loop
+# stops cycling — a deadlock, an await that never resolves, a starved runtime.
+# That is the one state DEC-266 cannot see, because the task is alive: every fan
+# holds its last duty and nothing evaluates the thermal ladder. On a timeout
+# systemd sends WatchdogSignal (below), runs ExecStopPost (which hands the hwmon
+# headers back and resets the GPU curves the daemon drove) and restarts the
+# daemon under the backoff
+# below.
+#
+# A slow or wedged DEVICE does not stop the pings, deliberately: since DEC-289 each
+# backend write is joined for at most one second (WRITE_JOIN_BUDGET), after which
+# the tick carries on and the write finishes in the background — restarting could
+# not unwedge a kernel driver anyway. So a legitimate tick completes within one
+# 1 s period plus the three bounded writes (1 s each for OpenFan and hwmon, 1.75 s
+# for GPU including its lock wait): the gap between pings is at most ~5 s, and
+# 15 s is three times that. (DEC-259's ~10 s figure is how long a degraded serial
+# WRITE can take; the tick no longer waits for it.) Suspend is not entirely free:
+# the clock is CLOCK_MONOTONIC, which does not advance during the sleep itself, but
+# user space is frozen while devices suspend and resume and that stretch DOES count.
+# So the package's system-sleep hook (/usr/lib/systemd/system-sleep/
+# ventulusd, DEC-396, TS-ao) signals the daemon before each sleep, and the
+# daemon widens this watchdog to 120 s (WATCHDOG_USEC=) until the hook's resume
+# call — or until 120 s have passed without one — then puts 15 s back. A machine
+# whose device suspend + resume exceeds even that can still widen WatchdogSec in a
+# drop-in; the sleep window never narrows a wider configured value.
+#
+# While stopping, the daemon disarms the watchdog itself — STOPPING=1 with
+# WATCHDOG_USEC=0 — because systemd re-arms it on any keep-alive whatever the
+# unit's state, and a late tick would otherwise arm a fresh 15 s over the
+# hardware restore below. A disarm that systemd's full queue refused is sent
+# again once the IPC server has stopped, before the task drains (TS-ay,
+# DEC-402), and once more just before that restore (TS-ap, DEC-396); no
+# sleep-window widen is ever sent after it.
+WatchdogSec=15
+# DEC-388 (TS-al, the user's choice): a watchdog timeout asks for a GRACEFUL stop
+# rather than aborting. Only the in-process stop can apply the exit floor to the
+# OpenFan channels — ExecStopPost cannot reach serial — and a hung LOOP usually
+# leaves the rest of the runtime able to run it. The cost is the core dump that
+# SIGABRT would have left to show where the loop stopped.
+WatchdogSignal=SIGTERM
+# How long that graceful stop gets before SIGKILL — for a watchdog stop only;
+# every other stop keeps TimeoutStopSec. Derived from the ORDER of the stop,
+# ASSUMING the hung engine is the one task that will not drain: its drain
+# (SHUTDOWN_TASK_TIMEOUT, 3 s), then the exit floor, which runs first in the
+# restore (two steps, 3 s each at most). 10 s covers those; the GPU reset and
+# hwmon hand-back after them may be cut, and ExecStopPost repeats both. The
+# assumption is the limit: a deadlock that also stalls an in-flight API request
+# or a poll task costs up to 3 s more per stuck drain, and SIGKILL can then land
+# before the exit floor — those outputs keep their last duty, as before DEC-388.
+# Not raised to cover that: every second here is a second with no thermal
+# ladder, and a runtime too starved to act on SIGTERM at all is killed at 10 s
+# instead of at TimeoutStopSec's 40.
+TimeoutAbortSec=10
+# Pinned, never the manager default: that default is a distribution choice, and
+# CachyOS ships DefaultTimeoutStartSec=15s — under Type=notify the whole start-up
+# runs inside this window, and 15 s would kill a daemon configured with a startup
+# delay on every boot. Derived: the startup delay, capped at 30 s
+# (MAX_STARTUP_DELAY_SECS, enforced even on a hand-edited runtime.toml), and the
+# config and state loads ahead of it must fit, with room to spare. The boot-time
+# serial probe does NOT have to: before each candidate the daemon sends
+# EXTEND_TIMEOUT_USEC sized to that probe's own bound, so neither the number of
+# serial devices nor serial.timeout_ms (which the admin file does not cap) counts
+# against this window, while a probe that never returns stops extending it. A
+# start that overruns it really is wedged, and is killed and restarted like any
+# other failure.
+TimeoutStartSec=120
+ExecStart=/usr/bin/ventulusd
+ExecStopPost=/usr/bin/ventulus-restore-auto
+ExecReload=/bin/kill -HUP $MAINPID
+RuntimeDirectory=ventulus
+# 0755 (systemd's default, pinned explicitly) so a non-root GUI can traverse
+# /run/ventulus to reach the 0666 socket the daemon chmods after bind
+# (DEC-049); a future UMask/hardening change then can't silently lock the GUI out.
+RuntimeDirectoryMode=0755
+# Kept when the unit stops (LIFE-a, DEC-487). A start refused because a daemon
+# run by hand is serving would otherwise have its stop empty this directory,
+# deleting that daemon's socket and hand-back records. Each hand-back record is
+# removed by ExecStopPost once replayed, and a starting daemon removes a socket
+# nothing serves on before it binds, so nothing a stopped daemon left behind is
+# acted on later.
+RuntimeDirectoryPreserve=yes
+StateDirectory=ventulus
+# Socket: /run/ventulus/ventulus.sock (created by daemon)
+# State: /var/lib/ventulus/daemon_state.json (active profile pointer)
+# Override config: /etc/ventulus/daemon.toml
+
+# Logging goes to journald by default (env_logger → stderr → journald)
+Environment=RUST_LOG=info
+# HOME is required for default profile search dirs (~/.config/ventulus/profiles).
+# User=root (below) sets it from the passwd entry, but it is pinned explicitly so
+# the resolved path stays obvious and independent of NSS (systemd.exec(5)).
+Environment=HOME=/root
+
+# Restart on a crash, a non-zero exit (DEC-266's engine or sensor-feed death) or
+# a watchdog timeout — on-failure covers all three.
+#
+# A start refused because another daemon is running exits 75 (TEMPFAIL, LIFE-a)
+# and is restarted too, deliberately (DEC-487): it is not listed in
+# RestartPreventExitStatus=. The lock holder may be this unit's own previous
+# process, kept alive after SIGKILL by a thread stuck in a wedged sysfs write,
+# and only a retry brings the service back once that releases. A daemon run by
+# hand costs one refused start a minute at the backoff below, and the service
+# takes over when it exits. ExecStopPost returns early on 75.
+Restart=on-failure
+# Exponential backoff (DEC-387), replacing the start limit above: 3 s, then about
+# 5.5, 10, 18 and 33 s, then 60 s for every restart after that. The first restart
+# after an isolated fault is as fast as before; one that keeps recurring slows to
+# one start a minute, which also bounds how often a restart re-probes the serial
+# bus. systemd grows the delay with its restart COUNTER, which only a manual start
+# resets — so after five minutes of completed ticks the daemon sends
+# RESTART_RESET=1 (systemd >= 258; older managers ignore it) and a later,
+# unrelated fault starts again from 3 s. Needs systemd >= 254.
+RestartSec=3
+RestartSteps=5
+RestartMaxDelaySec=60
+
+# Defence in depth — NOT the mechanism that bounds shutdown (273-b).
+# The daemon bounds most of its own teardown: `shutdown_sequence` allows 3 s per
+# drain (the IPC server + up to five poll/engine/recorder/adoption tasks) and the
+# runtime teardown adds at most RUNTIME_SHUTDOWN_TIMEOUT (2 s). Those parts total
+# ~20 s. The SIGHUP reloads still running at the stop (TS-bf) are drained too,
+# but bounded from the stop's start, so they overlap the drains and add nothing.
+#
+# Since 2.21.1 the restore is bounded too (277-b), in BOTH halves: it reads the
+# hand-back ledger — which headers the daemon holds, and what each gets back
+# (DEC-382) — under a SHUTDOWN_TASK_TIMEOUT (3 s) lock deadline, then performs the
+# writes on a detached thread under another 3 s deadline. The second bound is the
+# load-bearing one: a sysfs write wedged in the kernel holds the chip's driver
+# lock, and most boards put every header on one Super-I/O chip whose driver
+# serialises attribute stores, so bounding just the lock would move the hang to
+# the kernel rather than remove it.
+#
+# Before that the restore took the mutex unconditionally and stalled past every
+# timeout above — including on the path where the daemon stops ITSELF to be
+# restarted (DEC-266), where systemd had no stop job and so this line did not
+# apply; ExecStopPost runs only once the process has exited, which a stalled
+# restore never did. A wedged stop is therefore now ~20 s for the hwmon hand-back,
+# rather than unbounded. Since DEC-387 that self-stop also announces itself with
+# STOPPING=1, so systemd applies this line to it as well.
+#
+# As of 2.22.0 that IS a total bound on the restore closure: the GPU `fan_curve`
+# reset runs FIRST in the same closure and used to be unbounded (278-c), so a
+# wedged PMFW write could hold shutdown open ahead of everything above and
+# bounding the hwmon half alone achieved nothing. Each step now runs through the
+# shared `run_bounded` helper with its OWN 3 s deadline (DEC-279) — they do not
+# share one deadline between them, so the restore closure's worst case is the
+# SUM: 3 s OpenFan exit floor + 3 s hwmon exit floor (both DEC-388, run first) +
+# 3 s GPU + 3 s hwmon lock + 3 s hwmon writes = 15 s. See the arithmetic below;
+# reading "bounded" here as a single 3 s step would understate it by 12 s.
+# Note the honest limit: exiting is guaranteed, restoring the hardware is not. If
+# the chip is genuinely unresponsive nothing can restore it, and those fans hold
+# their last duty until something owns them again.
+#
+# This line remains as defence in depth, not as the mechanism. Note what
+# ExecStopPost=ventulus-restore-auto does and does NOT cover: the script
+# replays the daemon's hand-back record — each hwmon header the daemon holds goes
+# back to what it was doing before the daemon took it (DEC-382), and nothing else
+# is touched — replays the legacy GPU verify's record (DEC-414), and resets the
+# PMFW `fan_curve` on each card the daemon drove (DEC-435). OpenFan channels are USB-serial, out of
+# its reach, and have no firmware-auto to fall back to: a clean stop leaves them at
+# the exit floor first (DEC-388), but after a crash or SIGKILL they stay latched
+# at the last commanded duty until a daemon owns them again. Fans hold, never
+# fall — but this is not a full hand-back and must not be read as one.
+#
+# The number is DERIVED, not picked. An ordinary (non-wedged) stop costs up to
+# SHUTDOWN_TASK_TIMEOUT (3 s) per sequential task drain — six of them: the IPC
+# server, hwmon-poll, the engine, validation-recorder, and either openfan-poll or
+# (no controller at boot) post-boot adoption plus the adopted poll loop — plus
+# RUNTIME_SHUTDOWN_TIMEOUT (2 s): ~20 s worst case. (Until TS-bf this said four
+# drains and ~14 s, missing validation-recorder and post-boot adoption.) The uncontended restore adds
+# nothing measurable — an uncontended `try_lock_for` returns immediately and the
+# writes complete — while a fully wedged machine adds at most 3 s for each exit
+# floor step (DEC-388: OpenFan, then hwmon), 3 s for the GPU curve reset (278-c),
+# 3 s for the hwmon lock and 3 s for the hwmon writes: ~35 s in the worst case.
+# (It was ~23 s before DEC-388 added the two exit-floor steps, and ~20 s before
+# 2.22.0 bounded the GPU step — that step was previously unbounded, so the old
+# figure described a case that could not actually be exceeded because it could
+# not actually terminate.) At 29 s against the old 30 s a loaded machine whose
+# drains each run near their cap would trip SIGKILL on a routine `systemctl
+# restart` — not a fault, but it WOULD make a genuine wedge look routine in the
+# journal. 40 s keeps a 5 s margin over the recounted worst case (TS-bf); grow
+# it with the next drain or restore step.
+#
+# 277-c's rescan-adopted OpenFan poll loops do not grow the count past one:
+# adoption is guarded by `slot.is_none()` and nothing ever clears the slot, so at
+# most ONE controller is ever adopted per process — and it can only be adopted
+# when boot found none, which is exactly when the boot-time openfan-poll handle is
+# absent. The adopted drain replaces that budget line, it does not add to it.
+#
+# Raise this if the drain budget above ever grows. Lowering it is now a smaller
+# question than it was: with the restore bounded, SIGKILL is no longer what ends
+# a wedged stop, so this cap governs the margin rather than the outcome.
+TimeoutStopSec=40
+
+# Privilege model: daemon runs as root, declared explicitly via User=root
+# (identical to the prior implicit default — root is what a User=-less system
+# service already gets — but it states intent).
+User=root
+# Group=root pinned explicitly (2026-07-21 audit PKG-3): systemd already
+# derives it from root's passwd entry, so this is a no-op today — but it
+# states intent and stops a future User= change (or DynamicUser=) from
+# silently inheriting an unexpected primary group.
+Group=root
+# Root is required for direct read/write to /sys/class/hwmon and /sys/class/drm
+# sysfs nodes (motherboard fan PWM headers and GPU PMFW fan curves). Serial
+# device access (/dev/ttyACM*) is handled via DeviceAllow below.
+# CapabilityBoundingSet: drop caps the daemon provably never uses (no netlink/raw-IO,
+# no ptrace, no module load, no reboot, no raw USB). CAP_DAC_OVERRIDE is deliberately
+# KEPT — sysfs pwm / drm fan_curve / serial-tty writes succeed on owner perms as UID 0,
+# but DAC_OVERRIDE is retained as insurance for any board whose sysfs node is not
+# root-owned. (Analysis-verified; smoke-test on real hardware before release.)
+CapabilityBoundingSet=~CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE CAP_SYS_RAWIO CAP_SYS_MODULE CAP_SYS_BOOT
+
+# Security hardening
+ProtectHome=read-only
+ProtectSystem=strict
+# ProtectKernelTunables=true (below) remounts ALL of /sys read-only — ProtectSystem=strict
+# alone does NOT (it explicitly exempts /sys) — so this entry is what re-exposes the fan
+# nodes for writing. It MUST target /sys/devices, NOT /sys/class/hwmon or /sys/class/drm:
+# those class directories hold only symlinks, and sysfs decides writability by the *target*
+# inode's mount. Every pwm*/pwm*_enable and GPU fan_curve the daemon writes resolves through
+# those symlinks to /sys/devices/... — carving out the class dirs re-exposes the symlinks but
+# not their targets, so writes fail with EROFS ("Read-only file system", os error 30). The GPU
+# fan_curve lives under .../device/gpu_od/ (a sibling of drm/), also under /sys/devices. Reads
+# work fine on the ro mount, so only the write targets need this carve-out. See DEC-199.
+# /run/ventulus and /var/lib/ventulus are provided by RuntimeDirectory=/StateDirectory=
+# above; systemd.exec(5) guarantees those are writable under ProtectSystem=strict.
+ReadWritePaths=/sys/devices
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @reboot @swap @debug
+SystemCallArchitectures=native
+
+# Extra Protect* isolation (safe set — verified on real hardware).
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+# ProcSubset=pid is deliberately NOT set: it would hide /proc/{modules,ioports,cpuinfo},
+# which the live GET /diagnostics/hardware handler reads (hw_diagnostics.rs).
+
+# Owner-only umask for new files and an owner-only StateDirectory.
+UMask=0027
+StateDirectoryMode=0700
+
+# Network isolation: the daemon's only socket is the filesystem Unix socket at
+# /run/ventulus/ventulus.sock (unaffected by a private net namespace) and it
+# makes no outbound network calls. AF_UNIX is the real socket; AF_NETLINK is kept
+# only so a netlink socket libudev may open during available_ports() does not hit
+# EAFNOSUPPORT (serial enumeration itself works via static sysfs reads + the
+# direct-probe fallback regardless). This still blocks AF_INET/INET6/PACKET.
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+# Serial device access (OpenFanController)
+# Allow all ttyACM and ttyUSB devices (index varies across systems). read+write
+# only — the daemon opens existing device nodes and never creates them, so the
+# mknod bit (m) is dropped.
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-ttyUSB rw
+
+[Install]
+WantedBy=multi-user.target

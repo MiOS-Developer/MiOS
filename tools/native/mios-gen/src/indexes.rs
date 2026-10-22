@@ -2,6 +2,24 @@
 // AI-doc: usr/share/doc/mios/manual/tools.md
 // AI-related: usr/share/doc/mios/adr/, usr/share/mios/mios.toml, usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md, tools/native/mios-gen/src/main.rs, ROADMAP.md, tools/native/mios-gen/tests/docs.rs
 
+/// Give a freshly written temp file the mode of the file it replaces (0644 for a
+/// new one) before the rename. `fs::write` creates the temp with the caller's
+/// umask, so a root `mios-gen sync` under umask 077 would otherwise swap a 0644
+/// tracked index for a 0600 one that no user, test or gate can read.
+fn keep_mode(tmp: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(dest)
+            .map(|m| m.permissions())
+            .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o644));
+        std::fs::set_permissions(tmp, perms)?;
+    }
+    #[cfg(not(unix))]
+    let _ = (tmp, dest);
+    Ok(())
+}
+
 pub mod adr_index {
     use regex::Regex;
     use std::collections::HashMap;
@@ -370,6 +388,9 @@ pub mod adr_index {
         if let Err(e) = fs::write(&tmp_path, &body) {
             return Err((format!("failed to write {}: {}", tmp_path.display(), e), 1));
         }
+        if let Err(e) = super::keep_mode(&tmp_path, &path) {
+            return Err((format!("failed to set mode on {}: {}", tmp_path.display(), e), 1));
+        }
         if let Err(e) = fs::rename(&tmp_path, &path) {
             return Err((format!("failed to replace {}: {}", path.display(), e), 1));
         }
@@ -597,6 +618,8 @@ pub mod gate_index {
         let tmp_path = output_path.with_extension("tmp");
         fs::write(&tmp_path, tsv_content.as_bytes())
             .map_err(|e| (format!("Failed to write {}: {e}", tmp_path.display()), 1))?;
+        super::keep_mode(&tmp_path, &output_path)
+            .map_err(|e| (format!("Failed to set mode on {}: {e}", tmp_path.display()), 1))?;
         fs::rename(&tmp_path, &output_path).map_err(|e| {
             (
                 format!("Failed to replace {}: {e}", output_path.display()),
@@ -779,6 +802,8 @@ pub mod pipeline_index {
         let tmp_path = output_path.with_extension("tmp");
         fs::write(&tmp_path, tsv_content.as_bytes())
             .map_err(|e| (format!("Failed to write {}: {e}", tmp_path.display()), 1))?;
+        super::keep_mode(&tmp_path, &output_path)
+            .map_err(|e| (format!("Failed to set mode on {}: {e}", tmp_path.display()), 1))?;
         fs::rename(&tmp_path, &output_path).map_err(|e| {
             (
                 format!("Failed to replace {}: {e}", output_path.display()),

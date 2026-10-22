@@ -51,13 +51,12 @@ deadline=$(( $(date +%s) + 300 ))
 ready_port=""
 
 while (( $(date +%s) < deadline )); do
-    for check_port in "$http_port" 3000 8300; do
-        if _is_forge_up "$check_port"; then
-            ready_port="$check_port"
-            _log "Forgejo is up on :${ready_port}"
-            break 2
-        fi
-    done
+    # Only the SSOT port ([ports].forge_http): stale guesses (3000, 8300) hit other services -- 8300 is RDP.
+    if _is_forge_up "$http_port"; then
+        ready_port="$http_port"
+        _log "Forgejo is up on :${ready_port}"
+        break
+    fi
     sleep 2
 done
 

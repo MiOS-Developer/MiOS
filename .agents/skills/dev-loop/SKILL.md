@@ -130,7 +130,7 @@ The `dev_loop` tool coordinates multi-lane terminal execution. Schema definition
 Dev Loop provides native custom slash commands and prompt configurations pre-built for every major agent environment under `commands/`:
 
 - **Google Gemini Spark (Native):** `commands/spark/*.md` (`skills/dev-loop/commands/spark/*.md`)
-- **Anthropic Claude Code:** `commands/claude/dev-loop.md` (`~/.claude/commands/dev-loop.md`)
+- **Anthropic Claude Code:** `../../workflows/dev-loop.md` (`~/.claude/commands/dev-loop.md`)
 - **OpenAI Codex:** `commands/codex/dev-loop.md` (`~/.codex/prompts/dev-loop.md`)
 - **Google Gemini CLI / AGY:** `commands/gemini/dev-loop.toml` (`~/.gemini/commands/dev-loop.toml`)
 - **Google Antigravity:** `commands/antigravity/dev-loop.md` (`~/.antigravity/workflows/dev-loop.md`)

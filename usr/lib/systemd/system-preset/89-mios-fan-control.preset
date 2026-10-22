@@ -1,0 +1,3 @@
+# AI-hint: Enables the MiOS fan-control daemon (ventulusd, alias mios-fan-control.service) at boot; the unit itself is skipped in VMs/containers (ConditionVirtualization=no).
+# AI-related: /usr/lib/systemd/system/ventulusd.service, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf
+enable ventulusd.service

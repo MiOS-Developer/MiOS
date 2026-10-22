@@ -544,8 +544,18 @@ mod tmux_runtime {
             String::from_utf8_lossy(&o.stderr)
         );
         let conf = fs::read_to_string(d.join("tmux.conf")).unwrap();
+        // The vendor value comes from the SSOT ([theme.tmux].status_position), never a literal here.
+        let vendor: toml::Value = toml::from_str(
+            &fs::read_to_string(repo_root().join("usr/share/mios/mios.toml")).unwrap(),
+        )
+        .unwrap();
+        let vendor_pos = vendor["theme"]["tmux"]["status_position"]
+            .as_str()
+            .expect("[theme.tmux].status_position")
+            .to_string();
+        let other_pos = if vendor_pos == "top" { "bottom" } else { "top" };
         assert!(
-            conf.contains("set -g status-position bottom"),
+            conf.contains(&format!("set -g status-position {vendor_pos}")),
             "vendor default"
         );
         assert!(
@@ -560,12 +570,9 @@ mod tmux_runtime {
             "runtime mode must be silent on success (login shells)"
         );
 
-        // Layer proof: the USER tier must win over the vendor tier.
-        let (o2, d2) = run(
-            td.path(),
-            Some("[theme.tmux]\nstatus_position = \"top\"\n"),
-            &args,
-        );
+        // Layer proof: the USER tier must win over the vendor tier (it asks for the other position).
+        let user_toml = format!("[theme.tmux]\nstatus_position = \"{other_pos}\"\n");
+        let (o2, d2) = run(td.path(), Some(user_toml.as_str()), &args);
         assert!(
             o2.status.success(),
             "{}",
@@ -573,10 +580,10 @@ mod tmux_runtime {
         );
         let conf2 = fs::read_to_string(d2.join("tmux.conf")).unwrap();
         assert!(
-            conf2.contains("set -g status-position top"),
+            conf2.contains(&format!("set -g status-position {other_pos}")),
             "user layer wins"
         );
-        assert!(!conf2.contains("set -g status-position bottom"));
+        assert!(!conf2.contains(&format!("set -g status-position {vendor_pos}")));
 
         #[cfg(unix)]
         {

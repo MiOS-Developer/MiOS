@@ -1,0 +1,18 @@
+# AI-hint: Systemd service that applies an offline atomic bootc/OCI upgrade from removable media under /run/media.
+# AI-related: man:bootc(8), usr/share/doc/mios/manual/offline-upgrade.md
+
+[Unit]
+Description=MiOS Offline Atomic OCI Upgrade Service
+Documentation=man:bootc(8) file:///usr/share/doc/mios/manual/offline-upgrade.md
+After=local-fs.target
+ConditionPathExists=/run/media
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mios-offline-upgrade --reboot-mode auto
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

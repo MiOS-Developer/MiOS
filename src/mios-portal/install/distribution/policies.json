@@ -1,0 +1,66 @@
+{
+  "policies": {
+    "DisableAppUpdate": true,
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableFeedbackCommands": true,
+    "DontCheckDefaultBrowser": true,
+    "DisableFirefoxAccounts": true,
+    "DisableRemoteSettingsAndAcceptSecurityConsequences": true,
+    "DisableRemoteImprovements": true,
+    "NetworkPrediction": false,
+    "CaptivePortal": false,
+    "FirefoxSuggest": {
+      "WebSuggestions": false,
+      "SponsoredSuggestions": false,
+      "ImproveSuggest": false,
+      "Locked": true
+    },
+    "UserMessaging": {
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true,
+      "MoreFromMozilla": false,
+      "FirefoxLabs": false,
+      "Locked": true
+    },
+    "Homepage": {
+      "URL": "http://localhost:8700/",
+      "StartPage": "homepage"
+    },
+    "GenerativeAI": {
+      "Enabled": true,
+      "Chatbot": true,
+      "SmartWindow": false,
+      "LinkPreviews": false,
+      "TabGroups": false,
+      "Locked": true
+    },
+    "Preferences": {
+      "browser.ml.enable": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.enabled": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.endpoint": { "Value": "", "Status": "locked" },
+      "browser.smartwindow.searchQuery.endpointURL": { "Value": "", "Status": "locked" },
+      "browser.smartwindow.firstrun.explainerURL": { "Value": "", "Status": "locked" },
+      "browser.ml.modelHubRootUrl": { "Value": "", "Status": "locked" },
+      "browser.region.network.url": { "Value": "", "Status": "locked" },
+      "browser.region.update.enabled": { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.enabled": { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.autoSubmit2": { "Value": false, "Status": "locked" },
+      "datareporting.policy.dataSubmissionEnabled": { "Value": false, "Status": "locked" },
+      "browser.ml.pageAssist.enabled": { "Value": false, "Status": "locked" },
+      "browser.ml.linkPreview.enabled": { "Value": false, "Status": "locked" },
+      "browser.tabs.groups.smart.enabled": { "Value": false, "Status": "locked" },
+      "browser.ml.chat.enabled": { "Value": true, "Status": "locked" },
+      "browser.ml.chat.provider": { "Value": "http://127.0.0.1:8700/v1", "Status": "locked" },
+      "browser.ml.chat.hideLocalhost": { "Value": false, "Status": "locked" },
+      "browser.ml.chat.shortcuts": { "Value": true, "Status": "default" },
+      "network.captive-portal-service.enabled": { "Value": false, "Status": "locked" },
+      "network.connectivity-service.enabled": { "Value": false, "Status": "locked" },
+      "dom.push.enabled": { "Value": false, "Status": "locked" },
+      "dom.push.connection.enabled": { "Value": false, "Status": "locked" }
+    }
+  }
+}

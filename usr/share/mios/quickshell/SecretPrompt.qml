@@ -22,7 +22,7 @@ PanelWindow {
     // Backdrop overlay
     Rectangle {
         anchors.fill: parent
-        color: "#99000000"
+        color: Qt.rgba(0, 0, 0, theme.scrimOpacity)
 
         MouseArea {
             anchors.fill: parent
@@ -39,7 +39,7 @@ PanelWindow {
             anchors.centerIn: parent
             radius: theme.radius
             color: theme.bg
-            border.color: theme.accent
+            border.color: theme.outlineColor
             border.width: 1
 
             ColumnLayout {
@@ -55,7 +55,7 @@ PanelWindow {
                     Rectangle {
                         width: 8
                         height: 22
-                        radius: 2
+                        radius: theme.radius
                         color: theme.cursor // Orange accent stripe
                     }
 
@@ -63,7 +63,7 @@ PanelWindow {
                         text: promptTitle
                         color: theme.fg
                         font.family: theme.fontFamily
-                        font.pixelSize: 16
+                        font.pixelSize: theme.titleFontSize
                         font.bold: true
                         Layout.fillWidth: true
                     }
@@ -74,7 +74,7 @@ PanelWindow {
                     text: promptMessage
                     color: theme.subtle
                     font.family: theme.fontFamily
-                    font.pixelSize: 13
+                    font.pixelSize: theme.fontSize + 1
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -83,8 +83,8 @@ PanelWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     height: 40
-                    radius: 6
-                    color: "#181438"
+                    radius: theme.radius
+                    color: Qt.darker(theme.bg, 1.6)
                     border.color: passwordInput.activeFocus ? theme.cursor : theme.muted
                     border.width: 1
 
@@ -97,7 +97,7 @@ PanelWindow {
                         echoMode: TextInput.Password
                         color: theme.fg
                         font.family: theme.fontFamily
-                        font.pixelSize: 14
+                        font.pixelSize: theme.fontSize + 2
                         focus: true
 
                         onAccepted: submitSecret()
@@ -115,8 +115,8 @@ PanelWindow {
                     Rectangle {
                         width: 90
                         height: 36
-                        radius: 6
-                        color: cancelHover.hovered ? "#332d56" : "transparent"
+                        radius: theme.radius
+                        color: cancelHover.hovered ? theme.outlineColor : "transparent"
                         border.color: theme.muted
                         border.width: 1
 
@@ -125,7 +125,7 @@ PanelWindow {
                             text: "Cancel"
                             color: theme.muted
                             font.family: theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: theme.fontSize + 1
                         }
 
                         HoverHandler { id: cancelHover }
@@ -136,7 +136,7 @@ PanelWindow {
                     Rectangle {
                         width: 100
                         height: 36
-                        radius: 6
+                        radius: theme.radius
                         color: unlockHover.hovered ? theme.cursor : theme.accent
 
                         Text {
@@ -144,7 +144,7 @@ PanelWindow {
                             text: "Unlock"
                             color: theme.fg
                             font.family: theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: theme.fontSize + 1
                             font.bold: true
                         }
 
