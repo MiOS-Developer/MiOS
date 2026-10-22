@@ -48,7 +48,7 @@ class LookingGlassConfigManager:
         allow_dma: bool = True,
     ) -> None:
         self.vm_name = vm_name
-        self.shm_file = shm_file
+        self.shm_file = self.resolve_shm_file(shm_file)
         self.escape_key = escape_key
         self.full_screen = full_screen
         self.auto_resize = auto_resize
@@ -62,6 +62,13 @@ class LookingGlassConfigManager:
         self.fractional_scale = fractional_scale
         self.allow_dma = allow_dma
         self.spice_socket = self.resolve_spice_socket(vm_name, spice_socket)
+
+    @staticmethod
+    def resolve_shm_file(shm_file: str) -> str:
+        """Resolves shared memory file path, falling back to /dev/shm/looking-glass if default KVMFR device is missing."""
+        if shm_file == DEFAULT_SHM_FILE and not os.path.exists(DEFAULT_SHM_FILE) and os.path.exists(FALLBACK_SHM_FILE):
+            return FALLBACK_SHM_FILE
+        return shm_file
 
     @staticmethod
     def resolve_spice_socket(vm_name: str, explicit_path: Optional[str] = None) -> str:

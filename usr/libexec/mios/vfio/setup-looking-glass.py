@@ -937,6 +937,12 @@ class LookingGlassManager:
   <size unit="M">{self.size_mb}</size>
 </shmem>"""
 
+    def generate_qemu_cmdline(self) -> str:
+        """Generates raw QEMU command-line argument snippet for Looking Glass IVSHMEM."""
+        size_bytes = self.size_mb * 1024 * 1024
+        target_path = self.device_node if os.path.exists(self.device_node) else self.shm_path
+        return f"-object memory-backend-file,id=shmmem-looking-glass,mem-path={target_path},size={size_bytes},share=yes -device ivshmem-plain,id=shmem0,memdev=shmmem-looking-glass"
+
     def validate_shm_allocation(self, mock: bool = False) -> bool:
         if mock:
             return True
@@ -974,6 +980,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MiOS Looking Glass shared memory, domain profile and launcher.")
     parser.add_argument("--verify", action="store_true", help="Verify IVSHMEM device node and permissions.")
     parser.add_argument("--generate", action="store_true", help="Generate libvirt domain IVSHMEM XML snippet.")
+    parser.add_argument("--generate-qemu", action="store_true", help="Generate raw QEMU command-line argument snippet.")
     parser.add_argument("--mock", action="store_true", help="Run verification in mock/synthetic mode.")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format.")
     parser.add_argument("--size-mb", type=int, default=None, help="Framebuffer size in MB (default: [vm.looking_glass].shm_size_mb).")
@@ -1063,6 +1070,14 @@ def main() -> int:
             sys.stdout.write(json.dumps({"xml": xml, "size_mb": lg.size_mb}, indent=2) + "\n")
         else:
             sys.stdout.write(xml + "\n")
+        return 0
+
+    if args.generate_qemu:
+        cmdline = lg.generate_qemu_cmdline()
+        if args.json:
+            sys.stdout.write(json.dumps({"cmdline": cmdline, "size_mb": args.size_mb}, indent=2) + "\n")
+        else:
+            sys.stdout.write(cmdline + "\n")
         return 0
 
     if args.verify or not sys.argv[1:]:
