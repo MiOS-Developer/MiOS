@@ -1003,3 +1003,6 @@ usr/share/mios/virtio/*.iso
 !/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
 
 !/usr/share/wayland-sessions/mios-desktop-dgpu.desktop
+
+# Dev-loop isolated worktrees (.agents/workflows/dev-loop.md step 3)
+.worktrees/
