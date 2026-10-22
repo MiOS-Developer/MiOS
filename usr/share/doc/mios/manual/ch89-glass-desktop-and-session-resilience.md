@@ -36,7 +36,10 @@ Hyprglass renders the desktop glass material. The MiOS Hypr3DGlass integration
 uses `/usr/lib64/mios/hypr3d.so`, declared in `[desktop.hyprland.hypr3d]`, for the
 3D view. **Super+G** toggles that view in either GPU session; the chord and enable
 switch are exposed in the local configurator. The engine loads on first use,
-outside configuration parsing. It reuses its loaded instance after a reload.
+through `/usr/bin/mios-gen hyprland-3d-toggle`. The helper loads the live plugin
+through compositor IPC, then configures and toggles it. The Lua plugin-load API
+declares configuration and does not perform this live activation. The helper
+reuses its loaded instance after a reload.
 An unavailable optional engine leaves the desktop shell usable. The image build uses the existing compositor ABI
 hold and `build-hyprland-plugin --name hypr3d` with the tracked MiOS glass patch.
 
@@ -49,6 +52,18 @@ retain equirectangular sampling. Mirrored panorama wrapping is off by default;
 effect for panorama files. The renderer's CTest regression runs the shared GLSL
 mapping in an offscreen EGL context and checks orientation, both poles, and
 color continuity across projection boundaries using an asymmetric texture.
+
+The session's GPU order must survive shell initialization: `/etc/profile.d/50-mios.sh`
+preserves an explicit `MIOS_DESKTOP_HARDWARE_PROFILE` or `AQ_DRM_DEVICES` selection.
+An older host override in `/etc/environment.d/60-mios-igpu.conf` can force the
+iGPU into every session and should yield to the native launcher. Host udev
+overrides must also follow the boot choice: a dGPU assigned `ID_SEAT=seat_vfio`
+is skipped by the seat0 compositor even when its native driver is loaded.
+The managed host override `/etc/udev/rules.d/61-mios-mutter-primary-gpu.rules`
+uses `mios.desktop.gpu` to keep VFIO isolation in the iGPU profile and expose
+the native dGPU on seat0 in the dGPU profile. Verify the actual renderer in
+compositor startup logs; environment variables alone do not establish which
+GPU rendered the desktop.
 
 ```mermaid
 flowchart TD

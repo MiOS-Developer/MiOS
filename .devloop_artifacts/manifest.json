@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-22T00:30:00.468916+00:00",
-  "total_artifacts": 31,
+  "last_updated": "2026-10-22T00:48:51.056583+00:00",
+  "total_artifacts": 32,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -14,25 +14,25 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "480912e771e07d7b301079f69434ff8970250619fbc2b98346bf8d73125efaa8",
-      "size_bytes": 582403,
-      "created_at": "2026-10-22T00:30:00.468916+00:00",
+      "sha256": "313f268b29e9e07409c3fc590e36a00787a4ab20603cdfb21102e13749874789",
+      "size_bytes": 585511,
+      "created_at": "2026-10-22T00:48:51.056583+00:00",
       "metadata": {}
     },
     {
       "path": "tools/native/mios-gen/src/main.rs",
       "artifact_type": "code",
-      "sha256": "985c3aa99abfb007067f39f53c0236978595e97247d5236b35096454fdc930cb",
-      "size_bytes": 113740,
-      "created_at": "2026-10-22T00:30:00.468916+00:00",
+      "sha256": "c96552e58727027f539ae84033996be3ad0825e64b6621cbd4a6a15f8eff7281",
+      "size_bytes": 114092,
+      "created_at": "2026-10-22T00:48:51.056583+00:00",
       "metadata": {}
     },
     {
       "path": "tools/native/mios-gen/src/render.rs",
       "artifact_type": "code",
-      "sha256": "91940aee064fc321d5ce35058a4ee3cce2c940b5f758c6e0e0ddb34ff8e64802",
-      "size_bytes": 305975,
-      "created_at": "2026-10-22T00:30:00.468916+00:00",
+      "sha256": "87f678948cef5713f49a8f33f72205f5fcff168df0859d1d57ffa0a8335860e5",
+      "size_bytes": 307206,
+      "created_at": "2026-10-22T00:48:51.056583+00:00",
       "metadata": {}
     },
     {
@@ -46,9 +46,9 @@
     {
       "path": "usr/share/mios/hyprland/hyprland.lua",
       "artifact_type": "config",
-      "sha256": "b05edc0afc6709d26e9d118d30d1bc0e4a6e9f2026d60cf2c7b5e0e73d9df5cd",
-      "size_bytes": 33921,
-      "created_at": "2026-10-22T00:11:14.848539+00:00",
+      "sha256": "642580856f4b4185776e56ae598c09dca3cb59d94601f0b0c8f05c56cc97ae54",
+      "size_bytes": 33700,
+      "created_at": "2026-10-22T00:48:51.056583+00:00",
       "metadata": {}
     },
     {
@@ -78,9 +78,9 @@
     {
       "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
       "artifact_type": "doc",
-      "sha256": "ec412836ce43d601bc6e0a3ba13ce81b7218ca78e6dda05ecb6432d734ec3def",
-      "size_bytes": 36817,
-      "created_at": "2026-10-22T00:30:00.468916+00:00",
+      "sha256": "1f0910f78020d4bee8325450a12cb5b47678e6b1f10f2c7998b578d2be0582f1",
+      "size_bytes": 37837,
+      "created_at": "2026-10-22T00:48:51.056583+00:00",
       "metadata": {}
     },
     {
@@ -250,6 +250,14 @@
       "sha256": "d69671c8711185508bbfc0830be82f52c67dfc444893b6e4b351317feaf12be1",
       "size_bytes": 25124,
       "created_at": "2026-10-22T00:30:00.468916+00:00"
+    },
+    {
+      "path": "etc/profile.d/50-mios.sh",
+      "artifact_type": "code",
+      "metadata": {},
+      "sha256": "71f24495fadd677b1bacc884570e1fa248d8180473be22b01c9c7416372d7237",
+      "size_bytes": 50790,
+      "created_at": "2026-10-22T00:48:51.056583+00:00"
     }
   ]
 }

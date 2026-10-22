@@ -76,15 +76,7 @@ end
 mios_state.binds = true
 mios_section("hypr3d", function()
  hl.unbind("SUPER + G")
- hl.bind("SUPER + G", function()
-  mios_section("hypr3d", function()
-   if not hl.plugin.hypr3d then hl.plugin.load("/usr/lib64/mios/hypr3d.so") end
-   if hl.plugin.hypr3d then
-    hl.plugin.hypr3d.config({["world"] = {["panorama_mirror"] = false}})
-    hl.plugin.hypr3d.toggle()
-   end
-  end)
- end)
+ hl.bind("SUPER + G", hl.dsp.exec_cmd("/usr/bin/mios-gen hyprland-3d-toggle"))
 end)
 mios_section("hyprglass", function()
 hl.plugin.load("/usr/lib64/mios/hyprglass.so")

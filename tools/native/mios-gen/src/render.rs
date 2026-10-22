@@ -4751,8 +4751,7 @@ report("again")
     }
     // ---- end magic lamp ------------------------------------------------------------------------------------------
 
-    /// Load the 3D engine on demand, outside configuration parsing. Reloads
-    /// replace its toggle binding without initializing the engine again.
+    /// The Lua load API declares configuration; live loading uses native IPC.
     fn hypr3d_profile(data: &Value) -> Result<String, String> {
         let Some(plugin) = hardware_profile_table(data)?.get("hypr3d") else {
             return Ok(String::new());
@@ -4771,11 +4770,38 @@ report("again")
             .ok_or("desktop.hyprland.hypr3d.toggle_key must be a nonempty key chord")?;
         let config = table.get("config").filter(|v| v.is_table())
             .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        let _ = (path, lua(config)?); // Validate operator settings before projecting the binding.
         Ok(format!(
-            "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, function()\n  mios_section(\"hypr3d\", function()\n   if not hl.plugin.hypr3d then hl.plugin.load({}) end\n   if hl.plugin.hypr3d then\n    hl.plugin.hypr3d.config({})\n    hl.plugin.hypr3d.toggle()\n   end\n  end)\n end)\nend)\n",
+            "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\nend)\n",
             lua(&Value::String(key.into()))?, lua(&Value::String(key.into()))?,
-            lua(&Value::String(path.into()))?, lua(config)?,
         ))
+    }
+
+    pub fn toggle_3d(root: &Path) -> Result<String, String> {
+        use std::process::Command;
+        let data = hardware_profile_data(root)?;
+        if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
+        let plugin = &data["desktop"]["hyprland"]["hypr3d"];
+        let path = plugin["path"].as_str().ok_or("Missing 3D engine path")?;
+        let ipc = |args: &[&str]| Command::new("/usr/bin/hyprctl").args(args).output()
+            .map_err(|e| format!("Compositor IPC failed: {e}"));
+        let probe = "assert(hl.plugin.hypr3d, 'Hypr3DGlass is not loaded')";
+        if !ipc(&["eval", probe])?.status.success() {
+            let loaded = ipc(&["plugin", "load", path])?;
+            // Another concurrent toggle may have completed the same load.
+            if !loaded.status.success() && !ipc(&["eval",probe])?.status.success() {
+                return Err(format!("Cannot load Hypr3DGlass: {}{}",
+                    String::from_utf8_lossy(&loaded.stdout), String::from_utf8_lossy(&loaded.stderr)));
+            }
+        }
+        let expr = format!("(function() local p=assert(hl.plugin.hypr3d); p.config({}); p.toggle(); return p.active() end)()",
+            lua(&plugin["config"])?);
+        let result = ipc(&["eval", &expr])?;
+        if !result.status.success() {
+            return Err(format!("Cannot toggle Hypr3DGlass: {}{}",
+                String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr)));
+        }
+        Ok(String::from_utf8_lossy(&result.stdout).trim().into())
     }
 
     fn hardware_profile_data(root: &Path) -> Result<Value,String> {
@@ -4931,14 +4957,14 @@ report("again")
             let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
             // This operation only changes managed boot choices. Device ownership
             // changes at boot, before a compositor opens either DRM device.
-            let status = Command::new("/usr/bin/sudo")
-                .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
-                    "--hardware-profile", &profile])
-                .status().map_err(|e| format!("GPU boot selection failed: {e}"))?;
-            if !status.success() {
-                return Err("GPU boot selection requires administrator authorization; the desktop was not started".into());
-            }
             if profile != current {
+                let status = Command::new("/usr/bin/sudo")
+                    .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
+                        "--hardware-profile", &profile])
+                    .status().map_err(|e| format!("GPU boot selection failed: {e}"))?;
+                if !status.success() {
+                    return Err("GPU boot selection requires administrator authorization; the desktop was not started".into());
+                }
                 return Ok(format!("Rebooting into the {profile} desktop hardware profile\n"));
             }
         }
@@ -5255,35 +5281,25 @@ report("again")
         }
 
         #[test]
-        fn hypr3d_reload_reuses_plugin_and_preserves_desktop_after_load_failure() {
+        fn hypr3d_binding_dispatches_native_toggle_without_loading_during_config() {
             let chunk = hypr3d_profile(&real_ssot()).unwrap();
             let preamble = r#"
-local loads, toggles, failures = 0, 0, 0
+local bindings, failures = 0, 0
 local bound = {}
 hl = {plugin = {}, unbind = function(k) bound[k] = nil end,
- bind = function(k, f) bound[k] = f end}
-hl.plugin.load = function(path)
- assert(path == '/usr/lib64/mios/hypr3d.so')
- loads = loads + 1
- hl.plugin.hypr3d = {config = function(c) assert(type(c) == 'table') end,
-  toggle = function() toggles = toggles + 1 end}
-end
+ bind = function(k, dispatcher) bindings = bindings + 1; bound[k] = dispatcher end,
+ dsp = {exec_cmd = function(cmd)
+  assert(cmd == '/usr/bin/mios-gen hyprland-3d-toggle')
+  return {command = cmd}
+ end}}
+hl.plugin.load = function() error('configuration must not load the live engine') end
 local function mios_section(name, fn)
  assert(name == 'hypr3d')
  if not pcall(fn) then failures = failures + 1 end
 end
 "#;
-            let control = r#"
-assert(loads == 0)
-bound['SUPER + G']()
-assert(loads == 1 and toggles == 1)
-bound['SUPER + G']()
-assert(loads == 1 and toggles == 2)
-hl.plugin.hypr3d = nil
-hl.plugin.load = function() error('missing engine') end
-"#;
-            let script = preamble.to_owned() + &chunk + &chunk + control + &chunk
-                + "bound['SUPER + G']()\nassert(failures == 1)\nio.write('desktop survives')";
+            let script = preamble.to_owned() + &chunk + &chunk
+                + "assert(bindings == 2 and failures == 0)\nassert(bound['SUPER + G'].command == '/usr/bin/mios-gen hyprland-3d-toggle')\nio.write('desktop survives')";
             let (ok, out) = run_lua(&script, &[]);
             assert!(ok && out == "desktop survives", "{out}");
         }

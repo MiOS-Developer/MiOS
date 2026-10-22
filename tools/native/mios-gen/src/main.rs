@@ -320,6 +320,10 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Load and toggle the live 3D engine through compositor IPC.
+    #[command(name = "hyprland-3d-toggle")]
+    Hyprland3dToggle,
+
     /// Run the login chooser with the GPU profile selected at boot.
     #[command(name = "hyprland-greeter")]
     HyprlandGreeter {
@@ -1284,6 +1288,10 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::Hyprland3dToggle => (
+            "hyprland-3d-toggle", "desktop",
+            render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        ),
         Commands::HyprlandGreeter { kind, dry_run } => (
             "hyprland-greeter", "desktop",
             greeter::runtime(kind.as_deref(), dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
