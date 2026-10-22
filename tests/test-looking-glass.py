@@ -180,8 +180,26 @@ class TestLookingGlassSetup(unittest.TestCase):
         self.assertIn("-device ivshmem-plain", cmdline)
 
     def test_shm_file_resolution_fallback(self):
-        res = looking_glass.LookingGlassConfigManager.resolve_shm_file("/dev/kvmfr0")
-        self.assertIn(res, ["/dev/kvmfr0", "/dev/shm/looking-glass"])
+        from unittest import mock
+        M = looking_glass.LookingGlassConfigManager
+        kvmfr, shm = looking_glass.DEFAULT_SHM_FILE, looking_glass.FALLBACK_SHM_FILE
+        # Positive: kvmfr missing, SHM file present -> fallback at runtime only.
+        with mock.patch.object(looking_glass.os.path, "exists", side_effect=lambda p: p == shm):
+            self.assertEqual(M.resolve_shm_file(kvmfr), shm)
+            lg = M(vm_name="win11")
+            self.assertEqual(lg.shm_file, kvmfr)                     # config stays deterministic
+            self.assertEqual(lg.get_default_config_dict()["app"]["shmFile"], kvmfr)
+            self.assertEqual(lg.effective_shm_file(), shm)
+            self.assertIn(shm, lg.build_client_launch_args(resolve_fallback=True))
+            self.assertIn(kvmfr, lg.build_client_launch_args())
+        # Negative: kvmfr present -> no fallback; custom paths are never rewritten.
+        with mock.patch.object(looking_glass.os.path, "exists", return_value=True):
+            self.assertEqual(M.resolve_shm_file(kvmfr), kvmfr)
+        with mock.patch.object(looking_glass.os.path, "exists", side_effect=lambda p: p == shm):
+            self.assertEqual(M.resolve_shm_file("/dev/shm/custom-lg"), "/dev/shm/custom-lg")
+        # Negative: neither exists -> keep the configured device (validation reports it).
+        with mock.patch.object(looking_glass.os.path, "exists", return_value=False):
+            self.assertEqual(M.resolve_shm_file(kvmfr), kvmfr)
 
     def test_mock_shm_validation(self):
         lg = setup_looking_glass.LookingGlassManager()
