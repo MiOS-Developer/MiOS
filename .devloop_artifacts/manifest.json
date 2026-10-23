@@ -1,0 +1,191 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2026-10-22T18:30:16.701991",
+  "total_artifacts": 23,
+  "artifacts": [
+    {
+      "path": ".gitignore",
+      "artifact_type": "config",
+      "sha256": "9683aa5b52d04471b990e5d1472a9097a2ce7f366f87cc1e9824f0a6a15bb8c0",
+      "size_bytes": 26501,
+      "created_at": "2026-10-22T18:30:16.049554",
+      "metadata": {}
+    },
+    {
+      "path": ".devloop/LEDGER.md",
+      "artifact_type": "doc",
+      "sha256": "164757e88e8bf323748d1b0ba63523fc5fe446e39080f6a5b41a9687b33c895b",
+      "size_bytes": 585482,
+      "created_at": "2026-10-22T18:30:16.079532",
+      "metadata": {}
+    },
+    {
+      "path": "tools/native/mios-gen/src/main.rs",
+      "artifact_type": "code",
+      "sha256": "087f6305ea9004f88e01595bf1c518bf9233a75296da0b51d4e5c13f7a0bf340",
+      "size_bytes": 114393,
+      "created_at": "2026-10-22T18:30:16.107909",
+      "metadata": {}
+    },
+    {
+      "path": "tools/native/mios-gen/src/render.rs",
+      "artifact_type": "code",
+      "sha256": "87f678948cef5713f49a8f33f72205f5fcff168df0859d1d57ffa0a8335860e5",
+      "size_bytes": 307206,
+      "created_at": "2026-10-22T18:30:16.138833",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/mios.toml",
+      "artifact_type": "config",
+      "sha256": "6ba36a390d63dac62ca6516f64dc10967174397e1c1e301e76573d7a1db71c14",
+      "size_bytes": 927922,
+      "created_at": "2026-10-22T18:30:16.168623",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/hyprland/hyprland.lua",
+      "artifact_type": "config",
+      "sha256": "642580856f4b4185776e56ae598c09dca3cb59d94601f0b0c8f05c56cc97ae54",
+      "size_bytes": 33700,
+      "created_at": "2026-10-22T18:30:16.197459",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/wayland-sessions/hyprland.desktop",
+      "artifact_type": "config",
+      "sha256": "8ed20ac81742ef84b55dbe3932533512bee6d3a5a85399babc62005e1d580f8b",
+      "size_bytes": 400,
+      "created_at": "2026-10-22T18:30:16.226467",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/wayland-sessions/mios-desktop-dgpu.desktop",
+      "artifact_type": "config",
+      "sha256": "76fa295b5ea6aafac650a41e4fc25b81b5b4c6afb5b088a0c64fa9bce114791b",
+      "size_bytes": 390,
+      "created_at": "2026-10-22T18:30:16.255847",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/doc/mios/manual.md",
+      "artifact_type": "doc",
+      "sha256": "f0b4a42441c2cd1a0542ab2967ab8695f27df24a12ccc2a72897c2df1cfdc2c2",
+      "size_bytes": 81896,
+      "created_at": "2026-10-22T18:30:16.287278",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
+      "artifact_type": "doc",
+      "sha256": "1f0910f78020d4bee8325450a12cb5b47678e6b1f10f2c7998b578d2be0582f1",
+      "size_bytes": 37837,
+      "created_at": "2026-10-22T18:30:16.316875",
+      "metadata": {}
+    },
+    {
+      "path": "TASKS.md",
+      "artifact_type": "doc",
+      "sha256": "02a19e56ba249f28f5c6eda4e91d5210024047f7dd9fa42ffc7de6330bd2ab1d",
+      "size_bytes": 544575,
+      "created_at": "2026-10-22T18:30:16.346142",
+      "metadata": {}
+    },
+    {
+      "path": "tasks.jsonl",
+      "artifact_type": "config",
+      "sha256": "2e6ea1868725ad2f51909552245f46492eb5857e7cbddd63c947f6f6f40f3b75",
+      "size_bytes": 14515204,
+      "created_at": "2026-10-22T18:30:16.381368",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/README.md",
+      "artifact_type": "doc",
+      "sha256": "720afb39d58129c5ce68e4c32eb9c8ddaaeccd5053423341ae63d6d10618a94c",
+      "size_bytes": 3524,
+      "created_at": "2026-10-22T18:30:16.411013",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/client-wayland-input.c",
+      "artifact_type": "code",
+      "sha256": "5bb511d0636bbb45cb8070d57ac5f1c2a244e641e0533c78a653c13d17881b21",
+      "size_bytes": 21791,
+      "created_at": "2026-10-22T18:30:16.440758",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-app.c",
+      "artifact_type": "code",
+      "sha256": "4a0b621576f327a987e4e34e5b99d79e8df06f7645931bb9661fae78d428a376",
+      "size_bytes": 34528,
+      "created_at": "2026-10-22T18:30:16.470064",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-capture.h",
+      "artifact_type": "code",
+      "sha256": "d86e82968411f9a37a7179190f14cf614ad4731ee7db609df4a8e90b2d7e576b",
+      "size_bytes": 5157,
+      "created_at": "2026-10-22T18:30:16.498716",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-pipewire.c",
+      "artifact_type": "code",
+      "sha256": "72c2c6c397c5375b9fa2aedfc5387599ac9f2b6a020afbb4f5097330ffd74be3",
+      "size_bytes": 18722,
+      "created_at": "2026-10-22T18:30:16.527772",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/host-portal.c",
+      "artifact_type": "code",
+      "sha256": "08ed8d75908a2167a1e27229bb028170ff08eb4fb9a53c5085db33243fa62095",
+      "size_bytes": 11943,
+      "created_at": "2026-10-22T18:30:16.556272",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/test-cursor.c",
+      "artifact_type": "code",
+      "sha256": "9f6f82c719f8f646e117fb914b9ac1f1eeaba38686197a7026522b3584cc8509",
+      "size_bytes": 2833,
+      "created_at": "2026-10-22T18:30:16.585066",
+      "metadata": {}
+    },
+    {
+      "path": "usr/share/mios/looking-glass/source/test-hover.c",
+      "artifact_type": "code",
+      "sha256": "9f7dbc434428512ec50a51bb7110b672f569d58211a1e258d8abcd86549cd708",
+      "size_bytes": 1677,
+      "created_at": "2026-10-22T18:30:16.614182",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-docklamp-adversarial.py",
+      "artifact_type": "test",
+      "sha256": "568a70ff2a3a4cfd589e5995d5b11041cb424cba97c542e0e54a51a81c2194fe",
+      "size_bytes": 11162,
+      "created_at": "2026-10-22T18:30:16.644255",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-power-sampler.py",
+      "artifact_type": "test",
+      "sha256": "4647cefd0c7a841b14aeee144954563fe9a96034cd41c893a4be6e85991889bf",
+      "size_bytes": 5906,
+      "created_at": "2026-10-22T18:30:16.673925",
+      "metadata": {}
+    },
+    {
+      "path": "tests/test-sysmon-vfio-adversarial.py",
+      "artifact_type": "test",
+      "sha256": "dc863b4d3b3fc25ed7c45ead63b53ccd9a01a746accb1841593bec1816666926",
+      "size_bytes": 19421,
+      "created_at": "2026-10-22T18:30:16.701981",
+      "metadata": {}
+    }
+  ]
+}
