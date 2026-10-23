@@ -2529,6 +2529,10 @@ def main() -> int:
             return subprocess.call([executable, *sys.argv[3:]])
         native = Path(cfg_cli["linux_prefix"]) / ("npm/bin" if row["kind"] == "npm" else "native" if row["kind"] == "native" else "bin") / name
         if not os.access(native, os.X_OK):
+            if native.is_file():
+                # A self-update run as root (umask 077) leaves the binary 0700: say so instead of "not installed".
+                raise RuntimeError(f"{native} is not executable by this user (mode {native.stat().st_mode & 0o7777:o}); "
+                                   f"an update ran as root: sudo chmod 0755 {native}")
             raise RuntimeError(f"{name} is not installed; run sudo mios agents --install")
         try:
             return subprocess.call([str(native), *sys.argv[3:]])

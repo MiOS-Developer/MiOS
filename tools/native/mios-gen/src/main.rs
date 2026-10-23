@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod agent_interaction;
 mod ai;
 mod btop_theme;
 mod display_scale;
@@ -403,6 +404,26 @@ enum Commands {
         root: Option<PathBuf>,
 
         /// Check mode: report drift without writing
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Projects [agent_cli.interaction] values into agent CLI settings files under --home (validates only without it)
+    #[command(name = "render-agent-interaction")]
+    RenderAgentInteraction {
+        /// Repository root directory
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Home directory whose client files receive the declared values; without it the SSOT table is only validated
+        #[arg(long)]
+        home: Option<PathBuf>,
+
+        /// Read the layered SSOT (vendor < host < user), as an agent launch does
+        #[arg(long)]
+        runtime: bool,
+
+        /// Report the client files that would change and exit 1, writing nothing
         #[arg(long)]
         check: bool,
     },
@@ -1357,6 +1378,41 @@ fn main() -> ExitCode {
                         Ok(())
                     }
                     Err((msg, code)) => Err((msg, code)),
+                },
+            )
+        }
+        Commands::RenderAgentInteraction { root, home, runtime, check } => {
+            let r = resolve_root(root);
+            (
+                "render-agent-interaction",
+                "usr/share/mios/mios.toml [agent_cli.interaction]",
+                match agent_interaction::run(&r, home.as_deref(), runtime, check) {
+                    Ok(out) => {
+                        // Skipped files are the operator's (unreadable or malformed): say so, never fail a launch.
+                        for (name, why) in &out.skipped {
+                            eprintln!("[agent-interaction] {name}: left untouched: {why}");
+                        }
+                        if check && !out.changed.is_empty() {
+                            let list: Vec<String> = out.changed.iter().map(|p| p.display().to_string()).collect();
+                            Err((format!("client files differ from [agent_cli.interaction]: {}", list.join(", ")), 1))
+                        } else {
+                            // Silent on a runtime projection: agent launches run it every time.
+                            if cli.format != "json" && !runtime {
+                                match &home {
+                                    Some(h) => println!(
+                                        "[agent-interaction] {} client(s) declared; {} updated, {} already current under {}",
+                                        out.declared,
+                                        out.changed.len(),
+                                        out.unchanged.len(),
+                                        h.display()
+                                    ),
+                                    None => println!("[agent-interaction] {} client(s) declared; table valid", out.declared),
+                                }
+                            }
+                            Ok(())
+                        }
+                    }
+                    Err(msg) => Err((msg, 1)),
                 },
             )
         }
