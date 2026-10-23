@@ -4777,10 +4777,52 @@ report("again")
         ))
     }
 
+    /// `hyprland-session` exports the running hardware profile to the compositor, so every
+    /// binding the compositor runs (SUPER+G among them) inherits it.
+    const SESSION_PROFILE_ENV: &str = "MIOS_DESKTOP_HARDWARE_PROFILE";
+
+    /// `[desktop.hyprland.hardware_profiles.<p>].hypr3d_render_scale`: a number in the plugin's 1..4 range.
+    fn hypr3d_render_scale(value: &Value, key: &str) -> Result<f64, String> {
+        let scale = match value {
+            Value::Float(f) => *f,
+            Value::Integer(i) => *i as f64,
+            _ => f64::NAN,
+        };
+        if (1.0..=4.0).contains(&scale) { Ok(scale) } else { Err(format!("{key} must be a number in 1..4")) }
+    }
+
+    /// The Hypr3D config for the running session. The active hardware profile is the one the
+    /// session exported, else the kernel's `mios.desktop.gpu=`, else the SSOT default. Its
+    /// `hypr3d_render_scale` replaces `config.render.scale`; an unknown profile, or a profile
+    /// without the key, keeps the global value. An invalid value is an error.
+    fn hypr3d_session_config(data: &Value, session: Option<&str>, cmdline: &str) -> Result<Value, String> {
+        let h = hardware_profile_table(data)?;
+        let mut config = h.get("hypr3d").and_then(|p| p.get("config")).filter(|v| v.is_table()).cloned()
+            .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        let profile = match profile_name(data, session.map(str::trim).filter(|s| !s.is_empty()), cmdline) {
+            Ok(profile) => profile,
+            Err(e) => {
+                eprintln!("Hypr3DGlass: {e}; using the global render.scale");
+                return Ok(config);
+            }
+        };
+        let Some(value) = h.get("hardware_profiles").and_then(|p| p.get(&profile))
+            .and_then(|p| p.get("hypr3d_render_scale")) else { return Ok(config) };
+        let scale = hypr3d_render_scale(value,
+            &format!("desktop.hyprland.hardware_profiles.{profile}.hypr3d_render_scale"))?;
+        config.as_table_mut().expect("checked table").entry("render")
+            .or_insert_with(|| Value::Table(Default::default()))
+            .as_table_mut().ok_or("desktop.hyprland.hypr3d.config.render must be a table")?
+            .insert("scale".into(), Value::Float(scale));
+        Ok(config)
+    }
+
     pub fn toggle_3d(root: &Path) -> Result<String, String> {
         use std::process::Command;
         let data = hardware_profile_data(root)?;
         if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
+        let config = hypr3d_session_config(&data, std::env::var(SESSION_PROFILE_ENV).ok().as_deref(),
+            &fs::read_to_string("/proc/cmdline").unwrap_or_default())?;
         let plugin = &data["desktop"]["hyprland"]["hypr3d"];
         let path = plugin["path"].as_str().ok_or("Missing 3D engine path")?;
         let ipc = |args: &[&str]| Command::new("/usr/bin/hyprctl").args(args).output()
@@ -4795,7 +4837,7 @@ report("again")
             }
         }
         let expr = format!("(function() local p=assert(hl.plugin.hypr3d); p.config({}); p.toggle(); return p.active() end)()",
-            lua(&plugin["config"])?);
+            lua(&config)?);
         let result = ipc(&["eval", &expr])?;
         if !result.status.success() {
             return Err(format!("Cannot toggle Hypr3DGlass: {}{}",
@@ -4873,6 +4915,10 @@ report("again")
             let name = cfg.get("name").and_then(Value::as_str).ok_or("hardware profile needs name")?;
             if name.is_empty() || name.chars().any(char::is_control) {
                 return Err("Invalid desktop session name".into());
+            }
+            // Read at SUPER+G, not at login: check it here so render-hyprland --check catches it.
+            if let Some(scale) = cfg.get("hypr3d_render_scale") {
+                hypr3d_render_scale(scale, &format!("desktop.hyprland.hardware_profiles.{id}.hypr3d_render_scale"))?;
             }
             entries.push((format!("usr/share/wayland-sessions/{file}"), format!(
                 "# AI-hint: Generated MiOS desktop session; hardware profile is the only session difference.\n# AI-related: /usr/share/mios/mios.toml, /usr/share/mios/hyprland/session.lua\n[Desktop Entry]\nName={name}\nComment=MiOS Hyprland and Quickshell; {id} hardware profile\nExec=/usr/bin/mios-gen hyprland-session --hardware-profile {id}\nTryExec=/usr/bin/mios-gen\nType=Application\nDesktopNames=Hyprland\n"
@@ -5092,7 +5138,7 @@ report("again")
                 command.env_remove(key);
             }
         }
-        command.env("MIOS_DESKTOP_HARDWARE_PROFILE", &profile);
+        command.env(SESSION_PROFILE_ENV, &profile);
         if let Ok(pci) = fs::canonicalize(
             Path::new("/sys/class/drm")
                 .join(selected.file_name().unwrap_or_default())
@@ -5318,6 +5364,84 @@ end
                 let mut bad = real_ssot();
                 bad["desktop"]["hyprland"]["hypr3d"][key] = value;
                 assert!(hypr3d_profile(&bad).is_err(), "accepted invalid {key}");
+            }
+        }
+
+        fn hypr3d_scale(data: &Value, session: Option<&str>, cmdline: &str) -> Option<f64> {
+            hypr3d_session_config(data, session, cmdline).unwrap()["render"]["scale"].as_float()
+        }
+
+        #[test]
+        fn hypr3d_render_scale_follows_the_running_hardware_profile() {
+            let d = real_ssot();
+            // The operator's per-GPU values in the vendor SSOT.
+            assert_eq!(hypr3d_scale(&d, Some("igpu"), ""), Some(1.5));
+            assert_eq!(hypr3d_scale(&d, Some("dgpu"), ""), Some(2.0));
+            // The session export wins over the kernel command line, which wins over the default profile.
+            assert_eq!(hypr3d_scale(&d, Some("igpu"), "quiet mios.desktop.gpu=dgpu"), Some(1.5));
+            assert_eq!(hypr3d_scale(&d, Some(" dgpu\n"), "mios.desktop.gpu=igpu"), Some(2.0));
+            assert_eq!(hypr3d_scale(&d, None, "quiet mios.desktop.gpu=dgpu"), Some(2.0));
+            assert_eq!(hypr3d_scale(&d, Some(""), "quiet mios.desktop.gpu=dgpu"), Some(2.0));
+            assert_eq!(hypr3d_scale(&d, None, "quiet"), Some(1.5));
+            let mut dgpu_default = d.clone();
+            dgpu_default["desktop"]["hyprland"]["hardware_profile"] = Value::String("dgpu".into());
+            assert_eq!(hypr3d_scale(&dgpu_default, None, "quiet"), Some(2.0));
+            // Only render.scale changes; the other settings pass through.
+            let global = d["desktop"]["hyprland"]["hypr3d"]["config"].clone();
+            let mut igpu = hypr3d_session_config(&d, Some("igpu"), "").unwrap();
+            igpu["render"]["scale"] = global["render"]["scale"].clone();
+            assert_eq!(igpu, global);
+            assert!(lua(&hypr3d_session_config(&d, Some("igpu"), "").unwrap()).unwrap().contains("[\"scale\"] = 1.5"));
+            // A render table is created when the global config has none.
+            let mut bare = d.clone();
+            bare["desktop"]["hyprland"]["hypr3d"]["config"] = Value::Table(Default::default());
+            assert_eq!(hypr3d_scale(&bare, Some("dgpu"), ""), Some(2.0));
+        }
+
+        #[test]
+        fn hypr3d_render_scale_falls_back_to_the_global_value() {
+            let mut d = real_ssot();
+            // A global value no profile uses, so a fallback cannot pass by accident.
+            d["desktop"]["hyprland"]["hypr3d"]["config"]["render"]["scale"] = Value::Float(3.25);
+            assert_eq!(hypr3d_scale(&d, Some("dgpu"), ""), Some(2.0), "negative control: the profile value applies");
+            for (session, cmdline) in [(Some("missing"), "mios.desktop.gpu=dgpu"), (Some("dgpu;exec"), ""),
+                (None, "quiet mios.desktop.gpu=missing"), (Some("DGPU"), "")] {
+                assert_eq!(hypr3d_scale(&d, session, cmdline), Some(3.25), "{session:?} {cmdline:?}");
+            }
+            let mut no_key = d.clone();
+            no_key["desktop"]["hyprland"]["hardware_profiles"]["dgpu"].as_table_mut().unwrap().remove("hypr3d_render_scale");
+            assert_eq!(hypr3d_scale(&no_key, Some("dgpu"), ""), Some(3.25));
+            assert_eq!(hypr3d_scale(&no_key, Some("igpu"), ""), Some(1.5));
+            let mut no_profiles = d.clone();
+            no_profiles["desktop"]["hyprland"].as_table_mut().unwrap().remove("hardware_profiles");
+            assert_eq!(hypr3d_scale(&no_profiles, Some("igpu"), ""), Some(3.25));
+            assert_eq!(hypr3d_scale(&no_profiles, None, ""), Some(3.25));
+        }
+
+        #[test]
+        fn hypr3d_render_scale_rejects_invalid_values() {
+            let d = real_ssot();
+            for value in [Value::String("2.0".into()), Value::Boolean(true), Value::Float(0.5), Value::Float(4.01),
+                Value::Float(f64::NAN), Value::Float(f64::INFINITY), Value::Integer(0), Value::Integer(5),
+                Value::Array(vec![Value::Float(2.0)])] {
+                let mut bad = d.clone();
+                bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["hypr3d_render_scale"] = value.clone();
+                let err = hypr3d_session_config(&bad, Some("dgpu"), "").unwrap_err();
+                assert!(err.contains("hardware_profiles.dgpu.hypr3d_render_scale"), "{value:?}: {err}");
+                assert!(session_entries(&bad).is_err(), "render-hyprland accepted {value:?}");
+                // Only the running profile's value is read at toggle time.
+                assert_eq!(hypr3d_scale(&bad, Some("igpu"), ""), Some(1.5));
+            }
+            // A render value that is not a table cannot take the profile scale.
+            let mut bad = d.clone();
+            bad["desktop"]["hyprland"]["hypr3d"]["config"]["render"] = Value::Float(2.0);
+            assert!(hypr3d_session_config(&bad, Some("dgpu"), "").is_err());
+            // Negative control: the range ends and integers are accepted.
+            for (value, want) in [(Value::Float(1.0), 1.0), (Value::Float(4.0), 4.0), (Value::Integer(3), 3.0)] {
+                let mut ok = d.clone();
+                ok["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["hypr3d_render_scale"] = value;
+                assert_eq!(hypr3d_scale(&ok, Some("dgpu"), ""), Some(want));
+                assert!(session_entries(&ok).is_ok());
             }
         }
 
