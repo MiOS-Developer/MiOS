@@ -3389,3 +3389,10 @@ so long. Let a run finish.
 - Claude lane (mios-desktop-repair-session) is blocked by the Anthropic API ("Credit balance is too low", job 879ffca7 retried 10x 11:16-12:16 EDT); job 34d99edf stopped. No agent CLI process is running; every relay registration is offline.
 - Queued and unverified for Claude's verification lane: desk-069-m2-r6-complete (R3 M2 probe report /home/mios/mios-desktop-work-1/xbox-m2-probe-report.md; R6 golden-ratio worker layout) and cont-058 (R3 M1 build complete; R2 lamp fixes dispatched). 8 messages are queued for mios-image-verification-session and 1 for mios-image-build-session.
 - Health at observation: watchdog0 inactive; mios.toml valid TOML, mode 0644; MemAvailable 30.6 GB; one Hyprland instance (pid 5231); all libvirt domains shut off.
+
+## 2026-10-22T20:41:42Z serverbox-agent: shipped to main via /review + /ship (PR #62 and #63 merged)
+- main: f71ff817 -> 325178b0 (Merge lane mios-image-build, --no-ff; PR #62 and #63 now MERGED on GitHub) -> 67490c22 (Merge lane lane/ci-registry). /review PASSED on every shipped commit (4dbd9710, af417e0d, 11a381de, e58aed85, 765aa67f; 0 blockers). Review comments are on #62 and #63.
+- PR #63 made Looking Glass configs host-dependent (5 tests failed when /dev/kvmfr0 is absent); fixed in 11a381de (runtime-only /dev/shm fallback, hermetic tests, 42/42, negative control verified).
+- .worktrees/ is now gitignored (e58aed85) for /dev-loop isolated worktrees; the ephemeral ship/lane worktrees were removed after shipping. The local repo was deepened by 50 commits (it was a 10-commit shallow clone).
+- /goal eval on main: C-02 clean tree PASS; C-03 task artifacts PASS (mios-task check, 3691 records). C-01 FAIL: ci-suites --check had 12 unregistered suites; 2 hermetic ones were registered in the unit tier (765aa67f), and 10 remain that need live hardware, a desktop or VMs while [ci.exempt] is at max_exempt_suites 6/6 (policy decision pending). sync-bootstrap --check: bootstrap repo absent on this host. bake-smoke: localhost/mios-dev:latest is not built.
+- tests/test-docklamp-adversarial.py fails 5/5 (expected until AGY R2 DockLamp fixes land).

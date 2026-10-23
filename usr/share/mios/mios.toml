@@ -8115,13 +8115,16 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch"]
 toggle_key = "SUPER + G"
 
 [desktop.hyprland.hypr3d.config]
 
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
+# Live wallpaper around the horizon (hypr3d-mios-ssaa.patch): "mirror" = once, centre ahead, mirrored back half
+# (no seam); "repeat" = one copy over the full circle, joined behind. File panoramas use panorama_mirror.
+live_wrap = "mirror"
 
 # Render quality (hypr3d-mios-render-quality.patch): MSAA samples on the 3D scene
 # (0 = off, clamped to the GPU maximum), FXAA post AA (softens text slightly),
@@ -8131,6 +8134,10 @@ msaa = 4
 fxaa = false
 sharpen = 0.25
 texture_supersample = true
+# Supersampling (hypr3d-mios-ssaa.patch): the 3D scene renders at scale x the output and is box-filtered down,
+# so window textures, rims and glass are sampled scale^2 times per pixel (MSAA covers geometry edges only).
+# 1..4; capped by the GL size limits and a 768 MiB scene budget.
+scale = 2.0
 
 [desktop.hyprland.boot_sync]
 enabled = true
@@ -8145,6 +8152,14 @@ device = "/dev/dri/igpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/igpu-pci"
 include_other_devices = false
+# Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
+# this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+G) finds the running profile in
+# MIOS_DESKTOP_HARDWARE_PROFILE (exported to the compositor by `hyprland-session`), then in the kernel's
+# mios.desktop.gpu=, then in [desktop.hyprland].hardware_profile. An unknown profile or a missing key keeps the
+# global scale. A value that is not a number in 1..4 is rejected by render-hyprland (--check) and by the toggle.
+# Each SUPER+G re-applies it. Radeon 610M (2 CU) at 1920x1080 with msaa 4: 1.5 = 10.2 ms/frame and holds
+# 60 fps; 2.0 = 11.2 ms/frame and drops to about 55 fps.
+hypr3d_render_scale = 1.5
 
 [desktop.hyprland.hardware_profiles.dgpu]
 name = "MiOS dGPU"
@@ -8157,6 +8172,8 @@ device = "/dev/dri/dgpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/dgpu-pci"
 include_other_devices = true
+# Hypr3D supersampling on the RTX 4090; see hardware_profiles.igpu.hypr3d_render_scale.
+hypr3d_render_scale = 2.0
 
 [desktop.hyprland.environment]
 AQ_DRM_DEVICES = "/dev/dri/igpu"
@@ -16087,6 +16104,7 @@ unit = [
     "tests/test-xbox-r3-regression.py",
     "tests/test-mios-xbox-legacy-retired.py",
     "tests/test-power-sampler.py",
+    "tests/test-hypr3d-quality.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [

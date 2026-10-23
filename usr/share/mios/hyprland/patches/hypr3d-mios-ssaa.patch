@@ -1,0 +1,599 @@
+MiOS Hypr3D supersampling and live-wallpaper wrap. The scene renders at
+render.scale x the output (default 2, clamped 1..4 and capped by the GL
+texture/renderbuffer/viewport limits and a 768 MiB scene budget) and is
+box-filtered down in the composite (one bilinear tap at 1x/2x, N^2 taps
+otherwise); FXAA/CAS run on the output grid; pixel-sized glass terms and
+grid lines keep their output-pixel size. The live wallpaper wraps ONCE
+around the horizon (world.live_wrap = "mirror": centre ahead, mirrored back
+half, no seam; "repeat": one copy over 360 degrees) instead of three axis
+projections that each showed the whole image; elevation is rectilinear with
+the image aspect and the caps fade to the edge row's ring average. One
+shared function serves the dome and glass reflections; file panoramas and
+panorama_mirror are unchanged. player.look_yaw/look_pitch set an absolute
+look (automation/tests); the status dump reports the effective scene size.
+Applies after hypr3d-mios-render-quality.patch.
+
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 0c88154..ded15d1 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -33,45 +33,69 @@ namespace {
+ constexpr float PI = 3.14159265358979323846f;
+ 
+ // One mapping for the visible environment and glass reflections. Captured
+-// Hyprland layers use logical top-down texture coordinates. A flat wallpaper
+-// is a cube-face image, not an equirectangular panorama with collapsed poles.
++// Hyprland layers use logical top-down texture coordinates. A flat (live)
++// wallpaper is wrapped once around the horizon, not treated as an
++// equirectangular panorama with collapsed poles.
+ constexpr const char* ENVIRONMENT_UV_GLSL = R"GLSL(
++// MiOS: the live wallpaper is a flat image, wrapped ONCE around the horizon as
++// a cylinder (it used to be blended from three axis projections, each showing
++// the whole image, so one turn showed it about four times). liveMirror 1: the
++// front half circle holds the wallpaper (centre straight ahead, edges at +-90
++// degrees) and the back half its mirror image, so both folds are continuous
++// and there is no seam. liveMirror 0: one copy over the full circle, joined
++// behind the camera. Elevation is rectilinear (tan) with the image's own aspect
++// at the horizon; above and below the image the edge row fades to its ring
++// average, so the caps are smooth instead of pinched.
++// u: azimuth (one wrap); v: tan(elevation) scaled by `span`, not clamped.
++vec2 miosLiveWallpaperUV(vec3 ray, vec2 size, float liveMirror, out float span) {
++    ray = normalize(ray);
++    float azimuth = atan(ray.x, -ray.z);
++    float u, around;
++    if (liveMirror > 0.5) {
++        u = 1.0 - abs(1.0 - mod(0.5 + azimuth / 3.14159265359, 2.0));
++        around = 3.14159265359;
++    } else {
++        u = fract(0.5 + azimuth / 6.28318530718);
++        around = 6.28318530718;
++    }
++    span = clamp(0.5 * around * size.y / max(size.x, 1.0), 0.35, 2.5);
++    return vec2(u, 0.5 - 0.5 * (ray.y / max(length(ray.xz), 1e-4)) / span);
++}
++
+ vec2 miosEnvironmentUV(vec3 ray, bool liveWallpaper, float mirror) {
+     ray = normalize(ray);
+-    if (!liveWallpaper) {
+-        float u = fract(0.5 + atan(ray.x, -ray.z) / 6.28318530718);
+-        u = mix(u, 1.0 - abs(2.0 * u - 1.0), mirror);
+-        return vec2(u, 0.5 - asin(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
+-    }
+-    vec3 a = abs(ray);
+-    vec2 face;
+-    if (a.z >= a.x && a.z >= a.y)
+-        face = vec2(ray.z < 0.0 ? ray.x : -ray.x, -ray.y) / a.z;
+-    else if (a.x >= a.y)
+-        face = vec2(ray.x > 0.0 ? ray.z : -ray.z, -ray.y) / a.x;
+-    else
+-        face = vec2(ray.x, ray.y > 0.0 ? -ray.z : ray.z) / a.y;
+-    return face * 0.5 + 0.5;
++    if (liveWallpaper) {
++        float span;
++        return miosLiveWallpaperUV(ray, vec2(16.0, 9.0), 1.0, span); // 16:9, mirrored (tests)
++    }
++    float u = fract(0.5 + atan(ray.x, -ray.z) / 6.28318530718);
++    u = mix(u, 1.0 - abs(2.0 * u - 1.0), mirror);
++    return vec2(u, 0.5 - asin(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
++}
++
++vec4 miosLiveWallpaperColor(sampler2D image, vec3 ray, float liveMirror, float lod) {
++    ray = normalize(ray);
++    vec2 size = max(vec2(textureSize(image, 0)), vec2(1.0));
++    float span;
++    vec2 uv = miosLiveWallpaperUV(ray, size, liveMirror, span);
++    vec4 c = textureLod(image, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), lod);
++    float elevation = atan(abs(ray.y), length(ray.xz));
++    float edge = atan(span);
++    float cap = smoothstep(edge * 0.8, edge + 0.5 * (1.57079632679 - edge), elevation);
++    if (cap > 0.0) {
++        float row = ray.y > 0.0 ? 0.5 / size.y : 1.0 - 0.5 / size.y;
++        vec4 ring = vec4(0.0);
++        for (int i = 0; i < 8; ++i)
++            ring += textureLod(image, vec2((float(i) + 0.5) / 8.0, row), lod);
++        c = mix(c, ring * 0.125, cap);
++    }
++    return c;
+ }
+ 
+-vec4 miosEnvironmentColor(sampler2D image, vec3 ray, bool liveWallpaper, float mirror, float lod) {
++vec4 miosEnvironmentColor(sampler2D image, vec3 ray, bool liveWallpaper, float mirror, float liveMirror, float lod) {
+     if (!liveWallpaper)
+         return textureLod(image, miosEnvironmentUV(ray, false, mirror), lod);
+-    ray = normalize(ray);
+-    vec3 a = abs(ray);
+-    // Blend the three rectilinear projections before selecting a face.
+-    // Their weights vanish at sign changes, so there is no cube seam or pole.
+-    vec3 weights = a * a * a * a;
+-    weights /= weights.x + weights.y + weights.z;
+-    vec2 x = vec2(ray.x > 0.0 ? ray.z : -ray.z, -ray.y) / max(a.x, 0.000001);
+-    vec2 y = vec2(ray.x, ray.y > 0.0 ? -ray.z : ray.z) / max(a.y, 0.000001);
+-    vec2 z = vec2(ray.z < 0.0 ? ray.x : -ray.x, -ray.y) / max(a.z, 0.000001);
+-    x = clamp(x * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+-    y = clamp(y * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+-    z = clamp(z * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+-    return textureLod(image, x, lod) * weights.x
+-         + textureLod(image, y, lod) * weights.y
+-         + textureLod(image, z, lod) * weights.z;
++    return miosLiveWallpaperColor(image, ray, liveMirror, lod);
+ }
+ )GLSL";
+ 
+@@ -517,6 +541,8 @@ uniform bool uGlassHasEnvironment;
+ uniform bool uGlassLiveWallpaper;
+ MIOS_ENVIRONMENT_UV
+ uniform float uGlassMirror;
++uniform float uGlassLiveMirror;
++uniform float uSceneScale; // MiOS: scene pixels per output pixel
+ uniform vec3 uGlassEye;
+ in vec3 vWorldPosition;
+ uniform int uGlassFace;
+@@ -641,7 +667,7 @@ vec4 sampleBlurred(vec2 wuv) {
+     vec2 shift = hgUVToScreen * (wuv - v_texcoord);
+     vec2 screen = (gl_FragCoord.xy + shift) / uGlassViewport;
+     vec2 pad = 0.5 / uGlassViewport;
+-    vec2 spread = vec2(2.0) / uGlassViewport;
++    vec2 spread = vec2(2.0 * uSceneScale) / uGlassViewport;
+     // Compact frosted filter; not the desktop's separable Gaussian pipeline.
+     vec4 c = texture(uGlassBackground, clamp(screen, pad, 1.0-pad)) * 0.40;
+     c += texture(uGlassBackground, clamp(screen+vec2(spread.x,0.0),pad,1.0-pad))*0.15;
+@@ -1074,7 +1100,7 @@ void main() {
+         float det = dx.x*dy.y-dy.x*dx.y;
+         hgUVToScreen = abs(det)>1e-12 ? inverse(mat2(dx,dy)) : mat2(0.0);
+         float capturedLuma=dot(content.rgb/max(content.a,0.001),vec3(0.2126,0.7152,0.0722));
+-        float capturedDetail=fwidth(capturedLuma);
++        float capturedDetail=fwidth(capturedLuma)*uSceneScale;
+         float sd = getCornerSDF(v_texcoord);
+         if (sd > 0.0) {
+             // A snapshot can retain opaque pixels in a rounded client corner.
+@@ -1100,7 +1126,7 @@ void main() {
+             vec3 ray = reflect(-view, normal);
+             // n=1.5 glass against air has normal-incidence reflectance 0.04.
+             float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(normal, view), 0.0), 5.0);
+-            hgColor.rgb = mix(hgColor.rgb, miosEnvironmentColor(uGlassEnvironment, ray, uGlassLiveWallpaper, uGlassMirror, 0.0).rgb, fresnel);
++            hgColor.rgb = mix(hgColor.rgb, miosEnvironmentColor(uGlassEnvironment, ray, uGlassLiveWallpaper, uGlassMirror, uGlassLiveMirror, 0.0).rgb, fresnel);
+         }
+         // Opaque snapshots otherwise hide the entire material. This deliberate
+         // appearance transform makes flat client backgrounds transmissive.
+@@ -1167,7 +1193,10 @@ in vec2 vUV;
+ uniform sampler2D uTexture;
+ uniform float uAlpha;
+ uniform int uPerPx;
+-uniform vec2 uTexel;    // 1 / scene size
++uniform vec2 uTexel;    // 1 / OUTPUT size: FXAA/CAS work on the downsampled image
++uniform vec2 uSrcTexel; // MiOS: 1 / scene (supersampled) size
++uniform float uScale;   // MiOS: scene pixels per output pixel
++uniform int uBoxTaps;   // MiOS: box taps per axis (1 = one bilinear tap)
+ uniform int uFxaa;      // MiOS: FXAA 3.11-style post AA
+ uniform float uSharpen; // MiOS: AMD FidelityFX CAS strength (0 = off)
+ 
+@@ -1175,8 +1204,28 @@ out vec4 fragColor;
+ 
+ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+ 
++// MiOS: box downsample of the supersampled scene to one output pixel. At 2x
++// (and 1x) one bilinear tap at the output pixel centre lands on a texel corner
++// and averages exactly the 2x2 footprint; other scales take uBoxTaps^2 taps
++// spread over the scale x scale footprint (exact for 3x and 4x).
++vec4 box(vec2 uv) {
++    if (uBoxTaps <= 1)
++        return texture(uTexture, uv);
++    vec4 c = vec4(0.0);
++    float n = float(uBoxTaps);
++    for (int j = 0; j < 4; ++j) {
++        if (j >= uBoxTaps) break;
++        for (int i = 0; i < 4; ++i) {
++            if (i >= uBoxTaps) break;
++            vec2 o = (vec2(float(i), float(j)) + 0.5) / n - 0.5;
++            c += texture(uTexture, uv + o * uScale * uSrcTexel);
++        }
++    }
++    return c / (n * n);
++}
++
+ vec4 fxaa(vec2 uv) {
+-    vec4 m = texture(uTexture, uv);
++    vec4 m = box(uv);
+     float lNW = luma(texture(uTexture, uv + vec2(-1.0, -1.0) * uTexel).rgb);
+     float lNE = luma(texture(uTexture, uv + vec2( 1.0, -1.0) * uTexel).rgb);
+     float lSW = luma(texture(uTexture, uv + vec2(-1.0,  1.0) * uTexel).rgb);
+@@ -1216,7 +1265,7 @@ void main() {
+     // convention; sampling with a flipped v puts the scene upright.
+     vec2 uv = vec2(vUV.x, 1.0 - vUV.y);
+ 
+-    vec4 color = uFxaa != 0 ? fxaa(uv) : texture(uTexture, uv);
++    vec4 color = uFxaa != 0 ? fxaa(uv) : box(uv);
+     if (uSharpen > 0.001)
+         color = cas(uv, color);
+ 
+@@ -1322,6 +1371,7 @@ in vec2 vUV;
+ in vec3 vDirection;
+ uniform float uLod;
+ uniform float uMirror;
++uniform float uLiveMirror;
+ uniform bool uLiveWallpaper;
+ uniform sampler2D uPanorama;
+ out vec4 fragColor;
+@@ -1329,7 +1379,7 @@ MIOS_ENVIRONMENT_UV
+ void main() {
+     // Explicit LOD avoids seam derivative spikes. Live layer FBOs have no
+     // mip chain and use level zero; file panoramas keep analytic filtering.
+-    fragColor = vec4(miosEnvironmentColor(uPanorama, vDirection, uLiveWallpaper, uMirror, uLod).rgb, 1.0);
++    fragColor = vec4(miosEnvironmentColor(uPanorama, vDirection, uLiveWallpaper, uMirror, uLiveMirror, uLod).rgb, 1.0);
+ }
+ )GLSL";
+ 
+@@ -1414,6 +1464,8 @@ void main() {
+     m_glassSurface = glGetUniformLocation(m_sceneProgram, "uGlassSurface");
+     m_glassMetrics = glGetUniformLocation(m_sceneProgram, "uGlassMetrics");
+     m_glassMirror = glGetUniformLocation(m_sceneProgram, "uGlassMirror");
++    m_glassLiveMirror = glGetUniformLocation(m_sceneProgram, "uGlassLiveMirror");
++    m_sceneScaleLoc = glGetUniformLocation(m_sceneProgram, "uSceneScale");
+     for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
+         m_glassParameters[i] = glGetUniformLocation(m_sceneProgram, GLASS_PARAMETERS[i].uniform);
+     m_glassColors[0] = glGetUniformLocation(m_sceneProgram, "tintColor");
+@@ -1443,6 +1495,9 @@ void main() {
+     m_blitTexel   = glGetUniformLocation(m_blitProgram, "uTexel");
+     m_blitFxaa    = glGetUniformLocation(m_blitProgram, "uFxaa");
+     m_blitSharpen = glGetUniformLocation(m_blitProgram, "uSharpen");
++    m_blitSrcTexel = glGetUniformLocation(m_blitProgram, "uSrcTexel");
++    m_blitScale   = glGetUniformLocation(m_blitProgram, "uScale");
++    m_blitBoxTaps = glGetUniformLocation(m_blitProgram, "uBoxTaps");
+ 
+     m_panoramaFwd =
+         glGetUniformLocation(
+@@ -1480,6 +1535,7 @@ void main() {
+             "uLod"
+         );
+     m_panoramaMirrorLoc = glGetUniformLocation(m_panoramaProgram, "uMirror");
++    m_panoramaLiveMirrorLoc = glGetUniformLocation(m_panoramaProgram, "uLiveMirror");
+     m_panoramaLiveWallpaper = glGetUniformLocation(m_panoramaProgram, "uLiveWallpaper");
+ 
+     m_panoramaSampler =
+@@ -1763,12 +1819,41 @@ bool GLScene::ensureSceneFramebuffer(
+ ) {
+     if (
+         m_sceneFBO &&
+-        m_sceneWidth == width &&
+-        m_sceneHeight == height &&
++        m_outputWidth == width &&
++        m_outputHeight == height &&
+         !m_msaaDirtyCfg
+     )
+         return true;
+ 
++    // MiOS: supersampling. The scene is drawn at scale x the output size and
++    // box-filtered down in the composite, so window textures, rims and glass
++    // are sampled several times per output pixel (MSAA alone covers geometry
++    // edges only). The scale is capped by the GL size limits and by a memory
++    // budget (color + glass copy + depth + MSAA color/depth per pixel).
++    m_outputWidth = width;
++    m_outputHeight = height;
++    {
++        GLint maxTex = 0, maxRb = 0, maxVp[2] = {0, 0}, maxSamplesQ = 0;
++        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
++        glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRb);
++        glGetIntegerv(GL_MAX_VIEWPORT_DIMS, maxVp);
++        glGetIntegerv(GL_MAX_SAMPLES, &maxSamplesQ);
++        float s = std::clamp(m_rq.scale, 1.0f, 4.0f);
++        const float limW = static_cast<float>(std::min({maxTex, maxRb, maxVp[0]}));
++        const float limH = static_cast<float>(std::min({maxTex, maxRb, maxVp[1]}));
++        if (limW > 0.f) s = std::min(s, limW / static_cast<float>(width));
++        if (limH > 0.f) s = std::min(s, limH / static_cast<float>(height));
++        const int samples = std::clamp(m_rq.msaa, 0, static_cast<int>(maxSamplesQ));
++        const double bytesPerPixel = 12.0 + (samples >= 2 ? 8.0 * samples : 0.0);
++        const double pixels = static_cast<double>(width) * height * s * s;
++        if (pixels * bytesPerPixel > kSceneBudgetBytes)
++            s = static_cast<float>(std::sqrt(kSceneBudgetBytes / (bytesPerPixel * width * height)));
++        s = std::max(s, 1.0f);
++        width = std::max(1, static_cast<int>(std::lround(width * s)));
++        height = std::max(1, static_cast<int>(std::lround(height * s)));
++        m_sceneScale = static_cast<float>(width) / static_cast<float>(m_outputWidth);
++    }
++
+     if (!m_sceneFBO) {
+         glGenFramebuffers(1, &m_sceneFBO);
+         glGenTextures(1, &m_sceneColor);
+@@ -2382,6 +2467,7 @@ void GLScene::drawPanorama(float aspect) {
+     glUniform1f(m_panoramaTanY, TANY);
+     glUniform1f(m_panoramaLod, lod);
+     glUniform1f(m_panoramaMirrorLoc, m_panoramaMirror ? 1.f : 0.f);
++    glUniform1f(m_panoramaLiveMirrorLoc, m_liveWrapMirror ? 1.f : 0.f);
+     glUniform1i(m_panoramaLiveWallpaper, m_environmentTex != 0);
+ 
+     glActiveTexture(GL_TEXTURE0);
+@@ -2719,6 +2805,7 @@ void GLScene::drawWindows(
+     glBindTexture(GL_TEXTURE_2D, environment);
+     glUniform1i(m_glassEnvironment, 2);
+     glUniform1f(m_glassMirror, m_panoramaMirror ? 1.f : 0.f);
++    glUniform1f(m_glassLiveMirror, m_liveWrapMirror ? 1.f : 0.f);
+     for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
+         glUniform1f(m_glassParameters[i], m_glassConfig.values[i]);
+     for (size_t i = 0; i < 3; ++i) {
+@@ -2736,6 +2823,7 @@ void GLScene::drawWindows(
+     glActiveTexture(GL_TEXTURE0);
+     glUniform1i(m_glassBackground, 1);
+     glUniform2f(m_glassViewport, static_cast<float>(m_sceneWidth), static_cast<float>(m_sceneHeight));
++    glUniform1f(m_sceneScaleLoc, m_sceneScale);
+ 
+     // Consecutive polys with the same texture and alpha merge into ONE
+     // upload + draw: a depth slab adds ~100 wall quads per window, and a
+@@ -3083,8 +3171,17 @@ void GLScene::drawFullscreen(
+     glUniform1i(m_blitTexture, 0);
+     glUniform1f(m_blitAlpha, alpha);
+     glUniform1i(m_blitPerPx, perPixel ? 1 : 0);
+-    glUniform2f(m_blitTexel, m_sceneWidth > 0 ? 1.0f / m_sceneWidth : 0.0f,
++    glUniform2f(m_blitTexel, m_outputWidth > 0 ? 1.0f / m_outputWidth : 0.0f,
++                m_outputHeight > 0 ? 1.0f / m_outputHeight : 0.0f);
++    glUniform2f(m_blitSrcTexel, m_sceneWidth > 0 ? 1.0f / m_sceneWidth : 0.0f,
+                 m_sceneHeight > 0 ? 1.0f / m_sceneHeight : 0.0f);
++    glUniform1f(m_blitScale, m_sceneScale);
++    // 1x and 2x: one bilinear tap is the exact box; even 4x: 2x2 bilinear taps;
++    // otherwise ceil(scale) taps per axis.
++    int taps = 1;
++    if (std::fabs(m_sceneScale - 1.0f) > 0.01f && std::fabs(m_sceneScale - 2.0f) > 0.01f)
++        taps = std::fabs(m_sceneScale - 4.0f) <= 0.01f ? 2 : std::clamp(static_cast<int>(std::ceil(m_sceneScale - 0.01f)), 1, 4);
++    glUniform1i(m_blitBoxTaps, taps);
+     glUniform1i(m_blitFxaa, m_rq.fxaa ? 1 : 0);
+     glUniform1f(m_blitSharpen, std::clamp(m_rq.sharpen, 0.0f, 1.0f));
+ 
+@@ -3170,7 +3267,8 @@ void GLScene::drawDebugOverlay(int width, int height) {
+     glGetIntegerv(GL_VIEWPORT, oldViewport);
+ 
+     glBindFramebuffer(GL_FRAMEBUFFER, sceneDrawFBO());
+-    glViewport(0, 0, width, height);
++    // Ortho is in output pixels (width x height); the target is the scene size.
++    glViewport(0, 0, m_sceneWidth, m_sceneHeight);
+ 
+     // The lines: coordinates, view angles, fps, map size.
+     const auto& CAM = m_camera;
+@@ -3387,7 +3485,14 @@ bool GLScene::render(
+ 
+     glBindFramebuffer(GL_FRAMEBUFFER, sceneDrawFBO());
+ 
+-    glViewport(0, 0, width, height);
++    // MiOS: the scene buffer is supersampled; every scene pass uses its size.
++    glViewport(0, 0, m_sceneWidth, m_sceneHeight);
++    {
++        // Grid lines keep their output-pixel width at the supersampled size.
++        GLfloat range[2] = {1.0f, 1.0f};
++        glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range);
++        glLineWidth(std::clamp(m_sceneScale, range[0], std::max(range[0], range[1])));
++    }
+ 
+     glDisable(GL_SCISSOR_TEST);
+     glDisable(GL_CULL_FACE);
+@@ -3505,8 +3610,8 @@ bool GLScene::render(
+     // cannot become fully opaque no matter what the fade is set to.
+     if (m_probeRequested) {
+         glReadPixels(
+-            width / 2,
+-            height / 4,
++            m_sceneWidth / 2,
++            m_sceneHeight / 4,
+             1,
+             1,
+             GL_RGBA,
+@@ -3833,6 +3938,9 @@ void GLScene::destroyGLObjects() {
+ 
+     m_sceneWidth = 0;
+     m_sceneHeight = 0;
++    m_outputWidth = 0;
++    m_outputHeight = 0;
++    m_sceneScale = 1.0f;
+ }
+ 
+ } // namespace H3D
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 2656c29..77a89a7 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -72,6 +72,13 @@ class GLScene {
+         std::array<uint32_t, 3> colors{0x1c14402e, 0xffffff00, 0xffffff00};
+     };
+     void setPanoramaMirror(bool on) { m_panoramaMirror = on; }
++    // MiOS: live wallpaper wrap around the horizon (true = mirrored back half).
++    void setLiveWrapMirror(bool on) { m_liveWrapMirror = on; }
++    // Effective supersampling (scene px per output px) after the GL/memory caps.
++    float sceneScale() const { return m_sceneScale; }
++    int sceneWidth() const { return m_sceneWidth; }
++    int sceneHeight() const { return m_sceneHeight; }
++    int msaaSamples() const { return m_msaaSamples; }
+     const SGlassConfig& glassConfig() const { return m_glassConfig; }
+     void setGlassConfig(const SGlassConfig& config) { m_glassConfig = config; }
+ 
+@@ -158,10 +165,11 @@ class GLScene {
+         bool  fxaa               = false; // post-process AA (softens text a little)
+         float sharpen            = 0.25f; // AMD CAS strength 0..1 (0 = off)
+         bool  textureSupersample = true;  // 4-tap RGSS for minified window textures
++        float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
+     };
+     const SRenderQuality& renderQuality() const { return m_rq; }
+     void setRenderQuality(const SRenderQuality& q) {
+-        if (q.msaa != m_rq.msaa)
++        if (q.msaa != m_rq.msaa || q.scale != m_rq.scale)
+             m_msaaDirtyCfg = true;
+         m_rq = q;
+     }
+@@ -385,6 +393,10 @@ class GLScene {
+     int  m_msaaSamples = 0;
+     bool m_msaaDirtyCfg = false;
+     int  m_blitTexel = -1, m_blitFxaa = -1, m_blitSharpen = -1, m_sceneTexSS = -1;
++    int  m_blitSrcTexel = -1, m_blitScale = -1, m_blitBoxTaps = -1;
++    int  m_outputWidth = 0, m_outputHeight = 0;
++    float m_sceneScale = 1.0f;
++    static constexpr double kSceneBudgetBytes = 768.0 * 1024.0 * 1024.0;
+     unsigned int sceneDrawFBO() const { return m_msaaSamples > 1 ? m_msaaFBO : m_sceneFBO; }
+     void resolveSceneMsaa();
+     unsigned int m_sceneDepth = 0;
+@@ -439,6 +451,8 @@ class GLScene {
+     int m_discVertexCount = 0;
+     int m_glassMirror = -1, m_panoramaMirrorLoc = -1;
+     bool m_panoramaMirror = false;
++    int m_glassLiveMirror = -1, m_panoramaLiveMirrorLoc = -1, m_sceneScaleLoc = -1;
++    bool m_liveWrapMirror = true;
+     std::array<int, GLASS_PARAMETERS.size()> m_glassParameters{};
+     std::array<int, 3> m_glassColors{}, m_glassAlphas{};
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index ee23991..01de2e8 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -4679,6 +4679,11 @@ static void dumpStatus() {
+         << " savedPoses=" << g_savedPoses.size()
+         << " renderedOnce=" << (g_renderedOnce ? 1 : 0) << "\n";
+ 
++    // MiOS render quality: the effective supersampled scene and frame rate.
++    out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
++        << " scale=" << g_scene.sceneScale() << " msaa=" << g_scene.msaaSamples()
++        << " fps=" << g_debugFps << "\n";
++
+     out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
+         << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
+         << " sinkCalls=" << g_diagSinkCalls
+@@ -6408,6 +6413,14 @@ static int luaConfig(lua_State* L) {
+                 return luaL_error(L, "hypr3d.config: world.panorama_mirror must be a boolean");
+             g_scene.setPanoramaMirror(mirror);
+         }
++        {
++            // MiOS: live wallpaper wrap: "mirror" (once + mirrored back half) or "repeat".
++            std::string wrap = "mirror";
++            if (!SET_STRING(idx, "live_wrap", wrap, "world.live_wrap") ||
++                (wrap != "mirror" && wrap != "repeat"))
++                return luaL_error(L, "hypr3d.config: world.live_wrap must be \"mirror\" or \"repeat\"");
++            g_scene.setLiveWrapMirror(wrap == "mirror");
++        }
+         if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
+             return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
+         lua_pop(L, 1);
+@@ -6455,6 +6468,10 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
+         if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
+             return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");
++        // MiOS supersampling: scene size / output size, 1..4 (capped by GL limits + memory).
++        if (!SET_NUM(idx, "scale", q.scale, "render.scale") || !std::isfinite(q.scale))
++            return luaL_error(L, "hypr3d.config: render.scale must be a number");
++        q.scale = std::clamp(q.scale, 1.0f, 4.0f);
+         q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
+         q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
+         g_scene.setRenderQuality(q);
+@@ -6592,6 +6609,21 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: player.walk_bob must be a boolean");
+         if (!SET_BOOL(idx, "collision", g_playerCollision, "player.collision"))
+             return luaL_error(L, "hypr3d.config: player.collision must be a boolean");
++        {
++            // MiOS: absolute look direction in degrees (automation, deterministic tests).
++            float lookYaw = NAN, lookPitch = NAN;
++            if (!SET_NUM(idx, "look_yaw", lookYaw, "player.look_yaw"))
++                return luaL_error(L, "hypr3d.config: player.look_yaw must be a number");
++            if (!SET_NUM(idx, "look_pitch", lookPitch, "player.look_pitch"))
++                return luaL_error(L, "hypr3d.config: player.look_pitch must be a number");
++            auto& CAM = g_scene.camera();
++            if (std::isfinite(lookYaw) || std::isfinite(lookPitch)) {
++                const float Y = std::isfinite(lookYaw) ? lookYaw * 3.14159265f / 180.0f - CAM.yaw : 0.0f;
++                const float P = std::isfinite(lookPitch) ? lookPitch * 3.14159265f / 180.0f - CAM.pitch : 0.0f;
++                CAM.applyLook(Y, P);
++                damageCurrentMonitor();
++            }
++        }
+ 
+         // The shared mesh-block parser: path + transform + material
+         // overrides -- the SAME description for the player and the scene
+diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+index b659604..0611812 100644
+--- a/tests/mios-bsp-regression.cpp
++++ b/tests/mios-bsp-regression.cpp
+@@ -39,12 +39,13 @@ precision highp float;
+ uniform vec3 ray;
+ uniform bool live;
+ uniform float mirror;
++uniform float liveMirror;
+ uniform bool sampleImage;
+ uniform sampler2D wallpaper;
+ out vec4 color;
+ MIOS_ENVIRONMENT_UV
+ void main() {
+- color = sampleImage ? miosEnvironmentColor(wallpaper, ray, live, mirror, 0.0)
++ color = sampleImage ? miosEnvironmentColor(wallpaper, ray, live, mirror, liveMirror, 0.0)
+                      : vec4(miosEnvironmentUV(ray, live, mirror), 0.0, 1.0);
+ }
+ )GLSL");
+@@ -67,17 +68,29 @@ void main() {
+                 std::to_string(pixel[0]/255.f) + "," + std::to_string(pixel[1]/255.f));
+     };
+     // Captures are top-down: looking above/below the horizon must select
+-    // the top/bottom of the wallpaper, without the old mirrored wrap.
+-    expect({0, 0.5f, -1}, true, 0.5f, 0.25f);
+-    expect({0, -0.5f, -1}, true, 0.5f, 0.75f);
+-    expect({0.5f, 0, -1}, true, 0.75f, 0.5f, 1.f);
+-    // Both poles have a regular image centre and neighbourhood, not a
+-    // latitude singularity. File panoramas retain equirectangular UVs.
+-    expect({0, 1, 0}, true, 0.5f, 0.5f);
+-    expect({0, -1, 0}, true, 0.5f, 0.5f);
+-    expect({0.1f, 1, 0.1f}, true, 0.55f, 0.45f);
+-    expect({0.1f, -1, 0.1f}, true, 0.55f, 0.55f);
++    // the top/bottom of the wallpaper. MiOS: the live wallpaper wraps ONCE
++    // around the horizon (16:9 reference, mirrored back half): centre ahead,
++    // edges at +-90 degrees, the back half its mirror image, elevation
++    // rectilinear with the image aspect (span = pi/2 * 9/16).
++    expect({0, 0, -1}, true, 0.5f, 0.5f);
++    expect({0, 0.5f, -1}, true, 0.5f, 0.2171f);
++    expect({0, -0.5f, -1}, true, 0.5f, 0.7829f);
++    expect({0.5f, 0, -1}, true, 0.6476f, 0.5f);
++    expect({0.5f, 0, 1}, true, 0.6476f, 0.5f);   // mirrored back half
++    expect({1, 0, 0}, true, 1.0f, 0.5f);
++    expect({-1, 0, 0}, true, 0.0f, 0.5f);
++    expect({0, 0, 1}, true, 0.5f, 0.5f);
++    // panorama_mirror is a file-panorama setting; it does not touch the live wrap.
++    expect({0.5f, 0, -1}, true, 0.6476f, 0.5f, 1.f);
++    // File panoramas retain equirectangular UVs.
+     expect({1, 0, -1}, false, 0.625f, 0.5f);
++    // Exactly one copy per half turn: u rises monotonically from the left
++    // fold to the right fold in 15-degree steps (the old blend repeated the
++    // whole image every ~90 degrees).
++    for (int deg = -90; deg <= 90; deg += 15) {
++        const float r = deg * 3.14159265f / 180.f;
++        expect({std::sin(r), 0, -std::cos(r)}, true, 0.5f + deg / 180.f, 0.5f);
++    }
+     // An asymmetric labelled-color image tests the actual texture sampler,
+     // including continuity when crossing what used to be a cube-face seam.
+     GLuint texture = 0;
+@@ -93,6 +106,7 @@ void main() {
+     glUniform1i(glGetUniformLocation(program, "sampleImage"), 1);
+     glUniform1i(glGetUniformLocation(program, "wallpaper"), 0);
+     glUniform1i(glGetUniformLocation(program, "live"), 1);
++    glUniform1f(glGetUniformLocation(program, "liveMirror"), 1.f);
+     const auto sample = [&](Vec3 ray) {
+         glUniform3f(glGetUniformLocation(program, "ray"), ray.x, ray.y, ray.z);
+         glDrawArrays(GL_TRIANGLES, 0, 3);
+@@ -105,13 +119,29 @@ void main() {
+     for (const auto& pair : std::array<std::array<Vec3,2>,3>{{
+         {{{1,0,-0.999f}, {0.999f,0,-1}}},
+         {{{0.001f,1,0.001f}, {-0.001f,1,-0.001f}}},
+-        {{{0.001f,-1,0.001f}, {-0.001f,-1,-0.001f}}}
++        {{{0.001f,-1,0.001f}, {-0.001f,-1,-0.001f}}},
+     }}) {
+         const auto left = sample(pair[0]), right = sample(pair[1]);
+         for (int channel = 0; channel < 3; ++channel)
+             if (std::abs(int(left[channel])-int(right[channel])) > 5)
+                 throw std::runtime_error("environment seam regression");
+     }
++    for (const auto& pair : std::array<std::array<Vec3,2>,3>{{
++        {{{0.001f,0,1}, {-0.001f,0,1}}},
++        {{{1,0,0.001f}, {1,0,-0.001f}}},
++        {{{-1,0,0.001f}, {-1,0,-0.001f}}},
++    }}) {
++        const auto left = sample(pair[0]), right = sample(pair[1]);
++        for (int channel = 0; channel < 3; ++channel)
++            if (std::abs(int(left[channel])-int(right[channel])) > 5)
++                throw std::runtime_error("live wallpaper mirror fold regression");
++    }
++    glUniform1f(glGetUniformLocation(program, "liveMirror"), 0.f);
++    {
++        // live_wrap = "repeat": one copy over the full circle, joined behind.
++        const auto left = sample({0.001f, -0.2f, 1}), right = sample({-0.001f, -0.2f, 1});
++        require(std::abs(int(left[1]) - int(right[1])) > 100);
++    }
+     glDeleteTextures(1, &texture);
+     glDeleteProgram(program);
+     glDeleteShader(vs);
