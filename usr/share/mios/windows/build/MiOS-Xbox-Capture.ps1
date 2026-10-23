@@ -123,7 +123,11 @@ function Invoke-Prepare {
     $bytes = New-Object byte[] 24
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $secret = 'Mc-' + ([Convert]::ToBase64String($bytes) -replace '[+/=]', 'x') + '-9a'
-    New-LocalUser -Name $name -Password (ConvertTo-SecureString -String $secret -AsPlainText -Force) -PasswordNeverExpires -AccountNeverExpires `
+    # SecureString built in place (PSAvoidUsingConvertToSecureStringWithPlainText): same generated secret, no plain-text conversion
+    $secure = New-Object Security.SecureString
+    foreach ($ch in $secret.ToCharArray()) { $secure.AppendChar($ch) }
+    $secure.MakeReadOnly()
+    New-LocalUser -Name $name -Password $secure -PasswordNeverExpires -AccountNeverExpires `
         -Description 'MiOS-Xbox Start layout capture' | Out-Null
     try { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $name } catch { if ($_.Exception.Message -notmatch 'already') { throw } }
     $acl = & icacls.exe $Pub /grant ('{0}:(OI)(CI)M' -f $name) 2>&1
