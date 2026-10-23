@@ -191,9 +191,31 @@ def running_wsl_distros():
     except (OSError, subprocess.TimeoutExpired):
         return set()
 
-def check_port(host, port):
+def listening_tcp_ports(paths=("/proc/net/tcp", "/proc/net/tcp6")):
+    """Local TCP ports in LISTEN state (st 0A) from procfs; None where procfs is unavailable.
+
+    A connect probe opens a real session on every service at each refresh: xrdp forked a child and
+    logged a failed X.224 handshake for every probe (37,841 in one day). Reading the socket table
+    observes the same "is it listening" fact without touching the service."""
+    found, ports = False, set()
+    for path in paths:
+        try:
+            with open(path, encoding="ascii") as fh:
+                next(fh, None)
+                for line in fh:
+                    fields = line.split()
+                    if len(fields) > 3 and fields[3] == "0A":
+                        ports.add(int(fields[1].rsplit(":", 1)[1], 16))
+            found = True
+        except (OSError, ValueError, IndexError):
+            continue
+    return ports if found else None
+
+def check_port(host, port, listening=None):
     if type(port) is not int or not 0 < port < 65536:
         return False
+    if listening is not None and host in ("127.0.0.1", "localhost", "::1"):
+        return port in listening
     try:
         with socket.create_connection((host, int(port)), timeout=0.03):
             return True
@@ -218,10 +240,11 @@ def get_services():
     ports = monitor_config().get("ports", {})
     offset = int(ports.get("stack_id", 0)) * 10000
     svcs = []
+    listening = listening_tcp_ports()
     for name, port in ports.items():
         if type(port) is int and name != "stack_id":
             actual_port = process_val(f"ports.{name}", port, offset)
-            svcs.append((name, actual_port, check_port("127.0.0.1", actual_port)))
+            svcs.append((name, actual_port, check_port("127.0.0.1", actual_port, listening)))
     wsl_online = bool(running_wsl_distros()) if IS_WINDOWS else "microsoft" in platform.release().lower()
     svcs.append(("wsl-engine", 0, wsl_online))
     svcs.append(("podman-machine", 0, engine_online()))
