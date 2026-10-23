@@ -23,4 +23,9 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID
+SystemCallFilter=~process_vm_readv process_vm_writev
+# CAP_SYS_PTRACE: TLS-KEY authorizes the caller by readlink(/proc/<pid>/exe) of the operator-owned
+# mios-rdp-server; root may read another uid's exe link only with it (without it: "exe None", DENY,
+# native server crash loop). ptrace(2) stays blocked (@debug is not in @system-service), and the
+# process_vm_* calls the capability would unlock are removed from @ipc above.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID CAP_SYS_PTRACE
