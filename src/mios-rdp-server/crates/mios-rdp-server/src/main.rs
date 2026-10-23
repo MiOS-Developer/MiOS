@@ -315,6 +315,24 @@ async fn serve(cfg: Config) -> Result<()> {
         .with_connection_policy(ConnectionPolicy::Reject)
         .with_honor_client_desktop_size(Some(DesktopSize { width: cfg.native.max_width, height: cfg.native.max_height }))
         .with_display_suppressed_handle(Arc::clone(&s.suppressed));
+    // Legacy bitmap codecs for clients that negotiate EGFX without AVC420. Microsoft's Windows App on
+    // iOS/macOS sets AVC_DISABLED in every EGFX capability set and lists only NSCodec in its bitmap-codec
+    // capability, so with IronRDP's default list (RemoteFX, QOI, QOIZ) it got raw/RLE bitmap updates:
+    // several MB per 1100x2080 frame and TCP back-pressure on the phone link (mios, 2026-10-23).
+    // IronRDP ranks NSCodec below RemoteFX/QOI, so clients that offer those keep them.
+    {
+        use ironrdp_pdu::rdp::capability_sets::{Codec, CodecProperty, NsCodec, server_codecs_capabilities};
+        let mut codecs = server_codecs_capabilities(&[]).map_err(|e| anyhow!("server bitmap codecs: {e}"))?;
+        codecs.0.push(Codec {
+            id: 0,
+            property: CodecProperty::NsCodec(NsCodec {
+                is_dynamic_fidelity_allowed: true,
+                is_subsampling_allowed: true,
+                color_loss_level: 3,
+            }),
+        });
+        builder = builder.with_bitmap_codecs(codecs);
+    }
     if cfg.input && (cfg.redirect.touch || cfg.redirect.pen) {
         builder = builder.with_rdpei_factory(Some(Box::new(input::RdpeiFactory {
             tx: Mutex::new(input_tx.clone()),

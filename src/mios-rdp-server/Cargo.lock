@@ -1509,6 +1509,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironrdp-nscodec"
+version = "0.2.0"
+dependencies = [
+ "ironrdp-graphics",
+]
+
+[[package]]
 name = "ironrdp-pdu"
 version = "0.9.0"
 dependencies = [
@@ -1656,6 +1663,7 @@ dependencies = [
  "ironrdp-egfx",
  "ironrdp-error",
  "ironrdp-graphics",
+ "ironrdp-nscodec",
  "ironrdp-pdu",
  "ironrdp-rdpdr",
  "ironrdp-rdpeai",
@@ -1666,7 +1674,6 @@ dependencies = [
  "ironrdp-rdpsnd",
  "ironrdp-svc",
  "ironrdp-tokio",
- "libc",
  "qoicoubeh",
  "rand 0.9.5",
  "rayon",
