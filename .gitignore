@@ -519,6 +519,7 @@ etc/sysctl.d/*
 !/usr/share/cockpit/branding/mios/**
 !/usr/share/wayland-sessions/
 !/usr/share/wayland-sessions/hyprland.desktop
+!/usr/share/wayland-sessions/mios-desktop-dgpu.desktop
 !/usr/share/wayland-sessions/tmux-console.desktop
 !/usr/share/pki/
 /usr/share/pki/*
@@ -982,6 +983,7 @@ usr/share/mios/virtio/*.iso
 !/usr/share/mios/rofi/config.rasi
 
 !/usr/share/mios/hyprland/session.lua
+!/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
 
 !/usr/share/mios/theme/console-palette
 
@@ -1006,3 +1008,10 @@ usr/share/mios/virtio/*.iso
 
 # Dev-loop isolated worktrees (.agents/workflows/dev-loop.md step 3)
 .worktrees/
+
+# Verified desktop profile deliverable fingerprints
+!.devloop_artifacts/
+!.devloop_artifacts/manifest.json
+
+# Complete source replacements for verified Linux capture/input fixes.
+!/usr/share/mios/looking-glass/source/**

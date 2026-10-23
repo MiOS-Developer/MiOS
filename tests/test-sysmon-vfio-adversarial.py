@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Adversarial empirical challenge for Milestone M4 (Sysmon hardware isolation and resource consumption).
+# Set MIOS_SYSMON_LIVE=1 to include this workstation's physical GPU and desktop checks.
 # Verifies:
 # 1. Host hardware isolation: PCI 0000:01:00.0/0000:01:00.1 (RTX 4090) is bound to vfio-pci; amdgpu, nouveau, nvidia do NOT attach.
 # 2. Sysmon parseScan rejection: planted synthetic check proving vfio-pci GPUs and sensors are rejected by parseScan.
@@ -23,8 +24,9 @@ import time
 import unittest
 
 QS = shutil.which("quickshell")
-SYSMON_QML = "/usr/share/mios/quickshell/Sysmon.qml"
-THEME_QML = "/usr/share/mios/quickshell/Theme.qml"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SYSMON_QML = os.path.join(ROOT, "usr/share/mios/quickshell/Sysmon.qml")
+THEME_QML = os.path.join(ROOT, "usr/share/mios/quickshell/Theme.qml")
 LIVE_CONFIG_QML = "/usr/share/mios/quickshell/Config.qml"
 
 libc = ctypes.CDLL(None)
@@ -55,6 +57,8 @@ def get_live_quickshell_pid() -> int | None:
         return None
 
 
+@unittest.skipUnless(os.environ.get("MIOS_SYSMON_LIVE") == "1",
+                     "live workstation checks require MIOS_SYSMON_LIVE=1")
 class TestLiveVfioHardwareIsolation(unittest.TestCase):
     """Adversarial check of live host PCI bus and driver attachments."""
 
@@ -326,6 +330,8 @@ class TestQuickshellNeverOpensVfioInputs(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+@unittest.skipUnless(os.environ.get("MIOS_SYSMON_LIVE") == "1",
+                     "live workstation checks require MIOS_SYSMON_LIVE=1")
 class TestLiveQuickshellCpuAndMemoryContainment(unittest.TestCase):
     """Measures actual CPU and memory consumption of the live Quickshell process."""
 

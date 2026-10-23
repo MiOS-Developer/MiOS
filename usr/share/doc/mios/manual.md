@@ -403,6 +403,7 @@ This manual assembles the 89-chapter documentation suite. Each chapter is an aut
   * [Fan Control Safety Model](manual/ch89-glass-desktop-and-session-resilience.md#89_fan_control_safety_model): ventulusd, curve clamping and firmware preservation.
   * [Looking Glass IDD Mirroring](manual/ch89-glass-desktop-and-session-resilience.md#89_looking_glass_idd_mirroring): Non-exclusive IDD and dual VNC/SPICE display mirroring.
   * [Traversal OOM Resilience](manual/ch89-glass-desktop-and-session-resilience.md#89_kernel_traversal_oom_resilience): The /proc/kcore traversal root cause and tmux scope OOMPolicy.
+  * [Desktop Hardware Profiles](manual/ch89-glass-desktop-and-session-resilience.md#89_desktop_hardware_profiles): Shared Hyprland and Quickshell sessions, strict GPU selection, BLS hardware choices and signed UKI boundaries.
 
 ---
 
