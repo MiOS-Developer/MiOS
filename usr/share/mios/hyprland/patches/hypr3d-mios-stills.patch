@@ -1,0 +1,61 @@
+MiOS Hypr3D stills mode. render.stills = true gives a clean frame for
+screenshots and photography: the crosshair is hidden, and the room draws at
+RENDER_LAST_MOMENT, so it covers the top and overlay layers (bars, dock,
+notifications) instead of sitting under them. The layers stay mapped and keep
+their input; only their pixels are covered. Default false. Applies on the
+next frame after hl.plugin.hypr3d.config({render={stills=...}}).
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 01de2e8..8719191 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -440,6 +440,11 @@ static bool        g_cfgGrid = true;
+ // world.under_layers = false to return to panels-in-the-room.
+ static bool        g_cfgUnderLayers = true;
+ 
++// MiOS render.stills: a clean frame for screenshots and photography. The room
++// draws last, over the top and overlay layers (bars, dock, notifications stay
++// mapped but are covered), and the crosshair is hidden. Input is unchanged.
++static bool        g_cfgStills = false;
++
+ // --- windows ----------------------------------------------------------------
+ static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window size
+ static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
+@@ -3651,7 +3656,7 @@ static void enter3D() {
+     g_scene.setPlayerDebugCapsule(Vec3{}, false);
+ 
+     g_keyboardMode = EKeyboardMode::Space;
+-    g_scene.setCrosshairVisible(true);
++    g_scene.setCrosshairVisible(!g_cfgStills);
+     g_freeOnRoom     = false;
+     g_swallowRelease = 0;
+     g_vcSpace        = ECursorSpace::Desktop;
+@@ -5234,7 +5239,7 @@ static void onRenderStage(eRenderStage stage) {
+     // world.under_layers: after the windows, before the top and overlay
+     // layers -- bars, launchers and notifications draw over the room as
+     // ordinary 2D. Otherwise the room covers everything.
+-    if (stage != (g_cfgUnderLayers ? RENDER_POST_WINDOWS : RENDER_LAST_MOMENT))
++    if (stage != (g_cfgUnderLayers && !g_cfgStills ? RENDER_POST_WINDOWS : RENDER_LAST_MOMENT))
+         return;
+ 
+     if (!g_currentRenderMon || g_currentRenderMon != g_monitor)
+@@ -5363,7 +5368,7 @@ static void setKeyboardMode(EKeyboardMode mode) {
+         g_lastFocusId = 0;
+     }
+ 
+-    g_scene.setCrosshairVisible(!pointerFree());
++    g_scene.setCrosshairVisible(!g_cfgStills && !pointerFree());
+ 
+     notify(
+         g_keyboardMode == EKeyboardMode::Space ?
+@@ -6475,6 +6480,10 @@ static int luaConfig(lua_State* L) {
+         q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
+         q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
+         g_scene.setRenderQuality(q);
++        // MiOS stills: no crosshair, room over the 2D shell layers.
++        if (!SET_BOOL(idx, "stills", g_cfgStills, "render.stills"))
++            return luaL_error(L, "hypr3d.config: render.stills must be a boolean");
++        g_scene.setCrosshairVisible(!g_cfgStills && !pointerFree());
+         lua_pop(L, 1);
+     }
+ 

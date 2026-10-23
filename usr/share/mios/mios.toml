@@ -8115,7 +8115,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch"]
 toggle_key = "SUPER + G"
 
 [desktop.hyprland.hypr3d.config]
@@ -8138,6 +8138,9 @@ texture_supersample = true
 # so window textures, rims and glass are sampled scale^2 times per pixel (MSAA covers geometry edges only).
 # 1..4; capped by the GL size limits and a 768 MiB scene budget.
 scale = 2.0
+# Stills (hypr3d-mios-stills.patch): true hides the crosshair and draws the room over the bars, dock and
+# notifications, for screenshots and photography. Input is unchanged. Normal use: false.
+stills = false
 
 [desktop.hyprland.boot_sync]
 enabled = true
