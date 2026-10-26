@@ -1,0 +1,1101 @@
+MiOS Hypr3D edge quality (applies after hypr3d-mios-stills.patch). One glass look in the room, as on the flat
+desktop with the same hyprglass preset, and clean edges at any angle:
+
+- Clean capture. The window snapshot runs as a FOREIGN render (an identity render modifier), so hyprglass leaves
+  its pane and edge pass out of it (RenderGuards::isForeignRender). They used to be baked in, with the pane
+  frosting the snapshot's cleared black: every window came out opaque, and the 3D face guessed transmission from
+  luma and fwidth. That key made flat dark areas see-through, so opaque dark apps read as dim mauve glass. It
+  forced antialiased glyph fringes opaque with their dark matte (halos round light text). Its 2x2-quad
+  derivative turned a rule's sub-texel sampling phase into on/off dashes. And it let a window behind be seen
+  almost unfrosted through a front window that was really 85% opaque.
+- One glass look. The face now composites the desktop's own stack: the pane (hgMaterial over the 3D backdrop,
+  frosted with the preset's blur_sigma, which used to be dead) under the client at its own opacity, then the edge
+  pass (hgEdgePass, a port of hyprglass' edge pass) over it. If another plugin still bakes a pane in, the face
+  swaps that black-backed pane for the live one.
+- Corners. Outside the rounded outline only SOLID decorations stay (Hyprland's reserved extents: border, group
+  bar, titlebar). The 2D drop shadow is no longer drawn flat in the window plane: its inner edge followed the
+  square client box and left a square wedge past every rounded corner. The outline is antialiased over one screen
+  pixel (fwidth of the SDF), instead of a fixed 2-logical-px ramp plus a hard discard.
+- Minified text. Snapshot textures get a mip chain once per capture and are sampled with one trilinear +
+  anisotropic tap (render.anisotropy, GL_EXT_texture_filter_anisotropic). The 4-tap RGSS stays as the fallback.
+- CAS. AMD's limiter min(mn, 2 - mx) is for its doubled soft min/max; this 5-tap form needs 1 - mx. With 2 - mx it
+  sharpened at full strength next to white and undershot into dark outlines. The result is also clamped to the
+  5-tap neighbourhood: without the clamp, a glyph at the window's opacity (light but not white) still rang into a
+  dark ring the flat desktop never shows.
+- The glass table gains edge_pass and edge_pass_width. mios-gen projects the whole table from
+  [desktop.hyprland.hypr3d.config].glass_preset (the hyprglass preset).
+- The status file gains a "texture: mip= aniso= maxAniso=" line.
+
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 73e8fbe..7b0764c 100644
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -3,6 +3,7 @@
+ #include "HyprlandCompat/WindowsCompat.hpp"
+ 
+ #include <hyprland/src/desktop/view/Window.hpp>
++#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
+ #include <hyprland/src/desktop/view/LayerSurface.hpp>
+ #include <hyprland/src/protocols/LayerShell.hpp>
+ #include <hyprland/src/protocols/core/Compositor.hpp>
+@@ -338,6 +339,71 @@ void finishSkirtMask(CWindowCapture::SSkirtState& state,
+ 
+ } // namespace
+ 
++// --- MiOS edge quality --------------------------------------------------------
++
++// The window snapshot must hold what the CLIENT draws (at its own opacity), not
++// the desktop's glass: hyprglass draws its pane under every window and its edge
++// pass over it, and in a snapshot pass the pane frosts nothing but the cleared
++// (black) framebuffer. Baked in, it made every window opaque, so the 3D face had
++// to guess transmission from luma (dark flat areas see-through, everything else
++// opaque): halos round text, dashed rules, opaque dark apps that read as tinted
++// glass and transparent terminals that double-exposed whatever stood behind
++// them. Hyprglass leaves foreign renders alone (RenderGuards::isForeignRender:
++// a render modifier is set), so the plugin's own snapshot passes run under an
++// identity modifier (translate 0,0: no geometry changes), and the 3D face draws
++// the desktop's stack itself -- pane, client, edge pass -- with the same preset.
++class CForeignSnapshotScope {
++  public:
++    CForeignSnapshotScope() : m_saved(g_pHyprRenderer->m_renderData.renderModif) {
++        auto& modif = g_pHyprRenderer->m_renderData.renderModif;
++        modif.modifs.emplace_back(Render::SRenderModifData::RMOD_TYPE_TRANSLATE, Vector2D{0.0, 0.0});
++        modif.enabled = true;
++    }
++    ~CForeignSnapshotScope() {
++        g_pHyprRenderer->m_renderData.renderModif = m_saved;
++    }
++    CForeignSnapshotScope(const CForeignSnapshotScope&)            = delete;
++    CForeignSnapshotScope& operator=(const CForeignSnapshotScope&) = delete;
++
++  private:
++    Render::SRenderModifData m_saved;
++};
++
++#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
++#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
++#endif
++
++// Trilinear mipmaps for a fresh snapshot texture: generated ONCE per capture
++// (a capture happens only when the client committed a new buffer or the box
++// changed), so a static window costs nothing per frame. The minification filter
++// switches to mipmapped only after a clean generation; GLScene reads it back to
++// pick the single prefiltered (anisotropic) tap over the 4-tap fallback.
++static void mipmapSnapshotTexture(GLuint tex) {
++    if (!tex)
++        return;
++    GLint old = 0;
++    glGetIntegerv(GL_TEXTURE_BINDING_2D, &old);
++    while (glGetError() != GL_NO_ERROR) {}
++    glBindTexture(GL_TEXTURE_2D, tex);
++    glGenerateMipmap(GL_TEXTURE_2D);
++    if (glGetError() == GL_NO_ERROR)
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
++    else
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(old));
++}
++
++// The opacity Hyprland composites the client with (renderWindow: the active /
++// inactive alpha, 1 under the opaque rule), and the solid decoration extents.
++static void recordWindowLook(const PHLWINDOW& window, CWindowCapture::SSnapshot& snapshot) {
++    snapshot.windowAlpha = window->m_ruleApplicator->opaque().valueOrDefault() ?
++        1.0f :
++        std::clamp(window->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE), 0.0f, 1.0f);
++    const auto RES = window->getFullWindowReservedArea();
++    snapshot.reserved = {static_cast<float>(std::max(0.0, RES.topLeft.x)), static_cast<float>(std::max(0.0, RES.topLeft.y)),
++                         static_cast<float>(std::max(0.0, RES.bottomRight.x)), static_cast<float>(std::max(0.0, RES.bottomRight.y))};
++}
++
+ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& monitor, bool force) {
+     if (!window || !monitor)
+         return false;
+@@ -410,7 +476,12 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
+ 
+     // Renders the window (content + decorations) into a fresh plugin-ownable
+     // framebuffer. Requires the window to currently pass shouldRenderWindow.
+-    auto fb = g_pHyprRenderer->makeSnapshotFB(window);
++    // MiOS: as a foreign render, without hyprglass' pane and edge pass.
++    SP<Render::IFramebuffer> fb;
++    {
++        CForeignSnapshotScope foreign;
++        fb = g_pHyprRenderer->makeSnapshotFB(window);
++    }
+ 
+     if (SHIFTED)
+         WORKSPACE->m_renderOffset->setValueAndWarp(ORIGINAL);
+@@ -446,6 +517,9 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
+     snapshot.surfaceSize   = surfSize;
+     snapshot.texSpan       = MONLOGI;
+     snapshot.lastBuffer    = bufferIdentity(window->resource());
++    recordWindowLook(window, snapshot);
++    if (m_mipmaps)
++        mipmapSnapshotTexture(snapshot.texID);
+ 
+     // Drop the previous snapshot first: the SP releases the framebuffer's GL
+     // objects on destruction, and a leftover composite texture from a tiled
+@@ -541,7 +615,11 @@ bool CWindowCapture::makeTiledSnapshot(
+             if (WORKSPACE)
+                 WORKSPACE->m_renderOffset->setValueAndWarp(shift);
+ 
+-            auto fb = g_pHyprRenderer->makeSnapshotFB(window);
++            SP<Render::IFramebuffer> fb;
++            {
++                CForeignSnapshotScope foreign; // MiOS: no hyprglass pane / edge pass baked in
++                fb = g_pHyprRenderer->makeSnapshotFB(window);
++            }
+ 
+             if (WORKSPACE)
+                 WORKSPACE->m_renderOffset->setValueAndWarp(ORIGINAL);
+@@ -593,6 +671,9 @@ bool CWindowCapture::makeTiledSnapshot(
+     snapshot.surfaceSize   = surfSize;
+     snapshot.texSpan       = Vector2D{fullBox.w, fullBox.h};
+     snapshot.lastBuffer    = bufferIdentity(window->resource());
++    recordWindowLook(window, snapshot);
++    if (m_mipmaps)
++        mipmapSnapshotTexture(bigTex);
+ 
+     m_snapshots.erase(id);
+     m_snapshots.emplace(id, std::move(snapshot));
+@@ -826,6 +907,8 @@ bool CWindowCapture::makeSnapshotPopup(const WP<Desktop::View::CPopup>& popup,
+     snapshot.surfaceSize   = Vector2D{box.w, box.h};
+     snapshot.texSpan       = monitor->m_size;
+     snapshot.lastBuffer    = bufferIdentity(POPUP->resource());
++    if (m_mipmaps)
++        mipmapSnapshotTexture(snapshot.texID);
+ 
+     m_snapshots.erase(ID);
+     m_snapshots.emplace(ID, std::move(snapshot));
+@@ -945,6 +1028,8 @@ bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& mon
+     }
+ 
+     snapshot.lastBuffer = bufferIdentity(SURFACE);
++    if (m_mipmaps)
++        mipmapSnapshotTexture(snapshot.texID);
+ 
+     m_snapshots.erase(ID);
+     m_snapshots.emplace(ID, std::move(snapshot));
+diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
+index 6f92072..7898df9 100644
+--- a/src/HyprlandCompat/WindowCapture.hpp
++++ b/src/HyprlandCompat/WindowCapture.hpp
+@@ -6,6 +6,7 @@
+ 
+ #include "World/Outline.hpp"
+ 
++#include <array>
+ #include <chrono>
+ #include <cstdint>
+ #include <memory>
+@@ -46,6 +47,15 @@ class CWindowCapture {
+         Vector2D surfaceOffset = {};
+         Vector2D surfaceSize   = {};
+ 
++        // MiOS edge quality: what the 3D glass face needs to composite the window
++        // exactly as the desktop does. windowAlpha is the active/inactive opacity
++        // the client was drawn with (1 under the opaque rule); reserved are the
++        // SOLID decoration extents (border, group bar, titlebar: Hyprland's reserved
++        // area, logical px, l/t/r/b). The rest of the decorated box is the drop
++        // shadow, which the 3D face does not draw.
++        float              windowAlpha = 1.0f;
++        std::array<float, 4> reserved{0.f, 0.f, 0.f, 0.f};
++
+         // Logical span of the captured texture. It equals the monitor size
+         // unless the window is larger than the monitor and the monitor was
+         // temporarily enlarged for the snapshot -- the UV subrect must divide
+@@ -132,6 +142,13 @@ class CWindowCapture {
+         m_skirtDeferred = on;
+     }
+ 
++    // MiOS: trilinear mipmaps on every new snapshot texture (render.texture_supersample),
++    // so the 3D view samples minified window content prefiltered (plus anisotropic
++    // filtering at draw time) instead of point-ish bilinear taps.
++    void setMipmaps(bool on) {
++        m_mipmaps = on;
++    }
++
+   private:
+     // Oversized windows: monitor-sized tiles, composited into one texture.
+     bool makeTiledSnapshot(
+@@ -181,6 +198,7 @@ class CWindowCapture {
+     std::unordered_map<std::uintptr_t, SSnapshot> m_snapshots;
+     std::unordered_map<std::uintptr_t, SSkirtState> m_skirtStates;
+     bool m_skirtDeferred = false;
++    bool m_mipmaps       = true;
+ };
+ 
+ } // namespace H3D::Compat
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index ded15d1..57525c7 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <algorithm>
+ #include <functional>
++#include <string_view>
+ #include <memory>
+ #include <cmath>
+ #include <cstddef>
+@@ -127,6 +128,8 @@ struct SWPoly {
+     std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
++    std::array<float, 4> glassDeco{0.f, 0.f, 0.f, 0.f}; // MiOS: solid decoration extents
++    float glassWindowAlpha = 1.0f;                       // MiOS: the client's composite opacity
+ };
+ 
+ // Split a polygon by a plane. Pieces on the positive side go to `front`,
+@@ -147,6 +150,8 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
+     front.glassUV = back.glassUV = poly.glassUV;
+     front.glassSurface = back.glassSurface = poly.glassSurface;
+     front.glassMetrics = back.glassMetrics = poly.glassMetrics;
++    front.glassDeco = back.glassDeco = poly.glassDeco;
++    front.glassWindowAlpha = back.glassWindowAlpha = poly.glassWindowAlpha;
+     hasFront = hasBack = false;
+ 
+     const size_t COUNT = poly.verts.size();
+@@ -551,6 +556,8 @@ uniform vec4 uGlassUV;
+ uniform vec2 uGlassViewport;
+ uniform vec4 uGlassSurface;
+ uniform vec4 uGlassMetrics;
++uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
++uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
+ out vec4 fragColor;
+ 
+ 
+@@ -663,18 +670,16 @@ vec2 toTexUV(vec2 wuv) {
+ 
+ // Screen mapping uses the inverse UV Jacobian, preserving perspective/roll.
+ mat2 hgUVToScreen;
++// MiOS: the preset's frost. uGlassBackground is the backdrop copy already blurred
++// by a separable Gaussian of blur_sigma output px (GLScene::frostGlassCopy, the
++// kernel hyprglass frosts the desktop pane with: 4 x blur_strength x
++// sqrt(blur_iterations)). blur_sigma used to be declared and never read, and the
++// frost was a fixed 5-tap cross whose +-2 px copies passed text strokes through:
++// a window seen behind glass double-exposed instead of frosting.
+ vec4 sampleBlurred(vec2 wuv) {
+     vec2 shift = hgUVToScreen * (wuv - v_texcoord);
+     vec2 screen = (gl_FragCoord.xy + shift) / uGlassViewport;
+-    vec2 pad = 0.5 / uGlassViewport;
+-    vec2 spread = vec2(2.0 * uSceneScale) / uGlassViewport;
+-    // Compact frosted filter; not the desktop's separable Gaussian pipeline.
+-    vec4 c = texture(uGlassBackground, clamp(screen, pad, 1.0-pad)) * 0.40;
+-    c += texture(uGlassBackground, clamp(screen+vec2(spread.x,0.0),pad,1.0-pad))*0.15;
+-    c += texture(uGlassBackground, clamp(screen-vec2(spread.x,0.0),pad,1.0-pad))*0.15;
+-    c += texture(uGlassBackground, clamp(screen+vec2(0.0,spread.y),pad,1.0-pad))*0.15;
+-    c += texture(uGlassBackground, clamp(screen-vec2(0.0,spread.y),pad,1.0-pad))*0.15;
+-    return c;
++    return texture(uGlassBackground, clamp(screen, vec2(0.0), vec2(1.0)));
+ }
+ 
+ // ============================================================================
+@@ -797,6 +802,119 @@ vec2 sdfOutwardNormal(vec2 uv) {
+ // MAIN — Thick-glass refraction model
+ // ============================================================================
+ 
++// MiOS: the frosted tone and the edge lights, split out of hgMaterial so the 3D
++// face can evaluate the SAME pane over black -- what the window snapshot holds
++// under the client (the snapshot pass has no scene behind hyprglass' pane).
++// Reads the per-fragment state hgMaterial sets just before calling it.
++vec2  hgUV;
++float hgCornerSdf;
++float hgEdgeProximity;
++vec3 hgTone(vec3 color) {
++    vec2 uv = hgUV;
++    float cornerSdf = hgCornerSdf;
++    float edgeProximity = hgEdgeProximity;
++    // ========================================
++    // FROSTED TINT (per-theme tone mapping)
++    // ========================================
++    float blurredLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
++
++    // Frosted desaturation
++    color = mix(vec3(blurredLum), color, saturation);
++
++    // Tight smoothstep range maps the blur-compressed luminance (~0.3-0.7)
++    // to the full [0,1] adaptive range, creating visible per-region differentiation
++    float lumCurve = smoothstep(0.25, 0.55, blurredLum);
++
++    // Dim: multiplicative — effective at darkening bright areas
++    color *= brightness * (1.0 - adaptiveDim * lumCurve);
++
++    // Boost: additive lift — multiplicative can't brighten near-black content
++    color += vec3(adaptiveBoost * (1.0 - lumCurve) * 0.5);
++
++    // Contrast (pivot around midpoint)
++    color = mix(vec3(0.5), color, contrast);
++
++    // Vibrancy (selective saturation boost scaled by existing saturation)
++    float currentLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
++    float sat = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
++    float darkFactor = 1.0 - vibrancyDarkness * (1.0 - blurredLum);
++    color = mix(vec3(currentLum), color, 1.0 + vibrancy * sat * darkFactor);
++
++    // ========================================
++    // COLOR TINT OVERLAY
++    // ========================================
++    color = mix(color, tintColor, tintAlpha);
++
++    // ========================================
++    // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
++    // ========================================
++    if (bevelStrength > 0.001) {
++        float sizePx = max(bevelSize * monitorScale, 1.0);   // logical px, uniform across monitor scales
++        float core = 0.25 * sizePx;
++        float tail = sizePx;
++        float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
++
++        // lit side faces the light, the far side fades out and can be shadowed
++        float facing = clamp(dot(sdfOutwardNormal(uv), lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
++
++        vec3 bevelLight = vec3(1.0);
++        if (bevelColorAlpha > 0.001) bevelLight = mix(vec3(1.0), bevelColor, bevelColorAlpha);   // a dark colour gives a dark line
++        if (bevelTint > 0.001) {
++            float maxC = max(max(color.r, color.g), color.b);
++            bevelLight = mix(bevelLight, maxC > 0.001 ? color / maxC : vec3(1.0), bevelTint);
++        }
++
++        color = mix(color, bevelLight, ring * facing * bevelStrength);
++        if (bevelShadow > 0.001)
++            color = mix(color, vec3(0.0), ring * (1.0 - facing) * bevelShadow);
++    }
++
++    // ========================================
++    // FRESNEL RIM GLOW (edge zone)
++    // ========================================
++    if (fresnelStrength > 0.001) {
++        float fresnel = edgeProximity * edgeProximity * fresnelStrength * 0.15;
++        vec3 fresnelLight = vec3(1.0);
++        if (fresnelColorAlpha > 0.001) fresnelLight = mix(vec3(1.0), fresnelColor, fresnelColorAlpha);   // chosen colour, then the tint below
++        if (fresnelTint > 0.001) {
++            // rim light in the background's own hue, at full brightness so the gain matches white
++            float maxC = max(max(color.r, color.g), color.b);
++            fresnelLight = mix(fresnelLight, maxC > 0.001 ? color / maxC : vec3(1.0), fresnelTint);
++        }
++        color += fresnelLight * fresnel;
++    }
++
++    // ========================================
++    // SPECULAR — subtle top highlight (edge zone)
++    // ========================================
++    if (specularStrength > 0.001) {
++        float specT = max(1.0 - uv.y, 0.0);
++        if (abs(specularAngle) > 0.001) {
++            // rotate the highlight gradient toward the light: at angle 0, lightDir gives
++            // (0,-1) and dot(uv-0.5, L) = 0.5-uv.y, so 0.5+dot(...) reduces to 1-uv.y exactly
++            vec2 L = lightDir(specularAngle);
++            specT = clamp(0.5 + dot(uv - 0.5, L), 0.0, 1.0);
++        }
++        float topBias = pow(specT, 2.0);
++        float spec = topBias * edgeProximity * edgeProximity * specularStrength * 0.08;
++        color += vec3(1.0, 0.99, 0.97) * spec;
++    }
++
++    // ========================================
++    // INNER SHADOW (bottom rim)
++    // ========================================
++    {
++        float bottomBias = pow(uv.y, 2.0);
++        float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
++        color *= 1.0 - shadow;
++    }
++
++    // float framebuffers (FP16 under wide-gamut cm) store unbounded values and
++    // the glass re-samples its own output: unclamped color diverges over frames
++    color = clamp(color, 0.0, 1.0);
++    return color;
++}
++
+ void hgMaterial() {
+     vec2 uv = v_texcoord;
+ 
+@@ -827,7 +945,11 @@ void hgMaterial() {
+     }
+ 
+     float cornerSdf    = getCornerSDF(uv);
+-    float cornerAlpha  = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
++    // MiOS: the 3D face owns the outline coverage (a ramp one screen pixel wide,
++    // from the SDF's footprint) and applies it to its whole composite, so the
++    // material is computed at full coverage here. The fixed 2-logical-px ramp and
++    // the hard sd > 0 discard aliased whenever a window was minified.
++    float cornerAlpha  = 1.0;
+ 
+     if (maskMode == 1) {
+         // Subsurface items: the glass box (glassBoxOffsetPx/SizePx) can be
+@@ -843,11 +965,6 @@ void hgMaterial() {
+             hgColor = surfacePixel;
+             return;
+         }
+-    } else {
+-        // Windows, and alpha-mask layers: no surface pixel to fall back to
+-        // outside the glass shape, so this is exactly the old hard-edged cutoff.
+-        if (cornerSdf > 0.0) discard;
+-        if (cornerAlpha < 0.001) discard;
+     }
+ 
+     float minDim = min(fullSize.x, fullSize.y);
+@@ -936,105 +1053,10 @@ void hgMaterial() {
+         color = sampleBlurred(uvG).rgb;
+     }
+ 
+-    // ========================================
+-    // FROSTED TINT (per-theme tone mapping)
+-    // ========================================
+-    float blurredLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+-
+-    // Frosted desaturation
+-    color = mix(vec3(blurredLum), color, saturation);
+-
+-    // Tight smoothstep range maps the blur-compressed luminance (~0.3-0.7)
+-    // to the full [0,1] adaptive range, creating visible per-region differentiation
+-    float lumCurve = smoothstep(0.25, 0.55, blurredLum);
+-
+-    // Dim: multiplicative — effective at darkening bright areas
+-    color *= brightness * (1.0 - adaptiveDim * lumCurve);
+-
+-    // Boost: additive lift — multiplicative can't brighten near-black content
+-    color += vec3(adaptiveBoost * (1.0 - lumCurve) * 0.5);
+-
+-    // Contrast (pivot around midpoint)
+-    color = mix(vec3(0.5), color, contrast);
+-
+-    // Vibrancy (selective saturation boost scaled by existing saturation)
+-    float currentLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+-    float sat = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
+-    float darkFactor = 1.0 - vibrancyDarkness * (1.0 - blurredLum);
+-    color = mix(vec3(currentLum), color, 1.0 + vibrancy * sat * darkFactor);
+-
+-    // ========================================
+-    // COLOR TINT OVERLAY
+-    // ========================================
+-    color = mix(color, tintColor, tintAlpha);
+-
+-    // ========================================
+-    // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
+-    // ========================================
+-    if (bevelStrength > 0.001) {
+-        float sizePx = max(bevelSize * monitorScale, 1.0);   // logical px, uniform across monitor scales
+-        float core = 0.25 * sizePx;
+-        float tail = sizePx;
+-        float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
+-
+-        // lit side faces the light, the far side fades out and can be shadowed
+-        float facing = clamp(dot(sdfOutwardNormal(uv), lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
+-
+-        vec3 bevelLight = vec3(1.0);
+-        if (bevelColorAlpha > 0.001) bevelLight = mix(vec3(1.0), bevelColor, bevelColorAlpha);   // a dark colour gives a dark line
+-        if (bevelTint > 0.001) {
+-            float maxC = max(max(color.r, color.g), color.b);
+-            bevelLight = mix(bevelLight, maxC > 0.001 ? color / maxC : vec3(1.0), bevelTint);
+-        }
+-
+-        color = mix(color, bevelLight, ring * facing * bevelStrength);
+-        if (bevelShadow > 0.001)
+-            color = mix(color, vec3(0.0), ring * (1.0 - facing) * bevelShadow);
+-    }
+-
+-    // ========================================
+-    // FRESNEL RIM GLOW (edge zone)
+-    // ========================================
+-    if (fresnelStrength > 0.001) {
+-        float fresnel = edgeProximity * edgeProximity * fresnelStrength * 0.15;
+-        vec3 fresnelLight = vec3(1.0);
+-        if (fresnelColorAlpha > 0.001) fresnelLight = mix(vec3(1.0), fresnelColor, fresnelColorAlpha);   // chosen colour, then the tint below
+-        if (fresnelTint > 0.001) {
+-            // rim light in the background's own hue, at full brightness so the gain matches white
+-            float maxC = max(max(color.r, color.g), color.b);
+-            fresnelLight = mix(fresnelLight, maxC > 0.001 ? color / maxC : vec3(1.0), fresnelTint);
+-        }
+-        color += fresnelLight * fresnel;
+-    }
+-
+-    // ========================================
+-    // SPECULAR — subtle top highlight (edge zone)
+-    // ========================================
+-    if (specularStrength > 0.001) {
+-        float specT = max(1.0 - uv.y, 0.0);
+-        if (abs(specularAngle) > 0.001) {
+-            // rotate the highlight gradient toward the light: at angle 0, lightDir gives
+-            // (0,-1) and dot(uv-0.5, L) = 0.5-uv.y, so 0.5+dot(...) reduces to 1-uv.y exactly
+-            vec2 L = lightDir(specularAngle);
+-            specT = clamp(0.5 + dot(uv - 0.5, L), 0.0, 1.0);
+-        }
+-        float topBias = pow(specT, 2.0);
+-        float spec = topBias * edgeProximity * edgeProximity * specularStrength * 0.08;
+-        color += vec3(1.0, 0.99, 0.97) * spec;
+-    }
+-
+-    // ========================================
+-    // INNER SHADOW (bottom rim)
+-    // ========================================
+-    {
+-        float bottomBias = pow(uv.y, 2.0);
+-        float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
+-        color *= 1.0 - shadow;
+-    }
+-
+-    // float framebuffers (FP16 under wide-gamut cm) store unbounded values and
+-    // the glass re-samples its own output: unclamped color diverges over frames
+-    color = clamp(color, 0.0, 1.0);
++    hgUV = uv;
++    hgCornerSdf = cornerSdf;
++    hgEdgeProximity = edgeProximity;
++    color = hgTone(color);
+     float glassA = clamp(glassOpacity * cornerAlpha, 0.0, 1.0);
+ 
+     if (hasMask) {
+@@ -1059,13 +1081,17 @@ void hgMaterial() {
+     }
+ }
+ 
+-// MiOS: rotated-grid 4-tap supersampling for minified window textures.
+-// Window buffers have no mipmaps; when a texel footprint exceeds ~1 pixel the
+-// single bilinear tap aliases (crawling text). 1:1 and magnified stay 1 tap.
++// MiOS: minified window textures. Snapshots carry a mip chain (generated once
++// per capture, hypr3d-mios-edge-quality.patch): ONE trilinear + anisotropic tap
++// prefilters the whole footprint, so 1-px rules and text stay continuous at
++// steep angles. Without a mip chain, rotated-grid 4-tap supersampling (a 4-tap
++// grid still misses features thinner than its spacing once the footprint
++// passes ~4 texels). 1:1 and magnified stay 1 tap.
+ uniform int uTexSS;
++uniform int uTexMip;
+ vec4 texSS(sampler2D s, vec2 uv) {
+     vec2 dx = dFdx(uv), dy = dFdy(uv);
+-    if (uTexSS == 0) return texture(s, uv);
++    if (uTexSS == 0 || uTexMip != 0) return texture(s, uv);
+     vec2 ts = vec2(textureSize(s, 0));
+     float fp = max(length(dx * ts), length(dy * ts));
+     if (fp < 1.15) return texture(s, uv);
+@@ -1075,6 +1101,57 @@ vec4 texSS(sampler2D s, vec2 uv) {
+                    texture(s, uv - 0.375 * dx + 0.125 * dy));
+ }
+ 
++// MiOS: hyprglass' edge pass (hyprglass-mios-glass.patch, edgePass = 1): the
++// preset's edge light alone -- bevel ring, fresnel rim, top specular, inner
++// shadow -- folded into one premultiplied overlay composited OVER the client:
++//   out = (1 - h) * ((1 - s) * L * b + F) + D * (1 - h)(1 - s)(1 - b)
++// Same terms, gain (edge_pass) and falloff width (edge_pass_width) as the
++// desktop's, so a 3D slab carries the same edge light as the flat window.
++uniform float edgePassGain;
++uniform float edgePassWidth;
++vec4 hgEdgePass(vec2 uv, float cornerSdf) {
++    if (edgePassGain <= 0.001)
++        return vec4(0.0);
++    float minDim = min(fullSize.x, fullSize.y);
++    float inv = edgePassWidth > 0.0 ? 1.0 / edgePassWidth : invBezelWidthPx;
++    float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
++    float edgeProximity = min(exp(bevelSdf * inv), 1.0);
++    vec3  tintRef = tintAlpha > 0.001 ? tintColor : vec3(1.0);
++    float b = 0.0, s = 0.0;
++    vec3  L = vec3(1.0);
++    if (bevelStrength > 0.001) {
++        float sizePx = max(min(bevelSize * monitorScale, (bevelSize / 28.0) * minDim), 1.0);
++        float core = 0.25 * sizePx;
++        float tail = sizePx;
++        float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
++        float facing = clamp(dot(sdfOutwardNormal(uv), lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
++        if (bevelColorAlpha > 0.001) L = mix(vec3(1.0), bevelColor, bevelColorAlpha);
++        if (bevelTint > 0.001) {
++            float maxC = max(max(tintRef.r, tintRef.g), tintRef.b);
++            L = mix(L, maxC > 0.001 ? tintRef / maxC : vec3(1.0), bevelTint);
++        }
++        b = clamp(ring * facing * bevelStrength * edgePassGain, 0.0, 1.0);
++        s = bevelShadow > 0.001 ? clamp(ring * (1.0 - facing) * bevelShadow * edgePassGain, 0.0, 1.0) : 0.0;
++    }
++    vec3 F = vec3(0.0);
++    if (fresnelStrength > 0.001) {
++        vec3 fl = vec3(1.0);
++        if (fresnelColorAlpha > 0.001) fl = mix(vec3(1.0), fresnelColor, fresnelColorAlpha);
++        if (fresnelTint > 0.001) {
++            float maxC = max(max(tintRef.r, tintRef.g), tintRef.b);
++            fl = mix(fl, maxC > 0.001 ? tintRef / maxC : vec3(1.0), fresnelTint);
++        }
++        F += fl * (edgeProximity * edgeProximity * fresnelStrength * 0.15 * edgePassGain);
++    }
++    if (specularStrength > 0.001) {
++        float specT = max(1.0 - uv.y, 0.0);
++        if (abs(specularAngle) > 0.001) specT = clamp(0.5 + dot(uv - 0.5, lightDir(specularAngle)), 0.0, 1.0);
++        F += vec3(1.0, 0.99, 0.97) * (pow(specT, 2.0) * edgeProximity * edgeProximity * specularStrength * 0.08 * edgePassGain);
++    }
++    float h = clamp(pow(uv.y, 2.0) * edgeProximity * edgeProximity * 0.06 * edgePassGain, 0.0, 1.0);
++    return vec4((1.0 - h) * ((1.0 - s) * L * b + F), 1.0 - (1.0 - h) * (1.0 - s) * (1.0 - b));
++}
++
+ void main() {
+     if (uTextured != 0 && uGlassWall != 0) {
+         vec4 t=texSS(uTexture, vUV);
+@@ -1099,17 +1176,30 @@ void main() {
+         vec2 dx = dFdx(v_texcoord), dy = dFdy(v_texcoord);
+         float det = dx.x*dy.y-dy.x*dx.y;
+         hgUVToScreen = abs(det)>1e-12 ? inverse(mat2(dx,dy)) : mat2(0.0);
+-        float capturedLuma=dot(content.rgb/max(content.a,0.001),vec3(0.2126,0.7152,0.0722));
+-        float capturedDetail=fwidth(capturedLuma)*uSceneScale;
++        // derivatives first, in uniform control flow (the branches below discard)
++        vec3 wdx = dFdx(vWorldPosition), wdy = dFdy(vWorldPosition);
+         float sd = getCornerSDF(v_texcoord);
+-        if (sd > 0.0) {
+-            // A snapshot can retain opaque pixels in a rounded client corner.
+-            // Cut that corner using the same live compositor radius as the
+-            // slab walls. Only pixels outside the client box are decorations.
+-            if (all(greaterThanEqual(v_texcoord, vec2(0.0))) &&
+-                all(lessThanEqual(v_texcoord, vec2(1.0)))) discard;
+-            // Decorations/shadows: preserve the captured pixels, no lens.
+-            float a=content.a*uColor.a;
++        // MiOS edge quality: the rounded outline's coverage over one SCREEN pixel
++        // (the SDF's footprint), so the edge is antialiased at any distance and
++        // angle instead of a fixed 2-logical-px ramp plus a hard discard.
++        float sdW = max(fwidth(sd), 1e-3);
++        float coverage = clamp(0.5 - sd / sdW, 0.0, 1.0);
++        if (coverage <= 0.0) {
++            // Outside the window's rounded outline only SOLID decorations stay
++            // (border, group bar, titlebar: Hyprland's reserved extents), clipped
++            // by their own outline (radius + extent, as Hyprland rounds a border).
++            // The 2D drop shadow is not drawn: flat in the window plane it hung a
++            // dark halo round the slab whose inner edge followed the SQUARE client
++            // box -- the client corner was cut, the shadow beyond the box was not:
++            // a square wedge past every rounded corner.
++            vec4 e = uGlassDeco;
++            if (max(max(e.x, e.y), max(e.z, e.w)) <= 0.0) discard;
++            float grow = min(min(e.x, e.y), min(e.z, e.w));
++            float sdSolid = getRoundedBoxSDF(v_texcoord * fullSize + e.xy, fullSize + e.xy + e.zw,
++                                             vec4(uGlassMetrics.z + grow));
++            float decoCoverage = clamp(0.5 - sdSolid / sdW, 0.0, 1.0);
++            if (decoCoverage <= 0.0) discard;
++            float a=content.a*decoCoverage*uColor.a;
+             vec3 rgb=content.rgb/max(content.a,0.001)*uColor.rgb;
+             fragColor=vec4(uPremult!=0 ? rgb*a : rgb,a);
+             return;
+@@ -1120,7 +1210,7 @@ void main() {
+             // copy. World-space derivatives keep it correct after rotation
+             // and BSP clipping; Schlick's dielectric Fresnel grows at grazing
+             // angles instead of painting a fixed screen-space highlight.
+-            vec3 normal = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
++            vec3 normal = normalize(cross(wdx, wdy));
+             vec3 view = normalize(uGlassEye - vWorldPosition);
+             normal = faceforward(normal, -view, normal);
+             vec3 ray = reflect(-view, normal);
+@@ -1128,27 +1218,26 @@ void main() {
+             float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(normal, view), 0.0), 5.0);
+             hgColor.rgb = mix(hgColor.rgb, miosEnvironmentColor(uGlassEnvironment, ray, uGlassLiveWallpaper, uGlassMirror, uGlassLiveMirror, 0.0).rgb, fresnel);
+         }
+-        // Opaque snapshots otherwise hide the entire material. This deliberate
+-        // appearance transform makes flat client backgrounds transmissive.
+-        // It is not a recovered client alpha channel or semantic text mask.
+-        vec3 straight=content.rgb/max(content.a,0.001);
+-        float luma=dot(straight,vec3(0.2126,0.7152,0.0722));
+-        float chroma=max(max(straight.r,straight.g),straight.b)-min(min(straight.r,straight.g),straight.b);
+-        float ink=clamp(smoothstep(0.14,0.52,luma)+chroma*0.65,0.0,1.0);
+-        float detail=smoothstep(0.025,0.16,capturedDetail);
+-        float transmissionWeight=mix(mix(0.16,0.82,ink),0.98,detail);
+-        float surfaceA=content.a*transmissionWeight;
+-        float compA=surfaceA+hgColor.a*(1.0-surfaceA);
+-        vec3 rgb=(straight*surfaceA+hgColor.rgb*(1.0-surfaceA))/max(compA,0.001);
+-        // Edge light remains above opaque client content (MiOS edge-pass intent).
+-        float e=min(exp(getBevelSDF(v_texcoord)*invBezelWidthPx),1.0);
+-        float rim=e*e;
+-        vec3 hue=hgColor.rgb/max(max(hgColor.r,hgColor.g),max(hgColor.b,0.001));
+-        rgb += mix(vec3(1.0),hue,fresnelTint)*rim*fresnelStrength*0.15*content.a;
+-        rgb += vec3(1.0,0.99,0.97)*pow(max(1.0-v_texcoord.y,0.0),2.0)*rim*specularStrength*0.08*content.a;
+-        float a=compA*uColor.a;
+-        rgb=clamp(rgb,0.0,1.0)*uColor.rgb;
+-        fragColor=vec4(uPremult!=0 ? rgb*a : rgb,a);
++        // MiOS one glass look: composite exactly as the desktop does. The snapshot
++        // holds the client at its own opacity (WindowCapture keeps hyprglass' pane
++        // and edge pass out of it), so: the pane (hgColor, over the 3D backdrop,
++        // the preset's frost) under the client, the edge pass over it. No luma
++        // keying: an opaque app reads as on the desktop (transmission 1 - its
++        // opacity), a transparent terminal shows the frosted scene behind it.
++        // Fallback if a pane was baked in anyway (the snapshot is opaque past the
++        // window's opacity): swap that pane-over-black for the live one.
++        vec4 C = content;
++        float u = max(C.a - clamp(uGlassWindowAlpha, 0.0, 1.0), 0.0);
++        if (u > 0.004) {
++            vec3 P0 = hgTone(vec3(0.0)) * clamp(glassOpacity, 0.0, 1.0);
++            C = vec4(max(C.rgb - u * P0, vec3(0.0)), C.a - u);
++        }
++        vec4 D = C + (1.0 - C.a) * hgColor;
++        vec4 E = hgEdgePass(v_texcoord, sd);
++        vec4 O = (E + (1.0 - E.a) * D) * coverage;
++        float a = O.a * uColor.a;
++        vec3 rgb = clamp(O.rgb / max(O.a, 1e-4), 0.0, 1.0) * uColor.rgb;
++        fragColor = vec4(uPremult != 0 ? rgb * a : rgb, a);
+         return;
+     }
+     vec4 c = uTextured != 0 ? texSS(uTexture, vUV) * uColor : uColor;
+@@ -1255,9 +1344,17 @@ vec4 cas(vec2 uv, vec4 c) {
+     vec3 s = texture(uTexture, uv + vec2( 0.0,  1.0) * uTexel).rgb;
+     vec3 mn = min(c.rgb, min(min(n, w), min(e, s)));
+     vec3 mx = max(c.rgb, max(max(n, w), max(e, s)));
+-    vec3 amp = sqrt(clamp(min(mn, 2.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
++    // MiOS: AMD's CAS limiter is min(mn, 2 - mx) on its DOUBLED soft min/max
++    // (3x3 + cross); this 5-tap form uses plain min/max, so the limit is 1 - mx.
++    // With 2 - mx the headroom check never fired: full sharpening next to white,
++    // and the undershoot drew dark outlines round light text.
++    vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
+     vec3 k = amp * (-1.0 / mix(8.0, 5.0, clamp(uSharpen, 0.0, 1.0)));
+-    return vec4(clamp((c.rgb + (n + w + e + s) * k) / (1.0 + 4.0 * k), 0.0, 1.0), c.a);
++    // MiOS: no ringing. The limiter only stops at the signal limits; a glyph at the
++    // window's opacity (light, not white) still pulled its dark neighbours below the
++    // background -- a dark outline the flat desktop (no sharpening) never shows.
++    // Clamped to the 5-tap neighbourhood, edges get steeper but never overshoot.
++    return vec4(clamp((c.rgb + (n + w + e + s) * k) / (1.0 + 4.0 * k), mn, mx), c.a);
+ }
+ 
+ void main() {
+@@ -1343,6 +1440,46 @@ void main() {
+     if (!m_blitProgram)
+         return false;
+ 
++    {
++        // MiOS: separable Gaussian for the glass frost (one direction per pass).
++        static constexpr const char* frostFragmentShader = R"GLSL(
++#version 300 es
++precision highp float;
++in vec2 vUV;
++uniform sampler2D uTexture;
++uniform vec2 uStep;    // one target pixel along the pass direction, in source UV
++uniform float uSigma;  // target px
++uniform int uRadius;   // taps per side
++out vec4 fragColor;
++void main() {
++    float inv = -0.5 / max(uSigma * uSigma, 1e-4);
++    vec4 c = texture(uTexture, vUV);
++    float wsum = 1.0;
++    for (int i = 1; i <= 24; ++i) {
++        if (i > uRadius) break;
++        float w = exp(float(i * i) * inv);
++        c += (texture(uTexture, vUV + uStep * float(i)) + texture(uTexture, vUV - uStep * float(i))) * w;
++        wsum += 2.0 * w;
++    }
++    fragColor = c / wsum;
++}
++)GLSL";
++        const GLuint VS = compileShader(GL_VERTEX_SHADER, blitVertexShader);
++        const GLuint FS = VS ? compileShader(GL_FRAGMENT_SHADER, frostFragmentShader) : 0;
++        if (VS && FS)
++            m_frostProgram = linkProgram(VS, FS);
++        if (VS)
++            glDeleteShader(VS);
++        if (FS)
++            glDeleteShader(FS);
++        if (m_frostProgram) {
++            m_frostTexture = glGetUniformLocation(m_frostProgram, "uTexture");
++            m_frostStep    = glGetUniformLocation(m_frostProgram, "uStep");
++            m_frostSigma   = glGetUniformLocation(m_frostProgram, "uSigma");
++            m_frostRadius  = glGetUniformLocation(m_frostProgram, "uRadius");
++        }
++    }
++
+     // A camera-centred UV sphere: translation never moves the environment,
+     // while yaw, pitch, roll, zoom and the reverse view share the scene basis.
+     static constexpr const char* panoramaVertexShader = R"GLSL(
+@@ -1451,7 +1588,23 @@ void main() {
+             "uPremult"
+         );
+     m_sceneTexSS = glGetUniformLocation(m_sceneProgram, "uTexSS");
+-
++    m_sceneTexMip = glGetUniformLocation(m_sceneProgram, "uTexMip");
++    m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
++    m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
++
++    if (m_maxAnisotropy < 0.f) {
++        // MiOS: GL_EXT_texture_filter_anisotropic (Mesa, NVIDIA); 0 when absent.
++        GLint n = 0;
++        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
++        m_maxAnisotropy = 0.f;
++        for (GLint i = 0; i < n; ++i) {
++            const auto* EXT = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
++            if (EXT && std::string_view(EXT) == "GL_EXT_texture_filter_anisotropic") {
++                glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT */, &m_maxAnisotropy);
++                break;
++            }
++        }
++    }
+     m_glassBackground = glGetUniformLocation(m_sceneProgram, "uGlassBackground");
+     m_glassEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassEnvironment");
+     m_glassHasEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassHasEnvironment");
+@@ -2516,6 +2669,76 @@ void GLScene::drawGrid(
+     glBindVertexArray(0);
+ }
+ 
++// MiOS edge quality: the glass frost as hyprglass draws it on the desktop -- a
++// Gaussian of blur_sigma OUTPUT px over everything behind the pane, other windows
++// included (the copy is refreshed per glass batch, in BSP order). Two passes into
++// owned targets at half the scene resolution once sigma spans >= 2 scene px (the
++// 2x2 box of the downsample and the bilinear tap that reads the result back are
++// folded into sigma), else at full resolution. Leaves the program, VAO, viewport,
++// depth/blend state and framebuffer bindings to the caller.
++unsigned int GLScene::frostGlassCopy() {
++    size_t sigmaIndex = 0;
++    for (size_t k = 0; k < GLASS_PARAMETERS.size(); ++k)
++        if (std::string_view(GLASS_PARAMETERS[k].key) == "blur_sigma")
++            sigmaIndex = k;
++    const float SIGMA_SCENE = std::max(0.f, m_glassConfig.values[sigmaIndex]) * m_sceneScale;
++    if (!m_frostProgram || !m_fullscreenVAO || SIGMA_SCENE < 0.3f || m_sceneWidth <= 0 || m_sceneHeight <= 0)
++        return m_glassColor;
++
++    const int   F  = SIGMA_SCENE >= 2.f ? 2 : 1;
++    const int   TW = std::max(1, m_sceneWidth / F), TH = std::max(1, m_sceneHeight / F);
++    const float FOLD = F == 2 ? 0.25f : 0.0f; // downsample box (1/12) + read-back tent (1/6), target px^2
++    const float SIGMA = std::sqrt(std::max((SIGMA_SCENE / F) * (SIGMA_SCENE / F) - FOLD, 0.09f));
++    const int   RADIUS = std::clamp(static_cast<int>(std::ceil(3.f * SIGMA)), 1, 24);
++
++    if (TW != m_frostW || TH != m_frostH || !m_frostTex[0]) {
++        for (int k = 0; k < 2; ++k) {
++            if (!m_frostTex[k]) {
++                glGenTextures(1, &m_frostTex[k]);
++                glGenFramebuffers(1, &m_frostFBO[k]);
++            }
++            glBindTexture(GL_TEXTURE_2D, m_frostTex[k]);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, TW, TH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++            glBindFramebuffer(GL_FRAMEBUFFER, m_frostFBO[k]);
++            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_frostTex[k], 0);
++            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
++                m_frostW = m_frostH = 0;
++                return m_glassColor;
++            }
++        }
++        m_frostW = TW;
++        m_frostH = TH;
++    }
++
++    const GLboolean SCISSOR = glIsEnabled(GL_SCISSOR_TEST);
++    glDisable(GL_DEPTH_TEST);
++    glDisable(GL_BLEND);
++    glDisable(GL_SCISSOR_TEST);
++    glViewport(0, 0, TW, TH);
++    glUseProgram(m_frostProgram);
++    glUniform1i(m_frostTexture, 0);
++    glUniform1f(m_frostSigma, SIGMA);
++    glUniform1i(m_frostRadius, RADIUS);
++    glBindVertexArray(m_fullscreenVAO);
++    glActiveTexture(GL_TEXTURE0);
++    // horizontal: the copy (full res) -> target 0; vertical: target 0 -> target 1
++    glBindFramebuffer(GL_FRAMEBUFFER, m_frostFBO[0]);
++    glBindTexture(GL_TEXTURE_2D, m_glassColor);
++    glUniform2f(m_frostStep, 1.f / TW, 0.f);
++    glDrawArrays(GL_TRIANGLES, 0, 6);
++    glBindFramebuffer(GL_FRAMEBUFFER, m_frostFBO[1]);
++    glBindTexture(GL_TEXTURE_2D, m_frostTex[0]);
++    glUniform2f(m_frostStep, 0.f, 1.f / TH);
++    glDrawArrays(GL_TRIANGLES, 0, 6);
++    if (SCISSOR)
++        glEnable(GL_SCISSOR_TEST);
++    return m_frostTex[1];
++}
++
+ void GLScene::drawWindows(
+     const Mat4& vp,
+     const std::vector<WindowRender>& windows
+@@ -2576,6 +2799,8 @@ void GLScene::drawWindows(
+         slab.front.glassFace = window.glassMetrics[3] > 0.5f;
+         slab.front.glassSurface = window.glassSurface;
+         slab.front.glassMetrics = window.glassMetrics;
++        slab.front.glassDeco = window.glassDeco;
++        slab.front.glassWindowAlpha = window.glassWindowAlpha;
+         slab.front.glassUV = {window.u0, window.v0,
+                              window.u1 - window.u0, window.v1 - window.v0};
+ 
+@@ -2614,6 +2839,8 @@ void GLScene::drawWindows(
+             slab.back.glassFace = slab.front.glassFace;
+             slab.back.glassSurface = slab.front.glassSurface;
+             slab.back.glassMetrics = slab.front.glassMetrics;
++            slab.back.glassDeco = slab.front.glassDeco;
++            slab.back.glassWindowAlpha = slab.front.glassWindowAlpha;
+             slab.back.glassUV = slab.front.glassUV;
+ 
+             for (int c = 0; c < 4; ++c) {
+@@ -2840,7 +3067,9 @@ void GLScene::drawWindows(
+                ordered[j].glassWall == ordered[i].glassWall &&
+                ordered[j].glassUV == ordered[i].glassUV &&
+                ordered[j].glassSurface == ordered[i].glassSurface &&
+-               ordered[j].glassMetrics == ordered[i].glassMetrics)
++               ordered[j].glassMetrics == ordered[i].glassMetrics &&
++               ordered[j].glassDeco == ordered[i].glassDeco &&
++               ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha)
+             ++j;
+ 
+         verts.clear();
+@@ -2874,6 +3103,19 @@ void GLScene::drawWindows(
+         glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
+         glUniform1i(m_sceneTextured, 1);
+         glUniform1i(m_sceneTexSS, m_rq.textureSupersample ? 1 : 0);
++        {
++            // MiOS: a snapshot texture with a mip chain (WindowCapture generates it once
++            // per capture) is sampled with ONE trilinear + anisotropic tap; without one
++            // the shader keeps the 4-tap RGSS. The texture describes itself, so a
++            // failed generation can never leave an incomplete (black) texture bound.
++            GLint minFilter = GL_LINEAR;
++            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
++            const bool MIP = m_rq.textureSupersample && minFilter == GL_LINEAR_MIPMAP_LINEAR;
++            glUniform1i(m_sceneTexMip, MIP ? 1 : 0);
++            if (MIP && m_maxAnisotropy > 1.f)
++                glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY_EXT */,
++                                std::clamp(static_cast<float>(m_rq.anisotropy), 1.f, m_maxAnisotropy));
++        }
+         glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
+ 
+         // Do not sample the framebuffer we are drawing into. Refresh the
+@@ -2890,13 +3132,29 @@ void GLScene::drawWindows(
+             const auto& M = ordered[i].glassMetrics;
+             glUniform4f(m_glassSurface, S[0], S[1], S[2], S[3]);
+             glUniform4f(m_glassMetrics, M[0], M[1], M[2], M[3]);
++            const auto& D = ordered[i].glassDeco;
++            glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
++            glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
+             glActiveTexture(GL_TEXTURE1);
+             glBindTexture(GL_TEXTURE_2D, m_glassColor);
+             resolveSceneMsaa();
+             glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneFBO);
+             glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_sceneWidth, m_sceneHeight);
++            // MiOS: frost the copy once for the whole batch (separable Gaussian), then
++            // put back exactly the state this loop draws with.
++            const GLuint FROSTED = frostGlassCopy();
++            glUseProgram(m_sceneProgram);
++            glBindVertexArray(m_polyVAO);
++            glBindBuffer(GL_ARRAY_BUFFER, m_polyVBO);
++            glViewport(0, 0, m_sceneWidth, m_sceneHeight);
++            glEnable(GL_DEPTH_TEST);
++            glDepthMask(GL_FALSE);
++            glEnable(GL_BLEND);
++            glActiveTexture(GL_TEXTURE1);
++            glBindTexture(GL_TEXTURE_2D, FROSTED);
+             glBindFramebuffer(GL_FRAMEBUFFER, sceneDrawFBO());
+             glActiveTexture(GL_TEXTURE0);
++            glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
+         }
+         glDrawArrays(GL_TRIANGLES, 0,
+                      static_cast<GLint>(verts.size() / 5));
+@@ -3886,6 +4144,18 @@ void GLScene::destroyGLObjects() {
+         m_sceneDepth = 0;
+     }
+ 
++    for (int k = 0; k < 2; ++k) {
++        if (m_frostTex[k])
++            glDeleteTextures(1, &m_frostTex[k]);
++        if (m_frostFBO[k])
++            glDeleteFramebuffers(1, &m_frostFBO[k]);
++        m_frostTex[k] = m_frostFBO[k] = 0;
++    }
++    m_frostW = m_frostH = 0;
++    if (m_frostProgram) {
++        glDeleteProgram(m_frostProgram);
++        m_frostProgram = 0;
++    }
+     if (m_glassColor) {
+         glDeleteTextures(1, &m_glassColor);
+         m_glassColor = 0;
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 77a89a7..1b05b8f 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -59,6 +59,10 @@ class GLScene {
+         {"bevel_shadow", "bevelShadow", .1f, 0.f, 1.f},
+         {"specular_angle", "specularAngle", 0.f, -360.f, 360.f},
+         {"blur_sigma", "blurSigma", 1.095445f, 0.f, 256.f},
++        // MiOS: hyprglass' edge pass over the client (gain on the preset's light
++        // strengths; falloff width in logical px, 0 = edge_thickness x short side).
++        {"edge_pass", "edgePassGain", 1.f, 0.f, 4.f},
++        {"edge_pass_width", "edgePassWidth", 8.f, 0.f, 256.f},
+     });
+     inline static constexpr std::array<const char*, 3> GLASS_COLORS{
+         "tint_color", "fresnel_color", "bevel_color"};
+@@ -79,6 +83,7 @@ class GLScene {
+     int sceneWidth() const { return m_sceneWidth; }
+     int sceneHeight() const { return m_sceneHeight; }
+     int msaaSamples() const { return m_msaaSamples; }
++    float maxAnisotropy() const { return m_maxAnisotropy; } // MiOS: 0 = no anisotropic filtering
+     const SGlassConfig& glassConfig() const { return m_glassConfig; }
+     void setGlassConfig(const SGlassConfig& config) { m_glassConfig = config; }
+ 
+@@ -106,6 +111,11 @@ class GLScene {
+         // Actual surface rect in normalized top-down capture-box coordinates.
+         std::array<float,4> glassSurface{0.f,0.f,1.f,1.f};
+         std::array<float,4> glassMetrics{800.f,600.f,12.f,0.f};
++        // MiOS edge quality: solid decoration extents (border, group bar, titlebar;
++        // logical px l/t/r/b -- the 3D face keeps these and drops the drop shadow) and
++        // the opacity the client was composited with (the desktop's transmission).
++        std::array<float,4> glassDeco{0.f,0.f,0.f,0.f};
++        float glassWindowAlpha = 1.0f;
+         float alpha = 1.0f;
+ 
+         // Depth slab: thickness in world units, extruded BACKWARDS along the
+@@ -164,7 +174,8 @@ class GLScene {
+         int   msaa               = 4;     // 0/1 = off, else samples (clamped to GL_MAX_SAMPLES)
+         bool  fxaa               = false; // post-process AA (softens text a little)
+         float sharpen            = 0.25f; // AMD CAS strength 0..1 (0 = off)
+-        bool  textureSupersample = true;  // 4-tap RGSS for minified window textures
++        bool  textureSupersample = true;  // mipmapped + anisotropic window textures (4-tap RGSS fallback)
++        int   anisotropy         = 16;    // MiOS: max anisotropic samples (1 = trilinear only)
+         float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
+     };
+     const SRenderQuality& renderQuality() const { return m_rq; }
+@@ -388,6 +399,13 @@ class GLScene {
+     unsigned int m_sceneFBO = 0;
+     unsigned int m_sceneColor = 0;
+     unsigned int m_glassColor = 0; // independent scene-backdrop copy
++    // MiOS edge quality: the preset's frost, a separable Gaussian of the backdrop copy
++    // (half resolution when sigma allows), computed once per glass batch.
++    unsigned int m_frostProgram = 0;
++    int m_frostTexture = -1, m_frostStep = -1, m_frostSigma = -1, m_frostRadius = -1;
++    std::array<unsigned int, 2> m_frostTex{}, m_frostFBO{};
++    int m_frostW = 0, m_frostH = 0;
++    unsigned int frostGlassCopy(); // returns the texture the glass samples (the copy itself when sigma is ~0)
+     SRenderQuality m_rq;
+     unsigned int m_msaaFBO = 0, m_msaaColor = 0, m_msaaDepth = 0;
+     int  m_msaaSamples = 0;
+@@ -446,6 +464,8 @@ class GLScene {
+     int m_glassLiveWallpaper = -1, m_panoramaLiveWallpaper = -1;
+     int m_glassUV = -1, m_glassViewport = -1;
+     int m_glassSurface = -1, m_glassMetrics = -1;
++    int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
++    float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
+     SGlassConfig m_glassConfig;
+     unsigned int m_discVAO = 0, m_discVBO = 0;
+     int m_discVertexCount = 0;
+diff --git a/src/main.cpp b/src/main.cpp
+index 8719191..e0f0e9e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -2111,6 +2111,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+             render.glassMetrics = {static_cast<float>(SNAPSHOT->surfaceSize.x),
+                 static_cast<float>(SNAPSHOT->surfaceSize.y),
+                 std::max(0.f, static_cast<float>(W->rounding())), 1.f};
++            // MiOS edge quality: solid decorations (the shadow is not drawn) and the
++            // opacity the snapshot's client was composited with.
++            render.glassDeco        = SNAPSHOT->reserved;
++            render.glassWindowAlpha = SNAPSHOT->windowAlpha;
+         }
+ 
+ 
+@@ -4688,6 +4692,10 @@ static void dumpStatus() {
+     out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
+         << " scale=" << g_scene.sceneScale() << " msaa=" << g_scene.msaaSamples()
+         << " fps=" << g_debugFps << "\n";
++    // MiOS edge quality: window texture filtering (mipmaps + anisotropic samples, GPU max).
++    out << "texture: mip=" << (g_scene.renderQuality().textureSupersample ? 1 : 0)
++        << " aniso=" << g_scene.renderQuality().anisotropy
++        << " maxAniso=" << g_scene.maxAnisotropy() << "\n";
+ 
+     out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
+         << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
+@@ -6473,6 +6481,14 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
+         if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
+             return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");
++        // MiOS edge quality: mipmapped window snapshots + anisotropic filtering (1..16 samples).
++        {
++            float aniso = static_cast<float>(q.anisotropy);
++            if (!SET_NUM(idx, "anisotropy", aniso, "render.anisotropy") || !std::isfinite(aniso))
++                return luaL_error(L, "hypr3d.config: render.anisotropy must be a number");
++            q.anisotropy = std::clamp(static_cast<int>(aniso + 0.5f), 1, 16);
++        }
++        g_capture.setMipmaps(q.textureSupersample);
+         // MiOS supersampling: scene size / output size, 1..4 (capped by GL limits + memory).
+         if (!SET_NUM(idx, "scale", q.scale, "render.scale") || !std::isfinite(q.scale))
+             return luaL_error(L, "hypr3d.config: render.scale must be a number");

@@ -1015,3 +1015,27 @@ usr/share/mios/virtio/*.iso
 
 # Complete source replacements for verified Linux capture/input fixes.
 !/usr/share/mios/looking-glass/source/**
+
+!/tools/native/mios-gen/src/main.rs
+!/tools/native/mios-gen/src/render.rs
+!/tools/native/mios-gen/src/hypr3d_spawn.rs
+!/usr/libexec/mios/mios-gamepad-hypr3d
+!/tests/test-hypr3d-retina-spawn.py
+!/tests/test-hypr3d-edge-quality.py
+!/tests/test-framerate.py
+!/usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch
+!/tests/test-hypr3d-controller.py
+!/usr/lib/systemd/user/mios-gamepad-hypr3d.service
+!/usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch
+!/usr/share/mios/hyprland/patches/hyprbars-mios-overlay-tab.patch
+
+!/usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp
+!/usr/share/mios/hyprland/plugins/mios-pacing/main.cpp
+!/usr/share/mios/hyprland/plugins/mios-pacing/Makefile
+!/usr/share/mios/hyprland/plugins/mios-pacing/tests/pacing_test.cpp
+
+!/tools/native/mios-resolver/src/framerate.rs
+!/tools/native/mios-resolver/src/lib.rs

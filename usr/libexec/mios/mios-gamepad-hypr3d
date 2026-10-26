@@ -1,0 +1,1743 @@
+#!/usr/bin/env python3
+# AI-hint: Universal USB/Bluetooth controller daemon for Hypr3D (L3+R3 toggle chord, dual-stick movement & camera, RT grab & LT resize).
+# AI-doc: usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md
+# AI-related: usr/share/mios/mios.toml [desktop.hyprland.hypr3d.controller], tools/native/mios-gen/src/render.rs
+"""
+Universal USB/Bluetooth Controller Daemon for Hypr3D.
+
+Features:
+- evdev device discovery on /dev/input/event* filtering for gamepads (EV_KEY + EV_ABS) with EVIOCGABS per-axis range detection.
+- Simultaneous L3 + R3 (BTN_THUMBL + BTN_THUMBR) toggle chord with debounce window.
+- Dual-stick controls when Hypr3D mode is active:
+  * Left Stick (ABS_X, ABS_Y, and optional D-pad ABS_HAT0X, ABS_HAT0Y): 3D translation.
+  * Right Stick (ABS_RX, ABS_RY with fallback to ABS_Z, ABS_RZ): 3D camera yaw/pitch.
+  * Radial deadzone filtering (default 0.15).
+  * Sensitivity scaling and optional pitch inversion.
+- Trigger window manipulation when Hypr3D mode is active:
+  * RT (BTN_TR2 / ABS_RZ): Grabs/drags aimed or focused window in 3D space while held (hypr3d:grab down/up).
+  * LT (BTN_TL2 / ABS_Z): Resizes aimed or focused window in 3D space while held (hypr3d:resize down/up).
+- Inactive suppression: stick movements and trigger gestures are suppressed when Hypr3D is inactive.
+- CLI modes: --daemon, --check-config, --simulate, --dry-run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import math
+import os
+import select
+import socket
+import struct
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Linux Input Subsystem Constants & Protocol
+# ---------------------------------------------------------------------------
+
+EV_SYN = 0x00
+EV_KEY = 0x01
+EV_REL = 0x02
+EV_ABS = 0x03
+
+SYN_REPORT = 0x00
+SYN_DROPPED = 0x03
+
+# Gamepad buttons (Linux input-event-codes.h)
+BTN_GAMEPAD = 0x130  # 304, also BTN_SOUTH / BTN_A
+BTN_SOUTH = 0x130
+BTN_EAST = 0x131    # 305, BTN_B
+BTN_NORTH = 0x133   # 307, BTN_X
+BTN_WEST = 0x134    # 308, BTN_Y
+BTN_TL = 0x136      # 310, Left Bumper
+BTN_TR = 0x137      # 311, Right Bumper
+BTN_TL2 = 0x138     # 312, Left Trigger (LT)
+BTN_TR2 = 0x139     # 313, Right Trigger (RT)
+BTN_SELECT = 0x13A  # 314
+BTN_START = 0x13B   # 315
+BTN_MODE = 0x13C    # 316
+BTN_THUMBL = 0x13D  # 317, L3
+BTN_THUMBR = 0x13E  # 318, R3
+
+# Absolute axes (Linux input-event-codes.h)
+ABS_X = 0x00        # Left Stick X
+ABS_Y = 0x01        # Left Stick Y
+ABS_Z = 0x02        # Left Trigger (LT) / Fallback Right Stick X
+ABS_RX = 0x03       # Right Stick X
+ABS_RY = 0x04       # Right Stick Y
+ABS_RZ = 0x05       # Right Trigger (RT) / Fallback Right Stick Y
+ABS_HAT0X = 0x10    # D-pad X (-1 left, 1 right)
+ABS_HAT0Y = 0x11    # D-pad Y (-1 up, 1 down)
+
+KEY_NAMES = {
+    "BTN_GAMEPAD": BTN_GAMEPAD,
+    "BTN_SOUTH": BTN_SOUTH,
+    "BTN_EAST": BTN_EAST,
+    "BTN_NORTH": BTN_NORTH,
+    "BTN_WEST": BTN_WEST,
+    "BTN_TL": BTN_TL,
+    "BTN_TR": BTN_TR,
+    "BTN_TL2": BTN_TL2,
+    "BTN_TR2": BTN_TR2,
+    "BTN_SELECT": BTN_SELECT,
+    "BTN_START": BTN_START,
+    "BTN_MODE": BTN_MODE,
+    "BTN_THUMBL": BTN_THUMBL,
+    "BTN_THUMBR": BTN_THUMBR,
+}
+
+AXIS_NAMES = {
+    "ABS_X": ABS_X,
+    "ABS_Y": ABS_Y,
+    "ABS_Z": ABS_Z,
+    "ABS_RX": ABS_RX,
+    "ABS_RY": ABS_RY,
+    "ABS_RZ": ABS_RZ,
+    "ABS_HAT0X": ABS_HAT0X,
+    "ABS_HAT0Y": ABS_HAT0Y,
+}
+
+# struct input_event: timeval (tv_sec, tv_usec), type, code, value
+# 64-bit Linux: timeval is 16 bytes (qq), type is uint16 (H), code is uint16 (H), value is int32 (i) = 24 bytes
+INPUT_EVENT_FORMAT = "qqHHi"
+INPUT_EVENT_SIZE = struct.calcsize(INPUT_EVENT_FORMAT)
+
+# ioctl helpers
+_IOC_NRBITS = 8
+_IOC_TYPEBITS = 8
+_IOC_SIZEBITS = 14
+_IOC_DIRBITS = 2
+
+_IOC_NRSHIFT = 0
+_IOC_TYPESHIFT = _IOC_NRSHIFT + _IOC_NRBITS
+_IOC_SIZESHIFT = _IOC_TYPESHIFT + _IOC_TYPEBITS
+_IOC_DIRSHIFT = _IOC_SIZESHIFT + _IOC_SIZEBITS
+
+_IOC_READ = 2
+
+
+def _IOC(dir_: int, type_: int, nr: int, size: int) -> int:
+    return (
+        (dir_ << _IOC_DIRSHIFT)
+        | (type_ << _IOC_TYPESHIFT)
+        | (nr << _IOC_NRSHIFT)
+        | (size << _IOC_SIZESHIFT)
+    )
+
+
+def EVIOCGBIT(ev: int, length: int) -> int:
+    return _IOC(_IOC_READ, ord("E"), 0x20 + ev, length)
+
+
+def EVIOCGNAME(length: int) -> int:
+    return _IOC(_IOC_READ, ord("E"), 0x06, length)
+
+
+def EVIOCGABS(axis: int) -> int:
+    return _IOC(_IOC_READ, ord("E"), 0x40 + axis, 24)
+
+
+def EVIOCGKEY(length: int) -> int:
+    return _IOC(_IOC_READ, ord("E"), 0x18, length)
+
+
+# ---------------------------------------------------------------------------
+# SSOT Configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ControllerConfig:
+    enabled: bool = True
+    toggle_chord: List[str] = field(default_factory=lambda: ["BTN_THUMBL", "BTN_THUMBR"])
+    debounce_ms: int = 250
+    deadzone: float = 0.15
+    sensitivity: float = 1.0
+    move_sensitivity: float = 1.0
+    camera_sensitivity: float = 1.0
+    left_stick_mode: str = "continuous"
+    right_stick_mode: str = "camera"
+    invert_y: bool = False
+    dpad_enabled: bool = True
+    poll_ms: int = 10
+    device_filter: str = "gamepad"
+    fallback_axes: List[str] = field(default_factory=lambda: ["ABS_Z", "ABS_RZ"])
+    grab_button: str = "BTN_TR2"
+    grab_axis: str = "ABS_RZ"
+    resize_button: str = "BTN_TL2"
+    resize_axis: str = "ABS_Z"
+    trigger_threshold: float = 0.30
+    view_mode_button: str = "BTN_SELECT"
+    cursor_mode_button: str = "BTN_START"
+    jump_button: str = "BTN_SOUTH"
+    double_press_ms: int = 350
+    crouch_button: str = "BTN_WEST"
+    fullscreen_button: str = "BTN_NORTH"
+    shaderglass_toggle_button: str = "BTN_TR"
+    shaderglass_cycle_button: str = "BTN_TL"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ControllerConfig":
+        cfg = cls()
+        ctrl = data.get("desktop", {}).get("hyprland", {}).get("hypr3d", {}).get("controller", {})
+        if not ctrl:
+            # Fallback if top-level or alternate format
+            ctrl = data.get("controller", {})
+
+        if "enabled" in ctrl:
+            cfg.enabled = bool(ctrl["enabled"])
+        if "toggle_chord" in ctrl and isinstance(ctrl["toggle_chord"], list):
+            cfg.toggle_chord = [str(x) for x in ctrl["toggle_chord"]]
+        if "debounce_ms" in ctrl:
+            cfg.debounce_ms = int(ctrl["debounce_ms"])
+        if "deadzone" in ctrl:
+            cfg.deadzone = float(ctrl["deadzone"])
+        if "sensitivity" in ctrl:
+            cfg.sensitivity = float(ctrl["sensitivity"])
+        if "move_sensitivity" in ctrl:
+            cfg.move_sensitivity = float(ctrl["move_sensitivity"])
+        if "camera_sensitivity" in ctrl:
+            cfg.camera_sensitivity = float(ctrl["camera_sensitivity"])
+        if "left_stick_mode" in ctrl:
+            cfg.left_stick_mode = str(ctrl["left_stick_mode"])
+        if "right_stick_mode" in ctrl:
+            cfg.right_stick_mode = str(ctrl["right_stick_mode"])
+        if "invert_y" in ctrl:
+            cfg.invert_y = bool(ctrl["invert_y"])
+        if "dpad_enabled" in ctrl:
+            cfg.dpad_enabled = bool(ctrl["dpad_enabled"])
+        if "poll_ms" in ctrl:
+            cfg.poll_ms = int(ctrl["poll_ms"])
+        if "device_filter" in ctrl:
+            cfg.device_filter = str(ctrl["device_filter"])
+        if "fallback_axes" in ctrl and isinstance(ctrl["fallback_axes"], list):
+            cfg.fallback_axes = [str(x) for x in ctrl["fallback_axes"]]
+        if "grab_button" in ctrl:
+            cfg.grab_button = str(ctrl["grab_button"])
+        if "grab_axis" in ctrl:
+            cfg.grab_axis = str(ctrl["grab_axis"])
+        if "resize_button" in ctrl:
+            cfg.resize_button = str(ctrl["resize_button"])
+        if "resize_axis" in ctrl:
+            cfg.resize_axis = str(ctrl["resize_axis"])
+        if "trigger_threshold" in ctrl:
+            cfg.trigger_threshold = float(ctrl["trigger_threshold"])
+        if "view_mode_button" in ctrl:
+            cfg.view_mode_button = str(ctrl["view_mode_button"])
+        if "cursor_mode_button" in ctrl:
+            cfg.cursor_mode_button = str(ctrl["cursor_mode_button"])
+        if "jump_button" in ctrl:
+            cfg.jump_button = str(ctrl["jump_button"])
+        if "double_press_ms" in ctrl:
+            cfg.double_press_ms = int(ctrl["double_press_ms"])
+        if "crouch_button" in ctrl:
+            cfg.crouch_button = str(ctrl["crouch_button"])
+        if "fullscreen_button" in ctrl:
+            cfg.fullscreen_button = str(ctrl["fullscreen_button"])
+        if "shaderglass_toggle_button" in ctrl:
+            cfg.shaderglass_toggle_button = str(ctrl["shaderglass_toggle_button"])
+        if "shaderglass_cycle_button" in ctrl:
+            cfg.shaderglass_cycle_button = str(ctrl["shaderglass_cycle_button"])
+
+        # Validate bounds
+        if not (0.0 <= cfg.deadzone <= 1.0):
+            raise ValueError(f"deadzone must be between 0.0 and 1.0, got {cfg.deadzone}")
+        if not (0.0 < cfg.trigger_threshold <= 1.0):
+            raise ValueError(f"trigger_threshold must be in (0.0, 1.0], got {cfg.trigger_threshold}")
+        if cfg.debounce_ms <= 0:
+            raise ValueError(f"debounce_ms must be positive, got {cfg.debounce_ms}")
+        if cfg.double_press_ms <= 0:
+            raise ValueError(f"double_press_ms must be positive, got {cfg.double_press_ms}")
+
+        return cfg
+
+    @classmethod
+    def load_ssot(cls, path: str = "/usr/share/mios/mios.toml") -> "ControllerConfig":
+        if not os.path.exists(path):
+            return cls()
+        if tomllib is None:
+            raise RuntimeError("Python tomllib or tomli module required to parse SSOT")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        return cls.from_dict(data)
+
+
+# ---------------------------------------------------------------------------
+# Simultaneous Button Chord Detector
+# ---------------------------------------------------------------------------
+
+class ChordDetector:
+    """Detects simultaneous button chords (e.g. L3 + R3) with debounce and hold suppression."""
+
+    def __init__(self, chord_button_names: List[str], debounce_ms: int = 250):
+        self.chord_button_names = chord_button_names
+        self.debounce_sec = max(0.01, debounce_ms / 1000.0)
+        self.chord_codes: Set[int] = {
+            KEY_NAMES[k] for k in chord_button_names if k in KEY_NAMES
+        }
+        self.button_states: Dict[int, bool] = {code: False for code in self.chord_codes}
+        self.button_press_times: Dict[int, float] = {code: 0.0 for code in self.chord_codes}
+        self.chord_triggered = False
+        self.last_trigger_time = 0.0
+
+    def process_key(self, code: int, value: int, now: Optional[float] = None) -> bool:
+        """
+        Process a key/button event.
+        Returns True if the full simultaneous chord was just triggered, False otherwise.
+        """
+        if code not in self.chord_codes:
+            return False
+
+        if now is None:
+            now = time.monotonic()
+
+        if value == 1:  # Press
+            self.button_states[code] = True
+            self.button_press_times[code] = now
+
+            # Check if all buttons in chord are pressed
+            all_pressed = all(self.button_states.get(c, False) for c in self.chord_codes)
+            if all_pressed and not self.chord_triggered:
+                # Check debounce timing: time between first and last press in chord
+                press_times = [self.button_press_times[c] for c in self.chord_codes]
+                chord_spread = max(press_times) - min(press_times)
+
+                if chord_spread <= self.debounce_sec:
+                    # Enforce cooldown from previous trigger
+                    if (now - self.last_trigger_time) >= self.debounce_sec:
+                        self.chord_triggered = True
+                        self.last_trigger_time = now
+                        return True
+        elif value == 0:  # Release
+            self.button_states[code] = False
+            # When any button in the chord is released, reset triggered flag
+            self.chord_triggered = False
+
+        return False
+
+    def reset(self):
+        """Resets all button states and triggered latch (e.g. on device disconnect)."""
+        for code in self.chord_codes:
+            self.button_states[code] = False
+            self.button_press_times[code] = 0.0
+        self.chord_triggered = False
+
+
+# ---------------------------------------------------------------------------
+# Dual-Stick Input Processor
+# ---------------------------------------------------------------------------
+
+class StickProcessor:
+    """Processes analog stick axes: normalization, radial deadzone, scaling, fallback."""
+
+    def __init__(
+        self,
+        config: ControllerConfig,
+        available_axes: Optional[Set[int]] = None,
+        axis_ranges: Optional[Dict[int, Tuple[int, int]]] = None,
+        initial_values: Optional[Dict[int, int]] = None,
+    ):
+        self.config = config
+        self.available_axes = available_axes or set()
+        # Default typical range for gamepad axes (-32768, 32767)
+        self.axis_ranges = dict(axis_ranges) if axis_ranges else {}
+        self.current_raw: Dict[int, int] = {}
+        self.current_norm: Dict[int, float] = {}
+        self.dirty: bool = False
+
+        # Resolve right-stick axes (primary ABS_RX/ABS_RY vs fallback ABS_Z/ABS_RZ)
+        self.rx_axis = ABS_RX
+        self.ry_axis = ABS_RY
+        if self.available_axes:
+            has_rx_ry = ABS_RX in self.available_axes and ABS_RY in self.available_axes
+            if not has_rx_ry:
+                fb_x = AXIS_NAMES.get(self.config.fallback_axes[0], ABS_Z) if len(self.config.fallback_axes) > 0 else ABS_Z
+                fb_y = AXIS_NAMES.get(self.config.fallback_axes[1], ABS_RZ) if len(self.config.fallback_axes) > 1 else ABS_RZ
+                if fb_x in self.available_axes and fb_y in self.available_axes:
+                    self.rx_axis = fb_x
+                    self.ry_axis = fb_y
+
+        self.triggers_are_axes: bool = (
+            self.rx_axis not in (ABS_Z, ABS_RZ) and self.ry_axis not in (ABS_Z, ABS_RZ)
+        )
+
+        if initial_values:
+            for ax, val in initial_values.items():
+                self.current_raw[ax] = val
+                norm = self.normalize_axis(ax, val)
+                if abs(norm) < 0.5:
+                    self.current_norm[ax] = norm
+                else:
+                    self.current_norm[ax] = 0.0
+
+    def normalize_axis(self, axis: int, raw_value: int) -> float:
+        min_v, max_v = self.axis_ranges.get(axis, (-32768, 32767))
+        if axis in (ABS_HAT0X, ABS_HAT0Y):
+            return float(max(-1, min(1, raw_value)))
+        if max_v <= min_v:
+            return 0.0
+        center = (min_v + max_v) / 2.0
+        half_span = (max_v - min_v) / 2.0
+        norm = (raw_value - center) / half_span
+        return max(-1.0, min(1.0, norm))
+
+    def normalize_trigger(self, axis: int, raw_value: int) -> float:
+        if axis in self.axis_ranges:
+            min_v, max_v = self.axis_ranges[axis]
+        elif 0 <= raw_value <= 255:
+            min_v, max_v = (0, 255)
+        else:
+            min_v, max_v = (-32768, 32767)
+        if max_v <= min_v:
+            return 0.0
+        return max(0.0, min(1.0, (raw_value - min_v) / float(max_v - min_v)))
+
+    def _compute_vectors(self) -> Dict[str, Tuple[float, float]]:
+        # 1. Left Stick (ABS_X, ABS_Y) + optional D-pad
+        lx = self.current_norm.get(ABS_X, 0.0)
+        ly = self.current_norm.get(ABS_Y, 0.0)
+
+        if self.config.dpad_enabled:
+            dx = self.current_norm.get(ABS_HAT0X, 0.0)
+            dy = self.current_norm.get(ABS_HAT0Y, 0.0)
+            if dx != 0.0:
+                lx = dx
+            if dy != 0.0:
+                ly = dy
+
+        left_x, left_y = self._apply_deadzone(
+            lx, ly, self.config.deadzone, self.config.sensitivity * self.config.move_sensitivity
+        )
+
+        # 2. Right Stick (rx_axis, ry_axis)
+        rx = self.current_norm.get(self.rx_axis, 0.0)
+        ry = self.current_norm.get(self.ry_axis, 0.0)
+
+        if self.config.invert_y:
+            ry = -ry
+
+        right_x, right_y = self._apply_deadzone(
+            rx, ry, self.config.deadzone, self.config.sensitivity * self.config.camera_sensitivity
+        )
+
+        return {
+            "left": (left_x, left_y),
+            "right": (right_x, right_y),
+        }
+
+    def get_vectors(self) -> Dict[str, Tuple[float, float]]:
+        """
+        Computes current filtered dual stick vectors from accumulated normalized axes
+        and clears the dirty flag:
+        {"left": (x, y), "right": (yaw, pitch)}
+        """
+        self.dirty = False
+        return self._compute_vectors()
+
+    def process_abs(self, axis: int, value: int) -> Dict[str, Tuple[float, float]]:
+        """
+        Updates axis value in buffer, marks state dirty, and returns current filtered dual stick vectors:
+        {"left": (x, y), "right": (yaw, pitch)}
+        """
+        self.current_raw[axis] = value
+        self.current_norm[axis] = self.normalize_axis(axis, value)
+        self.dirty = True
+        return self._compute_vectors()
+
+    def reset(self):
+        """Resets raw and normalized axis state and dirty flag."""
+        self.current_raw.clear()
+        self.current_norm.clear()
+        self.dirty = False
+
+    @staticmethod
+    def _apply_deadzone(
+        x: float, y: float, deadzone: float, sensitivity: float
+    ) -> Tuple[float, float]:
+        if abs(x) < deadzone * 0.5:
+            x = 0.0
+        if abs(y) < deadzone * 0.5:
+            y = 0.0
+        mag = math.hypot(x, y)
+        if deadzone >= 1.0 or mag <= deadzone or mag == 0.0:
+            return (0.0, 0.0)
+
+        # Smooth rescale from deadzone to 1.0
+        scaled_mag = (mag - deadzone) / (1.0 - deadzone)
+        scaled_mag = min(1.0, max(0.0, scaled_mag))
+        factor = (scaled_mag / mag) * sensitivity
+        return (x * factor, y * factor)
+
+
+# ---------------------------------------------------------------------------
+# Gamepad Evdev Device Discovery & Handling
+# ---------------------------------------------------------------------------
+
+class GamepadDevice:
+    """Encapsulates a Linux evdev input device node."""
+
+    def __init__(self, path: str, fd: Optional[int] = None, name: str = ""):
+        self.path = path
+        self.fd = fd
+        self.name = name
+        self.key_bits: Set[int] = set()
+        self.abs_bits: Set[int] = set()
+        self.abs_ranges: Dict[int, Tuple[int, int]] = {}
+        self.abs_initial: Dict[int, int] = {}
+        self.stick_processor: Optional[StickProcessor] = None
+        self.chord_detector: Optional[ChordDetector] = None
+
+    @staticmethod
+    def test_bit(buf: Any, bit: int) -> bool:
+        byte_idx = bit // 8
+        bit_idx = bit % 8
+        return byte_idx < len(buf) and bool(buf[byte_idx] & (1 << bit_idx))
+
+    @classmethod
+    def matches_capabilities(cls, has_key: bool, has_abs: bool, key_mask: Any, abs_mask: Any) -> bool:
+        """Determines if input device capabilities match a gamepad."""
+        if not (has_key and has_abs):
+            return False
+
+        is_gamepad_btn = cls.test_bit(key_mask, BTN_GAMEPAD) or (
+            cls.test_bit(key_mask, BTN_THUMBL) and cls.test_bit(key_mask, BTN_THUMBR)
+        )
+        if not is_gamepad_btn:
+            return False
+
+        has_x_y = cls.test_bit(abs_mask, ABS_X) and cls.test_bit(abs_mask, ABS_Y)
+        if not has_x_y:
+            return False
+
+        return True
+
+    @classmethod
+    def probe(cls, path: str) -> Optional["GamepadDevice"]:
+        """Probes /dev/input/event* path to verify if it is a gamepad."""
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, PermissionError):
+            return None
+
+        try:
+            import fcntl
+
+            # Check EV_KEY and EV_ABS presence
+            ev_mask_buf = bytearray(8)
+            fcntl.ioctl(fd, EVIOCGBIT(0, len(ev_mask_buf)), ev_mask_buf)
+            has_key = bool(ev_mask_buf[0] & (1 << EV_KEY))
+            has_abs = bool(ev_mask_buf[0] & (1 << EV_ABS))
+            if not (has_key and has_abs):
+                os.close(fd)
+                return None
+
+            # Read EV_KEY bitmask
+            key_mask_buf = bytearray(96)  # up to key 768
+            fcntl.ioctl(fd, EVIOCGBIT(EV_KEY, len(key_mask_buf)), key_mask_buf)
+
+            # Read EV_ABS bitmask
+            abs_mask_buf = bytearray(8)
+            fcntl.ioctl(fd, EVIOCGBIT(EV_ABS, len(abs_mask_buf)), abs_mask_buf)
+
+            if not cls.matches_capabilities(has_key, has_abs, key_mask_buf, abs_mask_buf):
+                os.close(fd)
+                return None
+
+            # Read device name
+            name_buf = bytearray(256)
+            try:
+                fcntl.ioctl(fd, EVIOCGNAME(len(name_buf)), name_buf)
+                name = name_buf.split(b"\x00")[0].decode("utf-8", errors="replace").strip()
+            except Exception:
+                name = "Unknown Gamepad"
+
+            name_lower = name.lower()
+            reject_tokens = (
+                "annepro",
+                "keyboard",
+                "mouse",
+                "touchpad",
+                "motion sensor",
+                "headset",
+                "consumer control",
+                "system control",
+                "video bus",
+                "power button",
+                "razer viper",
+                "generic usb audio",
+                "hda ",
+                "hdmi",
+            )
+            if any(tok in name_lower for tok in reject_tokens):
+                os.close(fd)
+                return None
+
+            dev = cls(path, fd, name)
+            for k in KEY_NAMES.values():
+                if cls.test_bit(key_mask_buf, k):
+                    dev.key_bits.add(k)
+            for a in AXIS_NAMES.values():
+                if cls.test_bit(abs_mask_buf, a):
+                    dev.abs_bits.add(a)
+                    try:
+                        abs_buf = bytearray(24)
+                        fcntl.ioctl(fd, EVIOCGABS(a), abs_buf)
+                        val, min_v, max_v, _fuzz, _flat, _res = struct.unpack("6i", abs_buf)
+                        if max_v > min_v:
+                            dev.abs_ranges[a] = (min_v, max_v)
+                        dev.abs_initial[a] = val
+                    except Exception:
+                        pass
+
+            # Reject dummy unsigned (0..255) HID descriptors where sticks are uninitialized at 0
+            x_range = dev.abs_ranges.get(ABS_X)
+            y_range = dev.abs_ranges.get(ABS_Y)
+            if (
+                x_range is not None
+                and y_range is not None
+                and x_range[0] == 0
+                and y_range[0] == 0
+                and dev.abs_initial.get(ABS_X) == 0
+                and dev.abs_initial.get(ABS_Y) == 0
+                and dev.abs_initial.get(ABS_RX, 0) == 0
+                and dev.abs_initial.get(ABS_RY, 0) == 0
+            ):
+                os.close(fd)
+                return None
+
+            return dev
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            return None
+
+    def close(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+
+# ---------------------------------------------------------------------------
+# Daemon Orchestration
+# ---------------------------------------------------------------------------
+
+class GamepadHypr3dDaemon:
+    """Main daemon managing gamepad discovery, chord detection, dual-stick dispatch, and RT/LT window gestures."""
+
+    def __init__(
+        self,
+        config: Optional[ControllerConfig] = None,
+        dry_run: bool = False,
+        root: str = "/",
+        verbose: bool = False,
+        toggle_callback: Optional[Callable[[bool], None]] = None,
+        move_callback: Optional[Callable[[float, float], None]] = None,
+        camera_callback: Optional[Callable[[float, float], None]] = None,
+        grab_callback: Optional[Callable[[bool], None]] = None,
+        resize_callback: Optional[Callable[[bool], None]] = None,
+        view_callback: Optional[Callable[[], None]] = None,
+        mode_callback: Optional[Callable[[], None]] = None,
+        jump_callback: Optional[Callable[[], None]] = None,
+        fly_callback: Optional[Callable[[], None]] = None,
+        posture_callback: Optional[Callable[[], None]] = None,
+        fullscreen_callback: Optional[Callable[[], None]] = None,
+        shaderglass_toggle_callback: Optional[Callable[[], None]] = None,
+        shaderglass_cycle_callback: Optional[Callable[[], None]] = None,
+        dispatch_callback: Optional[Callable[[List[str]], bool]] = None,
+        dry_run_success_map: Optional[Dict[str, bool]] = None,
+    ):
+        self.config = config or ControllerConfig()
+        self.dry_run = dry_run
+        self.root = root
+        self.verbose = verbose
+        self.hypr3d_active: bool = False
+        self.devices: Dict[str, GamepadDevice] = {}
+        self.probed_paths: Dict[str, Tuple[int, int]] = {}
+        self.chord_detector = ChordDetector(self.config.toggle_chord, self.config.debounce_ms)
+        self.stick_processor = StickProcessor(self.config)
+
+        self.toggle_callback = toggle_callback
+        self.move_callback = move_callback
+        self.camera_callback = camera_callback
+        self.grab_callback = grab_callback
+        self.resize_callback = resize_callback
+        self.view_callback = view_callback
+        self.mode_callback = mode_callback
+        self.jump_callback = jump_callback
+        self.fly_callback = fly_callback
+        self.posture_callback = posture_callback
+        self.fullscreen_callback = fullscreen_callback
+        self.shaderglass_toggle_callback = shaderglass_toggle_callback
+        self.shaderglass_cycle_callback = shaderglass_cycle_callback
+        self.dispatch_callback = dispatch_callback
+        self.dry_run_success_map: Dict[str, bool] = dry_run_success_map or {}
+
+        # State tracking for rate limiting, held stick movement, WASD keys, and RT/LT triggers
+        self.last_dispatch_time: float = 0.0
+        self.last_status_sync_time: float = 0.0
+        self.cached_hypr_sig: Optional[str] = None
+        self.current_left_vector: Tuple[float, float] = (0.0, 0.0)
+        self.current_right_vector: Tuple[float, float] = (0.0, 0.0)
+        self.active_wasd_keys: Set[str] = set()
+        self.active_continuous_move: bool = False
+        self.dispatched_commands: List[List[str]] = []
+        self.has_hypr3d_move: bool = True
+        self.has_hypr3d_camera: bool = True
+
+        self.grab_btn_code: int = KEY_NAMES.get(self.config.grab_button, BTN_TR2)
+        self.grab_axis_code: int = AXIS_NAMES.get(self.config.grab_axis, ABS_RZ)
+        self.resize_btn_code: int = KEY_NAMES.get(self.config.resize_button, BTN_TL2)
+        self.resize_axis_code: int = AXIS_NAMES.get(self.config.resize_axis, ABS_Z)
+
+        self.rt_button_down: bool = False
+        self.rt_axis_down: bool = False
+        self.rt_grab_active: bool = False
+        self.lt_button_down: bool = False
+        self.lt_axis_down: bool = False
+        self.lt_resize_active: bool = False
+        self.trigger_dirty: bool = False
+        self.view_btn_code: int = KEY_NAMES.get(self.config.view_mode_button, BTN_SELECT)
+        self.mode_btn_code: int = KEY_NAMES.get(self.config.cursor_mode_button, BTN_START)
+        self.jump_btn_code: int = KEY_NAMES.get(self.config.jump_button, BTN_SOUTH)
+        self.crouch_btn_code: int = KEY_NAMES.get(self.config.crouch_button, BTN_WEST)
+        self.fullscreen_btn_code: int = KEY_NAMES.get(self.config.fullscreen_button, BTN_NORTH)
+        self.sg_toggle_btn_code: int = KEY_NAMES.get(self.config.shaderglass_toggle_button, BTN_TR)
+        self.sg_cycle_btn_code: int = KEY_NAMES.get(self.config.shaderglass_cycle_button, BTN_TL)
+        self.select_btn_down: bool = False
+        self.start_btn_down: bool = False
+        self.south_btn_down: bool = False
+        self.west_btn_down: bool = False
+        self.north_btn_down: bool = False
+        self.rb_btn_down: bool = False
+        self.lb_btn_down: bool = False
+        self.last_south_press_time: float = 0.0
+        self.select_seq: int = 0
+        self.start_seq: int = 0
+        self.south_seq: int = 0
+        self.fly_seq: int = 0
+        self.west_seq: int = 0
+        self.north_seq: int = 0
+        self.rb_seq: int = 0
+        self.lb_seq: int = 0
+        if not self.dry_run and os.path.exists("/tmp/mios-hypr3d-pad.bin"):
+            try:
+                with open("/tmp/mios-hypr3d-pad.bin", "rb") as f:
+                    raw = f.read(68)
+                if len(raw) >= 68:
+                    (
+                        magic, ver, _ts, _lx, _ly, _rx, _ry,
+                        _rt, _lt, _sh, _wh,
+                        sel_s, st_s, so_s, fl_s, we_s, no_s, rb_s, lb_s,
+                    ) = struct.unpack("<IIqffffBBBBIIIIIIII", raw[:68])
+                    if magic == 0x4D493344 and ver == 1:
+                        self.select_seq = sel_s
+                        self.start_seq = st_s
+                        self.south_seq = so_s
+                        self.fly_seq = fl_s
+                        self.west_seq = we_s
+                        self.north_seq = no_s
+                        self.rb_seq = rb_s
+                        self.lb_seq = lb_s
+                elif len(raw) >= 44:
+                    magic, ver, _ts, _lx, _ly, _rx, _ry, _rt, _lt, _p0, _p1, sel_s, st_s = struct.unpack(
+                        "<IIqffffBBBBII", raw[:44]
+                    )
+                    if magic == 0x4D493344 and ver == 1:
+                        self.select_seq = sel_s
+                        self.start_seq = st_s
+            except Exception:
+                pass
+
+    def log(self, msg: str):
+        if self.verbose:
+            print(f"[mios-gamepad-hypr3d] {msg}", file=sys.stderr, flush=True)
+
+    def _resolve_hyprland_env(self) -> Dict[str, str]:
+        """Resolves environment variables including live HYPRLAND_INSTANCE_SIGNATURE."""
+        env = dict(os.environ)
+        uid = os.getuid()
+        xdg_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
+        env["XDG_RUNTIME_DIR"] = xdg_dir
+        hypr_base = os.path.join(xdg_dir, "hypr")
+
+        if self.cached_hypr_sig:
+            sock = os.path.join(hypr_base, self.cached_hypr_sig, ".socket.sock")
+            if os.path.exists(sock):
+                env["HYPRLAND_INSTANCE_SIGNATURE"] = self.cached_hypr_sig
+                return env
+            self.cached_hypr_sig = None
+
+        candidates: List[Tuple[float, str]] = []
+        if os.path.isdir(hypr_base):
+            for entry in os.listdir(hypr_base):
+                sock = os.path.join(hypr_base, entry, ".socket.sock")
+                if os.path.exists(sock):
+                    try:
+                        candidates.append((os.path.getmtime(sock), entry))
+                    except OSError:
+                        pass
+        candidates.sort(reverse=True)
+        for _mtime, sig in candidates:
+            test_env = dict(env)
+            test_env["HYPRLAND_INSTANCE_SIGNATURE"] = sig
+            try:
+                res = subprocess.run(
+                    ["/usr/bin/hyprctl", "monitors"],
+                    env=test_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=0.5,
+                )
+                if res.returncode == 0 and "Monitor" in res.stdout:
+                    self.cached_hypr_sig = sig
+                    env["HYPRLAND_INSTANCE_SIGNATURE"] = sig
+                    return env
+            except Exception:
+                continue
+
+        return env
+
+    def _sync_hypr3d_active(self, now: Optional[float] = None, force: bool = False):
+        """Syncs self.hypr3d_active with live /tmp/hypr3d-status.txt when not in dry_run mode."""
+        if self.dry_run:
+            return
+        if now is None:
+            now = time.monotonic()
+        if not force and (now - self.last_status_sync_time) < 0.15:
+            return
+        self.last_status_sync_time = now
+
+        status_path = "/tmp/hypr3d-status.txt"
+        try:
+            st = os.stat(status_path)
+            with open(status_path, "rb") as f:
+                if st.st_size > 4096:
+                    f.seek(st.st_size - 4096)
+                tail = f.read().decode("utf-8", errors="ignore")
+            for line in reversed(tail.splitlines()):
+                if line.startswith("active="):
+                    was_active = self.hypr3d_active
+                    self.hypr3d_active = line.startswith("active=1") and (" target=1 " in line or line.endswith(" target=1"))
+                    if was_active and not self.hypr3d_active:
+                        self._release_wasd_keys()
+                        self._release_triggers()
+                    break
+        except OSError:
+            pass
+
+    def scan_devices(self) -> int:
+        """Discovers and opens matching gamepad devices in /dev/input/event*."""
+        patterns = os.path.join(self.root, "dev/input/event*")
+        found = glob.glob(patterns)
+        new_count = 0
+        for path in sorted(found):
+            if path in self.devices:
+                continue
+            try:
+                st = os.stat(path)
+                sig = (st.st_rdev, st.st_ctime_ns)
+            except OSError:
+                continue
+            if self.probed_paths.get(path) == sig:
+                continue
+            self.probed_paths[path] = sig
+            dev = GamepadDevice.probe(path)
+            if dev:
+                dev.stick_processor = StickProcessor(
+                    self.config,
+                    available_axes=dev.abs_bits,
+                    axis_ranges=dev.abs_ranges,
+                    initial_values=dev.abs_initial,
+                )
+                dev.chord_detector = ChordDetector(self.config.toggle_chord, self.config.debounce_ms)
+                self.devices[path] = dev
+                self.log(f"Discovered gamepad: {dev.name} ({path}) ranges={dev.abs_ranges}")
+                self.stick_processor = dev.stick_processor
+                new_count += 1
+        return new_count
+
+    def toggle_hypr3d(self) -> bool:
+        """Toggles Hypr3D mode."""
+        self._sync_hypr3d_active(force=True)
+        self.hypr3d_active = not self.hypr3d_active
+        self.log(f"Chord L3+R3 triggered! Hypr3D active: {self.hypr3d_active}")
+
+        if not self.hypr3d_active:
+            if self.active_wasd_keys or self.active_continuous_move:
+                self._release_wasd_keys()
+            self._release_triggers()
+
+        if self.hypr3d_active:
+            self.has_hypr3d_move = True
+            self.has_hypr3d_camera = True
+
+        if self.toggle_callback:
+            self.toggle_callback(self.hypr3d_active)
+
+        if not self.dry_run:
+            self._write_shared_pad_state()
+            # Execute toggle via mios-gen or hyprctl eval
+            cmd = ["/usr/bin/mios-gen", "hyprland-3d-toggle"]
+            if not os.path.exists(cmd[0]):
+                cmd = ["/usr/bin/hyprctl", "eval", "hl.plugin.hypr3d.toggle()"]
+
+            try:
+                subprocess.run(
+                    cmd,
+                    env=self._resolve_hyprland_env(),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                self.last_status_sync_time = time.monotonic()
+            except Exception as e:
+                self.log(f"Toggle command failed: {e}")
+
+        return self.hypr3d_active
+
+    @staticmethod
+    def _translate_live_hyprctl(cmd: List[str]) -> List[str]:
+        """Translates logical hyprctl dispatch hypr3d:* commands to Hyprland v0.56 Lua eval syntax."""
+        if len(cmd) >= 3 and cmd[1] == "dispatch" and cmd[2].startswith("hypr3d:"):
+            verb = cmd[2].split(":", 1)[1]
+            args = cmd[3:]
+            if verb == "move":
+                if not args or args[0] in ("stop", "reset"):
+                    return [cmd[0], "eval", "hl.plugin.hypr3d.move(0.0, 0.0)"]
+                if len(args) >= 2:
+                    return [cmd[0], "eval", f"hl.plugin.hypr3d.move({float(args[0])}, {float(args[1])})"]
+            elif verb == "camera":
+                if not args or args[0] in ("stop", "reset"):
+                    return [cmd[0], "eval", "hl.plugin.hypr3d.camera(0.0, 0.0)"]
+                if len(args) >= 2:
+                    dx = float(args[0])
+                    dy = float(args[1])
+                    if abs(dx) <= 2.0 and abs(dy) <= 2.0:
+                        dx *= 16.0
+                        dy *= 16.0
+                    return [cmd[0], "eval", f"hl.plugin.hypr3d.camera({dx:.3f}, {dy:.3f})"]
+            elif verb in ("grab", "resize", "crt", "view", "mode", "fly", "posture", "click"):
+                default_arg = "cycle" if verb in ("view", "posture") else ("left" if verb == "click" else "toggle")
+                arg_str = args[0] if args else default_arg
+                safe_arg = arg_str.replace("\\", "").replace("'", "")
+                return [cmd[0], "eval", f"hl.plugin.hypr3d.{verb}('{safe_arg}')"]
+            elif verb == "jump":
+                if args:
+                    safe_arg = args[0].replace("\\", "").replace("'", "")
+                    return [cmd[0], "eval", f"hl.plugin.hypr3d.jump('{safe_arg}')"]
+                return [cmd[0], "eval", "hl.plugin.hypr3d.jump()"]
+            elif verb in ("toggle", "open", "close", "fullscreen"):
+                return [cmd[0], "eval", f"hl.plugin.hypr3d.{verb}()"]
+        return cmd
+
+    def _write_shared_pad_state(self):
+        """Writes lock-free 68-byte gamepad state to /tmp/mios-hypr3d-pad.bin for hypr3d.so."""
+        if self.dry_run:
+            return
+        lx, ly = self.current_left_vector if self.hypr3d_active else (0.0, 0.0)
+        rx, ry = self.current_right_vector if self.hypr3d_active else (0.0, 0.0)
+        rt = 1 if (self.hypr3d_active and self.rt_grab_active) else 0
+        lt = 1 if (self.hypr3d_active and self.lt_resize_active) else 0
+        south_held = 1 if (self.hypr3d_active and self.south_btn_down) else 0
+        west_held = 1 if (self.hypr3d_active and self.west_btn_down) else 0
+        pkt = struct.pack(
+            "<IIqffffBBBBIIIIIIII",
+            0x4D493344,
+            1,
+            time.monotonic_ns(),
+            float(lx),
+            float(ly),
+            float(rx),
+            float(ry),
+            rt,
+            lt,
+            south_held,
+            west_held,
+            self.select_seq & 0xFFFFFFFF,
+            self.start_seq & 0xFFFFFFFF,
+            self.south_seq & 0xFFFFFFFF,
+            self.fly_seq & 0xFFFFFFFF,
+            self.west_seq & 0xFFFFFFFF,
+            self.north_seq & 0xFFFFFFFF,
+            self.rb_seq & 0xFFFFFFFF,
+            self.lb_seq & 0xFFFFFFFF,
+        )
+        pad_path = "/tmp/mios-hypr3d-pad.bin"
+        tmp_path = "/tmp/mios-hypr3d-pad.bin.tmp"
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(pkt)
+            os.replace(tmp_path, pad_path)
+        except OSError:
+            pass
+
+    def dispatch_hyprctl(self, cmd: List[str]) -> bool:
+        """Executes hyprctl dispatch command or records it in dry_run mode."""
+        self.dispatched_commands.append(cmd)
+        if self.dispatch_callback is not None:
+            return self.dispatch_callback(cmd)
+        if self.dry_run:
+            for target, result in self.dry_run_success_map.items():
+                if any(target in arg for arg in cmd):
+                    return result
+            return True
+        if len(cmd) >= 3 and cmd[1] == "dispatch" and cmd[2] in (
+            "hypr3d:move",
+            "hypr3d:camera",
+            "hypr3d:grab",
+            "hypr3d:resize",
+            "hypr3d:view",
+            "hypr3d:mode",
+            "hypr3d:jump",
+            "hypr3d:fly",
+            "hypr3d:posture",
+            "hypr3d:fullscreen",
+            "hypr3d:crt",
+        ):
+            self._write_shared_pad_state()
+            return True
+        exec_cmd = self._translate_live_hyprctl(cmd)
+        env = self._resolve_hyprland_env()
+        try:
+            res = subprocess.run(
+                exec_cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+            if res.returncode != 0:
+                self.cached_hypr_sig = None
+            return res.returncode == 0
+        except Exception as e:
+            self.log(f"Dispatch {exec_cmd} failed: {e}")
+            return False
+
+    def _release_triggers(self):
+        """Releases any active RT grab, LT resize, or held South/West buttons."""
+        self.rt_button_down = False
+        self.rt_axis_down = False
+        self.lt_button_down = False
+        self.lt_axis_down = False
+        self.south_btn_down = False
+        self.west_btn_down = False
+        self.trigger_dirty = False
+        if self.rt_grab_active:
+            self.rt_grab_active = False
+            if self.grab_callback:
+                self.grab_callback(False)
+            self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:grab", "up"])
+        if self.lt_resize_active:
+            self.lt_resize_active = False
+            if self.resize_callback:
+                self.resize_callback(False)
+            self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:resize", "up"])
+
+    def _update_trigger_states(self, now: Optional[float] = None):
+        """Dispatches hypr3d:grab down/up (RT) and hypr3d:resize down/up (LT) when Hypr3D is active."""
+        self.trigger_dirty = False
+        self._sync_hypr3d_active(now)
+
+        if not self.hypr3d_active:
+            if self.rt_grab_active or self.lt_resize_active:
+                self._release_triggers()
+            return
+
+        want_rt = self.rt_button_down or self.rt_axis_down
+        want_lt = self.lt_button_down or self.lt_axis_down
+
+        if want_rt != self.rt_grab_active:
+            self.rt_grab_active = want_rt
+            if self.grab_callback:
+                self.grab_callback(want_rt)
+            self.dispatch_hyprctl(
+                ["/usr/bin/hyprctl", "dispatch", "hypr3d:grab", "down" if want_rt else "up"]
+            )
+
+        if want_lt != self.lt_resize_active:
+            self.lt_resize_active = want_lt
+            if self.resize_callback:
+                self.resize_callback(want_lt)
+            self.dispatch_hyprctl(
+                ["/usr/bin/hyprctl", "dispatch", "hypr3d:resize", "down" if want_lt else "up"]
+            )
+
+    def handle_stick_input(
+        self,
+        left: Tuple[float, float],
+        right: Tuple[float, float],
+        force: bool = False,
+        now: Optional[float] = None,
+    ):
+        """Dispatches movement and camera rotation only if Hypr3D is active."""
+        self.current_left_vector = left
+        self.current_right_vector = right
+
+        if now is None:
+            now = time.monotonic()
+        self._sync_hypr3d_active(now)
+
+        if not self.hypr3d_active:
+            # INACTIVE SUPPRESSION: stick events are completely ignored when Hypr3D is inactive.
+            if self.active_wasd_keys or self.active_continuous_move:
+                self._release_wasd_keys()
+            return
+
+        lx, ly = left
+        rx, ry = right
+
+        poll_interval = max(0.005, self.config.poll_ms / 1000.0)
+
+        # Always release left-stick movement immediately on centering before rate-limiting
+        if lx == 0.0 and ly == 0.0 and (self.active_wasd_keys or self.active_continuous_move):
+            self._release_wasd_keys()
+
+        # If both sticks are centered, write zero state and return
+        if lx == 0.0 and ly == 0.0 and rx == 0.0 and ry == 0.0:
+            self._write_shared_pad_state()
+            return
+
+        # Rate-limiting: suppress dispatches faster than poll_ms interval unless forced
+        if not force and (now - self.last_dispatch_time) < poll_interval:
+            return
+
+        self.last_dispatch_time = now
+
+        # 1. Left Stick (Movement)
+        if lx != 0.0 or ly != 0.0:
+            if self.move_callback:
+                self.move_callback(lx, ly)
+
+            if self.config.left_stick_mode == "wasd":
+                self._dispatch_wasd_movement(lx, ly)
+            else:
+                self._dispatch_continuous_movement(lx, ly)
+
+        # 2. Right Stick (Camera Look)
+        if rx != 0.0 or ry != 0.0:
+            if self.camera_callback:
+                self.camera_callback(rx, ry)
+            self._dispatch_camera_look(rx, ry)
+
+    def _dispatch_wasd_movement(self, lx: float, ly: float):
+        """Emits discrete WASD step movement based on stick deflection."""
+        desired: Set[str] = set()
+        if ly < -0.20:
+            desired.add("w")  # Forward
+        elif ly > 0.20:
+            desired.add("s")  # Backward
+
+        if lx < -0.20:
+            desired.add("a")  # Strafe Left
+        elif lx > 0.20:
+            desired.add("d")  # Strafe Right
+
+        for k in desired:
+            cmd = ["/usr/bin/hyprctl", "dispatch", "sendshortcut", f",{k.upper()},"]
+            self.dispatch_hyprctl(cmd)
+
+        self.active_wasd_keys = desired
+
+    def _release_wasd_keys(self):
+        """Releases any currently held WASD keys without spurious keypress dispatch and stops continuous move."""
+        self.active_wasd_keys.clear()
+        if self.active_continuous_move:
+            self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:move", "stop"])
+            self.active_continuous_move = False
+
+    def _dispatch_continuous_movement(self, lx: float, ly: float):
+        """Dispatches continuous 3D camera translation with fallback to WASD step movement."""
+        if self.has_hypr3d_move:
+            cmd = ["/usr/bin/hyprctl", "dispatch", "hypr3d:move", f"{lx:.3f}", f"{ly:.3f}"]
+            success = self.dispatch_hyprctl(cmd)
+            if not success:
+                self.has_hypr3d_move = False
+                self.active_continuous_move = False
+                self._dispatch_wasd_movement(lx, ly)
+            else:
+                self.active_continuous_move = True
+        else:
+            self._dispatch_wasd_movement(lx, ly)
+
+    def _dispatch_camera_look(self, rx: float, ry: float):
+        """Dispatches 3D camera rotation with fallback to relative cursor motion."""
+        if self.has_hypr3d_camera:
+            cmd = ["/usr/bin/hyprctl", "dispatch", "hypr3d:camera", f"{rx:.3f}", f"{ry:.3f}"]
+            success = self.dispatch_hyprctl(cmd)
+            if not success:
+                self.has_hypr3d_camera = False
+                self._fallback_camera_look(rx, ry)
+        else:
+            self._fallback_camera_look(rx, ry)
+
+    def _fallback_camera_look(self, rx: float, ry: float):
+        """Relative cursor motion fallback when hypr3d:camera is not registered."""
+        dx = int(rx * 20.0 * self.config.camera_sensitivity)
+        dy = int(ry * 20.0 * self.config.camera_sensitivity)
+        if dx != 0 or dy != 0:
+            fallback_cmd = ["/usr/bin/hyprctl", "dispatch", "movecursor", str(dx), str(dy)]
+            self.dispatch_hyprctl(fallback_cmd)
+
+    def process_event(self, ev_type: int, code: int, value: int, now: Optional[float] = None):
+        """Processes a single input event (either live from evdev or synthetic for tests)."""
+        if now is None:
+            now = time.monotonic()
+        if ev_type == EV_KEY:
+            if self.chord_detector.process_key(code, value, now):
+                self.toggle_hypr3d()
+                return
+            if code == self.grab_btn_code:
+                self.rt_button_down = (value != 0)
+                self._update_trigger_states(now)
+            elif code == self.resize_btn_code:
+                self.lt_button_down = (value != 0)
+                self._update_trigger_states(now)
+            elif code == self.view_btn_code:
+                if value == 1 and not self.select_btn_down:
+                    self.select_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.select_seq += 1
+                        if self.view_callback:
+                            self.view_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:view", "cycle"])
+                elif value == 0:
+                    self.select_btn_down = False
+            elif code == self.mode_btn_code:
+                if value == 1 and not self.start_btn_down:
+                    self.start_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.start_seq += 1
+                        if self.mode_callback:
+                            self.mode_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:mode", "toggle"])
+                elif value == 0:
+                    self.start_btn_down = False
+            elif code == self.jump_btn_code:
+                if value == 1 and not self.south_btn_down:
+                    self.south_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        double_window = max(0.05, self.config.double_press_ms / 1000.0)
+                        if (
+                            self.last_south_press_time > 0.0
+                            and 0.02 <= (now - self.last_south_press_time) <= double_window
+                        ):
+                            self.last_south_press_time = 0.0
+                            self.fly_seq += 1
+                            if self.fly_callback:
+                                self.fly_callback()
+                            self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:fly", "toggle"])
+                        else:
+                            self.last_south_press_time = now
+                            self.south_seq += 1
+                            if self.jump_callback:
+                                self.jump_callback()
+                            self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:jump"])
+                elif value == 0 and self.south_btn_down:
+                    self.south_btn_down = False
+                    if self.hypr3d_active:
+                        self._write_shared_pad_state()
+            elif code == self.crouch_btn_code:
+                if value == 1 and not self.west_btn_down:
+                    self.west_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.west_seq += 1
+                        if self.posture_callback:
+                            self.posture_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:posture", "cycle"])
+                elif value == 0 and self.west_btn_down:
+                    self.west_btn_down = False
+                    if self.hypr3d_active:
+                        self._write_shared_pad_state()
+            elif code == self.fullscreen_btn_code:
+                if value == 1 and not self.north_btn_down:
+                    self.north_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.north_seq += 1
+                        if self.fullscreen_callback:
+                            self.fullscreen_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:fullscreen"])
+                    elif not self.dry_run:
+                        if self.fullscreen_callback:
+                            self.fullscreen_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "fullscreen", "0"])
+                elif value == 0:
+                    self.north_btn_down = False
+            elif code == self.sg_toggle_btn_code:
+                if value == 1 and not self.rb_btn_down:
+                    self.rb_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.rb_seq += 1
+                        if self.shaderglass_toggle_callback:
+                            self.shaderglass_toggle_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:crt", "toggle"])
+                    elif not self.dry_run:
+                        if self.shaderglass_toggle_callback:
+                            self.shaderglass_toggle_callback()
+                        try:
+                            subprocess.Popen(
+                                ["/usr/bin/mios-shaderglass", "toggle"],
+                                env=self._resolve_hyprland_env(),
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        except Exception:
+                            pass
+                elif value == 0:
+                    self.rb_btn_down = False
+            elif code == self.sg_cycle_btn_code:
+                if value == 1 and not self.lb_btn_down:
+                    self.lb_btn_down = True
+                    self._sync_hypr3d_active(now)
+                    if self.hypr3d_active:
+                        self.lb_seq += 1
+                        if self.shaderglass_cycle_callback:
+                            self.shaderglass_cycle_callback()
+                        self.dispatch_hyprctl(["/usr/bin/hyprctl", "dispatch", "hypr3d:crt", "cycle"])
+                    elif not self.dry_run:
+                        if self.shaderglass_cycle_callback:
+                            self.shaderglass_cycle_callback()
+                        try:
+                            subprocess.Popen(
+                                ["/usr/bin/mios-shaderglass", "cycle"],
+                                env=self._resolve_hyprland_env(),
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        except Exception:
+                            pass
+                elif value == 0:
+                    self.lb_btn_down = False
+        elif ev_type == EV_ABS:
+            if self.stick_processor.triggers_are_axes and code in (self.grab_axis_code, self.resize_axis_code):
+                t_val = self.stick_processor.normalize_trigger(code, value)
+                thresh = self.config.trigger_threshold
+                rel_thresh = max(0.05, thresh - 0.10)
+                if code == self.grab_axis_code:
+                    if t_val >= thresh and not self.rt_axis_down:
+                        self.rt_axis_down = True
+                        self.trigger_dirty = True
+                    elif t_val <= rel_thresh and self.rt_axis_down:
+                        self.rt_axis_down = False
+                        self.trigger_dirty = True
+                elif code == self.resize_axis_code:
+                    if t_val >= thresh and not self.lt_axis_down:
+                        self.lt_axis_down = True
+                        self.trigger_dirty = True
+                    elif t_val <= rel_thresh and self.lt_axis_down:
+                        self.lt_axis_down = False
+                        self.trigger_dirty = True
+                return
+            # Accumulate multi-axis stick updates without immediate dispatch
+            self.stick_processor.process_abs(code, value)
+        elif ev_type == EV_SYN:
+            # Trigger dispatch only on EV_SYN (SYN_REPORT)
+            if code == SYN_REPORT:
+                if self.trigger_dirty:
+                    self._update_trigger_states(now)
+                if self.stick_processor.dirty:
+                    vectors = self.stick_processor.get_vectors()
+                    self.handle_stick_input(vectors["left"], vectors["right"], now=now)
+
+    def _resync_device_axes(self, dev: GamepadDevice, now: float):
+        """Reads instantaneous hardware axis and button positions via EVIOCGABS/EVIOCGKEY to prevent stuck releases."""
+        if dev.fd is None or dev.stick_processor is None:
+            return
+        try:
+            import fcntl
+            sp = dev.stick_processor
+            changed = False
+            for axis in dev.abs_bits:
+                abs_buf = bytearray(24)
+                fcntl.ioctl(dev.fd, EVIOCGABS(axis), abs_buf)
+                val, _min_v, _max_v, _fuzz, _flat, _res = struct.unpack("6i", abs_buf)
+                if sp.triggers_are_axes and axis in (self.grab_axis_code, self.resize_axis_code):
+                    t_val = sp.normalize_trigger(axis, val)
+                    rel_thresh = max(0.05, self.config.trigger_threshold - 0.10)
+                    if axis == self.grab_axis_code and self.rt_axis_down and t_val <= rel_thresh:
+                        self.rt_axis_down = False
+                        self.trigger_dirty = True
+                    elif axis == self.resize_axis_code and self.lt_axis_down and t_val <= rel_thresh:
+                        self.lt_axis_down = False
+                        self.trigger_dirty = True
+                else:
+                    cur_norm = abs(sp.current_norm.get(axis, 0.0))
+                    if cur_norm > self.config.deadzone:
+                        new_norm = abs(sp.normalize_axis(axis, val))
+                        if new_norm <= self.config.deadzone:
+                            sp.process_abs(axis, val)
+                            changed = True
+            if self.rt_button_down or self.lt_button_down or self.south_btn_down or self.west_btn_down:
+                key_state = bytearray(96)
+                fcntl.ioctl(dev.fd, EVIOCGKEY(len(key_state)), key_state)
+                if self.rt_button_down and not GamepadDevice.test_bit(key_state, self.grab_btn_code):
+                    self.rt_button_down = False
+                    self.trigger_dirty = True
+                if self.lt_button_down and not GamepadDevice.test_bit(key_state, self.resize_btn_code):
+                    self.lt_button_down = False
+                    self.trigger_dirty = True
+                if self.south_btn_down and not GamepadDevice.test_bit(key_state, self.jump_btn_code):
+                    self.south_btn_down = False
+                    changed = True
+                if self.west_btn_down and not GamepadDevice.test_bit(key_state, self.crouch_btn_code):
+                    self.west_btn_down = False
+                    changed = True
+            if self.trigger_dirty:
+                self._update_trigger_states(now)
+            if changed:
+                if sp.dirty:
+                    vectors = sp.get_vectors()
+                    self.handle_stick_input(vectors["left"], vectors["right"], force=True, now=now)
+                self._write_shared_pad_state()
+        except Exception:
+            pass
+
+    def run_daemon(self):
+        """Runs the main daemon polling loop."""
+        self.log(f"Starting gamepad daemon (poll={self.config.poll_ms}ms, deadzone={self.config.deadzone})...")
+        self.scan_devices()
+        self._sync_hypr3d_active()
+
+        last_scan_time = time.monotonic()
+        last_resync_time = time.monotonic()
+        poll_timeout = max(0.005, self.config.poll_ms / 1000.0)
+
+        while True:
+            now = time.monotonic()
+            if now - last_scan_time > 2.0:
+                self.scan_devices()
+                self._sync_hypr3d_active(now)
+                last_scan_time = now
+
+            if not self.devices:
+                time.sleep(0.5)
+                continue
+
+            fds = [dev.fd for dev in self.devices.values() if dev.fd is not None]
+            if not fds:
+                time.sleep(0.5)
+                continue
+
+            try:
+                rlist, _, _ = select.select(fds, [], [], poll_timeout)
+            except (OSError, select.error):
+                continue
+
+            now = time.monotonic()
+
+            # Periodically resync hardware axes via EVIOCGABS while any stick or trigger is active
+            if (
+                self.current_left_vector != (0.0, 0.0)
+                or self.current_right_vector != (0.0, 0.0)
+                or self.rt_grab_active
+                or self.lt_resize_active
+                or self.south_btn_down
+                or self.west_btn_down
+            ) and (now - last_resync_time) >= 0.04:
+                last_resync_time = now
+                for d in list(self.devices.values()):
+                    self._resync_device_axes(d, now)
+
+            if not rlist:
+                # Polling interval timeout with no new evdev change:
+                # Support held-stick continuous dispatch across polling intervals
+                if (
+                    self.current_left_vector != (0.0, 0.0)
+                    or self.current_right_vector != (0.0, 0.0)
+                    or self.rt_grab_active
+                    or self.lt_resize_active
+                    or self.south_btn_down
+                    or self.west_btn_down
+                ):
+                    self.handle_stick_input(
+                        self.current_left_vector, self.current_right_vector, force=True, now=now
+                    )
+                    self._write_shared_pad_state()
+                continue
+
+            for fd in rlist:
+                dev = next((d for d in self.devices.values() if d.fd == fd), None)
+                if not dev:
+                    continue
+
+                if dev.stick_processor is not None:
+                    self.stick_processor = dev.stick_processor
+                if dev.chord_detector is not None:
+                    self.chord_detector = dev.chord_detector
+
+                # Drain ALL queued evdev chunks on this fd so we never lag behind hardware
+                chunks: List[bytes] = []
+                disconnected = False
+                while True:
+                    try:
+                        chunk = os.read(fd, INPUT_EVENT_SIZE * 64)
+                        if not chunk:
+                            disconnected = True
+                            break
+                        chunks.append(chunk)
+                    except BlockingIOError:
+                        break
+                    except OSError as e:
+                        if e.errno in (19, 9):
+                            disconnected = True
+                        break
+
+                if disconnected:
+                    self.log(f"Gamepad disconnected: {dev.path}")
+                    dev.close()
+                    self.devices.pop(dev.path, None)
+                    self.probed_paths.pop(dev.path, None)
+                    self.chord_detector.reset()
+                    self.stick_processor.reset()
+                    self.current_left_vector = (0.0, 0.0)
+                    self.current_right_vector = (0.0, 0.0)
+                    self._release_wasd_keys()
+                    self._release_triggers()
+                    self._write_shared_pad_state()
+                    continue
+
+                if not chunks:
+                    continue
+
+                data = b"".join(chunks)
+                offset = 0
+                saw_syn_dropped = False
+                while offset + INPUT_EVENT_SIZE <= len(data):
+                    sec, usec, ev_type, code, value = struct.unpack(
+                        INPUT_EVENT_FORMAT, data[offset : offset + INPUT_EVENT_SIZE]
+                    )
+                    offset += INPUT_EVENT_SIZE
+                    if ev_type == EV_SYN and code == SYN_DROPPED:
+                        saw_syn_dropped = True
+                        continue
+                    self.process_event(ev_type, code, value, now)
+
+                if saw_syn_dropped:
+                    self._resync_device_axes(dev, now)
+
+            if (
+                self.current_left_vector != (0.0, 0.0)
+                or self.current_right_vector != (0.0, 0.0)
+                or self.rt_grab_active
+                or self.lt_resize_active
+                or self.south_btn_down
+                or self.west_btn_down
+            ) and (now - self.last_dispatch_time) >= poll_timeout:
+                self.handle_stick_input(
+                    self.current_left_vector, self.current_right_vector, force=True, now=now
+                )
+                self._write_shared_pad_state()
+
+
+# ---------------------------------------------------------------------------
+# CLI Entrypoint
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="MiOS Universal USB/Bluetooth Gamepad Daemon for Hypr3D")
+    parser.add_argument("--daemon", action="store_true", help="Run gamepad listener daemon")
+    parser.add_argument("--check-config", action="store_true", help="Validate SSOT controller configuration")
+    parser.add_argument("--simulate", action="store_true", help="Run simulation verification suite")
+    parser.add_argument("--dry-run", action="store_true", help="Do not execute system commands")
+    parser.add_argument("--root", default="/", help="Root directory overlay path")
+    parser.add_argument("--config", default="", help="Path to SSOT mios.toml")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+
+    args = parser.parse_args()
+
+    config_path = args.config or os.path.join(args.root, "usr/share/mios/mios.toml")
+    try:
+        config = ControllerConfig.load_ssot(config_path)
+    except Exception as e:
+        print(f"Error loading SSOT from {config_path}: {e}", file=sys.stderr)
+        return 1
+
+    if args.check_config:
+        print("SSOT Controller Configuration:")
+        print(f"  enabled: {config.enabled}")
+        print(f"  toggle_chord: {config.toggle_chord}")
+        print(f"  debounce_ms: {config.debounce_ms}")
+        print(f"  deadzone: {config.deadzone}")
+        print(f"  sensitivity: {config.sensitivity}")
+        print(f"  move_sensitivity: {config.move_sensitivity}")
+        print(f"  camera_sensitivity: {config.camera_sensitivity}")
+        print(f"  left_stick_mode: {config.left_stick_mode}")
+        print(f"  right_stick_mode: {config.right_stick_mode}")
+        print(f"  invert_y: {config.invert_y}")
+        print(f"  dpad_enabled: {config.dpad_enabled}")
+        print(f"  poll_ms: {config.poll_ms}")
+        print(f"  device_filter: {config.device_filter}")
+        print(f"  fallback_axes: {config.fallback_axes}")
+        print(f"  grab_button: {config.grab_button}")
+        print(f"  grab_axis: {config.grab_axis}")
+        print(f"  resize_button: {config.resize_button}")
+        print(f"  resize_axis: {config.resize_axis}")
+        print(f"  trigger_threshold: {config.trigger_threshold}")
+        print(f"  view_mode_button: {config.view_mode_button}")
+        print(f"  cursor_mode_button: {config.cursor_mode_button}")
+        print(f"  jump_button: {config.jump_button}")
+        print(f"  double_press_ms: {config.double_press_ms}")
+        print(f"  crouch_button: {config.crouch_button}")
+        print(f"  fullscreen_button: {config.fullscreen_button}")
+        print(f"  shaderglass_toggle_button: {config.shaderglass_toggle_button}")
+        print(f"  shaderglass_cycle_button: {config.shaderglass_cycle_button}")
+        return 0
+
+    if args.simulate:
+        print("Running controller simulation...")
+        toggles = []
+        moves = []
+        cams = []
+        grabs = []
+        resizes = []
+        views = []
+        modes = []
+        daemon = GamepadHypr3dDaemon(
+            config=config,
+            dry_run=True,
+            root=args.root,
+            verbose=args.verbose,
+            toggle_callback=lambda act: toggles.append(act),
+            move_callback=lambda x, y: moves.append((x, y)),
+            camera_callback=lambda x, y: cams.append((x, y)),
+            grab_callback=lambda g: grabs.append(g),
+            resize_callback=lambda r: resizes.append(r),
+            view_callback=lambda: views.append(True),
+            mode_callback=lambda: modes.append(True),
+        )
+
+        # 1. Negative control: single L3 press does not toggle
+        daemon.process_event(EV_KEY, BTN_THUMBL, 1, 100.0)
+        assert len(toggles) == 0, "Single button triggered toggle!"
+        daemon.process_event(EV_KEY, BTN_THUMBL, 0, 100.1)
+
+        # 2. Positive control: simultaneous L3 + R3 within debounce window triggers toggle
+        daemon.process_event(EV_KEY, BTN_THUMBL, 1, 101.0)
+        daemon.process_event(EV_KEY, BTN_THUMBR, 1, 101.05)
+        assert len(toggles) == 1 and toggles[0] is True, f"L3+R3 chord failed to toggle! toggles={toggles}"
+
+        # 3. Negative control: holding chord does not trigger repeatedly
+        daemon.process_event(EV_KEY, BTN_THUMBL, 1, 101.5)
+        daemon.process_event(EV_KEY, BTN_THUMBR, 1, 101.5)
+        assert len(toggles) == 1, "Debounce hold suppression failed!"
+
+        # Release buttons
+        daemon.process_event(EV_KEY, BTN_THUMBL, 0, 102.0)
+        daemon.process_event(EV_KEY, BTN_THUMBR, 0, 102.0)
+
+        # 4. Positive control: stick movement while Hypr3D is active
+        daemon.process_event(EV_ABS, ABS_X, 20000, 102.5)  # > deadzone
+        daemon.process_event(EV_SYN, SYN_REPORT, 0, 102.5)
+        assert len(moves) == 1 and moves[0][0] > 0, "Left stick movement while active failed!"
+
+        # 5. Negative control: deadzone suppression
+        moves.clear()
+        daemon.process_event(EV_ABS, ABS_X, 1000, 102.7)  # ~3% deflection, inside 15% deadzone
+        daemon.process_event(EV_ABS, ABS_Y, 1000, 102.7)
+        daemon.process_event(EV_SYN, SYN_REPORT, 0, 102.7)
+        assert len(moves) == 0, f"Deadzone suppression failed! moves={moves}"
+
+        # 6. Positive control: RT grab, LT resize, SELECT view cycle, START mode toggle while Hypr3D is active
+        daemon.process_event(EV_KEY, BTN_TR2, 1, 102.8)
+        daemon.process_event(EV_KEY, BTN_TR2, 0, 102.85)
+        assert grabs == [True, False], f"RT grab failed! grabs={grabs}"
+        daemon.process_event(EV_KEY, BTN_TL2, 1, 102.9)
+        daemon.process_event(EV_KEY, BTN_TL2, 0, 102.95)
+        assert resizes == [True, False], f"LT resize failed! resizes={resizes}"
+        daemon.process_event(EV_KEY, BTN_SELECT, 1, 102.96)
+        daemon.process_event(EV_KEY, BTN_SELECT, 0, 102.97)
+        assert len(views) == 1, f"SELECT view mode cycle failed! views={views}"
+        daemon.process_event(EV_KEY, BTN_START, 1, 102.98)
+        daemon.process_event(EV_KEY, BTN_START, 0, 102.99)
+        assert len(modes) == 1, f"START cursor/camera mode toggle failed! modes={modes}"
+
+        # 7. Toggle Hypr3D off
+        daemon.process_event(EV_KEY, BTN_THUMBL, 1, 103.0)
+        daemon.process_event(EV_KEY, BTN_THUMBR, 1, 103.05)
+        assert len(toggles) == 2 and toggles[1] is False, "L3+R3 failed to toggle off!"
+        daemon.process_event(EV_KEY, BTN_THUMBL, 0, 103.2)
+        daemon.process_event(EV_KEY, BTN_THUMBR, 0, 103.2)
+
+        # 8. Negative control: stick movement, triggers, SELECT, and START while Hypr3D is inactive are suppressed
+        moves.clear()
+        grabs.clear()
+        resizes.clear()
+        views.clear()
+        modes.clear()
+        daemon.process_event(EV_ABS, ABS_X, 30000, 103.5)
+        daemon.process_event(EV_SYN, SYN_REPORT, 0, 103.5)
+        daemon.process_event(EV_KEY, BTN_TR2, 1, 103.6)
+        daemon.process_event(EV_KEY, BTN_TL2, 1, 103.6)
+        daemon.process_event(EV_KEY, BTN_SELECT, 1, 103.6)
+        daemon.process_event(EV_KEY, BTN_START, 1, 103.6)
+        daemon.process_event(EV_KEY, BTN_TR2, 0, 103.7)
+        daemon.process_event(EV_KEY, BTN_TL2, 0, 103.7)
+        daemon.process_event(EV_KEY, BTN_SELECT, 0, 103.7)
+        daemon.process_event(EV_KEY, BTN_START, 0, 103.7)
+        assert (
+            len(moves) == 0 and len(grabs) == 0 and len(resizes) == 0 and len(views) == 0 and len(modes) == 0
+        ), "Inactive suppression failed!"
+
+        # 9. Positive control: WASD left stick mode emits sendshortcut commands
+        daemon.config.left_stick_mode = "wasd"
+        daemon.toggle_hypr3d()  # active again
+        daemon.dispatched_commands.clear()
+        daemon.process_event(EV_ABS, ABS_Y, -25000, 104.0)  # Forward -> W
+        daemon.process_event(EV_SYN, SYN_REPORT, 0, 104.0)
+        assert any("sendshortcut" in cmd and any(",W," in part for part in cmd) for cmd in daemon.dispatched_commands), "WASD W command missing!"
+
+        # 10. Positive control: Right stick camera look emits hypr3d:camera / movecursor
+        daemon.dispatched_commands.clear()
+        daemon.process_event(EV_ABS, ABS_RX, 20000, 105.0)
+        daemon.process_event(EV_SYN, SYN_REPORT, 0, 105.0)
+        assert len(cams) > 0 and len(daemon.dispatched_commands) > 0, "Camera look command missing!"
+
+        # 11. Positive control: deadzone = 1.0 does not raise ZeroDivisionError
+        sp = StickProcessor(ControllerConfig(deadzone=1.0))
+        res = sp.process_abs(ABS_X, 32767)
+        assert res["left"] == (0.0, 0.0), f"deadzone=1.0 failed! res={res}"
+
+        # 12. Positive control: disconnect clears latch
+        daemon.chord_detector.button_states[BTN_THUMBL] = True
+        daemon.chord_detector.chord_triggered = True
+        daemon.chord_detector.reset()
+        assert not daemon.chord_detector.chord_triggered, "Chord reset failed!"
+
+        print("Simulation passed all controls cleanly.")
+        return 0
+
+    if args.daemon:
+        daemon = GamepadHypr3dDaemon(config=config, dry_run=args.dry_run, root=args.root, verbose=args.verbose)
+        try:
+            daemon.run_daemon()
+        except KeyboardInterrupt:
+            print("\nDaemon terminated cleanly by signal.")
+            return 0
+
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

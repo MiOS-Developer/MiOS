@@ -1,0 +1,13 @@
+[Unit]
+Description=MiOS universal USB/Bluetooth gamepad daemon for Hypr3D
+PartOf=mios-desktop.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/mios/mios-gamepad-hypr3d --daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=mios-desktop.target

@@ -34,7 +34,7 @@ and `graphical-session.target`, releasing the old session's desktop services.
 
 Hyprglass renders the desktop glass material. The MiOS Hypr3DGlass integration
 uses `/usr/lib64/mios/hypr3d.so`, declared in `[desktop.hyprland.hypr3d]`, for the
-3D view. **Super+G** toggles that view in either GPU session; the chord and enable
+3D view. **Super+F12** toggles that view in either GPU session; the chord and enable
 switch are exposed in the local configurator. The engine loads on first use,
 through `/usr/bin/mios-gen hyprland-3d-toggle`. The helper loads the live plugin
 through compositor IPC, then configures and toggles it. The Lua plugin-load API

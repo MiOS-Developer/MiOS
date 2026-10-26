@@ -1,54 +1,14 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-22T18:30:16.701991",
-  "total_artifacts": 23,
+  "last_updated": "2026-10-26T16:57:30.946300+00:00",
+  "total_artifacts": 43,
   "artifacts": [
-    {
-      "path": ".gitignore",
-      "artifact_type": "config",
-      "sha256": "9683aa5b52d04471b990e5d1472a9097a2ce7f366f87cc1e9824f0a6a15bb8c0",
-      "size_bytes": 26501,
-      "created_at": "2026-10-22T18:30:16.049554",
-      "metadata": {}
-    },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
       "sha256": "164757e88e8bf323748d1b0ba63523fc5fe446e39080f6a5b41a9687b33c895b",
       "size_bytes": 585482,
       "created_at": "2026-10-22T18:30:16.079532",
-      "metadata": {}
-    },
-    {
-      "path": "tools/native/mios-gen/src/main.rs",
-      "artifact_type": "code",
-      "sha256": "087f6305ea9004f88e01595bf1c518bf9233a75296da0b51d4e5c13f7a0bf340",
-      "size_bytes": 114393,
-      "created_at": "2026-10-22T18:30:16.107909",
-      "metadata": {}
-    },
-    {
-      "path": "tools/native/mios-gen/src/render.rs",
-      "artifact_type": "code",
-      "sha256": "87f678948cef5713f49a8f33f72205f5fcff168df0859d1d57ffa0a8335860e5",
-      "size_bytes": 307206,
-      "created_at": "2026-10-22T18:30:16.138833",
-      "metadata": {}
-    },
-    {
-      "path": "usr/share/mios/mios.toml",
-      "artifact_type": "config",
-      "sha256": "6ba36a390d63dac62ca6516f64dc10967174397e1c1e301e76573d7a1db71c14",
-      "size_bytes": 927922,
-      "created_at": "2026-10-22T18:30:16.168623",
-      "metadata": {}
-    },
-    {
-      "path": "usr/share/mios/hyprland/hyprland.lua",
-      "artifact_type": "config",
-      "sha256": "642580856f4b4185776e56ae598c09dca3cb59d94601f0b0c8f05c56cc97ae54",
-      "size_bytes": 33700,
-      "created_at": "2026-10-22T18:30:16.197459",
       "metadata": {}
     },
     {
@@ -73,14 +33,6 @@
       "sha256": "f0b4a42441c2cd1a0542ab2967ab8695f27df24a12ccc2a72897c2df1cfdc2c2",
       "size_bytes": 81896,
       "created_at": "2026-10-22T18:30:16.287278",
-      "metadata": {}
-    },
-    {
-      "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
-      "artifact_type": "doc",
-      "sha256": "1f0910f78020d4bee8325450a12cb5b47678e6b1f10f2c7998b578d2be0582f1",
-      "size_bytes": 37837,
-      "created_at": "2026-10-22T18:30:16.316875",
       "metadata": {}
     },
     {
@@ -186,6 +138,339 @@
       "size_bytes": 19421,
       "created_at": "2026-10-22T18:30:16.701981",
       "metadata": {}
+    },
+    {
+      "path": ".gitignore",
+      "artifact_type": "config",
+      "sha256": "6508a290d1a438f50e07aadbb627847595995664f036c0aa470b36559fba1251",
+      "size_bytes": 27542,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tools/native/mios-gen/src/main.rs",
+      "artifact_type": "code",
+      "sha256": "8dc4fbe4b114f2bb28fec8f54a29b14d37bf76e5d417014dcd978791881aa840",
+      "size_bytes": 121441,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tools/native/mios-gen/src/render.rs",
+      "artifact_type": "code",
+      "sha256": "ed8d824d87d9b0df3ab069a217d63d48cef5833409fdc57f1b6811ace52010b3",
+      "size_bytes": 386130,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tools/native/mios-gen/src/hypr3d_spawn.rs",
+      "artifact_type": "code",
+      "sha256": "d97188e0a245b25d3799a14baec636eed86fe65104d0d7125d8fc9289cec63ae",
+      "size_bytes": 36638,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tools/native/mios-resolver/src/lib.rs",
+      "artifact_type": "code",
+      "sha256": "49b7583aff1d2a53183055057eb0f0f913624177e0f5b067dcbc2135bf32c605",
+      "size_bytes": 15304,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tools/native/mios-resolver/src/framerate.rs",
+      "artifact_type": "code",
+      "sha256": "f68ab9959490c457766b356482052273392d51242ee4bd4ac300b13ae5183073",
+      "size_bytes": 35891,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-desktop.target",
+      "artifact_type": "config",
+      "sha256": "7ef838409a8e47d5993fcedc234a6cc09d89bc75eba16cd1198d7a68d554eacf",
+      "size_bytes": 400,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-gamepad-hypr3d.service",
+      "artifact_type": "config",
+      "sha256": "d2ac70157ccc67f1b93b8dca27efc25bbcccdec24e409c00feccab322c7ca042",
+      "size_bytes": 284,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/libexec/mios/mios-gamepad-hypr3d",
+      "artifact_type": "config",
+      "sha256": "5ae52e6c1e07986be334a0038b9e3c7ae0e1fe0b6e2d09106bdb14f1c32a612a",
+      "size_bytes": 74323,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/doc/mios/manual/ch89-glass-desktop-and-session-resilience.md",
+      "artifact_type": "config",
+      "sha256": "bef016a2e34722a7f3229b670f26d3b2a991167d7d6e919ef80a174d62ed1bfa",
+      "size_bytes": 37839,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/hyprland.lua",
+      "artifact_type": "config",
+      "sha256": "7edc36c4c7c12b73e01fc3c209c244ca4e33a93352ebc7e1996de5627ef8bc68",
+      "size_bytes": 37426,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/mios.toml",
+      "artifact_type": "config",
+      "sha256": "9b468f5c71fbcf3d41201bcc176cbbde7540a8a38bc3d214557e1f16049b453a",
+      "size_bytes": 972943,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tests/test-hypr3d-controller.py",
+      "artifact_type": "code",
+      "sha256": "712dc4031694a7057d4d3ecb8d6db0a04003e0da8b182073bdc2154ea3ace701",
+      "size_bytes": 53319,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tests/test-hypr3d-edge-quality.py",
+      "artifact_type": "code",
+      "sha256": "933664040af5683e6827c311ae8a78a6fd71b2e232c75de39e06b7fd320c52ae",
+      "size_bytes": 42307,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tests/test-hypr3d-retina-spawn.py",
+      "artifact_type": "code",
+      "sha256": "bdc63ac608d92406ca013c3cc24e7638aeae4c553a3309e709803b0217b43644",
+      "size_bytes": 78581,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "tests/test-framerate.py",
+      "artifact_type": "code",
+      "sha256": "7551912ecc1759e67696498b94a0746b127310b57b68a55572ca1fd81bff5d30",
+      "size_bytes": 68164,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch",
+      "artifact_type": "code",
+      "sha256": "f25c0dd29728d7f801d63f561e60107c9cbf5782183319df5d637dc2743c6297",
+      "size_bytes": 56644,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch",
+      "artifact_type": "code",
+      "sha256": "93141be079b47d3c0bae33d1591772229d3f3c656d8d588b4926f84a313fe34f",
+      "size_bytes": 33426,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch",
+      "artifact_type": "code",
+      "sha256": "90f705946bc66ff0de0d0eabef310edb82a749a53cb8a5120607f3f23a3b1bc9",
+      "size_bytes": 42835,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch",
+      "artifact_type": "code",
+      "sha256": "cf241cd161c3512cdfb2ca0ca63a167598999d4593af95913b93bdd844deba8b",
+      "size_bytes": 20029,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch",
+      "artifact_type": "code",
+      "sha256": "bc6e751f19b880d3ce853123dd36a4226555b45dd71d9714296c219751cc85d1",
+      "size_bytes": 164823,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hyprbars-mios-overlay-tab.patch",
+      "artifact_type": "code",
+      "sha256": "6d3eeeafbe247b9d4ae7e2246ae331959538ca2f122a3b1a4e326b740a0fb30e",
+      "size_bytes": 124109,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp",
+      "artifact_type": "code",
+      "sha256": "0334c49bf5a070714f978f531a2cc807fd3ff4c59ca77b5cb055e8468a8f01fd",
+      "size_bytes": 4937,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-pacing/main.cpp",
+      "artifact_type": "code",
+      "sha256": "d0bdba13745ba2e1f1bcd6af0552a2661caab93e7c8d4c7004616d5fd6be6db8",
+      "size_bytes": 28132,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-pacing/Makefile",
+      "artifact_type": "config",
+      "sha256": "6e5649a7b5b3ecb0e5a7dc26fece45d4e9b7e0f1c760bdfb71cc98503c696a4b",
+      "size_bytes": 1425,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
+    },
+    {
+      "path": "usr/share/mios/hyprland/plugins/mios-pacing/tests/pacing_test.cpp",
+      "artifact_type": "code",
+      "sha256": "9a637bc5141f473acc729d808ba62ec0a78a5b81853b1ef7b8e6fbcbffb016c7",
+      "size_bytes": 7151,
+      "created_at": "2026-10-26T16:57:30.946300+00:00",
+      "metadata": {
+        "purpose": "desktop-session-recovery"
+      }
     }
-  ]
+  ],
+  "mios_session_repair": {
+    "status": "live_desktop_repaired_dgpu_reboot_pending",
+    "boot_id_before": "f7dd9d0e-8b31-41f9-a571-bad55f20f59c",
+    "installed": {
+      "/usr/lib64/mios/hypr3d.so": "330551633845da7701d9d44835273035eecfa3acfcd057da7e66bd0d3cac3a63",
+      "/usr/lib64/mios/hyprbars.so": "124a1a86ff30ccd57a21287ca22ce1372d1baab9c3e5a239462e8d3b5556680e"
+    },
+    "tests": {
+      "mios_gen_unit": 147,
+      "mios_resolver_unit": 93,
+      "controller_unit": 45,
+      "isolated_native_transition": 1,
+      "live_keyboard_fullscreen_return_cycles": 3,
+      "compiled_hyprbars_gate_positive": 4,
+      "old_hyprbars_gate_negative_expected_fail": true
+    },
+    "controller": {
+      "controller_detected": true,
+      "L3_R3_enters_3D": true,
+      "START_toggles_cursor_camera_without_crash": true,
+      "SELECT_cycles_camera": true,
+      "controller_2D_fullscreen_returns_to_3D": true,
+      "L3_R3_exits_3D": true,
+      "session_survived": true
+    },
+    "keyboard": {
+      "Super_F11_fullscreen_Super_F12_return_cycles": 3,
+      "Super_F12_toggle": true,
+      "session_survived": true
+    },
+    "grub_menu": {
+      "menu_directory": "loader/mios-menu",
+      "entries": [
+        {
+          "file": "mios-desktop-dgpu.conf",
+          "title": "MiOS dGPU",
+          "grub_read_verified": true
+        },
+        {
+          "file": "mios-desktop-igpu.conf",
+          "title": "MiOS iGPU",
+          "grub_read_verified": true
+        },
+        {
+          "file": "mios-recovery.conf",
+          "title": "MiOS Recovery (iGPU, text console)",
+          "grub_read_verified": true
+        }
+      ],
+      "grub_config_syntax": "PASS",
+      "static_extra_menu_entries": 0,
+      "default": "mios-desktop-igpu",
+      "grubenv": [
+        "saved_entry=mios-desktop-igpu",
+        "boot_success=1",
+        "boot_indeterminate=0",
+        "next_entry=",
+        "blsdir=loader/mios-menu"
+      ],
+      "grub_regeneration_preserves_gpu_arguments": true,
+      "entry_hashes": {
+        "mios-desktop-igpu.conf": "06c911df71360e77bbb4a1f6f50e237566f8c8b257534f4510f1551cca287b60",
+        "mios-desktop-dgpu.conf": "dc7cada7c24946580f3176cc5cbe896207b6526a71b7573ec37cc2a4322403b0",
+        "mios-recovery.conf": "286637657e500cbaf13a24b0779836c171d51f546bcca748c436413724f5be46"
+      }
+    },
+    "root_workspace_preserved": true,
+    "source_checkpoint": "/.worktrees/mios-session-repair",
+    "pending": [
+      "Boot into dGPU and validate NVIDIA driver, compositor, shell and physical display"
+    ],
+    "reboot_authorized": true
+  }
 }

@@ -1,0 +1,631 @@
+MiOS Hypr3D frame rate (applies after hypr3d-mios-edge-quality.patch). The room follows the desktop frame-rate
+policy ([desktop.framerate], operator 2026-10-23: performance 90, balanced / power-saver / battery 60, gaming
+120, unlocked = the output maximum; glass refraction and reflection at 1/3 of the desktop rate, 1/2 for gaming
+and unlocked; the wallpaper at 1/2, the full rate when unlocked). miosd framerate and mios-gen
+hyprland-3d-toggle (SUPER+G) send the running tier's rates; every key is partial and live, and 0 keeps the
+upstream behaviour:
+
+- render.max_fps (0..1000; 0 = the fixed 8 ms pump). The frame pump that keeps the room animated asks for a
+  frame on phase-locked deadlines 1/max_fps apart (a late tick resyncs instead of bursting). The compositor cap
+  (mios-pacing) stays the hard limit; this stops the room damaging the output for frames the cap defers anyway,
+  and holds the room near D where no compositor cap runs.
+- render.glass_fps (0..1000; 0 = every frame) and render.glass_cache_mib (default 256). The glass backdrop (the
+  per-batch copy of the scene behind a pane, frosted with the preset's blur_sigma: the refraction) refreshes on
+  due frames only. Each glass batch keeps its frosted copy in a slot texture (key: the window -- WindowRender::id,
+  carried on every BSP piece; its snapshot texture is re-allocated by captures -- and the batch's ordinal within
+  it) and frames in between bind that slot instead of copying and blurring again. A scene size, scale or MSAA change
+  drops every slot, so the next frame refreshes; a due frame drops the slots no batch used. Batches beyond the
+  budget refresh every frame. The dome the glass REFLECTS is latched into a copy on due frames as well, so
+  reflection content follows glass_fps; reflection and refraction geometry stay per frame. Trade-off (what the
+  policy asks for): while the camera turns, the screen-space refraction lags by up to (desktop / glass - 1)
+  frames.
+- world.live_fps (0..1000; 0 = every frame). The live wallpaper dome is re-captured (a full re-render of the
+  background layer) only when due; between due frames the previous capture stays bound. The wallpaper itself
+  steps at the same rate W, so no wallpaper step is lost.
+- world.panorama_mirror and world.live_wrap become partial like every other key: a config call without them (miosd
+  sends world = {live_fps = W} alone) no longer resets them to false / "mirror".
+- The status file gains "pacing: max_fps= glass_fps= live_fps= glassRefresh/s= glassReuse/s= domeCapture/s=
+  domeKept/s= glassSlots= glassMiB= envLatch= glassDue= glassKept= glassMiss=" (rates per second since the
+  previous dump; the last three are totals of due frames, kept frames and kept-frame batches without a slot).
+  The glass cache is freed when the room closes. Measured in a nested session (AMD iGPU, one animated window =
+  22 glass batches, scene 1920x1080, no MSAA): glass_fps 0 (upstream) 16.5 compositor fps; glass_fps 30
+  35 fps; glass_fps 5 73 fps -- every batch copy + frost is a full-scene pass.
+
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 57525c7..dde464c 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -122,6 +122,7 @@ struct SWVert {
+ struct SWPoly {
+     std::vector<SWVert> verts;
+     unsigned int        tex = 0;
++    std::uintptr_t      owner = 0; // MiOS frame rate: the window (WindowRender::id) -- its glass slots' key
+     float               alpha = 1.0f; // the window's room alpha (g_fsFade etc.)
+     bool glassWall = false;
+     bool glassFace = false; // walls keep their existing appearance
+@@ -145,6 +146,7 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
+     front.alpha    = poly.alpha;
+     back.tex       = poly.tex;
+     back.alpha     = poly.alpha;
++    front.owner    = back.owner = poly.owner;
+     front.glassWall = back.glassWall = poly.glassWall;
+     front.glassFace = back.glassFace = poly.glassFace;
+     front.glassUV = back.glassUV = poly.glassUV;
+@@ -2739,6 +2741,181 @@ unsigned int GLScene::frostGlassCopy() {
+     return m_frostTex[1];
+ }
+ 
++// MiOS frame rate (hypr3d-mios-frame-rate.patch): copy `src` (a 2D texture of w x h) into the framebuffer `dstFbo`
++// with a blit (format conversion included); the caller's read/draw framebuffers and scissor are restored.
++bool GLScene::blitTexture(unsigned int src, unsigned int dstFbo, int w, int h) {
++    if (!src || !dstFbo || w <= 0 || h <= 0)
++        return false;
++    if (!m_copyReadFBO)
++        glGenFramebuffers(1, &m_copyReadFBO);
++    GLint oldRead = 0, oldDraw = 0;
++    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldRead);
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldDraw);
++    const GLboolean SCISSOR = glIsEnabled(GL_SCISSOR_TEST);
++    glDisable(GL_SCISSOR_TEST);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_copyReadFBO);
++    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
++    bool ok = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++    if (ok) {
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
++        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    }
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_copyReadFBO);
++    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(oldRead));
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(oldDraw));
++    if (SCISSOR)
++        glEnable(GL_SCISSOR_TEST);
++    return ok;
++}
++
++// MiOS frame rate: true on frames where the glass backdrop and reflection refresh (render.glass_fps; 0 = every
++// frame). Phase-locked deadlines (no drift); a size, scale or MSAA change invalidates every slot, so the first frame
++// after it always refreshes.
++bool GLScene::glassFrameDue() {
++    if (m_glassDropCache) {
++        releaseGlassCache();
++        m_glassDropCache = false;
++    }
++    if (m_glassFps <= 0.f)
++        return true;
++    if (m_glassKeyW != m_sceneWidth || m_glassKeyH != m_sceneHeight || m_glassKeyMsaa != m_msaaSamples ||
++        m_glassKeyScale != m_sceneScale) {
++        releaseGlassCache();
++        m_glassKeyW     = m_sceneWidth;
++        m_glassKeyH     = m_sceneHeight;
++        m_glassKeyMsaa  = m_msaaSamples;
++        m_glassKeyScale = m_sceneScale;
++        m_glassNext     = {};
++    }
++    const auto NOW    = std::chrono::steady_clock::now();
++    const auto PERIOD = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / m_glassFps));
++    if (m_glassNext.time_since_epoch().count() != 0 && NOW + std::chrono::microseconds(500) < m_glassNext)
++        return false;
++    m_glassNext = (m_glassNext.time_since_epoch().count() != 0 && NOW - m_glassNext < PERIOD) ? m_glassNext + PERIOD : NOW + PERIOD;
++    for (auto& [k, slot] : m_glassSlots)
++        slot.used = false;
++    return true;
++}
++
++// MiOS frame rate: keep a copy of the frosted backdrop of one glass batch for the frames until the next due one.
++// Returns the slot texture, or 0 when the cache budget is spent (that batch then refreshes every frame).
++unsigned int GLScene::storeGlassSlot(uint64_t key, unsigned int source) {
++    if (!source)
++        return 0;
++    GLint w = 0, h = 0;
++    glBindTexture(GL_TEXTURE_2D, source);
++    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
++    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
++    if (w <= 0 || h <= 0)
++        return 0;
++    auto it = m_glassSlots.find(key);
++    if (it == m_glassSlots.end() || it->second.w != w || it->second.h != h) {
++        const size_t BYTES = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
++        const size_t OLD   = it == m_glassSlots.end() ? 0 : static_cast<size_t>(it->second.w) * static_cast<size_t>(it->second.h) * 4;
++        if (m_glassSlotBytes - OLD + BYTES > static_cast<size_t>(m_glassCacheMiB) << 20)
++            return 0;
++        SGlassSlotTex& slot = m_glassSlots[key];
++        if (!slot.tex) {
++            glGenTextures(1, &slot.tex);
++            glGenFramebuffers(1, &slot.fbo);
++        }
++        glBindTexture(GL_TEXTURE_2D, slot.tex);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++        GLint oldDraw = 0;
++        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldDraw);
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, slot.fbo);
++        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, slot.tex, 0);
++        const bool COMPLETE = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(oldDraw));
++        m_glassSlotBytes = m_glassSlotBytes - OLD + BYTES;
++        slot.w = w;
++        slot.h = h;
++        if (!COMPLETE) {
++            glDeleteFramebuffers(1, &slot.fbo);
++            glDeleteTextures(1, &slot.tex);
++            m_glassSlotBytes -= BYTES;
++            m_glassSlots.erase(key);
++            return 0;
++        }
++        it = m_glassSlots.find(key);
++    }
++    if (!blitTexture(source, it->second.fbo, w, h))
++        return 0;
++    it->second.used = true;
++    m_glassStats.slots = m_glassSlots.size();
++    m_glassStats.bytes = m_glassSlotBytes;
++    return it->second.tex;
++}
++
++// MiOS frame rate: the dome the glass reflects, latched on due frames (the dome itself follows world.live_fps).
++unsigned int GLScene::latchGlassEnvironment(unsigned int environment) {
++    if (!environment)
++        return 0;
++    GLint w = 0, h = 0;
++    glBindTexture(GL_TEXTURE_2D, environment);
++    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
++    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
++    if (w <= 0 || h <= 0)
++        return 0;
++    if (!m_glassEnvTex || w != m_glassEnvW || h != m_glassEnvH) {
++        if (!m_glassEnvTex) {
++            glGenTextures(1, &m_glassEnvTex);
++            glGenFramebuffers(1, &m_glassEnvFBO);
++        }
++        // the dome's own sampling state (filters, wrap), so the reflection samples the copy exactly as the dome
++        GLint params[4] = {GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE};
++        const GLenum NAMES[4] = {GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T};
++        for (int k = 0; k < 4; ++k)
++            glGetTexParameteriv(GL_TEXTURE_2D, NAMES[k], &params[k]);
++        if (params[0] != GL_NEAREST && params[0] != GL_LINEAR)
++            params[0] = GL_LINEAR; // no mip chain on the copy
++        glBindTexture(GL_TEXTURE_2D, m_glassEnvTex);
++        for (int k = 0; k < 4; ++k)
++            glTexParameteri(GL_TEXTURE_2D, NAMES[k], params[k]);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++        GLint oldDraw = 0;
++        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldDraw);
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_glassEnvFBO);
++        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_glassEnvTex, 0);
++        const bool COMPLETE = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(oldDraw));
++        m_glassEnvW = COMPLETE ? w : 0;
++        m_glassEnvH = COMPLETE ? h : 0;
++        if (!COMPLETE)
++            return 0;
++    }
++    if (!blitTexture(environment, m_glassEnvFBO, w, h))
++        return 0;
++    m_glassEnvSource = environment;
++    ++m_glassStats.envLatch;
++    return m_glassEnvTex;
++}
++
++void GLScene::releaseGlassCache() {
++    for (auto& [k, slot] : m_glassSlots) {
++        if (slot.tex)
++            glDeleteTextures(1, &slot.tex);
++        if (slot.fbo)
++            glDeleteFramebuffers(1, &slot.fbo);
++    }
++    m_glassSlots.clear();
++    m_glassSlotBytes = 0;
++    if (m_glassEnvTex)
++        glDeleteTextures(1, &m_glassEnvTex);
++    if (m_glassEnvFBO)
++        glDeleteFramebuffers(1, &m_glassEnvFBO);
++    m_glassEnvTex = m_glassEnvFBO = 0;
++    m_glassEnvW = m_glassEnvH = 0;
++    m_glassEnvSource = 0;
++    m_glassStats.slots = 0;
++    m_glassStats.bytes = 0;
++}
++
+ void GLScene::drawWindows(
+     const Mat4& vp,
+     const std::vector<WindowRender>& windows
+@@ -2795,6 +2972,7 @@ void GLScene::drawWindows(
+ 
+         SWinSlab slab;
+         slab.front.tex   = window.texture;
++        slab.front.owner = window.id;
+         slab.front.alpha = window.alpha;
+         slab.front.glassFace = window.glassMetrics[3] > 0.5f;
+         slab.front.glassSurface = window.glassSurface;
+@@ -2835,6 +3013,7 @@ void GLScene::drawWindows(
+             // each content face is visible exclusively from its own side,
+             // so the two never stack through a translucent window.
+             slab.back.tex   = window.texture;
++            slab.back.owner = window.id;
+             slab.back.alpha = window.alpha;
+             slab.back.glassFace = slab.front.glassFace;
+             slab.back.glassSurface = slab.front.glassSurface;
+@@ -2890,6 +3069,7 @@ void GLScene::drawWindows(
+ 
+                     SWPoly wall;
+                     wall.tex   = window.texture;
++                    wall.owner = window.id;
+                     wall.alpha = window.alpha;
+                     wall.glassWall = slab.front.glassFace;
+ 
+@@ -3029,8 +3209,21 @@ void GLScene::drawWindows(
+     glActiveTexture(GL_TEXTURE2);
+     glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTexture2);
+     const GLuint environment = m_environmentTex ? m_environmentTex : m_panoramaTex;
+-    glBindTexture(GL_TEXTURE_2D, environment);
++    // MiOS frame rate (render.glass_fps): refraction backdrops and the reflected dome refresh on due frames only.
++    const bool GLASS_DUE = glassFrameDue();
++    ++(GLASS_DUE ? m_glassStats.dueFrames : m_glassStats.keptFrames);
++    GLuint     glassEnvironment = environment;
++    if (m_glassFps > 0.f && m_environmentTex) {
++        if (GLASS_DUE || !m_glassEnvTex || m_glassEnvSource != m_environmentTex) {
++            if (const GLuint LATCHED = latchGlassEnvironment(m_environmentTex))
++                glassEnvironment = LATCHED;
++        } else
++            glassEnvironment = m_glassEnvTex;
++    }
++    glActiveTexture(GL_TEXTURE2);
++    glBindTexture(GL_TEXTURE_2D, glassEnvironment);
+     glUniform1i(m_glassEnvironment, 2);
++    std::unordered_map<uint64_t, uint32_t> glassOrdinal; // glass batches per window this frame (slot keys)
+     glUniform1f(m_glassMirror, m_panoramaMirror ? 1.f : 0.f);
+     glUniform1f(m_glassLiveMirror, m_liveWrapMirror ? 1.f : 0.f);
+     for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
+@@ -3135,6 +3328,19 @@ void GLScene::drawWindows(
+             const auto& D = ordered[i].glassDeco;
+             glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
+             glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
++            // MiOS frame rate: between due frames a batch reuses its cached frosted copy (render.glass_fps). The
++            // key is the WINDOW (its snapshot texture is re-allocated by captures) and the batch's ordinal within it.
++            const uint64_t OWNER    = ordered[i].owner ? static_cast<uint64_t>(ordered[i].owner) : ordered[i].tex;
++            const uint64_t SLOT_KEY = (OWNER << 12) ^ glassOrdinal[OWNER]++;
++            GLuint         FROSTED  = 0;
++            if (!GLASS_DUE) {
++                if (const auto CACHED = m_glassSlots.find(SLOT_KEY); CACHED != m_glassSlots.end() && CACHED->second.tex) {
++                    FROSTED = CACHED->second.tex;
++                    ++m_glassStats.reuses;
++                } else
++                    ++m_glassStats.misses;
++            }
++            if (!FROSTED) {
+             glActiveTexture(GL_TEXTURE1);
+             glBindTexture(GL_TEXTURE_2D, m_glassColor);
+             resolveSceneMsaa();
+@@ -3142,7 +3348,14 @@ void GLScene::drawWindows(
+             glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_sceneWidth, m_sceneHeight);
+             // MiOS: frost the copy once for the whole batch (separable Gaussian), then
+             // put back exactly the state this loop draws with.
+-            const GLuint FROSTED = frostGlassCopy();
++            FROSTED = frostGlassCopy();
++            ++m_glassStats.refreshes;
++            if (m_glassFps > 0.f) {
++                glActiveTexture(GL_TEXTURE1);
++                if (const GLuint KEPT = storeGlassSlot(SLOT_KEY, FROSTED))
++                    FROSTED = KEPT;
++            }
++            }
+             glUseProgram(m_sceneProgram);
+             glBindVertexArray(m_polyVAO);
+             glBindBuffer(GL_ARRAY_BUFFER, m_polyVBO);
+@@ -3164,6 +3377,21 @@ void GLScene::drawWindows(
+ 
+     glUniform1i(m_glassFace, 0);
+     glUniform1i(m_glassWall, 0);
++    // MiOS frame rate: a due frame drops the slots no batch used (closed or hidden windows).
++    if (GLASS_DUE && m_glassFps > 0.f) {
++        for (auto it = m_glassSlots.begin(); it != m_glassSlots.end();) {
++            if (it->second.used) {
++                ++it;
++                continue;
++            }
++            m_glassSlotBytes -= static_cast<size_t>(it->second.w) * static_cast<size_t>(it->second.h) * 4;
++            glDeleteTextures(1, &it->second.tex);
++            glDeleteFramebuffers(1, &it->second.fbo);
++            it = m_glassSlots.erase(it);
++        }
++        m_glassStats.slots = m_glassSlots.size();
++        m_glassStats.bytes = m_glassSlotBytes;
++    }
+     glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(oldReadFBO));
+     glActiveTexture(GL_TEXTURE2);
+     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(oldTexture2));
+@@ -4160,6 +4388,11 @@ void GLScene::destroyGLObjects() {
+         glDeleteTextures(1, &m_glassColor);
+         m_glassColor = 0;
+     }
++    releaseGlassCache(); // MiOS frame rate
++    if (m_copyReadFBO) {
++        glDeleteFramebuffers(1, &m_copyReadFBO);
++        m_copyReadFBO = 0;
++    }
+ 
+     if (m_msaaFBO) {
+         glDeleteFramebuffers(1, &m_msaaFBO);
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 1b05b8f..dbba3b2 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -8,10 +8,12 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <chrono>
+ #include <cstdint>
+ #include <filesystem>
+ #include <memory>
+ #include <string>
++#include <unordered_map>
+ #include <vector>
+ 
+ namespace H3D {
+@@ -151,6 +153,31 @@ class GLScene {
+     // Borrowed from the background-layer capture owner until the next render.
+     // Zero restores the optional file panorama; this class never deletes it.
+     void setEnvironmentTexture(unsigned int texture) { m_environmentTex = texture; }
++    unsigned int environmentTexture() const { return m_environmentTex; }
++
++    // MiOS frame rate (hypr3d-mios-frame-rate.patch, [desktop.framerate]): the glass backdrop (the frosted copy of
++    // the scene behind each glass batch: refraction) and the dome the glass reflects refresh only glassFps times a
++    // second; frames in between reuse each batch's last frosted copy (one slot per batch, within cacheMiB) and a
++    // latched copy of the dome. 0 = every frame (the upstream behaviour). Geometry stays per frame.
++    void setGlassPacing(float fps, int cacheMiB) {
++        m_glassFps      = std::clamp(fps, 0.f, 1000.f);
++        m_glassCacheMiB = std::clamp(cacheMiB, 0, 4096);
++        if (m_glassFps <= 0.f)
++            m_glassDropCache = true;
++    }
++    float glassFps() const { return m_glassFps; }
++    int   glassCacheMiB() const { return m_glassCacheMiB; }
++    struct SGlassPacingStats {
++        uint64_t refreshes = 0; // backdrop copies + frosts done
++        uint64_t reuses    = 0; // batches drawn from a cached slot
++        uint64_t envLatch  = 0; // dome copies latched for the reflection
++        uint64_t dueFrames = 0, keptFrames = 0; // drawWindows calls that refreshed / reused the glass
++        uint64_t misses    = 0; // batches on a kept frame without a cached slot (refreshed anyway)
++        size_t   slots = 0, bytes = 0;
++    };
++    const SGlassPacingStats& glassPacingStats() const { return m_glassStats; }
++    // Frees the glass slots and the dome copy (GL context current, outside a render pass: the 3D view closed).
++    void releaseGlassPacingCache() { releaseGlassCache(); }
+ 
+     // What the crosshair currently points at, or 0 for "nothing". Ray is cast
+     // through the centre of the screen from the camera, never from the OS
+@@ -406,6 +433,31 @@ class GLScene {
+     std::array<unsigned int, 2> m_frostTex{}, m_frostFBO{};
+     int m_frostW = 0, m_frostH = 0;
+     unsigned int frostGlassCopy(); // returns the texture the glass samples (the copy itself when sigma is ~0)
++    // MiOS frame rate: the glass refresh cadence and its caches.
++    struct SGlassSlotTex {
++        unsigned int tex = 0, fbo = 0;
++        int          w = 0, h = 0;
++        bool         used = false;
++    };
++    bool         glassFrameDue();                                   // once per drawWindows
++    unsigned int storeGlassSlot(uint64_t key, unsigned int source); // copy of `source` kept for non-due frames (0 = over budget)
++    unsigned int latchGlassEnvironment(unsigned int environment);   // the dome copy glass reflects (0 = none)
++    void         releaseGlassCache();
++    bool         blitTexture(unsigned int src, unsigned int dstFbo, int w, int h);
++    float                                       m_glassFps = 0.f;
++    int                                         m_glassCacheMiB = 256;
++    std::chrono::steady_clock::time_point       m_glassNext{};
++    bool                                        m_glassDropCache = false;
++    int                                         m_glassKeyW = 0, m_glassKeyH = 0, m_glassKeyMsaa = -1;
++    float                                       m_glassKeyScale = 0.f;
++    size_t                                      m_glassKeyBatches = 0;
++    std::unordered_map<uint64_t, SGlassSlotTex> m_glassSlots;
++    size_t                                      m_glassSlotBytes = 0;
++    unsigned int                                m_copyReadFBO = 0;
++    unsigned int                                m_glassEnvTex = 0, m_glassEnvFBO = 0;
++    int                                         m_glassEnvW = 0, m_glassEnvH = 0;
++    unsigned int                                m_glassEnvSource = 0;
++    SGlassPacingStats                           m_glassStats;
+     SRenderQuality m_rq;
+     unsigned int m_msaaFBO = 0, m_msaaColor = 0, m_msaaDepth = 0;
+     int  m_msaaSamples = 0;
+diff --git a/src/main.cpp b/src/main.cpp
+index e0f0e9e..c828f93 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -387,6 +387,45 @@ static constexpr float kSpawnDistance = 10.0f;
+ static SP<CEventLoopTimer> g_framePump;
+ static constexpr auto kFramePumpInterval = std::chrono::milliseconds(8);
+ 
++// MiOS frame rate (hypr3d-mios-frame-rate.patch, [desktop.framerate]): render.max_fps paces the pump on
++// phase-locked deadlines (0 = the 8 ms pump above); world.live_fps re-captures the live dome only that often
++// (0 = every frame); render.glass_fps / glass_cache_mib live in GLScene (refraction backdrops + reflected dome).
++// miosd framerate and SUPER+G send the running tier's D, W and G; the compositor cap (mios-pacing) stays the
++// hard limit, this only stops the room asking for frames the cap would defer anyway.
++static float                                 g_cfgMaxFps  = 0.f;
++static float                                 g_cfgLiveFps = 0.f;
++static std::chrono::steady_clock::time_point g_pumpNext{};
++static std::chrono::steady_clock::time_point g_domeNext{};
++static uint64_t                              g_domeCaptures = 0, g_domeKept = 0;
++
++// Phase-locked next deadline for a cadence of `fps` from `next` (a late tick resyncs instead of bursting).
++static std::chrono::steady_clock::time_point nextDeadline(std::chrono::steady_clock::time_point next, float fps,
++                                                          std::chrono::steady_clock::time_point now) {
++    const auto PERIOD = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / fps));
++    if (next.time_since_epoch().count() == 0 || now - next >= PERIOD)
++        return now + PERIOD;
++    return now < next ? next : next + PERIOD;
++}
++
++static std::chrono::steady_clock::duration framePumpTimeout() {
++    if (g_cfgMaxFps <= 0.f)
++        return kFramePumpInterval;
++    const auto NOW = std::chrono::steady_clock::now();
++    g_pumpNext     = nextDeadline(g_pumpNext, g_cfgMaxFps, NOW);
++    return std::max<std::chrono::steady_clock::duration>(g_pumpNext - NOW, std::chrono::microseconds(500));
++}
++
++// True when the live dome is due for a re-capture (world.live_fps); advances the deadline when it is.
++static bool domeDue() {
++    if (g_cfgLiveFps <= 0.f)
++        return true;
++    const auto NOW = std::chrono::steady_clock::now();
++    if (g_domeNext.time_since_epoch().count() != 0 && NOW + std::chrono::microseconds(500) < g_domeNext)
++        return false;
++    g_domeNext = nextDeadline(g_domeNext, g_cfgLiveFps, NOW);
++    return true;
++}
++
+ // Two keyboard modes, toggled with Super + Left Alt:
+ //   Space  -- WASD/Space/Shift/Ctrl drive the camera;
+ //   Window -- every key reaches the focused window for typing.
+@@ -1458,13 +1497,14 @@ static void startFramePump() {
+                     g_capture.releaseAll();
+                     g_scene.setEnvironmentTexture(0);
+                     g_environmentCapture.releaseAll();
++                    g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
+                     g_captureReleasePending = false;
+                 }
+ 
+                 if (g_fsPhase != EFullscreenPhase::In2D)
+                     damageCurrentMonitor();
+ 
+-                self->updateTimeout(kFramePumpInterval);
++                self->updateTimeout(framePumpTimeout());
+             },
+             nullptr
+         );
+@@ -1472,7 +1512,8 @@ static void startFramePump() {
+         g_pEventLoopManager->addTimer(g_framePump);
+     }
+ 
+-    g_framePump->updateTimeout(kFramePumpInterval);
++    g_pumpNext = {};
++    g_framePump->updateTimeout(framePumpTimeout());
+ }
+ 
+ // --- live window capture -----------------------------------------------------
+@@ -1646,14 +1687,23 @@ static void serviceCapture() {
+             if (box && box->w >= MON->m_size.x * 0.95 &&
+                 box->h >= MON->m_size.y * 0.95) background = layer;
+         }
+-    g_scene.setEnvironmentTexture(0);
+     std::vector<std::uintptr_t> environmentIds;
+-    if (background) {
+-        const auto id = reinterpret_cast<std::uintptr_t>(background.get());
+-        if (g_environmentCapture.makeSnapshotLayer(background, MON, true, false)) {
+-            if (const auto* snapshot = g_environmentCapture.get(id)) {
+-                g_scene.setEnvironmentTexture(snapshot->texID);
+-                environmentIds.push_back(id);
++    const auto* keptDome = background ? g_environmentCapture.get(reinterpret_cast<std::uintptr_t>(background.get())) : nullptr;
++    if (keptDome && !domeDue()) {
++        // MiOS frame rate (world.live_fps): between due frames the dome keeps its last capture.
++        g_scene.setEnvironmentTexture(keptDome->texID);
++        environmentIds.push_back(reinterpret_cast<std::uintptr_t>(background.get()));
++        ++g_domeKept;
++    } else {
++        g_scene.setEnvironmentTexture(0);
++        if (background) {
++            const auto id = reinterpret_cast<std::uintptr_t>(background.get());
++            if (g_environmentCapture.makeSnapshotLayer(background, MON, true, false)) {
++                if (const auto* snapshot = g_environmentCapture.get(id)) {
++                    g_scene.setEnvironmentTexture(snapshot->texID);
++                    environmentIds.push_back(id);
++                    ++g_domeCaptures;
++                }
+             }
+         }
+     }
+@@ -3508,6 +3558,7 @@ static void deactivate3D() {
+     g_capture.releaseAll();
+     g_scene.setEnvironmentTexture(0);
+     g_environmentCapture.releaseAll();
++    g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
+     Compat::setPointerCapture(false);
+ 
+     unghostWindows();
+@@ -4696,6 +4747,23 @@ static void dumpStatus() {
+     out << "texture: mip=" << (g_scene.renderQuality().textureSupersample ? 1 : 0)
+         << " aniso=" << g_scene.renderQuality().anisotropy
+         << " maxAniso=" << g_scene.maxAnisotropy() << "\n";
++    // MiOS frame rate: the configured rates and what they did per second since the previous dump.
++    {
++        static uint64_t lastRefresh = 0, lastReuse = 0, lastDome = 0, lastKept = 0;
++        static auto     lastT = NOW;
++        const auto&     G     = g_scene.glassPacingStats();
++        const float     DT    = std::max(1e-3f, std::chrono::duration<float>(NOW - lastT).count());
++        out << "pacing: max_fps=" << g_cfgMaxFps << " glass_fps=" << g_scene.glassFps() << " live_fps=" << g_cfgLiveFps
++            << " glassRefresh/s=" << (G.refreshes - lastRefresh) / DT << " glassReuse/s=" << (G.reuses - lastReuse) / DT
++            << " domeCapture/s=" << (g_domeCaptures - lastDome) / DT << " domeKept/s=" << (g_domeKept - lastKept) / DT
++            << " glassSlots=" << G.slots << " glassMiB=" << G.bytes / 1048576.0 << " envLatch=" << G.envLatch
++            << " glassDue=" << G.dueFrames << " glassKept=" << G.keptFrames << " glassMiss=" << G.misses << "\n";
++        lastRefresh = G.refreshes;
++        lastReuse   = G.reuses;
++        lastDome    = g_domeCaptures;
++        lastKept    = g_domeKept;
++        lastT       = NOW;
++    }
+ 
+     out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
+         << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
+@@ -6420,13 +6488,21 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: world.monitor must be a string");
+         if (!SET_BOOL(idx, "under_layers", g_cfgUnderLayers, "world.under_layers"))
+             return luaL_error(L, "hypr3d.config: world.under_layers must be a boolean");
+-        {
++        // MiOS frame rate: every world key is partial -- miosd sends world = {live_fps = W} alone, which must not
++        // reset panorama_mirror / live_wrap to their defaults.
++        const auto HAS = [&](const char* key) {
++            lua_getfield(L, idx, key);
++            const bool PRESENT = !lua_isnil(L, -1);
++            lua_pop(L, 1);
++            return PRESENT;
++        };
++        if (HAS("panorama_mirror")) {
+             bool mirror = false;
+             if (!SET_BOOL(idx, "panorama_mirror", mirror, "world.panorama_mirror"))
+                 return luaL_error(L, "hypr3d.config: world.panorama_mirror must be a boolean");
+             g_scene.setPanoramaMirror(mirror);
+         }
+-        {
++        if (HAS("live_wrap")) {
+             // MiOS: live wallpaper wrap: "mirror" (once + mirrored back half) or "repeat".
+             std::string wrap = "mirror";
+             if (!SET_STRING(idx, "live_wrap", wrap, "world.live_wrap") ||
+@@ -6436,6 +6512,14 @@ static int luaConfig(lua_State* L) {
+         }
+         if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
+             return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
++        {
++            // MiOS frame rate: live dome re-captures per second (0 = every frame).
++            float live = g_cfgLiveFps;
++            if (!SET_NUM(idx, "live_fps", live, "world.live_fps") || !std::isfinite(live))
++                return luaL_error(L, "hypr3d.config: world.live_fps must be a number");
++            g_cfgLiveFps = std::clamp(live, 0.f, 1000.f);
++            g_domeNext   = {};
++        }
+         lua_pop(L, 1);
+     }
+ 
+@@ -6500,6 +6584,19 @@ static int luaConfig(lua_State* L) {
+         if (!SET_BOOL(idx, "stills", g_cfgStills, "render.stills"))
+             return luaL_error(L, "hypr3d.config: render.stills must be a boolean");
+         g_scene.setCrosshairVisible(!g_cfgStills && !pointerFree());
++        {
++            // MiOS frame rate: the room's pump (0 = 8 ms), the glass refresh (0 = every frame) and its cache.
++            float maxFps = g_cfgMaxFps, glassFps = g_scene.glassFps(), cacheMiB = static_cast<float>(g_scene.glassCacheMiB());
++            if (!SET_NUM(idx, "max_fps", maxFps, "render.max_fps") || !std::isfinite(maxFps))
++                return luaL_error(L, "hypr3d.config: render.max_fps must be a number");
++            if (!SET_NUM(idx, "glass_fps", glassFps, "render.glass_fps") || !std::isfinite(glassFps))
++                return luaL_error(L, "hypr3d.config: render.glass_fps must be a number");
++            if (!SET_NUM(idx, "glass_cache_mib", cacheMiB, "render.glass_cache_mib") || !std::isfinite(cacheMiB))
++                return luaL_error(L, "hypr3d.config: render.glass_cache_mib must be a number");
++            g_cfgMaxFps = std::clamp(maxFps, 0.f, 1000.f);
++            g_scene.setGlassPacing(glassFps, static_cast<int>(std::clamp(cacheMiB, 0.f, 4096.f)));
++            g_pumpNext = {};
++        }
+         lua_pop(L, 1);
+     }
+ 

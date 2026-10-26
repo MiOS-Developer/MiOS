@@ -118,6 +118,7 @@ pub mod model {
         pub env: Option<HashMap<String, String>>,
     }
 }
+pub mod framerate;
 pub mod palette;
 pub mod ports;
 pub mod sigstore;

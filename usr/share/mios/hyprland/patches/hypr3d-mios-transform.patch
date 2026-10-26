@@ -1,0 +1,456 @@
+MiOS Hypr3D rotated outputs (applies after hypr3d-mios-retina-spawn.patch). On an output with a transform
+(portrait by rotation, flips) the room rendered in the panel buffer's orientation and sampled window snapshots
+Hyprland had rendered through the transform: it showed sideways with the wrong window content (measured: status
+size=1080x1920 pixel=1920x1080 scene=3840x2160, a 900x560 window drawn as a 476x764 white slab). Now:
+
+- the scene renders upright (the output's logical orientation, aspect W_t / H_t, SSAA at m_transformedSize x
+  render.scale) and the composite maps it into the buffer through the output transform (the blit's UV); the
+  typing-mode pointer follows through the same map; the crosshair is symmetric and stays in buffer space;
+- every snapshot (window, popup, layer, the wallpaper dome, each tile of an oversized window) is copied upright
+  once after capture, so UVs, texSpan, mipmaps and the outline tracer see the logical orientation;
+- pixel densities (tiled capture, outline and layer alpha masks) use m_transformedSize.
+
+The map from buffer to upright texture coordinates for wl_output_transform t is M_t (0 (x, y), 1 (-y, x),
+2 (-x, -y), 3 (y, -x), 4 (-x, y), 5 (y, x), 6 (x, -y), 7 (-y, -x)), measured in nested sessions for all eight
+transforms (window at the work-area centre at 1:1, a second window cascaded right/down). A normal output
+(transform 0) takes exactly the old code paths. Cost on a rotated output: one extra full-snapshot draw per capture
+(capture rates and counts unchanged).
+
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 7b0764c..23e7b84 100644
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -14,6 +14,8 @@
+ 
+ #include <GLES3/gl32.h>
+ 
++#include "Render/GLScene.hpp" // MiOS rotated outputs: miosOutputMap
++
+ #include <algorithm>
+ #include <cmath>
+ #include <fstream>
+@@ -404,6 +406,137 @@ static void recordWindowLook(const PHLWINDOW& window, CWindowCapture::SSnapshot&
+                          static_cast<float>(std::max(0.0, RES.bottomRight.x)), static_cast<float>(std::max(0.0, RES.bottomRight.y))};
+ }
+ 
++// MiOS rotated outputs (hypr3d-mios-transform.patch): Hyprland renders a
++// snapshot into a buffer-oriented framebuffer through the output transform.
++// The room samples snapshots in the output's logical (upright) orientation, so
++// on a transformed output the capture is copied upright once: one draw into a
++// framebuffer of m_transformedSize. A normal output returns `fb` untouched.
++static SP<Render::IFramebuffer> uprightSnapshot(const SP<Render::IFramebuffer>& fb, const PHLMONITOR& monitor) {
++    if (!fb || !monitor || monitor->m_transform == WL_OUTPUT_TRANSFORM_NORMAL || !g_pHyprRenderer)
++        return fb;
++    auto* SRCFB = dynamic_cast<Render::GL::CGLFramebuffer*>(fb.get());
++    const auto SRCTEX = fb->getTexture();
++    if (!SRCFB || !SRCTEX || !SRCTEX->m_texID)
++        return fb;
++    const int W = static_cast<int>(std::lround(monitor->m_transformedSize.x));
++    const int H = static_cast<int>(std::lround(monitor->m_transformedSize.y));
++    if (W <= 0 || H <= 0)
++        return fb;
++
++    static GLuint s_prog = 0, s_vao = 0, s_vbo = 0;
++    static GLint  s_tex = -1, s_map = -1;
++    if (!s_prog) {
++        static constexpr const char* VS = R"GLSL(#version 300 es
++layout(location = 0) in vec2 aPosition;
++out vec2 vUV;
++void main() { gl_Position = vec4(aPosition, 0.0, 1.0); vUV = aPosition * 0.5 + 0.5; }
++)GLSL";
++        static constexpr const char* FS = R"GLSL(#version 300 es
++precision highp float;
++in vec2 vUV;
++uniform sampler2D uTex;
++uniform int uMap;
++out vec4 fragColor;
++void main() {
++    vec2 c = vUV - 0.5;
++    vec2 r = c;
++    if (uMap == 1) r = vec2(c.y, -c.x);
++    else if (uMap == 2) r = -c;
++    else if (uMap == 3) r = vec2(-c.y, c.x);
++    else if (uMap == 4) r = vec2(-c.x, c.y);
++    else if (uMap == 5) r = vec2(c.y, c.x);
++    else if (uMap == 6) r = vec2(c.x, -c.y);
++    else if (uMap == 7) r = vec2(-c.y, -c.x);
++    fragColor = texture(uTex, r + 0.5);
++}
++)GLSL";
++        const auto COMPILE = [](GLenum type, const char* src) -> GLuint {
++            const GLuint S = glCreateShader(type);
++            glShaderSource(S, 1, &src, nullptr);
++            glCompileShader(S);
++            GLint ok = 0;
++            glGetShaderiv(S, GL_COMPILE_STATUS, &ok);
++            if (!ok) {
++                glDeleteShader(S);
++                return 0;
++            }
++            return S;
++        };
++        const GLuint V = COMPILE(GL_VERTEX_SHADER, VS), F = V ? COMPILE(GL_FRAGMENT_SHADER, FS) : 0;
++        if (V && F) {
++            const GLuint P = glCreateProgram();
++            glAttachShader(P, V);
++            glAttachShader(P, F);
++            glLinkProgram(P);
++            GLint ok = 0;
++            glGetProgramiv(P, GL_LINK_STATUS, &ok);
++            if (ok)
++                s_prog = P;
++            else
++                glDeleteProgram(P);
++        }
++        if (V)
++            glDeleteShader(V);
++        if (F)
++            glDeleteShader(F);
++        if (!s_prog)
++            return fb;
++        s_tex = glGetUniformLocation(s_prog, "uTex");
++        s_map = glGetUniformLocation(s_prog, "uMap");
++        static constexpr float QUAD[] = {-1.f, -1.f, 1.f, -1.f, 1.f, 1.f, -1.f, -1.f, 1.f, 1.f, -1.f, 1.f};
++        glGenVertexArrays(1, &s_vao);
++        glGenBuffers(1, &s_vbo);
++        glBindVertexArray(s_vao);
++        glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
++        glBufferData(GL_ARRAY_BUFFER, sizeof(QUAD), QUAD, GL_STATIC_DRAW);
++        glEnableVertexAttribArray(0);
++        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
++        glBindVertexArray(0);
++        glBindBuffer(GL_ARRAY_BUFFER, 0);
++    }
++
++    auto out = g_pHyprRenderer->createFB("hypr3d upright snapshot");
++    if (!out || !out->alloc(W, H, DRM_FORMAT_ABGR8888))
++        return fb;
++    out->setImageDescription(monitor->workBufferImageDescription());
++    auto* DSTFB = dynamic_cast<Render::GL::CGLFramebuffer*>(out.get());
++    if (!DSTFB)
++        return fb;
++
++    GLint oldFBO = 0, oldProg = 0, oldVAO = 0, oldTex = 0, oldActive = 0, oldVP[4] = {};
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldFBO);
++    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProg);
++    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVAO);
++    glGetIntegerv(GL_ACTIVE_TEXTURE, &oldActive);
++    glActiveTexture(GL_TEXTURE0);
++    glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTex);
++    glGetIntegerv(GL_VIEWPORT, oldVP);
++    const GLboolean BLEND = glIsEnabled(GL_BLEND), SCISSOR = glIsEnabled(GL_SCISSOR_TEST);
++
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, DSTFB->getFBID());
++    glViewport(0, 0, W, H);
++    glDisable(GL_BLEND);
++    glDisable(GL_SCISSOR_TEST);
++    glUseProgram(s_prog);
++    glBindTexture(GL_TEXTURE_2D, SRCTEX->m_texID);
++    glUniform1i(s_tex, 0);
++    glUniform1i(s_map, miosOutputMap(static_cast<int>(monitor->m_transform)));
++    glBindVertexArray(s_vao);
++    glDrawArrays(GL_TRIANGLES, 0, 6);
++
++    glBindVertexArray(static_cast<GLuint>(oldVAO));
++    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(oldTex));
++    glActiveTexture(static_cast<GLenum>(oldActive));
++    glUseProgram(static_cast<GLuint>(oldProg));
++    glViewport(oldVP[0], oldVP[1], oldVP[2], oldVP[3]);
++    if (BLEND)
++        glEnable(GL_BLEND);
++    if (SCISSOR)
++        glEnable(GL_SCISSOR_TEST);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(oldFBO));
++    return out;
++}
++
+ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& monitor, bool force) {
+     if (!window || !monitor)
+         return false;
+@@ -489,6 +622,8 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
+     if (!fb)
+         return false;
+ 
++    fb = uprightSnapshot(fb, monitor); // MiOS rotated outputs
++
+     const auto TEXTURE = fb->getTexture();
+ 
+     SSnapshot snapshot;
+@@ -550,7 +685,7 @@ bool CWindowCapture::makeTiledSnapshot(
+     bool              force
+ ) {
+     const Vector2D MONLOGI = monitor->m_size;
+-    const Vector2D MONPIX  = monitor->m_pixelSize;
++    const Vector2D MONPIX  = monitor->m_transformedSize; // MiOS: == m_pixelSize unless rotated
+ 
+     const double SX = MONPIX.x / MONLOGI.x; // logical -> texture px
+     const double SY = MONPIX.y / MONLOGI.y;
+@@ -627,6 +762,8 @@ bool CWindowCapture::makeTiledSnapshot(
+             if (!fb)
+                 continue; // hole in the composite; next frame retries
+ 
++            fb = uprightSnapshot(fb, monitor); // MiOS rotated outputs
++
+             auto* GLFB = dynamic_cast<Render::GL::CGLFramebuffer*>(fb.get());
+ 
+             if (!GLFB)
+@@ -735,8 +872,8 @@ void CWindowCapture::refreshSkirtMask(std::uintptr_t id, SSnapshot& snapshot,
+             return;
+         }
+ 
+-        const double SX = monitor->m_pixelSize.x / monitor->m_size.x;
+-        const double SY = monitor->m_pixelSize.y / monitor->m_size.y;
++        const double SX = monitor->m_transformedSize.x / monitor->m_size.x; // MiOS: upright texture
++        const double SY = monitor->m_transformedSize.y / monitor->m_size.y;
+ 
+         const int PW = std::max(1, static_cast<int>(std::lround(
+                                       snapshot.sampledBox.w * SX)));
+@@ -889,6 +1026,7 @@ bool CWindowCapture::makeSnapshotPopup(const WP<Desktop::View::CPopup>& popup,
+     auto fb = g_pHyprRenderer->makeSnapshotFB(popup);
+     if (!fb)
+         return false;
++    fb = uprightSnapshot(fb, monitor); // MiOS rotated outputs
+ 
+     const auto TEXTURE = fb->getTexture();
+ 
+@@ -944,6 +1082,8 @@ bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& mon
+     if (!fb)
+         return false;
+ 
++    fb = uprightSnapshot(fb, monitor); // MiOS rotated outputs
++
+     const auto TEXTURE = fb->getTexture();
+ 
+     SSnapshot snapshot;
+@@ -969,8 +1109,8 @@ bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& mon
+     // pixels instead of swallowing input for the window underneath.
+     ++snapshot.maskAge;
+ 
+-    const double SX = monitor->m_pixelSize.x / monitor->m_size.x;
+-    const double SY = monitor->m_pixelSize.y / monitor->m_size.y;
++    const double SX = monitor->m_transformedSize.x / monitor->m_size.x; // MiOS: upright texture
++    const double SY = monitor->m_transformedSize.y / monitor->m_size.y;
+ 
+     const int PW = static_cast<int>(std::lround(BOXOPT->w * SX));
+     const int PH = static_cast<int>(std::lround(BOXOPT->h * SY));
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 9897319..a5a1585 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -1282,6 +1282,23 @@ layout(location = 1) in vec2 aUV;
+ 
+ out vec2 vUV;
+ 
++// MiOS rotated outputs: 0 = identity, else 1 + k (miosApplyMap) on centred UVs.
++uniform int uOutTransform;
++vec2 miosOutUV(vec2 uv) {
++    if (uOutTransform <= 0) return uv;
++    vec2 c = uv - 0.5;
++    int k = uOutTransform - 1;
++    vec2 r = c;
++    if (k == 1) r = vec2(-c.y, c.x);
++    else if (k == 2) r = -c;
++    else if (k == 3) r = vec2(c.y, -c.x);
++    else if (k == 4) r = vec2(-c.x, c.y);
++    else if (k == 5) r = vec2(c.y, c.x);
++    else if (k == 6) r = vec2(c.x, -c.y);
++    else if (k == 7) r = vec2(-c.y, -c.x);
++    return r + 0.5;
++}
++
+ void main() {
+     gl_Position = vec4(
+         aPosition,
+@@ -1289,7 +1306,7 @@ void main() {
+         1.0
+     );
+ 
+-    vUV = aUV;
++    vUV = miosOutUV(aUV);
+ }
+ )GLSL";
+ 
+@@ -1668,6 +1685,7 @@ void main() {
+             "uPerPx"
+         );
+     m_blitTexel   = glGetUniformLocation(m_blitProgram, "uTexel");
++    m_blitOutTransform = glGetUniformLocation(m_blitProgram, "uOutTransform");
+     m_blitFxaa    = glGetUniformLocation(m_blitProgram, "uFxaa");
+     m_blitSharpen = glGetUniformLocation(m_blitProgram, "uSharpen");
+     m_blitSrcTexel = glGetUniformLocation(m_blitProgram, "uSrcTexel");
+@@ -3550,6 +3568,15 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+         ny = CY / CW;
+         return true;
+     };
++    // MiOS rotated outputs: upright NDC -> buffer NDC (the composite's inverse).
++    // The output map is defined on image coordinates (y down): flip in and out.
++    const auto toBuffer = [&](float& nx, float& ny) {
++        if (m_outTransform) {
++            float y = -ny;
++            miosApplyMap(miosOutputMap(m_outTransform), nx, y, true);
++            ny = -y;
++        }
++    };
+ 
+     const auto drawLayer = [&](float ox, float oy, float r, float g, float b) {
+         std::vector<float> verts;
+@@ -3559,6 +3586,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+             float nx = 0.0f, ny = 0.0f;
+             if (!toNdc(V[0] + ox, V[1] + oy, nx, ny))
+                 return;
++            toBuffer(nx, ny);
+ 
+             // Drawn straight into Hyprland's framebuffer, which is stored
+             // vertically flipped (the scene blit flips v for the same
+@@ -3605,6 +3633,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+             float nx = 0.0f, ny = 0.0f;
+             if (!toNdc(C[0], C[1], nx, ny))
+                 return;
++            toBuffer(nx, ny);
+ 
+             // Flipped framebuffer, as below.
+             verts.insert(verts.end(), {nx, -ny, 0.0f, C[2], C[3]});
+@@ -3678,6 +3707,7 @@ void GLScene::drawFullscreen(
+     glUniform1i(m_blitTexture, 0);
+     glUniform1f(m_blitAlpha, alpha);
+     glUniform1i(m_blitPerPx, perPixel ? 1 : 0);
++    glUniform1i(m_blitOutTransform, m_outTransform ? 1 + miosOutputMap(m_outTransform) : 0);
+     glUniform2f(m_blitTexel, m_outputWidth > 0 ? 1.0f / m_outputWidth : 0.0f,
+                 m_outputHeight > 0 ? 1.0f / m_outputHeight : 0.0f);
+     glUniform2f(m_blitSrcTexel, m_sceneWidth > 0 ? 1.0f / m_sceneWidth : 0.0f,
+@@ -3909,7 +3939,8 @@ bool GLScene::render(
+     int height,
+     float alpha,
+     float dt,
+-    const std::vector<WindowRender>& windows
++    const std::vector<WindowRender>& windows,
++    int outputTransform
+ ) {
+     if (width <= 0 || height <= 0)
+         return false;
+@@ -3917,6 +3948,14 @@ bool GLScene::render(
+     if (!initialize())
+         return false;
+ 
++    // MiOS rotated outputs: `width` x `height` is the target buffer; the scene
++    // renders upright at the output's logical orientation (swapped for a 90 /
++    // 270 degree transform) and the composite maps it into the buffer.
++    m_outTransform = outputTransform & 7;
++    const int BUFFER_W = width, BUFFER_H = height;
++    if (m_outTransform & 1)
++        std::swap(width, height);
++
+     if (!ensureSceneFramebuffer(width, height))
+         return false;
+ 
+@@ -4133,7 +4172,7 @@ bool GLScene::render(
+     // --- composite over whatever Hyprland already drew for this frame ---
+     glBindFramebuffer(GL_FRAMEBUFFER, targetFBO);
+ 
+-    glViewport(0, 0, width, height);
++    glViewport(0, 0, BUFFER_W, BUFFER_H);
+ 
+     glDisable(GL_DEPTH_TEST);
+     glDisable(GL_CULL_FACE);
+@@ -4160,8 +4199,8 @@ bool GLScene::render(
+     }
+ 
+     drawFullscreen(std::clamp(alpha, 0.0f, 1.0f), MORPH);
+-    drawCrosshair(width, height);
+-    drawPointer(vp, width, height);
++    drawCrosshair(BUFFER_W, BUFFER_H); // centred and symmetric: buffer space as is
++    drawPointer(vp, width, height);    // upright NDC, mapped into the buffer per vertex
+ 
+     // --- restore compositor state ---
+     glUseProgram(static_cast<GLuint>(oldProgram));
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 9dd1c51..89b4cc4 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -25,6 +25,30 @@ static constexpr float kFovDeg = 65.0f;
+ // Vertex count of the typing-mode cursor arrow (five triangles).
+ static constexpr int kPointerVerts = 15;
+ 
++// MiOS rotated outputs (hypr3d-mios-transform.patch): the 8 axis-aligned maps of
++// centred coordinates, k -> M_k (x, y): 0 (x, y), 1 (-y, x), 2 (-x, -y),
++// 3 (y, -x), 4 (-x, y), 5 (y, x), 6 (x, -y), 7 (-y, -x). miosOutputMap(t) is
++// the map from an output's BUFFER texture coordinates to its upright (logical)
++// image for wl_output_transform t; M_k^-1 = M_k^T. Measured on nested outputs
++// with every transform 0..7 (window at the work-area centre, 1:1, cascade
++// right/down): it is M_t itself (flipped-90 = (y, x), flipped-270 = (-y, -x)).
++inline int miosOutputMap(int wlTransform) {
++    return wlTransform & 7;
++}
++inline void miosApplyMap(int k, float& x, float& y, bool inverse) {
++    const float X = x, Y = y;
++    switch (k & 7) {
++        case 1: x = inverse ? Y : -Y; y = inverse ? -X : X; break;
++        case 2: x = -X; y = -Y; break;
++        case 3: x = inverse ? -Y : Y; y = inverse ? X : -X; break;
++        case 4: x = -X; break;
++        case 5: x = Y; y = X; break;
++        case 6: y = -Y; break;
++        case 7: x = -Y; y = -X; break;
++        default: break;
++    }
++}
++
+ // The 3D view: a first-person room containing the windows of the active
+ // workspace. It deliberately knows nothing about Hyprland -- main.cpp feeds it
+ // WindowRender entries and reads back what the crosshair hit.
+@@ -136,8 +160,11 @@ class GLScene {
+     // already there with `alpha`, so the 2D desktop underneath fades out
+     // instead of being captured and re-projected -- the workspace itself is
+     // never rendered as an object in the scene.
++    // MiOS: outputTransform = the output's wl_output_transform (the scene
++    // renders upright, the composite follows the transform into the buffer).
+     bool render(unsigned int targetFBO, int width, int height, float alpha,
+-                float dt, const std::vector<WindowRender>& windows);
++                float dt, const std::vector<WindowRender>& windows,
++                int outputTransform = 0);
+ 
+     // Raw pointer counts -> camera look. Prefer driving this through
+     // InputController so sensitivity policy stays in one testable place.
+@@ -519,6 +546,7 @@ class GLScene {
+     int m_glassSurface = -1, m_glassMetrics = -1;
+     int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
+     int m_sceneTexSharp = -1; // MiOS retina spawn
++    int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
+     float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
+     SGlassConfig m_glassConfig;
+     unsigned int m_discVAO = 0, m_discVBO = 0;
+diff --git a/src/main.cpp b/src/main.cpp
+index c1785f4..ebf52bf 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -2127,9 +2127,8 @@ static Vec3 retinaSettle(const PHLMONITOR& mon, World3D::SEntity& entity, const
+         return center;
+     g_retinaSettle.erase(IT);
+     const auto& CAM = g_scene.camera();
+-    if (CAM.mirrorView || std::fabs(CAM.roll) > 1e-5f || !mon || mon->m_size.y < 1.0 ||
+-        (static_cast<int>(mon->m_transform) % 2) != 0)
+-        return center; // rotated outputs and rolled views have no fixed pixel grid here
++    if (CAM.mirrorView || std::fabs(CAM.roll) > 1e-5f || !mon || mon->m_size.y < 1.0)
++        return center; // a rolled view has no fixed pixel grid
+     const Vec3   FWD = CAM.forward(), RIGHT = CAM.right(), UP = cross(RIGHT, FWD);
+     const Vec3   N   = retinaNormal(entity.yaw, entity.pitch);
+     if (dot(N, FWD) > -0.99999f || std::fabs(entity.roll) > 1e-5f)
+@@ -5033,13 +5032,17 @@ class CHypr3DPassElement final : public IPassElement {
+         Render::GL::g_pHyprOpenGL->makeEGLCurrent();
+ 
+         const auto R_T0 = std::chrono::steady_clock::now();
++        // MiOS rotated outputs: the scene renders upright, the composite
++        // follows the output transform into the buffer.
++        const auto ROOM_MON = targetMonitor();
+         const bool result = g_scene.render(
+             framebufferID,
+             width,
+             height,
+             m_alpha,
+             m_dt,
+-            g_renderWindows
++            g_renderWindows,
++            ROOM_MON ? static_cast<int>(ROOM_MON->m_transform) : 0
+         );
+         g_msRender = g_msRender * 0.9 +
+             std::chrono::duration<double, std::milli>(
