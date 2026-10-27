@@ -480,6 +480,7 @@ etc/sysctl.d/*
 !/usr/bin/mios-chrome
 !/usr/bin/mios-deploy
 !/usr/bin/mios-portal
+!/usr/bin/mios-shaderglass
 !/usr/bin/mios-pull
 !/usr/bin/mios-rebuild
 !/usr/bin/mios-update
@@ -743,6 +744,7 @@ usr/lib/modules-load.d/*
 !/usr/lib/pam.d/
 usr/lib/pam.d/*
 !/usr/lib/pam.d/mios-*
+!/usr/lib/pam.d/mios-rdp
 !/usr/lib/pam.d/password-auth
 !/usr/lib/pam.d/system-auth
 
@@ -932,6 +934,7 @@ etc/profile.d/80-systemd-osc-context.sh
 !/src/mios-rs/**
 
 # Native RDP server (IronRDP workspace): source committed, target/ ignored
+!/src/mios-rdp-server
 !/src/mios-rdp-server/
 !/src/mios-rdp-server/**
 /src/mios-rdp-server/target/
@@ -967,6 +970,24 @@ usr/share/mios/virtio/*.iso
 /usr/lib/mios/agent-cli/
 /usr/lib/mios/agent-cli/**
 
+# Runtime-installed ShaderGlass release (GPL-3 binaries, WineCap.dll, INSTALLED.json): fetched and verified per host by
+# `miosd shaderglass install` ([desktop.shaderglass].install_dir), never tracked; .prev is its rollback copy.
+/usr/lib/mios/shaderglass/
+/usr/lib/mios/shaderglass/**
+/usr/lib/mios/shaderglass.prev/
+/usr/lib/mios/.shaderglass.new-*/
+
+# Host-provisioned Rust toolchain ([build.toolchain].rustup_home / cargo_home), unpacked Gecko runtime archives, and MCP runtime cache:
+/usr/lib/mios/rustup/
+/usr/lib/mios/rustup/**
+/usr/lib/mios/cargo/
+/usr/lib/mios/cargo/**
+/usr/lib/mios/portal/libxul.so
+/usr/lib/mios/portal/omni.ja
+/usr/lib/mios/portal/browser/omni.ja
+/var/lib/mios/mcp/
+/var/lib/mios/mcp/**
+
 # tuned: ship only the MiOS profiles and the PPD mapping; Fedora's own profiles and tuned's runtime state stay untracked.
 !/usr/lib/tuned/
 /usr/lib/tuned/*
@@ -984,6 +1005,8 @@ usr/share/mios/virtio/*.iso
 
 !/usr/share/mios/hyprland/session.lua
 !/usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch
 
 !/usr/share/mios/theme/console-palette
 

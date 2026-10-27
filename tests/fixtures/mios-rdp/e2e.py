@@ -4,7 +4,7 @@ test certificate) attached to HEADLESS-MIOS-SCALETEST of the live Hyprland, a Fr
 private Xvfb, an optional test window on the scaletest workspace. Guards before/after: fuse.portal
 count, watchdog0, HDMI-A-1 mode/position, no SCALETEST left, default sink/source unchanged.
 Library + CLI: e2e.py --label L --seconds N [--window bars|text|static|none] [-- extra xfreerdp args]"""
-import glob, json, os, signal, subprocess, sys, time
+import glob, json, os, signal, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RT = "/run/user/1000"
@@ -238,7 +238,7 @@ def main():
     label = opt("--label", "run")
     secs = float(opt("--seconds", "15"))
     window = opt("--window", "none")
-    d = opt("--dir", os.path.join(HERE, "..", "t3"))
+    d = opt("--dir", os.environ.get("MIOS_RDP_LIVE_DIR") or tempfile.mkdtemp(prefix="mios-rdp-e2e-"))
     extra = a[a.index("--") + 1:] if "--" in a else []
     ensure_cert(d)
     if not os.path.exists(f"{d}/native.json"):

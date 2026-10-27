@@ -5,8 +5,15 @@
 #![warn(clippy::unwrap_used, clippy::panic, clippy::todo)]
 
 mod drift;
+#[cfg(target_os = "linux")]
 mod appmenu;
+#[cfg(target_os = "linux")]
 mod placement;
+#[cfg(target_os = "linux")]
+mod shaderglass;
+#[cfg(target_os = "linux")]
+mod framerate;
+#[cfg(target_os = "linux")]
 mod sessions;
 use miosd::fhs_sync;
 use miosd::native_generator;
@@ -320,6 +327,90 @@ struct Cli {
     command: Commands,
 }
 
+// Topbar switches persist in the user TOML and apply to every output.
+#[cfg(target_os = "linux")]
+mod topbar_runtime {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Path;
+
+    pub const ITEMS: &[&str] = &["app_menu", "workspaces", "network", "sound", "batteries", "sysmon", "date", "clock", "power", "fps", "shaderglass", "remote"];
+
+    pub fn set_visibility(path: &Path, item: &str, visible: bool) -> Result<(), String> {
+        if !ITEMS.contains(&item) { return Err(format!("unknown topbar item {item:?}")); }
+        let parent = path.parent().ok_or("user TOML has no parent")?;
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600)
+            .open(parent.join(".mios-topbar.lock")).map_err(|e| e.to_string())?;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 { return Err("cannot lock user settings".into()); }
+        let text = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.to_string()),
+        };
+        let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|e| format!("user TOML: {e}"))?;
+        let mut table = doc.as_table_mut();
+        for key in ["desktop", "topbar", "visibility"] {
+            if !table.contains_key(key) { table[key] = toml_edit::Item::Table(toml_edit::Table::new()); }
+            table = table[key].as_table_mut().ok_or_else(|| format!("{key} must be a TOML table"))?;
+        }
+        table[item] = toml_edit::value(visible);
+        let tmp = parent.join(format!(".mios-topbar-{}.tmp", std::process::id()));
+        let mut f = OpenOptions::new().create_new(true).write(true).mode(0o600).open(&tmp).map_err(|e| e.to_string())?;
+        let result = (|| {
+            f.write_all(doc.to_string().as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
+            fs::rename(&tmp, path).map_err(|e| e.to_string())
+        })();
+        if result.is_err() { let _ = fs::remove_file(&tmp); }
+        result
+    }
+
+    pub fn run(item: Option<&str>, visible: Option<bool>) -> Result<(), String> {
+        match (item, visible) {
+            (Some(k), Some(v)) => set_visibility(&mios_resolver::user_toml_path(None), k, v)?,
+            (None, None) => {},
+            _ => return Err("--item and --visible must be supplied together".into()),
+        }
+        let doc = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
+        let bar = doc.get("desktop").and_then(|d| d.get("topbar")).ok_or("desktop.topbar is missing")?;
+        println!("{}", serde_json::to_string(bar).map_err(|e| e.to_string())?);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn visibility_preserves_other_settings_and_comments() {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("mios.toml");
+            fs::write(&p, "# operator choices\n[identity]\nusername = 'operator'\n[desktop.topbar.visibility]\nclock = false\n").unwrap();
+            set_visibility(&p, "fps", true).unwrap();
+            let raw = fs::read_to_string(&p).unwrap();
+            let doc: toml::Value = raw.parse().unwrap();
+            assert!(raw.contains("# operator choices"));
+            assert_eq!(doc["identity"]["username"].as_str(), Some("operator"));
+            assert_eq!(doc["desktop"]["topbar"]["visibility"]["clock"].as_bool(), Some(false));
+            assert_eq!(doc["desktop"]["topbar"]["visibility"]["fps"].as_bool(), Some(true));
+            assert!(set_visibility(&p, "unknown", false).is_err());
+            assert_eq!(fs::read_to_string(&p).unwrap(), raw);
+        }
+        #[test]
+        fn malformed_user_toml_is_preserved() {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("mios.toml");
+            fs::write(&p, "[broken").unwrap();
+            assert!(set_visibility(&p, "fps", true).is_err());
+            assert_eq!(fs::read_to_string(&p).unwrap(), "[broken");
+            fs::write(&p, "desktop = false\n").unwrap();
+            assert!(set_visibility(&p, "fps", true).is_err());
+            assert_eq!(fs::read_to_string(&p).unwrap(), "desktop = false\n");
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Synchronize and maintain FHS Root Overlay and Windows/Linux host-guest topology parity at runtime
@@ -353,11 +444,33 @@ enum Commands {
         status: Option<String>,
     },
     /// Float-first window placement on Hyprland ([desktop.hyprland.placement])
+    #[cfg(target_os = "linux")]
     Placement {
         #[command(subcommand)]
         action: placement::PlacementCommand,
     },
+    /// Read or update global topbar visibility in the user TOML.
+    #[cfg(target_os = "linux")]
+    Topbar {
+        #[arg(long, requires = "visible")]
+        item: Option<String>,
+        #[arg(long, requires = "item", action = clap::ArgAction::Set)]
+        visible: Option<bool>,
+    },
+    /// ShaderGlass overlay panes over windows ([desktop.shaderglass]; glue: mios-shaderglass)
+    #[cfg(target_os = "linux")]
+    Shaderglass {
+        #[command(subcommand)]
+        action: shaderglass::ShaderglassCommand,
+    },
+    /// Desktop frame-rate policy: power profile / battery / GameMode -> compositor, glass and wallpaper rates ([desktop.framerate])
+    #[cfg(target_os = "linux")]
+    Framerate {
+        #[command(subcommand)]
+        action: framerate::FramerateCommand,
+    },
     /// Global tmux session selector across this node and tailnet MiOS nodes ([terminal.sessions])
+    #[cfg(target_os = "linux")]
     Sessions {
         #[arg(long, default_value = "/")]
         root: String,
@@ -366,6 +479,7 @@ enum Commands {
         list: bool,
     },
     /// Real application menus of the focused window (GTK org.gtk.Menus + dbusmenu registrar)
+    #[cfg(target_os = "linux")]
     Appmenu {
         #[command(subcommand)]
         action: appmenu::AppmenuAction,
@@ -1622,18 +1736,42 @@ async fn main() {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
         Commands::Placement { action } => {
             if let Err(error) = placement::run(action) {
                 eprintln!("[miosd] placement: {error}");
                 std::process::exit(1);
             }
         }
+        #[cfg(target_os = "linux")]
+        Commands::Topbar { item, visible } => {
+            if let Err(error) = topbar_runtime::run(item.as_deref(), *visible) {
+                eprintln!("[miosd] topbar: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Commands::Shaderglass { action } => {
+            if let Err(error) = shaderglass::run(action) {
+                eprintln!("[miosd] shaderglass: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Commands::Framerate { action } => {
+            if let Err(error) = framerate::run(action).await {
+                eprintln!("[miosd] framerate: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
         Commands::Sessions { root, list } => {
             if let Err(error) = sessions::run(std::path::Path::new(root), *list) {
                 eprintln!("[miosd] sessions: {error}");
                 std::process::exit(1);
             }
         }
+        #[cfg(target_os = "linux")]
         Commands::Appmenu { action } => {
             if let Err(error) = appmenu::run(action).await {
                 eprintln!("[miosd] appmenu: {error}");
@@ -1987,59 +2125,60 @@ async fn main() {
             url,
             runtime_dir,
         } => {
-            let rt = runtime_dir.clone().unwrap_or_else(|| {
-                std::env::var_os("XDG_RUNTIME_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| std::path::PathBuf::from("/run/user/1000"))
-            });
+            #[cfg(unix)]
+            {
+                let rt = runtime_dir.clone().unwrap_or_else(|| {
+                    std::env::var_os("XDG_RUNTIME_DIR")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("/run/user/1000"))
+                });
 
-            let data = mios_resolver::resolve_merged(None, false).ok();
-            let config = data
-                .as_ref()
-                .and_then(|d| d.get("theme"))
-                .and_then(|t| t.get("wallpaper"));
+                let data = mios_resolver::resolve_merged(None, false).ok();
+                let config = data
+                    .as_ref()
+                    .and_then(|d| d.get("theme"))
+                    .and_then(|t| t.get("wallpaper"));
 
-            let r = runner.clone().unwrap_or_else(|| {
-                config
-                    .and_then(|c| c.get("linux_runner"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("/usr/lib64/qt6/bin/qml")
-                    .to_string()
-            });
+                let r = runner.clone().unwrap_or_else(|| {
+                    config
+                        .and_then(|c| c.get("linux_runner"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("/usr/lib64/qt6/bin/qml")
+                        .to_string()
+                });
 
-            let h = host.clone().unwrap_or_else(|| {
-                config
-                    .and_then(|c| c.get("linux_host"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("/usr/share/mios/wallpaper/Host.qml")
-                    .to_string()
-            });
+                let h = host.clone().unwrap_or_else(|| {
+                    config
+                        .and_then(|c| c.get("linux_host"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("/usr/share/mios/wallpaper/Host.qml")
+                        .to_string()
+                });
 
-            let u = url.clone().unwrap_or_else(|| {
-                "file:///usr/share/MiOS%20Wallpaper/living.html".to_string()
-            });
+                let u = url.clone().unwrap_or_else(|| {
+                    "file:///usr/share/MiOS%20Wallpaper/living.html".to_string()
+                });
 
-            let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let s_clone = shutdown.clone();
+                let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let s_clone = shutdown.clone();
 
-            tokio::spawn(async move {
-                #[cfg(unix)]
-                {
+                tokio::spawn(async move {
                     use tokio::signal::unix::{signal, SignalKind};
                     if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
                         sigterm.recv().await;
                         s_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = tokio::signal::ctrl_c().await;
-                    s_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
+                });
 
-            if let Err(e) = miosd::wallpaper::supervise_loop(&r, &h, &u, &rt, shutdown) {
-                eprintln!("[miosd] Wallpaper supervisor error: {e}");
+                if let Err(e) = miosd::wallpaper::supervise_loop(&r, &h, &u, &rt, shutdown) {
+                    eprintln!("[miosd] Wallpaper supervisor error: {e}");
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (runner, host, url, runtime_dir);
+                eprintln!("[miosd] wallpaper-watch is only supported on Linux (use mios-wallpaperd on Windows)");
                 std::process::exit(1);
             }
         }

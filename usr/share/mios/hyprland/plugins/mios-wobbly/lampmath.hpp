@@ -135,8 +135,8 @@ namespace MiosLamp {
     }
 
     // Fade the rigid hyprglass pane during wobble based on maximum mesh deviation (dev in px).
-    // At rest (dev <= 0): 1.0. At/above threshold: minFade (0.05). Unity brightness preserved via uGain = 1.0 / paneFade.
-    inline double wobblePaneFade(double dev, double minFade = 0.05, double thresh = 2.0) {
+    // At rest (dev <= 0): 1.0. At/above threshold: minFade (0.4). Unity brightness preserved via uGain = 1.0 / paneFade.
+    inline double wobblePaneFade(double dev, double minFade = 0.4, double thresh = 2.0) {
         minFade = std::isfinite(minFade) ? std::clamp(minFade, 0.05, 1.0) : 1.0;
         if (!std::isfinite(thresh) || thresh <= 0.0)
             thresh = 2.0;

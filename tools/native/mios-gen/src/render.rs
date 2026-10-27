@@ -2723,6 +2723,213 @@ pub mod render_hyprland {
         Ok(format!("mios_section(\"screenshot\", function()\n{body}end)\n"))
     }
 
+    /// Words [desktop.shaderglass.window].suppress_event may carry, and the ones it must carry: the pane never
+    /// takes focus by activation and never goes fullscreen or maximized (Wine asks for fullscreen when a
+    /// borderless window covers its monitor, which `-f` does at start).
+    const SHADERGLASS_SUPPRESS: &[&str] = &["fullscreen", "maximize", "activate", "activatefocus", "fullscreenoutput"];
+    const SHADERGLASS_SUPPRESS_REQUIRED: &[&str] = &["fullscreen", "maximize", "activate", "activatefocus"];
+
+    /// One key combination in a comparable form: "+"-separated parts, trimmed, upper-cased, sorted.
+    fn key_combo(key: &str) -> String {
+        let mut parts: Vec<String> = key.split('+').map(|p| p.trim().to_ascii_uppercase()).filter(|p| !p.is_empty()).collect();
+        parts.sort();
+        parts.join("+")
+    }
+
+    /// Every key combination the rest of the projection binds (desktop bindings, terminal and launcher keys,
+    /// [keybindings] actions, the workspace keys, mios-shot and the Hypr3D toggle while they are enabled).
+    fn bound_key_combos(data: &Value) -> Result<std::collections::BTreeSet<String>, String> {
+        let mut out = std::collections::BTreeSet::new();
+        let h = at(data, "desktop.hyprland")?;
+        let main = string_value(h, "main_modifier")?;
+        for key in ["Q", "Return"] {
+            out.insert(key_combo(&format!("{main} + {key}")));
+        }
+        for key in h.get("launcher_keys").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            out.insert(key_combo(&format!("{main} + {key}")));
+        }
+        if let (Some(modifier), Some(actions)) = (
+            data.get("keybindings").and_then(|k| k.get("desktop_modifier")).and_then(Value::as_str),
+            data.get("keybindings").and_then(|k| k.get("actions")).and_then(Value::as_array),
+        ) {
+            let modifier = modifier.split_whitespace().collect::<Vec<_>>().join(" + ");
+            for key in actions.iter().filter_map(|a| a.get("key").and_then(Value::as_str)) {
+                out.insert(key_combo(&format!("{modifier} + {key}")));
+            }
+        }
+        for key in h.get("bindings").and_then(Value::as_array).into_iter().flatten().filter_map(|b| b.get("key").and_then(Value::as_str)) {
+            out.insert(key_combo(key));
+        }
+        let count = h.get("workspace_count").and_then(Value::as_integer).unwrap_or(10).clamp(1, 10);
+        for i in 1..=count {
+            out.insert(key_combo(&format!("{main} + {}", i % 10)));
+            out.insert(key_combo(&format!("{main} + SHIFT + {}", i % 10)));
+        }
+        if let Some(shot) = data.get("desktop").and_then(|d| d.get("screenshot")).filter(|s| s.get("enabled").and_then(Value::as_bool) != Some(false)) {
+            for key in shot.get("bindings").and_then(Value::as_array).into_iter().flatten().filter_map(|b| b.get("key").and_then(Value::as_str)) {
+                out.insert(key_combo(key));
+            }
+        }
+        if let Some(key) = h
+            .get("hypr3d")
+            .filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true))
+            .and_then(|p| p.get("toggle_key"))
+            .and_then(Value::as_str)
+        {
+            out.insert(key_combo(key));
+        }
+        Ok(out)
+    }
+
+    /// [desktop.shaderglass] (`miosd shaderglass`: ShaderGlass under Wine as a pinned, click-through,
+    /// Hyprglass-decorated live clone over one target window) -> its window rules and keybinds. Absent or
+    /// enabled != true: nothing. One mios_section, so a compositor that rejects a rule keeps the session.
+    /// Rules, all scoped to the anchored ShaderGlass class/title patterns or the pane's tag:
+    /// - the pane: float + pin (pinned floating windows draw after every workspace window and open special
+    ///   workspace, so the pane sits above every window and glass pane and below the shell layers);
+    ///   no_initial_focus, focus_on_activate = false and suppress_event (never steals focus, never goes
+    ///   fullscreen/maximized); no_anim (follows its target without the move animation); its pane tag; and,
+    ///   only with exclude_from_captures, no_screen_share (Hyprland 0.56 blacks it out of output captures);
+    /// - the glass preset tag: the desktop's one preset ([desktop.hyprland.hyprglass.config].default_preset),
+    ///   while Hyprglass is enabled;
+    /// - passthrough: windows carrying passthrough_tag get no_focus (hit-testing skips them, so pointer and
+    ///   keyboard reach the target underneath); miosd adds the tag to an overlay pane and drops it in setup;
+    /// - the tool windows (shader browser, parameters): float, centred and pinned, above the pinned pane.
+    ///
+    /// Self-capture never happens by construction: the pane captures one target window (xdph window capture
+    /// renders only that window) and miosd refuses a ShaderGlass window as a target.
+    pub fn shaderglass_lua(data: &Value) -> Result<String, String> {
+        let Some(sg) = data.get("desktop").and_then(|d| d.get("shaderglass")) else {
+            return Ok(String::new());
+        };
+        if sg.get("enabled").and_then(Value::as_bool) != Some(true) {
+            return Ok(String::new());
+        }
+        let binary = string_value(sg, "binary")?;
+        if !binary.starts_with('/') || binary.chars().any(|c| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]~#".contains(c)) {
+            return Err("desktop.shaderglass.binary must be an absolute path without shell metacharacters".into());
+        }
+        let w = at(sg, "window").map_err(|_| "[desktop.shaderglass.window] is required".to_string())?;
+        let pattern = |k: &str| -> Result<String, String> {
+            let p = string_value(w, k).map_err(|_| format!("desktop.shaderglass.window.{k} must be a nonempty regex"))?;
+            if !(p.starts_with('^') && p.ends_with('$')) {
+                return Err(format!("desktop.shaderglass.window.{k} must be anchored (^...$) so it matches only ShaderGlass windows"));
+            }
+            regex::Regex::new(&p).map_err(|e| format!("desktop.shaderglass.window.{k}: {e}"))?;
+            Ok(p)
+        };
+        let (class, title, tools) = (pattern("class")?, pattern("title")?, pattern("tools_title")?);
+        let tag = |k: &str| -> Result<String, String> {
+            w.get(k)
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty() && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+                .map(str::to_owned)
+                .ok_or(format!("desktop.shaderglass.window.{k} must be a [A-Za-z0-9_-] tag"))
+        };
+        let (pane_tag, pass_tag) = (tag("pane_tag")?, tag("passthrough_tag")?);
+        if pane_tag == pass_tag {
+            return Err("desktop.shaderglass.window.pane_tag and passthrough_tag must differ".into());
+        }
+        let layer = string_value(w, "layer")?;
+        if layer != "pinned" {
+            return Err(format!("desktop.shaderglass.window.layer {layer:?}: only \"pinned\" (float + pin: above every window and glass pane, below the shell layers) is supported"));
+        }
+        let suppress = string_value(w, "suppress_event")?;
+        let words: Vec<&str> = suppress.split_whitespace().collect();
+        if let Some(bad) = words.iter().find(|e| !SHADERGLASS_SUPPRESS.contains(e)) {
+            return Err(format!("desktop.shaderglass.window.suppress_event: unknown event {bad:?} (one of {SHADERGLASS_SUPPRESS:?})"));
+        }
+        if let Some(missing) = SHADERGLASS_SUPPRESS_REQUIRED.iter().find(|e| !words.contains(e)) {
+            return Err(format!("desktop.shaderglass.window.suppress_event must suppress {missing:?}: the pane never takes focus or the whole output"));
+        }
+        let flag = |k: &str| -> Result<bool, String> {
+            w.get(k).and_then(Value::as_bool).ok_or(format!("desktop.shaderglass.window.{k} must be a boolean"))
+        };
+        let (no_anim, exclude) = (flag("no_anim")?, flag("exclude_from_captures")?);
+        // One material: the pane takes the preset every other window draws with.
+        let preset = string_value(w, "glass_preset")?;
+        let glass = data
+            .get("desktop")
+            .and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("hyprglass"))
+            .filter(|g| g.get("enabled").and_then(Value::as_bool) == Some(true));
+        if let Some(g) = glass {
+            if g.get("presets").and_then(|p| p.get(&preset)).is_none() {
+                return Err(format!("desktop.shaderglass.window.glass_preset: hyprglass preset {preset} not found"));
+            }
+            let default = g.get("config").and_then(|c| c.get("default_preset")).and_then(Value::as_str);
+            if default != Some(preset.as_str()) {
+                return Err(format!(
+                    "desktop.shaderglass.window.glass_preset {preset:?} must be the desktop's default_preset {default:?}: one glass material for every window"
+                ));
+            }
+        }
+        let str_v = |s: &str| Value::String(s.to_owned());
+        let matcher = |pairs: &[(&str, &str)]| {
+            Value::Table(pairs.iter().map(|(k, v)| ((*k).to_owned(), str_v(v))).collect())
+        };
+        let mut pane = toml::map::Map::new();
+        pane.insert("name".into(), str_v("mios-shaderglass"));
+        pane.insert("match".into(), matcher(&[("class", &class), ("title", &title)]));
+        pane.insert("float".into(), Value::Boolean(true));
+        pane.insert("pin".into(), Value::Boolean(true));
+        pane.insert("no_initial_focus".into(), Value::Boolean(true));
+        pane.insert("focus_on_activate".into(), Value::Boolean(false));
+        pane.insert("suppress_event".into(), str_v(&words.join(" ")));
+        pane.insert("tag".into(), str_v(&format!("+{pane_tag}")));
+        pane.insert("hyprbars:no_bar".into(), Value::Boolean(true));
+        if no_anim {
+            pane.insert("no_anim".into(), Value::Boolean(true));
+        }
+        if exclude {
+            pane.insert("no_screen_share".into(), Value::Boolean(true));
+        }
+        let mut body = format!(" hl.window_rule({})\n", lua(&Value::Table(pane))?);
+        if glass.is_some() {
+            let mut rule = toml::map::Map::new();
+            rule.insert("name".into(), str_v("mios-shaderglass-glass"));
+            rule.insert("match".into(), matcher(&[("class", &class), ("title", &title)]));
+            rule.insert("tag".into(), str_v(&format!("+hyprglass_preset_{preset}")));
+            body += &format!(" hl.window_rule({})\n", lua(&Value::Table(rule))?);
+        }
+        let mut pass = toml::map::Map::new();
+        pass.insert("name".into(), str_v("mios-shaderglass-passthrough"));
+        pass.insert("match".into(), matcher(&[("tag", &pass_tag)]));
+        pass.insert("no_focus".into(), Value::Boolean(true));
+        body += &format!(" hl.window_rule({})\n", lua(&Value::Table(pass))?);
+        let mut tool = toml::map::Map::new();
+        tool.insert("name".into(), str_v("mios-shaderglass-tools"));
+        tool.insert("match".into(), matcher(&[("class", &class), ("title", &tools)]));
+        tool.insert("float".into(), Value::Boolean(true));
+        tool.insert("center".into(), Value::Boolean(true));
+        tool.insert("pin".into(), Value::Boolean(true));
+        body += &format!(" hl.window_rule({})\n", lua(&Value::Table(tool))?);
+        let taken = bound_key_combos(data)?;
+        let mut mine = std::collections::BTreeSet::new();
+        for b in sg.get("bindings").and_then(Value::as_array).ok_or("desktop.shaderglass.bindings must be an array")? {
+            let key = b
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|k| !k.trim().is_empty())
+                .ok_or("desktop.shaderglass.bindings entries need a nonempty key")?;
+            let args = b.get("args").and_then(Value::as_str).unwrap_or("");
+            if args.trim().is_empty()
+                || !args
+                    .split_whitespace()
+                    .all(|w| w.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_=.,:".contains(&c)))
+            {
+                return Err(format!("desktop.shaderglass.bindings {key:?}: args must be plain mios-shaderglass words"));
+            }
+            let combo = key_combo(key);
+            if taken.contains(&combo) || !mine.insert(combo) {
+                return Err(format!("desktop.shaderglass.bindings {key:?} is already bound"));
+            }
+            let cmd = std::iter::once(binary.as_str()).chain(args.split_whitespace()).collect::<Vec<_>>().join(" ");
+            body += &format!(" hl.bind({}, hl.dsp.exec_cmd({}))\n", lua(&str_v(key))?, lua(&Value::String(cmd))?);
+        }
+        Ok(format!("mios_section(\"shaderglass\", function()\n{body}end)\n"))
+    }
+
     /// [desktop.hyprland.hyprglass.config] keys only the MiOS hyprglass patch registers (hyprglass-mios-glass.patch).
     pub const HYPRGLASS_MIOS_KEYS: &[&str] = &["edge_pass", "edge_pass_width"];
     /// hyprbars config keys only the MiOS hyprbars patch registers beyond its long-standing overlay keys: the
@@ -2972,7 +3179,15 @@ if #problems > 0 then
 end
 "#;
 
+    /// The projection with the default login inputs (no power profile known, mains, not gaming): deterministic, the
+    /// tracked usr/share/mios/hyprland/hyprland.lua. `--runtime` (session.lua at login) passes the host's inputs.
     pub fn project(data: &Value) -> Result<String, String> {
+        project_login(data, &RateInputs::default())
+    }
+
+    /// The projection with `login` as the frame-rate inputs ([desktop.framerate]) when miosd's state file is absent.
+    pub fn project_login(data: &Value, login: &RateInputs) -> Result<String, String> {
+        let rate_policy = framerate_policy(data)?;
         let h = at(data, "desktop.hyprland")?;
         let mut config = at(h, "config")?.clone();
         let acrylic = at(data, "theme.acrylic")?
@@ -3078,6 +3293,11 @@ end
         out += &format!("hl.config({})\nhl.monitor({})\n", lua(&config)?, lua(at(h, "monitor")?)?);
         for rule in &monitor_rules {
             out += &format!("hl.monitor({})\n", lua(rule)?);
+        }
+        // [desktop.framerate] (miosd framerate): the tier's rates for the sections below (hyprglass) and the
+        // compositor cap; after the monitor rules, so a mode miosd switched an output to survives a reload.
+        if let Some(policy) = &rate_policy {
+            out += &framerate_lua(data, policy, login)?;
         }
         // Float-first placement ([desktop.hyprland.placement], miosd placement): emitted before
         // the SSOT window_rules so the PiP/dialog rules after it override its size and position.
@@ -3201,6 +3421,8 @@ end
         }
         // [desktop.screenshot] (mios-shot): keybinds, no-animation layer rules, screencopy permissions.
         out += &screenshot_lua(data)?;
+        // [desktop.shaderglass] (miosd shaderglass): the overlay pane's window rules and keybinds.
+        out += &shaderglass_lua(data)?;
         let count = at(h, "workspace_count")?
             .as_integer()
             .filter(|n| (1..=10).contains(n))
@@ -3241,6 +3463,24 @@ end
                     return Err("[desktop.hyprland.hyprglass.config] edge_pass must be a gain in 0..=4 (0 = off)".into());
                 }
             }
+            // live_resample_fps (windows and layers): the only content-driven throttle on the glass behind a pane;
+            // 0 = one re-sample per output frame at each output's own refresh, else a cap in fps. With
+            // [desktop.framerate] enabled the policy's glass rate G is the one source (mios_rate below): a fixed SSOT
+            // value would be silently overridden, so it is an error.
+            for group in ["windows", "layers"] {
+                if let Some(fps) = config.get(group).and_then(|g| g.get("live_resample_fps")) {
+                    if rate_policy.is_some() {
+                        return Err(format!(
+                            "[desktop.hyprland.hyprglass.config.{group}] live_resample_fps is superseded by [desktop.framerate] (glass rate = desktop rate / glass_divisor); remove it"
+                        ));
+                    }
+                    if !fps.as_integer().is_some_and(|f| (0..=1000).contains(&f)) {
+                        return Err(format!(
+                            "[desktop.hyprland.hyprglass.config.{group}] live_resample_fps must be 0 (every output frame) or a cap in 1..=1000 fps"
+                        ));
+                    }
+                }
+            }
             if let Some(width) = mios_keys.get("edge_pass_width") {
                 let width = width.as_float().or_else(|| width.as_integer().map(|i| i as f64));
                 if !width.is_some_and(|w| (0.0..=256.0).contains(&w)) {
@@ -3248,6 +3488,10 @@ end
                 }
             }
             out += &format!(" hg.config({})\n", lua(&config)?);
+            if rate_policy.is_some() {
+                // The glass rate G of the running tier (framerate_lua's mios_rate; miosd re-applies it live).
+                out += " hg.config({[\"layers\"] = {[\"live_resample_fps\"] = mios_rate.glass_fps}, [\"windows\"] = {[\"live_resample_fps\"] = mios_rate.glass_fps}})\n";
+            }
             for namespace in at(glass, "layers")?
                 .as_array()
                 .ok_or("hyprglass.layers must be an array")?
@@ -4771,10 +5015,176 @@ report("again")
         let config = table.get("config").filter(|v| v.is_table())
             .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
         let _ = (path, lua(config)?); // Validate operator settings before projecting the binding.
+        if let Some(player) = config.get("player") {
+            let player_tbl = player.as_table().ok_or("desktop.hyprland.hypr3d.config.player must be a table")?;
+            if let Some(wb) = player_tbl.get("walk_bob") {
+                wb.as_bool().ok_or("desktop.hyprland.hypr3d.config.player.walk_bob must be boolean")?;
+            }
+        }
+        // [desktop.hyprland.hypr3d.spawn] is read at SUPER+G: check it here so render-hyprland --check catches it.
+        crate::hypr3d_spawn::Policy::from_ssot(data)?;
+        if let Some(ctrl) = table.get("controller") {
+            let ctrl_tbl = ctrl.as_table().ok_or("desktop.hyprland.hypr3d.controller must be a table")?;
+            if let Some(en) = ctrl_tbl.get("enabled") {
+                en.as_bool().ok_or("desktop.hyprland.hypr3d.controller.enabled must be boolean")?;
+            }
+            if let Some(dz) = ctrl_tbl.get("deadzone") {
+                let val = dz.as_float().or_else(|| dz.as_integer().map(|i| i as f64))
+                    .ok_or("desktop.hyprland.hypr3d.controller.deadzone must be a number")?;
+                if !(0.0..=1.0).contains(&val) {
+                    return Err("desktop.hyprland.hypr3d.controller.deadzone must be in 0.0..=1.0".into());
+                }
+            }
+            if let Some(chord) = ctrl_tbl.get("toggle_chord") {
+                chord.as_array().ok_or("desktop.hyprland.hypr3d.controller.toggle_chord must be an array")?;
+            }
+            for str_key in [
+                "view_mode_button",
+                "cursor_mode_button",
+                "jump_button",
+                "crouch_button",
+                "fullscreen_button",
+                "shaderglass_toggle_button",
+                "shaderglass_cycle_button",
+            ] {
+                if let Some(v) = ctrl_tbl.get(str_key) {
+                    v.as_str().ok_or(format!("desktop.hyprland.hypr3d.controller.{str_key} must be a string"))?;
+                }
+            }
+            if let Some(dp) = ctrl_tbl.get("double_press_ms") {
+                let val = dp.as_integer().ok_or("desktop.hyprland.hypr3d.controller.double_press_ms must be an integer")?;
+                if val <= 0 {
+                    return Err("desktop.hyprland.hypr3d.controller.double_press_ms must be > 0".into());
+                }
+            }
+        }
+        if framerate_policy(data)?.is_some() {
+            for (group, key) in HYPR3D_RATE_KEYS {
+                if config.get(group).and_then(|g| g.get(key)).is_some() {
+                    return Err(format!(
+                        "desktop.hyprland.hypr3d.config.{group}.{key} is superseded by [desktop.framerate] (SUPER+G and miosd send the running tier's rate); remove it"
+                    ));
+                }
+            }
+        }
         Ok(format!(
             "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\nend)\n",
             lua(&Value::String(key.into()))?, lua(&Value::String(key.into()))?,
         ))
+    }
+
+    // ---- desktop frame rate ([desktop.framerate], miosd framerate) ------------------------------------------------
+    // The policy table and precedence live in mios_resolver::framerate (one copy for miosd, this projection and the
+    // tests). Here: the login/reload projection and the Hypr3D keys SUPER+G sends.
+    use mios_resolver::framerate::{Inputs as RateInputs, Policy as RatePolicy, State as RateState};
+
+    /// Hypr3D's rate keys (hypr3d-mios-frame-rate.patch): render.max_fps = D, render.glass_fps = G, world.live_fps = W.
+    const HYPR3D_RATE_KEYS: [(&str, &str); 3] = [("render", "max_fps"), ("render", "glass_fps"), ("world", "live_fps")];
+
+    /// The enabled policy; None when [desktop.framerate] is absent or `enabled = false` (every plugin then keeps its
+    /// own default or the SSOT key written for it).
+    pub fn framerate_policy(data: &Value) -> Result<Option<RatePolicy>, String> {
+        Ok(RatePolicy::from_ssot(data)?.filter(|p| p.enabled))
+    }
+
+    /// `local mios_rate` for every section after it (hyprglass reads mios_rate.glass_fps) plus the compositor cap.
+    /// The running tier comes from miosd's state file when its writer still runs (a config reload keeps the live rates
+    /// and the modes miosd switched outputs to, so nothing bounces), else from the login plan computed here (`login`:
+    /// tuned-ppd base profile, sysfs battery, SSOT unlocked; never gaming at login). The unlocked tier caps nothing and
+    /// derives G and W from the local outputs' largest advertised refresh (none known yet at startup: 0 = every output
+    /// frame until miosd applies).
+    fn framerate_lua(data: &Value, policy: &RatePolicy, login: &RateInputs) -> Result<String, String> {
+        let r = policy.plan(login, None);
+        let unlocked = policy.tiers["unlocked"];
+        let prefixes = Value::Array(policy.exclude_prefixes.iter().cloned().map(Value::String).collect());
+        let mut seed = toml::map::Map::new();
+        seed.insert("tier".into(), Value::String(r.tier.clone()));
+        for (k, v) in [("desktop_hz", r.desktop_hz), ("cap_hz", r.cap_hz), ("glass_fps", r.glass_fps), ("wallpaper_fps", r.wallpaper_fps)] {
+            seed.insert(k.into(), Value::Integer(i64::from(v)));
+        }
+        // Login: nothing paces the wallpaper yet (miosd turns the compositor's wallpaper throttle on together with the
+        // state file Host.qml follows; a throttle without it would halve the wallpaper's visible rate).
+        seed.insert("wallpaper_paced".into(), Value::Boolean(false));
+        seed.insert("source".into(), Value::String("login".into()));
+        let mut out = format!(
+            "local mios_rate = {seed}\nmios_section(\"framerate\", function()\n local excluded = {prefixes}\n local function local_output(name)\n  for _, p in ipairs(excluded) do if name:sub(1, #p) == p then return false end end\n  return true\n end\n local runtime = os.getenv(\"XDG_RUNTIME_DIR\")\n local f = runtime and io.open(runtime .. {state}, \"r\")\n local s = \"\"\n if f then s = f:read(\"*a\") or \"\" f:close() end\n local pid = s:match('\"pid\"%s*:%s*(%d+)')\n local c = pid and io.open(\"/proc/\" .. pid .. \"/comm\", \"r\")\n local comm = \"\"\n if c then comm = c:read(\"*l\") or \"\" c:close() end\n local function n(k) return tonumber(s:match('\"' .. k .. '\"%s*:%s*(%d+)')) end\n local tier = s:match('\"tier\"%s*:%s*\"([%w%-]+)\"')\n if comm == \"miosd\" and tier and n(\"desktop_hz\") and n(\"cap_hz\") and n(\"glass_fps\") and n(\"wallpaper_fps\") then\n  mios_rate = {{tier = tier, desktop_hz = n(\"desktop_hz\"), cap_hz = n(\"cap_hz\"), glass_fps = n(\"glass_fps\"), wallpaper_fps = n(\"wallpaper_fps\"), wallpaper_paced = s:match('\"wallpaper_paced\"%s*:%s*true') ~= nil, source = \"state\"}}\n  for name, mode in s:gmatch('\"mode%.([%w%-_%.]+)\"%s*:%s*\"(%d+x%d+@[%d%.]+)\"') do\n   local m = local_output(name) and hl.get_monitor(name)\n   if m then hl.monitor({{output = name, mode = mode, position = m.x .. \"x\" .. m.y, scale = m.scale, transform = m.transform}}) end\n  end\n elseif mios_rate.cap_hz == 0 then\n  local max = 0\n  for _, m in ipairs(hl.get_monitors() or {{}}) do\n   if local_output(m.name) then\n    for _, mode in ipairs(m.available_modes or {{}}) do max = math.max(max, math.floor(mode.refresh_rate + 0.5)) end\n   end\n  end\n  mios_rate.desktop_hz = max\n  mios_rate.glass_fps = math.floor(max / {gdiv})\n  mios_rate.wallpaper_fps = math.floor(max / {wdiv})\n end\n mios_state.framerate = mios_rate\nend)\n",
+            seed = lua(&Value::Table(seed))?,
+            prefixes = lua(&prefixes)?,
+            state = lua(&Value::String(format!("/{}", policy.state_file)))?,
+            gdiv = unlocked.glass_divisor,
+            wdiv = unlocked.wallpaper_divisor,
+        );
+        // The compositor cap (mios-pacing plugin): mios_rate.cap_hz on every local output with active VRR (0 = none).
+        let h = at(data, "desktop.hyprland")?;
+        if let Some(p) = h.get(&policy.pacing_plugin).filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true)) {
+            let path = p
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
+                    && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
+                .ok_or_else(|| format!("desktop.hyprland.{}.path must be an absolute FHS path", policy.pacing_plugin))?;
+            let mut statics = toml::map::Map::new();
+            statics.insert("mios_pacing".into(), Value::Table(pacing_config(p, &policy.pacing_plugin)?));
+            out += &format!(
+                "mios_section({}, function()\nhl.plugin.load({})\nhl.config({{[\"plugin\"] = {}}})\nhl.config({{[\"plugin\"] = {{[\"mios_pacing\"] = {{[\"max_fps\"] = mios_rate.cap_hz, [\"exclude_prefixes\"] = {}, [\"wallpaper_fps\"] = (mios_rate.wallpaper_paced and mios_rate.wallpaper_fps or 0)}}}}}})\nend)\n",
+                lua(&Value::String(policy.pacing_plugin.clone()))?,
+                lua(&Value::String(path.into()))?,
+                lua(&Value::Table(statics))?,
+                lua(&Value::String(policy.exclude_prefixes.join(",")))?,
+            );
+        }
+        Ok(out)
+    }
+
+    /// `[desktop.hyprland.<pacing>.config]`: the plugin's static options, validated. The rate keys (max_fps,
+    /// exclude_prefixes, wallpaper_fps) belong to the running tier and are refused here.
+    fn pacing_config(plugin: &Value, name: &str) -> Result<toml::map::Map<String, Value>, String> {
+        let Some(cfg) = plugin.get("config") else { return Ok(Default::default()) };
+        let cfg = cfg.as_table().ok_or_else(|| format!("desktop.hyprland.{name}.config must be a table"))?;
+        let mut out = toml::map::Map::new();
+        for (k, v) in cfg {
+            let ok = match k.as_str() {
+                "enabled" | "require_vrr" => v.is_bool(),
+                "slack_us" => v.as_integer().is_some_and(|n| (0..=20_000).contains(&n)),
+                "wallpaper_namespaces" => v.as_str().is_some_and(|s| {
+                    s.split(',').map(str::trim).all(|n| n.is_empty() || n.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
+                }),
+                "max_fps" | "exclude_prefixes" | "wallpaper_fps" => {
+                    return Err(format!("desktop.hyprland.{name}.config.{k} is the running tier's ([desktop.framerate], set by miosd framerate); remove it"))
+                }
+                _ => return Err(format!("desktop.hyprland.{name}.config.{k} is not a plugin option (enabled, require_vrr, slack_us, wallpaper_namespaces)")),
+            };
+            if !ok {
+                return Err(format!(
+                    "desktop.hyprland.{name}.config.{k} is invalid (enabled/require_vrr: boolean; slack_us: 0..=20000; wallpaper_namespaces: comma-separated [A-Za-z0-9._-] layer namespaces)"
+                ));
+            }
+            out.insert(k.clone(), v.clone());
+        }
+        Ok(out)
+    }
+
+    /// The running tier's Hypr3D keys into `config` (the table SUPER+G sends): miosd's live state, else the login plan.
+    /// render.max_fps = D (0 = every output frame: unlocked), render.glass_fps = G, world.live_fps = W.
+    fn hypr3d_rate_overlay(config: &mut Value, policy: &RatePolicy, live: Option<&RateState>, login: &RateInputs) -> Result<(), String> {
+        let (desktop, cap, glass, wallpaper) = match live {
+            Some(s) => (s.desktop_hz, s.cap_hz, s.glass_fps, s.wallpaper_fps),
+            None => {
+                let r = policy.plan(login, None);
+                (r.desktop_hz, r.cap_hz, r.glass_fps, r.wallpaper_fps)
+            }
+        };
+        let max_fps = if cap == 0 { 0 } else { desktop };
+        let table = config.as_table_mut().ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        for ((group, key), v) in HYPR3D_RATE_KEYS.iter().zip([max_fps, glass, wallpaper]) {
+            table
+                .entry(*group)
+                .or_insert_with(|| Value::Table(Default::default()))
+                .as_table_mut()
+                .ok_or_else(|| format!("desktop.hyprland.hypr3d.config.{group} must be a table"))?
+                .insert((*key).into(), Value::Integer(i64::from(v)));
+        }
+        Ok(())
     }
 
     /// `hyprland-session` exports the running hardware profile to the compositor, so every
@@ -4791,6 +5201,99 @@ report("again")
         if (1.0..=4.0).contains(&scale) { Ok(scale) } else { Err(format!("{key} must be a number in 1..4")) }
     }
 
+    /// Hyprglass' fallback values (hyprglass src/BuiltInPresets.hpp): the theme defaults for the toned keys and
+    /// the global defaults for the rest, and the built-in `glass` preset presets usually inherit from.
+    const HYPRGLASS_DARK_DEFAULTS: &[(&str, f64)] = &[("brightness", 0.82), ("contrast", 0.90), ("saturation", 0.80),
+        ("vibrancy", 0.15), ("vibrancy_darkness", 0.0), ("adaptive_dim", 0.4), ("adaptive_boost", 0.0)];
+    const HYPRGLASS_LIGHT_DEFAULTS: &[(&str, f64)] = &[("brightness", 1.12), ("contrast", 0.92), ("saturation", 0.85),
+        ("vibrancy", 0.12), ("vibrancy_darkness", 0.0), ("adaptive_dim", 0.0), ("adaptive_boost", 0.4)];
+    const HYPRGLASS_GLOBAL_DEFAULTS: &[(&str, f64)] = &[("blur_strength", 2.0), ("blur_iterations", 3.0),
+        ("refraction_strength", 0.6), ("chromatic_aberration", 0.5), ("fresnel_strength", 0.6), ("specular_strength", 0.8),
+        ("glass_opacity", 1.0), ("edge_thickness", 0.06), ("tint_color", 2_291_772_962.0 /* 0x8899aa22 */),
+        ("lens_distortion", 0.5), ("refraction_flow", 0.0), ("refraction_spread", 1.0), ("fresnel_tint", 0.0),
+        ("bevel_strength", 0.0), ("bevel_size", 6.0), ("fresnel_color", 4_294_967_040.0 /* 0xffffff00 */),
+        ("bevel_color", 4_294_967_040.0), ("bevel_tint", 0.0), ("bevel_angle", 315.0), ("bevel_shadow", 0.0),
+        ("specular_angle", 0.0)];
+    const HYPRGLASS_BUILTIN_GLASS: &[(&str, f64)] = &[("blur_strength", 1.0), ("blur_iterations", 2.0),
+        ("lens_distortion", 0.3), ("refraction_strength", 8.0), ("chromatic_aberration", 0.5), ("fresnel_strength", 0.4),
+        ("specular_strength", 0.8), ("glass_opacity", 1.0), ("edge_thickness", 0.06), ("tint_color", 4_294_967_040.0)];
+    /// Hypr3D's glass parameters (hypr3d GLScene::GLASS_PARAMETERS keys) that come from a hyprglass preset.
+    const HYPR3D_GLASS_KEYS: &[&str] = &["refraction_strength", "chromatic_aberration", "fresnel_strength",
+        "specular_strength", "glass_opacity", "edge_thickness", "lens_distortion", "brightness", "contrast", "saturation",
+        "vibrancy", "vibrancy_darkness", "adaptive_dim", "adaptive_boost", "refraction_flow", "refraction_spread",
+        "fresnel_tint", "bevel_strength", "bevel_size", "bevel_tint", "bevel_angle", "bevel_shadow", "specular_angle"];
+
+    /// `[desktop.hyprland.hypr3d.config].glass_preset`: the hyprglass preset `name` resolved the way hyprglass
+    /// resolves it (PluginConfig.cpp resolvePreset*): the default_theme table, the preset, its `inherits` chain
+    /// (SSOT presets, then hyprglass' built-in `glass`), hyprglass' config (theme table, then global), then
+    /// hyprglass' defaults. Projected as Hypr3D's glass table: every material key, the tint/fresnel/bevel colours
+    /// (0xRRGGBBAA), the frost (blur_sigma = 4 x blur_strength x sqrt(blur_iterations): hyprglass' kernel radius
+    /// blur_strength x 12 px, sigma radius / 3, blur_iterations H+V passes) and the edge pass (edge_pass,
+    /// edge_pass_width from [desktop.hyprland.hyprglass.config]).
+    fn hypr3d_glass(data: &Value, name: &str) -> Result<Value, String> {
+        let h = hardware_profile_table(data)?;
+        let glass = h.get("hyprglass").ok_or("hypr3d glass_preset needs [desktop.hyprland.hyprglass]")?;
+        let presets = glass.get("presets").and_then(Value::as_table)
+            .ok_or("hypr3d glass_preset needs [desktop.hyprland.hyprglass.presets]")?;
+        if !presets.contains_key(name) {
+            return Err(format!("hypr3d glass_preset: hyprglass preset {name} not found"));
+        }
+        let config = glass_palette(glass.get("config").unwrap_or(&Value::Table(Default::default())), data)?;
+        let theme = config.get("default_theme").and_then(Value::as_str).unwrap_or("dark");
+        let dark = theme != "light";
+        let number = |v: &Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
+        // the inherits chain, preset tables palette-resolved (SSOT presets; anything else is a built-in)
+        let mut chain: Vec<Value> = Vec::new();
+        let mut builtin_glass = false;
+        let mut next = Some(name.to_owned());
+        while let Some(n) = next.take() {
+            if chain.len() >= 8 {
+                return Err(format!("hypr3d glass_preset {name}: inherits chain too deep"));
+            }
+            match presets.get(&n) {
+                Some(p) => {
+                    let p = glass_palette(p, data)?;
+                    next = p.get("inherits").and_then(Value::as_str).map(str::to_owned);
+                    chain.push(p);
+                }
+                None => builtin_glass = n == "glass",
+            }
+        }
+        let resolve = |key: &str| -> Option<f64> {
+            for p in &chain {
+                if let Some(v) = p.get(theme).and_then(|t| t.get(key)).and_then(number) { return Some(v); }
+                if let Some(v) = p.get(key).and_then(number) { return Some(v); }
+            }
+            if builtin_glass {
+                let theme_value = match (dark, key) { (true, "adaptive_dim") => Some(0.3), (false, "adaptive_boost") => Some(0.3), _ => None };
+                if let Some(v) = theme_value.or_else(|| HYPRGLASS_BUILTIN_GLASS.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)) {
+                    return Some(v);
+                }
+            }
+            if let Some(v) = config.get(theme).and_then(|t| t.get(key)).and_then(number) { return Some(v); }
+            if let Some(v) = config.get(key).and_then(number) { return Some(v); }
+            let toned = if dark { HYPRGLASS_DARK_DEFAULTS } else { HYPRGLASS_LIGHT_DEFAULTS };
+            toned.iter().chain(HYPRGLASS_GLOBAL_DEFAULTS).find(|(k, _)| *k == key).map(|(_, v)| *v)
+        };
+        let r4 = |v: f64| Value::Float((v * 10_000.0).round() / 10_000.0);
+        let mut out = toml::map::Map::new();
+        for key in HYPR3D_GLASS_KEYS {
+            let v = resolve(key).ok_or_else(|| format!("hypr3d glass_preset {name}: no value for {key}"))?;
+            out.insert((*key).into(), r4(v));
+        }
+        for key in ["tint_color", "fresnel_color", "bevel_color"] {
+            let v = resolve(key).ok_or_else(|| format!("hypr3d glass_preset {name}: no value for {key}"))?;
+            out.insert(key.into(), Value::Integer((v as i64) & 0xFFFF_FFFF));
+        }
+        let strength = resolve("blur_strength").unwrap_or(2.0).max(0.0);
+        let iterations = resolve("blur_iterations").unwrap_or(3.0).clamp(1.0, 5.0);
+        out.insert("blur_sigma".into(), r4(4.0 * strength * iterations.sqrt()));
+        let edge = |key: &str, d: f64| config.get(key).and_then(number).unwrap_or(d);
+        out.insert("edge_pass".into(), r4(edge("edge_pass", 0.0).clamp(0.0, 4.0)));
+        out.insert("edge_pass_width".into(), r4(edge("edge_pass_width", 0.0).clamp(0.0, 256.0)));
+        Ok(Value::Table(out))
+    }
+
     /// The Hypr3D config for the running session. The active hardware profile is the one the
     /// session exported, else the kernel's `mios.desktop.gpu=`, else the SSOT default. Its
     /// `hypr3d_render_scale` replaces `config.render.scale`; an unknown profile, or a profile
@@ -4799,6 +5302,21 @@ report("again")
         let h = hardware_profile_table(data)?;
         let mut config = h.get("hypr3d").and_then(|p| p.get("config")).filter(|v| v.is_table()).cloned()
             .ok_or("desktop.hyprland.hypr3d.config must be a table")?;
+        // glass_preset = "<name>": the room's glass IS the desktop's (one glass look, MiOS rule): the named
+        // [desktop.hyprland.hyprglass.presets] entry resolved as hyprglass resolves it, projected into the
+        // plugin's glass table at toggle time (no hand-tuned copy). Explicit config.glass keys still win.
+        if let Some(name) = config.as_table_mut().expect("checked table").remove("glass_preset") {
+            let name = name.as_str().ok_or("desktop.hyprland.hypr3d.config.glass_preset must name a hyprglass preset")?;
+            let mut glass = hypr3d_glass(data, name)?;
+            if let Some(explicit) = config.get("glass") {
+                let explicit = explicit.as_table().ok_or("desktop.hyprland.hypr3d.config.glass must be a table")?;
+                let table = glass.as_table_mut().expect("table");
+                for (k, v) in explicit {
+                    table.insert(k.clone(), v.clone());
+                }
+            }
+            config.as_table_mut().expect("checked table").insert("glass".into(), glass);
+        }
         let profile = match profile_name(data, session.map(str::trim).filter(|s| !s.is_empty()), cmdline) {
             Ok(profile) => profile,
             Err(e) => {
@@ -4821,8 +5339,30 @@ report("again")
         use std::process::Command;
         let data = hardware_profile_data(root)?;
         if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
-        let config = hypr3d_session_config(&data, std::env::var(SESSION_PROFILE_ENV).ok().as_deref(),
+        let mut config = hypr3d_session_config(&data, std::env::var(SESSION_PROFILE_ENV).ok().as_deref(),
             &fs::read_to_string("/proc/cmdline").unwrap_or_default())?;
+        // [desktop.framerate]: the running tier's rates, so SUPER+G never resets what miosd applied.
+        if let Some(policy) = framerate_policy(&data)? {
+            let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
+            let live = runtime.as_deref().and_then(|r| RateState::read_live(&policy.state_path(r), Path::new("/")));
+            hypr3d_rate_overlay(&mut config, &policy, live.as_ref(), &mios_resolver::framerate::login_inputs(root))?;
+        }
+        // [desktop.hyprland.hypr3d.spawn]: Retina window opening, planned for the room's output (hyprctl monitors:
+        // mode, scale, transform, reserved bars; the [desktop.mobile] verdict). Explicit [config.windows] keys win.
+        if crate::hypr3d_spawn::Policy::from_ssot(&data)?.is_some() {
+            match Command::new("/usr/bin/hyprctl").args(["-j", "monitors"]).output() {
+                Ok(out) if out.status.success() => {
+                    let monitors: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+                    let published: Option<serde_json::Value> = std::env::var_os("XDG_RUNTIME_DIR")
+                        .and_then(|r| fs::read(Path::new(&r).join("mios-mobile-outputs.json")).ok())
+                        .and_then(|b| serde_json::from_slice(&b).ok());
+                    if crate::hypr3d_spawn::overlay(&data, &mut config, &monitors, published.as_ref())?.is_none() {
+                        eprintln!("Hypr3DGlass: no target output in the monitor list; window placement keeps the plugin defaults");
+                    }
+                }
+                _ => eprintln!("Hypr3DGlass: no monitor list from the compositor; window placement keeps the plugin defaults"),
+            }
+        }
         let plugin = &data["desktop"]["hyprland"]["hypr3d"];
         let path = plugin["path"].as_str().ok_or("Missing 3D engine path")?;
         let ipc = |args: &[&str]| Command::new("/usr/bin/hyprctl").args(args).output()
@@ -5184,10 +5724,12 @@ report("again")
                     .parse::<Value>()
                     .map_err(|e| e.to_string())?
             };
-            let output = project(&data)?;
             if runtime {
-                return Ok(output);
+                // Login (session.lua): the host's frame-rate inputs -- tuned-ppd base profile and sysfs battery
+                // under `root` -- for when miosd's state file is absent; the static file below uses the defaults.
+                return project_login(&data, &mios_resolver::framerate::login_inputs(root));
             }
+            let output = project(&data)?;
             for (path, content) in [
                 ("usr/share/mios/hyprland/hyprland.lua", output.as_str()),
                 ("etc/skel/.config/hypr/hyprland.lua", LOADER),
@@ -5280,7 +5822,9 @@ report("again")
             }
             assert!(igpu.contains("vfio-pci.ids=10de:2684,10de:22ba"));
             assert!(!dgpu.contains("vfio-pci.ids=10de") && !dgpu.contains("rd.driver.pre=vfio-pci"));
-            assert!(dgpu.contains("vfio-pci.ids= rd.driver.blacklist=vfio-pci nouveau.modeset=1"));
+            assert!(dgpu.contains("vfio-pci.ids= rd.driver.blacklist=vfio-pci"));
+            assert!(dgpu.contains("nvidia-drm.modeset=1"));
+            assert!(!dgpu.contains("nouveau.modeset=1"));
             assert!(boot_entries(&d,"title UKI\nefi /EFI/Linux/signed.efi\noptions quiet\n").is_err());
             let mut bad=d.clone();
             bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["boot_append"]=Value::Array(vec![Value::String("arg\ninitrd /bad".into())]);
@@ -5345,7 +5889,7 @@ local function mios_section(name, fn)
 end
 "#;
             let script = preamble.to_owned() + &chunk + &chunk
-                + "assert(bindings == 2 and failures == 0)\nassert(bound['SUPER + G'].command == '/usr/bin/mios-gen hyprland-3d-toggle')\nio.write('desktop survives')";
+                + "assert(bindings == 2 and failures == 0)\nassert(bound['SUPER + F12'].command == '/usr/bin/mios-gen hyprland-3d-toggle')\nio.write('desktop survives')";
             let (ok, out) = run_lua(&script, &[]);
             assert!(ok && out == "desktop survives", "{out}");
         }
@@ -5386,16 +5930,64 @@ end
             let mut dgpu_default = d.clone();
             dgpu_default["desktop"]["hyprland"]["hardware_profile"] = Value::String("dgpu".into());
             assert_eq!(hypr3d_scale(&dgpu_default, None, "quiet"), Some(2.0));
-            // Only render.scale changes; the other settings pass through.
-            let global = d["desktop"]["hyprland"]["hypr3d"]["config"].clone();
+            // Only render.scale changes (and glass_preset resolves into glass); the other settings pass through.
+            let mut global = d["desktop"]["hyprland"]["hypr3d"]["config"].clone();
             let mut igpu = hypr3d_session_config(&d, Some("igpu"), "").unwrap();
             igpu["render"]["scale"] = global["render"]["scale"].clone();
+            if global.as_table_mut().unwrap().remove("glass_preset").is_some() {
+                assert!(igpu.as_table_mut().unwrap().remove("glass").is_some(), "glass_preset projects a glass table");
+            }
             assert_eq!(igpu, global);
             assert!(lua(&hypr3d_session_config(&d, Some("igpu"), "").unwrap()).unwrap().contains("[\"scale\"] = 1.5"));
             // A render table is created when the global config has none.
             let mut bare = d.clone();
             bare["desktop"]["hyprland"]["hypr3d"]["config"] = Value::Table(Default::default());
             assert_eq!(hypr3d_scale(&bare, Some("dgpu"), ""), Some(2.0));
+        }
+
+        #[test]
+        fn hypr3d_glass_preset_is_the_desktop_preset() {
+            // One glass look (MiOS rule): the room's glass is the hyprglass preset the desktop draws windows with,
+            // resolved like hyprglass (theme table, preset, inherits, config, defaults), never a copy.
+            let mut d = real_ssot();
+            d["desktop"]["hyprland"]["hypr3d"]["config"]
+                .as_table_mut().unwrap().insert("glass_preset".into(), Value::String("mios".into()));
+            let c = hypr3d_session_config(&d, Some("igpu"), "").unwrap();
+            assert!(c.get("glass_preset").is_none(), "the preset name is resolved, not passed to the plugin");
+            let g = &c["glass"];
+            let preset = &d["desktop"]["hyprland"]["hyprglass"]["presets"]["mios"];
+            for k in ["refraction_strength", "lens_distortion", "fresnel_strength", "specular_strength",
+                      "bevel_strength", "bevel_shadow", "bevel_size", "edge_thickness", "glass_opacity"] {
+                assert_eq!(g[k].as_float(), preset[k].as_float().or(preset[k].as_integer().map(|i| i as f64)), "{k}");
+            }
+            for k in ["brightness", "contrast", "saturation", "adaptive_dim"] {
+                assert_eq!(g[k].as_float(), preset["dark"][k].as_float(), "{k}");
+            }
+            // tint/fresnel/bevel: palette-resolved exactly as hg.preset() receives them in hyprland.lua
+            let projected = glass_palette(preset, &d).unwrap();
+            for k in ["tint_color", "fresnel_color", "bevel_color"] {
+                assert_eq!(g[k].as_integer(), projected["dark"][k].as_integer(), "{k}");
+            }
+            // frost: 4 x blur_strength x sqrt(blur_iterations), as hyprbars' pill_blur_sigma
+            let sigma = 4.0 * preset["blur_strength"].as_float().unwrap() * (preset["blur_iterations"].as_integer().unwrap() as f64).sqrt();
+            assert!((g["blur_sigma"].as_float().unwrap() - sigma).abs() < 1e-3);
+            // edge pass from [desktop.hyprland.hyprglass.config]; keys the preset leaves out are hyprglass' defaults
+            let hg = &d["desktop"]["hyprland"]["hyprglass"]["config"];
+            assert_eq!(g["edge_pass"].as_float(), hg["edge_pass"].as_float().or(hg["edge_pass"].as_integer().map(|i| i as f64)));
+            assert_eq!(g["edge_pass_width"].as_float(), hg["edge_pass_width"].as_float().or(hg["edge_pass_width"].as_integer().map(|i| i as f64)));
+            assert_eq!(g["bevel_angle"].as_float(), Some(315.0));
+            assert_eq!(g["vibrancy"].as_float(), Some(0.15));
+            assert_eq!(g.as_table().unwrap().len(), HYPR3D_GLASS_KEYS.len() + 6);
+            // explicit glass keys win; an unknown preset is an error
+            d["desktop"]["hyprland"]["hypr3d"]["config"].as_table_mut().unwrap().insert("glass".into(),
+                toml::toml! { bevel_size = 4.0 }.into());
+            assert_eq!(hypr3d_session_config(&d, None, "").unwrap()["glass"]["bevel_size"].as_float(), Some(4.0));
+            d["desktop"]["hyprland"]["hypr3d"]["config"]["glass_preset"] = Value::String("missing".into());
+            assert!(hypr3d_session_config(&d, None, "").is_err());
+            // the Lua the toggle sends carries the table
+            d["desktop"]["hyprland"]["hypr3d"]["config"]["glass_preset"] = Value::String("mios".into());
+            let lua_text = lua(&hypr3d_session_config(&d, None, "").unwrap()).unwrap();
+            assert!(lua_text.contains("[\"glass\"] = {") && lua_text.contains("[\"blur_sigma\"] = 1.4142"), "{lua_text}");
         }
 
         #[test]
@@ -5647,6 +6239,215 @@ for _, c in ipairs(execs) do print("exec " .. c) end
             assert!(!out.contains("minimal session"), "{out}");
         }
 
+        /// Runs a full projection under a stub `hl` that records every window rule (sorted key=value list, nested
+        /// tables in braces) and every exec bind (key + command), plus any mios_section error.
+        fn record_rules(data: &Value) -> String {
+            const STUB: &str = r#"
+local function auto()
+ return setmetatable({}, { __index = function(t, k) local v = auto() rawset(t, k, v) return v end, __call = function() return auto() end })
+end
+MIOS_SESSION = {}
+hl = auto()
+local out = {}
+local function flat(t)
+ local keys = {}
+ for k in pairs(t) do table.insert(keys, k) end
+ table.sort(keys)
+ local parts = {}
+ for _, k in ipairs(keys) do
+  local v = t[k]
+  if type(v) == "table" then table.insert(parts, k .. "={" .. flat(v) .. "}") else table.insert(parts, k .. "=" .. tostring(v)) end
+ end
+ return table.concat(parts, ",")
+end
+hl.window_rule = function(r) table.insert(out, "rule " .. tostring(r.name) .. " " .. flat(r)) return { set_enabled = function() end } end
+hl.dsp.exec_cmd = function(cmd) return { cmd = cmd } end
+hl.bind = function(key, d) if type(d) == "table" and rawget(d, "cmd") then table.insert(out, "bind " .. key .. " " .. d.cmd) end end
+dofile(os.getenv("CHUNK"))
+table.sort(out)
+for _, l in ipairs(out) do print(l) end
+for _, e in ipairs(MIOS_SESSION.errors or {}) do print("error " .. e) end
+"#;
+            let chunk = project(data).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("chunk.lua");
+            fs::write(&path, &chunk).unwrap();
+            let (ok, out) = run_lua(STUB, &[("CHUNK", path.to_str().unwrap())]);
+            assert!(ok, "projection raised under the stub: {out}");
+            out
+        }
+
+        fn rule_line(out: &str, name: &str) -> Option<String> {
+            out.lines().find(|l| l.starts_with(&format!("rule {name} "))).map(str::to_owned)
+        }
+
+        fn shaderglass_enabled(mut d: Value) -> Value {
+            d["desktop"]["shaderglass"]["enabled"] = Value::Boolean(true);
+            d
+        }
+
+        #[test]
+        fn shaderglass_rules_and_binds_project_only_while_enabled() {
+            let vendor = real_ssot();
+            assert_eq!(vendor["desktop"]["shaderglass"]["enabled"].as_bool(), Some(true));
+            let mut disabled = vendor.clone();
+            disabled["desktop"]["shaderglass"]["enabled"] = Value::Boolean(false);
+            let mut missing = vendor.clone();
+            missing["desktop"].as_table_mut().unwrap().remove("shaderglass");
+            for d in [&disabled, &missing] {
+                assert_eq!(shaderglass_lua(d).unwrap(), "");
+                let chunk = project(d).unwrap();
+                assert!(!chunk.contains("shaderglass"), "disabled ShaderGlass leaked into the projection");
+            }
+            // Positive control: enabled, one section with the four rules and both binds.
+            let on = shaderglass_enabled(vendor.clone());
+            assert_eq!(project(&on).unwrap().matches("mios_section(\"shaderglass\", function()").count(), 1);
+            let out = record_rules(&on);
+            assert!(!out.contains("error "), "{out}");
+            let pane = rule_line(&out, "mios-shaderglass").unwrap_or_else(|| panic!("no pane rule: {out}"));
+            for kv in [
+                "float=true", "pin=true", "no_initial_focus=true", "focus_on_activate=false", "no_anim=true",
+                "tag=+mios-shaderglass", "hyprbars:no_bar=true", "suppress_event=fullscreen maximize activate activatefocus",
+                "match={class=^(shaderglass\\.exe)$,title=^ShaderGlass( \\(.*\\))?$}",
+            ] {
+                assert!(pane.contains(kv), "pane rule lacks {kv}: {pane}");
+            }
+            // Click-through is the tag rule's job (miosd toggles the tag), never the static rule's; captures keep it.
+            assert!(!pane.contains("no_focus") && !pane.contains("no_screen_share"), "{pane}");
+            let glass = rule_line(&out, "mios-shaderglass-glass").unwrap_or_else(|| panic!("no glass rule: {out}"));
+            assert!(glass.contains("tag=+hyprglass_preset_mios"), "{glass}");
+            let pass = rule_line(&out, "mios-shaderglass-passthrough").unwrap_or_else(|| panic!("no passthrough rule: {out}"));
+            assert!(pass.contains("match={tag=mios-shaderglass-passthrough}") && pass.contains("no_focus=true"), "{pass}");
+            let tools = rule_line(&out, "mios-shaderglass-tools").unwrap_or_else(|| panic!("no tools rule: {out}"));
+            for kv in ["float=true", "pin=true", "center=true", "title=^(Choose Shader|Shader Parameters(: .*)?)$"] {
+                assert!(tools.contains(kv), "tools rule lacks {kv}: {tools}");
+            }
+            assert!(out.contains("bind SUPER + G /usr/bin/mios-shaderglass toggle"), "{out}");
+            assert!(out.contains("bind SUPER + SHIFT + G /usr/bin/mios-shaderglass cycle"), "{out}");
+            assert!(out.contains("bind SUPER + ALT + G /usr/bin/mios-shaderglass setup"), "{out}");
+            // exclude_from_captures adds no_screen_share to the pane rule only.
+            let mut ex = on.clone();
+            ex["desktop"]["shaderglass"]["window"]["exclude_from_captures"] = Value::Boolean(true);
+            let out = record_rules(&ex);
+            assert!(rule_line(&out, "mios-shaderglass").unwrap().contains("no_screen_share=true"), "{out}");
+            assert!(!rule_line(&out, "mios-shaderglass-tools").unwrap().contains("no_screen_share"), "{out}");
+            // Hyprglass disabled: no preset tag rule, the rest stays.
+            let mut plain = on.clone();
+            plain["desktop"]["hyprland"]["hyprglass"]["enabled"] = Value::Boolean(false);
+            let out = record_rules(&plain);
+            assert!(rule_line(&out, "mios-shaderglass-glass").is_none(), "{out}");
+            assert!(rule_line(&out, "mios-shaderglass-passthrough").is_some(), "{out}");
+        }
+
+        #[test]
+        fn shaderglass_projection_rejects_unsafe_or_ambiguous_values() {
+            let on = shaderglass_enabled(real_ssot());
+            assert!(shaderglass_lua(&on).is_ok(), "positive control");
+            let s = |x: &str| Value::String(x.into());
+            let window = |k: &str, v: Value| {
+                let mut d = on.clone();
+                d["desktop"]["shaderglass"]["window"][k] = v;
+                d
+            };
+            let binding = |key: &str, args: &str| {
+                let mut d = on.clone();
+                let b: Value = toml::from_str(&format!("b = [{{ key = {:?}, args = {:?}, label = \"x\" }}]", key, args)).unwrap();
+                d["desktop"]["shaderglass"]["bindings"] = b["b"].clone();
+                d
+            };
+            let mut other_preset = on.clone();
+            let mios = other_preset["desktop"]["hyprland"]["hyprglass"]["presets"]["mios"].clone();
+            other_preset["desktop"]["hyprland"]["hyprglass"]["presets"].as_table_mut().unwrap().insert("other".into(), mios);
+            other_preset["desktop"]["shaderglass"]["window"]["glass_preset"] = s("other");
+            let mut relative = on.clone();
+            relative["desktop"]["shaderglass"]["binary"] = s("mios-shaderglass");
+            let cases: Vec<(Value, &str)> = vec![
+                (window("class", s("shaderglass")), "anchored"),
+                (window("class", s("^(shaderglass$")), "window.class"),
+                (window("title", s("")), "window.title"),
+                (window("pane_tag", s("bad tag")), "pane_tag"),
+                (window("passthrough_tag", s("mios-shaderglass")), "differ"),
+                (window("layer", s("top")), "pinned"),
+                (window("suppress_event", s("fullscreen maximize activate")), "activatefocus"),
+                (window("suppress_event", s("fullscreen maximize activate activatefocus bogus")), "unknown event"),
+                (window("glass_preset", s("missing")), "not found"),
+                (other_preset, "default_preset"),
+                (window("no_anim", s("yes")), "no_anim"),
+                (relative, "absolute path"),
+                (binding("SUPER + SHIFT + G", "toggle;rm"), "plain"),
+                (binding("SUPER + SHIFT + G", ""), "plain"),
+                (binding("SUPER + F12", "toggle"), "already bound"),
+                (binding("C + SUPER", "toggle"), "already bound"),
+                (binding("SUPER + SHIFT + 1", "toggle"), "already bound"),
+            ];
+            for (d, needle) in cases {
+                let e = shaderglass_lua(&d).expect_err(needle);
+                assert!(e.contains(needle), "expected {needle:?} in: {e}");
+                assert!(project(&d).is_err(), "project accepted what shaderglass_lua rejects ({needle})");
+            }
+        }
+
+        #[test]
+        fn hyprglass_live_resample_fps_reaches_the_plugin_options() {
+            // The fixed SSOT keys apply only while [desktop.framerate] is off (with it on, the policy's glass rate is
+            // the one source: framerate_projects_the_cap_and_glass_rate_of_each_login_tier).
+            let without_policy = || {
+                let mut d = real_ssot();
+                d["desktop"].as_table_mut().unwrap().remove("framerate");
+                d
+            };
+            let mut d = without_policy();
+            let cfg = &mut d["desktop"]["hyprland"]["hyprglass"]["config"];
+            cfg["layers"].as_table_mut().unwrap().insert("live_resample_fps".into(), Value::Integer(0));
+            let windows: Value = toml::from_str("live_resample_fps = 0").unwrap();
+            cfg.as_table_mut().unwrap().insert("windows".into(), windows);
+            // Under a stub that maps nested tables to option paths the way hyprglass' hg.config does
+            // (copyValidatedTable: plugin:hyprglass:<group>:<key>).
+            const STUB: &str = r#"
+local function auto()
+ return setmetatable({}, { __index = function(t, k) local v = auto() rawset(t, k, v) return v end, __call = function() return auto() end })
+end
+MIOS_SESSION = {}
+hl = auto()
+local opts = {}
+local function walk(t, prefix)
+ for k, v in pairs(t) do
+  local key = prefix .. ":" .. k
+  if type(v) == "table" then walk(v, key) else opts[key] = v end
+ end
+end
+hl.plugin.load = function() end
+hl.plugin.hyprglass = setmetatable({ config = function(t) walk(t, "plugin:hyprglass") end }, { __index = function() return function() end end })
+dofile(os.getenv("CHUNK"))
+print("windows=" .. tostring(opts["plugin:hyprglass:windows:live_resample_fps"]))
+print("layers=" .. tostring(opts["plugin:hyprglass:layers:live_resample_fps"]))
+for _, e in ipairs(MIOS_SESSION.errors or {}) do print("error " .. e) end
+"#;
+            let run = |d: &Value| {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("chunk.lua");
+                fs::write(&path, project(d).unwrap()).unwrap();
+                let (ok, out) = run_lua(STUB, &[("CHUNK", path.to_str().unwrap())]);
+                assert!(ok, "{out}");
+                out
+            };
+            let out = run(&d);
+            assert!(out.contains("windows=0\n") && out.contains("layers=0\n") && !out.contains("error "), "{out}");
+            // Negative control: without the keys the plugin keeps its own default (nothing is sent).
+            let mut base = without_policy();
+            base["desktop"]["hyprland"]["hyprglass"]["config"]["layers"].as_table_mut().unwrap().remove("live_resample_fps");
+            base["desktop"]["hyprland"]["hyprglass"]["config"].as_table_mut().unwrap().remove("windows");
+            let out = run(&base);
+            assert!(out.contains("windows=nil") && out.contains("layers=nil"), "{out}");
+            // Out-of-range or non-integer values fail the projection.
+            for bad in [Value::Integer(-1), Value::Integer(1001), Value::Float(0.5), Value::String("0".into())] {
+                let mut x = d.clone();
+                x["desktop"]["hyprland"]["hyprglass"]["config"]["windows"]["live_resample_fps"] = bad.clone();
+                let e = project(&x).expect_err("bad fps accepted");
+                assert!(e.contains("live_resample_fps"), "{bad:?}: {e}");
+            }
+        }
+
         #[test]
         fn lua_escapes_quotes_and_rejects_unsupported_values() {
             assert_eq!(
@@ -5676,7 +6477,8 @@ for _, c in ipairs(execs) do print("exec " .. c) end
             let mut data: Value = fs::read_to_string(path).unwrap().parse().unwrap();
             // Backwards compatible: the vendor SSOT ships only the catch-all rule.
             let vendor = project(&data).unwrap();
-            assert_eq!(vendor.matches("hl.monitor(").count(), 1, "{vendor}");
+            // (static rules only: the [desktop.framerate] section re-applies, at run time, a mode miosd switched to)
+            assert_eq!(vendor.lines().filter(|l| l.starts_with("hl.monitor(")).count(), 1, "{vendor}");
             assert!(!vendor.contains("default_monitor"), "{vendor}");
             let layer: Value = toml::from_str(
                 "[monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\nposition = \"0x0\"\nscale = 1.25\ntransform = 0\nprimary = true\n[monitors.DP-2]\nmode = \"preferred\"\nposition = \"auto-right\"\nscale = 1\ndisabled = true\n",
@@ -5776,6 +6578,265 @@ for _, c in ipairs(execs) do print("exec " .. c) end
                 .as_array_mut()
                 .unwrap()[0]["dispatcher"] = Value::String("exec_cmd);bad(".into());
             assert!(project(&data).unwrap_err().contains("dispatcher"));
+        }
+
+        // ---- [desktop.framerate] ---------------------------------------------------------------------------------
+
+        /// Runs a projection under a stub `hl` that records what reaches the compositor for the frame rate: plugin
+        /// loads, the mios_pacing options, the hyprglass live_resample_fps options and hl.monitor rules for outputs.
+        /// `monitors` is the hl.get_monitors() result (Lua table source); `env` adds XDG_RUNTIME_DIR etc.
+        fn record_rates(chunk: &str, monitors: &str, env: &[(&str, &str)]) -> String {
+            let stub = format!(
+                r#"
+local function auto()
+ return setmetatable({{}}, {{ __index = function(t, k) local v = auto() rawset(t, k, v) return v end, __call = function() return auto() end }})
+end
+MIOS_SESSION = {{}}
+hl = auto()
+local out = {{}}
+local function walk(t, prefix)
+ for k, v in pairs(t) do
+  local key = prefix .. ":" .. k
+  if type(v) == "table" then walk(v, key) else out[#out + 1] = key .. "=" .. tostring(v) end
+ end
+end
+local monitors = {monitors}
+hl.get_monitors = function() return monitors end
+hl.get_monitor = function(name) for _, m in ipairs(monitors) do if m.name == name then return m end end end
+hl.plugin.load = function(p) out[#out + 1] = "load " .. p end
+hl.config = function(t) walk(t, "") end
+hl.monitor = function(r) if r.output and r.output ~= "" then out[#out + 1] = "monitor " .. r.output .. " " .. tostring(r.mode) .. " " .. tostring(r.position) .. " " .. tostring(r.scale) end end
+hl.plugin.hyprglass = setmetatable({{ config = function(t) walk(t, ":plugin:hyprglass") end }}, {{ __index = function() return function() end end }})
+dofile(os.getenv("CHUNK"))
+table.sort(out)
+for _, l in ipairs(out) do print(l) end
+local r = MIOS_SESSION.framerate or {{}}
+print("rate " .. tostring(r.tier) .. " " .. tostring(r.desktop_hz) .. " " .. tostring(r.cap_hz) .. " " .. tostring(r.glass_fps) .. " " .. tostring(r.wallpaper_fps) .. " " .. tostring(r.source))
+for _, e in ipairs(MIOS_SESSION.errors or {{}}) do print("error " .. e) end
+"#
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("chunk.lua");
+            fs::write(&path, chunk).unwrap();
+            let empty_rt = tempfile::tempdir().unwrap();
+            let has_rt = env.iter().any(|(k, _)| *k == "XDG_RUNTIME_DIR");
+            let mut all = vec![("CHUNK", path.to_str().unwrap())];
+            if !has_rt {
+                all.push(("XDG_RUNTIME_DIR", empty_rt.path().to_str().unwrap()));
+            }
+            all.extend_from_slice(env);
+            let (ok, out) = run_lua(&stub, &all);
+            assert!(ok, "projection raised under the stub: {out}");
+            out
+        }
+
+        const DP3_144: &str = r#"{ { name = "DP-3", x = 0, y = 0, width = 1920, height = 1080, physical_width = 530, physical_height = 300, refresh_rate = 143.998, scale = 1, transform = 0, available_modes = { { width = 1920, height = 1080, refresh_rate = 143.998 }, { width = 1920, height = 1080, refresh_rate = 60.0 } } }, { name = "HEADLESS-MIOS-RDP", x = 1920, y = 0, width = 1170, height = 2532, physical_width = 0, physical_height = 0, refresh_rate = 240.0, scale = 2, transform = 0, available_modes = { { width = 1170, height = 2532, refresh_rate = 240.0 } } } }"#;
+
+        fn framerate_ssot() -> Value {
+            let d = real_ssot();
+            assert!(d["desktop"].get("framerate").is_some(), "the SSOT carries [desktop.framerate] (the staged framerate edit)");
+            d
+        }
+
+        fn rate_line(out: &str) -> &str {
+            out.lines().find(|l| l.starts_with("rate ")).unwrap_or("")
+        }
+
+        fn inputs(profile: Option<&str>, battery: bool) -> RateInputs {
+            RateInputs { gaming: false, on_battery: battery, profile: profile.map(str::to_owned) }
+        }
+
+        #[test]
+        fn framerate_projects_the_cap_and_glass_rate_of_each_login_tier() {
+            let d = framerate_ssot();
+            let path = d["desktop"]["hyprland"]["mios-pacing"]["path"].as_str().unwrap().to_owned();
+            // login inputs -> (tier, D, cap, G, W): DESIGN.md section 0 on a 144 Hz output
+            for (login, tier, desk, cap, glass, wall) in [
+                (inputs(Some("power-saver"), false), "power-saver", 60, 60, 20, 30),
+                (inputs(Some("balanced"), false), "balanced", 60, 60, 20, 30),
+                (inputs(Some("performance"), false), "performance", 90, 90, 30, 45),
+                (inputs(Some("performance"), true), "battery", 60, 60, 20, 30),
+                (inputs(None, false), "balanced", 60, 60, 20, 30),
+            ] {
+                let out = record_rates(&project_login(&d, &login).unwrap(), DP3_144, &[]);
+                assert!(!out.contains("error "), "{out}");
+                assert!(out.contains(&format!("load {path}\n")), "pacing plugin loaded: {out}");
+                assert!(out.contains(&format!(":plugin:mios_pacing:max_fps={cap}\n")), "{tier}: {out}");
+                assert!(out.contains(":plugin:mios_pacing:exclude_prefixes=HEADLESS-\n"), "{out}");
+                // the SSOT's static plugin options reach it; no state file: the wallpaper keeps its timer (no throttle)
+                let cfg = d["desktop"]["hyprland"]["mios-pacing"]["config"].as_table().unwrap();
+                assert!(cfg.contains_key("wallpaper_namespaces"), "the staged SSOT names the wallpaper namespace");
+                for (k, v) in cfg {
+                    let v = v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string());
+                    assert!(out.contains(&format!(":plugin:mios_pacing:{k}={v}\n")), "{k}: {out}");
+                }
+                assert!(out.contains(":plugin:mios_pacing:wallpaper_fps=0\n"), "{tier}: {out}");
+                for group in ["layers", "windows"] {
+                    assert!(out.contains(&format!(":plugin:hyprglass:{group}:live_resample_fps={glass}\n")), "{tier} {group}: {out}");
+                }
+                assert_eq!(rate_line(&out), format!("rate {tier} {desk} {cap} {glass} {wall} login"), "{out}");
+                assert!(!out.contains("monitor DP-3"), "no state file: no mode rule");
+            }
+            // unlocked (SSOT/user-tier opt-in): no cap; G and W from the local outputs' largest mode (the 240 Hz
+            // headless output is excluded), whatever the profile.
+            let mut u = d.clone();
+            u["desktop"]["framerate"]["unlocked"] = Value::Boolean(true);
+            let out = record_rates(&project_login(&u, &inputs(Some("power-saver"), true)).unwrap(), DP3_144, &[]);
+            assert!(out.contains(":plugin:mios_pacing:max_fps=0\n"), "{out}");
+            assert!(out.contains(":plugin:hyprglass:layers:live_resample_fps=72\n"), "{out}");
+            assert_eq!(rate_line(&out), "rate unlocked 144 0 72 144 login", "{out}");
+            // no outputs known yet (compositor start): every output frame until miosd applies
+            let out = record_rates(&project_login(&u, &RateInputs::default()).unwrap(), "{}", &[]);
+            assert_eq!(rate_line(&out), "rate unlocked 0 0 0 0 login", "{out}");
+        }
+
+        #[test]
+        fn framerate_reads_the_live_state_of_a_running_miosd_and_ignores_a_stale_file() {
+            // (the state's wallpaper_paced moves the compositor's wallpaper throttle: on with it, off without)
+            let d = framerate_ssot();
+            let rt = tempfile::tempdir().unwrap();
+            let state_dir = rt.path().join("mios/framerate");
+            fs::create_dir_all(&state_dir).unwrap();
+            // a process whose comm is "miosd" stands for the running daemon
+            let bin = rt.path().join("miosd");
+            fs::copy("/usr/bin/sleep", &bin).unwrap();
+            let mut child = std::process::Command::new(&bin).arg("30").spawn().unwrap();
+            let write = |pid: u32, paced: bool| {
+                let mut outputs = std::collections::BTreeMap::new();
+                outputs.insert("DP-3".to_string(), mios_resolver::framerate::OutputState {
+                    mechanism: "mode".into(), cap_hz: 0, max_hz: 144, mode: Some("1920x1080@119.98".into()), refresh_hz: 119.98 });
+                let s = RateState { version: mios_resolver::framerate::STATE_VERSION, pid, seq: 7, tier: "gaming".into(), desktop_hz: 120,
+                    cap_hz: 120, glass_fps: 60, wallpaper_fps: 60, max_hz: 144, unlocked: false, wallpaper_paced: paced,
+                    inputs: RateInputs { gaming: true, on_battery: false, profile: Some("performance".into()) }, outputs };
+                fs::write(state_dir.join("state.json"), s.to_json()).unwrap();
+            };
+            write(child.id(), true);
+            let chunk = project_login(&d, &inputs(Some("power-saver"), false)).unwrap();
+            let env = [("XDG_RUNTIME_DIR", rt.path().to_str().unwrap())];
+            let out = record_rates(&chunk, DP3_144, &env);
+            assert_eq!(rate_line(&out), "rate gaming 120 120 60 60 state", "{out}");
+            assert!(out.contains(":plugin:mios_pacing:wallpaper_fps=60\n"), "paced: the wallpaper's callbacks at W: {out}");
+            write(child.id(), false);
+            let out = record_rates(&chunk, DP3_144, &env);
+            assert!(out.contains(":plugin:mios_pacing:wallpaper_fps=0\n"), "not paced: no throttle: {out}");
+            write(child.id(), true);
+            let out = record_rates(&chunk, DP3_144, &env);
+            assert!(out.contains(":plugin:mios_pacing:max_fps=120\n") && out.contains(":plugin:hyprglass:windows:live_resample_fps=60\n"), "{out}");
+            assert!(out.contains("monitor DP-3 1920x1080@119.98 0x0 1\n"), "the switched mode survives a reload: {out}");
+            // negative control: the same file from a dead (or reused, non-miosd) pid is stale
+            write(1, true);
+            let out = record_rates(&chunk, DP3_144, &env);
+            assert_eq!(rate_line(&out), "rate power-saver 60 60 20 30 login", "{out}");
+            assert!(!out.contains("monitor DP-3"), "{out}");
+            assert!(out.contains(":plugin:mios_pacing:wallpaper_fps=0\n"), "a stale file never throttles the wallpaper: {out}");
+            child.kill().ok();
+            child.wait().ok();
+        }
+
+        #[test]
+        fn framerate_absent_or_disabled_projects_nothing_and_keeps_the_plugin_keys() {
+            let mut off = framerate_ssot();
+            off["desktop"]["framerate"]["enabled"] = Value::Boolean(false);
+            let mut gone = framerate_ssot();
+            gone["desktop"].as_table_mut().unwrap().remove("framerate");
+            for d in [&off, &gone] {
+                let chunk = project(d).unwrap();
+                assert!(!chunk.contains("mios_section(\"framerate\"") && !chunk.contains("mios_rate") && !chunk.contains("mios_pacing"), "no frame-rate projection");
+                let out = record_rates(&chunk, DP3_144, &[]);
+                assert!(!out.contains("live_resample_fps") && !out.contains("mios_pacing") && !out.contains("error "), "plugin defaults: {out}");
+                // the legacy SSOT keys pass through as written while the policy is off
+                let mut legacy = d.clone();
+                legacy["desktop"]["hyprland"]["hyprglass"]["config"]["layers"].as_table_mut().unwrap().insert("live_resample_fps".into(), Value::Integer(25));
+                let out = record_rates(&project(&legacy).unwrap(), DP3_144, &[]);
+                assert!(out.contains(":plugin:hyprglass:layers:live_resample_fps=25\n"), "{out}");
+            }
+            // pacing plugin disabled: rates still projected, no plugin load
+            let mut nopace = framerate_ssot();
+            nopace["desktop"]["hyprland"]["mios-pacing"]["enabled"] = Value::Boolean(false);
+            let out = record_rates(&project(&nopace).unwrap(), DP3_144, &[]);
+            assert!(!out.contains("mios_pacing") && out.contains(":plugin:hyprglass:layers:live_resample_fps=20\n"), "{out}");
+        }
+
+        #[test]
+        fn framerate_rejects_superseded_fixed_rates_and_bad_policies() {
+            let d = framerate_ssot();
+            for group in ["layers", "windows"] {
+                let mut x = d.clone();
+                let cfg = x["desktop"]["hyprland"]["hyprglass"]["config"].as_table_mut().unwrap();
+                cfg.entry(group).or_insert_with(|| Value::Table(Default::default()))
+                    .as_table_mut().unwrap().insert("live_resample_fps".into(), Value::Integer(0));
+                let e = project(&x).unwrap_err();
+                assert!(e.contains("superseded by [desktop.framerate]") && e.contains(group), "{e}");
+            }
+            for (group, key) in HYPR3D_RATE_KEYS {
+                let mut x = d.clone();
+                x["desktop"]["hyprland"]["hypr3d"]["config"].as_table_mut().unwrap()
+                    .entry(group).or_insert_with(|| Value::Table(Default::default()))
+                    .as_table_mut().unwrap().insert(key.into(), Value::Integer(30));
+                let e = project(&x).unwrap_err();
+                assert!(e.contains(&format!("{group}.{key}")) && e.contains("superseded"), "{e}");
+            }
+            let mut x = d.clone();
+            x["desktop"]["framerate"]["tiers"]["performance"]["desktop_hz"] = Value::Integer(0);
+            assert!(project(&x).unwrap_err().contains("desktop_hz"));
+            let mut x = d.clone();
+            x["desktop"]["hyprland"]["mios-pacing"]["path"] = Value::String("lib/../x.so".into());
+            assert!(project(&x).unwrap_err().contains("mios-pacing.path"));
+            // the plugin's static options: the rate keys belong to the tier; unknown keys and bad values are refused
+            for (k, v, needle) in [
+                ("max_fps", Value::Integer(90), "running tier"),
+                ("wallpaper_fps", Value::Integer(30), "running tier"),
+                ("exclude_prefixes", Value::String("X-".into()), "running tier"),
+                ("turbo", Value::Boolean(true), "not a plugin option"),
+                ("slack_us", Value::Integer(-1), "invalid"),
+                ("require_vrr", Value::String("yes".into()), "invalid"),
+                ("wallpaper_namespaces", Value::String("mios wallpaper".into()), "invalid"),
+            ] {
+                let mut x = d.clone();
+                x["desktop"]["hyprland"]["mios-pacing"]["config"].as_table_mut().unwrap().insert(k.into(), v);
+                let e = project(&x).unwrap_err();
+                assert!(e.contains(&format!("mios-pacing.config.{k}")) && e.contains(needle), "{k}: {e}");
+            }
+        }
+
+        #[test]
+        fn framerate_projection_parses_as_lua() {
+            let d = framerate_ssot();
+            let chunk = project_login(&d, &inputs(Some("performance"), false)).unwrap();
+            let start = chunk.find("local mios_rate = ").expect("rate seed");
+            let end = chunk[start..].find("mios_section(\"mios-pacing\"").map(|e| start + e).expect("pacing section");
+            let body = &chunk[start..end];
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("rate.lua");
+            fs::write(&path, format!("local mios_state = {{}}\nlocal function mios_section(n, f) f() end\nhl = {{ get_monitors = function() return {{}} end }}\n{body}\nprint(mios_rate.tier, mios_rate.desktop_hz, mios_rate.glass_fps)\n")).unwrap();
+            let out = std::process::Command::new(interpreter()).arg(&path).env_remove("XDG_RUNTIME_DIR").output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert_eq!(String::from_utf8_lossy(&out.stdout).split_whitespace().collect::<Vec<_>>(), ["performance", "90", "30"]);
+        }
+
+        #[test]
+        fn hypr3d_toggle_carries_the_running_tier() {
+            let d = framerate_ssot();
+            let policy = framerate_policy(&d).unwrap().unwrap();
+            let base = hypr3d_session_config(&d, None, "").unwrap();
+            let keys = |c: &Value| HYPR3D_RATE_KEYS.map(|(g, k)| c[g][k].as_integer().unwrap());
+            let mut c = base.clone();
+            hypr3d_rate_overlay(&mut c, &policy, None, &inputs(Some("performance"), false)).unwrap();
+            assert_eq!(keys(&c), [90, 30, 45]);
+            assert_eq!(c["render"]["scale"], base["render"]["scale"], "the rest of the config is untouched");
+            let mut c = base.clone();
+            hypr3d_rate_overlay(&mut c, &policy, None, &inputs(Some("balanced"), true)).unwrap();
+            assert_eq!(keys(&c), [60, 20, 30]);
+            let live = RateState { version: mios_resolver::framerate::STATE_VERSION, pid: 1, seq: 1, tier: "unlocked".into(), desktop_hz: 144,
+                cap_hz: 0, glass_fps: 72, wallpaper_fps: 144, max_hz: 144, unlocked: true, wallpaper_paced: true, inputs: RateInputs::default(), outputs: Default::default() };
+            let mut c = base.clone();
+            hypr3d_rate_overlay(&mut c, &policy, Some(&live), &inputs(Some("power-saver"), false)).unwrap();
+            assert_eq!(keys(&c), [0, 72, 144], "unlocked: every output frame, glass D/2, dome at D");
+            // negative control: without the policy nothing is added
+            let mut off = d.clone();
+            off["desktop"]["framerate"]["enabled"] = Value::Boolean(false);
+            assert!(framerate_policy(&off).unwrap().is_none());
+            assert!(base["render"].get("max_fps").is_none() && base["world"].get("live_fps").is_none());
         }
     }
 }

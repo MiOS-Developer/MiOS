@@ -94,9 +94,16 @@ $taskName = 'MiOS-OSControl-Server'
 $fwName   = "MiOS - oscontrol ($Port/tcp)"
 $logDir   = Join-Path $env:LOCALAPPDATA 'mios\oscontrol\logs'
 
-function Info($m){ Write-Host "  [*] $m" -ForegroundColor Cyan }
-function Ok($m)  { Write-Host "  [+] $m" -ForegroundColor Green }
-function Warn($m){ Write-Host "  [!] $m" -ForegroundColor Yellow }
+# Console status lines are best effort. The logon task starts Windows PowerShell hidden, and at sign-in its console
+# can be invalid (Windows 11 console handoff): Write-Host then fails with "The handle is invalid" (0x6), which
+# $ErrorActionPreference = 'Stop' made fatal -- the server exited 1 at every logon (MiOS-Xbox round-1 boot).
+# A failed console write is dropped; it never stops the executor.
+function Write-MiosStatus([string]$Text, [ConsoleColor]$Color) {
+    try { Write-Host $Text -ForegroundColor $Color -ErrorAction Stop } catch { }
+}
+function Info($m){ Write-MiosStatus "  [*] $m" Cyan }
+function Ok($m)  { Write-MiosStatus "  [+] $m" Green }
+function Warn($m){ Write-MiosStatus "  [!] $m" Yellow }
 
 # ---- scheduled-task install / uninstall (mirrors mios-igpu-server.ps1) -------
 if ($Uninstall) {

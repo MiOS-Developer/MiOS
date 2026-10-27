@@ -163,6 +163,7 @@
       <address type="pci" domain="0x0000" bus="0x01" slot="0x00" function="0x0"/>
     </interface>
     <serial type="pty">
+      <log file="/var/log/libvirt/qemu/Xbox-serial0.log" append="on"/>
       <target type="isa-serial" port="0">
         <model name="isa-serial"/>
       </target>

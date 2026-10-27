@@ -1,0 +1,1109 @@
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -9,6 +9,9 @@
+ #include <hyprland/src/protocols/core/Compositor.hpp>
+ #include <hyprland/src/protocols/types/Buffer.hpp>
+ #include <hyprland/src/render/Renderer.hpp>
++#include <hyprland/src/animation/AnimationManager.hpp>
++#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
++#include <array>
+ #include <hyprland/src/render/OpenGL.hpp>
+ #include <hyprland/src/render/gl/GLFramebuffer.hpp>
+ 
+@@ -388,23 +391,46 @@
+         if (m_window) {
+             m_savedTransformers = std::move(m_window->m_transformers);
+             m_window->m_transformers.clear();
+-            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_FADE) < 1.0f)
+-                m_window->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(1.0f);
+-            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_LAYOUT) < 1.0f)
+-                m_window->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);
+-            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN) < 1.0f)
+-                m_window->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(1.0f);
++            // A foreign capture needs opaque pixels, but must not change the live
++            // alpha animation's value, goal, timer, or fullscreen input ownership.
++            // Borrow constant handles only for this render; the original animated
++            // variables keep their exact state and are restored on scope exit.
++            auto& pool = opaqueAlphas();
++            for (size_t i = 0; i < CHANNELS.size(); ++i) {
++                if (m_window->alphaValue(CHANNELS[i]) >= 1.F)
++                    continue;
++                if (!pool[i])
++                    Animation::mgr()->createAnimation(1.F, pool[i],
++                        Config::animationTree()->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
++                m_savedAlphas[i] = std::move(m_window->alpha(CHANNELS[i]));
++                m_window->alpha(CHANNELS[i]) = std::move(pool[i]);
++            }
+         }
+     }
+     ~CForeignSnapshotScope() {
+-        if (m_window)
++        if (m_window) {
++            auto& pool = opaqueAlphas();
++            for (size_t i = 0; i < CHANNELS.size(); ++i) {
++                if (!m_savedAlphas[i])
++                    continue;
++                pool[i] = std::move(m_window->alpha(CHANNELS[i]));
++                m_window->alpha(CHANNELS[i]) = std::move(m_savedAlphas[i]);
++            }
+             m_window->m_transformers = std::move(m_savedTransformers);
++        }
+         g_pHyprRenderer->m_renderData.renderModif = m_saved;
+     }
+     CForeignSnapshotScope(const CForeignSnapshotScope&)            = delete;
+     CForeignSnapshotScope& operator=(const CForeignSnapshotScope&) = delete;
+ 
+   private:
++    static constexpr std::array CHANNELS{Desktop::View::WINDOW_ALPHA_FADE,
++        Desktop::View::WINDOW_ALPHA_LAYOUT, Desktop::View::WINDOW_ALPHA_FULLSCREEN};
++    static std::array<PHLANIMVAR<float>, 3>& opaqueAlphas() {
++        static std::array<PHLANIMVAR<float>, CHANNELS.size()> pool;
++        return pool;
++    }
++    std::array<PHLANIMVAR<float>, CHANNELS.size()> m_savedAlphas;
+     Render::SRenderModifData                     m_saved;
+     PHLWINDOW                                    m_window;
+     std::vector<UP<Render::IWindowTransformer>>  m_savedTransformers;
+diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCompat.cpp
+--- a/src/HyprlandCompat/WindowsCompat.cpp
++++ b/src/HyprlandCompat/WindowsCompat.cpp
+@@ -544,7 +544,8 @@
+     return window->resource();
+ }
+ 
+-bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global) {
++bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global,
++                        PHLLS* outLayer, Vector2D* outLocal) {
+     if (!monitor || !Desktop::viewState())
+         return false;
+ 
+@@ -553,18 +554,28 @@
+     Vector2D coords;
+     PHLLS    found;
+ 
+-    if (HIT.layerPopupSurfaceAt(global, monitor, &coords, &found))
++    if (HIT.layerPopupSurfaceAt(global, monitor, &coords, &found)) {
++        if (outLayer) *outLayer = found;
++        if (outLocal) *outLocal = coords;
+         return true;
++    }
+ 
+     constexpr size_t LAYER_TOP = 2, LAYER_OVERLAY = 3;
+ 
+     for (const size_t L : {LAYER_OVERLAY, LAYER_TOP}) {
+         if (HIT.layerSurfaceAt(global, &monitor->m_layerSurfaceLayers[L],
+-                               &coords, &found))
++                               &coords, &found)) {
++            if (outLayer) *outLayer = found;
++            if (outLocal) *outLocal = coords;
+             return true;
++        }
+     }
+ 
+     return false;
++}
++
++bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global) {
++    return interactiveLayerAt(monitor, global, nullptr, nullptr);
+ }
+ 
+ bool layerHasKeyboardFocus() {
+diff --git a/src/HyprlandCompat/WindowsCompat.hpp b/src/HyprlandCompat/WindowsCompat.hpp
+--- a/src/HyprlandCompat/WindowsCompat.hpp
++++ b/src/HyprlandCompat/WindowsCompat.hpp
+@@ -163,6 +163,8 @@
+ // this monitor -- Hyprland's own hit test, input regions included. Those
+ // draw over the room and are used as ordinary 2D surfaces.
+ bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global);
++bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global,
++                        PHLLS* layer, Vector2D* local);
+ 
+ // Whether keyboard focus is on a layer surface (a launcher, a sidebar's
+ // text field): the room then leaves the keyboard and focus alone.
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -127,6 +127,8 @@
+     bool glassWall = false;
+     bool glassFace = false; // walls keep their existing appearance
+     bool crtEnabled = false;
++    std::array<float, 2> controls{0.f, 0.f};
++    std::array<float,48> controlStyle{};
+     std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
+@@ -151,6 +153,8 @@
+     front.glassWall = back.glassWall = poly.glassWall;
+     front.glassFace = back.glassFace = poly.glassFace;
+     front.crtEnabled = back.crtEnabled = poly.crtEnabled;
++    front.controls = back.controls = poly.controls;
++        front.controlStyle = back.controlStyle = poly.controlStyle;
+     front.glassUV = back.glassUV = poly.glassUV;
+     front.glassSurface = back.glassSurface = poly.glassSurface;
+     front.glassMetrics = back.glassMetrics = poly.glassMetrics;
+@@ -607,6 +611,12 @@
+ uniform vec4 uGlassMetrics;
+ uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
+ uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
++uniform vec2 uControls; // per-window reveal and configured horizontal inset
++uniform vec4 uControlStyle[12];
++bool controlCircleActive=false;
++vec3 controlCircle=vec3(0.0);
++vec3 materialTintColor;
++float materialTintAlpha;
+ uniform int uCrtCurvature;
+ uniform float uCrtRadius;
+ uniform int uCrtScanlines;
+@@ -772,8 +782,10 @@
+ }
+ 
+ float tabShapeSDF(vec2 boxLocalPx) {
+-    vec2 tq = abs(boxLocalPx - vec2(86.0, 0.0)) - vec2(44.0, 28.0) + vec2(10.0);
+-    return length(max(tq, 0.0)) + min(max(tq.x, tq.y), 0.0) - 10.0;
++    boxLocalPx.x -= uControls.y;
++    vec4 box=uControlStyle[0];
++    vec2 tq=abs(boxLocalPx-vec2(box.x,0.0))-vec2(box.y,box.z)+vec2(box.w);
++    return length(max(tq,0.0))+min(max(tq.x,tq.y),0.0)-box.w;
+ }
+ 
+ float sminTab(float a, float b, float k) {
+@@ -782,10 +794,11 @@
+ }
+ 
+ float getCornerSDF(vec2 uv) {
++    if (controlCircleActive) return length(uv*fullSize-controlCircle.xy)-controlCircle.z;
+     vec2 boxLocalPx = uv * fullSize - glassBoxOffsetPx;
+     float d = getRoundedBoxSDF(boxLocalPx, glassBoxSizePx, radii);
+-    if (abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= 14.0 && boxLocalPx.x >= 18.0 && boxLocalPx.x <= 154.0) {
+-        d = sminTab(tabShapeSDF(boxLocalPx), d, 15.0);
++    if (uControls.x > 0.5 && abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= uControlStyle[0].z*.5 && abs(boxLocalPx.x-uControlStyle[0].x) <= uControlStyle[0].y+2.0*uControlStyle[1].x) {
++        d = sminTab(tabShapeSDF(boxLocalPx), d, max(uControlStyle[1].x,0.001));
+     }
+     return d;
+ }
+@@ -806,6 +819,7 @@
+ // contours are stadiums, i.e. the plain distance to the box rounded by h (so a
+ // capsule gets its exact distance everywhere).
+ float getBevelSDF(vec2 uv) {
++    if (controlCircleActive) return getCornerSDF(uv);
+     vec2  H = glassBoxSizePx * 0.5;
+     float h = min(H.x, H.y);
+     vec2  boxLocalPx = uv * fullSize - glassBoxOffsetPx;
+@@ -824,8 +838,8 @@
+     }
+     vec2 s = p - H + h;
+     float winBevel = -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
+-    if (abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= 14.0 && boxLocalPx.x >= 18.0 && boxLocalPx.x <= 154.0) {
+-        return sminTab(tabShapeSDF(boxLocalPx), winBevel, 15.0);
++    if (uControls.x > 0.5 && abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= uControlStyle[0].z*.5 && abs(boxLocalPx.x-uControlStyle[0].x) <= uControlStyle[0].y+2.0*uControlStyle[1].x) {
++        return sminTab(tabShapeSDF(boxLocalPx), winBevel, max(uControlStyle[1].x,0.001));
+     }
+     return winBevel;
+ }
+@@ -916,7 +930,7 @@
+     // ========================================
+     // COLOR TINT OVERLAY
+     // ========================================
+-    color = mix(color, tintColor, tintAlpha);
++    color = mix(color, materialTintColor, materialTintAlpha);
+ 
+     // ========================================
+     // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
+@@ -1208,7 +1222,7 @@
+     float inv = edgePassWidth > 0.0 ? 1.0 / edgePassWidth : invBezelWidthPx;
+     float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
+     float edgeProximity = min(exp(bevelSdf * inv), 1.0);
+-    vec3  tintRef = tintAlpha > 0.001 ? tintColor : vec3(1.0);
++    vec3  tintRef = materialTintAlpha > 0.001 ? materialTintColor : vec3(1.0);
+     float b = 0.0, s = 0.0;
+     vec3  L = vec3(1.0);
+     if (bevelStrength > 0.001) {
+@@ -1313,6 +1327,17 @@
+         if (coverage <= 0.0) {
+             discard;
+         }
++        materialTintColor=tintColor; materialTintAlpha=tintAlpha;
++        vec2 controlPx=raw_texcoord*fullSize;
++        bool controlTab=uControls.x>.5 && controlPx.y<0.0;
++        if (uControls.x>.5 && abs(lampP)<=.001 &&
++            abs(controlPx.x-uControlStyle[0].x) <= uControlStyle[0].y+2.0*uControlStyle[1].x) {
++            float merge=1.0-smoothstep(0.0,max(uControlStyle[1].y,.001),controlPx.y);
++            float a2=uControlStyle[2].a*merge;
++            float combined=1.0-(1.0-tintAlpha)*(1.0-a2);
++            materialTintColor=combined>.0001 ? (tintColor*tintAlpha*(1.0-a2)+uControlStyle[2].rgb*a2)/combined : tintColor;
++            materialTintAlpha=combined;
++        }
+         hgMaterial();
+         if (uGlassHasEnvironment) {
+             // Environment reflection, distinct from the transmitted scene
+@@ -1340,63 +1365,34 @@
+             C.rgb = clamp(C.rgb * scan * dotmask, 0.0, 1.0);
+         }
+         vec4 D = C + (1.0 - C.a) * hgColor;
+-        vec4 E = hgEdgePass(edge_coord, sd);
++        vec4 E = controlTab ? vec4(0.0) : hgEdgePass(edge_coord, sd);
+         vec4 O = (E + (1.0 - E.a) * D) * coverage;
+         float a = O.a * uColor.a;
+         vec3 rgb = clamp(O.rgb / max(O.a, 1e-4), 0.0, 1.0) * uColor.rgb;
+-        vec2 px = raw_texcoord * fullSize;
+-        if (abs(lampP) <= 0.001 && fullSize.x > 180.0 && px.y <= 16.0 && px.y >= -36.0 && px.x >= 20.0 && px.x <= 152.0) {
+-            // 2D hyprbars pill_color tint + merge zone (rgba(28226238)): smooth blend across px.y in [-8.0, +8.0] into window face with zero horizontal seam at y = 0
+-            float blendY = 1.0 - smoothstep(-8.0, 8.0, px.y);
+-            float mergeT = blendY * (1.0 - smoothstep(44.0, 56.0, abs(px.x - 86.0)));
+-            rgb = mix(rgb, vec3(0.157, 0.133, 0.384) * uColor.rgb, 0.22 * mergeT);
+-            // 16px 3D glass-orb buttons (button_glass = 0.80) matching 2D drawGlassButton
+-            vec2 p0 = px - vec2(60.0, -14.0);
+-            vec2 p1 = px - vec2(86.0, -14.0);
+-            vec2 p2 = px - vec2(112.0, -14.0);
+-            float d0 = length(p0) - 8.0;
+-            float d1 = length(p1) - 8.0;
+-            float d2 = length(p2) - 8.0;
+-            float bw = max(fwidth(d0), 0.65);
+-            if (d0 < bw) {
+-                float bc = clamp(0.5 - d0 / bw, 0.0, 1.0);
+-                vec3 orb = mix(hgColor.rgb, vec3(0.863, 0.153, 0.106), 0.80);
+-                vec2 n0 = length(p0) > 1e-4 ? p0 / length(p0) : vec2(0.0, -1.0);
+-                float f0 = clamp(dot(n0, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
+-                float r0 = (1.0 - smoothstep(-1.4, 0.0, d0)) * smoothstep(-4.5, -1.4, d0);
+-                float prox0 = exp(d0 * 0.35);
+-                orb = mix(orb, bevelColor, r0 * f0 * 0.28);
+-                orb += fresnelColor * (prox0 * prox0 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n0.y, 0.0) * prox0 * 0.07);
+-                float ix = min(abs(p0.x - p0.y), abs(p0.x + p0.y)) * 0.7071;
+-                float ic = (max(abs(p0.x), abs(p0.y)) < 3.1) ? clamp(1.05 - ix / 0.82, 0.0, 1.0) : 0.0;
+-                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
+-                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
+-            }
+-            if (d1 < bw) {
+-                float bc = clamp(0.5 - d1 / bw, 0.0, 1.0);
+-                vec3 orb = mix(hgColor.rgb, vec3(0.953, 0.361, 0.082), 0.80);
+-                vec2 n1 = length(p1) > 1e-4 ? p1 / length(p1) : vec2(0.0, -1.0);
+-                float f1 = clamp(dot(n1, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
+-                float r1 = (1.0 - smoothstep(-1.4, 0.0, d1)) * smoothstep(-4.5, -1.4, d1);
+-                float prox1 = exp(d1 * 0.35);
+-                orb = mix(orb, bevelColor, r1 * f1 * 0.28);
+-                orb += fresnelColor * (prox1 * prox1 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n1.y, 0.0) * prox1 * 0.07);
+-                float ic = (abs(p1.x) < 3.3 && abs(p1.y) < 0.82) ? 1.0 : 0.0;
+-                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
+-                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
+-            }
+-            if (d2 < bw) {
+-                float bc = clamp(0.5 - d2 / bw, 0.0, 1.0);
+-                vec3 orb = mix(hgColor.rgb, vec3(0.243, 0.467, 0.396), 0.80);
+-                vec2 n2 = length(p2) > 1e-4 ? p2 / length(p2) : vec2(0.0, -1.0);
+-                float f2 = clamp(dot(n2, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
+-                float r2 = (1.0 - smoothstep(-1.4, 0.0, d2)) * smoothstep(-4.5, -1.4, d2);
+-                float prox2 = exp(d2 * 0.35);
+-                orb = mix(orb, bevelColor, r2 * f2 * 0.28);
+-                orb += fresnelColor * (prox2 * prox2 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n2.y, 0.0) * prox2 * 0.07);
+-                float ic = ((abs(p2.x) < 3.3 && abs(p2.y) < 0.82) || (abs(p2.y) < 3.3 && abs(p2.x) < 0.82)) ? 1.0 : 0.0;
+-                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
+-                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
++        if (uControls.x>.5 && abs(lampP)<=.001) {
++            for (int i=0;i<3;++i) {
++                vec4 geom=uControlStyle[3+i*3];
++                vec2 p=controlPx-geom.xy;
++                float d=length(p)-geom.z;
++                float pixel=max(fwidth(d),.001);
++                if (d>pixel) continue;
++                vec4 bg=uControlStyle[4+i*3];
++                float a2=uControlStyle[1].z*bg.a;
++                float combined=1.0-(1.0-tintAlpha)*(1.0-a2);
++                materialTintColor=combined>.0001 ? (tintColor*tintAlpha*(1.0-a2)+bg.rgb*a2)/combined : tintColor;
++                materialTintAlpha=combined;
++                controlCircle=vec3(geom.xy,geom.z); controlCircleActive=true;
++                hgMaterial();
++                controlCircleActive=false;
++                vec3 orb=hgColor.rgb/max(hgColor.a,.0001);
++                vec2 q=p/max(geom.z,.001);
++                float icon=0.0;
++                if (i==0) icon=max(abs(q.x),abs(q.y))<.4 ? 1.0-smoothstep(.06,.15,min(abs(q.x-q.y),abs(q.x+q.y))) : 0.0;
++                else if (i==1) icon=abs(q.x)<.42 ? 1.0-smoothstep(.07,.15,abs(q.y)) : 0.0;
++                else icon=((abs(q.x)<.42 && abs(q.y)<.1)||(abs(q.y)<.42 && abs(q.x)<.1))?1.0:0.0;
++                vec4 fg=uControlStyle[5+i*3];
++                orb=mix(orb,fg.rgb,icon*fg.a*uControlStyle[1].w);
++                rgb=mix(rgb,clamp(orb,0.0,1.0)*uColor.rgb,clamp(.5-d/pixel,0.0,1.0));
+             }
+         }
+         if (lampP < -0.001) {
+@@ -1775,6 +1771,8 @@
+     m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
+     m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
+     m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
++    m_controls = glGetUniformLocation(m_sceneProgram, "uControls");
++    m_controlStyle = glGetUniformLocation(m_sceneProgram, "uControlStyle[0]");
+     m_crtCurvature = glGetUniformLocation(m_sceneProgram, "uCrtCurvature");
+     m_crtRadius = glGetUniformLocation(m_sceneProgram, "uCrtRadius");
+     m_crtScanlines = glGetUniformLocation(m_sceneProgram, "uCrtScanlines");
+@@ -3164,6 +3162,8 @@
+         slab.front.alpha = window.alpha;
+         slab.front.glassFace = window.glassMetrics[3] > 0.5f;
+         slab.front.crtEnabled = window.crtEnabled;
++        slab.front.controls = window.controls;
++        slab.front.controlStyle = window.controlStyle;
+         slab.front.glassSurface = window.glassSurface;
+         slab.front.glassMetrics = window.glassMetrics;
+         slab.front.glassDeco = window.glassDeco;
+@@ -3206,6 +3206,8 @@
+             slab.back.alpha = window.alpha;
+             slab.back.glassFace = slab.front.glassFace;
+             slab.back.crtEnabled = slab.front.crtEnabled;
++            slab.back.controls = slab.front.controls;
++            slab.back.controlStyle = slab.front.controlStyle;
+             slab.back.glassSurface = slab.front.glassSurface;
+             slab.back.glassMetrics = slab.front.glassMetrics;
+             slab.back.glassDeco = slab.front.glassDeco;
+@@ -3263,6 +3265,8 @@
+                     wall.alpha = window.alpha;
+                     wall.glassWall = slab.front.glassFace;
+                     wall.crtEnabled = slab.front.crtEnabled;
++                    wall.controls = slab.front.controls;
++                    wall.controlStyle = slab.front.controlStyle;
+ 
+                     wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
+                     wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
+@@ -3281,7 +3285,8 @@
+                 const auto& S=window.glassSurface;
+                 const auto& M=window.glassMetrics;
+                 auto loop=roundedRectLoop(std::max(1,static_cast<int>(M[0])),
+-                    std::max(1,static_cast<int>(M[1])),M[2],1.f,8);
++                    std::max(1,static_cast<int>(M[1])),M[2],1.f,8,
++                    window.controls[0]>.5F ? window.controlStyle.data() : nullptr);
+                 for (auto& P:loop.pts) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
+                 for (auto& P:loop.uvs) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
+                 EMIT_WALLS(loop.pts,loop.uvs);
+@@ -3454,7 +3459,9 @@
+                ordered[j].glassMetrics == ordered[i].glassMetrics &&
+                ordered[j].glassDeco == ordered[i].glassDeco &&
+                ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha &&
+-               ordered[j].crtEnabled == ordered[i].crtEnabled)
++               ordered[j].crtEnabled == ordered[i].crtEnabled &&
++               ordered[j].controls == ordered[i].controls &&
++               ordered[j].controlStyle == ordered[i].controlStyle)
+             ++j;
+ 
+         verts.clear();
+@@ -3521,6 +3528,8 @@
+             const auto& D = ordered[i].glassDeco;
+             glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
+             glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
++            glUniform2f(m_controls, ordered[i].controls[0], ordered[i].controls[1]);
++            glUniform4fv(m_controlStyle,12,ordered[i].controlStyle.data());
+             glUniform1i(m_crtCurvature, (ordered[i].crtEnabled && m_rq.crtCurvature) ? 1 : 0);
+             glUniform1f(m_crtRadius, m_rq.crtRadius);
+             glUniform1i(m_crtScanlines, (ordered[i].crtEnabled && m_rq.crtScanlines) ? 1 : 0);
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -144,6 +144,8 @@
+         float glassWindowAlpha = 1.0f;
+         float alpha = 1.0f;
+         bool crtEnabled = false;
++        std::array<float, 2> controls{0.f, 0.f}; // reveal, horizontal inset offset
++        std::array<float,48> controlStyle{};
+ 
+         // Depth slab: thickness in world units, extruded BACKWARDS along the
+         // window's normal (0 = the plain flat quad). When `outlines` carries
+@@ -554,6 +556,8 @@
+     int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
+     int m_sceneTexSharp = -1; // MiOS retina spawn
+     int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
++    int m_controls = -1;
++    int m_controlStyle = -1;
+     int m_crtCurvature = -1, m_crtRadius = -1, m_crtScanlines = -1, m_crtScanlineWeight = -1, m_crtDotmask = -1; // MiOS CRT shader
+     float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
+     SGlassConfig m_glassConfig;
+diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
+--- a/src/World/Outline.cpp
++++ b/src/World/Outline.cpp
+@@ -338,7 +338,7 @@
+ }
+ 
+ SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
+-                             float insetPx, int arcSegments) {
++                             float insetPx, int arcSegments, const float* controls) {
+     SOutlineLoop OUT;
+     if (wPx <= 0 || hPx <= 0)
+         return OUT;
+@@ -367,27 +367,32 @@
+         pts.push_back({0.f, FH});
+     } else {
+         // Clockwise in y-down screen coords:
+-        // Top edge with S-fillet tab contour along x in [25.0, 147.0]
+-        if (FW > 180.0f && R < 25.0f) {
+-            pts.push_back({R, 0.0f});
+-            pts.push_back({25.0f, 0.0f});
+-            for (float x = 25.5f; x <= 146.5f; x += 2.0f) {
+-                float low = -35.0f, high = 0.0f;
+-                for (int it = 0; it < 16; ++it) {
+-                    float mid = 0.5f * (low + high);
+-                    if (outlineSminTab(outlineTabShapeSDF(x, mid), -mid, 15.0f) < 0.0f)
+-                        high = mid;
+-                    else
+-                        low = mid;
++        // The same native tab box and smooth union as the glass fragment shader.
++        // No contour is emitted for hidden controls.
++        pts.push_back({R, 0.F});
++        if (controls && controls[2]>0.F && controls[1]>0.F) {
++            const float left=std::max(R,controls[0]-controls[1]-controls[4]);
++            const float right=std::min(FW-R,controls[0]+controls[1]+controls[4]);
++            const int steps=std::max(16,SEG*8);
++            if (right>left) {
++                pts.push_back({left,0.F});
++                for (int i=0;i<=steps;++i) {
++                    const float x=left+(right-left)*i/steps;
++                    float low=-controls[2]-2.F, high=0.F;
++                    for (int it=0;it<18;++it) {
++                        const float y=(low+high)*.5F;
++                        const float qx=std::abs(x-controls[0])-controls[1]+controls[3];
++                        const float qy=std::abs(y)-controls[2]+controls[3];
++                        const float box=std::hypot(std::max(qx,0.F),std::max(qy,0.F))+std::min(std::max(qx,qy),0.F)-controls[3];
++                        if (outlineSminTab(box,-y,std::max(controls[4],.001F))<0.F) high=y;
++                        else low=y;
++                    }
++                    pts.push_back({x,(low+high)*.5F});
+                 }
+-                pts.push_back({x, 0.5f * (low + high)});
++                pts.push_back({right,0.F});
+             }
+-            pts.push_back({147.0f, 0.0f});
+-            pts.push_back({FW - R, 0.0f});
+-        } else {
+-            pts.push_back({R, 0.0f});
+-            pts.push_back({FW - R, 0.0f});
+-        }
++        }
++        pts.push_back({FW-R,0.F});
+         ARC(FW - R, R,     270.f, 360.f, R, SEG); // top-right corner
+         ARC(FW - R, FH - R,  0.f,  90.f, R, SEG); // bottom-right corner
+         ARC(R,      FH - R, 90.f, 180.f, R, SEG); // bottom-left corner
+diff --git a/src/World/Outline.hpp b/src/World/Outline.hpp
+--- a/src/World/Outline.hpp
++++ b/src/World/Outline.hpp
+@@ -40,6 +40,6 @@
+ // so walls sample solid border texels instead of the antialiased fringe.
+ // Returns an empty loop for degenerate boxes.
+ SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
+-                             float insetPx, int arcSegments);
++                             float insetPx, int arcSegments, const float* controls = nullptr);
+ 
+ } // namespace H3D
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,4 +1,9 @@
+ #include <hyprland/src/plugins/PluginAPI.hpp>
++#include <hyprland/src/plugins/PluginSystem.hpp>
++#include <dlfcn.h>
++#include <spawn.h>
++#include <cstring>
++#include <limits>
+ 
+ #include <Jolt/Jolt.h>
+ #include <Jolt/RegisterTypes.h>
+@@ -1354,50 +1359,21 @@
+     else if (color.g > 0.65f && color.r < 0.55f)
+         kind = "success";
+ 
+-    std::thread([title = std::move(title), body = std::move(body), kind = std::move(kind)]() {
+-        static std::mutex s_mtx;
+-        static int        s_replaceId = 0;
+-        std::lock_guard<std::mutex> lock(s_mtx);
+-
+-        auto shQuote = [](const std::string& s) {
+-            std::string out = "'";
+-            for (char c : s) {
+-                if (c == '\'')
+-                    out += "'\\''";
+-                else
+-                    out += c;
+-            }
+-            out += "'";
+-            return out;
+-        };
+-
+-        std::string cmd = "/usr/bin/notify-send -p -a 'Hypr3D' -t 2500 -h int:transient:1";
+-        if (s_replaceId > 0)
+-            cmd += " -r " + std::to_string(s_replaceId);
+-        cmd += " " + shQuote(title) + " " + shQuote(body) + " 2>/dev/null";
+-
+-        bool sent = false;
+-        if (FILE* fp = ::popen(cmd.c_str(), "r")) {
+-            char buf[64]{};
+-            if (::fgets(buf, sizeof(buf), fp)) {
+-                const int id = std::atoi(buf);
+-                if (id > 0) {
+-                    s_replaceId = id;
+-                    sent = true;
+-                }
+-            }
+-            if (::pclose(fp) == 0)
+-                sent = true;
+-        }
+-        if (!sent) {
+-            const std::string qsCmd =
+-                "/usr/bin/quickshell ipc --path /usr/share/mios/quickshell/Config.qml "
+-                "--any-display call notifications post " +
+-                shQuote(title) + " " + shQuote(body) + " " + shQuote(kind) +
+-                " >/dev/null 2>&1";
+-            (void)::system(qsCmd.c_str());
+-        }
+-    }).detach();
++    // The compositor can unload this library immediately after a mode action.
++    // A detached worker would keep executing its unmapped lambda. Spawn an
++    // independent notifier process; Hyprland's SIGCHLD handler reaps it.
++    const auto quote=[](const std::string& value) {
++        std::string result="'";
++        for (char c:value) result += c=='\'' ? "'\\''" : std::string(1,c);
++        return result+"'";
++    };
++    const std::string command=
++        "/usr/bin/notify-send -a 'Hypr3D' -t 2500 -h int:transient:1 -- "+quote(title)+" "+quote(body)+
++        " 2>/dev/null || /usr/bin/quickshell ipc --path /usr/share/mios/quickshell/Config.qml "
++        "--any-display call notifications post "+quote(title)+" "+quote(body)+" "+quote(kind)+" >/dev/null 2>&1";
++    char* argv[]={const_cast<char*>("/bin/sh"),const_cast<char*>("-c"),const_cast<char*>(command.c_str()),nullptr};
++    pid_t child=0;
++    (void)::posix_spawn(&child,"/bin/sh",nullptr,nullptr,argv,::environ);
+ }
+ 
+ static uint32_t inputTimeMs() {
+@@ -2004,6 +1980,75 @@
+     return IT == g_attachParent.end() ? id : IT->second;
+ }
+ static World3D::SHit aimHit();
++
++// The 3D tab is generated by the glass shader, not captured from hyprbars.
++// Feed its reveal and click geometry from the same live operator settings.
++
++// Read the loaded native controls' geometry and resolved palette. No path, colour,
++// button size or corner radius is duplicated in the room renderer.
++static std::array<float,48> controlStyleForWindow(std::uintptr_t id) {
++    std::array<float,48> style{};
++    const auto window=Compat::findWindowById(id);
++    if (!window || !g_pPluginSystem) return style;
++    using Reader=bool(*)(void*,float*,size_t);
++    for (const auto* plugin : g_pPluginSystem->getAllPlugins()) {
++        if (plugin->m_name != "hyprbars") continue;
++        const auto reader=reinterpret_cast<Reader>(dlsym(plugin->m_handle,"mios_hyprbars_controls_v1"));
++        if (!reader || !reader(window.get(),style.data(),style.size())) return {};
++        break;
++    }
++    if (style[2] <= 0.F || style[7] > .5F) return style;
++    const auto* entity=g_world.find(id);
++    Vector2D local; bool hit=false;
++    if (entity && pointerFree() && g_vcSpace != ECursorSpace::Desktop && g_vcId == id) {
++        local={g_vcLocal.x-entity->surfaceOffsetX,g_vcLocal.y-entity->surfaceOffsetY}; hit=true;
++    } else if (entity && !pointerFree()) {
++        const auto aim=aimHit();
++        if (aim.hit && aim.id==id) {
++            local={aim.u*entity->logicalWidth-entity->surfaceOffsetX,aim.v*entity->logicalHeight-entity->surfaceOffsetY}; hit=true;
++        }
++    }
++    if (hit) for (size_t i=0;i<3;++i) {
++        const size_t p=12+i*12;
++        if (std::hypot(local.x-style[p],local.y-style[p+1]) <= style[p+2]) style[7]=1.F;
++    }
++    return style;
++}
++
++static std::array<float, 2> controlsForWindow(std::uintptr_t id) {
++    static CConfigValue<std::string> MODE("plugin:hyprbars:reveal_on");
++    static CConfigValue<Config::INTEGER> RADIUS("plugin:hyprbars:reveal_radius");
++    const std::string mode = MODE.good() ? *MODE : "focus+proximity";
++    const auto style = controlStyleForWindow(id);
++    if (style[2] <= 0.F) return {0.F,0.F};
++    const float offset = 0.F;
++    const float radius = RADIUS.good() ? std::max(0.f, static_cast<float>(*RADIUS)) : 0.f;
++    const auto window = Compat::findWindowById(id);
++    const bool focused = window && Compat::focusedWindow() == window;
++    bool near = false;
++    if (const auto* entity = g_world.find(id)) {
++        Vector2D local;
++        bool hit = false;
++        if (pointerFree() && g_vcSpace != ECursorSpace::Desktop && g_vcId == id) {
++            local = {g_vcLocal.x - entity->surfaceOffsetX, g_vcLocal.y - entity->surfaceOffsetY};
++            hit = true;
++        } else if (!pointerFree()) {
++            const auto aim = aimHit();
++            if (aim.hit && aim.id == id) {
++                local = {aim.u * entity->logicalWidth - entity->surfaceOffsetX,
++                         aim.v * entity->logicalHeight - entity->surfaceOffsetY};
++                hit = true;
++            }
++        }
++        near = hit && local.x >= style[0]-style[1]-radius && local.x <= style[0]+style[1]+radius &&
++               local.y >= -style[2]-radius && local.y <= radius;
++    }
++    const bool shown = mode == "always" || (mode == "focus" && focused) ||
++                       (mode == "proximity" && near) ||
++                       (mode != "always" && mode != "focus" && mode != "proximity" && focused && near);
++    return {shown ? 1.f : 0.f, offset};
++}
++
+ 
+ // Handoff the keyboard to whatever the crosshair is on -- and to nothing else.
+ // Aiming at empty space drops focus entirely rather than leaving the last
+@@ -2782,6 +2827,8 @@
+             render.glassWindowAlpha = SNAPSHOT->windowAlpha;
+         }
+ 
++        render.controls = controlsForWindow(entity.id);
++        render.controlStyle = controlStyleForWindow(entity.id);
+         render.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty());
+ 
+         // 3D Magic Lamp opening effect for newly spawned windows in 3D room
+@@ -3291,7 +3338,7 @@
+         if (const auto MON = targetMonitor(); MON && MON->m_activeWorkspace && Desktop::windowState()) {
+             for (auto const& W3 : Desktop::windowState()->windows()) {
+                 if (W3 && W3->m_workspace == MON->m_activeWorkspace && !W3->m_pinned)
+-                    *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = 1.F;
++                    *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = W3->isBlockedByFullscreen() ? 0.F : 1.F;
+             }
+         }
+         applyGlobalShaderGlassState(false);
+@@ -3598,7 +3645,7 @@
+                                 !W3->m_pinned)
+                                 *W3->alpha(
+                                      Desktop::View::WINDOW_ALPHA_FULLSCREEN) =
+-                                    1.F;
++                                    W3->isBlockedByFullscreen() ? 0.F : 1.F;
+                         }
+                     }
+                 }
+@@ -3631,6 +3678,24 @@
+     };
+ }
+ 
++// Layout targets contain the client/frame box; snapshots include decorative
++// margins. Feeding a sampled box into driveWindowBox grows the client by
++// those margins on every mode cycle. Keep layout memory in target coordinates.
++static CBox viewMorphClientBox(const PHLMONITOR& mon,std::uintptr_t id,const CBox& fallback) {
++    const auto window=Compat::findWindowById(id);
++    if (!window || !window->m_target || !mon) return fallback;
++    return viewMorphLocalBox(mon,Compat::currentWindowBox(window));
++}
++
++static CBox viewMorphDecoratedBox(const CBox& client,const Compat::CWindowCapture::SSnapshot* snapshot) {
++    if (!snapshot) return client;
++    const auto& offset=snapshot->surfaceOffset;
++    const auto& size=snapshot->surfaceSize;
++    return CBox{client.x-offset.x,client.y-offset.y,
++                client.w+snapshot->sampledBox.w-size.x,
++                client.h+snapshot->sampledBox.h-size.y};
++}
++
+ static CBox lerpBox(const CBox& A, const CBox& B, float t) {
+     return CBox{
+         A.x + (B.x - A.x) * t,
+@@ -3678,7 +3743,7 @@
+ 
+         const auto* SNAPSHOT = g_capture.get(info.id);
+ 
+-        MW.box2D = SNAPSHOT ? SNAPSHOT->sampledBox : info.monitorLocalBox;
++        MW.box2D = viewMorphClientBox(mon,info.id,info.monitorLocalBox);
+         MW.boxRoom = MW.box2D;
+ 
+         if (const auto POSE = g_savedPoses.find(info.id);
+@@ -3863,10 +3928,8 @@
+         // boxes).
+         const auto* SNAPSHOT = g_capture.get(ENTITY.id);
+ 
+-        MW.boxRoom = SNAPSHOT ?
+-            SNAPSHOT->sampledBox :
+-            CBox{ENTITY.logicalLeft, ENTITY.logicalTop,
+-                 ENTITY.logicalWidth, ENTITY.logicalHeight};
++        MW.boxRoom = viewMorphClientBox(MON,ENTITY.id,
++            CBox{ENTITY.logicalLeft,ENTITY.logicalTop,ENTITY.logicalWidth,ENTITY.logicalHeight});
+ 
+         if (midEnter && MW.roomPose.box.w > 1.0 && MW.roomPose.box.h > 1.0)
+             MW.boxRoom = MW.roomPose.box;
+@@ -4006,7 +4069,7 @@
+                 // behind the box mid-flight; at flight speed that reads as
+                 // a smooth stretch, and the first ungated pass after the
+                 // morph lands the exact sizes.
+-                BOX = TARGET;
++                BOX = viewMorphDecoratedBox(TARGET,SNAPSHOT);
+ 
+                 g_boxDriven.insert(RW.id);
+             }
+@@ -4096,7 +4159,7 @@
+ 
+     for (const auto& E : g_world.entities()) {
+         SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
+-            CBox{E.logicalLeft, E.logicalTop, E.logicalWidth, E.logicalHeight}};
++            viewMorphClientBox(MON,E.id,CBox{E.logicalLeft,E.logicalTop,E.logicalWidth,E.logicalHeight})};
+         POSE.scaleMul = retinaMul(E.id);
+ 
+         // A window left fullscreen (no passthrough ran for it): its live box
+@@ -4419,6 +4482,9 @@
+ }
+ 
+ 
++// Direct signal listeners must leave the event bus before dlclose.
++static CHyprSignalListener g_renderPreListener, g_renderStageListener, g_mouseMoveListener, g_mouseButtonListener, g_mouseAxisListener, g_keyboardKeyListener;
++
+ // --- lifecycle --------------------------------------------------------------
+ 
+ static void deactivate3D() {
+@@ -4492,7 +4558,7 @@
+     unghostWindows();
+     g_renderedOnce = false;
+ 
+-    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = true}}})");
+     applyGlobalShaderGlassState(false);
+ 
+     {
+@@ -4719,7 +4785,7 @@
+ 
+     // Keep the operator's proximity reveal policy in 3D too; forcing "always" leaves every
+     // window's controls raised and makes the global title/menu row jump inward.
+-    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = false, icon_on_hover = false}}})");
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = false}}})");
+     if (const auto MON = targetMonitor(); MON && Desktop::windowState() && g_pHyprRenderer) {
+         for (const auto& W : Desktop::windowState()->windows()) {
+             if (W && W->m_isMapped && !W->isHidden())
+@@ -6546,7 +6612,7 @@
+         if (!g_cfgUnderLayers || !Compat::interactiveLayerAt(MON, nextGlobal)) {
+             vcEnterFromDesktop(nextGlobal);
+         } else {
+-            Pointer::mgr()->warpTo(nextGlobal);
++            vcLeaveToDesktop(nextGlobal); // HUD hover and controller clicks share native pointer ownership
+         }
+         return;
+     }
+@@ -7057,17 +7123,33 @@
+     damageCurrentMonitor();
+ }
+ 
+-static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& rawLocal, uint32_t button = BTN_LEFT) {
+-    if (!W)
++static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& windowLocal, uint32_t button = BTN_LEFT) {
++    if (!W || controlsForWindow(Compat::windowId(W))[0] < 0.5f)
+         return false;
++    const auto style=controlStyleForWindow(Compat::windowId(W));
++    const Vector2D rawLocal=windowLocal;
++    int control=-1;
++    for (int i=0;i<3;++i) {
++        const size_t p=12+i*12;
++        const float firstLeft=std::min({style[12]-style[14],style[24]-style[26],style[36]-style[38]});
++        const float lastRight=std::max({style[12]+style[14],style[24]+style[26],style[36]+style[38]});
++        const float gap=std::min(std::abs(style[24]-style[12])-style[14]-style[26],
++                                std::abs(style[36]-style[24])-style[26]-style[38]);
++        const float left=style[p]-style[p+2],right=style[p]+style[p+2];
++        const float padLeft=std::abs(left-firstLeft)<.5F ? firstLeft-(style[0]-style[1]) : gap*.5F;
++        const float padRight=std::abs(right-lastRight)<.5F ? style[0]+style[1]-lastRight : gap*.5F;
++        if (rawLocal.x >= left-padLeft && rawLocal.x <= right+padRight &&
++            rawLocal.y >= -style[2]-8.F && rawLocal.y <= 8.F) { control=i; break; }
++    }
++    if (control<0) return false;
+     // Protruding 28px-tall hyprbars glass tab lives above the surface top edge
+     // (rawLocal.y in [-28..0], rawLocal.x in [42..130]), with generous touch/click padding.
+-    if (rawLocal.y <= 10.0 && rawLocal.y >= -34.0 && rawLocal.x >= 28.0 && rawLocal.x <= 144.0) {
++    if (control >= 0) {
+         focusRoomWindow(W);
+         const std::uintptr_t id = Compat::windowId(W);
+         std::ostringstream addr;
+         addr << "address:0x" << std::hex << id;
+-        if (rawLocal.x < 73.0) {
++        if (control == 0) {
+             // Button 0 (Close): Left-Click = graceful close, Right-Click = force kill (SIGKILL)
+             if (button == BTN_RIGHT) {
+                 (void)Config::Actions::signalWindow(SIGKILL, W);
+@@ -7075,7 +7157,7 @@
+             } else {
+                 (void)Config::Actions::closeWindow(W);
+             }
+-        } else if (rawLocal.x < 99.0) {
++        } else if (control == 1) {
+             // Button 1 (Minimize): Left-Click = animated 3D minimize, Right-Click = instant minimize
+             if (button == BTN_RIGHT)
+                 g_skipCloseAnim3D.insert(id);
+@@ -9509,6 +9591,25 @@
+ 
+     if (pointerFree()) {
+         const auto MON = targetMonitor();
++        // START puts the controller cursor on the 2D desktop for HUD layers.
++        // Its trigger click must follow the desktop pointer into the actual
++        // layer surface; ray-picking a 3D window underneath would steal it.
++        if (MON) {
++            PHLLS layer;
++            Vector2D local;
++            if (Compat::interactiveLayerAt(MON, Pointer::mgr()->position(),
++                                           &layer, &local) && layer) {
++                vcLeaveToDesktop(Pointer::mgr()->position());
++                Compat::deliverClick(layer, local, button, true, nowMs);
++                g_clientButtonWindow = nullptr;
++                g_clientButtonLayer  = layer;
++                g_clientButton       = button;
++                g_clientButtonLocal  = local;
++                g_clientButtonDown   = true;
++                damageCurrentMonitor();
++                return;
++            }
++        }
+         if (MON && g_vcSpace == ECursorSpace::Screen)
+             vcResolveScreen(MON);
+ 
+@@ -9700,6 +9801,91 @@
+     return HYPRLAND_API_VERSION;
+ }
+ 
++
++// A live renderer replacement must preserve the room, not just the 2D boxes.
++// The versioned checkpoint contains window ids (valid only in this session),
++// their independent room poses, and the camera. Import only while inactive.
++static int luaExportLayout(lua_State* L) {
++    const auto& cam=g_scene.camera();
++    std::ostringstream out;
++    out.precision(std::numeric_limits<float>::max_digits10);
++    out << "{\"version\":1,\"camera\":{\"x\":" << cam.position.x
++        << ",\"y\":" << cam.position.y << ",\"z\":" << cam.position.z
++        << ",\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch
++        << ",\"mode\":" << g_viewMode << "},\"windows\":[";
++    bool first=true;
++    for (const auto& e:g_world.entities()) {
++        if (!first) out << ',';
++        first=false;
++        const CBox box=viewMorphClientBox(targetMonitor(),e.id,CBox{e.logicalLeft,e.logicalTop,e.logicalWidth,e.logicalHeight});
++        out << "{\"id\":\"0x" << std::hex << e.id << std::dec
++            << "\",\"x\":" << e.center.x << ",\"y\":" << e.center.y << ",\"z\":" << e.center.z
++            << ",\"yaw\":" << e.yaw << ",\"pitch\":" << e.pitch << ",\"roll\":" << e.roll
++            << ",\"scale\":" << e.spawnScale << ",\"left\":" << box.x
++            << ",\"top\":" << box.y << ",\"width\":" << box.w
++            << ",\"height\":" << box.h << '}';
++    }
++    out << "]}";
++    const auto json=out.str();lua_pushlstring(L,json.data(),json.size());return 1;
++}
++
++static int luaRestoreLayout(lua_State* L) {
++    if (g_active) return luaL_error(L,"hypr3d.restore_layout: close the room before restoring its checkpoint");
++    luaL_checktype(L,1,LUA_TTABLE);
++    const auto number=[&](int table,const char* key) {
++        lua_getfield(L,table,key);
++        if (!lua_isnumber(L,-1)) luaL_error(L,"hypr3d.restore_layout: %s must be numeric",key);
++        const double value=lua_tonumber(L,-1);lua_pop(L,1);
++        if (!std::isfinite(value)) luaL_error(L,"hypr3d.restore_layout: %s must be finite",key);
++        return value;
++    };
++    if (number(1,"version")!=1.) return luaL_error(L,"hypr3d.restore_layout: unsupported checkpoint version");
++    lua_getfield(L,1,"camera");luaL_checktype(L,-1,LUA_TTABLE);
++    const Vec3 position{static_cast<float>(number(2,"x")),static_cast<float>(number(2,"y")),static_cast<float>(number(2,"z"))};
++    const float yaw=number(2,"yaw"),pitch=number(2,"pitch");
++    const int viewMode=static_cast<int>(number(2,"mode"));
++    if (viewMode<0 || viewMode>2) return luaL_error(L,"hypr3d.restore_layout: invalid camera mode");
++    lua_pop(L,1);
++    lua_getfield(L,1,"windows");luaL_checktype(L,-1,LUA_TTABLE);
++    struct Pose { std::uintptr_t id; SViewPose pose; };
++    std::vector<Pose> poses;
++    const size_t count=lua_rawlen(L,2);poses.reserve(count);
++    for (size_t i=1;i<=count;++i) {
++        lua_rawgeti(L,2,i);luaL_checktype(L,-1,LUA_TTABLE);
++        lua_getfield(L,3,"id");const char* raw=luaL_checkstring(L,-1);
++        std::uintptr_t id=0;
++        try {size_t end=0;id=std::stoull(raw,&end,16);if(end!=std::strlen(raw)) id=0;}
++        catch (...) {id=0;}
++        lua_pop(L,1);
++        if (!id) return luaL_error(L,"hypr3d.restore_layout: invalid window id");
++        SViewPose pose;
++        pose.center={static_cast<float>(number(3,"x")),static_cast<float>(number(3,"y")),static_cast<float>(number(3,"z"))};
++        pose.yaw=number(3,"yaw");pose.pitch=number(3,"pitch");pose.roll=number(3,"roll");
++        pose.box=CBox{number(3,"left"),number(3,"top"),number(3,"width"),number(3,"height")};
++        const float scale=number(3,"scale");
++        if (pose.box.w<=0. || pose.box.h<=0. || scale<=0.F) return luaL_error(L,"hypr3d.restore_layout: invalid window size or scale");
++        pose.scaleMul=scale/std::max(configWindowScale(),1e-6F);
++        if (const auto w=Compat::findWindowById(id)) {
++            // A checkpoint specifies the room pose explicitly. On this first
++            // entry there is no previous 2D baseline to pull movement from;
++            // armEnterMorph records the actual 2D box for later mode changes.
++            pose.box2D={};
++            poses.push_back({id,pose});
++        }
++        lua_pop(L,1);
++    }
++    lua_pop(L,1);
++    for (const auto& p:poses) {g_savedPoses[p.id]=p.pose;g_retinaMul[p.id]=p.pose.scaleMul;}
++    g_savedCamPos=position;g_savedCamYaw=yaw;g_savedCamPitch=pitch;g_savedViewMode=viewMode;g_savedCamValid=true;
++    g_playerSpawn={position.x,position.y-Camera::kEyeHeight,position.z};
++    if (g_bodyIf && !g_playerBody.IsInvalid()) {
++        g_bodyIf->SetPosition(g_playerBody,JPH::RVec3(position.x,position.y-Camera::kEyeHeight+Camera::kBodyHeight*.5F,position.z),JPH::EActivation::Activate);
++        g_bodyIf->SetLinearVelocity(g_playerBody,JPH::Vec3::sZero());
++    }
++    lua_pushinteger(L,poses.size());return 1;
++}
++
++
+ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     joltInit();
+ 
+@@ -9913,13 +10099,17 @@
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "on_state", luaOnState))
+         throw std::runtime_error("[hypr3d] failed to register Lua on_state");
+ 
++    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","export_layout",luaExportLayout) ||
++        !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","restore_layout",luaRestoreLayout))
++        throw std::runtime_error("[hypr3d] failed to register layout checkpoint interface");
++
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "config", luaConfig))
+         throw std::runtime_error("[hypr3d] failed to register Lua config");
+ 
+     // Every handler is wrapped: an exception must NEVER escape into
+     // Hyprland (std::terminate there kills the whole compositor). The
+     // exception text lands in the status dump instead.
+-    static auto renderPre =
++    g_renderPreListener =
+         Event::bus()->m_events.render.pre.listen(
+             [](PHLMONITOR mon) {
+                 try {
+@@ -9932,7 +10122,7 @@
+             }
+         );
+ 
+-    static auto renderStage =
++    g_renderStageListener =
+         Event::bus()->m_events.render.stage.listen(
+             [](eRenderStage stage) {
+                 try {
+@@ -9945,7 +10135,7 @@
+             }
+         );
+ 
+-    static auto mouseMove =
++    g_mouseMoveListener =
+         Event::bus()->m_events.input.mouse.move.listen(
+             [](Vector2D pos, Event::SCallbackInfo& info) {
+                 try {
+@@ -9958,7 +10148,7 @@
+             }
+         );
+ 
+-    static auto mouseButton =
++    g_mouseButtonListener =
+         Event::bus()->m_events.input.mouse.button.listen(
+             [](IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
+                 try {
+@@ -9971,7 +10161,7 @@
+             }
+         );
+ 
+-    static auto mouseAxis =
++    g_mouseAxisListener =
+         Event::bus()->m_events.input.mouse.axis.listen(
+             [](IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
+                 try {
+@@ -9984,7 +10174,7 @@
+             }
+         );
+ 
+-    static auto keyboardKey =
++    g_keyboardKeyListener =
+         Event::bus()->m_events.input.keyboard.key.listen(
+             [](IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
+                 try {
+@@ -9997,12 +10187,12 @@
+             }
+         );
+ 
+-    (void)renderPre;
+-    (void)renderStage;
+-    (void)mouseMove;
+-    (void)mouseButton;
+-    (void)mouseAxis;
+-    (void)keyboardKey;
++    (void)g_renderPreListener;
++    (void)g_renderStageListener;
++    (void)g_mouseMoveListener;
++    (void)g_mouseButtonListener;
++    (void)g_mouseAxisListener;
++    (void)g_keyboardKeyListener;
+ 
+     {
+         syncShaderGlassStateFromFile();
+@@ -10022,6 +10212,14 @@
+ }
+ 
+ APICALL EXPORT void PLUGIN_EXIT() {
++    // No event may call back into an unmapped plugin, even after a failed reload.
++    g_renderPreListener.reset();
++    g_renderStageListener.reset();
++    g_mouseMoveListener.reset();
++    g_mouseButtonListener.reset();
++    g_mouseAxisListener.reset();
++    g_keyboardKeyListener.reset();
++
+     // Hyprland keeps the last frame's pass elements until the next
+     // beginRender() clears them -- ours included. After dlclose() that clear()
+     // ran the destructor of a CHypr3DPassElement whose code was gone: unloading
+@@ -10042,7 +10240,7 @@
+     g_transition = 0.0f;
+     g_transitionTarget = 0.0f;
+ 
+-    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = true}}})");
+ 
+     if (Compat::setCursorHidden(false) && g_pHyprRenderer)
+         g_pHyprRenderer->setCursorFromName("default", true);
+@@ -10073,12 +10271,12 @@
+     // The FS fade channel: on FS-on Hyprland dims EVERY other workspace
+     // window to alpha 0 (WINDOW_ALPHA_FULLSCREEN). If our transition raced
+     // the fade, windows can be left semi-transparent after the 3D exit.
+-    // Reset the channel for the active workspace unconditionally.
++    // Restore visibility from the compositor fullscreen policy, including its input block.
+     if (const auto MON = targetMonitor(); MON && MON->m_activeWorkspace) {
+         for (auto const& W3 : Desktop::windowState()->windows()) {
+             if (W3 && W3->m_workspace == MON->m_activeWorkspace &&
+                 !W3->m_pinned)
+-                *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = 1.F;
++                *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = W3->isBlockedByFullscreen() ? 0.F : 1.F;
+         }
+     }
+ 
+diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+--- a/tests/mios-bsp-regression.cpp
++++ b/tests/mios-bsp-regression.cpp
+@@ -222,6 +222,7 @@
+     bspBuild(empty, polys, 0);
+     require(empty.coplanar.empty() && !empty.front && !empty.back);
+ 
++    warped.controlStyle[0]=211.F; warped.controlStyle[16]=.37F;
+     SWPoly front, back;
+     bool hasFront = false, hasBack = false;
+     bspSplitPoly(warped, {0.5f,0,0}, {1,0,0}, front, back, hasFront, hasBack);
+@@ -232,20 +233,26 @@
+         require(p->glassUV == warped.glassUV);
+         require(p->glassSurface == warped.glassSurface);
+         require(p->glassMetrics == warped.glassMetrics);
++        require(p->controlStyle == warped.controlStyle);
+         for (const auto& v : p->verts)
+             require(v.u >= 0.f && v.u <= 1.f && v.v >= 0.f && v.v <= 1.f);
+     }
+ 
+-    // Tab S-fillet contour in roundedRectLoop for standard window radius (R < 25)
+-    const auto tabbed = roundedRectLoop(640, 400, 12.f, 1.f, 8);
+-    require(tabbed.pts.size() > 32);
+-    bool foundProtrudingTab = false;
+-    for (const auto& point : tabbed.pts) {
+-        const float x = point.x * 640.f, y = point.y * 400.f;
+-        if (x >= 25.0f && x <= 147.0f && y < -0.01f)
+-            foundProtrudingTab = true;
+-    }
+-    require(foundProtrudingTab);
++    // The native tab geometry governs the outline at every radius. Hidden
++    // controls have no ghost tab/wall; distinctive settings catch copied defaults.
++    const auto plain=roundedRectLoop(640,400,28.F,1.F,8);
++    for (const auto& p:plain.pts) require(p.y>=-1e-6F);
++    const std::array<float,5> controls{211.F,45.F,36.F,14.F,19.6F};
++    const auto tabbed=roundedRectLoop(640,400,28.F,1.F,8,controls.data());
++    bool protruding=false;
++    for (const auto& p:tabbed.pts) {
++        if (p.y < -.001F) {
++            protruding=true;
++            require(p.x*640.F >= 145.F && p.x*640.F <= 277.F);
++            require(p.y*400.F >= -36.01F);
++        }
++    }
++    require(protruding);
+ 
+     // Vertex deduplication in bspSplitPoly
+     SWPoly polyWithNearDupe;

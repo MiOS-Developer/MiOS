@@ -215,28 +215,39 @@ if ($MirrorDisplays) {
     Protect-MiOSDir $mirrorDir $true
     $mirrorScript = Join-Path $mirrorDir 'mios-display-mirror.ps1'
     Set-Content -Encoding UTF8 -Path $mirrorScript -Value @'
-# AI-hint: MiOS-Xbox: put every active guest display in Windows Duplicate (clone) topology via SetDisplayConfig, falling back to DisplaySwitch.exe /clone.
+# AI-hint: MiOS-Xbox: put every active guest display in Windows Duplicate (clone) topology via SetDisplayConfig; DisplaySwitch.exe /clone only when the console desktop is not ready (ERROR_ACCESS_DENIED).
 $log = Join-Path $env:TEMP 'mios-display-mirror.log'   # the script dir is read-only for users
-$rc = -1
+function Write-MiOSMirrorLog([string]$Line) { "$(Get-Date -Format s) $Line" | Out-File -Append -Encoding utf8 $log }
 try {
     Add-Type -Namespace MiOS -Name Display -MemberDefinition @"
 [DllImport("user32.dll")] public static extern int SetDisplayConfig(uint numPathArrayElements, System.IntPtr pathArray, uint numModeInfoArrayElements, System.IntPtr modeInfoArray, uint flags);
+[DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
 "@
-    # SDC_APPLY (0x80) | SDC_TOPOLOGY_CLONE (0x2) | SDC_ALLOW_CHANGES (0x400) | SDC_PATH_PERSIST_IF_REQUIRED (0x800).
-    # SDC_SAVE_TO_DATABASE (0x200) is only valid with SDC_USE_SUPPLIED_DISPLAY_CONFIG (ERROR_INVALID_PARAMETER here);
-    # a topology request is remembered by Windows on its own.
-    $rc = [MiOS.Display]::SetDisplayConfig(0, [System.IntPtr]::Zero, 0, [System.IntPtr]::Zero, 0xC82)
-    "$(Get-Date -Format s) SetDisplayConfig(clone 0xC82) = $rc" | Out-File -Append -Encoding utf8 $log
 } catch {
-    "$(Get-Date -Format s) SetDisplayConfig exception: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+    Write-MiOSMirrorLog "display API unavailable: $($_.Exception.Message)"
+    return
 }
-# ERROR_ACCESS_DENIED (5: no console desktop yet), a bad configuration or an exception: let Windows' own switcher try.
-if ($rc -ne 0) {
+# SM_CMONITORS (80): monitors on this desktop; a Duplicate pair counts once. One (a GPU-less guest, the IDD not up yet)
+# or a pair already duplicated leaves nothing to clone. Asking anyway made SetDisplayConfig return 87 and the
+# DisplaySwitch fallback leave "Your PC can't project to another screen" open at every sign-in (round-1 debug boot).
+$monitors = [MiOS.Display]::GetSystemMetrics(80)
+if ($monitors -lt 2) {
+    Write-MiOSMirrorLog "$monitors display(s) on the desktop: nothing to duplicate"
+    return
+}
+# SDC_APPLY (0x80) | SDC_TOPOLOGY_CLONE (0x2) | SDC_ALLOW_CHANGES (0x400) | SDC_PATH_PERSIST_IF_REQUIRED (0x800).
+# SDC_SAVE_TO_DATABASE (0x200) is only valid with SDC_USE_SUPPLIED_DISPLAY_CONFIG (ERROR_INVALID_PARAMETER here);
+# a topology request is remembered by Windows on its own.
+$rc = [MiOS.Display]::SetDisplayConfig(0, [System.IntPtr]::Zero, 0, [System.IntPtr]::Zero, 0xC82)
+Write-MiOSMirrorLog "$monitors displays; SetDisplayConfig(clone 0xC82) = $rc"
+# ERROR_ACCESS_DENIED (5): no console desktop yet -- Windows' own switcher applies the topology once it is. Any other
+# failure is recorded only: DisplaySwitch.exe cannot clone what SetDisplayConfig refused and would just raise its flyout.
+if ($rc -eq 5) {
     try {
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\DisplaySwitch.exe') -ArgumentList '/clone' -Wait
-        "$(Get-Date -Format s) DisplaySwitch.exe /clone (fallback after rc=$rc)" | Out-File -Append -Encoding utf8 $log
+        Write-MiOSMirrorLog "DisplaySwitch.exe /clone (fallback after rc=5)"
     } catch {
-        "$(Get-Date -Format s) DisplaySwitch.exe exception: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+        Write-MiOSMirrorLog "DisplaySwitch.exe exception: $($_.Exception.Message)"
     }
 }
 '@

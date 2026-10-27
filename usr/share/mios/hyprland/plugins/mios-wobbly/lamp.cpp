@@ -37,6 +37,8 @@
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/layout/target/Target.hpp>
 
 // C linkage: the plugin's private Lua 5.5 (liblua.a from the compositor SRPM), exactly like the hyprbars plugin
 extern "C" {
@@ -114,6 +116,7 @@ namespace {
         bool                 wasFloating = false;
         std::string          workspaceTo;
         std::string          preMinMonitorName;
+        PHLMONITORREF        preMinMonitor;
         std::vector<SSiblingSnapshot> siblings;
         std::optional<CBox>  geometryTo;
         // filled by preWindowRender for the frame being drawn
@@ -124,6 +127,7 @@ namespace {
 
     struct SMinimized {
         PHLWINDOWREF window;
+        PHLMONITORREF originMonitor;
         std::string  address, workspace, cls, title, monitor;
         bool         floating = false;
         CBox         geometry; // position/size goal (logical, no decorations)
@@ -131,9 +135,10 @@ namespace {
         double       timeMs = 0;
     };
 
-    std::unordered_map<CWindow*, UP<SLamp>> g_lamps;
-    std::vector<SMinimized>                 g_minimized;
-    std::deque<std::string>                 g_consumed; // launch ids already animated (bounded)
+    std::unordered_map<CWindow*, UP<SLamp>>                                g_lamps;
+    std::vector<SMinimized>                                                g_minimized;
+    std::unordered_map<std::string, std::unordered_map<std::string, CBox>> g_wsFullLayout;
+    std::deque<std::string>                                                g_consumed; // launch ids already animated (bounded)
     std::vector<CHyprSignalListener>        g_listeners;
     SP<CEventLoopTimer>                     g_timer;
     Clock::time_point                       g_dockChecked;
@@ -167,6 +172,14 @@ namespace {
     }
     Vector2D boxCenter(const CBox& b) {
         return {b.x + b.w / 2.0, b.y + b.h / 2.0};
+    }
+    bool boxesMatch(const CBox& a, const CBox& b, double tolPos = 8.0, double tolSize = 14.0) {
+        return std::abs(a.x - b.x) <= tolPos && std::abs(a.y - b.y) <= tolPos &&
+               std::abs(a.w - b.w) <= tolSize && std::abs(a.h - b.h) <= tolSize;
+    }
+    bool boxContainsPoint(const CBox& b, const Vector2D& p, double margin = 4.0) {
+        return p.x >= b.x - margin && p.x <= b.x + b.w + margin &&
+               p.y >= b.y - margin && p.y <= b.y + b.h + margin;
     }
     bool eventOn(std::string_view ev) {
         if (!g_cfg.enabled->value())
@@ -531,10 +544,14 @@ namespace {
         }
     }
 
+    void syncWorkspaceMonitor(const PHLWINDOW& w, const PHLMONITOR& preferred = nullptr, const PHLMONITOR& dying = nullptr, bool stopFade = false);
+
     void finish(SLamp& s) {
         const auto w = s.window.lock();
         detach(s, w);
         if (w) {
+            if (onMinimizedWs(w))
+                syncWorkspaceMonitor(w, s.preMinMonitor.lock(), nullptr, true);
             w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
             setTag(s, w, false);
         }
@@ -589,16 +606,117 @@ namespace {
         return resolveTarget(parseDock(readSmall(runtimePath(g_cfg.dockFile, "mios-dock-icons.json"))), q);
     }
 
+    bool monitorAlive(const PHLMONITOR& m, const PHLMONITOR& dying = nullptr) {
+        return m && m != dying && m->m_enabled && m->m_id != MONITOR_INVALID;
+    }
+
+    PHLMONITOR findSurvivingMonitor(const PHLWINDOW& w, const PHLMONITOR& dying = nullptr) {
+        if (const auto fm = Desktop::focusState()->monitor(); monitorAlive(fm, dying))
+            return fm;
+        if (w && w->m_workspace) {
+            if (const auto wsMon = w->m_workspace->m_monitor.lock(); monitorAlive(wsMon, dying))
+                return wsMon;
+        }
+        for (const auto& sib : Desktop::windowState()->windows()) {
+            if (sib) {
+                if (const auto sm = sib->m_monitor.lock(); monitorAlive(sm, dying))
+                    return sm;
+            }
+        }
+        return nullptr;
+    }
+
+    void syncWorkspaceMonitor(const PHLWINDOW& w, const PHLMONITOR& preferred, const PHLMONITOR& dying, bool stopFade) {
+        if (!w || !w->m_workspace || w->m_workspace->m_name != minimizedWs())
+            return;
+        PHLMONITOR target = monitorAlive(preferred, dying) ? preferred : nullptr;
+        if (!target) {
+            const auto wm = w->m_monitor.lock();
+            if (monitorAlive(wm, dying))
+                target = wm;
+        }
+        if (!target)
+            target = findSurvivingMonitor(w, dying);
+        if (target) {
+            w->m_workspace->m_monitor = target;
+            w->m_monitor              = target;
+            for (const auto& sib : Desktop::windowState()->windows()) {
+                if (sib && sib->m_isMapped && sib->m_workspace == w->m_workspace)
+                    sib->m_monitor = target;
+            }
+        }
+        if (!w->m_workspace->isVisible()) {
+            w->m_workspace->m_renderOffset->warp();
+            w->m_workspace->m_alpha->setValueAndWarp(0.f);
+            w->m_workspace->m_forceRendering = false;
+        }
+        if (stopFade) {
+            w->m_monitorMovedFrom = MONITOR_INVALID;
+            w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.f);
+            w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(1.f);
+            w->positionAnimation()->warp();
+            w->sizeAnimation()->warp();
+        }
+    }
+
+    void rehomeDeadMonitors(const PHLMONITOR& dying = nullptr) {
+        for (auto& m : g_minimized) {
+            const auto w   = m.window.lock();
+            const auto cur = m.originMonitor.lock();
+            if (!monitorAlive(cur, dying) || (dying && m.monitor == dying->m_name)) {
+                if (const auto surv = findSurvivingMonitor(w, dying)) {
+                    m.originMonitor = surv;
+                    m.monitor       = surv->m_name;
+                }
+            }
+            if (w && onMinimizedWs(w))
+                syncWorkspaceMonitor(w, m.originMonitor.lock(), dying, false);
+            else if (w) {
+                const auto wm = w->m_monitor.lock();
+                if (!monitorAlive(wm, dying)) {
+                    if (const auto surv = findSurvivingMonitor(w, dying))
+                        w->m_monitor = surv;
+                }
+            }
+        }
+        for (const auto& w : Desktop::windowState()->windows()) {
+            if (w && w->m_isMapped && onMinimizedWs(w))
+                syncWorkspaceMonitor(w, nullptr, dying, false);
+        }
+    }
+
     void pruneMinimized() {
         std::erase_if(g_minimized, [](const SMinimized& m) {
             const auto w = m.window.lock();
             return !w || !w->m_isMapped || (!onMinimizedWs(w) && !g_lamps.contains(w.get()));
         });
+        rehomeDeadMonitors();
+    }
+
+    void recordFullLayout(const SMinimized& rec) {
+        if (rec.floating || rec.workspace.empty())
+            return;
+        bool anyMinimizedFromWs = false;
+        for (const auto& m : g_minimized)
+            if (m.workspace == rec.workspace)
+                anyMinimizedFromWs = true;
+        auto& full = g_wsFullLayout[rec.workspace];
+        if (!anyMinimizedFromWs || 1 + rec.siblings.size() >= full.size()) {
+            full.clear();
+            full[rec.address] = rec.geometry;
+            for (const auto& sib : rec.siblings)
+                full[sib.address] = sib.box;
+        }
     }
 
     void plainMinimize(const PHLWINDOW& w) {
+        const auto origMon = w ? w->m_monitor.lock() : nullptr;
         const auto lua = std::format("hl.dsp.window.move({{workspace = \"{}\", window = \"address:{}\", follow = false}})", minimizedWs(), addressOf(w));
-        g_pEventLoopManager->doLater([lua] { dispatch(lua); });
+        g_pEventLoopManager->doLater([lua, w, origMon] {
+            dispatch(lua);
+            if (w)
+                syncWorkspaceMonitor(w, origMon, nullptr, true);
+        });
     }
 
     SDispatchResult startMinimize(const PHLWINDOW& w) {
@@ -636,6 +754,7 @@ namespace {
         std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.lock() == w; });
         SMinimized rec;
         rec.window    = w;
+        rec.originMonitor = mon;
         rec.address   = addressOf(w);
         rec.workspace = workspaceSelector(ws);
         rec.cls       = w->m_class;
@@ -649,6 +768,7 @@ namespace {
                 rec.siblings.push_back({addressOf(sib), CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()}});
             }
         }
+        recordFullLayout(rec);
         g_minimized.push_back(rec);
 
         auto       s   = makeUnique<SLamp>();
@@ -666,6 +786,7 @@ namespace {
         s->wasFloating                       = rec.floating;
         s->address                           = rec.address;
         s->preMinMonitorName                 = rec.monitor;
+        s->preMinMonitor                     = mon;
         s->siblings                          = rec.siblings;
         attach(*s, w);
         setTag(*s, w, true);
@@ -722,6 +843,7 @@ namespace {
         CBox                          preBox;
         bool                          wasFlt = false;
         std::string                   preMonName;
+        PHLMONITORREF                 preMonRef;
         std::vector<SSiblingSnapshot> recSiblings;
         for (const auto& m : g_minimized)
             if (m.window.lock() == w) {
@@ -729,6 +851,7 @@ namespace {
                 preBox      = m.geometry;
                 wasFlt      = m.floating;
                 preMonName  = m.monitor;
+                preMonRef   = m.originMonitor;
                 recSiblings = m.siblings;
                 if (m.floating)
                     geo = m.geometry;
@@ -766,6 +889,7 @@ namespace {
         s->workspaceTo                       = wsTo;
         s->geometryTo                        = geo;
         s->preMinMonitorName                 = preMonName;
+        s->preMinMonitor                     = preMonRef;
         s->siblings                          = recSiblings;
         attach(*s, w);
         setTag(*s, w, true);
@@ -779,9 +903,11 @@ namespace {
 
     // Timer side of a restore: put the window back, then aim the reverse lamp at where it came out of the dock.
     void doRestoreMoves(SLamp& s, const PHLWINDOW& w) {
+        std::vector<PHLWINDOW>                 targetTiled;
+        std::unordered_map<std::string, CBox>  desiredBoxes;
+
         if (!s.wasFloating && !w->m_isFloating && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
             // Find all currently mapped tiled windows on target workspace
-            std::vector<PHLWINDOW> targetTiled;
             for (const auto& sib : Desktop::windowState()->windows()) {
                 if (sib && sib != w && sib->m_isMapped && !sib->m_isFloating && sib->m_workspace &&
                     workspaceSelector(sib->m_workspace) == s.workspaceTo) {
@@ -789,33 +915,111 @@ namespace {
                 }
             }
 
+            if (targetTiled.size() == s.siblings.size()) {
+                bool allMatch = true;
+                for (const auto& sib : targetTiled) {
+                    const auto addr = addressOf(sib);
+                    if (std::none_of(s.siblings.begin(), s.siblings.end(), [&](const SSiblingSnapshot& snap) { return snap.address == addr; })) {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                if (allMatch) {
+                    desiredBoxes[s.address] = s.preMinBox;
+                    for (const auto& snap : s.siblings)
+                        desiredBoxes[snap.address] = snap.box;
+                }
+            }
+            if (desiredBoxes.empty()) {
+                const auto itFull = g_wsFullLayout.find(s.workspaceTo);
+                if (itFull != g_wsFullLayout.end() && itFull->second.size() == targetTiled.size() + 1 && itFull->second.contains(s.address)) {
+                    bool allMatch = true;
+                    for (const auto& sib : targetTiled)
+                        if (!itFull->second.contains(addressOf(sib)))
+                            allMatch = false;
+                    if (allMatch)
+                        desiredBoxes = itFull->second;
+                }
+            }
+            if (desiredBoxes.empty()) {
+                for (const auto& snap : s.siblings)
+                    desiredBoxes[snap.address] = snap.box;
+                desiredBoxes[s.address] = s.preMinBox;
+                const auto itFull = g_wsFullLayout.find(s.workspaceTo);
+                if (itFull != g_wsFullLayout.end()) {
+                    for (const auto& sib : targetTiled) {
+                        const auto addr = addressOf(sib);
+                        if (!desiredBoxes.contains(addr) && itFull->second.contains(addr))
+                            desiredBoxes[addr] = itFull->second.at(addr);
+                    }
+                }
+            }
+
+            const CBox wDesired = desiredBoxes.contains(s.address) ? desiredBoxes[s.address] : s.preMinBox;
             if (!targetTiled.empty()) {
-                PHLWINDOW partner = nullptr;
-                double bestDist = 1e9;
-                const Vector2D preCenter = boxCenter(s.preMinBox);
+                PHLWINDOW partner      = nullptr;
+                int       bestMultiCov = -1;
+                bool      bestHasW     = false;
+                double    bestDist     = 1e18;
 
                 for (const auto& sib : targetTiled) {
-                    const auto sibBox = CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()};
-                    const double d = (boxCenter(sibBox) - preCenter).size();
-                    if (d < bestDist) {
-                        bestDist = d;
-                        partner = sib;
+                    const auto cBox = CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()};
+                    int covered = 0;
+                    if (boxContainsPoint(cBox, boxCenter(wDesired)))
+                        covered++;
+                    for (const auto& other : targetTiled) {
+                        const auto it = desiredBoxes.find(addressOf(other));
+                        if (it != desiredBoxes.end() && boxContainsPoint(cBox, boxCenter(it->second)))
+                            covered++;
+                    }
+                    const int    multiCov = covered >= 2 ? covered : 0;
+                    const bool   hasW     = boxContainsPoint(cBox, boxCenter(wDesired));
+                    const double d        = (boxCenter(cBox) - boxCenter(wDesired)).size();
+                    if (multiCov > bestMultiCov ||
+                        (multiCov == bestMultiCov && hasW && !bestHasW) ||
+                        (multiCov == bestMultiCov && hasW == bestHasW && d < bestDist)) {
+                        bestMultiCov = multiCov;
+                        bestHasW     = hasW;
+                        bestDist     = d;
+                        partner      = sib;
                     }
                 }
 
                 if (partner) {
-                    const auto pBox = CBox{partner->positionAnimation()->goal(), partner->sizeAnimation()->goal()};
-                    const double dx = preCenter.x - boxCenter(pBox).x;
-                    const double dy = preCenter.y - boxCenter(pBox).y;
+                    const auto   pAddr    = addressOf(partner);
+                    const auto   pBox     = CBox{partner->positionAnimation()->goal(), partner->sizeAnimation()->goal()};
+                    const CBox   pDesired = desiredBoxes.contains(pAddr) ? desiredBoxes[pAddr] : pBox;
+                    CBox         splitDesired = wDesired;
+                    if (!boxContainsPoint(pBox, boxCenter(wDesired))) {
+                        for (const auto& [addr, dBox] : desiredBoxes) {
+                            if (addr != pAddr && boxContainsPoint(pBox, boxCenter(dBox))) {
+                                splitDesired = dBox;
+                                break;
+                            }
+                        }
+                    }
+
                     char dir = 'd';
-                    if (std::abs(dx) / std::max(1.0, (double)pBox.w) > std::abs(dy) / std::max(1.0, (double)pBox.h)) {
-                        dir = dx > 0 ? 'r' : 'l';
+                    if (splitDesired.x >= pDesired.x + pDesired.w - 8.0) {
+                        dir = 'r';
+                    } else if (pDesired.x >= splitDesired.x + splitDesired.w - 8.0) {
+                        dir = 'l';
+                    } else if (splitDesired.y >= pDesired.y + pDesired.h - 8.0) {
+                        dir = 'd';
+                    } else if (pDesired.y >= splitDesired.y + splitDesired.h - 8.0) {
+                        dir = 'u';
                     } else {
-                        dir = dy > 0 ? 'd' : 'u';
+                        const double dx = boxCenter(splitDesired).x - boxCenter(pDesired).x;
+                        const double dy = boxCenter(splitDesired).y - boxCenter(pDesired).y;
+                        if (std::abs(dx) / std::max(1.0, (double)pBox.w) > std::abs(dy) / std::max(1.0, (double)pBox.h)) {
+                            dir = dx > 0 ? 'r' : 'l';
+                        } else {
+                            dir = dy > 0 ? 'd' : 'u';
+                        }
                     }
 
                     // Focus partner and set dwindle preselect direction BEFORE moving w
-                    dispatch(std::format("hl.dsp.focus({{window = \"address:{}\"}})", addressOf(partner)));
+                    dispatch(std::format("hl.dsp.focus({{window = \"address:{}\"}})", pAddr));
                     dispatch(std::format("hl.dsp.layout(\"preselect {}\")", dir));
                 }
             }
@@ -830,24 +1034,49 @@ namespace {
             if ((w->sizeAnimation()->goal() - g.size()).size() > 0.5)
                 dispatch(std::format("hl.dsp.window.resize({{x = {}, y = {}, window = \"{}\"}})", (int)std::lround(g.w), (int)std::lround(g.h), sel));
         } else if (!s.wasFloating && !w->m_isFloating && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
+            if (g_layoutManager && !desiredBoxes.empty()) {
+                std::vector<PHLWINDOW> allTiled = targetTiled;
+                allTiled.push_back(w);
+                for (size_t pass = 0; pass < allTiled.size(); ++pass) {
+                    bool anySwapped = false;
+                    for (const auto& u : allTiled) {
+                        if (!u || !u->layoutTarget())
+                            continue;
+                        const auto it = desiredBoxes.find(addressOf(u));
+                        if (it == desiredBoxes.end())
+                            continue;
+                        const CBox wantBox = it->second;
+                        const CBox uBox{u->positionAnimation()->goal(), u->sizeAnimation()->goal()};
+                        if (boxesMatch(uBox, wantBox))
+                            continue;
+                        for (const auto& v : allTiled) {
+                            if (!v || v == u || !v->layoutTarget())
+                                continue;
+                            const CBox vBox{v->positionAnimation()->goal(), v->sizeAnimation()->goal()};
+                            if (boxesMatch(vBox, wantBox)) {
+                                g_layoutManager->switchTargets(u->layoutTarget(), v->layoutTarget(), true);
+                                anySwapped = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!anySwapped)
+                        break;
+                }
+            }
             dispatch(std::format("hl.dsp.focus({{window = \"{}\"}})", sel));
-            const auto curBox = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
-            const bool match = std::abs(curBox.x - s.preMinBox.x) <= 6 && std::abs(curBox.y - s.preMinBox.y) <= 6 &&
-                               std::abs(curBox.w - s.preMinBox.w) <= 12 && std::abs(curBox.h - s.preMinBox.h) <= 12;
-
-            if (!match) {
-                // If w needs to be promoted to root level (e.g. left column spanning full height)
-                if ((s.preMinBox.h > curBox.h * 1.4) || (s.preMinBox.w > curBox.w * 1.4)) {
+            const CBox wDesired = desiredBoxes.contains(s.address) ? desiredBoxes[s.address] : s.preMinBox;
+            const auto curBox   = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
+            if (!boxesMatch(curBox, wDesired) && !boxContainsPoint(curBox, boxCenter(wDesired))) {
+                if ((wDesired.h > curBox.h * 1.4) || (wDesired.w > curBox.w * 1.4)) {
                     dispatch("hl.dsp.layout(\"movetoroot\")");
                 }
-
-                // Check if w is swapped with another sibling occupying s.preMinBox
                 const auto postBox = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
-                if (std::abs(postBox.x - s.preMinBox.x) > 10 || std::abs(postBox.y - s.preMinBox.y) > 10) {
+                if (!boxesMatch(postBox, wDesired) && !boxContainsPoint(postBox, boxCenter(wDesired))) {
                     const double curCx = boxCenter(postBox).x;
                     const double curCy = boxCenter(postBox).y;
-                    const double preCx = boxCenter(s.preMinBox).x;
-                    const double preCy = boxCenter(s.preMinBox).y;
+                    const double preCx = boxCenter(wDesired).x;
+                    const double preCy = boxCenter(wDesired).y;
 
                     if (std::abs(preCx - curCx) > std::abs(preCy - curCy)) {
                         dispatch(preCx < curCx ? "swapwindow l" : "swapwindow r");
@@ -996,7 +1225,9 @@ namespace {
                     if (s.kind == eKind::MINIMIZE) {
                         s.t = 1.0;
                         applyAlphas(s, w);
+                        const auto origMon = s.preMinMonitor.lock() ? s.preMinMonitor.lock() : w->m_monitor.lock();
                         dispatch(std::format("hl.dsp.window.move({{workspace = \"{}\", window = \"address:{}\", follow = false}})", minimizedWs(), s.address));
+                        syncWorkspaceMonitor(w, origMon, nullptr, true);
                         s.phase      = ePhase::FINISHING;
                         s.phaseSince = now;
                     } else
@@ -1243,17 +1474,20 @@ namespace MiosLampFx {
             if (!w || !ws || ws->m_name != minimizedWs())
                 return;
             for (const auto& m : g_minimized)
-                if (m.window.lock() == w)
+                if (m.window.lock() == w) {
+                    syncWorkspaceMonitor(w, m.originMonitor.lock(), nullptr, true);
                     return;
-            const auto mon = w->m_monitor.lock();
+                }
+            const auto prevMon = w->m_prevMonitor.lock();
+            const auto mon     = prevMon ? prevMon : w->m_monitor.lock();
             std::string origWs = (w->m_workspace && w->m_workspace->m_name != minimizedWs()) ? workspaceSelector(w->m_workspace) : std::string{};
             if (origWs.empty()) {
-                const auto wm = w->m_monitor.lock();
-                const auto fm = wm ? wm : Desktop::focusState()->monitor();
+                const auto fm = mon ? mon : Desktop::focusState()->monitor();
                 origWs        = fm ? workspaceSelector(fm->m_activeWorkspace) : std::string{"1"};
             }
             SMinimized rec;
             rec.window    = w;
+            rec.originMonitor = mon;
             rec.address   = addressOf(w);
             rec.workspace = origWs;
             rec.cls       = w->m_class;
@@ -1267,7 +1501,9 @@ namespace MiosLampFx {
                     rec.siblings.push_back({addressOf(sib), CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()}});
                 }
             }
+            recordFullLayout(rec);
             g_minimized.push_back(rec);
+            syncWorkspaceMonitor(w, mon, nullptr, true);
         }));
 
         g_listeners.push_back(Event::bus()->m_events.window.open.listen([](PHLWINDOW w) {
@@ -1285,6 +1521,16 @@ namespace MiosLampFx {
             if (w)
                 g_lamps.erase(w.get());
         }));
+        g_listeners.push_back(Event::bus()->m_events.monitor.added.listen([](PHLMONITOR) {
+            rehomeDeadMonitors();
+        }));
+        g_listeners.push_back(Event::bus()->m_events.monitor.preRemoved.listen([](PHLMONITOR mon) {
+            rehomeDeadMonitors(mon);
+        }));
+        g_listeners.push_back(Event::bus()->m_events.monitor.removed.listen([](PHLMONITOR mon) {
+            rehomeDeadMonitors(mon);
+        }));
+        rehomeDeadMonitors();
     }
 
     void exit() {

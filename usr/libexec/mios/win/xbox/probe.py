@@ -267,10 +267,11 @@ def host_checks(domain: Optional[str], ports: List[int], shm: Optional[str], shm
 # ---------------------------------------------------------------------------
 
 def _credentials(doc: Dict[str, Any], answer_file: Optional[str] = None) -> Tuple[str, str]:
-    """WinRM credentials: the SSOT-resolved desktop admin of the rendered spec (render_spec.py; the
-    operator decision makes it the WinRM account). `answer_file` is an explicit opt-in for a guest that
-    was installed from another answer file (the legacy negative control): its first Administrators
-    LocalAccount, read like the build worker reads its base. Never printed."""
+    """WinRM credentials from the rendered spec (render_spec.py): the separate elevation admin (users.admin) when the
+    spec has one -- the desktop account is a STANDARD user (F2) and WinRM refuses it (round-1 boot:
+    InvalidCredentialsError as the desktop user) -- else the desktop account of a single-account spec. `answer_file`
+    is an explicit opt-in for a guest that was installed from another answer file (the legacy negative control): its
+    first Administrators LocalAccount, read like the build worker reads its base. Never printed."""
     if answer_file:
         cfg = type("C", (), {"credential_source": "base-answer-file", "base_answer_file": answer_file})()
         import worker as W  # noqa: PLC0415
@@ -280,10 +281,12 @@ def _credentials(doc: Dict[str, Any], answer_file: Optional[str] = None) -> Tupl
             raise S.SpecError(str(e)) from None
     if doc.get("projection") == "guest":
         raise S.SpecError("the guest projection carries no credentials: probe with the full rendered spec")
-    d = (doc.get("users") or {}).get("desktop") or {}
-    if d.get("name") and d.get("password"):
-        return d["name"], d["password"]
-    raise S.SpecError("users.desktop: no SSOT credentials in the rendered spec (render it with render_spec.py)")
+    users = doc.get("users") or {}
+    for role in ("admin", "desktop"):
+        d = users.get(role) or {}
+        if d.get("name") and d.get("password"):
+            return d["name"], d["password"]
+    raise S.SpecError("users.admin / users.desktop: no SSOT credentials in the rendered spec (render it with render_spec.py)")
 
 
 def guest_commands(script: str, request: Dict[str, Any], chunk: int = 2000) -> Tuple[List[str], str]:
@@ -420,7 +423,9 @@ def _finish(results, findings, report: Optional[str]) -> int:
 def _reexec_with_winrm(doc: Dict[str, Any], argv: List[str]) -> None:
     """pywinrm lives in [windows.xbox.probe].python: re-execute there once."""
     py = str(((doc.get("spec") or {}).get("probe") or {}).get("python") or "")
-    if py and os.path.isfile(py) and os.path.realpath(py) != os.path.realpath(sys.executable) \
+    # compare the interpreter PATHS, not their realpaths: a venv's bin/python is a symlink to the system python, so
+    # realpath() made the venv look like "already running there" and the probe never reached pywinrm (round-1 boot)
+    if py and os.path.isfile(py) and os.path.abspath(py) != os.path.abspath(sys.executable) \
             and os.environ.get("MIOS_XBOX_PROBE_REEXEC") != "1":
         os.environ["MIOS_XBOX_PROBE_REEXEC"] = "1"
         os.execv(py, [py, "-I", os.path.abspath(__file__), *argv])

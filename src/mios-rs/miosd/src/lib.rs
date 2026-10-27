@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod drift;
 pub mod fhs_sync;
 pub mod rde;
+#[cfg(unix)]
 pub mod wallpaper;
 pub mod native_generator {
     use std::path::Path;

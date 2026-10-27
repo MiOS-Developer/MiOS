@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: MiOS-Xbox spec renderer: layered SSOT [windows.xbox] (vendor -> host -> user via mios_toml.load_merged) -> resolved xbox-spec.json, the single input of every Windows build step; a missing key or empty credential is a hard failure naming the key.
+# AI-hint: MiOS-Xbox spec renderer: layered SSOT [windows.xbox] (vendor -> host -> user via mios_toml.load_merged) -> resolved xbox-spec.json, the single input of every Windows build step; a missing key or empty credential is a hard failure naming the key; a Remote Desktop Services registry_map entry must name its TerminalServer.admx policy and that policy's value name (every settings.rdp key mapped).
 # AI-related: usr/lib/mios/mios_toml.py, usr/share/mios/mios.toml, tests/test-mios-xbox-spec.py, /.devloop/GOALS-mios-xbox.md, /.devloop/plan-mios-xbox.md
 # AI-functions: render, render_layers, resolve_ref, build_registry, guest_projection, main
 """Render the MiOS-Xbox image specification.
@@ -35,6 +35,10 @@ if os.path.isfile(os.path.join(_LIB, "mios_toml.py")) and _LIB not in sys.path:
     sys.path.insert(0, _LIB)
 import mios_toml  # noqa: E402
 import mios_credentials  # noqa: E402  -- the ONE layered-SSOT credential resolver (same tree)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import spec_items as _S  # noqa: E402  -- Microsoft's TerminalServer.admx policy table (TS_POLICIES), shared with the gate
 
 ROOT = "windows.xbox"
 SCHEMA = 1
@@ -45,7 +49,7 @@ REQUIRED = {
     "enable": bool,
     "spec_schema": int,
     "source.provider": str, "source.channel": str, "source.build": str, "source.arch": str,
-    "source.edition": str, "source.language_ref": str,
+    "source.edition": str, "source.language_ref": str, "source.apps": list, "source.app_frameworks": str,
     "preferences.taskbar_align": int, "preferences.search_box_mode": int,
     "preferences.taskbar_widgets": int, "preferences.taskbar_chat": int,
     "preferences.task_view_button": int, "preferences.touch_keyboard_button": int,
@@ -80,10 +84,10 @@ REQUIRED = {
     "settings.enablements": dict,
     "settings.security.prevent_device_encryption": int,
     "settings.ssh.start": int, "settings.ssh.enable": bool,
-    "settings.rdp.enable": int, "settings.rdp.allow_cam": int,
-    "settings.rdp.allow_audio": int, "settings.rdp.allow_drives": int,
+    "settings.rdp.enable": int, "settings.rdp.allow_audio_playback": int,
+    "settings.rdp.allow_microphone": int, "settings.rdp.allow_camera": int, "settings.rdp.allow_drives": int,
     "settings.rdp.allow_com_ports": int, "settings.rdp.allow_clipboard": int,
-    "settings.rdp.allow_location": int,
+    "settings.rdp.allow_location": int, "settings.rdp.allow_time_zone": int,
     "users.computer_name_ref": str, "users.service_account_ref": str,
     "users.desktop.name_ref": str, "users.desktop.password_ref": str,
     "users.desktop.display_name_ref": str, "users.desktop.groups": list,
@@ -110,9 +114,27 @@ REQUIRED = {
     "build.worker_build_timeout_s": int, "build.worker_poll_s": int, "build.download_tries": int,
     "build.extract_memsize_mib": int, "build.heavy_lock": str, "build.host_memory_max": str,
     "build.converter.upstream": str, "build.converter.subdir": str, "build.converter.channel": str,
-    "build.converter.entry": str, "build.converter.config": dict,
+    "build.converter.entry": str, "build.converter.config": dict, "build.converter.store_apps": dict,
     "registry_map": dict,
+    # provisioning stages (who runs what), SSH inputs, MiOS services/tasks, wallpaper page (fix-a M1)
+    "features.capability_fod": dict, "features.fod_metadata": str,
+    "provision.first_logon_commands": bool, "provision.state_dir": str, "provision.log_dir": str,
+    "provision.verify_task": str, "provision.hydrate_task": str, "provision.retry_task": str, "provision.serial_port": str,
+    "provision.serial_baud": int, "provision.network_category": str, "provision.network_wait_s": int,
+    "ssh.install": str, "ssh.port_ref": str, "ssh.settings_ref": str, "ssh.authorized_keys_key": str,
+    "ssh.authorized_keys_files": list, "ssh.settings_path": str, "ssh.authorized_keys_path": str,
+    "services": dict, "tasks": dict,
+    "wallpaper.html_ref": str, "wallpaper.target_ref": str, "wallpaper.setup_component": str,
 }
+SSH_INSTALL_MODES = ("fod-offline",)   # F4: the OpenSSH.Server FOD is baked into install.wim; never online-only
+SSH_KEY_RE = re.compile(r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]+( .*)?$")
+NETWORK_CATEGORIES = ("Private",)      # WinRM's firewall exception is refused while a profile is Public
+SERVICE_HOSTS = ("self", "MiosServiceTool")
+TASK_RUN_AS = ("system", "desktop")
+TASK_TRIGGERS = ("startup", "logon")
+# components.ship[].invocation: "per-request" = a one-shot CLI another program runs per request (mios-agent-relay
+# --state PATH < request.json exits 2 without them: as a startup task it "ran" at every boot and did nothing)
+COMPONENT_INVOCATIONS = ("per-request",)
 # Account names Windows reserves for the built-in Administrator (RID 500): never the AutoLogon account.
 RID500_NAMES = ("administrator",)
 WORKER_CREDENTIAL_SOURCES = ("base-answer-file",)
@@ -204,7 +226,7 @@ def build_registry(x: dict) -> list[dict]:
     """Every registry write implied by the spec; duplicate owners are an error."""
     items: list[dict] = []
 
-    def add(owner, hive, key, name, typ, data, kv_field=None, delete=False):
+    def add(owner, hive, key, name, typ, data, kv_field=None, delete=False, policy=None):
         if hive not in HIVES:
             raise SpecError(_full(owner), f"unknown hive {hive!r}")
         if not delete and typ not in REG_TYPES:
@@ -218,6 +240,8 @@ def build_registry(x: dict) -> list[dict]:
             item.update(type=typ, data=data)
         if kv_field:
             item["kv_field"] = kv_field
+        if policy:
+            item["policy"] = policy
         items.append(item)
 
     for path, loc in x["registry_map"].items():
@@ -236,7 +260,25 @@ def build_registry(x: dict) -> list[dict]:
                 raise SpecError(_full(when), f"missing (gate of registry_map.{path})")
             if not gate:
                 continue
-        add(path, loc["hive"], loc["key"], loc["name"], loc["type"], _reg_data(path, val), loc.get("kv_field"))
+        if loc.get("policy") is not None or _S.is_ts_policy_key(loc["hive"], loc["key"]):
+            # a Remote Desktop Services policy: the value name and data must be the named TerminalServer.admx
+            # policy's (Microsoft's ADMX_TerminalServer table), so a misnamed value (fDisableLocation) or a policy
+            # used for the wrong device (fDisableCam = playback, not the camera) cannot render (F5)
+            if not _S.is_ts_policy_key(loc["hive"], loc["key"]) or loc["type"] != "REG_DWORD":
+                raise SpecError(_full(f"registry_map.{path}"), f"a policy entry must be a REG_DWORD under SOFTWARE\\{_S.TS_POLICY_KEY}")
+            why = _S.ts_policy_problem(loc.get("policy"), loc["name"], _reg_data(path, val))
+            if why:
+                raise SpecError(_full(f"registry_map.{path}"), why)
+        add(path, loc["hive"], loc["key"], loc["name"], loc["type"], _reg_data(path, val), loc.get("kv_field"),
+            policy=loc.get("policy"))
+    # every RDP redirection switch is written by exactly one Terminal Services policy entry (closed world: a stale
+    # or renamed key in a host/user layer fails here instead of being silently ignored)
+    for k in sorted((x.get("settings") or {}).get("rdp") or {}):
+        if k == "enable":
+            continue
+        loc = x["registry_map"].get(f"settings.rdp.{k}")
+        if not isinstance(loc, dict) or not loc.get("policy"):
+            raise SpecError(_full(f"settings.rdp.{k}"), "no registry_map entry naming its TerminalServer.admx policy")
 
     start = x["start"]
     universe = start["folders_universe"]
@@ -384,6 +426,9 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
     debloat_services = []
     if x["debloat"]["enable"]:
         debloat_services = x["debloat"]["profiles"][x["debloat"]["profile"]].get("services", [])
+    ssh = _ssh_inputs(merged, x, resolved)
+    _check_provision(x, resolved)
+    _check_apps(x)
 
     out = {
         "schema": SCHEMA,
@@ -397,6 +442,7 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
         "registry": build_registry(x),
         "debloat_services": debloat_services,
         "winrm": {"enable": x["winrm"]["enable"], "remote_address": x["winrm"]["remote_address"], "port": port},
+        "ssh": ssh,
     }
     # credential refs were resolved into users; keep `resolved` free of secrets
     for p in CREDENTIAL_REFS:
@@ -453,6 +499,155 @@ def _check_accounts(merged: dict, x: dict, resolved: dict) -> int:
         if len(adm_name) > 20 or any(c in adm_name for c in '"/\\[]:;|=,+*?<>@'):
             raise SpecError(_full("users.admin.name_ref"), "not a valid Windows local account name")
     return int(al["count"]) if d["autologon"] else 0
+
+
+def _operator_home() -> str:
+    """Home of the operator the build runs for: under sudo the invoking user's (build.build_layers does the
+    same for the user SSOT tier), else the caller's."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        import pwd
+        try:
+            return pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir
+        except KeyError:
+            pass
+    return os.path.expanduser("~")
+
+
+def _ssh_inputs(merged: dict, x: dict, resolved: dict) -> dict:
+    """F4 inputs the image carries for mios-ssh-setup.ps1 (no GitHub, no Windows Update at provisioning):
+    the SSOT SSH port and [ssh.windows] settings, and the operator public keys -- [windows.xbox.ssh].
+    authorized_keys_key (an SSOT value, "" allowed) plus authorized_keys_files (globs in the operator's home).
+    Public keys only (a private key or junk line is refused); none at all fails the render, naming the keys."""
+    import glob
+    s = x["ssh"]
+    if s["install"] not in SSH_INSTALL_MODES:
+        raise SpecError(_full("ssh.install"), f"must be one of {SSH_INSTALL_MODES} (the OpenSSH server is baked offline)")
+    port = resolved["ssh.port_ref"]
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536:
+        raise SpecError(_full("ssh.port_ref"), "must resolve to a TCP port")
+    settings = resolved["ssh.settings_ref"]
+    if not isinstance(settings, dict):
+        raise SpecError(_full("ssh.settings_ref"), "must resolve to a table ([ssh.windows])")
+    for k in ("root", "config_relative", "listen_address", "remote_addresses"):
+        if k not in settings or settings[k] in ("", None, []):
+            raise SpecError(f"{x['ssh']['settings_ref']}.{k}", f"missing (read by {_full('ssh.settings_ref')})")
+    keys: list[str] = []
+    src = _get(merged, s["authorized_keys_key"])
+    if src is _MISSING:
+        raise SpecError(_full("ssh.authorized_keys_key"), f"references missing key {s['authorized_keys_key']}")
+    lines = [ln.strip() for ln in (src if isinstance(src, list) else str(src or "").splitlines())]
+    home = _operator_home()
+    for pat in s["authorized_keys_files"]:
+        p = str(pat)
+        p = os.path.join(home, p[2:]) if p.startswith("~/") else p
+        for f in sorted(glob.glob(p)):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    lines += [ln.strip() for ln in fh.read(65536).splitlines()]
+            except (OSError, UnicodeDecodeError):
+                continue
+    for ln in lines:
+        if not ln or ln.startswith("#"):
+            continue
+        if "PRIVATE KEY" in ln or not SSH_KEY_RE.match(ln):
+            raise SpecError(_full("ssh.authorized_keys_files"), "an operator key source holds a line that is not an SSH public key")
+        if ln not in keys:
+            keys.append(ln)
+    if not keys:
+        raise SpecError(_full("ssh.authorized_keys_key"),
+                        f"no operator SSH public key ({s['authorized_keys_key']} is empty and "
+                        f"{_full('ssh.authorized_keys_files')} matches nothing): sshd would accept nobody")
+    return {"port": port, "windows": {k: v for k, v in settings.items()}, "authorized_keys": keys,
+            "settings_path": s["settings_path"], "authorized_keys_path": s["authorized_keys_path"]}
+
+
+APP_PFN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*_[a-z0-9]{13}")
+# The Hydrate stage installs Store-only packages through winget's msstore source: both must be in the image.
+HYDRATE_REQUIRES = ("Microsoft.DesktopAppInstaller_8wekyb3d8bbwe", "Microsoft.WindowsStore_8wekyb3d8bbwe")
+CONVERTER_DERIVED = ("skipapps", "customlist")   # [Store_Apps] keys fetch.py derives from source.apps
+
+
+def _check_apps(x: dict) -> None:
+    """source.apps: the inbox apps of the update integrated offline (round-1 boot of build-20261023T224037Z: none were,
+    so the image had no Store, no winget and no Xbox app). Family-name syntax, a usable framework pattern, the
+    converter keys derived from it left alone, and every app another SSOT value relies on present."""
+    apps = x["source"]["apps"]
+    for i, a in enumerate(apps):
+        if not isinstance(a, str) or not APP_PFN_RE.fullmatch(a):
+            raise SpecError(_full(f"source.apps[{i}]"), "must be a package family name (Name_publisherid)")
+    low = [a.lower() for a in apps]
+    if len(set(low)) != len(low):
+        raise SpecError(_full("source.apps"), "lists a package family twice")
+    if apps:
+        try:
+            re.compile(x["source"]["app_frameworks"])
+        except re.error as e:
+            raise SpecError(_full("source.app_frameworks"), f"is not a regular expression ({e})") from None
+        if not x["source"]["app_frameworks"]:
+            raise SpecError(_full("source.app_frameworks"), "is empty (the apps' framework packages would be missing)")
+    for k, v in x["build"]["converter"]["store_apps"].items():
+        if k.lower() in CONVERTER_DERIVED:
+            raise SpecError(_full(f"build.converter.store_apps.{k}"), "is derived from source.apps (CustomAppsList.txt), never set")
+        if isinstance(v, bool) or not isinstance(v, (int, str)):
+            raise SpecError(_full(f"build.converter.store_apps.{k}"), "must be an integer or string")
+    home = str(x["xbox"]["home_app"] or "")
+    if x["xbox"]["enable"] and home and home.split("!", 1)[0].lower() not in low:
+        raise SpecError(_full("xbox.home_app"), f"names {home.split('!', 1)[0]}, which source.apps does not integrate "
+                        "(the gaming home would point at an absent app)")
+    names = {a.rsplit("_", 1)[0].lower() for a in apps}
+    hydrated = [p["name"] for p in x["store_hydrate"]["packages"] if str(p["name"]).lower() not in names]
+    if hydrated and not all(r.lower() in low for r in HYDRATE_REQUIRES):
+        raise SpecError(_full("store_hydrate.packages"), f"{', '.join(hydrated)} hydrate through winget/the Store: source.apps "
+                        f"must integrate {' and '.join(HYDRATE_REQUIRES)}")
+
+
+def _check_provision(x: dict, resolved: dict) -> None:
+    """Who runs what (fix-a M1): nothing privileged as the standard desktop user; services/tasks name a
+    shipped component and a supported host/run-as/trigger; the FOD map covers every added capability."""
+    p = x["provision"]
+    if p["first_logon_commands"]:
+        raise SpecError(_full("provision.first_logon_commands"),
+                        "must be false: FirstLogonCommands run as the (standard) desktop user and need administrator consent under UAC")
+    if p["network_category"] not in NETWORK_CATEGORIES:
+        raise SpecError(_full("provision.network_category"), f"must be one of {NETWORK_CATEGORIES}")
+    if not re.fullmatch(r"COM[1-9]", p["serial_port"]):
+        raise SpecError(_full("provision.serial_port"), "must name a guest serial port COM1..COM9")
+    comps = {c["name"]: c for c in x["components"]["ship"]}
+    for i, c in enumerate(x["components"]["ship"]):
+        if "invocation" in c and c["invocation"] not in COMPONENT_INVOCATIONS:
+            raise SpecError(_full(f"components.ship[{i}].invocation"), f"must be one of {COMPONENT_INVOCATIONS}")
+    for kind in ("services", "tasks"):
+        for name, ent in x[kind].items():
+            comp = comps.get(ent.get("component")) if isinstance(ent, dict) else None
+            if comp and comp.get("invocation") == "per-request":
+                raise SpecError(_full(f"{kind}.{name}.component"),
+                                f"{comp['name']} is a per-request CLI (components.ship invocation): it has no daemon mode to run as a service or task")
+    for name, sv in x["services"].items():
+        key = f"services.{name}"
+        if not isinstance(sv, dict) or sv.get("component") not in comps:
+            raise SpecError(_full(f"{key}.component"), "must name a components.ship entry")
+        if sv.get("host") not in SERVICE_HOSTS:
+            raise SpecError(_full(f"{key}.host"), f"must be one of {SERVICE_HOSTS}")
+        if sv["host"] == "MiosServiceTool" and (not sv.get("host_name") or "MiosServiceTool" not in comps):
+            raise SpecError(_full(f"{key}.host_name"), "a MiosServiceTool-hosted service needs host_name and the shipped MiosServiceTool")
+        if sv.get("args_from") and comps.get(sv["args_from"], {}).get("kind") != "config":
+            raise SpecError(_full(f"{key}.args_from"), "must name a components.ship config")
+    for name, tk in x["tasks"].items():
+        key = f"tasks.{name}"
+        if not isinstance(tk, dict) or tk.get("component") not in comps:
+            raise SpecError(_full(f"{key}.component"), "must name a components.ship entry")
+        if tk.get("run_as") not in TASK_RUN_AS:
+            raise SpecError(_full(f"{key}.run_as"), f"must be one of {TASK_RUN_AS}")
+        if tk.get("trigger") not in TASK_TRIGGERS:
+            raise SpecError(_full(f"{key}.trigger"), f"must be one of {TASK_TRIGGERS}")
+    if x["wallpaper"]["setup_component"] not in comps:
+        raise SpecError(_full("wallpaper.setup_component"), "must name a components.ship entry")
+    fod = x["features"]["capability_fod"]
+    for cap in x["features"]["capabilities_add"]:
+        ent = fod.get(cap)
+        if not isinstance(ent, dict) or not ent.get("package") or not ent.get("proof"):
+            raise SpecError(_full(f"features.capability_fod.{cap}"),
+                            "every added capability is baked offline from its FOD package (package + proof file)")
 
 
 _CREDENTIAL_FIELDS = ("password",)

@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::Write as _;
 use std::os::fd::{AsFd, FromRawFd};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -211,6 +211,7 @@ pub struct InputParams {
     pub desktop: Arc<AtomicU64>,
     pub display: Arc<DisplayClient>,
     pub counters: Arc<InputCounters>,
+    pub operator_paused: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -533,6 +534,9 @@ fn run(p: InputParams, rx: Receiver<Cmd>) -> Result<()> {
             }
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        if p.operator_paused.load(Ordering::SeqCst) && !matches!(cmd, Cmd::Release | Cmd::Stop) {
+            continue;
+        }
         let time = now_ms(t0);
         match cmd {
             Cmd::Stop => break,
@@ -1001,5 +1005,19 @@ mod tests {
         assert_eq!(scale(1099, 1100), ABS_MAX);
         assert_eq!(scale(5000, 1100), ABS_MAX);
         assert_eq!(scale(-5, 1100), 0);
+    }
+
+    #[test]
+    fn rdpei_sc_ready_pdu_has_v300_features_field_for_freerdp_interop() {
+        use ironrdp_dvc::DvcProcessor as _;
+        use ironrdp_server::RdpeiServerFactory as _;
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let factory = RdpeiFactory { tx: Mutex::new(tx), touch: true, pen: true };
+        let mut srv = factory.build_server();
+        let msgs = srv.start(1).expect("RDPEI DVC start");
+        assert_eq!(msgs.len(), 1);
+        let encoded = ironrdp_core::encode_vec(msgs[0].as_ref()).expect("encode SC_READY");
+        // MS-RDPEI 2.2.3.1: 6-byte RDPINPUT_HEADER + 4-byte protocolVersion (V300) + 4-byte features = 14 bytes.
+        assert_eq!(encoded.len(), 14, "SC_READY PDU for V300 must include 4-byte features field (14 bytes total)");
     }
 }

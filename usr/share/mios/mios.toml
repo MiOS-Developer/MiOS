@@ -2062,8 +2062,11 @@ binaries = [
 [[build.native.linux.exceptions]]
 scope  = "usr/libexec/mios/rdp-native"
 owner  = "remote.rdp.native"
-reason = "Native RDP server components mios-rdp-server and mios-rdp-priv are approved glibc-dynamic exceptions per desk-051 due to runtime dependencies on PipeWire, Mesa EGL/GBM, dlopen OpenH264, libz.so.1, and PAM authentication."
+reason = "Native RDP server components mios-rdp-server (E1: Mesa EGL/GBM, libxkbcommon, libz, dlopen OpenH264) and mios-rdp-priv (E2: Linux PAM) are approved glibc-dynamic exceptions per desk-051."
 binaries = ["mios-rdp-server", "mios-rdp-priv"]
+[build.native.linux.exceptions.allowed_needed]
+mios-rdp-server = ["libxkbcommon.so.0", "libEGL.so.1", "libgbm.so.1", "libz.so.1", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"]
+mios-rdp-priv   = ["libpam.so.0", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"]
 
 [build.native.windows]
 # MSVC links the WebView2 loader statically; GNU imports WebView2Loader.dll.
@@ -4210,6 +4213,10 @@ bindings = [
   { key = "o", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-focus next'", command_windows = "select-pane -t :.+" },
   { key = "f", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-view toggle'", command_windows = "resize-pane -Z" },
 ]
+
+[keybindings.controller]
+enabled = true
+hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -6516,7 +6523,7 @@ small_screen_px     = 1300          # short side below this counts as a phone/ta
 small_screen_scale  = 2.0
 max_scale           = 3.0
 size_align          = 0             # 0 = exact client size. With output_scale, e.g. 8 rounds sizes down to unlock fractional scales for odd sizes like 572x1081 (the client letterboxes the few pixels)
-server              = "xrdp"        # "native" = mios-rdp-server (IronRDP, EGFX AVC420 H.264 via Cisco OpenH264, virtual pointer/keyboard, uinput touch/pen, ext-data-control clipboard; user unit mios-rdp-native.service) | "xrdp" = xrdp + RFB bridge + wayvnc. "native" falls back to xrdp while the binary is missing or after a crash loop (marker /run/mios/rdp/fallback, cleared at reboot or by `mios-rdp switch native`); `sudo mios-rdp switch native|xrdp` is a runtime trial (reboot returns to this key)
+server              = "xrdp"        # xrdp provides interactive server-side login. The native EGFX AVC420 server requires the client to supply credentials; `sudo mios-rdp switch native|xrdp` overrides this key until reboot.
 native_binary       = "auto"        # "auto" = /usr/libexec/mios/rdp-native/mios-rdp-server (automation/71-bake-rdp-server.sh) when installed, else xrdp serves; or an absolute path
 
 [remote.rdp.native]
@@ -6542,11 +6549,13 @@ gpu_guard           = false         # true = step the remote refresh down 15 Hz 
 gpu_guard_min_hz    = 60
 auto_reconnect      = true          # Server Auto-Reconnect Cookie: random per session, single-use, rotated on a clean logoff; skips PAM (IronRDP contract)
 auto_reconnect_seconds = 300        # a cookie older than this after a drop no longer resumes
-auth_backoff_seconds = 2            # per source address after a refused login, doubling per failure (cap 60 s); pam_faillock applies on top
+auth_backoff_seconds = 2            # per source address after a refused login, doubling per failure (cap 60 s); enforced in mios-rdp-server (auth.rs)
 keepalive_seconds   = 5             # TCP keepalive idle (2 s interval, 3 probes) + TCP_USER_TIMEOUT 10 s: a dead client is dropped in about 15 s
 udp_transport       = false         # RDP-UDP (Shortpath): a NEW opening; stays false until the operator approves
 log_negotiation     = true          # log the EGFX capability sets, negotiated version, codecs, DISP layouts, RDPEI version
 bitmap_hz           = 15            # frames/s of the classic bitmap path for clients without EGFX/AVC420
+bitmap_slow_queue_ms = 250.0        # bitmap path: delivered-frame queue-age p50 above this steps the capture rate down 20 %/window, below half steps +1 Hz (hysteresis)
+bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
 slow_ack_ms         = 250.0         # AIMD: median frame-ack latency above this counts as congestion
 max_width           = 4096          # largest desktop a client may request (per dimension)
@@ -6557,11 +6566,13 @@ clipboard           = "both"        # "both" | "to-client" | "to-host" | "off" (
 clipboard_max_mb    = 64            # larger clipboard data is refused in either direction
 touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remote Touch", mapped to the remote output before it exists
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
-audio_output        = true          # MS-RDPSND audio output (PipeWire wave playback sink)
-microphone          = true          # MS-RDPEAI audio input (PipeWire virtual source)
-drives              = true          # MS-RDPDR storage redirection ($XDG_RUNTIME_DIR/mios-rdp/drives/<name>)
-camera              = true          # MS-RDPECAM video capture device redirection
-location            = true          # MS-RDPEL geolocation redirection
+audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
+microphone          = false         # MS-RDPEAI audio input (Phase 5 stub; off until PipeWire virtual source is wired)
+drives              = false         # MS-RDPDR storage redirection (Phase 6 stub; off until FUSE/mount backend is wired)
+camera              = false         # MS-RDPECAM video capture device redirection (Phase 7 stub; off by default)
+location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
+timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
+smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
 
 [remote.rdp.naming]                 # names of the virtual devices (test instances add " test")
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
@@ -7622,6 +7633,17 @@ pkgs = [
     "protontricks",           # winetricks for Steam-installed games
 ]
 
+# ShaderGlass overlay ([desktop.shaderglass]): Wine (Fedora's WoW64 build) and DXVK for its Direct3D 11 renderer,
+# installed by automation/65-bake-hyprland.sh. The GPL-3 release itself is fetched on the host by
+# `miosd shaderglass install`, never baked.
+[packages.shaderglass]
+enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
+pkgs = [
+    "wine-core",              # wine, wineserver (the Windows-side wineboot.exe)
+    "wine-common",            # /usr/bin/wineboot and the other launcher scripts (not in wine-core)
+    "wine-dxvk",              # DXVK d3d11/dxgi for every prefix (alternatives)
+]
+
 [packages.guests]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
 pkgs = [
@@ -7730,7 +7752,7 @@ window_rules = [
   # this rule only keeps miosd placement from re-tiling it when dragged).
   { name = "mios-looking-glass", match = { class = "^(looking-glass-client)$" }, float = true, center = true },
 ]
-startup = ["dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && systemctl --user start mios-desktop.target"]
+startup = ["dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME MIOS_THEME_BRIDGE GTK_MODULES XDG_SESSION_DESKTOP XDG_SESSION_TYPE AQ_DRM_DEVICES WLR_DRM_DEVICES DRI_PRIME MIOS_DESKTOP_HARDWARE_PROFILE && { systemctl --user reset-failed mios-shell.service 2>/dev/null; systemctl --user restart mios-desktop.target; }"]
 shutdown = ["systemctl --user stop mios-desktop.target graphical-session.target"]
 bindings = [
   { key = "SUPER + Super_L", dispatcher = "exec_cmd", args = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call search toggle", flags = { release = true } , label = "Global search" },
@@ -7755,7 +7777,7 @@ bindings = [
 # floating and centered at one size; a placed window the operator drags drops into the tiling
 # layout where it lands; Super+V toggles the active window through the same sizing function.
 # The long axis of the usable monitor area (logical px, so the monitor scale carries DPI) gets
-# width_ratio (golden 0.618), the short axis follows aspect (1.6 = 16:10); both clamp to the pixel
+# width_ratio (0.56), the short axis follows aspect (1.414 = A4 landscape / portrait); both clamp to the pixel
 # bounds, to max_width_ratio / max_height_ratio of the usable area, and the width to max_width_mm
 # of physical panel (0 disables). Picture-in-Picture, dialogs, modals and windows the operator
 # floats are never re-tiled. scope = "empty_workspace" floats new windows only on workspaces with
@@ -7765,8 +7787,8 @@ bindings = [
 [desktop.hyprland.placement]
 enabled = true
 scope = "all"
-width_ratio = 0.618
-aspect = 1.6
+width_ratio = 0.56
+aspect = 1.414
 min_width_px = 640
 min_height_px = 400
 max_width_px = 1800
@@ -7793,7 +7815,7 @@ source_repository = "https://github.com/hyprwm/hyprland-plugins.git"
 # takes source_repository default-branch HEAD, logs the resolved commit, and fails naming any
 # MiOS patch that no longer applies (mios-gen build-hyprland-plugin refuses a pin).
 source_subdir = "hyprbars"
-patches = ["usr/share/mios/hyprland/patches/hyprbars-overlay.patch"]
+patches = ["usr/share/mios/hyprland/patches/hyprbars-mios-overlay-tab.patch"]
 path = "/usr/lib64/mios/hyprbars.so"
 [desktop.hyprland.hyprbars.config]
 bar_overlay = true
@@ -7801,8 +7823,8 @@ bar_height = 28
 bar_color = "rgba(00000000)"   # transparent strip: only the controls draw over the content
 bar_title_enabled = false
 bar_buttons_alignment = "left"
-bar_padding = 52               # left inset: clears the sidebar/pane toggles apps place at their top-left corner
-bar_button_padding = 8
+bar_padding = 52               # keep the control tab and its fillets inside the rounded window corner
+bar_button_padding = 10
 bar_part_of_window = true
 icon_on_hover = true
 # What reveals a window's controls tab (a hidden tab never claims clicks). The tab is a glass tab that
@@ -7814,7 +7836,7 @@ icon_on_hover = true
 #   "proximity"       - any window's tab rises when the cursor comes near it
 #   "always"          - always shown
 reveal_on = "focus+proximity"    # desktop: the tab reveals when the window is focused AND the cursor is near its top-left (operator: "always" left the controls stuck open). Mobile outputs show their controls permanently via [desktop.mobile] instead.
-reveal_radius = 48
+reveal_radius = 16               # narrow activation zone; menu pills keep pointer priority
 # Glass tab: the window's own glass. glass_preset names the [desktop.hyprland.hyprglass] preset the window
 # body is drawn with; mios-gen projects its frost and look into the plugin (no hand-tuned copies):
 #   pill_blur_sigma  = 4 x blur_strength x sqrt(blur_iterations)  (hyprglass' kernel: radius blur_strength x 12
@@ -7848,26 +7870,26 @@ pill_shadow_comp = true        # remove the window's drop shadow from the backdr
 # app-menu pills to its right (usr/share/mios/quickshell/AppMenu.qml).
 tab_yield = true
 yield_layers = "mios-topbar,mios-dock"
-pill_padding = 9
+pill_padding = 10
 pill_inset = 3
 pill_feather = 6
 # Buttons in display order; palette/icon_palette name [colors] keys.
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "error"
 icon_palette = "bg"
-size = 13
+size = 16
 icon = "✕"
 action = "hyprctl dispatch 'hl.dsp.window.close()'"
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "warning"
 icon_palette = "bg"
-size = 13
+size = 16
 icon = "–"
 action = "hyprctl dispatch '(hl.plugin.mios_lamp and hl.plugin.mios_lamp.minimize() or hl.dsp.window.move({workspace = \"special:minimized\", follow = false}))'"   # magic lamp into the dock ([desktop.hyprland.lamp]); plain silent move without the plugin
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "success"
 icon_palette = "bg"
-size = 13
+size = 16
 icon = "+"
 action = "hyprctl dispatch 'hl.dsp.window.fullscreen({mode = \"maximized\", action = \"toggle\"})'"
 
@@ -8008,6 +8030,103 @@ edge_pass_width = 8
 enabled = true
 exclude_namespaces = "mios-wallpaper,mios-wallpaper-native-probe,mios-dock-hotzone,mios-shot-freeze,mios-shot,mios-shot-flash,selection"  # screenshot freeze / scrim / flash / slurp: no glass over the frozen frame (the mios-shot-bar toolbar keeps it)
 live_resample = true
+# Live re-sample rate (plugin:hyprglass:{layers,windows}:live_resample_fps): a pane only re-samples and re-blurs
+# what is behind it when that content commits (a video, the wallpaper); the rate is the glass rate G of
+# [desktop.framerate] (desktop rate / glass_divisor: 1/3, 1/2 for gaming and unlocked), projected at login and set
+# live by miosd framerate. No fixed value here: mios-gen rejects one while the policy is enabled.
+
+# Desktop frame rate (operator 2026-10-23 20:15: "lock the framerate on high-performance to 90Hz/90fps--60 for
+# medium and low-power/power-saving/battery--120 for gaming and unlocked as a risk low windows/panes/apps/VMs/Games
+# ... That goes for the desktop environment(s)(Hypr3D and 2D compositor modes)--glass refractions/reflection(s) are
+# 1/3rd rate globally(1/2 rate for 120/Unlocked)"; 20:20: "wallpaper(s) are 1/2 rate globally--except for Unlocked
+# mode(s)"). `miosd framerate serve` (user unit mios-framerate.service) picks the tier at runtime, first match wins:
+#   unlocked (this key, or `miosd framerate set-unlocked on` into the user tier) > gaming (GameMode ClientCount > 0,
+#   session bus) > battery (UPower OnBattery, whatever the profile) > the power profile (net.hadess.PowerProfiles
+#   ActiveProfile -- tuned-ppd -- mapped through [desktop.framerate.profiles]; the daemon never sets a profile).
+# A tier gives the desktop rate D (desktop_hz; 0 = the output's own maximum, no cap) for the 2D compositor and Hypr3D,
+# the glass rate G = D / glass_divisor (Hyprglass re-sampling behind panes, Hypr3D refraction and reflection) and the
+# wallpaper rate W = D / wallpaper_divisor (the native living wallpaper's steps, Hypr3D's live dome). Whole numbers,
+# rounded down; D is capped at each output's maximum; G and W are process-wide and follow the largest local D.
+# Outputs matching exclude_prefixes (default: [desktop.displays].ignore_prefixes -- the RDP/VNC headless outputs)
+# keep their own refresh and pacing ([remote.rdp]) and are never capped or re-moded; G and W still apply there.
+# Mechanism: "auto" holds D with the mios-pacing compositor plugin on an output that runs VRR (60/90/120 are real
+# panel refresh rates inside the VRR range: no modeset, instant) and, on an output without active VRR, switches to
+# the advertised (EDID) mode nearest D (a modeset: the screen blanks; 90 has no EDID mode on most panels -> 99.93/100);
+# "cap" never changes a mode; "mode" always uses modes. A mode switch is verified within revert_timeout_ms (mode
+# shown, output present, DPMS on) or reverted and the mode blocklisted ($XDG_STATE_HOME/mios/framerate/bad-modes.json).
+# Every automatic display-mode change to a mode the operator has not kept on that panel before is restored after
+# mode_confirm_s unless `miosd framerate confirm-mode` keeps it (an on-screen notification says so); without an answer
+# the panel gets no more automatic modesets until `miosd framerate confirm-mode --reset`. Stopping the daemon restores
+# every mode it changed. A mode the operator pinned in [desktop.hyprland.monitors.<name>].mode ("WxH@Hz") is never
+# changed.
+[desktop.framerate]
+enabled = true
+unlocked = false                   # operator opt-in "at risk": no cap anywhere (games/VMs/apps that need the full rate)
+debounce_ms = 750                  # inputs settle this long before an apply (one hyprctl eval per apply)
+self_check_s = 60                  # re-read every input and re-apply what drifted (a plugin reload, a config reload)
+gaming_exit_hold_ms = 3000         # gaming holds this long after the last GameMode client left (launchers re-register)
+mechanism = "auto"                 # auto | cap | mode (see above)
+modes = "advertised"               # mode selection: only modes the output advertises (EDID) are applied automatically
+revert_timeout_ms = 5000           # an unverified mode switch is reverted after this long
+mode_confirm_s = 15                # a new mode is restored after this long unless confirmed (0 = no confirmation)
+modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
+modeset_min_interval_s = 30        # at least this long between two modesets of one output
+pacing_plugin = "mios-pacing"      # the [desktop.hyprland.<name>] compositor plugin that holds the cap
+state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, SUPER+G
+user_fragment = "50-framerate.toml"        # `miosd framerate set-unlocked` writes `unlocked` here (user-tier mios.d)
+[desktop.framerate.profiles]       # power profile -> tier; "unknown" = any other profile or no profile daemon
+power-saver = "power-saver"
+balanced = "balanced"
+performance = "performance"
+unknown = "balanced"
+[desktop.framerate.gaming]
+gamemode = true                    # GameMode (com.feralinteractive.GameMode) has a registered client
+fullscreen_game = false            # also: a fullscreen local window whose content type is "game" or whose class matches game_class
+game_class = '^steam_app_[0-9]+$'
+[desktop.framerate.tiers.unlocked]
+desktop_hz = 0                     # the output's maximum (DP-3: 144); glass D/2, wallpaper D
+glass_divisor = 2
+wallpaper_divisor = 1
+[desktop.framerate.tiers.gaming]
+desktop_hz = 120                   # glass 60, wallpaper 60
+glass_divisor = 2
+wallpaper_divisor = 2
+[desktop.framerate.tiers.battery]
+desktop_hz = 60                    # glass 20, wallpaper 30
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.performance]
+desktop_hz = 90                    # glass 30, wallpaper 45
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.balanced]
+desktop_hz = 60
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.power-saver]
+desktop_hz = 60
+glass_divisor = 3
+wallpaper_divisor = 2
+
+# Frame cap (MiOS-original compositor plugin in the tree, [desktop.framerate]): hooks Hyprland's per-output frame
+# handler and lets an output commit at most max_fps frames per second (phase-locked deadlines; the deferred frame is
+# rescheduled at its deadline, so damage is never lost and clients pace at the cap through their frame callbacks).
+# Only outputs with active VRR are capped (on a fixed-refresh output a cap would judder; miosd switches its mode
+# instead); exclude_prefixes outputs never are. max_fps and exclude_prefixes come from [desktop.framerate] (projected
+# at login, set live by miosd). The wallpaper's present rate W is held here too: Qt's layer update makes the native
+# wallpaper commit every step twice, so the plugin releases the frame callbacks of the wallpaper_namespaces layer
+# surfaces at most W times a second (wallpaper_fps, set by miosd together with the state file's wallpaper_paced;
+# Host.qml then steps once per presented frame). `hyprctl mios-pacing status` reports per output cap, presented fps
+# and deferrals, and per wallpaper surface the callbacks per second.
+[desktop.hyprland.mios-pacing]
+enabled = true
+source_path = "usr/share/mios/hyprland/plugins/mios-pacing"
+build_system = "make"
+path = "/usr/lib64/mios/mios-pacing.so"
+[desktop.hyprland.mios-pacing.config]   # static plugin options; max_fps / exclude_prefixes / wallpaper_fps are the tier's
+slack_us = 500                     # a frame due within this long counts as due (timer jitter)
+require_vrr = true                 # cap only outputs whose VRR is active (false: also fixed-refresh outputs, judders)
+wallpaper_namespaces = "mios-wallpaper"   # layer namespaces (exact) whose frame callbacks follow the wallpaper rate W
 
 # Catch-all monitor rule (output = "" matches every output); projected first.
 [desktop.hyprland.monitor]
@@ -8108,6 +8227,145 @@ bindings = [
   { key = "CTRL + Print", args = "all", label = "Screenshot: all outputs" },
 ]
 
+# ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
+# shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
+# On Linux ShaderGlass is Clone-mode only: WineCap (a Winelib .so next to ShaderGlass.exe) captures the target
+# through the xdg-desktop-portal ScreenCast API + PipeWire, and xdg-desktop-portal-hyprland's window capture
+# renders only that window, so the pane is never in its own input (no feedback loop) and miosd refuses a
+# ShaderGlass window as a target. Hyprland 0.56 cannot leave one window out of an output capture
+# (no_screen_share paints it black), so ShaderGlass' see-through "Glass" mode is not possible here.
+# `miosd shaderglass` (src/mios-rs/miosd/src/shaderglass.rs; /usr/bin/mios-shaderglass is its glue) installs the
+# newest release, runs every pane from one transient user unit (app-mios-<app_id>@overlay.service) and keeps each
+# pane on its target; mios-gen render-hyprland projects [desktop.shaderglass.window] and the bindings below (only
+# while enabled). Nothing here is a version: `install` resolves the newest release of `channel` at install time,
+# accepts the asset only against the sha256 GitHub publishes for it, builds WineCap from the same tag's source plus
+# the MiOS patches, and records tag, commit and digests in <install_dir>/INSTALLED.json (never here). The release
+# is fetched on the operator's host, never committed (.gitignore) and never baked into the image; an image that
+# bakes it must ship or offer the Corresponding Source (GPL-3 section 6).
+[desktop.shaderglass]
+enabled = true                    # rules, keybinds and the drawer entry; the install step turns it on once Wine and the release are in place
+binary = "/usr/bin/mios-shaderglass"
+source_repository = "https://github.com/mausimus/ShaderGlass"
+github_api = "https://api.github.com"
+channel = "newest"                 # newest (pre-releases included: Linux/WineCap fixes land there first) | stable (newest non-pre-release)
+asset_pattern = '^ShaderGlass-[0-9][0-9A-Za-z.+-]*-win-x64\.zip$'   # exactly one asset of the chosen release must match
+install_dir = "/usr/lib/mios/shaderglass"
+exe = "ShaderGlass.exe"
+# Taken from the zip root by exact name (exe and LICENSE required); WineCap.dll comes from [desktop.shaderglass.winecap].
+install_files = ["ShaderGlass.exe", "LICENSE", "MANUAL.pdf", "README.txt", "CustomShader.slang"]
+license_markers = ["GNU GENERAL PUBLIC LICENSE", "Version 3"]   # LICENSE must still say GPL-3, or install stops
+app_id = "org.mios.ShaderGlass"    # supervisor unit app-mios-<app_id>@overlay.service: the portal's app id (restore tokens) and the journal tag
+memory_max = "4G"                  # MemoryMax of that unit (every pane, Wine and wineserver together)
+idle_exit_s = 30                   # the supervisor stops this long after its last pane closes
+map_timeout_s = 60                 # a pane window that does not map within this is given up (its process is stopped)
+# Keybinds, projected by mios-gen render-hyprland as hl.bind(key, exec "<binary> <args>"); labels feed the Super+Escape map.
+bindings = [
+  { key = "SUPER + G", args = "toggle", label = "ShaderGlass: overlay on the active window on/off" },
+  { key = "SUPER + SHIFT + G", args = "cycle", label = "ShaderGlass: cycle shader preset" },
+  { key = "SUPER + ALT + G", args = "setup", label = "ShaderGlass: pane setup (shader menu) / back to overlay" },
+]
+[desktop.shaderglass.wine]
+binary = "/usr/bin/wine"
+wineboot = "/usr/bin/wineboot"
+prefix = "mios/shaderglass/prefix" # under $XDG_DATA_HOME, per user (created headless on first attach; never in git)
+driver = "x11"                     # x11 (XWayland: ShaderGlass' Win32 menus and popups) | wayland (winewayland.drv, to evaluate)
+d3d = "dxvk"                       # dxvk (Fedora wine-dxvk, through alternatives) | wined3d (WINEDLLOVERRIDES d3d11,dxgi=b)
+gpu = "compositor"                 # compositor (DXVK_FILTER_DEVICE_NAME = the vendor of the compositor's first AQ_DRM_DEVICES card, read at run time: no PRIME copy per frame) | any (DXVK's choice)
+debug = "-all"                     # WINEDEBUG
+dll_overrides = "mscoree,mshtml="  # no Mono/Gecko installer prompt when the prefix is created
+[desktop.shaderglass.launch]
+# -f: borderless and never resizing itself (miosd owns the geometry); -input "Choose...": start capturing at once
+# through WineCap's single Linux input entry (no menu clicks).
+args = ["-f", "-input", "Choose..."]
+setup_shortcut = "m"               # ShaderGlass' menu toggle, sent to the pane when setup mode starts and ends
+# Seeded once as %LOCALAPPDATA%\ShaderGlassDefault.sgp (ShaderGlass' default profile, loaded at start) when the prefix
+# has none; Processing > Set as default replaces it and is never overwritten. Keys are ShaderGlass' profile
+# mnemonics (ShaderGlass/Options.h); a shader the release no longer ships falls back to ShaderGlass' own default.
+[desktop.shaderglass.profile]
+ProfileVersion = "1.1"
+ShaderCategory = "crt"
+ShaderName = "crt-geom"
+PixelSize = "1"
+DPIScaling = "0"
+AspectRatio = "1"
+OutputScale = "Free"
+FrameSkip = "0"
+Clone = "1"
+Transparent = "0"
+CaptureCursor = "0"
+Param-1-CRTgamma = "2.2"
+Param-1-monitorgamma = "2.2"
+Param-1-CURVATURE = "1"
+Param-1-R = "3.2"
+Param-1-d = "1.5"
+Param-1-cornersize = "0.016"
+Param-1-cornersmooth = "1000"
+Param-1-SHARPER = "3"
+Param-1-scanline_weight = "0.5"
+Param-1-vertical_scanlines = "1"
+Param-1-mask_type = "22"
+Param-1-DOTMASK = "0.25"
+Param-1-DOTMASK_brightboost = "0"
+Param-1-lum = "0.06"
+Param-1-interlace_detect = "0"
+# The pane's Hyprland rules (mios-gen render-hyprland, only while enabled). class and title are anchored patterns for
+# ShaderGlass' main window (Wine's X11 class is the lower-cased exe name; the title gains "(<shader>, ...)" once it
+# captures); tools_title is its shader browser and parameter windows.
+[desktop.shaderglass.window]
+class = '^(shaderglass\.exe)$'
+title = '^ShaderGlass( \(.*\))?$'
+main_title = '^ShaderGlass \(.*\)$'   # the main window once started (it maps as bare "ShaderGlass", then retitles); message boxes and the input dialog keep the bare title and are never adopted as a pane
+tools_title = '^(Choose Shader|Shader Parameters(: .*)?)$'
+pane_tag = "mios-shaderglass"                    # static tag on the pane (rule)
+passthrough_tag = "mios-shaderglass-passthrough" # miosd adds it to an overlay pane: no_focus, so input reaches the target; setup mode drops it
+glass_preset = "mios"              # must be [desktop.hyprland.hyprglass.config].default_preset: one material for every window
+layer = "pinned"                   # float + pin: above every window, glass pane and open special workspace, below the shell layers
+no_anim = true                     # follow the target without the windowsMove animation
+suppress_event = "fullscreen maximize activate activatefocus"   # never fullscreen/maximized (Wine asks when a borderless window covers its output), never focused by activation
+exclude_from_captures = false      # true = no_screen_share: the pane is blacked out of every output capture (screenshots, OBS)
+# Following: Hyprland sends no geometry events, so miosd polls the target.
+[desktop.shaderglass.follow]
+follow_hz = 0                      # 0 = the target output's refresh rate while the target moves or a pointer button is held
+idle_poll_ms = 100                 # otherwise
+settle_ms = 300                    # how long after the last change the fast rate continues
+on_move = "follow"                 # follow | hide (pane transparent until the target settles)
+close_with_target = true           # the pane closes when its target does
+hide_in_hypr3d = true              # transparent while Hypr3DGlass is active (it would become its own slab)
+# Screencast policy. The pane only ever captures a window: WineCap offers window sources only, and the MiOS picker
+# ([desktop.hyprland.xdph].custom_picker_binary) answers the supervisor's one-shot request with the target window
+# (no click); every other screencast request gets the stock picker.
+[desktop.shaderglass.capture]
+source_types = "window"            # WineCap MIOS_WINECAP_SOURCE_TYPES (monitor,window,virtual)
+cursor = "hidden"                  # WineCap MIOS_WINECAP_CURSOR: the real pointer stays sharp over the pane (no lagging shaded copy)
+picker = "mios"                    # mios (one-shot request answered by the MiOS picker) | stock (one click in the stock picker)
+request_ttl_ms = 15000             # a one-shot request older than this is ignored and removed
+restore_tokens = true              # persist the selection (portal restore token per target class): a re-attach needs no picker at all
+# WineCap, the capture library ShaderGlass loads from its own directory. build = compile the installed tag's WineCap/
+# with these patches in the builder below (fails loudly naming a patch that no longer applies); release = the zip's
+# prebuilt WineCap.dll (patches unused, so no restore tokens); auto = release when no patch is listed.
+[desktop.shaderglass.winecap]
+source = "build"
+patches = ["usr/share/mios/shaderglass/patches/winecap-mios-portal.patch"]   # MiOS: restore tokens, window-only sources, cursor mode
+[desktop.shaderglass.winecap.builder]
+image = "localhost/mios-winecap-build:latest"
+containerfile_dir = "/usr/share/mios/shaderglass/winecap-build"
+base_image = "registry.fedoraproject.org/fedora:{fedora_release}"   # {fedora_release} = the Fedora release this host is built on (os-release PLATFORM_ID platform:f<N>; MiOS rebrands VERSION_ID to its own version): the library links the ABI it is loaded with
+packages = ["wine-devel", "pipewire-devel", "glib2-devel", "gcc", "gcc-c++", "make", "pkgconf-pkg-config"]   # winegcc drives g++ even for C (upstream's builder installs g++ too)
+work_root = "/var/lib/mios-build/shaderglass"   # clone, staged tree, image store; $XDG_CACHE_HOME/mios/shaderglass when not writable
+heavy_lock = "/home/mios/mios-desktop-work-1/heavy.lock"   # MIOS_HEAVY_LOCK overrides it for one run
+scope_memory_max = "4G"
+container_memory = "3g"
+container_cpus = 4
+
+# xdg-desktop-portal-hyprland's own config, rendered to $XDG_CONFIG_HOME/<config> by `miosd shaderglass portal-config
+# --write` (xdph reads it only when it starts: restart it or log in again). The MiOS picker answers only miosd's
+# one-shot ShaderGlass requests and execs stock_picker (found on PATH, as xdph does) for everything else.
+[desktop.hyprland.xdph]
+config = "hypr/xdph.conf"
+allow_token_by_default = true
+custom_picker_binary = "/usr/libexec/mios/mios-share-picker"
+stock_picker = "hyprland-share-picker"
+
 # Hypr3DGlass shares the compositor ABI and Hyprglass material with the flat desktop.
 # The MiOS patch supplies the glass pass and compositor graphics/Lua build integration.
 [desktop.hyprland.hypr3d]
@@ -8115,10 +8373,17 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch"]
-toggle_key = "SUPER + G"
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch"]
+toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
+# One glass look (MiOS rule): the room's glass is the [desktop.hyprland.hyprglass.presets] entry the desktop draws
+# windows with. mios-gen hyprland-3d-toggle resolves it as hyprglass does (theme table, preset, inherits, hyprglass
+# config and defaults) and sends it as the plugin's glass table, with the frost (blur_sigma = 4 x blur_strength x
+# sqrt(blur_iterations)) and the edge pass ([desktop.hyprland.hyprglass.config] edge_pass, edge_pass_width).
+# hypr3d-mios-edge-quality.patch composites the desktop's stack in 3D: that pane over the room, the client at its
+# own opacity, the edge pass over it (no hand-tuned copy here; a [config.glass] table would override keys).
+glass_preset = "mios"
 
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
@@ -8128,12 +8393,16 @@ live_wrap = "mirror"
 
 # Render quality (hypr3d-mios-render-quality.patch): MSAA samples on the 3D scene
 # (0 = off, clamped to the GPU maximum), FXAA post AA (softens text slightly),
-# AMD FidelityFX CAS sharpening 0..1, and supersampling of minified window textures.
+# AMD FidelityFX CAS sharpening 0..1, and filtering of minified window textures.
 [desktop.hyprland.hypr3d.config.render]
 msaa = 4
 fxaa = false
 sharpen = 0.25
+# texture_supersample (hypr3d-mios-edge-quality.patch): window snapshots carry a mip chain (built once per capture)
+# sampled trilinear + anisotropic, so 1-px rules and text stay continuous at steep angles; false = one bilinear tap.
 texture_supersample = true
+# Max anisotropic filtering samples for window textures, 1..16 (1 = trilinear only; capped by the GPU).
+anisotropy = 16
 # Supersampling (hypr3d-mios-ssaa.patch): the 3D scene renders at scale x the output and is box-filtered down,
 # so window textures, rims and glass are sampled scale^2 times per pixel (MSAA covers geometry edges only).
 # 1..4; capped by the GL size limits and a 768 MiB scene budget.
@@ -8141,6 +8410,119 @@ scale = 2.0
 # Stills (hypr3d-mios-stills.patch): true hides the crosshair and draws the room over the bars, dock and
 # notifications, for screenshots and photography. Input is unchanged. Normal use: false.
 stills = false
+# texel_sharp (hypr3d-mios-retina-spawn.patch): at 1:1 and magnified, each window texel is flat over the scene pixels it
+# covers (only the pixel a texel edge crosses blends), so with scale >= 1.5 a window opened at 1:1 keeps 1-px detail at
+# full contrast (bilinear then the box filter halves it: modulation 0.5). Minified textures keep the mip + anisotropic
+# path; the glass, rim and edge pass are untouched (one glass look). false = bilinear.
+texel_sharp = true
+crt_curvature = true
+crt_radius = 3.2
+crt_scanlines = true
+crt_scanline_weight = 0.5
+crt_dotmask = 0.25
+crt_default_on = false
+
+[desktop.hyprland.hypr3d.config.player]
+# VR-native locomotion: disable view-only vertical head-bobbing and head-tilt roll while walking.
+walk_bob = false
+
+# Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
+# render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
+# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by SUPER+G and
+# miosd framerate; mios-gen rejects them here while the policy is enabled.
+
+# Retina window opening (hypr3d-mios-retina-spawn.patch; tools/native/mios-gen/src/hypr3d_spawn.rs). A window opens in
+# the room at magnification M = 1 (its on-screen size / its 2D size): one snapshot texel per output pixel at the window
+# centre (no minification blur) and every client's glyphs at their flat-desktop size, whatever font, app zoom or text
+# scaling the client uses (they are baked into its buffer). For a window facing the camera
+#   M = window_scale x d1 / distance,  d1 = (logical height / 100 / 2) / tan(65 deg / 2)
+# (logical height = the output's mode / scale, rotated by its transform), and only M = 1 gives both one texel per
+# pixel and the 2D glyph size. So the reading distance stays a world constant and window_scale follows the output:
+# 1920x1080 0.58988, 2560x1440 0.44241, 2560x1440 @1.25 0.55301, portrait 1080x1920 0.33181, phone 390x844 0.75482
+# (the plugin default 0.5 gave M = 0.85 on 1080p, 1.13 on 1440p, 0.66 on a phone). `mios-gen hyprland-3d-toggle`
+# plans the room's output (hyprctl monitors: mode, scale, transform, reserved bars; its [desktop.mobile] verdict) and
+# sends windows = {window_scale, spawn_distance, spawn_size, pixel_exact, fit, fit_margin, pixel_snap, cascade,
+# min_magnification}; the patched plugin re-derives window_scale live per output (pixel_exact) and places each window.
+# Explicit [desktop.hyprland.hypr3d.config.windows] keys win (an explicit window_scale turns pixel_exact off).
+# `mios-gen hyprland-3d-spawn` prints the plan per output. criterion = "fixed" (or enabled = false) sends nothing.
+# Unaffected: the frame-rate policy (placement is computed once per window, no extra pass; fitted boxes never take the
+# tiled capture path), render.stills, the one glass look, per-GPU render.scale (it only sets the legibility floor).
+# Rotated and flipped outputs (portrait by transform): hypr3d-mios-transform.patch renders the room upright and maps it
+# through the output transform (upstream drew it sideways with the wrong window content), so the same numbers hold.
+[desktop.hyprland.hypr3d.spawn]
+enabled = true
+criterion = "retina"                       # "retina": M = 1 per output and per window; "fixed": the plugin's own placement
+reading_distance_m = 0.65                  # arm's reach (metres in front of the eye): sheet-of-paper retina sizing on every output
+eyeline_offset_m = 0.04                    # lift fresh windows above screen centre to clear the dock/HUD in the 3D room
+tilt_angle_deg = 12.0                      # angled up at a shallow vertical angle (degrees)
+open_effect_3d = "magic-lamp"              # 3D window opening animation ("magic-lamp" | "none")
+close_effect_3d = "glass-dissolve"         # 3D glass window closing animation ("glass-dissolve" | "magic-lamp" | "none")
+# A window larger than the work area (the output minus its reserved bars) minus fit_margin_px on every side:
+# "resize" = the room box shrinks into it (the client re-renders, M stays 1; a client whose minimum size is larger is
+# pushed back until it fits), "distance" = pushed back only, "off" = upstream (may be cropped). Never cropped otherwise.
+fit = "resize"
+fit_margin_px = "theme.shell.edge_margin_px"   # a number, or the SSOT key it follows (the shell's edge margin, 8)
+min_text_px = 10                           # push-back legibility floor: M_min = max(1 / render.scale, min_text_px / text size)
+text_size_source = "theme.font"            # size (px) and cell_w_px/cell_h_px + chrome_w_px/chrome_h_px of the text cells
+landscape_cells = [94, 34]                 # paper-like landscape box (960x692 at the SSOT cell grid)
+portrait_cells = [66, 46]                  # paper-like portrait box (680x932 at the SSOT cell grid)
+mobile = "fill"                            # a [desktop.mobile] output: "fill" = the whole fit box (as the 2D mobile profile), "cells"
+cascade_px = 32                            # a window opening over another steps right/down this far in the plane (M-compensated
+                                           # depth step, never sharing a plane); 0 = upstream 0.15 m in front (M 1.03)
+pixel_snap = true                          # the texel grid lands on the output pixel grid (sub-pixel shift once it settles)
+
+# Universal USB/Bluetooth controller support for Hypr3D (L3 + R3 chord toggle & dual-stick controls).
+[desktop.hyprland.hypr3d.controller]
+enabled = true
+# Simultaneous thumbstick chord to toggle Hypr3D mode (evdev button event names).
+toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
+# Chord debounce window in milliseconds to avoid double-triggering when holding both sticks.
+debounce_ms = 250
+# Radial/axis deadzone threshold [0.0..1.0]; stick input below this value is ignored.
+deadzone = 0.15
+# Global sensitivity multiplier.
+sensitivity = 1.0
+# Translation sensitivity multiplier for Left Stick movement.
+move_sensitivity = 1.0
+# Rotation sensitivity multiplier for Right Stick camera look.
+camera_sensitivity = 1.0
+# Left stick movement mode: "continuous" (continuous 3D camera translation) or "wasd" (step movement).
+left_stick_mode = "continuous"
+# Right stick camera mode: "camera" (yaw/pitch rotation).
+right_stick_mode = "camera"
+# Invert camera pitch (look up/down).
+invert_y = false
+# Allow D-pad (ABS_HAT0X, ABS_HAT0Y) to drive left-stick discrete movement.
+dpad_enabled = true
+# Polling/sampling interval in milliseconds for analog axes.
+poll_ms = 10
+# Device filter: "gamepad" checks EV_KEY for BTN_GAMEPAD/BTN_SOUTH or BTN_THUMBL+BTN_THUMBR and EV_ABS.
+device_filter = "gamepad"
+# Fallback axes for Right Stick on gamepads exposing Z/RZ instead of RX/RY.
+fallback_axes = ["ABS_Z", "ABS_RZ"]
+# Right Trigger (RT) grabs/drags aimed or focused window in 3D space while held.
+grab_button = "BTN_TR2"
+grab_axis = "ABS_RZ"
+# Left Trigger (LT) resizes aimed or focused window in 3D space while held.
+resize_button = "BTN_TL2"
+resize_axis = "ABS_Z"
+# Analog trigger threshold [0.0..1.0] for engaging RT grab / LT resize.
+trigger_threshold = 0.30
+# SELECT button cycles through Hypr3D camera views/modes (first-person, third-person behind, third-person front).
+view_mode_button = "BTN_SELECT"
+# START button switches between cursor mode (window interaction) and camera mode (3D space look/move).
+cursor_mode_button = "BTN_START"
+# Bottom/South face button (BTN_SOUTH): single-press jumps; double-press within double_press_ms toggles Flying/Hover mode (hold = fly up).
+jump_button = "BTN_SOUTH"
+double_press_ms = 350
+# Left/West face button (BTN_WEST): cycles posture (Stand -> Crouch -> Sit) in walking/gravity mode; hold = fly down in Flying/Hover mode.
+crouch_button = "BTN_WEST"
+# Top/North face button (BTN_NORTH): toggles 2D fullscreen of the aimed/focused window from Hypr3D (Super+F11 equivalent).
+fullscreen_button = "BTN_NORTH"
+# Right top bumper (R1/RB = BTN_TR): toggles ShaderGlass on the aimed/focused window.
+shaderglass_toggle_button = "BTN_TR"
+# Left top bumper (L1/LB = BTN_TL): cycles ShaderGlass shader presets/types.
+shaderglass_cycle_button = "BTN_TL"
 
 [desktop.hyprland.boot_sync]
 enabled = true
@@ -8150,7 +8532,7 @@ enabled = true
 [desktop.hyprland.hardware_profiles.igpu]
 name = "MiOS iGPU (default)"
 session_file = "hyprland.desktop"
-boot_title = "MiOS-Desktop (default iGPU)"
+boot_title = "MiOS iGPU"
 boot_remove = ["mios.desktop.gpu="]
 boot_append = ["mios.desktop.gpu=igpu"]
 device = "/dev/dri/igpu"
@@ -8158,27 +8540,75 @@ pci = ""
 pci_file = "/etc/mios/hyprland/igpu-pci"
 include_other_devices = false
 # Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
-# this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+G) finds the running profile in
+# this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+F12) finds the running profile in
 # MIOS_DESKTOP_HARDWARE_PROFILE (exported to the compositor by `hyprland-session`), then in the kernel's
 # mios.desktop.gpu=, then in [desktop.hyprland].hardware_profile. An unknown profile or a missing key keeps the
 # global scale. A value that is not a number in 1..4 is rejected by render-hyprland (--check) and by the toggle.
-# Each SUPER+G re-applies it. Radeon 610M (2 CU) at 1920x1080 with msaa 4: 1.5 = 10.2 ms/frame and holds
+# Each SUPER+F12 re-applies it. Radeon 610M (2 CU) at 1920x1080 with msaa 4: 1.5 = 10.2 ms/frame and holds
 # 60 fps; 2.0 = 11.2 ms/frame and drops to about 55 fps.
 hypr3d_render_scale = 1.5
 
 [desktop.hyprland.hardware_profiles.dgpu]
 name = "MiOS dGPU"
 session_file = "mios-desktop-dgpu.desktop"
-boot_title = "MiOS-Desktop dGPU (NVIDIA)"
+boot_title = "MiOS dGPU"
 boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids="]
 # The empty ids override also clears a reservation embedded in an older initramfs.
-boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "nouveau.modeset=1", "rd.driver.post=nouveau"]
+boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"]
 device = "/dev/dri/dgpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/dgpu-pci"
 include_other_devices = true
 # Hypr3D supersampling on the RTX 4090; see hardware_profiles.igpu.hypr3d_render_scale.
 hypr3d_render_scale = 2.0
+
+# AI-hint: GRUB boot menu, defaults and theme. `sudo mios-gen render-grub --apply` projects them (tools/native/mios-gen/src/grub.rs):
+# the /etc/default/grub managed block, the static recovery entry /etc/grub.d/41_mios_recovery, the theme under
+# [boot.grub.theme].dir, grubenv (save_default) and a BLS menu that holds only mios-desktop-<profile>.conf. Every other
+# BLS entry moves to archive_dir (kernels stay installed). `mios-gen render-grub --check` reports drift.
+[boot.grub]
+enabled                = true
+timeout_s              = 10                     # menu countdown in seconds
+timeout_style          = "menu"                 # "menu" | "countdown" | "hidden"
+default                = "last"                 # "last" = boot the entry booted last (GRUB saves each menu choice); or a profile id: "igpu" | "dgpu"
+initial_default        = "igpu"                 # saved entry when grubenv has none or a stale one; after a kernel update the booted profile wins
+menu_profiles          = ["igpu", "dgpu"]       # [desktop.hyprland.hardware_profiles.*] shown, in this order; their boot_title is the menu text
+archive_dir            = "/boot/loader/mios-kernel-sources"  # other BLS entries move here; kernel updates re-render the managed entries from the newest kernel
+recovery               = true                   # one static recovery entry that does not depend on BLS discovery
+recovery_title         = "MiOS Recovery"
+recovery_profile       = "igpu"                 # kernel options come from this managed entry
+recovery_kernel        = "rescue"               # "rescue" = dracut rescue kernel/initramfs (survives kernel updates) | "profile" = the profile entry's kernel
+recovery_remove        = ["rhgb", "quiet", "systemd.unit="]  # exact options, or prefixes ending in "="
+recovery_append        = ["systemd.unit=multi-user.target"]  # text console, no desktop
+recovery_saves_default = false                  # booting recovery never becomes the next default
+gfxmode                = "1920x1080,auto"       # GRUB_GFXMODE
+hide_firmware_entry    = true                   # no "UEFI Firmware Settings" item (/etc/grub.d/30_uefi-firmware not executable)
+kernel_hook            = true                   # /etc/kernel/install.d/99-mios-grub-menu.install keeps the menu right after kernel updates
+
+# Image-free theme: the signed Fedora GRUB has gfxmenu/gfxterm built in. Under Secure Boot its shim_lock verifier refuses
+# every font file read from disk (verified in OVMF with this grubx64.efi), so only its embedded Unifont 16 can draw text.
+[boot.grub.theme]
+enabled         = true                          # false = plain text console menu
+dir             = "/boot/grub2/themes/mios"     # on /boot, which GRUB reads before the root filesystem
+title           = "MiOS"
+hint            = "Up/Down select    Enter boot    e edit    c command line"
+font            = "/usr/share/fonts/geist-nerd/GeistMonoNerdFontMono-Regular.otf"  # [theme.font] family
+font_bold       = "/usr/share/fonts/geist-nerd/GeistMonoNerdFontMono-Bold.otf"
+title_size      = 44
+item_size       = 28
+hint_size       = 18
+background      = "bg"                          # [colors] token or #RRGGBB
+foreground      = "fg"
+item            = "subtle"
+selected        = "cursor"
+muted           = "muted"
+accent          = "accent"
+menu_width_pct  = 44
+menu_top_pct    = 34
+menu_height_pct = 30
+fonts                = "auto"                   # "auto" = convert font/font_bold with grub2-mkfont only when Secure Boot is off | "always" | "never"
+builtin_font         = "Unifont Regular 16"     # embedded in the signed grubx64.efi; used whenever the converted fonts cannot load
+builtin_font_gfxmode = "1280x720,auto"          # GRUB_GFXMODE with the 16 px built-in font, so it reads larger on a 1080p screen
 
 [desktop.hyprland.environment]
 AQ_DRM_DEVICES = "/dev/dri/igpu"
@@ -8225,7 +8655,7 @@ dim_strength = 0.05
 enabled = true
 range = 36
 render_power = 2
-offset = "0 4"
+offset = "0 0"
 color = "rgba(0A0A0A55)"
 color_inactive = "rgba(0A0A0A33)"
 [desktop.hyprland.config.decoration.blur]
@@ -9379,6 +9809,7 @@ client             = "/usr/bin/looking-glass-client"
 client_ini         = "/etc/looking-glass-client.ini"
 client_auto_resize = false     # the window keeps the placement size; the guest image scales into it
 start_timeout_s    = 120       # how long the launcher waits for the framebuffer after `virsh start`
+serial_log         = "/var/log/libvirt/qemu/{domain}-serial0.log"   # <serial><log file=.../> on every domain: virtlogd keeps the guest's COM1 (provisioning log) on the host, console still attachable
 
 [identity.ipa]
 enabled = false
@@ -9838,7 +10269,7 @@ hover_opacity_pct        = 50   # dock/drawer hover highlight: accent at this al
 selection_opacity_pct    = 65   # search/list selection: accent at this alpha
 scrim_opacity_pct        = 60   # modal backdrop (secret prompt): black at this alpha
 title_font_step_px       = 4    # titles and the search field: [theme.font].size + this
-dock_autohide            = false # true = dock hides until the pointer touches the bottom edge (reserves one edge margin); false = always shown, hidden only under fullscreen
+dock_autohide            = false # HUD stays visible; borderless fullscreen uses edge reveal without reserving space
 dock_reveal_px           = 2    # height of the bottom-edge hot zone that reveals the auto-hidden dock
 dock_hide_delay_ms       = 600  # dock stays up this long after the pointer leaves it and the hot zone
 dock_fullscreen_reveal   = true # under a fullscreen window the dock hides; true = the bottom-edge hot zone reveals it as an overlay above the window (reserves nothing)
@@ -9863,11 +10294,26 @@ date_format     = "ddd d MMM"     # Qt date format for the brief day/date; click
 week_starts_on  = 1               # calendar first weekday: 0 = Sunday, 1 = Monday
 app_menu        = true            # focused app's exported menu (GTK org.gtk.Menus / dbusmenu) when one exists
 popup_ms        = 200             # shell popups (calendar, power, app-menu dropdowns) grow out of their trigger over this long
+sample_interval_ms = 1000         # one shared FPS / ShaderGlass sampler for all islands
 # Under a fullscreen window the status island and app-menu pills hide and reserve nothing; touching the
 # top screen edge reveals them as overlays above the window until the pointer leaves (EdgeReveal.qml).
 fullscreen_reveal          = true   # false = they stay hidden under fullscreen windows
 fullscreen_reveal_px       = 2      # height of the top-edge hot zone over a fullscreen window
 fullscreen_hide_delay_ms   = 600    # the revealed row stays up this long after the pointer leaves it
+# The island appearance menu writes these switches to the user TOML; all outputs update together.
+# Its settings button remains available when every optional item is hidden.
+[desktop.topbar.visibility]
+app_menu   = true
+workspaces = false
+network    = false
+sound      = false
+batteries  = true
+sysmon     = false
+date       = false
+clock      = true
+power      = true
+fps        = false
+
 # Commands the bar runs; settings panels need XDG_CURRENT_DESKTOP=GNOME outside GNOME Shell.
 [desktop.topbar.commands]
 settings       = "/usr/libexec/mios/mios-configurator-launch"
@@ -10051,6 +10497,30 @@ session_dirs        = ["/usr/share/wayland-sessions", "/usr/share/xsessions"]  #
 tuigreet            = "/usr/bin/tuigreet"                   # the real tuigreet binary (NOT the /usr/local/bin/tuigreet helper wrapper)
 tuigreet_args       = ["--time", "--asterisks", "--remember", "--remember-user-session"]  # flags before --sessions/--cmd, same as the live config
 session_cmd = "/usr/bin/mios-gen hyprland-session"  # Boot profile selects the GPU.
+autologin           = false                                 # true = greetd [initial_session] starts session_cmd for autologin_user once per boot, skipping the greeter
+autologin_user      = "mios"                                # read only when autologin = true
+console_palette     = true                                  # paint the greeter VT with [colors].ansi_* (terminal::console) before tuigreet draws
+greeting            = "MiOS"                                # tuigreet --greeting
+width               = 64                                    # tuigreet --width (columns)
+window_padding      = 2                                     # tuigreet --window-padding
+container_padding   = 2                                     # tuigreet --container-padding
+prompt_padding      = 1                                     # tuigreet --prompt-padding
+greet_align         = "center"                              # tuigreet --greet-align
+time_format         = "%a %d %b  %H:%M"                     # tuigreet --time-format (shown with --time)
+
+# tuigreet --theme: ANSI colour names resolved through the console palette (console_palette = true):
+# black = ansi_0 (indigo), gray = ansi_7 (cream), yellow = ansi_3 (sunset), cyan = ansi_6, lightblue = ansi_12.
+[desktop.greeter.tuigreet_theme]
+container = "black"
+border    = "lightblue"
+title     = "yellow"
+greet     = "gray"
+text      = "gray"
+time      = "cyan"
+prompt    = "cyan"
+input     = "white"
+action    = "darkgray"
+button    = "yellow"
 
 [theme.cursor_windows]
 base_size           = 24
@@ -10396,6 +10866,25 @@ build        = "latest"             # always the newest build of `channel`; a nu
 arch         = "amd64"              # amd64 | arm64
 edition      = "professional"       # UUP Dump edition name (Pro: RDP host, Hyper-V platform, gpedit)
 language_ref = "locale.language"    # SSOT locale (en_US.UTF-8) -> UUP language tag (en-us) at render
+# Inbox apps of the SAME update, integrated offline by the converter (CustomAppsList.txt -> Apps\<family>): the edition
+# file list carries none of them, so without this the image has no Microsoft Store, no App Installer (winget) and no
+# Xbox app (round-1 boot of build-20261023T224037Z: 3 provisioned packages, a GamingHomeApp naming an absent app and a
+# Hydrate stage without winget). Package family names; each must be offered by the update, else the resolve aborts.
+apps = [
+  "Microsoft.WindowsStore_8wekyb3d8bbwe",            # Microsoft Store (the Store-only components hydrate through it)
+  "Microsoft.StorePurchaseApp_8wekyb3d8bbwe",        # Store purchase flow
+  "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe",     # App Installer = winget (the Hydrate stage)
+  "Microsoft.SecHealthUI_8wekyb3d8bbwe",             # Windows Security UI
+  "Microsoft.GamingApp_8wekyb3d8bbwe",               # Xbox app = [windows.xbox.xbox].home_app
+  "Microsoft.GamingServices_8wekyb3d8bbwe",          # Gaming Services (offline; store_hydrate then finds it provisioned)
+  "Microsoft.XboxIdentityProvider_8wekyb3d8bbwe",    # Xbox sign-in
+  "Microsoft.Xbox.TCUI_8wekyb3d8bbwe",               # Xbox title-callable UI
+  "Microsoft.XboxGamingOverlay_8wekyb3d8bbwe",       # Game Bar ([windows.xbox.xbox].game_bar)
+  "Microsoft.XboxSpeechToTextOverlay_8wekyb3d8bbwe", # Game Bar speech-to-text
+]
+# Framework packages the apps depend on (VCLibs, UI.Xaml, .NET Native, Windows App Runtime, Store Engagement): every one
+# the update offers is staged (Apps\MSIXFramework). Matched on the file name after UUP Dump's IPA_<group>_ prefix.
+app_frameworks = '^Microsoft\.(VCLibs|UI\.Xaml|NET\.Native\.(Framework|Runtime)|WindowsAppRuntime|Services\.Store\.Engagement)\.[^_]*\.(appx|msix)$'
 
 # --- shell preferences (Default-user hive unless the registry_map says otherwise) ---
 [windows.xbox.preferences]
@@ -10695,6 +11184,11 @@ enable  = []                                                   # unconditional e
 enable_if_nested_virt = ["Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"]   # only when the domain exposes svm/vmx (Q6)
 disable = ["Microsoft-Hyper-V-All", "NetFx3"]                  # Hyper-V off, .NET 3.5 off (Q6)
 capabilities_add = ["OpenSSH.Server"]                          # capability NAME prefix; the build picks the image's matching capability (no version suffix)
+# Every added capability is baked OFFLINE from its Feature-on-Demand package of the SAME resolved UUP update
+# (DISM /Add-Capability /Source:<fod> /LimitAccess on the mounted image; Microsoft sample package name
+# OpenSSH-Server-Package~31bf3856ad364e35~amd64~~.cab). proof = image-relative file the gate requires in install.wim.
+capability_fod   = { "OpenSSH.Server" = { package = "OpenSSH-Server-Package", proof = 'Windows\System32\OpenSSH\sshd.exe' } }
+fod_metadata     = "FoDMetadata_Client.cab"                    # FOD metadata of the same update, staged beside the packages (FOD repository layout)
 
 # --- drivers: virtualization drivers only; GPU by in-guest detection, never in the image (XB-3) ---
 [windows.xbox.drivers]
@@ -10806,18 +11300,24 @@ reboot_exit_codes = []   # success codes that mean "reboot required": status reb
 
 # --- guest tools (staged offline, installed at SetupComplete, verified by the probe) ---
 [windows.xbox.guest_tools.virtio_win_guest_tools]
-from       = "drivers.virtio_win"            # taken from the same resolved virtio-win ISO
-file       = "virtio-win-guest-tools.exe"    # bundle: virtio driver MSI + QEMU guest agent + SPICE vdagent
-install_at = "SetupComplete"                 # silent install as SYSTEM before first logon
+from       = "drivers.virtio_win"            # taken from the same resolved virtio-win release (verified RPM -> ISO)
+file       = "virtio-win-gt-x64.msi"         # the driver/service MSI at the ISO root (virtio drivers, VirtioFsSvc, BalloonService), run alone by msiexec
+bundle     = "virtio-win-guest-tools.exe"    # the composite Burn bundle is only a verified SOURCE (the SPICE agent MSI is carved from it); never run: its silent session-0 install exited 1603
+install_at = "SetupComplete"                 # msiexec /qn as SYSTEM before first logon, verbose log under provision.log_dir
 
 [windows.xbox.guest_tools.qemu_ga]
 upstream   = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-qemu-ga/"   # latest-qemu-ga channel
 channel    = "latest"           # newest qemu-ga MSI; version recorded in the manifest only
-package    = "qemu-ga-x86_64.msi"   # MSI name inside the channel directory
+package    = "qemu-ga-x86_64.msi"   # MSI name inside the channel directory (and under guest-agent/ in the virtio-win RPM)
 service    = "QEMU-GA"          # service the probe requires Running
+# integrity: the MSI is unsigned and upstream publishes no digest for it. Its anchor is the sha256 that the RPM header
+# of the same resolved virtio-win release records for guest-agent/<package> (FILEDIGESTS); that RPM is anchored by the
+# md5 upstream publishes in CHECKSUM. A latest-qemu-ga MSI that the latest virtio-win release does not carry aborts.
 
 [windows.xbox.guest_tools.spice_vdagent]
-from       = "guest_tools.virtio_win_guest_tools"   # shipped inside the guest-tools bundle
+from       = "guest_tools.virtio_win_guest_tools"   # carved from the verified bundle; its Burn manifest SHA-1 must match
+product    = "Spice Agent"            # ProductName marker that selects the agent among the bundle's 64-bit MSI packages
+package    = "spice-vdagent-x64.msi"  # name the image stages it under (msiexec /qn as SYSTEM)
 service    = "spice-agent"      # service the probe requires Running
 
 [windows.xbox.guest_tools.winfsp]
@@ -10845,7 +11345,7 @@ ship = [
   { name = "mios-wallpaperd",        kind = "native", source = "build.native.windows:mios-wallpaperd" },        # living wallpaper host (spec s.1)
   { name = "Set-MiOSWallpaper",      kind = "script", source = "usr/share/mios/windows/Set-MiOSWallpaper.ps1" }, # wallpaper registration
   { name = "miosd",                  kind = "native", source = "build.native.windows:miosd" },                  # MiOS daemon
-  { name = "mios-agent-relay",       kind = "native", source = "build.native.windows:mios-agent-relay" },       # agent relay
+  { name = "mios-agent-relay",       kind = "native", source = "build.native.windows:mios-agent-relay", invocation = "per-request" },   # agent relay: a one-shot mailbox CLI the MCP server runs per request (--state PATH < request.json); never a service or task
   { name = "MiosServiceTool",        kind = "binary", source = "usr/share/mios/windows/MiosServiceTool.exe" },   # service helper
   { name = "MiOS-FhsSync",           kind = "config", source = "usr/share/mios/windows/MiOS-FhsSync.cfg" },      # FHS sync config
   { name = "mios-looking-glass-idd", kind = "script", source = "usr/share/mios/windows/mios-looking-glass-idd.ps1" },  # LG IDD install + mirror task
@@ -10922,13 +11422,19 @@ start  = 2   # OpenSSH server Start: 2 = Automatic
 enable = true
 
 [windows.xbox.settings.rdp]
-enable           = 0    # fDenyTSConnections: 0 = RDP connections allowed
-allow_cam        = 0    # fDisableCam: 0 = camera redirection allowed
-allow_audio      = 0    # fDisableAudioCapture: 0 = audio capture allowed
-allow_drives     = 0    # fDisableCdm: 0 = client drive redirection allowed
-allow_com_ports  = 0    # fDisableCcm: 0 = COM port redirection allowed
-allow_clipboard  = 0    # fDisableClip: 0 = clipboard redirection allowed
-allow_location   = 0    # fDisableLocation: 0 = location redirection allowed
+# Device and Resource Redirection policies for the official Windows App. Each allow_* key is written by its
+# registry_map entry, which names the Microsoft TerminalServer.admx policy (render_spec checks the value name
+# against Microsoft's Policy CSP ADMX_TerminalServer table; the image gate checks it against the image's own
+# Windows\PolicyDefinitions\TerminalServer.admx). Every key here must be mapped (an unmapped key fails the render).
+enable               = 0    # fDenyTSConnections: 0 = RDP connections allowed
+allow_audio_playback = 0    # fDisableCam = TS_CLIENT_AUDIO "Allow audio and video playback redirection": 0 = Enabled (playback allowed)
+allow_microphone     = 0    # fDisableAudioCapture = TS_CLIENT_AUDIO_CAPTURE "Allow audio recording redirection": 0 = Enabled (microphone allowed)
+allow_camera         = 0    # fDisableCameraRedir = TS_CAMERA_REDIRECTION "Do not allow video capture redirection": 0 = Disabled (camera allowed)
+allow_drives         = 0    # fDisableCdm = TS_CLIENT_DRIVE_M "Do not allow drive redirection": 0 = Disabled (drives allowed)
+allow_com_ports      = 0    # fDisableCcm = TS_CLIENT_COM "Do not allow COM port redirection": 0 = Disabled (COM ports allowed)
+allow_clipboard      = 0    # fDisableClip = TS_CLIENT_CLIPBOARD "Do not allow Clipboard redirection": 0 = Disabled (clipboard allowed)
+allow_location       = 0    # fDisableLocationRedir = TS_LOCATION_REDIRECTION "Do not allow location redirection": 0 = Disabled (location allowed)
+allow_time_zone      = 1    # fEnableTimeZoneRedirection = TS_TIME_ZONE "Allow time zone redirection": 1 = Enabled (not configured = the guest's zone)
 
 # --- users: references only, never literal credentials (XB-4; operator decision: Accounts) ---
 [windows.xbox.users]
@@ -10941,8 +11447,8 @@ password_ref     = "identity.default_password"   # its password (empty -> render
 display_name_ref = "identity.fullname"           # FullName / DisplayName
 groups           = ["Users", "Remote Desktop Users"]   # standard non-admin gaming account
 autologon        = true                          # AutoLogon into the desktop account
-autologon_persistent = true                      # LogonCount = mios_credentials.PERSISTENT_LOGON_COUNT and FirstLogon deletes
-                                                 # Winlogon AutoLogonCount: autologon persists across reboots
+autologon_persistent = true                      # LogonCount = mios_credentials.PERSISTENT_LOGON_COUNT and the SYSTEM SetupComplete stage
+                                                 # deletes Winlogon AutoLogonCount: autologon persists across reboots
 
 [windows.xbox.users.admin]
 name_ref         = "identity.admin_username"     # separate elevation admin account name
@@ -10953,13 +11459,13 @@ autologon        = false
 
 [windows.xbox.users.builtin_administrator]
 password_ref = "identity.admin_password"   # RID-500 password while setup runs (empty -> render fails)
-disable_at   = "finalize"                    # mios-setup-finalize disables RID-500 once setup is complete
+disable_at   = "finalize"                    # the last step of the SYSTEM SetupComplete stage disables RID-500 (after the admin account is proven)
 
 # --- Store-only components (operator decision: Store-only components) ---
 [windows.xbox.store_hydrate]
-stage    = "first_logon"     # MiOS first-logon hydrate task; retries every logon until verified, then removes itself
+stage    = "first_logon"     # the desktop user's logon task (registered by SYSTEM at SetupComplete); retries every logon; the SYSTEM Verify task removes it once verified
 packages = [
-  { name = "Microsoft.GamingServices", store_id = "9MWPM2CQNLHN" },   # Gaming Services (Store-only); probe verifies the appx
+  { name = "Microsoft.GamingServices", store_id = "9MWPM2CQNLHN" },   # Gaming Services; also integrated offline by windows.xbox.source.apps (Hydrate then finds it provisioned); probe verifies the appx
 ]
 
 [windows.xbox.baked.webview2]
@@ -11082,7 +11588,7 @@ base_answer_file  = "/var/lib/mios-build/artifacts/mios-xbox/media/autounattend.
 "settings.display.system_light_theme"     = { hive = "DEFAULT_USER", key = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", name = "SystemUsesLightTheme", type = "REG_DWORD" }   # dark shell
 "settings.display.transparency"           = { hive = "DEFAULT_USER", key = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", name = "EnableTransparency", type = "REG_DWORD" }   # transparency
 "settings.display.wallpaper"              = { hive = "DEFAULT_USER", key = "Control Panel\\Desktop", name = "Wallpaper", type = "REG_SZ" }   # no static wallpaper
-"settings.display.no_remote_desktop_wallpaper" = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fNoRemoteDesktopWallpaper", type = "REG_DWORD" }   # RDP wallpaper off
+"settings.display.no_remote_desktop_wallpaper" = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fNoRemoteDesktopWallpaper", type = "REG_DWORD", policy = "TS_DISABLE_REMOTE_DESKTOP_WALLPAPER" }   # RDP wallpaper off
 "settings.input.sticky_keys_flags"        = { hive = "DEFAULT_USER", key = "Control Panel\\Accessibility\\StickyKeys", name = "Flags", type = "REG_SZ" }   # sticky keys hotkey
 "settings.input.mouse_speed"              = { hive = "DEFAULT_USER", key = "Control Panel\\Mouse", name = "MouseSpeed", type = "REG_SZ" }   # pointer precision
 "settings.enablements.developer_mode"     = { hive = "SOFTWARE", key = "Microsoft\\Windows\\CurrentVersion\\AppModelUnlock", name = "AllowDevelopmentWithoutDevLicense", type = "REG_DWORD" }   # developer mode
@@ -11092,12 +11598,14 @@ base_answer_file  = "/var/lib/mios-build/artifacts/mios-xbox/media/autounattend.
 "settings.security.prevent_device_encryption" = { hive = "SYSTEM", key = "ControlSet001\\Control\\BitLocker", name = "PreventDeviceEncryption", type = "REG_DWORD" }   # prevent auto BitLocker (spec s.6)
 "settings.ssh.start"                        = { hive = "SYSTEM", key = "ControlSet001\\Services\\sshd", name = "Start", type = "REG_DWORD" }   # OpenSSH automatic start
 "settings.rdp.enable"                       = { hive = "SYSTEM", key = "ControlSet001\\Control\\Terminal Server", name = "fDenyTSConnections", type = "REG_DWORD" }   # RDP enable (fDenyTSConnections=0)
-"settings.rdp.allow_cam"                    = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCam", type = "REG_DWORD" }   # RDP camera redirection
-"settings.rdp.allow_audio"                  = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableAudioCapture", type = "REG_DWORD" }   # RDP audio capture redirection
-"settings.rdp.allow_drives"                 = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCdm", type = "REG_DWORD" }   # RDP drive redirection
-"settings.rdp.allow_com_ports"              = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCcm", type = "REG_DWORD" }   # RDP COM ports redirection
-"settings.rdp.allow_clipboard"              = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableClip", type = "REG_DWORD" }   # RDP clipboard redirection
-"settings.rdp.allow_location"               = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableLocation", type = "REG_DWORD" }   # RDP location redirection
+"settings.rdp.allow_audio_playback"         = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCam", type = "REG_DWORD", policy = "TS_CLIENT_AUDIO" }   # RDP audio/video playback (speakers)
+"settings.rdp.allow_microphone"             = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableAudioCapture", type = "REG_DWORD", policy = "TS_CLIENT_AUDIO_CAPTURE" }   # RDP audio recording (microphone)
+"settings.rdp.allow_camera"                 = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCameraRedir", type = "REG_DWORD", policy = "TS_CAMERA_REDIRECTION" }   # RDP video capture (camera)
+"settings.rdp.allow_drives"                 = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCdm", type = "REG_DWORD", policy = "TS_CLIENT_DRIVE_M" }   # RDP drive redirection
+"settings.rdp.allow_com_ports"              = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableCcm", type = "REG_DWORD", policy = "TS_CLIENT_COM" }   # RDP COM ports redirection
+"settings.rdp.allow_clipboard"              = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableClip", type = "REG_DWORD", policy = "TS_CLIENT_CLIPBOARD" }   # RDP clipboard redirection
+"settings.rdp.allow_location"               = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fDisableLocationRedir", type = "REG_DWORD", policy = "TS_LOCATION_REDIRECTION" }   # RDP location redirection
+"settings.rdp.allow_time_zone"              = { hive = "SOFTWARE", key = "Policies\\Microsoft\\Windows NT\\Terminal Services", name = "fEnableTimeZoneRedirection", type = "REG_DWORD", policy = "TS_TIME_ZONE" }   # RDP time zone redirection
 
 # --- setup (answer file windowsPE pass) ---
 [windows.xbox.settings.setup]
@@ -11112,6 +11620,70 @@ msr_mb      = 16      # Microsoft reserved partition size
 enable         = true                              # SetupComplete enables the WinRM HTTP listener (Negotiate, message encryption; no Basic, no unencrypted)
 remote_address = "LocalSubnet"                     # firewall scope: the VM's own subnet = the libvirt bridge the host sits on
 port_ref       = "windows.xbox.probe.winrm_port"   # the port the probe dials
+
+# --- provisioning stages (fix-a M1). Microsoft: SetupComplete.cmd "runs with local system permissions" after Windows
+# is installed, before the logon screen; FirstLogonCommands run as the first user to log on and, for a user without
+# administrative privileges under UAC, only after an administrator approves (Cancel = not run). The desktop account is
+# a standard user, so every privileged step runs as SYSTEM (SetupComplete or a SYSTEM scheduled task).
+[windows.xbox.provision]
+first_logon_commands = false                  # the answer file carries no FirstLogonCommands (the render refuses true)
+state_dir    = 'C:\ProgramData\MiOS'          # setup-state.json, provision-state.json, setup.log
+log_dir      = 'C:\ProgramData\MiOS\logs'     # per-installer msiexec /l*v logs
+verify_task  = 'MiOS\MiOS-Verify'             # SYSTEM task: MiOS-Xbox.Provision.ps1 -Stage Verify at startup and at the desktop user's logon
+hydrate_task = 'MiOS\MiOS-StoreHydrate'       # the desktop user's logon task (Store installs are per user); registered by SYSTEM
+retry_task   = 'MiOS\MiOS-GuestToolsRetry'   # SYSTEM startup task: re-runs a guest-tool MSI that failed at SetupComplete (e.g. qemu-ga RegisterCom
+                                             # 0x8004E00F while COM+ cannot reach MSDTC) until its service exists, then removes itself
+serial_port  = "COM1"                         # every provisioning log line is mirrored here (System.IO.Ports.SerialPort); host side: [vm.looking_glass].serial_log
+serial_baud  = 115200
+network_category = "Private"                  # Set-NetConnectionProfile before WinRM: a Public profile blocks the WinRM firewall exception
+network_wait_s   = 120                        # how long SetupComplete waits for Windows to identify the network
+
+# --- OpenSSH server (F4): the inbox OpenSSH.Server FOD is baked offline ([windows.xbox.features].capability_fod);
+# SetupComplete only configures it from these inputs, rendered into the image (no download, no GitHub, no Windows Update).
+[windows.xbox.ssh]
+install               = "fod-offline"          # the only mode (the render refuses anything else)
+port_ref              = "ports.ssh"            # the same SSH port as the Linux service ([ssh.windows])
+settings_ref          = "ssh.windows"          # FHS root, config dir, listen address, firewall scope
+authorized_keys_key   = "auth.existing_ssh_key"   # SSOT public key(s), one per line ("" = none)
+authorized_keys_files = ["~/.ssh/*.pub"]       # the operator's public keys at build time (under sudo: SUDO_USER's home); none at all fails the render
+settings_path         = 'C:\ProgramData\MiOS\ssh-settings.json'   # rendered {port, windows} for mios-ssh-setup.ps1 -InboxOpenSsh
+authorized_keys_path  = 'C:\ProgramData\MiOS\authorized_keys'     # rendered operator public keys
+
+# --- MiOS services the SYSTEM stage registers (requirement 13). host = "self": the exe is its own SCM service
+# (mios-wallpaperd SERVICE_NAME; `miosd fhs-sync --daemon` connects its own dispatcher); "MiosServiceTool": the shipped
+# MiosServiceTool.exe hosts it, copied to <host_name>.exe beside <host_name>.cfg (line 1 exe, line 2 arguments).
+[windows.xbox.services.miosd]
+component = "miosd"
+host      = "MiosServiceTool"                 # `miosd daemon` has no SCM entry point of its own
+host_name = "MiOS-Daemon"
+args      = 'daemon --state-dir C:\ProgramData\MiOS\daemon'
+display   = "MiOS Daemon"
+
+[windows.xbox.services.MiOS-FhsSync]
+component = "miosd"
+host      = "self"
+args_from = "MiOS-FhsSync"                    # the argument line of the shipped MiOS-FhsSync.cfg (its exe line is the FHS install path; the image runs components.dest_dir\miosd.exe)
+display   = "MiOS FHS Root Overlay Sync Service"
+
+[windows.xbox.services.MiOS-Wallpaper-Service]
+component = "mios-wallpaperd"
+host      = "self"
+args      = ""
+display   = "MiOS Living Wallpaper"
+
+# --- MiOS scheduled tasks (\MiOS\<name>). run_as: system (SYSTEM, highest) | desktop (the desktop user's interactive
+# session: window enumeration and input need WinSta0\Default). Script components run under Windows PowerShell 5.1.
+[windows.xbox.tasks.MiOS-OsControl]
+component = "mios-oscontrol-server"
+run_as    = "desktop"
+trigger   = "logon"
+port_ref  = "ports.oscontrol"                 # passed as -Port (the image carries no per-user runtime SSOT projection)
+
+# --- living wallpaper (spec s.1): the page the image carries and the SYSTEM step that writes its URL
+[windows.xbox.wallpaper]
+html_ref        = "theme.wallpaper.html_path"           # page source in the MiOS tree
+target_ref      = "theme.wallpaper.windows_html_path"   # where the image carries it (the URL Set-MiOSWallpaper.ps1 writes)
+setup_component = "Set-MiOSWallpaper"                   # run as SYSTEM at SetupComplete: HKLM\SOFTWARE\MiOS\WallpaperUrl
 
 # --- offline gate (conform.py image mode) ---
 [windows.xbox.gate]
@@ -11138,7 +11710,6 @@ lg_downloads           = "https://looking-glass.io/downloads"   # Looking Glass 
 lg_client_build_record = "/usr/share/mios/looking-glass/build.json"   # host client build output (automation/69-bake-lookingglass-client.sh); the guest host app must match its commit
 github_api             = "https://api.github.com"         # GitHub REST base for releases/latest + asset sha256 digest (WinFsp) and the converter's newest commit
 edge_products_api      = "https://edgeupdates.microsoft.com/api/products?view=enterprise"   # Edge Stable train version = WebView2 Evergreen runtime version
-qemu_ga_signer         = "Red Hat"                        # Authenticode subject the qemu-ga MSI must carry (upstream publishes no digest for it)
 webview2_signer        = "Microsoft Corporation"          # Authenticode subject the WebView2 standalone installer must carry (Microsoft publishes no digest)
 lg_signer              = "HostFission"                    # Authenticode subject of the Looking Glass host/IDD installers
 
@@ -11167,6 +11738,9 @@ channel  = "latest"
 entry    = "convert-UUP.cmd"
 # ConvertConfig.ini [convert-UUP] overrides; every key must exist in upstream's ConvertConfig.ini (else the build aborts).
 config = { AutoStart = 1, AddUpdates = 1, Cleanup = 1, ResetBase = 0, NetFx3 = 0, StartVirtual = 0, wim2esd = 0, wim2swm = 0, SkipISO = 1, SkipWinRE = 0, ForceDism = 1, SkipEdge = 0, AutoExit = 1, AddDrivers = 0 }
+# ConvertConfig.ini [Store_Apps] overrides (same rule: every key must exist upstream). SkipApps and CustomList are
+# derived from windows.xbox.source.apps (fetch.py writes CustomAppsList.txt), never set here. 1 = full apps, not stubs.
+store_apps = { StubAppsFull = 1 }
 
 [preflight]
 min_windows_build   = 22000      # Windows 11 21H2 minimum
@@ -15299,6 +15873,19 @@ startup_wm_class = "org.quickshell"
 ai_hint = "App-drawer entry for MiOS Displays, the monitor settings app (arrange outputs, resolution, refresh rate, scale, rotation, enable/disable, primary); Exec mirrors [desktop.topbar.commands].display."
 ai_related = "/usr/bin/mios-displays, /usr/share/mios/displays/Displays.qml, usr/share/mios/mios.toml [desktop.displays]"
 
+[desktop.launchers.mios-shaderglass]
+exec_cmd = "/usr/bin/mios-shaderglass toggle"
+title = "ShaderGlass Overlay"
+generic_name = "Shader Overlay"
+comment = "Shade the active window live with RetroArch shaders (a ShaderGlass pane pinned over it)"
+icon = "video-display"
+categories = "Utility;Graphics;"
+keywords = "shader;crt;retro;overlay;shaderglass;filter;scanlines;mios;"
+startup_notify = false
+no_display = false                  # hidden from the drawer and search until [desktop.shaderglass].enabled (the install step flips both)
+ai_hint = "App-drawer entry for the ShaderGlass overlay: mios-shaderglass toggle attaches a ShaderGlass pane (Wine, RetroArch shaders, Hyprglass glass) to the active window, or removes it. No StartupWMClass: the pane must never be taken for this entry's window."
+ai_related = "/usr/bin/mios-shaderglass, src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass]"
+
 [desktop.launchers.mios-zen]
 exec_cmd = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding app.zen_browser.zen @@u %u @@"
 title = "Zen Browser"
@@ -15626,7 +16213,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 598
+max_tracked_mb    = 655
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -16119,6 +16706,28 @@ unit = [
     "tests/test-hypr3d-quality.py",
     "tests/test-shell-reserve.py",
     "tests/test-sysmon-vfio-adversarial.py",
+    "tests/test-agent-interaction.py",
+    "tests/test-hypr3d-stills.py",
+    "tests/test-hypr3d-edge-quality.py",
+    "tests/test-hypr3d-retina-spawn.py",
+    "tests/test-hypr3d-spawn.py",
+    "tests/test-hypr3d-crt.py",
+    "tests/test-hypr3d-controller.py",
+    "tests/test-shaderglass.py",
+    "tests/test-hyprbars-overlay.py",
+    "tests/test-hypr3d-enter-morph-scale.py",
+    "tests/test-photoshoot-probe.py",
+    "tests/test-photoshoot-empirical-audit.py",
+    "tests/test-hypr3d-spatial.py",
+    "tests/test-shaderglass-overlay.py",
+    "tests/test-framerate.py",
+    "tests/test-mios-xbox-reconcile.py",
+    "tests/test-mios-xbox-boot-r1.py",
+    "tests/test-mios-xbox-inbox-apps.py",
+    "tests/test-mios-xbox-policy-gates.py",
+    "tests/test-mios-xbox-provisioning.py",
+    "tests/test-adversarial-r7-desktop-resilience.py",
+    "tests/test-adversarial-r8-dock-drawer.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [
@@ -16831,8 +17440,11 @@ renderer = "native"
 linux_runner = "/usr/lib64/qt6/bin/qml"
 linux_host = "/usr/share/mios/wallpaper/Host.qml"
 linux_web_host = "/usr/share/mios/wallpaper/WebHost.qml"
-# Simulation steps per second (URL query fps; the HTML's FPS). One step advects by 1/framerate, so this is part
-# of the look: both platforms step at the same rate, Qt/Chromium present each step on the next output frame.
+# Simulation steps per second (URL query fps; the HTML's FPS): the look's REFERENCE rate. One step advects by
+# 1/framerate and the per-step decay/blend/blur constants are tuned at it. The Windows HTML steps at it; the
+# native Linux host steps at the live wallpaper rate W of [desktop.framerate] (desktop rate / 2, the full desktop
+# rate when unlocked: Host.qml reads it from the state file once a second) and rescales those constants by
+# framerate / W, so the field evolves the same per wall-clock second at any rate (bit-identical at W = framerate).
 framerate = 30
 
 # Living-wallpaper motion: ONE contract for the Windows HTML and the native Linux host (mios-wallpaperd passes it
@@ -16887,10 +17499,22 @@ bevel_alpha = 1.0
 
 [user_units."mios-desktop.target".Unit]
 Description = "MiOS graphical user session"
-Wants = "mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
+Wants = "mios-gamepad-hypr3d.service mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-framerate.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
 Requires = "graphical-session.target"
 After = "graphical-session.target"
 BindsTo = "graphical-session.target"
+
+[user_units."mios-gamepad-hypr3d.service".Unit]
+Description = "MiOS universal USB/Bluetooth gamepad daemon for Hypr3D"
+PartOf = "mios-desktop.target"
+After = "graphical-session.target"
+[user_units."mios-gamepad-hypr3d.service".Service]
+Type = "simple"
+ExecStart = "/usr/libexec/mios/mios-gamepad-hypr3d --daemon"
+Restart = "on-failure"
+RestartSec = 3
+[user_units."mios-gamepad-hypr3d.service".Install]
+WantedBy = "mios-desktop.target"
 
 [user_units."mios-wallpaper.service".Unit]
 Description = "MiOS shared Windows and Linux living wallpaper"
@@ -16948,6 +17572,21 @@ ExecStart = "/usr/bin/miosd placement serve"
 Restart = "on-failure"
 RestartSec = 2
 [user_units."mios-placement.service".Install]
+WantedBy = "mios-desktop.target"
+
+# Desktop frame-rate policy daemon (src/mios-rs/miosd/src/framerate.rs); policy in [desktop.framerate].
+[user_units."mios-framerate.service".Unit]
+Description = "MiOS desktop frame-rate policy (power profile, battery, GameMode -> compositor, glass, wallpaper rates)"
+PartOf = "mios-desktop.target"
+After = "graphical-session.target"
+Requisite = "graphical-session.target"
+[user_units."mios-framerate.service".Service]
+Type = "exec"
+ExecStart = "/usr/bin/miosd framerate serve"
+ExecReload = "/bin/kill -HUP $MAINPID"
+Restart = "on-failure"
+RestartSec = 2
+[user_units."mios-framerate.service".Install]
 WantedBy = "mios-desktop.target"
 
 # First-logon display setup: opens the Displays app in guided mode once per user (marker in
@@ -17039,6 +17678,10 @@ WantedBy = "sockets.target"
 Description = "MiOS RDP root helper (one request from the native RDP server)"
 Documentation = "file:///usr/libexec/mios/rdp-native"
 [units."mios-rdp-priv@.service".Service]
+comment = """# CAP_SYS_PTRACE: TLS-KEY authorizes the caller by readlink(/proc/<pid>/exe) of the operator-owned
+# mios-rdp-server; root may read another uid's exe link only with it (without it: "exe None", DENY,
+# native server crash loop). ptrace(2) stays blocked (@debug is not in @system-service), and the
+# process_vm_* calls the capability would unlock are removed from @ipc above."""
 Type = "oneshot"
 ExecStart = "/usr/libexec/mios/rdp-native/mios-rdp-priv"
 StandardOutput = "journal"
@@ -17058,8 +17701,8 @@ RestrictNamespaces = "yes"
 LockPersonality = "yes"
 MemoryDenyWriteExecute = "yes"
 SystemCallArchitectures = "native"
-SystemCallFilter = "@system-service"
-CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID"
+SystemCallFilter = ["@system-service", "~process_vm_readv process_vm_writev"]
+CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID CAP_SYS_PTRACE"
 
 [theme.windows]
 opacity_pct = 85

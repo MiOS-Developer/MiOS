@@ -211,12 +211,27 @@ def render_bundle(out: str, doc: Dict[str, Any], items: List[Dict[str, Any]], ro
             dst = os.path.join(out, "payload", i["path"])
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             _write_component(dst, i, doc, root)
+        elif i["kind"] == "gpu_step" and i.get("spec_path"):
+            # the credential-free guest spec the GPU step reads (render_spec.guest_projection: no password fields)
+            dst = os.path.join(out, "payload", i["spec_path"])
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            write_json(dst, guest_spec(doc))
         elif i["kind"] == "build_family":
             fam = branch or sorted(i["families"])[0]
             dst = os.path.join(out, "payload", i["start2_target"])
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(os.path.join(root, i["families"][fam]["start2"]), dst)
             write_json(os.path.join(out, "build-manifest.json"), {"windows": {"build": "29683", "branch": fam}})
+    return out
+
+
+def guest_spec(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """The spec the image ships (C:\\ProgramData\\MiOS\\xbox-spec.json): the doc minus every password field."""
+    out = json.loads(json.dumps(doc))
+    for acct in (out.get("users") or {}).values():
+        if isinstance(acct, dict):
+            acct.pop("password", None)
+    out["projection"] = "guest"
     return out
 
 
@@ -329,9 +344,23 @@ def fill_hive(path: str, items: List[Dict[str, Any]], offline_system: bool = Fal
     os.unlink(reg)
 
 
+def terminalserver_admx(policies: Optional[Dict[str, Any]] = None) -> str:
+    """A synthetic Windows\\PolicyDefinitions\\TerminalServer.admx (policy -> valueName, enabled/disabled values),
+    shaped like the real one (build 29683); default: Microsoft's table in spec_items.TS_POLICIES."""
+    rows = []
+    for name, (value, en, dis) in sorted((policies or S.TS_POLICIES).items()):
+        rows.append(f'    <policy name="{name}" class="Machine" displayName="$(string.{name})" key="SOFTWARE\\{S.TS_POLICY_KEY}" '
+                    f'valueName="{value}">\n      <parentCategory ref="TS_REDIRECTION" />\n'
+                    f'      <enabledValue><decimal value="{en}" /></enabledValue>\n'
+                    f'      <disabledValue><decimal value="{dis}" /></disabledValue>\n    </policy>')
+    return ('<?xml version="1.0" encoding="utf-8"?>\n<policyDefinitions xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions" '
+            'revision="1.0" schemaVersion="1.0">\n  <policies>\n' + "\n".join(rows) + "\n  </policies>\n</policyDefinitions>\n")
+
+
 def build_image(out: str, bundle: str, items: List[Dict[str, Any]], branch: str,
                 extra_user: Optional[List[Dict[str, Any]]] = None, extra_infs: Optional[Dict[str, str]] = None,
-                drop: Optional[List[str]] = None, build: str = "29683") -> str:
+                drop: Optional[List[str]] = None, build: str = "29683", admx: Optional[str] = None,
+                extra_software: Optional[List[Dict[str, Any]]] = None) -> str:
     """install.wim from a rendered bundle: the bundle's payload becomes the image tree, its registry
     items go into real hives, its drivers into the driver store.  Returns the WIM path."""
     tree = os.path.join(out, "tree")
@@ -347,7 +376,12 @@ def build_image(out: str, bundle: str, items: List[Dict[str, Any]], branch: str,
         if i["kind"] == "feature" and i["state"] in ("enabled", "disabled"):
             sw.append({"scope": "software", "path": "Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\Notifications\\OptionalFeatures\\" + i["name"],
                        "name": "Selection", "type": "dword", "value": 1 if i["state"] == "enabled" else 0})
+    sw += list(extra_software or [])
     fill_hive(os.path.join(cfg, "SOFTWARE"), sw)
+    pd = os.path.join(tree, "Windows", "PolicyDefinitions")
+    os.makedirs(pd, exist_ok=True)
+    with open(os.path.join(pd, "TerminalServer.admx"), "w", encoding="utf-8") as fh:
+        fh.write(terminalserver_admx() if admx is None else admx)
     fill_hive(os.path.join(cfg, "SYSTEM"), [i for i in reg if i["scope"] == "system"], offline_system=True)
     fill_hive(os.path.join(tree, "Users", "Default", "NTUSER.DAT"), [i for i in reg if i["scope"] == "user"] + list(extra_user or []))
     repo = os.path.join(tree, "Windows", "System32", "DriverStore", "FileRepository")
@@ -433,3 +467,49 @@ def conforming_probe(items: List[Dict[str, Any]], branch: str, root: str, doc: D
                         {"device_id": "PCI\\VEN_1AF4&DEV_1050&SUBSYS_11001AF4&REV_01\\3&1", "name": "Red Hat VirtIO GPU DOD controller",
                          "provider": "Red Hat, Inc.", "version": "100.0.0.0", "inf": "oem5.inf"}],
             "third_party_drivers": [], "observations": obs, "errors": []}
+
+
+# ---------------------------------------------------------------------------
+# synthetic RPM header (the virtio-win release metadata: one sha256 per file)
+# ---------------------------------------------------------------------------
+
+def _rpm_index(entries: List[Any]) -> bytes:
+    """One RPM header structure from [(tag, type, value)] (types: 3 INT16, 4 INT32, 6 STRING, 8 STRING_ARRAY)."""
+    store, index = b"", b""
+    for tag, typ, val in entries:
+        align = {3: 2, 4: 4}.get(typ, 1)
+        store += b"\0" * (-len(store) % align)
+        off = len(store)
+        if typ == 6:
+            data, cnt = val.encode() + b"\0", 1
+        elif typ == 8:
+            data, cnt = b"".join(v.encode() + b"\0" for v in val), len(val)
+        else:
+            w = {3: 2, 4: 4}[typ]
+            data, cnt = b"".join(int(v).to_bytes(w, "big") for v in val), len(val)
+        store += data
+        index += struct.pack(">IIII", tag, typ, off, cnt)
+    return b"\x8e\xad\xe8\x01\0\0\0\0" + struct.pack(">II", len(entries), len(store)) + index + store
+
+
+def rpm_header_bytes(name: str, version: str, release: str, files: Dict[str, Any], algo: int = 8,
+                     tamper_header: bool = False) -> bytes:
+    """Lead + signature header (sha256 of the main header) + main header listing `files` ({path: bytes | (sha256, size)}),
+    shaped like a real RPM so resolve_latest.rpm_header parses it (the payload is not included)."""
+    dirs: List[str] = []
+    bases, didx, digs, sizes, modes = [], [], [], [], []
+    for path, v in sorted(files.items()):
+        d, b = os.path.split("/" + path.lstrip("/"))
+        d += "/"
+        if d not in dirs:
+            dirs.append(d)
+        sha, size = (hashlib.sha256(v).hexdigest(), len(v)) if isinstance(v, bytes) else v
+        bases.append(b); didx.append(dirs.index(d)); digs.append(sha); sizes.append(size); modes.append(0o100644)
+    main = _rpm_index([(1000, 6, name), (1001, 6, version), (1002, 6, release), (1028, 4, sizes), (1030, 3, modes),
+                       (1035, 8, digs), (1116, 4, didx), (1117, 8, bases), (1118, 8, dirs), (5011, 4, [algo])])
+    sig = _rpm_index([(273, 6, hashlib.sha256(main).hexdigest())])
+    sig += b"\0" * (-len(sig) % 8)
+    if tamper_header:   # flip one byte of the main header's data store after the signature was computed
+        main = main[:-2] + bytes([main[-2] ^ 1]) + main[-1:]
+    lead = b"\xed\xab\xee\xdb\x03\x00" + b"\0\0" + b"\0\1" + (name.encode() + b"\0" * 66)[:66] + b"\0\1" + b"\0\5" + b"\0" * 16
+    return lead + sig + main

@@ -701,6 +701,12 @@ struct NativeLinux {
     linker: String,
     rustflags: Vec<String>,
     pie: std::collections::BTreeMap<String, bool>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    audit_scopes: Vec<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    exceptions: Vec<toml::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -888,7 +894,7 @@ fn resolved_native_config(root: &std::path::Path) -> Result<NativeConfig, String
 }
 
 fn native_document(root: &std::path::Path) -> Result<toml::Value, String> {
-    mios_resolver::resolve_merged(Some(root), false)
+    mios_resolver::resolve_projection(root)
         .map_err(|e| format!("cannot resolve layered native SSOT: {e}"))
 }
 

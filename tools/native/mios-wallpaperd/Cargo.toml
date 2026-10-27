@@ -28,6 +28,8 @@ windows = { version = "0.58", features = [
     "Win32_Security",
     "Win32_System_Registry",
     "Win32_System_Environment",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
 ] }
 # Release size tuning lives in the workspace root (rendered by mios-gen
 # cargo-manifests): [profile.release.package] here would be silently ignored.

@@ -1,0 +1,798 @@
+MiOS Hypr3D Retina window opening (applies after hypr3d-mios-frame-rate.patch). Operator 2026-10-23: "default
+Hypr3D window opening distance/size should be Zoom/Scale/DPI/Resolution/Formatting(Landscape, Portrait, Mobile,
+etc-etc) aware ... launch to Retina specifications based on text-size". A window that enters the room (the 3D
+toggle, or a window mapping while the room is open) opens at magnification M = 1 (its on-screen size / its 2D
+size): one snapshot texel per output pixel at the window centre and across it (no minification blur), and every
+client's glyphs at their flat-desktop size, whatever font, app zoom or text scaling the client renders with. For a
+camera-facing window M = window_scale x d1 / distance, d1 = (logical height / 100 / 2) / tan(kFovDeg / 2) -- the
+1:1 distance the fullscreen passthrough and the view morph already use -- so the stock 0.5 / 5 m gave M = 0.85 on
+1080p, 1.13 on 1440p and 0.66 on a 390x844 phone (measured). Every key defaults to upstream behaviour; mios-gen
+(tools/native/mios-gen/src/hypr3d_spawn.rs, [desktop.hyprland.hypr3d.spawn]) sends them at SUPER+G:
+
+- windows.pixel_exact: window_scale = spawn_distance / d1(target monitor), re-derived every frame from the
+  plugin's own monitor size (follows mode, scale and transform changes and hot-plug). The reading distance stays a
+  world constant, so the enter/exit morph and the fullscreen passthrough become a pure dolly at constant text size.
+- windows.fit ("off" | "resize" | "distance") and windows.fit_margin (logical px): the work area (the monitor minus
+  its reserved bars) shrunk by the margin. "resize": a window larger than it gets a room box that fits (the morph
+  drives the real client box, the client re-renders at 1:1; the spawn box of a window mapping in the room is
+  clamped the same way); a client that keeps a larger box (min or fixed size) is pushed back about the eye until
+  it fits -- never cropped. "distance": push back only. Fresh windows centre on the work area (where the 2D
+  `center` rule puts them) whenever fit is on.
+- windows.pixel_snap: once a fresh window's snapshot box holds still, a sub-pixel shift lands its texel grid on
+  the output pixel grid (at render.scale 1 a half-pixel phase washes 1-px detail out completely).
+- windows.cascade (logical px): a window opening over another steps right/down in the plane instead of 0.15 m
+  toward the eye (M 1.031); any depth step toward the eye (stacking, dialogs 0.3 m in front of their parent) is
+  compensated by a per-window scale multiplier kept with the saved pose, so M stays 1.
+- windows.min_magnification: the push-back legibility floor (status flag "small").
+- render.texel_sharp: at 1:1 and magnified, each window texel is flat over the scene pixels it covers and only the
+  pixel a texel edge crosses blends, so with render.scale >= 1.5 a 1:1 window keeps 1-px detail at full contrast
+  (bilinear then the SSAA box halves it: modulation 0.5). Minified textures keep the mip + anisotropic path; the
+  pane, rim and edge pass are untouched (one glass look).
+- static_assert: mios-gen mirrors kFovDeg = 65 and LOGICAL_PX_PER_UNIT = 100; the build fails when upstream changes
+  either.
+- The status file gains "spawn: exact= scale= d= d1= M= fit= area= snap= cascade= sharp= spawnBox= placed=
+  resized= pushed= snapped= last= box= lastM= dist= mul= k= dx= dy= small=".
+
+Frame rate, captures and stills are unaffected: placement runs once per window (no pass, no capture), and a fitted
+box never takes the tiled capture path.
+
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index dde464c..9897319 100644
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -1091,8 +1091,27 @@ void hgMaterial() {
+ // passes ~4 texels). 1:1 and magnified stay 1 tap.
+ uniform int uTexSS;
+ uniform int uTexMip;
++// MiOS retina spawn (render.texel_sharp): at 1:1 and magnified (at most one
++// texel per scene pixel along both axes) the bilinear tap is replaced by a
++// texel-sharp one: each texel is flat over the scene pixels it covers and only
++// the pixel a texel edge crosses blends (ramp width = one scene pixel). With
++// the SSAA box filter after it, a window at magnification 1 shows 1-px detail
++// at full contrast (bilinear-then-box halves it: 0.75/0.25 per output pixel).
++// Same filter as bilinear at exactly one texel per scene pixel, so it joins
++// the minified path (trilinear + anisotropic) without a seam.
++uniform int uTexSharp;
+ vec4 texSS(sampler2D s, vec2 uv) {
+     vec2 dx = dFdx(uv), dy = dFdy(uv);
++    if (uTexSharp != 0) {
++        vec2 ts = vec2(textureSize(s, 0));
++        vec2 fw = (abs(dx) + abs(dy)) * ts; // texels per scene pixel, per axis
++        if (max(fw.x, fw.y) <= 1.0 && min(fw.x, fw.y) > 1e-5) {
++            vec2 p = uv * ts;
++            vec2 e = floor(p + 0.5);         // the nearest texel edge
++            vec2 q = e - 0.5 + clamp((p - e) / fw + 0.5, 0.0, 1.0);
++            return textureLod(s, q / ts, 0.0);
++        }
++    }
+     if (uTexSS == 0 || uTexMip != 0) return texture(s, uv);
+     vec2 ts = vec2(textureSize(s, 0));
+     float fp = max(length(dx * ts), length(dy * ts));
+@@ -1591,6 +1610,7 @@ void main() {
+         );
+     m_sceneTexSS = glGetUniformLocation(m_sceneProgram, "uTexSS");
+     m_sceneTexMip = glGetUniformLocation(m_sceneProgram, "uTexMip");
++    m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
+     m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
+     m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
+ 
+@@ -3296,6 +3316,7 @@ void GLScene::drawWindows(
+         glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
+         glUniform1i(m_sceneTextured, 1);
+         glUniform1i(m_sceneTexSS, m_rq.textureSupersample ? 1 : 0);
++        glUniform1i(m_sceneTexSharp, m_rq.texelSharp ? 1 : 0);
+         {
+             // MiOS: a snapshot texture with a mip chain (WindowCapture generates it once
+             // per capture) is sampled with ONE trilinear + anisotropic tap; without one
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index dbba3b2..9dd1c51 100644
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -204,6 +204,7 @@ class GLScene {
+         bool  textureSupersample = true;  // mipmapped + anisotropic window textures (4-tap RGSS fallback)
+         int   anisotropy         = 16;    // MiOS: max anisotropic samples (1 = trilinear only)
+         float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
++        bool  texelSharp         = false; // MiOS retina spawn: texel-sharp 1:1 / magnified window textures
+     };
+     const SRenderQuality& renderQuality() const { return m_rq; }
+     void setRenderQuality(const SRenderQuality& q) {
+@@ -517,6 +518,7 @@ class GLScene {
+     int m_glassUV = -1, m_glassViewport = -1;
+     int m_glassSurface = -1, m_glassMetrics = -1;
+     int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
++    int m_sceneTexSharp = -1; // MiOS retina spawn
+     float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
+     SGlassConfig m_glassConfig;
+     unsigned int m_discVAO = 0, m_discVBO = 0;
+diff --git a/src/main.cpp b/src/main.cpp
+index c828f93..c1785f4 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -173,6 +173,10 @@ struct SViewPose {
+     // client re-renders at the room's size -- crisp content), on exit back
+     // to the 2D box. Empty = never sized in the room.
+     CBox box{};
++
++    // MiOS retina spawn: the stacking scale multiplier (retinaMul) the window
++    // had in the room, so a remembered window keeps its magnification.
++    float scaleMul = 1.f;
+ };
+ 
+ // Room poses remembered across toggles; keyed by window id, pruned against
+@@ -489,6 +493,98 @@ static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window si
+ static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
+ static float       g_cfgWindowDepth   = 0.05f;   // slab thickness, 0 = flat quads
+ 
++// --- MiOS retina spawn (hypr3d-mios-retina-spawn.patch) ---------------------
++// A window opens in the room at the flat desktop's size. Its magnification
++// M (on-screen size / 2D size) for a camera-facing quad is
++//   M = window_scale * d1 / distance,  d1 = (H_log / 100 / 2) / tan(fov / 2),
++// d1 being the 1:1 distance the fullscreen passthrough and the view morph
++// already use. M = 1 is the only point where one snapshot texel lands on one
++// output pixel AND every client's glyphs keep their 2D size (whatever font,
++// app zoom or text scaling the client renders with), so:
++//   windows.pixel_exact   window_scale = spawn_distance / d1(target monitor), live
++//   windows.fit           "resize": a window larger than the work area minus
++//                         fit_margin is resized to it (the client re-renders,
++//                         M stays 1); a client that keeps a larger box (min or
++//                         fixed size) is pushed back until it fits, never
++//                         cropped. "distance": push back only. "off": upstream.
++//   windows.fit_margin    logical px kept free inside the work area
++//   windows.pixel_snap    the texel grid lands on the output pixel grid (a
++//                         sub-pixel shift once the window settles)
++//   windows.cascade       logical px: a window opening over another steps
++//                         right/down by this much in the plane; any depth step
++//                         toward the eye is compensated by the window's scale,
++//                         so M stays 1 (0 = upstream: 0.15 m in front, M 1.03)
++//   windows.min_magnification  legibility floor of the push-back (status flag)
++// Fresh windows centre on the work area (where the 2D `center` rule puts
++// them) whenever fit is on. Every key defaults to upstream behaviour.
++// mios-gen (tools/native/mios-gen/src/hypr3d_spawn.rs) mirrors kFovDeg and
++// LOGICAL_PX_PER_UNIT; the assertion fails the build when upstream changes one.
++static_assert(kFovDeg == 65.0f && World3D::LOGICAL_PX_PER_UNIT == 100.0f,
++              "hypr3d-mios-retina-spawn: mios-gen hypr3d_spawn.rs mirrors kFovDeg = 65 and LOGICAL_PX_PER_UNIT = 100");
++enum class ERetinaFit : uint8_t { Off, Resize, Distance };
++static bool       g_cfgPixelExact = false;
++static ERetinaFit g_cfgFit        = ERetinaFit::Off;
++static float      g_cfgFitMargin  = 8.0f;
++static float      g_cfgSafeTop    = 0.0f;
++static float      g_cfgSafeBottom = 0.0f;
++static bool       g_cfgPixelSnap  = false;
++static float      g_cfgCascade    = 0.0f;
++static float      g_cfgMinMag     = 0.0f;
++
++static bool retinaPlacing() {
++    return g_cfgFit != ERetinaFit::Off || g_cfgPixelSnap || g_cfgCascade > 0.0f;
++}
++
++// tan(fov / 2) at rest zoom (the C-key zoom is transient; placement ignores it).
++static double retinaTan() {
++    return std::tan(static_cast<double>(kFovDeg) * 3.14159265358979323846 / 360.0);
++}
++
++// The 1:1 distance of a monitor, world units: a window at scale 1 this far
++// away covers exactly its 2D pixels (= g_fsDistance, ScreenProject's D).
++static float retinaD1(const PHLMONITOR& mon) {
++    const double H = mon && mon->m_size.y > 1.0 ? mon->m_size.y : 1080.0;
++    return static_cast<float>((H / World3D::LOGICAL_PX_PER_UNIT * 0.5) / retinaTan());
++}
++
++// Where room windows may sit (monitor-local logical px): the work area (the
++// monitor minus its reserved bars) shrunk by fit_margin on every side.
++static CBox retinaFitArea(const PHLMONITOR& mon) {
++    if (!mon)
++        return {};
++    CBox wa = mon->logicalBoxMinusReserved();
++    wa.x -= mon->m_position.x;
++    wa.y -= mon->m_position.y;
++    if (wa.w < 16.0 || wa.h < 16.0)
++        wa = CBox{0.0, 0.0, mon->m_size.x, mon->m_size.y};
++    const double top = std::max(wa.y, static_cast<double>(g_cfgSafeTop));
++    const double bottom = std::max(mon->m_size.y - (wa.y + wa.h), static_cast<double>(g_cfgSafeBottom));
++    wa.y = top;
++    wa.h = std::max(16.0, mon->m_size.y - top - bottom);
++    const double M = std::max(0.0f, g_cfgFitMargin);
++    const double W = std::max(16.0, wa.w - 2.0 * M);
++    const double H = std::max(16.0, wa.h - 2.0 * M);
++    return CBox{wa.x + (wa.w - W) * 0.5, wa.y + (wa.h - H) * 0.5, W, H};
++}
++
++// A box shrunk into the fit area (never grown), at least the client's minimum
++// size, centred in the fit area, on the logical pixel grid. `deco` is the
++// decoration the compositor adds around the box (decorated minus real box).
++static CBox retinaFitted(const PHLMONITOR& mon, const CBox& box, const PHLWINDOW& window,
++                         const Vector2D& deco = {}) {
++    const CBox FA = retinaFitArea(mon);
++    double     w = std::min(box.w, FA.w - deco.x);
++    double     h = std::min(box.h, FA.h - deco.y);
++    if (window)
++        if (const auto MIN = window->minSize()) {
++            w = std::max(w, MIN->x);
++            h = std::max(h, MIN->y);
++        }
++    w = std::max(16.0, std::round(w));
++    h = std::max(16.0, std::round(h));
++    return CBox{std::round(FA.x + (FA.w - w - deco.x) * 0.5), std::round(FA.y + (FA.h - h - deco.y) * 0.5), w, h};
++}
++
+ // --- player -----------------------------------------------------------------
+ static float       g_cfgLookInertia   = 0.03f;   // seconds, 0 = off
+ static float       g_cfgMoveInertia   = 0.05f;   // seconds, 0 = off
+@@ -1384,22 +1480,27 @@ static void ghostWindows(
+         // (which belongs to whichever monitor sits at 0,0, or none at all).
+         // A dialog (a window with a parent) keeps the size it asked for.
+         if (info.window && !info.window->parent()) {
+-            const double CX =
+-                mon->m_position.x + mon->m_size.x * 0.5 - g_cfgSpawnWidth * 0.5;
+-            const double CY =
+-                mon->m_position.y + mon->m_size.y * 0.5 - g_cfgSpawnHeight * 0.5;
+-
+-            Compat::setWindowBox(
+-                info.window,
+-                CBox{CX, CY, g_cfgSpawnWidth, g_cfgSpawnHeight}
+-            );
++            double SW = g_cfgSpawnWidth, SH = g_cfgSpawnHeight;
++            double CX = mon->m_position.x + mon->m_size.x * 0.5 - SW * 0.5;
++            double CY = mon->m_position.y + mon->m_size.y * 0.5 - SH * 0.5;
++
++            // MiOS retina spawn: the spawn box never exceeds the work area
++            // minus fit_margin and is centred in it (the 2D `center` spot).
++            if (g_cfgFit != ERetinaFit::Off) {
++                const CBox B = retinaFitted(mon, CBox{0.0, 0.0, SW, SH}, info.window);
++                SW = B.w;
++                SH = B.h;
++                CX = mon->m_position.x + B.x;
++                CY = mon->m_position.y + B.y;
++            }
++
++            Compat::setWindowBox(info.window, CBox{CX, CY, SW, SH});
+ 
+             // The ghost is room-driven: the enforcer holds its spawn box,
+             // and the ghost-toggle fixup (update3D) can find it in the
+             // driven set.
+             g_roomBoxes[info.id] =
+-                CBox{CX - mon->m_position.x, CY - mon->m_position.y,
+-                     g_cfgSpawnWidth, g_cfgSpawnHeight};
++                CBox{CX - mon->m_position.x, CY - mon->m_position.y, SW, SH};
+             g_boxDriven.insert(info.id);
+         }
+ 
+@@ -1794,9 +1895,278 @@ static float fsRawProgress() {
+ // fullscreen animation (its endpoints must match what the room renders, or
+ // the transition visibly jumps).
+ static float configWindowScale() {
++    // MiOS retina spawn: M = 1 at spawn_distance on the target monitor, live
++    // (a mode, scale or transform change re-derives it the next frame).
++    if (g_cfgPixelExact && g_cfgSpawnDistance > 0.0f)
++        if (const auto MON = targetMonitor())
++            return g_cfgSpawnDistance / retinaD1(MON);
+     return g_cfgWindowScale;
+ }
+ 
++// --- MiOS retina spawn: per-window placement ----------------------------------
++// A window stepped toward the eye (stacked in front of a window it overlaps, a
++// dialog in front of its parent) carries the scale multiplier
++// depth / reference depth: only window_scale / distance reaches the screen, so
++// its magnification is unchanged. Remembered with the pose (SViewPose).
++static std::unordered_map<std::uintptr_t, float> g_retinaMul;
++
++static float retinaMul(std::uintptr_t id) {
++    const auto IT = g_retinaMul.find(id);
++    return IT == g_retinaMul.end() ? 1.0f : IT->second;
++}
++
++// The room scale of one window: the config scale times its multiplier.
++static float roomScaleOf(std::uintptr_t id) {
++    return configWindowScale() * retinaMul(id);
++}
++
++// Windows the placement still settles after they land: a client that kept a
++// box larger than the fit area is pushed back until it fits (scaled about the
++// eye point it was placed from, so it keeps its spot on screen), and the
++// pixel snap moves the texel grid onto the output pixel grid (< 1 px).
++struct SRetinaSettle {
++    Vec3  origin{};      // the eye position the window was placed from
++    float M      = 1.0f; // the fit magnification it was placed at (before any stacking step)
++    int   frames = 0;    // settle frames so far
++    int   stable = 0;    // consecutive frames with an unchanged snapshot box
++    CBox  lastBox{};
++};
++static std::unordered_map<std::uintptr_t, SRetinaSettle> g_retinaSettle;
++static constexpr int kRetinaSettleFrames = 240; // give up after ~2-4 s
++static constexpr int kRetinaStableFrames = 6;   // snapshot box unchanged this long = settled
++
++// hypr3d-status.txt "spawn:" -- the last window placed, and counters.
++struct SRetinaLast {
++    std::uintptr_t id = 0;
++    CBox  box{};
++    float M = 0.0f, dist = 0.0f, mul = 1.0f, snapX = 0.0f, snapY = 0.0f;
++    int   cascade = 0;
++    bool  pushed = false, small = false;
++};
++static SRetinaLast g_retinaLast;
++static int g_retinaPlaced = 0, g_retinaSnapped = 0, g_retinaPushed = 0, g_retinaResized = 0;
++
++// Something already in the room, as seen from the eye: its projected centre
++// and radius (monitor-local logical px) and its nearest depth (world units).
++struct SRetinaObstacle {
++    double x = 0.0, y = 0.0, r = 0.0;
++    float  depth = 0.0f;
++};
++
++// The quad model's normal (World3D rotateLocal of +Z without roll).
++static Vec3 retinaNormal(float yaw, float pitch) {
++    return Vec3{std::sin(yaw) * std::cos(pitch), -std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
++}
++
++static bool retinaObstacle(const PHLMONITOR& mon, const Vec3& center, float yaw, float pitch,
++                           float worldW, float worldH, SRetinaObstacle& out) {
++    const auto& CAM   = g_scene.camera();
++    const Vec3  FWD   = CAM.forward();
++    const Vec3  RIGHT = CAM.right();
++    const Vec3  UP    = cross(RIGHT, FWD);
++    const Vec3  V     = center - CAM.position;
++    const float Z     = dot(V, FWD);
++    const float HALF  = 0.5f * std::sqrt(worldW * worldW + worldH * worldH);
++    if (Z + HALF <= 0.05f)
++        return false; // behind the eye
++    const float  TILT = std::sqrt(std::max(0.0f, 1.0f - std::pow(dot(retinaNormal(yaw, pitch), FWD), 2.0f)));
++    const double ZC   = std::max(0.05f, Z);
++    const double PX   = mon->m_size.y / (2.0 * ZC * retinaTan()); // logical px per world unit at ZC
++    out.x     = mon->m_size.x * 0.5 + dot(V, RIGHT) * PX;
++    out.y     = mon->m_size.y * 0.5 - dot(V, UP) * PX;
++    out.r     = HALF * PX;
++    out.depth = Z - HALF * TILT;
++    return true;
++}
++
++struct SRetinaPose {
++    Vec3  center{};
++    float dist = 0.0f; // depth of the window plane along the view, world units
++    float mul  = 1.0f;
++    float M    = 1.0f; // on screen
++    float fitM = 1.0f; // what the fit allows (M below it only by the upstream nudge, cascade off)
++    int   k    = 0;
++    bool  pushed = false;
++};
++
++// Where a fresh window opens: straight ahead, centred on the work area when
++// fit is on, at spawn_distance / M_fit (M_fit < 1 only for a box that cannot
++// fit), cascaded `cascade` px right/down past windows already opened at that
++// spot (starting at index k0), and in front of every window it overlaps --
++// with the depth step compensated by the scale multiplier. `maxDist` keeps it
++// in front of scene geometry. `box` is the window's decorated box.
++static SRetinaPose retinaPlace(const PHLMONITOR& mon, const CBox& box,
++                               const std::vector<SRetinaObstacle>& obstacles, int k0, float maxDist) {
++    SRetinaPose P;
++    const auto& CAM   = g_scene.camera();
++    const Vec3  FWD   = CAM.forward();
++    const Vec3  RIGHT = CAM.right();
++    const Vec3  UP    = cross(RIGHT, FWD);
++    const float D     = std::max(0.1f, g_cfgSpawnDistance);
++    const double W    = std::max(1.0, box.w), H = std::max(1.0, box.h);
++
++    // the magnification the window is placed at: 1 unless it cannot fit
++    const float M0 = configWindowScale() * retinaD1(mon) / D;
++    float       M  = M0;
++    double      cx = mon->m_size.x * 0.5, cy = mon->m_size.y * 0.5;
++    CBox        FA{0.0, 0.0, mon->m_size.x, mon->m_size.y};
++    if (g_cfgFit != ERetinaFit::Off) {
++        FA = retinaFitArea(mon);
++        cx = FA.x + FA.w * 0.5;
++        cy = FA.y + FA.h * 0.5;
++        M  = std::min(M0, static_cast<float>(std::min(FA.w / W, FA.h / H)));
++    }
++    P.pushed = M < M0 - 1e-4f;
++    float dist = D * (M0 / M); // the plane where it shows at M
++
++    // in-plane cascade (screen px): the first free spot that still fits
++    const double STEP = std::max(0.0f, g_cfgCascade);
++    int          k    = 0;
++    if (STEP > 0.0) {
++        const double ROOM = std::min(FA.w - W * M, FA.h - H * M);
++        const int    KMAX = ROOM > STEP ? static_cast<int>(ROOM / STEP) : 0;
++        k                 = KMAX > 0 ? k0 % (KMAX + 1) : 0;
++        for (int tries = 0; tries <= KMAX; ++tries) {
++            const int    KK  = (k0 + tries) % (KMAX + 1);
++            const double QX  = cx + KK * STEP, QY = cy + KK * STEP;
++            bool         used = false;
++            for (const auto& O : obstacles)
++                used = used || (std::fabs(O.x - QX) < STEP * 0.5 && std::fabs(O.y - QY) < STEP * 0.5);
++            if (!used) {
++                k = KK;
++                break;
++            }
++        }
++        cx += k * STEP;
++        cy += k * STEP;
++    }
++    P.k = k;
++
++    // In front of every window it overlaps on screen, never sharing its plane.
++    // With cascade on the step is one slab (+1 cm) and the multiplier keeps M;
++    // without it, upstream's 0.15 m step in front of the window at the centre.
++    const bool   COMP   = STEP > 0.0;
++    const float  STEP_Z = COMP ? std::max(0.02f, g_cfgWindowDepth + 0.01f) : 0.15f;
++    const float  DIST0  = dist;
++    const double HW = COMP ? W * M * 0.5 : 0.0, HH = COMP ? H * M * 0.5 : 0.0;
++    for (int pass = 0; pass < 16; ++pass) {
++        bool moved = false;
++        for (const auto& O : obstacles)
++            if (std::fabs(O.x - cx) < HW + O.r && std::fabs(O.y - cy) < HH + O.r &&
++                O.depth < dist + STEP_Z && O.depth - STEP_Z > 0.3f) {
++                dist  = O.depth - STEP_Z;
++                moved = true;
++            }
++        if (!moved)
++            break;
++    }
++    if (maxDist > 0.0f && dist > maxDist)
++        dist = maxDist;
++    dist = std::max(0.6f, dist);
++
++    // the multiplier keeps M through every depth step (cascade on)
++    P.fitM = M;
++    P.mul  = COMP ? dist / DIST0 : 1.0f;
++    P.M    = COMP ? M : M * DIST0 / dist;
++    P.dist = dist;
++    const double PERPX = 2.0 * dist * retinaTan() / mon->m_size.y; // world units per screen logical px
++    P.center = CAM.position + FWD * dist +
++        RIGHT * static_cast<float>((cx - mon->m_size.x * 0.5) * PERPX) +
++        UP * static_cast<float>((mon->m_size.y * 0.5 - cy) * PERPX);
++    return P;
++}
++
++static void retinaRecord(std::uintptr_t id, const CBox& box, const SRetinaPose& P) {
++    g_retinaMul[id]    = P.mul;
++    g_retinaSettle[id] = SRetinaSettle{g_scene.camera().position, P.fitM, 0, 0, box};
++    g_retinaLast       = SRetinaLast{id, box, P.M, P.dist, P.mul, 0.0f, 0.0f, P.k, P.pushed,
++                               g_cfgMinMag > 0.0f && P.M < g_cfgMinMag - 1e-4f};
++    ++g_retinaPlaced;
++    if (P.pushed)
++        ++g_retinaPushed;
++}
++
++// One settle step for a room window the placement put down (syncWorld, after
++// the entity took its pose; no layout side effects). Returns the new centre.
++static Vec3 retinaSettle(const PHLMONITOR& mon, World3D::SEntity& entity, const CBox& BOX, float winScale) {
++    const auto IT = g_retinaSettle.find(entity.id);
++    if (IT == g_retinaSettle.end())
++        return entity.center;
++    auto& S = IT->second;
++    if (g_viewMorph != EViewMorph::None || g_fsPhase != EFullscreenPhase::None)
++        return entity.center; // the morph or the passthrough owns the pose
++    if ((g_world.dragActive() && g_world.draggedId() == entity.id) ||
++        (g_resize.active && g_resize.id == entity.id) || ++S.frames > kRetinaSettleFrames) {
++        g_retinaSettle.erase(IT); // the operator took it, or it never settled
++        return entity.center;
++    }
++    const bool CHANGED = std::fabs(BOX.x - S.lastBox.x) > 0.5 || std::fabs(BOX.y - S.lastBox.y) > 0.5 ||
++        std::fabs(BOX.w - S.lastBox.w) > 0.5 || std::fabs(BOX.h - S.lastBox.h) > 0.5;
++    S.stable = CHANGED ? 0 : S.stable + 1;
++    S.lastBox = BOX;
++
++    Vec3 center = entity.center;
++
++    // push back (or forward again) when the snapshot box is not the one placed
++    if (g_cfgFit != ERetinaFit::Off) {
++        const CBox  FA = retinaFitArea(mon);
++        const float M0 = configWindowScale() * retinaD1(mon) / std::max(0.1f, g_cfgSpawnDistance);
++        const float M  = std::min(M0, static_cast<float>(std::min(FA.w / std::max(1.0, BOX.w), FA.h / std::max(1.0, BOX.h))));
++        if (std::fabs(M - S.M) > 1e-4f) {
++            center = S.origin + (center - S.origin) * (S.M / M);
++            if (M < M0 - 1e-4f && S.M >= M0 - 1e-4f)
++                ++g_retinaPushed;
++            if (g_retinaLast.id == entity.id) {
++                g_retinaLast.dist *= S.M / M;
++                g_retinaLast.M *= M / S.M; // on screen: the fit change times any stacking step
++                g_retinaLast.box    = BOX;
++                g_retinaLast.pushed = M < M0 - 1e-4f;
++                g_retinaLast.small  = g_cfgMinMag > 0.0f && M < g_cfgMinMag - 1e-4f;
++            }
++            S.M      = M;
++            S.stable = 0;
++        }
++    }
++
++    // the pixel snap, once the box has held still
++    if (!g_cfgPixelSnap || S.stable < kRetinaStableFrames)
++        return center;
++    g_retinaSettle.erase(IT);
++    const auto& CAM = g_scene.camera();
++    if (CAM.mirrorView || std::fabs(CAM.roll) > 1e-5f || !mon || mon->m_size.y < 1.0 ||
++        (static_cast<int>(mon->m_transform) % 2) != 0)
++        return center; // rotated outputs and rolled views have no fixed pixel grid here
++    const Vec3   FWD = CAM.forward(), RIGHT = CAM.right(), UP = cross(RIGHT, FWD);
++    const Vec3   N   = retinaNormal(entity.yaw, entity.pitch);
++    if (dot(N, FWD) > -0.99999f || std::fabs(entity.roll) > 1e-5f)
++        return center; // not facing the eye: no 1:1 pixel grid to land on
++    const double SPX   = mon->m_scale;                          // output px per logical px
++    const double HPX   = mon->m_size.y * SPX;                   // output px rows
++    const double Z     = dot(center - CAM.position, FWD);
++    if (Z <= 0.05)
++        return center;
++    const double PXW   = HPX / (2.0 * Z * retinaTan());         // output px per world unit
++    const double WPX   = entity.width * PXW;                    // window width on screen, output px
++    const double MEAS  = WPX / std::max(1.0, BOX.w * SPX);      // the magnification it shows
++    if (std::fabs(MEAS - 1.0) > 2e-3)
++        return center; // not at 1:1: no grid to align
++    const Vec3   V     = center - CAM.position;
++    const double LEFT  = mon->m_size.x * SPX * 0.5 + dot(V, RIGHT) * PXW - WPX * 0.5;
++    const double TOP   = HPX * 0.5 - dot(V, UP) * PXW - entity.height * PXW * 0.5;
++    // texel edges sit at frac(box origin x s) inside the snapshot
++    const double FX    = BOX.x * SPX - std::floor(BOX.x * SPX), FY = BOX.y * SPX - std::floor(BOX.y * SPX);
++    const double EX    = LEFT - FX, EY = TOP - FY;
++    const double DX    = std::round(EX) - EX, DY = std::round(EY) - EY;
++    center = center + RIGHT * static_cast<float>(DX / PXW) - UP * static_cast<float>(DY / PXW);
++    ++g_retinaSnapped;
++    if (g_retinaLast.id == entity.id) {
++        g_retinaLast.snapX = static_cast<float>(DX);
++        g_retinaLast.snapY = static_cast<float>(DY);
++    }
++    (void)winScale;
++    return center;
++}
++
+ static void syncWorld(const PHLMONITOR& mon, float dt) {
+     // Deliberately free of side effects on the layout and the renderer. This
+     // runs from render.stage, i.e. between the frame's startRenderPass() and
+@@ -1936,7 +2306,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+         // Uniform window scale from config, applied to every entity every
+         // frame so a runtime change resizes the whole room. The scale is
+         // uniform so the captured content never distorts.
+-        entity.spawnScale = WIN_SCALE;
++        entity.spawnScale = WIN_SCALE * retinaMul(info.id);
+ 
+         // Seed pose: existing entities own their world position and rotation.
+         // Next come the poses remembered from the last 3D session -- positions
+@@ -1993,6 +2363,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+             entity.yaw = EXISTING->yaw;
+             entity.pitch = EXISTING->pitch;
+             entity.roll = EXISTING->roll;
++            // MiOS retina spawn: fit and pixel snap once the window landed
++            entity.width  = World3D::toWorld(BOX.w) * entity.spawnScale;
++            entity.height = World3D::toWorld(BOX.h) * entity.spawnScale;
++            entity.center = retinaSettle(mon, entity, BOX, WIN_SCALE);
+         }
+         else if (const auto POSE = g_savedPoses.find(info.id);
+                  POSE != g_savedPoses.end()) {
+@@ -2022,6 +2396,43 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+             entity.yaw   = DIALOG_PARENT->yaw;
+             entity.pitch = DIALOG_PARENT->pitch;
+             entity.roll  = DIALOG_PARENT->roll;
++
++            // MiOS retina spawn: 0.3 m nearer would magnify it (1.06 at 5 m);
++            // the multiplier keeps its text at the parent's apparent size.
++            if (g_cfgCascade > 0.0f) {
++                const float DP = std::fabs(dot(g_scene.camera().position - DIALOG_PARENT->center,
++                                               g_world.normalOf(DIALOG_PARENT->id)));
++                if (DP > 0.6f) {
++                    g_retinaMul[info.id] = retinaMul(DIALOG_PARENT->id) * (DP - 0.3f) / DP;
++                    entity.spawnScale    = WIN_SCALE * retinaMul(info.id);
++                }
++            }
++        }
++        else if (retinaPlacing() && mon && !g_viewMorphWins.count(info.id)) {
++            // MiOS retina spawn: work-area centre, fit, in-plane cascade,
++            // compensated stacking (see retinaPlace). A window in the enter
++            // morph was placed by buildEnterMorph: the morph owns its pose.
++            const auto& CAM = g_scene.camera();
++            const Vec3  FWD = CAM.forward();
++            std::vector<SRetinaObstacle> OBST;
++            const auto ADD = [&](const World3D::SEntity& E) {
++                SRetinaObstacle O;
++                if (E.id != info.id && retinaObstacle(mon, E.center, E.yaw, E.pitch, E.width, E.height, O))
++                    OBST.push_back(O);
++            };
++            for (const auto& E : g_world.entities())
++                ADD(E);
++            for (const auto& E : ENTITIES)
++                ADD(E);
++            float maxDist = 0.0f;
++            if (const auto WALL = modelRayHit(CAM.position, FWD, false); WALL.hit)
++                maxDist = std::max(0.6f, WALL.dist - 0.3f);
++            const auto P = retinaPlace(mon, BOX, OBST, 0, maxDist);
++            retinaRecord(info.id, BOX, P);
++            entity.center     = P.center;
++            entity.spawnScale = WIN_SCALE * P.mul;
++            entity.yaw   = std::atan2(-FWD.x, -FWD.z);
++            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f));
+         }
+         else {
+             const auto& CAM = g_scene.camera();
+@@ -2070,7 +2481,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+                 FSW && Compat::windowId(FSW) == info.id) {
+                 const float RAWP = fsRawProgress();
+                 const float p = RAWP * RAWP * (3.0f - 2.0f * RAWP);
+-                const float ROOM_S = configWindowScale();
++                const float ROOM_S = roomScaleOf(info.id);
+                 const float S0 =
+                     g_fsPhase == EFullscreenPhase::To2D ? ROOM_S : 1.0f;
+                 const float S1 =
+@@ -2748,7 +3159,7 @@ static void applyFullscreenAnimation() {
+     // otherwise the quad visibly jumps at the handoff frames.
+     E->spawnScale = 1.0f;
+ 
+-    const float ROOM_SCALE = configWindowScale();
++    const float ROOM_SCALE = roomScaleOf(E->id);
+     const float S0 = A ? ROOM_SCALE : 1.0f;
+     const float S1 = A ? 1.0f : ROOM_SCALE;
+     const float S = S0 + (S1 - S0) * p; // p is the eased progress
+@@ -2887,13 +3298,22 @@ static bool boxesDiffer(const CBox& A, const CBox& B) {
+ // rectangle is always the live box: the layout owns the real geometry in
+ // both modes.
+ static void buildEnterMorph(
+-    const PHLMONITOR& /*mon*/, const std::vector<Compat::SWindowInfo>& infos) {
++    const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
+     g_viewMorphWins.clear();
+ 
+     const auto& CAM = g_scene.camera();
+     const Vec3  FWD = CAM.forward();
+ 
+     int i = 0;
++    int fresh = 0;                          // MiOS retina spawn: cascade index
++    std::vector<SRetinaObstacle> obstacles; // the poses laid out so far
++    const auto OBSTACLE = [&](const SViewPose& pose, const CBox& box, float mul) {
++        SRetinaObstacle O;
++        const float S = configWindowScale() * mul;
++        if (mon && retinaObstacle(mon, pose.center, pose.yaw, pose.pitch,
++                                  World3D::toWorld(box.w) * S, World3D::toWorld(box.h) * S, O))
++            obstacles.push_back(O);
++    };
+ 
+     for (const auto& info : infos) {
+         SViewMorphWin MW;
+@@ -2913,12 +3333,37 @@ static void buildEnterMorph(
+             // layout tree underneath is untouched.
+             if (MW.roomPose.box.w > 1.0 && MW.roomPose.box.h > 1.0)
+                 MW.boxRoom = MW.roomPose.box;
++            g_retinaMul[info.id] = MW.roomPose.scaleMul;
++            OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
+         } else {
+             // The same fresh spawn syncWorld seeds for unknown windows.
+             MW.roomPose.center = CAM.position + FWD * g_cfgSpawnDistance;
+             MW.roomPose.yaw    = std::atan2(-FWD.x, -FWD.z);
+             MW.roomPose.pitch  = std::asin(std::clamp(FWD.y, -1.0f, 1.0f));
+             MW.roomPose.roll   = 0.0f;
++            g_retinaMul.erase(info.id);
++
++            // MiOS retina spawn: a box larger than the work area minus the
++            // margin is resized into it (the morph drives the real box, the
++            // client re-renders at 1:1); then the window is placed like a
++            // fresh spawn, cascaded past the ones laid out before it.
++            if (retinaPlacing() && mon && !info.attached && !info.isLayer) {
++                if (g_cfgFit == ERetinaFit::Resize && info.window) {
++                    const CBox FA = retinaFitArea(mon);
++                    if (MW.box2D.w > FA.w + 0.5 || MW.box2D.h > FA.h + 0.5) {
++                        const CBox REAL = Compat::currentWindowBox(info.window);
++                        const Vector2D DECO{std::max(0.0, MW.box2D.w - REAL.w), std::max(0.0, MW.box2D.h - REAL.h)};
++                        const CBox FIT = retinaFitted(mon, CBox{0.0, 0.0, REAL.w, REAL.h}, info.window, DECO);
++                        MW.boxRoom = CBox{FIT.x, FIT.y, FIT.w + DECO.x, FIT.h + DECO.y};
++                        ++g_retinaResized;
++                    }
++                }
++                const auto P = retinaPlace(mon, MW.boxRoom, obstacles, fresh++, 0.0f);
++                retinaRecord(info.id, MW.boxRoom, P);
++                MW.roomPose.center   = P.center;
++                MW.roomPose.scaleMul = P.mul;
++                OBSTACLE(MW.roomPose, MW.boxRoom, P.mul);
++            }
+         }
+ 
+         MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
+@@ -2998,6 +3443,7 @@ static void beginExit3D() {
+         } else {
+             MW.roomPose = SViewPose{
+                 ENTITY.center, ENTITY.yaw, ENTITY.pitch, ENTITY.roll};
++            MW.roomPose.scaleMul = retinaMul(ENTITY.id);
+         }
+ 
+         // The room's real box rides the memory -- the next entry drives the
+@@ -3117,7 +3563,9 @@ static void applyViewMorphWindows(const PHLMONITOR& mon, float s) {
+         }
+ 
+         // Exact 1:1 on the frustum plane at s=0, the room scale at s=1.
+-        const float SCALE = 1.0f + (configWindowScale() - 1.0f) * s;
++        // MiOS retina spawn: with window_scale x d1 = spawn_distance the
++        // flight is a pure dolly at constant text size.
++        const float SCALE = 1.0f + (configWindowScale() * MW.roomPose.scaleMul - 1.0f) * s;
+ 
+         const auto SP = ScreenProject::project(
+             CAM.position, CAM.yaw, CAM.pitch, CAM.mirrorView, g_scene.zoom(),
+@@ -3198,6 +3646,7 @@ static void saveViewPoses() {
+     for (const auto& E : g_world.entities()) {
+         SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
+             CBox{E.logicalLeft, E.logicalTop, E.logicalWidth, E.logicalHeight}};
++        POSE.scaleMul = retinaMul(E.id);
+ 
+         // A window left fullscreen (no passthrough ran for it): its live box
+         // is the monitor -- never a room size. Keep the remembered one.
+@@ -3551,6 +4000,8 @@ static void deactivate3D() {
+ 
+     clearAimFocus();
+     g_world.clear();
++    g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
++    g_retinaSettle.clear();
+     g_renderWindows.clear();
+     g_input.reset();
+     resetMovementKeys();
+@@ -4743,6 +5194,24 @@ static void dumpStatus() {
+     out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
+         << " scale=" << g_scene.sceneScale() << " msaa=" << g_scene.msaaSamples()
+         << " fps=" << g_debugFps << "\n";
++    // MiOS retina spawn: the placement policy and the last window placed.
++    if (MON) {
++        const CBox FA = retinaFitArea(MON);
++        out << "spawn: exact=" << (g_cfgPixelExact ? 1 : 0) << " scale=" << configWindowScale()
++            << " d=" << g_cfgSpawnDistance << " d1=" << retinaD1(MON)
++            << " M=" << configWindowScale() * retinaD1(MON) / std::max(0.1f, g_cfgSpawnDistance)
++            << " fit=" << (g_cfgFit == ERetinaFit::Resize ? "resize" : g_cfgFit == ERetinaFit::Distance ? "distance" : "off")
++            << " area=" << FA.x << "," << FA.y << "," << FA.w << "x" << FA.h
++            << " snap=" << (g_cfgPixelSnap ? 1 : 0) << " cascade=" << g_cfgCascade
++            << " sharp=" << (g_scene.renderQuality().texelSharp ? 1 : 0)
++            << " spawnBox=" << g_cfgSpawnWidth << "x" << g_cfgSpawnHeight
++            << " placed=" << g_retinaPlaced << " resized=" << g_retinaResized
++            << " pushed=" << g_retinaPushed << " snapped=" << g_retinaSnapped
++            << " last=" << g_retinaLast.id << " box=" << g_retinaLast.box.w << "x" << g_retinaLast.box.h
++            << " lastM=" << g_retinaLast.M << " dist=" << g_retinaLast.dist << " mul=" << g_retinaLast.mul
++            << " k=" << g_retinaLast.cascade << " dx=" << g_retinaLast.snapX << " dy=" << g_retinaLast.snapY
++            << " small=" << (g_retinaLast.small ? 1 : 0) << "\n";
++    }
+     // MiOS edge quality: window texture filtering (mipmaps + anisotropic samples, GPU max).
+     out << "texture: mip=" << (g_scene.renderQuality().textureSupersample ? 1 : 0)
+         << " aniso=" << g_scene.renderQuality().anisotropy
+@@ -6565,6 +7034,9 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
+         if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
+             return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");
++        // MiOS retina spawn: texel-sharp reconstruction of 1:1 and magnified window textures.
++        if (!SET_BOOL(idx, "texel_sharp", q.texelSharp, "render.texel_sharp"))
++            return luaL_error(L, "hypr3d.config: render.texel_sharp must be a boolean");
+         // MiOS edge quality: mipmapped window snapshots + anisotropic filtering (1..16 samples).
+         {
+             float aniso = static_cast<float>(q.anisotropy);
+@@ -6614,6 +7086,44 @@ static int luaConfig(lua_State* L) {
+                      "windows.depth"))
+             return luaL_error(L, "hypr3d.config: windows.depth must be a number");
+ 
++        // MiOS retina spawn (see g_cfgPixelExact).
++        if (!SET_BOOL(idx, "pixel_exact", g_cfgPixelExact, "windows.pixel_exact"))
++            return luaL_error(L, "hypr3d.config: windows.pixel_exact must be a boolean");
++        if (!SET_BOOL(idx, "pixel_snap", g_cfgPixelSnap, "windows.pixel_snap"))
++            return luaL_error(L, "hypr3d.config: windows.pixel_snap must be a boolean");
++        {
++            float margin = g_cfgFitMargin, cascade = g_cfgCascade, minMag = g_cfgMinMag;
++            float safeTop = g_cfgSafeTop, safeBottom = g_cfgSafeBottom;
++            if (!SET_NUM(idx, "fit_margin", margin, "windows.fit_margin") || !std::isfinite(margin))
++                return luaL_error(L, "hypr3d.config: windows.fit_margin must be a number");
++            if (!SET_NUM(idx, "cascade", cascade, "windows.cascade") || !std::isfinite(cascade))
++                return luaL_error(L, "hypr3d.config: windows.cascade must be a number");
++            if (!SET_NUM(idx, "min_magnification", minMag, "windows.min_magnification") || !std::isfinite(minMag))
++                return luaL_error(L, "hypr3d.config: windows.min_magnification must be a number");
++            if (!SET_NUM(idx, "safe_top", safeTop, "windows.safe_top") || !std::isfinite(safeTop))
++                return luaL_error(L, "hypr3d.config: windows.safe_top must be a number");
++            if (!SET_NUM(idx, "safe_bottom", safeBottom, "windows.safe_bottom") || !std::isfinite(safeBottom))
++                return luaL_error(L, "hypr3d.config: windows.safe_bottom must be a number");
++            g_cfgFitMargin = std::clamp(margin, 0.0f, 512.0f);
++            g_cfgCascade   = std::clamp(cascade, 0.0f, 512.0f);
++            g_cfgMinMag    = std::clamp(minMag, 0.0f, 1.0f);
++            g_cfgSafeTop = std::clamp(safeTop, 0.0f, 512.0f);
++            g_cfgSafeBottom = std::clamp(safeBottom, 0.0f, 512.0f);
++        }
++        {
++            std::string fit;
++            if (!SET_STRING(idx, "fit", fit, "windows.fit"))
++                return luaL_error(L, "hypr3d.config: windows.fit must be a string");
++            if (fit == "off")
++                g_cfgFit = ERetinaFit::Off;
++            else if (fit == "resize")
++                g_cfgFit = ERetinaFit::Resize;
++            else if (fit == "distance")
++                g_cfgFit = ERetinaFit::Distance;
++            else if (!fit.empty())
++                return luaL_error(L, "hypr3d.config: windows.fit must be \"off\", \"resize\" or \"distance\"");
++        }
++
+         // windows.spawn_size = { x = 960, y = 540 }: the logical box a
+         // window that appears while the view is open starts at.
+         {

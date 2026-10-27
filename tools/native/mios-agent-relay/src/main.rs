@@ -1444,7 +1444,9 @@ fn run(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::E
 // it must never infer ownership from an idle shell in the operator's window.
 fn workspace_tmux(socket: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new("tmux")
-        .args(["-S", socket])
+        .env("LC_ALL", "C.UTF-8")
+        .env("LANG", "C.UTF-8")
+        .args(["-u", "-S", socket])
         .args(args)
         .output()
         .map_err(|e| e.to_string())?;
@@ -1458,6 +1460,10 @@ fn workspace_tmux(socket: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim_end_matches('\n')
         .to_string())
+}
+
+fn workspace_escape_format(value: &str) -> String {
+    value.replace('#', "##")
 }
 
 fn workspace_lock(path: &Path, name: &str) -> Result<fs::File, String> {
@@ -2011,19 +2017,11 @@ fn workspace_layout_order(layout: &str) -> Vec<String> {
 // A server's inherited SSH environment does not identify the active viewer.
 // Inspect only the most recently active client's process ancestry, never its
 // environment or command arguments. Unknown platforms use the real cell budget.
-fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool, String> {
-    let clients = workspace_tmux(
-        socket,
-        &[
-            "list-clients",
-            "-F",
-            "#{client_pid}\t#{client_activity}\t#{client_session}\t#{client_width}",
-        ],
-    )?;
+fn workspace_select_viewer_pid(clients: &str, session: &str, w: usize) -> Option<u32> {
     let parsed: Vec<(bool, u64, u32)> = clients
         .lines()
         .filter_map(|line| {
-            let row: Vec<&str> = line.split('\t').collect();
+            let row: Vec<&str> = line.split(['\t', '|']).collect();
             if row.len() != 4 || row[2] != session {
                 return None;
             }
@@ -2032,21 +2030,23 @@ fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool
         })
         .collect();
     let has_width_match = parsed.iter().any(|(m, _, _)| *m);
-    let selected = parsed
+    parsed
         .into_iter()
         .filter(|(m, _, _)| !has_width_match || *m)
         .map(|(_, act, pid)| (act, pid))
-        .max();
-    let Some((_, mut pid)) = selected else {
-        return Ok(false);
-    };
+        .max()
+        .map(|(_, pid)| pid)
+}
+
+fn workspace_pid_is_remote_in(proc_root: &Path, start_pid: u32) -> bool {
+    let mut pid = start_pid;
     for _ in 0..24 {
-        let path = PathBuf::from(format!("/proc/{pid}"));
+        let path = proc_root.join(pid.to_string());
         let Ok(name) = fs::read_to_string(path.join("comm")) else {
             break;
         };
         if matches!(name.trim(), "sshd" | "sshd-session") {
-            return Ok(true);
+            return true;
         }
         let Ok(stat) = fs::read_to_string(path.join("stat")) else {
             break;
@@ -2066,7 +2066,22 @@ fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool
         }
         pid = parent;
     }
-    Ok(false)
+    false
+}
+
+fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool, String> {
+    let clients = workspace_tmux(
+        socket,
+        &[
+            "list-clients",
+            "-F",
+            "#{client_pid}|#{client_activity}|#{client_session}|#{client_width}",
+        ],
+    )?;
+    let Some(pid) = workspace_select_viewer_pid(&clients, session, w) else {
+        return Ok(false);
+    };
+    Ok(workspace_pid_is_remote_in(Path::new("/proc"), pid))
 }
 
 fn workspace(request: &Value) -> Result<Value, String> {
@@ -2158,12 +2173,12 @@ fn workspace(request: &Value) -> Result<Value, String> {
             "-t",
             &window,
             "-F",
-            "#{pane_id}\t#{@mios-mcp-owner}",
+            "#{pane_id}|#{@mios-mcp-owner}",
         ])?;
         let mut workers = Vec::new();
         let mut owner = String::new();
         for row in rows.lines() {
-            let Some((pane, candidate)) = row.split_once('\t') else {
+            let Some((pane, candidate)) = row.split_once(['\t', '|']) else {
                 return Err("invalid startup pane record".into());
             };
             if pane == head {
@@ -2380,10 +2395,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
         // Re-enter the existing human workspace; opening a terminal must not
         // start another head or duplicate its worker reservations.
         let panes = tmux(&["list-panes", "-a", "-F",
-            "#{pane_id}\t#{session_name}\t#{@mios-workspace-head}\t#{@mios-workspace-window}\t#{pane_dead}"]).unwrap_or_default();
+            "#{pane_id}|#{session_name}|#{@mios-workspace-head}|#{@mios-workspace-window}|#{pane_dead}"]).unwrap_or_default();
         for row in panes
             .lines()
-            .map(|line| line.split('\t').collect::<Vec<_>>())
+            .map(|line| line.split(['\t', '|']).collect::<Vec<_>>())
         {
             if row.len() == 5
                 && row[0] == row[2]
@@ -2403,9 +2418,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
                         result = workspace(&resize)?;
                     }
                     let active = result["active"].as_str().unwrap_or(row[0]);
+                    let worker_count = result["workers"].as_array().map(|w| w.len()).unwrap_or(0);
                     tmux(&["select-window", "-t", row[3]])?;
                     tmux(&["select-pane", "-t", active])?;
-                    return Ok(json!({"head":row[0],"worker_panes":count,"reused":true}));
+                    return Ok(json!({"head":row[0],"worker_panes":worker_count,"reused":true}));
                 }
             }
         }
@@ -2423,6 +2439,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
         if !Path::new(&directory).is_absolute() || !Path::new(&directory).is_dir() {
             return Err("workspace directory must be an existing absolute path".into());
         }
+        let escaped_directory = workspace_escape_format(&directory);
         let latch = string(request, "latch")?;
         identifier(latch)?;
         let command = format!(
@@ -2444,7 +2461,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 "-n",
                 string(config, "window_name")?,
                 "-c",
-                &directory,
+                &escaped_directory,
                 &command,
             ])?
         } else {
@@ -2459,7 +2476,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 "-n",
                 string(config, "window_name")?,
                 "-c",
-                &directory,
+                &escaped_directory,
                 &command,
             ])?
         };
@@ -2508,7 +2525,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 "-n",
                 string(config, "workers_window_name")?,
                 "-c",
-                &directory,
+                &escaped_directory,
                 "exec /usr/bin/sleep infinity",
             ])?;
             tmux(&[
@@ -2534,36 +2551,6 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 "@mios-workspace-anchor-for",
                 &head,
             ])?;
-            for slot in 1..=count {
-                let pane = tmux(&[
-                    "split-window",
-                    "-d",
-                    "-P",
-                    "-F",
-                    "#{pane_id}",
-                    "-t",
-                    &head,
-                    "-c",
-                    &directory,
-                    "exec /usr/bin/sleep infinity",
-                ])?;
-                let pid = tmux(&["display-message", "-p", "-t", &pane, "#{pane_pid}"])?;
-                for (key, value) in [
-                    ("@mios-workspace-worker", head.clone()),
-                    ("@mios-workspace-slot", slot.to_string()),
-                    ("@mios-workspace-reserved", pid),
-                ] {
-                    tmux(&["set-option", "-p", "-t", &pane, key, &value])?;
-                }
-                tmux(&[
-                    "select-pane",
-                    "-t",
-                    &pane,
-                    "-T",
-                    &format!("Worker {slot} (empty)"),
-                ])?;
-                tmux(&["select-layout", "-t", &head, "tiled"])?;
-            }
             let observer = tmux(&[
                 "new-window",
                 "-d",
@@ -2575,7 +2562,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 "-n",
                 "MiOS AI Agents",
                 "-c",
-                &directory,
+                &escaped_directory,
                 string(request, "observer_command")?,
             ])?;
             created_observer = Some(observer.clone());
@@ -2646,7 +2633,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
         }
         tmux(&["select-window", "-t", &head])?;
         tmux(&["select-pane", "-t", &head])?;
-        return Ok(json!({"head":head,"worker_panes":count}));
+        return Ok(json!({"head":head,"worker_panes":0}));
     }
     let mut window = match tmux(&[
         "display-message",
@@ -2664,11 +2651,11 @@ fn workspace(request: &Value) -> Result<Value, String> {
             Err(_) => return Ok(json!({"managed": false})),
         };
     }
-    let context = match tmux(&["display-message", "-p", "-t", &window, "#{session_name}\t#{window_id}\t#{@mios-workspace-head}\t#{window_width}\t#{window_height}\t#{@mios-workspace-observer}\t#{window_zoomed_flag}"]) {
+    let context = match tmux(&["display-message", "-p", "-t", &window, "#{session_name}|#{window_id}|#{@mios-workspace-head}|#{window_width}|#{window_height}|#{@mios-workspace-observer}|#{window_zoomed_flag}"]) {
         Ok(c) => c,
         Err(_) => return Ok(json!({"managed": false})),
     };
-    let fields: Vec<&str> = context.split('\t').collect();
+    let fields: Vec<&str> = context.split(['\t', '|']).collect();
     if fields.len() != 7 || fields[0] != string(request, "session")? || fields[2] != head {
         return Ok(json!({"managed":false}));
     }
@@ -2693,7 +2680,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
         path,
         &format!("mios-workspace-{}.lock", head.trim_start_matches('%')),
     )?;
-    let rows = tmux(&["list-panes", "-a", "-F", "#{pane_id}\t#{@mios-workspace-worker}\t#{@mios-workspace-slot}\t#{@mios-workspace-reserved}\t#{pane_pid}\t#{pane_current_command}\t#{@mios-mcp-owner}"])?;
+    let rows = tmux(&["list-panes", "-a", "-F", "#{pane_id}|#{@mios-workspace-worker}|#{@mios-workspace-slot}|#{@mios-workspace-reserved}|#{pane_pid}|#{pane_current_command}|#{@mios-mcp-owner}"])?;
     if action == "claim" || action == "release" {
         let slot = request["slot"]
             .as_u64()
@@ -2703,7 +2690,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
         };
         let row = rows
             .lines()
-            .map(|s| s.split('\t').collect::<Vec<_>>())
+            .map(|s| s.split(['\t', '|']).collect::<Vec<_>>())
             .find(|r| r.len() == 7 && r[1] == head && r[2] == slot.to_string());
         let Some(row) = row else {
             return Ok(json!({"managed":false}));
@@ -2801,9 +2788,9 @@ fn workspace(request: &Value) -> Result<Value, String> {
         "-p",
         "-t",
         window,
-        "#{window_width}\t#{window_height}",
+        "#{window_width}|#{window_height}",
     ])?;
-    let (sw, sh) = size.split_once('\t').unwrap_or((fields[3], fields[4]));
+    let (sw, sh) = size.split_once(['\t', '|']).unwrap_or((fields[3], fields[4]));
     let w = sw.parse::<usize>().map_err(|e| e.to_string())?;
     let h = sh.parse::<usize>().map_err(|e| e.to_string())?;
     // The observer pane can exit or be closed by the operator. Every later step
@@ -2827,13 +2814,13 @@ fn workspace(request: &Value) -> Result<Value, String> {
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id}\t#{@mios-workspace-observer-for}\t#{pane_dead}\t#{window_id}",
+            "#{pane_id}|#{@mios-workspace-observer-for}|#{pane_dead}|#{window_id}",
         ])
         .unwrap_or_default();
         let mut live: Vec<(String, String)> = tagged
             .lines()
             .filter_map(|line| {
-                let f: Vec<&str> = line.split('\t').collect();
+                let f: Vec<&str> = line.split(['\t', '|']).collect();
                 (f.len() == 4 && f[1] == head_s && f[2] == "0")
                     .then(|| (f[0].to_string(), f[3].to_string()))
             })
@@ -2943,7 +2930,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
     let observer = observer_id.as_str();
     let mut workers = Vec::new();
     let mut ordered = Vec::new();
-    for row in rows.lines().map(|s| s.split('\t').collect::<Vec<_>>()) {
+    for row in rows.lines().map(|s| s.split(['\t', '|']).collect::<Vec<_>>()) {
         if row.len() != 7 {
             return Err("invalid workspace metadata".into());
         }
@@ -3087,10 +3074,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
             "-t",
             &anchor,
             "-F",
-            "#{pane_id}\t#{@mios-workspace-worker}\t#{@mios-workspace-anchor-for}",
+            "#{pane_id}|#{@mios-workspace-worker}|#{@mios-workspace-anchor-for}",
         ])?;
         if stored.lines().any(|line| {
-            let row: Vec<&str> = line.split('\t').collect();
+            let row: Vec<&str> = line.split(['\t', '|']).collect();
             row.len() != 3 || (row[1] != head && row[2] != head)
         }) {
             return Err("workspace storage contains an operator pane".into());
@@ -3194,18 +3181,29 @@ fn workspace(request: &Value) -> Result<Value, String> {
         }
     }
     if !compact && resource.is_empty() {
-        resource = tmux(&[
+        let storage_target = format!("={storage}:");
+        let res_cmd = string(config, "resource_command")?;
+        let mut res_args = vec![
             "new-window",
             "-d",
             "-P",
             "-F",
             "#{pane_id}",
             "-t",
-            &format!("={storage}:"),
+            &storage_target,
             "-n",
             "MiOS Processes",
-            string(config, "resource_command")?,
-        ])?;
+        ];
+        let escaped_dir;
+        if let Some(dir) = request["directory"]
+            .as_str()
+            .filter(|d| Path::new(d).is_absolute() && Path::new(d).is_dir())
+        {
+            escaped_dir = workspace_escape_format(dir);
+            res_args.extend(["-c", &escaped_dir]);
+        }
+        res_args.push(res_cmd);
+        resource = tmux(&res_args)?;
         tmux(&[
             "set-option",
             "-p",
@@ -3271,12 +3269,12 @@ fn workspace(request: &Value) -> Result<Value, String> {
         "-t",
         window,
         "-F",
-        "#{pane_id}\t#{pane_top}\t#{pane_left}",
+        "#{pane_id}|#{pane_top}|#{pane_left}",
     ])?;
     let mut cells: Vec<(usize, usize, String)> = positioned
         .lines()
         .map(|line| {
-            let row: Vec<&str> = line.split('\t').collect();
+            let row: Vec<&str> = line.split(['\t', '|']).collect();
             Ok((
                 row[1].parse::<usize>().map_err(|e| e.to_string())?,
                 row[2].parse::<usize>().map_err(|e| e.to_string())?,
@@ -5073,5 +5071,214 @@ mod border_policy_tests {
         config["desktop_border_lines"] = json!("double");
         config["desktop_border_format"] = json!("title\nrun-shell bad");
         assert!(workspace_borders(&config, false).is_err());
+    }
+
+    #[test]
+    fn workspace_remote_viewer_filters_by_client_width_and_walks_sshd_ancestry() {
+        let clients = "1001|100|tmux-os|200\n2002|300|tmux-os|54\n3003|999|other|200\n";
+        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 200), Some(1001));
+        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 54), Some(2002));
+        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 120), Some(2002));
+        assert_eq!(workspace_select_viewer_pid(clients, "missing", 200), None);
+
+        let clients_desktop_latest =
+            "1001\t500\ttmux-os\t200\n2002\t300\ttmux-os\t54\n3003\t999\tother\t200\n";
+        assert_eq!(
+            workspace_select_viewer_pid(clients_desktop_latest, "tmux-os", 200),
+            Some(1001)
+        );
+
+        let temp = tempfile::Builder::new()
+            .prefix("mios-proc-test-")
+            .tempdir()
+            .unwrap();
+        let root = temp.path();
+        let write_proc = |pid: u32, comm: &str, ppid: u32| {
+            let dir = root.join(pid.to_string());
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
+            fs::write(dir.join("stat"), format!("{pid} ({comm} (test)) S {ppid} 1 1 0\n")).unwrap();
+        };
+        write_proc(1, "systemd", 0);
+        write_proc(100, "Hyprland", 1);
+        write_proc(101, "ghostty", 100);
+        write_proc(1001, "tmux: client", 101);
+        // 2002 has ONLY sshd-session in its ancestry (no sshd parent) to kill mutant m4
+        write_proc(201, "sshd-session", 1);
+        write_proc(202, "bash", 201);
+        write_proc(2002, "tmux: client", 202);
+        // 3003 has ONLY sshd in its ancestry to kill mutant m3
+        write_proc(300, "sshd", 1);
+        write_proc(3003, "tmux: client", 300);
+
+        // Positive control: matching width SSH client (w=54 -> pid 2002 via sshd-session) is remote (compact)
+        let ssh_viewer = workspace_select_viewer_pid(clients, "tmux-os", 54).unwrap();
+        assert_eq!(ssh_viewer, 2002);
+        assert!(workspace_pid_is_remote_in(root, ssh_viewer));
+
+        // Negative control 1: narrow background SSH client (2002, w=54) when wide desktop client (1001, w=200) is latest -> not remote
+        let desktop_latest =
+            workspace_select_viewer_pid(clients_desktop_latest, "tmux-os", 200).unwrap();
+        assert_eq!(desktop_latest, 1001);
+        assert!(!workspace_pid_is_remote_in(root, desktop_latest));
+
+        // Negative control 2: narrow SSH client (2002, w=54) with higher activity when window width is 200 -> width filter selects 1001 -> not remote
+        let width_filtered = workspace_select_viewer_pid(clients, "tmux-os", 200).unwrap();
+        assert_eq!(width_filtered, 1001);
+        assert!(!workspace_pid_is_remote_in(root, width_filtered));
+
+        assert!(workspace_pid_is_remote_in(root, 3003));
+        assert!(!workspace_pid_is_remote_in(root, 9999));
+    }
+
+    #[test]
+    fn workspace_open_does_not_prespawn_sleep_worker_panes() {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(
+            Command::new("tmux")
+                .arg("-V")
+                .output()
+                .is_ok_and(|o| o.status.success()),
+            "tmux binary is required for workspace_open_does_not_prespawn_sleep_worker_panes"
+        );
+        struct ScratchServer {
+            _temp: tempfile::TempDir,
+            sock: String,
+        }
+        impl Drop for ScratchServer {
+            fn drop(&mut self) {
+                let _ = Command::new("tmux")
+                    .args(["-S", &self.sock, "-f", "/dev/null", "kill-server"])
+                    .output();
+            }
+        }
+        let temp = tempfile::Builder::new()
+            .prefix("mios-relay-open-")
+            .tempdir()
+            .unwrap();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let sock = temp.path().join("default");
+        let sock_str = sock.to_str().unwrap().to_string();
+        let hash_dir = temp.path().join("dir#{session_name}");
+        fs::create_dir_all(&hash_dir).unwrap();
+        let hash_dir_str = hash_dir.to_str().unwrap().to_string();
+        let _guard = ScratchServer {
+            _temp: temp,
+            sock: sock_str.clone(),
+        };
+
+        let status = Command::new("tmux")
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .args([
+                "-S",
+                &sock_str,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                "base",
+                "-x",
+                "200",
+                "-y",
+                "60",
+                "sleep 3600",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let ws_cfg = json!({
+            "enabled": true,
+            "worker_panes": 4,
+            "window_name": "MiOS AI",
+            "workers_window_name": "MiOS AI Workers",
+            "tui_python": "/usr/bin/python3",
+            "resource_command": "sleep 3600",
+            "head_percent": 38,
+            "desktop_head_percent": 38,
+            "desktop_min_columns": 160,
+            "desktop_min_rows": 40,
+            "portrait_ratio_percent": 200,
+            "minimum_head_rows": 16,
+            "worker_min_columns": 12,
+            "resource_min_columns": 60,
+            "resource_min_rows": 8,
+            "remote_compact": true,
+            "desktop_border_lines": "double",
+            "compact_border_lines": "single",
+            "desktop_border_status": "top",
+            "compact_border_status": "off",
+            "desktop_border_format": "╭─ #{pane_title} ─╮",
+            "golden_ratio": (1.0 + 5.0_f64.sqrt()) / 2.0,
+            "layout": {
+                "left_roles": ["chat", "metrics"],
+                "column_share": 0.3819660112501051,
+                "chat_share": 0.6180339887498949,
+                "monitor_share": 0.2360679774997897,
+                "monitor_min_rows": 8,
+                "spiral_share": 0.6180339887498949,
+                "spiral_start": "down",
+                "spiral_turn": "clockwise",
+                "spiral_depth": 4
+            }
+        });
+
+        let open_req = json!({
+            "action": "open",
+            "socket": sock_str,
+            "human_socket": "default",
+            "session": "test-open-ws",
+            "directory": hash_dir_str,
+            "latch": "mios-test-latch",
+            "command": "sleep 3600",
+            "observer_command": "sleep 3600",
+            "adapter": "/usr/libexec/mios/mios-mcp-server",
+            "adapter_python": "/usr/bin/python3",
+            "workspace": ws_cfg
+        });
+        let open_res = workspace(&open_req).unwrap();
+        let head = open_res["head"].as_str().unwrap().to_string();
+        assert_eq!(open_res["worker_panes"], 0);
+
+        let _ = workspace_tmux(
+            &sock_str,
+            &["resize-window", "-t", &head, "-x", "200", "-y", "60"],
+        );
+        let mut resize_req = open_req.clone();
+        resize_req["action"] = json!("resize");
+        resize_req["head"] = json!(head);
+        let resize_res = workspace(&resize_req).unwrap();
+        assert_eq!(resize_res["layout"], "desktop");
+        assert_eq!(resize_res["workers"], json!([]));
+
+        let head_cwd = workspace_tmux(
+            &sock_str,
+            &["display-message", "-p", "-t", &head, "#{pane_current_path}"],
+        )
+        .unwrap();
+        assert_eq!(head_cwd, hash_dir_str, "expected literal # in cwd: {head_cwd}");
+
+        let win_panes = workspace_tmux(
+            &sock_str,
+            &[
+                "list-panes",
+                "-t",
+                &head,
+                "-F",
+                "#{pane_id}|#{@mios-workspace-worker}|#{@mios-workspace-reserved}|#{pane_title}|#{pane_current_path}",
+            ],
+        )
+        .unwrap();
+        let rows: Vec<&str> = win_panes.lines().collect();
+        assert_eq!(rows.len(), 3, "expected 3 desktop panes: {win_panes}");
+        for row in rows {
+            let parts: Vec<&str> = row.split(['\t', '|']).collect();
+            assert!(parts[1].is_empty(), "unexpected worker tag: {row}");
+            assert!(parts[2].is_empty(), "unexpected reserved tag: {row}");
+            assert!(!parts[3].contains("Worker"), "unexpected worker title: {row}");
+            assert_eq!(parts[4], hash_dir_str, "unexpected expanded cwd in pane: {row}");
+        }
     }
 }

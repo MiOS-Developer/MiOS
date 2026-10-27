@@ -1,0 +1,20 @@
+#!/bin/bash
+# AI-hint: xdg-desktop-portal-hyprland custom picker ([desktop.hyprland.xdph].custom_picker_binary): `miosd shaderglass pick` answers the ShaderGlass supervisor's one-shot request with its target window (no click); every other screencast request, and any miosd without the picker, gets the stock hyprland-share-picker with the same arguments.
+# AI-related: src/mios-rs/miosd/src/shaderglass/picker.rs, usr/share/mios/mios.toml [desktop.hyprland.xdph] [desktop.shaderglass.capture]
+# AI-functions: main
+
+set -euo pipefail
+
+MIOSD=/usr/bin/miosd
+
+main() {
+    if "$MIOSD" shaderglass pick --probe >/dev/null 2>&1; then
+        exec "$MIOSD" shaderglass pick "$@"
+    fi
+    # xdph's own default when no custom picker is configured (found on PATH).
+    exec hyprland-share-picker "$@"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

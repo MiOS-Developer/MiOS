@@ -14,6 +14,8 @@ Item {
     property vector4d bg: Qt.vector4d(0, 0, 0, 1)  // cleared-field colour ([colors].bg)
     property real dark: 1                          // [theme].mode == "dark"
     property real fps: 30                          // steps per second; one step advects by 1 / fps
+    property real refFps: 30                       // the look's reference rate ([theme.wallpaper] framerate): at fps != refFps
+                                                   // the SIM compounds its per-step constants by refFps / fps (u_rate)
     property int emitters: 24
     property real dprCap: 1.5                      // HTML DPR_CAP
     property real refSimScale: 0.6                 // HTML SIM_SCALE: reference grid for every kernel offset
@@ -56,6 +58,7 @@ Item {
         property var u_prev: field
         property real u_time: 0
         property real u_dt: 1 / ocean.fps
+        property real u_rate: ocean.refFps / ocean.fps   // 1 at the reference rate: the original per-step math
         property real u_asp: ocean.aspect
         property real u_reset: 1
         property real u_emitters: ocean.emitters

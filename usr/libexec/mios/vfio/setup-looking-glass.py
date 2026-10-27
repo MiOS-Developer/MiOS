@@ -76,6 +76,9 @@ LG_DEFAULTS: Dict[str, Any] = {
     "client_keep_aspect": True,     # win:keepAspect
     "client_egl_scale": 0,          # egl:scale -- 0 auto: 1:1 when the guest matches the window, linear otherwise
     "start_timeout_s": 120,
+    # virtlogd keeps every domain's COM1 on the host (<serial><log file=.../>): the guest's provisioning log is
+    # readable without a console attached; "" = no serial log. {domain} = the domain name.
+    "serial_log": "/var/log/libvirt/qemu/{domain}-serial0.log",
     "build_record": "/usr/share/mios/looking-glass/build.json",
     "idd_downloads": "https://looking-glass.io/downloads",
     "idd_signer": "CN=HostFission",
@@ -354,11 +357,37 @@ def apply_profile(xml_text: str, cfg: Dict[str, Any], vcpus: Optional[int] = Non
         spice_el = next(g for g in devices.findall("graphics") if g.get("type") == "spice")
         devices.insert(_index_of(devices, spice_el) + 1, vnc)
 
+    # -- host-readable guest serial log (COM1: the MiOS provisioning log) ---------------------------------
+    want_log = serial_log_path(cfg, root.findtext("name") or "")
+    if want_log:
+        serial = next((s for s in devices.findall("serial") if s.get("type") in ("pty", "file", "unix")), None)
+        if serial is None:
+            serial = ET.SubElement(devices, "serial", {"type": "pty"})
+            ET.SubElement(serial, "target", {"type": "isa-serial", "port": "0"})
+        for old in serial.findall("log"):
+            serial.remove(old)
+        log_el = ET.Element("log", {"file": want_log, "append": "on"})
+        src = serial.find("source")   # libvirt's chardev order: <source>, <log>, <target>
+        serial.insert(list(serial).index(src) + 1 if src is not None else 0, log_el)
+
     _indent(root)
     out = ET.tostring(root, encoding="unicode")
     if xml_text.lstrip().startswith("<?xml"):
         out = '<?xml version="1.0" encoding="UTF-8"?>\n' + out
     return out + "\n"
+
+
+def serial_log_path(cfg: Dict[str, Any], domain: str) -> str:
+    """[vm.looking_glass].serial_log for one domain ("" = off). Only an absolute path under /var/log/libvirt."""
+    tmpl = str(cfg.get("serial_log") or "")
+    if not tmpl:
+        return ""
+    if not domain or not re.fullmatch(r"[A-Za-z0-9_.+-]+", domain):
+        raise ValueError(f"domain name {domain!r} cannot name a serial log file")
+    path = os.path.normpath(tmpl.replace("{domain}", domain))
+    if not path.startswith("/var/log/libvirt/") or "{" in path:
+        raise ValueError(f"[vm.looking_glass].serial_log {tmpl!r} must resolve under /var/log/libvirt/")
+    return path
 
 
 def _indent(root: ET.Element) -> None:
@@ -435,6 +464,11 @@ def profile_problems(xml_text: str, cfg: Dict[str, Any], vcpus: Optional[int] = 
         m, s = shm[0].find("model"), shm[0].find("size")
         if m is None or m.get("type") != "ivshmem-plain" or s is None or (s.text or "").strip() != str(int(cfg["shm_size_mb"])) or s.get("unit") != "M":
             bad.append(f"shmem is not ivshmem-plain {cfg['shm_size_mb']}M")
+    want_log = serial_log_path(cfg, root.findtext("name") or "")
+    if want_log:
+        logs = [lg.get("file") for s in (dev.findall("serial") if dev is not None else []) for lg in s.findall("log")]
+        if want_log not in logs:
+            bad.append(f"no host serial log: <serial> lacks <log file='{want_log}'/> ([vm.looking_glass].serial_log)")
     return bad
 
 

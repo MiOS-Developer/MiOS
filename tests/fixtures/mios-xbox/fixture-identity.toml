@@ -4,3 +4,7 @@ username = "mios-fixture"
 default_password = "Fixture-Only-Pw-7x!"
 hostname = "MIOS-XBOX-FIX"
 fullname = "MiOS Fixture"
+
+# Test-only operator SSH public key (not a real key): [windows.xbox.ssh].authorized_keys_key reads it.
+[auth]
+existing_ssh_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMiOSFixtureOnlyPublicKeyNotARealKey000000 fixture@mios-xbox"

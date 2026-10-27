@@ -7,5 +7,7 @@ filesystems=!host;!host-os;!host-etc;
 devices=!all;
 
 [Session Bus Policy]
+# Native application-menu export for every sandboxed application that supports it.
+com.canonical.AppMenu.Registrar=talk
 org.freedesktop.portal.*=talk
 org.freedesktop.Flatpak=none

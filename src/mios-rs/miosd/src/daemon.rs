@@ -363,6 +363,47 @@ pub mod telemetry {
         }
 
         fn sample_memory() -> (u64, u64, f32) {
+            #[cfg(windows)]
+            {
+                #[repr(C)]
+                struct MemoryStatusEx {
+                    dw_length: u32,
+                    dw_memory_load: u32,
+                    ull_total_phys: u64,
+                    ull_avail_phys: u64,
+                    ull_total_page_file: u64,
+                    ull_avail_page_file: u64,
+                    ull_total_virtual: u64,
+                    ull_avail_virtual: u64,
+                    ull_avail_extended_virtual: u64,
+                }
+                extern "system" {
+                    fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+                }
+                let mut stat = MemoryStatusEx {
+                    dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
+                    dw_memory_load: 0,
+                    ull_total_phys: 0,
+                    ull_avail_phys: 0,
+                    ull_total_page_file: 0,
+                    ull_avail_page_file: 0,
+                    ull_total_virtual: 0,
+                    ull_avail_virtual: 0,
+                    ull_avail_extended_virtual: 0,
+                };
+                if unsafe { GlobalMemoryStatusEx(&mut stat) } != 0 && stat.ull_total_phys > 0 {
+                    let total_mb = stat.ull_total_phys / (1024 * 1024);
+                    let avail_mb = stat.ull_avail_phys / (1024 * 1024);
+                    let used_mb = total_mb.saturating_sub(avail_mb);
+                    let pct = if total_mb > 0 {
+                        (used_mb as f32 / total_mb as f32) * 100.0
+                    } else {
+                        0.0
+                    };
+                    return (used_mb, total_mb, pct);
+                }
+            }
+
             let mut total_kb: u64 = 16 * 1024 * 1024;
             let mut avail_kb: u64 = 12 * 1024 * 1024;
 
@@ -407,7 +448,57 @@ pub mod telemetry {
         }
 
         fn sample_disk() -> (f32, f32) {
-            // Fallback default capacity representation
+            #[cfg(unix)]
+            {
+                let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+                if unsafe { libc::statvfs(c"/".as_ptr(), &mut stat) } == 0 && stat.f_blocks > 0 {
+                    let frsize = if stat.f_frsize > 0 {
+                        stat.f_frsize as u64
+                    } else {
+                        stat.f_bsize as u64
+                    };
+                    let total_bytes = (stat.f_blocks as u64).saturating_mul(frsize);
+                    let avail_bytes = (stat.f_bavail as u64).saturating_mul(frsize);
+                    let used_bytes = total_bytes.saturating_sub(avail_bytes);
+                    let gib = 1024.0 * 1024.0 * 1024.0;
+                    return (
+                        (used_bytes as f64 / gib) as f32,
+                        (total_bytes as f64 / gib) as f32,
+                    );
+                }
+            }
+            #[cfg(windows)]
+            {
+                extern "system" {
+                    fn GetDiskFreeSpaceExW(
+                        lp_directory_name: *const u16,
+                        lp_free_bytes_available_to_caller: *mut u64,
+                        lp_total_number_of_bytes: *mut u64,
+                        lp_total_number_of_free_bytes: *mut u64,
+                    ) -> i32;
+                }
+                let root: [u16; 4] = [b'C' as u16, b':' as u16, b'\\' as u16, 0];
+                let mut free_caller: u64 = 0;
+                let mut total_bytes: u64 = 0;
+                let mut free_total: u64 = 0;
+                if unsafe {
+                    GetDiskFreeSpaceExW(
+                        root.as_ptr(),
+                        &mut free_caller,
+                        &mut total_bytes,
+                        &mut free_total,
+                    )
+                } != 0
+                    && total_bytes > 0
+                {
+                    let used_bytes = total_bytes.saturating_sub(free_total);
+                    let gib = 1024.0 * 1024.0 * 1024.0;
+                    return (
+                        (used_bytes as f64 / gib) as f32,
+                        (total_bytes as f64 / gib) as f32,
+                    );
+                }
+            }
             (35.5, 250.0)
         }
     }
@@ -423,6 +514,14 @@ pub mod telemetry {
             assert!(metrics.cpu_percent >= 0.0 && metrics.cpu_percent <= 100.0);
             assert!(metrics.memory_total_mb > 0);
             assert!(metrics.memory_percent >= 0.0 && metrics.memory_percent <= 100.0);
+            assert!(metrics.disk_total_gb > 0.0);
+            assert!(metrics.disk_used_gb >= 0.0 && metrics.disk_used_gb <= metrics.disk_total_gb);
+            #[cfg(unix)]
+            assert!(
+                (metrics.disk_total_gb - 250.0).abs() > 0.01
+                    || (metrics.disk_used_gb - 35.5).abs() > 0.01,
+                "disk telemetry must read real statvfs, not the fabricated (35.5, 250.0) fallback"
+            );
         }
     }
 }

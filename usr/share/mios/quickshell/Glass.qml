@@ -71,7 +71,7 @@ Singleton {
     }
     readonly property real barHeight: typeof barsCfg.bar_height === "number" ? barsCfg.bar_height : theme.topHeight
     // The hyprbars tab rules, for any surface of height h.
-    function cornerFor(h) { return Math.min(glass.rounding, h) / 2 }
+    function cornerFor(h) { return Math.min(glass.rounding, Math.max(0, h) / 2) }
     function filletFor(h) { return Math.min(glass.rounding / 2, h / 2) }
     // The same rules for a window of rounding r (the hyprbars tab follows its own window's rounding).
     function tabCorner(h, r) { return Math.min(Math.max(0, r), h) / 2 }

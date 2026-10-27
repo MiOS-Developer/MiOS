@@ -199,9 +199,12 @@ class PluginHostTests(unittest.TestCase):
             src = f.read()
         self.assertIn("uniform float uGain;", src)
         self.assertIn("clamp(texture(uTex, vUV) * uGain, 0.0, 1.0)", src)
-        self.assertIn("MiosLamp::wobblePaneFade", src)
         self.assertIn("WINDOW_ALPHA_LAYOUT", src)
-        self.assertIn("            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);\n", src)
+        self.assertIn("            s.paneFade = 1.0f;\n", src)
+        self.assertIn("            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);\n", src)
+        self.assertNotIn("wobblePaneFade(dev", src)
+        self.assertIn("        const float gain = 1.0f / std::max(s.paneFade, 0.05f);", src)
+        self.assertNotIn("const float gain = 1.0f;", src)
         self.assertIn("            glUniform1f(g_locGain, gain);", src)
         self.assertNotIn("glUniform1f(g_locGain, 1.0f);", src)
 
@@ -209,18 +212,35 @@ class PluginHostTests(unittest.TestCase):
         lamp_cpp = os.path.join(PLUGIN_DIR, "lamp.cpp")
         with open(lamp_cpp, "r", encoding="utf-8") as f:
             src = f.read()
-        self.assertIn("        rec.geometry  = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};\n", src)
+        self.assertIn("        rec.geometry  = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};\n        rec.timeMs    = epochMs();\n", src)
         self.assertEqual(src.count("rec.geometry  = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};"), 2)
+        self.assertEqual(src.count("recordFullLayout(rec);"), 2)
+        self.assertIn("void syncWorkspaceMonitor(const PHLWINDOW& w, const PHLMONITOR& preferred", src)
+        self.assertIn("w->m_workspace->m_monitor = target;", src)
+        self.assertIn("w->m_monitor              = target;", src)
+        self.assertIn("syncWorkspaceMonitor(w, origMon, nullptr, true);", src)
+        self.assertIn("syncWorkspaceMonitor(w, m.originMonitor.lock(), nullptr, true);", src)
+        self.assertIn("syncWorkspaceMonitor(w, mon, nullptr, true);", src)
         self.assertIn(
             "        doRestoreMoves(*s, w);\n        g_lamps.emplace(w.get(), std::move(s));",
             src,
         )
         self.assertIn(
+            "    void doRestoreMoves(SLamp& s, const PHLWINDOW& w) {\n        std::vector<PHLWINDOW>",
+            src,
+        )
+        self.assertIn(
+            "                    if (splitDesired.x >= pDesired.x + pDesired.w - 8.0) {\n                        dir = 'r';\n                    } else if (pDesired.x >= splitDesired.x + splitDesired.w - 8.0) {\n                        dir = 'l';",
+            src,
+        )
+        self.assertIn("            if (g_layoutManager && !desiredBoxes.empty()) {", src)
+        self.assertNotIn("if (false &&", src)
+        self.assertIn(
             '                continue; // Do NOT overwrite with "slot", "edge", or "fallback"',
             src,
         )
         self.assertIn(
-            "                sib->positionAnimation()->warp();\n                sib->sizeAnimation()->warp();",
+            "            if (sib && sib != w && sib->m_isMapped && sib->m_workspace == targetWs && !sib->m_isFloating) {\n                sib->positionAnimation()->warp();\n                sib->sizeAnimation()->warp();",
             src,
         )
 
@@ -258,6 +278,20 @@ class QmlSyntax(unittest.TestCase):
             src = f.read()
         self.assertIn('DockLamp.restore(addr, "minimized", rect)', src)
         self.assertNotIn('DockLamp.restore(addr, "icon", rect)', src)
+        self.assertIn("readonly property var allMinimizedTiles:", src)
+        self.assertIn(
+            "return dock.allMinimizedTiles.filter(m => !dock.dockApps.some(e => root.ownsClass(e, m.appId) || root.ownsClass(e, m.initialClass)))",
+            src,
+        )
+        self.assertIn(
+            "return dock.allMinimizedTiles.find(m => root.ownsClass(entry, m.appId) || root.ownsClass(entry, m.initialClass))",
+            src,
+        )
+        self.assertNotIn("if (root.isToplevelMinimized(t)) return", src)
+        dock_lamp_qml = os.path.join(QS_DIR, "DockLamp.qml")
+        with open(dock_lamp_qml, "r", encoding="utf-8") as f:
+            dl_src = f.read()
+        self.assertIn('const isSpecial = wsName.startsWith("special:") || tlWsName.startsWith("special:")', dl_src)
 
 
 DOCK_HARNESS_QML = """import QtQuick
@@ -349,6 +383,7 @@ class DockLampContractIntegration(unittest.TestCase):
             f.write(DOCK_HARNESS_QML)
         self.dock_json = os.path.join(self.tmp, "mios-dock-icons.json")
         self.launch_json = os.path.join(self.tmp, "mios-lamp-launch.json")
+        self.prefs_json = os.path.join(self.tmp, "dock-prefs.json")
         self.fixture_json = os.path.join(self.tmp, "fixture.json")
         self.log_path = os.path.join(self.tmp, "qs.log")
         self.procs = []
@@ -377,6 +412,7 @@ class DockLampContractIntegration(unittest.TestCase):
             QT_QPA_PLATFORM="offscreen",
             MIOS_DOCK_ICONS_JSON=self.dock_json,
             MIOS_LAMP_LAUNCH_JSON=self.launch_json,
+            MIOS_DOCK_PREFS_JSON=self.prefs_json,
             MIOS_DOCK_FIXTURE_JSON=self.fixture_json if fixture_text is not None else "",
         )
         for k in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY"):
@@ -520,13 +556,48 @@ class DockLampContractIntegration(unittest.TestCase):
         st_after = json.loads(self.call_ipc("state"))
         self.assertIn("0xdeadbeef01", st_after.get("restoring_windows", {}))
 
+        # 9. Pin / Unpin / Star / Favourite / Move & Reorganize persistence over IPC
+        st_pin1 = json.loads(self.call_ipc("pin", "mios-terminal.desktop"))
+        self.assertEqual(st_pin1["custom_pinned"], ["mios-terminal"])
+        st_pin2 = json.loads(self.call_ipc("pin", "mios-zen.desktop"))
+        self.assertEqual(st_pin2["custom_pinned"], ["mios-terminal", "mios-zen"])
+        st_move = json.loads(self.call_ipc("movePin", "mios-zen", "-1"))
+        self.assertEqual(st_move["custom_pinned"], ["mios-zen", "mios-terminal"])
+        st_unpin = json.loads(self.call_ipc("unpin", "mios-zen"))
+        self.assertEqual(st_unpin["custom_pinned"], ["mios-terminal"])
+
+        st_star1 = json.loads(self.call_ipc("star", "org.gnome.Nautilus.desktop"))
+        self.assertEqual(st_star1["starred_apps"], ["org.gnome.Nautilus"])
+        st_star2 = json.loads(self.call_ipc("star", "mios-portal.desktop"))
+        self.assertEqual(st_star2["starred_apps"], ["org.gnome.Nautilus", "mios-portal"])
+        st_mstar = json.loads(self.call_ipc("moveStar", "mios-portal", "-1"))
+        self.assertEqual(st_mstar["starred_apps"], ["mios-portal", "org.gnome.Nautilus"])
+        st_unstar = json.loads(self.call_ipc("unstar", "org.gnome.Nautilus"))
+        self.assertEqual(st_unstar["starred_apps"], ["mios-portal"])
+
+        st_reord = json.loads(self.call_ipc("setReorderMode", "true"))
+        self.assertTrue(st_reord["reorder_mode"])
+        st_reord_off = json.loads(self.call_ipc("setReorderMode", "false"))
+        self.assertFalse(st_reord_off["reorder_mode"])
+
+        # Wait for atomic prefs file flush and verify disk JSON
+        self.wait_state(lambda s: s.get("prefs_write_count", 0) >= 2 and s.get("starred_apps") == ["mios-portal"])
+        self.assertTrue(os.path.isfile(self.prefs_json))
+        with open(self.prefs_json, encoding="utf-8") as f:
+            disk_prefs = json.load(f)
+        self.assertEqual(disk_prefs["pinned"], ["mios-terminal"])
+        self.assertEqual(disk_prefs["starred"], ["mios-portal"])
+
     def test_negative_malformed_fixture_and_bad_address_degrade_safely(self):
         self.start_harness("{malformed json")
         st = self.wait_state(lambda s: s.get("write_count", 0) >= 1)
         self.assertEqual(st["minimized_windows"], [])
-        # Invalid window address must be rejected immediately and never injected
-        bad_cmd = self.call_ipc("minimize", '0x12"; os.execute("bad")')
-        self.assertEqual(bad_cmd, "error: invalid address")
+        # Invalid window address must be rejected immediately and never injected on both minimize and restore
+        for bad_addr in ('0x12"; os.execute("bad")', "0x12\n", "0xZZ", " "):
+            bad_min = self.call_ipc("minimize", bad_addr)
+            self.assertEqual(bad_min, "error: invalid address", bad_addr)
+            bad_res = self.call_ipc("restore", bad_addr, "minimized")
+            self.assertEqual(bad_res, "error: invalid address", bad_addr)
         st_after = json.loads(self.call_ipc("state"))
         self.assertNotIn("os.execute", st_after.get("last_dispatched", ""))
         self.assertNotIn("0x12", st_after.get("last_dispatched", ""))

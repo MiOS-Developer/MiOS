@@ -326,7 +326,7 @@ namespace {
         glBindTexture(GL_TEXTURE_2D, inTex->m_texID);
         glBindSampler(0, g_sampler);
         glUniform1i(g_locTex, 0);
-        const float gain = s.paneFade;
+        const float gain = 1.0f / std::max(s.paneFade, 0.05f);
         if (g_locGain >= 0)
             glUniform1f(g_locGain, gain);
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(tris.size() / 4));
@@ -351,8 +351,6 @@ namespace {
 
     void detach(SWobble& s) {
         if (const auto w = s.window.lock()) {
-            if (w->m_ruleApplicator)
-                w->m_ruleApplicator->m_tagKeeper.removeDynamicTag("hyprglass_disabled");
             std::erase_if(w->m_transformers, [](const auto& t) { return dynamic_cast<CWobblyTransformer*>(t.get()) != nullptr; });
             w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
             if (s.lastDamage.w > 0)
@@ -370,8 +368,6 @@ namespace {
             return;
         w->m_transformers.emplace_back(makeUnique<CWobblyTransformer>(s.window));
         s.attached = true;
-        if (w->m_ruleApplicator)
-            w->m_ruleApplicator->m_tagKeeper.applyTag("hyprglass_disabled", true);
     }
 
     MiosWobble::SParams params() {
@@ -510,11 +506,9 @@ namespace {
                     y1  = std::max(y1, s.P[i][j].y);
                 }
 
-            // Fade rigid hyprglass pane while deformed (desk-042 (8))
-            constexpr float paneMin = 0.05f;
-            (void)MiosLamp::wobblePaneFade(dev, paneMin, 2.0);
+            // Always render hyprglass pane at full strength while grabbing/moving/dragging
             s.paneFade = 1.0f;
-            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);
+            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);
 
             const auto ws    = w->m_workspace;
             const auto shift = (w->m_pinned || !ws) ? Vector2D{} : ws->m_renderOffset->value();

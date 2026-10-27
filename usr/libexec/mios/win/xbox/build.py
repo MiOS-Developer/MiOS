@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: THE MiOS-Xbox image build entry (xb-15, XB-1..XB-4): render_spec (layered SSOT -> xbox-spec.json) -> resolve_latest (newest upstream, no pins -> build-manifest.json) -> fetch (download + verify every artefact) -> family (offline: the image's BuildBranch has a captured Start layout) -> answer (autounattend + SetupComplete chain + offline .reg + components from the SAME spec) -> conform rendered gate -> GPU-less worker over WinRM (UUP Dump converter + New-MiOSXboxImage.ps1 DISM servicing + ISO) -> read-only copy-out -> conform image gate -> build-<ts>/ manifest. Every stage fails closed; heavy stages run under the SSOT heavy lock in a MemoryMax scope; the worker never runs next to the target/base VM and never holds a GPU.
 # AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
-# AI-functions: build_layers, plan, Build, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
+# AI-functions: build_layers, plan, Build, host_preflight, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
 """MiOS-Xbox build.
 
   build.py plan                      # validate SSOT, tree, tools, VM guards; writes nothing
@@ -147,10 +147,19 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
               "usr/share/mios/windows/mios-looking-glass-idd.ps1"):
         if not os.path.isfile(os.path.join(_TREE, p)):
             problems.append(f"{p} missing")
+    html = str(doc["resolved"].get("wallpaper.html_ref") or "")
+    if not os.path.isfile(os.path.join(_TREE, html.lstrip("/"))):
+        problems.append(f"windows.xbox.wallpaper.html_ref: {html} missing")
+    for name in x["services"]:
+        try:
+            A.service_binpath(doc, name, _TREE)
+        except A.PayloadError as e:
+            problems.append(str(e))
     fam_why = {f: CAP.check_assets(doc, f, _TREE) for f in x["start"]["layout_assets"]}
     fams = {f: why is None for f, why in fam_why.items()}
     tools = {t: bool(shutil.which(t)) for t in ("wimlib-imagex", "perl", "hivexregedit", "7z", "rpm2cpio", "cpio",
-                                                "qemu-img", "virsh", "guestfish")}
+                                                "qemu-img", "virsh", "guestfish",
+                                                "pwsh")}   # pwsh: the gates run Read-MiOSGpuSpec on the shipped guest spec
     problems += [f"host tool {t} missing" for t, ok in tools.items() if not ok]
     states = {d: W.domstate(d, runner) for d in (x["vm"]["name"], x["vm"]["worker"]["overlay_of"], x["vm"]["worker"]["name"])}
     try:
@@ -178,6 +187,10 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
         "registry_values": len(doc["registry"]),
         "feature_toggles": sum(1 for f in doc["feature_overrides"] if f["enabled"]),
         "components": [c["name"] for c in x["components"]["ship"]],
+        "capabilities_baked_offline": {c: x["features"]["capability_fod"][c]["package"] for c in x["features"]["capabilities_add"]},
+        "ssh": {"port": doc["ssh"]["port"], "authorized_keys": len(doc["ssh"]["authorized_keys"])},
+        "services": sorted(x["services"]), "tasks": sorted(x["tasks"]),
+        "first_logon_commands": x["provision"]["first_logon_commands"],
         "start_layout_assets_captured": fams,
         "start_layout_assets_status": {f: why or "captured" for f, why in fam_why.items()},
         "negative_controls": {p: _presence(p) for p in x["gate"].get("negative_controls") or []},
@@ -366,6 +379,12 @@ def stage_job(b: Build, family: str) -> str:
     _link_tree(b.payload, os.path.join(job, "payload"))
     _link_tree(inputs["drivers_dir"], os.path.join(job, "drivers"))
     _link_tree(inputs["uup_dir"], os.path.join(job, "uup"))
+    # the capability FOD set (Microsoft repository names) apart from the UUP set the converter consumes
+    if x["features"].get("capabilities_add") and not os.path.isdir(inputs.get("fod_dir") or ""):
+        raise BuildError("[job] the capability FOD set was not fetched (inputs.json fod_dir): capabilities are baked offline")
+    os.makedirs(os.path.join(job, "fod"), mode=0o700, exist_ok=True)
+    if inputs.get("fod_dir"):
+        _link_tree(inputs["fod_dir"], os.path.join(job, "fod"))
     _link_tree(inputs["converter_dir"], os.path.join(job, "converter"))
     sa = os.path.join(job, "start-assets")
     index: Dict[str, Any] = {}
@@ -398,13 +417,15 @@ def stage_worker(b: Build, job: str, runner: W.Runner = W._default_runner, sessi
         W.start(cfg, runner, **(guards or {}))
         b.log(f"worker {cfg.name} started")
         sess = W.wait_winrm(cfg, runner, session_factory=session_factory, **kw)
-        b.log(f"worker {W.quiesce(sess)}")
-        W.submit_job(sess)
+        b.log(f"worker {W.quiesce(sess, **kw)}")
+        W.submit_job(sess, **kw)
         status = W.poll_job(cfg, sess, log=b.log, **kw)
     finally:
         W.stop(cfg, runner, **kw)
         if os.path.exists(cfg.exchange):
             try:
+                freed = W.drop_overlay(cfg, runner)   # before the copy-out: the ISO never coexists with the overlay
+                b.log(f"worker overlay removed before the copy-out ({freed / 2**30:.1f} GiB)")
                 if os.path.exists(b.out):
                     shutil.rmtree(b.out)
                 W.extract(cfg, b.out, runner)
@@ -529,6 +550,20 @@ def run_gate(b: Build) -> None:
 # CLI (+ heavy-lock / memory-scope wrapper)
 # ---------------------------------------------------------------------------
 
+VM_COMMANDS = ("capture", "stage", "service", "run")   # each drives (or is followed by) the worker VM
+
+
+def host_preflight(command: str, x: Dict[str, Any], runner: W.Runner = W._default_runner) -> None:
+    """Before any stage writes or downloads: this process context must be able to drive the worker (virsh reads
+    the files the build writes). A refusal costs seconds here instead of the whole stage."""
+    if command not in VM_COMMANDS:
+        return
+    try:
+        W.virsh_file_access(x["build"]["work_root"], runner)
+    except W.WorkerError as e:
+        raise BuildError(f"[preflight] {e}") from None
+
+
 def _scoped_argv(argv: List[str], x: Dict[str, Any]) -> List[str]:
     py = x["probe"]["python"] if os.path.isfile(x["probe"]["python"]) else sys.executable
     scope = ["systemd-run", "--scope", "-q", "-p", f"MemoryMax={x['build']['host_memory_max']}", "-p", "MemorySwapMax=0",
@@ -562,6 +597,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             os.execvp("flock", _scoped_argv(argv, x))
         if a.command in ("service", "gate") and not a.build_dir:
             raise BuildError(f"{a.command} needs --build-dir build-<ts>")
+        host_preflight(a.command, x)
         b = Build(a.build_dir, layers) if a.build_dir else Build.new(x["build"]["artifact_root"], layers)
         if a.command == "capture":
             b.step("render", lambda: stage_render(b))

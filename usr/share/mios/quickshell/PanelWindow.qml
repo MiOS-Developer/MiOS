@@ -49,6 +49,20 @@ QS.PanelWindow {
     property string popup: ""   // "", "calendar" or "power"
     readonly property int popupMs: bar.popup_ms !== undefined ? bar.popup_ms : 200
     readonly property bool onFocusedScreen: !Hyprland.focusedMonitor || Hyprland.focusedMonitor.name === screen.name
+    function shown(key) {
+        return typeof shellState.topbarShown === "function" ? shellState.topbarShown(key) : (!bar.visibility || bar.visibility[key] !== false)
+    }
+    readonly property real outputFps: typeof shellState.fpsFor === "function" ? shellState.fpsFor(screen.name) : -1
+    readonly property bool remoteFrames: typeof shellState.isRemoteOutput === "function" && shellState.isRemoteOutput(screen.name)
+    property bool batteryHoverOpen: false
+    property bool batteryPanelHovered: false
+    readonly property bool batteryHovering: batteryItemsHover.hovered || batteryPanelHovered
+    onBatteryHoveringChanged: {
+        if (batteryHovering) { batteryLeave.stop(); batteryEnter.restart() }
+        else { batteryEnter.stop(); batteryLeave.restart() }
+    }
+    Timer { id: batteryEnter; interval: Math.max(1, pill.popupMs); onTriggered: pill.batteryHoverOpen = true }
+    Timer { id: batteryLeave; interval: Math.max(1, pill.popupMs); onTriggered: pill.batteryHoverOpen = false }
     // Extra shell scale for this output (Mobile.uiScale: policy scale / scale the compositor applied; 1
     // when the compositor scaled it). Window geometry is in compositor px, the row's contents in shell
     // units (`content` below).
@@ -73,7 +87,7 @@ QS.PanelWindow {
         const full = a.startsWith("0x") ? a : "0x" + a
         return /^0x[0-9a-fA-F]+$/.test(full) ? full : ""
     }
-    readonly property bool shoulders: mobile && target !== null && !overFullscreen
+    readonly property bool shoulders: mobile && target !== null && !(reveal && reveal.fullscreen)
     // The compositor draws the tabs (hyprbars mobile mode) when the projection says it applied them.
     readonly property bool barsTabs: mobile && Mobile.hyprbarsTabs
     // The window's own top-corner rounding on this output: the global rounding unless [desktop.mobile]
@@ -307,7 +321,7 @@ QS.PanelWindow {
     // Menus flattened: each menu's label as a header, its items (submenus inline, two levels) below.
     readonly property var appMenuRows: {
         const s = menuSnap, out = []
-        if (!targetAppId || !s || s.app_id !== targetAppId || !Array.isArray(s.menus)) return out
+        if (!targetAppId || !s || s.app_id !== targetAppId || s.address !== targetAddress || !Array.isArray(s.menus)) return out
         function walk(items, depth) {
             for (const it of items) {
                 if (!it || !it.label || out.length >= 80) continue
@@ -316,7 +330,12 @@ QS.PanelWindow {
             }
         }
         for (const m of s.menus) {
-            if (!m || !m.label || !Array.isArray(m.items) || !m.items.length) continue
+            if (!m || !m.label) continue
+            if (m.action) {
+                out.push({ item: { id: m.action, label: m.label, enabled: m.enabled !== false }, depth: 0, header: false })
+                continue
+            }
+            if (!Array.isArray(m.items) || !m.items.length) continue
             out.push({ item: m, depth: 0, header: true })
             walk(m.items, 1)
         }
@@ -327,10 +346,12 @@ QS.PanelWindow {
     // nothing, and comes back on the overlay layer above it while the pointer is at the top edge.
     property QtObject reveal: null
     readonly property bool overFullscreen: !!reveal && reveal.topActive
+    readonly property string hudAlignment: "center"
+    readonly property real hudScreenX: mobile ? 0 : ((screen ? screen.width : 0) - width) / 2
     // "mios-topbar-remote" where [desktop.mobile.remote_effects] applies (Mobile.layerNamespace): the
     // compositor draws this layer's glass with the remote preset.
     WlrLayershell.namespace: Mobile.layerNamespace("mios-topbar", screen ? screen.name : "")
-    WlrLayershell.layer: overFullscreen ? WlrLayer.Overlay : WlrLayer.Top
+    WlrLayershell.layer: WlrLayer.Overlay
     anchors.top: true
     // Desktop: a centred island as wide as its contents. Mobile: the surface spans the row and the island inside it
     // fills the room between the window tabs (islandGoal); the rest of the surface is transparent and takes no input.
@@ -375,8 +396,9 @@ QS.PanelWindow {
         QS.Region { item: pill.mobile && pill.shoulders && !pill.barsTabs ? rightTab.box : null }
     }
     Item { id: rowMask; width: pill.width; height: Math.round(pill.rowHeight * pill.ui) }
-    onPopupChanged: if (reveal) reveal.islandPopup = popup !== "" || sysmonHoverOpen
-    onSysmonHoverOpenChanged: if (reveal) reveal.islandPopup = popup !== "" || sysmonHoverOpen
+    onPopupChanged: if (reveal) reveal.islandPopup = popup !== "" || sysmonHoverOpen || batteryHoverOpen
+    onSysmonHoverOpenChanged: if (reveal) reveal.islandPopup = popup !== "" || sysmonHoverOpen || batteryHoverOpen
+    onBatteryHoverOpenChanged: if (reveal) reveal.islandPopup = popup !== "" || sysmonHoverOpen || batteryHoverOpen
     onVisibleChanged: if (!visible && reveal && reveal.islandHovered) Qt.callLater(() => { if (!pill.visible && pill.reveal) pill.reveal.islandHovered = false })
 
     // Publish the island's rectangle so the top-left app menus (AppMenu.qml) never run under it.
@@ -385,16 +407,17 @@ QS.PanelWindow {
         const h = Math.round(rowHeight * ui)
         const g = islandGoal
         if (mobile && g) ShellGeometry.setIsland(screen.name, Math.round(g.x), islandTop, Math.round(g.w), h)
-        else ShellGeometry.setIsland(screen.name, Math.round((screen.width - width) / 2), Math.round(theme.edgeMargin * ui), width, h)
+        else ShellGeometry.setIsland(screen.name, Math.round(hudScreenX), Math.round(theme.edgeMargin * ui), width, h)
     }
     onIslandTargetChanged: publishIsland()
     onWidthChanged: publishIsland()
     onHeightChanged: publishIsland()
+    onHudScreenXChanged: publishIsland()
     Component.onCompleted: { placeIsland(); publishIsland(); if (reveal) reveal.topSurface = pill }
     // The island as drawn now (mobile: animated between the tabs), its radius and whether it is mapped: the
     // notification blob (Notifications.qml) starts as this rectangle and melts back into it.
     readonly property var drawnIsland: !screen ? null : ({
-        x: mobile ? islandX : (screen.width - width) / 2, y: Math.round(theme.edgeMargin * ui),
+        x: mobile ? islandX : hudScreenX, y: Math.round(theme.edgeMargin * ui),
         width: mobile ? Math.max(0, islandW) : width, height: Math.round(rowHeight * ui),
         radius: island.radius * ui, shown: visible && backingWindowVisible })
     onDrawnIslandChanged: if (drawnIsland) ShellGeometry.setDrawnIsland(screen.name, drawnIsland)
@@ -419,6 +442,40 @@ QS.PanelWindow {
     readonly property var sink: Pipewire.defaultAudioSink
     readonly property var battery: UPower.displayDevice
     readonly property bool hasBattery: battery && battery.isPresent && battery.isLaptopBattery
+    readonly property var batteryDevices: UPower.devices.values.filter(d => d.ready && d.isPresent
+        && d.type !== UPowerDeviceType.LinePower && (d.state !== UPowerDeviceState.Unknown || d.percentage > 0))
+    function batteryName(d) { return d.model || UPowerDeviceType.toString(d.type) }
+    function batteryKind(d) {
+        if (d.type === UPowerDeviceType.Ups) return "UPS"
+        if (d.type === UPowerDeviceType.GamingInput) return "Controller"
+        if (d.type === UPowerDeviceType.Battery) return "BAT"
+        if (d.type === UPowerDeviceType.BluetoothGeneric) return "BT"
+        return UPowerDeviceType.toString(d.type)
+    }
+    function batteryIcon(d) {
+        switch (d.type) {
+        case UPowerDeviceType.GamingInput: return "\u{f02b4}"
+        case UPowerDeviceType.Phone: return "\u{f011c}"
+        case UPowerDeviceType.Mouse: return "\u{f037d}"
+        case UPowerDeviceType.Keyboard: return "\u{f030c}"
+        case UPowerDeviceType.Headphones: return "\u{f02cb}"
+        case UPowerDeviceType.Headset: return "\u{f02ce}"
+        case UPowerDeviceType.Speakers:
+        case UPowerDeviceType.OtherAudio: return "\u{f04c3}"
+        case UPowerDeviceType.Tablet:
+        case UPowerDeviceType.Pda: return "\u{f04f6}"
+        case UPowerDeviceType.Computer: return "\u{f0322}"
+        case UPowerDeviceType.Wearable: return "\u{f0589}"
+        case UPowerDeviceType.Camera: return "\u{f0100}"
+        case UPowerDeviceType.Pen: return "\u{f03eb}"
+        case UPowerDeviceType.BluetoothGeneric: return "\u{f00af}"
+        case UPowerDeviceType.Ups: return "\u{f06a5}"
+        default:
+            if (d.state === UPowerDeviceState.Charging) return "\u{f0084}"
+            const level = Math.max(0, Math.min(10, Math.round(d.percentage * 10)))
+            return level >= 10 ? "\u{f0079}" : level <= 0 ? "\u{f008e}" : String.fromCodePoint(0xf0079 + level)
+        }
+    }
     readonly property bool online: Networking.devices.values.some(d => d.connected)
 
     property date now: new Date()
@@ -493,26 +550,23 @@ QS.PanelWindow {
                 spacing: pill.theme.edgeMargin + 4
 
                 Glyph {
-                    visible: !pill.mobile
-                    text: "MiOS"
-                    font.bold: true
-                    Hit { onClicked: pill.shellState.toggleDrawer() }
-                }
-                Glyph {
-                    visible: !pill.mobile
+                    visible: !pill.mobile && pill.shown("workspaces")
                     text: Hyprland.focusedWorkspace ? "\u{f0570} " + Hyprland.focusedWorkspace.id : ""
                     color: pill.theme.subtle
                 }
                 Glyph {
                     id: netGlyph
+                    visible: pill.shown("network")
                     text: pill.online ? "\u{f06f3}" : "\u{f06f4}"
                     color: pill.online ? pill.theme.fg : pill.theme.muted
                     Hit { onClicked: pill.run("network") }
                 }
                 Glyph {
-                    visible: !pill.mobile && !!pill.sink && !!pill.sink.audio
+                    id: soundGlyph
+                    visible: !pill.mobile && pill.shown("sound") && !!pill.sink && !!pill.sink.audio
                     text: !pill.sink || !pill.sink.audio ? "" :
                           (pill.sink.audio.muted ? "\u{f075f}" : "\u{f057e}") + " " + Math.round(pill.sink.audio.volume * 100) + "%"
+                    Accessible.name: !pill.sink || !pill.sink.audio ? "Sound" : "Volume " + Math.round(pill.sink.audio.volume * 100) + "%"
                     Hit {
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton && pill.sink.audio) pill.sink.audio.muted = !pill.sink.audio.muted
@@ -525,15 +579,26 @@ QS.PanelWindow {
                         }
                     }
                 }
-                Glyph {
-                    id: batteryGlyph
-                    visible: pill.hasBattery
-                    text: !pill.hasBattery ? "" :
-                          (pill.battery.state === UPowerDeviceState.Charging ? "\u{f0084}" : "\u{f0079}") + " " + Math.round(pill.battery.percentage * 100) + "%"
-                    Hit { onClicked: pill.run("power_settings") }
+                Row {
+                    id: batteryItems
+                    spacing: pill.theme.edgeMargin
+                    HoverHandler { id: batteryItemsHover }
+                    Repeater {
+                        model: pill.shown("batteries") ? pill.batteryDevices : []
+                        delegate: Glyph {
+                            required property var modelData
+                            text: pill.batteryIcon(modelData) + " " + Math.round(modelData.percentage * 100) + "%"
+                                + (modelData.type !== UPowerDeviceType.Battery && modelData.state === UPowerDeviceState.Charging ? " \u{f0e7}" : "")
+                            textFormat: Text.PlainText
+                            Accessible.name: pill.batteryName(modelData) + ", " + Math.round(modelData.percentage * 100) + "%"
+                            color: modelData.state === UPowerDeviceState.Charging ? pill.theme.success : pill.theme.fg
+                            Hit { onClicked: pill.popup = pill.popup === "batteries" ? "" : "batteries" }
+                        }
+                    }
                 }
                 SysmonItems {
                     id: sysmonItems
+                    visible: pill.shown("sysmon") && fitted.length > 0
                     theme: pill.theme
                     keys: pill.mobile ? Sysmon.mobileItems : Sysmon.items
                     compact: pill.mobile
@@ -542,24 +607,55 @@ QS.PanelWindow {
                     onTapped: pill.popup = pill.popup === "sysmon" ? "" : "sysmon"
                 }
                 Glyph {
+                    id: fpsGlyph
+                    visible: pill.shown("fps")
+                    text: pill.remoteFrames ? (pill.outputFps >= 0 ? pill.outputFps.toFixed(1) + " RDP FPS" : "RDP FPS —")
+                                           : (pill.outputFps >= 0 ? pill.outputFps + " FPS" : "FPS —")
+                    Hit { onClicked: pill.popup = pill.popup === "sysmon" ? "" : "sysmon" }
+                }
+
+                Rectangle {
+                    visible: (dateGlyph.visible || timeGlyph.visible) && (netGlyph.visible || soundGlyph.visible || batteryItems.width > 0 || sysmonItems.visible || fpsGlyph.visible)
+                    width: 1; height: pill.theme.topHeight / 2; y: (pill.theme.topHeight - height) / 2
+                    color: pill.theme.outlineColor
+                }
+                Glyph {
                     id: dateGlyph
-                    visible: !pill.mobile
+                    visible: !pill.mobile && pill.shown("date")
                     text: Qt.formatDateTime(pill.now, pill.bar.date_format || "ddd d MMM")
                     color: pill.theme.subtle
                     Hit { onClicked: pill.popup = pill.popup === "calendar" ? "" : "calendar" }
                 }
                 Glyph {
                     id: timeGlyph
+                    visible: pill.shown("clock")
                     text: pill.timeText
                     font.bold: true
                     Hit { onClicked: pill.popup = pill.popup === "calendar" ? "" : "calendar" }
                 }
+                Rectangle {
+                    visible: dateGlyph.visible || timeGlyph.visible || batteryItems.width > 0 || netGlyph.visible || soundGlyph.visible || sysmonItems.visible || fpsGlyph.visible
+                    width: 1; height: pill.theme.topHeight / 2; y: (pill.theme.topHeight - height) / 2
+                    color: pill.theme.outlineColor
+                }
+                Glyph {
+                    id: settingsGlyph
+                    width: height
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "\u{f0493}"
+                    Accessible.name: "HUD appearance"
+                    Hit { onClicked: pill.popup = pill.popup === "settings" ? "" : "settings" }
+                }
                 Glyph {
                     id: powerGlyph
+                    visible: pill.shown("power")
+                    width: height
+                    horizontalAlignment: Text.AlignHCenter
                     text: "\u{f0425}"
-                    color: pill.theme.cursor
+                    Accessible.name: "This computer: power and session"
                     Hit { onClicked: pill.popup = pill.popup === "power" ? "" : "power" }
                 }
+
             }
         }
         Tab {
@@ -714,7 +810,7 @@ QS.PanelWindow {
                             enabled: menuRow.active
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", pill.menuSnap.app_id, String(menuRow.it.id)])
+                                QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", pill.menuSnap.app_id, String(menuRow.it.id), "--window", pill.menuSnap.address])
                                 pill.popup = ""
                             }
                         }
@@ -762,19 +858,158 @@ QS.PanelWindow {
         function openCalendar(): void { pill.popup = "calendar" }
         function openPower(): void { pill.popup = "power" }
         function openSysmon(): void { pill.popup = "sysmon" }
+        function openSettings(): void { pill.popup = "settings" }
+        function openBatteries(): void { pill.popup = "batteries" }
+        function reloadSettings(): void { if (typeof pill.shellState.saveNextTopbar === "function") pill.shellState.saveNextTopbar() }
+        function showItem(key: string, shown: bool): void { if (typeof pill.shellState.setTopbarShown === "function") pill.shellState.setTopbarShown(key, shown) }
         function close(): void { pill.popup = "" }
         function state(): string {
             return JSON.stringify({ popup: pill.popup, calendar: calendarPanel.progress, power: powerPanel.progress,
                                     sysmon: sysmonPanel.progress, sysmon_hover: pill.sysmonHoverOpen,
-                                    sysmon_items: sysmonItems.fitted, island_width: pill.width })
+                                    sysmon_items: sysmonItems.fitted, island_width: pill.width, fps: pill.outputFps,
+                                    fps_source: pill.remoteFrames ? "rdp-delivered" : "compositor",
+                                    visibility: pill.shellState.topbarConfig ? pill.shellState.topbarConfig.visibility : ({}),
+                                    batteries: pill.batteryDevices.map(d => ({name: pill.batteryName(d), kind: pill.batteryKind(d), icon: pill.batteryIcon(d), percentage: Math.round(d.percentage * 100)})),
+                                    batteries_rect: batteriesPanel.toScreenRect,
+                                    hud: { x: pill.hudScreenX, width: pill.width, alignment: pill.hudAlignment, shown: pill.visible,
+                                           autohide: !!pill.reveal && pill.reveal.topActive, layer: pill.WlrLayershell.layer,
+                                           settings: settingsPanel.fromScreenRect, power: powerPanel.fromScreenRect },
+                                    settings_rect: settingsPanel.fromScreenRect })
         }
     }
     // A click anywhere outside the island and its open popup dismisses the popup.
     HyprlandFocusGrab {
-        windows: [pill, calendarPanel, powerPanel, controlsPanel, appMenuPanel, sysmonPanel]
+        windows: [pill, calendarPanel, powerPanel, controlsPanel, appMenuPanel, sysmonPanel, settingsPanel, batteriesPanel]
         active: pill.popup !== ""
         onCleared: pill.popup = ""
     }
+
+    component SettingsAction: Rectangle {
+        id: action
+        property string label: ""
+        property bool selected: false
+        signal triggered()
+        width: parent.width
+        height: pill.theme.searchRowHeight - 8
+        radius: height / 2
+        color: actionHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : Glass.fill
+        Text {
+            anchors.fill: parent
+            anchors.margins: pill.theme.edgeMargin
+            verticalAlignment: Text.AlignVCenter
+            text: action.label
+            textFormat: Text.PlainText
+            color: action.enabled ? pill.theme.fg : pill.theme.muted
+            font.family: pill.theme.fontFamily
+            font.pixelSize: pill.theme.fontSize
+            elide: Text.ElideRight
+        }
+        MouseArea { id: actionHit; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: action.triggered() }
+    }
+    MeltPopup {
+        id: settingsPanel
+        anchor.window: pill
+        theme: pill.theme
+        trigger: settingsGlyph
+        open: pill.popup === "settings"
+        duration: pill.popupMs
+        panelWidth: 280
+        panelHeight: settingsRows.implicitHeight + 2 * pill.theme.edgeMargin
+        Column {
+            id: settingsRows
+            x: pill.theme.edgeMargin; y: x
+            width: settingsPanel.panelWidth - 2 * x
+            spacing: pill.theme.edgeMargin / 2
+            Glyph { text: "HUD appearance · all outputs"; font.bold: true }
+            Repeater {
+                model: pill.shellState.topbarOptions || []
+                delegate: SettingsAction {
+                    required property var modelData
+                    label: (pill.shown(modelData.key) ? "✓  " : "○  ") + modelData.label
+                    onTriggered: pill.shellState.setTopbarShown(modelData.key, !pill.shown(modelData.key))
+                }
+            }
+            Text {
+                width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                text: pill.shellState.topbarError || ""; visible: text !== ""
+                color: pill.theme.error; font.pixelSize: pill.theme.smallFontSize
+            }
+        }
+    }
+    MeltPopup {
+        id: batteriesPanel
+        anchor.window: pill
+        theme: pill.theme
+        trigger: batteryItems
+        open: pill.popup === "batteries" || pill.batteryHoverOpen
+        duration: pill.popupMs
+        panelWidth: Math.min(340, (pill.screen ? pill.screen.width : 1920) - 2 * pill.theme.edgeMargin)
+        panelHeight: batteryRows.implicitHeight + 2 * pill.theme.edgeMargin
+        Column {
+            id: batteryRows
+            x: pill.theme.edgeMargin; y: x; width: batteriesPanel.panelWidth - 2 * x
+            HoverHandler { onHoveredChanged: pill.batteryPanelHovered = hovered }
+            Glyph { text: "Device batteries"; font.bold: true }
+            Repeater {
+                model: pill.batteryDevices
+                delegate: Item {
+                    id: batteryRow
+                    required property var modelData
+                    width: batteryRows.width
+                    height: Math.max(pill.theme.searchRowHeight, batteryDetails.implicitHeight + 2 * pill.theme.edgeMargin)
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: pill.theme.radius
+                        color: batteryHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
+                    }
+                    Glyph {
+                        id: deviceIcon
+                        x: pill.theme.edgeMargin
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: pill.theme.topHeight
+                        text: pill.batteryIcon(batteryRow.modelData)
+                        color: batteryRow.modelData.state === UPowerDeviceState.Charging ? pill.theme.success : pill.theme.fg
+                    }
+                    Column {
+                        id: batteryDetails
+                        anchors.left: deviceIcon.right
+                        anchors.right: parent.right
+                        anchors.rightMargin: pill.theme.edgeMargin
+                        anchors.verticalCenter: parent.verticalCenter
+                        Text {
+                            width: parent.width
+                            text: pill.batteryName(batteryRow.modelData)
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            font.family: pill.theme.fontFamily
+                            font.pixelSize: pill.theme.fontSize
+                            color: pill.theme.fg
+                        }
+                        Text {
+                            width: parent.width
+                            text: pill.batteryKind(batteryRow.modelData) + " · " + Math.round(batteryRow.modelData.percentage * 100) + "% · "
+                                + UPowerDeviceState.toString(batteryRow.modelData.state)
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            font.family: pill.theme.fontFamily
+                            font.pixelSize: pill.theme.smallFontSize
+                            color: pill.theme.muted
+                        }
+                    }
+                    MouseArea {
+                        id: batteryHit
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: pill.run("power_settings")
+                    }
+                }
+            }
+        }
+    }
+
+
+
 
     // System monitor details (SysmonDetails.qml), grown out of the monitor items.
     MeltPopup {
@@ -918,6 +1153,7 @@ QS.PanelWindow {
                 x: pill.theme.edgeMargin
                 y: pill.theme.edgeMargin
                 width: parent.width - 2 * pill.theme.edgeMargin
+                Glyph { text: "This computer"; font.bold: true }
                 Repeater {
                     model: powerPanel.items
                     delegate: Rectangle {

@@ -30,6 +30,13 @@ pub struct Greeter {
     pub tuigreet_args: Vec<String>,
     pub session_cmd: String,
     pub boot_sync: bool,
+    /// greetd [initial_session] (skips the greeter once per boot); false = the greeter always runs.
+    pub autologin: bool,
+    pub autologin_user: String,
+    /// Paint the greeter VT with [colors].ansi_* before tuigreet starts.
+    pub console_palette: bool,
+    /// tuigreet --greeting/--width/--*-padding/--greet-align/--time-format/--theme from the SSOT.
+    pub tuigreet_style: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -121,6 +128,7 @@ impl Greeter {
         if !wallpaper.is_empty() && !wallpaper.starts_with('/') {
             return Err(format!("{TABLE}.wallpaper: expected \"\" or an absolute path"));
         }
+        let (autologin, autologin_user) = autologin(t)?;
         Ok(Self {
             kind,
             vt: int(t, "vt", 1, 63)?,
@@ -137,12 +145,17 @@ impl Greeter {
             tuigreet_args: list(t, "tuigreet_args")?,
             session_cmd: abs(t, "session_cmd")?,
             boot_sync: crate::render::desktop_boot::enabled(doc)?,
+            autologin,
+            autologin_user,
+            console_palette: opt_bool(t, "console_palette")?,
+            tuigreet_style: tuigreet_style(t)?,
         })
     }
 
     fn tuigreet_argv(&self) -> Vec<String> {
         let mut v = vec![self.tuigreet.clone()];
         v.extend(self.tuigreet_args.iter().cloned());
+        v.extend(self.tuigreet_style.iter().cloned());
         v.push("--sessions".into());
         v.push(self.session_dirs.join(":"));
         v.push("--cmd".into());
@@ -210,7 +223,126 @@ impl Greeter {
         text.push_str(&format!("vt = {}\n\n[default_session]\n", self.vt));
         text.push_str(&format!("command = {}\n", Value::String(command)));
         text.push_str(&format!("user = {}\n", Value::String(self.user.clone())));
+        if self.autologin {
+            text.push_str("\n[initial_session]\n");
+            text.push_str(&format!("command = {}\n", Value::String(self.session_cmd.clone())));
+            text.push_str(&format!("user = {}\n", Value::String(self.autologin_user.clone())));
+        }
         Rendered { effective: effective.into(), degraded, text }
+    }
+}
+
+/// tuigreet --theme colour names (ratatui); they resolve through the VT palette painted from [colors].ansi_*.
+const TUI_COLORS: &[&str] = &[
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "darkgray", "lightred", "lightgreen",
+    "lightyellow", "lightblue", "lightmagenta", "lightcyan", "white",
+];
+const TUI_THEME_KEYS: &[&str] = &["text", "time", "container", "border", "title", "greet", "prompt", "input", "action", "button"];
+
+fn opt_bool(t: &toml::Table, k: &str) -> Result<bool, String> {
+    match t.get(k) {
+        None => Ok(false),
+        Some(v) => v.as_bool().ok_or_else(|| format!("{TABLE}.{k}: expected a boolean")),
+    }
+}
+
+/// greetd [initial_session]: off unless the SSOT asks for it, so the greeter always runs by default.
+fn autologin(t: &toml::Table) -> Result<(bool, String), String> {
+    let on = opt_bool(t, "autologin")?;
+    let user = match t.get("autologin_user") {
+        None => String::new(),
+        Some(v) => v.as_str().ok_or_else(|| format!("{TABLE}.autologin_user: expected a string"))?.to_string(),
+    };
+    if on && (user.is_empty() || !user.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.".contains(&c))) {
+        return Err(format!("{TABLE}.autologin_user: autologin = true needs a valid account name, got {user:?}"));
+    }
+    Ok((on, user))
+}
+
+/// tuigreet presentation flags from [desktop.greeter] and [desktop.greeter.tuigreet_theme].
+fn tuigreet_style(t: &toml::Table) -> Result<Vec<String>, String> {
+    let mut v = Vec::new();
+    if let Some(x) = t.get("greeting") {
+        let s = x.as_str().ok_or_else(|| format!("{TABLE}.greeting: expected a string"))?;
+        if s.contains('\n') {
+            return Err(format!("{TABLE}.greeting: newlines are not allowed"));
+        }
+        if !s.is_empty() {
+            v.push("--greeting".to_string());
+            v.push(s.to_string());
+        }
+    }
+    let numbers: [(&str, &str, i64, i64); 4] = [
+        ("width", "--width", 20, 200),
+        ("window_padding", "--window-padding", 0, 20),
+        ("container_padding", "--container-padding", 0, 20),
+        ("prompt_padding", "--prompt-padding", 0, 10),
+    ];
+    for (key, flag, lo, hi) in numbers {
+        if let Some(x) = t.get(key) {
+            let n = x
+                .as_integer()
+                .filter(|n| (lo..=hi).contains(n))
+                .ok_or_else(|| format!("{TABLE}.{key}: expected an integer in {lo}..={hi}"))?;
+            v.push(flag.to_string());
+            v.push(n.to_string());
+        }
+    }
+    if let Some(x) = t.get("greet_align") {
+        let s = x.as_str().unwrap_or("");
+        if !matches!(s, "left" | "center" | "right") {
+            return Err(format!("{TABLE}.greet_align: expected \"left\", \"center\" or \"right\""));
+        }
+        v.push("--greet-align".to_string());
+        v.push(s.to_string());
+    }
+    if let Some(x) = t.get("time_format") {
+        let s = x.as_str().unwrap_or("");
+        if s.is_empty() || s.contains('\n') {
+            return Err(format!("{TABLE}.time_format: expected a non-empty single-line strftime format"));
+        }
+        v.push("--time-format".to_string());
+        v.push(s.to_string());
+    }
+    if let Some(x) = t.get("tuigreet_theme") {
+        let th = x.as_table().ok_or_else(|| format!("{TABLE}.tuigreet_theme: expected a table"))?;
+        for k in th.keys() {
+            if !TUI_THEME_KEYS.contains(&k.as_str()) {
+                return Err(format!("{TABLE}.tuigreet_theme.{k}: unknown tuigreet theme component"));
+            }
+        }
+        let mut parts = Vec::new();
+        for key in TUI_THEME_KEYS {
+            if let Some(c) = th.get(*key) {
+                let c = c.as_str().ok_or_else(|| format!("{TABLE}.tuigreet_theme.{key}: expected a string"))?;
+                let hex = c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit());
+                if !hex && !TUI_COLORS.contains(&c) {
+                    return Err(format!("{TABLE}.tuigreet_theme.{key}: expected an ANSI colour name or #RRGGBB, got {c:?}"));
+                }
+                parts.push(format!("{key}={c}"));
+            }
+        }
+        if !parts.is_empty() {
+            v.push("--theme".to_string());
+            v.push(parts.join(";"));
+        }
+    }
+    Ok(v)
+}
+
+/// Paint the greeter's virtual console with the SSOT ANSI palette (terminal::console) before tuigreet draws.
+fn paint_console(doc: &Value) {
+    let on_vt = fs::read_link("/proc/self/fd/1").ok().and_then(|p| p.to_str().map(str::to_string)).is_some_and(|p| {
+        p.strip_prefix("/dev/tty").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    });
+    if !on_vt {
+        return;
+    }
+    if let Ok(esc) = crate::terminal::console::escapes(doc, "linux") {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(esc.as_bytes());
+        let _ = out.write_all(b"\x1b[2J\x1b[H");
+        let _ = out.flush();
     }
 }
 
@@ -246,6 +378,9 @@ pub fn runtime(kind: Option<&str>, dry_run: bool) -> Result<String, String> {
     }
     write_atomic(Path::new("/var/lib/greetd/tuigreet-lastsession-path"),
         &format!("/usr/share/wayland-sessions/{file}"))?;
+    if g.console_palette {
+        paint_console(&doc);
+    }
     let mut command = std::process::Command::new(&argv[0]);
     command.args(&argv[1..]).env("MIOS_GREETER_BOOT_SESSION", &g.default_session);
     Err(format!("Failed to start boot-selected greeter: {}", command.exec()))
@@ -440,6 +575,36 @@ mod tests {
             assert!(cfg(&frag).is_err(), "{to} must be rejected");
         }
         assert!(Greeter::from_doc(&toml::from_str::<Value>("[desktop]\nsession = \"x\"\n").unwrap()).is_err());
+    }
+
+    #[test]
+    fn autologin_and_tuigreet_theme_are_projected_from_the_ssot() {
+        let off = cfg(FRAGMENT).unwrap();
+        assert!(!off.autologin && !off.console_palette);
+        assert!(!off.render(Path::new("/nonexistent")).text.contains("[initial_session]"));
+        let frag = FRAGMENT.replacen(
+            "[desktop.greeter]\n",
+            "[desktop.greeter]\nautologin = true\nautologin_user = \"mios\"\nconsole_palette = true\ngreeting = \"MiOS\"\nwidth = 64\ngreet_align = \"center\"\n",
+            1,
+        ) + "\n[desktop.greeter.tuigreet_theme]\ncontainer = \"black\"\nborder = \"lightblue\"\ntitle = \"#F35C15\"\n";
+        let g = cfg(&frag).unwrap();
+        assert!(g.console_palette);
+        let text = g.render(Path::new("/nonexistent")).text;
+        assert!(text.contains("\n[initial_session]\n") && text.contains("user = \"mios\""), "{text}");
+        let joined = g.tuigreet_argv().join(" ");
+        assert!(joined.contains("--greeting MiOS --width 64 --greet-align center --theme container=black;border=lightblue;title=#F35C15"), "{joined}");
+    }
+
+    #[test]
+    fn negative_autologin_and_tuigreet_style_values_are_rejected() {
+        for extra in ["autologin = true\n", "autologin = true\nautologin_user = \"bad user\"\n", "greet_align = \"middle\"\n", "width = 5\n", "autologin = \"yes\"\n"] {
+            let frag = FRAGMENT.replacen("[desktop.greeter]\n", &format!("[desktop.greeter]\n{extra}"), 1);
+            assert!(cfg(&frag).is_err(), "{extra}");
+        }
+        for theme in ["border = \"chartreuse\"\n", "sparkle = \"red\"\n", "border = 3\n"] {
+            let frag = format!("{FRAGMENT}\n[desktop.greeter.tuigreet_theme]\n{theme}");
+            assert!(cfg(&frag).is_err(), "{theme}");
+        }
     }
 
     #[test]

@@ -16,6 +16,8 @@ chrono.workspace = true
 regex.workspace = true
 tokio.workspace = true
 libc.workspace = true
+sha2.workspace = true
+flate2 = "1"
 mios-build = { path = "../mios-build" }
 mios-config = { path = "../mios-config" }
 mios-unit-gen = { path = "../../../tools/native/mios-unit-gen" }

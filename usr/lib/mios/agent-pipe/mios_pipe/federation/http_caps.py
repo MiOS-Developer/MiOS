@@ -419,13 +419,38 @@ async def list_models_logic(request: Request) -> JSONResponse:
     created = int(time.time())
     _agent_id = str((_toml_section("ai") or {}).get("agent_model") or "MiOS AI")
     _ctx = int(os.environ.get("MIOS_AGENT_PIPE_CTX", "65536"))
-    models: list = [{
-        "id": _agent_id, "object": "model",
-        "created": created, "owned_by": "mios",
-        "max_model_len": _ctx, "context_length": _ctx,
-        "max_context_length": _ctx, "context_window": _ctx,
-    }]
-    return JSONResponse(content={"object": "list", "data": models})
+
+    model_ids = ["gpt-6.1-sol"]
+    if _agent_id not in model_ids:
+        model_ids.append(_agent_id)
+
+    models_data = []
+    for mid in model_ids:
+        models_data.append({
+            "id": mid,
+            "object": "model",
+            "created": created,
+            "owned_by": "mios",
+            "max_model_len": _ctx,
+            "context_length": _ctx,
+            "max_context_length": _ctx,
+            "context_window": _ctx,
+            "max_context_window": _ctx,
+            "slug": mid,
+            "display_name": mid,
+            "supported_in_api": True,
+            "visibility": "list",
+            "supported_reasoning_levels": ["low", "medium", "high"],
+            "default_reasoning_level": "medium",
+            "shell_type": "unified_exec",
+            "input_modalities": ["text", "image"],
+        })
+
+    return JSONResponse(content={
+        "object": "list",
+        "data": models_data,
+        "models": models_data,
+    })
 
 async def embeddings_logic(request: Request) -> JSONResponse:
     body = await request.body()

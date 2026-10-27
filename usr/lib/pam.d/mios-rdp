@@ -1,8 +1,9 @@
 #%PAM-1.0
 # MiOS native RDP server (mios-rdp-priv): password check of the Client Info credentials. No session
-# phase: the session is the operator's own live one (as in xrdp gateway mode). pam_faillock applies
-# through password-auth. Membership of the managed group mios-rdp ([remote.rdp].allowed_users, set by
-# `mios-rdp render`) is checked here and again in mios-rdp-priv; root is refused in both.
+# phase: the session is the operator's own live one (as in xrdp gateway mode). Per-source exponential
+# backoff is enforced in mios-rdp-server (auth.rs). Membership of the managed group mios-rdp
+# ([remote.rdp].allowed_users, set by `mios-rdp render`) is checked here and again in mios-rdp-priv;
+# root is refused in both.
 auth       include      password-auth
 account    required     pam_succeed_if.so user ingroup mios-rdp
 account    required     pam_succeed_if.so uid >= 1000 quiet

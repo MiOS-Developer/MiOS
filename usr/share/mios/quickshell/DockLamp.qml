@@ -20,6 +20,246 @@ Singleton {
     readonly property string dockFile: Quickshell.env("MIOS_DOCK_ICONS_JSON") || (runtimeDir + "/mios-dock-icons.json")
     readonly property string launchFile: Quickshell.env("MIOS_LAMP_LAUNCH_JSON") || (runtimeDir + "/mios-lamp-launch.json")
     readonly property string minimizedWorkspace: Quickshell.env("MIOS_MINIMIZED_WORKSPACE") || "special:minimized"
+    readonly property string prefsFile: Quickshell.env("MIOS_DOCK_PREFS_JSON")
+        || ((Quickshell.env("XDG_CONFIG_HOME") || ((Quickshell.env("HOME") || "/home/mios") + "/.config")) + "/mios/dock-prefs.json")
+
+    // ---- Pin / Star / Favourite & Reorganize persistence -----------------------------------------------------------
+    property var customPinned: null
+    property var starredApps: []
+    property bool reorderMode: false
+    property int prefsWriteCount: 0
+    property string queuedPrefsJson: ""
+
+    property FileView prefsView: FileView {
+        path: lamp.prefsFile
+        watchChanges: false
+        preload: true
+        printErrors: false
+        onLoaded: lamp.parsePrefs(text())
+        onLoadFailed: {
+            if (lamp.customPinned === null) lamp.customPinned = null
+        }
+    }
+
+    function canonAppId(entryOrId) {
+        if (!entryOrId) return ""
+        if (typeof entryOrId === "string") return stripDesktop(entryOrId.trim())
+        return stripDesktop(String(entryOrId.id || entryOrId.appId || entryOrId.startupClass || "").trim())
+    }
+
+    function parsePrefs(raw) {
+        if (prefsWriter.running || lamp.queuedPrefsJson !== "") return
+        try {
+            const j = JSON.parse(String(raw || "").trim() || "{}")
+            if (j && typeof j === "object") {
+                if (Array.isArray(j.pinned)) {
+                    const p = []
+                    for (const id of j.pinned) {
+                        const c = canonAppId(id)
+                        if (c && p.indexOf(c) < 0) p.push(c)
+                    }
+                    lamp.customPinned = p
+                }
+                if (Array.isArray(j.starred)) {
+                    const s = []
+                    for (const id of j.starred) {
+                        const c = canonAppId(id)
+                        if (c && s.indexOf(c) < 0) s.push(c)
+                    }
+                    lamp.starredApps = s
+                }
+            }
+        } catch (e) {
+            /* keep current state on malformed JSON */
+        }
+    }
+
+    function effectivePinned(defaultPinned) {
+        if (Array.isArray(lamp.customPinned)) return lamp.customPinned
+        const out = []
+        const src = Array.isArray(defaultPinned) ? defaultPinned : []
+        for (const id of src) {
+            const c = canonAppId(id)
+            if (c && out.indexOf(c) < 0) out.push(c)
+        }
+        return out
+    }
+
+    function isPinned(entryOrId, defaultPinned) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        const list = effectivePinned(defaultPinned)
+        return list.some(id => id.toLowerCase() === c.toLowerCase())
+    }
+
+    function isStarred(entryOrId) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        return lamp.starredApps.some(id => id.toLowerCase() === c.toLowerCase())
+    }
+
+    function savePrefs() {
+        const payload = JSON.stringify({
+            version: 1,
+            updated_ms: Date.now(),
+            pinned: Array.isArray(lamp.customPinned) ? lamp.customPinned : [],
+            starred: Array.isArray(lamp.starredApps) ? lamp.starredApps : []
+        })
+        if (!prefsWriter.running) {
+            prefsWriter.payload = payload
+            prefsWriter.running = true
+        } else {
+            queuedPrefsJson = payload
+        }
+    }
+
+    property Process prefsWriter: Process {
+        property string payload: ""
+        command: ["sh", "-c",
+            "f=$1; j=$2; d=${f%/*}; [ -n \"$d\" ] || d=.; mkdir -p \"$d\" 2>/dev/null || true; " +
+            "t=\"$d/.${f##*/}.tmp.$$\"; printf '%s\\n' \"$j\" > \"$t\" && mv -f \"$t\" \"$f\"",
+            "sh", lamp.prefsFile, prefsWriter.payload]
+        onExited: (code, status) => {
+            if (code === 0) lamp.prefsWriteCount++
+            if (lamp.queuedPrefsJson) {
+                prefsWriter.payload = lamp.queuedPrefsJson
+                lamp.queuedPrefsJson = ""
+                prefsWriter.running = true
+            }
+        }
+    }
+
+    function pinApp(entryOrId, defaultPinned) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        const list = effectivePinned(defaultPinned).slice()
+        if (!list.some(id => id.toLowerCase() === c.toLowerCase())) {
+            list.push(c)
+            lamp.customPinned = list
+            savePrefs()
+            return true
+        }
+        return false
+    }
+
+    function unpinApp(entryOrId, defaultPinned) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        const list = effectivePinned(defaultPinned).filter(id => id.toLowerCase() !== c.toLowerCase())
+        lamp.customPinned = list
+        savePrefs()
+        return true
+    }
+
+    function togglePin(entryOrId, defaultPinned) {
+        if (isPinned(entryOrId, defaultPinned)) {
+            unpinApp(entryOrId, defaultPinned)
+            return false
+        }
+        pinApp(entryOrId, defaultPinned)
+        return true
+    }
+
+    function movePin(entryOrId, delta, defaultPinned) {
+        const c = canonAppId(entryOrId)
+        if (!c || !delta) return false
+        const list = effectivePinned(defaultPinned).slice()
+        const idx = list.findIndex(id => id.toLowerCase() === c.toLowerCase())
+        if (idx < 0) return false
+        const target = Math.max(0, Math.min(list.length - 1, idx + delta))
+        if (target === idx) return false
+        const item = list.splice(idx, 1)[0]
+        list.splice(target, 0, item)
+        lamp.customPinned = list
+        savePrefs()
+        return true
+    }
+
+    function reorderPinTo(fromIndex, toIndex, defaultPinned) {
+        const list = effectivePinned(defaultPinned).slice()
+        if (fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length || fromIndex === toIndex) return false
+        const item = list.splice(fromIndex, 1)[0]
+        list.splice(toIndex, 0, item)
+        lamp.customPinned = list
+        savePrefs()
+        return true
+    }
+
+    function starApp(entryOrId) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        const list = (lamp.starredApps || []).slice()
+        if (!list.some(id => id.toLowerCase() === c.toLowerCase())) {
+            list.push(c)
+            lamp.starredApps = list
+            savePrefs()
+            return true
+        }
+        return false
+    }
+
+    function unstarApp(entryOrId) {
+        const c = canonAppId(entryOrId)
+        if (!c) return false
+        const list = (lamp.starredApps || []).filter(id => id.toLowerCase() !== c.toLowerCase())
+        lamp.starredApps = list
+        savePrefs()
+        return true
+    }
+
+    function toggleStar(entryOrId) {
+        if (isStarred(entryOrId)) {
+            unstarApp(entryOrId)
+            return false
+        }
+        starApp(entryOrId)
+        return true
+    }
+
+    function moveStar(entryOrId, delta) {
+        const c = canonAppId(entryOrId)
+        if (!c || !delta) return false
+        const list = (lamp.starredApps || []).slice()
+        const idx = list.findIndex(id => id.toLowerCase() === c.toLowerCase())
+        if (idx < 0) return false
+        const target = Math.max(0, Math.min(list.length - 1, idx + delta))
+        if (target === idx) return false
+        const item = list.splice(idx, 1)[0]
+        list.splice(target, 0, item)
+        lamp.starredApps = list
+        savePrefs()
+        return true
+    }
+
+    function reorderStarTo(fromIndex, toIndex) {
+        const list = (lamp.starredApps || []).slice()
+        if (fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length || fromIndex === toIndex) return false
+        const item = list.splice(fromIndex, 1)[0]
+        list.splice(toIndex, 0, item)
+        lamp.starredApps = list
+        savePrefs()
+        return true
+    }
+
+    function closeWindow(address) {
+        const a = normAddress(address)
+        if (!a) return "error: invalid address"
+        const expr = "hl.dsp.window.close({window = \"address:" + a + "\"})"
+        lastDispatched = expr
+        Quickshell.execDetached(["hyprctl", "dispatch", expr])
+        refreshSoon()
+        return expr
+    }
+
+    function toggleShaderGlass(address) {
+        const a = normAddress(address)
+        if (a) {
+            Quickshell.execDetached(["/usr/bin/mios-shaderglass", "attach", "--window", a])
+            return "attach:" + a
+        }
+        Quickshell.execDetached(["/usr/bin/mios-shaderglass", "toggle"])
+        return "toggle"
+    }
 
     // Per-output state reported by each Sidebar.qml instance: { "<output>": { visible, edge, dock_rect, edge_rect, minimized_slot, icons, minimized } }
     property var outputs: ({})
@@ -78,17 +318,17 @@ Singleton {
     // ---- address & class helpers -----------------------------------------------------------------------------------
     function validAddr(a) {
         if (a === undefined || a === null) return false
-        const s = String(a).trim()
-        if (!s) return false
+        const s = String(a)
+        if (!s || s !== s.trim()) return false
         const full = s.startsWith("0x") ? s : "0x" + s
-        return /^0x[0-9a-fA-F]+$/.test(full)
+        return /^0x[0-9a-fA-F]+$/.test(full) && !/[\r\n]/.test(full)
     }
     function normAddress(a) {
         if (!a) return ""
         const s = String(a).trim()
         if (!s) return ""
         const full = s.startsWith("0x") ? s : "0x" + s
-        return /^0x[0-9a-fA-F]+$/.test(full) ? full.toLowerCase() : ""
+        return (/^0x[0-9a-fA-F]+$/.test(full) && !/[\r\n]/.test(full)) ? full.toLowerCase() : ""
     }
     function addressOf(tl) {
         if (!tl) return ""
@@ -127,6 +367,27 @@ Singleton {
 
     // ---- minimized windows (special:minimized) ---------------------------------------------------------------------
     property var originOutput: ({})
+    property var originMonitorId: ({})
+    function isLiveMonitorName(name) {
+        if (!name) return false
+        if (lamp.fixtureView.path !== "") return true
+        const mons = Hyprland.monitors ? Hyprland.monitors.values : []
+        if (!mons || mons.length === 0) return true
+        for (let j = 0; j < mons.length; j++) {
+            const m = mons[j]
+            if (m && String(m.name) === name) return true
+        }
+        return false
+    }
+    function monitorNameForId(monId) {
+        if (monId === undefined || monId === null || monId < 0) return ""
+        const mons = Hyprland.monitors ? Hyprland.monitors.values : []
+        for (let j = 0; j < mons.length; j++) {
+            const m = mons[j]
+            if (m && m.id === monId && m.name) return String(m.name)
+        }
+        return ""
+    }
     readonly property var minimizedWindows: {
         const res = []
         const seen = {}
@@ -175,13 +436,20 @@ Singleton {
             const o = tl ? tl.lastIpcObject : null
             const wsName = (o && o.workspace && o.workspace.name) ? String(o.workspace.name)
                          : (tl && tl.workspace && tl.workspace.name ? String(tl.workspace.name) : "")
-            if (!wsName.startsWith("special:")) {
+            const tlWsName = (tl && tl.workspace && tl.workspace.name) ? String(tl.workspace.name) : ""
+            const isSpecial = wsName.startsWith("special:") || tlWsName.startsWith("special:")
+            const oMonId = (o && o.monitor !== undefined) ? o.monitor : -1
+            const monNameFromO = monitorNameForId(oMonId)
+            if (!isSpecial) {
                 const addr = addressOf(tl)
-                const monName = tl.monitor && tl.monitor.name ? String(tl.monitor.name)
-                              : (o && o.monitorName ? String(o.monitorName) : "")
+                const monName = (o && o.monitorName ? String(o.monitorName) : "")
+                              || monNameFromO
+                              || (tl.monitor && tl.monitor.name ? String(tl.monitor.name) : "")
                 if (addr && monName) lamp.originOutput[addr] = monName
+                if (addr && oMonId >= 0) lamp.originMonitorId[addr] = oMonId
             }
-            if (wsName !== targetWs) continue
+            if (!isSpecial) continue
+            if (wsName !== targetWs && tlWsName !== targetWs) continue
             if (o && o.mapped === false) continue
             const addr = addressOf(tl)
             if (!addr || seen[addr]) continue
@@ -189,14 +457,20 @@ Singleton {
             const cls = (o && o.class) ? String(o.class) : (tl.wayland ? String(tl.wayland.appId || "") : "")
             const initCls = (o && o.initialClass) ? String(o.initialClass) : cls
             const title = (o && o.title) ? String(o.title) : String(tl.title || cls || addr)
-            const monId = o && o.monitor !== undefined ? o.monitor : (tl.monitor ? tl.monitor.id : -1)
-            const monName = tl.monitor && tl.monitor.name ? String(tl.monitor.name) : ""
+            const savedOrig = lamp.originOutput[addr] || ""
+            const validOrig = isLiveMonitorName(savedOrig) ? savedOrig : ""
+            const savedMonId = lamp.originMonitorId[addr] !== undefined ? lamp.originMonitorId[addr] : -1
+            const validSavedMonName = monitorNameForId(savedMonId)
+            const effMonId = validSavedMonName ? savedMonId : oMonId
+            const monName = validOrig
+                          || monNameFromO
+                          || validSavedMonName
             res.push({
                 address: addr,
                 appId: cls,
                 initialClass: initCls,
                 title: title,
-                monitor: monId,
+                monitor: effMonId,
                 monitorName: monName
             })
         }
@@ -243,14 +517,15 @@ Singleton {
     function minimizedForOutput(outputName, monitorId, isPrimary) {
         const out = []
         for (const m of minimizedWindows) {
-            const orig = lamp.originOutput[m.address] || m.monitorName || ""
+            const savedOrig = lamp.originOutput[m.address] || ""
+            const orig = (savedOrig && isLiveMonitorName(savedOrig)) ? savedOrig : (isLiveMonitorName(m.monitorName) ? m.monitorName : "")
             if (!outputName) {
                 out.push(m)
             } else if (orig === outputName) {
                 out.push(m)
             } else if (!orig && (m.monitorName === outputName || (monitorId !== undefined && monitorId >= 0 && m.monitor === monitorId))) {
                 out.push(m)
-            } else if (!orig && isPrimary && (!m.monitorName || m.monitor === undefined || m.monitor < 0)) {
+            } else if (!orig && isPrimary) {
                 out.push(m)
             }
         }
@@ -282,7 +557,7 @@ Singleton {
     }
 
     function minimize(address) {
-        if (address !== undefined && address !== null && String(address).trim() !== "") {
+        if (address !== undefined && address !== null && String(address) !== "") {
             if (!validAddr(address)) return "error: invalid address"
         }
         const expr = minimizeExpr(address)
@@ -317,7 +592,7 @@ Singleton {
     }
 
     function restore(address, source, targetRect) {
-        if (address !== undefined && address !== null && String(address).trim() !== "") {
+        if (address !== undefined && address !== null && String(address) !== "") {
             if (!validAddr(address)) return "error: invalid address"
         }
         const a = normAddress(address)
@@ -329,6 +604,20 @@ Singleton {
         refreshSoon()
         refreshAfterLamp.restart()
         return expr
+    }
+
+    // Collect a stored or running window into the workspace the operator is using now.
+    function bringHere(address, source, targetRect) {
+        if (!validAddr(address)) return "error: invalid address"
+        const a = normAddress(address)
+        recordRestore(a, source, targetRect)
+        const commands = "dispatch hl.dsp.window.move({workspace = \"e+0\", window = \"address:" + a + "\", follow = false}); " +
+                         "dispatch hl.dsp.focus({window = \"address:" + a + "\"})"
+        lastDispatched = commands
+        Quickshell.execDetached(["hyprctl", "--batch", commands])
+        refreshSoon()
+        refreshAfterLamp.restart()
+        return commands
     }
 
     function rectForAddress(address, outputName) {
@@ -398,6 +687,7 @@ Singleton {
         const rowOffsetShellX = Math.max(0, (dockShellW - rowShellW) / 2)
         const icons = []
         const minimized = []
+        let phoneRect = null
         let cursorShellX = rowOffsetShellX
 
         for (let i = 0; i < list.length; i++) {
@@ -410,6 +700,7 @@ Singleton {
             const rx = Math.round(cx - w / 2)
             const ry = Math.round(cy - h / 2)
             const rect = [rx, ry, w, h]
+            if (it.kind === "phone") phoneRect = rect
             if (it.kind === "icon" && it.app_id) {
                 icons.push({
                     app_id: String(it.app_id),
@@ -432,7 +723,7 @@ Singleton {
         const slotX = Math.min(monX + screenLogicalW - marginBottom - slotW,
                                Math.round(dockGlobalX + cursorShellX * ui))
         const slotY = dockGlobalY
-        const minimizedSlot = [slotX, slotY, slotW, slotH]
+        const minimizedSlot = phoneRect || [slotX, slotY, slotW, slotH]
 
         return ({
             visible: visible,
@@ -440,6 +731,7 @@ Singleton {
             dock_rect: dockRect,
             edge_rect: edgeRect,
             minimized_slot: minimizedSlot,
+            phone_rect: phoneRect,
             icons: icons,
             minimized: minimized
         })
@@ -469,11 +761,33 @@ Singleton {
         scheduleDockWrite()
     }
 
+    function pruneStaleOutputs() {
+        if (lamp.fixtureView.path !== "") return
+        const mons = Hyprland.monitors ? Hyprland.monitors.values : []
+        if (!mons || mons.length === 0) return
+        let changed = false
+        const next = Object.assign({}, outputs)
+        for (const k in next) {
+            if (!isLiveMonitorName(k)) {
+                delete next[k]
+                changed = true
+            }
+        }
+        if (changed) {
+            outputs = next
+            scheduleDockWrite()
+        }
+    }
+
     function buildDockPayload() {
+        const filtered = {}
+        for (const k in lamp.outputs) {
+            if (isLiveMonitorName(k)) filtered[k] = lamp.outputs[k]
+        }
         return JSON.stringify({
             version: 1,
             updated_ms: Date.now(),
-            outputs: lamp.outputs
+            outputs: filtered
         })
     }
 
@@ -583,16 +897,16 @@ Singleton {
     }
     property Timer refreshFast: Timer {
         interval: 16
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
     }
     property Timer refreshSettled: Timer {
         interval: 250
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
     }
     // A lamp minimize moves the window to special:minimized after duration_minimize_ms (~520 ms).
     property Timer refreshAfterLamp: Timer {
         interval: 600
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
     }
     property Connections hyprWatch: Connections {
         target: Hyprland
@@ -602,6 +916,7 @@ Singleton {
     }
     Component.onCompleted: {
         if (fixtureView.path !== "") parseFixture(fixtureView.text())
+        if (prefsView.path !== "") parsePrefs(prefsView.text())
         refreshSoon()
     }
 
@@ -613,11 +928,16 @@ Singleton {
                 version: 1,
                 dock_file: lamp.dockFile,
                 launch_file: lamp.launchFile,
+                prefs_file: lamp.prefsFile,
                 write_count: lamp.writeCount,
                 launch_write_count: lamp.launchWriteCount,
+                prefs_write_count: lamp.prefsWriteCount,
                 last_dispatched: lamp.lastDispatched,
                 minimized_windows: lamp.minimizedWindows,
                 restoring_windows: lamp.restoringWindows,
+                custom_pinned: lamp.customPinned,
+                starred_apps: lamp.starredApps,
+                reorder_mode: lamp.reorderMode,
                 outputs: lamp.outputs,
                 pending: lamp.pendingLaunches
             })
@@ -631,6 +951,42 @@ Singleton {
         }
         function restore(address: string, source: string): string {
             return lamp.restore(address, source)
+        }
+        function pin(appId: string): string {
+            lamp.pinApp(appId, lamp.customPinned || [])
+            return state()
+        }
+        function unpin(appId: string): string {
+            lamp.unpinApp(appId, lamp.customPinned || [])
+            return state()
+        }
+        function togglePin(appId: string): string {
+            lamp.togglePin(appId, lamp.customPinned || [])
+            return state()
+        }
+        function movePin(appId: string, delta: int): string {
+            lamp.movePin(appId, delta, lamp.customPinned || [])
+            return state()
+        }
+        function star(appId: string): string {
+            lamp.starApp(appId)
+            return state()
+        }
+        function unstar(appId: string): string {
+            lamp.unstarApp(appId)
+            return state()
+        }
+        function toggleStar(appId: string): string {
+            lamp.toggleStar(appId)
+            return state()
+        }
+        function moveStar(appId: string, delta: int): string {
+            lamp.moveStar(appId, delta)
+            return state()
+        }
+        function setReorderMode(on: bool): string {
+            lamp.reorderMode = on
+            return state()
         }
         function launch(appId: string, output: string): string {
             const out = lamp.outputs[output] || ({})

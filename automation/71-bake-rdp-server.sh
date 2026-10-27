@@ -4,6 +4,7 @@
 # AI-related: /usr/libexec/mios/mios-rdp, /usr/lib/systemd/user/mios-rdp-native.service, /usr/lib/systemd/system/mios-rdp-priv.socket, /usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [packages.rdp-server-build], src/mios-rdp-server/
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
+umask 0022
 # shellcheck source=/dev/null
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,18 +98,26 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 export RUSTFLAGS="-L ${STUB_DIR} ${RUSTFLAGS:-}"
 TARGET=x86_64-unknown-linux-gnu
 
-git init -q "$BUILD_DIR/ironrdp" 
-git -C "$BUILD_DIR/ironrdp" fetch -q --depth 1 "$URL" "$SHA"
-git -C "$BUILD_DIR/ironrdp" checkout -q FETCH_HEAD
+if [[ -d /var/lib/mios-build/rdp-native/ironrdp/.git ]] \
+   && [[ "$(git -C /var/lib/mios-build/rdp-native/ironrdp rev-parse HEAD 2>/dev/null || true)" == "$SHA" ]] \
+   && [[ -z "$(git -C /var/lib/mios-build/rdp-native/ironrdp status --porcelain 2>/dev/null || echo dirty)" ]]; then
+    cp -a /var/lib/mios-build/rdp-native/ironrdp "$BUILD_DIR/ironrdp"
+else
+    git init -q "$BUILD_DIR/ironrdp"
+    git -C "$BUILD_DIR/ironrdp" fetch -q --depth 1 "$URL" "$SHA"
+    git -C "$BUILD_DIR/ironrdp" checkout -q FETCH_HEAD
+fi
 [[ "$(git -C "$BUILD_DIR/ironrdp" rev-parse HEAD)" == "$SHA" ]] || { mios_err "IronRDP checkout is not $SHA"; exit 1; }
 cp -a "$SRC" "$BUILD_DIR/src"
 rm -rf "$BUILD_DIR/src/target" "$BUILD_DIR/src/Cargo.lock"
-# patch carry (rdp-native-design.md 2.3): applied when present; none is needed for Phase 1
-for p in "$ROOT_DIR"/src/mios-rdp-server/patches/ironrdp/*.patch; do
-    [[ -f "$p" ]] || continue
-    git -C "$BUILD_DIR/ironrdp" apply --verbose "$p" \
-        || { mios_err "patch $(basename "$p") no longer applies to IronRDP $SHA"; exit 1; }
-done
+if [[ -z "$DESTDIR" ]]; then
+    mkdir -p /var/lib/mios-build/rdp-native
+    rm -rf /var/lib/mios-build/rdp-native/ironrdp
+    cp -a "$BUILD_DIR/ironrdp" /var/lib/mios-build/rdp-native/ironrdp
+    chown -R 1000:1000 /var/lib/mios-build/rdp-native/ironrdp 2>/dev/null || true
+    chmod -R u+rwX,go+rX /var/lib/mios-build/rdp-native/ironrdp
+    ln -sfn /var/lib/mios-build/rdp-native/ironrdp "$ROOT_DIR/src/ironrdp"
+fi
 
 (cd "$BUILD_DIR/src" && cargo build --release --target "$TARGET" -p mios-rdp-server -p mios-rdp-priv)
 (cd "$BUILD_DIR/src" && cargo test --release --target "$TARGET" -p mios-rdp-server -p mios-rdp-priv)
@@ -157,7 +166,7 @@ rec = {
     "source_sha256": src,
     "cargo_lock_sha256": lock,
     "target": "x86_64-unknown-linux-gnu",
-    "features": ["egfx", "helper"],
+    "features": ["egfx", "helper", "nscodec"],
     "static_policy_exceptions": ["E1 mios-rdp-server glibc dynamic (EGL, GBM, xkbcommon, dlopen libopenh264)",
                                  "E2 mios-rdp-priv glibc + libpam"],
     "self_test": json.loads(selftest or "{}"),

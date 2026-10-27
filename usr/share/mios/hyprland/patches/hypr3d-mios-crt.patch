@@ -1,0 +1,3851 @@
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -27,11 +27,35 @@
+ // Raw identity of a surface's last-committed buffer. Taking the pointer does
+ // NOT keep the buffer alive (no reference is held), so the client's buffer
+ // lifecycle is untouched.
++// MiOS: traverses the root surface and all child subsurfaces (video player frames
++// commit on child wl_subsurfaces) so subsurface video players update continuously.
+ std::uintptr_t bufferIdentity(const WP<CWLSurfaceResource>& surface) {
+-    if (!surface || !surface->m_current.buffer.m_buffer)
++    if (!surface)
+         return 0;
+ 
+-    return reinterpret_cast<std::uintptr_t>(surface->m_current.buffer.m_buffer.get());
++    auto surfLock = surface.lock();
++    if (!surfLock)
++        return 0;
++
++    std::uintptr_t hash = 0;
++    surfLock->breadthfirst(
++        [](SP<CWLSurfaceResource> surf, const Vector2D&, void* data) {
++            if (!surf || !surf->m_current.buffer.m_buffer)
++                return;
++            auto* h = static_cast<std::uintptr_t*>(data);
++            auto ptr = reinterpret_cast<std::uintptr_t>(surf->m_current.buffer.m_buffer.get());
++            *h = (*h * 31) ^ ptr;
++        },
++        &hash
++    );
++
++    return hash;
++}
++
++std::uintptr_t bufferIdentity(PHLWINDOW window) {
++    if (!window)
++        return 0;
++    return bufferIdentity(window->resource());
+ }
+ 
+ bool boxEquals(const CBox& a, const CBox& b) {
+@@ -356,19 +380,34 @@
+ // the desktop's stack itself -- pane, client, edge pass -- with the same preset.
+ class CForeignSnapshotScope {
+   public:
+-    CForeignSnapshotScope() : m_saved(g_pHyprRenderer->m_renderData.renderModif) {
++    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr)
++        : m_saved(g_pHyprRenderer->m_renderData.renderModif), m_window(window) {
+         auto& modif = g_pHyprRenderer->m_renderData.renderModif;
+         modif.modifs.emplace_back(Render::SRenderModifData::RMOD_TYPE_TRANSLATE, Vector2D{0.0, 0.0});
+         modif.enabled = true;
++        if (m_window) {
++            m_savedTransformers = std::move(m_window->m_transformers);
++            m_window->m_transformers.clear();
++            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_FADE) < 1.0f)
++                m_window->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(1.0f);
++            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_LAYOUT) < 1.0f)
++                m_window->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);
++            if (m_window->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN) < 1.0f)
++                m_window->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(1.0f);
++        }
+     }
+     ~CForeignSnapshotScope() {
++        if (m_window)
++            m_window->m_transformers = std::move(m_savedTransformers);
+         g_pHyprRenderer->m_renderData.renderModif = m_saved;
+     }
+     CForeignSnapshotScope(const CForeignSnapshotScope&)            = delete;
+     CForeignSnapshotScope& operator=(const CForeignSnapshotScope&) = delete;
+ 
+   private:
+-    Render::SRenderModifData m_saved;
++    Render::SRenderModifData                     m_saved;
++    PHLWINDOW                                    m_window;
++    std::vector<UP<Render::IWindowTransformer>>  m_savedTransformers;
+ };
+ 
+ #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+@@ -402,8 +441,12 @@
+         1.0f :
+         std::clamp(window->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE), 0.0f, 1.0f);
+     const auto RES = window->getFullWindowReservedArea();
+-    snapshot.reserved = {static_cast<float>(std::max(0.0, RES.topLeft.x)), static_cast<float>(std::max(0.0, RES.topLeft.y)),
+-                         static_cast<float>(std::max(0.0, RES.bottomRight.x)), static_cast<float>(std::max(0.0, RES.bottomRight.y))};
++    snapshot.reserved = {
++        static_cast<float>(std::max(0.0, RES.topLeft.x)),
++        static_cast<float>(std::max(0.0, RES.topLeft.y)),
++        static_cast<float>(std::max(0.0, RES.bottomRight.x)),
++        static_cast<float>(std::max(0.0, RES.bottomRight.y))
++    };
+ }
+ 
+ // MiOS rotated outputs (hypr3d-mios-transform.patch): Hyprland renders a
+@@ -556,9 +599,11 @@
+     // plus a monitor-sized framebuffer allocation), and skipping it for idle
+     // windows is what keeps the room cheap while a screen capture is running.
+     const auto ID = reinterpret_cast<std::uintptr_t>(window.get());
++    static std::unordered_map<std::uintptr_t, int> s_captureCounts;
+ 
+     if (!force) {
+         if (auto IT = m_snapshots.find(ID); IT != m_snapshots.end() &&
++            s_captureCounts[ID] >= 25 &&
+             IT->second.lastBuffer == bufferIdentity(window->resource()) &&
+             boxEquals(IT->second.fullBox, fullBox))
+             return true;
+@@ -604,20 +649,25 @@
+     const bool     SHIFTED  = shift.x != 0.0 || shift.y != 0.0;
+     const Vector2D ORIGINAL = WORKSPACE ? WORKSPACE->m_renderOffset->value() : Vector2D{};
+ 
+-    if (SHIFTED)
++    const bool WAS_PINNED = window->m_pinned;
++    if (SHIFTED) {
+         WORKSPACE->m_renderOffset->setValueAndWarp(shift);
++        window->m_pinned = false;
++    }
+ 
+     // Renders the window (content + decorations) into a fresh plugin-ownable
+     // framebuffer. Requires the window to currently pass shouldRenderWindow.
+     // MiOS: as a foreign render, without hyprglass' pane and edge pass.
+     SP<Render::IFramebuffer> fb;
+     {
+-        CForeignSnapshotScope foreign;
++        CForeignSnapshotScope foreign(window);
+         fb = g_pHyprRenderer->makeSnapshotFB(window);
+     }
+ 
+-    if (SHIFTED)
++    if (SHIFTED) {
++        window->m_pinned = WAS_PINNED;
+         WORKSPACE->m_renderOffset->setValueAndWarp(ORIGINAL);
++    }
+ 
+     if (!fb)
+         return false;
+@@ -643,8 +693,8 @@
+     // the live geometry.
+     snapshot.fullBox = fullBox;
+     snapshot.sampledBox = CBox{
+-        fullBox.x + static_cast<int>(shift.x),
+-        fullBox.y + static_cast<int>(shift.y),
++        fullBox.x + shift.x,
++        fullBox.y + shift.y,
+         fullBox.w,
+         fullBox.h,
+     };
+@@ -663,6 +713,7 @@
+         destroySnapshotGL(IT->second);
+         m_snapshots.erase(IT);
+     }
++    ++s_captureCounts[ID];
+     m_snapshots.emplace(ID, std::move(snapshot));
+ 
+     refreshSkirtMask(ID, m_snapshots.find(ID)->second, monitor);
+@@ -733,6 +784,9 @@
+ 
+     bool anyTile = false;
+ 
++    const bool WAS_PINNED = window->m_pinned;
++    window->m_pinned = false;
++
+     for (int j = 0; j < ROWS; ++j) {
+         for (int i = 0; i < COLS; ++i) {
+             const float TILE_X = i * MONLOGI.x;
+@@ -752,7 +806,7 @@
+ 
+             SP<Render::IFramebuffer> fb;
+             {
+-                CForeignSnapshotScope foreign; // MiOS: no hyprglass pane / edge pass baked in
++                CForeignSnapshotScope foreign(window); // MiOS: no hyprglass pane / edge pass baked in
+                 fb = g_pHyprRenderer->makeSnapshotFB(window);
+             }
+ 
+@@ -789,6 +843,8 @@
+             anyTile = true;
+         }
+     }
++
++    window->m_pinned = WAS_PINNED;
+ 
+     if (!anyTile)
+         return false;
+diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCompat.cpp
+--- a/src/HyprlandCompat/WindowsCompat.cpp
++++ b/src/HyprlandCompat/WindowsCompat.cpp
+@@ -191,6 +191,6 @@
+     // each side margin so a rogue rule cannot blow the quad up.
+     constexpr double MAX_MARGIN = 150.0;
+     const double LEFT   = std::clamp<double>(SURF.x - FULL.x, 0.0, MAX_MARGIN);
+-    const double TOP    = std::clamp<double>(SURF.y - FULL.y, 0.0, MAX_MARGIN);
++    const double TOP    = std::clamp<double>(std::max<double>(SURF.y - FULL.y, 32.0), 0.0, MAX_MARGIN);
+     const double RIGHT  = std::clamp<double>((FULL.x + FULL.w) - (SURF.x + SURF.w), 0.0, MAX_MARGIN);
+     const double BOTTOM = std::clamp<double>((FULL.y + FULL.h) - (SURF.y + SURF.h), 0.0, MAX_MARGIN);
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -126,6 +126,7 @@
+     float               alpha = 1.0f; // the window's room alpha (g_fsFade etc.)
+     bool glassWall = false;
+     bool glassFace = false; // walls keep their existing appearance
++    bool crtEnabled = false;
+     std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
+@@ -149,6 +150,7 @@
+     front.owner    = back.owner = poly.owner;
+     front.glassWall = back.glassWall = poly.glassWall;
+     front.glassFace = back.glassFace = poly.glassFace;
++    front.crtEnabled = back.crtEnabled = poly.crtEnabled;
+     front.glassUV = back.glassUV = poly.glassUV;
+     front.glassSurface = back.glassSurface = poly.glassSurface;
+     front.glassMetrics = back.glassMetrics = poly.glassMetrics;
+@@ -195,6 +197,23 @@
+         }
+     }
+ 
++    auto dedupeVerts = [](std::vector<SWVert>& verts) {
++        if (verts.size() < 2) return;
++        std::vector<SWVert> clean;
++        clean.reserve(verts.size());
++        for (const auto& v : verts) {
++            if (clean.empty() || dot(v.p - clean.back().p, v.p - clean.back().p) > 1e-8f) {
++                clean.push_back(v);
++            }
++        }
++        while (clean.size() > 1 && dot(clean.front().p - clean.back().p, clean.front().p - clean.back().p) <= 1e-8f) {
++            clean.pop_back();
++        }
++        verts = std::move(clean);
++    };
++    dedupeVerts(front.verts);
++    dedupeVerts(back.verts);
++
+     hasFront = hasFront && front.verts.size() >= 3;
+     hasBack  = hasBack  && back.verts.size()  >= 3;
+ }
+@@ -209,12 +228,19 @@
+     if (polys.empty()) return;
+     // Reject degenerate fragments before choosing a plane (zero normals
+     // incorrectly classify every other polygon as coplanar).
++    // Newell area-weighted normal across all vertices so valid clipped faces are not deleted by polys.erase.
+     const auto planeNormal = [](const SWPoly& p) {
+         if (p.verts.size() < 3) return Vec3{};
+-        for (size_t i=1; i+1<p.verts.size(); ++i) {
+-            const auto n=cross(p.verts[i].p-p.verts[0].p,p.verts[i+1].p-p.verts[0].p);
+-            if (dot(n,n)>1e-14f) return normalize(n);
+-        }
++        Vec3 n{};
++        const size_t N = p.verts.size();
++        for (size_t i = 0; i < N; ++i) {
++            const auto& c = p.verts[i].p;
++            const auto& next = p.verts[(i + 1) % N].p;
++            n.x += (c.y - next.y) * (c.z + next.z);
++            n.y += (c.z - next.z) * (c.x + next.x);
++            n.z += (c.x - next.x) * (c.y + next.y);
++        }
++        if (dot(n, n) > 1e-12f) return normalize(n);
+         return Vec3{};
+     };
+     polys.erase(std::remove_if(polys.begin(),polys.end(),[&](const SWPoly& p) {
+@@ -225,9 +251,12 @@
+     const size_t candidates=std::min<size_t>(polys.size(),16);
+     for (size_t k=0;k<candidates;++k) {
+         const size_t index=k*polys.size()/candidates;
++        if (polys[index].glassWall) continue; // NEVER choose perimeter wall quads as splitting planes
+         const auto point=polys[index].verts[0].p, normal=planeNormal(polys[index]);
++        if (dot(normal, normal) < 0.5f) continue;
+         size_t front=0,back=0,split=0;
+         for (const auto& p:polys) {
++            if (p.owner == polys[index].owner) continue; // Polygons of the same window never split each other
+             bool pos=false,neg=false;
+             for (const auto& v:p.verts) {
+                 const float d=dot(v.p-point,normal);
+@@ -238,7 +267,16 @@
+         const size_t cost=std::max(front,back)+split*4;
+         if (cost<bestCost) {bestCost=cost;best=index;}
+     }
++    if (bestCost == ~size_t(0)) {
++        for (size_t i = 0; i < polys.size(); ++i) {
++            if (!polys[i].glassWall && dot(planeNormal(polys[i]), planeNormal(polys[i])) >= 0.5f) {
++                best = i;
++                break;
++            }
++        }
++    }
+     node.p=polys[best].verts[0].p; node.n=planeNormal(polys[best]);
++    const auto splitterOwner = polys[best].owner;
+     std::vector<SWPoly> frontList,backList;
+     for (size_t index = 0; index < polys.size(); ++index) {
+         auto& p = polys[index];
+@@ -247,6 +285,15 @@
+         // Re-inserting it unchanged makes the BSP recurse without progress.
+         if (index == best) {
+             node.coplanar.push_back(std::move(p));
++            continue;
++        }
++        // Polygons belonging to the same window (p.owner == splitter.owner) must never split each other
++        if (p.owner == splitterOwner) {
++            float avgD = 0.f;
++            for (const auto& v : p.verts) avgD += dot(v.p - node.p, node.n);
++            if (std::abs(avgD) <= 1e-3f) node.coplanar.push_back(std::move(p));
++            else if (avgD < 0.f) backList.push_back(std::move(p));
++            else frontList.push_back(std::move(p));
+             continue;
+         }
+         bool pos=false,neg=false;
+@@ -560,6 +607,11 @@
+ uniform vec4 uGlassMetrics;
+ uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
+ uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
++uniform int uCrtCurvature;
++uniform float uCrtRadius;
++uniform int uCrtScanlines;
++uniform float uCrtScanlineWeight;
++uniform float uCrtDotmask;
+ out vec4 fragColor;
+ 
+ 
+@@ -719,9 +771,23 @@
+     return min(max(q.x, q.y), 0.0) + lpNorm(max(q, 0.0), roundingPower, invRoundingPower) - clampedR;
+ }
+ 
++float tabShapeSDF(vec2 boxLocalPx) {
++    vec2 tq = abs(boxLocalPx - vec2(86.0, 0.0)) - vec2(44.0, 28.0) + vec2(10.0);
++    return length(max(tq, 0.0)) + min(max(tq.x, tq.y), 0.0) - 10.0;
++}
++
++float sminTab(float a, float b, float k) {
++    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
++    return mix(b, a, h) - k * h * (1.0 - h);
++}
++
+ float getCornerSDF(vec2 uv) {
+     vec2 boxLocalPx = uv * fullSize - glassBoxOffsetPx;
+-    return getRoundedBoxSDF(boxLocalPx, glassBoxSizePx, radii);
++    float d = getRoundedBoxSDF(boxLocalPx, glassBoxSizePx, radii);
++    if (abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= 14.0 && boxLocalPx.x >= 18.0 && boxLocalPx.x <= 154.0) {
++        d = sminTab(tabShapeSDF(boxLocalPx), d, 15.0);
++    }
++    return d;
+ }
+ 
+ // Edge distance for the bevel, crease-free. Inside the window, getCornerSDF is
+@@ -742,7 +808,8 @@
+ float getBevelSDF(vec2 uv) {
+     vec2  H = glassBoxSizePx * 0.5;
+     float h = min(H.x, H.y);
+-    vec2  signedP = uv * fullSize - glassBoxOffsetPx - H;
++    vec2  boxLocalPx = uv * fullSize - glassBoxOffsetPx;
++    vec2  signedP = boxLocalPx - H;
+     float r = min(pickCornerRadius(signedP, radii), h);
+     vec2  p = abs(signedP);
+     vec2  a = p - H + r;
+@@ -756,7 +823,11 @@
+             d = dc;                                        // in a corner zone: the rounded contour
+     }
+     vec2 s = p - H + h;
+-    return -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
++    float winBevel = -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
++    if (abs(uGlassDeco.w) <= 0.001 && glassBoxSizePx.x > 180.0 && boxLocalPx.y <= 14.0 && boxLocalPx.x >= 18.0 && boxLocalPx.x <= 154.0) {
++        return sminTab(tabShapeSDF(boxLocalPx), winBevel, 15.0);
++    }
++    return winBevel;
+ }
+ 
+ // ============================================================================
+@@ -1184,46 +1255,63 @@
+         return;
+     }
+     if (uTextured != 0 && uGlassFace != 0) {
+-        vec4 content = texSS(uTexture, vUV);
+         vec2 capture = (vUV-uGlassUV.xy)/uGlassUV.zw;
+         capture.y = 1.0-capture.y;
+         v_texcoord = (capture-uGlassSurface.xy)/uGlassSurface.zw;
+         fullSize = max(uGlassMetrics.xy, vec2(1.0));
++        vec2 raw_texcoord = v_texcoord;
++        float lampP = uGlassDeco.w;
++        if (abs(lampP) > 0.001) {
++            float p = clamp(abs(lampP), 0.0, 1.0);
++            float yRise = clamp(1.0 - p * 0.88, 0.08, 1.0);
++            float lamp_y = (v_texcoord.y - (1.0 - yRise)) / yRise;
++            float funnel = smoothstep(0.0, 1.0, clamp(v_texcoord.y, 0.0, 1.0)) * p;
++            float wNeck = mix(1.0, 0.18, funnel * funnel * (3.0 - 2.0 * funnel));
++            float xWave = sin(clamp(lamp_y, 0.0, 1.0) * 3.14159265) * sin(p * 6.2831853) * 0.07 * p;
++            float lamp_x = (v_texcoord.x - 0.5 - xWave) / max(wNeck, 0.08) + 0.5;
++            v_texcoord = vec2(lamp_x, lamp_y);
++        }
++        vec2 sample_coord = v_texcoord;
++        bool crt_outside = false;
++        if (uCrtCurvature != 0) {
++            vec2 cc = (v_texcoord - 0.5) * 2.0;
++            float aspect = fullSize.x / max(fullSize.y, 1.0);
++            vec2 c_aspect = vec2(cc.x * aspect, cc.y);
++            float r2 = (c_aspect.x * c_aspect.x + c_aspect.y * c_aspect.y) / (aspect * aspect);
++            float R = max(uCrtRadius, 0.1);
++            vec2 distorted = cc * (1.0 + (r2 / (R * R)));
++            sample_coord = distorted * 0.5 + 0.5;
++            if (sample_coord.x < 0.0 || sample_coord.x > 1.0 || sample_coord.y < 0.0 || sample_coord.y > 1.0) {
++                crt_outside = true;
++            }
++        }
++        vec2 sample_uv = vUV;
++        if (uCrtCurvature != 0 || abs(lampP) > 0.001) {
++            vec2 cur_capture = sample_coord * uGlassSurface.zw + uGlassSurface.xy;
++            cur_capture.y = 1.0 - cur_capture.y;
++            sample_uv = cur_capture * uGlassUV.zw + uGlassUV.xy;
++        }
++        bool tex_outside = crt_outside || sample_coord.x < 0.0 || sample_coord.x > 1.0 || sample_coord.y < 0.0 || sample_coord.y > 1.0;
++        vec4 content = tex_outside ? vec4(0.0) : texSS(uTexture, sample_uv);
+         invFullSize = 1.0/fullSize;
+         glassBoxSizePx = fullSize;
+         radii = vec4(uGlassMetrics.z);
+         invBezelWidthPx = 1.0/max(edgeThickness*min(fullSize.x,fullSize.y),1.0);
+         lensMaxPx = lensDistortion*min(fullSize.x,fullSize.y)*0.006;
+-        vec2 dx = dFdx(v_texcoord), dy = dFdy(v_texcoord);
++        vec2 dx = dFdx(raw_texcoord), dy = dFdy(raw_texcoord);
+         float det = dx.x*dy.y-dy.x*dx.y;
+         hgUVToScreen = abs(det)>1e-12 ? inverse(mat2(dx,dy)) : mat2(0.0);
+         // derivatives first, in uniform control flow (the branches below discard)
+         vec3 wdx = dFdx(vWorldPosition), wdy = dFdy(vWorldPosition);
+-        float sd = getCornerSDF(v_texcoord);
++        vec2 edge_coord = uCrtCurvature != 0 ? sample_coord : v_texcoord;
++        float sd = getCornerSDF(edge_coord);
+         // MiOS edge quality: the rounded outline's coverage over one SCREEN pixel
+         // (the SDF's footprint), so the edge is antialiased at any distance and
+         // angle instead of a fixed 2-logical-px ramp plus a hard discard.
+         float sdW = max(fwidth(sd), 1e-3);
+         float coverage = clamp(0.5 - sd / sdW, 0.0, 1.0);
+         if (coverage <= 0.0) {
+-            // Outside the window's rounded outline only SOLID decorations stay
+-            // (border, group bar, titlebar: Hyprland's reserved extents), clipped
+-            // by their own outline (radius + extent, as Hyprland rounds a border).
+-            // The 2D drop shadow is not drawn: flat in the window plane it hung a
+-            // dark halo round the slab whose inner edge followed the SQUARE client
+-            // box -- the client corner was cut, the shadow beyond the box was not:
+-            // a square wedge past every rounded corner.
+-            vec4 e = uGlassDeco;
+-            if (max(max(e.x, e.y), max(e.z, e.w)) <= 0.0) discard;
+-            float grow = min(min(e.x, e.y), min(e.z, e.w));
+-            float sdSolid = getRoundedBoxSDF(v_texcoord * fullSize + e.xy, fullSize + e.xy + e.zw,
+-                                             vec4(uGlassMetrics.z + grow));
+-            float decoCoverage = clamp(0.5 - sdSolid / sdW, 0.0, 1.0);
+-            if (decoCoverage <= 0.0) discard;
+-            float a=content.a*decoCoverage*uColor.a;
+-            vec3 rgb=content.rgb/max(content.a,0.001)*uColor.rgb;
+-            fragColor=vec4(uPremult!=0 ? rgb*a : rgb,a);
+-            return;
++            discard;
+         }
+         hgMaterial();
+         if (uGlassHasEnvironment) {
+@@ -1242,22 +1330,79 @@
+         // MiOS one glass look: composite exactly as the desktop does. The snapshot
+         // holds the client at its own opacity (WindowCapture keeps hyprglass' pane
+         // and edge pass out of it), so: the pane (hgColor, over the 3D backdrop,
+-        // the preset's frost) under the client, the edge pass over it. No luma
+-        // keying: an opaque app reads as on the desktop (transmission 1 - its
+-        // opacity), a transparent terminal shows the frosted scene behind it.
+-        // Fallback if a pane was baked in anyway (the snapshot is opaque past the
+-        // window's opacity): swap that pane-over-black for the live one.
++        // the preset's frost) under the client, the edge pass over it.
+         vec4 C = content;
+-        float u = max(C.a - clamp(uGlassWindowAlpha, 0.0, 1.0), 0.0);
+-        if (u > 0.004) {
+-            vec3 P0 = hgTone(vec3(0.0)) * clamp(glassOpacity, 0.0, 1.0);
+-            C = vec4(max(C.rgb - u * P0, vec3(0.0)), C.a - u);
++        if (uCrtScanlines != 0) {
++            float phys_y = gl_FragCoord.y / uSceneScale;
++            float scan = 1.0 - uCrtScanlineWeight * 0.55 * (0.5 + 0.5 * cos(2.0 * 3.14159265359 * phys_y));
++            float phys_x = gl_FragCoord.x / uSceneScale;
++            float dotmask = (mod(floor(phys_x), 2.0) < 1.0) ? (1.0 - uCrtDotmask * 0.6) : (1.0 + 0.35 * uCrtDotmask);
++            C.rgb = clamp(C.rgb * scan * dotmask, 0.0, 1.0);
+         }
+         vec4 D = C + (1.0 - C.a) * hgColor;
+-        vec4 E = hgEdgePass(v_texcoord, sd);
++        vec4 E = hgEdgePass(edge_coord, sd);
+         vec4 O = (E + (1.0 - E.a) * D) * coverage;
+         float a = O.a * uColor.a;
+         vec3 rgb = clamp(O.rgb / max(O.a, 1e-4), 0.0, 1.0) * uColor.rgb;
++        vec2 px = raw_texcoord * fullSize;
++        if (abs(lampP) <= 0.001 && fullSize.x > 180.0 && px.y <= 16.0 && px.y >= -36.0 && px.x >= 20.0 && px.x <= 152.0) {
++            // 2D hyprbars pill_color tint + merge zone (rgba(28226238)): smooth blend across px.y in [-8.0, +8.0] into window face with zero horizontal seam at y = 0
++            float blendY = 1.0 - smoothstep(-8.0, 8.0, px.y);
++            float mergeT = blendY * (1.0 - smoothstep(44.0, 56.0, abs(px.x - 86.0)));
++            rgb = mix(rgb, vec3(0.157, 0.133, 0.384) * uColor.rgb, 0.22 * mergeT);
++            // 16px 3D glass-orb buttons (button_glass = 0.80) matching 2D drawGlassButton
++            vec2 p0 = px - vec2(60.0, -14.0);
++            vec2 p1 = px - vec2(86.0, -14.0);
++            vec2 p2 = px - vec2(112.0, -14.0);
++            float d0 = length(p0) - 8.0;
++            float d1 = length(p1) - 8.0;
++            float d2 = length(p2) - 8.0;
++            float bw = max(fwidth(d0), 0.65);
++            if (d0 < bw) {
++                float bc = clamp(0.5 - d0 / bw, 0.0, 1.0);
++                vec3 orb = mix(hgColor.rgb, vec3(0.863, 0.153, 0.106), 0.80);
++                vec2 n0 = length(p0) > 1e-4 ? p0 / length(p0) : vec2(0.0, -1.0);
++                float f0 = clamp(dot(n0, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
++                float r0 = (1.0 - smoothstep(-1.4, 0.0, d0)) * smoothstep(-4.5, -1.4, d0);
++                float prox0 = exp(d0 * 0.35);
++                orb = mix(orb, bevelColor, r0 * f0 * 0.28);
++                orb += fresnelColor * (prox0 * prox0 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n0.y, 0.0) * prox0 * 0.07);
++                float ix = min(abs(p0.x - p0.y), abs(p0.x + p0.y)) * 0.7071;
++                float ic = (max(abs(p0.x), abs(p0.y)) < 3.1) ? clamp(1.05 - ix / 0.82, 0.0, 1.0) : 0.0;
++                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
++                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
++            }
++            if (d1 < bw) {
++                float bc = clamp(0.5 - d1 / bw, 0.0, 1.0);
++                vec3 orb = mix(hgColor.rgb, vec3(0.953, 0.361, 0.082), 0.80);
++                vec2 n1 = length(p1) > 1e-4 ? p1 / length(p1) : vec2(0.0, -1.0);
++                float f1 = clamp(dot(n1, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
++                float r1 = (1.0 - smoothstep(-1.4, 0.0, d1)) * smoothstep(-4.5, -1.4, d1);
++                float prox1 = exp(d1 * 0.35);
++                orb = mix(orb, bevelColor, r1 * f1 * 0.28);
++                orb += fresnelColor * (prox1 * prox1 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n1.y, 0.0) * prox1 * 0.07);
++                float ic = (abs(p1.x) < 3.3 && abs(p1.y) < 0.82) ? 1.0 : 0.0;
++                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
++                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
++            }
++            if (d2 < bw) {
++                float bc = clamp(0.5 - d2 / bw, 0.0, 1.0);
++                vec3 orb = mix(hgColor.rgb, vec3(0.243, 0.467, 0.396), 0.80);
++                vec2 n2 = length(p2) > 1e-4 ? p2 / length(p2) : vec2(0.0, -1.0);
++                float f2 = clamp(dot(n2, vec2(-0.7071, -0.7071)) * 0.5 + 0.5, 0.0, 1.0);
++                float r2 = (1.0 - smoothstep(-1.4, 0.0, d2)) * smoothstep(-4.5, -1.4, d2);
++                float prox2 = exp(d2 * 0.35);
++                orb = mix(orb, bevelColor, r2 * f2 * 0.28);
++                orb += fresnelColor * (prox2 * prox2 * 0.06) + vec3(1.0, 0.99, 0.97) * (max(-n2.y, 0.0) * prox2 * 0.07);
++                float ic = ((abs(p2.x) < 3.3 && abs(p2.y) < 0.82) || (abs(p2.y) < 3.3 && abs(p2.x) < 0.82)) ? 1.0 : 0.0;
++                orb = mix(orb, vec3(0.157, 0.133, 0.384), ic * 0.92);
++                rgb = mix(rgb, clamp(orb, 0.0, 1.0) * uColor.rgb, bc);
++            }
++        }
++        if (lampP < -0.001) {
++            float dissolveGlow = clamp(1.0 - abs(v_texcoord.y) * 3.5, 0.0, 1.0) * abs(lampP);
++            rgb = mix(rgb, bevelColor, dissolveGlow * 0.65);
++        }
+         fragColor = vec4(uPremult != 0 ? rgb * a : rgb, a);
+         return;
+     }
+@@ -1630,6 +1775,11 @@
+     m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
+     m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
+     m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
++    m_crtCurvature = glGetUniformLocation(m_sceneProgram, "uCrtCurvature");
++    m_crtRadius = glGetUniformLocation(m_sceneProgram, "uCrtRadius");
++    m_crtScanlines = glGetUniformLocation(m_sceneProgram, "uCrtScanlines");
++    m_crtScanlineWeight = glGetUniformLocation(m_sceneProgram, "uCrtScanlineWeight");
++    m_crtDotmask = glGetUniformLocation(m_sceneProgram, "uCrtDotmask");
+ 
+     if (m_maxAnisotropy < 0.f) {
+         // MiOS: GL_EXT_texture_filter_anisotropic (Mesa, NVIDIA); 0 when absent.
+@@ -3013,6 +3163,7 @@
+         slab.front.owner = window.id;
+         slab.front.alpha = window.alpha;
+         slab.front.glassFace = window.glassMetrics[3] > 0.5f;
++        slab.front.crtEnabled = window.crtEnabled;
+         slab.front.glassSurface = window.glassSurface;
+         slab.front.glassMetrics = window.glassMetrics;
+         slab.front.glassDeco = window.glassDeco;
+@@ -3054,6 +3205,7 @@
+             slab.back.owner = window.id;
+             slab.back.alpha = window.alpha;
+             slab.back.glassFace = slab.front.glassFace;
++            slab.back.crtEnabled = slab.front.crtEnabled;
+             slab.back.glassSurface = slab.front.glassSurface;
+             slab.back.glassMetrics = slab.front.glassMetrics;
+             slab.back.glassDeco = slab.front.glassDeco;
+@@ -3110,6 +3262,7 @@
+                     wall.owner = window.id;
+                     wall.alpha = window.alpha;
+                     wall.glassWall = slab.front.glassFace;
++                    wall.crtEnabled = slab.front.crtEnabled;
+ 
+                     wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
+                     wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
+@@ -3300,7 +3453,8 @@
+                ordered[j].glassSurface == ordered[i].glassSurface &&
+                ordered[j].glassMetrics == ordered[i].glassMetrics &&
+                ordered[j].glassDeco == ordered[i].glassDeco &&
+-               ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha)
++               ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha &&
++               ordered[j].crtEnabled == ordered[i].crtEnabled)
+             ++j;
+ 
+         verts.clear();
+@@ -3367,6 +3521,11 @@
+             const auto& D = ordered[i].glassDeco;
+             glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
+             glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
++            glUniform1i(m_crtCurvature, (ordered[i].crtEnabled && m_rq.crtCurvature) ? 1 : 0);
++            glUniform1f(m_crtRadius, m_rq.crtRadius);
++            glUniform1i(m_crtScanlines, (ordered[i].crtEnabled && m_rq.crtScanlines) ? 1 : 0);
++            glUniform1f(m_crtScanlineWeight, m_rq.crtScanlineWeight);
++            glUniform1f(m_crtDotmask, m_rq.crtDotmask);
+             // MiOS frame rate: between due frames a batch reuses its cached frosted copy (render.glass_fps). The
+             // key is the WINDOW (its snapshot texture is re-allocated by captures) and the batch's ordinal within it.
+             const uint64_t OWNER    = ordered[i].owner ? static_cast<uint64_t>(ordered[i].owner) : ordered[i].tex;
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -143,6 +143,7 @@
+         std::array<float,4> glassDeco{0.f,0.f,0.f,0.f};
+         float glassWindowAlpha = 1.0f;
+         float alpha = 1.0f;
++        bool crtEnabled = false;
+ 
+         // Depth slab: thickness in world units, extruded BACKWARDS along the
+         // window's normal (0 = the plain flat quad). When `outlines` carries
+@@ -232,6 +233,12 @@
+         int   anisotropy         = 16;    // MiOS: max anisotropic samples (1 = trilinear only)
+         float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
+         bool  texelSharp         = false; // MiOS retina spawn: texel-sharp 1:1 / magnified window textures
++        bool  crtCurvature      = false;
++        float crtRadius         = 3.2f;
++        bool  crtScanlines      = false;
++        float crtScanlineWeight = 0.5f;
++        float crtDotmask        = 0.25f;
++        bool  crtDefaultOn      = false;
+     };
+     const SRenderQuality& renderQuality() const { return m_rq; }
+     void setRenderQuality(const SRenderQuality& q) {
+@@ -547,6 +554,7 @@
+     int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
+     int m_sceneTexSharp = -1; // MiOS retina spawn
+     int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
++    int m_crtCurvature = -1, m_crtRadius = -1, m_crtScanlines = -1, m_crtScanlineWeight = -1, m_crtDotmask = -1; // MiOS CRT shader
+     float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
+     SGlassConfig m_glassConfig;
+     unsigned int m_discVAO = 0, m_discVBO = 0;
+diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
+--- a/src/World/Outline.cpp
++++ b/src/World/Outline.cpp
+@@ -325,6 +325,18 @@
+     return out;
+ }
+ 
++static float outlineTabShapeSDF(float x, float y) {
++    float qx = std::abs(x - 86.0f) - 44.0f + 10.0f;
++    float qy = std::abs(y - 0.0f) - 28.0f + 10.0f;
++    float ox = std::max(qx, 0.0f), oy = std::max(qy, 0.0f);
++    return std::hypot(ox, oy) + std::min(std::max(qx, qy), 0.0f) - 10.0f;
++}
++
++static float outlineSminTab(float a, float b, float k) {
++    float h = std::clamp(0.5f + 0.5f * (b - a) / k, 0.0f, 1.0f);
++    return b + (a - b) * h - k * h * (1.0f - h);
++}
++
+ SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
+                              float insetPx, int arcSegments) {
+     SOutlineLoop OUT;
+@@ -354,9 +366,28 @@
+         pts.push_back({FW, FH});
+         pts.push_back({0.f, FH});
+     } else {
+-        // Clockwise in y-down screen coords, starting on the top edge at
+-        // (R, 0): top -> TR arc -> right -> BR arc -> bottom -> BL arc ->
+-        // left -> TL arc, closing at the start.
++        // Clockwise in y-down screen coords:
++        // Top edge with S-fillet tab contour along x in [25.0, 147.0]
++        if (FW > 180.0f && R < 25.0f) {
++            pts.push_back({R, 0.0f});
++            pts.push_back({25.0f, 0.0f});
++            for (float x = 25.5f; x <= 146.5f; x += 2.0f) {
++                float low = -35.0f, high = 0.0f;
++                for (int it = 0; it < 16; ++it) {
++                    float mid = 0.5f * (low + high);
++                    if (outlineSminTab(outlineTabShapeSDF(x, mid), -mid, 15.0f) < 0.0f)
++                        high = mid;
++                    else
++                        low = mid;
++                }
++                pts.push_back({x, 0.5f * (low + high)});
++            }
++            pts.push_back({147.0f, 0.0f});
++            pts.push_back({FW - R, 0.0f});
++        } else {
++            pts.push_back({R, 0.0f});
++            pts.push_back({FW - R, 0.0f});
++        }
+         ARC(FW - R, R,     270.f, 360.f, R, SEG); // top-right corner
+         ARC(FW - R, FH - R,  0.f,  90.f, R, SEG); // bottom-right corner
+         ARC(R,      FH - R, 90.f, 180.f, R, SEG); // bottom-left corner
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -30,6 +30,7 @@
+ #include <hyprland/src/managers/SeatManager.hpp>
+ #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+ #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
++#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+ #include <hyprland/src/config/values/ConfigValues.hpp>
+ #include <hyprland/src/desktop/state/WindowState.hpp>
+ #include <hyprland/src/config/ConfigValue.hpp>
+@@ -70,16 +71,21 @@
+ #include <atomic>
+ #include <chrono>
+ #include <cmath>
++#include <csignal>
+ #include <cstdint>
++#include <cstdio>
++#include <cstdlib>
+ #include <filesystem>
+ #include <fstream>
+ #include <memory>
++#include <mutex>
+ #include <stdexcept>
+ #include <string>
+ #include <thread>
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <vector>
++#include <sstream>
+ 
+ namespace H3D {
+ 
+@@ -173,6 +179,7 @@
+     // client re-renders at the room's size -- crisp content), on exit back
+     // to the 2D box. Empty = never sized in the room.
+     CBox box{};
++    CBox box2D{};
+ 
+     // MiOS retina spawn: the stacking scale multiplier (retinaMul) the window
+     // had in the room, so a remembered window keeps its magnification.
+@@ -182,6 +189,7 @@
+ // Room poses remembered across toggles; keyed by window id, pruned against
+ // the live room on every save (closed windows drop out).
+ static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
++static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
+ 
+ enum class EViewMorph : uint8_t { None, To3D, To2D };
+ static EViewMorph g_viewMorph = EViewMorph::None;
+@@ -382,7 +390,7 @@
+ // window_scale gives the same panel in the room with more pixels (sharper,
+ // more content), as if the window were further away.
+ static float      g_cfgSpawnWidth  = 960.0f;
+-static float      g_cfgSpawnHeight = 540.0f;
++static float      g_cfgSpawnHeight = 532.0f;
+ static constexpr float kSpawnDistance = 10.0f;
+ 
+ // A normal damage cycle stops when nothing else in Hyprland changes. 3D mode is
+@@ -449,6 +457,30 @@
+ // 0 = none.
+ static uint32_t g_cfgTypingButton = 0;
+ static bool          g_altHeld      = false;
++static bool          g_shiftHeld    = false;
++
++// Per-window and global CRT / ShaderGlass state
++static std::unordered_set<std::uintptr_t> g_crtWindows;
++static bool                               g_cfgCrtDefaultOn = false;
++static bool                               g_crtGlobalOn     = false;
++static size_t                             g_crtPresetIdx    = 0;
++
++struct SCrtPreset {
++    const char* name;
++    bool        curvature;
++    float       radius;
++    bool        scanlines;
++    float       scanlineWeight;
++    float       dotmask;
++};
++static constexpr std::array<SCrtPreset, 5> kCrtPresets{{
++    {"crt-geom",        true,  3.2f, true, 0.50f, 0.25f},
++    {"crt-trinitron",   true,  4.8f, true, 0.42f, 0.38f},
++    {"crt-arcade",      true,  2.2f, true, 0.72f, 0.48f},
++    {"crt-pvm",         false, 6.0f, true, 0.35f, 0.18f},
++    {"scanlines-clean", false, 8.0f, true, 0.55f, 0.00f},
++}};
++static void applyGlobalShaderGlassState(bool writeState = true);
+ 
+ // The free cursor was last seen over the room (see onMouseMove).
+ static bool g_freeOnRoom = false;
+@@ -464,6 +496,28 @@
+ static bool g_keyUp = false;
+ static bool g_keyDown = false;
+ static bool g_keySprint = false;
++
++// Analog movement and look vectors from gamepad / controller dispatchers (-1.0 to 1.0)
++static float g_analogFwd      = 0.0f;
++static float g_analogStrafe   = 0.0f;
++static float g_analogVertical = 0.0f;
++static float g_analogLookX    = 0.0f;
++static float g_analogLookY    = 0.0f;
++static std::chrono::steady_clock::time_point g_lastAnalogMoveTime =
++    std::chrono::steady_clock::now();
++
++static bool startGrab3D();
++static bool startResize3D();
++static void cycleCameraViewMode(const std::string& arg = "cycle");
++static void toggleCursorCameraMode(const std::string& arg = "toggle");
++static void triggerJump();
++static void toggleFlyMode(const std::string& arg = "toggle");
++static void cyclePosture(const std::string& arg = "cycle");
++static void toggleFullscreen2D(bool allowExit = false);
++static void cycleCrtPreset();
++static void vcClickButton(uint32_t button, bool pressed);
++static std::uintptr_t targetCrtWindow();
++static void toggleWindowCrt(std::uintptr_t id);
+ 
+ static bool g_hookInstalled = false;
+ 
+@@ -489,9 +543,13 @@
+ static bool        g_cfgStills = false;
+ 
+ // --- windows ----------------------------------------------------------------
+-static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window size
+-static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
+-static float       g_cfgWindowDepth   = 0.05f;   // slab thickness, 0 = flat quads
++static float       g_cfgWindowScale   = 0.076684f; // room multiplier on window size (M=1 at 0.65m)
++static float       g_cfgSpawnDistance = 0.65f;     // arm's reach (meters) in front of the camera
++static float       g_cfgWindowDepth   = 0.008f;    // slab thickness, 0 = flat quads (sleek glass pane)
++static float       g_cfgEyelineOffset = 0.0f;      // vertical offset from eyeline (meters)
++static float       g_cfgTiltAngleDeg  = 0.0f;      // shallow upward vertical angle (degrees, e.g. 12.0)
++static std::string g_cfgOpenEffect3D  = "magic-lamp";
++static std::string g_cfgCloseEffect3D = "glass-dissolve";
+ 
+ // --- MiOS retina spawn (hypr3d-mios-retina-spawn.patch) ---------------------
+ // A window opens in the room at the flat desktop's size. Its magnification
+@@ -584,12 +642,15 @@
+ static float       g_cfgMoveInertia   = 0.05f;   // seconds, 0 = off
+ static float       g_cfgMoveSpeed     = 4.0f;    // world units / second
+ static float       g_cfgSensitivity   = 0.0025f; // radians per pointer count
+-static bool        g_playerFlying     = true;    // false = walk / jump / gravity
++static bool        g_playerFlying     = false;   // false = walk / jump / gravity (double-press Jump toggles fly/hover)
+ static bool        g_playerCollision  = true;    // reserved: the capsule is
+         // the movement system, so this only gates future per-object contact
+-static bool        g_cfgWalkBob       = true;    // view-only walk bob (walking only)
++static bool        g_cfgWalkBob       = false;   // view-only walk bob (disabled by default for VR-native locomotion)
+ static GLScene::SPlayerCfg g_playerCfg;          // the player character
+ static float        g_playerAnimSpeed[4] = {1.f, 1.f, 1.f, 1.f};
++
++enum class EPlayerPosture : uint8_t { Stand = 0, Crouch = 1, Sit = 2 };
++static EPlayerPosture g_playerPosture = EPlayerPosture::Stand;
+ 
+ // Feet position; eyes ride kEyeHeight above (spawn 0,0,0 = standing on
+ // the grid platform at world zero).
+@@ -826,6 +887,11 @@
+ // Body center -> eye offset: the eye rides kEyeHeight above the feet.
+ static constexpr float PLAYER_EYE_OFF =
+     Camera::kEyeHeight - Camera::kBodyHeight * 0.5f;
++static constexpr float PLAYER_EYE_OFF_CROUCH =
++    1.00f - Camera::kBodyHeight * 0.5f;
++static constexpr float PLAYER_EYE_OFF_SIT =
++    0.55f - Camera::kBodyHeight * 0.5f;
++static float g_currentEyeOff = PLAYER_EYE_OFF;
+ 
+ static void ensurePlayerBody() {
+     if (!g_joltSystem || !g_playerBody.IsInvalid())
+@@ -877,7 +943,7 @@
+         return;
+ 
+     if (g_cfgGrid && g_floorBody.IsInvalid()) {
+-        JPH::BoxShapeSettings SLAB(JPH::Vec3(20.0f, 0.5f, 20.0f));
++        JPH::BoxShapeSettings SLAB(JPH::Vec3(200.0f, 0.5f, 200.0f));
+         SLAB.SetEmbedded();
+         auto RES = SLAB.Create();
+         if (RES.HasError())
+@@ -1261,15 +1327,71 @@
+     const std::string& text,
+     const CHyprColor& color
+ ) {
+-    if (!PHANDLE)
+-        return;
+-
+-    HyprlandAPI::addNotification(
+-        PHANDLE,
+-        text,
+-        color,
+-        3000
+-    );
++    if (!PHANDLE || text.empty())
++        return;
++
++    std::string title = "Hypr3D";
++    std::string body  = text;
++    if (body.rfind("[hypr3d]", 0) == 0) {
++        body.erase(0, 8);
++        while (!body.empty() && (body.front() == ' ' || body.front() == ':'))
++            body.erase(0, 1);
++    }
++    if (body.empty())
++        body = text;
++
++    std::string kind = "info";
++    if (color.r > 0.75f && color.g < 0.45f && color.b < 0.45f)
++        kind = "error";
++    else if (color.r > 0.75f && color.g > 0.45f && color.b < 0.45f)
++        kind = "warning";
++    else if (color.g > 0.65f && color.r < 0.55f)
++        kind = "success";
++
++    std::thread([title = std::move(title), body = std::move(body), kind = std::move(kind)]() {
++        static std::mutex s_mtx;
++        static int        s_replaceId = 0;
++        std::lock_guard<std::mutex> lock(s_mtx);
++
++        auto shQuote = [](const std::string& s) {
++            std::string out = "'";
++            for (char c : s) {
++                if (c == '\'')
++                    out += "'\\''";
++                else
++                    out += c;
++            }
++            out += "'";
++            return out;
++        };
++
++        std::string cmd = "/usr/bin/notify-send -p -a 'Hypr3D' -t 2500 -h int:transient:1";
++        if (s_replaceId > 0)
++            cmd += " -r " + std::to_string(s_replaceId);
++        cmd += " " + shQuote(title) + " " + shQuote(body) + " 2>/dev/null";
++
++        bool sent = false;
++        if (FILE* fp = ::popen(cmd.c_str(), "r")) {
++            char buf[64]{};
++            if (::fgets(buf, sizeof(buf), fp)) {
++                const int id = std::atoi(buf);
++                if (id > 0) {
++                    s_replaceId = id;
++                    sent = true;
++                }
++            }
++            if (::pclose(fp) == 0)
++                sent = true;
++        }
++        if (!sent) {
++            const std::string qsCmd =
++                "/usr/bin/quickshell ipc --path /usr/share/mios/quickshell/Config.qml "
++                "--any-display call notifications post " +
++                shQuote(title) + " " + shQuote(body) + " " + shQuote(kind) +
++                " >/dev/null 2>&1";
++            (void)::system(qsCmd.c_str());
++        }
++    }).detach();
+ }
+ 
+ static uint32_t inputTimeMs() {
+@@ -1329,6 +1451,13 @@
+     g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
+     g_keyUp = g_keyDown = g_keySprint = false;
+     g_superHeld = false;
++    g_altHeld = false;
++    g_shiftHeld = false;
++    g_analogFwd = 0.0f;
++    g_analogStrafe = 0.0f;
++    g_analogVertical = 0.0f;
++    g_analogLookX = 0.0f;
++    g_analogLookY = 0.0f;
+ }
+ 
+ // Clears only the camera keys, keeping the gesture modifiers honest -- used
+@@ -1336,6 +1465,11 @@
+ static void resetCameraKeys() {
+     g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
+     g_keyUp = g_keyDown = g_keySprint = false;
++    g_analogFwd = 0.0f;
++    g_analogStrafe = 0.0f;
++    g_analogVertical = 0.0f;
++    g_analogLookX = 0.0f;
++    g_analogLookY = 0.0f;
+ }
+ 
+ // True while the 3D view owns the pointer and the keyboard.
+@@ -1399,6 +1533,16 @@
+ // triggers a relayout of the ones still attached, which would corrupt boxes
+ // captured afterwards. Ghosting is what stops tiling from managing windows
+ // while they are living in 3D space.
++static std::vector<Compat::SWindowInfo> enumerateRoomWindows(const PHLMONITOR& mon) {
++    auto infos = Compat::enumerateEligibleWindows(mon, g_cfgUnderLayers);
++    std::erase_if(infos, [](const Compat::SWindowInfo& info) {
++        return info.window &&
++            (info.window->m_class == "shaderglass.exe" ||
++             info.window->m_initialClass == "shaderglass.exe");
++    });
++    return infos;
++}
++
+ static void ghostWindows(
+     const PHLMONITOR& mon,
+     const std::vector<Compat::SWindowInfo>* infos = nullptr) {
+@@ -1411,7 +1555,7 @@
+     const std::vector<Compat::SWindowInfo>* list = infos;
+ 
+     if (!list) {
+-        enumerated = Compat::enumerateEligibleWindows(mon, g_cfgUnderLayers);
++        enumerated = enumerateRoomWindows(mon);
+         list       = &enumerated;
+     }
+ 
+@@ -1473,8 +1617,11 @@
+         // coordinates: centre on this monitor, not on the layout origin
+         // (which belongs to whichever monitor sits at 0,0, or none at all).
+         // A dialog (a window with a parent) keeps the size it asked for.
+-        if (info.window && !info.window->parent()) {
+-            double SW = g_cfgSpawnWidth, SH = g_cfgSpawnHeight;
++        // Floating and pinned (e.g. PiP video player) windows keep their native size/aspect ratio,
++        // while windows auto-floated by mios-placement ("mios-placed") resize to the 3D sheet-of-paper spawn box.
++        if (info.window && !info.window->parent() && ((!info.floating && !info.window->m_pinned) || !info.window->m_pinned) && g_cfgSpawnWidth > 0 && g_cfgSpawnHeight > 0) {
++            double SW = (info.monitorLocalBox.w > 1.0) ? info.monitorLocalBox.w : g_cfgSpawnWidth;
++            double SH = (info.monitorLocalBox.h > 1.0) ? info.monitorLocalBox.h : g_cfgSpawnHeight;
+             double CX = mon->m_position.x + mon->m_size.x * 0.5 - SW * 0.5;
+             double CY = mon->m_position.y + mon->m_size.y * 0.5 - SH * 0.5;
+ 
+@@ -1613,20 +1760,37 @@
+ 
+ // --- live window capture -----------------------------------------------------
+ 
++struct SWinAnim3D {
++    std::uintptr_t   id = 0;
++    bool             closing = false;
++    float            progress = 0.0f; // 0 -> 1
++    World3D::SEntity lastEntity{};
++    bool             crtEnabled = false;
++};
++static std::unordered_map<std::uintptr_t, SWinAnim3D> g_winAnims3D;
++static std::unordered_set<std::uintptr_t>             g_skipCloseAnim3D;
++static std::unordered_map<std::uintptr_t, CBox>       g_preMax3DBoxes;
++
+ static void refreshCaptures(
+     const std::vector<Compat::SWindowInfo>& infos,
+     const PHLMONITOR& mon
+ ) {
+-    if (infos.empty())
++    if (infos.empty() && g_winAnims3D.empty())
+         return;
+ 
+     std::vector<std::uintptr_t> keep;
+-    keep.reserve(infos.size());
++    keep.reserve(infos.size() + g_winAnims3D.size());
+ 
+     for (const auto& info : infos)
+         keep.push_back(info.id);
++    for (const auto& [animId, anim] : g_winAnims3D)
++        if (anim.closing && anim.progress < 1.0f)
++            keep.push_back(animId);
+ 
+     g_capture.retainOnly(keep);
++
++    if (infos.empty())
++        return;
+ 
+     const auto FOCUSED = Compat::focusedWindow();
+     const std::uintptr_t FOCUSED_ID = FOCUSED ? Compat::windowId(FOCUSED) : 0;
+@@ -1804,7 +1968,7 @@
+     }
+     g_environmentCapture.retainOnly(environmentIds);
+ 
+-    const auto INFOS = Compat::enumerateEligibleWindows(MON, g_cfgUnderLayers);
++    const auto INFOS = enumerateRoomWindows(MON);
+ 
+     if (g_viewMorphArmed) {
+         // First pass of a fresh 3D session: capture the windows BEFORE the
+@@ -2066,7 +2230,7 @@
+     const double PERPX = 2.0 * dist * retinaTan() / mon->m_size.y; // world units per screen logical px
+     P.center = CAM.position + FWD * dist +
+         RIGHT * static_cast<float>((cx - mon->m_size.x * 0.5) * PERPX) +
+-        UP * static_cast<float>((mon->m_size.y * 0.5 - cy) * PERPX);
++        UP * static_cast<float>((mon->m_size.y * 0.5 - cy) * PERPX + g_cfgEyelineOffset);
+     return P;
+ }
+ 
+@@ -2169,7 +2333,7 @@
+     // monitor blur FBs; the compositor's outer endRender() then aborted in
+     // CMonitor::useFP16(). Capture and ghosting therefore happen outside the
+     // frame -- see serviceCapture().
+-    auto INFOS = Compat::enumerateEligibleWindows(mon, g_cfgUnderLayers);
++    auto INFOS = enumerateRoomWindows(mon);
+ 
+     // Attached surfaces (popups, X11 menus) come after every window, so each
+     // finds its parent's entity already built this frame. An X11 menu whose
+@@ -2425,11 +2589,20 @@
+             entity.center     = P.center;
+             entity.spawnScale = WIN_SCALE * P.mul;
+             entity.yaw   = std::atan2(-FWD.x, -FWD.z);
+-            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f));
++            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
++                           g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
++            g_entryPoses3D[info.id] = entity.center;
++            if (!g_viewMorphArmed && g_viewMorph == EViewMorph::None &&
++                !g_cfgStills && !info.isLayer && !info.attached &&
++                g_cfgOpenEffect3D != "none") {
++                g_winAnims3D[info.id] = SWinAnim3D{info.id, false, 0.0f, entity, false};
++            }
+         }
+         else {
+             const auto& CAM = g_scene.camera();
+             const Vec3 FWD = CAM.forward();
++            const Vec3 RIGHT = CAM.right();
++            const Vec3 UP = cross(RIGHT, FWD);
+ 
+             // Never on the far side of a wall: a spawn point behind scene
+             // geometry comes forward to just in front of it. Nor inside a
+@@ -2444,13 +2617,20 @@
+                 WIN.hit && WIN.distance < dist + 0.15f)
+                 dist = std::max(0.5f, WIN.distance - 0.15f);
+ 
+-            entity.center = CAM.position + FWD * dist;
++            entity.center = CAM.position + FWD * dist + UP * g_cfgEyelineOffset;
+ 
+             // Face the camera: with this model's convention (the normal's Y
+             // component is -sin(pitch)) the target is the camera's own yaw
+             // and pitch.
+             entity.yaw   = std::atan2(-FWD.x, -FWD.z);
+-            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f));
++            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
++                           g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
++            g_entryPoses3D[info.id] = entity.center;
++            if (!g_viewMorphArmed && g_viewMorph == EViewMorph::None &&
++                !g_cfgStills && !info.isLayer && !info.attached &&
++                g_cfgOpenEffect3D != "none") {
++                g_winAnims3D[info.id] = SWinAnim3D{info.id, false, 0.0f, entity, false};
++            }
+         }
+ 
+         // The quad size follows the snapshot box (times the config scale):
+@@ -2500,13 +2680,38 @@
+         ENTITIES.push_back(entity);
+     }
+ 
++    // Detect windows that just closed in 3D room to trigger 3D Glass Dissolve + Magic Lamp collapse.
++    if (!g_cfgStills && g_cfgCloseEffect3D != "none" &&
++        g_viewMorph == EViewMorph::None && g_fsPhase == EFullscreenPhase::None) {
++        for (const auto& oldEnt : g_world.entities()) {
++            const bool stillHere = std::any_of(ENTITIES.begin(), ENTITIES.end(),
++                [&](const World3D::SEntity& e) { return e.id == oldEnt.id; });
++            if (!stillHere && g_capture.has(oldEnt.id)) {
++                if (g_skipCloseAnim3D.erase(oldEnt.id) > 0) {
++                    g_winAnims3D.erase(oldEnt.id);
++                    continue;
++                }
++                auto& anim      = g_winAnims3D[oldEnt.id];
++                anim.id         = oldEnt.id;
++                anim.closing    = true;
++                anim.progress   = 0.0f;
++                anim.lastEntity = oldEnt;
++                anim.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(oldEnt.id) ||
++                                  (g_cfgCrtDefaultOn && g_crtWindows.empty());
++            }
++        }
++    }
++
+     g_world.setEntities(std::move(ENTITIES), false);
+ 
+     // --- build the draw list from world + snapshot ---
+     g_renderWindows.clear();
+-    g_renderWindows.reserve(g_world.entities().size());
++    g_renderWindows.reserve(g_world.entities().size() + g_winAnims3D.size());
+ 
+     for (const auto& entity : g_world.entities()) {
++        if (g_crtGlobalOn)
++            g_crtWindows.insert(entity.id);
++
+         const auto* SNAPSHOT = g_capture.get(entity.id);
+ 
+         if (!SNAPSHOT || (SNAPSHOT->texID == 0 && !SNAPSHOT->bigTex))
+@@ -2571,13 +2776,34 @@
+             render.glassWindowAlpha = SNAPSHOT->windowAlpha;
+         }
+ 
++        render.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty());
++
++        // 3D Magic Lamp opening effect for newly spawned windows in 3D room
++        float openScaleDepth = 1.0f;
++        if (auto animIt = g_winAnims3D.find(entity.id); animIt != g_winAnims3D.end() && !animIt->second.closing) {
++            auto& anim = animIt->second;
++            anim.lastEntity = entity;
++            anim.crtEnabled = render.crtEnabled;
++            anim.progress = std::min(1.0f, anim.progress + std::max(0.004f, dt) / 0.42f);
++            const float inv = 1.0f - anim.progress;
++            const float t   = 1.0f - inv * inv * inv; // cubic genie ease-out
++            render.y            -= (1.0f - t) * 0.28f;
++            render.width        *= (0.35f + 0.65f * std::sqrt(t));
++            render.height       *= (0.15f + 0.85f * t);
++            render.pitch        += (1.0f - t) * 0.28f;
++            render.alpha        *= std::clamp(t * 1.45f, 0.0f, 1.0f);
++            render.glassDeco[3]  = 1.0f - t; // > 0 drives Compiz Magic Lamp genie funnel in GLScene.cpp
++            openScaleDepth       = t;
++            if (anim.progress >= 1.0f)
++                g_winAnims3D.erase(animIt);
++        }
+ 
+         // Depth slab (windows.depth): silhouette source priority -- the
+         // outline traced from the snapshot texture's real alpha (exact
+         // corner shape; the GPU-side copy is the only reliable read), then
+         // the analytic rounded rect (mask refresh failures, first frames),
+         // then GLScene's plain box.
+-        render.depth = g_cfgWindowDepth;
++        render.depth = g_cfgWindowDepth * openScaleDepth;
+ 
+         if (SNAPSHOT->outlines && !SNAPSHOT->outlines->empty())
+             render.outlines = SNAPSHOT->outlines;
+@@ -2605,6 +2831,64 @@
+         g_renderWindows.push_back(render);
+     }
+ 
++    // Render 3D Glass Dissolve + Magic Lamp collapse for closing windows
++    for (auto it = g_winAnims3D.begin(); it != g_winAnims3D.end();) {
++        if (!it->second.closing) {
++            ++it;
++            continue;
++        }
++        auto& anim = it->second;
++        anim.progress = std::min(1.0f, anim.progress + std::max(0.004f, dt) / 0.36f);
++        const auto* SNAPSHOT = g_capture.get(anim.id);
++        if (!SNAPSHOT || (SNAPSHOT->texID == 0 && !SNAPSHOT->bigTex) ||
++            SNAPSHOT->texSpan.x <= 0.0f || SNAPSHOT->texSpan.y <= 0.0f ||
++            anim.progress >= 1.0f) {
++            it = g_winAnims3D.erase(it);
++            continue;
++        }
++        const auto& entity = anim.lastEntity;
++        const float SPANW  = SNAPSHOT->texSpan.x;
++        const float SPANH  = SNAPSHOT->texSpan.y;
++        const float s      = 1.0f - anim.progress;
++        const float eased  = s * s * (3.0f - 2.0f * s);
++
++        GLScene::WindowRender render;
++        render.id      = entity.id;
++        render.texture = SNAPSHOT->bigTex ? SNAPSHOT->bigTex : SNAPSHOT->texID;
++        render.x       = entity.center.x;
++        render.y       = entity.center.y - (1.0f - eased) * 0.26f;
++        render.z       = entity.center.z;
++        render.yaw     = entity.yaw;
++        render.pitch   = entity.pitch - (1.0f - eased) * 0.35f;
++        render.roll    = entity.roll;
++        render.width   = entity.width * (0.25f + 0.75f * eased);
++        render.height  = entity.height * (0.12f + 0.88f * eased);
++        render.alpha   = eased * eased;
++        if (entity.logicalWidth > 0.f && entity.logicalHeight > 0.f &&
++            SNAPSHOT->surfaceSize.x > 0.0 && SNAPSHOT->surfaceSize.y > 0.0) {
++            render.glassSurface = {
++                static_cast<float>(SNAPSHOT->surfaceOffset.x / entity.logicalWidth),
++                static_cast<float>(SNAPSHOT->surfaceOffset.y / entity.logicalHeight),
++                static_cast<float>(SNAPSHOT->surfaceSize.x / entity.logicalWidth),
++                static_cast<float>(SNAPSHOT->surfaceSize.y / entity.logicalHeight)};
++            render.glassMetrics = {static_cast<float>(SNAPSHOT->surfaceSize.x),
++                static_cast<float>(SNAPSHOT->surfaceSize.y), 14.0f, 1.f};
++            render.glassDeco        = SNAPSHOT->reserved;
++            render.glassDeco[3]     = -(1.0f - eased); // < 0 drives Glass Dissolve + Magic Lamp collapse
++            render.glassWindowAlpha = SNAPSHOT->windowAlpha * eased;
++        }
++        render.crtEnabled = anim.crtEnabled;
++        render.depth      = g_cfgWindowDepth * eased;
++        if (SNAPSHOT->outlines && !SNAPSHOT->outlines->empty())
++            render.outlines = SNAPSHOT->outlines;
++        render.u0 = std::clamp(entity.logicalLeft / SPANW, 0.0f, 1.0f);
++        render.u1 = std::clamp((entity.logicalLeft + entity.logicalWidth) / SPANW, 0.0f, 1.0f);
++        render.v0 = std::clamp((entity.logicalTop + entity.logicalHeight) / SPANH, 0.0f, 1.0f);
++        render.v1 = std::clamp(entity.logicalTop / SPANH, 0.0f, 1.0f);
++        g_renderWindows.push_back(render);
++        ++it;
++    }
++
+     // Aim focus updates freeze during the fullscreen transition: the flying
+     // quad sweeps the crosshair across other windows and would thrash focus.
+     // The view morph flies every window at once -- same freeze.
+@@ -2647,24 +2931,56 @@
+ // what keeps aim/focus from flapping between an overlay and the window it
+ // covers.
+ static World3D::SHit pickVisible(const Vec3& dir) {
+-    const auto& cam = g_scene.camera();
+-
+-    for (const auto& HIT : g_world.pickAll(cam.position, dir)) {
++    const auto& cam  = g_scene.camera();
++    auto        hits = g_world.pickAll(cam.position, dir);
++
++    // Coplanar / near-coplanar windows: later entities in g_world.entities() are
++    // rendered on top, and a hit directly on a window's protruding hyprbars tab
++    // must beat the client surface of a coplanar window behind it.
++    const auto& ents = g_world.entities();
++    auto entityOrder = [&](std::uintptr_t id) -> int {
++        for (size_t i = 0; i < ents.size(); ++i)
++            if (ents[i].id == id)
++                return static_cast<int>(i);
++        return -1;
++    };
++    auto isTabHit = [&](const World3D::SHit& H) -> bool {
++        if (const auto* E = g_world.find(H.id)) {
++            const double rawX = H.u * E->logicalWidth - E->surfaceOffsetX;
++            const double rawY = H.v * E->logicalHeight - E->surfaceOffsetY;
++            return (rawY >= -34.0 && rawY <= 10.0 && rawX >= 28.0 && rawX <= 146.0);
++        }
++        return false;
++    };
++    std::stable_sort(hits.begin(), hits.end(), [&](const World3D::SHit& a, const World3D::SHit& b) {
++        if (std::fabs(a.distance - b.distance) > 0.025f)
++            return a.distance < b.distance;
++        const bool tabA = isTabHit(a);
++        const bool tabB = isTabHit(b);
++        if (tabA != tabB)
++            return tabA;
++        return entityOrder(a.id) > entityOrder(b.id);
++    });
++
++    for (const auto& HIT : hits) {
+         const auto* SNAPSHOT = g_capture.get(HIT.id);
+ 
+         if (!SNAPSHOT || (!SNAPSHOT->bigTex && !SNAPSHOT->texID))
+             continue;
+ 
+         if (SNAPSHOT->alphaValid && !SNAPSHOT->alphaMask.empty()) {
+-            const int MX = std::min(SNAPSHOT->alphaW - 1,
+-                static_cast<int>(HIT.u * SNAPSHOT->alphaW));
+-            const int MY = std::min(SNAPSHOT->alphaH - 1,
+-                static_cast<int>(HIT.v * SNAPSHOT->alphaH));
+-
+-            const int A = SNAPSHOT->alphaMask[static_cast<size_t>(MY) * SNAPSHOT->alphaW + MX];
+-
+-            if (A < 8)
+-                continue; // transparent pixel of an overlay: next surface
++            const bool onProtrudingTab = isTabHit(HIT);
++            if (!onProtrudingTab) {
++                const int MX = std::min(SNAPSHOT->alphaW - 1,
++                    static_cast<int>(HIT.u * SNAPSHOT->alphaW));
++                const int MY = std::min(SNAPSHOT->alphaH - 1,
++                    static_cast<int>(HIT.v * SNAPSHOT->alphaH));
++
++                const int A = SNAPSHOT->alphaMask[static_cast<size_t>(MY) * SNAPSHOT->alphaW + MX];
++
++                if (A < 8)
++                    continue; // transparent pixel of an overlay: next surface
++            }
+         }
+ 
+         return HIT;
+@@ -2927,17 +3243,17 @@
+ // In2D -> To3D: restore the real floating box, capture input, hide the
+ // cursor; the animation runs the quad back to its room pose.
+ static void startTo3D() {
+-    if (auto W = g_fsWindow.lock()) {
++    auto W = g_fsWindow.lock();
++    auto* E = W ? g_world.find(Compat::windowId(W)) : nullptr;
++    if (W && E) {
+         // The To3D start is the window's CURRENT pose: the tracked fullscreen
+         // pose after a normal exit, or wherever the aborted To2D got to. The
+         // real floating box is restored when the animation COMPLETES (restoring
+         // it here would make the quad show magnified small-window content).
+-        if (auto* E = g_world.find(Compat::windowId(W))) {
+-            g_fsEndCenter = E->center;
+-            g_fsEndYaw    = E->yaw;
+-            g_fsEndPitch  = E->pitch;
+-            g_fsRollAtStart = wrapPi(E->roll);
+-        }
++        g_fsEndCenter   = E->center;
++        g_fsEndYaw      = E->yaw;
++        g_fsEndPitch    = E->pitch;
++        g_fsRollAtStart = wrapPi(E->roll);
+ 
+         if (!pointerFree() && Compat::setCursorHidden(true))
+             Pointer::mgr()->resetCursorImage();
+@@ -2947,6 +3263,34 @@
+         g_fsPhase      = EFullscreenPhase::To3D;
+         g_fsPhaseStart = std::chrono::steady_clock::now();
+         g_input.reset();
++        applyGlobalShaderGlassState(false);
++        damageCurrentMonitor();
++    } else {
++        // The fullscreened window was closed while in 2D mode: return
++        // immediately to the 3D room so the user is never stranded in In2D.
++        g_fsPhase        = EFullscreenPhase::None;
++        g_fsWindow       = {};
++        g_fsCurrentId    = 0;
++        g_fsWasOn        = false;
++        g_fsAlpha        = 1.0f;
++        g_fsFade         = 1.0f;
++        g_fsAssertFrames = 0;
++        g_scene.setEnvAlpha(1.0f);
++
++        if (!pointerFree() && Compat::setCursorHidden(true))
++            Pointer::mgr()->resetCursorImage();
++        Compat::setPointerCapture(g_hookInstalled && ownsInput());
++        g_input.reset();
++
++        if (const auto MON = targetMonitor(); MON && MON->m_activeWorkspace && Desktop::windowState()) {
++            for (auto const& W3 : Desktop::windowState()->windows()) {
++                if (W3 && W3->m_workspace == MON->m_activeWorkspace && !W3->m_pinned)
++                    *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = 1.F;
++            }
++        }
++        applyGlobalShaderGlassState(false);
++        notify("[hypr3d] fullscreen window closed — returned to 3D room",
++               CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
+         damageCurrentMonitor();
+     }
+ }
+@@ -2981,6 +3325,8 @@
+     }
+ }
+ 
++static void pollGamepadFullscreenExit();
++
+ static void pollFullscreen() {
+     const auto MON = targetMonitor();
+ 
+@@ -3038,6 +3384,7 @@
+ 
+         g_fsLastFSWindow = FSW;
+     } else if (g_fsPhase == EFullscreenPhase::In2D) {
++        pollGamepadFullscreenExit();
+         // Exit passthrough when OUR window is no longer the fullscreen one
+         // (toggled off, or fullscreen moved to another window entirely).
+         const auto W = g_fsWindow.lock();
+@@ -3067,9 +3414,19 @@
+     auto* E = W ? g_world.find(Compat::windowId(W)) : nullptr;
+ 
+     if (!E) {
+-        // the window closed mid-transition: land the phase
+-        g_fsPhase  = EFullscreenPhase::None;
+-        g_fsWindow = {};
++        // the window closed mid-transition: land the phase and restore room
++        g_fsPhase     = EFullscreenPhase::None;
++        g_fsWindow    = {};
++        g_fsCurrentId = 0;
++        g_fsWasOn     = false;
++        g_fsAlpha     = 1.0f;
++        g_fsFade      = 1.0f;
++        g_scene.setEnvAlpha(1.0f);
++        if (!pointerFree() && Compat::setCursorHidden(true))
++            Pointer::mgr()->resetCursorImage();
++        Compat::setPointerCapture(g_hookInstalled && ownsInput());
++        applyGlobalShaderGlassState(false);
++        damageCurrentMonitor();
+         return;
+     }
+ 
+@@ -3191,6 +3548,7 @@
+ 
+             if (Compat::setCursorHidden(false) && g_pHyprRenderer)
+                 g_pHyprRenderer->setCursorFromName("default", true);
++            applyGlobalShaderGlassState(false);
+         } else {
+             // Rapid exit+reenter: the FS state may already be ON again for
+             // this window -- fly it back to the screen (real 2D) instead of
+@@ -3293,6 +3651,7 @@
+ static void buildEnterMorph(
+     const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
+     g_viewMorphWins.clear();
++    g_entryPoses3D.clear();
+ 
+     const auto& CAM = g_scene.camera();
+     const Vec3  FWD = CAM.forward();
+@@ -3320,6 +3679,24 @@
+             POSE != g_savedPoses.end()) {
+             MW.roomPose = POSE->second;
+ 
++            // Pull relative 2D movement if the window was moved during the 2D session.
++            if (MW.roomPose.box2D.w > 1.0 && MW.roomPose.box2D.h > 1.0) {
++                const double dxPx = (MW.box2D.x + MW.box2D.w * 0.5) -
++                                    (MW.roomPose.box2D.x + MW.roomPose.box2D.w * 0.5);
++                const double dyPx = (MW.box2D.y + MW.box2D.h * 0.5) -
++                                    (MW.roomPose.box2D.y + MW.roomPose.box2D.h * 0.5);
++                if (std::fabs(dxPx) > 2.0 || std::fabs(dyPx) > 2.0) {
++                    const float S = configWindowScale() * std::max(0.1f, MW.roomPose.scaleMul);
++                    const Vec3  N = retinaNormal(MW.roomPose.yaw, MW.roomPose.pitch);
++                    const Vec3  R = normalize(Vec3{std::cos(MW.roomPose.yaw), 0.0f, -std::sin(MW.roomPose.yaw)});
++                    const Vec3  U = normalize(cross(N, R));
++                    MW.roomPose.center = MW.roomPose.center +
++                        R * (World3D::toWorld(dxPx) * S) -
++                        U * (World3D::toWorld(dyPx) * S);
++                }
++            }
++            MW.roomPose.box2D = MW.box2D;
++
+             // Sizes are per-mode: the room keeps the real box the window
+             // had here last time. The morph drives the real box there (the
+             // client re-renders -- crisp content at the room's size); the
+@@ -3329,36 +3706,62 @@
+             g_retinaMul[info.id] = MW.roomPose.scaleMul;
+             OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
+         } else {
+-            // The same fresh spawn syncWorld seeds for unknown windows.
+-            MW.roomPose.center = CAM.position + FWD * g_cfgSpawnDistance;
+-            MW.roomPose.yaw    = std::atan2(-FWD.x, -FWD.z);
+-            MW.roomPose.pitch  = std::asin(std::clamp(FWD.y, -1.0f, 1.0f));
+-            MW.roomPose.roll   = 0.0f;
++            const Vec3 RIGHT = CAM.right();
++            const Vec3 UP    = cross(RIGHT, FWD);
++            MW.boxRoom       = MW.box2D; // preserve authentic 2D window size
++            MW.roomPose.box2D = MW.box2D;
+             g_retinaMul.erase(info.id);
+ 
+-            // MiOS retina spawn: a box larger than the work area minus the
+-            // margin is resized into it (the morph drives the real box, the
+-            // client re-renders at 1:1); then the window is placed like a
+-            // fresh spawn, cascaded past the ones laid out before it.
+-            if (retinaPlacing() && mon && !info.attached && !info.isLayer) {
+-                if (g_cfgFit == ERetinaFit::Resize && info.window) {
+-                    const CBox FA = retinaFitArea(mon);
+-                    if (MW.box2D.w > FA.w + 0.5 || MW.box2D.h > FA.h + 0.5) {
+-                        const CBox REAL = Compat::currentWindowBox(info.window);
+-                        const Vector2D DECO{std::max(0.0, MW.box2D.w - REAL.w), std::max(0.0, MW.box2D.h - REAL.h)};
+-                        const CBox FIT = retinaFitted(mon, CBox{0.0, 0.0, REAL.w, REAL.h}, info.window, DECO);
+-                        MW.boxRoom = CBox{FIT.x, FIT.y, FIT.w + DECO.x, FIT.h + DECO.y};
+-                        ++g_retinaResized;
+-                    }
+-                }
+-                const auto P = retinaPlace(mon, MW.boxRoom, obstacles, fresh++, 0.0f);
+-                retinaRecord(info.id, MW.boxRoom, P);
+-                MW.roomPose.center   = P.center;
+-                MW.roomPose.scaleMul = P.mul;
+-                OBSTACLE(MW.roomPose, MW.boxRoom, P.mul);
++            const double monW = mon ? mon->m_size.x : 1920.0;
++            const double monH = mon ? mon->m_size.y : 1080.0;
++            const double winCx = MW.box2D.x + MW.box2D.w * 0.5;
++            const double winCy = MW.box2D.y + MW.box2D.h * 0.5;
++            const double dx = winCx - monW * 0.5;
++            const double dy = winCy - monH * 0.5;
++
++            const double tanHalf = retinaTan();
++            const float xRatio = static_cast<float>(dx / (monH * 0.5) * tanHalf);
++            const float yRatio = static_cast<float>(-dy / (monH * 0.5) * tanHalf);
++
++            const float yawOffset = std::atan2(xRatio, 1.0f);
++            const float pitchOffset = std::atan2(yRatio, std::sqrt(1.0f + xRatio * xRatio));
++
++            const float baseYaw = std::atan2(-FWD.x, -FWD.z);
++            const float basePitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
++                                    g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
++
++            MW.roomPose.yaw = baseYaw - yawOffset;
++            MW.roomPose.pitch = basePitch + pitchOffset;
++            MW.roomPose.roll = 0.0f;
++
++            // Map 2D window layer order to radial depth (dist stepped by STEP_Z)
++            // so foreground windows are radially closer.
++            // infos is in bottom-to-top (background-to-foreground) stacking order.
++            const size_t totalWins = infos.size();
++            const size_t layerIndex = (totalWins > static_cast<size_t>(i)) ? (totalWins - 1 - i) : 0;
++            const float STEP_Z = std::max(0.02f, g_cfgWindowDepth + 0.01f);
++            const float baseDist = std::max(0.6f, g_cfgSpawnDistance);
++            const float dist = baseDist + static_cast<float>(layerIndex) * STEP_Z;
++
++            const Vec3 dir = normalize(FWD + RIGHT * xRatio + UP * yRatio);
++            MW.roomPose.center = CAM.position + dir * dist + UP * g_cfgEyelineOffset;
++            MW.roomPose.scaleMul = 1.0f;
++            MW.roomPose.box = MW.boxRoom;
++            g_retinaMul[info.id] = MW.roomPose.scaleMul;
++            OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
++
++            if (!g_cfgStills && !info.isLayer && !info.attached && g_cfgOpenEffect3D != "none") {
++                World3D::SEntity seedEnt{};
++                seedEnt.id     = info.id;
++                seedEnt.center = MW.roomPose.center;
++                seedEnt.yaw    = MW.roomPose.yaw;
++                seedEnt.pitch  = MW.roomPose.pitch;
++                seedEnt.roll   = MW.roomPose.roll;
++                g_winAnims3D[info.id] = SWinAnim3D{info.id, false, 0.0f, seedEnt, false};
+             }
+         }
+ 
++        g_entryPoses3D[info.id] = MW.roomPose.center;
+         MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
+ 
+         // Every window's box is frozen at enter: the room is its own
+@@ -3423,6 +3826,11 @@
+     g_viewMorphWins.clear();
+ 
+     int i = 0;
++    std::vector<CBox> placedExitBoxes;
++    const auto& CAM   = g_scene.camera();
++    const Vec3  FWD   = CAM.forward();
++    const Vec3  RIGHT = CAM.right();
++    const Vec3  UP    = cross(RIGHT, FWD);
+ 
+     for (const auto& ENTITY : g_world.entities()) {
+         SViewMorphWin MW;
+@@ -3472,26 +3880,69 @@
+ 
+         MW.roomPose.box = MW.boxRoom;
+ 
+-        g_savedPoses[ENTITY.id] = MW.roomPose;
+-
+-        // The 2D box the window must land on: the layout save. The
+-        // room-box enforcer refreshes it live whenever the tree re-asserts
+-        // (a reflow), so it is always the CURRENT 2D truth -- a reflowed
+-        // window lands exactly where the settle recalc will keep it, no
+-        // post-landing jump. Ghosted windows (session newcomers, the
+-        // pre-fullscreen panel) are owned by their full restore path.
++        // The 2D box the window must land on: the layout save.
+         MW.box2D   = MW.boxRoom;
+         MW.animBox = false;
+ 
+-        for (const auto& SAVE : g_layoutSaves) {
+-            if (SAVE.id != ENTITY.id || SAVE.ghosted)
++        // Project 3D pose relative to camera origin onto 2D workspace coordinates
++        // adjacent to other open windows, avoiding dead-center stacking.
++        const Vec3 V = MW.roomPose.center - CAM.position;
++        const float z = dot(V, FWD);
++        const float x = dot(V, RIGHT);
++        const float y = dot(V, UP);
++
++        double targetCx = MON->m_position.x + MON->m_size.x * 0.5;
++        double targetCy = MON->m_position.y + MON->m_size.y * 0.5;
++
++        if (z > 0.05f) {
++            const double tanHalf = retinaTan();
++            const double normX = (x / z) / (2.0 * tanHalf);
++            const double normY = (y / z) / (2.0 * tanHalf);
++            targetCx += normX * MON->m_size.y;
++            targetCy -= normY * MON->m_size.y;
++        }
++
++        double w = (MW.boxRoom.w > 1.0) ? MW.boxRoom.w : 960.0;
++        double h = (MW.boxRoom.h > 1.0) ? MW.boxRoom.h : 532.0;
++
++        const double minX = MON->m_position.x + 12.0;
++        const double minY = MON->m_position.y + 44.0;
++        const double maxX = std::max(minX, MON->m_position.x + MON->m_size.x - w - 12.0);
++        const double maxY = std::max(minY, MON->m_position.y + MON->m_size.y - h - 12.0);
++
++        CBox targetBox{std::clamp(targetCx - w * 0.5, minX, maxX),
++                       std::clamp(targetCy - h * 0.5, minY, maxY),
++                       w, h};
++
++        for (const auto& OB : placedExitBoxes) {
++            if (std::fabs(targetBox.x - OB.x) < 48.0 && std::fabs(targetBox.y - OB.y) < 48.0) {
++                targetBox.x = std::clamp(targetBox.x + 48.0, minX, maxX);
++                targetBox.y = std::clamp(targetBox.y + 48.0, minY, maxY);
++            }
++        }
++        placedExitBoxes.push_back(targetBox);
++
++        for (auto& SAVE : g_layoutSaves) {
++            if (SAVE.id != ENTITY.id)
+                 continue;
+ 
+-            MW.box2D   = viewMorphLocalBox(MON, SAVE.box);
+-            MW.animBox = boxesDiffer(MW.box2D, MW.boxRoom);
+-
++            SAVE.box = targetBox;
++            SAVE.wasFloating = true;
++            g_flagFloated.erase(SAVE.id);
++            if (auto W = SAVE.window.lock(); W && W->m_target && !W->m_target->floating())
++                W->m_target->setFloating(true);
++
++            if (!SAVE.ghosted) {
++                MW.box2D   = viewMorphLocalBox(MON, SAVE.box);
++                MW.animBox = boxesDiffer(MW.box2D, MW.boxRoom);
++            } else {
++                MW.box2D = viewMorphLocalBox(MON, SAVE.box);
++            }
+             break;
+         }
++
++        MW.roomPose.box2D       = MW.box2D;
++        g_savedPoses[ENTITY.id] = MW.roomPose;
+ 
+         MW.stack = static_cast<float>(i) * kMorphStackEps;
+         ++i;
+@@ -3635,6 +4086,7 @@
+ // Remember the room as it is right now; prunes windows that no longer exist.
+ static void saveViewPoses() {
+     g_savedPoses.clear();
++    const auto MON = targetMonitor();
+ 
+     for (const auto& E : g_world.entities()) {
+         SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
+@@ -3648,6 +4100,16 @@
+ 
+             if (ROOM != g_roomBoxes.end())
+                 POSE.box = ROOM->second;
++        }
++
++        POSE.box2D = POSE.box;
++        if (MON) {
++            for (const auto& SAVE : g_layoutSaves) {
++                if (SAVE.id == E.id) {
++                    POSE.box2D = viewMorphLocalBox(MON, SAVE.box);
++                    break;
++                }
++            }
+         }
+ 
+         g_savedPoses[E.id] = POSE;
+@@ -3803,6 +4265,7 @@
+     g_pointerDown = false;
+     g_pointerGesture = EPointerGesture::None;
+     g_pointerButton = 0;
++    g_world.stopDrag();
+ 
+     // A finished resize gesture: schedule one forced snapshot of the resized
+     // window for the next capture pass -- its purpose is the silhouette's
+@@ -3913,6 +4376,12 @@
+     return true;
+ }
+ 
++// Mutating input, focus and layout must run before Hyprland starts its
++// monitor render pass: those operations can synchronously take snapshots.
++static float updateTransition();
++static void update3D(float dt);
++static float g_frameDt = 0.0f;
++
+ static void onRenderPre(PHLMONITOR mon) {
+     if (g_capturing)
+         return;
+@@ -3932,7 +4401,15 @@
+     }
+ 
+     g_monitor = mon;
++    g_frameDt = updateTransition();
+     serviceCapture();
++    if (g_fsPhase != EFullscreenPhase::In2D) {
++        const auto T0 = std::chrono::steady_clock::now();
++        update3D(g_frameDt);
++        g_msUpdate3D = g_msUpdate3D * 0.9 +
++            std::chrono::duration<double, std::milli>(
++                std::chrono::steady_clock::now() - T0).count() * 0.1;
++    }
+ }
+ 
+ 
+@@ -3995,6 +4472,7 @@
+     g_world.clear();
+     g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
+     g_retinaSettle.clear();
++    g_winAnims3D.clear();
+     g_renderWindows.clear();
+     g_input.reset();
+     resetMovementKeys();
+@@ -4007,6 +4485,15 @@
+ 
+     unghostWindows();
+     g_renderedOnce = false;
++
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
++    applyGlobalShaderGlassState(false);
++
++    {
++        std::ofstream out("/tmp/hypr3d-status.txt", std::ios::app);
++        if (out)
++            out << "active=0 frames=" << g_diagFrames << " transition=0 target=0\n";
++    }
+ 
+     notify("[hypr3d] room closed", CHyprColor{0.4f, 0.6f, 0.9f, 1.0f});
+ 
+@@ -4175,21 +4662,28 @@
+         if (const auto MON = targetMonitor()) {
+             if (const auto FSW =
+                     Fullscreen::controller()->getFullscreenWindow(MON)) {
++                double curW = g_cfgSpawnWidth > 0 ? g_cfgSpawnWidth : 960.0;
++                double curH = g_cfgSpawnHeight > 0 ? g_cfgSpawnHeight : 532.0;
++                const CBox curBox = Compat::currentWindowBox(FSW);
++                if (curBox.w > 1.0 && curBox.h > 1.0 && (curBox.w < MON->m_size.x * 0.95 || curBox.h < MON->m_size.y * 0.95)) {
++                    curW = curBox.w;
++                    curH = curBox.h;
++                }
+                 const double PX =
+-                    MON->m_size.x * 0.5 - g_cfgSpawnWidth * 0.5;
++                    MON->m_size.x * 0.5 - curW * 0.5;
+                 const double PY =
+-                    MON->m_size.y * 0.5 - g_cfgSpawnHeight * 0.5;
++                    MON->m_size.y * 0.5 - curH * 0.5;
+ 
+                 Compat::setWindowBox(
+                     FSW,
+                     CBox{MON->m_position.x + PX, MON->m_position.y + PY,
+-                         g_cfgSpawnWidth, g_cfgSpawnHeight});
++                         curW, curH});
+ 
+                 // Room-driven ghost, same as the session newcomers: the
+                 // enforcer holds the spawn box, the ghost-toggle fixup
+                 // guards the floating flag.
+                 g_roomBoxes[Compat::windowId(FSW)] =
+-                    CBox{PX, PY, g_cfgSpawnWidth, g_cfgSpawnHeight};
++                    CBox{PX, PY, curW, curH};
+                 g_boxDriven.insert(Compat::windowId(FSW));
+ 
+                 g_layoutSaves.clear(); // no stale saves may survive into this session
+@@ -4215,6 +4709,18 @@
+     g_captureFrames = 0;
+     g_reportedFramebufferError = false;
+     g_reportedRenderError = false;
++    g_winAnims3D.clear();
++
++    // Keep the operator's proximity reveal policy in 3D too; forcing "always" leaves every
++    // window's controls raised and makes the global title/menu row jump inward.
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = false, icon_on_hover = false}}})");
++    if (const auto MON = targetMonitor(); MON && Desktop::windowState() && g_pHyprRenderer) {
++        for (const auto& W : Desktop::windowState()->windows()) {
++            if (W && W->m_isMapped && !W->isHidden())
++                g_pHyprRenderer->damageWindow(W);
++        }
++    }
++    applyGlobalShaderGlassState(false);
+ 
+     fireOnState(true);
+ 
+@@ -4223,5 +4728,10 @@ }
+ 
+ static void toggle3D() {
++    if (g_active && (g_fsPhase == EFullscreenPhase::In2D || g_fsPhase == EFullscreenPhase::To2D)) {
++        toggleFullscreen2D(/*allowExit=*/true);
++        return;
++    }
++
+     g_transitionTarget =
+         g_transitionTarget > 0.5f ? 0.0f : 1.0f;
+ 
+@@ -4305,8 +4815,15 @@ // with the move-inertia glide. The PLAYER BODY applies it -- Jolt owns the
+ // pose, so this no longer moves the camera directly.
+ static void applyCameraMovement(float dt) {
+-    float FORWARD  = (g_keyFwd ? 1.f : 0.f) - (g_keyBack ? 1.f : 0.f);
+-    float STRAFE   = (g_keyRight ? 1.f : 0.f) - (g_keyLeft ? 1.f : 0.f);
+-    float VERTICAL = (g_keyUp ? 1.f : 0.f) - (g_keyDown ? 1.f : 0.f);
++    if ((g_analogFwd != 0.0f || g_analogStrafe != 0.0f) &&
++        std::chrono::duration<float>(std::chrono::steady_clock::now() - g_lastAnalogMoveTime).count() > 0.25f) {
++        g_analogFwd    = 0.0f;
++        g_analogStrafe = 0.0f;
++        s_moveVel      = {};
++    }
++
++    float FORWARD  = (g_keyFwd ? 1.f : 0.f) - (g_keyBack ? 1.f : 0.f) + g_analogFwd;
++    float STRAFE   = (g_keyRight ? 1.f : 0.f) - (g_keyLeft ? 1.f : 0.f) + g_analogStrafe;
++    float VERTICAL = std::clamp((g_keyUp ? 1.f : 0.f) - (g_keyDown ? 1.f : 0.f) + g_analogVertical, -1.0f, 1.0f);
+ 
+     auto& CAM = g_scene.camera();
+ 
+@@ -4332,6 +4849,9 @@     if (!g_playerFlying) {
+         // --- walking: the keys own the horizontal plane; Jolt's gravity
+         // (system -14, the old player constant) owns the vertical one ---
+-        const float SPEED = CAM.moveSpeed * (g_keySprint ? 2.5f : 1.0f);
++        const float postureMult =
++            (g_playerPosture == EPlayerPosture::Crouch) ? 0.55f :
++            (g_playerPosture == EPlayerPosture::Sit)    ? 0.25f : 1.0f;
++        const float SPEED = CAM.moveSpeed * (g_keySprint ? 2.5f : 1.0f) * postureMult;
+         const Vec3  TARGET =
+             CAM.flatForward() * (FORWARD * SPEED) +
+             CAM.right() * (STRAFE * SPEED);
+@@ -4373,6 +4893,306 @@         s_moveVel = {};
+ }
+ 
++#pragma pack(push, 1)
++struct SGamepadSharedState {
++    uint32_t magic;
++    uint32_t version;
++    int64_t  timestamp_ns;
++    float    lx;
++    float    ly;
++    float    rx;
++    float    ry;
++    uint8_t  rt_grab;
++    uint8_t  lt_resize;
++    uint8_t  south_held;
++    uint8_t  west_held;
++    uint32_t select_seq;
++    uint32_t start_seq;
++    uint32_t south_seq;
++    uint32_t fly_seq;
++    uint32_t west_seq;
++    uint32_t north_seq;
++    uint32_t rb_seq;
++    uint32_t lb_seq;
++};
++#pragma pack(pop)
++
++static bool     s_padSeqInit           = false;
++static uint32_t s_lastSelectSeq        = 0;
++static uint32_t s_lastStartSeq         = 0;
++static uint32_t s_lastSouthSeq         = 0;
++static uint32_t s_lastFlySeq           = 0;
++static uint32_t s_lastWestSeq          = 0;
++static uint32_t s_lastNorthSeq         = 0;
++static uint32_t s_lastRbSeq            = 0;
++static uint32_t s_lastLbSeq            = 0;
++static bool     s_padGrabActive        = false;
++static bool     s_padResizeActive      = false;
++static bool     s_padCursorLeftActive  = false;
++static bool     s_padCursorRightActive = false;
++static bool     s_padWasMoving         = false;
++static bool     s_padWasLooking        = false;
++
++static void pollGamepadFullscreenExit() {
++    if (g_fsPhase != EFullscreenPhase::In2D)
++        return;
++
++    std::ifstream in("/tmp/mios-hypr3d-pad.bin", std::ios::binary);
++    if (!in)
++        return;
++
++    SGamepadSharedState pkt{};
++    in.read(reinterpret_cast<char*>(&pkt), sizeof(pkt));
++    if (in.gcount() < 60 || pkt.magic != 0x4D493344u || pkt.version != 1u)
++        return;
++
++    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++                            std::chrono::steady_clock::now().time_since_epoch())
++                            .count();
++    const int64_t age_ns = now_ns - pkt.timestamp_ns;
++    const bool validSeqAge = (age_ns >= -1'000'000'000LL && age_ns <= 2'000'000'000LL);
++
++    if (!s_padSeqInit) {
++        s_lastSelectSeq = pkt.select_seq;
++        s_lastStartSeq  = pkt.start_seq;
++        s_lastSouthSeq  = pkt.south_seq;
++        s_lastFlySeq    = pkt.fly_seq;
++        s_lastWestSeq   = pkt.west_seq;
++        s_lastNorthSeq  = pkt.north_seq;
++        s_lastRbSeq     = pkt.rb_seq;
++        s_lastLbSeq     = pkt.lb_seq;
++        s_padSeqInit    = true;
++        return;
++    }
++
++    if (pkt.north_seq != s_lastNorthSeq) {
++        const bool increased = pkt.north_seq > s_lastNorthSeq;
++        s_lastNorthSeq = pkt.north_seq;
++        if (increased && validSeqAge)
++            toggleFullscreen2D(/*allowExit=*/false);
++    }
++    if (pkt.rb_seq != s_lastRbSeq) {
++        const bool increased = pkt.rb_seq > s_lastRbSeq;
++        s_lastRbSeq = pkt.rb_seq;
++        if (increased && validSeqAge)
++            toggleWindowCrt(targetCrtWindow());
++    }
++    if (pkt.lb_seq != s_lastLbSeq) {
++        const bool increased = pkt.lb_seq > s_lastLbSeq;
++        s_lastLbSeq = pkt.lb_seq;
++        if (increased && validSeqAge)
++            cycleCrtPreset();
++    }
++}
++
++static void pollGamepadState(float dt) {
++    if (!ownsInput()) {
++        if (!g_active)
++            s_padSeqInit = false;
++        s_padGrabActive        = false;
++        s_padResizeActive      = false;
++        s_padCursorLeftActive  = false;
++        s_padCursorRightActive = false;
++        s_padWasMoving         = false;
++        s_padWasLooking        = false;
++        g_analogVertical       = 0.0f;
++        return;
++    }
++
++    std::ifstream in("/tmp/mios-hypr3d-pad.bin", std::ios::binary);
++    if (!in) {
++        s_padSeqInit     = false;
++        g_analogVertical = 0.0f;
++        return;
++    }
++
++    SGamepadSharedState pkt{};
++    in.read(reinterpret_cast<char*>(&pkt), sizeof(pkt));
++    if (in.gcount() < 44 ||
++        pkt.magic != 0x4D493344u || pkt.version != 1u)
++        return;
++
++    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++                            std::chrono::steady_clock::now().time_since_epoch())
++                            .count();
++    const int64_t age_ns = now_ns - pkt.timestamp_ns;
++    const bool validSeqAge = (age_ns >= -1'000'000'000LL && age_ns <= 2'000'000'000LL);
++
++    if (!s_padSeqInit) {
++        s_lastSelectSeq = pkt.select_seq;
++        s_lastStartSeq  = pkt.start_seq;
++        s_lastSouthSeq  = pkt.south_seq;
++        s_lastFlySeq    = pkt.fly_seq;
++        s_lastWestSeq   = pkt.west_seq;
++        s_lastNorthSeq  = pkt.north_seq;
++        s_lastRbSeq     = pkt.rb_seq;
++        s_lastLbSeq     = pkt.lb_seq;
++        s_padSeqInit    = true;
++    } else {
++        if (pkt.select_seq != s_lastSelectSeq) {
++            const bool increased = pkt.select_seq > s_lastSelectSeq;
++            s_lastSelectSeq = pkt.select_seq;
++            if (increased && validSeqAge)
++                cycleCameraViewMode("cycle");
++        }
++        if (pkt.start_seq != s_lastStartSeq) {
++            const bool increased = pkt.start_seq > s_lastStartSeq;
++            s_lastStartSeq = pkt.start_seq;
++            if (increased && validSeqAge)
++                toggleCursorCameraMode("toggle");
++        }
++        if (pkt.fly_seq != s_lastFlySeq) {
++            const bool increased = pkt.fly_seq > s_lastFlySeq;
++            s_lastFlySeq   = pkt.fly_seq;
++            s_lastSouthSeq = pkt.south_seq;
++            if (increased && validSeqAge)
++                toggleFlyMode("toggle");
++        } else if (pkt.south_seq != s_lastSouthSeq) {
++            const bool increased = pkt.south_seq > s_lastSouthSeq;
++            s_lastSouthSeq = pkt.south_seq;
++            if (increased && validSeqAge && !g_playerFlying)
++                triggerJump();
++        }
++        if (pkt.west_seq != s_lastWestSeq) {
++            const bool increased = pkt.west_seq > s_lastWestSeq;
++            s_lastWestSeq = pkt.west_seq;
++            if (increased && validSeqAge && !g_playerFlying)
++                cyclePosture("cycle");
++        }
++        if (pkt.north_seq != s_lastNorthSeq) {
++            const bool increased = pkt.north_seq > s_lastNorthSeq;
++            s_lastNorthSeq = pkt.north_seq;
++            if (increased && validSeqAge)
++                toggleFullscreen2D();
++        }
++        if (pkt.rb_seq != s_lastRbSeq) {
++            const bool increased = pkt.rb_seq > s_lastRbSeq;
++            s_lastRbSeq = pkt.rb_seq;
++            if (increased && validSeqAge)
++                toggleWindowCrt(targetCrtWindow());
++        }
++        if (pkt.lb_seq != s_lastLbSeq) {
++            const bool increased = pkt.lb_seq > s_lastLbSeq;
++            s_lastLbSeq = pkt.lb_seq;
++            if (increased && validSeqAge)
++                cycleCrtPreset();
++        }
++    }
++
++    const bool fresh      = (age_ns >= -1'000'000'000LL && age_ns <= 250'000'000LL);
++    const bool wantGrab   = fresh && (pkt.rt_grab != 0);
++    const bool wantResize = fresh && (pkt.lt_resize != 0);
++
++    const float newVert = (fresh && g_playerFlying)
++        ? ((pkt.south_held != 0 ? 1.0f : 0.0f) - (pkt.west_held != 0 ? 1.0f : 0.0f))
++        : 0.0f;
++    if (newVert != g_analogVertical) {
++        g_analogVertical = newVert;
++        damageCurrentMonitor();
++    } else if (g_analogVertical != 0.0f) {
++        damageCurrentMonitor();
++    }
++
++    const float lx = fresh ? std::clamp(pkt.lx, -1.0f, 1.0f) : 0.0f;
++    const float ly = fresh ? std::clamp(pkt.ly, -1.0f, 1.0f) : 0.0f;
++    const float rx = fresh ? std::clamp(pkt.rx, -1.0f, 1.0f) : 0.0f;
++    const float ry = fresh ? std::clamp(pkt.ry, -1.0f, 1.0f) : 0.0f;
++
++    // Unified Left Stick: ALWAYS drives character translation (in both Camera and Cursor modes,
++    // and while holding RT grab or LT resize).
++    const bool movingNow = (std::fabs(lx) > 0.001f || std::fabs(ly) > 0.001f);
++    if (movingNow) {
++        g_analogStrafe       = lx;
++        g_analogFwd          = -ly;
++        g_lastAnalogMoveTime = std::chrono::steady_clock::now();
++        s_padWasMoving       = true;
++        damageCurrentMonitor();
++    } else if (s_padWasMoving) {
++        g_analogStrafe = 0.0f;
++        g_analogFwd    = 0.0f;
++        s_moveVel      = {};
++        s_padWasMoving = false;
++        damageCurrentMonitor();
++    }
++
++    if (pointerFree()) {
++        if (s_padGrabActive || s_padResizeActive) {
++            s_padGrabActive   = false;
++            s_padResizeActive = false;
++            if (g_pointerDown) {
++                resetPointerGesture();
++                damageCurrentMonitor();
++            }
++        }
++        if (s_padWasLooking) {
++            g_input.reset();
++            s_padWasLooking = false;
++        }
++
++        // In Cursor Mode: RT = Main Click (BTN_LEFT), LT = Alt Click (BTN_RIGHT).
++        if (wantGrab != s_padCursorLeftActive) {
++            s_padCursorLeftActive = wantGrab;
++            vcClickButton(BTN_LEFT, wantGrab);
++        }
++        if (wantResize != s_padCursorRightActive) {
++            s_padCursorRightActive = wantResize;
++            vcClickButton(BTN_RIGHT, wantResize);
++        }
++
++        if (std::fabs(rx) > 0.001f || std::fabs(ry) > 0.001f) {
++            vcMove(static_cast<double>(rx) * 900.0 * static_cast<double>(dt),
++                   static_cast<double>(ry) * 900.0 * static_cast<double>(dt));
++            damageCurrentMonitor();
++        }
++        return;
++    }
++
++    if (s_padCursorLeftActive) {
++        s_padCursorLeftActive = false;
++        vcClickButton(BTN_LEFT, false);
++    }
++    if (s_padCursorRightActive) {
++        s_padCursorRightActive = false;
++        vcClickButton(BTN_RIGHT, false);
++    }
++
++    if (wantGrab != s_padGrabActive) {
++        s_padGrabActive = wantGrab;
++        if (wantGrab) {
++            startGrab3D();
++        } else if (g_pointerDown &&
++                   (g_pointerGesture == EPointerGesture::Move3D ||
++                    g_pointerGesture == EPointerGesture::MapDrag)) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++        }
++    }
++
++    if (wantResize != s_padResizeActive) {
++        s_padResizeActive = wantResize;
++        if (wantResize) {
++            startResize3D();
++        } else if (g_pointerDown && g_pointerGesture == EPointerGesture::ResizeReal) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++        }
++    }
++
++    const bool lookingNow = (std::fabs(rx) > 0.001f || std::fabs(ry) > 0.001f);
++    if (lookingNow) {
++        g_input.addMotion(static_cast<double>(rx) * 960.0 * static_cast<double>(dt),
++                          static_cast<double>(ry) * 960.0 * static_cast<double>(dt));
++        s_padWasLooking = true;
++        damageCurrentMonitor();
++    } else if (s_padWasLooking) {
++        g_input.reset();
++        s_padWasLooking = false;
++        damageCurrentMonitor();
++    }
++}
++
+ static void update3D(float dt) {
++    pollGamepadState(dt);
++
+     // Release capture unconditionally when the view no longer owns input, so
+     // a disappearing monitor or a closing transition can never strand the
+     // pointer in captured mode.
+@@ -4498,7 +5318,28 @@         // (g_transition is the ROOM progress -- 1.0 in normal 3D -- it must
+         // NOT gate this.)
+         if (!g_playerBody.IsInvalid()) {
+-            const auto PPOS = g_bodyIf->GetPosition(g_playerBody);
+-            const Vec3 EYE{PPOS.GetX(), PPOS.GetY() + PLAYER_EYE_OFF,
++            const float targetEyeOff = g_playerFlying
++                ? PLAYER_EYE_OFF
++                : (g_playerPosture == EPlayerPosture::Crouch
++                       ? PLAYER_EYE_OFF_CROUCH
++                       : (g_playerPosture == EPlayerPosture::Sit
++                              ? PLAYER_EYE_OFF_SIT
++                              : PLAYER_EYE_OFF));
++            g_currentEyeOff += (targetEyeOff - g_currentEyeOff) *
++                (1.0f - std::exp(-12.0f * dt));
++
++            auto PPOS = g_bodyIf->GetPosition(g_playerBody);
++            if (!g_playerFlying && g_cfgGrid &&
++                PPOS.GetY() < Camera::kBodyHeight * 0.5f - 0.05f) {
++                PPOS = JPH::RVec3(PPOS.GetX(), Camera::kBodyHeight * 0.5f, PPOS.GetZ());
++                g_bodyIf->SetPositionAndRotationWhenChanged(
++                    g_playerBody, PPOS, JPH::Quat::sIdentity(),
++                    JPH::EActivation::Activate);
++                auto vel = g_bodyIf->GetLinearVelocity(g_playerBody);
++                if (vel.GetY() < 0.0f)
++                    g_bodyIf->SetLinearVelocity(
++                        g_playerBody, JPH::Vec3(vel.GetX(), 0.0f, vel.GetZ()));
++            }
++            const Vec3 EYE{PPOS.GetX(), PPOS.GetY() + g_currentEyeOff,
+                            PPOS.GetZ()};
+             auto& CAM = g_scene.camera();
+ 
+@@ -4613,11 +5454,11 @@         if (g_fsPhase == EFullscreenPhase::None && g_viewMode == 0) {
+             const auto CUR = g_bodyIf->GetPosition(g_playerBody);
+             const float DX = CAM.position.x - CUR.GetX();
+-            const float DY = CAM.position.y - (CUR.GetY() + PLAYER_EYE_OFF);
++            const float DY = CAM.position.y - (CUR.GetY() + g_currentEyeOff);
+             const float DZ = CAM.position.z - CUR.GetZ();
+-            if (DX * DX + DY * DY + DZ * DZ > 0.25f)
++            if (DX * DX + DY * DY + DZ * DZ > 0.64f)
+                 g_bodyIf->SetPositionAndRotationWhenChanged(
+                     g_playerBody,
+-                    JPH::RVec3(CAM.position.x, CAM.position.y - PLAYER_EYE_OFF,
++                    JPH::RVec3(CAM.position.x, CAM.position.y - g_currentEyeOff,
+                                CAM.position.z),
+                     JPH::Quat::sIdentity(), JPH::EActivation::Activate);
+         }
+@@ -4644,6 +5485,6 @@             // the orbit position pulls the camera in front of walls.
+             if (g_viewMode != 0) {
+                 const Vec3 ORBIT_EYE{PPOS.GetX(),
+-                                     PPOS.GetY() + PLAYER_EYE_OFF,
++                                     PPOS.GetY() + g_currentEyeOff,
+                                      PPOS.GetZ()};
+                 const Vec3 FLAT = CAM.flatForward();
+                 const float P = CAM.pitch;
+@@ -4714,35 +5555,39 @@                 s_moveVel.x, VY, s_moveVel.z));
+         }
+ 
+-        // Walk bob (view-only, walking + grounded): a small vertical sway
+-        // synced to the distance traveled, plus a head TILT at half the
+-        // bob frequency (in a real gait the full left-right roll cycle
+-        // spans two vertical bounces). The amplitude eases in and out, so
+-        // jumps, stops and the walk<->fly switch never pop.
+-        const float BOB_SPEED = std::sqrt(s_moveVel.x * s_moveVel.x +
+-                                          s_moveVel.z * s_moveVel.z);
+-        const bool BOBING = g_cfgWalkBob && !g_playerFlying && g_grounded &&
+-            g_fsPhase == EFullscreenPhase::None &&
+-            g_viewMorph == EViewMorph::None && g_viewMode == 0;
+-        const float TARGET_AMP =
+-            BOBING ? kBobAmplitude *
+-                std::min(1.0f, BOB_SPEED / std::max(CAM.moveSpeed, 0.5f))
+-                   : 0.0f;
+-        s_bobAmp += (TARGET_AMP - s_bobAmp) * (1.0f - std::exp(-8.0f * dt));
+-
+-        // The phase wraps at 4pi: two bob cycles, so sin(phase/2) walks a
+-        // FULL tilt cycle (left, then right) and the wrap lands on zero.
+-        if (BOBING)
+-            s_bobPhase = std::fmod(s_bobPhase + BOB_SPEED * dt * kBobRate,
+-                                   12.5663706f);
+-
+-        // Both offsets ride the same eased envelope: the roll fades out
+-        // with the bob (walk_bob off, flight, air, transitions).
+-        if (s_bobAmp > 0.0005f) {
+-            CAM.position.y += s_bobAmp * std::sin(s_bobPhase);
+-            CAM.roll = (s_bobAmp * (1.0f / kBobAmplitude)) * kBobRoll *
+-                std::sin(s_bobPhase * 0.5f);
++        // Walk bob (view-only, walking + grounded): disabled by default
++        // (g_cfgWalkBob = false) so walking translates cleanly to VR natively
++        // without vertical head-bobbing or roll tilt.
++        if (!g_cfgWalkBob) {
++            s_bobAmp = 0.0f;
++            s_bobPhase = 0.0f;
++            CAM.roll = 0.0f;
+         } else {
+-            CAM.roll = 0.0f;
++            const float BOB_SPEED = std::sqrt(s_moveVel.x * s_moveVel.x +
++                                              s_moveVel.z * s_moveVel.z);
++            const bool BOBING = !g_playerFlying && g_grounded &&
++                g_fsPhase == EFullscreenPhase::None &&
++                g_viewMorph == EViewMorph::None && g_viewMode == 0;
++            const float TARGET_AMP =
++                BOBING ? kBobAmplitude *
++                    std::min(1.0f, BOB_SPEED / std::max(CAM.moveSpeed, 0.5f))
++                       : 0.0f;
++            s_bobAmp += (TARGET_AMP - s_bobAmp) * (1.0f - std::exp(-8.0f * dt));
++
++            // The phase wraps at 4pi: two bob cycles, so sin(phase/2) walks a
++            // FULL tilt cycle (left, then right) and the wrap lands on zero.
++            if (BOBING)
++                s_bobPhase = std::fmod(s_bobPhase + BOB_SPEED * dt * kBobRate,
++                                       12.5663706f);
++
++            // Both offsets ride the same eased envelope: the roll fades out
++            // with the bob (walk_bob off, flight, air, transitions).
++            if (s_bobAmp > 0.0005f) {
++                CAM.position.y += s_bobAmp * std::sin(s_bobPhase);
++                CAM.roll = (s_bobAmp * (1.0f / kBobAmplitude)) * kBobRoll *
++                    std::sin(s_bobPhase * 0.5f);
++            } else {
++                CAM.roll = 0.0f;
++            }
+         }
+     }
+ 
+@@ -5144,8 +5989,5 @@     // missing the bug (it self-healed before the read); the timeline catches
+     // the transition frame by frame. Bounded at ~128 KB, trimmed from the
+     // head.
+-    std::ofstream out("/tmp/hypr3d-status.txt",
+-                      std::ios::app | std::ios::in);
+-
+     {
+         std::error_code              ec;
+         const auto                   SZ = std::filesystem::file_size(
+@@ -5166,5 +6008,7 @@         }
+     }
+ 
++    std::ofstream out("/tmp/hypr3d-status.txt", std::ios::app);
++
+     out << "--- frame " << g_diagFrames << " t="
+         << std::chrono::duration<float>(std::chrono::steady_clock::now() -
+                                         g_inputClockStart)
+@@ -5185,6 +6029,14 @@         << " morphS=" << g_morphS
+         << " morphWins=" << g_viewMorphWins.size()
+         << " savedPoses=" << g_savedPoses.size()
+-        << " renderedOnce=" << (g_renderedOnce ? 1 : 0) << "\n";
++        << " renderedOnce=" << (g_renderedOnce ? 1 : 0)
++        << " crtWindows=" << g_crtWindows.size()
++        << " viewMode=" << g_viewMode
++        << " kbMode=" << static_cast<int>(g_keyboardMode)
++        << " gesture=" << static_cast<int>(g_pointerGesture)
++        << " pointerDown=" << (g_pointerDown ? 1 : 0)
++        << " camPos=" << g_scene.camera().position.x << "," << g_scene.camera().position.y << "," << g_scene.camera().position.z
++        << " camYaw=" << g_scene.camera().yaw
++        << " camPitch=" << g_scene.camera().pitch << "\n";
+ 
+     // MiOS render quality: the effective supersampled scene and frame rate.
+     out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
+@@ -5337,6 +6189,8 @@     // snapshot texture via the GPU copy, fallback analytic; layers: traced
+     // from the picking mask). skirt=0/err=N says the copy failed and why.
+     for (const auto& RW : g_renderWindows) {
+-        out << "  rwin=" << RW.id << " depth=" << RW.depth
++        out << "  rwin=" << RW.id << " center=" << RW.x << "," << RW.y << "," << RW.z
++            << " size3d=" << RW.width << "x" << RW.height
++            << " depth=" << RW.depth
+             << " outlines=" << (RW.outlines ? (long)RW.outlines->size() : -1);
+ 
+         if (RW.outlines && !RW.outlines->empty()) {
+@@ -5459,6 +6313,9 @@             << PP.GetZ() << ") vel=(" << PV.GetX() << "," << PV.GetY()
+             << "," << PV.GetZ() << ") moveVel=(" << s_moveVel.x << ","
+             << s_moveVel.y << "," << s_moveVel.z << ") grounded="
+-            << g_grounded << " flying=" << g_playerFlying << "\n";
++            << g_grounded << " flying=" << g_playerFlying
++            << " posture=" << static_cast<int>(g_playerPosture)
++            << " walkBob=" << g_cfgWalkBob
++            << " roll=" << g_scene.camera().roll << "\n";
+     }
+ }
+ 
+@@ -5668,12 +6525,23 @@     g_vcId    = 0;
+ }
+ 
++static void vcEnterFromDesktop(const Vector2D& global);
++
+ static void vcMove(double dx, double dy) {
+     const auto MON = targetMonitor();
+     if (!MON)
+         return;
+ 
+-    if (g_vcSpace != ECursorSpace::Screen)
+-        return;
++    if (g_vcSpace != ECursorSpace::Screen) {
++        Vector2D nextGlobal = Pointer::mgr()->position() + Vector2D{dx, dy};
++        nextGlobal.x = std::clamp(nextGlobal.x, MON->m_position.x, MON->m_position.x + MON->m_size.x - 1.0);
++        nextGlobal.y = std::clamp(nextGlobal.y, MON->m_position.y, MON->m_position.y + MON->m_size.y - 1.0);
++        if (!g_cfgUnderLayers || !Compat::interactiveLayerAt(MON, nextGlobal)) {
++            vcEnterFromDesktop(nextGlobal);
++        } else {
++            Pointer::mgr()->warpTo(nextGlobal);
++        }
++        return;
++    }
+ 
+     g_vcScreen = g_vcScreen + Vector2D{dx, dy};
+     vcResolveScreen(MON);
+@@ -5795,6 +6663,6 @@ 
+     dumpStatus();
+ 
+-    const float dt = updateTransition();
++    const float dt = g_frameDt;
+ 
+     if (g_transition <= 0.0f && g_transitionTarget <= 0.0f) {
+         requestDeactivate3D();
+@@ -5819,11 +6687,5 @@     // its input are dormant. The frame pump polls for the fullscreen exit.
+     if (g_fsPhase == EFullscreenPhase::In2D)
+         return;
+-
+-    const auto U3_T0 = std::chrono::steady_clock::now();
+-    update3D(dt);
+-    g_msUpdate3D = g_msUpdate3D * 0.9 +
+-        std::chrono::duration<double, std::milli>(
+-            std::chrono::steady_clock::now() - U3_T0).count() * 0.1;
+ 
+     // Composite alpha: the view morph needs the scene opaque from its first
+     // frame (the windows land exactly on the 2D rectangles; the environment
+@@ -6188,5 +7050,74 @@     damageCurrentMonitor();
+ }
+ 
++static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& rawLocal, uint32_t button = BTN_LEFT) {
++    if (!W)
++        return false;
++    // Protruding 28px-tall hyprbars glass tab lives above the surface top edge
++    // (rawLocal.y in [-28..0], rawLocal.x in [42..130]), with generous touch/click padding.
++    if (rawLocal.y <= 10.0 && rawLocal.y >= -34.0 && rawLocal.x >= 28.0 && rawLocal.x <= 144.0) {
++        focusRoomWindow(W);
++        const std::uintptr_t id = Compat::windowId(W);
++        std::ostringstream addr;
++        addr << "address:0x" << std::hex << id;
++        if (rawLocal.x < 73.0) {
++            // Button 0 (Close): Left-Click = graceful close, Right-Click = force kill (SIGKILL)
++            if (button == BTN_RIGHT) {
++                (void)Config::Actions::signalWindow(SIGKILL, W);
++                (void)Config::Actions::closeWindow(W);
++            } else {
++                (void)Config::Actions::closeWindow(W);
++            }
++        } else if (rawLocal.x < 99.0) {
++            // Button 1 (Minimize): Left-Click = animated 3D minimize, Right-Click = instant minimize
++            if (button == BTN_RIGHT)
++                g_skipCloseAnim3D.insert(id);
++            HyprlandAPI::invokeHyprctlCommand("dispatch",
++                "hl.dsp.window.move({workspace = \"special:minimized\", window = \"" + addr.str() + "\", follow = false})");
++        } else {
++            // Button 2 (Maximize): Right-Click = Fullscreen (2D) Mode (Super + F11), Left-Click = 3D Maximize / Restore
++            if (button == BTN_RIGHT || g_fsPhase == EFullscreenPhase::In2D || g_fsPhase == EFullscreenPhase::To2D) {
++                toggleFullscreen2D(/*allowExit=*/true);
++            } else if (const auto MON = targetMonitor()) {
++                const CBox   curBox  = Compat::currentWindowBox(W);
++                const double maxW    = std::round(MON->m_size.x * 0.82);
++                const double maxH    = std::round(MON->m_size.y * 0.82);
++                const bool   isMax3D = (curBox.w >= maxW - 24.0 && curBox.h >= maxH - 24.0);
++                CBox         targetBox{};
++                if (isMax3D) {
++                    const auto   it    = g_preMax3DBoxes.find(id);
++                    const double restW = (it != g_preMax3DBoxes.end() && it->second.w >= 240.0 && it->second.w < maxW - 24.0) ?
++                        it->second.w :
++                        static_cast<double>(g_cfgSpawnWidth);
++                    const double restH = (it != g_preMax3DBoxes.end() && it->second.h >= 160.0 && it->second.h < maxH - 24.0) ?
++                        it->second.h :
++                        static_cast<double>(g_cfgSpawnHeight);
++                    targetBox = CBox{
++                        MON->m_position.x + std::round((MON->m_size.x - restW) * 0.5),
++                        MON->m_position.y + std::max(48.0, std::round((MON->m_size.y - restH) * 0.5)),
++                        restW,
++                        restH
++                    };
++                } else {
++                    g_preMax3DBoxes[id] = curBox;
++                    targetBox = CBox{
++                        MON->m_position.x + std::round((MON->m_size.x - maxW) * 0.5),
++                        MON->m_position.y + std::max(48.0, std::round((MON->m_size.y - maxH) * 0.5)),
++                        maxW,
++                        maxH
++                    };
++                }
++                Compat::driveWindowBox(W, targetBox);
++                g_boxDriven.insert(id);
++                g_roomBoxes[id] = CBox{targetBox.x - MON->m_position.x, targetBox.y - MON->m_position.y, targetBox.w, targetBox.h};
++                g_skirtFinalRefreshId = id;
++            }
++        }
++        damageCurrentMonitor();
++        return true;
++    }
++    return false;
++}
++
+ static void onMouseButton(
+     IPointer::SButtonEvent event,
+     Event::SCallbackInfo& info
+@@ -6242,5 +7173,9 @@             return;
+ 
+         const auto LOCAL = surfaceLocal(*E, g_vcLocal);
++        const Vector2D RAW_LOCAL{g_vcLocal.x - E->surfaceOffsetX, g_vcLocal.y - E->surfaceOffsetY};
++
++        if ((event.button == BTN_LEFT || event.button == BTN_RIGHT) && TARGET.window && handleHyprbarsClick3D(TARGET.window, RAW_LOCAL, event.button))
++            return;
+ 
+         // A click focuses, as on the desktop -- also taking the keyboard
+         // back from a launcher or sidebar.
+@@ -6540,7 +7475,19 @@     }
+ 
+     const Vector2D LOCAL = localFromHit(HIT);
++    Vector2D RAW_LOCAL = LOCAL;
++    if (const auto* E = g_world.find(HIT.id)) {
++        RAW_LOCAL = Vector2D{
++            std::clamp(HIT.u, 0.0f, 1.0f) * E->logicalWidth - E->surfaceOffsetX,
++            std::clamp(HIT.v, 0.0f, 1.0f) * E->logicalHeight - E->surfaceOffsetY,
++        };
++    }
+ 
+     if (PRESSED) {
++        if ((event.button == BTN_LEFT || event.button == BTN_RIGHT) && TARGET.window && handleHyprbarsClick3D(TARGET.window, RAW_LOCAL, event.button)) {
++            info.cancelled = true;
++            return;
++        }
++
+         if (TARGET.window)
+             focusRoomWindow(TARGET.window);
+ 
+@@ -6620,12 +7567,185 @@     }
+ }
+ 
++static void syncShaderGlassStateFromFile() {
++    std::ifstream st("/tmp/mios-hypr3d-crt.state");
++    if (!st)
++        return;
++    std::string line;
++    bool sawGlobal = false;
++    bool globalVal = false;
++    bool activeVal = false;
++    bool sawTargets = false;
++    std::unordered_set<std::uintptr_t> fileTargets;
++    while (std::getline(st, line)) {
++        if (line.rfind("global=", 0) == 0) {
++            sawGlobal = true;
++            globalVal = (line.substr(7) == "1");
++        } else if (line.rfind("active=", 0) == 0) {
++            activeVal = (line.substr(7) == "1");
++        } else if (line.rfind("preset_idx=", 0) == 0) {
++            try {
++                g_crtPresetIdx = static_cast<size_t>(std::stoul(line.substr(11))) % kCrtPresets.size();
++            } catch (...) {}
++        } else if (line.rfind("targets=", 0) == 0 || line.rfind("target=", 0) == 0) {
++            sawTargets = true;
++            const auto eq = line.find('=');
++            std::string list = (eq != std::string::npos) ? line.substr(eq + 1) : "";
++            for (char& c : list) {
++                if (c == ',' || c == ';')
++                    c = ' ';
++            }
++            std::istringstream iss(list);
++            std::string tok;
++            while (iss >> tok) {
++                try {
++                    const std::uintptr_t wid = std::stoull(tok, nullptr, 16);
++                    if (wid != 0)
++                        fileTargets.insert(wid);
++                } catch (...) {}
++            }
++        }
++    }
++    if (sawTargets)
++        g_crtWindows = std::move(fileTargets); // targets are a snapshot; removed windows must detach
++    if (sawGlobal)
++        g_crtGlobalOn = globalVal;
++    else if (activeVal && !sawTargets) {
++        g_crtGlobalOn = true;
++    }
++}
++
++static void applyGlobalShaderGlassState(bool writeState) {
++    if (!writeState)
++        syncShaderGlassStateFromFile();
++
++    const auto& P = kCrtPresets[g_crtPresetIdx % kCrtPresets.size()];
++    auto q = g_scene.renderQuality();
++    q.crtCurvature      = P.curvature;
++    q.crtRadius         = P.radius;
++    q.crtScanlines      = P.scanlines;
++    q.crtScanlineWeight = P.scanlineWeight;
++    q.crtDotmask        = P.dotmask;
++    g_scene.setRenderQuality(q);
++
++    if (writeState) {
++        const bool anyActive = g_crtGlobalOn || !g_crtWindows.empty();
++        std::ofstream st("/tmp/mios-hypr3d-crt.state", std::ios::trunc);
++        if (st) {
++            st << "active=" << (anyActive ? 1 : 0) << "\n"
++               << "global=" << (g_crtGlobalOn ? 1 : 0) << "\n"
++               << "preset=" << P.name << "\n"
++               << "preset_idx=" << g_crtPresetIdx << "\n"
++               << "targets=";
++            bool first = true;
++            for (const auto wid : g_crtWindows) {
++                if (!first)
++                    st << ",";
++                st << "0x" << std::hex << wid << std::dec;
++                first = false;
++            }
++            st << "\n";
++        }
++        std::ofstream hst("/tmp/hypr3d-status.txt", std::ios::app);
++        if (hst) {
++            hst << "crtGlobal=" << (g_crtGlobalOn ? 1 : 0)
++                << " crtPreset=" << P.name
++                << " crtWindows=" << (g_crtGlobalOn ? std::max<size_t>(1, g_crtWindows.size()) : g_crtWindows.size()) << "\n";
++        }
++    }
++
++    HyprlandAPI::invokeHyprctlCommand("keyword", "decoration:screen_shader [[EMPTY]]");
++    damageCurrentMonitor();
++}
++
++static std::uintptr_t targetCrtWindow() {
++    if (g_lastFocusId != 0 && g_world.find(g_lastFocusId))
++        return g_lastFocusId;
++    const auto FOCUSED = Compat::focusedWindow();
++    if (FOCUSED) {
++        const auto id = Compat::windowId(FOCUSED);
++        if (g_world.find(id))
++            return id;
++    }
++    if (!g_world.entities().empty())
++        return g_world.entities().front().id;
++    return 0;
++}
++
++static void toggleWindowCrt(std::uintptr_t id) {
++    if (id != 0) {
++        if (g_crtGlobalOn) {
++            g_crtGlobalOn = false;
++            g_crtWindows.clear();
++        } else if (g_crtWindows.contains(id)) {
++            g_crtWindows.erase(id);
++        } else {
++            g_crtWindows.insert(id);
++        }
++    } else {
++        g_crtGlobalOn = !g_crtGlobalOn;
++        if (g_crtGlobalOn) {
++            for (const auto& entity : g_world.entities())
++                g_crtWindows.insert(entity.id);
++        } else {
++            g_crtWindows.clear();
++        }
++    }
++    applyGlobalShaderGlassState(true);
++    const auto& P = kCrtPresets[g_crtPresetIdx % kCrtPresets.size()];
++    const bool onNow = g_crtGlobalOn || (id != 0 && g_crtWindows.contains(id));
++    notify(std::string("[hypr3d] ShaderGlass CRT ") + (onNow ? (std::string("enabled (") + P.name + ")") : "disabled"),
++           CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++}
++
++static void selectWindowCrt() {
++    if (g_world.entities().empty()) {
++        cycleCrtPreset();
++        return;
++    }
++
++    std::vector<std::pair<std::uintptr_t, std::string>> entries;
++    for (const auto& entity : g_world.entities()) {
++        std::string title;
++        std::string cls;
++        if (auto W = Compat::findWindowById(entity.id)) {
++            title = W->m_title;
++            cls = W->m_class;
++        }
++        if (cls.empty()) cls = "window";
++        if (title.empty()) title = "(untitled)";
++        std::ostringstream ss;
++        ss << "0x" << std::hex << entity.id << " " << cls << " \xe2\x80\x94 " << title;
++        entries.emplace_back(entity.id, ss.str());
++    }
++
++    if (entries.empty())
++        return;
++
++    bool hasMenu = false;
++    for (const char* tool : {"wofi", "rofi", "zenity"}) {
++        std::string checkCmd = std::string("which ") + tool + " >/dev/null 2>&1";
++        if (system(checkCmd.c_str()) == 0) {
++            hasMenu = true;
++            break;
++        }
++    }
++
++    if (hasMenu) {
++        std::string inputList;
++        for (const auto& entry : entries) {
++            inputList += entry.second + "\\n";
++        }
++        std::string cmd = "sh -c 'CHOICE=$(printf \"" + inputList + "\" | (wofi --dmenu -p \"Hypr3D ShaderGlass Window\" 2>/dev/null || rofi -dmenu -p \"Hypr3D ShaderGlass Window\" 2>/dev/null || zenity --list --column=\"Windows\" --title=\"Hypr3D ShaderGlass Window\" 2>/dev/null) | awk \"{print \\$1}\"); if [ -n \"$CHOICE\" ]; then hyprctl dispatch hypr3d:crt \"$CHOICE\"; fi' &";
++        system(cmd.c_str());
++    } else {
++        cycleCrtPreset();
++    }
++}
++
+ static void onKeyboardKey(
+     IKeyboard::SKeyEvent event,
+     Event::SCallbackInfo& info
+ ) {
+-    if (!ownsInput())
+-        return;
+-
+     if (!g_pSeatManager || g_pSeatManager->m_keyboard.expired())
+         return;
+ 
+@@ -6647,7 +7767,24 @@     // gestures, and Super + Left Alt toggles the keyboard mode.
+     if (SYM == XKB_KEY_Super_L || SYM == XKB_KEY_Super_R)
+         g_superHeld = PRESSED;
+-    else if (SYM == XKB_KEY_Alt_L)
++    else if (SYM == XKB_KEY_Alt_L || SYM == XKB_KEY_Alt_R)
+         g_altHeld = PRESSED;
++    else if (SYM == XKB_KEY_Shift_L || SYM == XKB_KEY_Shift_R)
++        g_shiftHeld = PRESSED;
++
++    // Super+F12 belongs to the global 3D toggle binding. Only intercept
++    // fullscreen here while the room owns the fullscreen handoff.
++    if (PRESSED && g_superHeld && !g_shiftHeld &&
++        SYM == XKB_KEY_F11 && g_active && g_transition >= 0.9f) {
++        toggleFullscreen2D(/*allowExit=*/true);
++        info.cancelled = true;
++        return;
++    }
++
++    if (!g_active || g_transition < 0.9f)
++        return;
++
++    if (!ownsInput())
++        return;
+ 
+     // A layer holds the keyboard (launcher, sidebar text field): every key
+     // is its, in both modes. Held camera keys must not keep walking.
+@@ -6658,14 +7795,32 @@         return;
+     }
+ 
+-    // Walking mode: Space jumps off whatever the capsule stands on. The
+-    // held state still reaches setMovementSym, but the walking movement
+-    // path zeroes the vertical input, so holding Space does not fly.
++    // Walking / Flying mode: single-press Space jumps off whatever the capsule
++    // stands on; double-press Space within 350ms toggles Flying / Hover mode.
+     // SPACE KEYBOARD MODE ONLY: in Window mode the key belongs to the
+     // focused window -- a jump here would fire on every typed space.
+     if (PRESSED && SYM == XKB_KEY_space &&
+-        g_keyboardMode == EKeyboardMode::Space &&
+-        !g_playerFlying && g_grounded)
+-        g_playerJumpQueued = true; // applied to the body in update3D
++        g_keyboardMode == EKeyboardMode::Space) {
++        static auto s_lastSpacePress = std::chrono::steady_clock::time_point{};
++        const auto now = std::chrono::steady_clock::now();
++        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
++            now - s_lastSpacePress).count();
++        if (s_lastSpacePress.time_since_epoch().count() != 0 &&
++            elapsedMs >= 30 && elapsedMs <= 350) {
++            s_lastSpacePress = {};
++            toggleFlyMode("toggle");
++        } else {
++            s_lastSpacePress = now;
++            if (!g_playerFlying)
++                triggerJump();
++        }
++    }
++
++    // In Walking/Gravity mode, pressing Shift cycles posture (Stand -> Crouch -> Sit -> Stand).
++    if (PRESSED && (SYM == XKB_KEY_Shift_L || SYM == XKB_KEY_Shift_R) &&
++        !g_superHeld && !g_altHeld &&
++        g_keyboardMode == EKeyboardMode::Space && !g_playerFlying) {
++        cyclePosture("cycle");
++    }
+ 
+     // F3 toggles the debug HUD (collision wireframe + info overlay) in both
+     // keyboard modes: it never belongs to the focused window.
+@@ -6687,5 +7842,21 @@                 EKeyboardMode::Window :
+                 EKeyboardMode::Space);
+ 
++        info.cancelled = true;
++        return;
++    }
++
++    // ShaderGlass CRT keybind intercepts in 3D mode:
++    // Super+Shift+G or Super+Alt+S: toggle CRT on target window
++    // Super+Alt+G: open CRT window selector / picker
++    if (PRESSED && ((g_superHeld && g_shiftHeld && (SYM == XKB_KEY_G || SYM == XKB_KEY_g)) ||
++                    (g_superHeld && g_altHeld && (SYM == XKB_KEY_S || SYM == XKB_KEY_s)))) {
++        toggleWindowCrt(targetCrtWindow());
++        info.cancelled = true;
++        return;
++    }
++
++    if (PRESSED && (g_superHeld && g_altHeld && (SYM == XKB_KEY_G || SYM == XKB_KEY_g))) {
++        selectWindowCrt();
+         info.cancelled = true;
+         return;
+     }
+@@ -7048,5 +8219,22 @@         q.scale = std::clamp(q.scale, 1.0f, 4.0f);
+         q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
+         q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
++        // MiOS CRT: barrel curvature, radius, scanlines, scanline weight, dotmask.
++        if (!SET_BOOL(idx, "crt_curvature", q.crtCurvature, "render.crt_curvature"))
++            return luaL_error(L, "hypr3d.config: render.crt_curvature must be a boolean");
++        if (!SET_NUM(idx, "crt_radius", q.crtRadius, "render.crt_radius") || !std::isfinite(q.crtRadius))
++            return luaL_error(L, "hypr3d.config: render.crt_radius must be a number");
++        if (!SET_BOOL(idx, "crt_scanlines", q.crtScanlines, "render.crt_scanlines"))
++            return luaL_error(L, "hypr3d.config: render.crt_scanlines must be a boolean");
++        if (!SET_NUM(idx, "crt_scanline_weight", q.crtScanlineWeight, "render.crt_scanline_weight") || !std::isfinite(q.crtScanlineWeight))
++            return luaL_error(L, "hypr3d.config: render.crt_scanline_weight must be a number");
++        if (!SET_NUM(idx, "crt_dotmask", q.crtDotmask, "render.crt_dotmask") || !std::isfinite(q.crtDotmask))
++            return luaL_error(L, "hypr3d.config: render.crt_dotmask must be a number");
++        if (!SET_BOOL(idx, "crt_default_on", g_cfgCrtDefaultOn, "render.crt_default_on"))
++            return luaL_error(L, "hypr3d.config: render.crt_default_on must be a boolean");
++        q.crtDefaultOn = g_cfgCrtDefaultOn;
++        q.crtRadius = std::max(q.crtRadius, 0.1f);
++        q.crtScanlineWeight = std::clamp(q.crtScanlineWeight, 0.0f, 1.0f);
++        q.crtDotmask = std::clamp(q.crtDotmask, 0.0f, 1.0f);
+         g_scene.setRenderQuality(q);
+         // MiOS stills: no crosshair, room over the 2D shell layers.
+         if (!SET_BOOL(idx, "stills", g_cfgStills, "render.stills"))
+@@ -7082,5 +8270,17 @@         if (!SET_NUM(idx, "depth", g_cfgWindowDepth,
+                      "windows.depth"))
+             return luaL_error(L, "hypr3d.config: windows.depth must be a number");
++        if (!SET_NUM(idx, "eyeline_offset", g_cfgEyelineOffset,
++                     "windows.eyeline_offset"))
++            return luaL_error(L, "hypr3d.config: windows.eyeline_offset must be a number");
++        if (!SET_NUM(idx, "tilt_angle_deg", g_cfgTiltAngleDeg,
++                     "windows.tilt_angle_deg"))
++            return luaL_error(L, "hypr3d.config: windows.tilt_angle_deg must be a number");
++        if (!SET_STRING(idx, "open_effect_3d", g_cfgOpenEffect3D,
++                        "windows.open_effect_3d"))
++            return luaL_error(L, "hypr3d.config: windows.open_effect_3d must be a string");
++        if (!SET_STRING(idx, "close_effect_3d", g_cfgCloseEffect3D,
++                        "windows.close_effect_3d"))
++            return luaL_error(L, "hypr3d.config: windows.close_effect_3d must be a string");
+ 
+         // MiOS retina spawn (see g_cfgPixelExact).
+         if (!SET_BOOL(idx, "pixel_exact", g_cfgPixelExact, "windows.pixel_exact"))
+@@ -7673,5 +8873,814 @@     return {};
+ }
+ 
++static SDispatchResult dispatchCamera(std::string args) {
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++
++    if (args.find("stop") != std::string::npos || args.find("reset") != std::string::npos) {
++        g_analogLookX = 0.0f;
++        g_analogLookY = 0.0f;
++        g_input.reset();
++        damageCurrentMonitor();
++        return {};
++    }
++
++    for (char& c : args) {
++        if (c == ',')
++            c = ' ';
++    }
++    std::istringstream iss(args);
++    double dx = 0.0, dy = 0.0;
++    if (!(iss >> dx >> dy))
++        return {.success = false, .error = "hypr3d:camera requires dx and dy arguments"};
++
++    if (std::fabs(dx) <= 2.0 && std::fabs(dy) <= 2.0) {
++        if (dx == 0.0 && dy == 0.0) {
++            g_input.reset();
++            damageCurrentMonitor();
++            return {};
++        }
++        dx *= 16.0;
++        dy *= 16.0;
++    }
++
++    if (pointerFree()) {
++        vcMove(dx, dy);
++    } else {
++        g_input.addMotion(dx, dy);
++    }
++    damageCurrentMonitor();
++    return {};
++}
++
++static SDispatchResult dispatchMove(std::string args) {
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++
++    for (char& c : args) {
++        if (c == ',')
++            c = ' ';
++    }
++    std::istringstream iss(args);
++    float val1 = 0.0f, val2 = 0.0f;
++    if (iss >> val1) {
++        if (iss >> val2) {
++            g_analogStrafe = std::clamp(val1, -1.0f, 1.0f);
++            g_analogFwd    = std::clamp(-val2, -1.0f, 1.0f);
++        } else {
++            g_analogFwd    = std::clamp(val1, -1.0f, 1.0f);
++            g_analogStrafe = 0.0f;
++        }
++        g_lastAnalogMoveTime = std::chrono::steady_clock::now();
++        if (std::fabs(g_analogStrafe) < 0.001f && std::fabs(g_analogFwd) < 0.001f) {
++            g_analogStrafe = 0.0f;
++            g_analogFwd    = 0.0f;
++            s_moveVel      = {};
++        }
++        damageCurrentMonitor();
++        return {};
++    }
++
++    if (args.find("stop") != std::string::npos || args.find("reset") != std::string::npos) {
++        g_analogFwd    = 0.0f;
++        g_analogStrafe = 0.0f;
++        s_moveVel      = {};
++        damageCurrentMonitor();
++        return {};
++    }
++
++    return {.success = false, .error = "hypr3d:move requires <lx> <ly> or 'stop'"};
++}
++
++static SDispatchResult dispatchCrt(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++
++    if (args.empty() || args == "toggle" || args == "active") {
++        toggleWindowCrt(targetCrtWindow());
++        return {};
++    }
++
++    if (args == "select" || args == "picker") {
++        selectWindowCrt();
++        return {};
++    }
++
++    if (args == "cycle" || args == "preset" || args == "next") {
++        cycleCrtPreset();
++        return {};
++    }
++
++    if (args == "all" || args == "on") {
++        g_crtGlobalOn = true;
++        for (const auto& entity : g_world.entities()) {
++            g_crtWindows.insert(entity.id);
++        }
++        applyGlobalShaderGlassState(true);
++        notify("[hypr3d] ShaderGlass CRT enabled globally",
++               CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++        return {};
++    }
++
++    if (args == "off" || args == "clear") {
++        g_crtGlobalOn = false;
++        g_crtWindows.clear();
++        applyGlobalShaderGlassState(true);
++        notify("[hypr3d] ShaderGlass CRT disabled globally",
++               CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++        return {};
++    }
++
++    std::string subcmd;
++    std::string hexStr = args;
++    if (args.rfind("on ", 0) == 0) {
++        subcmd = "on";
++        hexStr = args.substr(3);
++    } else if (args.rfind("off ", 0) == 0) {
++        subcmd = "off";
++        hexStr = args.substr(4);
++    } else if (args.rfind("toggle ", 0) == 0) {
++        subcmd = "toggle";
++        hexStr = args.substr(7);
++    }
++
++    while (!hexStr.empty() && std::isspace(static_cast<unsigned char>(hexStr.front())))
++        hexStr.erase(hexStr.begin());
++
++    try {
++        std::uintptr_t winId = std::stoull(hexStr, nullptr, 16);
++        if (winId != 0) {
++            if (subcmd == "on") {
++                g_crtWindows.insert(winId);
++                applyGlobalShaderGlassState(true);
++                notify("[hypr3d] ShaderGlass CRT enabled on window", CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++            } else if (subcmd == "off") {
++                g_crtWindows.erase(winId);
++                applyGlobalShaderGlassState(true);
++                notify("[hypr3d] ShaderGlass CRT disabled on window", CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++            } else {
++                toggleWindowCrt(winId);
++            }
++            return {};
++        }
++    } catch (...) {
++    }
++
++    return {.success = false, .error = "unknown hypr3d:crt command: " + args};
++}
++
++static bool startGrab3D() {
++    if (!ownsInput() || g_fsPhase != EFullscreenPhase::None)
++        return false;
++
++    const World3D::SHit HIT = aimHit();
++    const auto TARGET = HIT.hit ? targetFromHit(HIT.id) : SHitTarget{};
++    const auto& CAM = g_scene.camera();
++    const Vec3 DIR = CAM.centerRay();
++
++    float bestT = -1.f;
++    size_t bestIdx = SIZE_MAX;
++
++    for (size_t i = 0; i < g_sceneObjects.size(); ++i) {
++        if (!g_sceneObjects[i].dynamic)
++            continue;
++
++        const auto* MODEL = g_scene.sceneModel(i);
++        if (!MODEL || !MODEL->loaded())
++            continue;
++
++        const float T = MODEL->rayCast(CAM.position, DIR);
++        if (T > 0.f && (bestT < 0.f || T < bestT)) {
++            bestT   = T;
++            bestIdx = i;
++        }
++    }
++
++    if (bestIdx != SIZE_MAX && bestT < 0.f)
++        bestIdx = SIZE_MAX;
++    if (bestIdx != SIZE_MAX && HIT.hit && bestT >= HIT.distance)
++        bestIdx = SIZE_MAX;
++
++    if (bestIdx != SIZE_MAX) {
++        const auto* MODEL = g_scene.sceneModel(bestIdx);
++        g_mapGrabIndex = bestIdx;
++        g_mapGrabDist  = std::sqrt(
++            (MODEL->position() - CAM.position).x * (MODEL->position() - CAM.position).x +
++            (MODEL->position() - CAM.position).y * (MODEL->position() - CAM.position).y +
++            (MODEL->position() - CAM.position).z * (MODEL->position() - CAM.position).z);
++        s_modelZoomId    = SIZE_MAX;
++        g_pointerGesture = EPointerGesture::MapDrag;
++        g_pointerButton  = BTN_LEFT;
++        g_pointerDown    = true;
++        g_resize         = {};
++        damageCurrentMonitor();
++        return true;
++    }
++
++    World3D::SHit useHit = HIT;
++    SHitTarget useTarget = TARGET;
++
++    if (!useTarget.window && !useTarget.layer) {
++        const auto fallbackId = (pointerFree() && g_vcId != 0) ? g_vcId : targetCrtWindow();
++        const auto* ENTITY = fallbackId ? g_world.find(fallbackId) : nullptr;
++        if (!ENTITY)
++            return false;
++        useTarget = targetFromHit(fallbackId);
++        if (!useTarget.window && !useTarget.layer)
++            return false;
++
++        useHit.hit = true;
++        useHit.id  = fallbackId;
++        useHit.u   = 0.5f;
++        useHit.v   = 0.5f;
++        Vec3 planePt{};
++        if (!rayPlanePoint(CAM.position, DIR, ENTITY->center, g_world.normalOf(fallbackId), planePt)) {
++            const Vec3 toEnt = ENTITY->center - CAM.position;
++            const float d = std::max(0.5f, std::sqrt(dot(toEnt, toEnt)));
++            planePt = CAM.position + DIR * d;
++        }
++        useHit.point = planePt;
++        const Vec3 diff = planePt - CAM.position;
++        useHit.distance = std::sqrt(dot(diff, diff));
++    }
++
++    if (useTarget.window)
++        focusRoomWindow(useTarget.window);
++
++    if (!g_world.startDrag(useHit.id, useHit, CAM.position, CAM.forward()))
++        return false;
++
++    s_zoomId = 0;
++    if (g_fsAssertFrames > 0 && useTarget.window && useHit.id == Compat::windowId(useTarget.window)) {
++        g_fsAssertFrames = 0;
++        g_fsWindow = {};
++    }
++
++    g_pointerGesture = EPointerGesture::Move3D;
++    g_pointerButton  = BTN_LEFT;
++    g_pointerDown    = true;
++    g_resize         = {};
++    damageCurrentMonitor();
++    return true;
++}
++
++static bool startResize3D() {
++    if (!ownsInput() || g_fsPhase != EFullscreenPhase::None)
++        return false;
++
++    const auto& CAM = g_scene.camera();
++    const Vec3 DIR = CAM.centerRay();
++    World3D::SHit useHit = aimHit();
++    SHitTarget useTarget = useHit.hit ? targetFromHit(useHit.id) : SHitTarget{};
++
++    if (useTarget.window && modelInFront(CAM.position, DIR, useHit))
++        return false;
++
++    if (!useTarget.window) {
++        const auto fallbackId = (pointerFree() && g_vcId != 0) ? g_vcId : targetCrtWindow();
++        const auto* ENTITY = fallbackId ? g_world.find(fallbackId) : nullptr;
++        if (!ENTITY)
++            return false;
++        useTarget = targetFromHit(fallbackId);
++        if (!useTarget.window)
++            return false;
++
++        useHit.hit = true;
++        useHit.id  = fallbackId;
++        Vec3 planePt{};
++        if (!rayPlanePoint(CAM.position, DIR, ENTITY->center, g_world.normalOf(fallbackId), planePt)) {
++            const Vec3 toEnt = ENTITY->center - CAM.position;
++            const float d = std::max(0.5f, std::sqrt(dot(toEnt, toEnt)));
++            planePt = CAM.position + DIR * d;
++        }
++        useHit.point = planePt;
++        const Vec3 diff = planePt - CAM.position;
++        useHit.distance = std::sqrt(dot(diff, diff));
++        const Vec3 local = g_world.localPoint(fallbackId, planePt);
++        useHit.u = local.x < 0.0f ? 0.25f : 0.75f;
++        useHit.v = local.y > 0.0f ? 0.25f : 0.75f;
++    }
++
++    const auto* ENTITY = g_world.find(useHit.id);
++    if (!ENTITY || !useTarget.window)
++        return false;
++
++    focusRoomWindow(useTarget.window);
++
++    g_resize = {};
++    g_resize.active = true;
++    g_resize.id = useHit.id;
++    g_resize.window = useTarget.window;
++    g_resize.startBox = Compat::currentWindowBox(useTarget.window);
++    g_resize.startCenter = ENTITY->center;
++    g_resize.startWorldWidth = ENTITY->width;
++    g_resize.startWorldHeight = ENTITY->height;
++    g_resize.planePoint = ENTITY->center;
++    g_resize.planeNormal = g_world.normalOf(useHit.id);
++    g_resize.edgeX = useHit.u < 0.5f ? -1 : 1;
++    g_resize.edgeY = useHit.v < 0.5f ? 1 : -1;
++    g_resize.grabPx = worldPointToGlobalPx(targetMonitor(), useHit.point);
++
++    g_pointerGesture = EPointerGesture::ResizeReal;
++    g_pointerButton  = BTN_RIGHT;
++    g_pointerDown    = true;
++    damageCurrentMonitor();
++    return true;
++}
++
++static SDispatchResult dispatchGrab(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++
++    const bool grabHeld = g_pointerDown &&
++        (g_pointerGesture == EPointerGesture::Move3D || g_pointerGesture == EPointerGesture::MapDrag);
++
++    if (args == "up" || args == "release" || args == "0" || args == "stop" || args == "off") {
++        if (grabHeld) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++        }
++        return {};
++    }
++
++    if (args == "down" || args == "press" || args == "1" || args == "start" || args == "on") {
++        if (!ownsInput())
++            return {.success = false, .error = "hypr3d not active or not owning input"};
++        if (grabHeld)
++            return {};
++        if (!startGrab3D())
++            return {.success = false, .error = "hypr3d:grab could not start window grab"};
++        return {};
++    }
++
++    if (args.empty() || args == "toggle") {
++        if (grabHeld) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++            return {};
++        }
++        if (!ownsInput())
++            return {.success = false, .error = "hypr3d not active or not owning input"};
++        if (!startGrab3D())
++            return {.success = false, .error = "hypr3d:grab could not start window grab"};
++        return {};
++    }
++
++    return {.success = false, .error = "unknown hypr3d:grab argument: " + args};
++}
++
++static SDispatchResult dispatchResize(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++
++    const bool resizeHeld = g_pointerDown && g_pointerGesture == EPointerGesture::ResizeReal;
++
++    if (args == "up" || args == "release" || args == "0" || args == "stop" || args == "off") {
++        if (resizeHeld) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++        }
++        return {};
++    }
++
++    if (args == "down" || args == "press" || args == "1" || args == "start" || args == "on") {
++        if (!ownsInput())
++            return {.success = false, .error = "hypr3d not active or not owning input"};
++        if (resizeHeld)
++            return {};
++        if (!startResize3D())
++            return {.success = false, .error = "hypr3d:resize could not start window resize"};
++        return {};
++    }
++
++    if (args.empty() || args == "toggle") {
++        if (resizeHeld) {
++            resetPointerGesture();
++            damageCurrentMonitor();
++            return {};
++        }
++        if (!ownsInput())
++            return {.success = false, .error = "hypr3d not active or not owning input"};
++        if (!startResize3D())
++            return {.success = false, .error = "hypr3d:resize could not start window resize"};
++        return {};
++    }
++
++    return {.success = false, .error = "unknown hypr3d:resize argument: " + args};
++}
++
++static void cycleCameraViewMode(const std::string& arg) {
++    if (!ownsInput())
++        return;
++
++    if (arg == "0" || arg == "first" || arg == "fp") {
++        g_viewMode = 0;
++    } else if (arg == "1" || arg == "third" || arg == "behind") {
++        g_viewMode = 1;
++    } else if (arg == "2" || arg == "front" || arg == "mirror") {
++        g_viewMode = 2;
++    } else {
++        g_viewMode = (g_viewMode + 1) % 3;
++    }
++
++    g_scene.camera().mirrorView = (g_viewMode == 2);
++    g_scene.setPlayerVisible(g_viewMode != 0);
++
++    const char* modeName =
++        (g_viewMode == 0) ? "first person" :
++        (g_viewMode == 1) ? "third person (behind)" :
++                            "third person (front)";
++    notify(std::string("[hypr3d] camera view: ") + modeName,
++           CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++    damageCurrentMonitor();
++}
++
++static void toggleCursorCameraMode(const std::string& arg) {
++    if (!ownsInput())
++        return;
++
++    if (arg == "cursor" || arg == "window" || arg == "1") {
++        setKeyboardMode(EKeyboardMode::Window);
++    } else if (arg == "camera" || arg == "space" || arg == "0") {
++        setKeyboardMode(EKeyboardMode::Space);
++    } else {
++        setKeyboardMode(g_keyboardMode == EKeyboardMode::Window ?
++                            EKeyboardMode::Space :
++                            EKeyboardMode::Window);
++    }
++}
++
++static void triggerJump() {
++    if (!ownsInput())
++        return;
++    if (g_playerFlying)
++        return;
++    if (g_playerPosture != EPlayerPosture::Stand) {
++        g_playerPosture = EPlayerPosture::Stand;
++        notify("[hypr3d] posture: stand", CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++        damageCurrentMonitor();
++    }
++    if (g_grounded || !g_playerBody.IsInvalid())
++        g_playerJumpQueued = true;
++    damageCurrentMonitor();
++}
++
++static void toggleFlyMode(const std::string& arg) {
++    if (!ownsInput())
++        return;
++
++    if (arg == "on" || arg == "1" || arg == "fly" || arg == "hover" || arg == "true") {
++        g_playerFlying = true;
++    } else if (arg == "off" || arg == "0" || arg == "walk" || arg == "gravity" || arg == "false") {
++        g_playerFlying = false;
++    } else {
++        g_playerFlying = !g_playerFlying;
++    }
++
++    if (g_playerFlying) {
++        g_playerPosture = EPlayerPosture::Stand;
++        g_playerJumpQueued = false;
++        if (!g_playerBody.IsInvalid() && g_bodyIf) {
++            g_bodyIf->SetGravityFactor(g_playerBody, 0.0f);
++            g_bodyIf->SetLinearVelocity(g_playerBody, JPH::Vec3::sZero());
++        }
++        notify("[hypr3d] movement: flying / hover mode (South=Up, West=Down)",
++               CHyprColor{0.2f, 0.8f, 0.9f, 1.0f});
++    } else {
++        g_analogVertical = 0.0f;
++        if (!g_playerBody.IsInvalid() && g_bodyIf) {
++            g_bodyIf->SetGravityFactor(g_playerBody, 1.0f);
++            g_bodyIf->ActivateBody(g_playerBody);
++        }
++        notify("[hypr3d] movement: gravity / walking mode",
++               CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++    }
++    damageCurrentMonitor();
++}
++
++static void cyclePosture(const std::string& arg) {
++    if (!ownsInput())
++        return;
++
++    if (g_playerFlying)
++        return;
++
++    if (arg == "stand" || arg == "0") {
++        g_playerPosture = EPlayerPosture::Stand;
++    } else if (arg == "crouch" || arg == "1") {
++        g_playerPosture = EPlayerPosture::Crouch;
++    } else if (arg == "sit" || arg == "2") {
++        g_playerPosture = EPlayerPosture::Sit;
++    } else {
++        switch (g_playerPosture) {
++            case EPlayerPosture::Stand:  g_playerPosture = EPlayerPosture::Crouch; break;
++            case EPlayerPosture::Crouch: g_playerPosture = EPlayerPosture::Sit;    break;
++            case EPlayerPosture::Sit:    g_playerPosture = EPlayerPosture::Stand;  break;
++        }
++    }
++
++    const char* name =
++        (g_playerPosture == EPlayerPosture::Crouch) ? "crouch" :
++        (g_playerPosture == EPlayerPosture::Sit)    ? "sit" :
++                                                      "stand";
++    notify(std::string("[hypr3d] posture: ") + name,
++           CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++    damageCurrentMonitor();
++}
++
++static void toggleFullscreen2D(bool allowExit) {
++    if (!g_active)
++        return;
++
++    const auto MON = targetMonitor();
++    if (!MON)
++        return;
++
++    const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++    if (g_fsPhase == EFullscreenPhase::In2D ||
++        g_fsPhase == EFullscreenPhase::To2D || FSW) {
++        const auto W = FSW ? FSW : g_fsWindow.lock();
++        if (!allowExit) {
++            // North button while already in 2D fullscreen captures input to the current window
++            // rather than exiting back to 3D (L3+R3 or Super+F12 returns to 3D).
++            if (W) {
++                focusRoomWindow(W);
++                setKeyboardMode(EKeyboardMode::Window);
++                notify("[hypr3d] input captured to 2D fullscreen window (press L3+R3 or Super+F12 to return to 3D)",
++                       CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++            }
++            damageCurrentMonitor();
++            return;
++        }
++        if (W) {
++            Fullscreen::controller()->setFullscreenMode(
++                W, Fullscreen::FSMODE_NONE, Fullscreen::FSMODE_NONE);
++        }
++        if (g_fsPhase == EFullscreenPhase::In2D ||
++            g_fsPhase == EFullscreenPhase::To2D) {
++            startTo3D();
++        }
++        notify("[hypr3d] returned from 2D fullscreen to 3D room",
++               CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++        damageCurrentMonitor();
++        return;
++    }
++
++    if (!ownsInput())
++        return;
++
++    std::uintptr_t targetId = 0;
++    if (pointerFree() && g_vcId != 0 && g_world.find(g_vcId)) {
++        targetId = g_vcId;
++    } else {
++        const auto HIT = aimHit();
++        if (HIT.hit && g_world.find(HIT.id))
++            targetId = HIT.id;
++    }
++    if (targetId == 0)
++        targetId = targetCrtWindow();
++    if (targetId == 0)
++        return;
++
++    const auto W = Compat::findWindowById(targetId);
++    if (!W)
++        return;
++
++    focusRoomWindow(W);
++    startTo2D(W, /*captureRestoreBox=*/true);
++    Fullscreen::controller()->setFullscreenMode(
++        W, Fullscreen::FSMODE_FULLSCREEN, Fullscreen::FSMODE_FULLSCREEN);
++    notify("[hypr3d] fullscreened window in 2D (press L3+R3 or Super+F12 to return to 3D)",
++           CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++    damageCurrentMonitor();
++}
++
++static void cycleCrtPreset() {
++    g_crtPresetIdx = (g_crtPresetIdx + 1) % kCrtPresets.size();
++    const auto& P = kCrtPresets[g_crtPresetIdx];
++
++    g_crtGlobalOn = true;
++    const auto target = targetCrtWindow();
++    if (target != 0 && !g_crtWindows.contains(target))
++        g_crtWindows.insert(target);
++    for (const auto& entity : g_world.entities())
++        g_crtWindows.insert(entity.id);
++
++    applyGlobalShaderGlassState(true);
++    notify(std::string("[hypr3d] ShaderGlass preset: ") + P.name,
++           CHyprColor{0.4f, 0.8f, 0.4f, 1.0f});
++}
++
++static void vcClickButton(uint32_t button, bool pressed) {
++    if (!ownsInput())
++        return;
++
++    const uint32_t nowMs = inputTimeMs();
++
++    if (!pressed) {
++        if (g_clientButtonDown && button == g_clientButton)
++            finishClientButton(nowMs);
++        damageCurrentMonitor();
++        return;
++    }
++
++    if (g_clientButtonDown)
++        finishClientButton(nowMs);
++
++    if (pointerFree()) {
++        const auto MON = targetMonitor();
++        if (MON && g_vcSpace == ECursorSpace::Screen)
++            vcResolveScreen(MON);
++
++        if (g_vcId != 0) {
++            const auto* E = g_world.find(g_vcId);
++            const auto TARGET = targetFromHit(g_vcId);
++            if (E && (TARGET.window || TARGET.layer)) {
++                const auto LOCAL = surfaceLocal(*E, g_vcLocal);
++                const Vector2D RAW_LOCAL{g_vcLocal.x - E->surfaceOffsetX, g_vcLocal.y - E->surfaceOffsetY};
++                if ((button == BTN_LEFT || button == BTN_RIGHT) && TARGET.window && handleHyprbarsClick3D(TARGET.window, RAW_LOCAL, button))
++                    return;
++                if (TARGET.window) {
++                    Compat::focusWindow(TARGET.window);
++                    g_lastFocusId = g_vcId;
++                }
++                if (TARGET.layer)
++                    Compat::deliverClick(TARGET.layer, LOCAL, button, true, nowMs);
++                else
++                    Compat::deliverClick(TARGET.window, LOCAL, button, true, nowMs);
++                g_clientButtonWindow = TARGET.window;
++                g_clientButtonLayer  = TARGET.layer;
++                g_clientButton       = button;
++                g_clientButtonLocal  = LOCAL;
++                g_clientButtonDown   = true;
++                damageCurrentMonitor();
++                return;
++            }
++        }
++
++        if (MON && g_vcId == 0) {
++            const World3D::SHit scrHit = pickVisible(screenRay(MON, g_vcScreen));
++            if (scrHit.hit)
++                vcEnterWindow(scrHit);
++            if (g_vcId != 0) {
++                const auto* E = g_world.find(g_vcId);
++                const auto TARGET = targetFromHit(g_vcId);
++                if (E && (TARGET.window || TARGET.layer)) {
++                    const auto LOCAL = surfaceLocal(*E, g_vcLocal);
++                    const Vector2D RAW_LOCAL{g_vcLocal.x - E->surfaceOffsetX, g_vcLocal.y - E->surfaceOffsetY};
++                    if ((button == BTN_LEFT || button == BTN_RIGHT) && TARGET.window && handleHyprbarsClick3D(TARGET.window, RAW_LOCAL, button))
++                        return;
++                    if (TARGET.window) {
++                        Compat::focusWindow(TARGET.window);
++                        g_lastFocusId = g_vcId;
++                    }
++                    if (TARGET.layer)
++                        Compat::deliverClick(TARGET.layer, LOCAL, button, true, nowMs);
++                    else
++                        Compat::deliverClick(TARGET.window, LOCAL, button, true, nowMs);
++                    g_clientButtonWindow = TARGET.window;
++                    g_clientButtonLayer  = TARGET.layer;
++                    g_clientButton       = button;
++                    g_clientButtonLocal  = LOCAL;
++                    g_clientButtonDown   = true;
++                    damageCurrentMonitor();
++                    return;
++                }
++            }
++        }
++    }
++
++    const World3D::SHit HIT = aimHit();
++    const auto TARGET = HIT.hit ? targetFromHit(HIT.id) : SHitTarget{};
++    if (!TARGET.window && !TARGET.layer)
++        return;
++
++    const Vector2D LOCAL = localFromHit(HIT);
++    Vector2D RAW_LOCAL = LOCAL;
++    if (const auto* E = g_world.find(HIT.id)) {
++        RAW_LOCAL = Vector2D{
++            std::clamp(HIT.u, 0.0f, 1.0f) * E->logicalWidth - E->surfaceOffsetX,
++            std::clamp(HIT.v, 0.0f, 1.0f) * E->logicalHeight - E->surfaceOffsetY,
++        };
++    }
++    if ((button == BTN_LEFT || button == BTN_RIGHT) && TARGET.window && handleHyprbarsClick3D(TARGET.window, RAW_LOCAL, button))
++        return;
++    if (TARGET.window)
++        focusRoomWindow(TARGET.window);
++
++    if (TARGET.layer)
++        Compat::deliverClick(TARGET.layer, LOCAL, button, true, nowMs);
++    else
++        Compat::deliverClick(TARGET.window, LOCAL, button, true, nowMs);
++
++    g_clientButtonWindow = TARGET.window;
++    g_clientButtonLayer  = TARGET.layer;
++    g_clientButton       = button;
++    g_clientButtonLocal  = LOCAL;
++    g_clientButtonDown   = true;
++    damageCurrentMonitor();
++}
++
++static SDispatchResult dispatchJump(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    if (args == "fly" || args == "double")
++        toggleFlyMode("toggle");
++    else
++        triggerJump();
++    return {};
++}
++
++static SDispatchResult dispatchFly(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    toggleFlyMode(args.empty() ? "toggle" : args);
++    return {};
++}
++
++static SDispatchResult dispatchPosture(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    cyclePosture(args.empty() ? "cycle" : args);
++    return {};
++}
++
++static SDispatchResult dispatchFullscreen(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!g_active)
++        return {.success = false, .error = "hypr3d not active"};
++    const bool allowExit = (args == "exit" || args == "toggle" || args == "return" || args == "3d");
++    toggleFullscreen2D(allowExit);
++    return {};
++}
++
++static SDispatchResult dispatchClick(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++
++    uint32_t btn = BTN_LEFT;
++    if (args.find("right") != std::string::npos || args.find("alt") != std::string::npos || args.find("2") != std::string::npos)
++        btn = BTN_RIGHT;
++    else if (args.find("middle") != std::string::npos || args.find("3") != std::string::npos)
++        btn = BTN_MIDDLE;
++
++    if (args.find("down") != std::string::npos || args.find("press") != std::string::npos) {
++        vcClickButton(btn, true);
++    } else if (args.find("up") != std::string::npos || args.find("release") != std::string::npos) {
++        vcClickButton(btn, false);
++    } else {
++        vcClickButton(btn, true);
++        vcClickButton(btn, false);
++    }
++    return {};
++}
++
++static SDispatchResult dispatchView(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    cycleCameraViewMode(args.empty() ? "cycle" : args);
++    return {};
++}
++
++static SDispatchResult dispatchMode(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    toggleCursorCameraMode(args.empty() ? "toggle" : args);
++    return {};
++}
++
+ APICALL EXPORT std::string PLUGIN_API_VERSION() {
+     return HYPRLAND_API_VERSION;
+ }
+@@ -7703,10 +9712,8 @@         );
+     }
+ 
+-    HyprlandAPI::addNotification(
+-        PHANDLE,
++    notify(
+         "[hypr3d] renderer loaded",
+-        CHyprColor{0.2f, 0.8f, 0.4f, 1.0f},
+-        3000
++        CHyprColor{0.2f, 0.8f, 0.4f, 1.0f}
+     );
+ 
+     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:toggle", dispatchToggle))
+@@ -7718,5 +9725,163 @@ 
+     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:close", dispatchClose))
+         throw std::runtime_error("[hypr3d] failed to register close dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:camera", dispatchCamera))
++        throw std::runtime_error("[hypr3d] failed to register camera dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:move", dispatchMove))
++        throw std::runtime_error("[hypr3d] failed to register move dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:crt", dispatchCrt))
++        throw std::runtime_error("[hypr3d] failed to register crt dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:grab", dispatchGrab))
++        throw std::runtime_error("[hypr3d] failed to register grab dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:resize", dispatchResize))
++        throw std::runtime_error("[hypr3d] failed to register resize dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:view", dispatchView))
++        throw std::runtime_error("[hypr3d] failed to register view dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:mode", dispatchMode))
++        throw std::runtime_error("[hypr3d] failed to register mode dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:jump", dispatchJump))
++        throw std::runtime_error("[hypr3d] failed to register jump dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fly", dispatchFly))
++        throw std::runtime_error("[hypr3d] failed to register fly dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:posture", dispatchPosture))
++        throw std::runtime_error("[hypr3d] failed to register posture dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fullscreen", dispatchFullscreen))
++        throw std::runtime_error("[hypr3d] failed to register fullscreen dispatcher");
++
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick))
++        throw std::runtime_error("[hypr3d] failed to register click dispatcher");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "jump", [](lua_State* L) -> int {
++        std::string arg;
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchJump(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua jump");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "fly", [](lua_State* L) -> int {
++        std::string arg = "toggle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchFly(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua fly");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "posture", [](lua_State* L) -> int {
++        std::string arg = "cycle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchPosture(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua posture");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "fullscreen", [](lua_State*) -> int {
++        dispatchFullscreen("");
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua fullscreen");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "click", [](lua_State* L) -> int {
++        std::string arg = "left";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchClick(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua click");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "view", [](lua_State* L) -> int {
++        std::string arg = "cycle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchView(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua view");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "mode", [](lua_State* L) -> int {
++        std::string arg = "toggle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchMode(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua mode");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "grab", [](lua_State* L) -> int {
++        std::string arg = "toggle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchGrab(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua grab");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "resize", [](lua_State* L) -> int {
++        std::string arg = "toggle";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchResize(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua resize");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "camera", [](lua_State* L) -> int {
++        if (lua_gettop(L) >= 2 && ownsInput()) {
++            double dx = lua_tonumber(L, 1);
++            double dy = lua_tonumber(L, 2);
++            if (std::fabs(dx) < 0.001 && std::fabs(dy) < 0.001) {
++                g_input.reset();
++            } else if (pointerFree()) {
++                vcMove(dx, dy);
++            } else {
++                g_input.addMotion(dx, dy);
++            }
++            damageCurrentMonitor();
++        }
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua camera");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "move", [](lua_State* L) -> int {
++        if (lua_gettop(L) >= 2) {
++            float lx = static_cast<float>(lua_tonumber(L, 1));
++            float ly = static_cast<float>(lua_tonumber(L, 2));
++            g_analogStrafe      = std::clamp(lx, -1.0f, 1.0f);
++            g_analogFwd         = std::clamp(-ly, -1.0f, 1.0f);
++            g_lastAnalogMoveTime = std::chrono::steady_clock::now();
++            if (std::fabs(g_analogStrafe) < 0.001f && std::fabs(g_analogFwd) < 0.001f) {
++                g_analogStrafe = 0.0f;
++                g_analogFwd    = 0.0f;
++                s_moveVel      = {};
++            }
++            damageCurrentMonitor();
++        }
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua move");
++
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "crt", [](lua_State* L) -> int {
++        std::string arg = "";
++        if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
++            arg = lua_tostring(L, 1);
++        dispatchCrt(arg);
++        return 0;
++    }))
++        throw std::runtime_error("[hypr3d] failed to register Lua crt");
+ 
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "toggle", luaToggle))
+         throw std::runtime_error("[hypr3d] failed to register Lua toggle");
+@@ -7825,10 +9990,12 @@     (void)mouseAxis;
+     (void)keyboardKey;
+ 
+-    if (!HyprlandAPI::reloadConfig()) {
+-        notify(
+-            "[hypr3d] reloadConfig failed",
+-            CHyprColor{1.0f, 0.6f, 0.2f, 1.0f}
+-        );
++    {
++        syncShaderGlassStateFromFile();
++        std::ofstream hst("/tmp/hypr3d-status.txt", std::ios::app);
++        if (hst)
++            hst << "active=0 frames=0 transition=0 target=0 crtGlobal=" << (g_crtGlobalOn ? 1 : 0)
++                << " crtWindows=" << (g_crtGlobalOn ? std::max<size_t>(1, g_crtWindows.size()) : g_crtWindows.size()) << "\n";
++        applyGlobalShaderGlassState(false);
+     }
+ 
+     return {
+@@ -7861,5 +10028,7 @@     g_transition = 0.0f;
+     g_transitionTarget = 0.0f;
+ 
++    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
++
+     if (Compat::setCursorHidden(false) && g_pHyprRenderer)
+         g_pHyprRenderer->setCursorFromName("default", true);
+ 
+diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+--- a/tests/mios-bsp-regression.cpp
++++ b/tests/mios-bsp-regression.cpp
+@@ -235,3 +235,46 @@         for (const auto& v : p->verts)
+             require(v.u >= 0.f && v.u <= 1.f && v.v >= 0.f && v.v <= 1.f);
+     }
+-}
++
++    // Tab S-fillet contour in roundedRectLoop for standard window radius (R < 25)
++    const auto tabbed = roundedRectLoop(640, 400, 12.f, 1.f, 8);
++    require(tabbed.pts.size() > 32);
++    bool foundProtrudingTab = false;
++    for (const auto& point : tabbed.pts) {
++        const float x = point.x * 640.f, y = point.y * 400.f;
++        if (x >= 25.0f && x <= 147.0f && y < -0.01f)
++            foundProtrudingTab = true;
++    }
++    require(foundProtrudingTab);
++
++    // Vertex deduplication in bspSplitPoly
++    SWPoly polyWithNearDupe;
++    polyWithNearDupe.verts = {{{0,0,0},0,0}, {{0.50000001f,0,0},0.5f,0}, {{1,0,0},1,0}, {{1,1,0},1,1}, {{0,1,0},0,1}};
++    SWPoly fDupe, bDupe;
++    bool hfD = false, hbD = false;
++    bspSplitPoly(polyWithNearDupe, {0.5f,0,0}, {1,0,0}, fDupe, bDupe, hfD, hbD);
++    require(hfD && hbD);
++    for (size_t vi = 0; vi < fDupe.verts.size(); ++vi) {
++        const auto& va = fDupe.verts[vi];
++        const auto& vb = fDupe.verts[(vi + 1) % fDupe.verts.size()];
++        require(dot(va.p - vb.p, va.p - vb.p) > 1e-8f);
++    }
++
++    // Perimeter wall quads (glassWall) never chosen as splitters & same owner never splits
++    SWPoly wallQuad;
++    wallQuad.glassWall = true;
++    wallQuad.owner = 100;
++    wallQuad.verts = {{{0.5f,-1,-0.5f},0,0}, {{0.5f,1,-0.5f},1,0}, {{0.5f,1,0.5f},1,1}, {{0.5f,-1,0.5f},0,1}};
++    SWPoly faceQuad;
++    faceQuad.glassWall = false;
++    faceQuad.owner = 100;
++    faceQuad.verts = {{{0,0,0},0,0}, {{1,0,0},1,0}, {{1,1,0},1,1}, {{0,1,0},0,1}};
++    std::vector<SWPoly> bspSet{wallQuad, faceQuad};
++    SBspNode bspNode;
++    bspBuild(bspNode, bspSet, 0);
++    require(bspNode.coplanar.size() >= 1);
++    int faceFragments = 0;
++    bspTraverse(bspNode, {0,0,3}, [&](const SWPoly& p) {
++        if (!p.glassWall && p.owner == 100) ++faceFragments;
++    });
++    require(faceFragments == 1);
++}

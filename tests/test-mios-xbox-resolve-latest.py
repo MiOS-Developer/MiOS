@@ -42,6 +42,9 @@ spec.loader.exec_module(rl)
 sys.path.insert(0, _LIB)
 import mios_toml  # noqa: E402  (read-only use: load_merged with explicit layers)
 sys.path.pop(0)
+sys.path.insert(0, _HERE)
+import _mios_xbox_fixtures as FX  # noqa: E402  (synthetic RPM header: the virtio-win release metadata)
+sys.path.pop(0)
 
 COMMIT = "cdba29f2f6bcae3ded26369fc231a067cbca3752"
 UUID = "2fab9ee5-66d1-4532-8592-f48a223edf69"
@@ -53,7 +56,22 @@ FW = "https://go.microsoft.com/fwlink/?linkid=2124701"
 WV2 = "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/35871e19/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 
 ESD = b"fixture esd payload"
+FOD_SSHD = b"fixture OpenSSH-Server FOD cab"
+FOD_META = b"fixture FoD metadata cab"
 MSI = b"fixture winfsp msi"
+QGA_SIZE = 11909632
+QGA_SHA = hashlib.sha256(b"fixture qemu-ga msi").hexdigest()   # what the virtio-win RPM header records for it
+VIRTIO_MEMBERS = {   # path in the virtio-win RPM -> (sha256, size) as its header records them
+    "usr/share/virtio-win/virtio-win-0.1.302.iso": (hashlib.sha256(b"fixture iso").hexdigest(), 11),
+    "usr/share/virtio-win/installer/virtio-win-guest-tools.exe": (hashlib.sha256(b"fixture bundle").hexdigest(), 14),
+    "usr/share/virtio-win/installer/virtio-win-gt-x64.msi": (hashlib.sha256(b"fixture gt msi").hexdigest(), 14),
+    "usr/share/virtio-win/guest-agent/qemu-ga-x86_64.msi": (QGA_SHA, QGA_SIZE),
+    "usr/share/virtio-win/drivers/by-driver/viostor/w11/amd64/viostor.inf": (hashlib.sha256(b"inf").hexdigest(), 3),
+}
+
+
+def virtio_rpm_header(**kw) -> bytes:
+    return FX.rpm_header_bytes("virtio-win", "0.1.302", "1", dict(VIRTIO_MEMBERS), **kw)
 LG_SHA = hashlib.sha256(b"fixture lg host zip").hexdigest()
 LG_IDD_SHA = hashlib.sha256(b"fixture lg idd zip").hexdigest()
 GH = "https://api.github.com"
@@ -83,6 +101,25 @@ def _uupfile(payload: bytes, size: int | None = None, digest_override: str | Non
             "debug": f"<FileLocation><FileDigest>{fd}</FileDigest><Url>http://x</Url></FileLocation>"}
 
 
+def ssot_apps() -> list:
+    """windows.xbox.source.apps of the vendor SSOT the tests resolve against."""
+    import tomllib
+    with open(_VENDOR, "rb") as fh:
+        return list(tomllib.load(fh)["windows"]["xbox"]["source"].get("apps") or [])
+
+
+def ipa_files(apps=None, framework=True) -> dict:
+    """UUP Dump IPA_<group>_<file> rows for every app (main bundle + one resource pack) and one framework package."""
+    out = {}
+    for pfn in (ssot_apps() if apps is None else apps):
+        group = "G" + pfn.split("_")[0].replace(".", "")
+        out[f"IPA_{group}_{pfn}.msixbundle"] = _uupfile(f"bundle {pfn}".encode())
+        out[f"IPA_{group}_App_1.0.0.0_language-de.msix"] = _uupfile(f"lang {pfn}".encode())
+    if framework:
+        out["IPA_frameworks_Microsoft.VCLibs.x64.14.00.appx"] = _uupfile(b"vclibs framework")
+    return out
+
+
 def routes() -> dict:
     """(method, url) -> (status, headers, body) for one consistent upstream snapshot."""
     j = lambda o: json.dumps(o).encode()  # noqa: E731
@@ -98,13 +135,22 @@ def routes() -> dict:
         ("GET", f"{API}/get.php?id={UUID}&lang=en-us&edition=professional"): (200, {}, j({"response": {
             "build": "29683.1000", "files": {"MetadataESD_professional_en-us.esd": _uupfile(ESD),
                                              f"{UUID}.AggregatedMetadata.cab": _uupfile(b"cab")}}})),
+        # the update's FULL file list: the OpenSSH.Server FOD cab + FOD metadata (baked offline, F4) and the inbox
+        # apps of windows.xbox.source.apps with a framework (integrated offline; the edition list carries none)
+        ("GET", f"{API}/get.php?id={UUID}&noLinks=1"): (200, {}, j({"response": {"files": {
+            "MetadataESD_professional_en-us.esd": _uupfile(ESD),
+            "cabs_OpenSSH-Client-Package-amd64.cab": _uupfile(b"ssh client cab"),
+            "cabs_OpenSSH-Server-Package-amd64.cab": _uupfile(FOD_SSHD),
+            "FoDMetadata_Client.cab": _uupfile(FOD_META), **ipa_files()}}})),
         ("HEAD", f"{VIRTIO}/latest-virtio/virtio-win.iso"): (301, {"Location": REL + "virtio-win.iso"}, b""),
         ("GET", REL.replace("http://", "https://") + "CHECKSUM"): (200, {}, (
             "66f65c16ab3e8dfe12c2855a0d1ac303  virtio-win-0.1.302-1.noarch.rpm\n"
             "09c1acd2ff72263c16a6afbf7a5f2e69  virtio-win-0.1.302-1.src.rpm\n").encode()),
+        # ranged read of the RPM's leading bytes: lead + signature + main header (sha256 per file)
+        ("GET", REL.replace("http://", "https://") + "virtio-win-0.1.302-1.noarch.rpm"): (206, {}, virtio_rpm_header()),
         ("HEAD", f"{VIRTIO}/latest-qemu-ga/qemu-ga-x86_64.msi"): (301, {"Location":
             "http://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-qemu-ga/qemu-ga-win-110.2.3-2.el10/qemu-ga-x86_64.msi"}, b""),
-        ("HEAD", f"{VIRTIO}/archive-qemu-ga/qemu-ga-win-110.2.3-2.el10/qemu-ga-x86_64.msi"): (200, {"Content-Length": "11909632"}, b""),
+        ("HEAD", f"{VIRTIO}/archive-qemu-ga/qemu-ga-win-110.2.3-2.el10/qemu-ga-x86_64.msi"): (200, {"Content-Length": str(QGA_SIZE)}, b""),
         ("GET", f"{LG}/downloads"): (200, {}, (
             '<a href="/artifact/B7/host">B7</a><a href="/artifact/B7-826-236efcb1/host">x</a>'
             '<a href="/artifact/B7-829-cdba29f2/host">x</a><a href="/artifact/B7-829-cdba29f2/idd">x</a>').encode()),
@@ -138,8 +184,10 @@ class FakeHttp:
         self.table = table
         self.calls: list = []
 
-    def request(self, url: str, method: str = "GET", follow: bool = True):
+    def request(self, url: str, method: str = "GET", follow: bool = True, headers=None, limit=None):
         self.calls.append((method, url))
+        if headers:
+            self.ranged = getattr(self, "ranged", []) + [(url, headers.get("Range"), limit)]
         if (method, url) not in self.table:
             raise AssertionError(f"unmocked upstream call {method} {url}")
         entry = self.table[(method, url)]
@@ -233,7 +281,17 @@ class ResolveLatestTest(unittest.TestCase):
         self.assertEqual((a["virtio_win"]["version"], a["virtio_win"]["integrity"]["value"]),
                          ("0.1.302-1", "66f65c16ab3e8dfe12c2855a0d1ac303"))
         self.assertEqual(a["qemu_ga"]["version"], "110.2.3-2.el10")
-        self.assertEqual((a["qemu_ga"]["integrity"]["kind"], a["qemu_ga"]["integrity"]["size"]), ("authenticode", 11909632))
+        # item 7: the unsigned qemu-ga MSI is anchored by the sha256 the virtio-win RPM header records (no Authenticode claim)
+        self.assertEqual((a["qemu_ga"]["integrity"]["kind"], a["qemu_ga"]["integrity"]["value"], a["qemu_ga"]["integrity"]["size"]),
+                         ("sha256", QGA_SHA, QGA_SIZE))
+        self.assertNotIn("authenticode", json.dumps(a["qemu_ga"]).lower())
+        self.assertNotIn("signer", a["qemu_ga"]["integrity"])
+        v = a["virtio_win"]
+        self.assertEqual(set(v["members"]), {"iso", "guest_tools", "gt_msi", "qemu_ga"})
+        for role, path in v["members"].items():
+            self.assertEqual((v["member_digests"][path]["sha256"], v["member_digests"][path]["size"]), VIRTIO_MEMBERS[path], role)
+        self.assertNotIn("drivers/", json.dumps(v["member_digests"]))   # only the members the build uses are pinned
+        self.assertRegex(v["rpm_header_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual((a["looking_glass_host"]["version"], a["looking_glass_host"]["integrity"]["value"]),
                          ("B7-829-cdba29f2", LG_SHA))
         self.assertEqual((a["winfsp"]["version"], a["winfsp"]["integrity"]["value"]),
@@ -260,20 +318,20 @@ class ResolveLatestTest(unittest.TestCase):
     def test_verify_authenticode_signer(self):
         self.assertEqual(self.resolve()[0], 0)
         m = _load(self.out)
-        f = os.path.join(self.dir, "qemu-ga-x86_64.msi")
+        f = os.path.join(self.dir, "MicrosoftEdgeWebView2RuntimeInstallerX64.exe")   # signed by its publisher
         with open(f, "wb") as fh:
-            fh.truncate(m["artifacts"]["qemu_ga"]["integrity"]["size"])
+            fh.truncate(m["artifacts"]["webview2"]["integrity"]["size"])
         tool = os.path.join(self.dir, "osslsigncode")
         with open(tool, "w") as fh:
             fh.write("#!/bin/sh\necho \"Subject: /C=US/O=$FAKE_SIGNER/CN=$FAKE_SIGNER\"\necho 'Signature verification: ok'\n")
         os.chmod(tool, 0o755)
         os.environ["MIOS_OSSLSIGNCODE"] = tool
         try:
-            os.environ["FAKE_SIGNER"] = "Red Hat, Inc."
-            self.assertEqual(rl.verify_file(m, "qemu_ga", f), "authenticode")
+            os.environ["FAKE_SIGNER"] = "Microsoft Corporation"
+            self.assertEqual(rl.verify_file(m, "webview2", f), "authenticode")
             os.environ["FAKE_SIGNER"] = "Evil Corp"  # negative: signed by someone else
             with self.assertRaisesRegex(rl.ResolveError, "not by"):
-                rl.verify_file(m, "qemu_ga", f)
+                rl.verify_file(m, "webview2", f)
         finally:
             for k in ("MIOS_OSSLSIGNCODE", "FAKE_SIGNER"):
                 os.environ.pop(k, None)
@@ -420,6 +478,147 @@ class ResolveLatestTest(unittest.TestCase):
         rc, _, err = self.run_main(["resolve", "--out", self.out], http=http, data=self.data)
         self.assertEqual(rc, 0, err)
         self.assertEqual(http.calls.count(("GET", k[1])), 2)
+
+    # Build 20261023T224037Z attempt 2: api.uupdump.net answered get.php with 429 three times inside the 2 s / 4 s
+    # transport backoff and the 35-minute stage was lost. 429 has its own budget, paced by Retry-After or a schedule.
+    U429 = "https://api.uupdump.net/get.php?id=x"
+
+    def _fetch_seq(self, mod, seq, tries=3):
+        http, waits = FakeHttp({("GET", self.U429): list(seq)}), []
+        try:
+            r = mod._fetch(http, self.U429, tries=tries, sleep=waits.append)
+        except mod.ResolveError as e:
+            return None, str(e), waits, len(http.calls)
+        return r, "", waits, len(http.calls)
+
+    def test_rate_limit_has_its_own_budget_and_honours_retry_after(self):
+        ok = (200, {}, b"{}")
+        r, err, waits, n = self._fetch_seq(rl, [(429, {"Retry-After": "7"}, b""), (429, {}, b""), (429, {}, b""), ok])
+        self.assertIsNotNone(r, err)
+        self.assertEqual((n, waits), (4, [7.0, rl.RATE_LIMIT_WAITS_S[1], rl.RATE_LIMIT_WAITS_S[2]]))
+        _, _, waits, _ = self._fetch_seq(rl, [(429, {"Retry-After": "99999"}, b""), ok])
+        self.assertEqual(waits, [rl.RATE_LIMIT_MAX_WAIT_S])                       # capped
+        _, _, waits, _ = self._fetch_seq(rl, [(429, {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, b""), ok])
+        self.assertEqual(waits, [rl.RATE_LIMIT_WAITS_S[0]])                       # HTTP-date form: the schedule
+
+    def test_rate_limit_and_server_errors_stay_bounded(self):
+        r, err, waits, n = self._fetch_seq(rl, [(429, {}, b"")])
+        self.assertIsNone(r)
+        self.assertIn("HTTP 429", err)
+        self.assertEqual((n, waits), (len(rl.RATE_LIMIT_WAITS_S) + 1, list(rl.RATE_LIMIT_WAITS_S)))
+        r, err, waits, n = self._fetch_seq(rl, [(503, {}, b"")])
+        self.assertIsNone(r)
+        self.assertEqual((n, waits), (3, [2, 4]))                                 # 5xx: tries, unchanged
+        r, err, waits, n = self._fetch_seq(rl, [(404, {}, b"")])
+        self.assertEqual((n, waits), (1, []))                                     # other 4xx: no retry
+
+    def test_rate_limit_negative_control_head_gave_up_within_seconds(self):
+        import subprocess
+        g = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/libexec/mios/win/xbox/resolve_latest.py"],
+                           capture_output=True, text=True)
+        if g.returncode or "RATE_LIMIT_WAITS_S" in g.stdout:
+            self.skipTest("no git HEAD, or HEAD already has the 429 budget")
+        d = tempfile.mkdtemp(prefix="rl-head.")
+        try:
+            p = os.path.join(d, "resolve_latest_head.py")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(g.stdout)
+            sp = importlib.util.spec_from_file_location("resolve_latest_head", p)
+            head = importlib.util.module_from_spec(sp)
+            sp.loader.exec_module(head)
+            seq = [(429, {"Retry-After": "7"}, b""), (429, {}, b""), (429, {}, b""), (200, {}, b"{}")]
+            http, waits = FakeHttp({("GET", self.U429): list(seq)}), []
+            with self.assertRaises(head.ResolveError):
+                head._fetch(http, self.U429, sleep=waits.append)
+            self.assertLess(sum(waits), 10)    # the observed failure: three 429s within ~6 s
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+    # Build 20261024T044408Z (stage re-run): fetchupd.php?ring=Dev answered HTTP 400 at 05:35:25Z and 200 a minute
+    # later. UUP Dump reports a failed live Windows Update request as 400 + {"response": {"error": ...}}; the resolver
+    # gave up on the first 400 and discarded the body, so the message could not say why.
+    U400 = "https://api.uupdump.net/fetchupd.php?arch=amd64&ring=Dev"
+    WU_FAILED = (400, {}, b'{"response":{"error":"WU_REQUEST_FAILED"},"jsonApiVersion":"0.2.3"}')
+
+    def test_uup_api_400_is_retried_then_resolves(self):
+        t = routes()
+        k = ("GET", f"{API}/fetchupd.php?arch=amd64&ring=Dev")
+        t[k] = [self.WU_FAILED, self.WU_FAILED, t[k]]
+        http = FakeHttp(t)
+        rc, _, err = self.run_main(["resolve", "--out", self.out], http=http, data=self.data)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(http.calls.count(("GET", k[1])), 3)
+
+    def test_uup_api_400_stays_bounded_and_names_the_upstream_error(self):
+        http, waits = FakeHttp({("GET", self.U400): [self.WU_FAILED]}), []
+        with self.assertRaises(rl.ResolveError) as cm:
+            rl._fetch(http, self.U400, tries=5, sleep=waits.append, retry=rl.UUP_API_RETRY)
+        self.assertIn("HTTP 400 (WU_REQUEST_FAILED)", str(cm.exception))
+        self.assertEqual((len(http.calls), waits), (5, [2, 4, 8, 16]))
+
+    def test_negative_400_is_not_retried_without_the_uup_api_opt_in(self):
+        http, waits = FakeHttp({("GET", self.U400): [self.WU_FAILED, (200, {}, b"{}")]}), []
+        with self.assertRaises(rl.ResolveError) as cm:
+            rl._fetch(http, self.U400, tries=5, sleep=waits.append)    # every other upstream: a 4xx aborts at once
+        self.assertEqual((len(http.calls), waits), (1, []))
+        self.assertIn("WU_REQUEST_FAILED", str(cm.exception))
+
+    def test_uup_api_400_negative_control_head_gave_up_at_once(self):
+        import subprocess
+        g = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/libexec/mios/win/xbox/resolve_latest.py"],
+                           capture_output=True, text=True)
+        if g.returncode or "UUP_API_RETRY" in g.stdout:
+            self.skipTest("no git HEAD, or HEAD already retries the UUP Dump API's 400")
+        d = tempfile.mkdtemp(prefix="rl-head.")
+        try:
+            p = os.path.join(d, "resolve_latest_head.py")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(g.stdout)
+            sp = importlib.util.spec_from_file_location("resolve_latest_head", p)
+            head = importlib.util.module_from_spec(sp)
+            sp.loader.exec_module(head)
+            http = FakeHttp({("GET", self.U400): [self.WU_FAILED, (200, {}, b"{}")]})
+            with self.assertRaises(head.ResolveError) as cm:
+                head._fetch(http, self.U400, tries=5, sleep=lambda s: None)
+            self.assertEqual(len(http.calls), 1)                   # the observed failure: no second try
+            self.assertNotIn("WU_REQUEST_FAILED", str(cm.exception))   # and no reason in the message
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_http_client_keeps_a_bounded_error_body(self):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = ResolveLatestTest.WU_FAILED[2] if self.path.startswith("/small") else b"x" * (rl.ERROR_BODY_MAX * 2)
+                self.send_response(400)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        socket.socket = self._sock   # loopback only, for this one test of the real client
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        env = dict(os.environ)
+        os.environ["no_proxy"] = os.environ["NO_PROXY"] = "127.0.0.1"
+        try:
+            base = f"http://127.0.0.1:{srv.server_address[1]}"
+            r = rl.Http().request(base + "/small")
+            self.assertEqual((r.status, rl._upstream_error(r)), (400, "WU_REQUEST_FAILED"))
+            r = rl.Http().request(base + "/large")
+            self.assertEqual((r.status, len(r.body)), (400, rl.ERROR_BODY_MAX))   # bounded, never the whole body
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            os.environ.clear()
+            os.environ.update(env)
+            socket.socket = _no_network  # type: ignore[assignment]
 
     def test_error_status_aborts_even_with_a_plausible_body(self):
         t = routes()

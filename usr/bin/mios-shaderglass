@@ -1,0 +1,105 @@
+#!/bin/bash
+# AI-hint: ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, stop, status, install/update, prefix, portal-config. Without a terminal (keybind or drawer) a failure becomes a desktop notification.
+# AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass], usr/share/applications/mios-shaderglass.desktop
+# AI-functions: main, log_error, notify_error
+
+set -euo pipefail
+
+MIOSD=/usr/bin/miosd
+
+log_error() {
+    printf '[%s] ERROR: %s\n' "mios-shaderglass" "$*" >&2
+}
+
+notify_error() {
+    log_error "$1"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "ShaderGlass" "ShaderGlass overlay" "$1" || true
+    fi
+}
+
+hypr3d_is_active() {
+    [[ -f /tmp/hypr3d-status.txt ]] || return 1
+    local last_active
+    last_active=$(grep '^active=' /tmp/hypr3d-status.txt 2>/dev/null | tail -n 1 || true)
+    [[ "$last_active" == active=1* ]] && [[ "$last_active" != *"target=0"* ]]
+}
+
+ensure_hyprland_env() {
+    local rdir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" || ! -S "$rdir/hypr/${HYPRLAND_INSTANCE_SIGNATURE}/.socket.sock" ]]; then
+        local d
+        for d in $(ls -1dt "$rdir"/hypr/* 2>/dev/null || true); do
+            if [[ -S "$d/.socket.sock" ]]; then
+                export HYPRLAND_INSTANCE_SIGNATURE="${d##*/}"
+                break
+            fi
+        done
+    fi
+}
+
+main() {
+    ensure_hyprland_env
+    if [[ $# -eq 0 ]]; then
+        set -- toggle
+    fi
+
+    # When in 3D mode, route CRT controls to hypr3d:crt and mirror toggle/stop to 2D supervisor
+    if hypr3d_is_active; then
+        local subcmd="${1:-toggle}"
+        case "$subcmd" in
+            toggle)
+                hyprctl eval 'hl.plugin.hypr3d.crt("toggle")' >/dev/null 2>&1 || hyprctl dispatch hypr3d:crt toggle
+                "$MIOSD" shaderglass toggle >/dev/null 2>&1 &
+                exit 0
+                ;;
+            setup)
+                hyprctl eval 'hl.plugin.hypr3d.crt("select")' >/dev/null 2>&1 || hyprctl dispatch hypr3d:crt select
+                exit 0
+                ;;
+            cycle|preset)
+                hyprctl eval 'hl.plugin.hypr3d.crt("cycle")' >/dev/null 2>&1 || hyprctl dispatch hypr3d:crt cycle
+                exit 0
+                ;;
+            stop|off|clear)
+                hyprctl eval 'hl.plugin.hypr3d.crt("off")' >/dev/null 2>&1 || hyprctl dispatch hypr3d:crt off
+                "$MIOSD" shaderglass stop >/dev/null 2>&1 &
+                exit 0
+                ;;
+            on|all)
+                hyprctl eval 'hl.plugin.hypr3d.crt("on")' >/dev/null 2>&1 || hyprctl dispatch hypr3d:crt on
+                exit 0
+                ;;
+        esac
+    fi
+
+    case "${1:-}" in
+        cycle|preset)
+            set -- setup "${@:2}"
+            ;;
+        off|clear)
+            set -- stop "${@:2}"
+            ;;
+        on)
+            set -- attach "${@:2}"
+            ;;
+    esac
+
+    if ! "$MIOSD" shaderglass --help >/dev/null 2>&1; then
+        notify_error "this miosd has no shaderglass command yet: install the current miosd build"
+        exit 69
+    fi
+    if [[ -t 2 ]]; then
+        exec "$MIOSD" shaderglass "$@"
+    fi
+    local err rc=0
+    err=$("$MIOSD" shaderglass "$@" 2>&1 >/dev/null) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        notify_error "$(printf '%s\n' "$err" | tail -n 1)"
+        exit "$rc"
+    fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

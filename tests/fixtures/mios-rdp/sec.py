@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -I
 """A1/A3/A4/A5/A6 security tests against a private native server (test-auth build)."""
-import hashlib, json, os, re, subprocess, sys, time
+import hashlib, json, os, re, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import e2e  # noqa: E402
 
@@ -31,7 +31,7 @@ def log(s):
     return open(f"{s.out}/server.log").read()
 
 def main():
-    d = os.path.join(H, "..", "t-sec")
+    d = os.environ.get("MIOS_RDP_LIVE_DIR") or tempfile.mkdtemp(prefix="mios-rdp-sec-")
     e2e.ensure_cert(d)
     res = {}
     before = e2e.guards()

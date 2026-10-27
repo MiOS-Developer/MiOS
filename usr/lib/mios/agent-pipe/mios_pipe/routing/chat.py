@@ -1271,51 +1271,264 @@ async def chat_completions_logic(request: Request) -> Any:
 
 async def responses_api_logic(request: Request) -> Any:
     try:
-        body = _loads_lenient(await request.body() or b"{}")
+        body_bytes = await request.body()
+        if not body_bytes:
+            body = {}
+        else:
+            raw_text = body_bytes.decode("utf-8", errors="replace")
+            body = _loads_lenient(raw_text)
+            if body is None or not isinstance(body, dict):
+                raise ValueError("invalid JSON body")
     except Exception:
         return JSONResponse(content={"error": {"message": "invalid JSON body",
                             "type": "invalid_request_error"}}, status_code=400)
+
     model = body.get("model") or BACKEND_MODEL
     inp = body.get("input")
     msgs: list = []
     if body.get("instructions"):
         msgs.append({"role": "system", "content": str(body["instructions"])})
+
     if isinstance(inp, str):
-        msgs.append({"role": "user", "content": inp})
+        if inp.strip():
+            msgs.append({"role": "user", "content": inp})
     elif isinstance(inp, list):
         for it in inp:
             if not isinstance(it, dict):
                 continue
-            c = it.get("content")
-            if isinstance(c, list):
-                c = "".join(p.get("text", "") for p in c if isinstance(p, dict)
-                            and p.get("type") in ("input_text", "output_text", "text"))
-            msgs.append({"role": it.get("role") or "user", "content": str(c or "")})
+            itype = it.get("type")
+            if itype == "function_call":
+                cid = it.get("call_id") or it.get("id") or f"call_{uuid.uuid4().hex[:12]}"
+                fn_name = it.get("name") or ""
+                fn_args = it.get("arguments")
+                if not isinstance(fn_args, str):
+                    fn_args = json.dumps(fn_args or {})
+                msgs.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": cid,
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": fn_args}
+                    }]
+                })
+            elif itype == "function_call_output":
+                cid = it.get("call_id") or it.get("id") or ""
+                out = it.get("output", "")
+                if not isinstance(out, str):
+                    out = json.dumps(out)
+                msgs.append({"role": "tool", "tool_call_id": cid, "content": out})
+            elif itype == "custom_tool_call":
+                cid = it.get("call_id") or it.get("id") or f"call_{uuid.uuid4().hex[:12]}"
+                fn_name = it.get("name") or ""
+                raw_args = it.get("arguments") if it.get("arguments") is not None else it.get("input")
+                fn_args = raw_args if isinstance(raw_args, str) else json.dumps(raw_args or {})
+                msgs.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": cid,
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": fn_args}
+                    }]
+                })
+            elif itype == "custom_tool_call_output":
+                cid = it.get("call_id") or it.get("id") or ""
+                out = it.get("output", "")
+                if not isinstance(out, str):
+                    out = json.dumps(out)
+                msgs.append({"role": "tool", "tool_call_id": cid, "content": out})
+            else:
+                role = it.get("role") or "user"
+                c = it.get("content")
+                if isinstance(c, list):
+                    c = "".join(p.get("text", "") for p in c if isinstance(p, dict)
+                                and p.get("type") in ("input_text", "output_text", "text"))
+                elif not isinstance(c, str):
+                    c = str(c or "")
+                msgs.append({"role": role, "content": c})
+
     if not msgs:
         return JSONResponse(content={"error": {"message": "you must provide 'input'",
             "type": "invalid_request_error", "param": "input", "code": None}},
             status_code=400)
+
+    translated_tools = []
+    for t in (body.get("tools") or []):
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") == "function":
+            if "function" in t and isinstance(t["function"], dict):
+                translated_tools.append(t)
+            else:
+                translated_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": t.get("name") or "",
+                        "description": t.get("description") or "",
+                        "parameters": t.get("parameters") or {},
+                    }
+                })
+        else:
+            translated_tools.append(t)
+
+    cc_payload: dict = {"model": model, "messages": msgs, "stream": False}
+    if translated_tools:
+        cc_payload["tools"] = translated_tools
+    if body.get("tool_choice"):
+        cc_payload["tool_choice"] = body["tool_choice"]
+
+    streaming = bool(body.get("stream", False))
     _port = os.environ.get("MIOS_PORTS_AGENT_PIPE", "8700")
-    try:
-        async with httpx.AsyncClient(timeout=300.0) as s:
-            r = await s.post(f"http://127.0.0.1:{_port}/v1/chat/completions",
-                             json={"model": model, "messages": msgs, "stream": False},
-                             headers={"Content-Type": "application/json"})
-        cc = r.json()
-    except Exception:  # noqa: BLE001
-        log.exception("responses relay backend failed")
-        return JSONResponse(content={"error": {"message": "The response backend is unavailable",
-                            "type": "api_error"}}, status_code=502)
-    answer = (((cc.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
-    return JSONResponse(content={
-        "id": "resp_" + uuid.uuid4().hex[:24], "object": "response",
-        "created_at": int(time.time()), "model": model, "status": "completed",
-        "output": [{"type": "message", "id": "msg_" + uuid.uuid4().hex[:24],
-                    "status": "completed", "role": "assistant",
-                    "content": [{"type": "output_text", "text": answer}]}],
-        "output_text": answer,
-        "usage": _normalize_usage(cc.get("usage") or _usage_estimate("", answer)),
-    })
+
+    if not streaming:
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as s:
+                r = await s.post(f"http://127.0.0.1:{_port}/v1/chat/completions",
+                                 json=cc_payload,
+                                 headers={"Content-Type": "application/json"})
+            if getattr(r, "status_code", 200) >= 400:
+                try:
+                    err_body = r.json()
+                except Exception:
+                    err_body = {"error": {"message": getattr(r, "text", "") or f"Upstream error {r.status_code}", "type": "api_error"}}
+                return JSONResponse(status_code=r.status_code, content=err_body)
+            cc = r.json()
+        except Exception:  # noqa: BLE001
+            log.exception("responses relay backend failed")
+            return JSONResponse(content={"error": {"message": "The response backend is unavailable",
+                                "type": "api_error"}}, status_code=502)
+
+        msg = (((cc.get("choices") or [{}])[0].get("message") or {}))
+        answer = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+        output_items = []
+        if answer or not tool_calls:
+            output_items.append({
+                "type": "message",
+                "id": "msg_" + uuid.uuid4().hex[:24],
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": answer}],
+            })
+        for tc in tool_calls:
+            output_items.append({
+                "type": "function_call",
+                "id": "item_" + uuid.uuid4().hex[:24],
+                "call_id": tc.get("id") or f"call_{uuid.uuid4().hex[:12]}",
+                "name": (tc.get("function") or {}).get("name") or "",
+                "arguments": (tc.get("function") or {}).get("arguments") or "{}",
+                "status": "completed",
+            })
+
+        return JSONResponse(content={
+            "id": "resp_" + uuid.uuid4().hex[:24],
+            "object": "response",
+            "created_at": int(time.time()),
+            "model": model,
+            "status": "completed",
+            "output": output_items,
+            "output_text": answer,
+            "usage": _normalize_usage(cc.get("usage") or _usage_estimate("", answer)),
+        })
+
+    async def _stream_responses_events() -> AsyncGenerator[bytes, None]:
+        resp_id = "resp_" + uuid.uuid4().hex[:24]
+        created_at = int(time.time())
+
+        # 1. response.created
+        yield f"event: response.created\ndata: {json.dumps({'response': {'id': resp_id, 'object': 'response', 'created_at': created_at, 'model': model, 'status': 'in_progress', 'output': [], 'usage': None}})}\n\n".encode("utf-8")
+
+        # 2. response.in_progress
+        yield f"event: response.in_progress\ndata: {json.dumps({'response': {'id': resp_id, 'object': 'response', 'created_at': created_at, 'model': model, 'status': 'in_progress', 'output': [], 'usage': None}})}\n\n".encode("utf-8")
+
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as s:
+                r = await s.post(f"http://127.0.0.1:{_port}/v1/chat/completions",
+                                 json=cc_payload,
+                                 headers={"Content-Type": "application/json"})
+            if getattr(r, "status_code", 200) >= 400:
+                try:
+                    err_body = r.json()
+                except Exception:
+                    err_body = {"error": {"message": getattr(r, "text", "") or f"Upstream error {r.status_code}", "type": "api_error"}}
+                yield f"event: error\ndata: {json.dumps(err_body)}\n\n".encode("utf-8")
+                return
+            cc = r.json()
+        except Exception:  # noqa: BLE001
+            log.exception("responses relay backend failed in stream")
+            yield f"event: error\ndata: {json.dumps({'error': {'message': 'The response backend is unavailable', 'type': 'api_error'}})}\n\n".encode("utf-8")
+            return
+
+        msg = (((cc.get("choices") or [{}])[0].get("message") or {}))
+        answer = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+        output_items = []
+        output_idx = 0
+
+        if answer or not tool_calls:
+            msg_id = "msg_" + uuid.uuid4().hex[:24]
+            # 3. response.output_item.added
+            yield f"event: response.output_item.added\ndata: {json.dumps({'output_index': output_idx, 'item': {'id': msg_id, 'type': 'message', 'status': 'in_progress', 'role': 'assistant', 'content': []}})}\n\n".encode("utf-8")
+            # 4. response.content_part.added
+            yield f"event: response.content_part.added\ndata: {json.dumps({'output_index': output_idx, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})}\n\n".encode("utf-8")
+
+            if answer:
+                chunk_size = 16
+                for i in range(0, len(answer), chunk_size):
+                    delta = answer[i:i + chunk_size]
+                    # 5. response.output_text.delta
+                    yield f"event: response.output_text.delta\ndata: {json.dumps({'output_index': output_idx, 'content_index': 0, 'delta': delta})}\n\n".encode("utf-8")
+
+            # 6. response.output_text.done
+            yield f"event: response.output_text.done\ndata: {json.dumps({'output_index': output_idx, 'content_index': 0, 'text': answer})}\n\n".encode("utf-8")
+
+            # 7. response.output_item.done
+            item_obj = {
+                "id": msg_id, "type": "message", "status": "completed",
+                "role": "assistant", "content": [{"type": "output_text", "text": answer}]
+            }
+            yield f"event: response.output_item.done\ndata: {json.dumps({'output_index': output_idx, 'item': item_obj})}\n\n".encode("utf-8")
+            output_items.append(item_obj)
+            output_idx += 1
+
+        for tc in tool_calls:
+            item_id = "item_" + uuid.uuid4().hex[:24]
+            call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:12]}"
+            fn_name = (tc.get("function") or {}).get("name") or ""
+            fn_args = (tc.get("function") or {}).get("arguments") or "{}"
+            if not isinstance(fn_args, str):
+                fn_args = json.dumps(fn_args)
+
+            # response.output_item.added
+            yield f"event: response.output_item.added\ndata: {json.dumps({'output_index': output_idx, 'item': {'id': item_id, 'type': 'function_call', 'status': 'in_progress', 'call_id': call_id, 'name': fn_name, 'arguments': ''}})}\n\n".encode("utf-8")
+
+            # response.function_call_arguments.delta
+            yield f"event: response.function_call_arguments.delta\ndata: {json.dumps({'output_index': output_idx, 'call_id': call_id, 'delta': fn_args})}\n\n".encode("utf-8")
+
+            # response.function_call_arguments.done
+            yield f"event: response.function_call_arguments.done\ndata: {json.dumps({'output_index': output_idx, 'call_id': call_id, 'arguments': fn_args})}\n\n".encode("utf-8")
+
+            # response.output_item.done
+            item_obj = {
+                "id": item_id, "type": "function_call", "status": "completed",
+                "call_id": call_id, "name": fn_name, "arguments": fn_args
+            }
+            yield f"event: response.output_item.done\ndata: {json.dumps({'output_index': output_idx, 'item': item_obj})}\n\n".encode("utf-8")
+            output_items.append(item_obj)
+            output_idx += 1
+
+        # 8. response.completed
+        usage = _normalize_usage(cc.get("usage") or _usage_estimate("", answer))
+        completed_resp = {
+            "id": resp_id, "object": "response", "created_at": created_at,
+            "model": model, "status": "completed", "output": output_items,
+            "output_text": answer, "usage": usage
+        }
+        yield f"event: response.completed\ndata: {json.dumps({'response': completed_resp})}\n\n".encode("utf-8")
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(_stream_responses_events(), media_type="text/event-stream")
 
 chat_router = APIRouter()
 

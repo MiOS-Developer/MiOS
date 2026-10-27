@@ -110,7 +110,8 @@ def fake_inputs(tmp: str, doc) -> dict:
     dl = os.path.join(tmp, "dl")
     os.makedirs(dl, exist_ok=True)
     inputs = {"installers": {}}
-    for role, fn in (("virtio_guest_tools", "virtio-win-guest-tools.exe"), ("qemu_ga", "qemu-ga-x86_64.msi"),
+    for role, fn in (("virtio_guest_tools", "virtio-win-gt-x64.msi"), ("spice_vdagent", "spice-vdagent-x64.msi"),
+                     ("qemu_ga", "qemu-ga-x86_64.msi"),
                      ("winfsp", "winfsp-9.9.99999.msi"), ("webview2", "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
                      ("looking_glass_host", "looking-glass-host.zip"), ("looking_glass_idd", "looking-glass-idd.zip")):
         p = os.path.join(dl, fn)
@@ -127,6 +128,15 @@ def fake_inputs(tmp: str, doc) -> dict:
         with open(os.path.join(d, inf + ".inf"), "w") as fh:
             fh.write('[Version]\nClass=System\nProvider=%RH%\n[Strings]\nRH="Red Hat, Inc."\n')
     inputs["drivers_dir"] = drv
+    fod = os.path.join(tmp, "fod")   # the capability FOD set fetch.py stages (Microsoft repository names)
+    os.makedirs(fod, exist_ok=True)
+    x = doc["spec"]
+    for cap in x["features"]["capabilities_add"]:
+        with open(os.path.join(fod, A.fod_cab_name(x["features"]["capability_fod"][cap]["package"], x["source"]["arch"])), "wb") as fh:
+            fh.write(f"fixture fod {cap}".encode())
+    with open(os.path.join(fod, x["features"]["fod_metadata"]), "wb") as fh:
+        fh.write(b"fixture fod metadata")
+    inputs["fod_dir"] = fod
     return inputs
 
 
@@ -291,7 +301,7 @@ class TestPayload(unittest.TestCase):
 
     def test_setup_script_bakes_guest_tools_lg_gpu_winrm(self):
         s = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", A.SETUP_SCRIPT))
-        for needle in ("virtio-win-guest-tools.exe", "qemu-ga-x86_64.msi", "winfsp-9.9.99999.msi", "VirtioFsSvc",
+        for needle in ("virtio-win-gt-x64.msi", "spice-vdagent-x64.msi", "Invoke-MiOSMsi", "qemu-ga-x86_64.msi", "winfsp-9.9.99999.msi", "VirtioFsSvc",
                        "MicrosoftEdgeWebView2RuntimeInstallerX64.exe", "looking-glass-host-setup.exe", "mios-looking-glass-idd.ps1",
                        "mios-gpu-driver.ps1", "-Register", "Enable-PSRemoting", "MiOS-WinRM-HTTP", "-RemoteAddress 'LocalSubnet'",
                        "Assert-MiOSSigned", "Assert-MiOSSha256", "S-1-5-32-555", "Add-WindowsCapability"):
@@ -299,10 +309,11 @@ class TestPayload(unittest.TestCase):
         self.assertNotIn("AllowUnencrypted -Value $true", s)
         cmd = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", "SetupComplete.cmd"))
         self.assertIn(A.SETUP_SCRIPT, cmd)
-        fl = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", A.FIRSTLOGON_SCRIPT))
-        self.assertIn("Disable-LocalUser", fl)
-        self.assertIn("AutoLogonCount", fl)
-        self.assertIn("MiOS-StoreHydrate", fl)
+        # fix-a M1: the former first-logon work is SYSTEM (SetupComplete); no first-logon script, no FirstLogonCommands
+        for needle in ("Disable-LocalUser", "AutoLogonCount", "MiOS-StoreHydrate", "MiOS-Verify"):
+            self.assertIn(needle, s)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.pay, "Windows", "Setup", "Scripts"))), ["SetupComplete.cmd", A.SETUP_SCRIPT])
+        self.assertNotIn("virtio-win-guest-tools.exe", s)
 
     def test_components_and_gpu_step_staged_with_hashes(self):
         names = {c["name"] for c in self.summary["components"]}
@@ -693,6 +704,152 @@ class TestWorker(unittest.TestCase):
         verbs = [c[3] for c in r.calls if c[:1] == ["virsh"]]
         self.assertLess(verbs.index("shutdown"), verbs.index("destroy"))
 
+    # virsh exec'd from initrc_t (a shell script under systemd-run) runs as virsh_t and cannot read the worker XML
+    # ("virsh define failed: error: Failed to open file '.../worker-domain.xml': Permission denied", build
+    # 20261023T224037Z, after the 35-min stage). The probe must catch it before any VM work.
+    DENIED = "error: Failed to open file '{}': Permission denied\n"
+
+    def _probe_runner(self, rc):
+        seen = []
+
+        def run(cmd, **kw):
+            if cmd[:4] == ["virsh", "-c", "test:///default", "define"]:
+                seen.append((cmd, _rd(cmd[4])))   # the probe file exists, with the probe domain, during the call
+                return (0, "Domain 'mios-virsh-probe' defined\n") if rc == 0 else (1, self.DENIED.format(cmd[4]))
+            if cmd[:4] == ["virsh", "-c", W.CONNECT, "domstate"]:
+                return 0, "shut off\n"
+            return 0, ""
+        run.seen = seen
+        return run
+
+    def _probe_files(self):
+        return [f for f in os.listdir(self.cfg.work_dir) if f.startswith(".virsh-probe.")]
+
+    def test_virsh_file_access_positive_uses_only_the_test_driver(self):
+        r = self._probe_runner(0)
+        W.virsh_file_access(self.cfg.work_dir, r)
+        self.assertEqual(len(r.seen), 1)
+        cmd, body = r.seen[0]
+        self.assertNotIn(W.CONNECT, cmd)                          # nothing is defined on the host
+        self.assertTrue(cmd[4].startswith(os.path.join(self.cfg.work_dir, ".virsh-probe.")))
+        self.assertIn("<domain type='test'>", body)
+        self.assertEqual(self._probe_files(), [])               # the probe file is removed
+
+    def test_virsh_file_access_negative_selinux_denial(self):
+        with self.assertRaises(W.WorkerError) as cm:
+            W.virsh_file_access(self.cfg.work_dir, self._probe_runner(1))
+        self.assertIn("Permission denied", str(cm.exception))
+        self.assertIn("initrc_t", str(cm.exception))
+        self.assertEqual(self._probe_files(), [])
+
+    def test_preflight_negative_virsh_cannot_read(self):
+        W.preflight(self.cfg, self._probe_runner(0), mem=lambda: 64.0, wd=lambda: True)
+        with self.assertRaises(W.WorkerError) as cm:
+            W.preflight(self.cfg, self._probe_runner(1), mem=lambda: 64.0, wd=lambda: True)
+        self.assertIn("virsh cannot read", str(cm.exception))
+
+    # build-20261023T224037Z ran /var/lib/mios-build down to 5.6 GB in the service stage: the overlay is removed once
+    # the worker is off, before the ISO is copied out next to it.
+    def test_drop_overlay_only_after_the_worker_stopped(self):
+        _wrb(self.cfg.overlay, b"\0" * 8192)
+        with self.assertRaises(W.WorkerError) as cm:
+            W.drop_overlay(self.cfg, self._runner({self.cfg.name: "running"}))
+        self.assertIn("only after the worker stopped", str(cm.exception))
+        self.assertTrue(os.path.exists(self.cfg.overlay))             # negative: a running worker keeps its disk
+        self.assertGreater(W.drop_overlay(self.cfg, self._runner({self.cfg.name: "shut off"})), 0)
+        self.assertFalse(os.path.exists(self.cfg.overlay))
+        self.assertEqual(W.drop_overlay(self.cfg, self._runner({})), 0)   # already gone (or never defined): no-op
+
+
+# pywinrm's own fault class when the interpreter has it (windows.xbox.probe.python venv), else a stand-in with the
+# same shape: a WinRMError subclass from the winrm package carrying the MS WSManFault code.
+try:
+    from winrm.exceptions import WSManFaultError as _WSManFault  # type: ignore
+
+    def wsman_fault(code, reason):
+        return _WSManFault(code=500, message="Bad HTTP response returned from server. Code 500", response="",
+                           reason=reason, fault_code="s:Receiver", fault_subcode="w:InternalError", wsman_fault_code=code)
+except ImportError:
+    class _WinRMError(Exception):
+        pass
+
+    class _WSManFault(_WinRMError):
+        def __init__(self, code, reason):
+            self.wsman_fault_code = code
+            super().__init__(f"{reason} (extended fault data: {{'wsmanfault_code': {code}}})")
+    _WinRMError.__module__ = _WSManFault.__module__ = "winrm.exceptions"
+
+    def wsman_fault(code, reason):
+        return _WSManFault(code, reason)
+
+KEY_DELETED = 2147943418   # 0x800703FA, as build-20261024T044408Z's submit_job got it
+KEY_DELETED_REASON = "Illegal operation attempted on a registry key that has been marked for deletion. "
+
+
+class FaultySession:
+    """Raises ``faults`` (in order) on the first calls whose script contains ``match``, then answers like FakeSession."""
+
+    def __init__(self, status, faults, match=""):
+        self.status, self.faults, self.match = status, list(faults), match
+        self.scripts = []
+        self.calls = 0
+
+    def run_ps(self, script):
+        self.calls += 1
+        self.scripts.append(script)
+        if self.faults and self.match in script:
+            raise self.faults.pop(0)
+        out = json.dumps(self.status) if "status.json" in script else "5"
+        return type("R", (), {"status_code": 0, "std_out": out.encode(), "std_err": b""})()
+
+
+class TestWinRMFaults(unittest.TestCase):
+    """build-20261024T044408Z: the worker booted and quiesced, then submit_job's new WinRM shell failed with WSMan
+    fault 0x800703FA (the signing-in account's profile hive was unloaded under WinRM). run_ps let pywinrm's exception
+    escape: no named stage failure, and the 40-minute stage was lost to a fault a retry clears."""
+
+    def test_transient_profile_unload_fault_is_retried(self):
+        sess = FaultySession({}, [wsman_fault(KEY_DELETED, KEY_DELETED_REASON)] * 2)
+        slept = []
+        self.assertEqual(W.run_ps(sess, "$PSVersionTable.PSVersion.Major", slept.append), "5")
+        self.assertEqual(sess.calls, 3)
+        self.assertEqual(slept, [W.WINRM_RETRY_S] * 2)
+
+    def test_negative_other_faults_are_not_retried_and_fail_named(self):
+        sess = FaultySession({}, [wsman_fault(0x80070005, "Access is denied. ")])
+        slept = []
+        with self.assertRaises(W.WorkerError) as cm:
+            W.run_ps(sess, "whoami", slept.append)
+        self.assertEqual(sess.calls, 1)
+        self.assertEqual(slept, [])
+        self.assertIn("0x80070005", str(cm.exception))
+
+    def test_negative_a_persistent_transient_fault_gives_up_named(self):
+        sess = FaultySession({}, [wsman_fault(KEY_DELETED, KEY_DELETED_REASON)] * 99)
+        with self.assertRaises(W.WorkerError) as cm:
+            W.run_ps(sess, "whoami", lambda s: None, retries=3)
+        self.assertEqual(sess.calls, 4)
+        self.assertIn("0x800703fa", str(cm.exception))
+        self.assertIn("attempt 4/4", str(cm.exception))
+
+    def test_transport_errors_become_worker_errors_and_bugs_propagate(self):
+        sess = FaultySession({}, [ConnectionResetError("reset by peer")])
+        with self.assertRaises(W.WorkerError):
+            W.run_ps(sess, "whoami", lambda s: None)
+        sess = FaultySession({}, [TypeError("a bug, not the remote side")])
+        with self.assertRaises(TypeError):
+            W.run_ps(sess, "whoami", lambda s: None)
+
+    def test_pre_fix_run_ps_let_the_fault_escape(self):
+        """Negative control: the HEAD run_ps (no retry, no conversion) raises pywinrm's exception itself."""
+        def head_run_ps(sess, script):
+            r = sess.run_ps(script)
+            return r.std_out.decode()
+        sess = FaultySession({}, [wsman_fault(KEY_DELETED, KEY_DELETED_REASON)])
+        with self.assertRaises(Exception) as cm:
+            head_run_ps(sess, "whoami")
+        self.assertNotIsInstance(cm.exception, W.WorkerError)
+
 
 # ---------------------------------------------------------------------------
 # build orchestration
@@ -757,7 +914,7 @@ class TestBuild(unittest.TestCase):
         run.calls = calls
         return run
 
-    def _run_worker(self, status):
+    def _run_worker(self, status, sess=None):
         job = os.path.join(self.tmp, "job")
         os.makedirs(job)
         os.environ_backup = None
@@ -772,7 +929,7 @@ class TestBuild(unittest.TestCase):
                 return 0, base
             return r(cmd, **kw)
         run.calls = r.calls
-        sess = FakeSession(status)
+        sess = sess or FakeSession(status)
         orig_conn = socket.create_connection
         socket.create_connection = lambda *a, **k: contextlib.nullcontext()   # type: ignore
         try:
@@ -795,10 +952,105 @@ class TestBuild(unittest.TestCase):
         self.assertTrue(any("Register-ScheduledTask" in s and "S-1-5-18" in s for s in sess.scripts))
         self.assertFalse(os.path.exists(job))
 
+    def _overlay_at_copy_out(self):
+        """Run the worker stage; return whether the overlay existed when the read-only copy-out ran."""
+        seen = []
+        orig = W._guestfish
+
+        def spy(cfg, script, mode, runner):
+            if mode == "--ro":
+                seen.append(os.path.exists(cfg.overlay))
+            return orig(cfg, script, mode, runner)
+        W._guestfish = spy
+        try:
+            self._run_worker({"stage": "done", "status": "done"})
+        finally:
+            W._guestfish = orig
+        self.assertEqual(len(seen), 1)
+        return seen[0]
+
+    def test_stage_worker_drops_the_overlay_before_the_copy_out(self):
+        self.assertFalse(self._overlay_at_copy_out())
+        orig = W.drop_overlay
+        W.drop_overlay = lambda cfg, runner=None: 0   # negative control: the pre-fix sequence (overlay kept)
+        try:
+            self.assertTrue(self._overlay_at_copy_out())
+        finally:
+            W.drop_overlay = orig
+
+    def test_stage_worker_survives_a_transient_fault_at_submit(self):
+        sess = FaultySession({"stage": "done", "status": "done"}, [wsman_fault(KEY_DELETED, KEY_DELETED_REASON)],
+                             match="Register-ScheduledTask")
+        res, calls, sess, job = self._run_worker(None, sess)
+        self.assertEqual(res["status"], "done")
+        self.assertEqual(sum("Register-ScheduledTask" in s for s in sess.scripts), 2)   # the faulted call, then the retry
+        self.assertFalse(os.path.exists(job))
+
+    def test_stage_worker_negative_persistent_fault_fails_named_and_cleans_up(self):
+        sess = FaultySession({"stage": "done", "status": "done"}, [wsman_fault(KEY_DELETED, KEY_DELETED_REASON)] * 99,
+                             match="Register-ScheduledTask")
+        with self.assertRaises(W.WorkerError) as cm:
+            self._run_worker(None, sess)
+        self.assertIn("0x800703fa", str(cm.exception))
+        self.assertEqual(sum("Register-ScheduledTask" in s for s in sess.scripts), W.WINRM_RETRIES + 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "job")))
+
     def test_stage_worker_negative_failed_job_still_cleans_up(self):
         with self.assertRaises(W.WorkerError) as cm:
             self._run_worker({"stage": "convert", "status": "failed", "error": "converter failed"})
         self.assertIn("converter failed", str(cm.exception))
+
+    def test_host_preflight_vm_commands_only(self):
+        x = self.doc["spec"]
+        calls = []
+
+        def deny(cmd, **kw):
+            calls.append(cmd)
+            return 1, f"error: Failed to open file '{cmd[-1]}': Permission denied"
+        for cmd in ("capture", "stage", "service", "run"):
+            with self.assertRaises(B.BuildError) as cm:
+                B.host_preflight(cmd, x, deny)
+            self.assertIn("[preflight]", str(cm.exception))
+        n = len(calls)
+        for cmd in ("plan", "gate"):   # no VM: the offline gates still run from any context
+            B.host_preflight(cmd, x, deny)
+        self.assertEqual(len(calls), n)
+        B.host_preflight("run", x, lambda cmd, **kw: (0, "Domain 'mios-virsh-probe' defined"))
+
+    def _main_until_build_dir(self, probe_ok):
+        """main() as root inside the scope, with the probe stubbed: does it reach Build.new?"""
+        from unittest import mock
+        doc = copy.deepcopy(self.doc)
+        doc["spec"]["probe"]["python"] = sys.executable   # no re-exec into the venv
+        reached = []
+
+        def probe(work_dir, runner=None):
+            if not probe_ok:
+                raise W.WorkerError(f"virsh cannot read files the build writes under {work_dir} (Permission denied)")
+
+        def new(*a, **k):
+            reached.append(a)
+            raise B.BuildError("[test] stop at Build.new")
+
+        def no_exec(*a, **k):
+            raise AssertionError(f"exec {a[:1]}")
+        with mock.patch.object(B, "build_layers", lambda env=None: LAYERS), \
+                mock.patch.object(B.render_spec, "render", lambda merged, layers: copy.deepcopy(doc)), \
+                mock.patch.object(B.W, "virsh_file_access", probe), \
+                mock.patch.object(B.Build, "new", classmethod(lambda cls, *a, **k: new(*a, **k))), \
+                mock.patch("os.geteuid", lambda: 0), mock.patch("os.execv", no_exec), mock.patch("os.execvp", no_exec), \
+                mock.patch.dict(os.environ, {B.SCOPED_ENV: "1"}), contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = B.main(["stage"])
+        return rc, reached, err.getvalue()
+
+    def test_main_refuses_before_creating_a_build_dir(self):
+        rc, reached, err = self._main_until_build_dir(probe_ok=False)
+        self.assertEqual(rc, 2)
+        self.assertEqual(reached, [])
+        self.assertIn("[preflight] virsh cannot read", err)
+        rc, reached, err = self._main_until_build_dir(probe_ok=True)
+        self.assertEqual(len(reached), 1)                       # the probe passes -> the build proceeds
+        self.assertIn("stop at Build.new", err)
 
     def test_stage_family_negative_uncaptured(self):
         inputs_dir = os.path.join(self.b.work)
@@ -873,10 +1125,15 @@ class TestProbeDefaults(unittest.TestCase):
         self.assertNotEqual(fixture["users"]["desktop"]["name"], "ssot-rendered")
 
     def test_credentials_only_from_the_ssot_spec(self):
-        self.assertEqual(P._credentials(self.doc), (self.doc["users"]["desktop"]["name"], self.doc["users"]["desktop"]["password"]))
+        # the separate elevation admin signs WinRM in (the desktop account is a standard user, round-1 boot); a
+        # single-account spec falls back to its desktop account
+        self.assertEqual(P._credentials(self.doc), (self.doc["users"]["admin"]["name"], self.doc["users"]["admin"]["password"]))
+        single = copy.deepcopy(self.doc)
+        single["users"].pop("admin")
+        self.assertEqual(P._credentials(single), (single["users"]["desktop"]["name"], single["users"]["desktop"]["password"]))
         os.environ["MIOS_WINRM_USER"], os.environ["MIOS_WINRM_PASSWORD"] = "env-user", "env-not-ssot"
         try:
-            self.assertEqual(P._credentials(self.doc)[0], self.doc["users"]["desktop"]["name"])   # env cannot override
+            self.assertEqual(P._credentials(self.doc)[0], self.doc["users"]["admin"]["name"])   # env cannot override
         finally:
             del os.environ["MIOS_WINRM_USER"], os.environ["MIOS_WINRM_PASSWORD"]
         with self.assertRaises(S.SpecError):
@@ -933,7 +1190,7 @@ class TestPowerShell(unittest.TestCase):
             self.skipTest("pwsh not installed")
         files = [os.path.join(BUILD_PS, f) for f in ("New-MiOSXboxImage.ps1", "MiOS-Xbox-Worker.ps1", "MiOS-Xbox.Provision.ps1",
                                                      "MiOS-Xbox-Capture.ps1")]
-        files += [os.path.join(self.pay, "Windows", "Setup", "Scripts", f) for f in (A.SETUP_SCRIPT, A.FIRSTLOGON_SCRIPT)]
+        files += [os.path.join(self.pay, "Windows", "Setup", "Scripts", A.SETUP_SCRIPT)]
         ps = ("$bad = 0; foreach ($f in (ConvertFrom-Json $env:FILES)) { $e = $null; "
               "[void][System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$e); "
               "if ($e.Count) { $bad++; Write-Output \"$f : $($e[0].Message) @$($e[0].Extent.StartLineNumber)\" } }; exit $bad")
@@ -951,8 +1208,105 @@ class TestPowerShell(unittest.TestCase):
                          "deny_display_providers", "layout_assets", "xbox-registry.reg", "EditionId", "throw"):
             self.assertTrue(contract in t, f"New-MiOSXboxImage.ps1 lacks {contract!r}")
 
+    # The worker job on mocks (robocopy, the converter, Optimize-Volume, a stub servicing script): the UUP set is gone
+    # before servicing starts, the scratch is gone and the volume re-TRIMmed before status done, out\ is kept; a failed
+    # job keeps its scratch. HEAD's job script is the negative control (build-20261023T224037Z: 5.6 GB left).
+    _JOB_MOCKS = r"""
+$ErrorActionPreference = 'Stop'
+$global:trims = @()
+function robocopy.exe {
+    $src, $dst = $args[0], $args[1]
+    New-Item -ItemType Directory -Force -Path $dst | Out-Null
+    Get-ChildItem -LiteralPath $src -Force | Copy-Item -Destination $dst -Recurse -Force
+    if ($args -contains '/MOV') { Get-ChildItem -LiteralPath $src -File -Recurse | Remove-Item -Force }
+    $global:LASTEXITCODE = 1
+}
+function Start-Process {
+    param($FilePath, $ArgumentList, $WorkingDirectory, [switch]$Wait, [switch]$PassThru, $WindowStyle)
+    $m = Join-Path $WorkingDirectory 'ISOFOLDER\sources'
+    New-Item -ItemType Directory -Force -Path $m | Out-Null
+    Set-Content -LiteralPath (Join-Path $m 'install.wim') -Value 'wim'
+    [pscustomobject]@{ ExitCode = 0 }
+}
+function Optimize-Volume { param($DriveLetter, [switch]$ReTrim) if ($ReTrim) { $global:trims += [string]$DriveLetter } }
+& $env:JOB_SCRIPT -Root $env:JOB_ROOT
+[IO.File]::WriteAllText((Join-Path $env:JOB_ROOT 'trims.txt'), ($global:trims -join ','))
+"""
+    _STUB = r"""
+param($SpecPath, $MediaDir, $PayloadDir, $DriversDir, $StartAssetsDir, $WorkDir, $OutIso, $ResultPath, $IsoLabel,
+      $UupDir, $FodDir, $OscdimgPath)
+$uups = Join-Path (Split-Path -Parent $MediaDir) 'UUPs'
+$seen = [ordered]@{ uup_set_present = [bool](Test-Path -LiteralPath $uups); media = [bool](Test-Path -LiteralPath (Join-Path $MediaDir 'sources\install.wim')) }
+New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+Set-Content -LiteralPath (Join-Path $WorkDir 'install.wim') -Value 'serviced'
+[IO.File]::WriteAllText((Join-Path (Split-Path -Parent $OutIso) 'seen.json'), ($seen | ConvertTo-Json))
+if ($env:STUB_FAIL) { throw 'servicing failed (stub)' }
+Set-Content -LiteralPath $OutIso -Value 'iso'
+Set-Content -LiteralPath $ResultPath -Value '{"status":"done"}'
+"""
+
+    def _run_job(self, script_text: str, fail: bool = False):
+        import subprocess
+        root = tempfile.mkdtemp(prefix="mios-xbox-job.", dir=self.tmp)
+        job = os.path.join(root, "job")
+        for d in ("converter", "uup", "payload", "drivers", "start-assets", "fod"):
+            os.makedirs(os.path.join(job, d))
+        _wr(os.path.join(job, "converter", "convert-UUP.cmd"), "rem converter\n")
+        _wr(os.path.join(job, "uup", "professional_en-us.esd"), "esd\n")
+        _wr(os.path.join(job, "xbox-spec.json"), "{}\n")
+        _wr(os.path.join(job, "job.json"), json.dumps({"schema": "mios-xbox-job/1", "converter_entry": "convert-UUP.cmd",
+                                                     "iso_name": "MiOS-Xbox.iso", "iso_label": "MIOS_XBOX"}))
+        _wr(os.path.join(job, "New-MiOSXboxImage.ps1"), self._STUB)
+        script = os.path.join(job, "MiOS-Xbox-Worker.ps1")
+        _wr(script, script_text)
+        env = {**os.environ, "JOB_SCRIPT": script, "JOB_ROOT": root, **({"STUB_FAIL": "1"} if fail else {})}
+        r = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", self._JOB_MOCKS], capture_output=True,
+                           text=True, timeout=300, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = os.path.join(root, "out")
+        seen = _json(os.path.join(out, "seen.json"))
+        trims = _rd(os.path.join(root, "trims.txt")) if os.path.exists(os.path.join(root, "trims.txt")) else ""
+        return _json(os.path.join(out, "status.json")), seen, os.path.isdir(os.path.join(root, "work")), out, trims
+
+    def test_worker_job_frees_scratch_before_done(self):
+        if not shutil.which("pwsh"):
+            self.skipTest("pwsh not installed")
+        st, seen, work_left, out, trims = self._run_job(_rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1")))
+        self.assertEqual((st["stage"], st["status"]), ("done", "done"), st)
+        self.assertEqual(seen, {"uup_set_present": False, "media": True})   # servicing never shares disk with the UUP set
+        self.assertFalse(work_left)                                          # scratch gone before done
+        self.assertTrue(os.path.isfile(os.path.join(out, "MiOS-Xbox.iso")))   # out\ (what the host copies) kept
+        self.assertTrue(trims)                                               # exchange volume re-TRIMmed
+        # a failed job keeps its scratch for diagnosis and is reported failed, not done
+        st, _, work_left, _, trims = self._run_job(_rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1")), fail=True)
+        self.assertEqual((st["stage"], st["status"]), ("service", "failed"), st)
+        self.assertIn("servicing failed (stub)", st["error"])
+        self.assertTrue(work_left)
+        self.assertFalse(trims)
+
+    def test_worker_job_negative_control_head_kept_everything(self):
+        if not shutil.which("pwsh"):
+            self.skipTest("pwsh not installed")
+        import subprocess
+        r = subprocess.run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            self.skipTest("no git HEAD")
+        if "Optimize-Volume" in r.stdout:
+            self.skipTest("HEAD already carries the scratch cleanup")
+        st, seen, work_left, _, trims = self._run_job(r.stdout)
+        self.assertEqual(st["status"], "done", st)
+        self.assertTrue(seen["uup_set_present"])   # the detector bites: the old job serviced next to the UUP set
+        self.assertTrue(work_left)
+        self.assertFalse(trims)
+
+    def test_servicing_moves_the_serviced_wim(self):
+        t = _rd(os.path.join(BUILD_PS, "New-MiOSXboxImage.ps1"))
+        self.assertIn("Move-Item -LiteralPath $wim -Destination $mediaWim", t)
+        self.assertNotRegex(t, r"Copy-Item -LiteralPath \$wim\b")
+
     def test_rendered_scripts_never_carry_a_secret_or_legacy_value(self):
-        for f in (A.SETUP_SCRIPT, A.FIRSTLOGON_SCRIPT, "SetupComplete.cmd"):
+        for f in (A.SETUP_SCRIPT, "SetupComplete.cmd"):
             t = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", f))
             self.assertNotIn(self.doc["users"]["desktop"]["password"], t)
             self.assertNotIn("TaskbarAl", t)

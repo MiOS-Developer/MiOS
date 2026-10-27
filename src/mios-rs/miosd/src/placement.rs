@@ -341,7 +341,7 @@ pub fn rule_size_expression(cfg: &Config) -> String {
 
 // ---------------------------------------------------------------- Hyprland IPC
 
-fn runtime_dir() -> PathBuf {
+pub(crate) fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })))
@@ -382,6 +382,11 @@ impl Hypr {
         })
     }
 
+    /// The instance directory this connection talks to.
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     fn request(&self, body: &str) -> Result<String, String> {
         let mut s =
             UnixStream::connect(self.dir.join(".socket.sock")).map_err(|e| e.to_string())?;
@@ -408,7 +413,18 @@ impl Hypr {
         }
     }
 
-    fn events(&self) -> Result<UnixStream, String> {
+    /// `hyprctl notify`: an on-screen notification (icon: 0 warning, 1 info, 2 hint, 3 error, 4 confused, 5 ok).
+    pub(crate) fn notify(&self, icon: i32, ms: u32, msg: &str) -> Result<(), String> {
+        let line: String = msg.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+        let out = self.request(&format!("notify {icon} {ms} 0 {line}"))?;
+        if out.trim() == "ok" {
+            Ok(())
+        } else {
+            Err(out.trim().to_owned())
+        }
+    }
+
+    pub(crate) fn events(&self) -> Result<UnixStream, String> {
         UnixStream::connect(self.dir.join(".socket2.sock")).map_err(|e| e.to_string())
     }
 }
@@ -452,7 +468,7 @@ fn monitor_boxes(monitors: &Json) -> HashMap<i64, MonitorBox> {
     out
 }
 
-fn addr(a: &str) -> String {
+pub(crate) fn addr(a: &str) -> String {
     if a.starts_with("0x") {
         a.to_owned()
     } else {
@@ -460,7 +476,7 @@ fn addr(a: &str) -> String {
     }
 }
 
-fn lua_str(s: &str) -> String {
+pub(crate) fn lua_str(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
@@ -494,7 +510,7 @@ fn tile_lua(address: &str, tag: &str) -> String {
     )
 }
 
-fn tags(c: &Json) -> Vec<String> {
+pub(crate) fn tags(c: &Json) -> Vec<String> {
     c.get("tags")
         .and_then(Json::as_array)
         .map(|a| {
@@ -506,7 +522,7 @@ fn tags(c: &Json) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn pair(c: &Json, key: &str) -> Option<(f64, f64)> {
+pub(crate) fn pair(c: &Json, key: &str) -> Option<(f64, f64)> {
     let a = c.get(key)?.as_array()?;
     Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))
 }
@@ -515,7 +531,7 @@ fn pair(c: &Json, key: &str) -> Option<(f64, f64)> {
 
 /// Reads mouse button state with EVIOCGKEY on every input device exposing BTN_LEFT. Read-only
 /// ioctls: nothing is grabbed and no events are consumed. Unavailable without the input group.
-struct Buttons {
+pub(crate) struct Buttons {
     fds: Vec<std::fs::File>,
     scanned: Instant,
     /// Directory scanned for event nodes (/dev/input; a temp dir in tests).
@@ -568,7 +584,7 @@ fn bit(buf: &[u8; KEY_BYTES], n: usize) -> bool {
 }
 
 impl Buttons {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_dir(Path::new("/dev/input"))
     }
 
@@ -637,7 +653,7 @@ impl Buttons {
     }
 
     /// Some(true) while any pointer button is held, None when no device is readable.
-    fn down(&mut self) -> Option<bool> {
+    pub(crate) fn down(&mut self) -> Option<bool> {
         use std::os::fd::AsRawFd;
         let hotplug = self.hotplugged();
         if should_rescan(self.fds.is_empty(), self.scanned.elapsed(), hotplug) {
@@ -997,7 +1013,13 @@ impl Server {
                 continue;
             }
             let Some(g) = geom_of(c) else { continue };
-            let hidden = c.get("hidden").and_then(Json::as_bool) == Some(true)
+            let on_special = c
+                .get("workspace")
+                .and_then(|w| w.get("name"))
+                .and_then(Json::as_str)
+                .is_some_and(|n| n.starts_with("special:"));
+            let hidden = on_special
+                || c.get("hidden").and_then(Json::as_bool) == Some(true)
                 || c.get("fullscreen").and_then(Json::as_i64).unwrap_or(0) != 0;
             let Some(t) = self.tracked.get_mut(&a) else {
                 continue;
@@ -1268,8 +1290,8 @@ window_rules = [
 [desktop.hyprland.placement]
 enabled = true
 scope = "all"
-width_ratio = 0.618
-aspect = 1.6
+width_ratio = 0.56
+aspect = 1.414
 min_width_px = 640
 min_height_px = 400
 max_width_px = 1800
@@ -1401,8 +1423,8 @@ managed_tag = "mios-placed"
     fn expression_has_one_space_and_mirrors_rule_size() {
         let e = rule_size_expression(&cfg());
         assert_eq!(e.matches(' ').count(), 1);
-        assert!(e.contains("monitor_w*0.618"));
-        assert_eq!(rule_size(&cfg(), 1920.0, 1080.0), (1187.0, 742.0));
+        assert!(e.contains("monitor_w*0.56"));
+        assert_eq!(rule_size(&cfg(), 1920.0, 1080.0), (1075.0, 760.0));
     }
 
     #[test]

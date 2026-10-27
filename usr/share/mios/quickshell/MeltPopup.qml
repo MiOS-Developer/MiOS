@@ -21,7 +21,7 @@ QS.PanelWindow {
     property real gap: theme.edgeMargin / 2
     property int duration: 200
     property real triggerRadius: trigger ? Glass.cornerFor(trigger.height) : 0
-    property real panelRadius: Glass.rounding
+    property real panelRadius: Glass.cornerFor(Math.min(panelWidth, panelHeight))
     default property alias content: emerge.content
     readonly property alias progress: emerge.progress
 
@@ -31,7 +31,8 @@ QS.PanelWindow {
     readonly property AnchorSpec anchor: AnchorSpec {}
     property var host: anchor.window
     property real hostHeight: host ? host.height : theme.topHeight
-    property real hostScreenX: host ? (host.mobile ? 0 : (host.screen ? (host.screen.width - host.width) / 2 : 0)) : 0
+    property real hostScreenX: host ? (typeof host.hudScreenX === "number" ? host.hudScreenX
+        : (host.mobile ? 0 : (host.screen ? (host.screen.width - host.width) / 2 : 0))) : 0
     property real hostScreenY: host && host.margins ? host.margins.top : theme.edgeMargin
     readonly property real screenWidth: host && host.screen ? host.screen.width : 1920
     // Trigger rectangle in the bar window's coordinates.

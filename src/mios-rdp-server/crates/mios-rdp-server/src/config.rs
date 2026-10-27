@@ -91,7 +91,6 @@ impl Default for Native {
 #[serde(default)]
 pub struct Redirect {
     pub clipboard: String,
-    pub clipboard_files: bool,
     pub clipboard_max_mb: u64,
     pub touch: bool,
     pub pen: bool,
@@ -102,29 +101,22 @@ pub struct Redirect {
     pub location: bool,
     pub timezone: String,
     pub smartcard: bool,
-    pub printers: bool,
-    pub usb: bool,
-    pub serial: bool,
 }
 
 impl Default for Redirect {
     fn default() -> Self {
         Self {
             clipboard: "both".into(),
-            clipboard_files: true,
             clipboard_max_mb: 64,
             touch: true,
             pen: true,
-            audio_output: true,
-            microphone: true,
-            camera: true,
-            drives: true,
-            location: true,
+            audio_output: false,
+            microphone: false,
+            camera: false,
+            drives: false,
+            location: false,
             timezone: "report".into(),
             smartcard: false,
-            printers: false,
-            usb: false,
-            serial: false,
         }
     }
 }
@@ -134,7 +126,6 @@ impl Default for Redirect {
 pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
-    pub keyboard_device: String,
 }
 
 impl Default for Naming {
@@ -142,7 +133,6 @@ impl Default for Naming {
         Self {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
-            keyboard_device: "MiOS Remote Keyboard".into(),
         }
     }
 }

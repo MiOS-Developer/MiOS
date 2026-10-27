@@ -728,7 +728,11 @@ $script:sets
         # negative controls: the patch's 0x682 (SAVE_TO_DATABASE with a topology flag) is rejected by the rules
         self.assertFalse(self._sdc_flags_valid(0x682))
         self.assertTrue(self._sdc_flags_valid(0x82))
-        self.assertRegex(script, r"if \(\$rc -ne 0\)[\s\S]*DisplaySwitch\.exe'\) -ArgumentList '/clone'")
+        # DisplaySwitch only when the console desktop is not ready (ERROR_ACCESS_DENIED); never after 87 (round-1:
+        # a single display made every sign-in leave "Your PC can't project to another screen" open)
+        self.assertRegex(script, r"if \(\$rc -eq 5\) \{[\s\S]*DisplaySwitch\.exe'\) -ArgumentList '/clone'")
+        self.assertNotIn("if ($rc -ne 0)", script)
+        self.assertIn("GetSystemMetrics(80)", script)
         self.assertIn("$env:TEMP", script)  # the script dir is admin-only; users log to their own temp
         self.assertNotIn("$PSScriptRoot", script)
         if _pwsh():
@@ -738,6 +742,76 @@ $script:sets
                                     "$s=[Console]::In.ReadToEnd(); $e=$null; [System.Management.Automation.Language.Parser]::ParseInput($s, [ref]$null, [ref]$e) | Out-Null; $e.Count"],
                                    input=src, capture_output=True, text=True, timeout=60)
                 self.assertEqual(r.stdout.strip(), "0", r.stderr)
+
+    @staticmethod
+    def _mirror_script(body):
+        import re
+        m = re.search(r"\$mirrorScript -Value @'\n(.*?)\n'@", body, re.S)
+        return m.group(1) if m else None
+
+    def test_mirror_script_behaviour_both_sides(self):
+        """Run the sign-in mirror script against a managed stand-in for user32 (monitor count, SetDisplayConfig rc)
+        and a mocked Start-Process: positive = the working-tree script, negative control = the round-1 (HEAD) one."""
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+        if not _pwsh():
+            self.skipTest("pwsh not installed")
+        mock = ('Add-Type -Namespace MiOS -Name Display -MemberDefinition @"\n'
+                'public static int SetDisplayConfig(uint a, System.IntPtr b, uint c, System.IntPtr d, uint f) '
+                '{ System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("T_OUT"), "SDC " + f + "\\n"); '
+                'return int.Parse(System.Environment.GetEnvironmentVariable("T_RC")); }\n'
+                'public static int GetSystemMetrics(int i) { return i == 80 ? int.Parse(System.Environment.GetEnvironmentVariable("T_MON")) : 0; }\n'
+                '"@')
+
+        def run(script, monitors, rc):
+            tmp = tempfile.mkdtemp(prefix="mios-lg-mirror.")
+            try:
+                text = re.sub(r'Add-Type -Namespace MiOS -Name Display -MemberDefinition @"\n.*?\n"@', lambda _m: mock, script,
+                              flags=re.S)
+                self.assertIn("T_MON", text)
+                sp = os.path.join(tmp, "mirror.ps1")
+                with open(sp, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                out = os.path.join(tmp, "calls.txt")
+                open(out, "w").close()
+                wrapper = ("function Start-Process { param($FilePath, $ArgumentList, [switch]$Wait) "
+                           "Add-Content -LiteralPath $env:T_OUT ('DISPLAYSWITCH ' + $ArgumentList) }\n& '" + sp + "'\n")
+                r = subprocess.run([_pwsh(), "-NoProfile", "-NonInteractive", "-Command", wrapper], capture_output=True,
+                                   text=True, timeout=120,
+                                   env={**os.environ, "T_OUT": out, "T_MON": str(monitors), "T_RC": str(rc), "TEMP": tmp,
+                                        "SystemRoot": "C:\\Windows"})
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                with open(out) as fh:
+                    calls = [ln.strip() for ln in fh if ln.strip()]
+                log = os.path.join(tmp, "mios-display-mirror.log")
+                return calls, (open(log, encoding="utf-8-sig").read() if os.path.isfile(log) else "")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        with open(_IDD_PS1, encoding="utf-8") as fh:
+            new = self._mirror_script(fh.read())
+        # positive: one display (the GPU-less round-1 guest) -> no clone request, no flyout
+        calls, log = run(new, 1, 87)
+        self.assertEqual(calls, [])
+        self.assertIn("1 display(s) on the desktop: nothing to duplicate", log)
+        calls, _ = run(new, 2, 0)                      # two displays: one clone request (0xC82), nothing else
+        self.assertEqual(calls, ["SDC 3202"])
+        calls, log = run(new, 2, 87)                   # a refused clone is recorded, never handed to DisplaySwitch
+        self.assertEqual(calls, ["SDC 3202"])
+        self.assertIn("= 87", log)
+        calls, _ = run(new, 3, 5)                      # no console desktop yet: Windows' switcher applies it later
+        self.assertEqual(calls, ["SDC 3202", "DISPLAYSWITCH /clone"])
+        r = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/share/mios/windows/mios-looking-glass-idd.ps1"],
+                           capture_output=True, text=True)
+        old = self._mirror_script(r.stdout) if r.returncode == 0 else None
+        if old is None:
+            self.skipTest("no git HEAD for the negative control")
+        # negative control: the round-1 script asked for a clone with one display and then raised the flyout
+        calls, _ = run(old, 1, 87)
+        self.assertEqual(calls, ["SDC 3202", "DISPLAYSWITCH /clone"])
+
 
 if __name__ == "__main__":
     unittest.main()

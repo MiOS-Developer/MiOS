@@ -129,6 +129,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-flatpak-run` | Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole resolved SSOT (thousands of MIOS_* variables); flatpak forwards each one to bwrap and aborts past bwrap's... |
 | `usr/libexec/mios/mios-forgejo-runner-firstboot.sh` | bash Run `forgejo-runner register` once so /srv/mios/forge-runner/.runner AI-related: /usr/libexec/mios/mios-forgejo-runner-fir... |
 | `usr/libexec/mios/mios-freeipa-enroll.sh` | bash Bash oneshot run by mios-freeipa-enroll.service that joins the host to a FreeIPA domain via ipa-client-install; gated on /etc/mios/i... |
+| `usr/libexec/mios/mios-gamepad-hypr3d` | Universal USB/Bluetooth controller daemon for Hypr3D (L3+R3 toggle chord, dual-stick movement & camera, RT grab & LT resize). |
 | `usr/libexec/mios/mios-gen-role-system` | Generates unified, SSOT-driven SYSTEM prompts for MiOS agent roles by merging mios.toml configs, live verb/skill catalogs, and A2A peer surfaces into a single source for Modelfile and agent-pipe... |
 | `usr/libexec/mios/mios-generate-icons` | Generates the MiOS XDG icon theme index.theme and SVG icon stubs |
 | `usr/libexec/mios/mios-gpu-numa` | Multi-GPU PCIe/NVLink topology discovery and NUMA node affinity generator (task_463). |
@@ -228,7 +229,9 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-screen-stream` | Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732). |
 | `usr/libexec/mios/mios-screenshot` | Screenshot entry point behind the screenshot/snap/prtscr aliases: in a Linux Wayland session it hands off to the native /usr/bin/mios-shot (mios-shot modes and flags pass through; the legacy... |
 | `usr/libexec/mios/mios-seccomp-filter` | Emits the compiled seccomp cBPF program that mios-sandbox-exec hands bwrap on --seccomp FD. Reads the denylist and action from mios.toml [sandbox] through the layered resolver, builds the program... |
+| `usr/libexec/mios/mios-shaderglass` | ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, stop, status, install/update, prefix,... |
 | `usr/libexec/mios/mios-shadow-test` | Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718). |
+| `usr/libexec/mios/mios-share-picker` | xdg-desktop-portal-hyprland custom picker ([desktop.hyprland.xdph].custom_picker_binary): `miosd shaderglass pick` answers the ShaderGlass supervisor's one-shot request with its target window (no... |
 | `usr/libexec/mios/mios-shell-session` | SHELL-01 runner for the persistent PTY substrate. Drives tmux with the pure protocol in mios_pipe.routing.pty: `exec` sends one nonce-framed command into the chat's session (creating it under the... |
 | `usr/libexec/mios/mios-show-image` | Executes a SearXNG image search and opens the top result's URL in the system's default browser, optionally moving the resulting window to a specified screen position. |
 | `usr/libexec/mios/mios-shutdown` | Hardens Day-N shutdown loops by detecting dirty working tree edits (+1 compilations), presenting a formatted git diff preview, and offering choices to carry-forward, include in Day-N updates/builds,... |
@@ -298,7 +301,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 268 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 271 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)
@@ -344,8 +347,10 @@ is generated, its generator is here.
 | `tools/test_generate-gate-index.py` | Sibling test for tools/generate-gate-index.py; proves a row never carries a description belonging to another check. |
 | `tools/test_generator_check_agrees_with_write.py` | Asserts a generator's --check mode compares what its write mode produces; the pairs are read from the gate's own projection-evidence emitter, not listed here. |
 | `tools/test_mios_tracked.py` | Fixtures for mios_tracked.py -- proves a dead git and an empty listing both raise instead of reading as a clean, empty tree. |
+| `tools/test_monitor_ports.py` | mios-mon service dots read the procfs LISTEN table instead of connecting to every [ports] service each refresh (a connect probe made xrdp fork and log a failed handshake every 3 s). |
 | `tools/test_monitor_runtime.py` | Verify actual monitor lifecycle restores caller signal handlers before launching another terminal client, including real Linux Textual stale-handler failure. |
 | `tools/test_native_generator_dispatch.py` | Exercise real native management/generator dispatch without retired Python scripts. |
+| `tools/test_rdp_priv_unit.py` | mios-rdp-priv@.service must keep CAP_SYS_PTRACE in its bounding set (TLS-KEY reads the caller's /proc/<pid>/exe, owned by the operator) while ptrace(2) stays outside its syscall filter. |
 | `tools/test_read-ssot-key.py` | Sibling test for tools/read-ssot-key.py; proves an absent key exits non-zero instead of printing a default. |
 | `tools/test_routing_security.py` | Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact. |
 | `tools/test_sync-bootstrap.py` | Real native bootstrap-sync CLI fixtures prove read-only checks, convergence, confinement and fail-closed dispatch. |
@@ -355,7 +360,7 @@ is generated, its generator is here.
 | `tools/verb-template-check.py` | Validates verb command templates against declared verb arguments and synonyms at build time. |
 | `tools/verify-images.py` | Verifies the built deployment artifacts against the SSOT format matrix; an empty or partial build tree is a failure that names the formats that produced nothing. |
 
-<!-- derived from the AI-hint headers of 45 file(s) matching tools/*.py -->
+<!-- derived from the AI-hint headers of 47 file(s) matching tools/*.py -->
 <!-- /MIOS-GEN:index:tools/*.py -->
 
 ## Libraries (`usr/lib/mios`)

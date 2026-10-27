@@ -115,8 +115,30 @@ pub fn priv_auth(socket: &Path, user: &str, password: &mut String, peer: &str) -
     Ok((text == "OK", text))
 }
 
+struct DumpableGuard;
+impl DumpableGuard {
+    fn enter() -> Self {
+        // SAFETY: mark process non-dumpable while receiving and reading the private TLS key fd.
+        unsafe {
+            libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+        }
+        Self
+    }
+}
+impl Drop for DumpableGuard {
+    fn drop(&mut self) {
+        if std::env::var_os("MIOS_RDP_KEEP_NONDUMPABLE").is_none() {
+            // SAFETY: restore dumpable flag after key fds are closed.
+            unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0);
+            }
+        }
+    }
+}
+
 /// TLS-KEY -> (certificate PEM, key PEM), read from the descriptors the helper passed.
 pub fn priv_tls(socket: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    let _nondumpable = DumpableGuard::enter();
     let fd = seqpacket_connect(socket)?;
     send(std::os::fd::AsRawFd::as_raw_fd(&fd), b"TLS-KEY")?;
     let (reply, fds) = recv(std::os::fd::AsRawFd::as_raw_fd(&fd))?;
@@ -129,6 +151,83 @@ pub fn priv_tls(socket: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     File::from(it.next().expect("cert fd")).read_to_end(&mut cert)?;
     File::from(it.next().expect("key fd")).read_to_end(&mut key)?;
     Ok((cert, key))
+}
+
+/// Re-verify on auto-reconnect that `username` exists, has `uid >= 1000`, and is a member of `group_name`.
+pub fn check_user_authorized(username: &str, group_name: &str) -> bool {
+    let Ok(c_user) = std::ffi::CString::new(username) else {
+        return false;
+    };
+    let Ok(c_group) = std::ffi::CString::new(group_name) else {
+        return false;
+    };
+    // SAFETY: NSS getpwnam / getgrnam lookups; results are inspected before returning.
+    unsafe {
+        let pwd = libc::getpwnam(c_user.as_ptr());
+        if pwd.is_null() {
+            return false;
+        }
+        let (uid, gid) = ((*pwd).pw_uid, (*pwd).pw_gid);
+        if uid < 1000 {
+            return false;
+        }
+        let grp = libc::getgrnam(c_group.as_ptr());
+        if grp.is_null() {
+            return false;
+        }
+        if gid == (*grp).gr_gid {
+            return true;
+        }
+        let mut gr_mem = (*grp).gr_mem;
+        while !gr_mem.is_null() && !(*gr_mem).is_null() {
+            let member = std::ffi::CStr::from_ptr(*gr_mem);
+            if member.to_bytes() == username.as_bytes() {
+                return true;
+            }
+            gr_mem = gr_mem.add(1);
+        }
+    }
+    false
+}
+
+/// Single-use ServerAutoReconnect cookie tracker: a cookie is valid for at most one reconnect
+/// attempt before being rotated and invalidated (never retained in a previous-cookie slot).
+#[allow(dead_code)]
+pub struct SingleUseCookieJar {
+    current: Option<ironrdp_pdu::rdp::session_info::ServerAutoReconnect>,
+}
+
+#[allow(dead_code)]
+impl SingleUseCookieJar {
+    pub fn new(initial: Option<ironrdp_pdu::rdp::session_info::ServerAutoReconnect>) -> Self {
+        Self { current: initial }
+    }
+
+    pub fn current(&self) -> Option<&ironrdp_pdu::rdp::session_info::ServerAutoReconnect> {
+        self.current.as_ref()
+    }
+
+    pub fn rotate(&mut self, next: ironrdp_pdu::rdp::session_info::ServerAutoReconnect) {
+        self.current = Some(next);
+    }
+
+    pub fn clear(&mut self) {
+        self.current = None;
+    }
+
+    /// Consume the current cookie if `client` verifies against it, immediately rotating to `next`.
+    /// A second presentation of the same `client` packet always fails.
+    pub fn verify_and_consume(
+        &mut self,
+        client: &ironrdp_pdu::rdp::client_info::ClientAutoReconnect,
+        next: ironrdp_pdu::rdp::session_info::ServerAutoReconnect,
+    ) -> bool {
+        let matched = self.current.as_ref().is_some_and(|c| client.verify(c));
+        if matched {
+            self.current = Some(next);
+        }
+        matched
+    }
 }
 
 #[derive(Debug)]
@@ -261,5 +360,33 @@ mod tests {
         assert!(left > Duration::from_millis(200) && left <= Duration::from_millis(400));
         v.record(Some(ip), true);
         assert!(v.backoff_left(ip).is_none());
+    }
+
+    #[test]
+    fn single_use_cookie_jar_rejects_replay_and_rotates() {
+        use ironrdp_pdu::rdp::client_info::ClientAutoReconnect;
+        use ironrdp_pdu::rdp::session_info::ServerAutoReconnect;
+
+        let c1 = ServerAutoReconnect { logon_id: 1, random_bits: [0x11; 16] };
+        let c2 = ServerAutoReconnect { logon_id: 1, random_bits: [0x22; 16] };
+        let c3 = ServerAutoReconnect { logon_id: 1, random_bits: [0x33; 16] };
+
+        let client_pkt_1 = ClientAutoReconnect::from_server_cookie(&c1);
+        let client_pkt_2 = ClientAutoReconnect::from_server_cookie(&c2);
+
+        let mut jar = SingleUseCookieJar::new(Some(c1));
+        assert!(jar.verify_and_consume(&client_pkt_1, c2));
+        assert!(!jar.verify_and_consume(&client_pkt_1, c3.clone()));
+        assert!(jar.verify_and_consume(&client_pkt_2, c3));
+        assert!(!jar.verify_and_consume(&client_pkt_2, ServerAutoReconnect { logon_id: 1, random_bits: [0x44; 16] }));
+    }
+
+    #[test]
+    fn check_user_authorized_enforces_uid_and_group() {
+        assert!(!check_user_authorized("root", "root"));
+        assert!(!check_user_authorized("root", "mios-rdp"));
+        assert!(!check_user_authorized("no-such-user-mios", "mios-rdp"));
+        assert!(!check_user_authorized("mios", "no-such-group-mios"));
+        assert!(check_user_authorized("mios", "mios-rdp"));
     }
 }

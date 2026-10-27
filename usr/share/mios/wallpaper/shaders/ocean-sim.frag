@@ -2,6 +2,10 @@
 //          the colour(rgb)+height(a) field and blends in the 24 wandering SSOT emitters. Same math as the HTML;
 //          only the sampling grid is coarser: every kernel offset is expressed in the HTML's reference grid
 //          (u_ref = canvas * sim_scale) so the look does not depend on the native internal resolution.
+//          Rate independence ([desktop.framerate] wallpaper rate W): u_rate = reference steps/s ([theme.wallpaper]
+//          framerate, the HTML's FPS) / actual steps/s. The per-step constants -- height decay, emitter blend, emitter
+//          height and the blur kernel's spread -- are compounded by u_rate so the field evolves the same per wall-clock
+//          second at any step rate; at u_rate == 1 every expression is the original one (bit-identical to the HTML pass).
 // AI-related: usr/share/mios/wallpaper/MeshGradient.qml, usr/share/mios/branding/living-wallpaper.html, [theme.wallpaper.motion]
 // Build: qsb --glsl "300es,330" -O -o ocean-sim.frag.qsb ocean-sim.frag   (mios-wallpaper-shaders, tests/test-wallpaper-native.py)
 #version 440
@@ -17,6 +21,7 @@ layout(std140, binding = 0) uniform buf {
     float u_asp;       // canvas aspect (W / H)
     float u_reset;     // 1 = start from the cleared field (bg, height 0), as the HTML's FBO clear
     float u_emitters;  // emitter count (HTML: 24)
+    float u_rate;      // reference steps per second / actual steps per second (1 = the HTML's rate)
     vec2 u_ref;        // HTML reference sim grid (texels) -> kernel offsets in the same uv units
     vec4 u_bg;         // cleared-field colour (SSOT bg)
     vec4 p0;  vec4 p1;  vec4 p2;  vec4 p3;  vec4 p4;  vec4 p5;  vec4 p6;  vec4 p7;
@@ -60,9 +65,13 @@ void emit(vec2 uv, out vec3 sc, out float sw){
     sc+=pal[ci].rgb*g; sw+=g; } }
 }
 
+bool atRef(){ return abs(u_rate - 1.0) < 1e-6; }
+
 vec4 fetchBlur(vec2 c){
   if (u_reset > 0.5) return vec4(u_bg.rgb, 0.0);
   vec2 tx=2.6/u_ref;
+  // per-step kernel variance adds up linearly over the steps: scale the spread by sqrt(rate)
+  if (!atRef()) tx *= sqrt(u_rate);
   vec4 b=prevAt(c)*4.0;
   b+=(prevAt(c+vec2(tx.x,0.0))+prevAt(c-vec2(tx.x,0.0))+prevAt(c+vec2(0.0,tx.y))+prevAt(c-vec2(0.0,tx.y)))*2.0;
   b+=prevAt(c+tx)+prevAt(c-tx)+prevAt(c+vec2(tx.x,-tx.y))+prevAt(c+vec2(-tx.x,tx.y));
@@ -74,11 +83,13 @@ void main(){
   vec2 v=curl(pv*0.5, u_time*0.06)*0.18; v.y+=0.006;
   vec2 srcp=pv - v*u_dt; vec2 src=vec2(srcp.x/u_asp, srcp.y);
   vec4 fld=fetchBlur(src);
-  fld.a =mix(fld.a, 0.0, 0.020);
+  if (atRef()) fld.a =mix(fld.a, 0.0, 0.020);
+  else fld.a = mix(fld.a, 0.0, 1.0 - pow(1.0 - 0.020, u_rate));
   vec3 sc; float sw; emit(uv, sc, sw);
   vec3 tgt = sw>1e-4 ? sc/sw : fld.rgb;
   float w = clamp(sw,0.0,1.0)*0.06;
+  if (!atRef()) w = 1.0 - pow(1.0 - w, u_rate);
   vec3 col=mix(fld.rgb, tgt, w);
-  float h = clamp(fld.a + sw*0.018, 0.0, 2.5);
+  float h = atRef() ? clamp(fld.a + sw*0.018, 0.0, 2.5) : clamp(fld.a + sw*0.018*u_rate, 0.0, 2.5);
   fragColor=vec4(col, h);
 }

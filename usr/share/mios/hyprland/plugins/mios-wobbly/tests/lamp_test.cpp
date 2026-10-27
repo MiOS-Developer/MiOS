@@ -344,14 +344,40 @@ static void testJson() {
 }
 
 static void testWobblePaneFade() {
+    CHECK(near(wobblePaneFade(0.0), 1.0), "wobble pane fade default at rest is 1.0");
+    CHECK(near(wobblePaneFade(2.0), 0.4), "wobble pane fade default at thresh is 0.4");
+    CHECK(near(wobblePaneFade(4.0), 0.4), "wobble pane fade default beyond thresh is clamped to 0.4");
     CHECK(near(wobblePaneFade(0.0, 0.05, 2.0), 1.0), "wobble pane fade at rest is 1.0");
     CHECK(near(wobblePaneFade(2.0, 0.05, 2.0), 0.05), "wobble pane fade at thresh is 0.05");
     CHECK(near(wobblePaneFade(4.0, 0.05, 2.0), 0.05), "wobble pane fade beyond thresh is clamped to 0.05");
     for (double d = 0.0; d <= 6.0; d += 0.25) {
-        const double f = wobblePaneFade(d, 0.05, 2.0);
+        const double f = wobblePaneFade(d, 0.4, 2.0);
         const double gain = 1.0 / f;
         CHECK(near(f * gain, 1.0), "gain compensation preserves unity brightness: dev=%f", d);
     }
+    // 8-bit XRGB8888 work-buffer quantization check (positive: minFade=0.4 preserves grey ramp & slate/orange;
+    // negative: minFade=0.05 quantizes into <= 14 bands and shifts slate 106,90,205 -> 100,80,200)
+    auto quant8 = [](int c, double fade) -> int {
+        const int stored = std::clamp((int)std::lround(c * fade), 0, 255);
+        return std::clamp((int)std::lround(stored * (1.0 / fade)), 0, 255);
+    };
+    auto distinctRampLevels = [&](double fade) -> size_t {
+        std::set<int> levels;
+        for (int step = 1; step <= 64; ++step)
+            levels.insert(quant8(step * 3 + 16, fade));
+        return levels.size();
+    };
+    const double defFade = wobblePaneFade(3.0); // default minFade = 0.4
+    CHECK(distinctRampLevels(defFade) >= 56, "8-bit 64-step grey ramp preserves >=56 levels at default fade (%zu)", distinctRampLevels(defFade));
+    CHECK(std::abs(quant8(106, defFade) - 106) <= 1 && std::abs(quant8(90, defFade) - 90) <= 1 && std::abs(quant8(205, defFade) - 205) <= 1,
+          "8-bit slate (106,90,205) preserved within 1 code value at default fade");
+    CHECK(std::abs(quant8(220, defFade) - 220) <= 1 && std::abs(quant8(120, defFade) - 120) <= 1 && std::abs(quant8(30, defFade) - 30) <= 1,
+          "8-bit orange (220,120,30) preserved within 1 code value at default fade");
+    // Negative control: 0.05 fade collapses 8-bit grey ramp into <= 14 bands and shifts slate by >= 5
+    const double badFade = wobblePaneFade(3.0, 0.05, 2.0);
+    CHECK(distinctRampLevels(badFade) <= 14, "negative: 0.05 fade posterizes 8-bit grey ramp to <=14 levels (%zu)", distinctRampLevels(badFade));
+    CHECK(std::abs(quant8(90, badFade) - 90) >= 8, "negative: 0.05 fade shifts slate green channel 90 -> %d", quant8(90, badFade));
+
     // Monotonic decrease with dev
     double prev = wobblePaneFade(0.0, 0.05, 2.0);
     bool mono = true;
@@ -404,18 +430,36 @@ static void testRestoreTargetPersistence() {
 }
 
 static void testTiledSlotRestoration() {
-    // Left slot on 1920x1080 workspace
-    const SRect sOrig{0, 0, 960, 1080};
-    // Default dwindle right split
-    const SRect sDwindle{960, 0, 960, 1080};
+    // Canonical 3-window dwindle layout on 1920x1080 work area: A left, B top-right, C bottom-right
+    const SRect slotA{0, 44, 960, 964};
+    const SRect slotB{960, 44, 960, 482};
+    const SRect slotC{960, 526, 960, 482};
+    const SRect rightFull{960, 44, 960, 964};
+    const SRect fullWa{0, 44, 1920, 964};
 
-    const double origCenterX = sOrig.cx();
-    const double dwindleCenterX = sDwindle.cx();
+    auto contains = [](const SRect& b, double px, double py) {
+        return px >= b.x - 4.0 && px <= b.x + b.w + 4.0 && py >= b.y - 4.0 && py <= b.y + b.h + 4.0;
+    };
+    auto preselectDir = [](const SRect& splitDesired, const SRect& pDesired) -> char {
+        if (splitDesired.x >= pDesired.x + pDesired.w - 8.0) return 'r';
+        if (pDesired.x >= splitDesired.x + splitDesired.w - 8.0) return 'l';
+        if (splitDesired.y >= pDesired.y + pDesired.h - 8.0) return 'd';
+        if (pDesired.y >= splitDesired.y + splitDesired.h - 8.0) return 'u';
+        return 'd';
+    };
 
-    CHECK(origCenterX < dwindleCenterX - 50.0, "orig center (%f) is left of dwindle center (%f), movewindow l needed", origCenterX, dwindleCenterX);
+    // rt_B: B minimized -> A at slotA, C expands to rightFull (covers slotB.center and slotC.center)
+    CHECK(!contains(slotA, slotB.cx(), slotB.cy()) && contains(rightFull, slotB.cx(), slotB.cy()) && contains(rightFull, slotC.cx(), slotC.cy()),
+          "rt_B: sibling C at rightFull covers both B and C desired centers");
+    CHECK(contains(fullWa, slotA.cx(), slotA.cy()) && contains(fullWa, slotB.cx(), slotB.cy()) && contains(fullWa, slotC.cx(), slotC.cy()),
+          "fifo B: A at fullWa covers all desired centers");
+    CHECK(preselectDir(slotB, slotC) == 'u', "rt_B: B above C selects preselect u");
+    CHECK(preselectDir(slotC, slotB) == 'd', "fifo C: C below B selects preselect d");
+    CHECK(preselectDir(slotB, slotA) == 'r', "fifo B: B right of A on fullWa selects preselect r (no aspect tie)");
+    CHECK(preselectDir(slotA, slotB) == 'l', "rt_A: A left of B selects preselect l");
 
-    // Negative control: dwindle default does not match original left slot
-    CHECK(!near(sOrig.x, sDwindle.x), "negative: dwindle default differs from left slot");
+    // Negative control: default cursor-at-bottom split puts B at slotC instead of slotB
+    CHECK(!near(slotB.y, slotC.y), "negative: bottom split slotC differs from top-right slotB");
 }
 
 static void testCrossOutputMinimizedFallback() {

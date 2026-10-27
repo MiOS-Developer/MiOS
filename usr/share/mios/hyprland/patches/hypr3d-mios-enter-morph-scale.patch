@@ -1,0 +1,188 @@
+# AI-hint: Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); a window not moved in the room exits to exactly its saved 2D box and mode.
+# AI-related: tests/test-hypr3d-enter-morph-scale.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.spawn]
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -192,6 +192,9 @@
+ // the live room on every save (closed windows drop out).
+ static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
+ static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
++// The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
++// own default, so the exit's "moved in the room?" test needs this separate record).
++static std::unordered_map<std::uintptr_t, Vec3>      g_enterRoomCenters;
+ 
+ enum class EViewMorph : uint8_t { None, To3D, To2D };
+ static EViewMorph g_viewMorph = EViewMorph::None;
+@@ -3731,6 +3734,7 @@
+     const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
+     g_viewMorphWins.clear();
+     g_entryPoses3D.clear();
++    g_enterRoomCenters.clear();
+ 
+     const auto& CAM = g_scene.camera();
+     const Vec3  FWD = CAM.forward();
+@@ -3746,6 +3750,28 @@
+             obstacles.push_back(O);
+     };
+ 
++    // MiOS retina enter: the tiled 2D layout is projected into the room as ONE
++    // group. Every fresh window keeps its 2D size and its position relative to
++    // the others; the whole set is scaled by `groupS` (<= 1) towards the eye's
++    // sheet-of-paper reference -- no window larger than the retina spawn box --
++    // by moving it back (reading_distance / groupS) and compressing the angular
++    // offsets by the same factor, so it reads at arm's length instead of
++    // filling the view.
++    float groupS = 1.0f;
++    if (retinaPlacing() && g_cfgSpawnWidth > 0 && g_cfgSpawnHeight > 0) {
++        double maxW = 1.0, maxH = 1.0;
++        for (const auto& info : infos) {
++            if (g_savedPoses.count(info.id))
++                continue;
++            const auto* SNAP = g_capture.get(info.id);
++            const CBox  B    = SNAP ? SNAP->sampledBox : info.monitorLocalBox;
++            maxW = std::max(maxW, B.w);
++            maxH = std::max(maxH, B.h);
++        }
++        groupS = static_cast<float>(std::clamp(
++            std::min(static_cast<double>(g_cfgSpawnWidth) / maxW, static_cast<double>(g_cfgSpawnHeight) / maxH), 0.2, 1.0));
++    }
++
+     for (const auto& info : infos) {
+         SViewMorphWin MW;
+ 
+@@ -3798,33 +3824,70 @@
+             const double dx = winCx - monW * 0.5;
+             const double dy = winCy - monH * 0.5;
+ 
+-            const double tanHalf = retinaTan();
+-            const float xRatio = static_cast<float>(dx / (monH * 0.5) * tanHalf);
+-            const float yRatio = static_cast<float>(-dy / (monH * 0.5) * tanHalf);
+-
+-            const float yawOffset = std::atan2(xRatio, 1.0f);
+-            const float pitchOffset = std::atan2(yRatio, std::sqrt(1.0f + xRatio * xRatio));
++            // ONE flat group plane: every fresh window shares the global orientation (facing the
++            // camera, tilted by tilt_angle_deg) -- windows are NOT angled individually. The 2D
++            // layout is laid onto that plane at 1:1 world size, so relative positions and sizes
++            // survive, and the plane sits at reading_distance / groupS (apparent size groupS).
++            const float baseDist = std::max(0.6f, g_cfgSpawnDistance);
++            const float D1       = baseDist / groupS;
+ 
+-            const float baseYaw = std::atan2(-FWD.x, -FWD.z);
++            const float baseYaw   = std::atan2(-FWD.x, -FWD.z);
+             const float basePitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
+                                     g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
+-
+-            MW.roomPose.yaw = baseYaw - yawOffset;
+-            MW.roomPose.pitch = basePitch + pitchOffset;
+-            MW.roomPose.roll = 0.0f;
+-
+-            // Map 2D window layer order to radial depth (dist stepped by STEP_Z)
+-            // so foreground windows are radially closer.
+-            // infos is in bottom-to-top (background-to-foreground) stacking order.
+-            const size_t totalWins = infos.size();
+-            const size_t layerIndex = (totalWins > static_cast<size_t>(i)) ? (totalWins - 1 - i) : 0;
++            MW.roomPose.yaw   = baseYaw;
++            MW.roomPose.pitch = basePitch;
++            MW.roomPose.roll  = 0.0f;
++
++            const Vec3 N  = retinaNormal(MW.roomPose.yaw, MW.roomPose.pitch);
++            const Vec3 R  = normalize(Vec3{std::cos(MW.roomPose.yaw), 0.0f, -std::sin(MW.roomPose.yaw)});
++            const Vec3 UV = normalize(cross(N, R));
++
++            // Stacking: only a window overlapped on screen by one above it steps back (one slab each,
++            // pose scaled to keep its size); tiles never overlap, so a tiled group stays coplanar.
++            const auto BOXOF = [&](const Compat::SWindowInfo& W) {
++                const auto* SN = g_capture.get(W.id);
++                return SN ? SN->sampledBox : W.monitorLocalBox;
++            };
++            // The window list is Hyprland's creation order, not z-order: floating windows render
++            // above tiles and pinned floating (PiP) above those, whatever was mapped first. Rank:
++            // bottom-layer widgets < tiled < floating (a window with a parent, i.e. a modal, is at
++            // least floating) < pinned floating < attached popups; list order breaks ties.
++            const auto ZRANK = [](const Compat::SWindowInfo& W) {
++                if (W.isLayer)
++                    return -1;
++                if (W.attached)
++                    return 3;
++                if (!W.window)
++                    return 0;
++                if (W.window->m_pinned && W.floating)
++                    return 2;
++                if (W.floating || W.window->parent())
++                    return 1;
++                return 0;
++            };
++            const int MYRANK = ZRANK(info);
++            int       over   = 0;
++            for (size_t j = 0; j < infos.size(); ++j) {
++                if (j == static_cast<size_t>(i))
++                    continue;
++                const int JR = ZRANK(infos[j]);
++                if (JR < MYRANK || (JR == MYRANK && j < static_cast<size_t>(i)))
++                    continue; // not above this window
++                const CBox OB = BOXOF(infos[j]);
++                const double ix = std::min(MW.box2D.x + MW.box2D.w, OB.x + OB.w) - std::max(MW.box2D.x, OB.x);
++                const double iy = std::min(MW.box2D.y + MW.box2D.h, OB.y + OB.h) - std::max(MW.box2D.y, OB.y);
++                if (ix > 1.0 && iy > 1.0)
++                    ++over;
++            }
+             const float STEP_Z = std::max(0.02f, g_cfgWindowDepth + 0.01f);
+-            const float baseDist = std::max(0.6f, g_cfgSpawnDistance);
+-            const float dist = baseDist + static_cast<float>(layerIndex) * STEP_Z;
+-
+-            const Vec3 dir = normalize(FWD + RIGHT * xRatio + UP * yRatio);
+-            MW.roomPose.center = CAM.position + dir * dist + UP * g_cfgEyelineOffset;
+-            MW.roomPose.scaleMul = 1.0f;
++            const float delta  = static_cast<float>(over) * STEP_Z;
++            const float m      = (D1 + delta) / D1;
++            const float S      = configWindowScale() * m;
++
++            const Vec3 P0 = CAM.position + FWD * D1 + UP * g_cfgEyelineOffset;
++            MW.roomPose.center = P0 - N * delta +
++                                 R * (World3D::toWorld(dx) * S) - UV * (World3D::toWorld(dy) * S);
++            MW.roomPose.scaleMul = m;
+             MW.roomPose.box = MW.boxRoom;
+             g_retinaMul[info.id] = MW.roomPose.scaleMul;
+             OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
+@@ -3840,7 +3903,8 @@
+             }
+         }
+ 
+-        g_entryPoses3D[info.id] = MW.roomPose.center;
++        g_entryPoses3D[info.id]    = MW.roomPose.center;
++        g_enterRoomCenters[info.id] = MW.roomPose.center;
+         MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
+ 
+         // Every window's box is frozen at enter: the room is its own
+@@ -3963,6 +4027,32 @@
+         MW.box2D   = MW.boxRoom;
+         MW.animBox = false;
+ 
++        // A window the user did not move in the room returns to EXACTLY the 2D box and mode
++        // (tiled/floating, e.g. a pinned PiP) it had at entry: the layout save stays as taken.
++        // Only a window that was moved/grabbed in 3D (or opened there: no entry pose) lands where
++        // its room pose projects onto the 2D desktop (below).
++        bool movedInRoom = true;
++        if (const auto ENTRY = g_enterRoomCenters.find(ENTITY.id); ENTRY != g_enterRoomCenters.end()) {
++            const Vec3 D = ENTITY.center - ENTRY->second;
++            movedInRoom  = dot(D, D) > 0.03f * 0.03f;
++        }
++        if (!movedInRoom) {
++            for (auto& SAVE : g_layoutSaves) {
++                if (SAVE.id != ENTITY.id)
++                    continue;
++                MW.box2D = viewMorphLocalBox(MON, SAVE.box);
++                if (!SAVE.ghosted)
++                    MW.animBox = boxesDiffer(MW.box2D, MW.boxRoom);
++                break;
++            }
++            MW.roomPose.box2D       = MW.box2D;
++            g_savedPoses[ENTITY.id] = MW.roomPose;
++            MW.stack                = static_cast<float>(i) * kMorphStackEps;
++            ++i;
++            g_viewMorphWins[ENTITY.id] = MW;
++            continue;
++        }
++
+         // Project 3D pose relative to camera origin onto 2D workspace coordinates
+         // adjacent to other open windows, avoiding dead-center stacking.
+         const Vec3 V = MW.roomPose.center - CAM.position;

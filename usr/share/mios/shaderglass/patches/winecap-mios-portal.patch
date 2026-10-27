@@ -1,0 +1,280 @@
+diff --git a/WineCap/screencast.c b/WineCap/screencast.c
+index 9009415..ede3d59 100644
+--- a/WineCap/screencast.c
++++ b/WineCap/screencast.c
+@@ -31,6 +31,7 @@ Based on: screencast-portal.c
+ 
+ #include <spa/utils/defs.h>
+ #include <gio/gunixfdlist.h>
++#include <fcntl.h>
+ 
+ enum portal_capture_type
+ {
+@@ -46,6 +47,100 @@ enum portal_cursor_mode
+ 	PORTAL_CURSOR_MODE_METADATA = 1 << 2,
+ };
+ 
++/* MiOS: portal options from the environment; with none of these set WineCap behaves as upstream.
++ *   MIOS_WINECAP_SOURCE_TYPES  comma list of monitor,window,virtual offered to the picker,
++ *                              intersected with the portal's AvailableSourceTypes
++ *   MIOS_WINECAP_CURSOR        hidden, embedded or metadata, used when the portal offers it
++ *   MIOS_WINECAP_TOKEN_FILE    persist the selection: SelectSources asks for persist_mode 2 and sends the
++ *                              restore_token this file holds; the token Start returns replaces it (0600) */
++static uint32_t mios_source_types(uint32_t available)
++{
++	const char *v = getenv("MIOS_WINECAP_SOURCE_TYPES");
++	uint32_t want = 0;
++	if (!v || !*v)
++		return available;
++	if (strstr(v, "monitor"))
++		want |= PORTAL_CAPTURE_TYPE_MONITOR;
++	if (strstr(v, "window"))
++		want |= PORTAL_CAPTURE_TYPE_WINDOW;
++	if (strstr(v, "virtual"))
++		want |= PORTAL_CAPTURE_TYPE_VIRTUAL;
++	if (!(want & available))
++	{
++		warn("MIOS_WINECAP_SOURCE_TYPES=%s matches no portal source type; offering all", v);
++		return available;
++	}
++	return want & available;
++}
++
++static int mios_cursor_mode(uint32_t available)
++{
++	const char *v = getenv("MIOS_WINECAP_CURSOR");
++	uint32_t mode = 0;
++	if (!v || !*v)
++		return -1;
++	if (!strcmp(v, "hidden"))
++		mode = PORTAL_CURSOR_MODE_HIDDEN;
++	else if (!strcmp(v, "embedded"))
++		mode = PORTAL_CURSOR_MODE_EMBEDDED;
++	else if (!strcmp(v, "metadata"))
++		mode = PORTAL_CURSOR_MODE_METADATA;
++	if (!(mode & available))
++	{
++		warn("MIOS_WINECAP_CURSOR=%s is not offered by the portal; using the default", v);
++		return -1;
++	}
++	return (int)mode;
++}
++
++static char *mios_read_token(void)
++{
++	const char *path = getenv("MIOS_WINECAP_TOKEN_FILE");
++	char buf[512];
++	size_t n;
++	FILE *f;
++	if (!path || !*path)
++		return NULL;
++	f = fopen(path, "r");
++	if (!f)
++		return NULL;
++	n = fread(buf, 1, sizeof(buf) - 1, f);
++	fclose(f);
++	buf[n] = 0;
++	while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r' || buf[n - 1] == ' '))
++		buf[--n] = 0;
++	return n ? strdup(buf) : NULL;
++}
++
++static void mios_write_token(const char *token)
++{
++	const char *path = getenv("MIOS_WINECAP_TOKEN_FILE");
++	char tmp[4096];
++	size_t len;
++	bool ok;
++	int fd;
++	if (!path || !*path || !token || !*token)
++		return;
++	if (snprintf(tmp, sizeof(tmp), "%s.tmp.%d", path, (int)getpid()) >= (int)sizeof(tmp))
++		return;
++	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (fd < 0)
++	{
++		warn("restore token: cannot create %s", tmp);
++		return;
++	}
++	len = strlen(token);
++	ok = write(fd, token, len) == (ssize_t)len && fsync(fd) == 0;
++	close(fd);
++	if (!ok || rename(tmp, path) != 0)
++	{
++		unlink(tmp);
++		warn("restore token: cannot write %s", path);
++		return;
++	}
++	info("Restore token saved");
++}
++
+ struct
+ {
+ 	GDBusConnection *connection;
+@@ -173,6 +268,11 @@ static void on_start_response_received_cb(GVariant *parameters, void *user_data)
+ 	}
+ 
+ 	g_variant_iter_loop(&iter, "(u@a{sv})", &sc.pipewire_node, &stream_properties);
++	{
++		const char *restore_token = NULL;
++		if (g_variant_lookup(result, "restore_token", "&s", &restore_token))
++			mios_write_token(restore_token);
++	}
+ 	info("Source selected, setting up ScreenCast");
+ 	open_pipewire_remote();
+ }
+@@ -244,22 +344,37 @@ static void select_source()
+ {
+ 	GVariantBuilder builder;
+ 	uint32_t available_cursor_modes;
++	int forced_cursor_mode;
+ 	char *request_token;
+ 	char *request_path;
+ 
+ 	portal_create_request_path(&request_path, &request_token);
+ 	portal_signal_subscribe(request_path, sc.cancellable, on_select_source_response_received_cb, NULL);
+ 	g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
+-	g_variant_builder_add(&builder, "{sv}", "types", g_variant_new_uint32(sc.capture_types));
++	g_variant_builder_add(&builder, "{sv}", "types", g_variant_new_uint32(mios_source_types(sc.capture_types)));
+ 	g_variant_builder_add(&builder, "{sv}", "multiple", g_variant_new_boolean(FALSE));
+ 	g_variant_builder_add(&builder, "{sv}", "handle_token", g_variant_new_string(request_token));
+ 
+ 	available_cursor_modes = get_available_cursor_modes();
+-	if ((available_cursor_modes & PORTAL_CURSOR_MODE_EMBEDDED))
++	forced_cursor_mode = mios_cursor_mode(available_cursor_modes);
++	if (forced_cursor_mode >= 0)
++		g_variant_builder_add(&builder, "{sv}", "cursor_mode", g_variant_new_uint32((uint32_t)forced_cursor_mode));
++	else if ((available_cursor_modes & PORTAL_CURSOR_MODE_EMBEDDED))
+ 		g_variant_builder_add(&builder, "{sv}", "cursor_mode", g_variant_new_uint32(PORTAL_CURSOR_MODE_EMBEDDED));
+ 	else
+ 		g_variant_builder_add(&builder, "{sv}", "cursor_mode", g_variant_new_uint32(PORTAL_CURSOR_MODE_HIDDEN));
+ 
++	if (getenv("MIOS_WINECAP_TOKEN_FILE"))
++	{
++		char *restore_token = mios_read_token();
++		g_variant_builder_add(&builder, "{sv}", "persist_mode", g_variant_new_uint32(2));
++		if (restore_token)
++		{
++			g_variant_builder_add(&builder, "{sv}", "restore_token", g_variant_new_string(restore_token));
++			free(restore_token);
++		}
++	}
++
+ 	g_dbus_proxy_call(sc.screencast_proxy, "SelectSources",
+ 					  g_variant_new("(oa{sv})", sc.session_handle, &builder), G_DBUS_CALL_FLAGS_NONE, -1,
+ 					  sc.cancellable, on_source_selected_cb, NULL);
+
+diff --git a/WineCap/WineCap.c b/WineCap/WineCap.c
+--- a/WineCap/WineCap.c
++++ b/WineCap/WineCap.c
+@@ -17,11 +17,93 @@
+ static void *sContext = NULL;
+ static int sType = 0;
+ 
++
++/* The compositor can constrain a fullscreen X11 window while Wine retains the
++ * monitor-sized Win32 client rect. Resize from inside the owning Win32 process:
++ * changing only the compositor/X11 outer geometry leaves the DXGI client stale.
++ * This is enabled only by the MiOS overlay launcher and never moves or focuses
++ * a window. The capture dimensions follow window resizes and output scaling. */
++struct mios_output_size {
++    int width;
++    int height;
++};
++
++static BOOL CALLBACK mios_fit_output_window(HWND window, LPARAM opaque)
++{
++    DWORD pid = 0;
++    WCHAR title[128];
++    RECT current;
++    RECT wanted;
++    struct mios_output_size *size = (struct mios_output_size *)opaque;
++
++    GetWindowThreadProcessId(window, &pid);
++    if (pid != GetCurrentProcessId() || GetWindow(window, GW_OWNER) != NULL ||
++        !IsWindowVisible(window) ||
++        GetWindowTextW(window, title, sizeof(title) / sizeof(title[0])) <= 0 ||
++        CompareStringOrdinal(title, 13, L"ShaderGlass (", 13, FALSE) != CSTR_EQUAL)
++        return TRUE;
++
++    /* Setup mode owns a menu/caption; fit only the borderless overlay. */
++    if (GetMenu(window) != NULL || (GetWindowLongW(window, GWL_STYLE) & WS_CAPTION))
++        return FALSE;
++
++    if (!GetClientRect(window, &current) ||
++        (current.right == size->width && current.bottom == size->height))
++        return FALSE;
++
++    wanted.left = wanted.top = 0;
++    wanted.right = size->width;
++    wanted.bottom = size->height;
++    if (!AdjustWindowRectEx(&wanted, GetWindowLongW(window, GWL_STYLE),
++                           GetMenu(window) != NULL, GetWindowLongW(window, GWL_EXSTYLE)))
++        return FALSE;
++
++    if (SetWindowPos(window, NULL, 0, 0, wanted.right - wanted.left,
++                     wanted.bottom - wanted.top,
++                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)) {
++        info("Fit output client: %dx%d -> %dx%d", (int)current.right,
++             (int)current.bottom, size->width, size->height);
++    }
++    return FALSE;
++}
++
++static void mios_fit_output(int width, int height)
++{
++    static ULONGLONG last_request = 0;
++    ULONGLONG now;
++    const char *size_path;
++    struct mios_output_size size = {width, height};
++
++    if (width <= 0 || height <= 0 || sType != 1 /* CaptureLib::CaptureTypeWindow */ ||
++        g_strcmp0(g_getenv("MIOS_WINECAP_FIT_WINDOW"), "1") != 0)
++        return;
++
++    size_path = g_getenv("MIOS_WINECAP_SIZE_FILE");
++    if (size_path && *size_path) {
++        FILE *f = fopen(size_path, "r");
++        int tw = 0, th = 0;
++        if (f) {
++            if (fscanf(f, "%d %d", &tw, &th) == 2 && tw > 0 && th > 0) {
++                size.width = tw;
++                size.height = th;
++            }
++            fclose(f);
++        }
++    }
++
++    now = GetTickCount64();
++    if (last_request && now - last_request < 100)
++        return;
++    last_request = now;
++    EnumWindows(mios_fit_output_window, (LPARAM)&size);
++}
++
+ static void PipeWireCallback(void *data, int width, int height, int pitch)
+ {
+     if (!sActive)
+         return;
+ 
++    mios_fit_output(width, height);
+     sCallbackFunc(data, width, height, pitch, sContext);
+ }
+ 
+diff --git a/WineCap/Makefile b/WineCap/Makefile
+--- a/WineCap/Makefile
++++ b/WineCap/Makefile
+@@ -2,11 +2,11 @@
+ GLIB = $(shell pkg-config --cflags --libs gio-unix-2.0)
+ 
+ all:
+-	winegcc -Wall -lm -m64 -O3 -shared -fPIC WineCap.spec -Wno-attributes -Wno-unused-value WineCap.c pipewire.c portal.c screencast.c $(PIPEWIRE) $(GLIB) -o WineCap
++	winegcc -Wall -lm -m64 -O3 -shared -fPIC WineCap.spec -Wno-attributes -Wno-unused-value WineCap.c pipewire.c portal.c screencast.c $(PIPEWIRE) $(GLIB) -luser32 -o WineCap
+ 	mv WineCap.dll.so WineCap.dll
+ 
+ debug:
+-	winegcc -D_DEBUG -Wall -lm -m64 -shared -fPIC WineCap.spec -Wno-attributes -Wno-unused-value WineCap.c pipewire.c portal.c screencast.c $(PIPEWIRE) $(GLIB) -o WineCap
++	winegcc -D_DEBUG -Wall -lm -m64 -shared -fPIC WineCap.spec -Wno-attributes -Wno-unused-value WineCap.c pipewire.c portal.c screencast.c $(PIPEWIRE) $(GLIB) -luser32 -o WineCap
+ 	mv WineCap.dll.so WineCap.dll
+ 
+ run: all

@@ -91,6 +91,7 @@ class TestAdversarialM1TmuxRecovery(unittest.TestCase):
 
         self.assertIn("head", result, "Expected head pane in result")
         self.assertTrue(result["head"].startswith("%"), f"Expected % pane ID, got {result['head']}")
+        self.assertEqual(result.get("worker_panes"), 0, f"Expected 0 pre-spawned worker panes, got {result}")
 
         # Verify session now exists
         res = subprocess.run(
@@ -98,6 +99,35 @@ class TestAdversarialM1TmuxRecovery(unittest.TestCase):
             capture_output=True
         )
         self.assertEqual(res.returncode, 0, f"Session {target_session} should have been created")
+
+        # Verify 0 pre-spawned @mios-workspace-reserved or Worker N (empty) panes exist
+        head = result["head"]
+        win_panes = self.tmux(
+            "list-panes", "-t", head, "-F",
+            "#{pane_id}\t#{@mios-workspace-worker}\t#{@mios-workspace-reserved}\t#{pane_title}"
+        ).splitlines()
+        for line in win_panes:
+            parts = line.split("\t")
+            self.assertEqual(parts[1], "", f"Unexpected pre-spawned worker tag: {line}")
+            self.assertEqual(parts[2], "", f"Unexpected pre-spawned reserved tag: {line}")
+            self.assertNotIn("Worker", parts[3], f"Unexpected empty worker title: {line}")
+
+        # Verify worker slots allocate dynamically when requested
+        self.tmux("resize-window", "-t", head, "-x", "200", "-y", "60")
+        wp = self.tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", head, "sleep 3600")
+        for k, v in (("@mios-workspace-worker", head), ("@mios-workspace-slot", "1"), ("@mios-workspace-dynamic", "1")):
+            self.tmux("set-option", "-p", "-t", wp, k, v)
+        self.tmux("select-pane", "-t", wp, "-T", "MiOS worker 1")
+        res_dyn = relay._workspace_call(
+            "resize",
+            socket=str(self.socket),
+            session=target_session,
+            head=head,
+            adapter=f"{sys.executable} {RELAY}",
+            observer_command="sleep 3600"
+        )
+        self.assertEqual(res_dyn.get("layout"), "desktop")
+        self.assertEqual(res_dyn.get("workers"), [wp])
 
     def test_challenge_1b_target_session_killed_and_recreated(self):
         """Challenge 1B: Target session is killed and then recreated cleanly via _workspace_call."""

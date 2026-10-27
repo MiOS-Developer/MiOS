@@ -1,4 +1,4 @@
-# AI-hint: MiOS-Xbox DISM servicing on the GPU-less build worker (xb-05/07/08/10/11, XB-1..XB-3). Driven ONLY by the credential-free guest projection of xbox-spec.json (render_spec.py) and the payload answer.py rendered from the same spec: verifies every staged installer (sha256 + Authenticode signer) before baking, exports exactly source.edition, requires the captured Start layout of the image's BuildBranch family, injects the virtio-win drivers into install.wim and every boot.wim index (signature-enforced, never forced unsigned) and refuses any GPU vendor display driver, applies the optional-feature/capability lists, imports the rendered offline registry (.reg) into the loaded hives, stages the payload (SetupComplete chain, components, installers, guest spec), copies the rendered autounattend.xml to the media root and masters the ISO. Every failure throws; result.json records what was resolved.
+# AI-hint: MiOS-Xbox DISM servicing on the GPU-less build worker (xb-05/07/08/10/11, XB-1..XB-3). Driven ONLY by the credential-free guest projection of xbox-spec.json (render_spec.py) and the payload answer.py rendered from the same spec: verifies every staged installer before baking (sha256 always; a Valid Authenticode signature by the recorded signer for installers their publisher signs -- the unsigned virtio-win/qemu-ga MSIs carry signer "" and are anchored by sha256 alone, NotSigned is never accepted), exports exactly source.edition, requires the captured Start layout of the image's BuildBranch family, injects the virtio-win drivers into install.wim and every boot.wim index (signature-enforced, never forced unsigned) and refuses any GPU vendor display driver, applies the optional-feature list, sets the offline default time zone to the rendered region (DISM /Set-TimeZone, so specialize changes no zone), bakes every added capability OFFLINE from its FOD package (DISM /Add-Capability /Source /LimitAccess, fallback /Add-Package of the same cab; the build fails unless the capability is Installed and its proof file exists -- never deferred to an online install), refuses a registry item that targets a service the image does not register (orphan Services key), leaves Windows Setup's own first-boot CmdLine alone (no SetupType/CmdLine hook: SetupComplete.cmd runs through the normal path), imports the rendered offline registry (.reg) into the loaded hives, stages the payload (SetupComplete chain, components, installers, guest spec), copies the rendered autounattend.xml to the media root and masters the ISO. Every failure throws; result.json records what was resolved.
 # AI-related: usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/build.py, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, usr/libexec/mios/win/xbox/conform.py
 #Requires -Version 5.1
 [CmdletBinding()]
@@ -12,7 +12,8 @@ param(
     [Parameter(Mandatory = $true)][string]$OutIso,
     [Parameter(Mandatory = $true)][string]$ResultPath,
     [Parameter(Mandatory = $true)][string]$IsoLabel,
-    [string]$UupDir = '',                                   # capability source (FOD packages of the UUP set)
+    [string]$UupDir = '',                                   # the converted UUP set (informational)
+    [string]$FodDir = '',                                   # capability FOD packages under Microsoft repository names + FoD metadata (fetch.py)
     [string]$OscdimgPath = ''                               # oscdimg.exe / cdimage.exe (ADK or the converter's bin)
 )
 
@@ -21,10 +22,15 @@ $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2.0
 
 $Result = [ordered]@{ schema = 'mios-xbox-servicing/1'; status = 'running'; started = [DateTime]::UtcNow.ToString('o') }
+$script:SerialOut = $null
 function Say([string]$m) {
     $line = "[{0}] [New-MiOSXboxImage] {1}" -f [DateTime]::UtcNow.ToString('o'), $m
     Write-Output $line
-    try { [System.IO.File]::AppendAllText('\\.\COM1', "$line`r`n") } catch {}
+    # System.IO.Ports.SerialPort: .NET Framework FileStream refuses the \\.\COM1 device path
+    try {
+        if (-not $script:SerialOut) { $sp = New-Object System.IO.Ports.SerialPort -ArgumentList 'COM1', 115200; $sp.WriteTimeout = 2000; $sp.NewLine = "`r`n"; $sp.Open(); $script:SerialOut = $sp }
+        $script:SerialOut.WriteLine($line)
+    } catch { $script:SerialOut = $null }
 }
 function Save-Result {
     $tmp = "$ResultPath.tmp"
@@ -60,13 +66,14 @@ foreach ($p in @($payload.installers.PSObject.Properties)) {
     $f = Join-Path $PayloadDir ($p.Value.path -replace '/', '\')
     if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "installer $($p.Name) not staged at $f" }
     if ((Get-Sha256 $f) -ne ([string]$p.Value.sha256).ToLowerInvariant()) { throw "installer $($p.Name) sha256 differs from the build manifest" }
+    # signer "" = an installer its publisher does not sign (virtio-win gt / qemu-ga MSIs): the sha256 above, pinned
+    # from the virtio-win RPM header (anchored by upstream's CHECKSUM), is its anchor. A recorded signer is required to
+    # be Valid with that subject -- NotSigned is never accepted.
     $signer = [string]$p.Value.signer
     if ($signer -and $f -notmatch '\.zip$') {
         $s = Get-AuthenticodeSignature -LiteralPath $f
-        if ($s.Status -eq 'NotSigned' -and $signer -eq 'Red Hat') {
-            # Fedora virtio-win-guest-tools.exe and qemu-ga MSI have no outer Authenticode table; SHA-256 is verified above.
-        } elseif ($s.Status -ne 'Valid' -or -not $s.SignerCertificate -or $s.SignerCertificate.Subject -notmatch [regex]::Escape($signer)) {
-            throw "installer $($p.Name): Authenticode $($s.Status) ($($s.SignerCertificate.Subject)); expected $signer"
+        if ($s.Status -ne 'Valid' -or -not $s.SignerCertificate -or $s.SignerCertificate.Subject -notmatch [regex]::Escape($signer)) {
+            throw "installer $($p.Name): Authenticode $($s.Status) ($($s.SignerCertificate.Subject)); expected a valid signature by $signer"
         }
     }
     $verified[$p.Name] = [string]$p.Value.version
@@ -132,20 +139,46 @@ try {
     }
     foreach ($f in @($x.features.enable_if_nested_virt)) { $feat[$f] = 'setupcomplete (nested virtualization check)' }
     $Result.features = $feat
+    # Every added capability is baked OFFLINE (F4): Microsoft -- "If you're preinstalling a FOD onto an offline
+    # image, use the /source option"; /LimitAccess keeps DISM off Windows Update. No online fallback here.
     $caps = [ordered]@{}
     foreach ($cap in @($x.features.capabilities_add)) {
         $c = Get-WindowsCapability -Path $mount -Name "$cap*" | Select-Object -First 1
         if (-not $c) { throw "capability $cap is not offered by this image" }
-        if ($UupDir -and (Test-Path -LiteralPath (Join-Path $UupDir 'FoDMetadata_Client.cab'))) {
+        $fod = @($x.features.capability_fod.PSObject.Properties | Where-Object { $_.Name -eq $cap } | ForEach-Object { $_.Value }) | Select-Object -First 1
+        if (-not $fod) { throw "xbox-spec.json: windows.xbox.features.capability_fod.$cap missing" }
+        $cab = if ($FodDir) { Join-Path $FodDir ('{0}~31bf3856ad364e35~{1}~~.cab' -f [string]$fod.package, [string](Need $x.source.arch 'source.arch')) } else { '' }
+        if (-not $cab -or -not (Test-Path -LiteralPath $cab -PathType Leaf)) { throw "FOD package for $cap missing ($cab): capabilities are baked offline, never online at SetupComplete" }
+        $how = 'already installed'
+        if ([string]$c.State -ne 'Installed') {
             try {
-                Add-WindowsCapability -Path $mount -Name $c.Name -Source $UupDir -LimitAccess | Out-Null
-                $caps[$cap] = 'offline'
-            } catch { $caps[$cap] = 'setupcomplete (online)' }
-        } else {
-            $caps[$cap] = 'setupcomplete (online)'
+                Add-WindowsCapability -Path $mount -Name $c.Name -Source $FodDir -LimitAccess | Out-Null
+                $how = 'Add-WindowsCapability -Source -LimitAccess'
+            } catch {
+                Say "Add-WindowsCapability $($c.Name) -Source failed ($($_.Exception.Message)); adding its FOD package directly"
+                Add-WindowsPackage -Path $mount -PackagePath $cab -NoRestart | Out-Null
+                $how = 'Add-WindowsPackage (FOD cab)'
+            }
         }
+        $state = [string](Get-WindowsCapability -Path $mount -Name $c.Name).State
+        $proof = Join-Path $mount ([string](Need $fod.proof "features.capability_fod.$cap.proof"))
+        if ($state -ne 'Installed' -or -not (Test-Path -LiteralPath $proof -PathType Leaf)) {
+            throw "capability $cap not baked: state $state, $([string]$fod.proof) present=$(Test-Path -LiteralPath $proof)"
+        }
+        $caps[$cap] = "offline ($how)"
+        Say "capability $($c.Name) baked offline ($how)"
     }
     $Result.capabilities = $caps
+
+    # Offline time zone = the answer file's specialize TimeZone (reconcile, baseline N-c): the stock image is
+    # "Pacific Standard Time", and switching zones in specialize with RealTimeIsUniversal=1 moved Windows' UTC clock
+    # by the zone offset for the whole install session (TLS, signature timestamps and logs ran 7 h slow). Microsoft:
+    # DISM /Set-TimeZone sets the default time zone of an offline image (an international command runs on its own).
+    $tz = [string](Need $doc.region.timezone 'region.timezone (the rendered spec region)')
+    $tzOut = & dism.exe /English "/Image:$mount" "/Set-TimeZone:$tz"   # stdout only: 2>&1 under EAP Stop throws in 5.1
+    if ($LASTEXITCODE) { throw "DISM /Set-TimeZone:$tz exited $LASTEXITCODE ($((@($tzOut) | Select-Object -Last 3) -join ' '))" }
+    $Result.timezone = $tz
+    Say "offline default time zone $tz"
 
     if (-not ('MiOSOfflineReg' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -302,9 +335,26 @@ public static class MiOSOfflineReg {
     & reg.exe load 'HKLM\MIOS_SYS' (Join-Path $mount 'Windows\System32\config\SYSTEM') | Out-Null
     if ($LASTEXITCODE) { throw 'cannot load the image SYSTEM hive' }
     $hives += 'HKLM\MIOS_SYS'
-    & reg.exe add 'HKLM\MIOS_SYS\Setup' /v SetupType /t REG_DWORD /d 2 /f | Out-Null
-    & reg.exe add 'HKLM\MIOS_SYS\Setup' /v CmdLine /t REG_SZ /d 'cmd.exe /c C:\Windows\Setup\Scripts\SetupComplete.cmd' /f | Out-Null
-    Say 'offline registry setup hooks injected (SetupType=2)'
+    # No SetupType/CmdLine hook (fix-a 6): a generalized image's Setup\CmdLine is Windows Setup's own first-boot
+    # command (oobe\windeploy.exe, which drives specialize + OOBE); SetupComplete.cmd already runs as SYSTEM through
+    # the normal path (the generic install key is not an OEM key). A hooked image is refused, not "fixed".
+    $setupKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('MIOS_SYS\Setup', $false)
+    if ($setupKey) {
+        try { $Result.setup_cmdline = [string]$setupKey.GetValue('CmdLine', ''); $Result.setup_type = [string]$setupKey.GetValue('SetupType', '') } finally { $setupKey.Close() }
+        if ($Result.setup_cmdline -match '(?i)SetupComplete|cmd(\.exe)?\s+/c') { throw "the image's Setup\CmdLine is hooked ($($Result.setup_cmdline)); refusing it" }
+    }
+    # a registry item that targets Services\<name> needs the service registered (else it is an orphan key that
+    # makes a later CreateService fail with 1073): capabilities above register theirs before this check
+    foreach ($r in @($doc.registry)) {
+        if ([string]$r.hive -eq 'SYSTEM' -and [string]$r.key -match '^ControlSet001\\Services\\([^\\]+)$') {
+            $svcName = $Matches[1]
+            $sk = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("MIOS_SYS\ControlSet001\Services\$svcName", $false)
+            $img = $null
+            if ($sk) { try { $img = $sk.GetValue('ImagePath', $null) } finally { $sk.Close() } }
+            if (-not $img) { throw "registry item $($r.owner) targets service $svcName, which the image does not register (orphan Services key)" }
+        }
+    }
+    Say 'Setup\CmdLine untouched; every service the registry items target is registered'
     & reg.exe load 'HKLM\MIOS_DEFU' (Join-Path $mount 'Users\Default\NTUSER.DAT') | Out-Null
     if ($LASTEXITCODE) { throw 'cannot load the Default user hive' }
     $hives += 'HKLM\MIOS_DEFU'
@@ -351,7 +401,10 @@ public static class MiOSOfflineReg {
 } finally {
     if ($mounted) { Dismount-WindowsImage -Path $mount -Discard | Out-Null }
 }
-Copy-Item -LiteralPath $wim -Destination (Join-Path $MediaDir 'sources\install.wim') -Force
+# Move, not copy (same exchange volume): a second full-size install.wim only costs the thin exchange disk ~6 GB
+$mediaWim = Join-Path $MediaDir 'sources\install.wim'
+if (Test-Path -LiteralPath $mediaWim) { Remove-Item -LiteralPath $mediaWim -Force }
+Move-Item -LiteralPath $wim -Destination $mediaWim
 if (Test-Path -LiteralPath (Join-Path $MediaDir 'sources\install.esd')) { Remove-Item -LiteralPath (Join-Path $MediaDir 'sources\install.esd') -Force }
 $Result.install_wim_sha256 = Get-Sha256 (Join-Path $MediaDir 'sources\install.wim')
 

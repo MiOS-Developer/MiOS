@@ -16,6 +16,8 @@
 //!              `/MenuBar/<n>` (Qt) or `/com/canonical/menu/<n>` (Gecko) dbusmenu export is found on
 //!              the focused process's connections (a Flatpak's through its xdg-dbus-proxy, matched
 //!              by the app-flatpak-*.scope cgroup) and paired with the window by creation rank.
+//!   accessibility - native AT-SPI menu bars and application menu buttons, scoped to the
+//!              focused process and active frame, including GTK4/libadwaita applications.
 //! `activate <app_id> <item_id>` triggers one item and exits 0 once the action was delivered.
 // AI-related: usr/lib/systemd/user/mios-appmenu.service, usr/share/mios/quickshell (topbar app menus)
 
@@ -28,7 +30,7 @@ use std::time::Duration;
 
 use clap::Subcommand;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
@@ -73,7 +75,13 @@ pub enum AppmenuAction {
     /// Print the focused window's menus as JSON once (no registrar; diagnostic)
     Dump,
     /// Trigger one menu item of an application (ids come from appmenu.json)
-    Activate { app_id: String, item_id: String },
+    Activate {
+        app_id: String,
+        item_id: String,
+        /// Bind a HUD click to the exact window which supplied its menu.
+        #[arg(long)]
+        window: Option<String>,
+    },
 }
 
 pub async fn run(action: &AppmenuAction) -> Result<(), String> {
@@ -89,7 +97,7 @@ pub async fn run(action: &AppmenuAction) -> Result<(), String> {
             );
             Ok(())
         }
-        AppmenuAction::Activate { app_id, item_id } => activate(app_id, item_id).await,
+        AppmenuAction::Activate { app_id, item_id, window } => activate(app_id, item_id, window.as_deref()).await,
     }
 }
 
@@ -113,6 +121,11 @@ pub struct Menu {
     pub id: String,
     pub label: String,
     pub items: Vec<Item>,
+    /// An application's native menu button, when it exposes an accessibility
+    /// action rather than an exported menu model. Never invent its contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Clone, PartialEq, Debug)]
@@ -617,6 +630,8 @@ fn gtk_menus(groups: &GtkGroups, app: &ActionStates, win: Option<&ActionStates>)
                 id: item.id,
                 label: item.label,
                 items,
+                action: None,
+                enabled: item.enabled,
             })
         })
         .collect()
@@ -755,6 +770,8 @@ fn dbm_menus(kids: &[Value<'_>]) -> Vec<Menu> {
                 id: item.id,
                 label: item.label,
                 items,
+                action: None,
+                enabled: item.enabled,
             })
         })
         .collect()
@@ -762,6 +779,282 @@ fn dbm_menus(kids: &[Value<'_>]) -> Vec<Menu> {
 
 // ---------------------------------------------------------------------------------------------
 // Resolution context
+
+// AT-SPI is the toolkit-neutral fallback for native menu buttons and menu
+// bars which do not publish GMenu/dbusmenu. Object refs and roles come from
+// the application's own accessibility cache; no per-application labels,
+// shortcuts or command lists are fabricated here.
+type A11yRef = (String, OwnedObjectPath);
+type A11yLegacyCacheRow = (A11yRef, A11yRef, A11yRef, Vec<A11yRef>, Vec<String>, String, u32, String, Vec<u32>);
+type A11yCacheRow = (A11yRef, A11yRef, A11yRef, i32, i32, Vec<String>, String, u32, String, Vec<u32>);
+
+#[derive(Clone, Debug)]
+struct A11yNode {
+    parent: String,
+    index: i32,
+    label: String,
+    role: u32,
+    interfaces: Vec<String>,
+    states: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct A11yAction {
+    bus: String,
+    path: String,
+    frame: String,
+    address: String,
+    index: i32,
+}
+
+fn a11y_state(states: &[u32], bit: usize) -> bool {
+    states.get(bit / 32).is_some_and(|word| word & (1 << (bit % 32)) != 0)
+}
+
+fn a11y_in_frame(nodes: &HashMap<String, A11yNode>, path: &str, frame: &str) -> bool {
+    let mut current = path;
+    for _ in 0..64 {
+        if current == frame { return true; }
+        let Some(node) = nodes.get(current) else { return false; };
+        // Never turn webpage controls, document content or file-list
+        // context menus into application-wide menu pills.
+        if matches!(node.role, 31 | 55 | 66 | 82 | 95) { return false; }
+        if node.parent == current { return false; }
+        current = &node.parent;
+    }
+    false
+}
+
+fn a11y_enabled(node: &A11yNode) -> bool {
+    !a11y_state(&node.states, 6) &&
+        (a11y_state(&node.states, 8) || a11y_state(&node.states, 24))
+}
+
+fn a11y_native_button(node: &A11yNode) -> bool {
+    matches!(node.role, 43 | 62 | 129) && a11y_state(&node.states, 42) &&
+        !node.label.trim().is_empty() &&
+        node.interfaces.iter().any(|iface| iface == "org.a11y.atspi.Action")
+}
+
+fn a11y_menubar_entry(node: &A11yNode, parent: Option<&A11yNode>) -> bool {
+    // Qt Quick labels its MenuBarItem as MENU_BAR as well. Only a
+    // direct child of the real menu bar qualifies, never arbitrary buttons.
+    matches!(node.role, 8 | 33 | 34 | 35 | 45) && parent.is_some_and(|p| p.role == 34)
+}
+
+fn a11y_press_index(actions: &[(String, String, String)]) -> Option<i32> {
+    actions.iter().position(|(name, _, _)| matches!(name.to_ascii_lowercase().as_str(),
+        "click" | "press" | "activate" | "toggle" | "showmenu" | "show-menu" | "open"))
+        .map(|i| i as i32)
+        .or_else(|| (actions.len() == 1 && !actions[0].0.to_ascii_lowercase().contains("focus")).then_some(0))
+}
+
+async fn a11y_connection(session: &Connection) -> Result<Connection, String> {
+    let message = call(session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", &())
+        .await.map_err(|e| e.to_string())?;
+    let address: String = message.body().deserialize().map_err(|e| e.to_string())?;
+    tokio::time::timeout(CALL_TIMEOUT,
+        zbus::connection::Builder::address(address.as_str()).map_err(|e| e.to_string())?.build())
+        .await.map_err(|_| "accessibility bus connection timed out".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+async fn a11y_owner_matches(bus: &Connection, name: &str, client: &Client) -> bool {
+    let Ok(reply) = call(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+        "org.freedesktop.DBus", "GetConnectionUnixProcessID", &(name,)).await else { return false; };
+    let Ok(pid) = reply.body().deserialize::<u32>() else { return false; };
+    pid == client.pid || (flatpak_scope(client.pid).is_some() && flatpak_scope(pid) == flatpak_scope(client.pid))
+}
+
+async fn a11y_cache(bus: &Connection, name: &str) -> Result<HashMap<String, A11yNode>, String> {
+    let reply = call(bus, name, "/org/a11y/atspi/cache", "org.a11y.atspi.Cache", "GetItems", &())
+        .await.map_err(|e| e.to_string())?;
+    let body = reply.body();
+    let rows = match body.deserialize::<Vec<A11yCacheRow>>() {
+        Ok(rows) => rows,
+        Err(_) => {
+            // Qt still exports the pre-2015 cache signature. Reconstruct
+            // sibling order from its real child-reference arrays.
+            let legacy: Vec<A11yLegacyCacheRow> = body.deserialize().map_err(|e| e.to_string())?;
+            if legacy.len() > 16384 { return Err("application accessibility cache exceeds menu discovery bound".into()); }
+            let order: HashMap<_, _> = legacy.iter().filter(|r| r.0.0 == name)
+                .flat_map(|r| r.3.iter().enumerate().filter(|(_, child)| child.0 == name)
+                    .map(|(i, child)| (child.1.to_string(), i as i32))).collect();
+            legacy.into_iter().map(|r| {
+                let index = order.get(r.0.1.as_str()).copied().unwrap_or(-1);
+                (r.0, r.1, r.2, index, r.3.len() as i32, r.4, r.5, r.6, r.7, r.8)
+            }).collect()
+        }
+    };
+    if rows.len() > 16384 { return Err("application accessibility cache exceeds menu discovery bound".into()); }
+    Ok(rows.into_iter().filter(|r| r.0.0 == name).map(|r| (r.0.1.to_string(), A11yNode {
+        parent: r.2.1.to_string(), index: r.3, interfaces: r.5,
+        label: r.6, role: r.7, states: r.9,
+    })).collect())
+}
+
+async fn a11y_tree(bus: &Connection, name: &str, root: &str) -> HashMap<String, A11yNode> {
+    // Some Qt bridges publish an empty cache. Walk the standard accessible
+    // interface in bounded batches instead; never traverse document content.
+    let mut pending = std::collections::VecDeque::from([(root.to_string(), String::new(), 0, 0usize)]);
+    let mut visited = BTreeSet::new();
+    let mut nodes = HashMap::new();
+    while !pending.is_empty() && visited.len() < 2048 {
+        let mut batch = Vec::new();
+        while batch.len() < 8 && visited.len() < 2048 {
+            let Some(entry) = pending.pop_front() else { break; };
+            if visited.insert(entry.0.clone()) { batch.push(entry); }
+        }
+        let fetched = futures_util::future::join_all(batch.into_iter().map(|(path, parent, index, depth)| async move {
+            let interface = "org.a11y.atspi.Accessible";
+            let property_args = (interface, "Name");
+            let (properties, role, states, interfaces) = tokio::join!(
+                call(bus, name, &path, "org.freedesktop.DBus.Properties", "Get", &property_args),
+                call(bus, name, &path, interface, "GetRole", &()),
+                call(bus, name, &path, interface, "GetState", &()),
+                call(bus, name, &path, interface, "GetInterfaces", &()));
+            let role: u32 = role.ok()?.body().deserialize().ok()?;
+            let states = states.ok()?.body().deserialize().ok()?;
+            let interfaces = interfaces.ok()?.body().deserialize().ok()?;
+            // Qt's accessibility adaptor implements Properties.Get but
+            // rejects GetAll on this virtual interface. Missing names must
+            // not hide the descendants of otherwise valid containers.
+            let label = properties.ok().and_then(|r| r.body().deserialize::<OwnedValue>().ok())
+                .and_then(|v| as_str(&v)).unwrap_or_default();
+            let children = if depth < 64 && !matches!(role, 31 | 55 | 66 | 82 | 95) {
+                call(bus, name, &path, interface, "GetChildren", &()).await.ok()
+                    .and_then(|r| r.body().deserialize::<Vec<A11yRef>>().ok()).unwrap_or_default()
+            } else { Vec::new() };
+            Some((path, A11yNode { parent, index, label, role, states, interfaces }, children, depth))
+        })).await;
+        for (path, node, children, depth) in fetched.into_iter().flatten() {
+            for (index, (owner, child)) in children.into_iter().take(256).enumerate() {
+                if owner == name && pending.len() < 2048 {
+                    pending.push_back((child.to_string(), path.clone(), index as i32, depth + 1));
+                }
+            }
+            nodes.insert(path, node);
+        }
+    }
+    nodes
+}
+
+async fn a11y_nodes(bus: &Connection, name: &str, root: &str) -> HashMap<String, A11yNode> {
+    match a11y_cache(bus, name).await {
+        Ok(nodes) if !nodes.is_empty() => nodes,
+        // Includes cache-less bridges and older empty Qt cache signatures.
+        _ => a11y_tree(bus, name, root).await,
+    }
+}
+
+fn a11y_frame(nodes: &HashMap<String, A11yNode>) -> Option<String> {
+    let frames: Vec<_> = nodes.iter().filter(|(_, n)| matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6)).collect();
+    let active: Vec<_> = frames.iter().filter(|(_, n)| a11y_state(&n.states, 1)).collect();
+    if active.len() == 1 { Some(active[0].0.clone()) }
+    else if frames.len() == 1 { Some(frames[0].0.clone()) }
+    else { None } // Multiple inactive windows are never paired by guesswork.
+}
+
+fn a11y_id(bus: &str, path: &str, frame: &str, client: &Client, index: i32) -> String {
+    format!("a11y:{}", serde_json::to_string(&A11yAction {
+        bus: bus.into(), path: path.into(), frame: frame.into(),
+        address: client.address.clone(), index,
+    }).expect("serializable accessibility reference"))
+}
+
+fn a11y_order(nodes: &HashMap<String, A11yNode>, path: &str) -> Vec<i32> {
+    let mut order = Vec::new();
+    let mut current = path;
+    for _ in 0..64 {
+        let Some(node) = nodes.get(current) else { break; };
+        order.push(node.index);
+        if node.parent == current { break; }
+        current = &node.parent;
+    }
+    order.reverse();
+    order
+}
+
+fn a11y_items(nodes: &HashMap<String, A11yNode>, bus: &str, parent: &str, frame: &str, client: &Client, depth: usize) -> Vec<Item> {
+    if depth > MAX_DEPTH { return Vec::new(); }
+    let mut children: Vec<_> = nodes.iter().filter(|(_, n)| n.parent == parent).collect();
+    children.sort_by_key(|(_, n)| n.index);
+    let mut result = Vec::new();
+    let mut separator = false;
+    for (path, node) in children {
+        if node.role == 50 { separator = true; continue; }
+        if matches!(node.role, 8 | 33 | 35 | 45) && !node.label.trim().is_empty() {
+            let sub = a11y_items(nodes, bus, path, frame, client, depth + 1);
+            result.push(Item { id: a11y_id(bus, path, frame, client, 0), label: strip_mnemonic(&node.label),
+                enabled: a11y_enabled(node), submenu: (!sub.is_empty()).then_some(sub), separator_before: separator });
+            separator = false;
+        } else if matches!(node.role, 20 | 30 | 39 | 46 | 33) {
+            let mut nested = a11y_items(nodes, bus, path, frame, client, depth + 1);
+            if separator && !nested.is_empty() { nested[0].separator_before = true; separator = false; }
+            result.extend(nested);
+        }
+    }
+    result
+}
+
+async fn a11y_menus(session: &Connection, client: &Client, provider: &Arc<Mutex<Option<String>>>) -> Vec<Menu> {
+    if let Ok(mut current) = provider.lock() { *current = None; }
+    let Ok(bus) = a11y_connection(session).await else { return Vec::new(); };
+    let Ok(reply) = call(&bus, "org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root",
+        "org.a11y.atspi.Accessible", "GetChildren", &()).await else { return Vec::new(); };
+    let Ok(apps) = reply.body().deserialize::<Vec<A11yRef>>() else { return Vec::new(); };
+    for (name, root) in apps.into_iter().take(256) {
+        if !a11y_owner_matches(&bus, &name, client).await { continue; }
+        if let Ok(mut current) = provider.lock() { *current = Some(name.clone()); }
+        let nodes = a11y_nodes(&bus, &name, root.as_str()).await;
+        let Some(frame) = a11y_frame(&nodes) else { continue; };
+        let mut candidates: Vec<_> = nodes.iter().filter(|(path, node)|
+            a11y_in_frame(&nodes, path, &frame) &&
+            (a11y_native_button(node) || a11y_menubar_entry(node, nodes.get(&node.parent))))
+            .collect();
+        // Menu buttons commonly all have sibling index zero inside separate
+        // wrappers. Compare their complete ancestry, then path, so refreshes
+        // never shuffle the pills with HashMap iteration order.
+        candidates.sort_by_key(|(path, _)| (a11y_order(&nodes, path), (*path).clone()));
+        let mut result = Vec::new();
+        for (path, node) in candidates {
+            if node.label.trim().is_empty() { continue; }
+            let items = a11y_items(&nodes, &name, path, &frame, client, 0);
+            let action = if items.is_empty() {
+                let Ok(actions) = call(&bus, &name, path, "org.a11y.atspi.Action", "GetActions", &()).await else { continue; };
+                let Ok(actions) = actions.body().deserialize::<Vec<(String, String, String)>>() else { continue; };
+                let Some(index) = a11y_press_index(&actions) else { continue; };
+                Some(a11y_id(&name, path, &frame, client, index))
+            } else { None };
+            result.push(Menu { id: a11y_id(&name, path, &frame, client, 0), label: strip_mnemonic(&node.label),
+                items, action, enabled: a11y_enabled(node) });
+        }
+        return result;
+    }
+    Vec::new()
+}
+
+async fn a11y_activate(session: &Connection, client: &Client, id: &str) -> Result<(), String> {
+    let action: A11yAction = serde_json::from_str(id.strip_prefix("a11y:").ok_or("invalid accessibility menu reference")?)
+        .map_err(|e| e.to_string())?;
+    if action.address != client.address || action.index < 0 { return Err("menu belongs to a different window".into()); }
+    let bus = a11y_connection(session).await?;
+    if !a11y_owner_matches(&bus, &action.bus, client).await { return Err("menu provider does not belong to the focused application".into()); }
+    let nodes = a11y_nodes(&bus, &action.bus, &action.frame).await;
+    let node = nodes.get(&action.path).ok_or("application menu is no longer available")?;
+    if !a11y_in_frame(&nodes, &action.path, &action.frame) || a11y_frame(&nodes).as_deref() != Some(action.frame.as_str()) {
+        return Err("application menu window changed".into());
+    }
+    if !a11y_enabled(node) { return Err("application menu action is disabled".into()); }
+    let actions = call(&bus, &action.bus, &action.path, "org.a11y.atspi.Action", "GetActions", &()).await
+        .map_err(|e| e.to_string())?;
+    let actions = actions.body().deserialize::<Vec<(String, String, String)>>().map_err(|e| e.to_string())?;
+    let index = a11y_press_index(&actions).ok_or("application menu has no activation action")?;
+    let reply = call(&bus, &action.bus, &action.path, "org.a11y.atspi.Action", "DoAction", &(index,))
+        .await.map_err(|e| e.to_string())?;
+    if reply.body().deserialize::<bool>().unwrap_or(false) { Ok(()) }
+    else { Err("application rejected the menu action".into()) }
+}
 
 struct Ctx {
     conn: Connection,
@@ -778,6 +1071,7 @@ struct Ctx {
     dbm_primed: Option<(String, String)>,
     /// Unique bus name of the current menu source (for signal filtering).
     current_bus: Arc<Mutex<Option<String>>>,
+    current_a11y: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -799,6 +1093,7 @@ impl Ctx {
             gtk_inflight: None,
             dbm_primed: None,
             current_bus: Arc::new(Mutex::new(None)),
+            current_a11y: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1126,6 +1421,7 @@ impl Ctx {
             self.set_current(None);
             return empty(client);
         };
+        if let Ok(mut provider) = self.current_a11y.lock() { *provider = None; }
         let resolved = self.resolve(c, false).await;
         if !matches!(resolved, Resolved::Dbm { .. }) {
             self.dbm_primed = None;
@@ -1191,7 +1487,9 @@ impl Ctx {
             Resolved::None => {
                 self.drop_gtk_sub();
                 self.set_current(None);
-                empty(client)
+                let menus = a11y_menus(&self.conn, c, &self.current_a11y).await;
+                if menus.is_empty() { empty(client) }
+                else { Snapshot { app_id: c.class.clone(), source: "accessibility".into(), menus, address: c.address.clone() } }
             }
         }
     }
@@ -1450,6 +1748,35 @@ async fn spawn_owner_watch(
     Ok(())
 }
 
+async fn spawn_a11y_watch(session: &Connection, current: Arc<Mutex<Option<String>>>,
+    tx: tokio::sync::mpsc::UnboundedSender<()>) -> Result<(), String> {
+    let conn = a11y_connection(session).await?;
+    for interface in ["org.a11y.atspi.Cache", "org.a11y.atspi.Event.Object"] {
+        let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal)
+            .interface(interface).map_err(|e| e.to_string())?.build();
+        let mut stream = zbus::MessageStream::for_match_rule(rule, &conn, Some(64))
+            .await.map_err(|e| e.to_string())?;
+        let current = current.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            while let Some(Ok(msg)) = stream.next().await {
+                let hdr = msg.header();
+                let mine = current.lock().map(|p| p.as_deref().is_some_and(|p|
+                    hdr.sender().is_some_and(|s| s.as_str() == p))).unwrap_or(false);
+                let registry = hdr.path().is_some_and(|p| p.as_str() == "/org/a11y/atspi/accessible/root");
+                if (mine || registry) && tx.send(()).is_err() { return; }
+            }
+        });
+    }
+    // Register only menu-relevant structural/state changes, never key or
+    // pointer capture. These registrations vanish with this bus connection.
+    for event in ["object:children-changed", "object:state-changed", "object:property-change:accessible-name"] {
+        call(&conn, "org.a11y.atspi.Registry", "/org/a11y/atspi/registry", "org.a11y.atspi.Registry",
+            "RegisterEvent", &(event, Vec::<String>::new(), "")).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 async fn serve() -> Result<(), String> {
     let regs: Registrations = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -1476,7 +1803,17 @@ async fn serve() -> Result<(), String> {
             eprintln!("[appmenu] {REGISTRAR_NAME} unavailable ({e}); dbusmenu source disabled")
         }
     }
+    // This desktop consumes native application menus through AT-SPI too.
+    // Advertising an accessibility consumer makes running toolkits expose
+    // their trees; it does not enable screen-reader behavior or alter speech.
+    if let Err(e) = call(&conn, "org.a11y.Bus", "/org/a11y/bus", "org.freedesktop.DBus.Properties",
+        "Set", &("org.a11y.Status", "IsEnabled", Value::from(true))).await {
+        eprintln!("[appmenu] accessibility integration unavailable: {e}");
+    }
     let mut ctx = Ctx::new(conn.clone(), regs.clone());
+    if let Err(e) = spawn_a11y_watch(&conn, ctx.current_a11y.clone(), tx.clone()).await {
+        eprintln!("[appmenu] accessibility updates unavailable: {e}");
+    }
     spawn_hypr_events(tx.clone());
     spawn_signal_watch(&conn, ctx.current_bus.clone(), tx.clone()).await?;
     let (gone_tx, mut gone_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -1546,20 +1883,17 @@ async fn serve() -> Result<(), String> {
 // ---------------------------------------------------------------------------------------------
 // activate
 
-async fn activate(app_id: &str, item_id: &str) -> Result<(), String> {
+async fn activate(app_id: &str, item_id: &str, window: Option<&str>) -> Result<(), String> {
     let conn = Connection::session().await.map_err(|e| e.to_string())?;
-    let focused = focused_client();
-    let client = match focused.filter(|c| c.class == app_id) {
-        Some(c) => c,
-        None => all_clients()
-            .into_iter()
-            .find(|c| c.class == app_id)
-            .unwrap_or(Client {
-                class: app_id.to_string(),
-                ..Client::default()
-            }),
-    };
+    let client = focused_client().filter(|c| c.class == app_id)
+        .ok_or("the focused application changed before menu activation")?;
+    if window.is_some_and(|address| address != client.address) {
+        return Err("menu belongs to a different window".into());
+    }
     let regs: Registrations = Arc::new(Mutex::new(HashMap::new()));
+    if item_id.starts_with("a11y:") {
+        return a11y_activate(&conn, &client, item_id).await;
+    }
     if item_id.starts_with("dbm:") {
         // The registrar lives in `serve`; read its registrations over the bus.
         let msg = call(
@@ -1673,6 +2007,116 @@ async fn activate(app_id: &str, item_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn accessible(role: u32, label: &str, parent: &str, flags: &[usize]) -> A11yNode {
+        let mut states = vec![0, 0];
+        for &bit in flags { states[bit / 32] |= 1 << (bit % 32); }
+        A11yNode { parent: parent.into(), index: 0, label: label.into(), role,
+            interfaces: vec!["org.a11y.atspi.Action".into()], states }
+    }
+
+    #[test]
+    fn accessibility_menu_activation_selects_press_instead_of_focus() {
+        let action = |name: &str| (name.into(), String::new(), String::new());
+        assert_eq!(a11y_press_index(&[action("SetFocus"), action("Press")]), Some(1));
+        assert_eq!(a11y_press_index(&[action("click")]), Some(0));
+        assert_eq!(a11y_press_index(&[action("ShowMenu")]), Some(0));
+        assert_eq!(a11y_press_index(&[action("SetFocus")]), None);
+        assert_eq!(a11y_press_index(&[]), None);
+    }
+
+    #[test]
+    fn accessibility_menubar_entries_support_native_qt_quick_roles() {
+        let mut bar = A11yNode { parent: String::new(), index: 0, label: String::new(),
+            role: 34, interfaces: Vec::new(), states: Vec::new() };
+        let mut item = bar.clone();
+        item.label = "File".into();
+        for role in [33, 34, 35] {
+            item.role = role;
+            assert!(a11y_menubar_entry(&item, Some(&bar)));
+        }
+        item.role = 29; // labels inside bars are not menu entries
+        assert!(!a11y_menubar_entry(&item, Some(&bar)));
+        item.role = 34;bar.role = 20;
+        assert!(!a11y_menubar_entry(&item, Some(&bar)));
+        assert!(!a11y_menubar_entry(&item, None));
+    }
+
+    #[test]
+    fn accessibility_nested_menu_buttons_follow_application_order() {
+        let node = |parent: &str, index| A11yNode { parent: parent.into(), index,
+            label: String::new(), role: 43, interfaces: Vec::new(), states: Vec::new() };
+        let nodes: HashMap<String, A11yNode> = [
+            ("/frame".into(), node("/", 0)),
+            ("/first".into(), node("/frame", 2)),
+            ("/second".into(), node("/frame", 4)),
+            ("/z_button".into(), node("/first", 0)),
+            ("/a_button".into(), node("/second", 0)),
+        ].into();
+        assert!(a11y_order(&nodes, "/z_button") < a11y_order(&nodes, "/a_button"));
+    }
+
+    #[test]
+    fn accessibility_state_words_are_bitsets_and_support_gtk4_sensitive() {
+        let node = accessible(62, "Menu", "/frame", &[24, 42]);
+        assert!(a11y_state(&node.states, 42));
+        assert!(a11y_enabled(&node)); // GTK4 reports Sensitive without Enabled.
+        assert!(!a11y_state(&[24, 42], 42));
+        assert!(!a11y_state(&[], 42));
+        assert!(!a11y_enabled(&accessible(62, "Menu", "/frame", &[6, 24, 42])));
+    }
+
+    #[test]
+    fn accessibility_menu_buttons_use_semantics_not_app_names_or_labels() {
+        assert!(a11y_native_button(&accessible(62, "Menu principal", "/frame", &[24, 42])));
+        assert!(a11y_native_button(&accessible(129, "Options", "/frame", &[24, 42])));
+        assert!(!a11y_native_button(&accessible(62, "Menu", "/frame", &[24])));
+        assert!(!a11y_native_button(&accessible(62, "", "/frame", &[24, 42])));
+        assert!(!a11y_native_button(&accessible(43, "Save", "/frame", &[24])));
+    }
+
+    #[test]
+    fn accessibility_chooses_the_active_window_and_refuses_ambiguous_windows() {
+        let mut nodes = HashMap::from([
+            ("/first".into(), accessible(23, "First", "/app", &[])),
+            ("/second".into(), accessible(23, "Second", "/app", &[])),
+        ]);
+        assert!(a11y_frame(&nodes).is_none());
+        nodes.get_mut("/second").unwrap().states[0] |= 1 << 1;
+        assert_eq!(a11y_frame(&nodes).as_deref(), Some("/second"));
+        nodes.get_mut("/first").unwrap().states[0] |= 1 << 1;
+        assert!(a11y_frame(&nodes).is_none());
+    }
+
+    #[test]
+    fn accessibility_never_promotes_webpage_and_file_list_menus() {
+        let mut nodes = HashMap::from([
+            ("/frame".into(), accessible(23, "Application", "/app", &[1])),
+            ("/toolbar".into(), accessible(39, "", "/frame", &[])),
+            ("/menu".into(), accessible(62, "Main Menu", "/toolbar", &[24, 42])),
+            ("/document".into(), accessible(95, "Web content", "/frame", &[])),
+            ("/webmenu".into(), accessible(62, "Page menu", "/document", &[24, 42])),
+            ("/files".into(), accessible(55, "Files", "/frame", &[])),
+            ("/filemenu".into(), accessible(62, "Context menu", "/files", &[24, 42])),
+        ]);
+        assert!(a11y_in_frame(&nodes, "/menu", "/frame"));
+        assert!(!a11y_in_frame(&nodes, "/webmenu", "/frame"));
+        assert!(!a11y_in_frame(&nodes, "/filemenu", "/frame"));
+        assert!(!a11y_in_frame(&nodes, "/menu", "/other-frame"));
+        nodes.get_mut("/toolbar").unwrap().parent = "/menu".into();
+        assert!(!a11y_in_frame(&nodes, "/menu", "/frame"));
+    }
+
+    #[test]
+    fn accessibility_references_bind_the_original_window_and_exact_object() {
+        let client = Client { address: "0x1234".into(), class: "app.example.Editor".into(), ..Client::default() };
+        let id = a11y_id(":1.42", "/app/menu/3", "/app/window/2", &client, 0);
+        let decoded: A11yAction = serde_json::from_str(id.strip_prefix("a11y:").unwrap()).unwrap();
+        assert_eq!(decoded.address, "0x1234");
+        assert_eq!(decoded.path, "/app/menu/3");
+        assert_eq!(decoded.frame, "/app/window/2");
+        assert_eq!(decoded.bus, ":1.42");
+    }
 
     fn ov(v: Value<'_>) -> OwnedValue {
         OwnedValue::try_from(v).expect("owned value")

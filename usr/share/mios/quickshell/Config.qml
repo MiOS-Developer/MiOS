@@ -14,6 +14,73 @@ QS.ShellRoot {
         property bool searchOpen: false
         property string searchScreen: ""
         property string searchQuery: ""
+        // One settings model and one sampler for every output's island.
+        property var topbarConfig: ({})
+        property var topbarWrites: []
+        property string topbarError: ""
+        property var frameOutputs: []
+        property var rdpStats: ({})
+        property real frameSampleTime: Date.now() / 1000
+        property string rdpOutput: "HEADLESS-MIOS-RDP"
+        property var shaderStatus: ({})
+        property string shaderError: ""
+        property string remoteError: ""
+        readonly property var topbarOptions: [
+            {key: "app_menu", label: "Application menus"}, {key: "workspaces", label: "Workspace"},
+            {key: "network", label: "Network"}, {key: "sound", label: "Sound"},
+            {key: "batteries", label: "Device batteries"}, {key: "sysmon", label: "System monitor"},
+            {key: "fps", label: "Frames per second"},
+            {key: "date", label: "Date"}, {key: "clock", label: "Clock"}, {key: "power", label: "Power"}
+        ]
+        function topbarShown(key) { return !topbarConfig.visibility || topbarConfig.visibility[key] !== false }
+        function setTopbarShown(key, shown) {
+            topbarWrites = topbarWrites.concat([{key: key, shown: shown}])
+            saveNextTopbar()
+        }
+        function saveNextTopbar() {
+            if (topbarSettings.running) return
+            if (topbarWrites.length) {
+                const next = topbarWrites[0]
+                topbarWrites = topbarWrites.slice(1)
+                topbarSettings.command = ["/usr/bin/miosd", "topbar", "--item", next.key, "--visible", String(next.shown)]
+            } else topbarSettings.command = ["/usr/bin/miosd", "topbar"]
+            topbarSettings.running = true
+        }
+        function isRemoteOutput(name) { return name === rdpOutput || name.startsWith(rdpOutput + "-") }
+        function fpsFor(name) {
+            if (isRemoteOutput(name)) {
+                const s = rdpStats
+                return s.output === name && s.attached && Math.abs(frameSampleTime - Number(s.time)) < 10 && isFinite(s.fps) ? Number(s.fps) : -1
+            }
+            for (const output of frameOutputs) if (output.name === name && isFinite(output.rendered_fps)) return Math.round(output.rendered_fps)
+            return -1
+        }
+        function shaderPane(address) {
+            const supervisor = shaderStatus.supervisor || ({})
+            for (const pane of (supervisor.panes || [])) if (pane.target === address && pane.state !== "closing") return pane
+            for (const pane of (supervisor.queued || [])) if (pane.target === address) return pane
+            return null
+        }
+        readonly property bool remoteAttached: rdpStats.attached === true && Math.abs(frameSampleTime - Number(rdpStats.time)) < 10
+        function remoteAction(action) {
+            if (remoteControl.running || !remoteAttached || !rdpStats.control_supported) return
+            remoteError = ""
+            remoteControl.command = ["/usr/libexec/mios/rdp-native/mios-rdp-server", "--control", action]
+            remoteControl.running = true
+        }
+        function shaderAction(action, address) {
+            if (shaderControl.running) return
+            shaderError = ""
+            const verb = action === "browse" ? (shaderPane(address) ? "setup" : "attach") : action
+            let args = ["/usr/bin/miosd", "shaderglass", verb]
+            if (action === "browse" && verb === "attach") args.push("--setup")
+            if (action !== "stop") {
+                if (!/^0x[0-9a-f]+$/i.test(address)) return
+                args = args.concat(["--window", address])
+            }
+            shaderControl.command = args
+            shaderControl.running = true
+        }
         function openSearch(query) {
             searchScreen = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
             searchQuery = query
@@ -29,6 +96,89 @@ QS.ShellRoot {
             drawerScreen = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
             searchOpen = false
             drawerOpen = !drawerOpen
+        }
+    }
+    Process {
+        id: topbarSettings
+        command: ["/usr/bin/miosd", "topbar"]
+        running: true
+        property string result: ""
+        stdout: StdioCollector { onStreamFinished: topbarSettings.result = text }
+        stderr: StdioCollector { onStreamFinished: workspaceState.topbarError = text.trim() }
+        onExited: (code, status) => {
+            if (code === 0) {
+                try { workspaceState.topbarConfig = JSON.parse(result) } catch (e) { workspaceState.topbarError = "Could not read topbar settings" }
+            }
+            if (workspaceState.topbarWrites.length) Qt.callLater(workspaceState.saveNextTopbar)
+        }
+    }
+    FileView {
+        path: QS.Quickshell.env("MIOS_USER_TOML") || ((QS.Quickshell.env("XDG_CONFIG_HOME") || ((QS.Quickshell.env("HOME") || "/home/mios") + "/.config")) + "/mios/mios.toml")
+        watchChanges: true
+        printErrors: false
+        onFileChanged: if (!topbarSettings.running) workspaceState.saveNextTopbar()
+    }
+    Process {
+        id: frameSample
+        command: ["hyprctl", "mios-pacing", "status"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { workspaceState.frameOutputs = JSON.parse(text).outputs || [] }
+                catch (e) { workspaceState.frameOutputs = [] }
+            }
+        }
+        onExited: (code, status) => { if (code !== 0) workspaceState.frameOutputs = [] }
+    }
+    Process {
+        command: ["/usr/bin/mios-toml-get", "remote.rdp", "virtual_output", "HEADLESS-MIOS-RDP"]
+        running: true
+        stdout: StdioCollector { onStreamFinished: { if (text.trim()) workspaceState.rdpOutput = text.trim() } }
+    }
+    FileView {
+        path: QS.Quickshell.env("MIOS_RDP_STATS_JSON") || ((QS.Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/mios-rdp/stats.json")
+        watchChanges: true
+        preload: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: { try { workspaceState.rdpStats = JSON.parse(text()) } catch (e) { workspaceState.rdpStats = ({}) } }
+        onLoadFailed: workspaceState.rdpStats = ({})
+    }
+    Process {
+        id: shaderSample
+        command: ["/usr/bin/miosd", "shaderglass", "status"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { workspaceState.shaderStatus = JSON.parse(text) }
+                catch (e) { workspaceState.shaderStatus = ({}) }
+            }
+        }
+    }
+    Process {
+        id: shaderControl
+        stderr: StdioCollector { onStreamFinished: workspaceState.shaderError = text.trim() }
+        onExited: (code, status) => { if (!shaderSample.running) shaderSample.running = true }
+    }
+    Process {
+        id: remoteControl
+        stderr: StdioCollector { onStreamFinished: workspaceState.remoteError = text.trim() }
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const reply = JSON.parse(text)
+                    if (reply.ok && reply.paused !== undefined) workspaceState.rdpStats = Object.assign({}, workspaceState.rdpStats, {paused: reply.paused})
+                } catch (e) { workspaceState.remoteError = "Could not read the session response" }
+            }
+        }
+    }
+    Timer {
+        interval: Math.max(500, workspaceState.topbarConfig.sample_interval_ms || 1000)
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            workspaceState.frameSampleTime = Date.now() / 1000
+            if (workspaceState.topbarShown("fps") && !frameSample.running) frameSample.running = true
+            if (workspaceState.topbarShown("shaderglass") && !shaderSample.running) shaderSample.running = true
         }
     }
     IpcHandler {

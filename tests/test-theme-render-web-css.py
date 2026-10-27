@@ -153,6 +153,15 @@ class TestAppMenuPlainText(unittest.TestCase):
         qml = "Item {\n  Text {\n    id: itemLabel\n    text: rowBox.it.label\n  }\n}\n"
         self.assertEqual(unsafe_texts(qml), [2])
 
+    def test_menu_row_keeps_overflow_pills_reachable(self):
+        with open(APPMENU, encoding="utf-8") as fh:
+            qml = fh.read()
+        self.assertIn("Flickable {\n        id: pillViewport", qml)
+        self.assertIn("contentWidth: pills.implicitWidth", qml)
+        self.assertIn("pillViewport.contentX - delta", qml)
+        self.assertIn("Math.ceil(pills.implicitWidth)", qml)
+        self.assertNotIn('text: "›"', qml)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

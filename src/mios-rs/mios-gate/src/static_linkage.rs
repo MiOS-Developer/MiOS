@@ -69,6 +69,7 @@ struct Exception {
     binaries: BTreeSet<String>,
     scope: PathBuf,
     reason: String,
+    allowed_needed: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// What the SSOT says the gate audits beyond MiOS's own native workspaces: the exceptions, and the
@@ -141,7 +142,39 @@ fn load_policy(root: &Path) -> Policy {
                         scope.display()
                     ));
                 }
-                policy.exceptions.push(Exception { binaries, scope, reason });
+                let mut allowed_needed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                if let Some(an_val) = item.get("allowed_needed") {
+                    if let Some(table) = an_val.as_table() {
+                        for (bin_name, libs_val) in table {
+                            if let Some(arr) = libs_val.as_array() {
+                                let libs: BTreeSet<String> = arr
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(str::to_string))
+                                    .collect();
+                                if libs.len() != arr.len() {
+                                    policy.errors.push(format!(
+                                        "[[build.native.linux.exceptions]] #{i} allowed_needed.{bin_name} must contain only strings"
+                                    ));
+                                }
+                                allowed_needed.insert(bin_name.clone(), libs);
+                            } else {
+                                policy.errors.push(format!(
+                                    "[[build.native.linux.exceptions]] #{i} allowed_needed.{bin_name} must be an array of library sonames"
+                                ));
+                            }
+                        }
+                    } else {
+                        policy.errors.push(format!(
+                            "[[build.native.linux.exceptions]] #{i} allowed_needed must be a table"
+                        ));
+                    }
+                }
+                policy.exceptions.push(Exception {
+                    binaries,
+                    scope,
+                    reason,
+                    allowed_needed,
+                });
             }
             _ => policy.errors.push(format!(
                 "[[build.native.linux.exceptions]] #{i} needs binaries, a relative scope and a reason; it exempts nothing"
@@ -280,7 +313,50 @@ fn check_single_binary(
     policy: &Policy,
     findings: &mut Vec<String>,
 ) -> bool {
-    if exemption(path, root, policy).is_some() {
+    if let Some(exc) = exemption(path, root, policy) {
+        if !exc.allowed_needed.is_empty() {
+            let data = match std::fs::read(path) {
+                Ok(d) => d,
+                Err(e) => {
+                    findings.push(format!("{}: failed to read binary: {e}", path.display()));
+                    return false;
+                }
+            };
+            let Some(facts) = elf_facts(&data) else {
+                findings.push(format!(
+                    "{}: exempt binary is not a valid ELF64 file",
+                    path.display()
+                ));
+                return false;
+            };
+            let bin_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            let Some(allowed) = exc.allowed_needed.get(bin_name) else {
+                findings.push(format!(
+                    "{}: exempt binary '{}' missing from exception allowed_needed table",
+                    path.display(),
+                    bin_name
+                ));
+                return false;
+            };
+            let unapproved: Vec<&str> = facts
+                .needed
+                .iter()
+                .map(String::as_str)
+                .filter(|lib| !allowed.contains(*lib))
+                .collect();
+            if !unapproved.is_empty() {
+                findings.push(format!(
+                    "{}: exempt dynamic binary links unapproved DT_NEEDED library(ies): {} [allowed: {}]",
+                    path.display(),
+                    unapproved.join(", "),
+                    allowed.iter().cloned().collect::<Vec<_>>().join(", ")
+                ));
+                return false;
+            }
+        }
         return true;
     }
 
@@ -628,7 +704,7 @@ pub fn census(opts: &Options) -> (String, u8) {
                 .or_default()
                 .insert(name.clone());
         }
-        let verdict = if exempt {
+        let verdict = if exempt && passed {
             "exempt".to_string()
         } else if passed {
             "static".to_string()
@@ -1155,5 +1231,30 @@ mod tests {
         let report = check(&Options { binary: Some(portal), ..opts(tmp.path()) });
         assert_eq!(report.code(), 0, "{:?}", report.findings);
         assert!(report.summary.contains("approved dynamic exception"), "{:?}", report.summary);
+    }
+
+    #[test]
+    fn allowed_needed_enforces_exact_dt_needed_subset_on_exempt_binaries() {
+        let ex_ok = format!(
+            "{GECKO}[build.native.linux.exceptions.allowed_needed]\n\"mios-portal\" = [\"libfoo.so\"]\n\"libxul.so\" = [\"libfoo.so\"]\n\"plugin-container\" = [\"libfoo.so\"]\n\"libclearkey.so\" = [\"strtab+0\"]\n"
+        );
+        let tmp_ok = gecko_root(Some(&ex_ok));
+        let report_ok = check(&opts(tmp_ok.path()));
+        assert_eq!(report_ok.code(), 0, "{:?}", report_ok.findings);
+
+        let ex_bad = format!(
+            "{GECKO}[build.native.linux.exceptions.allowed_needed]\n\"mios-portal\" = [\"libc.so.6\"]\n\"libxul.so\" = [\"libfoo.so\"]\n\"plugin-container\" = [\"libfoo.so\"]\n\"libclearkey.so\" = [\"strtab+0\"]\n"
+        );
+        let tmp_bad = gecko_root(Some(&ex_bad));
+        let report_bad = check(&opts(tmp_bad.path()));
+        assert_eq!(report_bad.code(), 1, "unapproved DT_NEEDED must fail: {:?}", report_bad.findings);
+        assert!(
+            report_bad
+                .findings
+                .iter()
+                .any(|f| f.contains("mios-portal") && f.contains("unapproved DT_NEEDED") && f.contains("libfoo.so")),
+            "{:?}",
+            report_bad.findings
+        );
     }
 }

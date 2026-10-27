@@ -257,7 +257,7 @@ class TestBackendSelection(unittest.TestCase):
         os.makedirs(self.native)
         os.makedirs(self.state)
 
-    def run_rdp(self, server, *args, binary=True, marker=False, override=None):
+    def run_rdp(self, server, *args, binary=True, marker=False, override=None, systemctl=None):
         b = os.path.join(self.native, "mios-rdp-server")
         if binary:
             _exe(self.native, "mios-rdp-server", "print('x')\n")
@@ -280,7 +280,33 @@ class TestBackendSelection(unittest.TestCase):
             rdp["server"] = server
         env = dict(os.environ, MIOS_TOML_GET=self.toml, MIOS_RDP_NATIVE_DIR=self.native, MIOS_RDP_STATE_DIR=self.state,
                    FAKE_SECTION_remote_rdp=json.dumps(rdp), MIOS_PORTS_RDP="8300")
+        if systemctl is not None:
+            _exe(self.tmp, "systemctl", systemctl)
+            env["PATH"] = self.tmp + os.pathsep + env.get("PATH", "")
         return subprocess.run(["bash", _RDP, *args], env=env, capture_output=True, text=True, timeout=30)
+
+    @unittest.skipUnless(os.getuid() == 0, "backend switching requires root")
+    def test_native_switch_preserves_listener_when_helper_cannot_start(self):
+        log = os.path.join(self.tmp, "systemctl.log")
+        stub = f"import sys\nwith open({log!r}, 'a') as f: f.write(' '.join(sys.argv[1:]) + '\\n')\nsys.exit(1)\n"
+        r = self.run_rdp("xrdp", "switch", "native", systemctl=stub)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("current server preserved", r.stderr)
+        with open(log) as f:
+            self.assertEqual(f.read().strip(), "start mios-rdp-priv.socket")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "server-override")))
+
+    @unittest.skipUnless(os.getuid() == 0, "backend switching requires root")
+    def test_native_start_failure_restores_compatibility_listener(self):
+        log = os.path.join(self.tmp, "systemctl.log")
+        stub = f"import sys\na = sys.argv[1:]\nwith open({log!r}, 'a') as f: f.write(' '.join(a) + '\\n')\nsys.exit(1 if 'start' in a and 'mios-rdp-native.service' in a else 0)\n"
+        r = self.run_rdp("xrdp", "switch", "native", systemctl=stub)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("restored the xrdp listener", r.stderr)
+        with open(os.path.join(self.state, "server-override")) as f:
+            self.assertEqual(f.read().strip(), "xrdp")
+        with open(log) as f:
+            self.assertIn("start xrdp-sesman.service xrdp.service", f.read())
 
     def test_default_is_xrdp(self):
         self.assertEqual(self.run_rdp(None, "backend").stdout.strip(), "xrdp")
@@ -337,7 +363,8 @@ class TestSsotDefaults(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         with open(_SSOT, "rb") as f:
-            cls.rdp = tomllib.load(f)["remote"]["rdp"]
+            cls.ssot = tomllib.load(f)
+        cls.rdp = cls.ssot["remote"]["rdp"]
 
     def test_server_keys(self):
         self.assertEqual(self.rdp.get("server", "xrdp"), "xrdp")
@@ -350,7 +377,10 @@ class TestSsotDefaults(unittest.TestCase):
     def test_subtables_equal_code_defaults(self):
         d = json.loads(subprocess.run([_SERVER, "--print-defaults"], capture_output=True, text=True, timeout=30).stdout)
         for sub in ("native", "redirect", "naming"):
-            for k, v in self.rdp.get(sub, {}).items():
+            ssot_sub = self.rdp.get(sub, {})
+            self.assertEqual(set(ssot_sub.keys()), set(d[sub].keys()),
+                             f"[remote.rdp.{sub}] key mismatch: SSOT={sorted(ssot_sub)} vs code={sorted(d[sub])}")
+            for k, v in ssot_sub.items():
                 self.assertIn(k, d[sub], f"[remote.rdp.{sub}].{k} has no code default")
                 self.assertEqual(d[sub][k], v, f"[remote.rdp.{sub}].{k}: SSOT {v!r} != code {d[sub][k]!r}")
 
@@ -370,16 +400,129 @@ class TestSsotDefaults(unittest.TestCase):
             self.assertIn("account    required     pam_succeed_if.so user ingroup mios-rdp", content)
             self.assertIn("account    required     pam_succeed_if.so uid >= 1000 quiet", content)
 
+    @unittest.skipUnless(os.access(_SERVER, os.X_OK), "mios-rdp-server not built")
+    def test_self_test_openh264_and_egl_and_invariants(self):
+        r = subprocess.run([_SERVER, "--self-test"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        d = json.loads(r.stdout)
+        self.assertTrue(d.get("openh264", {}).get("ok"), f"openh264 self-test failed: {d}")
+        self.assertTrue(d.get("egl", {}).get("ok"), f"egl self-test failed: {d}")
+        self.assertTrue(d.get("invariants", {}).get("ok"), f"pipeline/redirect invariants failed: {d}")
+
+    def test_build_json_matches_binaries(self):
+        import hashlib
+        rdp_dir = os.path.dirname(_SERVER)
+        build_json = os.path.join(rdp_dir, "build.json")
+        self.assertTrue(os.path.exists(build_json), f"missing {build_json}")
+        with open(build_json) as f:
+            meta = json.load(f)
+        self.assertEqual(meta.get("self_test"), {"openh264": True, "egl": True})
+        self.assertIn("nscodec", meta.get("features", []))
+        for bname in ("mios-rdp-server", "mios-rdp-priv"):
+            bpath = os.path.join(rdp_dir, bname)
+            self.assertTrue(os.path.exists(bpath), f"missing {bpath}")
+            h = hashlib.sha256()
+            with open(bpath, "rb") as bf:
+                while chunk := bf.read(65536):
+                    h.update(chunk)
+            self.assertEqual(meta["binaries"][bname], h.hexdigest(), f"SHA-256 mismatch for {bname}")
+
+    def test_systemd_units_and_ssot_invariants(self):
+        with open("/usr/lib/systemd/user/mios-rdp-native.service") as f:
+            native_u = f.read()
+        self.assertIn("RestartMode=direct", native_u)
+        self.assertIn("StartLimitBurst=5", native_u)
+        self.assertIn("OnFailure=mios-rdp-native-failed.service", native_u)
+        self.assertIn("ExecCondition=/usr/libexec/mios/mios-rdp enabled native", native_u)
+        with open("/usr/lib/systemd/user/mios-rdp-vnc.service") as f:
+            vnc_u = f.read()
+        self.assertIn("ExecCondition=/usr/libexec/mios/mios-rdp enabled xrdp", vnc_u)
+        with open("/usr/lib/systemd/system/mios-rdp-priv@.service") as f:
+            priv_u = f.read()
+        self.assertIn("CAP_SYS_PTRACE", priv_u)
+        self.assertIn("~process_vm_readv process_vm_writev", priv_u)
+        priv_ssot = self.ssot["units"]["mios-rdp-priv@.service"]["Service"]
+        self.assertIn("CAP_SYS_PTRACE", priv_ssot["CapabilityBoundingSet"])
+        self.assertIn("~process_vm_readv process_vm_writev", priv_ssot["SystemCallFilter"])
+        pkgs = self.ssot["packages"]["rdp-server-build"]["pkgs"]
+        self.assertTrue(len(pkgs) >= 5, pkgs)
+
+    def test_restart_mode_direct_waits_for_burst_limit(self):
+        import time
+        unit = "mios-test-rdp-rmd-burst.service"
+        subprocess.run(["systemctl", "--user", "stop", unit], stderr=subprocess.DEVNULL)
+        subprocess.run(["systemctl", "--user", "reset-failed", unit], stderr=subprocess.DEVNULL)
+        with tempfile.TemporaryDirectory(prefix="mios-rdp-rmd-") as d:
+            restarts_log = os.path.join(d, "restarts.log")
+            cmd = [
+                "systemd-run", "--user", f"--unit={unit}",
+                "-p", "Type=exec", "-p", "Restart=on-failure", "-p", "RestartSec=150ms",
+                "-p", "RestartMode=direct", "-p", "StartLimitIntervalSec=120", "-p", "StartLimitBurst=5",
+                "/bin/sh", "-c", f"echo x >> {restarts_log}; exit 1"
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                self.skipTest(f"systemd-run --user unavailable: {r.stderr}")
+            try:
+                state, nrest = "", 0
+                for _ in range(80):
+                    st = subprocess.run(
+                        ["systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "NRestarts", "--value"],
+                        capture_output=True, text=True
+                    ).stdout.splitlines()
+                    if len(st) == 2:
+                        state, nrest = st[0], int(st[1])
+                        if state == "failed":
+                            break
+                    time.sleep(0.05)
+                with open(restarts_log) as f:
+                    runs = len(f.readlines())
+                self.assertEqual(state, "failed")
+                self.assertEqual(runs, 5, f"expected 5 runs before entering failed state, got {runs}")
+                self.assertGreaterEqual(nrest, 4)
+            finally:
+                subprocess.run(["systemctl", "--user", "stop", unit], stderr=subprocess.DEVNULL)
+                subprocess.run(["systemctl", "--user", "reset-failed", unit], stderr=subprocess.DEVNULL)
+
+    @unittest.skipUnless(os.path.exists("/run/mios-rdp-priv.sock"), "mios-rdp-priv.sock not active")
+    def test_tls_key_two_sided_control(self):
+        import socket
+        if os.getuid() != self.rdp.get("operator_uid", 1000):
+            self.skipTest("TLS-KEY controls must run as the configured desktop operator")
+        # Negative control: non-mios-rdp-server process requesting TLS-KEY must be denied with 0 fds.
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        try:
+            s.connect("/run/mios-rdp-priv.sock")
+            s.sendall(b"TLS-KEY")
+            msg, anc, _, _ = s.recvmsg(256, socket.CMSG_SPACE(16))
+        finally:
+            s.close()
+        self.assertEqual(msg, b"DENY unauthorized caller exe")
+        self.assertEqual(anc, [])
+        # Positive control: genuine /usr/libexec/mios/rdp-native/mios-rdp-server receives TLS-KEY fds.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "native.json")
+            with open(cfg, "w") as f:
+                json.dump({"listen": "127.0.0.1:0", "bind_device": None, "tls_source": "priv",
+                           "auth": "priv", "priv_socket": "/run/mios-rdp-priv.sock",
+                           "display_service": ["/bin/false"], "stats_path": os.path.join(d, "stats.json")}, f)
+            p = subprocess.run([_SERVER, "--config", cfg], capture_output=True, text=True, timeout=15)
+            combined = p.stdout + p.stderr
+            self.assertIn("TLS certificate loaded sha256=", combined, combined)
+            self.assertNotIn("priv sentinel refused TLS-KEY", combined, combined)
+
 
 @unittest.skipUnless(os.environ.get("MIOS_RDP_NATIVE_LIVE") == "1", "live native-server checks are opt-in (MIOS_RDP_NATIVE_LIVE=1)")
 class TestLive(unittest.TestCase):
     """Private server on 127.0.0.1:18301 (test-auth build: MIOS_RDP_BIN) + FreeRDP in Xvfb + SCALETEST."""
 
     def run_fixture(self, name, *args, timeout=400):
-        p = subprocess.run([sys.executable, "-I", os.path.join(_FIX, name), *args], capture_output=True, text=True,
-                           timeout=timeout)
-        lines = [l for l in p.stdout.splitlines() if l.startswith("{")]
-        return json.loads("".join(p.stdout[p.stdout.index("{"):].splitlines())) if lines else {"error": p.stderr[-2000:]}
+        with tempfile.TemporaryDirectory(prefix="mios-rdp-live-") as live_dir:
+            env = dict(os.environ, MIOS_RDP_LIVE_DIR=live_dir)
+            p = subprocess.run([sys.executable, "-I", os.path.join(_FIX, name), *args], capture_output=True, text=True,
+                               env=env, timeout=timeout)
+            lines = [l for l in p.stdout.splitlines() if l.startswith("{")]
+            return json.loads("".join(p.stdout[p.stdout.index("{"):].splitlines())) if lines else {"error": p.stderr[-2000:]}
 
     def test_g6_colour(self):
         r = self.run_fixture("g6.py", "g6-test", "bt709-full")

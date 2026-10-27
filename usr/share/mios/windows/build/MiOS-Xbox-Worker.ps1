@@ -1,4 +1,4 @@
-# AI-hint: MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\: guest spec, payload, drivers, UUP set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\. status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.
+# AI-hint: MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\: guest spec, payload, drivers, UUP set, capability FOD set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), drops the UUP set once the media exists, then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\; on success the scratch (work\) is removed and the exchange volume re-TRIMmed before status done, so the thin exchange disk gives its space back before the host copies the ISO out. status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.
 # AI-related: usr/libexec/mios/win/xbox/worker.py, usr/libexec/mios/win/xbox/build.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1
 #Requires -Version 5.1
 [CmdletBinding()]
@@ -43,6 +43,12 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $media 'sources\install.wim')) -and -not (Test-Path -LiteralPath (Join-Path $media 'sources\install.esd'))) {
         throw "UUP conversion produced no media (exit $($p.ExitCode); see the converter log in $conv)"
     }
+    # Disk (build-20261023T224037Z ran /var/lib/mios-build down to 5.6 GB): the converted media is all servicing reads,
+    # so the UUP set goes now and the servicing export + mount reuse its clusters on the thin exchange disk.
+    if (([IO.Path]::GetFullPath($media) + '\').StartsWith([IO.Path]::GetFullPath($uups) + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "the converted media $media lies inside the UUP set $uups"
+    }
+    try { Remove-Item -LiteralPath $uups -Recurse -Force } catch { Write-Warning "UUP set $uups not removed: $($_.Exception.Message)" }
 
     $stage = 'service'; Set-Status $stage 'running'
     $tool = @((Join-Path $conv 'bin\cdimage.exe'), (Join-Path $conv 'bin\bin64\cdimage.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
@@ -50,10 +56,17 @@ try {
         SpecPath = (Join-Path $job 'xbox-spec.json'); MediaDir = $media; PayloadDir = (Join-Path $job 'payload')
         DriversDir = (Join-Path $job 'drivers'); StartAssetsDir = (Join-Path $job 'start-assets'); WorkDir = (Join-Path $work 'servicing')
         OutIso = (Join-Path $out ([string]$j.iso_name)); ResultPath = (Join-Path $out 'result.json'); IsoLabel = [string]$j.iso_label
-        UupDir = $uups
+        FodDir = (Join-Path $job 'fod')
     }
     if ($tool) { $svcArgs.OscdimgPath = $tool }
     & (Join-Path $job 'New-MiOSXboxImage.ps1') @svcArgs
+    # out\ (ISO, result.json, logs) is all the host copies out: drop the scratch (converter, converted media, servicing
+    # WIM) and re-TRIM the exchange volume before the worker shuts down, so the thin exchange disk hands that space back
+    # to the build filesystem before the host copies the ISO. Scratch left behind costs disk, never the image.
+    try {
+        Remove-Item -LiteralPath $work -Recurse -Force
+        Optimize-Volume -DriveLetter ($Root.Substring(0, 1)) -ReTrim | Out-Null
+    } catch { Write-Warning "scratch cleanup of $work incomplete: $($_.Exception.Message)" }
     $stage = 'done'; Set-Status $stage 'done'
 } catch {
     Set-Status $stage 'failed' ($_.Exception.Message)

@@ -1,0 +1,15 @@
+[Unit]
+Description=MiOS desktop frame-rate policy (power profile, battery, GameMode -> compositor, glass, wallpaper rates)
+PartOf=mios-desktop.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/miosd framerate serve
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=mios-desktop.target

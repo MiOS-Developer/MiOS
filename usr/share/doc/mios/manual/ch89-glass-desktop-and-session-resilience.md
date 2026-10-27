@@ -34,7 +34,7 @@ and `graphical-session.target`, releasing the old session's desktop services.
 
 Hyprglass renders the desktop glass material. The MiOS Hypr3DGlass integration
 uses `/usr/lib64/mios/hypr3d.so`, declared in `[desktop.hyprland.hypr3d]`, for the
-3D view. **Super+G** toggles that view in either GPU session; the chord and enable
+3D view. **Super+F12** toggles that view in either GPU session; the chord and enable
 switch are exposed in the local configurator. The engine loads on first use,
 through `/usr/bin/mios-gen hyprland-3d-toggle`. The helper loads the live plugin
 through compositor IPC, then configures and toggles it. The Lua plugin-load API
@@ -255,6 +255,12 @@ Application menu bars (File, Edit, View, Window, Help) are extracted and display
 1. **GTK Native Applications**: `miosd` queries `org.gtk.Menus` and `org.gtk.Actions` under the application's well-known D-Bus name or process connection.
 2. **Qt and XWayland Applications**: `miosd` acts as the D-Bus registrar for `com.canonical.AppMenu.Registrar`, handling window registrations emitted by Qt applications and `appmenu-gtk-module`.
 3. **Atomic Export**: Menus are normalized into a unified JSON hierarchy and written atomically to `$XDG_RUNTIME_DIR/mios/appmenu.json`.
+
+4. **Native accessibility fallback**: When neither exported model is available, the daemon queries the application's AT-SPI cache. The current cache signature and the older child-reference signature are supported. Cache-less bridges are read through the standard accessible tree with bounded parallel calls; Qt's virtual accessibility properties are queried individually because its adaptor rejects `GetAll`. Real menu bars become the same Glass menu pills. Named application menu buttons, including GTK4/libadwaita menus, become pills which invoke the original native popup when the application provides no readable item model. This does not clone unreadable menu contents or manufacture menu options.
+5. **Window and content boundaries**: Accessibility menu references bind the provider, object, active frame and original Hyprland window address. Ambiguous inactive windows are rejected. Webpage dropdowns, document controls and file-list context menus are excluded. All activation paths reject an application which lost focus before the action was delivered.
+6. **Live updates and sandboxes**: Menu structure, state and name changes are watched over the accessibility bus. The service advertises an accessibility consumer without requesting screen-reader mode. The global Flatpak policy allows the specific `com.canonical.AppMenu.Registrar` service; per-application sandbox restrictions still take precedence. Applications must expose an exported menu or a native accessibility menu action; custom controls exposing neither cannot be discovered externally.
+
+`/usr/share/mios/quickshell/AppMenu.qml` and the mobile shoulder menu in `PanelWindow.qml` consume the same generic snapshot. There are no application-name branches in menu discovery or presentation. The browser's existing `[browser.zen].global_menu` projection also stages its required dbusmenu libraries into its sandbox; already-running browser processes need a restart to load newly staged libraries.
 
 #### Live Tab IPC and Quickshell Slide Animation
 When a window's glass control tab protrudes into the top-bar region, it risks visually colliding with the top-bar application menu pills. To prevent this, `hyprbars` emits real-time tab state events over Hyprland's socket2 interface:

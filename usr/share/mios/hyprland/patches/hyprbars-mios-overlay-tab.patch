@@ -1,0 +1,2209 @@
+diff --git a/hyprbars/BarPassElement.cpp b/hyprbars/BarPassElement.cpp
+--- a/hyprbars/BarPassElement.cpp
++++ b/hyprbars/BarPassElement.cpp
+@@ -21,7 +21,7 @@
+     color.a *= data.a;
+     const bool SHOULDBLUR = g_pGlobalState->config.barBlur->value() && *PENABLEBLURGLOBAL && color.a < 1.F;
+ 
+-    return SHOULDBLUR;
++    return SHOULDBLUR || data.deco->overlayNeedsBlur();
+ }
+ 
+ std::optional<CBox> CBarPassElement::boundingBox() {
+diff --git a/hyprbars/RenderGate.hpp b/hyprbars/RenderGate.hpp
+new file mode 100644
+--- /dev/null
++++ b/hyprbars/RenderGate.hpp
+@@ -0,0 +1,10 @@
++#pragma once
++// MiOS: the hyprbars render gate, alone so a regression test compiles it against the real SDK types.
++#include <hyprland/src/render/types.hpp>
++
++// True for a render pass that carries a render modifier (Hypr3D's CForeignSnapshotScope pushes an identity
++// translate): the same modifier test as hyprglass' RenderGuards::isForeignRender. A default SRenderModifData has
++// enabled = true and no modifs -- that is every normal frame, which must draw the controls.
++inline bool isForeignModifRender(const Render::SRenderModifData& modif) {
++    return modif.enabled && !modif.modifs.empty();
++}
+diff --git a/hyprbars/barDeco.cpp b/hyprbars/barDeco.cpp
+--- a/hyprbars/barDeco.cpp
++++ b/hyprbars/barDeco.cpp
+@@ -22,6 +22,24 @@
+ #include <hyprland/src/layout/LayoutManager.hpp>
+ #include <hyprland/src/render/OpenGL.hpp>
+ #include <hyprland/src/state/MonitorState.hpp>
++#include <hyprland/src/managers/EventManager.hpp>
++#include <hyprland/src/pointer/PointerManager.hpp>
++
++#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
++#include <hyprland/src/render/pass/TexPassElement.hpp>
++#include <cairo/cairo.h>
++#include <hyprland/src/render/gl/GLFramebuffer.hpp>
++#include <cmath>
++#include <csignal>
++#include <dlfcn.h>
++#include <linux/input-event-codes.h>
++#include <hyprutils/string/VarList.hpp>
++
++namespace { // MiOS hyprglass bridge, defined with the glass tab below
++    void hyprglassRelease(uintptr_t key);
++    bool drawGlassButton(PHLWINDOW window, uintptr_t key, const CBox& bb, const CHyprColor& color, float alpha);
++}
++#include <cstdint>
+ 
+ #include "globals.hpp"
+ #include "BarPassElement.hpp"
+@@ -48,14 +66,366 @@
+     // move events
+     m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo& info) { onTouchMove(info, e); });
+     m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo& info) { onMouseMove(c); });
++    // Focus reveal: every bar re-evaluates on a focus change, with the window the event names (focusState may
++    // still hold the previous window while the event is dispatched), so the window that lost focus melts its
++    // tab down into its own edge while the newly focused one may raise its own; nothing moves between windows.
++    m_pActiveWindowCallback = Event::bus()->m_events.window.active.listen([&](PHLWINDOW w, Desktop::eFocusReason r) { updateReveal(w); });
+ 
+     Animation::mgr()->createAnimation(configColor(g_pGlobalState->config.barColor->value()), m_cRealBarColor, Config::animationTree()->getAnimationPropertyConfig("border"),
+                                       pWindow, AVARDAMAGE_NONE);
+     m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
++
++    Animation::mgr()->createAnimation(0.F, m_fReveal, Config::animationTree()->getAnimationPropertyConfig("fadeIn"), pWindow, AVARDAMAGE_NONE);
++    m_fReveal->setUpdateCallback([&](auto) { damageEntire(); });
++}
++
++// reveal_on (overlay mode only):
++//   "focus+proximity" (default) - only the focused window, and only while the cursor is within reveal_radius
++//                                 of its tab area at the window's top-left
++//   "focus"                     - the focused window's tab is always raised
++//   "proximity"                 - any window's tab rises when the cursor comes near it
++//   "always"                    - never hidden
++// The legacy proximity_reveal = true selects "proximity" when reveal_on is empty.
++std::string CHyprBar::revealMode() {
++    std::string mode = g_pGlobalState->config.revealOn->value();
++    if (mode.empty())
++        mode = g_pGlobalState->config.proximityReveal->value() ? "proximity" : "always";
++    return mode;
++}
++
++bool CHyprBar::revealEnabled() {
++    if (!g_pGlobalState->config.barOverlay->value() || mobileMode())
++        return false; // mobile tabs are always raised, focused or not
++    const auto MODE = revealMode();
++    return MODE == "focus" || MODE == "proximity" || MODE == "focus+proximity";
++}
++
++float CHyprBar::buttonsWidth() {
++    const auto BPAD = g_pGlobalState->config.barButtonPadding->value();
++    float      w    = 0;
++    for (auto& b : g_pGlobalState->buttons)
++        w += b.size + BPAD;
++    return g_pGlobalState->buttons.empty() ? 0.F : w - BPAD;
++}
++
++// ---- MiOS mobile tabs ------------------------------------------------------------------------------------------
++// A window with the hyprbars:mobile rule (the MiOS projection sets it on windows of mobile outputs) gets its controls
++// split into two tabs of the SAME glass, silhouette and button rendering as the desktop tab: the left tab rises from
++// the window's top-left and holds the window-menu button, the right one rises from its top-right and holds the close
++// button; the status pill sits in the notch between them. Both are always raised (focused or not), never yield to a
++// layer or a neighbour (the mobile layout shows one window), and each is at least mobile_touch_target logical px
++// wide and tall so a finger can hit it; the whole tab is the button's hit area. Each tab's box starts one window
++// rounding plus one fillet in from the window's side, so its outer fillet lands on the straight part of the top edge,
++// exactly where the desktop tab sits at bar_padding.
++bool CHyprBar::mobileMode() {
++    return m_bMobile && g_pGlobalState->config.barOverlay->value();
++}
++
++// The tab strip's height: bar_height, raised to the touch target on mobile tabs.
++double CHyprBar::tabHeight() {
++    return g_pGlobalState->config.barHeight->value();
++}
++
++// The mobile buttons share the close button's size (the desktop buttons' size), so the dots read as the same buttons.
++double CHyprBar::mobileButtonSize() {
++    const auto& B   = g_pGlobalState->buttons;
++    const auto  IDX = g_pGlobalState->config.mobileCloseButton->value();
++    if (!B.empty())
++        return B[(IDX >= 0 && (size_t)IDX < B.size()) ? (size_t)IDX : 0].size;
++    return g_pGlobalState->config.barHeight->value() / 2.0;
++}
++
++std::array<CHyprBar::SMobileTab, 2> CHyprBar::mobileTabs(double windowWidth, double rounding) {
++    const double H      = tabHeight();
++    const double PAD    = g_pGlobalState->config.pillPadding->value();
++    const double ROUND  = std::max(0.0, rounding);
++    const double FILLET = std::min(ROUND / 2.0, H / 2.0);
++    const double INSET  = ROUND + FILLET;
++    const double W      = mobileButtonSize() + 2.0 * PAD;
++    return {SMobileTab{INSET, W}, SMobileTab{windowWidth - INSET - W, W}};
++}
++
++// coords: relative to the tab strip (assignedBoxGlobal). The whole tab is the hit area.
++bool CHyprBar::doMobilePress(const Vector2D& coords) {
++    if (!validMapped(m_pWindow))
++        return false;
++    const double H      = tabHeight();
++    const auto   TABS     = mobileTabs(assignedBoxGlobal().w, m_pWindow->rounding());
++    const double TARGET   = std::max(H, (double)std::max<Config::INTEGER>(0, g_pGlobalState->config.mobileTouchTarget->value()));
++    const double PAD      = g_pGlobalState->config.pillPadding->value();
++    const double TARGET_W = std::max((double)g_pGlobalState->config.mobileTouchTarget->value(), mobileButtonSize() + 2.0 * PAD);
++    const double PADY     = (TARGET - H) / 2.0;
++    if (coords.y < -PADY || coords.y > H + PADY)
++        return false;
++    std::string cmd;
++    for (int i = 0; i < 2; ++i) {
++        const double PADX = std::max(0.0, (TARGET_W - TABS[i].w) / 2.0);
++        if ((coords.x >= TABS[i].x - PADX && coords.x <= TABS[i].x + TABS[i].w + PADX) || (i == 1 && coords.x >= TABS[1].x && coords.x <= TABS[1].x + TABS[1].w)) {
++            if (i == 0)
++                cmd = g_pGlobalState->config.mobileMenuAction->value();
++            else {
++                const auto& B   = g_pGlobalState->buttons;
++                const auto  IDX = g_pGlobalState->config.mobileCloseButton->value();
++                if (!B.empty())
++                    cmd = B[(IDX >= 0 && (size_t)IDX < B.size()) ? (size_t)IDX : 0].cmd;
++            }
++            break;
++        }
++    }
++    if (!cmd.empty())
++        g_pKeybindManager->m_dispatchers["exec"](cmd);
++    return true; // a tap on a tab never reaches the client under it
++}
++
++// One tab's button: drawn as renderBarButtons / renderBarButtonsText draw theirs (a circle of the button's size in
++// its colour, its icon in "sans" at size x 0.62), centred in the tab. which: 0 = menu (left), 1 = close (right).
++void CHyprBar::renderMobileButton(const CBox& tabBox, int which, float scale, float a, bool icons) {
++    const auto&      B             = g_pGlobalState->buttons;
++    const auto       IDX           = g_pGlobalState->config.mobileCloseButton->value();
++    const auto       INACTIVECOLOR = g_pGlobalState->config.inactiveButtonColor->value();
++    const double     SIZE          = mobileButtonSize();
++    CHyprColor       bg, fg;
++    std::string      icon;
++    if (which == 0) {
++        bg   = configColor(g_pGlobalState->config.mobileMenuColor->value());
++        fg   = configColor(g_pGlobalState->config.mobileMenuIconColor->value());
++        icon = g_pGlobalState->config.mobileMenuIcon->value();
++    } else {
++        if (B.empty())
++            return;
++        const auto& b = B[(IDX >= 0 && (size_t)IDX < B.size()) ? (size_t)IDX : 0];
++        bg            = b.bgcol;
++        fg            = b.userfg ? b.fgcol : (b.bgcol.r + b.bgcol.g + b.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
++        icon          = b.icon;
++    }
++    if (INACTIVECOLOR > 0 && !m_bWindowHasFocus)
++        bg = configColor(INACTIVECOLOR);
++    const auto GLASSCOLOR = bg;
++    bg.a *= a;
++    const double S  = SIZE * scale;
++    CBox         bb = {tabBox.x + (tabBox.w - S) / 2.0, tabBox.y + (tabBox.h - S) / 2.0, S, S};
++    bb.round();
++    // MiOS: the same tinted glass orb as the desktop buttons
++    if (!drawGlassButton(m_pWindow.lock(), (uintptr_t)this + 2 + (which ? 1 : 0), bb, GLASSCOLOR, m_fButtonGlassA))
++        g_pHyprOpenGL->renderRect(bb, bg, {.round = static_cast<int>(std::round(S / 2.0)), .roundingPower = 2.F});
++
++    if (!icons || icon.empty())
++        return;
++    const std::string KEY = std::format("{}/{:x}/{:.3f}", icon, fg.getAsHex(), scale);
++    if (!m_pMobileIconTex[which] || m_pMobileIconTex[which]->m_texID == 0 || m_mobileIconKey[which] != KEY) {
++        m_pMobileIconTex[which] = g_pHyprRenderer->renderText(icon, fg, std::round(SIZE * 0.62 * scale), false, "sans", S);
++        m_mobileIconKey[which]  = KEY;
++    }
++    const auto& T = m_pMobileIconTex[which];
++    if (!T || T->m_texID == 0)
++        return;
++    CBox pos = {bb.x + bb.w / 2.0 - T->m_size.x / 2.0, bb.y + bb.h / 2.0 - T->m_size.y / 2.0, T->m_size.x, T->m_size.y};
++    g_pHyprOpenGL->renderTexture(T, pos, {.a = a});
++}
++
++// Cursor within reveal_radius of the tab (bar coordinates: the strip of bar_height above the window's top edge).
++// Measured against the window's GOAL geometry, not the animated one: while a window pops in, slides or wobbles
++// its current box passes the cursor and leaves it again, which would raise the tab and drop it back down, and
++// once the animation stopped nothing would damage the hidden tab to re-check until the cursor moved.
++bool CHyprBar::cursorNearTab() {
++    if (!validMapped(m_pWindow))
++        return false;
++    const auto POINTER = Pointer::mgr()->position();
++    // A menu pill owns its pointer area even while it overlaps a hidden
++    // tab's potential rectangle. Revealing beneath it would move the menu
++    // away before the operator can click its first entry.
++    if (const auto monitor = m_pWindow->m_monitor.lock()) {
++        Desktop::CViewHitTester hitTester{*Desktop::viewState()};
++        for (const auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
++            PHLLS surface = nullptr;
++            Vector2D local;
++            hitTester.layerSurfaceAt(POINTER, &monitor->m_layerSurfaceLayers[level], &local, &surface);
++            if (surface && surface->m_namespace == "mios-appmenu")
++                return false;
++            if (surface)
++                break; // only the topmost input surface owns this pointer
++        }
++    }
++    const auto  R       = g_pGlobalState->config.revealRadius->value();
++    const auto  HEIGHT  = g_pGlobalState->config.barHeight->value();
++    const auto  PAD     = g_pGlobalState->config.pillPadding->value();
++    const auto  BARPAD  = g_pGlobalState->config.barPadding->value();
++    const bool  RIGHT   = g_pGlobalState->config.barButtonsAlignment->value() != "left";
++    const float BUTTONS = buttonsWidth();
++    const auto  GPOS    = m_pWindow->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++    const auto  GSIZE   = m_pWindow->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++    const auto  PWS     = m_pWindow->m_workspace;
++    const auto  WSOFF   = PWS && !m_pWindow->m_pinned ? PWS->m_renderOffset->goal() : Vector2D{};
++    const float X0      = RIGHT ? GSIZE.x - BARPAD - BUTTONS - PAD : BARPAD - PAD;
++    const float X1      = X0 + BUTTONS + 2 * PAD;
++    // Use the compositor pointer position: controller cursor mode moves it independently of the
++    // input manager's physical-device coordinates.
++    const auto  C       = POINTER - (Vector2D{GPOS.x, GPOS.y - (m_bInset ? 0 : HEIGHT)} + WSOFF);
++    return C.x >= X0 - R && C.x <= X1 + R && C.y >= -R && C.y <= HEIGHT + R;
++}
++
++// Where the tab goes. It protrudes above the window's top-left unless that would put it
++//  - into a fullscreen window's missing headroom (fullscreen: it drops down inside the window),
++//  - off the top of the monitor,
++//  - under a layer surface that has priority (yield_layers: the status island, the dock), or
++//  - under a neighbouring window drawn above this one (a tiled window under any other tile or floating
++//    window, a floating window under a later floating one),
++// in which case it is drawn inside the window's top-left as an overlay on the window itself. Measured on
++// the GOAL geometry, like the reveal, so an animation never flips it back and forth.
++bool CHyprBar::computeInset() {
++    if (!validMapped(m_pWindow) || !g_pGlobalState->config.barOverlay->value())
++        return false;
++    const auto W = m_pWindow.lock();
++    if (Fullscreen::controller()->getFullscreenModes(W).internal == Fullscreen::FSMODE_FULLSCREEN)
++        return true;
++    if (mobileMode()) {
++        // mobile: the status pill sits in the notch between the tabs, so nothing is yielded to
++        const auto PM = W->m_monitor.lock();
++        return PM && W->position(Desktop::View::IGeometric::GEOMETRIC_GOAL).y - tabHeight() < PM->m_position.y;
++    }
++    if (!g_pGlobalState->config.tabYield->value())
++        return false;
++    const auto PMON = W->m_monitor.lock();
++    if (!PMON)
++        return false;
++
++    const double HEIGHT = g_pGlobalState->config.barHeight->value();
++    const double PAD    = g_pGlobalState->config.pillPadding->value();
++    const double BARPAD = g_pGlobalState->config.barPadding->value();
++    const bool   RIGHT  = g_pGlobalState->config.barButtonsAlignment->value() != "left";
++    const double BTNS   = buttonsWidth();
++    const auto   GPOS   = W->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++    const auto   GSIZE  = W->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++    const double FILLET = std::min((double)std::max(0.F, W->rounding()), HEIGHT) / 2.0;
++    const double X0     = GPOS.x + (RIGHT ? GSIZE.x - BARPAD - BTNS - PAD : BARPAD - PAD) - FILLET;
++    const CBox   TAB    = {X0, GPOS.y - HEIGHT, BTNS + 2 * PAD + 2 * FILLET, HEIGHT};
++
++    if (TAB.y < PMON->m_position.y)
++        return true;
++
++    // layer surfaces with priority
++    const std::string LIST = g_pGlobalState->config.yieldLayers->value();
++    if (!LIST.empty()) {
++        Hyprutils::String::CVarList names(LIST, 0, ',', true);
++        for (const auto LEVEL : {ZWLR_LAYER_SHELL_V1_LAYER_TOP, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY}) {
++            for (auto const& lsw : PMON->m_layerSurfaceLayers[LEVEL]) {
++                const auto ls = lsw.lock();
++                if (!ls || !ls->m_mapped || ls->m_geometry.w <= 0 || ls->m_geometry.h <= 0)
++                    continue;
++                if (std::ranges::none_of(names, [&](const std::string& n) { return n == ls->m_namespace; }))
++                    continue;
++                if (!ls->m_geometry.intersection(TAB).empty())
++                    return true;
++            }
++        }
++    }
++
++    // neighbouring windows drawn above this one
++    bool seenSelf = false;
++    for (auto const& o : Desktop::windowState()->windows()) {
++        if (o == W) {
++            seenSelf = true;
++            continue;
++        }
++        if (!o->m_isMapped || o->isHidden() || o->m_workspace != W->m_workspace || o->m_monitor != W->m_monitor)
++            continue;
++        const bool ABOVE = W->m_isFloating ? (o->m_isFloating && seenSelf) : true;
++        if (!ABOVE)
++            continue;
++        const CBox OBOX = {o->position(Desktop::View::IGeometric::GEOMETRIC_GOAL), o->size(Desktop::View::IGeometric::GEOMETRIC_GOAL)};
++        if (!OBOX.intersection(TAB).empty())
++            return true;
++    }
++    return false;
++}
++
++void CHyprBar::refreshInset() {
++    const bool INSET = computeInset();
++    if (INSET == m_bInset)
++        return;
++    damageEntire(); // both strips: damageEntire covers above and inside the top edge
++    m_bInset = INSET;
++    damageEntire();
++}
++
++void CHyprBar::updateReveal(std::optional<PHLWINDOW> focused, bool fromRender) {
++    if (!validMapped(m_pWindow))
++        return;
++    const auto PWINDOW = m_pWindow.lock();
++    if (!fromRender)
++        refreshInset();
++    float      target  = 1.F;
++    if (revealEnabled()) {
++        const auto MODE    = revealMode();
++        const bool FOCUSED = (focused.has_value() ? focused.value() : Desktop::focusState()->window()) == PWINDOW;
++        if (MODE == "focus")
++            target = FOCUSED ? 1.F : 0.F;
++        else if (MODE == "proximity")
++            target = cursorNearTab() ? 1.F : 0.F;
++        else
++            target = FOCUSED && cursorNearTab() ? 1.F : 0.F;
++    }
++    if (m_fReveal->goal() != target) {
++        Log::logger->log(Log::DEBUG, "[hyprbars] tab {:x} {} (mode {})", (uintptr_t)PWINDOW.get(), target > 0.F ? "rises" : "melts", revealMode());
++        *m_fReveal = target;
++    }
++
++    // While raised, the protruding tab's strip above the window is input area of this window, so reaching for the
++    // controls over another window (follow_mouse) does not move focus away and melt them.
++    const bool INPUT = g_pGlobalState->config.barOverlay->value() && target > 0.F;
++    if (INPUT != m_bInputExtents && !fromRender) { // never re-position mid-render; the next event does
++        m_bInputExtents = INPUT;
++        g_pDecorationPositioner->repositionDeco(this);
++    }
++    publishTab();
+ }
+ 
+ CHyprBar::~CHyprBar() {
++    for (uintptr_t slot = 0; slot < 8; ++slot) // MiOS: hyprglass sample framebuffers of the tabs and buttons
++        hyprglassRelease((uintptr_t)this + slot);
++    publishTab(true);
+     std::erase(g_pGlobalState->bars, m_self);
++}
++
++// Socket2 event for the shell (the top-bar app-menu pills step aside only while a tab is actually up):
++//   hyprbarstab>>ADDRESS,RAISED,X,Y,W,H,INSET
++// RAISED is the reveal goal (1 as the tab starts to rise, 0 as it starts to melt; the shell animates over the
++// same fadeIn curve), X,Y,W,H the tab's extent in global layout px including its fillets (GOAL geometry), INSET
++// 1 when it hangs inside the window. Sent only on change; a closing window sends RAISED 0.
++void CHyprBar::publishTab(bool gone) {
++    if (!g_pGlobalState->config.barOverlay->value() || !g_pEventManager)
++        return;
++    const auto W = m_pWindow.lock();
++    if (!W)
++        return;
++    std::string data;
++    if (gone || !validMapped(m_pWindow))
++        data = std::format("{:x},0,0,0,0,0,0", (uintptr_t)W.get());
++    else {
++        const double HEIGHT = g_pGlobalState->config.barHeight->value();
++        const double PAD    = g_pGlobalState->config.pillPadding->value();
++        const double BARPAD = g_pGlobalState->config.barPadding->value();
++        const bool   RIGHT  = g_pGlobalState->config.barButtonsAlignment->value() != "left";
++        const double BTNS   = buttonsWidth();
++        const auto   GPOS   = W->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++        const auto   GSIZE  = W->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++        const double FILLET = std::min((double)std::max(0.F, W->rounding()), HEIGHT) / 2.0;
++        const double X0     = GPOS.x + (RIGHT ? GSIZE.x - BARPAD - BTNS - PAD : BARPAD - PAD) - FILLET;
++        if (mobileMode()) {
++            // mobile: the left (menu) tab, at the touch height
++            const double MH = tabHeight();
++            const double MF = std::min((double)std::max(0.F, W->rounding()) / 2.0, MH / 2.0);
++            const auto   L  = mobileTabs(GSIZE.x, W->rounding())[0];
++            data = std::format("{:x},{},{},{},{},{},{}", (uintptr_t)W.get(), m_fReveal->goal() > 0.F ? 1 : 0, (int)std::floor(GPOS.x + L.x - MF),
++                               (int)std::floor(m_bInset ? GPOS.y : GPOS.y - MH), (int)std::ceil(L.w + 2 * MF), (int)std::ceil(MH), m_bInset ? 1 : 0);
++        } else
++        data = std::format("{:x},{},{},{},{},{},{}", (uintptr_t)W.get(), m_fReveal->goal() > 0.F ? 1 : 0, (int)std::floor(X0), (int)std::floor(m_bInset ? GPOS.y : GPOS.y - HEIGHT),
++                           (int)std::ceil(BTNS + 2 * PAD + 2 * FILLET), (int)HEIGHT, m_bInset ? 1 : 0);
++    }
++    if (data == m_lastTabEvent)
++        return;
++    m_lastTabEvent = data;
++    g_pEventManager->postEvent(SHyprIPCEvent{"hyprbarstab", data});
+ }
+ 
+ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
+@@ -69,6 +439,16 @@
+     info.priority       = PRECEDENCE ? 10005 : 5000;
+     info.reserved       = true;
+     info.desiredExtents = {{0, m_hidden || !ENABLED ? 0 : HEIGHT}, {0, 0}};
++    if (g_pGlobalState->config.barOverlay->value()) {
++        // Overlay: the window keeps its full geometry (nothing reserved); the controls tab protrudes above
++        // its top edge, so the extents cover that strip for damage, culling and (while raised) input.
++        info.policy         = DECORATION_POSITION_ABSOLUTE;
++        info.reserved       = false;
++        const double EXTENT = mobileMode() ?
++            tabHeight() + std::max(0.0, (g_pGlobalState->config.mobileTouchTarget->value() - tabHeight()) / 2.0) :
++            tabHeight();
++        info.desiredExtents = {{0.0, m_hidden || !ENABLED ? 0.0 : EXTENT + 8.0}, {0.0, 0.0}};
++    }
+     return info;
+ }
+ 
+@@ -111,7 +491,8 @@
+ 
+     // Check Top Layer
+     hitTester.layerSurfaceAt(MOUSE, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &foundSurface);
+-    if (foundSurface)
++    if (foundSurface && !(g_pGlobalState->config.barOverlay->value() &&
++                          (foundSurface->m_namespace == "mios-appmenu" || foundSurface->m_namespace == "mios-topbar")))
+         return false;
+ 
+     // Check Overlay Layer
+@@ -131,7 +512,7 @@
+         return;
+     }
+ 
+-    handleDownEvent(info, std::nullopt);
++    handleDownEvent(info, std::nullopt, e.button);
+ }
+ 
+ void CHyprBar::onTouchDown(Event::SCallbackInfo& info, ITouch::SDownEvent e) {
+@@ -139,7 +520,7 @@
+     if (!inputIsValid() || e.touchID != 0)
+         return;
+ 
+-    handleDownEvent(info, e);
++    handleDownEvent(info, e, BTN_LEFT);
+ }
+ 
+ void CHyprBar::onTouchUp(Event::SCallbackInfo& info, ITouch::SUpEvent e) {
+@@ -150,6 +531,8 @@
+ }
+ 
+ void CHyprBar::onMouseMove(Vector2D coords) {
++    updateReveal();
++
+     // ensure proper redraws of button icons on hover when using hardware cursors
+     if (g_pGlobalState->config.iconOnHover->value())
+         damageOnButtonHover();
+@@ -180,7 +563,7 @@
+     m_bDraggingThis = true;
+ }
+ 
+-void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent) {
++void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent, uint32_t button) {
+     m_bTouchEv = touchEvent.has_value();
+     if (m_bTouchEv)
+         m_touchId = touchEvent.value().touchID;
+@@ -201,15 +584,17 @@
+         COORDS   = Vector2D(PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y) - assignedBoxGlobal().pos();
+     }
+ 
+-    const auto HEIGHT           = g_pGlobalState->config.barHeight->value();
++    // overlay: the tab strip (mobile tabs are touch height)
++    const Config::INTEGER HEIGHT = g_pGlobalState->config.barOverlay->value() ? (Config::INTEGER)std::ceil(tabHeight()) : g_pGlobalState->config.barHeight->value();
+     const auto BARBUTTONPADDING = g_pGlobalState->config.barButtonPadding->value();
+     const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
+     const auto ALIGNBUTTONS     = g_pGlobalState->config.barButtonsAlignment->value();
+     const auto ON_DOUBLE_CLICK  = g_pGlobalState->config.onDoubleClick->value();
+ 
+-    const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
+-
+-    if (!VECINRECT(COORDS, 0, 0, assignedBoxGlobal().w, HEIGHT - 1)) {
++    const bool   BUTTONSRIGHT = ALIGNBUTTONS != "left";
++    const double VSLOP        = g_pGlobalState->config.barOverlay->value() ? 8.0 : 0.0;
++
++    if (!VECINRECT(COORDS, 0, -VSLOP, assignedBoxGlobal().w, HEIGHT + VSLOP - (VSLOP > 0.0 ? 0.0 : 1.0))) {
+ 
+         if (m_bDraggingThis) {
+             if (m_bTouchEv)
+@@ -224,6 +609,65 @@
+         return;
+     }
+ 
++    if (g_pGlobalState->config.barOverlay->value()) {
++        // Overlay: only the buttons belong to the bar; everything else under it is the client's.
++        if (revealEnabled() && m_fReveal->goal() < 1.F)
++            return;
++        if (mobileMode()) {
++            const double TARGET = std::max((double)tabHeight(), (double)std::max<Config::INTEGER>(0, g_pGlobalState->config.mobileTouchTarget->value()));
++            const double PADY   = (TARGET - tabHeight()) / 2.0;
++            if (COORDS.y < -PADY || COORDS.y > tabHeight() + PADY)
++                return;
++        } else if (COORDS.y < -8.0 || COORDS.y > HEIGHT + 8.0)
++            return;
++        // Buttons act on the active window, so the clicked window takes focus first.
++        if (Desktop::focusState()->window() != PWINDOW)
++            Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_CLICK);
++        if (mobileMode() ? doMobilePress(COORDS) : doButtonPress(BARPADDING, BARBUTTONPADDING, HEIGHT, COORDS, BUTTONSRIGHT, button)) {
++            info.cancelled   = true;
++            m_bCancelledDown = true;
++            return;
++        }
++
++        // Tab pill body click outside buttons
++        bool inPill = false;
++        if (mobileMode()) {
++            const auto TABS = mobileTabs(assignedBoxGlobal().w, PWINDOW->rounding());
++            inPill = (COORDS.x >= TABS[0].x - 8.0 && COORDS.x <= TABS[0].x + TABS[0].w + 8.0) ||
++                     (COORDS.x >= TABS[1].x - 8.0 && COORDS.x <= TABS[1].x + TABS[1].w + 8.0);
++        } else {
++            const auto PAD      = g_pGlobalState->config.pillPadding->value();
++            const auto BARPAD   = g_pGlobalState->config.barPadding->value();
++            const bool RIGHT    = g_pGlobalState->config.barButtonsAlignment->value() != "left";
++            const float BUTTONS = buttonsWidth();
++            const double SIZE_X = assignedBoxGlobal().w;
++            const double X0     = RIGHT ? SIZE_X - BARPAD - BUTTONS - PAD : BARPAD - PAD;
++            const double X1     = X0 + BUTTONS + 2 * PAD;
++            inPill              = COORDS.x >= X0 - 8.0 && COORDS.x <= X1 + 8.0;
++        }
++        if (!inPill)
++            return;
++
++        if (button != BTN_LEFT)
++            return;
++
++        info.cancelled   = true;
++        m_bCancelledDown = true;
++
++        if (PWINDOW->m_isFloating)
++            Desktop::windowState()->raise(PWINDOW);
++
++        if (!ON_DOUBLE_CLICK.empty() &&
++            std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_lastMouseDown).count() < 400) {
++            Config::Supplementary::executor()->spawn(ON_DOUBLE_CLICK);
++            m_bDragPending = false;
++        } else {
++            m_lastMouseDown = Time::steadyNow();
++            m_bDragPending  = true;
++        }
++        return;
++    }
++
+     if (Desktop::focusState()->window() != PWINDOW)
+         Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_CLICK);
+ 
+@@ -233,7 +677,10 @@
+     info.cancelled   = true;
+     m_bCancelledDown = true;
+ 
+-    if (doButtonPress(BARPADDING, BARBUTTONPADDING, HEIGHT, COORDS, BUTTONSRIGHT))
++    if (doButtonPress(BARPADDING, BARBUTTONPADDING, HEIGHT, COORDS, BUTTONSRIGHT, button))
++        return;
++
++    if (button != BTN_LEFT)
+         return;
+ 
+     if (!ON_DOUBLE_CLICK.empty() &&
+@@ -269,24 +716,102 @@
+     m_touchId      = 0;
+ }
+ 
++static void restoreWindowFloatBox(PHLWINDOW PWINDOW, const std::optional<CBox>& preMaxBox) {
++    if (!PWINDOW)
++        return;
++    const auto PMON = PWINDOW->m_monitor.lock();
++    if (!PMON)
++        return;
++    CBox target{PMON->m_position.x + std::round((PMON->m_size.x - 960.0) * 0.5),
++                PMON->m_position.y + std::max(48.0, std::round((PMON->m_size.y - 532.0) * 0.5)), 960.0, 532.0};
++    if (preMaxBox && preMaxBox->w >= 240.0 && preMaxBox->h >= 160.0 &&
++        (preMaxBox->w < PMON->m_size.x * 0.88 || preMaxBox->h < PMON->m_size.y * 0.80))
++        target = *preMaxBox;
++    (void)Config::Actions::resize(Vector2D{std::round(target.w), std::round(target.h)}, false, PWINDOW);
++    (void)Config::Actions::move(Vector2D{std::round(target.x), std::round(target.y)}, false, PWINDOW);
++}
++
+ void CHyprBar::handleMovement() {
++    const auto PWINDOW = m_pWindow.lock();
++    if (PWINDOW) {
++        const auto fsMode = Fullscreen::controller()->getFullscreenModes(PWINDOW).internal;
++        if (fsMode != Fullscreen::FSMODE_NONE) {
++            (void)Config::Actions::fullscreenWindow(fsMode, true, PWINDOW);
++            restoreWindowFloatBox(PWINDOW, m_preMaxBox);
++        }
++    }
+     g_pKeybindManager->changeMouseBindMode(MBIND_MOVE);
+     m_bDraggingThis = true;
+     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
+     return;
+ }
+ 
+-bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, const bool BUTTONSRIGHT) {
++bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, const bool BUTTONSRIGHT, uint32_t button) {
+     //check if on a button
+-    float offset = barPadding;
+-
+-    for (auto& b : g_pGlobalState->buttons) {
+-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, barHeight};
+-        Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
+-
+-        if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + barButtonPadding, currentPos.y + b.size)) {
+-            // hit on close
+-            g_pKeybindManager->m_dispatchers["exec"](b.cmd);
++    float        offset   = barPadding;
++    const double halfGap  = barButtonPadding * 0.5;
++    const double outerPad = g_pGlobalState->config.barOverlay->value() ? std::max<double>(halfGap, g_pGlobalState->config.pillPadding->value()) : halfGap;
++    const double vSlop    = g_pGlobalState->config.barOverlay->value() ? 8.0 : 0.0;
++    const size_t count    = g_pGlobalState->buttons.size();
++    const auto   PWINDOW  = m_pWindow.lock();
++
++    for (size_t i = 0; i < count; ++i) {
++        auto&        b        = g_pGlobalState->buttons[i];
++        const auto   BARBUF   = Vector2D{(int)assignedBoxGlobal().w, barHeight};
++        const double btnX     = std::floor(BUTTONSRIGHT ? BARBUF.x - offset - b.size : offset);
++        const double padLeft  = BUTTONSRIGHT ? (i + 1 == count ? outerPad : halfGap) : (i == 0 ? outerPad : halfGap);
++        const double padRight = BUTTONSRIGHT ? (i == 0 ? outerPad : halfGap) : (i + 1 == count ? outerPad : halfGap);
++
++        if (VECINRECT(COORDS, btnX - padLeft, -vSlop, btnX + b.size + padRight, barHeight + vSlop)) {
++            if (!PWINDOW) {
++                g_pKeybindManager->m_dispatchers["exec"](b.cmd);
++                return true;
++            }
++            if (i == 0 || b.icon == "✕" || b.icon == "x" || b.icon == "X") {
++                if (button == BTN_RIGHT) {
++                    (void)Config::Actions::signalWindow(SIGKILL, PWINDOW);
++                    (void)Config::Actions::closeWindow(PWINDOW);
++                } else {
++                    (void)Config::Actions::closeWindow(PWINDOW);
++                }
++            } else if (i == 1 || b.icon == "–" || b.icon == "-") {
++                const auto addr = std::format("address:0x{:x}", (uintptr_t)PWINDOW.get());
++                if (button == BTN_RIGHT) {
++                    HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("hl.dsp.window.move({{workspace = \"special:minimized\", window = \"{}\", follow = false}})", addr));
++                } else {
++                    if (HyprlandAPI::invokeHyprctlCommand("mios-lamp", "minimize " + addr) != "ok") {
++                        HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("hl.dsp.window.move({{workspace = \"special:minimized\", window = \"{}\", follow = false}})", addr));
++                    }
++                }
++            } else if (i == 2 || b.icon == "+") {
++                const auto PMON         = PWINDOW->m_monitor.lock();
++                const auto curPos       = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++                const auto curSize      = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
++                const auto fsMode       = Fullscreen::controller()->getFullscreenModes(PWINDOW).internal;
++                const bool isLargeFloat = PWINDOW->m_isFloating && PMON && curSize.x >= PMON->m_size.x * 0.88 && curSize.y >= PMON->m_size.y * 0.80;
++
++                if (PWINDOW->m_isFloating && fsMode == Fullscreen::FSMODE_NONE && !isLargeFloat)
++                    m_preMaxBox = CBox{curPos, curSize};
++
++                if (fsMode != Fullscreen::FSMODE_NONE) {
++                    (void)Config::Actions::fullscreenWindow(fsMode, true, PWINDOW);
++                    restoreWindowFloatBox(PWINDOW, m_preMaxBox);
++                    Desktop::windowState()->raise(PWINDOW);
++                    if (Desktop::focusState()->window() != PWINDOW)
++                        Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_CLICK);
++                } else if (button == BTN_RIGHT) {
++                    (void)Config::Actions::fullscreenWindow(Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW);
++                } else if (isLargeFloat) {
++                    restoreWindowFloatBox(PWINDOW, m_preMaxBox);
++                    Desktop::windowState()->raise(PWINDOW);
++                    if (Desktop::focusState()->window() != PWINDOW)
++                        Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_CLICK);
++                } else {
++                    (void)Config::Actions::fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, PWINDOW);
++                }
++            } else {
++                g_pKeybindManager->m_dispatchers["exec"](b.cmd);
++            }
+             return true;
+         }
+ 
+@@ -364,13 +889,16 @@
+                 button.iconTex = nullptr;
+         }
+ 
++        const auto GLASSCOLOR = color;
+         color.a *= a;
+ 
+         CBox buttonBox = {barBox->x + (BUTTONSRIGHT ? barBox->w - offset - scaledButtonSize : offset), barBox->y + (barBox->h - scaledButtonSize) / 2.0, scaledButtonSize,
+                           scaledButtonSize};
+         buttonBox.round();
+ 
+-        g_pHyprOpenGL->renderRect(buttonBox, color, {.round = static_cast<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
++        // MiOS: a glass orb tinted with the button's colour (hyprglass, the window's preset); flat dot otherwise
++        if (!drawGlassButton(m_pWindow.lock(), (uintptr_t)this + 2 + std::min<size_t>(i, 5), buttonBox, GLASSCOLOR, m_fButtonGlassA))
++            g_pHyprOpenGL->renderRect(buttonBox, color, {.round = static_cast<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
+ 
+         offset += scaledButtonsPad + scaledButtonSize;
+     }
+@@ -383,9 +911,12 @@
+     const auto ALIGNBUTTONS     = g_pGlobalState->config.barButtonsAlignment->value();
+     const auto ICONONHOVER      = g_pGlobalState->config.iconOnHover->value();
+ 
+-    const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
+-    const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
+-    const auto COORDS       = cursorRelativeToBar();
++    const bool   BUTTONSRIGHT = ALIGNBUTTONS != "left";
++    const auto   visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
++    const auto   COORDS       = cursorRelativeToBar();
++    const double halfGap      = BARBUTTONPADDING * 0.5;
++    const double outerPad     = g_pGlobalState->config.barOverlay->value() ? std::max<double>(halfGap, g_pGlobalState->config.pillPadding->value()) : halfGap;
++    const double vSlop        = g_pGlobalState->config.barOverlay->value() ? 8.0 : 0.0;
+ 
+     int        offset        = BARPADDING * scale;
+     float      noScaleOffset = BARPADDING;
+@@ -396,9 +927,11 @@
+         const auto scaledButtonsPad = BARBUTTONPADDING * scale;
+ 
+         // check if hovering here
+-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
+-        Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - button.size - noScaleOffset : noScaleOffset), (BARBUF.y - button.size) / 2.0}.floor();
+-        bool       hovering   = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + button.size + BARBUTTONPADDING, currentPos.y + button.size);
++        const auto   BARBUF   = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
++        const double btnX     = std::floor(BUTTONSRIGHT ? BARBUF.x - noScaleOffset - button.size : noScaleOffset);
++        const double padLeft  = BUTTONSRIGHT ? (i + 1 == visibleCount ? outerPad : halfGap) : (i == 0 ? outerPad : halfGap);
++        const double padRight = BUTTONSRIGHT ? (i == 0 ? outerPad : halfGap) : (i + 1 == visibleCount ? outerPad : halfGap);
++        bool         hovering = VECINRECT(COORDS, btnX - padLeft, -vSlop, btnX + button.size + padRight, HEIGHT + vSlop);
+         noScaleOffset += BARBUTTONPADDING + button.size;
+ 
+         if ((!button.iconTex || button.iconTex->m_texID == 0) && !button.icon.empty()) {
+@@ -448,7 +981,30 @@
+     g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
+ }
+ 
++void CHyprBar::drawFullscreen(PHLMONITOR pMonitor) {
++    if (m_bFsQueued || m_hidden || !validMapped(m_pWindow) || !g_pGlobalState->config.enabled->value())
++        return;
++    const auto PWINDOW = m_pWindow.lock();
++    if (Fullscreen::controller()->getFullscreenModes(PWINDOW).internal != Fullscreen::FSMODE_FULLSCREEN || PWINDOW->m_monitor != pMonitor)
++        return;
++    if (m_fReveal->value() <= 0.001F && m_fReveal->goal() <= 0.F)
++        return;
++    m_bFsQueued = true;
++    m_bInset    = true;
++    // fade (open/close, workspace switch) only; the colour layer applies the window's opacity itself
++    const float A = PWINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_FADE) * PWINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN) *
++        PWINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE);
++    auto data = CBarPassElement::SBarData{this, A};
++    g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
++}
++
+ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
++    // Skip only foreign renders that carry a render modifier (Hypr3D's snapshot passes push an identity translate),
++    // the same test as hyprglass' RenderGuards::isForeignRender. SRenderModifData::enabled alone defaults to true,
++    // so testing it alone skipped every normal frame and no tab or button was ever drawn.
++    if (isForeignModifRender(g_pHyprRenderer->m_renderData.renderModif))
++        return;
++
+     const auto  PWINDOW = m_pWindow.lock();
+ 
+     static auto PENABLEBLURGLOBAL = CConfigValue<Config::BOOL>("decoration:blur:enabled");
+@@ -490,6 +1046,11 @@
+ 
+     const auto scaledRounding = ROUNDING > 0 ? ROUNDING * pMonitor->m_scale - 2 /* idk why but otherwise it looks bad due to the gaps */ : 0;
+ 
++    if (g_pGlobalState->config.barOverlay->value()) {
++        renderOverlay(pMonitor, a);
++        return;
++    }
++
+     m_seExtents = {{0, HEIGHT}, {}};
+ 
+     const auto DECOBOX = assignedBoxGlobal();
+@@ -575,6 +1136,7 @@
+         g_pHyprOpenGL->renderTexture(m_pTextTex, titleBox, {.a = a});
+     }
+ 
++    m_fButtonGlassA = 0.F; // the classic (non-overlay) bar keeps flat buttons
+     renderBarButtons(&textBox, pMonitor->m_scale, a);
+     m_bButtonsDirty = false;
+ 
+@@ -592,6 +1154,825 @@
+     }
+ }
+ 
++// Overlay mode: the controls are a glass tab protruding above the window's top edge at its top-left. Its
++// silhouette is a signed-distance field: a box with rounded top corners (corner = min(radius, tab height)/2)
++// smooth-unioned (polynomial smin, blend k ~ the fillet) with the half-plane of the window below its top
++// edge, so the concave fillets where the tab's sides meet the window are part of the same field and the
++// tab reads as one continuous pane with the window. Every layer is shaded from that field with smoothstep
++// coverage at device-pixel scale (no stencil, no stair-steps): tint, a top-light sheen, a faint darker inner
++// edge, and a 1px specular rim that fades out as it runs down into the window edge (never along the window
++// edge itself). The blurred backdrop is sampled at draw time and masked by the texture's alpha. `melt` 0..1
++// drives both directions: the tab's height shrinks into the edge while the fillets spread sideways and the
++// shape fades; the circles sink into the window and fade twice as fast. Never moves between windows.
++namespace {
++    double smoothstep01(double e0, double e1, double x) {
++        const double t = std::clamp((x - e0) / (e1 - e0), 0.0, 1.0);
++        return t * t * (3.0 - 2.0 * t);
++    }
++    // polynomial smooth minimum (iq): blends a and b over a band of width k
++    double smin(double a, double b, double k) {
++        if (k <= 1e-6)
++            return std::min(a, b);
++        const double h = std::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
++        return b + (a - b) * h - k * h * (1.0 - h);
++    }
++    // box centred at (0,0), half extents (hx,hy), corner radius r
++    double sdRoundBox(double px, double py, double hx, double hy, double r) {
++        const double qx = std::abs(px) - hx + r, qy = std::abs(py) - hy + r;
++        const double ox = std::max(qx, 0.0), oy = std::max(qy, 0.0);
++        return std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.0) - r;
++    }
++    struct SPremul {
++        double r = 0, g = 0, b = 0, a = 0;
++        void   over(double sr, double sg, double sb, double sa) { // straight-alpha source over premultiplied dest
++            sa = std::clamp(sa, 0.0, 1.0);
++            r  = sr * sa + r * (1.0 - sa);
++            g  = sg * sa + g * (1.0 - sa);
++            b  = sb * sa + b * (1.0 - sa);
++            a  = sa + a * (1.0 - sa);
++        }
++    };
++}
++
++// ---------------------------------------------------------------------------------------------------------------
++// MiOS: hyprglass draws the tab and its buttons. The tab is the window's OWN glass: hyprglass' shader and the
++// window's preset (refraction, chromatic fringe, lens, tone, tint, bevel, fresnel, specular), through the
++// exported mios_hyprglass_draw_shape_v1 of the MiOS hyprglass patch (usr/share/mios/hyprland/patches/
++// hyprglass-mios-glass.patch, MiosGlass.hpp: the struct below mirrors SMiosGlassShapeV1). It is looked up per use with
++// dlopen(RTLD_NOLOAD) on the configured glass_plugin path and released at once, so hyprglass can be unloaded or
++// replaced between frames; when it is missing, or the window's glass is off, the built-in shader below draws.
++namespace {
++    struct SMiosGlassShapeV1 {
++        uint32_t  structSize;
++        void*     window;
++        uintptr_t key;
++        float     box[4];
++        float     alpha;
++        int32_t   shape;
++        float     radii[4];
++        float     roundingPower;
++        float     tabBox[4];
++        float     tabShape[4];
++        float     tabSpread[2];
++        float     tabFlip;
++        float     yClamp[2];
++        int64_t   tint;
++        uint32_t  backdropFbo;
++        int32_t   backdropPad;
++    };
++    constexpr int HYPRGLASS_SAMPLE_PAD = 60; // hyprglass' SAMPLE_PADDING_PX: the padded backdrop it expects
++
++    // Calls fn(symbol) with hyprglass' export while it is loaded; false when it is not (or fn says so).
++    template <typename F>
++    bool withHyprglass(const char* symbol, F&& fn) {
++        const auto& path = g_pGlobalState->config.glassPlugin->value();
++        if (path.empty())
++            return false;
++        void* handle = dlopen(path.c_str(), RTLD_LAZY | RTLD_NOLOAD);
++        if (!handle)
++            return false;
++        void*      sym = dlsym(handle, symbol);
++        const bool ok  = sym && fn(sym);
++        dlclose(handle);
++        return ok;
++    }
++    bool hyprglassPresent() {
++        return withHyprglass("mios_hyprglass_draw_shape_v1", [](void*) { return true; });
++    }
++    bool hyprglassDraw(const SMiosGlassShapeV1& s) {
++        return withHyprglass("mios_hyprglass_draw_shape_v1", [&](void* f) { return reinterpret_cast<int (*)(const SMiosGlassShapeV1*)>(f)(&s) == 1; });
++    }
++    void hyprglassRelease(uintptr_t key) {
++        withHyprglass("mios_hyprglass_release_v1", [&](void* f) {
++            reinterpret_cast<void (*)(uintptr_t)>(f)(key);
++            return true;
++        });
++    }
++    // a button as a glass orb tinted with its colour: hyprglass' rounded box, radius = half its size
++    bool drawGlassButton(PHLWINDOW window, uintptr_t key, const CBox& bb, const CHyprColor& color, float alpha) {
++        const float STRENGTH = std::clamp((float)g_pGlobalState->config.buttonGlass->value(), 0.F, 1.F);
++        if (STRENGTH <= 0.F || alpha <= 0.002F || !window)
++            return false;
++        SMiosGlassShapeV1 s{};
++        s.structSize    = sizeof(s);
++        s.window        = window.get();
++        s.key           = key;
++        s.box[0]        = (float)bb.x;
++        s.box[1]        = (float)bb.y;
++        s.box[2]        = (float)bb.w;
++        s.box[3]        = (float)bb.h;
++        s.alpha         = alpha;
++        s.shape         = 0;
++        const float R   = (float)std::min(bb.w, bb.h) / 2.F;
++        s.radii[0] = s.radii[1] = s.radii[2] = s.radii[3] = R;
++        s.roundingPower = 2.F;
++        s.yClamp[0]     = 1.F;
++        s.yClamp[1]     = 0.F;
++        auto q          = [](double v) { return (int64_t)std::lround(std::clamp(v, 0.0, 1.0) * 255.0); };
++        s.tint          = (q(color.r) << 24) | (q(color.g) << 16) | (q(color.b) << 8) | q(STRENGTH);
++        return hyprglassDraw(s);
++    }
++}
++
++// ---------------------------------------------------------------------------------------------------------------
++// GPU glass tab. One fragment shader draws the whole tab: the silhouette is the same signed-distance field as
++// above (rounded-top box smooth-unioned with the window's half-plane, smoothstep coverage per device pixel), and
++// the fill is hyprglass' own window glass recipe (the MiOS "mios" preset) applied to a copy of the framebuffer
++// under the tab: a light gaussian frost, adaptive dim + vibrancy, the tint, the lit bevel ring, fresnel glow and
++// top specular, so the tab is the same glass as the window body below it. Two things keep the junction seamless:
++//  - the window's own drop shadow, which darkens the backdrop just above its top edge (and so would put a dark
++//    band along the tab's base), is divided back out of every backdrop sample (pill_shadow_comp);
++//  - the glass continues pill_merge px down over the window's top edge under the tab, sampling the backdrop
++//    mirrored above the edge and fading out, so the window's own edge highlight dissolves into the tab.
++// Every light term fades out toward the window edge, so no line is ever drawn along the junction.
++namespace {
++    constexpr int     GLASS_SAMPLE_PAD_MIN = 8;  // device px around the tab copied for the frost taps (>= 3 sigma)
++    constexpr double  GLASS_SIGMA_MAX      = 16.0; // frost sigma cap, logical px (the taps stop at 48 device px)
++    const char* const GLASS_FRAG       = R"GLSL(#version 300 es
++precision highp float;
++uniform sampler2D tex;
++uniform vec2  sampleSize;   // sample framebuffer size, px
++uniform vec2  samplePad;    // the drawn box's origin inside the sample, px
++uniform vec2  boxSize;      // drawn box, device px (y grows downward)
++uniform vec4  tabBox;       // tab box centre x/y, half extents x/y   (shape space)
++uniform vec4  tabShape;     // corner radius, fillet blend width, window edge y, tab top y   (shape space)
++uniform vec2  tabSpread;    // fillet spread, merge depth
++uniform float sigma;        // frost sigma, px (vertical half; the sample is already blurred horizontally)
++uniform float flip;         // 1: inset tab, shape space is the box mirrored vertically (it hangs into the window)
++uniform vec2  yClamp;       // backdrop rows the frost may read, box px (never the bar row above an inset tab,
++                            // never the window under a protruding one)
++uniform vec4  tone;         // hyprglass saturation, brightness, contrast, adaptive dim
++uniform float vibrancy;
++uniform vec4  glassTint;    // hyprglass tint colour + alpha
++uniform vec4  winColor;     // the window's own colour layer, alpha already x the window's opacity
++uniform vec4  fresnelColor; // hyprglass fresnel colour (alpha mixes it with white)
++uniform vec4  bevelColor;   // hyprglass bevel colour (alpha mixes it with white)
++uniform vec4  light;        // bevel, fresnel, specular strengths, bezel width px
++uniform float bevelSize;    // px
++uniform float alpha;
++in vec2 v_texcoord;
++layout(location = 0) out vec4 fragColor;
++
++float sdRoundBox(vec2 p, vec2 h, float r) {
++    vec2 q = abs(p) - h + r;
++    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
++}
++float smin(float a, float b, float k) {
++    if (k <= 1e-4) return min(a, b);
++    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
++    return mix(b, a, h) - k * h * (1.0 - h);
++}
++float shapeD(vec2 q) {
++    return smin(sdRoundBox(q - tabBox.xy, tabBox.zw, tabShape.x), tabShape.z - q.y, tabShape.y);
++}
++// the sample holds the backdrop already unshadowed and blurred along x (GLASS_HBLUR_FRAG); p in box px
++vec3 tap(vec2 p) {
++    p.y = clamp(p.y, yClamp.x, yClamp.y);
++    vec2 uv = (p + samplePad) / sampleSize;
++    return clamp(texture(tex, clamp(uv, vec2(0.0005), vec2(0.9995))).rgb, 0.0, 1.0);
++}
++vec3 backdrop(vec2 p) {
++    if (sigma < 0.05) return tap(p);
++    float inv = -0.5 / (sigma * sigma);
++    int   R   = int(min(ceil(sigma * 3.0), 48.0));
++    vec3  acc = vec3(0.0);
++    float ws  = 0.0;
++    for (int j = -48; j <= 48; j++) {
++        if (j < -R || j > R) continue;
++        float w = exp(float(j * j) * inv);
++        acc += tap(p + vec2(0.0, float(j))) * w;
++        ws += w;
++    }
++    return acc / ws;
++}
++
++void main() {
++    vec2  p     = v_texcoord * boxSize;                                  // box px
++    vec2  q     = flip > 0.5 ? vec2(p.x, boxSize.y - p.y) : p;           // shape space
++    float BD    = tabShape.z;
++    float below = q.y - BD;
++    float d     = shapeD(vec2(q.x, min(q.y, BD)));
++    float cov;
++    if (below <= 0.0)
++        cov = smoothstep(0.5, -0.5, d);
++    else {
++        float side = abs(q.x - tabBox.x) - tabBox.z;
++        cov = tabSpread.y > 0.0 ? (1.0 - smoothstep(0.0, tabSpread.y, below)) * (1.0 - smoothstep(0.0, max(tabSpread.x, 1.0), side)) : 0.0;
++    }
++    cov *= alpha;
++    if (cov <= 0.002) discard;
++
++    // frosted backdrop; a protruding tab's merge zone below the edge reads the strip above it, mirrored
++    vec2 sp    = (flip < 0.5 && below > 0.0) ? vec2(p.x, BD - below) : p;
++    vec3 color = backdrop(sp);
++
++    // hyprglass tone mapping (same order and curves as its glass shader)
++    float blurredLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
++    color = mix(vec3(blurredLum), color, tone.x);
++    color *= tone.y * (1.0 - tone.w * smoothstep(0.25, 0.55, blurredLum));
++    color = mix(vec3(0.5), color, tone.z);
++    float cl  = dot(color, vec3(0.2126, 0.7152, 0.0722));
++    float sat = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
++    color = mix(vec3(cl), color, 1.0 + vibrancy * sat);
++    color = mix(color, glassTint.rgb, glassTint.a);
++
++    if (below <= 0.0) {
++        float hT       = max(BD - tabShape.w, 1.0);
++        float baseFade = smoothstep(0.0, 0.6 * hT, BD - q.y); // light terms melt away into the window edge
++        float depth    = max(-d, 0.0);
++        float prox     = min(exp(-depth / max(light.w, 1.0)), 1.0);
++        // lit bevel ring hugging the silhouette, brightest facing the light (hyprglass bevel_angle 315: top-left)
++        if (light.x > 0.001) {
++            float core = 0.25 * bevelSize, tail = bevelSize;
++            float ring = (1.0 - smoothstep(-core, 0.0, d)) * smoothstep(-tail, -core, d);
++            vec2  g    = vec2(shapeD(q + vec2(1.0, 0.0)) - shapeD(q - vec2(1.0, 0.0)), shapeD(q + vec2(0.0, 1.0)) - shapeD(q - vec2(0.0, 1.0)));
++            vec2  n    = length(g) > 1e-5 ? normalize(g) : vec2(0.0, -1.0);
++            if (flip > 0.5) n.y = -n.y;                                   // back to screen space for the light
++            float face = clamp(dot(n, vec2(-0.70710678, -0.70710678)) * 0.5 + 0.5, 0.0, 1.0);
++            vec3  bl   = mix(vec3(1.0), bevelColor.rgb, bevelColor.a);
++            color      = mix(color, bl, ring * face * light.x * baseFade);
++        }
++        vec3 fl = mix(vec3(1.0), fresnelColor.rgb, fresnelColor.a);
++        color += fl * (prox * prox * light.y * 0.15 * baseFade);                  // fresnel glow
++        color += vec3(1.0, 0.99, 0.97) * (prox * prox * light.z * 0.08 * baseFade); // top specular (the tab is the window's top)
++    }
++
++    // the window's own colour layer over its glass, as Hyprland composites the window's surface
++    color     = mix(clamp(color, 0.0, 1.0), winColor.rgb, winColor.a);
++    fragColor = vec4(color * cov, cov);
++}
++)GLSL";
++
++    // First half of the separable frost: copy -> (unshadow, gaussian along x) -> blurH. The main shader runs the
++    // vertical half while it shades the tab, so a wide frost costs 2 x (6 sigma + 1) taps per pixel, not a 2D
++    // kernel. Drawn as a full-target quad; gl_FragCoord is the sample texel (row = box y + pad, as in tap()).
++    const char* const GLASS_HBLUR_FRAG = R"GLSL(#version 300 es
++precision highp float;
++uniform sampler2D tex;
++uniform vec2  sampleSize;   // sample framebuffer size, px
++uniform float padY;         // the drawn box's origin row inside the sample
++uniform float sigma;        // frost sigma, px
++uniform vec4  shadow;       // window shadow: top y, range px, power, alpha (0 = none)
++uniform vec3  shadowColor;
++uniform vec2  mirror;       // MiOS: x = +1 rows below y (box px) / -1 rows above y read mirrored (the window side of the
++                            // edge: hyprglass' own blur and refraction then see the backdrop continue); 0 = off
++in vec2 v_texcoord;
++layout(location = 0) out vec4 fragColor;
++
++vec3 unshadow(vec3 c, float y) {
++    if (shadow.w <= 0.0) return c;
++    float dt = y - shadow.x;
++    if (dt <= 0.0) return c;
++    float s = min(shadow.w * (dt < shadow.y ? pow(dt / shadow.y, shadow.z) : 1.0), 0.9);
++    return clamp((c - shadowColor * s) / (1.0 - s), 0.0, 1.0);
++}
++vec3 texel(vec2 f) {
++    return clamp(texture(tex, clamp(f / sampleSize, vec2(0.0005), vec2(0.9995))).rgb, 0.0, 1.0);
++}
++void main() {
++    vec2 f = gl_FragCoord.xy;
++    float by = f.y - padY;
++    if (mirror.x > 0.5 && by > mirror.y) f.y = 2.0 * mirror.y - by + padY;
++    if (mirror.x < -0.5 && by < mirror.y) f.y = 2.0 * mirror.y - by + padY;
++    vec3 c;
++    if (sigma < 0.05)
++        c = texel(f);
++    else {
++        float inv = -0.5 / (sigma * sigma);
++        int   R   = int(min(ceil(sigma * 3.0), 48.0));
++        vec3  acc = vec3(0.0);
++        float ws  = 0.0;
++        for (int i = -48; i <= 48; i++) {
++            if (i < -R || i > R) continue;
++            float w = exp(float(i * i) * inv);
++            acc += texel(f + vec2(float(i), 0.0)) * w;
++            ws += w;
++        }
++        c = acc / ws;
++    }
++    fragColor = vec4(unshadow(c, f.y - padY), 1.0);
++}
++)GLSL";
++
++    GLuint glFBID(const SP<Render::IFramebuffer>& fb) {
++        auto* gl = dynamic_cast<Render::GL::CGLFramebuffer*>(fb.get());
++        return gl ? gl->getFBID() : 0;
++    }
++
++    bool ensureGlassShader() {
++        auto& G = g_pGlobalState->glass;
++        if (G.tried)
++            return G.ok;
++        G.tried  = true;
++        G.shader = makeShared<CShader>();
++        if (!G.shader->createProgram(g_pHyprOpenGL->m_shaders->TEXVERTSRC, GLASS_FRAG, true)) {
++            Log::logger->log(Log::ERR, "[hyprbars] glass tab shader failed to compile; using the CPU fallback");
++            G.shader.reset();
++            return false;
++        }
++        const auto P  = G.shader->program();
++        G.tabBox      = glGetUniformLocation(P, "tabBox");
++        G.tabShape    = glGetUniformLocation(P, "tabShape");
++        G.tabSpread   = glGetUniformLocation(P, "tabSpread");
++        G.sampleSize  = glGetUniformLocation(P, "sampleSize");
++        G.samplePad   = glGetUniformLocation(P, "samplePad");
++        G.boxSize     = glGetUniformLocation(P, "boxSize");
++        G.sigma        = glGetUniformLocation(P, "sigma");
++        G.flip         = glGetUniformLocation(P, "flip");
++        G.yClamp       = glGetUniformLocation(P, "yClamp");
++        G.tone         = glGetUniformLocation(P, "tone");
++        G.vibrancy     = glGetUniformLocation(P, "vibrancy");
++        G.glassTint    = glGetUniformLocation(P, "glassTint");
++        G.winColor     = glGetUniformLocation(P, "winColor");
++        G.fresnelColor = glGetUniformLocation(P, "fresnelColor");
++        G.bevelColor   = glGetUniformLocation(P, "bevelColor");
++        G.light       = glGetUniformLocation(P, "light");
++        G.bevelSize   = glGetUniformLocation(P, "bevelSize");
++        G.alpha       = glGetUniformLocation(P, "alpha");
++
++        G.hblur = makeShared<CShader>();
++        if (!G.hblur->createProgram(g_pHyprOpenGL->m_shaders->TEXVERTSRC, GLASS_HBLUR_FRAG, true)) {
++            Log::logger->log(Log::ERR, "[hyprbars] glass tab blur shader failed to compile; using the CPU fallback");
++            G.hblur.reset();
++            G.shader.reset();
++            return false;
++        }
++        const auto H   = G.hblur->program();
++        G.hSampleSize  = glGetUniformLocation(H, "sampleSize");
++        G.hPadY        = glGetUniformLocation(H, "padY");
++        G.hSigma       = glGetUniformLocation(H, "sigma");
++        G.shadow       = glGetUniformLocation(H, "shadow");
++        G.shadowColor  = glGetUniformLocation(H, "shadowColor");
++        G.mirror       = glGetUniformLocation(H, "mirror");
++        G.ok           = true;
++        return true;
++    }
++
++    struct SGlassTab {
++        CBox   box;                                 // drawn box, monitor-local device px (pixel aligned)
++        double cx, cy, hx, hy, rc, kb, bd, top, fx; // tab geometry, device px relative to box
++        double merge, bevelPx, bezelPx;
++        float  alpha;
++        bool   inset = false; // shape space mirrored: the tab hangs down inside the window from its top edge
++        double edgeY = 0;     // the window's top edge, box px (actual space)
++        float  winA  = 1.F;   // the window's active/inactive opacity (applies to its colour layer only)
++    };
++
++    // Draws the tab into the current framebuffer. False when the GL path is unavailable (caller falls back).
++    // key: the tab's sample-framebuffer key in hyprglass (MiOS path).
++    bool drawGlassTab(PHLMONITOR pMonitor, PHLWINDOW pWindow, const SGlassTab& T, uintptr_t key) {
++        if (!pMonitor || !ensureGlassShader())
++            return false;
++        auto&      G      = g_pGlobalState->glass;
++        const auto SOURCE = g_pHyprRenderer->m_renderData.currentFB;
++        if (!SOURCE || !glFBID(SOURCE))
++            return false;
++        if (pMonitor->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
++            return false; // the sample copy below assumes an untransformed output
++
++        CRegion damage{g_pHyprRenderer->m_renderData.damage};
++        damage.intersect(T.box);
++        if (damage.empty())
++            return true;
++
++        // device px, like hyprglass' own kernel (its radius is blur_strength x 12 device px whatever the scale)
++        const float BUILTIN_SIGMA = g_pGlobalState->config.pillBlur->value() ? (float)std::clamp((double)g_pGlobalState->config.pillBlurSigma->value(), 0.0, GLASS_SIGMA_MAX) : 0.F;
++        // MiOS: with hyprglass the copy below only removes the window's shadow (hyprglass frosts it itself) and
++        // carries hyprglass' sample padding
++        const bool  HG    = hyprglassPresent();
++        const float SIGMA = HG ? 0.F : BUILTIN_SIGMA;
++
++        // copy the framebuffer under the tab (+ frost padding of 3 sigma) into the sample buffer
++        const int PAD = HG ? HYPRGLASS_SAMPLE_PAD : std::max(GLASS_SAMPLE_PAD_MIN, (int)std::ceil(SIGMA * 3.F) + 2);
++        const int SW = (int)T.box.w + 2 * PAD, SH = (int)T.box.h + 2 * PAD;
++        if (!G.sample)
++            G.sample = g_pHyprRenderer->createFB("hyprbars-glass-sample");
++        if (!G.blurH)
++            G.blurH = g_pHyprRenderer->createFB("hyprbars-glass-blurh");
++        if (G.sample->m_size.x != SW || G.sample->m_size.y != SH || G.sample->m_drmFormat != SOURCE->m_drmFormat)
++            G.sample->alloc(SW, SH, SOURCE->m_drmFormat);
++        if (G.blurH->m_size.x != SW || G.blurH->m_size.y != SH || G.blurH->m_drmFormat != SOURCE->m_drmFormat)
++            G.blurH->alloc(SW, SH, SOURCE->m_drmFormat);
++        if (!glFBID(G.sample) || !glFBID(G.blurH))
++            return false;
++
++        int       sx0 = (int)T.box.x - PAD, sy0 = (int)T.box.y - PAD, sx1 = sx0 + SW, sy1 = sy0 + SH;
++        int       dx0 = 0, dy0 = 0, dx1 = SW, dy1 = SH;
++        const int FW = (int)SOURCE->m_size.x, FH = (int)SOURCE->m_size.y;
++        bool      clamped = false;
++        if (sx0 < 0) { dx0 -= sx0; sx0 = 0; clamped = true; }
++        if (sy0 < 0) { dy0 -= sy0; sy0 = 0; clamped = true; }
++        if (sx1 > FW) { dx1 -= sx1 - FW; sx1 = FW; clamped = true; }
++        if (sy1 > FH) { dy1 -= sy1 - FH; sy1 = FH; clamped = true; }
++        if (sx1 <= sx0 || sy1 <= sy0)
++            return true;
++
++        g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
++        if (glIsEnabled(GL_SCISSOR_TEST))
++            glDisable(GL_SCISSOR_TEST);
++        if (clamped) {
++            glBindFramebuffer(GL_FRAMEBUFFER, glFBID(G.sample));
++            glClearColor(0.F, 0.F, 0.F, 0.F);
++            glClear(GL_COLOR_BUFFER_BIT);
++        }
++        glBindFramebuffer(GL_READ_FRAMEBUFFER, glFBID(SOURCE));
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, glFBID(G.sample));
++        glBlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++        glBindFramebuffer(GL_FRAMEBUFFER, glFBID(SOURCE));
++
++        // the window's drop shadow over the strip above its top edge (straight-edge part of Hyprland's shadow.glsl)
++        static auto PSHADOWS      = CConfigValue<Config::INTEGER>("decoration:shadow:enabled");
++        static auto PSHADOWSIZE   = CConfigValue<Config::INTEGER>("decoration:shadow:range");
++        static auto PSHADOWPOWER  = CConfigValue<Config::INTEGER>("decoration:shadow:render_power");
++        static auto PSHADOWSCALE  = CConfigValue<Config::FLOAT>("decoration:shadow:scale");
++        static auto PSHADOWOFFSET = CConfigValue<Config::VEC2>("decoration:shadow:offset");
++        static auto PSHADOWSHARP  = CConfigValue<Config::INTEGER>("decoration:shadow:sharp");
++        float       shTop = 0, shRange = 1, shPower = 1, shA = 0;
++        CHyprColor  shCol{0, 0, 0, 0};
++        if (!T.inset && g_pGlobalState->config.pillShadowComp->value() && *PSHADOWS && !*PSHADOWSHARP && *PSHADOWSIZE > 0 && !pWindow->m_realShadowColor.m_colors.empty()) {
++            const double S     = pMonitor->m_scale;
++            const auto   POS   = pWindow->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - pMonitor->m_position + pWindow->m_floatingOffset;
++            const auto   SIZE  = pWindow->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
++            const auto   WSOFF = pWindow->m_workspace && !pWindow->m_pinned ? pWindow->m_workspace->m_renderOffset->value() : Vector2D{};
++            const double H     = SIZE.y + 2.0 * *PSHADOWSIZE;
++            const double CY    = POS.y + WSOFF.y + SIZE.y / 2.0;
++            const double SCALE = std::clamp((double)*PSHADOWSCALE, 0.0, 1.0);
++            const double TOPL  = CY - H * SCALE / 2.0 + (*PSHADOWOFFSET).y;
++            shTop              = (float)(std::round(TOPL * S) - T.box.y);
++            shRange            = (float)(*PSHADOWSIZE * S);
++            shPower            = (float)std::clamp(*PSHADOWPOWER, (Config::INTEGER)1, (Config::INTEGER)4);
++            shCol              = pWindow->m_realShadowColor.m_colors.front();
++            shA                = (float)(shCol.a * T.alpha);
++        }
++
++        const auto win     = configColor(g_pGlobalState->config.pillColor->value());
++        const auto fresnel = configColor(g_pGlobalState->config.pillRimColor->value());
++        const auto gtint   = configColor(g_pGlobalState->config.pillGlassTint->value());
++        const auto bevel   = configColor(g_pGlobalState->config.pillBevelColor->value());
++        const auto PCT     = [](const SP<Config::Values::CIntValue>& v) { return (float)std::clamp(v->value(), (Config::INTEGER)0, (Config::INTEGER)100) / 100.F; };
++        const auto F       = [](const SP<Config::Values::CFloatValue>& v) { return (float)v->value(); };
++
++        // horizontal half of the frost (and the shadow removal): sample -> blurH, a full-target quad
++        auto hpass = [&](float sigma) -> bool {
++            static constexpr std::array<float, 9> FULLSCREEN = {2.F, 0.F, 0.F, 0.F, 2.F, 0.F, -1.F, -1.F, 1.F};
++            auto                                  hs         = g_pHyprOpenGL->useShader(G.hblur).lock();
++            if (!hs)
++                return false;
++            g_pHyprRenderer->blend(false);
++            glBindFramebuffer(GL_FRAMEBUFFER, glFBID(G.blurH));
++            g_pHyprOpenGL->setViewport(0, 0, SW, SH);
++            hs->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN);
++            hs->setUniformInt(SHADER_TEX, 0);
++            glUniform2f(G.hSampleSize, (float)SW, (float)SH);
++            glUniform1f(G.hPadY, (float)PAD);
++            glUniform1f(G.hSigma, sigma);
++            // hyprglass blurs/refracts the copy itself: the window side of the edge mirrors the backdrop (the
++            // built-in shader clamps its own taps instead)
++            glUniform2f(G.mirror, !HG ? 0.F : (T.inset ? -1.F : 1.F), T.inset ? (float)T.edgeY : (float)T.bd);
++            glUniform4f(G.shadow, shTop, shRange, shPower, shA);
++            glUniform3f(G.shadowColor, (float)shCol.r, (float)shCol.g, (float)shCol.b);
++            glActiveTexture(GL_TEXTURE0);
++            G.sample->getTexture()->bind();
++            glBindVertexArray(hs->getUniformLocation(SHADER_SHADER_VAO));
++            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++            glBindVertexArray(0);
++            glBindFramebuffer(GL_FRAMEBUFFER, glFBID(SOURCE));
++            g_pHyprOpenGL->setViewport(0, 0, (int)SOURCE->m_size.x, (int)SOURCE->m_size.y);
++            g_pHyprRenderer->blend(true);
++            return true;
++        };
++        if (!hpass(SIGMA))
++            return false;
++
++        if (HG) {
++            // MiOS: the window's own glass, drawn by hyprglass over the unshadowed backdrop
++            SMiosGlassShapeV1 s{};
++            s.structSize  = sizeof(s);
++            s.window      = pWindow.get();
++            s.key         = key;
++            s.box[0]      = (float)T.box.x;
++            s.box[1]      = (float)T.box.y;
++            s.box[2]      = (float)T.box.w;
++            s.box[3]      = (float)T.box.h;
++            s.alpha       = T.alpha;
++            s.shape       = 1;
++            s.tabBox[0]   = (float)T.cx;
++            s.tabBox[1]   = (float)T.cy;
++            s.tabBox[2]   = (float)T.hx;
++            s.tabBox[3]   = (float)T.hy;
++            s.tabShape[0] = (float)T.rc;
++            s.tabShape[1] = (float)T.kb;
++            s.tabShape[2] = (float)T.bd;
++            s.tabShape[3] = (float)T.top;
++            s.tabSpread[0] = (float)T.fx;
++            s.tabSpread[1] = (float)T.merge;
++            s.tabFlip     = T.inset ? 1.F : 0.F;
++            // protruding: never read the window under the tab; inset: never read the row above the window
++            s.yClamp[0]   = T.inset ? (float)T.edgeY + 0.5F : -1e6F;
++            s.yClamp[1]   = T.inset ? 1e6F : (float)T.bd - 0.5F;
++            // The window's colour layer (pill_color x the window's opacity) folds into the glass tint, under the
++            // lights, exactly: mix(mix(c, t1, a1), t2, a2) = mix(c, (t1 a1 (1 - a2) + t2 a2) / A, A),
++            // A = 1 - (1 - a1)(1 - a2); t1/a1 = the preset tint (pill_glass_tint), t2/a2 = the colour layer.
++            {
++                const auto   t1 = configColor(g_pGlobalState->config.pillGlassTint->value());
++                const auto   t2 = configColor(g_pGlobalState->config.pillColor->value());
++                const double a1 = std::clamp(t1.a, 0.0, 1.0), a2 = std::clamp(t2.a * std::clamp((double)T.winA, 0.0, 1.0), 0.0, 1.0);
++                const double A  = 1.0 - (1.0 - a1) * (1.0 - a2);
++                auto         q  = [](double v) { return (int64_t)std::lround(std::clamp(v, 0.0, 1.0) * 255.0); };
++                auto         ch = [&](double c1, double c2) { return A > 1e-6 ? (c1 * a1 * (1.0 - a2) + c2 * a2) / A : 0.0; };
++                s.tint          = (q(ch(t1.r, t2.r)) << 24) | (q(ch(t1.g, t2.g)) << 16) | (q(ch(t1.b, t2.b)) << 8) | q(A);
++            }
++            s.backdropFbo = glFBID(G.blurH);
++            s.backdropPad = PAD;
++            if (hyprglassDraw(s))
++                return true;
++            if (!hpass(BUILTIN_SIGMA)) // hyprglass declined (the window's glass is off): built-in frost
++                return false;
++        }
++
++        const auto TRANSFORM = Math::wlTransformToHyprutils(Math::invertTransform(pMonitor->m_transform));
++        Mat3x3     matrix    = g_pHyprRenderer->projectBoxToTarget(T.box, TRANSFORM);
++        matrix.transpose();
++
++        glActiveTexture(GL_TEXTURE0);
++        G.blurH->getTexture()->bind();
++        auto shader = g_pHyprOpenGL->useShader(G.shader).lock();
++        if (!shader)
++            return false;
++        shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, matrix.getMatrix());
++        shader->setUniformInt(SHADER_TEX, 0);
++        glUniform2f(G.sampleSize, (float)SW, (float)SH);
++        glUniform2f(G.samplePad, (float)PAD, (float)PAD);
++        glUniform2f(G.boxSize, (float)T.box.w, (float)T.box.h);
++        glUniform4f(G.tabBox, (float)T.cx, (float)T.cy, (float)T.hx, (float)T.hy);
++        glUniform4f(G.tabShape, (float)T.rc, (float)T.kb, (float)T.bd, (float)T.top);
++        glUniform2f(G.tabSpread, (float)T.fx, (float)T.merge);
++        glUniform1f(G.sigma, SIGMA);
++        glUniform1f(G.flip, T.inset ? 1.F : 0.F);
++        // protruding: never read the window under the tab; inset: never read the row above the window
++        glUniform2f(G.yClamp, T.inset ? (float)T.edgeY + 0.5F : -1e6F, T.inset ? 1e6F : (float)T.bd - 0.5F);
++        glUniform4f(G.tone, F(g_pGlobalState->config.pillSaturation), F(g_pGlobalState->config.pillBrightness), F(g_pGlobalState->config.pillContrast),
++                    PCT(g_pGlobalState->config.pillDim));
++        glUniform1f(G.vibrancy, F(g_pGlobalState->config.pillVibrancy));
++        glUniform4f(G.glassTint, (float)gtint.r, (float)gtint.g, (float)gtint.b, (float)gtint.a);
++        glUniform4f(G.winColor, (float)win.r, (float)win.g, (float)win.b, (float)(win.a * std::clamp(T.winA, 0.F, 1.F)));
++        glUniform4f(G.fresnelColor, (float)fresnel.r, (float)fresnel.g, (float)fresnel.b, (float)fresnel.a);
++        glUniform4f(G.bevelColor, (float)bevel.r, (float)bevel.g, (float)bevel.b, (float)bevel.a);
++        glUniform4f(G.light, PCT(g_pGlobalState->config.pillEdge), PCT(g_pGlobalState->config.pillFresnel), PCT(g_pGlobalState->config.pillSheen), (float)T.bezelPx);
++        glUniform1f(G.bevelSize, (float)T.bevelPx);
++        glUniform1f(G.alpha, T.alpha);
++        glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
++
++        g_pHyprRenderer->blend(true);
++        for (auto& r : damage.getRects()) {
++            g_pHyprOpenGL->scissor(&r);
++            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++        }
++        g_pHyprOpenGL->scissor(nullptr);
++        glBindVertexArray(0);
++        return true;
++    }
++}
++
++// The glass tab reads the framebuffer around it, so while it is visible the pass treats it like live blur:
++// damage touching it is expanded, keeping every pixel the frost taps read current.
++bool CHyprBar::overlayNeedsBlur() {
++    return g_pGlobalState->config.barOverlay->value() && g_pGlobalState->config.pillEnabled->value() && m_fReveal->value() > 0.001F;
++}
++
++void CHyprBar::renderOverlay(PHLMONITOR pMonitor, const float& a) {
++    const auto  PWINDOW = m_pWindow.lock();
++    static auto PENABLEBLURGLOBAL = CConfigValue<Config::BOOL>("decoration:blur:enabled");
++    const auto  HEIGHT            = g_pGlobalState->config.barHeight->value();
++    const auto  PAD               = g_pGlobalState->config.pillPadding->value();
++    const auto  BARPAD            = g_pGlobalState->config.barPadding->value();
++    const bool  RIGHT             = g_pGlobalState->config.barButtonsAlignment->value() != "left";
++    constexpr float SPREAD        = 0.35F;
++
++    m_seExtents = {};
++    if (HEIGHT < 1 || g_pGlobalState->buttons.empty()) {
++        m_iLastHeight = HEIGHT;
++        return;
++    }
++
++    refreshInset();                   // a neighbour, the bar row or fullscreen may have changed without input
++    updateReveal(std::nullopt, true); // catches a bar created after its window's focus event
++    const float REVEAL = revealEnabled() ? std::clamp(m_fReveal->value(), 0.F, 1.F) : 1.F;
++    m_bButtonsDirty    = false;
++    if (REVEAL <= 0.001F)
++        return;
++    const float  MELT = 1.F - REVEAL;
++    const double S    = pMonitor->m_scale;
++    // The glass follows the window's fade (open/close, workspace switch), never its active/inactive opacity --
++    // the same rule hyprglass applies to the window's own pane (alphaTotalWithout(WINDOW_ALPHA_ACTIVE)). `a` is
++    // alpha x fade; with the opacity folded in, the unfrosted backdrop showed straight through the tab at
++    // 1 - opacity (15% at decoration:active_opacity 0.85), so the frost read as no blur at any sigma.
++    // The window's opacity applies to its colour layer over the glass instead (SGlassTab::winA), as Hyprland
++    // applies it to the window's surface over hyprglass' pane.
++    const float ACTIVEA = PWINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE);
++    const float GLASSA  = ACTIVEA > 0.001F ? std::clamp(a / ACTIVEA, 0.F, 1.F) : a;
++    const bool  INSET   = m_bInset;
++
++    // Monitor-local logical geometry. The strip is bar_height tall directly above the window; the tab's
++    // baseline B sits 1px inside the window's top edge so the two read as one pane (no seam).
++    // Inset (computeInset): the same tab mirrored, hanging down inside the window from its top edge.
++    const CBox   STRIP   = assignedBoxGlobal().translate(PWINDOW->m_floatingOffset - pMonitor->m_position);
++    const double tabH    = tabHeight(); // the strip's height: bar_height, the touch target on mobile tabs
++    const double EDGE    = INSET ? STRIP.y : STRIP.y + tabH; // the window's top edge
++    const double B       = EDGE + 1;
++    const double ROUND   = std::max(0.F, PWINDOW->rounding());
++    const double fillet  = std::min(ROUND / 2.0, tabH / 2.0);
++    const double corner  = std::min(ROUND, tabH) / 2.0;
++    const double BUTTONS = buttonsWidth();
++    const double hT      = tabH * (1.0 - MELT);
++    auto         tint    = configColor(g_pGlobalState->config.pillColor->value());
++    auto         rim     = configColor(g_pGlobalState->config.pillRimColor->value());
++    const bool   PILL    = g_pGlobalState->config.pillEnabled->value();
++
++    // One glass tab whose box spans tL .. tL + tabW (monitor-local logical px): the same silhouette, glass and
++    // fallback for the desktop tab and for each mobile tab. texBox: the drawn extent (device px).
++    auto drawTab = [&](const double tL, const double tabW, CBox& texBox) -> bool {
++        const double tR      = tL + tabW;
++        const double baseW   = 2 * fillet + tabW;
++        const double fx      = std::max(0.01, fillet + SPREAD * baseW * MELT / 2.0);
++        const double margin  = 1.5 * (fillet + SPREAD * baseW / 2.0) + 2.0; // covers the smin blend tail
++
++        // Pixel-aligned texture box around the whole silhouette (all melt states).
++        const double PX0 = std::floor((tL - margin) * S), PY0 = INSET ? std::round(EDGE * S) : std::floor((B - tabH - 2) * S);
++        const double PX1 = std::ceil((tR + margin) * S), PY1 = INSET ? PY0 + std::ceil((tabH + 2) * S) : std::ceil((B + 1) * S);
++        texBox = {PX0, PY0, PX1 - PX0, PY1 - PY0};
++        if (texBox.w < 1 || texBox.h < 1)
++            return false;
++
++        bool drawn = false;
++        if (PILL) {
++            // GPU glass (hyprglass recipe); geometry in device px relative to the drawn box
++            // the window's own top edge (not B, which is 1px inside it): the frost never reads window pixels
++            // (shape space; for an inset tab that is the box mirrored, so the edge is the box's far side)
++            const double BD     = INSET ? (PY1 - PY0) : std::round(EDGE * S) - PY0;
++            const double TOPD   = BD - hT * S;
++            const double HYD    = (BD + tabH * S - TOPD) / 2.0;
++            const auto   WSIZE  = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
++            const double MERGE  = INSET ? 0.0 :
++                                          std::clamp(g_pGlobalState->config.pillMerge->value(), (Config::INTEGER)0, (Config::INTEGER)24) * S * std::min(1.0, hT / std::max(tabH, 1.0) * 2.0);
++            SGlassTab    T;
++            T.box     = INSET ? CBox{PX0, PY0, PX1 - PX0, PY1 - PY0} : CBox{PX0, PY0, PX1 - PX0, std::ceil((B + 1) * S + MERGE) - PY0};
++            T.inset   = INSET;
++            T.edgeY   = 0.0;
++            T.winA    = ACTIVEA;
++            T.cx      = (tL + tR) / 2.0 * S - PX0;
++            T.hx      = tabW / 2.0 * S;
++            T.cy      = TOPD + HYD;
++            T.hy      = HYD;
++            T.rc      = std::max(0.0, std::min(corner, hT / 2.0)) * S;
++            T.kb      = 1.4 * fx * S * std::min(1.0, hT * S / 2.0);
++            T.bd      = BD;
++            T.top     = TOPD;
++            T.fx      = fx * S;
++            T.merge   = MERGE;
++            T.bevelPx = std::max(1.0, (double)g_pGlobalState->config.pillBevelSize->value() * S); // hyprglass bevel_size
++            // hyprglass edge zone: edge_thickness x the window's short side
++            T.bezelPx = std::max(4.0, (double)g_pGlobalState->config.pillEdgeThickness->value() * std::min(WSIZE.x, WSIZE.y) * S);
++            T.alpha   = std::min(1.F, 1.15F * REVEAL) * GLASSA;
++            drawn     = hT > 0.0 && drawGlassTab(pMonitor, PWINDOW, T, (uintptr_t)this + (uintptr_t)(tL > STRIP.x + STRIP.w / 2.0 ? 1 : 0));
++            if (!drawn && hT <= 0.0)
++                drawn = true; // nothing to draw this frame
++        }
++
++        if (PILL && !drawn && !INSET) {
++            const std::string KEY = std::format("{}x{}@{:.3f}/{:.3f},{:.3f}/{:.4f}/{:x}/{:x}/{}/{}/{}/{}", (int)texBox.w, (int)texBox.h, S, PX0 / S - tL, PY0 / S - B, MELT,
++                                                g_pGlobalState->config.pillColor->value(), g_pGlobalState->config.pillRimColor->value(), fillet, corner,
++                                                g_pGlobalState->config.pillSheen->value(), g_pGlobalState->config.pillEdge->value());
++            if (!m_pTabTex || m_pTabTex->m_texID == 0 || KEY != m_tabKey) {
++                const auto SURF = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)texBox.w, (int)texBox.h);
++                // Glass slab shaded from the SDF, per device pixel (smoothstep coverage over one pixel):
++                //  1. tint     - pill_color over the blurred backdrop (the backdrop itself is sampled at draw time)
++                //  2. sheen    - a soft top-light: rim colour falling off to nothing by ~60% of the tab height
++                //  3. edge     - a faint darker inner edge just inside the silhouette (the slab's thickness)
++                //  4. rim      - a 1px specular rim, brightest at the top, fading out as it runs into the window
++                const double TOPY  = B - hT;
++                const double SHEEN = std::clamp(g_pGlobalState->config.pillSheen->value(), (Config::INTEGER)0, (Config::INTEGER)100) / 100.0;
++                const double EDGE  = std::clamp(g_pGlobalState->config.pillEdge->value(), (Config::INTEGER)0, (Config::INTEGER)100) / 100.0;
++                // the window edge snapped to a device-pixel boundary so the flat edge beside the tab gets no
++                // partial-coverage line; nothing is drawn below it (the window itself is there)
++                const double BD  = std::round(B * S);
++                const double CX  = (tL + tR) / 2.0 * S, HX = tabW / 2.0 * S;
++                const double TOP = BD - hT * S;
++                const double HY  = (BD + tabH * S - TOP) / 2.0, CY = TOP + HY; // box runs on below the edge
++                const double RC  = std::max(0.0, std::min(corner, hT / 2.0)) * S;
++                const double KB  = 1.4 * fx * S * std::min(1.0, hT * S / 2.0); // fillet blend width, vanishes with the tab
++                const double HTD = std::max(hT * S, 1e-3);
++                const int    W = (int)texBox.w, H = (int)texBox.h, STRIDE = cairo_image_surface_get_stride(SURF);
++                cairo_surface_flush(SURF);
++                unsigned char* DATA = cairo_image_surface_get_data(SURF);
++                for (int y = 0; y < H; ++y) {
++                    auto*        row = reinterpret_cast<uint32_t*>(DATA + (size_t)y * STRIDE);
++                    const double py  = PY0 + y + 0.5;
++                    for (int x = 0; x < W; ++x) {
++                        row[x] = 0;
++                        if (py > BD || hT <= 0.0)
++                            continue;
++                        const double px  = PX0 + x + 0.5;
++                        const double box = sdRoundBox(px - CX, py - CY, HX, HY, RC);
++                        const double d   = smin(box, BD - py, KB); // <0 inside the pane, in device px
++                        const double cov = smoothstep01(0.5, -0.5, d);
++                        if (cov <= 0.0 && d > 1.5)
++                            continue;
++                        const double t = std::clamp((py - TOP) / HTD, 0.0, 1.0); // 0 at the tab's top, 1 at the edge
++                        SPremul      c;
++                        c.over(tint.r, tint.g, tint.b, tint.a * cov);
++                        if (SHEEN > 0.0) {
++                            const double sh = t < 0.6 ? (t < 0.27 ? std::lerp(std::min(1.0, rim.a * SHEEN * 2.0), rim.a * SHEEN * 0.5, t / 0.27) :
++                                                                    std::lerp(rim.a * SHEEN * 0.5, 0.0, (t - 0.27) / 0.33)) :
++                                                        0.0;
++                            c.over(rim.r, rim.g, rim.b, sh * cov);
++                        }
++                        if (EDGE > 0.0) {
++                            const double inner = smoothstep01(-2.0, -0.5, d) * cov; // ~1.5px band just inside
++                            c.over(tint.r * 0.4, tint.g * 0.4, tint.b * 0.4, std::lerp(EDGE, 0.0, t) * inner);
++                        }
++                        {
++                            const double band = 1.0 - smoothstep01(0.0, 0.9, std::abs(d + 0.6)); // 1px rim on the inside
++                            const double ra   = t < 0.5 ? std::lerp(std::min(1.0, rim.a * 1.6), rim.a * 0.8, t / 0.5) : std::lerp(rim.a * 0.8, 0.0, (t - 0.5) / 0.5);
++                            c.over(rim.r, rim.g, rim.b, ra * band);
++                        }
++                        auto q = [](double v) { return (uint32_t)std::lround(std::clamp(v, 0.0, 1.0) * 255.0); };
++                        row[x] = (q(c.a) << 24) | (q(c.r) << 16) | (q(c.g) << 8) | q(c.b);
++                    }
++                }
++                cairo_surface_mark_dirty(SURF);
++                m_pTabTex = g_pHyprRenderer->createTexture(SURF);
++                cairo_surface_destroy(SURF);
++                m_tabKey = KEY;
++            }
++
++            const float SHAPEA = std::min(1.F, 1.15F * REVEAL) * GLASSA;
++            CRegion     damage{g_pHyprRenderer->m_renderData.damage};
++            damage.intersect(texBox);
++            if (!damage.empty() && m_pTabTex) {
++                const auto UVTL = g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft;
++                const auto UVBR = g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight;
++                g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft     = Vector2D(-1, -1);
++                g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight = Vector2D(-1, -1);
++                if (g_pGlobalState->config.pillBlur->value() && *PENABLEBLURGLOBAL) {
++                    // Glass: the blurred backdrop, masked to the silhouette by the texture's own alpha, under the tint.
++                    auto blurred = g_pHyprRenderer->blurMainFramebuffer(1.F, &damage);
++                    g_pHyprOpenGL->renderTexture(m_pTabTex, texBox,
++                                                 {.blur = true, .blurA = 1.F, .blurredBG = blurred, .a = SHAPEA, .discardMode = DISCARD_ALPHA, .discardOpacity = 0.004F});
++                } else
++                    g_pHyprOpenGL->renderTexture(m_pTabTex, texBox, {.a = SHAPEA});
++                g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft     = UVTL;
++                g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight = UVBR;
++            }
++        }
++
++        return true;
++    };
++
++    const float BTNA    = std::max(0.F, 1.F - 2.F * MELT) * a;
++    m_fButtonGlassA     = std::max(0.F, 1.F - 2.F * MELT) * GLASSA; // MiOS: glass buttons follow the fade, not the opacity
++    const auto  OLDCLIP = g_pHyprRenderer->m_renderData.clipBox;
++    if (mobileMode()) {
++        // two tabs, each with its one button centred; icons follow icon_on_hover over either tab
++        const auto TABS  = mobileTabs(STRIP.w, ROUND);
++        const bool ICONS = !g_pGlobalState->config.iconOnHover->value() || m_bButtonHovered;
++        for (int i = 0; i < 2; ++i) {
++            CBox texBox;
++            if (!drawTab(STRIP.x + TABS[i].x, TABS[i].w, texBox) || BTNA <= 0.001F)
++                continue;
++            const double X   = (STRIP.x + TABS[i].x) * S;
++            CBox         tab = INSET ? CBox{X, (EDGE - MELT * tabH) * S, TABS[i].w * S, tabH * S} : CBox{X, (B - tabH + MELT * tabH) * S, TABS[i].w * S, tabH * S};
++            g_pHyprRenderer->m_renderData.clipBox = INSET ? CBox{texBox.x, texBox.y, texBox.w, texBox.h} : CBox{texBox.x, texBox.y, texBox.w, std::round(B * S) - texBox.y};
++            renderMobileButton(tab, i, S, BTNA, ICONS);
++            g_pHyprRenderer->m_renderData.clipBox = OLDCLIP;
++        }
++        m_bWindowSizeChanged = false;
++        m_bTitleColorChanged = false;
++        m_iLastHeight        = HEIGHT;
++        return;
++    }
++
++    CBox texBox;
++    if (!drawTab(STRIP.x + (RIGHT ? STRIP.w - BARPAD - BUTTONS - PAD : BARPAD - PAD), BUTTONS + 2.0 * PAD, texBox))
++        return;
++
++    // The circles, centred in the tab at rest; while melting they sink into the window and fade, clipped
++    // at the edge so they vanish into it rather than drawing over the content.
++    CBox        barBox  = INSET ? CBox{std::round(STRIP.x * S), std::round((EDGE - MELT * tabH) * S), std::round(STRIP.w * S), std::round(tabH * S)} :
++                                  CBox{std::round(STRIP.x * S), std::round((B - tabH + MELT * tabH) * S), std::round(STRIP.w * S), std::round(tabH * S)};
++    if (BTNA > 0.001F) {
++        // clipped at the window edge, so melting circles vanish into it
++        g_pHyprRenderer->m_renderData.clipBox = INSET ? CBox{texBox.x, texBox.y, texBox.w, texBox.h} : CBox{texBox.x, texBox.y, texBox.w, std::round(B * S) - texBox.y};
++        renderBarButtons(&barBox, S, BTNA);
++        renderBarButtonsText(&barBox, S, BTNA);
++        g_pHyprRenderer->m_renderData.clipBox = OLDCLIP;
++    }
++
++    m_bWindowSizeChanged = false;
++    m_bTitleColorChanged = false;
++    m_iLastHeight        = HEIGHT;
++}
++
+ eDecorationType CHyprBar::getDecorationType() {
+     return DECORATION_CUSTOM;
+ }
+@@ -610,6 +1991,17 @@
+ }
+ 
+ void CHyprBar::damageEntire() {
++    if (g_pGlobalState->config.barOverlay->value()) {
++        // the tab's strip above the window plus the pixel it overlaps into the window and the fillets' spread
++        // both strips (above and inside the top edge): the tab may have just moved between them
++        auto box = assignedBoxGlobal();
++        if (validMapped(m_pWindow))
++            box.translate(m_pWindow->m_floatingOffset);
++        const double H = tabHeight();
++        box            = {box.x, m_bInset ? box.y - H : box.y, box.w, 2 * H};
++        g_pHyprRenderer->damageBox(box.expand(std::max<double>(4.0, g_pGlobalState->config.pillMerge->value() + 4.0)));
++        return;
++    }
+     g_pHyprRenderer->damageBox(assignedBoxGlobal());
+ }
+ 
+@@ -618,10 +2010,16 @@
+ }
+ 
+ eDecorationLayer CHyprBar::getDecorationLayer() {
++    if (g_pGlobalState->config.barOverlay->value())
++        return DECORATION_LAYER_OVER;
+     return DECORATION_LAYER_UNDER;
+ }
+ 
+ uint64_t CHyprBar::getDecorationFlags() {
++    // Overlay: never part of the main window (the shadow and window box ignore the tab strip); pointer
++    // input only while the tab is raised.
++    if (g_pGlobalState->config.barOverlay->value())
++        return m_bInputExtents ? DECORATION_ALLOWS_MOUSE_INPUT : 0;
+     return DECORATION_ALLOWS_MOUSE_INPUT | (g_pGlobalState->config.barPartOfWindow->value() ? DECORATION_PART_OF_MAIN_WINDOW : 0);
+ }
+ 
+@@ -630,7 +2028,15 @@
+         return {};
+ 
+     CBox box = m_bAssignedBox;
+-    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_pWindow.lock()));
++    if (g_pGlobalState->config.barOverlay->value()) {
++        const auto POS  = m_pWindow->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
++        const auto SIZE = m_pWindow->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
++        // the strip of bar_height directly above the window's top edge, where the tab protrudes, or the
++        // strip just inside it when the tab is inset
++        const double H  = tabHeight();
++        box             = {POS.x, m_bInset ? POS.y : POS.y - H, SIZE.x, H};
++    } else
++        box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_pWindow.lock()));
+ 
+     const auto PWORKSPACE      = m_pWindow->m_workspace;
+     const auto WORKSPACEOFFSET = PWORKSPACE && !m_pWindow->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+@@ -646,11 +2052,15 @@
+     const auto PWINDOW              = m_pWindow.lock();
+     auto       prevHidden           = m_hidden;
+     auto       prevForcedTitleColor = m_bForcedTitleColor;
++    const bool prevMobile           = m_bMobile;
+ 
+     m_bForcedBarColor   = std::nullopt;
+     m_bForcedTitleColor = std::nullopt;
+     m_hidden            = false;
+-
++    m_bMobile           = false;
++
++    if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->mobileRuleIdx))
++        m_bMobile = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pGlobalState->mobileRuleIdx)->effect);
+     if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->nobarRuleIdx))
+         m_hidden = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pGlobalState->nobarRuleIdx)->effect);
+     if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->barColorRuleIdx))
+@@ -658,7 +2068,14 @@
+     if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->titleColorRuleIdx))
+         m_bForcedTitleColor = CHyprColor(Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pGlobalState->titleColorRuleIdx)->effect).value_or(0));
+ 
+-    if (prevHidden != m_hidden)
++    if (prevMobile != m_bMobile) {
++        // the strip changes height and the tabs their place: damage the old extent, then the new one
++        damageEntire();
++        m_bInset = computeInset();
++        updateReveal();
++        g_pDecorationPositioner->repositionDeco(this);
++        damageEntire();
++    } else if (prevHidden != m_hidden)
+         g_pDecorationPositioner->repositionDeco(this);
+     if (prevForcedTitleColor != m_bForcedTitleColor)
+         m_bTitleColorChanged = true;
+@@ -675,17 +2092,91 @@
+ 
+     const auto COORDS = cursorRelativeToBar();
+ 
+-    for (auto& b : g_pGlobalState->buttons) {
+-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
+-        Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
+-
+-        bool       hover = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + BARBUTTONPADDING, currentPos.y + b.size);
+-
+-        if (hover != m_bButtonHovered) {
+-            m_bButtonHovered = hover;
++    if (mobileMode() && validMapped(m_pWindow)) {
++        const auto   TABS  = mobileTabs(assignedBoxGlobal().w, m_pWindow->rounding());
++        const double H     = tabHeight();
++        const double PADY  = std::max(8.0, (std::max(H, (double)std::max<Config::INTEGER>(0, g_pGlobalState->config.mobileTouchTarget->value())) - H) / 2.0);
++        const bool   HOVER = COORDS.y >= -PADY && COORDS.y <= H + PADY &&
++            std::ranges::any_of(TABS, [&](const SMobileTab& t) { return COORDS.x >= t.x - 4.0 && COORDS.x <= t.x + t.w + 4.0; });
++        if (HOVER != m_bButtonHovered) {
++            m_bButtonHovered = HOVER;
+             damageEntire();
+         }
++        return;
++    }
++
++    const double halfGap  = BARBUTTONPADDING * 0.5;
++    const double outerPad = g_pGlobalState->config.barOverlay->value() ? std::max<double>(halfGap, g_pGlobalState->config.pillPadding->value()) : halfGap;
++    const double vSlop    = g_pGlobalState->config.barOverlay->value() ? 8.0 : 0.0;
++    const size_t count    = g_pGlobalState->buttons.size();
++    bool         anyHover = false;
++
++    for (size_t i = 0; i < count; ++i) {
++        auto&        b        = g_pGlobalState->buttons[i];
++        const auto   BARBUF   = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
++        const double btnX     = std::floor(BUTTONSRIGHT ? BARBUF.x - offset - b.size : offset);
++        const double padLeft  = BUTTONSRIGHT ? (i + 1 == count ? outerPad : halfGap) : (i == 0 ? outerPad : halfGap);
++        const double padRight = BUTTONSRIGHT ? (i == 0 ? outerPad : halfGap) : (i + 1 == count ? outerPad : halfGap);
++
++        if (VECINRECT(COORDS, btnX - padLeft, -vSlop, btnX + b.size + padRight, HEIGHT + vSlop))
++            anyHover = true;
+ 
+         offset += BARBUTTONPADDING + b.size;
+     }
+-}
++
++    if (anyHover != m_bButtonHovered) {
++        m_bButtonHovered = anyHover;
++        damageEntire();
++    }
++}
++
++
++// Versioned internal renderer ABI: the three OS controls, in surface-local logical px.
++// box (cx,hx,height,radius), blend/merge/button material/icon policy, fill RGBA,
++// then each button's geometry, resolved background and resolved icon colour.
++// Values come from the same live configuration used by drawOverlayTab/doButtonPress.
++extern "C" APICALL EXPORT bool mios_hyprbars_controls_v1(void* identity, float* data, size_t count) {
++    if (!data || count != 48 || !g_pGlobalState || g_pGlobalState->buttons.size() != 3)
++        return false;
++    PHLWINDOW window;
++    for (const auto& w : Desktop::windowState()->windows())
++        if (w && w.get() == identity && w->m_isMapped) { window = w; break; }
++    if (!window)
++        return false;
++    const auto& cfg = g_pGlobalState->config;
++    const float h = std::max(1.F, static_cast<float>(cfg.barHeight->value()));
++    const float pad = std::max(0.F, static_cast<float>(cfg.pillPadding->value()));
++    const float gap = std::max(0.F, static_cast<float>(cfg.barButtonPadding->value()));
++    const float inset = static_cast<float>(cfg.barPadding->value());
++    const bool right = cfg.barButtonsAlignment->value() != "left";
++    const float width = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x;
++    const float r = std::max(0.F, window->rounding());
++    float buttonWidth = gap * 2.F;
++    for (const auto& b : g_pGlobalState->buttons) buttonWidth += b.size;
++    const float left = right ? width - inset - buttonWidth - pad : inset - pad;
++    std::fill(data, data + count, 0.F);
++    data[0] = left + (buttonWidth + 2.F * pad) / 2.F;
++    data[1] = (buttonWidth + 2.F * pad) / 2.F;
++    data[2] = h;
++    data[3] = std::min(r, h) / 2.F;
++    data[4] = 1.4F * std::min(r / 2.F, h / 2.F);
++    data[5] = std::clamp(static_cast<float>(cfg.pillMerge->value()), 0.F, 24.F);
++    data[6] = std::clamp(static_cast<float>(cfg.buttonGlass->value()), 0.F, 1.F);
++    data[7] = cfg.iconOnHover->value() ? 0.F : 1.F;
++    const auto fill = configColor(cfg.pillColor->value());
++    data[8]=fill.r; data[9]=fill.g; data[10]=fill.b;
++    data[11]=fill.a * window->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE);
++    float offset=inset;
++    for (size_t i=0;i<3;++i) {
++        const auto& b=g_pGlobalState->buttons[i];
++        const auto bg=b.bgcol;
++        const auto fg=b.userfg ? b.fgcol : CHyprColor(bg.r+bg.g+bg.b < 1 ? 0xFFFFFFFF : 0xFF000000);
++        const size_t p=12+i*12;
++        data[p]=std::floor(right ? width-offset-b.size : offset)+b.size/2.F;
++        data[p+1]=-h/2.F; data[p+2]=b.size/2.F;
++        data[p+4]=bg.r; data[p+5]=bg.g; data[p+6]=bg.b; data[p+7]=bg.a;
++        data[p+8]=fg.r; data[p+9]=fg.g; data[p+10]=fg.b; data[p+11]=fg.a;
++        offset+=b.size+gap;
++    }
++    return true;
++}
+diff --git a/hyprbars/barDeco.hpp b/hyprbars/barDeco.hpp
+--- a/hyprbars/barDeco.hpp
++++ b/hyprbars/barDeco.hpp
+@@ -1,4 +1,6 @@
+ #pragma once
++
++#include "RenderGate.hpp"
+ 
+ #define WLR_USE_UNSTABLE
+ 
+@@ -12,6 +14,7 @@
+ #include <hyprland/src/helpers/time/Time.hpp>
+ #include <hyprland/src/helpers/signal/Signal.hpp>
+ #include "globals.hpp"
++#include <array>
+ 
+ #define private public
+ #include <hyprland/src/managers/input/InputManager.hpp>
+@@ -50,6 +53,9 @@
+ 
+     void                               updateRules();
+     void                               onConfigReloaded();
++    // fullscreen windows get no decoration pass: the tab is queued from the render-stage hook (once per frame)
++    void                               drawFullscreen(PHLMONITOR);
++    bool                               m_bFsQueued = false;
+ 
+     WP<CHyprBar>                       m_self;
+ 
+@@ -74,6 +80,22 @@
+     Time::steady_tp            m_lastMouseDown = Time::steadyNow();
+ 
+     PHLANIMVAR<CHyprColor>     m_cRealBarColor;
++    PHLANIMVAR<float>          m_fReveal;
++    float                      m_fButtonGlassA = 0.F; // MiOS: alpha of the glass buttons (0 outside the overlay tab)
++    // Overlay tab: the rasterized glass silhouette (fill + rim) and the key it was built for.
++    SP<Render::ITexture>       m_pTabTex;
++    std::string                m_tabKey;
++    // The tab claims pointer input (input extents above the window) only while it is raised.
++    bool                       m_bInputExtents = false;
++    std::string                m_lastTabEvent;
++    bool                       m_bInset        = false; // tab drawn inside the window's top-left instead of protruding
++    // MiOS mobile tabs (hyprbars:mobile rule): two always-raised touch tabs, menu left and close right
++    bool                       m_bMobile       = false;
++    SP<Render::ITexture>       m_pMobileIconTex[2];
++    std::string                m_mobileIconKey[2];
++    struct SMobileTab {
++        double x = 0, w = 0; // window-local logical px: the tab box, fillets excluded
++    };
+ 
+     Vector2D                   cursorRelativeToBar();
+ 
+@@ -88,14 +110,31 @@
+     void onTouchDown(Event::SCallbackInfo& info, ITouch::SDownEvent e);
+     void onTouchUp(Event::SCallbackInfo& info, ITouch::SUpEvent e);
+     void onMouseMove(Vector2D coords);
++    void        updateReveal(std::optional<PHLWINDOW> focused = std::nullopt, bool fromRender = false);
++    bool        revealEnabled();
++    std::string revealMode();
++    bool        cursorNearTab();
++    bool        computeInset();
++    void        publishTab(bool gone = false);
++    void        refreshInset();
++    float       buttonsWidth();
++    bool        mobileMode();
++    double      tabHeight();
++    double      mobileButtonSize();
++    std::array<SMobileTab, 2> mobileTabs(double windowWidth, double rounding);
++    bool        doMobilePress(const Vector2D& coords);
++    void        renderMobileButton(const CBox& tabBox, int which, float scale, float a, bool icons);
++    void        renderOverlay(PHLMONITOR pMonitor, const float& a);
++    bool        overlayNeedsBlur();
+     void onTouchMove(Event::SCallbackInfo& info, ITouch::SMotionEvent e);
+ 
+-    void handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
++    void handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent, uint32_t button = 0x110);
+     void handleUpEvent(Event::SCallbackInfo& info);
+     void handleMovement();
+-    bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
++    bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT, uint32_t button = 0x110);
+ 
+-    CBox assignedBoxGlobal();
++    CBox                assignedBoxGlobal();
++    std::optional<CBox> m_preMaxBox;
+ 
+     CHyprSignalListener m_pMouseButtonCallback;
+     CHyprSignalListener m_pTouchDownCallback;
+@@ -103,6 +142,7 @@
+ 
+     CHyprSignalListener m_pTouchMoveCallback;
+     CHyprSignalListener m_pMouseMoveCallback;
++    CHyprSignalListener m_pActiveWindowCallback;
+ 
+     std::string         m_szLastTitle;
+ 
+diff --git a/hyprbars/globals.hpp b/hyprbars/globals.hpp
+--- a/hyprbars/globals.hpp
++++ b/hyprbars/globals.hpp
+@@ -7,6 +7,10 @@
+ #include <hyprland/src/config/values/types/StringValue.hpp>
+ #include <hyprland/src/config/values/types/ColorValue.hpp>
+ #include <hyprland/src/config/values/types/FontWeightValue.hpp>
++#include <hyprland/src/config/values/types/FloatValue.hpp>
++#include <GLES3/gl32.h>
++#include <hyprland/src/render/Shader.hpp>
++#include <hyprland/src/render/Framebuffer.hpp>
+ 
+ inline HANDLE PHANDLE = nullptr;
+ 
+@@ -28,17 +32,44 @@
+     uint32_t                  nobarRuleIdx      = 0;
+     uint32_t                  barColorRuleIdx   = 0;
+     uint32_t                  titleColorRuleIdx = 0;
++    uint32_t                  mobileRuleIdx     = 0; // hyprbars:mobile (MiOS: split touch tabs)
+ 
+     struct {
+-        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor;
++        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor, pillColor, pillRimColor, pillGlassTint, pillBevelColor;
+         SP<Config::Values::CIntValue>        barHeight;
++        SP<Config::Values::CIntValue>        pillPadding, pillInset, pillFeather, pillSheen, pillEdge, revealRadius, pillFresnel, pillDim, pillMerge;
++        SP<Config::Values::CFloatValue>      pillBlurSigma, pillBrightness, pillContrast, pillSaturation, pillVibrancy, pillBevelSize, pillEdgeThickness;
++        SP<Config::Values::CStringValue>     yieldLayers;
++        // MiOS: the tab and its buttons are drawn by hyprglass (glass_plugin = its loaded path) with the window's
++        // own preset; button_glass = how strongly a button's colour tints its glass orb (0 = flat dots)
++        SP<Config::Values::CStringValue>     glassPlugin;
++        SP<Config::Values::CFloatValue>      buttonGlass;
++        // MiOS mobile tabs (windows with the hyprbars:mobile rule): touch target, the menu button, the close button
++        SP<Config::Values::CIntValue>        mobileTouchTarget, mobileCloseButton;
++        SP<Config::Values::CColorValue>      mobileMenuColor, mobileMenuIconColor;
++        SP<Config::Values::CStringValue>     mobileMenuIcon, mobileMenuAction;
++        SP<Config::Values::CBoolValue>       tabYield;
++        SP<Config::Values::CBoolValue>       pillShadowComp;
+         SP<Config::Values::CIntValue>        barTextSize;
+         SP<Config::Values::CFontWeightValue> barTextWeight;
+         SP<Config::Values::CIntValue>        barPadding;
+         SP<Config::Values::CIntValue>        barButtonPadding;
+-        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
+-        SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick;
++        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, barOverlay, pillEnabled, pillBlur, proximityReveal;
++        SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, revealOn;
+     } config;
++
++    // Overlay glass tab (GPU): one fragment shader shades the tab from its signed-distance field over a copy of
++    // the framebuffer under it. Compiled on first use inside the render pass; nullptr/false when unavailable,
++    // in which case the CPU-rasterized fallback is drawn.
++    struct {
++        SP<CShader>              shader;
++        bool                     tried = false, ok = false;
++        SP<CShader>              hblur;             // horizontal half of the separable frost
++        SP<Render::IFramebuffer> sample, blurH;
++        GLint                    hSampleSize = -1, hPadY = -1, hSigma = -1;
++        GLint tabBox = -1, tabShape = -1, tabSpread = -1, sampleSize = -1, samplePad = -1, boxSize = -1, sigma = -1, flip = -1, yClamp = -1, tone = -1, vibrancy = -1,
++              glassTint = -1, winColor = -1, fresnelColor = -1, bevelColor = -1, light = -1, bevelSize = -1, shadow = -1, shadowColor = -1, alpha = -1, mirror = -1;
++    } glass;
+ };
+ 
+ inline UP<SGlobalState> g_pGlobalState;
+diff --git a/hyprbars/main.cpp b/hyprbars/main.cpp
+--- a/hyprbars/main.cpp
++++ b/hyprbars/main.cpp
+@@ -32,6 +32,8 @@
+     return HYPRLAND_API_VERSION;
+ }
+ 
++static CHyprSignalListener g_PListener, g_P3Listener, g_P4Listener, g_P5Listener, g_P6Listener;
++
+ static void onNewWindow(PHLWINDOW window) {
+     if (!window->m_X11DoesntWantBorders) {
+         if (std::ranges::any_of(window->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
+@@ -107,7 +109,17 @@
+         return result;
+     }
+ 
+-    g_pGlobalState->buttons.push_back(SHyprButton{vars[3], userfg, *fgcolor, *bgcolor, size, vars[2]});
++    SHyprButton btn{vars[3], userfg, *fgcolor, *bgcolor, size, vars[2]};
++    bool        updated = false;
++    for (auto& existing : g_pGlobalState->buttons) {
++        if (!btn.icon.empty() && existing.icon == btn.icon) {
++            existing = std::move(btn);
++            updated  = true;
++            break;
++        }
++    }
++    if (!updated && g_pGlobalState->buttons.size() < 3)
++        g_pGlobalState->buttons.push_back(std::move(btn));
+ 
+     for (auto& b : g_pGlobalState->bars) {
+         b->m_bButtonsDirty = true;
+@@ -182,7 +194,16 @@
+         button.cmd = lua_tostring(L, -1);
+     }
+ 
+-    g_pGlobalState->buttons.push_back(std::move(button));
++    bool updated = false;
++    for (auto& existing : g_pGlobalState->buttons) {
++        if (!button.icon.empty() && existing.icon == button.icon) {
++            existing = std::move(button);
++            updated  = true;
++            break;
++        }
++    }
++    if (!updated && g_pGlobalState->buttons.size() < 3)
++        g_pGlobalState->buttons.push_back(std::move(button));
+ 
+     for (auto& b : g_pGlobalState->bars) {
+         b->m_bButtonsDirty = true;
+@@ -207,9 +228,12 @@
+     g_pGlobalState->nobarRuleIdx      = Desktop::Rule::windowEffects()->registerEffect("hyprbars:no_bar");
+     g_pGlobalState->barColorRuleIdx   = Desktop::Rule::windowEffects()->registerEffect("hyprbars:bar_color");
+     g_pGlobalState->titleColorRuleIdx = Desktop::Rule::windowEffects()->registerEffect("hyprbars:title_color");
+-
+-    static auto P  = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
+-    static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
++    // MiOS: hyprbars:mobile = true splits the window's controls into two always-raised touch tabs (menu left,
++    // close right) around the status pill; the MiOS projection sets it on windows of mobile outputs.
++    g_pGlobalState->mobileRuleIdx     = Desktop::Rule::windowEffects()->registerEffect("hyprbars:mobile");
++
++    g_PListener = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
++    g_P3Listener = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
+ 
+     g_pGlobalState->config.barColor            = makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color", "Change the bar color", 0x88333333);
+     g_pGlobalState->config.textColor           = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);
+@@ -224,6 +248,60 @@
+     g_pGlobalState->config.barTextAlign    = makeShared<Config::Values::CStringValue>("plugin:hyprbars:bar_text_align", "Bar's text alignment", "center");
+     g_pGlobalState->config.barPartOfWindow =
+         makeShared<Config::Values::CBoolValue>("plugin:hyprbars:bar_part_of_window", "Whether the bar is a part of the window (reserves space)", true);
++    g_pGlobalState->config.barOverlay =
++        makeShared<Config::Values::CBoolValue>("plugin:hyprbars:bar_overlay", "Draw the bar over the top of the window's own content instead of reserving space above it", false);
++    g_pGlobalState->config.proximityReveal =
++        makeShared<Config::Values::CBoolValue>("plugin:hyprbars:proximity_reveal", "Overlay: controls stay hidden and drop down when the cursor comes near", false);
++    g_pGlobalState->config.revealOn = makeShared<Config::Values::CStringValue>(
++        "plugin:hyprbars:reveal_on",
++        "Overlay: what raises a window's controls tab: focus+proximity (the focused window, while the cursor is near its top-left), focus, proximity, or always",
++        "focus+proximity");
++    g_pGlobalState->config.revealRadius = makeShared<Config::Values::CIntValue>("plugin:hyprbars:reveal_radius", "Overlay: cursor distance (px) around the controls that reveals them", 48);
++    g_pGlobalState->config.pillEnabled  = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:pill_enabled", "Overlay: draw a glass pill behind the buttons", false);
++    g_pGlobalState->config.pillBlur     = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:pill_blur", "Overlay: blur behind the pill", true);
++    g_pGlobalState->config.pillColor    = makeShared<Config::Values::CColorValue>("plugin:hyprbars:pill_color", "Overlay: pill tint", 0x38282262);
++    g_pGlobalState->config.pillRimColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:pill_rim_color", "Overlay: pill top-light rim", 0x40B7C9D7);
++    g_pGlobalState->config.pillPadding  = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_padding", "Overlay: pill padding around the buttons", 8);
++    g_pGlobalState->config.pillInset    = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_inset", "Overlay: pill vertical inset inside the bar", 3);
++    g_pGlobalState->config.pillFeather  = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_feather", "Overlay: soft halo width that melts the pill edge", 6);
++    g_pGlobalState->config.pillSheen    = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_sheen", "Overlay: top-light specular strength on the glass tab (0-100, hyprglass specular_strength x 100)", 25);
++    g_pGlobalState->config.pillEdge     = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_edge", "Overlay: lit inner bevel edge of the glass tab (0-100, hyprglass bevel_strength x 100)", 12);
++    g_pGlobalState->config.pillFresnel  = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_fresnel", "Overlay: fresnel edge glow of the glass tab (0-100, hyprglass fresnel_strength x 100)", 18);
++    g_pGlobalState->config.pillDim      = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_dim", "Overlay: adaptive dim of bright backdrops under the tab (0-100, hyprglass adaptive_dim x 100)", 10);
++    g_pGlobalState->config.pillMerge    = makeShared<Config::Values::CIntValue>("plugin:hyprbars:pill_merge", "Overlay: px the tab's glass continues down over its window's top edge, fading out, so the two read as one pane", 6);
++    g_pGlobalState->config.pillBlurSigma =
++        makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_blur_sigma", "Overlay: gaussian sigma (device px, 0-16) of the frost under the tab; hyprglass' frost is 4 x blur_strength x sqrt(blur_iterations)", 1.41F);
++    g_pGlobalState->config.pillShadowComp =
++        makeShared<Config::Values::CBoolValue>("plugin:hyprbars:pill_shadow_comp", "Overlay: remove the window's own drop shadow from the backdrop seen through the tab", true);
++    // The tab's glass is the window's own hyprglass glass: MiOS projects these from the hyprglass preset
++    // ([desktop.hyprland.hyprbars.config] glass_preset), the defaults are hyprglass' dark-theme fallbacks.
++    g_pGlobalState->config.pillGlassTint  = makeShared<Config::Values::CColorValue>("plugin:hyprbars:pill_glass_tint", "Overlay: glass tint over the frost (hyprglass tint_color)", 0x00000000);
++    g_pGlobalState->config.pillBevelColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:pill_bevel_color", "Overlay: lit bevel colour (hyprglass bevel_color; alpha mixes it with white)", 0x00FFFFFF);
++    g_pGlobalState->config.pillBrightness = makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_brightness", "Overlay: glass brightness (hyprglass brightness)", 0.82F);
++    g_pGlobalState->config.pillContrast   = makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_contrast", "Overlay: glass contrast (hyprglass contrast)", 0.9F);
++    g_pGlobalState->config.pillSaturation = makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_saturation", "Overlay: glass saturation (hyprglass saturation)", 0.8F);
++    g_pGlobalState->config.pillVibrancy   = makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_vibrancy", "Overlay: glass vibrancy (hyprglass vibrancy)", 0.15F);
++    g_pGlobalState->config.pillBevelSize  = makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_bevel_size", "Overlay: bevel ring width, logical px (hyprglass bevel_size)", 6.F);
++    g_pGlobalState->config.pillEdgeThickness =
++        makeShared<Config::Values::CFloatValue>("plugin:hyprbars:pill_edge_thickness", "Overlay: fresnel/specular edge zone as a fraction of the window's short side (hyprglass edge_thickness)", 0.06F);
++    g_pGlobalState->config.tabYield = makeShared<Config::Values::CBoolValue>(
++        "plugin:hyprbars:tab_yield", "Overlay: draw the tab inside the window's top-left when protruding would put it under a yield_layers surface, off the monitor or under a neighbouring window", true);
++    g_pGlobalState->config.mobileTouchTarget = makeShared<Config::Values::CIntValue>(
++        "plugin:hyprbars:mobile_touch_target", "Mobile tabs: minimum width and height of each tab, logical px (the touch target)", 44);
++    g_pGlobalState->config.mobileCloseButton = makeShared<Config::Values::CIntValue>(
++        "plugin:hyprbars:mobile_close_button", "Mobile tabs: index of the button (add_button order) the right tab shows", 0);
++    g_pGlobalState->config.mobileMenuColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:mobile_menu_color", "Mobile tabs: the left (menu) button colour", 0xFFB7C9D7);
++    g_pGlobalState->config.mobileMenuIconColor =
++        makeShared<Config::Values::CColorValue>("plugin:hyprbars:mobile_menu_icon_color", "Mobile tabs: the left (menu) button icon colour", 0xFF282262);
++    g_pGlobalState->config.mobileMenuIcon   = makeShared<Config::Values::CStringValue>("plugin:hyprbars:mobile_menu_icon", "Mobile tabs: the left (menu) button icon", "\u2630");
++    g_pGlobalState->config.mobileMenuAction = makeShared<Config::Values::CStringValue>(
++        "plugin:hyprbars:mobile_menu_action", "Mobile tabs: command the left (menu) button runs (the window is focused first)", "");
++    g_pGlobalState->config.glassPlugin = makeShared<Config::Values::CStringValue>(
++        "plugin:hyprbars:glass_plugin", "Overlay: path of the loaded hyprglass.so (MiOS patch) that draws the tab and its buttons as the window's own glass; empty = the built-in shader", "");
++    g_pGlobalState->config.buttonGlass = makeShared<Config::Values::CFloatValue>(
++        "plugin:hyprbars:button_glass", "Overlay: buttons as tinted glass orbs drawn by glass_plugin, tint strength 0-1 (0 = flat dots)", 0.F);
++    g_pGlobalState->config.yieldLayers = makeShared<Config::Values::CStringValue>(
++        "plugin:hyprbars:yield_layers", "Overlay: comma-separated layer-shell namespaces that have priority over the protruding tab", "");
+     g_pGlobalState->config.barPrecedenceOverBorder =
+         makeShared<Config::Values::CBoolValue>("plugin:hyprbars:bar_precedence_over_border", "Whether the bar is before, or after the border", false);
+     g_pGlobalState->config.barButtonsAlignment = makeShared<Config::Values::CStringValue>("plugin:hyprbars:bar_buttons_alignment", "Alignment of the bar buttons", "right");
+@@ -244,6 +322,42 @@
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextFont);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextAlign);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barPartOfWindow);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barOverlay);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.proximityReveal);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.revealRadius);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.revealOn);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillEnabled);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillBlur);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillRimColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillPadding);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillInset);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillFeather);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillSheen);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillEdge);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillFresnel);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillDim);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillMerge);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillBlurSigma);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillShadowComp);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillGlassTint);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillBevelColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillBrightness);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillContrast);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillSaturation);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillVibrancy);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillBevelSize);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.pillEdgeThickness);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.tabYield);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.yieldLayers);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileTouchTarget);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileCloseButton);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileMenuColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileMenuIconColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileMenuIcon);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.glassPlugin);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonGlass);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.mobileMenuAction);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barPrecedenceOverBorder);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barButtonsAlignment);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barPadding);
+@@ -256,8 +370,30 @@
+         HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
+     else
+         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "add_button", ::newLuaButton);
+-    static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
+-    static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
++    g_P4Listener = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
++    g_P5Listener = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
++    // Hyprland draws no decorations on a fullscreen window; its controls tab drops down inside it instead,
++    // queued right after the window's own surfaces.
++    g_P6Listener = Event::bus()->m_events.render.stage.listen([&](eRenderStage stage) {
++        if (stage == RENDER_BEGIN) {
++            for (auto& b : g_pGlobalState->bars)
++                if (b)
++                    b->m_bFsQueued = false;
++            return;
++        }
++        if (stage != RENDER_POST_WINDOW)
++            return;
++        const auto W = g_pHyprRenderer->m_renderData.currentWindow.lock();
++        const auto M = g_pHyprRenderer->m_renderData.pMonitor.lock();
++        if (!W || !M || !g_pGlobalState->config.barOverlay->value())
++            return;
++        for (auto& b : g_pGlobalState->bars) {
++            if (b && b->getOwner() == W) {
++                b->drawFullscreen(M);
++                break;
++            }
++        }
++    });
+ 
+     // add deco to existing windows
+     for (auto& w : Desktop::windowState()->windows()) {
+@@ -267,18 +403,38 @@
+         onNewWindow(w);
+     }
+ 
+-    HyprlandAPI::reloadConfig();
++    if (Config::mgr()->type() == Config::CONFIG_LEGACY)
++        HyprlandAPI::reloadConfig();
+ 
+     return {"hyprbars", "A plugin to add title bars to windows.", "Vaxry", "1.0"};
+ }
+ 
+ APICALL EXPORT void PLUGIN_EXIT() {
++    g_PListener.reset();
++    g_P3Listener.reset();
++    g_P4Listener.reset();
++    g_P5Listener.reset();
++    g_P6Listener.reset();
++
+     for (auto& m : State::monitorState()->monitors())
+         m->m_scheduledRecalc = true;
+ 
+     g_pHyprRenderer->m_renderPass.removeAllOfType("CBarPassElement");
++
++    // the glass tab's GL objects belong to this library; release them while it is still mapped
++    if (g_pGlobalState->glass.shader)
++        g_pGlobalState->glass.shader->destroy();
++    g_pGlobalState->glass.shader.reset();
++    g_pGlobalState->glass.sample.reset();
++    if (g_pGlobalState->glass.hblur)
++        g_pGlobalState->glass.hblur->destroy();
++    g_pGlobalState->glass.hblur.reset();
++    g_pGlobalState->glass.blurH.reset();
++    g_pGlobalState->glass.tried = false;
++    g_pGlobalState->glass.ok    = false;
+ 
+     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->barColorRuleIdx);
+     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->titleColorRuleIdx);
+     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->nobarRuleIdx);
+-}
++    Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->mobileRuleIdx);
++}

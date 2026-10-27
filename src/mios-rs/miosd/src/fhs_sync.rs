@@ -65,6 +65,80 @@ pub fn is_host_namespace_str(s: &str) -> bool {
         .any(|ns| first_component.eq_ignore_ascii_case(ns))
 }
 
+/// The daemon's own runtime directory, relative to the watched root (`<root>/run/mios`: the heartbeat
+/// `fhs-sync.json` and IPC). A change there is one this daemon made, never an FHS topology change.
+pub const SELF_RUNTIME_DIR: [&str; 2] = ["run", "mios"];
+
+/// Minimum spacing of event-driven heartbeat writes; the reconciliation tick always writes.
+pub const HEARTBEAT_MIN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// True for a change-notification path (relative to the watched root, either separator) inside
+/// [`SELF_RUNTIME_DIR`]. Without this filter every heartbeat write raised a notification that wrote the
+/// heartbeat again: on the MiOS-Xbox guest (root `C:\`) the service processed ~500 self-events/s and burnt
+/// ~16-31 % of a core with continuous disk writes (round-1 boot of build-20261023T224037Z).
+#[inline]
+pub fn is_self_generated_str(s: &str) -> bool {
+    let mut trimmed = s.trim();
+    if let Some(rest) = trimmed.strip_prefix(r"\\?\") {
+        trimmed = rest;
+    }
+    if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
+        trimmed = &trimmed[2..];
+    }
+    let mut parts = trimmed.split(['/', '\\']).filter(|p| !p.is_empty());
+    SELF_RUNTIME_DIR
+        .iter()
+        .all(|want| parts.next().is_some_and(|p| p.eq_ignore_ascii_case(want)))
+}
+
+/// Rate limit for event-driven heartbeat writes (events are still counted; the newest state is written
+/// once the interval has passed, and by every reconciliation tick).
+#[derive(Debug)]
+pub struct HeartbeatThrottle {
+    last: Option<Instant>,
+    min: Duration,
+}
+
+impl HeartbeatThrottle {
+    pub fn new(min: Duration) -> Self {
+        Self { last: None, min }
+    }
+    /// True when a write is allowed at `now` (and records it).
+    pub fn due(&mut self, now: Instant) -> bool {
+        match self.last {
+            Some(t) if now.saturating_duration_since(t) < self.min => false,
+            _ => {
+                self.last = Some(now);
+                true
+            }
+        }
+    }
+    /// Record an unconditional write (the reconciliation tick).
+    pub fn wrote(&mut self, now: Instant) {
+        self.last = Some(now);
+    }
+}
+
+/// One outstanding overlapped ReadDirectoryChangesW per directory handle: a new read is issued only after
+/// the previous one completed. The old loop re-issued a read after every 250 ms wait timeout, stacking
+/// requests that all completed into the same buffer and OVERLAPPED.
+#[derive(Debug, Default)]
+pub struct WatchRequest {
+    pending: bool,
+}
+
+impl WatchRequest {
+    pub fn should_issue(&self) -> bool {
+        !self.pending
+    }
+    pub fn issued(&mut self) {
+        self.pending = true;
+    }
+    pub fn completed(&mut self) {
+        self.pending = false;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HostRole {
     WindowsHost,
@@ -973,40 +1047,45 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
             };
 
             let mut buffer = vec![0u8; KERNEL_NOTIFICATION_BUFFER_SIZE];
+            let mut request = WatchRequest::default();
+            let mut start_time = Instant::now();
 
             while !shutdown_clone.load(Ordering::SeqCst)
                 && !GLOBAL_SHUTDOWN.load(Ordering::SeqCst)
             {
-                let mut bytes_returned = 0u32;
-                let start_time = Instant::now();
-                let success = unsafe {
-                    ReadDirectoryChangesW(
-                        h_dir,
-                        buffer.as_mut_ptr() as *mut _,
-                        KERNEL_NOTIFICATION_BUFFER_SIZE as u32,
-                        1, // Watch subtree
-                        FILE_NOTIFY_CHANGE_FILE_NAME
-                            | FILE_NOTIFY_CHANGE_DIR_NAME
-                            | FILE_NOTIFY_CHANGE_ATTRIBUTES
-                            | FILE_NOTIFY_CHANGE_SIZE
-                            | FILE_NOTIFY_CHANGE_LAST_WRITE
-                            | FILE_NOTIFY_CHANGE_CREATION,
-                        &mut bytes_returned,
-                        &mut overlapped as *mut _ as *mut _,
-                        None,
-                    )
-                };
+                if request.should_issue() {
+                    let mut bytes_returned = 0u32;
+                    start_time = Instant::now();
+                    let success = unsafe {
+                        ReadDirectoryChangesW(
+                            h_dir,
+                            buffer.as_mut_ptr() as *mut _,
+                            KERNEL_NOTIFICATION_BUFFER_SIZE as u32,
+                            1, // Watch subtree
+                            FILE_NOTIFY_CHANGE_FILE_NAME
+                                | FILE_NOTIFY_CHANGE_DIR_NAME
+                                | FILE_NOTIFY_CHANGE_ATTRIBUTES
+                                | FILE_NOTIFY_CHANGE_SIZE
+                                | FILE_NOTIFY_CHANGE_LAST_WRITE
+                                | FILE_NOTIFY_CHANGE_CREATION,
+                            &mut bytes_returned,
+                            &mut overlapped as *mut _ as *mut _,
+                            None,
+                        )
+                    };
 
-                if success == 0 {
-                    let err = unsafe { GetLastError() };
-                    if err != 997 {
-                        // ERROR_IO_PENDING = 997
-                        std::thread::sleep(Duration::from_millis(50));
-                        continue;
+                    if success == 0 {
+                        let err = unsafe { GetLastError() };
+                        if err != 997 {
+                            // ERROR_IO_PENDING = 997
+                            std::thread::sleep(Duration::from_millis(50));
+                            continue;
+                        }
                     }
+                    request.issued();
                 }
 
-                // Wait up to 250ms for events or shutdown
+                // Wait up to 250ms for events or shutdown (a timeout keeps the same request pending)
                 let wait_rc = unsafe { WaitForSingleObject(h_event, 250) };
                 if wait_rc == WAIT_OBJECT_0 {
                     let mut transferred = 0u32;
@@ -1019,6 +1098,7 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
                         )
                     };
                     unsafe { ResetEvent(h_event) };
+                    request.completed();
 
                     if got_result != 0 && transferred > 0 {
                         let latency = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -1027,6 +1107,10 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
                             // FAST RADIX PREFIX FILTERING (<1µs)
                             if is_host_namespace_str(&path_str) {
                                 // Strictly excluded host namespace (e.g. C:\Windows, C:\Program Files, C:\Users)
+                                continue;
+                            }
+                            if is_self_generated_str(&path_str) {
+                                // this daemon's own heartbeat / runtime writes (feedback loop otherwise)
                                 continue;
                             }
 
@@ -1056,6 +1140,7 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
     let mut reconciliation_interval =
         tokio::time::interval(Duration::from_secs(interval_secs));
     reconciliation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut heartbeat = HeartbeatThrottle::new(HEARTBEAT_MIN_INTERVAL);
 
     loop {
         tokio::select! {
@@ -1066,7 +1151,9 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
                 current_status.last_propagation_latency_ms = Some(event.propagation_latency_ms);
                 current_status.timestamp = chrono::Utc::now().to_rfc3339();
 
-                write_heartbeat(&root, &current_status);
+                if heartbeat.due(Instant::now()) {
+                    write_heartbeat(&root, &current_status);
+                }
             }
             _ = reconciliation_interval.tick() => {
                 let status = sync_once(&root, false);
@@ -1079,6 +1166,7 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
                 current_status.summary = status.summary;
                 current_status.findings = status.findings;
                 write_heartbeat(&root, &current_status);
+                heartbeat.wrote(Instant::now());
             }
             _ = tokio::signal::ctrl_c() => {
                 println!("[mios-fhs-sync] Received shutdown signal; stopping real-time daemon.");
@@ -1303,6 +1391,55 @@ pub async fn benchmark_propagation_latency(test_root: &Path) -> Result<f64, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_self_generated_events_are_filtered_and_others_kept() {
+        // positive: the daemon's own heartbeat / runtime writes (as ReadDirectoryChangesW reports them)
+        assert!(is_self_generated_str(r"run\mios\fhs-sync.json"));
+        assert!(is_self_generated_str(r"RUN\MiOS\fhs-sync.json.tmp"));
+        assert!(is_self_generated_str("run/mios/fhs-sync.json"));
+        assert!(is_self_generated_str(r"C:\run\mios\fhs-sync.json"));
+        assert!(is_self_generated_str(r"\\?\C:\run\mios"));
+        // negative: real FHS / user changes must still reach the daemon
+        assert!(!is_self_generated_str(r"run\user\1000\bus"));
+        assert!(!is_self_generated_str(r"run"));
+        assert!(!is_self_generated_str(r"etc\ssh\sshd_config"));
+        assert!(!is_self_generated_str(r"var\mios\fhs-sync.json"));
+        assert!(!is_self_generated_str(r"runs\mios\x"));
+        assert!(!is_self_generated_str(""));
+        // the namespace filter alone forwards the heartbeat path: that is the self-sustaining loop the
+        // round-1 guest measured (~500 events/s, last_event_path run\mios\fhs-sync.json)
+        assert!(!is_host_namespace_str(r"run\mios\fhs-sync.json"));
+    }
+
+    #[test]
+    fn test_heartbeat_throttle_spacing() {
+        let t0 = Instant::now();
+        let mut h = HeartbeatThrottle::new(Duration::from_secs(1));
+        assert!(h.due(t0), "the first event writes");
+        assert!(!h.due(t0 + Duration::from_millis(2)), "a burst does not write again");
+        assert!(!h.due(t0 + Duration::from_millis(999)));
+        assert!(h.due(t0 + Duration::from_millis(1000)), "the interval has passed");
+        h.wrote(t0 + Duration::from_millis(1500));
+        assert!(!h.due(t0 + Duration::from_millis(2000)), "a tick write restarts the interval");
+        assert!(h.due(t0 + Duration::from_millis(2600)));
+        // 500 events in one second (the measured self-event rate) write at most twice
+        let mut h = HeartbeatThrottle::new(HEARTBEAT_MIN_INTERVAL);
+        let writes = (0..500).filter(|i| h.due(t0 + Duration::from_millis(i * 2))).count();
+        assert_eq!(writes, 1);
+    }
+
+    #[test]
+    fn test_watch_request_single_outstanding() {
+        let mut r = WatchRequest::default();
+        assert!(r.should_issue());
+        r.issued();
+        // a 250 ms wait timeout must not issue a second read on the same handle/buffer
+        assert!(!r.should_issue());
+        assert!(!r.should_issue());
+        r.completed();
+        assert!(r.should_issue());
+    }
 
     #[test]
     fn test_fhs_dirs_coverage() {

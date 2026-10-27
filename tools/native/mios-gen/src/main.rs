@@ -13,8 +13,10 @@ mod agent_interaction;
 mod ai;
 mod btop_theme;
 mod display_scale;
+mod hypr3d_spawn;
 mod docs;
 mod greeter;
+mod grub;
 use render::desktop_boot;
 mod image;
 mod indexes;
@@ -325,6 +327,32 @@ enum Commands {
     #[command(name = "hyprland-3d-toggle")]
     Hyprland3dToggle,
 
+    /// Hypr3D Retina window opening ([desktop.hyprland.hypr3d.spawn]): per output, the window_scale,
+    /// spawn_distance, spawn box and fit the 3D toggle sends (a window opens at its flat-desktop size, one
+    /// texel per output pixel), as JSON. Outputs from --monitors (a `hyprctl -j monitors` file) or the
+    /// running compositor; [desktop.mobile] verdicts from --mobile or $XDG_RUNTIME_DIR/mios-mobile-outputs.json.
+    #[command(name = "hyprland-3d-spawn")]
+    Hyprland3dSpawn {
+        /// SSOT root (layered vendor/host/user); default $MIOS_ROOT or /
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// `hyprctl -j monitors` JSON file (default: ask the compositor)
+        #[arg(long)]
+        monitors: Option<PathBuf>,
+        /// [desktop.mobile] verdicts file (default: $XDG_RUNTIME_DIR/mios-mobile-outputs.json)
+        #[arg(long)]
+        mobile: Option<PathBuf>,
+        /// Only this output
+        #[arg(long)]
+        output: Option<String>,
+        /// Hypr3D render.scale for the legibility floor (default: the SSOT global)
+        #[arg(long = "render-scale")]
+        render_scale: Option<f64>,
+        /// A window size WxH (logical px) to place on each output; repeatable
+        #[arg(long = "window")]
+        window: Vec<String>,
+    },
+
     /// Run the login chooser with the GPU profile selected at boot.
     #[command(name = "hyprland-greeter")]
     HyprlandGreeter {
@@ -606,6 +634,34 @@ enum Commands {
         /// Output path for btop theme file
         #[arg(long, aliases = ["output", "out"])]
         out: Option<PathBuf>,
+    },
+
+    /// Projects the GRUB boot menu from [boot.grub] and [boot.grub.theme]: the /etc/default/grub managed block,
+    /// the static recovery entry, the MiOS theme, grubenv (boot the last booted entry) and a BLS menu that holds
+    /// only the managed GPU entries. Prints the projection unless --check, --stage or --apply is given.
+    #[command(name = "render-grub")]
+    RenderGrub {
+        /// Root whose vendor+host SSOT layers are read (default: the live system)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Filesystem whose /etc and /boot are projected; grub.cfg is regenerated only when this is "/"
+        #[arg(long, default_value = "/")]
+        sysroot: PathBuf,
+        /// Exit 1 when a projected file, grubenv value or the BLS menu drifts from the SSOT
+        #[arg(long, conflicts_with_all = ["stage", "apply"])]
+        check: bool,
+        /// Write everything and generate /boot/grub2/grub.cfg.mios-new, keeping the current grub.cfg
+        #[arg(long, conflicts_with = "apply")]
+        stage: bool,
+        /// Write everything and install the regenerated /boot/grub2/grub.cfg (root)
+        #[arg(long)]
+        apply: bool,
+        /// kernel-install event: first re-render the managed GPU entries from the newest installed kernel
+        #[arg(long, value_parser = ["add", "remove"], requires = "apply")]
+        kernel_event: Option<String>,
+        /// Kernel version passed by kernel-install (logged and validated)
+        #[arg(long, requires = "kernel_event")]
+        kernel_version: Option<String>,
     },
 
     /// Projects greetd's config.toml from [desktop.greeter]: the MiOS glass Quickshell greeter
@@ -913,6 +969,54 @@ fn run_egress_firewall(root: &Path, check: bool) -> Result<(), (String, i32)> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let (subcommand, target, result) = match cli.command {
+        Commands::Hyprland3dSpawn { root, monitors, mobile, output, render_scale, window } => {
+            let run = || -> Result<String, String> {
+                let root = root.or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from))
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                let data = crate::terminal::tmux_theme::tmux_runtime::load_layered(&root)?;
+                let text = match &monitors {
+                    Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+                    None => {
+                        let out = std::process::Command::new("/usr/bin/hyprctl").args(["-j", "monitors"]).output()
+                            .map_err(|e| format!("hyprctl: {e}"))?;
+                        if !out.status.success() {
+                            return Err("hyprctl -j monitors failed (no compositor? pass --monitors)".into());
+                        }
+                        String::from_utf8_lossy(&out.stdout).into_owned()
+                    }
+                };
+                let monitors: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("monitors JSON: {e}"))?;
+                let mobile_path = mobile.clone().or_else(|| env::var_os("XDG_RUNTIME_DIR")
+                    .map(|r| PathBuf::from(r).join("mios-mobile-outputs.json")));
+                let published: Option<serde_json::Value> = match (&mobile, mobile_path) {
+                    (Some(path), _) => Some(serde_json::from_str(&std::fs::read_to_string(path)
+                        .map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("mobile JSON: {e}"))?),
+                    (None, Some(path)) => std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()),
+                    (None, None) => None,
+                };
+                let windows = window.iter().map(|w| {
+                    let (a, b) = w.split_once('x').ok_or_else(|| format!("--window {w}: expected WxH"))?;
+                    let parse = |v: &str| v.parse::<f64>().ok().filter(|f| f.is_finite() && *f >= 1.0 && *f <= 32768.0);
+                    parse(a).zip(parse(b)).ok_or_else(|| format!("--window {w}: expected WxH in 1..=32768"))
+                }).collect::<Result<Vec<_>, _>>()?;
+                if let Some(r) = render_scale {
+                    if !(1.0..=4.0).contains(&r) {
+                        return Err("--render-scale must be in 1..=4".into());
+                    }
+                }
+                hypr3d_spawn::run_cli(&data, &monitors, published.as_ref(), output.as_deref(), render_scale, &windows)
+            };
+            return match run() {
+                Ok(text) => {
+                    println!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[hyprland-3d-spawn] {error}");
+                    ExitCode::from(2)
+                }
+            };
+        }
         Commands::DisplayScale {
             root,
             width,
@@ -1707,6 +1811,31 @@ fn main() -> ExitCode {
                                 );
                                 println!("  Saved config: {}", res.target.display());
                             }
+                        }
+                        Ok(())
+                    }
+                    Err(msg) => Err((msg, 1)),
+                },
+            )
+        }
+        Commands::RenderGrub { root, sysroot, check, stage, apply, kernel_event, kernel_version } => {
+            let r = root.unwrap_or_else(|| PathBuf::from("/"));
+            let mode = if check {
+                grub::Mode::Check
+            } else if apply {
+                grub::Mode::Apply
+            } else if stage {
+                grub::Mode::Stage
+            } else {
+                grub::Mode::Print
+            };
+            (
+                "render-grub",
+                "/etc/default/grub",
+                match grub::run(&r, &sysroot, mode, kernel_event.as_deref(), kernel_version.as_deref()) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            print!("{msg}");
                         }
                         Ok(())
                     }

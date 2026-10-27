@@ -141,17 +141,62 @@ mod host {
             super::workerw::attach(hwnd, workerw);
         }
 
+        // WebView2 keeps its profile in a user data folder whose default is next to the exe
+        // (C:\Program Files\MiOS\mios-wallpaperd.exe.WebView2): the standard desktop user cannot write there, so
+        // every host died "create webview ... 0x80070005 Access is denied" (round-1 boot of
+        // build-20261023T224037Z: exit 101, respawned every 3 s, black desktop). Use the user's LocalAppData.
+        let Some(data_dir) = super::webview_data_dir(local_app_data().as_deref()) else {
+            fail(None, "no LocalAppData known folder for the signed-in user");
+        };
+        let mut web_context = wry::WebContext::new(Some(std::path::PathBuf::from(&data_dir)));
+
         // Build the WebView on the (now re-parented) window.
-        let _webview = WebViewBuilder::new(&window)
+        let _webview = match WebViewBuilder::new(&window)
+            .with_web_context(&mut web_context)
             .with_url(&url)
             .build()
-            .expect("create webview");
+        {
+            Ok(w) => w,
+            Err(e) => fail(Some(&data_dir), &format!("create webview (user data folder {data_dir}): {e}")),
+        };
 
         event_loop.run(move |event, _target, control_flow| {
             *control_flow = ControlFlow::Wait;
             // Keep the window + webview alive for the process lifetime; the service restarts us on exit.
-            let _ = (&event, &window, &_webview);
+            let _ = (&event, &window, &_webview, &web_context);
         });
+    }
+
+    /// The signed-in user's LocalAppData from the known-folder API (the process token, not the environment block a
+    /// session-0 parent may have handed down); %LOCALAPPDATA% only when the API fails.
+    fn local_app_data() -> Option<String> {
+        use windows::Win32::System::Com::CoTaskMemFree;
+        use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+        unsafe {
+            if let Ok(p) = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, None) {
+                let s = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as *const core::ffi::c_void));
+                if s.as_deref().is_some_and(|v| !v.is_empty()) {
+                    return s;
+                }
+            }
+        }
+        std::env::var("LOCALAPPDATA").ok()
+    }
+
+    /// Record why the host cannot run (next to its data folder, readable by the user) and exit with
+    /// [`super::HOST_EXIT_FAILED`]; the service's respawn backoff spaces the retries.
+    fn fail(data_dir: Option<&str>, why: &str) -> ! {
+        if let Some(log) = data_dir.and_then(super::host_log_path) {
+            if let Some(parent) = std::path::Path::new(&log).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+                use std::io::Write;
+                let _ = writeln!(f, "[mios-wallpaperd host] {why}");
+            }
+        }
+        std::process::exit(super::HOST_EXIT_FAILED);
     }
 
     fn read_wallpaper_url() -> String {
@@ -245,6 +290,63 @@ pub const GUIWATCH_ARG: &str = "gui-watch";
 pub const WALLPAPER_URL_KEY: &str = r"SOFTWARE\MiOS";
 pub const WALLPAPER_URL_VALUE: &str = "WallpaperUrl";
 pub const WALLPAPER_URL_FALLBACK: &str = "file:///C:/Windows/Web/MiOS/living-wallpaper.html";
+/// Exit code of a Windows host that cannot run (the reason is in [`host_log_path`]); a Rust panic exits 101.
+pub const HOST_EXIT_FAILED: i32 = 3;
+
+/// The Windows host's WebView2 user data folder: `<LocalAppData>\MiOS\wallpaperd\WebView2`, per user and writable
+/// by the signed-in desktop user. None without a LocalAppData path -- never the exe directory under Program Files.
+pub fn webview_data_dir(local_app_data: Option<&str>) -> Option<String> {
+    let base = local_app_data?.trim().trim_end_matches(['\\', '/']);
+    if base.is_empty() {
+        return None;
+    }
+    Some(format!("{base}\\MiOS\\wallpaperd\\WebView2"))
+}
+
+/// `host.log` beside the WebView2 data folder (`<LocalAppData>\MiOS\wallpaperd\host.log`).
+pub fn host_log_path(data_dir: &str) -> Option<String> {
+    let parent = data_dir.trim_end_matches(['\\', '/']).rsplit_once('\\')?.0;
+    (!parent.is_empty()).then(|| format!("{parent}\\host.log"))
+}
+
+/// Spacing of host respawns by the session-0 service. A host that dies within [`RespawnBackoff::FAST_EXIT`] of its
+/// start doubles the wait ([`RespawnBackoff::MIN`] .. [`RespawnBackoff::MAX`]); one that ran longer resets it.
+/// Without it a host that cannot start was relaunched every 3 s for ever (round-1 boot: ~1 200 crashes an hour).
+#[derive(Debug, Default)]
+pub struct RespawnBackoff {
+    started: Option<std::time::Instant>,
+    not_before: Option<std::time::Instant>,
+    delay: std::time::Duration,
+}
+
+impl RespawnBackoff {
+    pub const FAST_EXIT: std::time::Duration = std::time::Duration::from_secs(30);
+    pub const MIN: std::time::Duration = std::time::Duration::from_secs(3);
+    pub const MAX: std::time::Duration = std::time::Duration::from_secs(300);
+
+    /// The host was started at `now`.
+    pub fn spawned(&mut self, now: std::time::Instant) {
+        self.started = Some(now);
+    }
+    /// The host was found dead at `now`.
+    pub fn exited(&mut self, now: std::time::Instant) {
+        let lived = self.started.take().map(|s| now.saturating_duration_since(s));
+        self.delay = match lived {
+            Some(l) if l >= Self::FAST_EXIT => std::time::Duration::ZERO,
+            _ if self.delay.is_zero() => Self::MIN,
+            _ => (self.delay * 2).min(Self::MAX),
+        };
+        self.not_before = Some(now + self.delay);
+    }
+    /// True when a (re)spawn is allowed at `now`.
+    pub fn may_spawn(&self, now: std::time::Instant) -> bool {
+        self.not_before.is_none_or(|t| now >= t)
+    }
+    /// The current wait after a death (zero after a long-lived host).
+    pub fn delay(&self) -> std::time::Duration {
+        self.delay
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WallpaperConfig {
@@ -302,7 +404,13 @@ fn file_url(path: &str) -> String {
 }
 
 fn wallpaper_url(data: &toml::Value, windows: bool) -> Result<String, String> {
-    let config = &data["theme"]["wallpaper"];
+    // get(), never data["theme"]: toml's Index panics on a missing key, and the MiOS-Xbox guest resolves an SSOT
+    // without [theme] (no layer files on the Windows side), so every host died "index not found" before it could
+    // fall back to the registry WallpaperUrl (round-1 debug guest, fixed host build).
+    let config = data
+        .get("theme")
+        .and_then(|t| t.get("wallpaper"))
+        .ok_or("[theme.wallpaper] is missing from the resolved SSOT")?;
     let path_key = if windows {
         "windows_html_path"
     } else {
@@ -403,7 +511,34 @@ fn motion_query(config: &toml::Value) -> Result<Vec<String>, String> {
     Ok(q)
 }
 
+/// The native host's live step rate ([desktop.framerate]; operator 2026-10-23: "wallpaper(s) are 1/2 rate globally--
+/// except for Unlocked mode(s)"): `ctl` = the state file miosd framerate writes under $XDG_RUNTIME_DIR, which Host.qml
+/// reads once a second (wallpaper_fps). The URL's fps stays the look's reference rate. Nothing when the policy is
+/// absent or disabled (the host then steps at the reference rate, as before) or for the web host (the HTML's own FPS).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn rate_query(data: &toml::Value, renderer_native: bool, runtime: &std::path::Path) -> Result<Option<String>, String> {
+    if !renderer_native {
+        return Ok(None);
+    }
+    let Some(policy) = mios_resolver::framerate::Policy::from_ssot(data)?.filter(|p| p.enabled) else {
+        return Ok(None);
+    };
+    let path = policy.state_path(runtime);
+    let path = path.to_str().ok_or("XDG_RUNTIME_DIR is not UTF-8")?;
+    let mut enc = String::new();
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"/._-".contains(&b) {
+            enc.push(b as char);
+        } else {
+            enc.push_str(&format!("%{b:02X}"));
+        }
+    }
+    Ok(Some(format!("ctl={enc}")))
+}
+
 /// Linux host for the configured renderer: "native" (GPU shaders, Host.qml) or "web" (QtWebEngine, WebHost.qml).
+/// Only linux_main calls it; the Windows build (build.native.windows lints warning-fatal) keeps it for the shared tests.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn linux_host(config: &toml::Value) -> Result<&str, String> {
     let key = match config.get("renderer").and_then(toml::Value::as_str) {
         Some("native") => "linux_host",
@@ -482,6 +617,11 @@ fn linux_main() -> Result<(), String> {
     if !Path::new(host).is_file() {
         return Err("Linux wallpaper host is not installed".into());
     }
+    let native = config.get("renderer").and_then(toml::Value::as_str) == Some("native");
+    let url = match rate_query(&data, native, runtime_path)? {
+        Some(q) => format!("{url}&{q}"),
+        None => url,
+    };
 
     println!("[mios-wallpaperd] Starting wallpaper supervisor daemon for {host}...");
     let mut backoff_secs = 2u64;
@@ -511,6 +651,8 @@ fn linux_main() -> Result<(), String> {
             .arg(&url)
             .env("QT_QPA_PLATFORM", "wayland")
             .env("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell")
+            // Host.qml reads the frame-rate state file through XMLHttpRequest (Qt refuses file:// reads without it)
+            .env("QML_XHR_ALLOW_FILE_READ", "1")
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
             .spawn()
@@ -606,6 +748,23 @@ mod shared_wallpaper_tests {
         doc
     }
     #[test]
+    fn a_resolved_ssot_without_theme_is_an_error_not_a_panic() {
+        // negative: the MiOS-Xbox guest resolves an SSOT without [theme] (no Windows-side layer files); the old
+        // data["theme"]["wallpaper"] index panicked "index not found" in every host
+        let empty = toml::Value::Table(toml::map::Map::new());
+        for windows in [true, false] {
+            let r = std::panic::catch_unwind(|| wallpaper_url(&empty, windows));
+            assert!(r.expect("must not panic").unwrap_err().contains("[theme.wallpaper]"));
+        }
+        let mut no_wp: toml::Value = toml::from_str("[theme]\nname = \"x\"\n").unwrap();
+        assert!(wallpaper_url(&no_wp, true).is_err());
+        no_wp.as_table_mut().unwrap().remove("theme");
+        assert!(wallpaper_url(&no_wp, false).is_err());
+        // positive: the fixture SSOT still renders on both platforms
+        assert!(wallpaper_url(&fixture(), true).unwrap().starts_with("file:///"));
+        assert!(wallpaper_url(&fixture(), false).is_ok());
+    }
+    #[test]
     fn both_platforms_project_every_ansi_slot_and_share_query() {
         let doc = fixture();
         let linux = wallpaper_url(&doc, false).unwrap();
@@ -646,6 +805,77 @@ mod shared_wallpaper_tests {
         doc["theme"]["wallpaper"]["motion"]["emitters"] = toml::Value::Integer(32);
         assert!(wallpaper_url(&doc, false).unwrap_err().contains("emitters"));
     }
+    #[test]
+    fn native_host_gets_the_live_rate_file_and_the_web_host_does_not() {
+        let mut doc = fixture();
+        let rt = std::path::Path::new("/run/user/1000");
+        assert_eq!(rate_query(&doc, true, rt).unwrap(), None, "no [desktop.framerate]: the reference rate only");
+        let policy: toml::Value = toml::from_str(FRAMERATE).unwrap();
+        doc.as_table_mut().unwrap().insert("desktop".into(), policy["desktop"].clone());
+        assert_eq!(rate_query(&doc, true, rt).unwrap().as_deref(), Some("ctl=/run/user/1000/mios/framerate/state.json"));
+        assert_eq!(rate_query(&doc, false, rt).unwrap(), None, "the web host keeps the HTML's own rate");
+        assert_eq!(rate_query(&doc, true, std::path::Path::new("/run/user/1 000")).unwrap().as_deref(), Some("ctl=/run/user/1%20000/mios/framerate/state.json"));
+        doc["desktop"]["framerate"]["enabled"] = toml::Value::Boolean(false);
+        assert_eq!(rate_query(&doc, true, rt).unwrap(), None, "disabled: the reference rate only");
+        doc["desktop"]["framerate"]["enabled"] = toml::Value::String("yes".into());
+        assert!(rate_query(&doc, true, rt).is_err(), "a broken policy is an error, not a silent default");
+        // the shared query is unchanged: fps stays the reference rate on both platforms
+        let linux = wallpaper_url(&doc, false).unwrap();
+        assert!(linux.contains("fps=30") && !linux.contains("ctl="));
+    }
+
+    const FRAMERATE: &str = r#"
+[desktop.framerate]
+enabled = true
+unlocked = false
+debounce_ms = 750
+self_check_s = 60
+gaming_exit_hold_ms = 3000
+mechanism = "auto"
+modes = "advertised"
+revert_timeout_ms = 5000
+mode_confirm_s = 15
+modeset_hold_ms = 5000
+modeset_min_interval_s = 30
+exclude_prefixes = ["HEADLESS-"]
+pacing_plugin = "mios-pacing"
+state_file = "mios/framerate/state.json"
+user_fragment = "50-framerate.toml"
+[desktop.framerate.profiles]
+power-saver = "power-saver"
+balanced = "balanced"
+performance = "performance"
+unknown = "balanced"
+[desktop.framerate.gaming]
+gamemode = true
+fullscreen_game = false
+game_class = '^steam_app_[0-9]+$'
+[desktop.framerate.tiers.unlocked]
+desktop_hz = 0
+glass_divisor = 2
+wallpaper_divisor = 1
+[desktop.framerate.tiers.gaming]
+desktop_hz = 120
+glass_divisor = 2
+wallpaper_divisor = 2
+[desktop.framerate.tiers.battery]
+desktop_hz = 60
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.performance]
+desktop_hz = 90
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.balanced]
+desktop_hz = 60
+glass_divisor = 3
+wallpaper_divisor = 2
+[desktop.framerate.tiers.power-saver]
+desktop_hz = 60
+glass_divisor = 3
+wallpaper_divisor = 2
+"#;
+
     #[test]
     fn renderer_selects_the_native_or_web_host() {
         let mut doc = fixture();
@@ -717,12 +947,14 @@ mod service {
         };
         let _ = status_handle.set_service_status(running.clone());
 
-        // Supervise a host child in the active user session until asked to stop.
+        // Supervise a host child in the active user session until asked to stop (a host that keeps dying is
+        // respawned with a growing delay, never every 3 s for ever).
+        let mut backoff = super::RespawnBackoff::default();
         loop {
             if shutdown_rx.recv_timeout(Duration::from_secs(3)).is_ok() {
                 break;
             }
-            super::session::ensure_host_running();
+            super::session::ensure_host_running(&mut backoff);
         }
 
         super::session::kill_host();
@@ -739,21 +971,31 @@ mod service {
 mod session {
     use std::sync::atomic::{AtomicU32, Ordering};
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
     use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
     use windows::Win32::System::Threading::{
-        CreateProcessAsUserW, OpenProcess, TerminateProcess, PROCESS_INFORMATION,
-        PROCESS_TERMINATE, STARTUPINFOW,
+        CreateProcessAsUserW, OpenProcess, TerminateProcess, CREATE_UNICODE_ENVIRONMENT,
+        PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, PROCESS_TERMINATE, STARTUPINFOW,
     };
 
     static HOST_PID: AtomicU32 = AtomicU32::new(0);
 
-    pub fn ensure_host_running() {
+    pub fn ensure_host_running(backoff: &mut super::RespawnBackoff) {
+        let now = std::time::Instant::now();
         let pid = HOST_PID.load(Ordering::SeqCst);
-        if pid != 0 && super::util::process_alive(pid) {
+        if pid != 0 {
+            if super::util::process_alive(pid) {
+                return;
+            }
+            HOST_PID.store(0, Ordering::SeqCst);
+            backoff.exited(now);
+        }
+        if !backoff.may_spawn(now) {
             return;
         }
         if let Some(new_pid) = spawn_host_in_session() {
             HOST_PID.store(new_pid, Ordering::SeqCst);
+            backoff.spawned(now);
         }
     }
 
@@ -786,10 +1028,18 @@ mod session {
                 super::util::current_exe_string(),
                 super::HOST_ARG
             ));
+            // The interactive desktop of the user's session (a NULL lpDesktop inherits the session-0 service's
+            // window station) and the USER's environment block (else the host inherits SYSTEM's, e.g. its
+            // %LOCALAPPDATA% and %TEMP%).
+            let mut desktop = super::util::wide("winsta0\\default");
             let si = STARTUPINFOW {
                 cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+                lpDesktop: windows::core::PWSTR(desktop.as_mut_ptr()),
                 ..Default::default()
             };
+            let mut env: *mut core::ffi::c_void = std::ptr::null_mut();
+            let have_env = CreateEnvironmentBlock(&mut env, token, false).is_ok() && !env.is_null();
+            let flags = if have_env { CREATE_UNICODE_ENVIRONMENT } else { PROCESS_CREATION_FLAGS(0) };
             let mut pi = PROCESS_INFORMATION::default();
             let ok = CreateProcessAsUserW(
                 token,
@@ -798,12 +1048,15 @@ mod session {
                 None,
                 None,
                 false,
-                Default::default(),
-                None,
+                flags,
+                if have_env { Some(env as *const core::ffi::c_void) } else { None },
                 None,
                 &si,
                 &mut pi,
             );
+            if have_env {
+                let _ = DestroyEnvironmentBlock(env);
+            }
             let _ = CloseHandle(token);
             if ok.is_err() {
                 return None;
@@ -888,5 +1141,62 @@ mod tests {
     fn test_util_wide() {
         let w = util::wide("hello");
         assert_eq!(w, vec![104, 101, 108, 108, 111, 0]);
+    }
+
+    #[test]
+    fn webview_data_dir_is_per_user_never_the_exe_dir() {
+        // positive: the signed-in user's LocalAppData (round-1 guest), with or without a trailing separator
+        let d = webview_data_dir(Some(r"C:\Users\user\AppData\Local")).unwrap();
+        assert_eq!(d, r"C:\Users\user\AppData\Local\MiOS\wallpaperd\WebView2");
+        assert_eq!(webview_data_dir(Some("C:\\Users\\user\\AppData\\Local\\")).unwrap(), d);
+        assert_eq!(host_log_path(&d).unwrap(), r"C:\Users\user\AppData\Local\MiOS\wallpaperd\host.log");
+        // negative: no known folder -> no data dir (the host then fails with a record), never a Program Files
+        // default; the WebView2 default the round-1 host used was <exe dir>\mios-wallpaperd.exe.WebView2
+        assert_eq!(webview_data_dir(None), None);
+        assert_eq!(webview_data_dir(Some("  ")), None);
+        assert!(!d.to_ascii_lowercase().contains("program files"));
+        assert_eq!(host_log_path("WebView2"), None);
+    }
+
+    #[test]
+    fn respawn_backoff_spaces_a_crash_loop_and_resets_after_a_good_run() {
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let mut b = RespawnBackoff::default();
+        assert!(b.may_spawn(t0), "the first host starts at once");
+        // the round-1 host died 0.3 s after each start: the waits double 3 s .. 300 s
+        let mut t = t0;
+        let mut waits = Vec::new();
+        for _ in 0..10 {
+            b.spawned(t);
+            t += Duration::from_millis(300);
+            b.exited(t);
+            assert!(!b.may_spawn(t), "no respawn straight after a fast death");
+            waits.push(b.delay().as_secs());
+            t += b.delay();
+            assert!(b.may_spawn(t));
+        }
+        assert_eq!(waits, vec![3, 6, 12, 24, 48, 96, 192, 300, 300, 300]);
+        // negative control: the old supervisor respawned every 3 s -> 1200 starts an hour; the backoff allows 18
+        let mut starts = 0;
+        let mut b = RespawnBackoff::default();
+        let mut t = t0;
+        while t < t0 + Duration::from_secs(3600) {
+            if b.may_spawn(t) {
+                starts += 1;
+                b.spawned(t);
+                b.exited(t + Duration::from_millis(300));
+            }
+            t += Duration::from_secs(3);
+        }
+        assert!(starts <= 20, "{starts} starts in an hour");
+        // a host that ran past FAST_EXIT (a session ending, an update) is restarted without delay
+        let mut b = RespawnBackoff::default();
+        b.spawned(t0);
+        b.exited(t0 + Duration::from_millis(100));
+        b.spawned(t0 + Duration::from_secs(3));
+        b.exited(t0 + Duration::from_secs(3) + RespawnBackoff::FAST_EXIT);
+        assert_eq!(b.delay(), Duration::ZERO);
+        assert!(b.may_spawn(t0 + Duration::from_secs(3) + RespawnBackoff::FAST_EXIT));
     }
 }

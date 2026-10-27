@@ -1313,6 +1313,7 @@ version = "0.3.0"
 dependencies = [
  "chrono",
  "clap",
+ "flate2",
  "futures-util",
  "libc",
  "mios-build",
@@ -1323,6 +1324,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",

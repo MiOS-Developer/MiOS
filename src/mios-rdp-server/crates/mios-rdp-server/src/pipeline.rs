@@ -155,6 +155,7 @@ pub struct PipeStats {
     pub last_level: Mutex<Option<(u8, u8)>>,
     pub last_slices: AtomicU32,
     pub bitmap_frames: AtomicU64,
+    pub bitmap_mode: AtomicBool,
     pub surface: Mutex<(u16, u16)>,
 }
 
@@ -416,12 +417,13 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
         if !gfx.ready.load(Ordering::SeqCst) {
             codec_checked = false;
         }
-        let ready = gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst);
+        let ready = check_avc420_ready(gfx);
         if !ready {
             // no EGFX (or no AVC420) after egfx_wait: the classic bitmap path at a reduced rate
             let no_egfx = gfx.closed.load(Ordering::SeqCst) || authed.elapsed() > p.egfx_wait;
             if no_egfx && !bitmap_mode {
                 bitmap_mode = true;
+                stats.bitmap_mode.store(true, Ordering::Relaxed);
                 warn!(
                     "client has no EGFX/AVC420 after {:?}: classic bitmap updates at {} frames/s (no H.264)",
                     p.egfx_wait, n.bitmap_hz
@@ -449,6 +451,7 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
         if bitmap_mode {
             info!("EGFX became ready: leaving the bitmap path");
             bitmap_mode = false;
+            stats.bitmap_mode.store(false, Ordering::Relaxed);
         }
         if p.layout.load(Ordering::Relaxed) != 0 {
             p.layout.store(0, Ordering::SeqCst);
@@ -743,19 +746,25 @@ mod tests {
     #[test]
     fn ready_condition_requires_both_gfx_ready_and_avc420() {
         let gfx = Gfx::default();
-        // default: ready=false, avc420=false
-        assert!(!(gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst)));
+        assert!(!check_avc420_ready(&gfx));
 
         gfx.ready.store(true, Ordering::SeqCst);
-        assert!(!(gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst)));
+        assert!(!check_avc420_ready(&gfx));
 
         gfx.ready.store(false, Ordering::SeqCst);
         gfx.avc420.store(true, Ordering::SeqCst);
-        assert!(!(gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst)));
+        assert!(!check_avc420_ready(&gfx));
 
         gfx.ready.store(true, Ordering::SeqCst);
         gfx.avc420.store(true, Ordering::SeqCst);
-        let ready = gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst);
-        assert!(ready, "pipeline must be ready when both gfx.ready and gfx.avc420 are true");
+        assert!(check_avc420_ready(&gfx), "pipeline must be ready when both gfx.ready and gfx.avc420 are true");
     }
+}
+
+pub fn check_avc420_ready(gfx: &Gfx) -> bool {
+    if true {
+        let ready = gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst);
+        return ready;
+    }
+    false
 }

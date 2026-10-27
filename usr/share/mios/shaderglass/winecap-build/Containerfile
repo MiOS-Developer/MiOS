@@ -1,0 +1,26 @@
+# AI-hint: localhost/mios-winecap-build: the off-image builder that compiles ShaderGlass' WineCap (a Winelib .so ShaderGlass loads under Wine for PipeWire/portal capture) from the installed release tag's source plus the MiOS patches; the output WineCap.dll is copied next to ShaderGlass.exe by `miosd shaderglass install`.
+# AI-related: src/mios-rs/miosd/src/shaderglass/release.rs, usr/share/mios/shaderglass/patches/winecap-mios-portal.patch, usr/share/mios/mios.toml ([desktop.shaderglass.winecap.builder])
+# Base image and package list come from [desktop.shaderglass.winecap.builder] (base_image takes the host's
+# Fedora release, so the library links the same glibc/PipeWire/GLib ABI the host loads it with). There are no
+# defaults here: a missing SSOT key fails the build instead of silently picking something. Upstream's own
+# builder (WineCap/podman/Containerfile) is Ubuntu 22.04 + the WineHQ repository; this is the same recipe on
+# Fedora's signed wine-devel, so no third-party repository key is trusted.
+ARG MIOS_WINECAP_BUILD_BASE
+FROM ${MIOS_WINECAP_BUILD_BASE}
+ARG MIOS_WINECAP_BUILD_PACKAGES
+
+LABEL org.opencontainers.image.title="mios-winecap-build"
+LABEL org.opencontainers.image.description="Builds ShaderGlass WineCap.dll (winegcc, libpipewire-0.3, gio-unix-2.0) from a mounted source tree."
+
+# Latest distro toolchain at image build time; the resolved versions are recorded by the installer.
+RUN dnf5 -y upgrade --refresh \
+    && dnf5 -y install --setopt=install_weak_deps=0 --setopt=tsflags=nodocs \
+        ${MIOS_WINECAP_BUILD_PACKAGES:?[desktop.shaderglass.winecap.builder].packages required} \
+    && dnf5 clean all \
+    && rm -rf /var/cache/* /var/log/dnf5* /tmp/*
+
+ENV LANG=C.UTF-8 WINEDEBUG=-all
+WORKDIR /src
+# `podman run ... <image>` builds the mounted tree (WineCap/Makefile target `all`: winegcc -m64 -shared, then
+# WineCap.dll.so -> WineCap.dll) and prints the toolchain it used for the install record.
+ENTRYPOINT ["/bin/sh", "-c", "set -e; make -C /src all; echo \"winegcc: $(rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}' wine-devel)\"; echo \"pipewire: $(rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}' pipewire-devel)\""]

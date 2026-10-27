@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -I
 """G6 colour fidelity: colour bars on SCALETEST, grim (compositor truth) vs FreeRDP's decoded AVC420
 frame (Xvfb framebuffer). ΔE2000 per bar patch. usage: g6.py LABEL [color_matrix]"""
-import json, math, os, subprocess, sys, time
+import json, math, os, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import e2e  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -59,7 +59,7 @@ def patch(im, cx, cy, r=12):
 def main():
     label = sys.argv[1]
     matrix = sys.argv[2] if len(sys.argv) > 2 else "bt709-full"
-    d = os.path.join(e2e.HERE, "..", "t-g6")
+    d = os.environ.get("MIOS_RDP_LIVE_DIR") or tempfile.mkdtemp(prefix="mios-rdp-g6-")
     e2e.ensure_cert(d)
     e2e.write_config(d, native={"color_matrix": matrix, "frames_in_flight": 3})
     before = e2e.guards()

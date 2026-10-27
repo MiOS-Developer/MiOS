@@ -1,0 +1,15 @@
+# AI-hint: App-drawer entry for the ShaderGlass overlay: mios-shaderglass toggle attaches a ShaderGlass pane (Wine, RetroArch shaders, Hyprglass glass) to the active window, or removes it. No StartupWMClass: the pane must never be taken for this entry's window.
+# AI-related: /usr/bin/mios-shaderglass, src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass]
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ShaderGlass Overlay
+GenericName=Shader Overlay
+Comment=Shade the active window live with RetroArch shaders (a ShaderGlass pane pinned over it)
+Exec=/usr/bin/mios-shaderglass toggle
+Icon=video-display
+Categories=Utility;Graphics;
+Keywords=shader;crt;retro;overlay;shaderglass;filter;scanlines;mios;
+Terminal=false
+StartupNotify=false
+NoDisplay=false

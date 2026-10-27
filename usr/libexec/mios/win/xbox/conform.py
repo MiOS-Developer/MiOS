@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Offline MiOS-Xbox spec-conformance gate (xb-03/xb-16): checks the rendered Windows pipeline inputs (answer file incl. embedded base64 scripts, SetupComplete/first-logon payloads, .reg files, driver set, payload tree) and/or a serviced install.wim (wimlib-imagex info/dir/extract + hivexregedit on SOFTWARE/SYSTEM/Default NTUSER.DAT, driver store) against every xbox-spec.json item, plus a legacy-literal deny-list; exits non-zero with named findings.
+# AI-hint: Offline MiOS-Xbox spec-conformance gate (xb-03/xb-16): checks the rendered Windows pipeline inputs (answer file incl. embedded base64 scripts, SetupComplete/first-logon payloads, .reg files, driver set, payload tree) and/or a serviced install.wim (wimlib-imagex info/dir/extract + hivexregedit on SOFTWARE/SYSTEM/Default NTUSER.DAT, driver store) against every xbox-spec.json item, plus a legacy-literal deny-list; Remote Desktop Services policy writes must match the named TerminalServer.admx policy (Microsoft's table, and the image's own Windows\PolicyDefinitions\TerminalServer.admx in image mode), the AutoLogon account must not be made an Administrator when the spec keeps it standard, no script may install a GPU vendor display driver (PnPUtil/DISM/Add-WindowsDriver/DevCon), and gpu.post_setup runs the tree's Read-MiOSGpuSpec (pwsh) on the guest spec the image ships; a Windows\Setup\Scripts stage that silences a state-changing cmdlet (-ErrorAction SilentlyContinue) is a false-ok step (deny.false-ok-step); exits non-zero with named findings.
 # AI-related: usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/probe.py, tests/test-mios-xbox-conform.py, /.devloop/plan-mios-xbox.md
 # AI-functions: Observations, parse_reg_text, parse_script, parse_answer_file, collect_rendered, collect_image, evaluate, run_rendered, run_image, main
 """MiOS-Xbox offline conformance gate.
@@ -70,6 +70,12 @@ class Observations:
     computer_names: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (name, source)
     listing: Set[str] = dataclasses.field(default_factory=set)  # image-relative lower paths seen by wimlib dir
     answer_seen: bool = False
+    first_logon_commands: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (command line, source)
+    group_adds: List[Tuple[str, str, str]] = dataclasses.field(default_factory=list)  # (group, member, source) from scripts
+    # the image's own Windows\PolicyDefinitions\TerminalServer.admx: policy name -> {key, value, enabled, disabled}
+    admx: Optional[Dict[str, Dict[str, Any]]] = None
+    # package families staged offline under Program Files\WindowsApps (image mode; None = not listed)
+    provisioned_apps: Optional[Set[str]] = None
     findings: List[Finding] = dataclasses.field(default_factory=list)
 
     def add_reg(self, path: str, name: str, vtype: str, value: Any, source: str) -> None:
@@ -132,6 +138,27 @@ def parse_reg_text(text: str, source: str, obs: Observations) -> None:
             if mh:
                 t, v = _decode_hex(mh.group(1) or "3", mh.group(2))
                 obs.add_reg(key, name, t, v, src)
+
+
+def parse_admx(text: str) -> Dict[str, Dict[str, Any]]:
+    """Machine policies of an ADMX file: name -> {key, value (valueName), enabled, disabled} (decimal values)."""
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        root = ET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
+    except ET.ParseError as e:
+        raise ValueError(f"ADMX is not well-formed XML ({e})") from None
+    for pol in root.iter():
+        if _local(pol.tag) != "policy" or not pol.get("name"):
+            continue
+        ent: Dict[str, Any] = {"key": pol.get("key") or "", "value": pol.get("valueName") or "", "enabled": None, "disabled": None}
+        for child in pol:
+            tag = _local(child.tag)
+            if tag in ("enabledValue", "disabledValue"):
+                dec = next((d for d in child if _local(d.tag) == "decimal"), None)
+                if dec is not None and re.fullmatch(r"\d+", dec.get("value") or ""):
+                    ent["enabled" if tag == "enabledValue" else "disabled"] = int(dec.get("value"))
+        out[pol.get("name")] = ent
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +238,42 @@ _CRED_RES = [
     (re.compile(r"(?:(?:\(|\b(?:echo|write-output)\s+)?(\"[^\"]*\"|'[^']*'|[A-Za-z0-9!@#%^&*_~-]+)\s*\)?)\s*\|\s*ConvertTo-SecureString\b.*?-AsPlainText\b", re.I), "SecureString literal (piped)", 1),
     (re.compile(r"-(?:Password|PlainPassword)[\s:=]+(\"[^\"]*\"|'[^']*'|[A-Za-z0-9!@#%^&*_~-]+)", re.I), "-Password literal", 1),
 ]
+_NET_LG_RE = re.compile(r"\bnet(?:\.exe)?\s+localgroup\s+(\"[^\"]+\"|'[^']+'|\S+)\s+(\"[^\"]+\"|'[^']+'|\S+)\s+/add\b", re.I)
+_ADD_LGM_RE = re.compile(r"\bAdd-LocalGroupMember\b(.*)$", re.I)
+# well-known group SIDs a script may name instead of the (localized) group name
+_GROUP_SIDS = {"s-1-5-32-544": "administrators", "s-1-5-32-545": "users", "s-1-5-32-555": "remote desktop users"}
+
+
+def _group_adds(line: str) -> List[Tuple[str, str]]:
+    """(group, member) pairs a script line adds (net localgroup ... /add, Add-LocalGroupMember -Group|-Name|-SID
+    ... -Member ...); groups given by well-known SID are mapped to their English name. Variables are skipped."""
+    out: List[Tuple[str, str]] = []
+    for m in _NET_LG_RE.finditer(line):
+        out.append((m.group(1).strip("'\"").lower(), m.group(2).strip("'\"").lower()))
+    m = _ADD_LGM_RE.search(line)
+    if m:
+        toks = _tokens(m.group(1))
+        args: Dict[str, str] = {}
+        for i, t in enumerate(toks):
+            if t.startswith("-") and i + 1 < len(toks) and not toks[i + 1].startswith("-"):
+                args[t.lstrip("-").lower()] = toks[i + 1].strip("'\"")
+        g = args.get("group") or args.get("name") or args.get("sid")
+        mem = args.get("member")
+        if g and mem and not g.startswith("$") and not mem.startswith("$"):
+            for one in re.split(r"\s*,\s*", mem):
+                out.append((g.lower(), one.lower()))
+    return [(_GROUP_SIDS.get(g, g), mem) for g, mem in out]
+
+
+# A SetupComplete-stage step records "ok" unless its body throws, so a state-changing cmdlet told to SilentlyContinue
+# turns its failure into a false ok (baseline N-e / R3-8: sshd_service and mios_daemons reported ok while nothing was
+# registered). Matched per pipeline segment: probes (Get-*) and cleanups (Remove-*) may stay silent.
+_STATE_CMDLETS = (r"(?:Set-Service|Start-Service|Restart-Service|New-Service|Enable-NetFirewallRule|Set-NetFirewallRule"
+                  r"|New-NetFirewallRule|Register-ScheduledTask|Start-ScheduledTask|Add-WindowsCapability"
+                  r"|Enable-WindowsOptionalFeature|Add-LocalGroupMember|Disable-LocalUser|Set-NetConnectionProfile"
+                  r"|Set-ItemProperty|New-ItemProperty)")
+_FALSE_OK_RE = re.compile(r"(?:^|[|;{(]|\btry\b)\s*&?\s*" + _STATE_CMDLETS
+                          + r"\b[^|;{}\r\n]*?-(?:ErrorAction|EA)\s*:?\s*(?:SilentlyContinue|Ignore|0)\b", re.I)
 _CAP_RE = re.compile(r"(?:Add-WindowsCapability\b.*?-Name\s+|/add-capability\b.*?/capabilityname:)(\"[^\"]+\"|'[^']+'|[\w.~\-]+)", re.I)
 _RID500_RE = re.compile(r"(net(?:\.exe)?\s+user\s+\S+\s+/active:no|Disable-LocalUser\b|-500['\"\s]?\)?\s*\|\s*Disable-LocalUser)", re.I)
 
@@ -307,8 +370,15 @@ def _ps_prop(args: str, obs: Observations, source: str) -> None:
     obs.add_reg(path, name, vt, S.canon_value(vt, val), source)
 
 
+def _is_stage_script(source: str) -> bool:
+    """A PowerShell provisioning stage Windows Setup runs from Windows\\Setup\\Scripts (the SYSTEM SetupComplete stage)."""
+    p = source.split("#", 1)[0].replace("\\", "/").lower()
+    return "windows/setup/scripts/" in p and p.endswith(".ps1")
+
+
 def parse_script(text: str, source: str, obs: Observations) -> None:
     obs.script_text.append((source, text))
+    stage_script = _is_stage_script(source)
     raw_lines = text.replace("\r\n", "\n").split("\n")
     joined_lines = []
     buffer = ""
@@ -387,8 +457,16 @@ def parse_script(text: str, source: str, obs: Observations) -> None:
                 if c_val and not c_val.startswith("$"):
                     _cred(obs, c_val, "SecureString literal", src)
         for fid, ln in S.text_deny_hits(line):
-            msg = "GPU vendor display driver INF referenced in script" if fid == "deny.pnputil-nvidia-inf" else "legacy literal in a pipeline input"
+            msg = {"deny.pnputil-nvidia-inf": "GPU vendor display driver INF referenced in script",
+                   "deny.gpu-driver-script": "a script installs a GPU vendor display driver (DISM /Add-Driver, Add-WindowsDriver, "
+                                             "PnPUtil or DevCon with an NVIDIA/AMD/Intel display INF or vendor driver directory)"
+                   }.get(fid, "legacy literal in a pipeline input")
             obs.findings.append(Finding(fid, msg, src))
+        for g, m in _group_adds(line):
+            obs.group_adds.append((g, m, src))
+        if stage_script and _FALSE_OK_RE.search(line):
+            obs.findings.append(Finding("deny.false-ok-step", "a SetupComplete step silences a state-changing cmdlet "
+                                        "(-ErrorAction SilentlyContinue/Ignore): its failure is recorded as ok", src))
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +533,9 @@ def parse_answer_file(path: str, source: str, obs: Observations) -> None:
                 parse_script(dec, f"{source}#{tag}(base64)", obs)
     for cn in root.iter(f"{{{UNS}}}ComputerName"):
         obs.computer_names.append(((cn.text or "").strip(), f"{source}#ComputerName"))
+    for flc in root.iter(f"{{{UNS}}}FirstLogonCommands"):   # run as the first account to log on (fix-a M1)
+        for cl in flc.iter(f"{{{UNS}}}CommandLine"):
+            obs.first_logon_commands.append(((cl.text or "").strip(), f"{source}#FirstLogonCommands"))
     for comp in root.iter(f"{{{UNS}}}component"):
         for ua in comp.iter(f"{{{UNS}}}UserAccounts"):
             ap = ua.find(f"{{{UNS}}}AdministratorPassword")
@@ -530,6 +611,8 @@ def ingest_file(p: str, rel: str, obs: Observations) -> None:
         parse_script(_read_text(p), rel, obs)
     elif low.endswith(".xml") and "/tasks/" in "/" + rel_l:
         obs.tasks.add(os.path.basename(rel_l))
+    elif os.path.basename(low) == "terminalserver.admx":
+        obs.admx = parse_admx(_read_text(p))
     elif low.endswith(".json") and os.path.basename(low) == "build-manifest.json":
         try:
             man = json.loads(_read_text(p))
@@ -591,6 +674,25 @@ def wim_info(wim: str, index: int) -> Dict[str, str]:
     return info
 
 
+WINDOWSAPPS = "/Program Files/WindowsApps"
+# <Name>_<Version>_<Arch>_<ResourceId>_<PublisherId>: a package folder DISM stages for a provisioned app
+_PKG_DIR_RE = re.compile(r"([A-Za-z0-9][A-Za-z0-9.\-]*)_[^_/]+_[^_/]*_[^_/]*_([a-z0-9]{13})", re.I)
+
+
+def windowsapps_families(listing: Iterable[str]) -> Set[str]:
+    """Package family names (lower case) of the package folders in a wimlib listing of Program Files/WindowsApps."""
+    fams: Set[str] = set()
+    for ent in listing:
+        rel = ent.replace("\\", "/")
+        if rel.lower().startswith(WINDOWSAPPS.lower()):
+            rel = rel[len(WINDOWSAPPS):]
+        top = rel.strip("/").split("/", 1)[0]
+        m = _PKG_DIR_RE.fullmatch(top)
+        if m:
+            fams.add(f"{m.group(1)}_{m.group(2)}".lower())
+    return fams
+
+
 def wim_dir(wim: str, index: int, path: str) -> List[str]:
     r = _run(["wimlib-imagex", "dir", wim, str(index), f"--path={path}"], check=False)
     if r.returncode != 0:
@@ -614,10 +716,15 @@ _CBS_FEATURES = "Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\
 _CURRENT_VERSION = "Microsoft\\Windows NT\\CurrentVersion"
 _DENY_KEYS = {  # keys read for the deny-list beyond the spec's own (the whole Default user hive is exported)
     "software": ["Policies\\Microsoft\\Windows\\Explorer"],
-    "system": [],
+    "system": ["Setup"],   # Windows Setup's first-boot CmdLine: a SetupComplete/cmd hook there is denied (fix-a 6)
 }
+# a Setup\CmdLine that replaces Windows Setup's own first-boot command (oobe\windeploy.exe) with a script hook
+_SETUP_HOOK_RE = re.compile(r"setupcomplete|\bcmd(?:\.exe)?\s+/[ck]\b", re.I)
+_SCRIPT_REF_RE = re.compile(r"[\w.\-]+\.(?:ps1|cmd|bat|vbs)\b", re.I)
 # Windows-defined places the pipeline stages payloads; the spec adds components.dest_dir.
 _STAGING_ROOTS = ["/Windows/Setup/Scripts", "/ProgramData/MiOS"]
+# the image's Remote Desktop Services administrative template (policy name -> registry value name)
+_TS_ADMX = "/Windows/PolicyDefinitions/TerminalServer.admx"
 
 # One perl process per hive reads single keys (non-recursive) with Win::Hivex and prints .reg text
 # (hex(T) values), so a 100 MB SOFTWARE hive is opened once and never exported whole.
@@ -710,15 +817,22 @@ def collect_image(wim: str, index: int, items: List[Dict[str, Any]], workdir: st
         for ent in wim_dir(wim, index, r):
             obs.listing.add(ent.lstrip("/").lower())
     want_files = [("/" + it["path"].lstrip("/")) for it in items if it["kind"] in ("component", "file_hash")]
+    want_files += ["/" + it["proof"].replace("\\", "/").lstrip("/") for it in items if it["kind"] == "capability" and it.get("proof")]
     want_files += [f"/Windows/System32/Tasks/{it['task'].replace(chr(92), '/')}" for it in items
                    if it["kind"] == "component" and it.get("task")]
     for it in items:
         if it["kind"] == "build_family":
             want_files.append("/" + it.get("start2_target", S.START2_TARGET))
+    want_files += ["/" + it["spec_path"].lstrip("/") for it in items if it["kind"] == "gpu_step" and it.get("spec_path")]
+    if any(it["kind"] == "reg" and it.get("policy") for it in items):
+        want_files.append(_TS_ADMX)   # RDS policy names are checked against the image's own ADMX (F5)
     wim_extract(wim, index, [v[0] for v in HIVE_FILES.values()] + [
         "/Windows/Setup/Scripts/*", "/Windows/System32/DriverStore/FileRepository/*/*.inf",
         "/Windows/Panther/unattend.xml", "/Windows/System32/Sysprep/unattend.xml",
     ] + want_files, ex)
+    admx = os.path.join(ex, _TS_ADMX.lstrip("/"))
+    if os.path.isfile(admx):
+        obs.admx = parse_admx(_read_text(admx))
     want: Dict[str, Set[str]] = {"software": set(_DENY_KEYS["software"]) | {_CURRENT_VERSION}, "system": set(_DENY_KEYS["system"])}
     for it in items:
         if it["kind"] == "reg" and it["scope"] in want:
@@ -746,6 +860,8 @@ def collect_image(wim: str, index: int, items: List[Dict[str, Any]], workdir: st
                 obs.branch = str(o.value)
             elif o.name == "currentbuild" and not obs.build:
                 obs.build = str(o.value)
+    if any(it["kind"] == "appx" and it.get("inbox") for it in items):
+        obs.provisioned_apps = windowsapps_families(wim_dir(wim, index, WINDOWSAPPS))
     repo = "/Windows/System32/DriverStore/FileRepository"
     for ent in wim_dir(wim, index, repo):
         rel = ent[len(repo):].strip("/")
@@ -807,6 +923,101 @@ def _mentioned(obs: Observations, name: str) -> bool:
     return any(rx.search(t.lower()) for _, t in obs.script_text)
 
 
+def _user_context(src: str, obs: Observations) -> bool:
+    """A script source that runs as the logged-on user: an answer-file CommandLine (FirstLogonCommands /
+    LogonCommands) or a file a FirstLogonCommand names."""
+    if src.endswith("#CommandLine"):
+        return True
+    refs = {m.group(0).lower() for cl, _ in obs.first_logon_commands for m in _SCRIPT_REF_RE.finditer(cl)}
+    return os.path.basename(src.split("#", 1)[0].replace("\\", "/")).lower() in refs
+
+
+GPU_STEP_TIMEOUT = 120
+# Read-MiOSGpuSpec of the tree's GPU step on the shipped guest spec; prints one JSON line. Paths are passed as
+# PowerShell single-quoted literals (no expansion); the shipped spec is data only (ConvertFrom-Json).
+_GPU_READ_PS = r"""$ErrorActionPreference = 'Stop'
+try {{
+  . {script} -LibraryOnly
+  $r = Read-MiOSGpuSpec {spec}
+  $ids = @($r.Gpu.vendors.PSObject.Properties | ForEach-Object {{ [string]$_.Value.vendor_id }})
+  [pscustomobject]@{{ mode = [string]$r.Mode; task = [string]$r.Gpu.task_name; record = [string]$r.Gpu.record_path;
+    vendor_ids = $ids }} | ConvertTo-Json -Compress
+}} catch {{ [Console]::Error.WriteLine('ERROR: ' + $_.Exception.Message); exit 3 }}
+"""
+
+
+def _ps_literal(s: str) -> str:
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def _gpu_spec_findings(it: Dict[str, Any], obs: Observations, tree: Optional[str] = None) -> List[Finding]:
+    """gpu.post_setup offline (item 8): the GPU detection step must be able to read the guest spec the image SHIPS
+    (the R3/M1 defect: 'SSOT table windows.xbox.gpu missing'). Runs the TREE's mios-gpu-driver.ps1 (never code taken
+    from the image; gpu.script proves the shipped copy is byte-identical) with -LibraryOnly under pwsh and compares
+    Read-MiOSGpuSpec's mode / task / record / vendor ids with the spec."""
+    spec = _find_file(obs, it["spec_path"])
+    if not spec:
+        return [Finding("missing:gpu.post_setup", f"the guest spec {it['spec_path']} the GPU step reads is not shipped")]
+    script = os.path.join(tree or _default_root(), it["script"])
+    if not os.path.isfile(script):
+        return [Finding("missing:gpu.post_setup", f"the tree has no GPU step {it['script']} (windows.xbox.drivers.gpu_step)")]
+    pwsh = os.environ.get("MIOS_PWSH") or shutil.which("pwsh")
+    if not pwsh:
+        raise ToolError("pwsh is required to run Read-MiOSGpuSpec on the shipped guest spec (gpu.post_setup)")
+    cmd = _GPU_READ_PS.format(script=_ps_literal(script), spec=_ps_literal(spec))
+    try:
+        r = subprocess.run([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True,
+                           text=True, timeout=GPU_STEP_TIMEOUT, env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"})
+    except subprocess.TimeoutExpired:
+        raise ToolError("pwsh Read-MiOSGpuSpec timed out")
+    if r.returncode != 0:
+        why = ((r.stderr or r.stdout).strip().splitlines() or ["no output"])[-1][:300]
+        return [Finding("off-spec:gpu.post_setup", f"Read-MiOSGpuSpec fails on the shipped guest spec: {why}", it["spec_path"])]
+    try:
+        got = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+    except ValueError:
+        got = None
+    if not isinstance(got, dict):
+        return [Finding("off-spec:gpu.post_setup", "Read-MiOSGpuSpec returned no JSON object", it["spec_path"])]
+    out: List[Finding] = []
+    for k, want in (("mode", it.get("mode")), ("task", it.get("task")), ("record", it.get("record"))):
+        if want and str(got.get(k, "")).lower() != str(want).lower():
+            out.append(Finding("off-spec:gpu.post_setup", f"the shipped guest spec gives the GPU step {k} {got.get(k)!r}, spec {want!r}",
+                               it["spec_path"]))
+    raw = got.get("vendor_ids")   # ConvertTo-Json renders a one-element array as a scalar
+    ids = sorted({str(v).upper() for v in (raw if isinstance(raw, list) else [raw]) if v})
+    if it.get("vendor_ids") and ids != sorted(it["vendor_ids"]):
+        out.append(Finding("off-spec:gpu.post_setup", f"the shipped guest spec gives vendor ids {ids}, spec {sorted(it['vendor_ids'])}",
+                           it["spec_path"]))
+    return out
+
+
+def _ts_policy_findings(it: Dict[str, Any], obs: Observations, mode: str) -> List[Finding]:
+    """A Remote Desktop Services policy item: Microsoft's policy table (all modes) and, in image mode, the image's own
+    TerminalServer.admx must define the named policy with this value name and value (F5: camera = fDisableCameraRedir,
+    location = fDisableLocationRedir)."""
+    out: List[Finding] = []
+    why = S.ts_policy_problem(it.get("policy"), it["name"], it["value"])
+    if why:
+        out.append(Finding(f"off-spec:{it['id']}.policy", why, "xbox-spec"))
+    if mode != "image" or not it.get("policy"):
+        return out
+    if obs.admx is None:
+        out.append(Finding("missing:policy-definitions", f"{_TS_ADMX} is not in the image: the RDS policy names cannot be verified"))
+        return out
+    pol = obs.admx.get(str(it["policy"]))
+    if pol is None:
+        out.append(Finding(f"off-spec:{it['id']}.policy", f"the image's TerminalServer.admx defines no policy {it['policy']}", _TS_ADMX))
+    elif pol["value"].lower() != it["name"].lower() or S.canon_item_path("software", re.sub(r"(?i)^software\\", "", pol["key"])) != \
+            S.canon_item_path("software", it["path"]):
+        out.append(Finding(f"off-spec:{it['id']}.policy", f"the image's TerminalServer.admx policy {it['policy']} writes "
+                           f"{pol['key']}\\{pol['value']}, not {it['path']}\\{it['name']}", _TS_ADMX))
+    elif S.canon_value("dword", it["value"]) not in (pol["enabled"], pol["disabled"]):
+        out.append(Finding(f"off-spec:{it['id']}.policy", f"{it['name']}={it['value']!r} is neither the Enabled ({pol['enabled']}) nor "
+                           f"the Disabled ({pol['disabled']}) value of {it['policy']}", _TS_ADMX))
+    return out
+
+
 def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
              policy: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], List[Finding]]:
     gpu_re = (policy or {}).get("gpu_provider_re", S.GPU_PROVIDER_RE)
@@ -832,10 +1043,16 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
             else:
                 if not seen:
                     findings.append(Finding(f"missing:{it['id']}", f"{it['name']} under {it['path']} is never set"))
+                svc = re.fullmatch(r"currentcontrolset\\services\\([^\\]+)", key[1])
+                if mode == "image" and seen and svc and not it["id"].startswith("debloat.") and not by_key.get(("system", key[1], "imagepath")):
+                    findings.append(Finding(f"off-spec:{it['id']}.orphan-service", f"Services\\{svc.group(1)} carries {it['name']} but "
+                                            "no ImagePath: the service is not registered in the image (orphan key)", seen[0].source))
                 for o in seen:
                     if not S.value_equal(it, o.vtype, o.value):
                         want = it["value"] if not it.get("kv_field") else f"{it['kv_field']}={it['value']}"
                         findings.append(Finding(f"off-spec:{it['id']}", f"{it['name']}={S.canon_value(o.vtype, o.value)!r}, spec {want!r}", o.source))
+            if it.get("policy") or S.is_ts_policy_key(it["scope"], it["path"]):
+                findings.extend(_ts_policy_findings(it, obs, mode))
         elif k == "feature":
             if it["state"] == "conditional":
                 res(it, "skipped", "conditional on nested virtualization; verified in-guest"); continue
@@ -846,9 +1063,13 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
                 if s != it["state"]:
                     findings.append(Finding(f"off-spec:{it['id']}", f"optional feature {it['name']} {s}, spec {it['state']}", src))
         elif k == "capability":
-            if mode == "image" and not obs.script_text:
+            if mode == "image" and it.get("proof"):
+                # baked offline (F4): the capability's own file must be IN the image, not merely named by a script
+                if not _find_file(obs, it["proof"].replace("\\", "/")):
+                    findings.append(Finding(f"missing:{it['id']}.offline", f"capability {it['name']} is not baked: {it['proof']} not in the image"))
+            elif mode == "image" and not obs.script_text:
                 res(it, "skipped", "capabilities are verified in-guest"); continue
-            if not any(c.startswith(it["name"].lower()) for c in obs.capabilities):
+            if not any(c.startswith(it["name"].lower()) for c in obs.capabilities) and not (mode == "image" and it.get("proof")):
                 findings.append(Finding(f"missing:{it['id']}", f"capability {it['name']} is never added"))
         elif k == "driver":
             if it["inf"].lower() not in obs.driver_bases:
@@ -906,6 +1127,21 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
                     findings.append(Finding("users.empty-credential", f"{it['id']} has an empty password", u["source"]))
                 elif u["sha256"] != want:
                     findings.append(Finding(f"users.password:{it['id']}", "answer-file password does not equal the SSOT value", u["source"]))
+            spec_groups = {str(g).lower() for g in it.get("groups") or []}
+            for u in la:   # the answer file's LocalAccount <Group> must be one of the spec's groups for that account
+                ga = {g.strip().lower() for g in re.split(r"[;,]", str(u.get("group") or "")) if g.strip()}
+                if spec_groups and ga - spec_groups:
+                    findings.append(Finding(f"off-spec:users.group:{it['id']}", f"answer-file group(s) {', '.join(sorted(ga - spec_groups))} "
+                                            f"not in the spec groups of {it['id']}", u["source"]))
+            if it.get("autologon") and spec_groups and "administrators" not in spec_groups:
+                # F2: the AutoLogon account is a STANDARD user; an Administrators membership from the answer file or
+                # any setup script (net localgroup / Add-LocalGroupMember, by name or S-1-5-32-544) is a finding
+                srcs = [u["source"] for u in la if "administrators" in
+                        {g.strip().lower() for g in re.split(r"[;,]", str(u.get("group") or ""))}]
+                srcs += [src for g, mem, src in obs.group_adds if g == "administrators" and mem.split("\\")[-1] == it["name"].lower()]
+                for src in srcs:
+                    findings.append(Finding("users.autologon-admin", f"the AutoLogon account {it['id']} is made an Administrator; "
+                                            "the spec keeps it a standard user (operator decision F2)", src))
             if it.get("autologon"):
                 if not obs.autologon or not obs.autologon["enabled"]:
                     findings.append(Finding("users.autologon", f"no enabled AutoLogon for {it['id']}"))
@@ -917,8 +1153,12 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
                     if it.get("persistent") and not al["persistent"]:
                         findings.append(Finding("users.autologon-persistent", "AutoLogon has a finite LogonCount", al["source"]))
         elif k == "rid500":
-            if not any(_RID500_RE.search(t) for _, t in obs.script_text):
+            hits = [src for src, t in obs.script_text if _RID500_RE.search(t)]
+            if not hits:
                 findings.append(Finding(f"missing:{it['id']}", "no setup step disables the built-in Administrator (RID 500)"))
+            elif all(_user_context(src, obs) for src in hits):
+                findings.append(Finding(f"users.rid500-not-system", "RID 500 is disabled only by a FirstLogonCommand (runs as the "
+                                        "logged-on user; a standard user under UAC needs admin consent): it must be a SYSTEM step", hits[0]))
         elif k == "computer_name":
             if not obs.answer_seen:
                 res(it, "skipped", "no answer file in these inputs"); continue
@@ -927,14 +1167,42 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
             for name, src in obs.computer_names:
                 if name.lower() != str(it["value"]).lower():
                     findings.append(Finding(f"off-spec:{it['id']}", f"ComputerName {name!r}, spec {it['value']!r}", src))
-        elif k in ("appx", "gpu_step"):
-            res(it, "skipped", "verified in-guest by probe.py"); continue
+        elif k == "gpu_step":
+            if not it.get("spec_path"):
+                res(it, "skipped", "verified in-guest by probe.py"); continue
+            findings.extend(_gpu_spec_findings(it, obs))
+        elif k == "appx":
+            if not (it.get("inbox") and mode == "image"):
+                res(it, "skipped", "verified in-guest by probe.py" if not it.get("inbox") else
+                    "integrated offline: verified by the image gate and probe.py"); continue
+            if obs.provisioned_apps is None or not obs.provisioned_apps:
+                findings.append(Finding(f"missing:{it['id']}", f"no provisioned app under {WINDOWSAPPS} in the image"))
+            elif str(it["pfn"]).lower() not in obs.provisioned_apps:
+                findings.append(Finding(f"missing:{it['id']}", f"inbox app {it['pfn']} is not provisioned in the image"))
         new = findings[before:]
         res(it, "fail" if new else "pass", "; ".join(f.id for f in new))
 
+    if mode == "image" and obs.admx is not None:   # the image's own ADMX is the complete list of policy values
+        ts_known = {str(p["value"]).lower() for p in obs.admx.values() if p.get("value")}
+    else:                                          # Microsoft's table plus what the spec itself writes there
+        ts_known = {v[0].lower() for v in S.TS_POLICIES.values()} | {
+            it["name"].lower() for it in items if it["kind"] == "reg" and S.is_ts_policy_key(it["scope"], it["path"])}
     for o in obs.reg:
         for fid in S.reg_deny_hits(o.scope, o.name, o.vtype, o.value):
             findings.append(Finding(fid, f"legacy value {o.name}={o.value!r}", o.source))
+        if o.scope == "software" and o.path == S.TS_POLICY_KEY.lower() and o.name not in ts_known:
+            findings.append(Finding("deny.unknown-ts-policy-value", f"{o.name} under {S.TS_POLICY_KEY} is no TerminalServer.admx "
+                                    "policy value (Windows ignores it; the intended redirection policy is not set)", o.source))
+        if o.scope == "system" and o.path == "setup" and o.name == "cmdline" and _SETUP_HOOK_RE.search(str(o.value or "")):
+            findings.append(Finding("deny.setup-cmdline-hook", "Setup\\CmdLine replaces Windows Setup's first-boot command "
+                                    "(oobe\\windeploy.exe) with a script hook", o.source))
+    if obs.first_logon_commands and obs.autologon:
+        first = obs.autologon["name"].lower()
+        acct = next((u for u in obs.answer_users if u["name"].lower() == first), None)
+        if acct is not None and str(acct.get("group", "")).lower() != "administrators":
+            findings.append(Finding("users.firstlogon-standard-user", "FirstLogonCommands run as the AutoLogon account, a standard "
+                                    "user: under UAC they need administrator consent and do not run on Cancel (privileged work "
+                                    "belongs in SetupComplete / a SYSTEM task)", obs.first_logon_commands[0][1]))
     for key, text in sorted(obs.infs.items()):
         base, where = key.split("|", 1)
         if S.gpu_inf_is_vendor_display(base, text, gpu_re):

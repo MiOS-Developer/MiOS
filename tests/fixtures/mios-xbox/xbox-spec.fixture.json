@@ -885,6 +885,7 @@
    "key": "Policies\\Microsoft\\Windows NT\\Terminal Services",
    "name": "fNoRemoteDesktopWallpaper",
    "owner": "settings.display.no_remote_desktop_wallpaper",
+   "policy": "TS_DISABLE_REMOTE_DESKTOP_WALLPAPER",
    "type": "REG_DWORD"
   },
   {
@@ -2624,7 +2625,7 @@
     "Intel"
    ],
    "gpu": "detect",
-   "gpu_step": "usr/share/mios/windows/mios-gpu-driver.ps1",
+   "gpu_step": "usr/share/mios/windows/xbox/mios-gpu-driver.ps1",
    "looking_glass_idd": {
     "channel": "stable",
     "install_at": "SetupComplete",
@@ -2933,6 +2934,7 @@
     "hive": "SOFTWARE",
     "key": "Policies\\Microsoft\\Windows NT\\Terminal Services",
     "name": "fNoRemoteDesktopWallpaper",
+    "policy": "TS_DISABLE_REMOTE_DESKTOP_WALLPAPER",
     "type": "REG_DWORD"
    },
    "settings.display.system_light_theme": {

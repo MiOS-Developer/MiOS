@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: The ONE MiOS-Xbox spec item model shared by the offline conformance gate (conform.py) and the in-guest WinRM probe (probe.py): loads xbox-spec.json (or the [windows.xbox] SSOT tree), turns it into a flat list of typed check items with evidence locators, canonicalises registry paths/values, and holds the legacy-literal deny-list.
+# AI-hint: The ONE MiOS-Xbox spec item model shared by the offline conformance gate (conform.py) and the in-guest WinRM probe (probe.py): loads xbox-spec.json (or the [windows.xbox] SSOT tree), turns it into a flat list of typed check items with evidence locators, canonicalises registry paths/values, holds Microsoft's TerminalServer.admx policy table (TS_POLICIES: RDP redirection value names) and the legacy-literal deny-list (incl. GPU display driver installs by script).
 # AI-related: usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, tests/test-mios-xbox-conform.py, tests/test-mios-xbox-probe.py
 # AI-functions: load_spec, items_from_spec, items_from_rendered, spec_policy, canon_reg_path, canon_value, value_equal, deny_hits, spec_deny_findings, sha256_text, Finding
 """MiOS-Xbox spec items (schema ``mios-xbox-spec/1``).
@@ -20,13 +20,13 @@ feature        name, state (enabled|disabled|conditional)
 driver         inf (base name, e.g. ``viostor``) -- must be in the driver set
 guest_tool     name, installer (payload path) and/or service, file
 component      name, path (image-relative), sha256?, task?, service?
-capability     name (Windows capability name prefix, e.g. OpenSSH.Server)
+capability     name (Windows capability name prefix, e.g. OpenSSH.Server), proof? (image-relative file of the offline-baked FOD)
 file_hash      path (image-relative), sha256
 build_family   family (list of BuildBranch names with Start assets), families{}
 user           name ("<RID-500>" = built-in Administrator), autologon, password_sha256
 rid500         state (disabled)
 computer_name  value
-appx           name (package family prefix), present (bool) -- probe only
+appx           name (package family prefix), present (bool), pfn + inbox (integrated offline: image gate + probe) -- else probe only
 gpu_step       record (guest path of the post-setup JSON record)
 =============  ===============================================================
 
@@ -315,6 +315,8 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
             it.update(type=canon_type(r["type"]), value=r["data"])
         if r.get("kv_field"):
             it["kv_field"] = r["kv_field"]
+        if r.get("policy"):   # TerminalServer.admx policy name (the image gate checks it against the image's ADMX)
+            it["policy"] = r["policy"]
         items.append(it)
     for svc in doc.get("debloat_services") or []:
         items.append({"id": f"debloat.services.{svc['name']}", "kind": "reg", "scope": "system",
@@ -324,8 +326,13 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
     for key, state in (("enable", "enabled"), ("disable", "disabled"), ("enable_if_nested_virt", "conditional")):
         for f in feats.get(key) or []:
             items.append({"id": f"features.{f}", "kind": "feature", "name": f, "state": state})
+    fod = feats.get("capability_fod") or {}
     for cap in feats.get("capabilities_add") or []:
-        items.append({"id": f"capabilities.{cap}", "kind": "capability", "name": cap})
+        it = {"id": f"capabilities.{cap}", "kind": "capability", "name": cap}
+        proof = (fod.get(cap) or {}).get("proof") if isinstance(fod.get(cap), dict) else None
+        if proof:   # baked offline (F4): the image gate requires this file in install.wim
+            it["proof"] = _win_rel(str(proof))
+        items.append(it)
     for dname, d in (x.get("drivers") or {}).items():
         if isinstance(d, dict):
             for inf in d.get("inf") or []:
@@ -364,10 +371,16 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
             it["task"] = gpu["task_name"]
         items.append(it)
     if gpu.get("record_path"):
-        items.append({"id": "gpu.post_setup", "kind": "gpu_step", "record": gpu["record_path"],
-                      "skip_vendor_ids": list(gpu.get("skip_vendor_ids") or []),
-                      "vendor_ids": sorted({str(v.get("vendor_id", "")).upper() for v in (gpu.get("vendors") or {}).values()
-                                            if isinstance(v, dict) and v.get("vendor_id")})})
+        it = {"id": "gpu.post_setup", "kind": "gpu_step", "record": gpu["record_path"],
+              "skip_vendor_ids": list(gpu.get("skip_vendor_ids") or []),
+              "vendor_ids": sorted({str(v.get("vendor_id", "")).upper() for v in (gpu.get("vendors") or {}).values()
+                                    if isinstance(v, dict) and v.get("vendor_id")})}
+        # offline gates: the tree's GPU step (drivers.gpu_step, byte-identical to the shipped copy per gpu.script) runs
+        # Read-MiOSGpuSpec on the guest spec the image SHIPS (gpu.spec_path) and must get this mode/task/record/vendors
+        if gpu.get("spec_path") and (x.get("drivers") or {}).get("gpu_step"):
+            it.update(spec_path=_win_rel(gpu["spec_path"]), script=str(x["drivers"]["gpu_step"]),
+                      mode=str((x.get("drivers") or {}).get("gpu", "")), task=str(gpu.get("task_name", "")))
+        items.append(it)
     start = x.get("start") or {}
     fams = {}
     for fam, a in (start.get("layout_assets") or {}).items():
@@ -380,6 +393,11 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
                       "start2_target": START2_TARGET})
     for pkg in (x.get("store_hydrate") or {}).get("packages") or []:
         items.append({"id": f"store_hydrate.{pkg['name']}", "kind": "appx", "name": pkg["name"], "present": True})
+    # inbox apps integrated offline (source.apps): the image gate finds them under Program Files\WindowsApps, the
+    # probe as installed packages (round-1: no Store, winget or Xbox app in the image)
+    for pfn in (x.get("source") or {}).get("apps") or []:
+        items.append({"id": f"source.apps.{pfn}", "kind": "appx", "name": pfn.rsplit("_", 1)[0], "pfn": pfn,
+                      "present": True, "inbox": True})
     users = doc["users"]
     d = users.get("desktop") or {}
     pw = d.get("password")
@@ -421,6 +439,56 @@ def spec_policy(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Remote Desktop Services policies (Microsoft TerminalServer.admx)
+# ---------------------------------------------------------------------------
+
+# The registry key every TerminalServer.admx machine policy below writes (SOFTWARE hive).
+TS_POLICY_KEY = "Policies\\Microsoft\\Windows NT\\Terminal Services"
+# ADMX policy name -> (registry value name, enabledValue, disabledValue). Source: Microsoft Learn "Policy CSP -
+# ADMX_TerminalServer" / "Policy CSP - RemoteDesktopServices" (ADMX mapping tables), cross-checked against the
+# image's own Windows\PolicyDefinitions\TerminalServer.admx (build 29683; TS_LOCATION_REDIRECTION is only in the
+# ADMX). This is Microsoft's schema, not MiOS data: the SSOT registry_map names the policy, and a value name that
+# is not that policy's valueName (fDisableLocation, or fDisableCam used for the camera) fails the render and the gate.
+TS_POLICIES: Dict[str, Tuple[str, int, int]] = {
+    "TS_CLIENT_AUDIO": ("fDisableCam", 0, 1),                      # Allow audio and video playback redirection
+    "TS_CLIENT_AUDIO_CAPTURE": ("fDisableAudioCapture", 0, 1),     # Allow audio recording redirection
+    "TS_CAMERA_REDIRECTION": ("fDisableCameraRedir", 1, 0),        # Do not allow video capture redirection
+    "TS_CLIENT_DRIVE_M": ("fDisableCdm", 1, 0),                    # Do not allow drive redirection
+    "TS_CLIENT_COM": ("fDisableCcm", 1, 0),                        # Do not allow COM port redirection
+    "TS_CLIENT_CLIPBOARD": ("fDisableClip", 1, 0),                 # Do not allow Clipboard redirection
+    "TS_CLIENT_LPT": ("fDisableLPT", 1, 0),                        # Do not allow LPT port redirection
+    "TS_CLIENT_PNP": ("fDisablePNPRedir", 1, 0),                   # Do not allow supported Plug and Play device redirection
+    "TS_CLIENT_PRINTER": ("fDisableCpm", 1, 0),                    # Do not allow client printer redirection
+    "TS_LOCATION_REDIRECTION": ("fDisableLocationRedir", 1, 0),    # Do not allow location redirection
+    "TS_SMART_CARD": ("fEnableSmartCard", 0, 1),                   # Do not allow smart card device redirection
+    "TS_TIME_ZONE": ("fEnableTimeZoneRedirection", 1, 0),          # Allow time zone redirection
+    "TS_UIA": ("EnableUiaRedirection", 1, 0),                      # Allow UI Automation redirection
+    "TS_WEBAUTHN": ("fDisableWebAuthn", 1, 0),                     # Do not allow WebAuthn redirection
+    "TS_DISABLE_REMOTE_DESKTOP_WALLPAPER": ("fNoRemoteDesktopWallpaper", 1, 0),   # Remove remote desktop wallpaper
+}
+
+
+def is_ts_policy_key(scope_or_hive: str, path: str) -> bool:
+    """True for HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services (machine RDS policies)."""
+    return str(scope_or_hive).lower() == "software" and canon_item_path("software", path) == TS_POLICY_KEY.lower()
+
+
+def ts_policy_problem(policy: Optional[str], name: str, value: Any) -> Optional[str]:
+    """Why a Terminal Services policy write does not match Microsoft's policy table (None = it matches)."""
+    if not policy:
+        return f"{name} is written under {TS_POLICY_KEY} without naming its TerminalServer.admx policy"
+    want = TS_POLICIES.get(str(policy))
+    if want is None:
+        return f"{policy} is not a TerminalServer.admx policy MiOS knows (Microsoft's ADMX_TerminalServer table)"
+    if want[0].lower() != str(name).lower():
+        return f"{policy} writes {want[0]}, not {name}"
+    v = canon_value("dword", value)
+    if v not in (want[1], want[2]):
+        return f"{policy} {want[0]}={v!r}: the policy's values are {want[1]} (Enabled) and {want[2]} (Disabled)"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # legacy-literal deny-list (gate policy, independent of the spec)
 # ---------------------------------------------------------------------------
 
@@ -441,6 +509,19 @@ DENY_TEXT: List[Tuple[str, "re.Pattern[str]"]] = [
     ("deny.static-wallpaper", re.compile(r"mios-wallpaper\.jpg", re.I)),
     ("deny.pnputil-nvidia-inf", re.compile(r"\bpnputil(?:\.exe)?\b[^\r\n;|&]*(?:/add-driver|-a\b)[^\r\n;|&]*\bnv[a-z0-9_]*\.inf\b", re.I)),
 ]
+# A GPU vendor display driver installed by a pipeline script (XB-3: only the post-setup detection step installs one,
+# from the vendor's own installer). Any driver-install command -- PnPUtil /add-driver|-a|-i, DISM /Add-Driver,
+# Add-WindowsDriver, DevCon install|update|dp_add -- that names an NVIDIA/AMD/Intel display INF (the names
+# GPU_INF_NAME_RE knows) or a GPU-vendor driver directory is denied. A pnputil + nv*.inf line keeps its own id above.
+_DRIVER_INSTALL_CMD = (r"(?:\bpnputil(?:\.exe)?\b[^\r\n;|&]*?(?:/add-driver\b|/install\b|(?<![\w-])-[ai]\b)"
+                       r"|\bdism(?:\.exe)?\b[^\r\n;|&]*?/add-driver\b"
+                       r"|\bAdd-WindowsDriver\b"
+                       r"|\bdevcon(?:\.exe)?\b[^\r\n;|&]*?\b(?:install|update|dp_add)\b)")
+_GPU_INF_TOKEN = (r"(?<![\w.-])(?:nv[a-z0-9_]*|iigd[a-z0-9_]*|igdlh[a-z0-9_]*|igdumd[a-z0-9_]*|cui_dch|amdkmdag"
+                  r"|atiilhag|atiumd[a-z0-9_]*|u0\d{6}|c0\d{6})\.inf\b")
+_GPU_VENDOR_DIR = r"[\\/](?:nvidia|geforce|amd|radeon|ati|intel)(?=[\\/'\"\s_-]|$)"
+DENY_TEXT.append(("deny.gpu-driver-script", re.compile(
+    _DRIVER_INSTALL_CMD + r"[^\r\n;|&]*?(?:" + _GPU_INF_TOKEN + "|" + _GPU_VENDOR_DIR + ")", re.I)))
 # Display drivers of these providers must never be in the image (XB-3: detect + install post-setup).
 GPU_PROVIDER_RE = re.compile(r"nvidia|advanced micro devices|\bamd\b|\bati\b|ati technologies|intel", re.I)
 GPU_INF_NAME_RE = re.compile(r"^(nv[a-z0-9_]*|iigd[a-z0-9_]*|igdlh[a-z0-9_]*|igdumd[a-z0-9_]*|cui_dch|amdkmdag|atiilhag|atiumd[a-z0-9_]*|u0\d{6}|c0\d{6})$", re.I)
@@ -479,7 +560,8 @@ def text_deny_hits(text: str) -> List[Tuple[str, int]]:
     for fid, rx in DENY_TEXT:
         for m in rx.finditer(text):
             hits.append((fid, text.count("\n", 0, m.start()) + 1))
-    return hits
+    nv_lines = {ln for fid, ln in hits if fid == "deny.pnputil-nvidia-inf"}   # one finding per line for the old pattern
+    return [(fid, ln) for fid, ln in hits if not (fid == "deny.gpu-driver-script" and ln in nv_lines)]
 
 
 def gpu_inf_is_vendor_display(name: str, inf_text: Optional[str], provider_re: "re.Pattern[str]" = GPU_PROVIDER_RE) -> bool:

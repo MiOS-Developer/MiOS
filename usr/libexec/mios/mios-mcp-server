@@ -497,23 +497,23 @@ def _human_tmux_context(socket_path=None, pane=None):
     if (not stat.S_ISSOCK(node.st_mode) or node.st_uid != os.getuid()
             or parent.st_uid != os.getuid() or parent.st_mode & 0o077):
         raise ValueError("MiOS desktop socket must be private and owned by the caller")
-    result = subprocess.run(["tmux", "-S", str(path), "display-message", "-p", "-t", pane,
-        "#{socket_path}\t#{session_name}\t#{pane_id}\t#{window_id}\t#{pid}"],
+    result = subprocess.run(["tmux", "-u", "-S", str(path), "display-message", "-p", "-t", pane,
+        "#{socket_path}|#{session_name}|#{pane_id}|#{window_id}|#{pid}"],
         capture_output=True, text=True, timeout=3, check=True)
-    fields = result.stdout.rstrip("\n").split("\t")
+    fields = result.stdout.rstrip("\n").split("|")
     if len(fields) == 5 and fields[1].startswith("mios-workspace-"):
         # Compact views park the head/workers in a separate session. Only
         # accept a pane whose managed main window witnesses the same head.
-        tags = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", pane,
-            "#{@mios-workspace-head}\t#{@mios-workspace-worker}\t#{@mios-workspace-window}"], text=True, timeout=3).rstrip('\n').split('\t')
+        tags = subprocess.check_output(["tmux", "-u", "-S", str(path), "display-message", "-p", "-t", pane,
+            "#{@mios-workspace-head}|#{@mios-workspace-worker}|#{@mios-workspace-window}"], text=True, timeout=3).rstrip('\n').split('|')
         head = tags[0] or (tags[1] if len(tags) > 1 else "")
         main = tags[2] if len(tags) > 2 and re.fullmatch(r"@\d+", tags[2]) else ""
         if not main and re.fullmatch(r"%\d+", head):
-            main = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", head,
+            main = subprocess.check_output(["tmux", "-u", "-S", str(path), "display-message", "-p", "-t", head,
                 "#{@mios-workspace-window}"], text=True, timeout=3).strip()
         if re.fullmatch(r"@\d+", main):
-            witness = subprocess.check_output(["tmux", "-S", str(path), "display-message", "-p", "-t", main,
-                "#{session_name}\t#{@mios-workspace-head}"], text=True, timeout=3).strip().split('\t')
+            witness = subprocess.check_output(["tmux", "-u", "-S", str(path), "display-message", "-p", "-t", main,
+                "#{session_name}|#{@mios-workspace-head}"], text=True, timeout=3).strip().split('|')
             if len(witness) == 2 and (not head or witness[1] == head):
                 fields[1] = witness[0]
                 fields[3] = main
@@ -546,14 +546,14 @@ def _workspace_call(action, ui=None, **arguments):
             pane = os.environ.get("TMUX_PANE")
             if pane:
                 current = _human_tmux_context(tmux_sock, pane)
-                marks = subprocess.check_output(["tmux", "-S", tmux_sock, "display-message", "-p", "-t", pane,
-                    "#{@mios-workspace-head}\t#{@mios-workspace-worker}\t#{@mios-workspace-observer-for}"], text=True, timeout=2).strip().split('\t')
+                marks = subprocess.check_output(["tmux", "-u", "-S", tmux_sock, "display-message", "-p", "-t", pane,
+                    "#{@mios-workspace-head}|#{@mios-workspace-worker}|#{@mios-workspace-observer-for}"], text=True, timeout=2).strip().split('|')
                 head = next((mark for mark in marks if re.fullmatch(r"%\d+", mark)), "")
                 if head:
-                    main = subprocess.check_output(["tmux", "-S", tmux_sock, "display-message", "-p", "-t", head,
+                    main = subprocess.check_output(["tmux", "-u", "-S", tmux_sock, "display-message", "-p", "-t", head,
                         "#{@mios-workspace-window}"], text=True, timeout=2).strip()
-                    witness = subprocess.check_output(["tmux", "-S", tmux_sock, "display-message", "-p", "-t", main,
-                        "#{session_name}\t#{@mios-workspace-head}"], text=True, timeout=2).strip().split('\t')
+                    witness = subprocess.check_output(["tmux", "-u", "-S", tmux_sock, "display-message", "-p", "-t", main,
+                        "#{session_name}|#{@mios-workspace-head}"], text=True, timeout=2).strip().split('|')
                     if len(witness) == 2 and witness[1] == head:
                         session = witness[0]
                         arguments.setdefault("session", session)
@@ -791,13 +791,6 @@ class _TmuxBridge:
                     self.tools.append(row)
                 if not self.tools:
                     raise RuntimeError("[mcp.tmux].allowed_tools selected zero upstream tools")
-                if self.visible:
-                    # Only a native workspace's original head can claim its blank
-                    # reservations. Nested heads allocate their own local slots.
-                    for slot in range(1, self.config["workspace"]["worker_panes"] + 1):
-                        reserved = await asyncio.to_thread(self._visible_allocate, slot, True)
-                        if reserved is None:
-                            break
                 self.ready.set()
                 try:
                     await self.stop.wait()
@@ -826,14 +819,14 @@ class _TmuxBridge:
                     self.directory.cleanup()
 
     async def _tmux(self, *args, check=False):
-        command = ["tmux", "-L", "mcp-headless", "-f", os.devnull, *args]
+        command = ["tmux", "-u", "-L", "mcp-headless", "-f", os.devnull, *args]
         result = await asyncio.to_thread(subprocess.run, command, env=self.env,
                                         capture_output=True, timeout=10)
         if check and result.returncode:
             raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
         return result
 
-    def _visible_allocate(self, slot, reservation_only=False):
+    def _visible_allocate(self, slot):
         """Allocate under a cross-process window lock; never adopt a user's pane."""
         import fcntl
         ui = self.visible
@@ -852,15 +845,15 @@ class _TmuxBridge:
                         raise TimeoutError("desktop pane allocation is busy")
                     time.sleep(0.02)
             def tmux(*args):
-                return subprocess.check_output(["tmux", "-S", ui["socket"], *args], text=True, timeout=3).rstrip("\n")
+                return subprocess.check_output(["tmux", "-u", "-S", ui["socket"], *args], text=True, timeout=3).rstrip("\n")
             record = self.visible_slots.get(slot)
             if record:
                 witness = tmux("display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}")
                 if witness != self.owner_id:
                     raise RuntimeError("desktop helper pane ownership changed")
-            rows = tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@mcp_slot}").splitlines()
-            occupied = {row.split("\t")[1] for row in rows if "\t" in row
-                        and (not record or row.split("\t")[0] != record["pane"])}
+            rows = tmux("list-panes", "-a", "-F", "#{pane_id}|#{@mcp_slot}").splitlines()
+            occupied = {row.split("|")[1] for row in rows if "|" in row
+                        and (not record or row.split("|")[0] != record["pane"])}
             physical = record["upstream"] if record and str(record["upstream"]) not in occupied else next((n for n in range(1, 65) if str(n) not in occupied), None)
             if physical is None:
                 raise RuntimeError("desktop window has no free tmux-mcp helper slots")
@@ -875,8 +868,6 @@ class _TmuxBridge:
                                  if k != "TMUX_TMPDIR")
             command = 'exec env -i ' + shell_env + ' MIOS_TMUX_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
             reserved = _workspace_call("claim", ui, slot=slot, owner=self.owner_id, command=command)
-            if reservation_only and not reserved.get("managed"):
-                return None
             created = reserved.get("pane") or tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", ui["pane"], command)
             try:
                 for key, value in (("@mcp_pane", created), ("@mcp_owner", "agent"),
@@ -909,11 +900,11 @@ class _TmuxBridge:
             if not record:
                 continue
             # Retire by witnessed pane ID, not a global upstream slot shared by peers.
-            result = await asyncio.to_thread(subprocess.run, ["tmux", "-S", self.visible["socket"],
-                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}\t#{@mios-workspace-worker}\t#{@mios-workspace-dynamic}"],
+            result = await asyncio.to_thread(subprocess.run, ["tmux", "-u", "-S", self.visible["socket"],
+                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}|#{@mios-workspace-worker}|#{@mios-workspace-dynamic}"],
                 capture_output=True, text=True, timeout=3)
             if result.returncode == 0:
-                parts = result.stdout.rstrip("\n").split("\t")
+                parts = result.stdout.rstrip("\n").split("|")
                 owner = parts[0] if parts else ""
                 w_head = parts[1] if len(parts) > 1 else ""
                 is_dyn = record.get("dynamic") or (len(parts) > 2 and parts[2] == "1")
@@ -943,15 +934,15 @@ class _TmuxBridge:
             await self._visible_retire(args.get("slot", 1))
             return types.CallToolResult(content=[types.TextContent(type="text", text='{"closed":true}')])
         if self.visible and upstream == "list-slots":
-            result = await asyncio.to_thread(subprocess.run, ["tmux", "-S", self.visible["socket"],
-                "list-panes", "-a", "-F", "#{pane_id}\t#{@mios-mcp-owner}\t#{pane_dead}"],
+            result = await asyncio.to_thread(subprocess.run, ["tmux", "-u", "-S", self.visible["socket"],
+                "list-panes", "-a", "-F", "#{pane_id}|#{@mios-mcp-owner}|#{pane_dead}"],
                 capture_output=True, text=True, timeout=3, check=True)
-            rows = [line.split("\t") for line in result.stdout.splitlines()]
+            rows = [line.split("|") for line in result.stdout.splitlines()]
             live = {r[0]: r[2] for r in rows if len(r) == 3 and r[1] == self.owner_id}
             data = [{"slot": n, "paneId": r["pane"], "isolated": False,
                      "origin": "created", "isAlive": live[r["pane"]] == "0"}
                     for n, r in self.visible_slots.items() if r["pane"] in live]
-            return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))], structuredContent=data)
+            return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))])
         local = args.get("slot", 1)
         if self.visible and upstream not in {"list-slots", "notify"}:
             if local not in self.visible_slots and upstream not in self.creators:
@@ -996,7 +987,10 @@ class _TmuxBridge:
             data["slot"] = local
         if isinstance(data, (dict, list)):
             wire = result.model_dump(by_alias=True, exclude_none=True)
-            wire["structuredContent"] = data
+            if isinstance(data, dict):
+                wire["structuredContent"] = data
+            else:
+                wire.pop("structuredContent", None)
             for block in wire["content"]:
                 if block.get("type") == "text":
                     try:
@@ -1153,8 +1147,10 @@ class _TmuxBridge:
                 and not (isinstance(data, dict) and data.get("timedOut"))):
             self._schedule_retirement(slot, completed=(upstream == "execute-command"
                                       and isinstance(data, dict) and type(data.get("exitCode")) is int))
-        if data is not None and isinstance(data, (dict, list)):
+        if isinstance(data, dict):
             wire["structuredContent"] = data
+        elif isinstance(data, list):
+            wire.pop("structuredContent", None)
         return types.CallToolResult.model_validate(wire)
 
     @staticmethod
@@ -2467,8 +2463,8 @@ def main() -> int:
         socket = os.environ.get("TMUX", "").rsplit(",", 2)[0]
         pane = os.environ.get("TMUX_PANE", "")
         ui = _human_tmux_context(socket, pane)
-        head = subprocess.check_output(["tmux", "-S", socket, "display-message", "-p", "-t", pane,
-            "#{@mios-workspace-head}\t#{@mios-workspace-worker}"], text=True, timeout=3).strip().split('\t')[0]
+        head = subprocess.check_output(["tmux", "-u", "-S", socket, "display-message", "-p", "-t", pane,
+            "#{@mios-workspace-head}|#{@mios-workspace-worker}"], text=True, timeout=3).strip().split('|')[0]
         if not head:
             head = subprocess.check_output(["tmux", "-S", socket, "display-message", "-p", "-t", pane,
                 "#{@mios-workspace-worker}"], text=True, timeout=3).strip()

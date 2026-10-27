@@ -51,7 +51,10 @@ class _Headers:
 
 class FakeRequest:
     def __init__(self, body_obj, headers=None):
-        self._body = json.dumps(body_obj).encode("utf-8")
+        if isinstance(body_obj, (bytes, bytearray)):
+            self._body = bytes(body_obj)
+        else:
+            self._body = json.dumps(body_obj).encode("utf-8")
         self.headers = _Headers(headers)
 
     async def body(self):
@@ -244,8 +247,10 @@ def main():
 
 class _RespHttpxResp:
     """A stand-in chat/completions response for the responses_api self-proxy POST."""
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self._payload = payload
+        self.status_code = status_code
+        self.text = ""
 
     def json(self):
         return self._payload
@@ -254,6 +259,8 @@ class _RespHttpxClient:
     """Async-context-manager httpx.AsyncClient stand-in returning a canned answer."""
     _payload = {"choices": [{"message": {"content": "PROXIED ANSWER"}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
+    last_post_url = None
+    last_post_json = None
 
     def __init__(self, *a, **k):
         pass
@@ -264,36 +271,167 @@ class _RespHttpxClient:
     async def __aexit__(self, *a):
         return False
 
-    async def post(self, *a, **k):
+    async def post(self, url, *a, **k):
+        _RespHttpxClient.last_post_url = url
+        _RespHttpxClient.last_post_json = k.get("json")
         return _RespHttpxResp(_RespHttpxClient._payload)
 
 class _RespHttpx:
     AsyncClient = _RespHttpxClient
 
 def _test_responses_api():
-    mios_chat.configure(BACKEND_MODEL="m", _loads_lenient=json.loads)
+    def _strict_str_loads(s):
+        if not isinstance(s, str):
+            raise TypeError(f"cannot use a string pattern on a bytes-like object: {type(s)}")
+        try:
+            return json.loads(s)
+        except Exception:
+            return None
+
+    mios_chat.configure(BACKEND_MODEL="m", _loads_lenient=_strict_str_loads)
     orig_httpx = mios_chat.httpx
     mios_chat.httpx = _RespHttpx
     try:
+        # 1. Positive control: bytes body decoded as str + basic response shape
         r = asyncio.run(mios_chat.responses_api_logic(
-            FakeRequest({"model": "m", "input": "hello",
-                         "instructions": "be terse"})))
+            FakeRequest(b'{"model": "m", "input": "hello", "instructions": "be terse"}')))
         body = getattr(r, "content", {}) or {}
         out_text = body.get("output_text")
         item = (body.get("output") or [{}])[0]
         part = ((item.get("content") or [{}])[0]) if isinstance(item, dict) else {}
-        check("responses_api -> Responses items shape (proxied answer)",
+        check("responses_api -> bytes decoding & Responses items shape (proxied answer)",
               body.get("object") == "response" and out_text == "PROXIED ANSWER"
               and part.get("type") == "output_text" and part.get("text") == "PROXIED ANSWER"
               and body.get("usage", {}).get("prompt_tokens") == 1,
               f"body={body}")
+
+        # 2. Negative control: malformed JSON returns 400
+        r_bad = asyncio.run(mios_chat.responses_api_logic(FakeRequest(b'{"broken json')))
+        bad_err = (getattr(r_bad, "content", {}) or {}).get("error") or {}
+        check("responses_api -> malformed JSON body is a 400 invalid_request error (negative control)",
+              getattr(r_bad, "status_code", None) == 400
+              and bad_err.get("type") == "invalid_request_error"
+              and bad_err.get("message") == "invalid JSON body",
+              f"status={getattr(r_bad,'status_code',None)} err={bad_err}")
+
+        # 3. Negative control: missing input is 400
         r2 = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m"})))
         err = (getattr(r2, "content", {}) or {}).get("error") or {}
         check("responses_api -> missing input is a 400 invalid_request error",
               getattr(r2, "status_code", None) == 400
               and err.get("type") == "invalid_request_error" and err.get("param") == "input",
               f"status={getattr(r2,'status_code',None)} err={err}")
+
+        # 4. Input items translation (message, function_call, function_call_output, custom_tool_call, custom_tool_call_output)
+        input_items = [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "start task"}]},
+            {"type": "function_call", "call_id": "call_fn_1", "name": "read_doc", "arguments": "{\"path\": \"/etc/hosts\"}"},
+            {"type": "function_call_output", "call_id": "call_fn_1", "output": "127.0.0.1 localhost"},
+            {"type": "custom_tool_call", "call_id": "call_cust_1", "name": "run_custom", "arguments": {"flag": True}},
+            {"type": "custom_tool_call_output", "call_id": "call_cust_1", "output": {"status": "ok"}}
+        ]
+        r_items = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": input_items})))
+        posted_msgs = (_RespHttpxClient.last_post_json or {}).get("messages") or []
+        check("responses_api -> input items converted to chat messages (5 items)",
+              len(posted_msgs) == 5
+              and posted_msgs[0] == {"role": "user", "content": "start task"}
+              and posted_msgs[1]["role"] == "assistant" and posted_msgs[1]["tool_calls"][0]["function"]["name"] == "read_doc"
+              and posted_msgs[2] == {"role": "tool", "tool_call_id": "call_fn_1", "content": "127.0.0.1 localhost"}
+              and posted_msgs[3]["role"] == "assistant" and posted_msgs[3]["tool_calls"][0]["function"]["name"] == "run_custom"
+              and posted_msgs[4] == {"role": "tool", "tool_call_id": "call_cust_1", "content": json.dumps({"status": "ok"})},
+              f"posted_msgs={posted_msgs}")
+
+        # 5. Tools conversion (Responses flat schema -> Chat Completions nested schema)
+        tools_in = [
+            {"type": "function", "name": "weather", "description": "get weather", "parameters": {"type": "object"}},
+            {"type": "function", "function": {"name": "calc", "description": "calculate", "parameters": {}}}
+        ]
+        r_tools = asyncio.run(mios_chat.responses_api_logic(
+            FakeRequest({"model": "m", "input": "calculate", "tools": tools_in, "tool_choice": "auto"})))
+        posted_tools = (_RespHttpxClient.last_post_json or {}).get("tools") or []
+        posted_tc = (_RespHttpxClient.last_post_json or {}).get("tool_choice")
+        check("responses_api -> tools schema translation and tool_choice",
+              len(posted_tools) == 2
+              and posted_tools[0].get("function", {}).get("name") == "weather"
+              and posted_tools[1].get("function", {}).get("name") == "calc"
+              and posted_tc == "auto",
+              f"posted_tools={posted_tools} posted_tc={posted_tc}")
+
+        # 6. Tool calls returned in non-streaming output
+        _RespHttpxClient._payload = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [{"id": "call_res_1", "type": "function", "function": {"name": "fetch", "arguments": "{\"url\": \"http://localhost\"}"}}]
+                }
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }
+        r_tc = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "fetch it"})))
+        tc_body = getattr(r_tc, "content", {}) or {}
+        tc_output = tc_body.get("output") or []
+        check("responses_api -> non-streaming tool_calls output item",
+              len(tc_output) == 1
+              and tc_output[0].get("type") == "function_call"
+              and tc_output[0].get("call_id") == "call_res_1"
+              and tc_output[0].get("name") == "fetch",
+              f"tc_output={tc_output}")
+
+        # 7. Streaming (stream: true) SSE event sequence
+        _RespHttpxClient._payload = {
+            "choices": [{"message": {"content": "STREAMED HELLO"}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 2}
+        }
+        r_stream = asyncio.run(mios_chat.responses_api_logic(
+            FakeRequest({"model": "m", "input": "stream hello", "stream": True})))
+        chunks = []
+        async def _consume_stream(it):
+            async for chunk in it:
+                chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+        asyncio.run(_consume_stream(r_stream.body_iterator))
+        stream_text = "".join(chunks)
+        check("responses_api -> streaming SSE events sequence",
+              "event: response.created" in stream_text
+              and "event: response.in_progress" in stream_text
+              and "event: response.output_item.added" in stream_text
+              and "event: response.content_part.added" in stream_text
+              and "event: response.output_text.delta" in stream_text
+              and "event: response.output_text.done" in stream_text
+              and "event: response.output_item.done" in stream_text
+              and "event: response.completed" in stream_text
+              and "data: [DONE]" in stream_text,
+              f"stream_text={stream_text[:200]}...")
+
+        # 8. Negative control: upstream HTTP 400 error propagation in non-streaming mode
+        orig_post = _RespHttpxClient.post
+        async def _err_post(self, url, *a, **k):
+            return _RespHttpxResp({"error": {"message": "upstream bad request", "type": "invalid_request_error"}}, status_code=400)
+        _RespHttpxClient.post = _err_post
+        r_err = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "trigger err"})))
+        check("responses_api -> propagates upstream 400 error status",
+              getattr(r_err, "status_code", None) == 400
+              and (getattr(r_err, "content", {}) or {}).get("error", {}).get("message") == "upstream bad request",
+              f"r_err={r_err}")
+
+        # 9. Negative control: upstream HTTP 400 error propagation in streaming mode
+        r_stream_err = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "trigger err", "stream": True})))
+        err_chunks = []
+        async def _consume_err_stream(it):
+            async for chunk in it:
+                err_chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+        asyncio.run(_consume_err_stream(r_stream_err.body_iterator))
+        err_stream_text = "".join(err_chunks)
+        check("responses_api -> streaming upstream error yields event: error",
+              "event: error" in err_stream_text
+              and "upstream bad request" in err_stream_text
+              and "response.completed" not in err_stream_text,
+              f"err_stream_text={err_stream_text}")
+        _RespHttpxClient.post = orig_post
+
     finally:
+        _RespHttpxClient.post = getattr(_RespHttpxClient, "orig_post", _RespHttpxClient.post)
+        _RespHttpxClient._payload = {"choices": [{"message": {"content": "PROXIED ANSWER"}}],
+                                    "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
         mios_chat.httpx = orig_httpx
 
 def _test_budget():

@@ -18,6 +18,11 @@ This document is derived directly from the systemd unit files in the repository.
 | `abrt-xorg.service` | `usr/lib/systemd/system` | ABRT Xorg log watcher |
 | `abrtd.service` | `usr/lib/systemd/system` | ABRT Daemon |
 | `accounts-daemon.service` | `usr/lib/systemd/system` | Accounts Service |
+| `akmods-keygen.target` | `usr/lib/systemd/system` | ? |
+| `akmods-keygen@.service` | `usr/lib/systemd/system` | Akmods Secure boot MOK Key Generation |
+| `akmods-shutdown.service` | `usr/lib/systemd/system` | Builds and install new kmods from akmod packages |
+| `akmods.service` | `usr/lib/systemd/system` | Builds and install new kmods from akmod packages |
+| `akmods@.service` | `usr/lib/systemd/system` | Builds and install new kmods from akmod for a given kernel |
 | `app-com.mitchellh.ghostty.service` | `usr/lib/systemd/user` | Ghostty |
 | `arp-ethers.service` | `usr/lib/systemd/system` | Load static arp entries |
 | `at-spi-dbus-bus.service` | `usr/lib/systemd/user` | Accessibility services bus |
@@ -165,6 +170,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `fwupd-refresh.service` | `usr/lib/systemd/system` | Refresh fwupd metadata and update motd |
 | `fwupd-refresh.timer` | `usr/lib/systemd/system` | Refresh fwupd metadata regularly |
 | `fwupd.service` | `usr/lib/systemd/system` | Firmware update daemon |
+| `gamemoded.service` | `usr/lib/systemd/user` | gamemoded |
 | `gcr-ssh-agent.service` | `usr/lib/systemd/user` | GCR ssh-agent wrapper |
 | `gcr-ssh-agent.socket` | `usr/lib/systemd/user` | GCR ssh-agent wrapper |
 | `gdm.service` | `usr/lib/systemd/system` | GNOME Display Manager |
@@ -369,7 +375,9 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-forge.container` | `usr/share/containers/systemd` | MiOS' Git forge (Forgejo) |
 | `mios-forgejo-runner-firstboot.service` | `usr/lib/systemd/system` | MiOS' Forgejo Runner first-boot registration |
 | `mios-forgejo-runner.container` | `usr/share/containers/systemd` | MiOS' Forgejo Runner (self-hosted CI for /=git working tree) |
+| `mios-framerate.service` | `usr/lib/systemd/user` | MiOS desktop frame-rate policy (power profile, battery, GameMode -> compositor, glass, wallpaper rates) |
 | `mios-freeipa-enroll.service` | `usr/lib/systemd/system` | MiOS' FreeIPA Zero-Touch Enrollment |
+| `mios-gamepad-hypr3d.service` | `usr/lib/systemd/user` | MiOS universal USB/Bluetooth gamepad daemon for Hypr3D |
 | `mios-git-root-init.service` | `usr/lib/systemd/system` | MiOS' first-boot: init / as a git working tree of localhost:3000/<user>/mios.git |
 | `mios-gpu-amd.service` | `usr/lib/systemd/system` | MiOS' AMD GPU container plumbing (ROCm/KFD + DRI) |
 | `mios-gpu-detect.service` | `usr/lib/systemd/system` | MiOS' GPU Environment Detection |
@@ -532,6 +540,13 @@ This document is derived directly from the systemd unit files in the repository.
 | `nss-lookup.target` | `usr/lib/systemd/system` | Host and Network Name Lookups |
 | `nss-user-lookup.target` | `usr/lib/systemd/system` | User and Group Name Lookups |
 | `numad.service` | `usr/lib/systemd/system` | numad - The NUMA daemon that manages application locality. |
+| `nvidia-fallback.service` | `usr/lib/systemd/system` | Fallback to nouveau as nvidia did not load |
+| `nvidia-hibernate.service` | `usr/lib/systemd/system` | NVIDIA system hibernate actions |
+| `nvidia-persistenced.service` | `usr/lib/systemd/system` | NVIDIA Persistence Daemon |
+| `nvidia-powerd.service` | `usr/lib/systemd/system` | nvidia-powerd service |
+| `nvidia-resume.service` | `usr/lib/systemd/system` | NVIDIA system resume actions |
+| `nvidia-suspend-then-hibernate.service` | `usr/lib/systemd/system` | NVIDIA actions for suspend-then-hibernate |
+| `nvidia-suspend.service` | `usr/lib/systemd/system` | NVIDIA system suspend actions |
 | `nvmefc-boot-connections.service` | `usr/lib/systemd/system` | Auto-connect to subsystems on FC-NVME devices found during boot |
 | `nvmf-autoconnect.service` | `usr/lib/systemd/system` | Connect NVMe-oF subsystems automatically during boot |
 | `nvmf-connect-nbft.service` | `usr/lib/systemd/system` | Connect NBFT-defined NVMe-oF subsystems automatically |
@@ -1060,5 +1075,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `xvnc@.service` | `usr/lib/systemd/system` | XVNC Per-Connection Daemon |
 | `zvbid.service` | `usr/lib/systemd/system` | Proxy Sharing V4L VBI Device Between Applications |
 
-<!-- derived from tracked unit files (1052 unit(s)) -->
+<!-- derived from tracked unit files (1067 unit(s)) -->
 <!-- /MIOS-GEN:units -->

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: MiOS-Xbox GPU-less DISM build worker (xb-14, Q9): every value from the rendered xbox-spec.json ([windows.xbox.vm.worker], [windows.xbox.build]). The worker domain is derived from the base domain's INACTIVE XML (read-only) on a qcow2 copy-on-write overlay of its disk (the base disk/domain are never written), with every hostdev/ivshmem/TPM/SPICE device stripped (a hostdev is refused), plus ONE exchange disk the host formats and fills (job inputs) and later reads back read-only (ISO, result, logs) with libguestfs. WinRM signs in with the SSOT-declared credential source (the base guest's answer file), never printed. Concurrency/RAM/watchdog guards refuse to start next to the target or base VM.
 # AI-related: usr/libexec/mios/win/xbox/build.py, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, tests/test-mios-xbox-build.py
-# AI-functions: WorkerConfig, generate_worker_xml, validate_worker_xml, worker_credentials, preflight, prepare_exchange, define, start, wait_winrm, submit_job, poll_job, stop, extract, cleanup, main
+# AI-functions: WorkerConfig, generate_worker_xml, validate_worker_xml, worker_credentials, virsh_file_access, preflight, prepare_exchange, define, start, wait_winrm, submit_job, poll_job, stop, drop_overlay, extract, cleanup, main
 """MiOS-Xbox build worker manager.
 
   worker.py --spec BUILD/xbox-spec.json xml        # print the worker domain XML (no side effects)
@@ -22,6 +22,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -288,10 +289,34 @@ def watchdog_inactive() -> bool:
         return True
 
 
+VIRSH_PROBE_XML = "<domain type='test'><name>mios-virsh-probe</name><memory>1024</memory><os><type>hvm</type></os></domain>\n"
+
+
+def virsh_file_access(work_dir: str, runner: Runner = _default_runner) -> None:
+    """virsh must read files this process writes under work_dir: ``virsh define`` reads the worker XML client-side.
+    Under SELinux a virsh exec'd from a confined system domain (initrc_t, e.g. a shell script started by systemd-run)
+    runs as virsh_t and gets "Failed to open file ...: Permission denied" -- which surfaced only at the worker, after
+    the 35-minute stage. The probe defines a throw-away domain in libvirt's in-process test driver (test:///default):
+    nothing on the host is defined or changed."""
+    os.makedirs(work_dir, mode=0o700, exist_ok=True)
+    fd, probe = tempfile.mkstemp(prefix=".virsh-probe.", suffix=".xml", dir=work_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(VIRSH_PROBE_XML)
+        rc, out = runner(["virsh", "-c", "test:///default", "define", probe])
+    finally:
+        os.unlink(probe)
+    if rc:
+        raise WorkerError(f"virsh cannot read files the build writes under {work_dir} ({out.strip()[-200:]}): run "
+                          "build.py with sudo from a login shell, or systemd-run the python interpreter directly "
+                          "(a shell script under systemd-run runs as initrc_t, and SELinux confines its virsh)")
+
+
 def preflight(cfg: WorkerConfig, runner: Runner = _default_runner, mem: Callable[[], float] = mem_available_gib,
               wd: Callable[[], bool] = watchdog_inactive) -> None:
     if not wd():
         raise WorkerError("hardware watchdog is armed: refusing to start a VM")
+    virsh_file_access(cfg.work_dir, runner)
     for dom in (cfg.target, cfg.base):
         st = domstate(dom, runner)
         if st and "shut off" not in st:
@@ -345,6 +370,23 @@ def _guestfish(cfg: WorkerConfig, script: str, mode: str, runner: Callable[..., 
         return runner(["guestfish", mode, "-a", cfg.exchange, "-f", sp])
     finally:
         os.unlink(sp)
+
+
+def drop_overlay(cfg: WorkerConfig, runner: Runner = _default_runner) -> int:
+    """Remove the worker's throwaway overlay once the worker is shut off, BEFORE the copy-out: the copied-out ISO then
+    never shares the build filesystem with the overlay (build-20261023T224037Z ran /var/lib/mios-build down to 5.6 GB
+    before its copy-out). The copy-out reads only the exchange disk. Returns the bytes freed."""
+    st = domstate(cfg.name, runner)
+    if st and "shut off" not in st:
+        raise WorkerError(f"{cfg.name} is {st}: its overlay is removed only after the worker stopped")
+    try:
+        size = os.stat(cfg.overlay).st_blocks * 512
+        os.unlink(cfg.overlay)
+    except FileNotFoundError:
+        return 0
+    except OSError as e:
+        raise WorkerError(f"cannot remove the worker overlay: {e}") from None
+    return size
 
 
 def extract(cfg: WorkerConfig, dest: str, runner: Callable[..., Tuple[int, str]] = _default_runner) -> str:
@@ -471,8 +513,36 @@ def _session(cfg: WorkerConfig, ip: str) -> Any:
         pw = ""
 
 
-def run_ps(sess: Any, script: str) -> str:
-    r = sess.run_ps(script)
+# WSMan faults Windows raises while it creates the shell for a request, before the command runs, so a retry is safe.
+# 0x800703FA ERROR_KEY_DELETED ("Illegal operation attempted on a registry key that has been marked for deletion"):
+# the User Profile Service unloaded the signing-in account's hive under WinRM between two shells (build
+# 20261024T044408Z: submit_job's shell, right after quiesce). It clears once the profile is reloaded.
+TRANSIENT_WSMAN_FAULTS = (0x800703FA,)
+WINRM_RETRIES = 6
+WINRM_RETRY_S = 10.0
+
+
+def _winrm_failure(e: BaseException) -> bool:
+    """pywinrm's WinRMError family (WSMan fault, transport, timeout) or the requests/socket OSError beneath it."""
+    return isinstance(e, OSError) or any(c.__module__.split(".")[0] == "winrm" for c in type(e).__mro__)
+
+
+def run_ps(sess: Any, script: str, sleep: Callable[[float], None] = time.sleep, retries: int = WINRM_RETRIES) -> str:
+    """One PowerShell script over WinRM. A transient shell-creation fault is retried; any other WinRM failure is a
+    WorkerError (the build stage fails named and its cleanup runs), never a raw pywinrm traceback."""
+    for attempt in range(retries + 1):
+        try:
+            r = sess.run_ps(script)
+            break
+        except Exception as e:   # noqa: BLE001 -- narrowed by _winrm_failure; anything else propagates unchanged
+            if not _winrm_failure(e):
+                raise
+            code = getattr(e, "wsman_fault_code", None)
+            if code in TRANSIENT_WSMAN_FAULTS and attempt < retries:
+                sleep(WINRM_RETRY_S)
+                continue
+            why = f"WSMan fault {code:#010x}" if isinstance(code, int) else type(e).__name__
+            raise WorkerError(f"worker WinRM call failed ({why}, attempt {attempt + 1}/{retries + 1}): {str(e)[:300]}") from None
     if r.status_code:
         raise WorkerError(f"worker command failed rc={r.status_code}: {r.std_err.decode(errors='replace')[-600:]}")
     return r.std_out.decode("utf-8", "replace")
@@ -489,7 +559,7 @@ def wait_winrm(cfg: WorkerConfig, runner: Runner = _default_runner, sleep: Calla
             try:
                 with socket.create_connection((ip, cfg.winrm_port), timeout=5):
                     pass
-                run_ps(sess, "$PSVersionTable.PSVersion.Major")
+                run_ps(sess, "$PSVersionTable.PSVersion.Major", sleep)
                 return sess
             except (OSError, WorkerError) as e:
                 last = f"{ip}: {type(e).__name__}"
@@ -511,7 +581,7 @@ _LOCATE = f"$v = Get-Volume -FileSystemLabel '{EXCHANGE_LABEL}' -ErrorAction Sil
 QUIESCE_SERVICES = ("wuauserv", "UsoSvc", "WaaSMedicSvc", "DoSvc")
 
 
-def quiesce(sess: Any) -> str:
+def quiesce(sess: Any, sleep: Callable[[float], None] = time.sleep) -> str:
     """Make the throwaway worker overlay safe for a long unattended job: no Windows Update (no reboot in the
     middle of a conversion), no sleep/hibernate, and Defender skips the exchange volume (UUP conversion +
     DISM on it). Protected services that refuse to stop are reported, not fatal; only the overlay changes."""
@@ -526,7 +596,7 @@ def quiesce(sess: Any) -> str:
                   "foreach ($a in @('standby-timeout-ac', 'hibernate-timeout-ac', 'monitor-timeout-ac')) { & powercfg.exe /change $a 0 | Out-Null }; "
                   "& powercfg.exe /hibernate off | Out-Null; "
                   "Add-MpPreference -ExclusionPath ('{0}:\\' -f $v.DriveLetter) -ErrorAction SilentlyContinue; "
-                  "'quiesced ' + ($r -join ' ')").strip()
+                  "'quiesced ' + ($r -join ' ')", sleep).strip()
 
 
 def run_exchange_script(sess: Any, script: str, args: str = "") -> str:
@@ -563,14 +633,14 @@ def reboot_and_wait(cfg: WorkerConfig, sess: Any, runner: Runner = _default_runn
     raise WorkerError(f"worker did not come back from the reboot within {cfg.boot_timeout_s}s ({last})")
 
 
-def submit_job(sess: Any) -> None:
+def submit_job(sess: Any, sleep: Callable[[float], None] = time.sleep) -> None:
     """Run the job as SYSTEM in a scheduled task (survives WinRM timeouts; DISM needs full rights)."""
     run_ps(sess, _LOCATE + "; "
            "$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File \"{0}\\job\\MiOS-Xbox-Worker.ps1\" -Root \"{0}\"' -f $root); "
            "$p = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest; "
            "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 12) -AllowStartIfOnBatteries; "
            "Register-ScheduledTask -TaskPath '\\MiOS\\' -TaskName 'MiOS-Xbox-Build' -Action $a -Principal $p -Settings $s -Force | Out-Null; "
-           "Start-ScheduledTask -TaskPath '\\MiOS\\' -TaskName 'MiOS-Xbox-Build'")
+           "Start-ScheduledTask -TaskPath '\\MiOS\\' -TaskName 'MiOS-Xbox-Build'", sleep)
 
 
 def poll_job(cfg: WorkerConfig, sess: Any, sleep: Callable[[float], None] = time.sleep,
@@ -578,7 +648,7 @@ def poll_job(cfg: WorkerConfig, sess: Any, sleep: Callable[[float], None] = time
     deadline = time.monotonic() + cfg.build_timeout_s
     last = ""
     while time.monotonic() < deadline:
-        txt = run_ps(sess, _LOCATE + "; $f = Join-Path $root 'out\\status.json'; if (Test-Path $f) { Get-Content -Raw $f } else { '{}' }")
+        txt = run_ps(sess, _LOCATE + "; $f = Join-Path $root 'out\\status.json'; if (Test-Path $f) { Get-Content -Raw $f } else { '{}' }", sleep)
         try:
             st = json.loads(txt.strip() or "{}")
         except ValueError:

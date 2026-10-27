@@ -23,6 +23,11 @@ QS.PanelWindow {
     readonly property var bar: theme.topbar || ({})
     readonly property var top: ToplevelManager.activeToplevel
     readonly property string appId: top ? top.appId : ""
+    readonly property string appAddress: {
+        const list = Hyprland.toplevels ? Hyprland.toplevels.values : []
+        const current = list.find(t => t && t.wayland === menus.top)
+        return current ? DockLamp.addressOf(current) : ""
+    }
     readonly property var entry: appId ? QS.DesktopEntries.heuristicLookup(appId) : null
     readonly property string appName: !appId ? "" : (entry ? entry.name : appId)
     property int openMenu: -1
@@ -42,11 +47,12 @@ QS.PanelWindow {
     function parse(t) { try { snap = JSON.parse(t) || ({}) } catch (e) { snap = ({}) } }
     readonly property var menuItems: {
         const s = snap
-        if (!appId || !s || s.app_id !== appId || !Array.isArray(s.menus)) return []
-        return s.menus.filter(m => m && m.label && Array.isArray(m.items) && m.items.length)
+        if (!appId || !appAddress || !s || s.app_id !== appId || s.address !== appAddress || !Array.isArray(s.menus)) return []
+        return s.menus.filter(m => m && m.label &&
+                             ((Array.isArray(m.items) && m.items.length) || (typeof m.action === "string" && m.action.length)))
     }
-    onMenuItemsChanged: openMenu = -1
-    onAppIdChanged: openMenu = -1
+    onMenuItemsChanged: { openMenu = -1; pillViewport.contentX = 0 }
+    onAppIdChanged: { openMenu = -1; pillViewport.contentX = 0 }
 
     // ---- window control tabs in the bar row -----------------------------------------------------
     // hyprbars announces every tab's live state on Hyprland's event socket (hyprbarstab>>ADDRESS,RAISED,
@@ -93,7 +99,16 @@ QS.PanelWindow {
         return left
     }
     // rowLeft animated with the tab (hyprbars rises/melts on Hyprland's fadeIn: speed x 100 ms)
-    property real shownLeft: rowLeft
+    property bool menuHovered: false
+    property real shownLeft: theme.edgeMargin
+    function updateRowPosition() {
+        // Keep the target beneath the pointer while a tab appears/melts,
+        // and keep an open dropdown attached to the pill that opened it.
+        if (!menuHovered && openMenu < 0) shownLeft = rowLeft
+    }
+    onRowLeftChanged: updateRowPosition()
+    onMenuHoveredChanged: updateRowPosition()
+    Component.onCompleted: updateRowPosition()
     Behavior on shownLeft { NumberAnimation { duration: menus.tab.reveal_ms !== undefined ? menus.tab.reveal_ms : 450; easing.type: Easing.OutCubic } }
     Connections {
         target: Hyprland
@@ -107,10 +122,10 @@ QS.PanelWindow {
     // layer above it with the status island while the pointer is at the top edge.
     property QtObject reveal: null
     readonly property bool overFullscreen: !!reveal && reveal.topActive
-    onOpenMenuChanged: if (reveal) reveal.menuPopup = openMenu >= 0
+    onOpenMenuChanged: { updateRowPosition(); if (reveal) reveal.menuPopup = openMenu >= 0 }
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
     WlrLayershell.namespace: "mios-appmenu"
-    WlrLayershell.layer: overFullscreen ? WlrLayer.Overlay : WlrLayer.Top
+    WlrLayershell.layer: WlrLayer.Overlay
     anchors.top: true
     anchors.left: true
     margins.top: theme.edgeMargin
@@ -118,11 +133,11 @@ QS.PanelWindow {
     exclusiveZone: 0
     exclusionMode: QS.ExclusionMode.Ignore   // the true top edge, same row as the status island
     // Mobile outputs ([desktop.mobile]) carry the app menu on the window shoulder dot, not here.
-    visible: appName !== "" && bar.app_menu !== false && !(screen && Mobile.isMobile(screen.name)) && (!overFullscreen || reveal.topShown)
+    visible: appName !== "" && bar.app_menu !== false && (typeof shellState.topbarShown !== "function" || shellState.topbarShown("app_menu")) && !(screen && Mobile.isMobile(screen.name)) && (!overFullscreen || reveal.topShown)
     // Never runs under the island: what does not fit before it is clipped.
     readonly property var island: ShellGeometry.islands[screen ? screen.name : ""] || null
     readonly property real maxWidth: Math.max(1, island ? island.x - rowLeft - theme.edgeMargin : screen.width / 2 - rowLeft)
-    implicitWidth: Math.max(1, Math.min(pills.implicitWidth, maxWidth))
+    implicitWidth: Math.max(1, Math.min(Math.ceil(pills.implicitWidth), Math.floor(maxWidth)))
     implicitHeight: theme.topHeight
     color: "transparent"
 
@@ -162,22 +177,53 @@ QS.PanelWindow {
         }
     }
 
-    Row {
-        id: pills
-        spacing: menus.theme.edgeMargin / 2
-        HoverHandler { onHoveredChanged: { const h = hovered; Qt.callLater(() => { if (menus.reveal) menus.reveal.menuHovered = menus.visible && h }) } }
-        Pill { text: menus.appName; strong: true }
-        Repeater {
-            id: pillRepeater
-            model: menus.menuItems
-            delegate: Pill {
-                required property var modelData
-                required property int index
-                text: modelData.label
-                active: menus.openMenu === index
-                onActivated: menus.openMenu = (menus.openMenu === index ? -1 : index)
-                // Sliding across the row while a menu is open switches menus, like a menubar.
-                onHovered: if (menus.openMenu >= 0 && menus.openMenu !== index) menus.openMenu = index
+    Flickable {
+        id: pillViewport
+        anchors.fill: parent
+        contentWidth: pills.implicitWidth
+        contentHeight: height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentWidth > width + 1
+        WheelHandler {
+            target: null
+            onWheel: event => {
+                const delta = event.angleDelta.x !== 0 ? event.angleDelta.x : event.angleDelta.y
+                pillViewport.contentX = Math.max(0, Math.min(pillViewport.contentWidth - pillViewport.width,
+                                                             pillViewport.contentX - delta))
+                event.accepted = true
+            }
+        }
+        Row {
+            id: pills
+            spacing: menus.theme.edgeMargin / 2
+            HoverHandler {
+                onHoveredChanged: {
+                    const h = hovered
+                    menus.menuHovered = h
+                    Qt.callLater(() => { if (menus.reveal) menus.reveal.menuHovered = menus.visible && h })
+                }
+            }
+            Pill { text: menus.appName; strong: true }
+            Repeater {
+                id: pillRepeater
+                model: menus.menuItems
+                delegate: Pill {
+                    required property var modelData
+                    required property int index
+                    text: modelData.label
+                    enabled: modelData.enabled !== false
+                    opacity: enabled ? 1 : 0.45
+                    active: menus.openMenu === index
+                    onActivated: {
+                        if (modelData.action) {
+                            menus.openMenu = -1
+                            QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", menus.snap.app_id, String(modelData.action), "--window", menus.snap.address])
+                        } else menus.openMenu = (menus.openMenu === index ? -1 : index)
+                    }
+                    // Sliding across the row while a menu is open switches menus, like a menubar.
+                    onHovered: if (!modelData.action && menus.openMenu >= 0 && menus.openMenu !== index) menus.openMenu = index
+                }
             }
         }
     }
@@ -277,7 +323,7 @@ QS.PanelWindow {
                                     menus.expanded = next
                                     return
                                 }
-                                QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", menus.snap.app_id, String(rowBox.it.id)])
+                                QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", menus.snap.app_id, String(rowBox.it.id), "--window", menus.snap.address])
                                 menus.openMenu = -1
                             }
                         }
@@ -301,7 +347,7 @@ QS.PanelWindow {
             return JSON.stringify({ app_id: menus.appId, app_name: menus.appName, visible: menus.visible,
                                     menus: menus.menuItems.map(m => m.label), open_menu: menus.openMenu,
                                     dropdown: dropdown.progress, width: menus.width, row_left: menus.rowLeft,
-                                    tabs: menus.tabRects, shown_left: menus.shownLeft })
+                                    tabs: menus.tabRects, shown_left: menus.shownLeft, menu_hovered: menus.menuHovered })
         }
     }
 }
