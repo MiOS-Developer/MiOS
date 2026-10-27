@@ -1,26 +1,82 @@
-# AI-hint: Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); a window not moved in the room exits to exactly its saved 2D box and mode.
+# AI-hint: Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); windows opened while the room is showing JOIN the same group frame (angles, plane, apparent scale); a window not moved in the room exits to exactly its saved 2D box and mode.
 # AI-related: tests/test-hypr3d-enter-morph-scale.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.spawn]
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -192,6 +192,9 @@
+@@ -192,6 +192,19 @@
  // the live room on every save (closed windows drop out).
  static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
  static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
 +// The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
 +// own default, so the exit's "moved in the room?" test needs this separate record).
 +static std::unordered_map<std::uintptr_t, Vec3>      g_enterRoomCenters;
++
++// The room's ONE group frame (global orientation + plane + scale). buildEnterMorph records it for the
++// windows that were open at entry; a window that opens while the room is showing joins the same frame
++// (same angles, same plane, same apparent scale) instead of taking the live camera's.
++struct SGroupFrame {
++    bool  valid = false;
++    float yaw = 0.0f, pitch = 0.0f, groupS = 1.0f, D1 = 0.65f;
++    Vec3  P0{}, N{}, R{}, UV{};
++};
++static SGroupFrame g_groupFrame;
  
  enum class EViewMorph : uint8_t { None, To3D, To2D };
  static EViewMorph g_viewMorph = EViewMorph::None;
-@@ -3731,6 +3734,7 @@
+@@ -2663,11 +2676,39 @@
+                 maxDist = std::max(0.6f, WALL.dist - 0.3f);
+             const auto P = retinaPlace(mon, BOX, OBST, 0, maxDist);
+             retinaRecord(info.id, BOX, P);
+-            entity.center     = P.center;
+-            entity.spawnScale = WIN_SCALE * P.mul;
+-            entity.yaw   = std::atan2(-FWD.x, -FWD.z);
+-            entity.pitch = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
+-                           g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
++
++            // Join the room's group frame: same angles, same plane, same apparent scale as every
++            // other window. No frame yet (the room opened empty): the first spawn defines it from
++            // the camera at this moment, with the global tilt, and later windows follow it.
++            if (!g_groupFrame.valid) {
++                const float D1  = std::max(0.6f, g_cfgSpawnDistance);
++                const float YAW = std::atan2(-FWD.x, -FWD.z);
++                const float PIT = std::asin(std::clamp(FWD.y, -1.0f, 1.0f)) -
++                                  g_cfgTiltAngleDeg * (3.14159265358979f / 180.0f);
++                const Vec3 NN = retinaNormal(YAW, PIT);
++                const Vec3 RR = normalize(Vec3{std::cos(YAW), 0.0f, -std::sin(YAW)});
++                const Vec3 UPC = cross(CAM.right(), FWD);
++                g_groupFrame = SGroupFrame{true, YAW, PIT, 1.0f, D1,
++                                           CAM.position + FWD * D1 + UPC * g_cfgEyelineOffset, NN, RR,
++                                           normalize(cross(NN, RR))};
++            }
++            const SGroupFrame& GF = g_groupFrame;
++            const CBox FA = g_cfgFit != ERetinaFit::Off ? retinaFitArea(mon)
++                                                         : CBox{0.0, 0.0, mon->m_size.x, mon->m_size.y};
++            const double CSTEP = std::max(0.0f, g_cfgCascade);
++            const double PCX   = FA.x + FA.w * 0.5 + P.k * CSTEP - mon->m_size.x * 0.5;
++            const double PCY   = FA.y + FA.h * 0.5 + P.k * CSTEP - mon->m_size.y * 0.5;
++            // a new window is the topmost: one slab in front of the plane per cascade step, the
++            // pose scaled down so its apparent size stays groupS * fitM
++            const float FRONT = -std::max(0.02f, g_cfgWindowDepth + 0.01f) * static_cast<float>(1 + P.k);
++            const float MUL   = GF.groupS * P.fitM * (GF.D1 + FRONT) / GF.D1;
++            const float SC    = configWindowScale() * MUL;
++            g_retinaMul[info.id] = MUL;
++            entity.center     = GF.P0 - GF.N * FRONT + GF.R * (World3D::toWorld(PCX) * SC) -
++                                GF.UV * (World3D::toWorld(PCY) * SC);
++            entity.spawnScale = WIN_SCALE * MUL;
++            entity.yaw   = GF.yaw;
++            entity.pitch = GF.pitch;
+             g_entryPoses3D[info.id] = entity.center;
+             if (!g_viewMorphArmed && g_viewMorph == EViewMorph::None &&
+                 !g_cfgStills && !info.isLayer && !info.attached &&
+@@ -3731,6 +3772,8 @@
      const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
      g_viewMorphWins.clear();
      g_entryPoses3D.clear();
 +    g_enterRoomCenters.clear();
++    g_groupFrame.valid = false;
  
      const auto& CAM = g_scene.camera();
      const Vec3  FWD = CAM.forward();
-@@ -3746,6 +3750,28 @@
+@@ -3746,6 +3789,28 @@
              obstacles.push_back(O);
      };
  
@@ -49,7 +105,7 @@
      for (const auto& info : infos) {
          SViewMorphWin MW;
  
-@@ -3798,33 +3824,70 @@
+@@ -3798,33 +3863,72 @@
              const double dx = winCx - monW * 0.5;
              const double dy = winCy - monH * 0.5;
  
@@ -87,6 +143,8 @@
 +            const Vec3 N  = retinaNormal(MW.roomPose.yaw, MW.roomPose.pitch);
 +            const Vec3 R  = normalize(Vec3{std::cos(MW.roomPose.yaw), 0.0f, -std::sin(MW.roomPose.yaw)});
 +            const Vec3 UV = normalize(cross(N, R));
++            g_groupFrame = SGroupFrame{true, MW.roomPose.yaw, MW.roomPose.pitch, groupS, D1,
++                                       CAM.position + FWD * D1 + UP * g_cfgEyelineOffset, N, R, UV};
 +
 +            // Stacking: only a window overlapped on screen by one above it steps back (one slab each,
 +            // pose scaled to keep its size); tiles never overlap, so a tiled group stays coplanar.
@@ -143,7 +201,7 @@
              MW.roomPose.box = MW.boxRoom;
              g_retinaMul[info.id] = MW.roomPose.scaleMul;
              OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
-@@ -3840,7 +3903,8 @@
+@@ -3840,7 +3944,8 @@
              }
          }
  
@@ -153,7 +211,15 @@
          MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
  
          // Every window's box is frozen at enter: the room is its own
-@@ -3963,6 +4027,32 @@
+@@ -3897,6 +4002,7 @@
+ 
+     // An interrupted ENTER morph contributes its intended room poses.
+     const auto PREVIOUS = std::move(g_viewMorphWins);
++    g_groupFrame.valid = false;
+ 
+     if (!g_world.entities().empty())
+         g_savedPoses.clear(); // rebuilt from the live room below; an empty
+@@ -3963,6 +4069,32 @@
          MW.box2D   = MW.boxRoom;
          MW.animBox = false;
  
