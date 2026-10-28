@@ -1058,3 +1058,7 @@ usr/share/mios/virtio/*.iso
 !/tools/native/mios-pip-gravity/src/
 !/tools/native/mios-pip-gravity/src/*.rs
 !/usr/lib/systemd/user/mios-pip-gravity.service
+# Compiled native daemons installed into the live tree; built from tools/native, never tracked.
+/usr/libexec/mios/mios-inputd
+/usr/libexec/mios/mios-pip-gravity
+/usr/libexec/mios/mios-menu-candidate
