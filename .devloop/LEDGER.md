@@ -3596,3 +3596,10 @@ Verification: live backend class 12 passing; older worktree class 10 passing; fu
 - Keybinds: [keybindings.global] SSOT, mios-gate keybind-collisions (rules 1-7, static gate installed), mios-inputd (observe-only), shared resolver parser, vectors, docs.
 - PiP gravity: [desktop.pip_gravity] SSOT + tools/native/mios-pip-gravity (magnetic flank rails, HUD magnetism, spring settle), user unit enabled, verified live and inside a nested Hyprland session with Hypr3D (PiP-sized pinned window on DP-3).
 - Open: planned actions quickshell:monitor-toggle, quickshell:lock, mios:toggle_vm_passthrough have no handlers. Not pushed.
+
+## 2026-10-28T03:45Z mios-keybinds-lead: follow-ups landed (local main, not pushed)
+- a940af9e0 mios-inputd serve arm compile fix; static inputd rebuilt; mios-inputd.service enabled observe-only, unresolved_actions=[].
+- 97a002372 quickshell:lock -> hyprlock in action_argv.
+- 5873493bc/ce26b9319 mios-pip-gravity: per-output planning by window centre, re-home pinned PiPs across outputs, Hypr3D idle test; verified live on DP-3 and HDMI-A-1 (topbar/dock reserved zones respected).
+- a7317722e compiled daemons ignored; version-literals-ssot passes again.
+- Remaining outside this lane: tests/test-photoshoot-capture.py (intent-to-add, no tier), peers' unstaged rdp/shaderglass/unit-gen edits.
