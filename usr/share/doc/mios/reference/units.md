@@ -440,6 +440,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-pgvector-optimize.service` | `usr/lib/systemd/system` | MiOS pgvector Database Optimization Service |
 | `mios-pgvector-optimize.timer` | `usr/lib/systemd/system` | Weekly Automated pgvector Index & Table Maintenance Timer |
 | `mios-pgvector.container` | `usr/share/containers/systemd` | MiOS' PostgreSQL + pgvector (unified agent-plane datastore, FOSS) |
+| `mios-pip-gravity.service` | `usr/lib/systemd/user` | MiOS PiP gravity (magnetic flank rails, HUD magnetism, springy snap) |
 | `mios-piper.container` | `usr/share/containers/systemd` | MiOS' Piper Streaming TTS Engine (piper1-gpl http_server) |
 | `mios-placement.service` | `usr/lib/systemd/user` | MiOS float-first window placement (centered floating size, tile on move) |
 | `mios-podman-gc.service` | `usr/lib/systemd/system` | MiOS' Podman Garbage Collection |
@@ -1076,5 +1077,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `xvnc@.service` | `usr/lib/systemd/system` | XVNC Per-Connection Daemon |
 | `zvbid.service` | `usr/lib/systemd/system` | Proxy Sharing V4L VBI Device Between Applications |
 
-<!-- derived from tracked unit files (1068 unit(s)) -->
+<!-- derived from tracked unit files (1069 unit(s)) -->
 <!-- /MIOS-GEN:units -->

@@ -4237,7 +4237,7 @@ reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e"
 # Every quickshell: and mios: action a binding fires must be in one of these two (the gate enforces it): an
 # implemented action carries its argv; an action with no runtime handler yet is listed as planned and is reported,
 # never silently launched. hypr:, exec:, tmux: and readline: verbs resolve natively (compositor eval, program, tmux, readline).
-planned_actions = ["quickshell:monitor-toggle", "quickshell:lock", "mios:toggle_vm_passthrough", "mios:vm-fullscreen", "mios:vm-command-modifier"]
+planned_actions = ["quickshell:monitor-toggle", "mios:toggle_vm_passthrough", "mios:vm-fullscreen", "mios:vm-command-modifier"]
 
 [keybindings.global.action_argv]
 "quickshell:drawer-toggle" = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call", "drawer", "toggle"]
@@ -4245,6 +4245,7 @@ planned_actions = ["quickshell:monitor-toggle", "quickshell:lock", "mios:toggle_
 "mios:placement-toggle" = ["/usr/bin/miosd", "placement", "toggle"]
 "mios:hyprland-3d-toggle" = ["/usr/bin/mios-gen", "hyprland-3d-toggle"]
 "mios:launch-browser" = ["/usr/bin/mios-browser"]
+"quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 [keybindings.global.contexts]
