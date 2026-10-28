@@ -76,7 +76,8 @@ fn run() -> Result<(), String> {
                 if result.is_ok() { return Ok(()); }
                 eprintln!("native controller recovery: {}",result.unwrap_err());
             }
-            Err(std::process::Command::new(&fallback[0]).args(&fallback[1..]).exec().to_string())
+            let (program, rest) = fallback.split_first().ok_or("controller recovery_argv is empty")?;
+            return Err(std::process::Command::new(program).args(rest).exec().to_string());
         }
         Operation::VmAction { action } => mios_inputd::runtime::vm_action(&action, &global)?,
         #[cfg(target_os = "linux")]
