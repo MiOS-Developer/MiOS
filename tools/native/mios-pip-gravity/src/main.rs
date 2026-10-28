@@ -152,6 +152,18 @@ mod monitor_tests {
         assert_eq!(monitor_at(&m, 2100.0, 100.0), Some(1));
         assert_eq!(monitor_at(&m, 5000.0, 100.0), None);
     }
+
+    #[test]
+    fn hypr3d_status_uses_the_latest_frame_line() {
+        let p = std::env::temp_dir().join(format!("mios-pg-status-{}", std::process::id()));
+        std::fs::write(&p, "active=1 frames=186 transition=0.6 target=0\nrender: x\nactive=0 frames=187 transition=0 target=0\n").unwrap();
+        assert!(!super::hypr3d_active(p.to_str().unwrap()));
+        std::fs::write(&p, "active=0 frames=1\n--- frame 2\nactive=1 frames=2 transition=1 target=1\nrender: y\n").unwrap();
+        assert!(super::hypr3d_active(p.to_str().unwrap()));
+        let _ = std::fs::remove_file(&p);
+        assert!(!super::hypr3d_active(p.to_str().unwrap()), "missing file means flat desktop");
+        assert!(!super::hypr3d_active(""), "unset path means flat desktop");
+    }
 }
 
 struct Track {
