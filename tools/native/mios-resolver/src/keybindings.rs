@@ -102,7 +102,7 @@ fn normalize_step(step: &str) -> Result<String, String> {
         }
     }
     let key = key.ok_or_else(|| format!("chord has no key: {step}"))?;
-    let mut out: Vec<_> = ["SUPER", "CTRL", "LEFTCTRL", "RIGHTCTRL", "ALT", "SHIFT"]
+    let mut out: Vec<_> = ["SUPER", "CTRL", "ALT", "SHIFT", "LEFTCTRL", "RIGHTCTRL"]
         .into_iter()
         .filter(|m| mods.contains(m))
         .map(str::to_owned)

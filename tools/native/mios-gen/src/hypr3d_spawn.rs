@@ -65,6 +65,7 @@ pub struct Policy {
     pub mobile_fill: bool,
     pub cascade_px: f64,
     pub pixel_snap: bool,
+    pub opening: Option<mios_resolver::window_opening::Policy>,
 }
 
 fn num(v: &Value) -> Option<f64> {
@@ -179,7 +180,7 @@ impl Policy {
             close_effect_3d: opt_str("close_effect_3d", "glass-dissolve", &["glass-dissolve", "magic-lamp", "none"])?,
             fit,
             fit_margin_px: follow("fit_margin_px", 0.0, 512.0)?,
-            safe_insets_px: [0.0, top, 0.0, dock + edge],
+            safe_insets_px: [0.0, top + 2.0 * edge, 0.0, dock + 2.0 * edge],
             min_text_px: number("min_text_px", 1.0, 200.0)?,
             text,
             landscape_cells: cells("landscape_cells")?,
@@ -188,6 +189,7 @@ impl Policy {
             cascade_px: number("cascade_px", 0.0, 512.0)?,
             pixel_snap: t.get("pixel_snap").and_then(Value::as_bool)
                 .ok_or_else(|| format!("{} must be a boolean", key("pixel_snap")))?,
+            opening: mios_resolver::window_opening::Policy::from_ssot(data)?,
         }))
     }
 }
@@ -280,6 +282,11 @@ pub fn plan(p: &Policy, o: &Output, distance: f64, render_scale: f64) -> Plan {
     let portrait = hl > wl;
     let spawn_box = if o.mobile && p.mobile_fill {
         (fit_box.0.floor() as i64, fit_box.1.floor() as i64)
+    } else if let Some(opening) = &p.opening {
+        let width_mm = if o.transform.rem_euclid(2) == 1 { o.phys_mm.1 } else { o.phys_mm.0 };
+        let ppm = (width_mm > 0.0).then_some(wl / width_mm);
+        let (w,h) = opening.size((wl-l-r).max(1.0), (hl-t-b).max(1.0), ppm);
+        (w as i64,h as i64)
     } else {
         let (cols, rows) = if portrait { p.portrait_cells } else { p.landscape_cells };
         let w = cols as f64 * p.text.cell.0 + p.text.chrome.0;
@@ -597,7 +604,7 @@ handheld_shape_max_short_px = 1600
         assert_eq!((land.fit_box, land.spawn_box, land.orientation), ((1904.0, 948.0), (960, 692), "landscape"));
         let mut no_bars = out("DP-1-no-reservations", 1920, 1080, 1.0, 0);
         no_bars.reserved = [0.0; 4];
-        assert_eq!(plan(&p, &no_bars, 5.0, 2.0).fit_box, (1904.0, 972.0),
+        assert_eq!(plan(&p, &no_bars, 5.0, 2.0).fit_box, (1904.0, 948.0),
                    "SSOT topbar and dock insets still protect outputs with zero layer-shell reservations");
         let port = plan(&p, &out("DP-2", 1920, 1080, 1.0, 1), 5.0, 2.0);
         assert_eq!((port.fit_box, port.spawn_box, port.orientation), ((1064.0, 1788.0), (680, 932), "portrait"));
@@ -661,14 +668,14 @@ handheld_shape_max_short_px = 1600
         let data = ssot();
         let p = Policy::from_ssot(&data).unwrap().unwrap();
         assert_eq!(p.fit_margin_px, 8.0, "follows theme.shell.edge_margin_px");
-        assert_eq!(p.safe_insets_px, [0.0, 28.0, 0.0, 64.0]);
+        assert_eq!(p.safe_insets_px, [0.0, 44.0, 0.0, 72.0]);
         assert_eq!(p.text, Text { size_px: 12.0, cell: (10.0, 20.0), chrome: (20.0, 12.0) });
         // the margin follows its source
         let mut m = data.clone();
         m["theme"]["shell"]["edge_margin_px"] = Value::Integer(20);
         assert_eq!(Policy::from_ssot(&m).unwrap().unwrap().fit_margin_px, 20.0);
         m["theme"]["shell"]["dock_height_px"] = Value::Integer(72);
-        assert_eq!(Policy::from_ssot(&m).unwrap().unwrap().safe_insets_px[3], 92.0);
+        assert_eq!(Policy::from_ssot(&m).unwrap().unwrap().safe_insets_px[3], 112.0);
         // off: absent, disabled, criterion fixed
         let mut off = data.clone();
         off["desktop"]["hyprland"]["hypr3d"].as_table_mut().unwrap().remove("spawn");
@@ -723,8 +730,8 @@ handheld_shape_max_short_px = 1600
         assert_eq!(w["window_scale"].as_float(), Some(0.754823));
         assert_eq!(w["spawn_distance"].as_float(), Some(5.0));
         assert_eq!((w["spawn_size"]["x"].as_integer(), w["spawn_size"]["y"].as_integer()), (Some(374), Some(712)));
-        assert_eq!(w["safe_top"].as_float(), Some(28.0));
-        assert_eq!(w["safe_bottom"].as_float(), Some(64.0));
+        assert_eq!(w["safe_top"].as_float(), Some(44.0));
+        assert_eq!(w["safe_bottom"].as_float(), Some(72.0));
         assert_eq!((w["pixel_exact"].as_bool(), w["fit"].as_str(), w["cascade"].as_float()), (Some(true), Some("resize"), Some(32.0)));
         assert_eq!(w["min_magnification"].as_float(), Some(0.8333));
         // world.monitor wins over focus; the published verdict wins over the computed one

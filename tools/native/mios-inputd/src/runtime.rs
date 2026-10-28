@@ -619,6 +619,7 @@ fn config_fingerprint(root: Option<&Path>) -> Vec<(PathBuf, u64, Option<std::tim
 }
 
 pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<String>, String> {
+    if global.planned_actions.iter().any(|a|a==action) { return Err(format!("action is planned, not implemented: {action}")); }
     global
         .resolved_actions
         .get(action)

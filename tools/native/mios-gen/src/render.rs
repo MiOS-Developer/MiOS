@@ -3333,9 +3333,13 @@ end
                         && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
                 })
                 .ok_or("desktop.hyprland.placement.open_tag must be [A-Za-z0-9_-]")?;
+            if let Some(opening) = mios_resolver::window_opening::Policy::from_ssot(data)? {
+                out += &format!("hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = {}, [\"tag\"] = \"+{tag}\"}})\n", lua(&Value::String(opening.rule_expression()))?);
+            } else {
             out += &format!(
                 "hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = \"(monitor_w>=monitor_h?min({land_w},monitor_w):min({port_w},monitor_w)) (monitor_w>=monitor_h?min({land_h},monitor_h):min({port_h},monitor_h))\", [\"tag\"] = \"+{tag}\"}})\n"
             );
+            }
         }
         for rule in at(h, "window_rules")?.as_array().ok_or("window_rules must be an array")? {
             if rule.as_table().is_none() {

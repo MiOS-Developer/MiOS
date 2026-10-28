@@ -15,6 +15,7 @@ struct Cli {
 enum Operation {
     Check,
     Serve,
+    Dispatch { action: String },
     VmAction { action: String },
     Map,
     ResolveAction {
@@ -67,6 +68,12 @@ fn run() -> Result<(), String> {
         _ => (false, false),
     };
     match args.command {
+        Operation::Dispatch { action } => {
+            use std::os::unix::process::CommandExt;
+            let argv=mios_inputd::runtime::configured_command(&action,&global)?;
+            let (program,rest)=argv.split_first().ok_or("action has no external dispatcher")?;
+            return Err(std::process::Command::new(program).args(rest).exec().to_string());
+        }
         Operation::Serve => {
             use std::os::unix::process::CommandExt;
             let fallback=global.controller.recovery_argv.clone();

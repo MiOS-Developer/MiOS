@@ -76,6 +76,12 @@ pub struct GlobalConfig {
     pub bindings: Vec<Binding>,
     pub controller: ControllerConfig,
     pub vm: crate::vm::VmConfig,
+    #[serde(default)]
+    pub action_argv: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub planned_actions: Vec<String>,
+    #[serde(default)]
+    pub native_actions: BTreeMap<String, String>,
     #[serde(skip)]
     pub resolved_actions: BTreeMap<String, Vec<String>>,
 }
@@ -167,6 +173,19 @@ impl GlobalConfig {
                 let mut argv = base.clone();
                 argv.extend([target.into(), "toggle".into()]);
                 self.resolved_actions.insert(action.into(), argv);
+            }
+        }
+        for (action, argv) in &self.action_argv {
+            validate_action(action)?;
+            if argv.is_empty() || argv.iter().any(|a| a.is_empty() || a.contains('\0')) {
+                return Err(format!("invalid action argv: {action}"));
+            }
+            if self.planned_actions.contains(action) { return Err(format!("action both implemented and planned: {action}")); }
+            self.resolved_actions.insert(action.clone(),argv.clone());
+        }
+        for (action,backend) in &self.native_actions {
+            if action != "mios:vm-command-modifier" || backend != "hyprland" || self.action_argv.contains_key(action) || self.planned_actions.contains(action) {
+                return Err(format!("unsupported native action realizer: {action}"));
             }
         }
         Ok(())

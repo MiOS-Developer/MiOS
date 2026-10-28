@@ -109,6 +109,9 @@ impl Device {
                 "refusing virtual output device: replay loop",
             ));
         }
+        if !fixture_only && name.starts_with("mios-input-fixture-") {
+            return Err(io::Error::other("private test fixture is isolated from the live bridge"));
+        }
         if fixture_only && !name.starts_with("mios-input-fixture-") {
             return Err(io::Error::other("fixture gate refuses a physical device"));
         }
@@ -436,7 +439,12 @@ impl VirtualDevice {
         {
             let entry = entry?;
             if entry.file_name().to_string_lossy().starts_with("event") {
-                return Ok(Path::new("/dev/input").join(entry.file_name()));
+                let path=Path::new("/dev/input").join(entry.file_name());
+                // devtmpfs publishes before udev sets the operator's input-group
+                // access. The fixture must wait for usable permissions, not only
+                // node existence (root-only tests otherwise hide this race).
+                let _ready=OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW).open(&path)?;
+                return Ok(path);
             }
         }
         Err(io::Error::new(
@@ -539,6 +547,9 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let path = path.ok_or("fixture did not enumerate")?;
+    if !Device::open(&path,false).err().is_some_and(|e|e.to_string().contains("isolated from the live bridge")) {
+        return Err("private fixture could enter live controller routing".into());
+    }
     let mut input = Device::open(&path, true).map_err(|e| e.to_string())?;
     let mut other = OpenOptions::new()
         .read(true)
@@ -680,7 +691,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         signal_results.push(signal);
     }
     Ok(
-        serde_json::json!({"fixture":"private-uinput","grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
+        serde_json::json!({"fixture":"private-uinput","isolated_from_live_bridge":true,"grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
     )
 }
 

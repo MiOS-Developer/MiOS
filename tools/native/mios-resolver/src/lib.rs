@@ -401,3 +401,199 @@ mod projection_tests {
         assert!(layered.get("desktop").is_some());
     }
 }
+
+// AI-hint: Shared output-aware opening geometry for native placement and the room.
+// AI-related: mios-gen/src/hypr3d_spawn.rs, miosd/src/placement.rs
+pub mod window_opening {
+    use toml::Value;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Policy {
+        pub landscape: (f64, f64),
+        pub portrait: (f64, f64),
+        pub font_scale: f64,
+        pub safe_insets: [f64; 4],
+        pub margin: f64,
+        pub min_width: f64,
+        pub min_height: f64,
+        pub max_width: f64,
+        pub max_width_ratio: f64,
+        pub max_height_ratio: f64,
+        pub max_width_mm: f64,
+        pub paper_long_edge_mm: f64,
+    }
+
+    fn at<'a>(doc: &'a Value, key: &str) -> Option<&'a Value> {
+        key.split('.').try_fold(doc, |v, k| v.get(k))
+    }
+    fn numeric(v: &Value) -> Option<f64> {
+        v.as_float().or_else(|| v.as_integer().map(|n| n as f64)).filter(|n| n.is_finite())
+    }
+    fn number(table: &Value, key: &str, low: f64, high: f64) -> Result<f64, String> {
+        table.get(key).and_then(numeric).filter(|v| *v >= low && *v <= high)
+            .ok_or_else(|| format!("window opening {key} must be finite in {low}..={high}"))
+    }
+
+    impl Policy {
+        /// Retina's text-cell policy is shared when float-first placement is enabled.
+        /// Legacy/fixed policies keep their existing independent sizing behavior.
+        pub fn from_ssot(doc: &Value) -> Result<Option<Self>, String> {
+            let Some(spawn) = at(doc, "desktop.hyprland.hypr3d.spawn") else { return Ok(None) };
+            if spawn.get("enabled").and_then(Value::as_bool) != Some(true)
+                || spawn.get("criterion").and_then(Value::as_str) != Some("retina") { return Ok(None); }
+            let Some(placement) = at(doc, "desktop.hyprland.placement") else { return Ok(None) };
+            if placement.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
+            let source = spawn.get("text_size_source").and_then(Value::as_str).ok_or("window opening text_size_source missing")?;
+            let font = at(doc, source).ok_or("window opening font source missing")?;
+            let font_size = number(font, "size", 4.0, 200.0)?;
+            let reference = match spawn.get("text_reference_px") {
+                Some(v) => numeric(v).filter(|v| *v >= 4.0 && *v <= 200.0).ok_or("window opening text_reference_px must be 4..=200")?,
+                None => font_size,
+            };
+            let font_scale = font_size / reference;
+            let cell_w = number(font, "cell_w_px", 1.0, 200.0)? * font_scale;
+            let cell_h = number(font, "cell_h_px", 1.0, 400.0)? * font_scale;
+            let chrome_w = number(font, "chrome_w_px", 0.0, 2000.0)?;
+            let chrome_h = number(font, "chrome_h_px", 0.0, 2000.0)?;
+            let cells = |key: &str| -> Result<(f64, f64), String> {
+                let pair = spawn.get(key).and_then(Value::as_array).filter(|v| v.len() == 2).ok_or_else(|| format!("window opening {key} must contain two cell counts"))?;
+                let c = numeric(&pair[0]).filter(|n| (1.0..=1000.0).contains(n)).ok_or("window opening invalid columns")?;
+                let r = numeric(&pair[1]).filter(|n| (1.0..=1000.0).contains(n)).ok_or("window opening invalid rows")?;
+                Ok((c * cell_w + chrome_w, r * cell_h + chrome_h))
+            };
+            let shell = at(doc, "theme.shell").ok_or("window opening shell metrics missing")?;
+            let edge = number(shell, "edge_margin_px", 0.0, 512.0)?;
+            let top = number(shell, "top_height_px", 0.0, 512.0)? + 2.0 * edge;
+            let bottom = number(shell, "dock_height_px", 0.0, 512.0)? + 2.0 * edge;
+            let margin = match spawn.get("fit_margin_px") {
+                Some(Value::String(path)) => at(doc, path).and_then(numeric),
+                Some(v) => numeric(v),
+                None => None,
+            }.filter(|v| *v >= 0.0 && *v <= 512.0).ok_or("window opening fit_margin_px is invalid")?;
+            let paper_long_edge_mm = match spawn.get("paper_long_edge_mm") {
+                Some(v) => numeric(v).filter(|v| *v >= 0.0 && *v <= 2000.0).ok_or("window opening paper_long_edge_mm must be 0..=2000")?,
+                None => 0.0,
+            };
+            Ok(Some(Self {
+                landscape: cells("landscape_cells")?, portrait: cells("portrait_cells")?, font_scale,
+                safe_insets: [0.0, top, 0.0, bottom], margin,
+                min_width: number(placement, "min_width_px", 1.0, 10000.0)?,
+                min_height: number(placement, "min_height_px", 1.0, 10000.0)?,
+                max_width: number(placement, "max_width_px", 1.0, 10000.0)?,
+                max_width_ratio: number(placement, "max_width_ratio", 0.01, 1.0)?,
+                max_height_ratio: number(placement, "max_height_ratio", 0.01, 1.0)?,
+                max_width_mm: number(placement, "max_width_mm", 0.0, 2000.0)?,
+                paper_long_edge_mm,
+            }))
+        }
+
+        pub fn insets(&self, reserved: [f64; 4]) -> [f64; 4] {
+            std::array::from_fn(|i| reserved[i].max(self.safe_insets[i]))
+        }
+
+        /// Uniform fit preserves the chosen paper/text-grid aspect. Workarea
+        /// and physical caps take precedence over minimum client dimensions.
+        pub fn size(&self, usable_w: f64, usable_h: f64, logical_px_per_mm: Option<f64>) -> (f64, f64) {
+            let portrait = usable_h > usable_w;
+            let (w, h) = if portrait { self.portrait } else { self.landscape };
+            let mut cap_w = (usable_w * self.max_width_ratio).min(self.max_width).min((usable_w - 2.0 * self.margin).max(1.0));
+            let mut cap_h = (usable_h * self.max_height_ratio).min((usable_h - 2.0 * self.margin).max(1.0));
+            if let Some(ppm) = logical_px_per_mm.filter(|v| v.is_finite() && *v > 0.0) {
+                if self.max_width_mm > 0.0 { cap_w = cap_w.min(self.max_width_mm * ppm); }
+                if self.paper_long_edge_mm > 0.0 {
+                    if portrait { cap_h = cap_h.min(self.paper_long_edge_mm * ppm); }
+                    else { cap_w = cap_w.min(self.paper_long_edge_mm * ppm); }
+                }
+            }
+            let scale = (self.min_width / w).max(self.min_height / h).max(1.0)
+                .min(cap_w / w).min(cap_h / h);
+            ((w * scale).floor().max(1.0), (h * scale).floor().max(1.0))
+        }
+
+        /// The first configure cannot query EDID, but uses identical text,
+        /// orientation and HUD bounds. The native mapper applies physical caps.
+        pub fn rule_expression(&self) -> String {
+            let n = |v: f64| format!("{v:.6}").trim_end_matches('0').trim_end_matches('.').to_owned();
+            let uw = format!("max(monitor_w-{},1)", n(self.safe_insets[0] + self.safe_insets[2]));
+            let uh = format!("max(monitor_h-{},1)", n(self.safe_insets[1] + self.safe_insets[3]));
+            let cap_w = format!("min(min(({uw})*{},{}),max(({uw})-{},1))",n(self.max_width_ratio),n(self.max_width),n(2.0*self.margin));
+            let cap_h = format!("min(({uh})*{},max(({uh})-{},1))",n(self.max_height_ratio),n(2.0*self.margin));
+            let expr = |(w,h): (f64,f64)| {
+                let scale = format!("min(min({},({cap_w})/{}),({cap_h})/{})",n((self.min_width/w).max(self.min_height/h).max(1.0)),n(w),n(h));
+                (format!("{}*({scale})",n(w)),format!("{}*({scale})",n(h)))
+            };
+            let (lw,lh)=expr(self.landscape);let (pw,ph)=expr(self.portrait);
+            format!("(({uw})>=({uh})?{lw}:{pw}) (({uw})>=({uh})?{lh}:{ph})")
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        fn doc() -> Value {
+            toml::from_str(r#"
+[theme.font]
+size=12
+cell_w_px=10
+cell_h_px=20
+chrome_w_px=20
+chrome_h_px=12
+[theme.shell]
+edge_margin_px=8
+top_height_px=28
+dock_height_px=56
+[desktop.hyprland.placement]
+enabled=true
+min_width_px=640
+min_height_px=400
+max_width_px=1800
+max_width_ratio=0.9
+max_height_ratio=0.9
+max_width_mm=420
+[desktop.hyprland.hypr3d.spawn]
+enabled=true
+criterion="retina"
+text_size_source="theme.font"
+text_reference_px=12
+paper_long_edge_mm=297
+landscape_cells=[94,34]
+portrait_cells=[66,46]
+fit_margin_px="theme.shell.edge_margin_px"
+"#).unwrap()
+        }
+        #[test]
+        fn opening_is_one_text_grid_across_output_resolutions() {
+            let p=Policy::from_ssot(&doc()).unwrap().unwrap();
+            assert_eq!(p.size(1920.0,964.0,Some(1920.0/530.0)),(960.0,692.0));
+            assert_eq!(p.size(2560.0,1324.0,Some(2560.0/697.0)),(960.0,692.0));
+            assert_eq!(p.size(1080.0,1804.0,Some(1080.0/299.0)),(680.0,932.0));
+        }
+        #[test]
+        fn output_workarea_and_mobile_bounds_win_over_client_minimum() {
+            let p=Policy::from_ssot(&doc()).unwrap().unwrap();
+            let (w,h)=p.size(390.0,728.0,None);
+            assert!(w<=351.0 && h<=655.0,"{w}x{h}");
+            assert!((w/h-680.0/932.0).abs()<0.003);
+            assert_eq!(p.insets([0.0;4]),[0.0,44.0,0.0,72.0]);
+            assert_eq!(p.insets([20.0,60.0,30.0,90.0]),[20.0,60.0,30.0,90.0]);
+        }
+        #[test]
+        fn font_size_changes_grow_the_opening_cells_and_physical_cap_is_uniform() {
+            let mut data=doc();data["theme"]["font"]["size"]=Value::Integer(18);
+            let p=Policy::from_ssot(&data).unwrap().unwrap();
+            assert_eq!(p.font_scale,1.5);
+            assert_eq!(p.landscape,(1430.0,1032.0));
+            let (w,h)=p.size(2560.0,1324.0,Some(2560.0/697.0));
+            assert!(w<=297.0*2560.0/697.0 && w>1080.0);
+            assert!((w/h-1430.0/1032.0).abs()<0.003);
+        }
+        #[test]
+        fn invalid_text_reference_is_rejected_and_fixed_mode_keeps_legacy_sizing() {
+            let mut data=doc();data["desktop"]["hyprland"]["hypr3d"]["spawn"]["text_reference_px"]=Value::Integer(0);
+            assert!(Policy::from_ssot(&data).is_err());
+            data["desktop"]["hyprland"]["hypr3d"]["spawn"]["criterion"]=Value::String("fixed".into());
+            assert!(Policy::from_ssot(&data).unwrap().is_none());
+        }
+    }
+
+}

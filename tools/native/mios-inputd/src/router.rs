@@ -374,7 +374,7 @@ impl Router {
                         .iter()
                         .map(|n| button_code(n).unwrap())
                         .collect();
-                    if override_codes.iter().all(|c| self.pressed.contains(c))
+                    if override_codes.contains(&e.code) && override_codes.iter().all(|c| self.pressed.contains(c))
                         && self.latched.insert("mode-override".into())
                     {
                         o.extend(self.release_outputs());
@@ -411,6 +411,7 @@ impl Router {
                     .map(|n| button_code(n).unwrap())
                     .collect();
                 if !["game", "vm-passthrough"].contains(&self.context.as_str())
+                    && toggle.contains(&e.code)
                     && toggle.iter().all(|c| self.pressed.contains(c))
                 {
                     let (min, max) = toggle

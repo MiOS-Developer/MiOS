@@ -49,6 +49,11 @@ pub fn finish(data: &Value) -> Result<String,String> {
         if let Some(bypass)=binding.get("bypass").and_then(Value::as_str) {
             out+=&format!(" escapes[{}]={}\n",q(&chord),q(&canonical(bypass,sep)?));
         }
+        if binding.get("tier").and_then(Value::as_integer)!=Some(2) && !["app-drawer","terminal","close-window","toggle-placement","fullscreen","hypr3d-toggle","keymap"].contains(&binding.get("id").and_then(Value::as_str).unwrap_or("")) {
+            let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
+            let quoted=format!("'{}'",action.replace('\'', "'\\''"));
+            out+=&format!(" local b=mios_native_hl.bind({},mios_native_hl.dsp.exec_cmd({}))\n if b then table.insert(mios_input_handles,{{handle=b,key={}}}) end\n",q(&chord),q(&format!("/usr/libexec/mios/mios-inputd dispatch {quoted}")),q(&chord));
+        }
         if binding.get("tier").and_then(Value::as_integer)==Some(2) {
             let action=binding.get("action").and_then(Value::as_str).ok_or("VM action missing")?;
             if action=="mios:vm-command-modifier" {
@@ -103,7 +108,7 @@ pub fn finish(data: &Value) -> Result<String,String> {
   table.insert(parts,leaf or '')
   return table.concat(parts,'+')
  end
- local function contains(list,value) for _,v in pairs(list or {}) do if v==value then return true end end return false end
+ local function contains(list,value) for _,v in pairs(list or {}) do if type(v)=='string' and v:gsub('%*$','')==value then return true end end return false end
  local function context()
   local w=hl.get_active_window()
   local tags=w and w.tags or {}
@@ -148,5 +153,56 @@ mod tests {
     use super::*;
     #[test] fn disabled_policy_is_inert() {let d:Value=toml::from_str("[keybindings.global]\nenabled=false").unwrap();assert!(prelude(&d).unwrap().is_empty());assert!(finish(&d).unwrap().is_empty());}
     #[test] fn generated_policy_uses_native_handles_and_bypass_flags() {let d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();let lua=finish(&d).unwrap();assert!(lua.contains("dont_inhibit=true,submap_universal=true"));assert!(lua.contains("v.handle:set_enabled(enabled)"));assert!(lua.contains("mios-input-vm-passthrough"));assert!(lua.contains("vm-action toggle_vm_passthrough"));}
-    #[test] fn remapping_has_one_source() {let mut d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();let b=d["keybindings"]["global"]["bindings"].as_array_mut().unwrap().iter_mut().find(|b|b["id"].as_str()==Some("fullscreen")).unwrap();b["chord"]=Value::String("SUPER+F10".into());assert_eq!(key(&d,"fullscreen","SUPER+F11"),"SUPER+F10");}
+    #[test] fn remapping_has_one_source() {let mut d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();let b=d["keybindings"]["global"]["bindings"].as_array_mut().unwrap().iter_mut().find(|b|b["id"].as_str()==Some("fullscreen")).unwrap();b["chord"]=Value::String("SUPER+F10".into());assert_eq!(key(&d,"fullscreen","SUPER+F11"),"SUPER+F10");}    #[test]
+    fn native_tag_context_and_hold_release_lifecycle() {
+        let data:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let fixture=r#"
+local window={address='0xabc',pid=42,class='looking-glass-client',tags={'mios-input-vm-passthrough*'}}
+local events,hooks,handles={},{},{}
+hl={plugin={},dsp={exec_cmd=function() return function() end end,send_key_state=function(t) return t end},get_active_window=function() return window end,get_windows=function() return {window} end,window_rule=function() end}
+hl.dispatch=function(t) table.insert(events,t.state) end
+hl.bind=function(key,dispatcher,flags)
+ local h={enabled=true,dispatcher=dispatcher,flags=flags or {}}
+ h.set_enabled=function(self,value) self.enabled=value end
+ h.is_enabled=function(self) return self.enabled end
+ table.insert(handles,h); return h
+end
+hl.on=function(event,fn) hooks[event]=hooks[event] or {};table.insert(hooks[event],fn) end
+local function mios_section(_,fn) fn() end
+"#;
+        let checks=r#"
+local p=MIOS_INPUT_POLICY
+assert(p.context()=='vm-passthrough','native dynamic tag must match')
+local ordinary,bypass,hold
+for _,v in ipairs(p.handles) do
+ if v.key=='SUPER+Space' then ordinary=v.handle end
+ if v.key=='SUPER+CTRL+space' then bypass=v.handle end
+ if v.key=='SUPER+CTRL+m' then hold=v.handle end
+end
+assert(ordinary and not ordinary.enabled)
+assert(bypass and bypass.enabled and bypass.flags.dont_inhibit and bypass.flags.submap_universal)
+hold.dispatcher();hold.dispatcher();assert(#events==1 and events[1]=='down')
+for _,fn in ipairs(hooks['window.active']) do fn() end
+assert(#events==2 and events[2]=='up','focus loss must release the original target')
+for _,fn in ipairs(hooks['window.active']) do fn() end
+assert(#events==2,'release must be idempotent')
+window.tags={};window.class='Alacritty';p.refresh();assert(ordinary.enabled)
+io.write('native policy controls passed')
+"#;
+        let text=format!("{fixture}\n{}\nhl.bind('SUPER+Space',function() end)\n{}\n{checks}",prelude(&data).unwrap(),finish(&data).unwrap());
+        let dir=tempfile::tempdir().unwrap();let file=dir.path().join("policy.lua");std::fs::write(&file,text).unwrap();
+        let output=std::process::Command::new("lua").arg(&file).output().expect("native Lua interpreter required");
+        assert!(output.status.success(),"{}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn newly_registered_shortcut_is_projected_by_the_native_dispatcher() {
+        let mut d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let b:Value=toml::from_str("id='custom-browser'\ntier=1\nchord='SUPER+F8'\naction='mios:launch-browser'\nrealized_by='hyprland'\npassthrough=['vm-passthrough']").unwrap();
+        d["keybindings"]["global"]["bindings"].as_array_mut().unwrap().push(b);
+        let lua=finish(&d).unwrap();
+        assert!(lua.contains("mios-inputd dispatch 'mios:launch-browser'"));
+        assert!(lua.contains("mios_native_hl.bind(\"SUPER+f8\""));
+    }
+
 }
