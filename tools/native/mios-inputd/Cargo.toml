@@ -1,0 +1,21 @@
+# AI-hint: Native global input policy, controller routing and evdev/uinput bridge.
+# AI-related: usr/share/mios/mios.toml [keybindings.global], tools/native/Cargo.toml
+[package]
+name = "mios-inputd"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+regex.workspace = true
+clap.workspace = true
+shlex = "2.0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

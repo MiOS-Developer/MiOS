@@ -1,0 +1,17 @@
+# AI-hint: Cargo manifest for mios-pip-gravity -- the native Picture-in-Picture gravity daemon (soft magnetic flank rails, HUD magnetism, springy snapping) for the Hyprland 2D compositor.
+# AI-related: usr/share/mios/mios.toml [desktop.pip_gravity], usr/lib/systemd/user/mios-pip-gravity.service, tools/native/Cargo.toml
+[package]
+name = "mios-pip-gravity"
+version.workspace = true
+edition.workspace = true
+description = "PiP gravity: springy magnetic flank rails + HUD magnetism for floating Picture-in-Picture windows"
+license = "MIT"
+
+[[bin]]
+name = "mios-pip-gravity"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+toml.workspace = true
+regex.workspace = true

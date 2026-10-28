@@ -2102,6 +2102,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mios-inputd"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "libc",
+ "mios-resolver",
+ "regex",
+ "serde",
+ "serde_json",
+ "shlex",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "mios-install"
 version = "0.3.0"
 dependencies = [
@@ -2118,6 +2133,15 @@ dependencies = [
  "mios-service-core",
  "serde_json",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mios-pip-gravity"
+version = "0.3.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

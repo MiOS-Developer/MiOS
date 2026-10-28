@@ -567,14 +567,35 @@ print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) els
     rm -f "$FALLBACK_MARKER"
     printf '%s\n' "$to" > "${OVERRIDE}.new" && chmod 0644 "${OVERRIDE}.new" && mv -f "${OVERRIDE}.new" "$OVERRIDE"
     logger -t mios-rdp "switching the RDP server to $to (runtime trial; reboot returns to [remote.rdp].server = ${RDP_SERVER})"
-    local um=(systemctl --user --machine="${user}@.host")
+    # Retry only a broken machine-scoped bus transport, never a real unit error.
+    # cmd_switch owns user/RDP_OPERATOR_UID; Bash resolves those caller locals.
+    um_run() {
+        local errf out rc
+        errf="$(mktemp "${TMPDIR:-/tmp}/mios-rdp-user-bus.XXXXXX")" || return $?
+        out="$(systemctl --user --machine="${user}@.host" "$@" 2>"$errf")" && rc=0 || rc=$?
+        if [[ "$rc" -ne 0 ]]; then
+            case "$(cat "$errf")" in
+                *"Remote peer disconnected"*|*"Transport endpoint is not connected"*|*"Connection reset by peer"*)
+                    if [[ $EUID -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
+                        out="$(runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/${RDP_OPERATOR_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${RDP_OPERATOR_UID}/bus" systemctl --user "$@" 2>"$errf")" && rc=0 || rc=$?
+                    elif [[ $EUID -ne 0 ]]; then
+                        out="$(env XDG_RUNTIME_DIR="/run/user/${RDP_OPERATOR_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${RDP_OPERATOR_UID}/bus" systemctl --user "$@" 2>"$errf")" && rc=0 || rc=$?
+                    fi
+                    ;;
+            esac
+        fi
+        if [[ "$rc" -ne 0 ]]; then cat "$errf" >&2; fi
+        rm -f "$errf"
+        [[ -z "$out" ]] || printf '%s\n' "$out"
+        return "$rc"
+    }
     if [[ "$to" == native ]]; then
-        "${um[@]}" stop mios-rdp-vnc.service || true
+        um_run stop mios-rdp-vnc.service || true
         systemctl stop xrdp.service xrdp-sesman.service || true
         local native_ready=false native_pid attempt
-        if "${um[@]}" start mios-rdp-native.service; then
+        if um_run start mios-rdp-native.service; then
             for attempt in {1..30}; do
-                native_pid="$("${um[@]}" show mios-rdp-native.service -p MainPID --value 2>/dev/null || true)"
+                native_pid="$(um_run show mios-rdp-native.service -p MainPID --value 2>/dev/null || true)"
                 if [[ "$native_pid" =~ ^[1-9][0-9]*$ ]] && ss -H -ltnp "sport = :${RDP_PORT}" | grep -Fq "pid=${native_pid},"; then
                     native_ready=true
                     break
@@ -583,17 +604,17 @@ print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) els
             done
         fi
         if [[ "$native_ready" != true ]]; then
-            "${um[@]}" stop mios-rdp-native.service || true
+            um_run stop mios-rdp-native.service || true
             printf '%s\n' xrdp > "${OVERRIDE}.new" && chmod 0644 "${OVERRIDE}.new" && mv -f "${OVERRIDE}.new" "$OVERRIDE"
             systemctl start xrdp-sesman.service xrdp.service || true
-            "${um[@]}" start mios-rdp-vnc.service || true
+            um_run start mios-rdp-vnc.service || true
             log "native listener failed to start after ${attempt:-0} probe(s); restored the xrdp listener"
             exit 1
         fi
     else
-        "${um[@]}" stop mios-rdp-native.service || true
+        um_run stop mios-rdp-native.service || true
         systemctl start xrdp-sesman.service xrdp.service
-        "${um[@]}" start mios-rdp-vnc.service
+        um_run start mios-rdp-vnc.service
     fi
     log "RDP server is now $(backend) on ${RDP_PORT}"
     [[ "${2:-}" == --persist ]] && log "to persist: set [remote.rdp].server = '$to' in /usr/share/mios/mios.toml (under the toml lock)"

@@ -400,6 +400,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-hermes-tail.service` | `usr/lib/systemd/system` | MiOS' Hermes journal tail (in-flight status -> OWUI emitter) |
 | `mios-hybrid.target` | `usr/lib/systemd/system` | MiOS' Hybrid role (desktop + k3s-worker + ceph-osd) |
 | `mios-hyperv-enhanced.service` | `usr/lib/systemd/system` | MiOS' Hyper-V Enhanced Session Setup (gnome-remote-desktop) |
+| `mios-inputd.service` | `usr/lib/systemd/user` | MiOS native global input policy observer |
 | `mios-k3s-init.service` | `usr/lib/systemd/system` | MiOS' K3s Manifest Seeder |
 | `mios-k3s-master.target` | `usr/lib/systemd/system` | MiOS' K3s Master Role |
 | `mios-k3s-worker.target` | `usr/lib/systemd/system` | MiOS' K3s worker role (agent) |
@@ -1075,5 +1076,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `xvnc@.service` | `usr/lib/systemd/system` | XVNC Per-Connection Daemon |
 | `zvbid.service` | `usr/lib/systemd/system` | Proxy Sharing V4L VBI Device Between Applications |
 
-<!-- derived from tracked unit files (1067 unit(s)) -->
+<!-- derived from tracked unit files (1068 unit(s)) -->
 <!-- /MIOS-GEN:units -->

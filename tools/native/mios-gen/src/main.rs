@@ -22,6 +22,7 @@ mod image;
 mod indexes;
 mod metal_vs_hosted;
 mod pod_quadlets;
+mod global_bindings;
 mod render;
 mod sync;
 mod terminal;

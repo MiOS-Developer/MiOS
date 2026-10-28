@@ -1,21 +1,24 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-22T18:30:16.701991",
-  "total_artifacts": 23,
+  "last_updated": "2026-10-28T00:33:36.356607+00:00",
+  "total_artifacts": 45,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "9683aa5b52d04471b990e5d1472a9097a2ce7f366f87cc1e9824f0a6a15bb8c0",
-      "size_bytes": 26501,
-      "created_at": "2026-10-22T18:30:16.049554",
-      "metadata": {}
+      "sha256": "d48809065391ecf7b9dd2ef7981d46002c032e4979f552251eccc7fc19baee78",
+      "size_bytes": 27960,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "164757e88e8bf323748d1b0ba63523fc5fe446e39080f6a5b41a9687b33c895b",
-      "size_bytes": 585482,
+      "sha256": "4f2f189975aa076716ac401257a8c359e18ef14aadb8413ed92c45d706f5b850",
+      "size_bytes": 638145,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {}
     },
@@ -38,10 +41,13 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "6ba36a390d63dac62ca6516f64dc10967174397e1c1e301e76573d7a1db71c14",
-      "size_bytes": 927922,
-      "created_at": "2026-10-22T18:30:16.168623",
-      "metadata": {}
+      "sha256": "7a0090acd5986441d6f000613bb8561761eeb01ed24ec94601c1cd0aa08cf4bd",
+      "size_bytes": 985605,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
     },
     {
       "path": "usr/share/mios/hyprland/hyprland.lua",
@@ -186,6 +192,248 @@
       "size_bytes": 19421,
       "created_at": "2026-10-22T18:30:16.701981",
       "metadata": {}
+    },
+    {
+      "path": "automation/98-drift-checks.sh",
+      "artifact_type": "code",
+      "sha256": "088a21ed84fedde4c1120c5660f8e874bfe91bbc1f655f55ae63eaa9de0ab7ac",
+      "size_bytes": 221013,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/Cargo.toml",
+      "artifact_type": "config",
+      "sha256": "66c58b455ee2e86867fae3f66b72a485da2bdf8888db31a609a8c78444639d2f",
+      "size_bytes": 1603,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/Cargo.lock",
+      "artifact_type": "config",
+      "sha256": "7473384579083a3dff677729be2454088b8b3fea7881652728cb94f192d3eb4c",
+      "size_bytes": 114398,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-resolver/src/lib.rs",
+      "artifact_type": "code",
+      "sha256": "65cc33507cd8ddaf6ba5458f692c982e8e717dc10ff5c8e026bd8301d7c45c95",
+      "size_bytes": 15325,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-resolver/src/keybindings.rs",
+      "artifact_type": "code",
+      "sha256": "b45dcd710eb2425645677c6fd7618c4ddc1f4ea949ab3abb9f081ab1f0892037",
+      "size_bytes": 5452,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "src/mios-rs/mios-gate/src/keybinds.rs",
+      "artifact_type": "code",
+      "sha256": "284ebdcfe1d5e7f8494723aa563cad52f4d2c35b270d67714fcee1f9a059ae22",
+      "size_bytes": 25032,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "src/mios-rs/mios-gate/src/main.rs",
+      "artifact_type": "code",
+      "sha256": "1998b814ad45df5b9c1f81fbc18bee307d19b4140ca3f3c0922eddf998d37b6f",
+      "size_bytes": 11364,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tests/test-mios-inputd.py",
+      "artifact_type": "code",
+      "sha256": "53732698cf028b31fbf3b75a83bd76ec87f6417ee48e087f378cd40b5f62833c",
+      "size_bytes": 6772,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tests/test-keybind-collisions.py",
+      "artifact_type": "code",
+      "sha256": "5ecea5dbfddd76ed2822d3957aa760d10c6a166e60866a87645894d90ce1dbf6",
+      "size_bytes": 7322,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "usr/share/doc/mios/keybinds.md",
+      "artifact_type": "doc",
+      "sha256": "d444d593fad1606d44eda9d5befc3689cc9a3cb4f5a224fa4c6c088e03a50cfc",
+      "size_bytes": 7121,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "usr/share/mios/keybinds/chord-vectors.json",
+      "artifact_type": "config",
+      "sha256": "6a0bda90e67fc3f22fc8e17ca46ca419c777302ece58020468eb3623bc09414c",
+      "size_bytes": 1650,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-inputd.service",
+      "artifact_type": "config",
+      "sha256": "7fe572a4b9403553d981ab1d6afb09ebed54596323840eecc5b9a59c92c81f6a",
+      "size_bytes": 438,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "usr/lib/udev/rules.d/70-mios-input.rules",
+      "artifact_type": "config",
+      "sha256": "cffeb460174bb7fcc78ccc02d55b368a495d832e42186f70b6b005ea9843f4da",
+      "size_bytes": 521,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/Cargo.toml",
+      "artifact_type": "config",
+      "sha256": "e98a49d1293b3fd8cb159e126ac21c50c40d5c83ef05c7f28ee399f81f51f5b1",
+      "size_bytes": 538,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/main.rs",
+      "artifact_type": "code",
+      "sha256": "51bc69599d0d957d1ba3d4e1c3a98f8556caa1b69c8a3e51dec63fd09c21eb57",
+      "size_bytes": 5223,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/config.rs",
+      "artifact_type": "code",
+      "sha256": "fc79b11e4128bd0798f2cb1946129adb7fbc89fa6878f98800d4dd4043db02d1",
+      "size_bytes": 18008,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/linux.rs",
+      "artifact_type": "code",
+      "sha256": "8975a5c30ca8a49ec903e72908caf16f6817979c7d41cb17edddea2db01ccea5",
+      "size_bytes": 23933,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/router.rs",
+      "artifact_type": "code",
+      "sha256": "751d8a935ce232a693ef8eb02c6a3fab2854a14c225971c9ac1b13e06a95ee1b",
+      "size_bytes": 31053,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/runtime.rs",
+      "artifact_type": "code",
+      "sha256": "8be7dadc672329c742585512ca23ec5e9e2a99f954f250c46e644e15534f4a6c",
+      "size_bytes": 25255,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "tools/native/mios-inputd/src/lib.rs",
+      "artifact_type": "code",
+      "sha256": "47e653bf8827b278ac16739d2a66861a304596543d0f0a1265cd34e4db0e96f1",
+      "size_bytes": 348,
+      "created_at": "2026-10-28T00:10:52.139406+00:00",
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": false
+      }
+    },
+    {
+      "path": "usr/libexec/mios/mios-rdp",
+      "artifact_type": "code",
+      "created_at": "2026-10-28T00:33:36.356607+00:00",
+      "metadata": {
+        "verification": "/var/tmp/mios-rdp-refinement/mios-t3-verification/result.json",
+        "live_listener_switched": false
+      },
+      "sha256": "ea739a8c39c03c0fb83eb9cac078395a662cc00083b02114dc792c7ca675c36e",
+      "size_bytes": 33174
+    },
+    {
+      "path": "tests/test-mios-rdp-native.py",
+      "artifact_type": "code",
+      "created_at": "2026-10-28T00:33:36.356607+00:00",
+      "metadata": {
+        "verification": "/var/tmp/mios-rdp-refinement/mios-t3-verification/result.json",
+        "live_listener_switched": false
+      },
+      "sha256": "f44344a6dd9d11d1dae021557740faf5f8d5b0d878a7d0039da528b6e31280cc",
+      "size_bytes": 31875
     }
   ]
 }

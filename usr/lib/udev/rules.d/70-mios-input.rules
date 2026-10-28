@@ -1,0 +1,8 @@
+# AI-hint: Classify the native input bridge outputs without hiding its desktop pointer.
+# AI-related: tools/native/mios-inputd/src/linux.rs, keybindings.global.controller
+ACTION!="add|change", GOTO="mios_input_end"
+SUBSYSTEM!="input", GOTO="mios_input_end"
+KERNEL!="event*", GOTO="mios_input_end"
+ATTRS{name}=="mios-vctl-pointer", ENV{ID_INPUT_MOUSE}="1", TAG+="uaccess", GOTO="mios_input_end"
+ATTRS{name}=="mios-vctl-*", ENV{ID_INPUT_JOYSTICK}="1", ENV{LIBINPUT_IGNORE_DEVICE}="1", TAG+="uaccess"
+LABEL="mios_input_end"

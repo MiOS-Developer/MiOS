@@ -3356,6 +3356,7 @@ end
                 lua(value)?
             );
         }
+        out += &crate::global_bindings::prelude(data)?;
         let actions = at(data, "keybindings.actions")?
             .as_array()
             .ok_or("keybindings.actions must be an array")?;
@@ -3364,22 +3365,15 @@ end
             .find(|a| a.get("id").and_then(Value::as_str) == Some("terminal"))
             .ok_or("Missing terminal action")?;
         for key in ["Q", "Return"] {
-            out += &format!(
-                "hl.bind({} .. \" + {key}\", hl.dsp.exec_cmd({}))\n",
-                string(h, "main_modifier")?,
-                string(terminal, "desktop_command")?
-            );
+            let fallback=format!("{} + {key}",at(h,"main_modifier")?.as_str().ok_or("modifier missing")?);
+            let chord=if key=="Return" {crate::global_bindings::key(data,"terminal",&fallback)} else {fallback};
+            out+=&format!("hl.bind({}, hl.dsp.exec_cmd({}))\n",lua(&Value::String(chord))?,string(terminal,"desktop_command")?);
         }
-        for key in at(h, "launcher_keys")?
-            .as_array()
-            .ok_or("launcher_keys must be an array")?
-        {
-            out += &format!(
-                "hl.bind({} .. \" + \" .. {}, hl.dsp.exec_cmd({}))\n",
-                string(h, "main_modifier")?,
-                lua(key)?,
-                string(h, "launcher")?
-            );
+        for key in at(h,"launcher_keys")?.as_array().ok_or("launcher_keys must be an array")? {
+            let key=key.as_str().ok_or("launcher key missing")?;
+            let fallback=format!("{} + {key}",at(h,"main_modifier")?.as_str().ok_or("modifier missing")?);
+            let chord=if key.eq_ignore_ascii_case("space") {crate::global_bindings::key(data,"app-drawer",&fallback)} else {fallback};
+            out+=&format!("hl.bind({}, hl.dsp.exec_cmd({}))\n",lua(&Value::String(chord))?,string(h,"launcher")?);
         }
         for action in actions {
             let modifier = at(data, "keybindings.desktop_modifier")?
@@ -3416,7 +3410,13 @@ end
                 .unwrap_or_default();
             out += &format!(
                 "hl.bind({}, hl.dsp.{dispatcher}({args}){flags})\n",
-                string(bind, "key")?
+                lua(&Value::String(crate::global_bindings::key(data, match (dispatcher, bind.get("args").and_then(Value::as_str)) {
+                    ("window.close", _) => "close-window",
+                    ("window.fullscreen", _) if bind.get("args").and_then(|a|a.get("mode")).and_then(Value::as_str)==Some("fullscreen") => "fullscreen",
+                    ("exec_cmd", Some("/usr/bin/miosd placement toggle")) => "toggle-placement",
+                    ("exec_cmd", Some(cmd)) if cmd.ends_with("call keymap toggle") => "keymap",
+                    _ => "",
+                }, at(bind,"key")?.as_str().ok_or("invalid bind key")?)))?
             );
         }
         // [desktop.screenshot] (mios-shot): keybinds, no-animation layer rules, screencopy permissions.
@@ -3789,6 +3789,7 @@ end
         // Magic lamp ([desktop.hyprland.lamp], inside the mios-wobbly plugin); additive, see lamp_profile below.
         out += &lamp_profile(data)?;
         // Mobile layout profile ([desktop.mobile]); additive, see mobile_profile below.
+        out += &crate::global_bindings::finish(data)?;
         out += &mobile_profile(data)?;
         Ok(out)
     }
@@ -5069,7 +5070,7 @@ report("again")
         }
         Ok(format!(
             "mios_section(\"hypr3d\", function()\n hl.unbind({})\n hl.bind({}, hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\nend)\n",
-            lua(&Value::String(key.into()))?, lua(&Value::String(key.into()))?,
+            lua(&Value::String(key.into()))?, lua(&Value::String(crate::global_bindings::key(data,"hypr3d-toggle",key)))?,
         ))
     }
 

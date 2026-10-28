@@ -3211,6 +3211,26 @@
         <label>Native client screen mode <input data-key="agent_cli.interaction.clients.agy.values.altScreenMode" type="text"></label>
         <label>Alternate terminal buffer <input data-key="agent_cli.interaction.clients.gemini.values.ui.useAlternateBuffer" data-type="bool" type="text"></label>
         <label>Responses client screen mode <input data-key="agent_cli.interaction.clients.codex.values.tui.alternate_screen" type="text"></label>
+        <label>Global input policy <input data-key="keybindings.global.enabled" type="checkbox"></label>
+        <label>Host escape modifier <input data-key="keybindings.global.bypass_mod" type="text"></label>
+        <label>Global keyboard bindings (JSON; chord, action, contexts, bypass) <textarea rows="14" data-key="keybindings.global.bindings" data-type="json-array"></textarea></label>
+        <label>Controller system button <input data-key="keybindings.global.controller.guide_button" type="text"></label>
+        <label>Controller cursor button <input data-key="keybindings.global.controller.cursor_mode_button" type="text"></label>
+        <label>Controller input ownership <input data-key="keybindings.global.controller.exclusive_grab" type="checkbox"></label>
+        <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
+        <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
+        <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>
+        <label>Guide + BTN_TL action <input data-key="keybindings.global.controller.system_layer.BTN_TL" type="text"></label>
+        <label>Guide + BTN_TR action <input data-key="keybindings.global.controller.system_layer.BTN_TR" type="text"></label>
+        <label>Guide + BTN_TL2 action <input data-key="keybindings.global.controller.system_layer.BTN_TL2" type="text"></label>
+        <label>Guide + BTN_TR2 action <input data-key="keybindings.global.controller.system_layer.BTN_TR2" type="text"></label>
+        <label>Guide + BTN_SOUTH action <input data-key="keybindings.global.controller.system_layer.BTN_SOUTH" type="text"></label>
+        <label>Guide + BTN_EAST action <input data-key="keybindings.global.controller.system_layer.BTN_EAST" type="text"></label>
+        <label>Guide + BTN_WEST action <input data-key="keybindings.global.controller.system_layer.BTN_WEST" type="text"></label>
+        <label>Guide + BTN_NORTH action <input data-key="keybindings.global.controller.system_layer.BTN_NORTH" type="text"></label>
+        <label>Guide + BTN_START action <input data-key="keybindings.global.controller.system_layer.BTN_START" type="text"></label>
+        <label>Guide + BTN_THUMBL action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBL" type="text"></label>
+        <label>Guide + BTN_THUMBR action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBR" type="text"></label>
         <label>Pending-action prefix key <input data-key="keybindings.agent.accept_key" type="text"></label>
         <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
         <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
@@ -4800,6 +4820,7 @@ function refreshFromData() {
         el.value = "";
       }
     }
+    else if (el.dataset.type === "json-array") el.value = JSON.stringify(v, null, 2);
     else if (el.type === "checkbox") el.checked = !!v;
     else if (el.dataset.array === "csv" || el.dataset.array === "csv-int") {
       el.value = Array.isArray(v) ? v.join(",") : String(v);
@@ -5360,6 +5381,11 @@ function gatherFromForm() {
         }
       });
       DATA[sec][key] = accounts;
+    }
+    else if (el.dataset.type === "json-array") {
+      const bindings = JSON.parse(el.value);
+      if (!Array.isArray(bindings) || bindings.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
+      DATA[sec][key] = bindings;
     }
     else if (el.type === "checkbox") DATA[sec][key] = el.checked;
     else if (el.dataset.array === "csv") {

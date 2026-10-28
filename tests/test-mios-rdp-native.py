@@ -308,6 +308,78 @@ class TestBackendSelection(unittest.TestCase):
         with open(log) as f:
             self.assertIn("start xrdp-sesman.service xrdp.service", f.read())
 
+    def _user_bus_fixture(self, log, error):
+        # No PAM/login or real systemd calls. The runuser stub records the
+        # requested identity/environment and executes only our fake systemctl.
+        _exe(self.tmp, "runuser", (
+            "import json, os, sys\n"
+            f"log = {log!r}\n"
+            "a = sys.argv[1:]\n"
+            "with open(log + '.runuser', 'a') as f: f.write(json.dumps(a) + '\\n')\n"
+            "assert a[0] == '-u' and a[2] == '--'\n"
+            "os.execvpe(a[3], a[3:], os.environ)\n"
+        ))
+        _exe(self.tmp, "ss", (
+            "import json\n"
+            f"log = {log!r}\n"
+            "try:\n"
+            "    calls = [json.loads(line) for line in open(log)]\n"
+            "except FileNotFoundError:\n"
+            "    calls = []\n"
+            "if ['--user', 'start', 'mios-rdp-native.service'] in calls:\n"
+            "    print('LISTEN 0 128 *:8300 *:* users:((\"mios-rdp-server\",pid=4242,fd=15))')\n"
+        ))
+        return (
+            "import json, sys\n"
+            f"log = {log!r}\n"
+            "a = sys.argv[1:]\n"
+            "with open(log, 'a') as f: f.write(json.dumps(a) + '\\n')\n"
+            "if any(x == '--machine' or x.startswith('--machine=') for x in a):\n"
+            f"    sys.stderr.write({error!r} + '\\n')\n"
+            "    sys.exit(5)\n"
+            "if a[:1] == ['--user'] and 'show' in a:\n"
+            "    print(4242)\n"
+            "sys.exit(0)\n"
+        )
+
+    @unittest.skipUnless(os.getuid() == 0, "backend switching requires root")
+    def test_switch_user_bus_fallback_on_transport_error(self):
+        for i, error in enumerate(("Remote peer disconnected", "Transport endpoint is not connected", "Connection reset by peer")):
+            with self.subTest(error=error):
+                log = os.path.join(self.tmp, f"um-transport-{i}.log")
+                r = self.run_rdp("xrdp", "switch", "native", systemctl=self._user_bus_fixture(log, error))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("RDP server is now native", r.stderr)
+                with open(log) as f:
+                    calls = [json.loads(line) for line in f]
+                self.assertTrue(any(any(x.startswith('--machine=') for x in a) for a in calls))
+                self.assertIn(['--user', 'start', 'mios-rdp-native.service'], calls)
+                with open(log + '.runuser') as f:
+                    routed = [json.loads(line) for line in f]
+                self.assertTrue(routed)
+                for a in routed:
+                    self.assertEqual(a[0], '-u')
+                    self.assertIn(f'XDG_RUNTIME_DIR=/run/user/{os.getuid()}', a)
+                    self.assertIn(f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{os.getuid()}/bus', a)
+                with open(os.path.join(self.state, 'server-override')) as f:
+                    self.assertEqual(f.read().strip(), 'native')
+
+    @unittest.skipUnless(os.getuid() == 0, "backend switching requires root")
+    def test_switch_user_bus_fallback_not_used_for_real_unit_errors(self):
+        for i, error in enumerate(("Unit mios-rdp-native.service not found", "Access denied", "Job for mios-rdp-native.service failed")):
+            with self.subTest(error=error):
+                log = os.path.join(self.tmp, f"um-unit-{i}.log")
+                r = self.run_rdp("xrdp", "switch", "native", systemctl=self._user_bus_fixture(log, error))
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn(error, r.stderr)
+                self.assertIn('restored the xrdp listener', r.stderr)
+                with open(log) as f:
+                    calls = [json.loads(line) for line in f]
+                self.assertFalse(any(a[:1] == ['--user'] and not any(x.startswith('--machine=') for x in a) for a in calls))
+                self.assertFalse(os.path.exists(log + '.runuser'), 'a genuine unit failure must not invoke fallback')
+                with open(os.path.join(self.state, 'server-override')) as f:
+                    self.assertEqual(f.read().strip(), 'xrdp')
+
     def test_default_is_xrdp(self):
         self.assertEqual(self.run_rdp(None, "backend").stdout.strip(), "xrdp")
         self.assertEqual(self.run_rdp(None, "enabled", "xrdp").returncode, 0)

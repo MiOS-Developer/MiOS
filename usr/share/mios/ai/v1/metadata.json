@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4866,
-  "total_metadata_entries": 3173,
-  "total_hints": 3167,
+  "total_files_scanned": 4886,
+  "total_metadata_entries": 3191,
+  "total_hints": 3185,
   "total_functions_indexed": 1701,
-  "total_related_links": 5892,
+  "total_related_links": 5940,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -4181,6 +4181,21 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/mios-gate/src/keybinds.rs",
+      "hint": "Audits every effective keyboard binding for collisions against the layered SSOT: [keybindings.global] (tiers, contexts, bypass, passthrough, reserved terminal chords), the Hyprland binding tables, and the literal hl.bind() lines of the generated session. One chord normalizer; two-sided unit controls.",
+      "related": [
+        "usr/share/mios/mios.toml ([keybindings.global])",
+        "usr/share/mios/hyprland/hyprland.lua",
+        "usr/share/doc/mios/keybinds.md",
+        "tests/test-keybind-collisions.py",
+        "/var/tmp/mios-keybinds/schema.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/mios-gate/src/laws.rs",
       "hint": "Asserts every [laws].enforced_by pointer resolves to live enforcement -- a function definition in the drift script, or a marker in executable text in the postcheck, never a comment.",
       "related": [
@@ -7203,6 +7218,19 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-keybind-collisions.py",
+      "hint": "Real-binary positive/negative verification of global keybind collisions and compositor projection drift.",
+      "related": [
+        "src/mios-rs/mios-gate/src/keybinds.rs",
+        "usr/share/mios/keybinds/chord-vectors.json",
+        "usr/share/doc/mios/keybinds.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-knowledge-graph.py",
       "hint": "Automated unit test suite for WS-RAG / GRAPH-01 recursive CTE knowledge traversal.",
       "related": [
@@ -7517,6 +7545,18 @@
         "usr/share/mios/windows/xbox/mios-gpu-driver.ps1",
         "tests/test-mios-gpu-driver.ps1",
         "usr/lib/mios/mios_toml.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-inputd.py",
+      "hint": "Functional native input policy and legacy controller parity tests; no real device grabs.",
+      "related": [
+        "tools/native/mios-inputd",
+        "usr/libexec/mios/mios-gamepad-hypr3d"
       ],
       "functions": [],
       "doc": null,
@@ -10620,6 +10660,19 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/global_bindings.rs",
+      "hint": "Project SSOT global remaps and native compositor shortcut-inhibition escapes.",
+      "related": [
+        "keybindings.global",
+        "mios-inputd/src/vm.rs",
+        "render.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/greeter.rs",
       "hint": "SSOT projector for greetd's /etc/greetd/config.toml from mios.toml [desktop.greeter]: kind = \"glass\"",
       "related": [
@@ -10909,6 +10962,103 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/Cargo.toml",
+      "hint": "Native global input policy, controller routing and evdev/uinput bridge.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "tools/native/Cargo.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/config.rs",
+      "hint": "Layered global input SSOT schema and canonical chord normalization.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "tools/native/mios-resolver"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/lib.rs",
+      "hint": "Shared global binding policy used by the input daemon and collision gate.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "src/mios-rs/mios-gate"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/linux.rs",
+      "hint": "Linux evdev/uinput file-descriptor ownership, capability cloning and private fixture gate.",
+      "related": [
+        "docs.kernel.org/input/uinput.html",
+        "docs.kernel.org/input/event-codes.html"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/main.rs",
+      "hint": "Global input policy validation, observation and explicitly enabled native controller bridge.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "tools/native/mios-inputd"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/router.rs",
+      "hint": "Per-controller input state machine; system actions never enter app replay.",
+      "related": [
+        "usr/libexec/mios/mios-gamepad-hypr3d",
+        "keybindings.global.controller"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/runtime.rs",
+      "hint": "Native controller service, bounded compositor IPC and named action dispatch.",
+      "related": [
+        "keybindings.global",
+        "desktop.hyprland.hypr3d.controller",
+        "mios-inputd.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/vm.rs",
+      "hint": "Focus-guarded VM client escape commands; capture state remains client-owned.",
+      "related": [
+        "keybindings.global.vm",
+        "mios-gen/src/global_bindings.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-install/Cargo.toml",
       "hint": "Cargo manifest for mios-install crate -- the native installer that puts [image].ref on a disk via the image's own bootc.",
       "related": [
@@ -10990,6 +11140,45 @@
         "usr/share/mios/windows/mios-native-client-setup.ps1",
         "usr/share/mios/mios.toml",
         "usr/share/mios/windows/mios-pc-control.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-pip-gravity/Cargo.toml",
+      "hint": "Cargo manifest for mios-pip-gravity -- the native Picture-in-Picture gravity daemon (soft magnetic flank rails, HUD magnetism, springy snapping) for the Hyprland 2D compositor.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.pip_gravity]",
+        "usr/lib/systemd/user/mios-pip-gravity.service",
+        "tools/native/Cargo.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-pip-gravity/src/gravity.rs",
+      "hint": "Pure geometry + spring physics for PiP gravity (no I/O). Computes magnetic flank-rail targets, HUD avoidance/magnetism, aspect-aware size clamping, and a damped-spring step. Fully unit-tested.",
+      "related": [
+        "tools/native/mios-pip-gravity/src/main.rs",
+        "usr/share/mios/mios.toml [desktop.pip_gravity]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-pip-gravity/src/main.rs",
+      "hint": "mios-pip-gravity daemon -- gives floating Picture-in-Picture windows soft magnetic flank rails (left/right columns stacked top-to-bottom), HUD (topbar/dock) magnetism without hiding them, aspect-aware sizing and a springy settle. Polls the Hyprland IPC; idles while Hypr3D is active (PiP are freely resizable there). Config comes only from the layered SSOT table [desktop.pip_gravity].",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.pip_gravity]",
+        "usr/lib/systemd/user/mios-pip-gravity.service",
+        "tools/native/mios-pip-gravity/src/gravity.rs",
+        "usr/share/mios/hyprland/hyprland.lua"
       ],
       "functions": [],
       "doc": null,
@@ -11085,6 +11274,19 @@
       "related": [
         "usr/share/mios/mios.toml [desktop.framerate]",
         "src/mios-rs/miosd/src/framerate.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-resolver/src/keybindings.rs",
+      "hint": "Shared global chord and Linux controller-code parser for gate and runtime.",
+      "related": [
+        "usr/share/mios/keybinds/chord-vectors.json",
+        "tools/native/mios-inputd",
+        "src/mios-rs/mios-gate"
       ],
       "functions": [],
       "doc": null,
@@ -20651,6 +20853,18 @@
       "related": [
         "usr/share/mios/mios.toml",
         "tools/native/mios-gen/src/render.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/udev/rules.d/70-mios-input.rules",
+      "hint": "Classify the native input bridge outputs without hiding its desktop pointer.",
+      "related": [
+        "tools/native/mios-inputd/src/linux.rs",
+        "keybindings.global.controller"
       ],
       "functions": [],
       "doc": null,
@@ -31073,6 +31287,20 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/keybinds.md",
+      "hint": "Global input SSOT, native Rust port, ownership and verification contract.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "tools/native/mios-inputd",
+        "tools/native/mios-resolver/src/keybindings.rs",
+        "src/mios-rs/mios-gate/src/keybinds.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/knowledge/epistemic-evolution-and-learning-loop.md",
       "hint": "Specification for the Autonomous Epistemic Evolution and Continuous Learning Loop in MiOS.",
       "related": [
@@ -35570,7 +35798,7 @@
     },
     {
       "path": "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch",
-      "hint": "Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); a window not moved in the room exits to exactly its saved 2D box and mode.",
+      "hint": "Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); windows opened while the room is showing JOIN the same group frame (angles, plane, apparent scale); a window not moved in the room exits to exactly its saved 2D box and mode.",
       "related": [
         "tests/test-hypr3d-enter-morph-scale.py",
         "usr/share/mios/mios.toml [desktop.hyprland.hypr3d.spawn]"

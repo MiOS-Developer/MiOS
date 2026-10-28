@@ -2118,7 +2118,7 @@ expose_bin = false
 compat_dirs = []
 
 [build.native.categories.daemons]
-binaries = ["mios-node", "mios-wallpaperd"]
+binaries = ["mios-node", "mios-wallpaperd", "mios-inputd", "mios-pip-gravity"]
 install_dir = "/usr/libexec/mios"
 expose_bin = true
 compat_dirs = []
@@ -4217,6 +4217,183 @@ bindings = [
 [keybindings.controller]
 enabled = true
 hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
+
+# --- Global input contract (schema v1: /var/tmp/mios-keybinds/schema.md; spec: the conflict-free keybinds research) ---
+# One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
+# 2 VM / Looking Glass / RDP / kernel VT, 3 terminal / POSIX / agent loop, 4 controller. `mios-gate
+# keybind-collisions` fails on a chord bound twice in intersecting contexts, a multi-step prefix clash, a
+# bypass that does not use bypass_mod, a host bind that leaks into vm-passthrough, a reserved POSIX terminal
+# chord stolen from the focused terminal, and a `realized_by = "hyprland"` binding the compositor does not have.
+# mios-inputd (Rust) consumes the same tables; both normalise chords to the vectors in
+# usr/share/mios/keybinds/chord-vectors.json. POSIX/Readline defaults stay with the focused application.
+[keybindings.global]
+enabled = true
+mod_key = "SUPER"
+bypass_mod = "SUPER+CTRL"            # host-escape modifier: reaches the host even while a VM owns the keyboard
+chord_sep = " "                      # separates the steps of a multi-step chord ("CTRL+x CTRL+b")
+action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline"]
+# Chords the focused terminal owns (termios/Readline/job control); no host binding may shadow them there.
+reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e", "CTRL+k", "CTRL+u", "CTRL+w", "CTRL+r", "CTRL+l"]
+# Every quickshell: and mios: action a binding fires must be in one of these two (the gate enforces it): an
+# implemented action carries its argv; an action with no runtime handler yet is listed as planned and is reported,
+# never silently launched. hypr:, exec:, tmux: and readline: verbs resolve natively (compositor eval, program, tmux, readline).
+planned_actions = ["quickshell:monitor-toggle", "quickshell:lock", "mios:toggle_vm_passthrough", "mios:vm-fullscreen", "mios:vm-command-modifier"]
+
+[keybindings.global.action_argv]
+"quickshell:drawer-toggle" = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call", "drawer", "toggle"]
+"quickshell:keymap-toggle" = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call", "keymap", "toggle"]
+"mios:placement-toggle" = ["/usr/bin/miosd", "placement", "toggle"]
+"mios:hyprland-3d-toggle" = ["/usr/bin/mios-gen", "hyprland-3d-toggle"]
+"mios:launch-browser" = ["/usr/bin/mios-browser"]
+
+# Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
+[keybindings.global.contexts]
+desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
+terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
+vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
+game = ["steam_app_.*", "gamescope", "Waydroid"]
+
+# Tier 1: bindings the compositor already realises (realized_by) and the chords reserved for their bypass.
+[[keybindings.global.bindings]]
+id = "app-drawer"
+tier = 1
+chord = "SUPER+Space"
+bypass = "SUPER+CTRL+Space"
+action = "quickshell:drawer-toggle"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+note = "App drawer; the bypass chord reaches the host even in VM passthrough."
+
+[[keybindings.global.bindings]]
+id = "terminal"
+tier = 1
+chord = "SUPER+Return"
+bypass = "SUPER+CTRL+Return"
+action = "exec:mios-terminal"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+
+[[keybindings.global.bindings]]
+id = "close-window"
+tier = 1
+chord = "SUPER+c"
+action = "hypr:killactive"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+note = "Super+C, not Super+Q (Q opens the terminal in the shipped session)."
+
+[[keybindings.global.bindings]]
+id = "toggle-placement"
+tier = 1
+chord = "SUPER+v"
+action = "mios:placement-toggle"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+
+[[keybindings.global.bindings]]
+id = "fullscreen"
+tier = 1
+chord = "SUPER+F11"
+action = "hypr:fullscreen"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+
+[[keybindings.global.bindings]]
+id = "hypr3d-toggle"
+tier = 1
+chord = "SUPER+F12"
+action = "mios:hyprland-3d-toggle"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+
+[[keybindings.global.bindings]]
+id = "keymap"
+tier = 1
+chord = "SUPER+Escape"
+action = "quickshell:keymap-toggle"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+
+# Tier 2: the VM passthrough latch lives on bypass_mod so it works while the VM owns the keyboard
+# (the research proposed Super+Alt+P; that chord would be swallowed by the guest). Reserved, not yet realised.
+[[keybindings.global.bindings]]
+id = "vm-passthrough-toggle"
+tier = 2
+chord = "SUPER+CTRL+p"
+action = "mios:toggle_vm_passthrough"
+contexts = ["desktop-2d", "desktop-3d", "vm-passthrough"]
+note = "Sends the focused Looking Glass or X11 FreeRDP native escape; capture state remains client-owned."
+
+[[keybindings.global.bindings]]
+id = "vm-fullscreen"
+tier = 2
+chord = "SUPER+CTRL+f"
+action = "mios:vm-fullscreen"
+contexts = ["vm-passthrough"]
+
+[[keybindings.global.bindings]]
+id = "vm-command-modifier"
+tier = 2
+chord = "SUPER+CTRL+m"
+action = "mios:vm-command-modifier"
+contexts = ["vm-passthrough"]
+note = "Hold the Looking Glass native command key; release on chord release, focus loss, or configuration reload."
+
+# Tier 3: chords owned by the focused application (documentation; scope = app means no host binding).
+[[keybindings.global.bindings]]
+id = "terminal-editor-handoff"
+tier = 3
+chord = "CTRL+x CTRL+e"
+action = "readline:edit-and-execute-command"
+contexts = ["terminal"]
+scope = "app"
+
+[[keybindings.global.bindings]]
+id = "terminal-draft-stash"
+tier = 3
+chord = "ALT+s"
+action = "readline:draft-stash"
+contexts = ["terminal"]
+scope = "app"
+
+# Tier 4: controller system layer. Active only while the guide button is held and consumed (zero leak to the
+# application); with the guide NOT held the legacy controls ([desktop.hyprland.hypr3d.controller]) are unchanged.
+# Exact client classes, not regexes; unsupported clients never receive guessed input.
+[keybindings.global.vm]
+looking_glass_classes = ["looking-glass-client"]
+x11_rdp_classes = ["xfreerdp"]
+other_classes = ["wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
+looking_glass_escape_key = "Scroll_Lock"
+x11_rdp_escape_key = "Control_R"
+
+[keybindings.global.controller]
+enabled = true
+exclusive_grab = false               # stays false until mios-inputd's private fixtures and legacy parity pass
+guide_button = "BTN_MODE"
+mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
+cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
+cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal"]
+legacy_pad_state_path = "/tmp/mios-hypr3d-pad.bin"
+recovery_argv = ["/usr/libexec/mios/mios-gamepad-hypr3d", "--daemon"]
+debounce_ms = 250
+scan_ms = 2000
+pointer_hz = 250
+stick_deadzone = 0.12
+pointer_max_speed_px = 18.0
+scroll_sensitivity = 45.0
+
+[keybindings.global.controller.system_layer]
+BTN_TL = "hypr:workspace e-1"
+BTN_TR = "hypr:workspace e+1"
+BTN_TL2 = "hypr:movetoworkspace e-1"
+BTN_TR2 = "hypr:movetoworkspace e+1"
+BTN_SOUTH = "hypr:togglefloating"
+BTN_EAST = "hypr:killactive"
+BTN_WEST = "exec:mios-terminal"
+BTN_NORTH = "mios:launch-browser"
+BTN_START = "quickshell:monitor-toggle"
+BTN_THUMBL = "quickshell:lock"
+BTN_THUMBR = "mios:toggle_vm_passthrough"
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -16213,7 +16390,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 655
+max_tracked_mb    = 658
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -16410,6 +16587,8 @@ lint = [
 ]
 # Behavioural suites. Each asserts something about the tree it ships from.
 unit = [
+    "tests/test-keybind-collisions.py",
+    "tests/test-mios-inputd.py",
     "tests/powershell/run-pester.sh",
     "tests/test-baresafe-emit.py",
     "tests/test-sandbox-seccomp.sh",
@@ -17058,7 +17237,7 @@ max_untested_crates = 0
 binaries = [
   "mios-gate", "mios-gen", "mios-resolver", "mios-serve", "mios-probe",
   "mios-install", "mios-build", "mios-task", "mios-node", "mios-launch",
-  "mios-wallpaperd", "miosd", "mios-fanctl", "mios-displays", "mios-shot",
+  "mios-wallpaperd", "mios-inputd", "mios-pip-gravity", "miosd", "mios-fanctl", "mios-displays", "mios-shot",
 ]
 max_unowned = 128
 universe = [
@@ -17070,7 +17249,7 @@ universe = [
 port-lane = ["gate", "gen"]
 native-tier = [
   "resolver", "serve", "probe", "install", "build", "task", "node", "apps",
-  "wallpaperd", "daemon_meta", "fan", "shot",
+  "wallpaperd", "daemon_meta", "fan", "shot", "input",
 ]
 agent-plane = ["ai-plane"]
 build-lane = ["automation-glue"]
@@ -17079,7 +17258,7 @@ qa-lane = ["tests"]
 [rust.categories.roles]
 cli = ["gate", "gen", "resolver", "probe", "install", "build", "task", "daemon_meta", "fan", "shot"]
 services = ["serve"]
-daemons = ["node", "wallpaperd"]
+daemons = ["node", "wallpaperd", "input"]
 apps = ["apps"]
 exempt = ["ai-plane", "automation-glue", "tests"]
 
@@ -17235,6 +17414,12 @@ crates = ["mios-browser"]
 binary = "mios-wallpaperd"
 description = "Dynamic live wallpaper daemon and directX GPU supervisor"
 replaces = []
+
+[rust.categories.input]
+binary = "mios-inputd"
+description = "Native global controller input policy and evdev/uinput bridge; observe-first migration of the existing input daemon"
+replaces = []
+scope = ["usr/libexec/mios/mios-gamepad-hypr3d"]
 
 [rust.categories.daemon_meta]
 binary = "miosd"
@@ -17715,3 +17900,47 @@ visible_rows = 7
 result_limit = 40
 debounce_ms = 120
 file_min_chars = 2
+
+# Native global-input observer. The legacy daemon retains physical ownership.
+[user_units."mios-inputd.service".Unit]
+Description = "MiOS native global input policy observer"
+PartOf = "mios-desktop.target"
+After = "graphical-session.target"
+ConditionFileIsExecutable = "/usr/libexec/mios/mios-inputd"
+
+[user_units."mios-inputd.service".Service]
+Type = "simple"
+ExecStartPre = "/usr/libexec/mios/mios-inputd check"
+ExecStart = "/usr/libexec/mios/mios-inputd observe"
+Restart = "on-failure"
+RestartSec = "3"
+NoNewPrivileges = "yes"
+RestrictSUIDSGID = "yes"
+LockPersonality = "yes"
+UMask = "0077"
+
+[user_units."mios-inputd.service".Install]
+WantedBy = "mios-desktop.target"
+
+
+# AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware, and settle with a spring. Consumed by tools/native/mios-pip-gravity. Hypr3D: disabled there (PiP are freely resizable in the room).
+# AI-related: tools/native/mios-pip-gravity/src/main.rs, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip
+[desktop.pip_gravity]
+enabled = true
+rails = ["left", "right"]            # flank columns; one entry pins every PiP to that side
+rail_margin = 16                     # px from the monitor edge to the rail
+stack_gap = 12                       # px between stacked PiPs
+hud_gap = 12                         # px kept between a PiP and the topbar/dock
+attract_px = 48                      # magnet range: snap to top/bottom/stack lines inside it, hover freely outside
+min_width_frac = 0.15                # aspect-aware size clamp (fraction of monitor width)
+max_width_frac = 0.40
+spring_stiffness = 260.0             # springy settle (k); damping c ~ 2*sqrt(k)*zeta
+spring_damping = 22.0
+settle_ms = 350                      # operator must hold still this long before gravity pulls
+idle_poll_ms = 120
+active_poll_ms = 16
+hud_namespaces = ["mios-topbar", "mios-dock", "mios-appmenu"]
+hypr3d_status_file = "/tmp/hypr3d-status.txt"
+match = [
+  { title = "^(Picture-in-Picture)$" },
+]

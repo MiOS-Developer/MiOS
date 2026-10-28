@@ -1,0 +1,113 @@
+{
+  "$comment": "AI-hint: shared chord-normalizer conformance vectors; the mios-gate keybind-collisions normalizer and mios-inputd normalize_chord must both produce exactly these results. expect = steps; no expect = must be rejected.",
+  "cases": [
+    {
+      "input": "SUPER+Space",
+      "expect": [
+        "SUPER+space"
+      ]
+    },
+    {
+      "input": "shift + super + C",
+      "expect": [
+        "SUPER+SHIFT+c"
+      ]
+    },
+    {
+      "input": "SUPER_CTRL+Space",
+      "expect": [
+        "SUPER+CTRL+space"
+      ]
+    },
+    {
+      "input": "CTRL+SUPER+space",
+      "expect": [
+        "SUPER+CTRL+space"
+      ]
+    },
+    {
+      "input": "CTRL+ALT+SHIFT+t",
+      "expect": [
+        "CTRL+ALT+SHIFT+t"
+      ]
+    },
+    {
+      "input": "SUPER + mouse:272",
+      "expect": [
+        "SUPER+mouse:272"
+      ]
+    },
+    {
+      "input": "SUPER + Super_L",
+      "expect": [
+        "SUPER+super_l"
+      ]
+    },
+    {
+      "input": "Print",
+      "expect": [
+        "print"
+      ]
+    },
+    {
+      "input": "CTRL+X CTRL+B",
+      "multi": true,
+      "expect": [
+        "CTRL+x",
+        "CTRL+b"
+      ]
+    },
+    {
+      "input": "",
+      "multi": true
+    },
+    {
+      "input": "SUPER+a+b"
+    },
+    {
+      "input": "SUPER+CTRL"
+    },
+    {
+      "input": "BTN_TL+BTN_MODE",
+      "expect": [
+        "BTN_MODE+BTN_TL"
+      ]
+    },
+    {
+      "input": "BTN_MODE+BTN_TL",
+      "expect": [
+        "BTN_MODE+BTN_TL"
+      ]
+    },
+    {
+      "input": "BTN_A",
+      "expect": [
+        "BTN_SOUTH"
+      ]
+    },
+    {
+      "input": "BTN_NOT_REAL"
+    },
+    {
+      "input": "CTRL+CTRL+a"
+    },
+    {
+      "input": "RIGHTCTRL+Space",
+      "expect": [
+        "RIGHTCTRL+space"
+      ]
+    },
+    {
+      "input": "CTRL+Space",
+      "expect": [
+        "CTRL+space"
+      ]
+    },
+    {
+      "input": "rctrl+F1",
+      "expect": [
+        "RIGHTCTRL+f1"
+      ]
+    }
+  ]
+}

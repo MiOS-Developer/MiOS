@@ -48,6 +48,7 @@ pub mod error {
 }
 pub mod expand;
 pub mod layers;
+pub mod keybindings;
 pub mod merge;
 pub mod model {
     use serde::{Deserialize, Serialize};

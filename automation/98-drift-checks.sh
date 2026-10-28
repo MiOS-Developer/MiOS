@@ -3545,6 +3545,20 @@ check_signature_policy() {
     fi
 }
 
+check_keybind_collisions() {
+    local bin; bin="$(_gate_bin)" || bin=""
+    if [[ -z "$bin" ]]; then
+        _violation "mios-gate is not built, so check_keybind_collisions could not run -- build it: cd src/mios-rs && cargo build -p mios-gate"
+        return
+    fi
+    if "$bin" keybind-collisions --root "$ROOT"; then
+        echo "[98-drift-checks]   every effective keybinding is collision-free in its contexts ([keybindings.global])"
+        return 0
+    else
+        _violation "keybinding collision or contract violation -- see the findings above; edit [keybindings.global] in usr/share/mios/mios.toml"
+    fi
+}
+
 check_projection_coverage() {
     # The reverse of check_projection_registry. That one walks the register and
     # asks whether each row's generator and check exist -- the forward direction
@@ -4023,6 +4037,7 @@ main() {
     check_memory_poisoning_scan
     check_build_tool_dispatch
     check_signature_policy
+    check_keybind_collisions
     check_phase_registry
     check_drift_stubs
     check_negatives_are_effective

@@ -16,6 +16,7 @@ mod host_parity;
 mod image_equivalence;
 mod image_freshness;
 mod inert_tables;
+mod keybinds;
 mod laws;
 mod module_tests;
 mod negative_coverage;
@@ -102,7 +103,7 @@ const USAGE: &str = "usage: mios-gate <check> [--root DIR] [--format text|json]\
                      \x20      mios-gate static-linkage [--root DIR] [--format text|json] [--binary PATH] [--arch ARCH] [--census]\n\
                      checks: artifact, artifact-recipes, build-tool-dispatch, canonical-bools, credential-literals,\n\
                              doc-refs-headers, doc-refs-resolve, drift-stubs, gate-registry, generator-host-parity,\n\
-                             image-equivalence, image-freshness, module-test-coverage, native-policy, negative-coverage,\n\
+                             image-equivalence, image-freshness, keybind-collisions, module-test-coverage, native-policy, negative-coverage,\n\
                              no-inert-ssot-tables, phase-ratchet, phase-registry, profile-integrity,\n\
                              powershell-parse, powershell-analyze, projection-coverage, protected-refs,\n\
                              ratchet-direction, render-coverage, root-fhs-overlay, rust-categories, shell-lint,\n\
@@ -242,6 +243,7 @@ fn main() -> ExitCode {
             allow_tree_only,
         }),
         "image-freshness" => image_freshness::check(&root),
+        "keybind-collisions" => keybinds::check(&root),
         "law-enforcers" => laws::check(&root),
         "module-test-coverage" => module_tests::check(&root),
         "negative-coverage" => negative_coverage::check(&root),

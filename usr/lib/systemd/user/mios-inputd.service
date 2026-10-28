@@ -1,0 +1,19 @@
+[Unit]
+Description=MiOS native global input policy observer
+PartOf=mios-desktop.target
+After=graphical-session.target
+ConditionFileIsExecutable=/usr/libexec/mios/mios-inputd
+
+[Service]
+Type=simple
+ExecStartPre=/usr/libexec/mios/mios-inputd check
+ExecStart=/usr/libexec/mios/mios-inputd observe
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=mios-desktop.target

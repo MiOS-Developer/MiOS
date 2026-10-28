@@ -1038,3 +1038,23 @@ usr/share/mios/virtio/*.iso
 
 # Complete source replacements for verified Linux capture/input fixes.
 !/usr/share/mios/looking-glass/source/**
+
+# Native global input port and shared binding validation.
+!/tools/native/mios-inputd/
+!/tools/native/mios-inputd/Cargo.toml
+!/tools/native/mios-inputd/src/
+!/tools/native/mios-inputd/src/*.rs
+!/tools/native/mios-resolver/src/keybindings.rs
+!/usr/lib/udev/rules.d/70-mios-input.rules
+!/usr/lib/systemd/user/mios-inputd.service
+!/tests/test-mios-inputd.py
+!/tests/test-keybind-collisions.py
+!/src/mios-rs/mios-gate/src/keybinds.rs
+!/usr/share/mios/keybinds/
+!/usr/share/mios/keybinds/chord-vectors.json
+!/usr/share/doc/mios/keybinds.md
+!/tools/native/mios-pip-gravity/
+!/tools/native/mios-pip-gravity/Cargo.toml
+!/tools/native/mios-pip-gravity/src/
+!/tools/native/mios-pip-gravity/src/*.rs
+!/usr/lib/systemd/user/mios-pip-gravity.service

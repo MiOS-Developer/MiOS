@@ -1,0 +1,19 @@
+[Unit]
+Description=MiOS PiP gravity (magnetic flank rails, HUD magnetism, springy snap)
+PartOf=mios-desktop.target
+After=graphical-session.target
+ConditionFileIsExecutable=/usr/libexec/mios/mios-pip-gravity
+
+[Service]
+Type=simple
+ExecStartPre=/usr/libexec/mios/mios-pip-gravity check
+ExecStart=/usr/libexec/mios/mios-pip-gravity
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=mios-desktop.target
