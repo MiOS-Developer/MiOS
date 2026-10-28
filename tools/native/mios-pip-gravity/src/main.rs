@@ -129,6 +129,31 @@ fn num(v: &Value, i: usize) -> f64 {
     v.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0)
 }
 
+/// Id of the monitor whose logical rectangle contains (x, y).
+fn monitor_at(mons: &Value, x: f64, y: f64) -> Option<i64> {
+    mons.as_array()?.iter().find_map(|m| {
+        let g = |k: &str| m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let sc = g("scale").max(0.1);
+        let (mx, my, mw, mh) = (g("x"), g("y"), g("width") / sc, g("height") / sc);
+        (x >= mx && x < mx + mw && y >= my && y < my + mh).then(|| m.get("id").and_then(|i| i.as_i64())).flatten()
+    })
+}
+
+#[cfg(test)]
+mod monitor_tests {
+    use super::monitor_at;
+    #[test]
+    fn centre_picks_owning_monitor_and_misses_outside() {
+        let m: serde_json::Value = serde_json::json!([
+            {"id": 0, "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0},
+            {"id": 1, "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1.0}
+        ]);
+        assert_eq!(monitor_at(&m, 1526.0, 827.0), Some(0));
+        assert_eq!(monitor_at(&m, 2100.0, 100.0), Some(1));
+        assert_eq!(monitor_at(&m, 5000.0, 100.0), None);
+    }
+}
+
 struct Track {
     last: Rect,
     expected: Option<Rect>,
@@ -204,7 +229,22 @@ fn main() {
             let at = c.get("at").cloned().unwrap_or_default();
             let sz = c.get("size").cloned().unwrap_or_default();
             let rect = Rect::new(num(&at, 0), num(&at, 1), num(&sz, 0), num(&sz, 1));
-            by_mon.entry(c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0)).or_default().push((s("address").to_string(), rect));
+            // The monitor owning the window's centre wins: Hyprland keeps a pinned window's old
+            // monitor id after it is moved across outputs, which would plan it on the wrong one.
+            let field = c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0);
+            let mid = monitor_at(&mons, rect.cx(), rect.cy()).unwrap_or(field);
+            if mid != field {
+                // Re-home it so the compositor renders it on the output it now sits on (pin is kept).
+                if let Some(name) = mons.as_array().and_then(|a| a.iter().find(|m| m.get("id").and_then(|i| i.as_i64()) == Some(mid))).and_then(|m| m.get("name")).and_then(|n| n.as_str()) {
+                    // move(monitor) resets the position, so put it back where it was dropped.
+                    let w = format!("address:{}", s("address"));
+                    let _ = ipc.send(&format!(
+                        "eval hl.dispatch(hl.dsp.window.move({{monitor='{name}',window='{w}'}}));hl.dispatch(hl.dsp.window.move({{x={},y={},window='{w}'}}))",
+                        rect.x.round(), rect.y.round()
+                    ));
+                }
+            }
+            by_mon.entry(mid).or_default().push((s("address").to_string(), rect));
         }
         let live: Vec<String> = by_mon.values().flatten().map(|(a, _)| a.clone()).collect();
         tracks.retain(|a, _| live.contains(a));
