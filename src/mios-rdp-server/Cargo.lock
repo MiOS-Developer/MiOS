@@ -1682,7 +1682,6 @@ dependencies = [
  "ironrdp-rdpsnd",
  "ironrdp-svc",
  "ironrdp-tokio",
- "libc",
  "qoicoubeh",
  "rand 0.9.5",
  "rayon",

@@ -318,7 +318,7 @@ async fn serve(cfg: Config) -> Result<()> {
     info!(sha256 = %fingerprint, protocols = %cfg.tls_protocols, "TLS certificate loaded");
 
     let display = display::DisplayClient::spawn(&cfg.display_service, &cfg.display_config)?;
-    let (bitmap_tx, bitmap_rx) = tokio::sync::mpsc::channel(2);
+    let bitmap = Arc::new(pipeline::BitmapSlot::default());
     let (input_tx, input_rx) = std::sync::mpsc::channel();
     let authenticated = Arc::new(AtomicBool::new(false));
     let desktop = Arc::new(AtomicU64::new((1280u64 << 32) | 720));
@@ -352,8 +352,7 @@ async fn serve(cfg: Config) -> Result<()> {
         capture_info: Mutex::new(None),
         capture_stats: Mutex::new(None),
         pipe: Mutex::new(None),
-        bitmap_tx,
-        bitmap_rx: Arc::new(tokio::sync::Mutex::new(bitmap_rx)),
+        bitmap: Arc::clone(&bitmap),
         mailbox: Mutex::new(None),
         applied: Mutex::new(None),
         attached: AtomicBool::new(false),
@@ -610,7 +609,7 @@ fn now_epoch() -> f64 {
 
 async fn stats_loop(s: Arc<Session>) {
     let mut iv = tokio::time::interval(Duration::from_secs_f64(stats::WINDOW_SECS));
-    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let mut prev_cpu = stats::process_cpu_seconds();
     let mut prev_t = Instant::now();
     let mut busy_windows = 0u32;
@@ -630,10 +629,13 @@ async fn stats_loop(s: Arc<Session>) {
             st.skipped_static.load(Ordering::Relaxed),
             st.bitmap_frames.load(Ordering::Relaxed),
             st.skipped_rc.load(Ordering::Relaxed),
+            st.bitmap_delivered.load(Ordering::Relaxed),
         );
         let rate = |a: u64, b: u64| (a.saturating_sub(b)) as f64 / dt;
-        let fps = rate(cur.2, prev.2) + rate(cur.5, prev.5);
-        let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6));
+        // delivered fps only: EGFX acks/s + bitmap frames actually handed to the connection/s.
+        // Bitmap frames queued but not drained are reported separately (bitmap_queued_fps).
+        let fps = rate(cur.2, prev.2) + rate(cur.7, prev.7);
+        let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6), rate(cur.5, prev.5), rate(cur.7, prev.7));
         prev = cur;
         let cpu = stats::process_cpu_seconds();
         let cpu_pct = 100.0 * (cpu - prev_cpu) / dt;
@@ -690,6 +692,18 @@ async fn stats_loop(s: Arc<Session>) {
                 s.capture_hz.store(s.cfg.target_hz, Ordering::SeqCst);
             }
         }
+        // bitmap path: no frame acks exist, so the delivered-frame queue age is the congestion
+        // signal. Step the capture rate down while frames age in the slot; creep back up when it drains.
+        if attached && st.bitmap_mode.load(Ordering::Relaxed) {
+            let p50_us = stats::percentile_u64(&samples.capture_to_send_us, 50.0) as u64;
+            let slow_us = (s.cfg.native.bitmap_slow_queue_ms * 1000.0) as u64;
+            let cur_hz = s.capture_hz.load(Ordering::Relaxed);
+            let next = pipeline::bitmap_pace(cur_hz, p50_us, slow_us, s.cfg.native.bitmap_min_hz, s.cfg.native.bitmap_hz);
+            if next != cur_hz {
+                s.capture_hz.store(next, Ordering::SeqCst);
+                info!(from_hz = cur_hz, to_hz = next, queue_ms_p50 = p50_us as f64 / 1000.0, "bitmap pacing stepped the capture rate");
+            }
+        }
         let ci = s.capture_info.lock().expect("ci").as_ref().map(|c| c.lock().expect("ci").clone());
         let advertised = s.gfx.advertised.lock().expect("gfx").clone();
         let negotiated = s.gfx.negotiated.lock().expect("gfx").clone();
@@ -715,6 +729,11 @@ async fn stats_loop(s: Arc<Session>) {
             "encoded_fps": (doc_core.1 * 10.0).round() / 10.0,
             "static_skipped_fps": (doc_core.4 * 10.0).round() / 10.0,
             "rc_skipped_fps": (doc_core.5 * 10.0).round() / 10.0,
+            "bitmap_queued_fps": (doc_core.6 * 10.0).round() / 10.0,
+            "bitmap_delivered_fps": (doc_core.7 * 10.0).round() / 10.0,
+            "bitmap_stale_dropped": st.bitmap_stale_dropped.load(Ordering::Relaxed),
+            "bitmap_hz": s.cfg.native.bitmap_hz,
+            "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),
             "bitrate_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,
             "frames_in_flight": st.frames_in_flight.load(Ordering::Relaxed),

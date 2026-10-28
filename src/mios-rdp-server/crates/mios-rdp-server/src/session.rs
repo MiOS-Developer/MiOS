@@ -43,8 +43,7 @@ pub struct Session {
     pub capture_info: Mutex<Option<Arc<Mutex<capture::CaptureInfo>>>>,
     pub capture_stats: Mutex<Option<Arc<capture::CaptureStats>>>,
     pub pipe: Mutex<Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>>,
-    pub bitmap_tx: tokio::sync::mpsc::Sender<Frame>,
-    pub bitmap_rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Frame>>>,
+    pub bitmap: Arc<pipeline::BitmapSlot>,
     pub mailbox: Mutex<Option<Arc<capture::Mailbox>>>,
     pub applied: Mutex<Option<Applied>>,
     pub attached: AtomicBool,
@@ -81,6 +80,7 @@ impl Session {
         *self.peer.lock().expect("peer") = Some(peer.ip());
         *self.connected_at.lock().expect("t") = Some(Instant::now());
         *self.client.lock().expect("client") = json!({"peer": peer.to_string()});
+        drop(self.bitmap.take_pending()); // never hand a previous connection's pending frame to a new one
     }
 
     /// Post-authentication: remote output, capture and encode pipeline.
@@ -115,7 +115,7 @@ impl Session {
             PipeParams {
                 native: self.cfg.native.clone(),
                 target_hz: self.cfg.target_hz,
-                bitmap_tx: self.bitmap_tx.clone(),
+                bitmap: Arc::clone(&self.bitmap),
                 layout: Arc::clone(&self.layout),
                 capture_hz: Arc::clone(&self.capture_hz),
                 authenticated: Arc::clone(&self.authenticated),
@@ -212,7 +212,7 @@ impl RdpServerDisplay for Display {
         self.s.suppressed.store(self.s.operator_paused.load(Ordering::Relaxed) || ctx.display_suppressed.load(Ordering::Relaxed), Ordering::Relaxed);
         *self.s.conn_suppressed.lock().expect("sup") = Some(ctx.display_suppressed);
         Ok(Box::new(Updates {
-            rx: Arc::clone(&self.s.bitmap_rx),
+            bitmap: Arc::clone(&self.s.bitmap),
             hide_pointer: self.s.cfg.native.cursor != "client",
             size: self.s.desktop_size(),
             pending: None,
@@ -256,7 +256,7 @@ impl RdpServerDisplay for Display {
 }
 
 struct Updates {
-    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Frame>>>,
+    bitmap: Arc<pipeline::BitmapSlot>,
     hide_pointer: bool,
     size: (u32, u32),
     pending: Option<Frame>,
@@ -277,11 +277,15 @@ impl RdpServerDisplayUpdates for Updates {
         let f = match self.pending.take() {
             Some(f) => f,
             None => {
-                let mut rx = self.rx.lock().await;
-                match rx.recv().await {
-                    Some(f) => f,
-                    None => return Ok(None),
-                }
+                let f = self.bitmap.take().await;
+                let taken = Instant::now();
+                let st = &self.s.stats;
+                st.bitmap_delivered.fetch_add(1, Ordering::Relaxed);
+                let mut smp = st.samples.lock().expect("samples");
+                smp.convert_us.push(f.convert_us);
+                smp.capture_to_send_us.push(taken.duration_since(f.ready_at).as_micros() as u64);
+                drop(smp);
+                f
             }
         };
         if (f.width, f.height) != self.size {

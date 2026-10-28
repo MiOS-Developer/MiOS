@@ -68,6 +68,39 @@ impl Gfx {
     }
 }
 
+/// Latest-frame handoff for the classic bitmap path: the pipeline thread offers the newest frame,
+/// the connection's update loop takes it. A slow client can never build a backlog here: an offer
+/// displaces (returns) the previously pending frame, so at most one frame is ever queued and it is
+/// always the newest one. Delivery is counted at the consumer side, not here.
+#[derive(Default)]
+pub struct BitmapSlot {
+    frame: Mutex<Option<Frame>>,
+    notify: tokio::sync::Notify,
+}
+
+impl BitmapSlot {
+    /// Offer the newest frame; `Some(_)` = the displaced stale frame (recycle its buffer).
+    pub fn offer(&self, f: Frame) -> Option<Frame> {
+        let old = self.frame.lock().expect("bitmap slot").replace(f);
+        self.notify.notify_one();
+        old
+    }
+    /// Synchronously steal the pending frame (connection teardown / fresh connection).
+    pub fn take_pending(&self) -> Option<Frame> {
+        self.frame.lock().expect("bitmap slot").take()
+    }
+    /// Wait for the newest frame. `notify_one` leaves a permit when nobody waits, so an offer
+    /// racing the empty-check is never lost.
+    pub async fn take(&self) -> Frame {
+        loop {
+            if let Some(f) = self.frame.lock().expect("bitmap slot").take() {
+                return f;
+            }
+            self.notify.notified().await;
+        }
+    }
+}
+
 pub struct GfxFactory {
     pub gfx: Arc<Gfx>,
     pub max_in_flight: u32,
@@ -155,6 +188,8 @@ pub struct PipeStats {
     pub last_level: Mutex<Option<(u8, u8)>>,
     pub last_slices: AtomicU32,
     pub bitmap_frames: AtomicU64,
+    pub bitmap_delivered: AtomicU64,
+    pub bitmap_stale_dropped: AtomicU64,
     pub bitmap_mode: AtomicBool,
     pub surface: Mutex<(u16, u16)>,
 }
@@ -170,7 +205,7 @@ pub struct Samples {
 pub struct PipeParams {
     pub native: Native,
     pub target_hz: u32,
-    pub bitmap_tx: tokio::sync::mpsc::Sender<Frame>,
+    pub bitmap: Arc<BitmapSlot>,
     /// 0 = I420/EGFX, 1 = BGRA/bitmap (shared with the capture thread)
     pub layout: Arc<AtomicU32>,
     pub capture_hz: Arc<AtomicU32>,
@@ -300,6 +335,23 @@ impl Aimd {
             ((f64::from(self.bps) * 1.05) as u32).min(self.max)
         };
         (self.bps != old).then_some(self.bps)
+    }
+}
+
+/// Adaptive bitmap capture rate: the bitmap path has no frame acks, so the queue age of delivered
+/// frames (capture ready -> handed to the connection) is the congestion signal. One step per stats
+/// window: -20 % while the p50 queue age is above `slow_us`, +1 Hz once it is below half of it
+/// (hysteresis), bounded to [floor, ceil]. A degenerate `slow_us` = 0 disables stepping entirely.
+pub fn bitmap_pace(cur_hz: u32, p50_us: u64, slow_us: u64, floor: u32, ceil: u32) -> u32 {
+    let ceil = ceil.max(1);
+    let floor = floor.clamp(1, ceil);
+    let cur = cur_hz.clamp(floor, ceil);
+    if slow_us > 0 && p50_us > slow_us {
+        ((f64::from(cur) * 0.8) as u32).max(floor)
+    } else if p50_us < slow_us / 2 && cur < ceil {
+        cur + 1
+    } else {
+        cur
     }
 }
 
@@ -435,7 +487,11 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
                 match mailbox.take(Duration::from_millis(50)) {
                     Ok(Some(f)) if f.layout == PixelLayout::Bgra => {
                         stats.captured.fetch_add(1, Ordering::Relaxed);
-                        if p.bitmap_tx.try_send(f).is_ok() {
+                        if let Some(stale) = p.bitmap.offer(f) {
+                            // the client had not drained the previous frame: keep the newest, recycle the stale one
+                            stats.bitmap_stale_dropped.fetch_add(1, Ordering::Relaxed);
+                            mailbox.recycle(stale.data);
+                        } else {
                             stats.bitmap_frames.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -758,6 +814,57 @@ mod tests {
         gfx.ready.store(true, Ordering::SeqCst);
         gfx.avc420.store(true, Ordering::SeqCst);
         assert!(check_avc420_ready(&gfx), "pipeline must be ready when both gfx.ready and gfx.avc420 are true");
+    }
+
+    fn bframe(seq: u64) -> Frame {
+        Frame { seq, width: 4, height: 4, stride: 4, layout: PixelLayout::Bgra, data: vec![0u8; 64], ready_at: Instant::now(), capture_us: 0, convert_us: 0 }
+    }
+
+    #[test]
+    fn bitmap_slot_displaces_stale_and_keeps_newest() {
+        let slot = BitmapSlot::default();
+        assert!(slot.offer(bframe(1)).is_none(), "the first offer displaces nothing");
+        for seq in 2..=50u64 {
+            let stale = slot.offer(bframe(seq)).expect("the previous frame must be displaced");
+            assert_eq!(stale.seq, seq - 1);
+        }
+        let taken = tokio::runtime::Builder::new_current_thread().build().expect("rt").block_on(slot.take());
+        assert_eq!(taken.seq, 50, "the newest frame must survive the pressure");
+        assert!(slot.take_pending().is_none(), "exactly one buffer is ever retained");
+    }
+
+    #[test]
+    fn bitmap_slot_never_grows_under_a_stalled_client() {
+        // negative control: a client that never drains the slot must not accumulate a backlog
+        let slot = BitmapSlot::default();
+        for seq in 0..1000u64 {
+            let _ = slot.offer(bframe(seq));
+        }
+        assert_eq!(slot.take_pending().expect("one retained frame").seq, 999);
+        assert!(slot.take_pending().is_none());
+    }
+
+    #[test]
+    fn bitmap_pace_backs_off_under_queue_pressure_and_recovers_slowly() {
+        let slow = 250_000u64;
+        let mut hz = 15u32;
+        for _ in 0..20 {
+            hz = bitmap_pace(hz, slow + 1, slow, 2, 15);
+        }
+        assert_eq!(hz, 2, "must fall to the floor, never below it");
+        let mut hz = 2u32;
+        for _ in 0..20 {
+            hz = bitmap_pace(hz, slow / 4, slow, 2, 15);
+        }
+        assert_eq!(hz, 15, "must climb back to the ceiling, never above it");
+        assert_eq!(bitmap_pace(7, slow * 3 / 4, slow, 2, 15), 7, "the hysteresis band holds");
+    }
+
+    #[test]
+    fn bitmap_pace_degenerate_threshold_holds_the_rate() {
+        // negative control: slow_us = 0 (misconfigured) must not stall the stream to zero
+        assert!(bitmap_pace(15, u64::MAX, 0, 2, 15) >= 2);
+        assert_eq!(bitmap_pace(15, 0, 0, 2, 15), 15);
     }
 }
 
