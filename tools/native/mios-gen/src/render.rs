@@ -3844,7 +3844,9 @@ do
    hyprbars_tab = @@HYPRBARS_TAB@@}
   local config_json = @@JSON@@
   local S = @@SCALING@@
-  local EXPLICIT = @@EXPLICIT@@
+  -- Global so `mios-gen session-scale` can mark an output it scaled explicit in the live session.
+  MIOS_SCALE_EXPLICIT = @@EXPLICIT@@
+  local EXPLICIT = MIOS_SCALE_EXPLICIT
   local FX = @@FX@@
 @@POLICY_FN@@
   local rules, fxrules, applied, timers = {}, {}, {}, {}
@@ -4334,7 +4336,7 @@ end
             for name in ["HDMI-A-1", "HEADLESS-MIOS-RDP"] {
                 assert!(!chunk.contains(name), "{name} hardcoded in the mobile profile");
             }
-            assert!(chunk.contains("local EXPLICIT = {}"), "{chunk}");
+            assert!(chunk.contains("MIOS_SCALE_EXPLICIT = {}") && chunk.contains("local EXPLICIT = MIOS_SCALE_EXPLICIT"), "{chunk}");
             assert!(!chunk.contains("@@"), "unfilled placeholder: {chunk}");
             // Without [desktop.scaling] the legacy rule is projected (no policy function).
             let mut legacy = vendor();

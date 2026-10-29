@@ -236,6 +236,21 @@ mios_section("global-input", function()
  policies["SUPER+f11"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+f12"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+escape"]={contexts={},passthrough={"vm-passthrough"}}
+ policies["SUPER+CTRL+equal"]={contexts={},passthrough={}}
+ local b=mios_native_hl.bind("SUPER+CTRL+equal",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'"))
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal"}) end
+ policies["SUPER+CTRL+minus"]={contexts={},passthrough={}}
+ local b=mios_native_hl.bind("SUPER+CTRL+minus",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'"))
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+minus"}) end
+ policies["SUPER+CTRL+0"]={contexts={},passthrough={}}
+ local b=mios_native_hl.bind("SUPER+CTRL+0",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-reset'"))
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+0"}) end
+ policies["SUPER+CTRL+mouse_up"]={contexts={},passthrough={}}
+ local b=mios_native_hl.bind("SUPER+CTRL+mouse_up",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'"))
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_up"}) end
+ policies["SUPER+CTRL+mouse_down"]={contexts={},passthrough={}}
+ local b=mios_native_hl.bind("SUPER+CTRL+mouse_down",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'"))
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_down"}) end
  policies["SUPER+CTRL+p"]={contexts={"desktop-2d","desktop-3d","vm-passthrough"},passthrough={}}
  local b=mios_native_hl.bind("SUPER+CTRL+p",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action toggle_vm_passthrough"),{dont_inhibit=true,submap_universal=true})
  if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+p",escape=true}) end
@@ -350,7 +365,9 @@ do
    hyprbars_tab = "mobile"}
   local config_json = "{\"enabled\":true,\"portrait\":true,\"breakpoint_px\":900,\"applies_to\":[\"local\",\"remote\"],\"remote_name_prefixes\":[\"HEADLESS-\"],\"layout\":\"monocle\",\"gaps_in_px\":0,\"gaps_out_px\":6,\"hyprbars_tab\":\"mobile\",\"notch_gap_px\":6,\"shoulder_dot_px\":14,\"app_menu\":true,\"island_motion\":\"fadeIn\",\"island_hold\":[\"windowsOut\",\"fadeOut\"],\"window_controls\":[{\"label\":\"Close\",\"icon\":\"✕\",\"action\":\"hyprctl dispatch 'hl.dsp.window.close({window = \\\"address:{address}\\\"})'\"},{\"label\":\"Minimize\",\"icon\":\"–\",\"action\":\"hyprctl dispatch '(hl.plugin.mios_lamp and hl.plugin.mios_lamp.minimize({window = \\\"address:{address}\\\"}) or hl.dsp.window.move({workspace = \\\"special:minimized\\\", window = \\\"address:{address}\\\", follow = false}))'\"},{\"label\":\"Float\",\"icon\":\"□\",\"action\":\"hyprctl dispatch 'hl.dsp.window.float({action = \\\"toggle\\\", window = \\\"address:{address}\\\"})'\"}],\"remote_effects\":{\"enabled\":false,\"applies_to\":[\"remote\"],\"preset\":\"mios-remote\",\"base_preset\":\"mios\",\"layer_namespaces\":[\"mios-topbar\",\"mios-dock\"],\"overrides\":{\"blur_iterations\":1,\"specular_strength\":0.0,\"fresnel_strength\":0.0,\"chromatic_aberration\":0.0}}}"
   local S = {enabled = true, apply_local = true, apply_remote = false, target_dpi = 96.0, handheld_dpi = 160.0, handheld_diag = 7.0, desktop_diag = 15.0, min_scale = 1.0, max_scale = 3.0, snap_step = 0.25, min_short = 360, mobile_short = 600, mobile_long = 1400, portrait_mobile = false, min_phys_mm = 50.0, edid_tol = 0.15, fb_desktop_diag = 24.0, fb_handheld_dpi = 400.0, hh_aspect = 1.85, hh_short = 1440}
-  local EXPLICIT = {}
+  -- Global so `mios-gen session-scale` can mark an output it scaled explicit in the live session.
+  MIOS_SCALE_EXPLICIT = {}
+  local EXPLICIT = MIOS_SCALE_EXPLICIT
   local FX = nil
 local function mios_scale_policy(P, m)
  local G = 120

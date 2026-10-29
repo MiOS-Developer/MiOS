@@ -4,15 +4,44 @@ use std::{env,fs,io::{Read,Write},os::{unix::{fs::{PermissionsExt,MetadataExt,sy
 use serde_json::Value as Json;
 use toml::Value;
 
+/// The fit scale for a viewport: the largest-fitting scale for the logical width x height, clamped, then the nearest
+/// multiple of 1/120 (Wayland fractional scale) whose logical size is whole in both axes, so the compositor never
+/// substitutes a scale of its own. Shared by the projection and its test.
+const NESTED_SCALE_LUA:&str=r#"
+local function nested_scale(w,h)
+ if nested_fit.mode ~= 'fit' then return 1 end
+ local s = math.min(w/nested_fit.w, h/nested_fit.h) * (nested_fit.zoom or 1)
+ s = math.max(nested_fit.min, math.min(nested_fit.max, s))
+ local k = math.floor(s*120+0.5)
+ local lo, hi = math.ceil(nested_fit.min*120), math.floor(nested_fit.max*120)
+ for d = 0, 240 do
+  for _, c in ipairs({k-d, k+d}) do
+   if c >= lo and c <= hi and (w*120) % c == 0 and (h*120) % c == 0 then return c/120 end
+  end
+ end
+ return 1
+end
+"#;
 fn shell_arg(s:&str)->String { format!("'{}'",s.replace('\'',"'\\''")) }
 fn command(v:&Value,key:&str)->Result<String,String> {
  let a=v.get(key).and_then(Value::as_array).filter(|v|!v.is_empty()).ok_or(format!("desktop.nested.{key} must be nonempty argv"))?;
  a.iter().map(|s|s.as_str().filter(|s|!s.chars().any(char::is_control)).map(shell_arg).ok_or(format!("invalid desktop.nested.{key} argument"))).collect::<Result<Vec<_>,_>>().map(|v|v.join(" "))
 }
+/// [desktop.nested] scale_mode ("fit" | "native"), scale_min and scale_max (0.1..=8, min <= max).
+fn nested_scaling(n:&Value)->Result<(String,f64,f64),String>{
+ let mode=n.get("scale_mode").and_then(Value::as_str).unwrap_or("fit");
+ if !["fit","native"].contains(&mode){return Err("desktop.nested.scale_mode must be fit or native".into());}
+ let f=|k:&str,d:f64|->Result<f64,String>{let v=match n.get(k){None=>d,Some(Value::Float(f))=>*f,Some(Value::Integer(i))=>*i as f64,_=>return Err(format!("desktop.nested.{k} must be a number"))};if (0.1..=8.0).contains(&v){Ok(v)}else{Err(format!("desktop.nested.{k} must be 0.1..8"))}};
+ let (lo,hi)=(f("scale_min",0.25)?,f("scale_max",2.0)?);
+ if lo>hi {return Err("desktop.nested.scale_min must not exceed scale_max".into());}
+ Ok((mode.to_owned(),lo,hi))
+}
 fn number(v:&Value,key:&str)->Result<i64,String>{v.get(key).and_then(Value::as_integer).filter(|n|(320..=8192).contains(n)).ok_or(format!("desktop.nested.{key} must be 320..8192"))}
 pub fn project(data:&Value)->Result<String,String>{
  let n=&data["desktop"]["nested"];let (width,height)=(number(n,"width")?,number(n,"height")?);
- let mut d=data.clone();d["desktop"]["hyprland"]["placement"]["enabled"]=Value::Boolean(false);let h=d.get_mut("desktop").and_then(|v|v.get_mut("hyprland")).and_then(Value::as_table_mut).ok_or("desktop.hyprland missing")?;
+ let mut d=data.clone();d["desktop"]["hyprland"]["placement"]["enabled"]=Value::Boolean(false);
+ // The session owns its output scale (fit/zoom below); the global automatic scale policy must not re-apply its own.
+ if let Some(sc)=d.get_mut("desktop").and_then(|v|v.get_mut("scaling")).and_then(Value::as_table_mut){sc.insert("apply_to".into(),Value::Array(vec![]));}let h=d.get_mut("desktop").and_then(|v|v.get_mut("hyprland")).and_then(Value::as_table_mut).ok_or("desktop.hyprland missing")?;
  h.insert("startup".into(),Value::Array(vec![]));h.insert("shutdown".into(),Value::Array(vec![]));h.insert("monitors".into(),Value::Table(Default::default()));
  h.insert("monitor".into(),toml::toml!{output="" mode="preferred" position="auto" scale=1}.into());
  h["config"]["cursor"]["no_hardware_cursors"]=Value::Integer(1);
@@ -24,18 +53,46 @@ pub fn project(data:&Value)->Result<String,String>{
  // A Wayland backend configure changes the output size without rebuilding its
  // workspace workarea. Keep the native monitor rule on the actual host viewport;
  // its prop refresh then recalculates tiled clients, without an initial-mode reset.
+ // scale_mode "fit" keeps the session's logical desktop at width x height whatever the viewport (a PiP shows the
+ // whole desktop scaled down, an enlarged window scales it up); "native" maps viewport pixels 1:1.
+ let (mode,smin,smax)=nested_scaling(n)?;
+ let zstep=data.get("desktop").and_then(|d|d.get("scaling")).and_then(|s|s.get("session_step")).and_then(|v|v.as_float().or_else(||v.as_integer().map(|i|i as f64))).filter(|v|*v>0.0&&*v<=1.0).unwrap_or(0.125);
+ out+=&format!("local nested_fit={{mode='{mode}',w={width},h={height},min={smin},max={smax},zoom=1,zstep={zstep}}}\n");
  out+=r#"
 local nested_modes = {}
+"#;
+ out+=NESTED_SCALE_LUA;
+ out+=r#"
 local function nested_reflow()
  for _,m in ipairs(hl.get_monitors()) do
   local mode = string.format('%dx%d',m.width,m.height)
   if m.width > 0 and m.height > 0 and nested_modes[m.name] ~= mode then
    nested_modes[m.name] = mode
-   hl.monitor({output=m.name,mode=mode,position=m.x..'x'..m.y,scale=m.scale,transform=m.transform})
+   hl.monitor({output=m.name,mode=mode,position=m.x..'x'..m.y,scale=nested_scale(m.width,m.height),transform=m.transform})
   end
  end
 end
 hl.on('monitor.layout_changed', nested_reflow)
+-- `mios-gen session-scale` in the parent zooms this session when its window is focused (global SUPER+CTRL +/-/0/wheel).
+-- Every press reaches the next scale the output accepts in that direction: on a small viewport valid scales are
+-- sparse, so the zoom keeps stepping until the effective scale actually changes (or the range ends).
+function mios_nested_zoom(dir)
+ local m = hl.get_monitors()[1]
+ if dir ~= 'up' and dir ~= 'down' then nested_fit.zoom = 1
+ elseif m and m.width > 0 and m.height > 0 then
+  local cur = nested_scale(m.width, m.height)
+  local z = nested_fit.zoom or 1
+  for _ = 1, 64 do
+   z = z + (dir == 'up' and nested_fit.zstep or -nested_fit.zstep)
+   if z < 0.05 or z > 8 then break end
+   nested_fit.zoom = z
+   local s = nested_scale(m.width, m.height)
+   if (dir == 'up' and s > cur + 1e-9) or (dir == 'down' and s < cur - 1e-9) then break end
+  end
+ end
+ nested_modes = {}
+ nested_reflow()
+end
 "#;
  let resize_poll=n.get("resize_poll_ms").and_then(Value::as_integer).filter(|v|(20..=5000).contains(v)).ok_or("desktop.nested.resize_poll_ms must be 20..5000")?;
  out+=&format!("hl.timer(nested_reflow,{{timeout={resize_poll},type='repeat'}})\n");
@@ -189,6 +246,38 @@ mod tests {
  #[test] fn nested_projection_keeps_shell_and_system_manager_separate(){
   let data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
   let out=project(&data).unwrap();assert!(!out.contains("name\"] = \"mios-placement"));assert!(!out.contains("systemctl --user restart mios-desktop.target"));assert!(!out.contains("dbus-update-activation-environment"));assert!(!out.contains("/usr/share/mios/quickshell/Config.qml"));assert!(out.contains("Nested.qml"));assert!(out.contains("no_hardware_cursors\"] = 1"));
+ }
+ #[test] fn nested_projection_turns_off_the_automatic_scale_policy(){
+  let mut d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+  d["desktop"]["scaling"]["apply_to"]=Value::Array(vec![Value::String("local".into())]);
+  let lua=project(&d).unwrap();
+  assert!(lua.contains("local nested_fit={mode='fit'"),"fit table projected");
+  assert!(lua.contains("function mios_nested_zoom("),"zoom hook projected");
+  assert!(!lua.contains("apply_to = {\"local\"}")&&!lua.contains("applies = {local = true"),"automatic policy off in the nested session");
+ }
+ #[test] fn nested_fit_scaling_is_projected_and_validated(){
+  let ok:Value=toml::from_str("scale_mode='fit'\nscale_min=0.25\nscale_max=2.0").unwrap();
+  assert_eq!(nested_scaling(&ok).unwrap(),("fit".into(),0.25,2.0));
+  assert_eq!(nested_scaling(&toml::from_str::<Value>("").unwrap()).unwrap().0,"fit","fit is the default");
+  for bad in ["scale_mode='stretch'","scale_min=0","scale_max=9","scale_min=2.0\nscale_max=1.0","scale_min='x'"] {
+   assert!(nested_scaling(&toml::from_str::<Value>(bad).unwrap()).is_err(),"{bad}");
+  }
+ }
+ #[test] fn nested_fit_scale_keeps_the_logical_desktop_in_lua(){
+  let lua=["/usr/bin/luajit","/usr/bin/lua"].into_iter().map(std::path::Path::new).find(|p|p.is_file()).expect("a Lua interpreter");
+  let src=format!("local nested_fit={{mode='fit',w=1280,h=800,min=0.25,max=2}}\n{NESTED_SCALE_LUA}\nfor _,v in ipairs({{{{464,334}},{{1280,800}},{{2560,1600}},{{100,60}},{{9000,9000}},{{1100,2080}}}}) do local s=nested_scale(v[1],v[2]) io.write(s,' ',v[1]/s,' ',v[2]/s,'\\n') end\nnested_fit.mode='native' io.write(nested_scale(464,334),' 0 0\\n')");
+  let out=std::process::Command::new(lua).arg("-e").arg(&src).output().unwrap();
+  assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
+  let rows:Vec<Vec<f64>>=String::from_utf8_lossy(&out.stdout).lines().map(|l|l.split_whitespace().map(|v|v.parse().unwrap()).collect()).collect();
+  assert_eq!(rows.len(),7);
+  let whole=|x:f64|(x-x.round()).abs()<1e-6;
+  for r in &rows[..6] { assert!(whole(r[0]*120.0) && whole(r[1]) && whole(r[2]),"1/120 step with whole logical size: {r:?}"); }
+  assert!((rows[0][0]-0.36).abs()<0.05 && rows[0][1]>1200.0,"a 464x334 PiP shows the ~1280-wide desktop scaled down: {:?}",rows[0]);
+  assert_eq!(rows[1],vec![1.0,1280.0,800.0]);
+  assert_eq!(rows[2],vec![2.0,1280.0,800.0]);
+  assert!(rows[3][0]>=0.25,"clamped low: {:?}",rows[3]);
+  assert!(rows[4][0]<=2.0,"clamped high: {:?}",rows[4]);
+  assert_eq!(rows[6][0],1.0,"native maps pixels 1:1");
  }
  #[test] fn nested_resize_interval_is_validated(){
   let mut data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();

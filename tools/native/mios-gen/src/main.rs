@@ -24,6 +24,7 @@ mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
+mod session_scale;
 mod render;
 mod sync;
 mod terminal;
@@ -331,6 +332,13 @@ enum Commands {
         #[arg(long)] root: Option<PathBuf>,
         #[arg(long)] dry_run: bool,
         #[arg(long,value_parser=["pip","window","side-by-side"])] layout: Option<String>,
+    },
+
+    /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
+    #[command(name = "session-scale")]
+    SessionScale {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(value_parser=["up","down","reset","+","-","0"])] direction: String,
     },
 
     /// Load and toggle the live 3D engine through compositor IPC.
@@ -1426,6 +1434,13 @@ fn main() -> ExitCode {
         Commands::NestedSession {root,dry_run,layout} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,layout.as_deref()).map_err(|e|(e,1)),
+        ),
+        Commands::SessionScale {root,direction} => (
+            "session-scale", "desktop",
+            session_scale::Dir::parse(&direction)
+                .and_then(|d| session_scale::run(&root.unwrap_or_else(||PathBuf::from("/")), d))
+                .map(|msg| println!("{msg}"))
+                .map_err(|e|(e,1)),
         ),
         Commands::Hyprland3dToggle => (
             "hyprland-3d-toggle", "desktop",

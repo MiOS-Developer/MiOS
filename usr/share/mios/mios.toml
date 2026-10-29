@@ -4251,6 +4251,9 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:placement-toggle" = ["/usr/bin/miosd", "placement", "toggle"]
 "mios:hyprland-3d-toggle" = ["/usr/bin/mios-gen", "hyprland-3d-toggle"]
 "mios:launch-browser" = ["/usr/bin/mios-browser"]
+"mios:session-scale-up" = ["/usr/bin/mios-gen", "session-scale", "up"]
+"mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
+"mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
@@ -4320,6 +4323,43 @@ chord = "SUPER+Escape"
 action = "quickshell:keymap-toggle"
 realized_by = "hyprland"
 passthrough = ["vm-passthrough"]
+
+# Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
+# On bypass_mod, so it also reaches the host while a VM or a captured app owns the keyboard.
+[[keybindings.global.bindings]]
+id = "session-scale-up"
+tier = 1
+chord = "SUPER+CTRL+equal"
+action = "mios:session-scale-up"
+realized_by = "hyprland"
+
+[[keybindings.global.bindings]]
+id = "session-scale-down"
+tier = 1
+chord = "SUPER+CTRL+minus"
+action = "mios:session-scale-down"
+realized_by = "hyprland"
+
+[[keybindings.global.bindings]]
+id = "session-scale-reset"
+tier = 1
+chord = "SUPER+CTRL+0"
+action = "mios:session-scale-reset"
+realized_by = "hyprland"
+
+[[keybindings.global.bindings]]
+id = "session-scale-wheel-up"
+tier = 1
+chord = "SUPER+CTRL+mouse_up"
+action = "mios:session-scale-up"
+realized_by = "hyprland"
+
+[[keybindings.global.bindings]]
+id = "session-scale-wheel-down"
+tier = 1
+chord = "SUPER+CTRL+mouse_down"
+action = "mios:session-scale-down"
+realized_by = "hyprland"
 
 # Tier 2: the VM passthrough latch lives on bypass_mod so it works while the VM owns the keyboard
 # (the research proposed Super+Alt+P; that chord would be swallowed by the guest). Reserved, not yet realised.
@@ -10613,6 +10653,9 @@ desktop_min_diagonal_in      = 15.0
 min_scale                    = 1.0
 max_scale                    = 3.0
 snap_step                    = 0.25        # preferred scale steps (multiple of 1/120) before the Hyprland-valid search
+session_step                 = 0.125       # SUPER+CTRL +/- and wheel: one manual step of the focused output's scale (also a nested session's zoom)
+session_min                  = 0.5         # manual scale range; the automatic policy keeps min_scale/max_scale
+session_max                  = 3.0
 min_logical_short_px         = 360         # never scale the short side below this many logical px
 mobile_short_side_px         = 600         # logical short side below this = mobile (phone class)
 mobile_max_long_side_px      = 1400        # ...unless the logical long side reaches this (strips/ultrawides)
@@ -17990,6 +18033,9 @@ match = [
 resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
 width = 1280
 height = 800
+scale_mode = "fit"                    # fit: the session keeps width x height logical pixels and scales to its viewport (PiP shows the whole desktop); native: viewport pixels 1:1
+scale_min = 0.25
+scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
 launch_layout = "pip"
 tmux_socket_name = "mios-nested"
