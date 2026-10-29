@@ -157,6 +157,8 @@ pub struct App {
     validating: bool,
     status: String,
     help: bool,
+    help_scroll: u16,
+    compact: bool,
     quit: bool,
     theme: Theme,
     backup_suffix: String,
@@ -198,6 +200,8 @@ impl App {
             validating: false,
             status: String::new(),
             help: false,
+            help_scroll: 0,
+            compact: false,
             quit: false,
             backup_suffix,
             areas: [Rect::default(); 3],
@@ -354,7 +358,13 @@ impl App {
             return;
         }
         if self.help {
-            self.help = false;
+            match k.code {
+                KeyCode::Down | KeyCode::Char('j') => self.help_scroll = self.help_scroll.saturating_add(1),
+                KeyCode::Up | KeyCode::Char('k') => self.help_scroll = self.help_scroll.saturating_sub(1),
+                KeyCode::PageDown => self.help_scroll = self.help_scroll.saturating_add(8),
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(8),
+                _ => self.help = false,
+            }
             return;
         }
         match k.code {
@@ -365,7 +375,10 @@ impl App {
                     self.quit = true;
                 }
             }
-            KeyCode::Char('?') | KeyCode::F(1) => self.help = true,
+            KeyCode::Char('?') | KeyCode::F(1) => {
+                self.help = true;
+                self.help_scroll = 0;
+            }
             KeyCode::Tab => self.focus = match self.focus { Focus::Devices => Focus::Diagram, Focus::Diagram => Focus::Bindings, Focus::Bindings => Focus::Devices },
             KeyCode::BackTab => self.focus = match self.focus { Focus::Devices => Focus::Bindings, Focus::Diagram => Focus::Devices, Focus::Bindings => Focus::Diagram },
             KeyCode::Char(']') => self.ctx = (self.ctx + 1) % (CONTEXTS.len() + 1),
@@ -657,33 +670,58 @@ impl App {
         Block::default().borders(Borders::ALL).title(title).border_style(if self.focus == f { Style::new().fg(t.accent) } else { Style::new().fg(t.muted) })
     }
 
+    /// Full layout on a large terminal; on a small one (PiP, phone, split pane, 80x24 console) one pane at a time,
+    /// the focused one, with the details and status below it.
     pub fn draw(&mut self, fr: &mut Frame) {
+        let area = fr.area();
+        self.compact = area.width < 120 || area.height < 32;
         let t = &self.theme;
-        let [top, body, table, status] = Layout::vertical([Constraint::Length(1), Constraint::Length(13), Constraint::Min(5), Constraint::Length(3)]).areas(fr.area());
-        let ctx = self.context().unwrap_or("all contexts");
-        let head = Line::from(vec![
-            Span::styled(" MiOS Controls ", Style::new().fg(t.accent).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("| context [{ctx}] ([ ]) | {} | ? help", if self.dirty() { "DRAFT (unsaved)" } else { "saved" })),
-        ]);
-        fr.render_widget(Paragraph::new(head), top);
-        let [devs, diagram, detail] = Layout::horizontal([Constraint::Length(26), Constraint::Min(40), Constraint::Length(44)]).areas(body);
-        self.areas = [devs, diagram, table];
-        self.draw_devices(fr, devs);
-        match self.device().kind {
-            Kind::Keyboard => self.draw_keyboard(fr, diagram),
-            Kind::Controller => self.draw_pad(fr, diagram),
+        let ctx = self.context().unwrap_or("all");
+        let state = if self.dirty() { "DRAFT" } else { "saved" };
+        let head = if self.compact {
+            Line::from(vec![Span::styled("MiOS Controls ", Style::new().fg(t.accent).add_modifier(Modifier::BOLD)), Span::raw(format!("[{ctx}] {state}  Tab pane  ? help"))])
+        } else {
+            Line::from(vec![
+                Span::styled(" MiOS Controls ", Style::new().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::raw(format!("| context [{ctx}] ([ ]) | {} | ? help", if self.dirty() { "DRAFT (unsaved)" } else { "saved" })),
+            ])
+        };
+        if self.compact {
+            let [top, main, detail, status] = Layout::vertical([Constraint::Length(1), Constraint::Min(6), Constraint::Length(6), Constraint::Length(2)]).areas(area);
+            fr.render_widget(Paragraph::new(head), top);
+            self.areas = [main, main, main];
+            match self.focus {
+                Focus::Devices => self.draw_devices(fr, main),
+                Focus::Diagram => match self.device().kind {
+                    Kind::Keyboard => self.draw_keyboard(fr, main),
+                    Kind::Controller => self.draw_pad(fr, main),
+                },
+                Focus::Bindings => self.draw_table(fr, main),
+            }
+            self.draw_detail(fr, detail);
+            self.draw_status(fr, status);
+        } else {
+            let [top, body, table, status] = Layout::vertical([Constraint::Length(1), Constraint::Length(13), Constraint::Min(5), Constraint::Length(3)]).areas(area);
+            fr.render_widget(Paragraph::new(head), top);
+            let [devs, diagram, detail] = Layout::horizontal([Constraint::Length(26), Constraint::Min(40), Constraint::Length(44)]).areas(body);
+            self.areas = [devs, diagram, table];
+            self.draw_devices(fr, devs);
+            match self.device().kind {
+                Kind::Keyboard => self.draw_keyboard(fr, diagram),
+                Kind::Controller => self.draw_pad(fr, diagram),
+            }
+            self.draw_detail(fr, detail);
+            self.draw_table(fr, table);
+            self.draw_status(fr, status);
         }
-        self.draw_detail(fr, detail);
-        self.draw_table(fr, table);
-        self.draw_status(fr, status);
         if self.help {
             self.draw_help(fr);
         }
         if let Some(p) = &self.prompt {
-            let area = centered(fr.area(), 70, 3);
+            let area = centered(fr.area(), 70, 4);
             fr.render_widget(Clear, area);
             let line = Line::from(vec![Span::raw(p.buf.clone()), Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK))]);
-            fr.render_widget(Paragraph::new(line).block(Block::default().borders(Borders::ALL).title(format!(" {} (Enter/Esc) ", p.label))), area);
+            fr.render_widget(Paragraph::new(line).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title(format!(" {} (Enter/Esc) ", p.label))), area);
         }
         if let Some(c) = self.confirm {
             let q = match c {
@@ -692,9 +730,9 @@ impl App {
                 Confirm::Delete => format!("Delete {} from the draft? (y/n)", self.selected().map(|b| field(b, "id")).unwrap_or("")),
                 Confirm::Quit => "Quit and discard the unsaved draft? (y/n)".into(),
             };
-            let area = centered(fr.area(), 70, 3);
+            let area = centered(fr.area(), 70, 5);
             fr.render_widget(Clear, area);
-            fr.render_widget(Paragraph::new(q).block(Block::default().borders(Borders::ALL).title(" confirm ")), area);
+            fr.render_widget(Paragraph::new(q).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title(" confirm ")), area);
         }
     }
 
@@ -741,15 +779,17 @@ impl App {
                             if self.focus == Focus::Diagram && self.key == (r, c) {
                                 st = st.add_modifier(Modifier::REVERSED);
                             }
-                            [Span::styled(format!("[{label}]"), st), Span::raw(" ")]
+                            [Span::styled(if self.compact { label.trim().to_string() } else { format!("[{label}]") }, st), Span::raw(" ")]
                         })
                         .collect::<Vec<_>>(),
                 )
             })
             .collect();
         let mut lines = lines;
-        lines.push(Line::from(""));
-        lines.push(Line::styled("bound keys highlighted; the selected binding's chord in bold", Style::new().fg(t.muted)));
+        if !self.compact {
+            lines.push(Line::from(""));
+            lines.push(Line::styled("bound keys highlighted; the selected binding's chord in bold", Style::new().fg(t.muted)));
+        }
         fr.render_widget(Paragraph::new(lines).block(self.block(" Keyboard ", Focus::Diagram)), area);
     }
 
@@ -805,18 +845,20 @@ impl App {
             Span::styled(format!("[{label}]"), st)
         };
         let s = |n: usize| Span::raw(" ".repeat(n));
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![s(2), cell("BTN_TL2"), s(28), cell("BTN_TR2")]),
             Line::from(vec![s(2), cell("BTN_TL"), s(28), cell("BTN_TR")]),
-            Line::from(""),
             Line::from(vec![s(6), cell("BTN_DPAD_UP"), s(5), cell("BTN_SELECT"), cell("BTN_MODE"), cell("BTN_START"), s(4), cell("BTN_NORTH")]),
             Line::from(vec![s(1), cell("BTN_DPAD_LEFT"), s(1), cell("BTN_DPAD_RIGHT"), s(19), cell("BTN_WEST"), s(3), cell("BTN_EAST")]),
             Line::from(vec![s(5), cell("BTN_DPAD_DOWN"), s(26), cell("BTN_SOUTH")]),
             Line::from(vec![s(10), Span::raw("( L )"), cell("BTN_THUMBL"), s(4), cell("BTN_THUMBR"), Span::raw("( R )")]),
-            Line::from(vec![s(10), Span::styled("left stick", Style::new().fg(t.muted)), s(6), Span::styled("right stick", Style::new().fg(t.muted))]),
-            Line::from(""),
-            Line::styled("highlighted: has a Guide action; underlined: takes or returns control", Style::new().fg(t.muted)),
         ];
+        if !self.compact {
+            lines.insert(2, Line::from(""));
+            lines.push(Line::from(vec![s(10), Span::styled("left stick", Style::new().fg(t.muted)), s(6), Span::styled("right stick", Style::new().fg(t.muted))]));
+            lines.push(Line::from(""));
+            lines.push(Line::styled("highlighted: has a Guide action; underlined: takes or returns control", Style::new().fg(t.muted)));
+        }
         fr.render_widget(Paragraph::new(lines).block(self.block(" Controller ", Focus::Diagram)), area);
     }
 
@@ -826,13 +868,13 @@ impl App {
         if self.device().kind == Kind::Controller {
             let (button, label) = PAD_BUTTONS[self.button];
             lines.push(Line::styled(format!("{label} ({button})"), Style::new().fg(t.accent).add_modifier(Modifier::BOLD)));
+            if matches!(button, "BTN_NORTH" | "BTN_THUMBL" | "BTN_THUMBR") {
+                let hold = self.hold_ms();
+                lines.push(Line::styled(format!("Tap N: aimed window takes control. Hold N {hold} ms: fullscreen. Hold L3+R3 {hold} ms: release."), Style::new().fg(t.warn)));
+            }
             lines.push(Line::from(format!("Guide + {label}: {}", self.draft.system_layer.get(button).map(String::as_str).unwrap_or("-"))));
             for r in self.pad_role(button) {
                 lines.push(Line::from(format!("- {r}")));
-            }
-            if matches!(button, "BTN_NORTH" | "BTN_THUMBL" | "BTN_THUMBR") {
-                let hold = self.hold_ms();
-                lines.push(Line::styled(format!("Taking control: tap North gives the aimed window every control; hold North {hold} ms for fullscreen; hold L3+R3 {hold} ms to hand control back"), Style::new().fg(t.warn)));
             }
             let captured = at(&self.merged, "keybindings.global.controller.captured_system_layer").and_then(Value::as_bool) == Some(true);
             lines.push(Line::styled(
@@ -881,19 +923,33 @@ impl App {
                 let hit = self.outcome.as_ref().map(|o| !o.mentions(field(b, "id")).is_empty()).unwrap_or(false);
                 let changed = self.saved.index(field(b, "id")).map(|i| &self.saved.bindings[i] != b).unwrap_or(true);
                 let (state, st) = self.binding_state(b);
-                Row::new(vec![
+                let mut cells = vec![
                     Cell::from(if hit { "!" } else if changed { "*" } else { " " }).style(Style::new().fg(if hit { t.error } else { t.warn })),
                     Cell::from(field(b, "id").to_owned()),
                     Cell::from(b.get("tier").and_then(Value::as_integer).map(|x| x.to_string()).unwrap_or_default()),
                     Cell::from(field(b, "chord").to_owned()),
                     Cell::from(field(b, "action").to_owned()),
                     Cell::from(state).style(st),
-                ])
+                ];
+                if self.compact {
+                    cells.remove(2);
+                }
+                Row::new(cells)
             })
             .collect();
-        let widths = [Constraint::Length(1), Constraint::Length(24), Constraint::Length(4), Constraint::Length(22), Constraint::Min(20), Constraint::Length(6)];
+        let (widths, header) = if self.compact {
+            (
+                vec![Constraint::Length(1), Constraint::Percentage(30), Constraint::Percentage(28), Constraint::Min(8), Constraint::Length(5)],
+                vec!["", "id", "chord", "action", "here"],
+            )
+        } else {
+            (
+                vec![Constraint::Length(1), Constraint::Length(24), Constraint::Length(4), Constraint::Length(22), Constraint::Min(20), Constraint::Length(6)],
+                vec!["", "id", "tier", "chord", "action", "here"],
+            )
+        };
         let table = Table::new(rows, widths)
-            .header(Row::new(["", "id", "tier", "chord", "action", "here"]).style(Style::new().fg(t.accent)))
+            .header(Row::new(header).style(Style::new().fg(t.accent)))
             .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
             .block(self.block(" Bindings  (! finding  * changed) ", Focus::Bindings));
         let mut st = TableState::default().with_selected(if self.draft.bindings.is_empty() { None } else { Some(self.sel) });
@@ -911,34 +967,37 @@ impl App {
                 Some(o) => Span::styled(format!("{} new finding(s): {}", o.new_findings().len(), o.new_findings()[0]), Style::new().fg(t.error)),
             }
         };
-        let lines = vec![
-            Line::from(check),
-            Line::from(Span::raw(self.status.clone())),
-            Line::styled("Tab pane  arrows move  Enter edit  n new  d del  v check  w apply  R defaults  e/i export/import  u revert  ? help  q quit", Style::new().fg(t.muted)),
-        ];
+        let mut lines = vec![Line::from(check), Line::from(Span::raw(self.status.clone()))];
+        if !self.compact {
+            lines.push(Line::styled("Tab pane  arrows move  Enter edit  n new  d del  v check  w apply  R defaults  e/i export/import  u revert  ? help  q quit", Style::new().fg(t.muted)));
+        }
         fr.render_widget(Paragraph::new(lines), area);
     }
 
     fn draw_help(&self, fr: &mut Frame) {
-        let area = centered(fr.area(), 78, 20);
+        let area = if self.compact { fr.area() } else { centered(fr.area(), 84, 26) };
         fr.render_widget(Clear, area);
         let hold = self.hold_ms();
-        let text = format!("MOVING AROUND  Tab / Shift+Tab switch between Peripherals, the diagram and the Bindings list.\n\
-Arrows, PgUp/PgDn and Home/End move. Enter opens or edits what is selected. Esc closes a box.\n\
-A controller works the same way: D-pad/stick = arrows, South = Enter, East = Esc, bumpers = Tab.\n\n\
-PERIPHERALS  Choose the keyboard map or the controller map. Connected devices are listed.\n\
-KEYBOARD  Highlighted keys have a binding; the selected binding's keys are bold. Enter on a key\n\
-shows its binding. CONTROLLER  Highlighted buttons have a Guide action (hold Guide + button).\n\
-Enter sets it, d removes one you added.\n\n\
-TAKING CONTROL  Tap North: the window you aim at gets every control and you stay in the room.\n\
-Hold North {hold} ms: fullscreen. Hold L3+R3 {hold} ms: control returns to the desktop.\n\n\
-BINDINGS  c chord, a action, x where it works, p let the app have it, b escape chord, t tier,\n\
-n new, d delete. [ and ] pick a place: on = MiOS handles it, ->app = the app gets it,\n\
-app = the app's own key, - = not used there. ! = conflict, * = changed.\n\n\
-SAVING  Changes are a draft until you press w; w only works when the draft has no new conflict.\n\
-R starts from the defaults, u undoes the draft, e/i export or import a map. Any key closes this.");
-        fr.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title(" help ")), area);
+        let text = [
+            "MOVING AROUND  Tab / Shift+Tab switch between Peripherals, the diagram and the Bindings list (on a small screen one of them fills it). Arrows, PgUp/PgDn and Home/End move. Enter opens or edits what is selected. Esc closes a box.".to_string(),
+            "A controller works the same way: D-pad or stick = arrows, South = Enter, East = Esc, bumpers = Tab.".to_string(),
+            "PERIPHERALS  Choose the keyboard map or the controller map. Connected devices are listed.".to_string(),
+            "KEYBOARD  Highlighted keys have a binding; the selected binding's keys are bold. Enter on a key shows its binding.".to_string(),
+            "CONTROLLER  Highlighted buttons have a Guide action (hold Guide + button). Enter sets it, d removes one you added.".to_string(),
+            format!("TAKING CONTROL  Tap North: the window you aim at gets every control and you stay in the room. Hold North {hold} ms: fullscreen. Hold L3+R3 {hold} ms: control returns to the desktop."),
+            "BINDINGS  c chord, a action, x where it works, p let the app have it, b escape chord, t tier, n new, d delete. [ and ] pick a place: on = MiOS handles it, ->app = the app gets it, app = the app's own key, - = not used there. ! = conflict, * = changed.".to_string(),
+            "SAVING  Changes are a draft until you press w; w only works when the draft has no new conflict. R starts from the defaults, u undoes the draft, e / i export or import a map.".to_string(),
+        ]
+        .join("\n\n");
+        fr.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: true })
+                .scroll((self.help_scroll, 0))
+                .block(Block::default().borders(Borders::ALL).title(" help: arrows scroll, any other key closes ")),
+            area,
+        );
     }
+
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
@@ -1006,6 +1065,53 @@ mod tests {
         for (b, _) in PAD_BUTTONS {
             mios_resolver::keybindings::button_code(b).unwrap();
         }
+    }
+
+    fn app() -> App {
+        let base: Value = "[keybindings.global]\nchord_sep = \" \"\n[[keybindings.global.bindings]]\nid = \"terminal\"\ntier = 1\nchord = \"SUPER+Return\"\naction = \"exec:mios-terminal\"\n[keybindings.global.controller]\nguide_button = \"BTN_MODE\"\n[keybindings.global.controller.system_layer]\nBTN_SOUTH = \"hypr:togglefloating\"\n".parse().unwrap();
+        let layers = Layers { root: "/nonexistent".into(), user_path: "/nonexistent/u.toml".into(), base, user_text: String::new(), user_value: Value::Table(Default::default()) };
+        App::new(layers, mpsc::channel().0)
+    }
+
+    fn render(app: &mut App, w: u16, h: u16) -> String {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>() + "\n").collect()
+    }
+
+    #[test]
+    fn every_pane_fits_pip_phone_console_and_desktop_sizes() {
+        for (w, h) in [(40, 12), (66, 18), (80, 24), (170, 46)] {
+            let mut a = app();
+            let s = render(&mut a, w, h);
+            assert!(s.contains("MiOS Controls"), "{w}x{h}:\n{s}");
+            assert!(s.contains("terminal"), "binding visible at {w}x{h}:\n{s}");
+            assert_eq!(a.compact, w < 120 || h < 32);
+            for focus in [Focus::Devices, Focus::Diagram, Focus::Bindings] {
+                a.focus = focus;
+                render(&mut a, w, h);
+            }
+            a.help = true;
+            let s = render(&mut a, w, h);
+            assert!(s.contains("MOVING AROUND"), "help at {w}x{h}:\n{s}");
+        }
+    }
+
+    #[test]
+    fn compact_mode_shows_the_focused_pane_and_scrolls_help() {
+        let mut a = app();
+        a.focus = Focus::Diagram;
+        a.dev = 1;
+        let s = render(&mut a, 66, 18);
+        assert!(s.contains("Controller") && !s.contains(" Bindings "), "{s}");
+        a.help = true;
+        let first = render(&mut a, 66, 18);
+        a.handle(Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)));
+        assert!(a.help, "scrolling keeps help open");
+        assert_ne!(render(&mut a, 66, 18), first, "help scrolled");
+        a.handle(Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)));
+        assert!(!a.help);
     }
 
     #[test]

@@ -29,8 +29,11 @@ pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Opt
     if without_keybindings(&new_value) != without_keybindings(&layers.user_value) {
         return Err("refusing: the draft would change tables outside [keybindings]".into());
     }
-    if new_text.trim().is_empty() && !layers.user_text.trim().is_empty() {
-        return Err("refusing: the draft would empty a non-empty user tier".into());
+    // Emptying is legitimate when the tier held only [keybindings] (restore defaults); never when it held anything
+    // else (defence in depth: the invariant above already proves those tables are unchanged).
+    let others_empty = without_keybindings(&layers.user_value).as_table().is_none_or(|t| t.is_empty());
+    if new_text.trim().is_empty() && !others_empty {
+        return Err("refusing: the draft would empty a user tier that holds other settings".into());
     }
     let lock_path = dir.join(format!(".{}.lock", path.file_name().and_then(|n| n.to_str()).unwrap_or("mios.toml")));
     let lock = OpenOptions::new()
@@ -117,6 +120,15 @@ mod tests {
         let new = format!("{user}[keybindings.global]\nenabled = true\n");
         assert!(apply(&l, &new, "b").unwrap_err().contains("changed since"));
         assert!(std::fs::read_to_string(&l.user_path).unwrap().contains("edited elsewhere"), "nothing overwritten");
+    }
+
+    #[test]
+    fn restoring_a_keybindings_only_tier_empties_it() {
+        let d = tempfile::tempdir().unwrap();
+        let user = "[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n";
+        let l = layers(d.path(), user);
+        apply(&l, "", "b").unwrap();
+        assert_eq!(std::fs::read_to_string(&l.user_path).unwrap(), "");
     }
 
     #[test]
