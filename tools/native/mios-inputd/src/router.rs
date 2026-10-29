@@ -258,6 +258,23 @@ impl Router {
         self.dropping = false;
         o
     }
+    /// Kernel truth may repair missed releases; it never invents a press or an
+    /// action. Preserve genuinely held chords and release already-forwarded
+    /// app/pointer buttons so a repaired router cannot leave a guest stuck.
+    pub fn reconcile(&mut self, held: &BTreeSet<u16>, now: u64) -> Output {
+        if self.dropping { return Output::default(); }
+        let released: Vec<_> = self.pressed.difference(held).copied().collect();
+        let guide = button_code(&self.global.controller.guide_button).unwrap();
+        if !held.contains(&guide) { self.pending_guide = false; }
+        let mut out = Output::default();
+        for code in released { out.extend(self.event(Event::new(EV_KEY, code, 0), now)); }
+        self.blocked.retain(|c| held.contains(c));
+        self.suppressed.retain(|c| held.contains(c));
+        self.chord_times.retain(|c, _| held.contains(c));
+        self.update_pad();
+        if !out.app.is_empty() { out.app.push(Event::new(EV_SYN,SYN_REPORT,0)); }
+        out
+    }
     fn button(&self, name: &str) -> bool {
         button_code(name).is_ok_and(|c| self.pressed.contains(&c) && !self.blocked.contains(&c))
     }
@@ -715,6 +732,35 @@ mod tests {
     fn key(r: &mut Router, c: u16, v: i32, t: u64) -> Output {
         r.event(Event::new(EV_KEY, c, v), t)
     }
+    #[test]
+    fn kernel_truth_repairs_releases_without_unlatching_held_chords() {
+        let mut r=router();
+        key(&mut r,0x130,1,1);
+        r.latched.insert("held-test".into());
+        let held=BTreeSet::from([0x130]);
+        let out=r.reconcile(&held,2);
+        assert!(out.actions.is_empty() && out.app.is_empty() && out.pointer.is_empty());
+        assert!(r.latched.contains("held-test"));
+        let out=r.reconcile(&BTreeSet::new(),3);
+        assert!(r.pressed.is_empty() && r.latched.is_empty() && r.chord_times.is_empty());
+        assert!(out.actions.is_empty());
+        assert!(out.app.contains(&Event::new(EV_KEY,0x130,0)));
+        let next=key(&mut r,0x130,1,4);
+        assert!(next.app.contains(&Event::new(EV_KEY,0x130,1)));
+    }
+    #[test]
+    fn kernel_truth_never_creates_a_guide_tap_or_a_new_press() {
+        let mut r=router();r.global.controller.captured_system_layer=false;r.set_context("app-capture");
+        key(&mut r,0x13c,1,1);assert!(r.pending_guide);
+        let out=r.reconcile(&BTreeSet::from([0x130]),2);
+        assert!(out.app.is_empty() && out.pointer.is_empty() && out.actions.is_empty());
+        assert!(!r.pending_guide && r.pressed.is_empty());
+        assert!(!r.app_held.contains(&0x130));
+        r.suppressed.insert(0x131);r.blocked.insert(0x131);
+        r.reconcile(&BTreeSet::new(),3);
+        assert!(r.suppressed.is_empty() && r.blocked.is_empty());
+    }
+
     #[test]
     fn captured_application_owns_guide_combinations_by_default() {
         let mut r=router();r.global.controller.captured_system_layer=false;r.set_context("app-capture");

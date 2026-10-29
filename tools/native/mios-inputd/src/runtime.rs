@@ -398,6 +398,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let start = Instant::now();
     let mut scan = start - Duration::from_secs(2);
     let mut last_tick = start;
+    let mut last_reconcile = start;
     let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false,sampled:Instant::now() };
     let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
@@ -590,7 +591,15 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             let now = Instant::now();
             let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
             last_tick = now;
+            let reconcile_due = now.duration_since(last_reconcile) >= Duration::from_millis(global.controller.context_poll_ms);
+            if reconcile_due { last_reconcile = now; }
             for dev in devices.values_mut() {
+                if reconcile_due && !dev.dropped {
+                    if let Ok(held) = dev.device.held_keys() {
+                        let out = dev.router.reconcile(&held, (linux::monotonic_ns()/1_000_000) as u64);
+                        emit(out,dev,&mut pointer,opt.bridge,opt.bridge && !opt.fixture_only,&mut children,&focus)?;
+                    }
+                }
                 let out = dev.router.tick(dt);
                 emit(
                     out,

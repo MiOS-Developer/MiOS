@@ -51,6 +51,41 @@ fn ipc(rt:&Path,sig:&str,cmd:&str)->Result<String,String>{
  s.set_read_timeout(Some(Duration::from_secs(2))).map_err(|e|e.to_string())?;s.write_all(cmd.as_bytes()).map_err(|e|e.to_string())?;
  let mut out=String::new();s.read_to_string(&mut out).map_err(|e|e.to_string())?;Ok(out)
 }
+// A window-list snapshot is not a close request: temporary IPC failures,
+// workspace changes or compositor reconfiguration must not kill a desktop.
+// Subscribe after proving the new parent's identity, so old events from a
+// recycled address cannot become a close request for this launch.
+#[derive(Default)]
+struct ParentEvents { stream:Option<UnixStream>, pending:Vec<u8> }
+impl ParentEvents {
+ fn connect(rt:&Path,sig:&str)->Self {
+  let stream=UnixStream::connect(rt.join("hypr").join(sig).join(".socket2.sock")).ok().and_then(|s|s.set_nonblocking(true).ok().map(|_|s));
+  Self{stream,pending:Vec::new()}
+ }
+ fn feed(&mut self,bytes:&[u8],address:&str)->bool {
+  self.pending.extend_from_slice(bytes);let expected=address.strip_prefix("0x").unwrap_or(address);let mut closed=false;
+  while let Some(end)=self.pending.iter().position(|b|*b==b'\n') {
+   closed|=std::str::from_utf8(&self.pending[..end]).ok().and_then(|line|line.strip_prefix("closewindow>>"))
+    .is_some_and(|value|value.strip_prefix("0x").unwrap_or(value)==expected);
+   self.pending.drain(..=end);
+  }
+  if self.pending.len()>65536 {self.pending.clear();} // bounded malformed event, never evidence of a close
+  closed
+ }
+ fn closed(&mut self,address:&str)->bool {
+  let mut buf=[0u8;4096];
+  loop {
+   let Some(stream)=self.stream.as_mut() else{return false;};
+   match stream.read(&mut buf) {
+    Ok(0)=>{self.stream=None;return false;},
+    Ok(n)=>{if self.feed(&buf[..n],address){return true;}},
+    Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>return false,
+    Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,
+    Err(_)=>{self.stream=None;return false;}
+   }
+  }
+ }
+}
 struct OwnedDir(PathBuf);
 impl Drop for OwnedDir {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
 pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
@@ -134,11 +169,10 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
   let descriptor=serde_json::json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"isolated_input":true,"physical_controllers_assigned":false,"tmux_socket":tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name)),"terminal_session":terminal_session});
   fs::write(owned.0.join("session.json"),format!("{descriptor}\n")).map_err(|e|e.to_string())?;
   println!("{descriptor}");
+  let mut parent_events=ParentEvents::connect(&parent,&signature);
   loop {
    if let Some(status)=child.try_wait().map_err(|e|e.to_string())? {return if status.success(){Ok(())}else{Err(format!("nested compositor exited {status}"))};}
-   let clients:Json=serde_json::from_str(&ipc(&parent,&signature,"j/clients")?).map_err(|e|e.to_string())?;
-   let visible=clients.as_array().is_some_and(|v|v.iter().any(|w|w["address"].as_str()==Some(address)&&w["pid"].as_u64()==Some(pid)&&w["stableId"].as_str()==Some(stable)));
-   if !visible {let _=child.kill();let _=child.wait();return Ok(());}
+   if parent_events.closed(address) {let _=child.kill();let _=child.wait();return Ok(());}
    thread::sleep(Duration::from_millis(250));
   }
  })();
@@ -160,6 +194,21 @@ mod tests {
   let mut data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
   for value in [20,100,5000] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).is_ok()); }
   for value in [0,19,5001] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).unwrap_err().contains("resize_poll_ms")); }
+ }
+ #[test] fn parent_close_requires_one_complete_matching_native_event(){
+  let mut events=ParentEvents::default();
+  assert!(!events.feed(b"closewindow>>0xabc1\nactivewindowv2>>0xabc\n", "0xabc"));
+  assert!(!events.feed(b"closewindow>>0xa", "0xabc"));
+  assert!(events.feed(b"bc\n", "0xabc"));
+  assert!(events.feed(b"closewindow>>abc\n", "0xabc")); // native event hex has no prefix
+  assert!(!events.feed(b"movewindow>>0xabc,2\n", "0xabc"));
+ }
+ #[test] fn parent_event_disconnect_preserves_a_running_session(){
+  let (client,mut server)=UnixStream::pair().unwrap();client.set_nonblocking(true).unwrap();
+  let mut events=ParentEvents{stream:Some(client),pending:Vec::new()};
+  assert!(!events.closed("0xabc")); // unavailable snapshot/event is not a close
+  server.write_all(b"closewindow>>0xother\n").unwrap();assert!(!events.closed("0xabc"));
+  drop(server);assert!(!events.closed("0xabc"));
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
 }

@@ -171,6 +171,48 @@ impl GraphicsPipelineHandler for Handler {
     }
 }
 
+/// Suppress sub-threshold desktop noise against the last TRANSMITTED bitmap,
+/// never against the latest captured/dropped frame. Small cumulative motion
+/// eventually crosses the threshold; text/cursor changes pass unchanged. The
+/// compositor's rendering, dimensions and input coordinates are untouched.
+pub fn stabilize_bitmap(data: &mut [u8], reference: &[u8], width: usize, height: usize, stride: usize, threshold: u8) -> bool {
+    let Some(row) = width.checked_mul(4) else { return true; };
+    let Some(needed) = height.checked_mul(stride) else { return true; };
+    if row > stride || data.len() < needed || reference.len() < needed { return true; }
+    let mut changed=false;
+    for y in 0..height {
+        for x in 0..width {
+            let off=y*stride+x*4;
+            if (0..3).any(|c| data[off+c].abs_diff(reference[off+c]) > threshold) {
+                changed=true;
+            } else {
+                data[off..off+4].copy_from_slice(&reference[off..off+4]);
+            }
+        }
+    }
+    changed
+}
+
+/// Service time of the bitmap handed to IronRDP. Its display loop requests the
+/// next update only AFTER encoding and writing all fragments of this one. A
+/// newest-frame slot deliberately hides backlog age, so it cannot measure this.
+#[derive(Default)]
+pub struct BitmapWrite {
+    pending: Option<(Instant, Instant)>,
+}
+impl BitmapWrite {
+    pub fn begin(&mut self, ready: Instant, now: Instant) { self.pending = Some((ready, now)); }
+    pub fn age_us(&self, now: Instant) -> u64 {
+        self.pending.map_or(0, |(_, start)| now.saturating_duration_since(start).as_micros().min(u128::from(u64::MAX)) as u64)
+    }
+    pub fn complete(&mut self, now: Instant) -> Option<(u64,u64)> {
+        self.pending.take().map(|(ready,start)| (
+            now.saturating_duration_since(start).as_micros().min(u128::from(u64::MAX)) as u64,
+            now.saturating_duration_since(ready).as_micros().min(u128::from(u64::MAX)) as u64))
+    }
+    pub fn clear(&mut self) { self.pending = None; }
+}
+
 /// Counters the stats loop turns into rates every window.
 #[derive(Default)]
 pub struct PipeStats {
@@ -189,6 +231,7 @@ pub struct PipeStats {
     pub last_slices: AtomicU32,
     pub bitmap_frames: AtomicU64,
     pub bitmap_delivered: AtomicU64,
+    pub bitmap_write: Mutex<BitmapWrite>,
     pub bitmap_stale_dropped: AtomicU64,
     pub bitmap_mode: AtomicBool,
     pub surface: Mutex<(u16, u16)>,
@@ -199,6 +242,8 @@ pub struct Samples {
     pub encode_us: Vec<u64>,
     pub convert_us: Vec<u64>,
     pub capture_to_send_us: Vec<u64>,
+    pub bitmap_write_us: Vec<u64>,
+    pub bitmap_capture_to_write_us: Vec<u64>,
     pub damage_pct: Vec<f64>,
 }
 
@@ -842,6 +887,72 @@ mod tests {
         }
         assert_eq!(slot.take_pending().expect("one retained frame").seq, 999);
         assert!(slot.take_pending().is_none());
+    }
+
+    #[test]
+    #[ignore = "requires the explicit recorded 1100x2080 mobile background fixture pair"]
+    fn bitmap_live_background_fixture_removes_noise_not_real_pixels() {
+        let before=std::fs::read(std::env::var("MIOS_BITMAP_BEFORE").expect("fixture baseline")).unwrap();
+        let mut after=std::fs::read(std::env::var("MIOS_BITMAP_AFTER").expect("fixture current")).unwrap();
+        let original=after.clone();let (w,h)=(1100usize,2080usize);
+        assert_eq!(before.len(),w*h*4);assert_eq!(after.len(),before.len());
+        let dirty=|a:&[u8]|a.chunks_exact(4).zip(before.chunks_exact(4)).filter(|(a,b)|a[..3]!=b[..3]).count();
+        let noisy=dirty(&after);let threshold=crate::config::Native::default().bitmap_damage_threshold;
+        assert!(stabilize_bitmap(&mut after,&before,w,h,w*4,threshold));
+        let retained=dirty(&after);assert!(noisy>w*h/2 && retained<noisy/10,"fixture must demonstrate the reported background flood");
+        for ((old,new),sent) in before.chunks_exact(4).zip(original.chunks_exact(4)).zip(after.chunks_exact(4)) {
+            if (0..3).any(|c|old[c].abs_diff(new[c])>threshold) {assert_eq!(sent,new,"significant pixels retain exact RGB");}
+        }
+        println!("mobile background pixels: {noisy} dirty -> {retained} significant; threshold={threshold}; this is damage reduction, not a measured phone FPS");
+    }
+
+    #[test]
+    fn bitmap_noise_filter_uses_the_transmitted_baseline() {
+        let reference=vec![100u8,100,100,255, 10,20,30,255];
+        let mut noise=vec![102u8,99,101,0, 12,18,31,255];
+        assert!(!stabilize_bitmap(&mut noise,&reference,2,1,8,3));
+        assert_eq!(noise,reference,"minor noise must not dirty the whole desktop");
+        // Compare a later capture to the SAME reference, not the previous
+        // discarded capture: slow colour/position changes must remain visible.
+        let mut later=vec![104u8,100,100,255, 10,20,30,255];
+        assert!(stabilize_bitmap(&mut later,&reference,2,1,8,3));
+        assert_eq!(later[0],104);
+        let mut text=vec![255u8,255,255,255, 10,20,30,255];
+        assert!(stabilize_bitmap(&mut text,&reference,2,1,8,3));
+        assert_eq!(text[0],255,"preserve significant text/cursor pixels exactly");
+    }
+    #[test]
+    fn bitmap_noise_filter_exact_mode_stride_and_invalid_buffers() {
+        let reference=vec![100u8,100,100,255, 9,9,9,9];
+        let mut data=vec![101u8,100,100,255, 8,8,8,8];
+        assert!(stabilize_bitmap(&mut data,&reference,1,1,8,0));
+        assert_eq!(&data[4..],&[8,8,8,8],"row padding is not image data");
+        assert!(stabilize_bitmap(&mut data,&reference,3,1,8,3));
+        assert!(stabilize_bitmap(&mut data,&reference,1,3,8,3));
+    }
+
+    #[test]
+    fn bitmap_write_pressure_survives_a_fresh_latest_frame() {
+        let start=Instant::now();let mut write=BitmapWrite::default();
+        assert_eq!(write.complete(start),None,"no completed frame may be invented");
+        write.begin(start-Duration::from_millis(12),start);
+        let stalled=start+Duration::from_secs(2);
+        // Slot age is only 1 ms after replacing stale frames: the old pacing
+        // signal incorrectly increases/holds the rate during this stalled write.
+        assert_eq!(bitmap_pace(15,1_000,250_000,2,15),15);
+        assert!(bitmap_pace(15,write.age_us(stalled),250_000,2,15)<15);
+        assert_eq!(write.complete(stalled),Some((2_000_000,2_012_000)));
+        assert_eq!(write.complete(stalled),None,"count each completed socket write once");
+        assert_eq!(write.age_us(stalled),0);
+    }
+    #[test]
+    fn bitmap_write_disconnect_and_fast_delivery_controls() {
+        let start=Instant::now();let mut write=BitmapWrite::default();
+        write.begin(start,start);write.clear();
+        assert_eq!(write.complete(start+Duration::from_secs(9)),None,"disconnect is not a delivered frame");
+        write.begin(start,start);
+        let (service,_) = write.complete(start+Duration::from_millis(5)).unwrap();
+        assert_eq!(bitmap_pace(7,service,250_000,2,15),8,"healthy path recovers normally");
     }
 
     #[test]

@@ -252,6 +252,8 @@ class TestBackendSelection(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-rdp-be-")
         self.toml = _exe(self.tmp, "mios-toml-get", FAKE_TOML)
+        # Backend controls must not masquerade as real listener switches in the host journal.
+        _exe(self.tmp, "logger", "pass\n")
         self.native = os.path.join(self.tmp, "native")
         self.state = os.path.join(self.tmp, "state")
         os.makedirs(self.native)

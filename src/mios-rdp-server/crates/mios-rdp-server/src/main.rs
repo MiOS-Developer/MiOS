@@ -632,7 +632,8 @@ async fn stats_loop(s: Arc<Session>) {
             st.bitmap_delivered.load(Ordering::Relaxed),
         );
         let rate = |a: u64, b: u64| (a.saturating_sub(b)) as f64 / dt;
-        // delivered fps only: EGFX acks/s + bitmap frames actually handed to the connection/s.
+        // EGFX client acks/s + completed bitmap encoder/socket-write operations/s.
+        // Bitmap has no display acknowledgement; these are not measured phone scanouts.
         // Bitmap frames queued but not drained are reported separately (bitmap_queued_fps).
         let fps = rate(cur.2, prev.2) + rate(cur.7, prev.7);
         let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6), rate(cur.5, prev.5), rate(cur.7, prev.7));
@@ -692,10 +693,13 @@ async fn stats_loop(s: Arc<Session>) {
                 s.capture_hz.store(s.cfg.target_hz, Ordering::SeqCst);
             }
         }
-        // bitmap path: no frame acks exist, so the delivered-frame queue age is the congestion
-        // signal. Step the capture rate down while frames age in the slot; creep back up when it drains.
+        // Bitmap has no acks. Include encoder/write completion and current stalled-write
+        // age: a newest-frame slot stays fresh even when TCP is blocked for seconds.
         if attached && st.bitmap_mode.load(Ordering::Relaxed) {
-            let p50_us = stats::percentile_u64(&samples.capture_to_send_us, 50.0) as u64;
+            let queue_us = stats::percentile_u64(&samples.capture_to_send_us, 50.0) as u64;
+            let write_us = stats::percentile_u64(&samples.bitmap_write_us, 50.0) as u64;
+            let pending_us = st.bitmap_write.lock().expect("bitmap write").age_us(Instant::now());
+            let p50_us = queue_us.max(write_us).max(pending_us);
             let slow_us = (s.cfg.native.bitmap_slow_queue_ms * 1000.0) as u64;
             let cur_hz = s.capture_hz.load(Ordering::Relaxed);
             let next = pipeline::bitmap_pace(cur_hz, p50_us, slow_us, s.cfg.native.bitmap_min_hz, s.cfg.native.bitmap_hz);
@@ -731,6 +735,11 @@ async fn stats_loop(s: Arc<Session>) {
             "rc_skipped_fps": (doc_core.5 * 10.0).round() / 10.0,
             "bitmap_queued_fps": (doc_core.6 * 10.0).round() / 10.0,
             "bitmap_delivered_fps": (doc_core.7 * 10.0).round() / 10.0,
+            "bitmap_fps_basis": "socket_write_complete",
+            "bitmap_damage_threshold": s.cfg.native.bitmap_damage_threshold,
+            "bitmap_write_ms_p50": stats::percentile_u64(&samples.bitmap_write_us,50.0)/1000.0,
+            "bitmap_capture_to_write_ms_p50": stats::percentile_u64(&samples.bitmap_capture_to_write_us,50.0)/1000.0,
+            "bitmap_write_in_flight_ms": st.bitmap_write.lock().expect("bitmap write").age_us(Instant::now()) as f64/1000.0,
             "bitmap_stale_dropped": st.bitmap_stale_dropped.load(Ordering::Relaxed),
             "bitmap_hz": s.cfg.native.bitmap_hz,
             "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),

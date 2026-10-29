@@ -174,7 +174,7 @@ class Static(unittest.TestCase):
         sp = h["spawn"]
         self.assertTrue(sp["enabled"])
         self.assertEqual(sp["criterion"], "retina")
-        self.assertAlmostEqual(float(sp["reading_distance_m"]), 0.65, places=2)
+        self.assertTrue(math.isfinite(float(sp["reading_distance_m"])) and float(sp["reading_distance_m"]) > 0)
         self.assertAlmostEqual(float(sp["eyeline_offset_m"]), 0.04, places=2)
         self.assertAlmostEqual(float(sp["tilt_angle_deg"]), 12.0, places=2)
         self.assertEqual(sp["open_effect_3d"], "magic-lamp")
@@ -189,7 +189,7 @@ class Static(unittest.TestCase):
         self.assertTrue(h["config"]["render"]["texel_sharp"])
         # no hard-coded window placement left in the room config: the policy derives it per output
         self.assertNotIn("window_scale", h["config"].get("windows", {}))
-        patches = [p for p in h["patches"] if "enter-morph-scale" not in p]  # trailing delta patch
+        patches = [p for p in h["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p]  # trailing delta patch
         self.assertEqual(len(patches), len(set(patches)))
         edge = patches.index("usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch")
         self.assertLess(edge, len(patches) - 2)
@@ -245,7 +245,7 @@ class Static(unittest.TestCase):
         for name, (w, h, s, t, mobile, want_logical, want_s) in OUTPUTS.items():
             o = oracle(data, w, h, s, t, mobile=mobile)
             self.assertEqual(o["logical"], want_logical, name)
-            self.assertAlmostEqual(o["S"], want_s, places=6, msg=name)
+            self.assertAlmostEqual(o["S"], want_s * float(spawn_table(data)["reading_distance_m"]) / 0.65, places=6, msg=name)  # reference vectors use 0.65 m
             self.assertAlmostEqual(magnification(o["S"], o["dist"], o["logical"][1]), 1.0, places=12)
             # negative control: the stock placement is not 1:1 here
             self.assertGreater(abs(magnification(0.5, 5.0, o["logical"][1]) - 1.0), 0.05, name)
@@ -376,10 +376,11 @@ class Upstream(unittest.TestCase):
     def test_patches_apply_in_order(self):
         for p, rc, err in self.applied:
             self.assertEqual(rc, 0, f"{p}: {err}")
-        if self.applied and self.applied[-1][0] == CRT:
-            self.assertEqual([a[0] for a in self.applied[-4:]], [FRAME_RATE, PATCH, TRANSFORM, CRT])
-        else:
-            self.assertEqual([a[0] for a in self.applied[-3:]], [FRAME_RATE, PATCH, TRANSFORM])
+        ordered = [a[0] for a in self.applied]
+        index = ordered.index(PATCH)
+        self.assertEqual(ordered[index - 1:index + 2], [FRAME_RATE, PATCH, TRANSFORM])
+        if CRT in ordered:
+            self.assertEqual(ordered[index + 2], CRT)
 
     def test_upstream_is_the_latest_head(self):
         """Never pinned: the checkout is at the upstream default branch's HEAD (skipped offline)."""

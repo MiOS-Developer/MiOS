@@ -58,8 +58,43 @@ Spotify's native mini-player uses a Chromium class and a changing track title.
 Recognition therefore requires a same-process Spotify sibling rather than a song
 title match. Discord uses its initial popout title; changing channel titles do
 not remove PiP. The fullscreen controller preserves pinned PiP geometry across
-2D maximize and fullscreen. Theatre framing and unrestricted spatial resizing
-in Hypr3D still require renderer work.
+2D maximize and fullscreen. Managed PiP in Hypr3D separates spatial scale from
+native raster size: client size hints and `pip_raster_max_px` bound allocations,
+while the room can continue enlarging or shrinking the surface. Returning from a
+large resize restores the optical scale rather than retaining a low-resolution
+raster at the old physical size.
+
+Native PiP maximize enters Theatre presentation. The screen targets
+`desktop.hyprland.hypr3d.config.windows.theatre_width` metres at
+`theatre_distance` metres from the camera, preserving aspect and fitting inside
+the HUD workarea. `theatre_fill` and `theatre_seconds` control fit and transition.
+Unmaximize restores the original room pose, native size and pin state. Automatic
+hover focus cannot dismiss Theatre while moving the pointer across its screen.
+
+## ShaderGlass and mode state
+
+A live ShaderGlass pane and its target carry reciprocal native Hyprland tags.
+The room captures that same pane's rendered client into the target's client
+rectangle; decorations, picking, controller ownership and the room pose remain
+attached to the original target. The pane does not become a separate room slab,
+and the selected effect is not translated into an unrelated built-in CRT preset.
+Broken reciprocal attachments are rejected and detach refreshes the original
+client image.
+
+The supervisor continues following native target geometry while the pane is
+hidden in a room. `hypr3d.effect_in_room()` distinguishes room composition from
+native 2D fullscreen passthrough, where the actual overlay must become visible.
+The same live ShaderGlass process retains shader/profile settings across these
+changes; this does not imply that an unsaved application profile survives an
+application restart.
+
+The isolated renderer proof covers first/third/front camera views, repeated
+2D/3D round trips, native fullscreen handoff, attachment removal/reattachment,
+PiP raster limits, Theatre entry/restore and fullscreen return. Full application
+profile selection under Wine and a Theatre-to-fullscreen-to-Theatre matrix still
+need an explicit live application check. Candidate binaries and activation state
+are recorded in the development receipts; installing source does not replace an
+already loaded compositor plugin.
 
 ## Independent desktop sessions
 

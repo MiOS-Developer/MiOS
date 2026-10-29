@@ -1782,7 +1782,7 @@ impl Supervisor {
             let f = rt.join(format!("hypr3d-active-{}", std::process::id()));
             let _ = std::fs::remove_file(&f);
             let lua = format!(
-                "local p = hl.plugin and hl.plugin.hypr3d; local a = false; if p and p.active then local ok, v = pcall(p.active); a = ok and v and true or false end; local f = io.open({}, 'w'); if f then f:write(a and '1' or '0'); f:close() end",
+                "local p = hl.plugin and hl.plugin.hypr3d; local a = false; if p then local probe = p.effect_in_room or p.active; if probe then local ok, v = pcall(probe); a = ok and v and true or false end end; local f = io.open({}, 'w'); if f then f:write(a and '1' or '0'); f:close() end",
                 lua_str(&f.display().to_string())
             );
             let value = self.hypr.eval(&lua).ok().and_then(|_| std::fs::read_to_string(&f).ok())

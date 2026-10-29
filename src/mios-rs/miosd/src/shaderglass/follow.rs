@@ -256,7 +256,10 @@ impl Follower {
         let hot = moving || within(self.poked_at);
         let show = on_screen(t, mons) && !suppressed && !(moving && p.on_move == OnMove::Hide);
         let mut actions = Vec::new();
-        if show {
+        // A room-hidden pane still renders the same live shader profile for the native
+        // target capture. Keep its raster and output synchronized without showing it or
+        // treating a held button as a request to move/resize the application.
+        if show || (suppressed && on_screen(t, mons)) {
             if pane.monitor != t.monitor
                 && (self.workspace != Some((t.monitor, t.workspace_id)) || !within(self.placed_at)) {
                 let workspace = if t.workspace_name.starts_with("special:") {
@@ -285,6 +288,8 @@ impl Follower {
                     self.placed_at = Some(now);
                 }
             }
+        }
+        if show {
             if self.shown != Some(true) {
                 actions.push(Action::Show);
                 self.shown = Some(true);
@@ -500,7 +505,7 @@ mod tests {
         // Hypr3DGlass active.
         let mut g = Follower::new();
         let s = g.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), true, t0);
-        assert_eq!(s.actions, vec![Action::Hide]);
+        assert_eq!(s.actions, vec![Action::Place(t.rect), Action::Hide]);
     }
 
     #[test]
@@ -589,6 +594,23 @@ mod tests {
         f.set_dragging(true); // a held button across a transition is not a pane drag
         let returned = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(800));
         assert_eq!(returned.actions, vec![Action::Place(t.rect), Action::Show]);
+    }
+
+    #[test]
+    fn room_hidden_effect_tracks_native_raster_without_stealing_target_geometry() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let mut target = win("0xt", 100.0, 100.0, 1);
+        let pane = win("0xp", 100.0, 100.0, 1);
+        f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), false, t0);
+        f.set_dragging(true);
+        target.rect = Rect { x: 42.0, y: 60.0, w: 1280.0, h: 720.0 };
+        let step = f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(400));
+        assert_eq!(step.actions, vec![Action::Place(target.rect), Action::Hide]);
+        assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_) | Action::Show)));
+        target.workspace_id = 7;
+        let offscreen = f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(800));
+        assert!(offscreen.actions.is_empty(), "off-workspace effects must stay dormant");
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub struct Native {
     pub udp_transport: bool,
     pub log_negotiation: bool,
     pub bitmap_hz: u32,
+    pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
     pub slow_ack_ms: f64,
@@ -81,6 +82,7 @@ impl Default for Native {
             udp_transport: false,
             log_negotiation: true,
             bitmap_hz: 15,
+            bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
             slow_ack_ms: 250.0,
@@ -264,6 +266,7 @@ impl Config {
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
         n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));
+        if n.bitmap_damage_threshold > 16 { bail!("bitmap_damage_threshold must be 0..=16"); }
         n.encoder_threads = n.encoder_threads.clamp(1, 8);
         n.convert_threads = n.convert_threads.clamp(1, 8);
         if !matches!(n.gpu_priority.as_str(), "low" | "normal") {
@@ -355,6 +358,16 @@ mod tests {
         assert_eq!(c.native.encoder, "openh264");
         let mut bad = Config { mode: "x".into(), ..Config::default() };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn bitmap_noise_threshold_has_an_exact_mode_and_bounded_loss() {
+        for threshold in [0,3,16] {
+            let mut c=Config::default();c.native.bitmap_damage_threshold=threshold;
+            c.validate().unwrap();assert_eq!(c.native.bitmap_damage_threshold,threshold);
+        }
+        let mut bad=Config::default();bad.native.bitmap_damage_threshold=17;
+        assert!(bad.validate().unwrap_err().to_string().contains("bitmap_damage_threshold"));
     }
 
     #[test]

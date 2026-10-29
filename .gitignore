@@ -1067,3 +1067,5 @@ usr/share/mios/virtio/*.iso
 !/tools/native/mios-gen/src/nested_session.rs
 
 !/usr/share/applications/mios-nested-session.desktop
+
+!/usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch

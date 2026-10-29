@@ -1,0 +1,833 @@
+# AI-hint: Native PiP spatial scaling/Theatre presentation and same-surface ShaderGlass effect capture across room modes.
+# AI-related: desktop.hyprland.hypr3d.config.windows, miosd shaderglass follow, tests/mios-pip-geometry.cpp
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b42ff23..5e04958 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -176,3 +176,9 @@ if(BUILD_TESTING)
+     add_test(NAME mios-bsp-regression COMMAND mios-bsp-regression)
+     set_tests_properties(mios-bsp-regression PROPERTIES TIMEOUT 5)
+ endif()
++
++if(BUILD_TESTING)
++ add_executable(mios-pip-geometry tests/mios-pip-geometry.cpp)
++ add_test(NAME mios-pip-geometry COMMAND mios-pip-geometry)
++ set_tests_properties(mios-pip-geometry PROPERTIES TIMEOUT 5)
++endif()
+diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 5e6d0f1..8120d04 100644
+--- a/src/HyprlandCompat/WindowCapture.cpp
++++ b/src/HyprlandCompat/WindowCapture.cpp
+@@ -383,7 +383,7 @@ void finishSkirtMask(CWindowCapture::SSkirtState& state,
+ // the desktop's stack itself -- pane, client, edge pass -- with the same preset.
+ class CForeignSnapshotScope {
+   public:
+-    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr)
++    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr, bool opaqueClient = false)
+         : m_saved(g_pHyprRenderer->m_renderData.renderModif), m_window(window) {
+         auto& modif = g_pHyprRenderer->m_renderData.renderModif;
+         modif.modifs.emplace_back(Render::SRenderModifData::RMOD_TYPE_TRANSLATE, Vector2D{0.0, 0.0});
+@@ -397,6 +397,7 @@ class CForeignSnapshotScope {
+             // variables keep their exact state and are restored on scope exit.
+             auto& pool = opaqueAlphas();
+             for (size_t i = 0; i < CHANNELS.size(); ++i) {
++                if (CHANNELS[i] == Desktop::View::WINDOW_ALPHA_ACTIVE && !opaqueClient) continue;
+                 if (m_window->alphaValue(CHANNELS[i]) >= 1.F)
+                     continue;
+                 if (!pool[i])
+@@ -425,8 +426,8 @@ class CForeignSnapshotScope {
+
+   private:
+     static constexpr std::array CHANNELS{Desktop::View::WINDOW_ALPHA_FADE,
+-        Desktop::View::WINDOW_ALPHA_LAYOUT, Desktop::View::WINDOW_ALPHA_FULLSCREEN};
+-    static std::array<PHLANIMVAR<float>, 3>& opaqueAlphas() {
++        Desktop::View::WINDOW_ALPHA_LAYOUT, Desktop::View::WINDOW_ALPHA_FULLSCREEN, Desktop::View::WINDOW_ALPHA_ACTIVE};
++    static std::array<PHLANIMVAR<float>, CHANNELS.size()>& opaqueAlphas() {
+         static std::array<PHLANIMVAR<float>, CHANNELS.size()> pool;
+         return pool;
+     }
+@@ -606,6 +607,52 @@ void main() {
+     return out;
+ }
+
++
++// Copy the SAME live effect client used by the desktop into the target's
++// existing client rectangle. Decorations, picking, pose, and native ownership
++// continue to belong to the target. No second slab, preset translation, CPU
++// readback, or mutation of the effect's live opacity/animation is involved.
++bool CWindowCapture::compositeClient(std::uintptr_t id, const SSnapshot& effect) {
++    auto it = m_snapshots.find(id);
++    if (it == m_snapshots.end()) return false;
++    auto& target = it->second;
++    const GLuint src = effect.bigTex ? effect.bigTex : effect.texID;
++    const GLuint dst = target.bigTex ? target.bigTex : target.texID;
++    if (!src || !dst || src == dst || effect.texSpan.x <= 0 || effect.texSpan.y <= 0 ||
++        target.texSpan.x <= 0 || target.texSpan.y <= 0 || effect.surfaceSize.x <= 0 ||
++        effect.surfaceSize.y <= 0 || target.surfaceSize.x <= 0 || target.surfaceSize.y <= 0) return false;
++    const auto rect = [](const SSnapshot& s) {
++        const double sx = s.width / s.texSpan.x, sy = s.height / s.texSpan.y;
++        const int x = std::lround((s.sampledBox.x + s.surfaceOffset.x) * sx);
++        const int y = std::lround((s.sampledBox.y + s.surfaceOffset.y) * sy);
++        return std::array<int,4>{x,y,x+static_cast<int>(std::lround(s.surfaceSize.x*sx)),y+static_cast<int>(std::lround(s.surfaceSize.y*sy))};
++    };
++    const auto a = rect(effect), b = rect(target);
++    if (a[0]<0 || a[1]<0 || a[2]>effect.width || a[3]>effect.height ||
++        b[0]<0 || b[1]<0 || b[2]>target.width || b[3]>target.height) return false;
++    GLint oldRead=0, oldDraw=0;
++    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&oldRead);
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&oldDraw);
++    const bool scissor=glIsEnabled(GL_SCISSOR_TEST);
++    GLuint fbo[2]{};glGenFramebuffers(2,fbo);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER,fbo[0]);
++    glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,src,0);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,fbo[1]);
++    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,dst,0);
++    bool ok=glCheckFramebufferStatus(GL_READ_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE &&
++        glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
++    if(ok) {
++        glDisable(GL_SCISSOR_TEST);
++        glBlitFramebuffer(a[0],a[1],a[2],a[3],b[0],b[1],b[2],b[3],GL_COLOR_BUFFER_BIT,GL_LINEAR);
++        ok=glGetError()==GL_NO_ERROR;
++    }
++    if(scissor)glEnable(GL_SCISSOR_TEST);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER,oldRead);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,oldDraw);
++    glDeleteFramebuffers(2,fbo);
++    if(ok && m_mipmaps)mipmapSnapshotTexture(dst);
++    return ok;
++}
++
+ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& monitor, bool force) {
+     if (!window || !monitor)
+         return false;
+@@ -686,7 +733,7 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
+     // MiOS: as a foreign render, without hyprglass' pane and edge pass.
+     SP<Render::IFramebuffer> fb;
+     {
+-        CForeignSnapshotScope foreign(window);
++        CForeignSnapshotScope foreign(window, m_opaqueClient);
+         fb = g_pHyprRenderer->makeSnapshotFB(window);
+     }
+
+@@ -832,7 +879,7 @@ bool CWindowCapture::makeTiledSnapshot(
+
+             SP<Render::IFramebuffer> fb;
+             {
+-                CForeignSnapshotScope foreign(window); // MiOS: no hyprglass pane / edge pass baked in
++                CForeignSnapshotScope foreign(window, m_opaqueClient); // MiOS: no hyprglass pane / edge pass baked in
+                 fb = g_pHyprRenderer->makeSnapshotFB(window);
+             }
+
+diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
+index 7898df9..242697b 100644
+--- a/src/HyprlandCompat/WindowCapture.hpp
++++ b/src/HyprlandCompat/WindowCapture.hpp
+@@ -145,11 +145,16 @@ class CWindowCapture {
+     // MiOS: trilinear mipmaps on every new snapshot texture (render.texture_supersample),
+     // so the 3D view samples minified window content prefiltered (plus anisotropic
+     // filtering at draw time) instead of point-ish bilinear taps.
++    // Bound effect panes stay invisible in the desktop; only this private capture borrows opaque alpha handles.
++    void setOpaqueClient(bool on) { m_opaqueClient = on; }
++    bool compositeClient(std::uintptr_t id, const SSnapshot& effect);
++
+     void setMipmaps(bool on) {
+         m_mipmaps = on;
+     }
+
+   private:
++    bool m_opaqueClient = false;
+     // Oversized windows: monitor-sized tiles, composited into one texture.
+     bool makeTiledSnapshot(
+         const PHLWINDOW&  window,
+diff --git a/src/World/PipGeometry.hpp b/src/World/PipGeometry.hpp
+new file mode 100644
+index 0000000..33be32d
+--- /dev/null
++++ b/src/World/PipGeometry.hpp
+@@ -0,0 +1,26 @@
++// AI-hint: Separate PiP room magnification from bounded native raster allocation.
++// AI-related: main.cpp spatial resize and Theatre placement, tests/mios-pip-geometry.cpp
++#pragma once
++#include <algorithm>
++#include <cmath>
++#include <optional>
++namespace H3D::PiP {
++struct Resize { double rasterFactor, spatialFactor; };
++inline std::optional<Resize> resize(double w,double h,double wanted,double minW,double minH,double maxW,double maxH,double budget) {
++ if (!(std::isfinite(w)&&std::isfinite(h)&&std::isfinite(wanted)&&std::isfinite(budget)) || w<=0 || h<=0 || wanted<=0 || budget<=0 || std::isnan(minW)||std::isnan(minH)||std::isnan(maxW)||std::isnan(maxH)) return {};
++ const double low=std::max({1.0/w,1.0/h,std::max(0.0,minW)/w,std::max(0.0,minH)/h});
++ const double high=std::min({budget/w,budget/h,maxW/w,maxH/h});
++ // Inconsistent client hints: keep the current raster, rather than allocate
++ // beyond the budget or call clamp with an inverted range. Room scale still works.
++ const double raster=low<=high ? std::clamp(wanted,low,high) : 1.0;
++ const double spatial=wanted/raster;
++ if (!std::isfinite(spatial)||spatial<=0) return {};
++ return Resize{raster,spatial};
++}
++inline std::optional<double> theatreScale(double w,double h,double distance,double tanHalfFov,double outputAspect,double widthFraction,double heightFraction) {
++ if (!(w>0&&h>0&&distance>0&&tanHalfFov>0&&outputAspect>0&&widthFraction>0&&heightFraction>0)) return {};
++ const double s=std::min(2*distance*tanHalfFov*outputAspect*widthFraction/w,2*distance*tanHalfFov*heightFraction/h);
++ if(!std::isfinite(s)||s<=0) return {};
++ return s;
++}
++}
+diff --git a/src/main.cpp b/src/main.cpp
+index 231cb1c..8413df4 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,3 +1,4 @@
++#include "World/PipGeometry.hpp"
+ #include <hyprland/src/plugins/PluginAPI.hpp>
+ #include <hyprland/src/plugins/PluginSystem.hpp>
+ #include <dlfcn.h>
+@@ -32,6 +33,7 @@
+ #include <hyprland/src/render/gl/GLFramebuffer.hpp>
+ #include <hyprland/src/output/Monitor.hpp>
+ #include <hyprland/src/desktop/view/Window.hpp>
++#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
+ #include <hyprland/src/managers/SeatManager.hpp>
+ #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+ #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+@@ -101,6 +103,8 @@ static InputController g_input;
+ static World3D::CWorld g_world;
+ static AimFocus        g_aim;
+ static Compat::CWindowCapture g_capture;
++static Compat::CWindowCapture g_shaderCapture;
++static std::unordered_set<std::uintptr_t> g_shaderComposited;
+ // Background layers belong to the environment, never the window/picking list.
+ static Compat::CWindowCapture g_environmentCapture;
+
+@@ -194,6 +198,20 @@ struct SViewPose {
+ // Room poses remembered across toggles; keyed by window id, pruned against
+ // the live room on every save (closed windows drop out).
+ static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
++struct SPiPTheatre {
++ std::uintptr_t id=0;
++ PHLWINDOWREF window;
++ SViewPose saved{};
++ CBox sourceBox{},rasterBox{};
++ float effectiveScale=0.f;
++ Vec3 center{};
++ float yaw=0,pitch=0;
++ std::chrono::steady_clock::time_point started{};
++};
++static SPiPTheatre g_pipTheatre;
++static float g_cfgTheatreDistance=4.f, g_cfgTheatreWidth=4.f, g_cfgTheatreFill=0.9f;
++static float g_cfgTheatreSeconds=0.25f, g_cfgPiPRasterMax=2048.f;
++
+ static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
+ // The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
+ // own default, so the exit's "moved in the room?" test needs this separate record).
+@@ -296,6 +314,9 @@ struct SResizeGesture {
+     // resize is driven by the aim's DELTA from this point, so the grabbed
+     // corner never snaps to the crosshair when the gesture starts.
+     Vector2D      grabPx{};
++    Vec3 grabWorld{}, startRight{}, startUp{};
++    float startRetinaMul=1.f;
++    bool spatialPiP=false;
+     int           edgeX = 0; // -1 left, +1 right
+     int           edgeY = 0; // +1 top, -1 bottom
+ };
+@@ -1528,11 +1549,24 @@ static void clearAimFocus() {
+ // triggers a relayout of the ones still attached, which would corrupt boxes
+ // captured afterwards. Ghosting is what stops tiling from managing windows
+ // while they are living in 3D space.
++static PHLWINDOW attachedShaderPane(const PHLWINDOW& target);
++static bool boundShaderPane(const PHLWINDOW& pane) {
++    if(!pane || !pane->m_ruleApplicator) return false;
++    for(const auto& tag:pane->m_ruleApplicator->m_tagKeeper.getTags()) {
++        constexpr std::string_view prefix="mios-shaderglass-target:";
++        if(!tag.starts_with(prefix)) continue;
++        try {
++            const auto raw=tag.substr(prefix.size());size_t end=0;const auto id=std::stoull(raw,&end,16);
++            if(end==raw.size() && attachedShaderPane(Compat::findWindowById(id))==pane) return true;
++        }catch(...){}
++    }
++    return false;
++}
+ static std::vector<Compat::SWindowInfo> enumerateRoomWindows(const PHLMONITOR& mon) {
+     auto infos = Compat::enumerateEligibleWindows(mon, g_cfgUnderLayers);
+     std::erase_if(infos, [](const Compat::SWindowInfo& info) {
+         return info.window &&
+-            (info.window->m_class == "shaderglass.exe" ||
++            (boundShaderPane(info.window) || info.window->m_class == "shaderglass.exe" ||
+              info.window->m_initialClass == "shaderglass.exe");
+     });
+     return infos;
+@@ -1731,7 +1765,7 @@ static void startFramePump() {
+                 // Snapshot release deferred from deactivate3D: safe to
+                 // destroy GL objects here, outside any render pass.
+                 if (g_captureReleasePending && !g_active) {
+-                    g_capture.releaseAll();
++                    g_capture.releaseAll();g_shaderCapture.releaseAll();g_shaderComposited.clear();
+                     g_scene.setEnvironmentTexture(0);
+                     g_environmentCapture.releaseAll();
+                     g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
+@@ -1766,6 +1800,26 @@ static std::unordered_map<std::uintptr_t, SWinAnim3D> g_winAnims3D;
+ static std::unordered_set<std::uintptr_t>             g_skipCloseAnim3D;
+ static std::unordered_map<std::uintptr_t, CBox>       g_preMax3DBoxes;
+
++
++// Only mutually tagged, live native windows form an effect attachment. A
++// recycled address or an unbound settings pane cannot replace another client.
++static PHLWINDOW attachedShaderPane(const PHLWINDOW& target) {
++    if (!target || !target->m_ruleApplicator) return nullptr;
++    std::ostringstream back;back << "mios-shaderglass-target:0x" << std::hex << Compat::windowId(target);
++    for (const auto& tag : target->m_ruleApplicator->m_tagKeeper.getTags()) {
++        constexpr std::string_view prefix="mios-shaderglass-pane:";
++        if (!tag.starts_with(prefix)) continue;
++        try {
++            const auto raw=tag.substr(prefix.size());size_t end=0;
++            const auto id=std::stoull(raw,&end,16);if(end!=raw.size())continue;
++            const auto pane=Compat::findWindowById(id);
++            if(pane && pane!=target && pane->m_isMapped && !pane->isHidden() && pane->m_ruleApplicator &&
++                pane->m_ruleApplicator->m_tagKeeper.isTagged(back.str())) return pane;
++        } catch (...) {}
++    }
++    return nullptr;
++}
++
+ static void refreshCaptures(
+     const std::vector<Compat::SWindowInfo>& infos,
+     const PHLMONITOR& mon
+@@ -1809,6 +1863,9 @@ static void refreshCaptures(
+         g_fsPhase == EFullscreenPhase::To3D;
+
+     bool consumedSkirt = false;
++    std::unordered_set<std::uintptr_t> composited;
++    std::vector<std::uintptr_t> effectKeep;
++    g_shaderCapture.setOpaqueClient(true);
+
+     size_t index = 0;
+
+@@ -1859,7 +1916,9 @@ static void refreshCaptures(
+         // aim, focus) would retake EVERY window at full rate for the whole
+         // transition -- the FPS crater. A mid-fade snapshot would bake
+         // partial alpha anyway; keeping the last good one is better.
+-        const bool FORCE = !MORPHING &&
++        const auto effectPane = attachedShaderPane(info.window);
++        const bool detachedEffect = g_shaderComposited.contains(info.id) && !effectPane;
++        const bool FORCE = detachedEffect || (!MORPHING &&
+             (FADING ||
+             ALPHA_GRACE ||
+             info.id == g_lastAimedId ||
+@@ -1867,7 +1926,7 @@ static void refreshCaptures(
+             (g_pointerGesture == EPointerGesture::ResizeReal && g_pointerDown &&
+              g_resize.id == info.id) || // the resized window: a retake every
+                                         // frame, the quad must track the box
+-            info.id == FOCUSED_ID);
++            info.id == FOCUSED_ID));
+
+         // The frame after a resize gesture ended: one forced snapshot, whose
+         // only purpose is the settled full-resolution silhouette refresh.
+@@ -1881,7 +1940,7 @@ static void refreshCaptures(
+
+         // Morph retake budget: a window already holding a snapshot waits for
+         // its rotation slot; fresh captures and layers are always served.
+-        if (MORPHING && !FORCE && !finalSkirt && !info.isLayer &&
++        if (MORPHING && !effectPane && !FORCE && !finalSkirt && !info.isLayer &&
+             g_capture.has(info.id)) {
+             const size_t SLOT =
+                 (index + morphCaptureCursor) % infos.size();
+@@ -1899,8 +1958,15 @@ static void refreshCaptures(
+         else
+             g_capture.makeSnapshot(info.window, mon, FORCE || finalSkirt);
+
++        if (effectPane) {
++            const auto effectId=Compat::windowId(effectPane);effectKeep.push_back(effectId);
++            if(g_shaderCapture.makeSnapshot(effectPane,mon) && g_shaderCapture.get(effectId) &&
++                g_capture.compositeClient(info.id,*g_shaderCapture.get(effectId))) composited.insert(info.id);
++        }
+         ++index;
+     }
++    g_shaderCapture.retainOnly(effectKeep);
++    g_shaderComposited=std::move(composited);
+
+     morphCaptureCursor =
+         (morphCaptureCursor + 1) % std::max(infos.size(), size_t{1});
+@@ -2084,6 +2150,9 @@ static void updateAimFocus(float dt) {
+     g_lastAimedId = AIMED;
+
+     const std::uintptr_t FOCUS = g_aim.update(AIMED, dt);
++    // Hover is not an explicit request to dismiss the cinema presentation.
++    // Native fullWindowFocus would unmaximize it when the ray crosses a neighbour.
++    if(g_pipTheatre.id && FOCUS!=g_pipTheatre.id) return;
+
+     if (FOCUS == g_lastFocusId)
+         return;
+@@ -2138,7 +2207,130 @@ static float retinaMul(std::uintptr_t id) {
+ }
+
+ // The room scale of one window: the config scale times its multiplier.
++static bool managedPiP(const PHLWINDOW& w) {
++ return w && w->m_ruleApplicator && w->m_ruleApplicator->m_tagKeeper.isTagged("mios-pip-managed");
++}
++static void restorePiPTheatre(bool nativeRestore=false) {
++ if(auto w=g_pipTheatre.window.lock(); w && Compat::windowId(w)==g_pipTheatre.id) {
++  if(auto* e=g_world.find(g_pipTheatre.id)) {
++   e->center=g_pipTheatre.saved.center;e->yaw=g_pipTheatre.saved.yaw;e->pitch=g_pipTheatre.saved.pitch;e->roll=g_pipTheatre.saved.roll;
++   e->spawnScale=configWindowScale()*g_pipTheatre.saved.scaleMul;
++   e->width=World3D::toWorld(g_pipTheatre.sourceBox.w)*e->spawnScale;
++   e->height=World3D::toWorld(g_pipTheatre.sourceBox.h)*e->spawnScale;
++  }
++  if(g_fsWindow.lock()==w && g_fsPhase!=EFullscreenPhase::None) {
++   g_fsStartCenter=g_pipTheatre.saved.center;g_fsStartYaw=g_pipTheatre.saved.yaw;g_fsStartPitch=g_pipTheatre.saved.pitch;g_fsSavedRoll=g_pipTheatre.saved.roll;
++   g_fsRestoreBox=g_pipTheatre.sourceBox;
++  }
++  if(nativeRestore && Fullscreen::controller()->getFullscreenModes(w).internal==Fullscreen::FSMODE_NONE) {
++   Compat::driveWindowBox(w,g_pipTheatre.sourceBox);
++   if(const auto mon=targetMonitor()) {
++    const auto& box=g_pipTheatre.sourceBox;g_roomBoxes[g_pipTheatre.id]=CBox{box.x-mon->m_position.x,box.y-mon->m_position.y,box.w,box.h};g_boxDriven.insert(g_pipTheatre.id);
++   }
++  }
++ }
++ g_pipTheatre={};
++}
++static bool theatreMaximized(const PHLWINDOW& w) {
++ return managedPiP(w) && Fullscreen::controller()->getFullscreenModes(w).internal==Fullscreen::FSMODE_MAXIMIZED;
++}
++static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
++ if(auto held=g_pipTheatre.window.lock(); held && Fullscreen::controller()->getFullscreenModes(held).internal==Fullscreen::FSMODE_FULLSCREEN) return;
++ const auto id=theatreMaximized(w) ? Compat::windowId(w) : 0;
++ if(g_pipTheatre.id && (g_pipTheatre.id!=id || g_pipTheatre.window.lock()!=w)) restorePiPTheatre();
++ if(!id || g_viewMorph!=EViewMorph::None || !ownsInput()) return;
++ if(g_pipTheatre.id==id) {
++  if(g_fsPhase==EFullscreenPhase::None) {
++   const auto actual=Compat::currentWindowBox(w);const auto& box=g_pipTheatre.rasterBox;
++   if(std::fabs(actual.w-box.w)>.5 || std::fabs(actual.h-box.h)>.5 || std::fabs(actual.x-box.x)>.5 || std::fabs(actual.y-box.y)>.5) Compat::driveWindowBox(w,box);
++   // A default-handled native maximize deliberately ignores ordinary layout
++   // target updates. Set the presentation raster through the native window API
++   // as well; otherwise j/clients changes but the captured surface stays at the
++   // old output-sized box. Fullscreen mode and pin restoration remain native.
++   const auto surface=w->getWindowMainSurfaceBox();
++   if(std::fabs(surface.w-box.w)>.5 || std::fabs(surface.h-box.h)>.5 || std::fabs(surface.x-box.x)>.5 || std::fabs(surface.y-box.y)>.5) {
++    w->setBox(box);w->sendWindowSize();w->m_target->warpPositionSize();
++    if(g_pHyprRenderer)g_pHyprRenderer->damageWindow(w);
++   }
++  }
++  return;
++ }
++ const auto* e=g_world.find(id);if(!e) return;
++ g_pipTheatre.id=id;g_pipTheatre.window=w;
++ g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};
++ g_pipTheatre.saved.scaleMul=retinaMul(id);
++ const auto previous=g_fsStableBoxes.find(id);
++ g_pipTheatre.sourceBox=previous!=g_fsStableBoxes.end() ? previous->second : CBox{e->logicalLeft+mon->m_position.x,e->logicalTop+mon->m_position.y,e->logicalWidth,e->logicalHeight};
++ const auto source=g_pipTheatre.sourceBox;const auto fit=retinaFitArea(mon);
++ const auto min=w->minSize().value_or(Vector2D{1,1});auto max=w->maxSize().value_or(Vector2D{INFINITY,INFINITY});
++ max.x=std::min(max.x,fit.w);max.y=std::min(max.y,fit.h);
++ const auto sized=PiP::resize(source.w,source.h,std::max(fit.w/source.w,fit.h/source.h),min.x,min.y,max.x,max.y,g_cfgPiPRasterMax);
++ if(!sized) {g_pipTheatre={};return;}
++ g_pipTheatre.rasterBox=CBox{mon->m_position.x+fit.x+(fit.w-source.w*sized->rasterFactor)*.5,mon->m_position.y+fit.y+(fit.h-source.h*sized->rasterFactor)*.5,source.w*sized->rasterFactor,source.h*sized->rasterFactor};
++ const auto& cam=g_scene.camera();
++ g_pipTheatre.id=id;g_pipTheatre.window=w;
++ g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};
++ const auto area=retinaFitArea(mon);
++ const auto up=cross(cam.right(),cam.forward());
++ const float offset=static_cast<float>((mon->m_size.y*0.5-(area.y+area.h*0.5))/mon->m_size.y)*2*g_cfgTheatreDistance*retinaTan();
++ g_pipTheatre.center=cam.position+cam.forward()*g_cfgTheatreDistance+up*offset;
++ g_pipTheatre.yaw=std::atan2(-cam.forward().x,-cam.forward().z);
++ g_pipTheatre.pitch=std::asin(std::clamp(cam.forward().y,-1.f,1.f));
++ g_pipTheatre.started=std::chrono::steady_clock::now();
++ Compat::focusWindow(w);g_lastFocusId=id;
++}
++static void placePiPTheatre(World3D::SEntity& e,const PHLMONITOR& mon,const CBox& box) {
++ if(e.id!=g_pipTheatre.id || !g_pipTheatre.id || g_fsPhase!=EFullscreenPhase::None) return;
++ const auto area=retinaFitArea(mon);
++ const auto fitScale=PiP::theatreScale(World3D::toWorld(box.w),World3D::toWorld(box.h),g_cfgTheatreDistance,retinaTan(),mon->m_size.x/mon->m_size.y,g_cfgTheatreFill*area.w/mon->m_size.x,g_cfgTheatreFill*area.h/mon->m_size.y);
++ if(!fitScale) return;
++ const double scale=std::min(*fitScale,static_cast<double>(g_cfgTheatreWidth)/World3D::toWorld(g_pipTheatre.rasterBox.w));
++ const float t=std::clamp(std::chrono::duration<float>(std::chrono::steady_clock::now()-g_pipTheatre.started).count()/g_cfgTheatreSeconds,0.f,1.f);
++ const float p=t*t*(3-2*t);
++ e.center=g_pipTheatre.saved.center+(g_pipTheatre.center-g_pipTheatre.saved.center)*p;
++ e.yaw=g_pipTheatre.saved.yaw+std::remainder(g_pipTheatre.yaw-g_pipTheatre.saved.yaw,6.283185307f)*p;
++ e.pitch=g_pipTheatre.saved.pitch+(g_pipTheatre.pitch-g_pipTheatre.saved.pitch)*p;
++ e.roll=g_pipTheatre.saved.roll*(1-p);
++ e.spawnScale=e.spawnScale+(static_cast<float>(scale)-e.spawnScale)*p;
++ g_pipTheatre.effectiveScale=e.spawnScale;
++ e.width=World3D::toWorld(box.w)*e.spawnScale;
++ e.height=World3D::toWorld(box.h)*e.spawnScale;
++}
++
++// Keep the optical/depth multiplier separate from extra room magnification.
++// Reversing a large resize can then recover the original native pixel density.
++struct SPiPRasterOptics { PHLWINDOWREF window; float baseMul=1.f; };
++static std::unordered_map<std::uintptr_t,SPiPRasterOptics> g_pipRasterOptics;
++static bool resizePiPRaster(const PHLWINDOW& w,const CBox& start,float startMul,double wanted,CBox& out) {
++ const auto id=Compat::windowId(w);
++ std::erase_if(g_pipRasterOptics,[](const auto& v){return !v.second.window.lock();});
++ auto& optics=g_pipRasterOptics[id];
++ if(optics.window.lock()!=w) {optics.window=w;optics.baseMul=startMul;}
++ auto min=w->minSize().value_or(Vector2D{1,1});
++ auto max=w->maxSize().value_or(Vector2D{INFINITY,INFINITY});
++ if(w->m_ruleApplicator) {
++  const auto ruleMin=w->m_ruleApplicator->minSize().valueOrDefault();
++  const auto ruleMax=w->m_ruleApplicator->maxSize().valueOrDefault();
++  min.x=std::max(min.x,ruleMin.x);min.y=std::max(min.y,ruleMin.y);
++  if(ruleMax.x>0) max.x=std::min(max.x,ruleMax.x);
++  if(ruleMax.y>0) max.y=std::min(max.y,ruleMax.y);
++ }
++ const double preferred=wanted*startMul/optics.baseMul;
++ const auto sized=PiP::resize(start.w,start.h,preferred,min.x,min.y,max.x,max.y,g_cfgPiPRasterMax);
++ if(!sized) return false;
++ const double mul=optics.baseMul*sized->spatialFactor;
++ if(!std::isfinite(mul) || mul>std::numeric_limits<float>::max() || mul<std::numeric_limits<float>::min()) return false;
++ const double worldW=start.w*sized->rasterFactor/World3D::LOGICAL_PX_PER_UNIT*configWindowScale()*mul;
++ const double worldH=start.h*sized->rasterFactor/World3D::LOGICAL_PX_PER_UNIT*configWindowScale()*mul;
++ const double limit=std::sqrt(std::numeric_limits<float>::max())/16;
++ if(!std::isfinite(worldW)||!std::isfinite(worldH)||worldW<=0||worldH<=0||worldW>limit||worldH>limit) return false;
++ g_retinaMul[id]=static_cast<float>(mul);
++ out=start;out.w=start.w*sized->rasterFactor;out.h=start.h*sized->rasterFactor;
++ return true;
++}
++
+ static float roomScaleOf(std::uintptr_t id) {
++    if(id==g_pipTheatre.id && g_pipTheatre.effectiveScale>0) return g_pipTheatre.effectiveScale;
+     return configWindowScale() * retinaMul(id);
+ }
+
+@@ -2769,6 +2961,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+                 (static_cast<float>(g_resize.edgeY) * DH * 0.5f);
+         }
+
++        placePiPTheatre(entity, mon, BOX);
+         ENTITIES.push_back(entity);
+     }
+
+@@ -2870,7 +3063,8 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+
+         render.controls = controlsForWindow(entity.id);
+         render.controlStyle = controlStyleForWindow(entity.id);
+-        render.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty());
++        // An attached real profile has already rendered the effect. Never apply a second unrelated CRT preset.
++        render.crtEnabled = !attachedShaderPane(Compat::findWindowById(entity.id)) && (g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty()));
+
+         // 3D Magic Lamp opening effect for newly spawned windows in 3D room
+         float openScaleDepth = 1.0f;
+@@ -3431,7 +3625,16 @@ static void pollFullscreen() {
+     // so the fade keeps ticking even when a frame is slow.
+     damageWindowsWithLiveAlpha(MON);
+
+-    const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++    auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++    PHLWINDOW maximizedPiP;
++    for(const auto& w:Desktop::windowState()->windows()) {
++     if(w && w->m_isMapped && w->m_workspace==MON->m_activeWorkspace && w->m_monitor.lock()==MON && theatreMaximized(w)) {
++      maximizedPiP=w;
++      if(Compat::windowId(w)==g_pipTheatre.id) break;
++     }
++    }
++    pollPiPTheatre(MON, maximizedPiP);
++    if(theatreMaximized(FSW)) FSW=nullptr;
+
+     g_fsCurrentId = FSW ? Compat::windowId(FSW) : 0;
+
+@@ -3967,6 +4170,8 @@ static void beginExit3D() {
+         return;
+
+     resetPointerGesture();
++    const auto exitTheatre=g_pipTheatre;
++    if(g_pipTheatre.id) restorePiPTheatre();
+
+     const auto MON = targetMonitor();
+
+@@ -4053,6 +4258,7 @@ static void beginExit3D() {
+                 MW.boxRoom = MW.roomPose.box;
+         }
+
++        if(ENTITY.id==exitTheatre.id) MW.boxRoom=viewMorphLocalBox(MON,exitTheatre.sourceBox);
+         MW.roomPose.box = MW.boxRoom;
+
+         // The 2D box the window must land on: the layout save.
+@@ -4444,7 +4650,16 @@ static void updateRealResize() {
+             point))
+         return;
+
+-    const CBox BOX = resizeBoxFromAim(point, MON);
++    CBox BOX = resizeBoxFromAim(point, MON);
++    if(g_resize.spatialPiP) {
++     const auto delta=point-g_resize.grabWorld;
++     const double x=1+g_resize.edgeX*dot(delta,g_resize.startRight)/g_resize.startWorldWidth;
++     const double y=1+g_resize.edgeY*dot(delta,g_resize.startUp)/g_resize.startWorldHeight;
++     const double wanted=std::fabs(x-1)>=std::fabs(y-1) ? x : y;
++     if(!resizePiPRaster(g_resize.window,g_resize.startBox,g_resize.startRetinaMul,wanted,BOX)) return;
++     BOX.x=g_resize.startBox.x+(g_resize.edgeX<0 ? g_resize.startBox.w-BOX.w : 0);
++     BOX.y=g_resize.startBox.y+(g_resize.edgeY>0 ? g_resize.startBox.h-BOX.h : 0);
++    }
+
+     // A real resize: the client re-renders at the new size, so the content
+     // stays crisp at any room size. The 2D box is remembered at entry and
+@@ -4616,6 +4831,7 @@ static void onRenderPre(PHLMONITOR mon) {
+
+ // Direct signal listeners must leave the event bus before dlclose.
+ static CHyprSignalListener g_renderPreListener, g_renderStageListener, g_mouseMoveListener, g_mouseButtonListener, g_mouseAxisListener, g_keyboardKeyListener;
++static CHyprSignalListener g_pipFullscreenListener;
+
+ // --- lifecycle --------------------------------------------------------------
+
+@@ -4623,6 +4839,7 @@ static void deactivate3D() {
+     finishClientButton(0);
+     resetPointerGesture();
+
++    if(g_pipTheatre.id) restorePiPTheatre();
+     g_active = false;
+     stopFramePump();
+
+@@ -4681,7 +4898,7 @@ static void deactivate3D() {
+     g_input.reset();
+     resetMovementKeys();
+
+-    g_capture.releaseAll();
++    g_capture.releaseAll();g_shaderCapture.releaseAll();g_shaderComposited.clear();
+     g_scene.setEnvironmentTexture(0);
+     g_environmentCapture.releaseAll();
+     g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
+@@ -4831,7 +5048,7 @@ static void enter3D() {
+         }
+     }
+
+-    g_capture.releaseAll();
++    g_capture.releaseAll();g_shaderCapture.releaseAll();g_shaderComposited.clear();
+     g_scene.setEnvironmentTexture(0);
+     g_environmentCapture.releaseAll();
+
+@@ -4864,8 +5081,8 @@ static void enter3D() {
+     // shrink, and the exit restores it as a floating panel (the FS exit
+     // path asserts that size).
+         if (const auto MON = targetMonitor()) {
+-            if (const auto FSW =
+-                    Fullscreen::controller()->getFullscreenWindow(MON)) {
++            if (const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++                FSW && !theatreMaximized(FSW)) {
+                 double curW = g_cfgSpawnWidth > 0 ? g_cfgSpawnWidth : 960.0;
+                 double curH = g_cfgSpawnHeight > 0 ? g_cfgSpawnHeight : 532.0;
+                 const CBox curBox = Compat::currentWindowBox(FSW);
+@@ -5961,6 +6178,7 @@ static void update3D(float dt) {
+             std::vector<std::uintptr_t> closed;
+
+             for (const auto& [ID, BOX] : g_roomBoxes) {
++                if(ID==g_pipTheatre.id) continue;
+                 const auto W = Compat::findWindowById(ID);
+
+                 if (!W) {
+@@ -6426,6 +6644,7 @@ static void dumpStatus() {
+     out << "sceneObjects=" << g_sceneObjects.size() << " joltBodies="
+         << g_joltBodies.size() << " objTrees=" << g_objTrees.size() << "\n";
+
++    out << "pipTheatre=" << g_pipTheatre.id << " distance=" << g_cfgTheatreDistance << " rasterMax=" << g_cfgPiPRasterMax << "\n";
+     out << "fsPhase=" << static_cast<int>(g_fsPhase)
+         << " fsWasOn=" << (g_fsWasOn ? 1 : 0)
+         << " fsAlpha=" << g_fsAlpha << "\n";
+@@ -6637,6 +6856,7 @@ static void vcEnterWindow(const World3D::SHit& hit) {
+     // layer holding the keyboard (a launcher) keeps it until a click.
+     const auto TARGET = targetFromHit(hit.id);
+     if (TARGET.window && g_lastFocusId != hit.id &&
++        (!g_pipTheatre.id || hit.id==g_pipTheatre.id) &&
+         !Compat::layerHasKeyboardFocus()) {
+         Compat::focusWindow(TARGET.window);
+         g_lastFocusId = hit.id;
+@@ -7299,6 +7519,9 @@ static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& windowLoca
+             // Button 2 (Maximize): Right-Click = Fullscreen (2D) Mode (Super + F11), Left-Click = 3D Maximize / Restore
+             if (button == BTN_RIGHT || g_fsPhase == EFullscreenPhase::In2D || g_fsPhase == EFullscreenPhase::To2D) {
+                 toggleFullscreen2D(/*allowExit=*/true);
++            } else if (managedPiP(W)) {
++                const auto mode=theatreMaximized(W) ? Fullscreen::FSMODE_NONE : Fullscreen::FSMODE_MAXIMIZED;
++                Fullscreen::controller()->setFullscreenMode(W,mode,mode);
+             } else if (const auto MON = targetMonitor()) {
+                 const CBox   curBox  = Compat::currentWindowBox(W);
+                 const double maxW    = std::round(MON->m_size.x * 0.82);
+@@ -8120,6 +8343,13 @@ static void onKeyboardKey(
+ // other things (e.g. switching to a dedicated workspace on the way in and
+ // back on the way out) can tell the two states apart without tracking its
+ // own state, which a config reload would lose.
++// Whether the effect pane is currently represented by a room capture. Native
++// fullscreen passthrough owns 2D composition and needs its real overlay visible.
++static int luaEffectInRoom(lua_State* L) {
++    lua_pushboolean(L,g_active && g_transition>0.f && g_fsPhase!=EFullscreenPhase::In2D);
++    return 1;
++}
++
+ static int luaActive(lua_State* L) {
+     lua_pushboolean(L, g_active && g_transitionTarget > 0.5f);
+     return 1;
+@@ -8482,6 +8712,16 @@ static int luaConfig(lua_State* L) {
+     if (idx == -1)
+         return luaL_error(L, "hypr3d.config: windows must be a table");
+     if (idx > 0) {
++        {
++         float distance=g_cfgTheatreDistance,width=g_cfgTheatreWidth,fill=g_cfgTheatreFill,seconds=g_cfgTheatreSeconds,budget=g_cfgPiPRasterMax;
++         if(!SET_NUM(idx,"theatre_distance",distance,"windows.theatre_distance") || !std::isfinite(distance) || distance<=0 ||
++            !SET_NUM(idx,"theatre_width",width,"windows.theatre_width") || !std::isfinite(width) || width<=0 ||
++            !SET_NUM(idx,"theatre_fill",fill,"windows.theatre_fill") || !std::isfinite(fill) || fill<=0 || fill>1 ||
++            !SET_NUM(idx,"theatre_seconds",seconds,"windows.theatre_seconds") || !std::isfinite(seconds) || seconds<=0 ||
++            !SET_NUM(idx,"pip_raster_max_px",budget,"windows.pip_raster_max_px") || !std::isfinite(budget) || budget<64 || budget>16384)
++          return luaL_error(L,"hypr3d.config: invalid PiP Theatre settings");
++         g_cfgTheatreDistance=distance;g_cfgTheatreWidth=width;g_cfgTheatreFill=fill;g_cfgTheatreSeconds=seconds;g_cfgPiPRasterMax=budget;
++        }
+         if (!SET_NUM(idx, "window_scale", g_cfgWindowScale,
+                      "windows.window_scale"))
+             return luaL_error(L, "hypr3d.config: windows.window_scale must be a number");
+@@ -9396,6 +9636,10 @@ static bool startResize3D() {
+         return false;
+
+     focusRoomWindow(useTarget.window);
++    if(theatreMaximized(useTarget.window)) {
++     Fullscreen::controller()->setFullscreenMode(useTarget.window,Fullscreen::FSMODE_NONE,Fullscreen::FSMODE_NONE);
++     restorePiPTheatre();
++    }
+
+     g_resize = {};
+     g_resize.active = true;
+@@ -9410,6 +9654,12 @@ static bool startResize3D() {
+     g_resize.edgeX = useHit.u < 0.5f ? -1 : 1;
+     g_resize.edgeY = useHit.v < 0.5f ? 1 : -1;
+     g_resize.grabPx = worldPointToGlobalPx(targetMonitor(), useHit.point);
++    g_resize.spatialPiP=managedPiP(useTarget.window);
++    g_resize.grabWorld=useHit.point;
++    g_resize.startRight=g_world.rightOf(useHit.id);
++    g_resize.startUp=g_world.upOf(useHit.id);
++    g_resize.startRetinaMul=retinaMul(useHit.id);
++
+
+     g_pointerGesture = EPointerGesture::ResizeReal;
+     g_pointerButton  = BTN_RIGHT;
+@@ -9630,7 +9880,8 @@ static void toggleFullscreen2D(bool allowExit) {
+     if (!MON)
+         return;
+
+-    const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++    auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
++    if(theatreMaximized(FSW)) { restorePiPTheatre(); FSW=nullptr; }
+     if (g_fsPhase == EFullscreenPhase::In2D ||
+         g_fsPhase == EFullscreenPhase::To2D || FSW) {
+         const auto W = FSW ? FSW : g_fsWindow.lock();
+@@ -9937,11 +10188,37 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
+ // A live renderer replacement must preserve the room, not just the 2D boxes.
+ // The versioned checkpoint contains window ids (valid only in this session),
+ // their independent room poses, and the camera. Import only while inactive.
++// Typed native endpoint shared by HUD/controller remapping clients. No input
++// injection: only an identity-verified managed PiP in the caller's active room.
++static int luaPiPScale(lua_State* L) {
++ if(!ownsInput() || g_viewMorph!=EViewMorph::None || g_fsPhase!=EFullscreenPhase::None || g_resize.active)
++  return luaL_error(L,"hypr3d.pip_scale: room is not ready");
++ const char* address=luaL_checkstring(L,1);const auto pid=luaL_checkinteger(L,2);
++ const char* stable=luaL_checkstring(L,3);const double factor=luaL_checknumber(L,4);
++ std::uintptr_t id=0;uint64_t stableId=0;
++ try {size_t end=0;id=std::stoull(address,&end,16);if(end!=std::strlen(address)) id=0;
++      end=0;stableId=std::stoull(stable,&end,16);if(end!=std::strlen(stable)) id=0;} catch(...) {id=0;}
++ const auto w=id ? Compat::findWindowById(id) : nullptr;
++ const auto* e=id ? g_world.find(id) : nullptr;
++ if(!w || !e || !w->m_target || w->getPID()!=pid || w->m_stableID!=stableId || !managedPiP(w))
++  return luaL_error(L,"hypr3d.pip_scale: PiP identity changed");
++ if(!std::isfinite(factor) || factor<=0 || Fullscreen::controller()->getFullscreenModes(w).internal!=Fullscreen::FSMODE_NONE)
++  return luaL_error(L,"hypr3d.pip_scale: invalid factor or maximized target");
++ const auto mon=targetMonitor();if(!mon || w->m_monitor.lock()!=mon) return luaL_error(L,"hypr3d.pip_scale: target is on another output");
++ CBox box;const auto start=Compat::currentWindowBox(w);
++ if(!resizePiPRaster(w,start,retinaMul(id),factor,box)) return luaL_error(L,"hypr3d.pip_scale: invalid raster geometry");
++ box.x=start.x+(start.w-box.w)*0.5;box.y=start.y+(start.h-box.h)*0.5;
++ Compat::driveWindowBox(w,box);g_boxDriven.insert(id);
++ g_roomBoxes[id]=CBox{box.x-mon->m_position.x,box.y-mon->m_position.y,box.w,box.h};
++ damageCurrentMonitor();return 0;
++}
++
+ static int luaExportLayout(lua_State* L) {
+     const auto& cam=g_scene.camera();
+     std::ostringstream out;
+     out.precision(std::numeric_limits<float>::max_digits10);
+-    out << "{\"version\":1,\"camera\":{\"x\":" << cam.position.x
++    out << "{\"version\":1,\"pip_theatre\":\"0x" << std::hex << g_pipTheatre.id << std::dec
++        << "\",\"fullscreen_phase\":" << static_cast<int>(g_fsPhase) << ",\"view_morph\":" << static_cast<int>(g_viewMorph) << ",\"owns_input\":" << (ownsInput()?"true":"false") << ",\"camera\":{\"x\":" << cam.position.x
+         << ",\"y\":" << cam.position.y << ",\"z\":" << cam.position.z
+         << ",\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch
+         << ",\"mode\":" << g_viewMode << "},\"windows\":[";
+@@ -9955,7 +10232,8 @@ static int luaExportLayout(lua_State* L) {
+             << ",\"yaw\":" << e.yaw << ",\"pitch\":" << e.pitch << ",\"roll\":" << e.roll
+             << ",\"scale\":" << e.spawnScale << ",\"left\":" << box.x
+             << ",\"top\":" << box.y << ",\"width\":" << box.w
+-            << ",\"height\":" << box.h << '}';
++            << ",\"height\":" << box.h << ",\"rendered_width\":" << e.width << ",\"rendered_height\":" << e.height
++            << ",\"shader_composited\":" << (g_shaderComposited.contains(e.id)?"true":"false") << '}';
+     }
+     out << "]}";
+     const auto json=out.str();lua_pushlstring(L,json.data(),json.size());return 1;
+@@ -10225,13 +10503,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "close", luaClose))
+         throw std::runtime_error("[hypr3d] failed to register Lua close");
+
++    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","pip_scale",luaPiPScale))
++        throw std::runtime_error("[hypr3d] failed to register Lua PiP scale");
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "active", luaActive))
+         throw std::runtime_error("[hypr3d] failed to register Lua active");
+
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "on_state", luaOnState))
+         throw std::runtime_error("[hypr3d] failed to register Lua on_state");
+
+-    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","export_layout",luaExportLayout) ||
++    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","effect_in_room",luaEffectInRoom) ||
++        !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","export_layout",luaExportLayout) ||
+         !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","restore_layout",luaRestoreLayout))
+         throw std::runtime_error("[hypr3d] failed to register layout checkpoint interface");
+
+@@ -10319,6 +10600,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+             }
+         );
+
++    g_pipFullscreenListener=Event::bus()->m_events.window.fullscreen.listen([](PHLWINDOW w) {
++     try {
++      const auto mon=targetMonitor();
++      if(!g_active || !mon || !w || w->m_monitor.lock()!=mon || w->m_workspace!=mon->m_activeWorkspace) return;
++      if(theatreMaximized(w)) pollPiPTheatre(mon,w);
++      else if(Compat::windowId(w)==g_pipTheatre.id && Fullscreen::controller()->getFullscreenModes(w).internal!=Fullscreen::FSMODE_FULLSCREEN) restorePiPTheatre(true);
++      damageCurrentMonitor();
++     } catch(const std::exception& e) { dumpErrorNow(std::string("pipTheatre: ")+e.what()); }
++    });
+     (void)g_renderPreListener;
+     (void)g_renderStageListener;
+     (void)g_mouseMoveListener;
+@@ -10345,6 +10635,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+
+ APICALL EXPORT void PLUGIN_EXIT() {
+     // No event may call back into an unmapped plugin, even after a failed reload.
++    g_pipFullscreenListener.reset();
+     g_renderPreListener.reset();
+     g_renderStageListener.reset();
+     g_mouseMoveListener.reset();
+@@ -10367,6 +10658,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
+
+     joltShutdown();
+
++    if(g_pipTheatre.id) restorePiPTheatre();
+     g_active = false;
+     stopFramePump();
+     g_transition = 0.0f;
+diff --git a/tests/mios-pip-geometry.cpp b/tests/mios-pip-geometry.cpp
+new file mode 100644
+index 0000000..1fbe4a9
+--- /dev/null
++++ b/tests/mios-pip-geometry.cpp
+@@ -0,0 +1,26 @@
++// AI-hint: Executable positive/negative controls for PiP scale and Theatre frustum fitting.
++// AI-related: src/World/PipGeometry.hpp
++#include "../src/World/PipGeometry.hpp"
++#include <limits>
++#include <iostream>
++#include <stdexcept>
++void check(bool v) { if(!v) throw std::runtime_error("PiP geometry regression"); }
++int main(){using namespace H3D::PiP;
++ for(double wanted:{0.001,0.1,1.0,10.0,10000.0}) {
++  auto r=resize(640,360,wanted,64,36,640,360,2048);check(r.has_value());
++  check(640*r->rasterFactor<=640 && 360*r->rasterFactor<=360);
++  check(std::abs(r->rasterFactor*r->spatialFactor-wanted)<wanted*1e-12);
++ }
++ auto r=resize(640,360,1000,1,1,INFINITY,INFINITY,2048);check(r && 640*r->rasterFactor<=2048 && r->spatialFactor>100);
++ auto up=resize(200,120,8,1,1,640,360,2048);check(up.has_value());
++ auto down=resize(200*up->rasterFactor,120*up->rasterFactor,up->spatialFactor/8,1,1,640,360,2048);
++ check(down && std::abs(200*up->rasterFactor*down->rasterFactor-200)<1e-9 && std::abs(down->spatialFactor-1)<1e-9);
++ check(!resize(0,360,1,1,1,640,360,2048));check(!resize(640,360,0,1,1,640,360,2048));check(!resize(640,360,NAN,1,1,640,360,2048));
++ r=resize(640,360,10,800,500,100,100,2048);check(r && r->rasterFactor==1 && r->spatialFactor==10);
++ for(auto size:{std::pair{16.,9.},std::pair{9.,16.}}) {
++  auto s=theatreScale(size.first,size.second,1.5,0.5,16./9.,0.9,0.8);check(s.has_value());
++  check(size.first*(*s)<=2*1.5*0.5*(16./9.)*0.9+1e-12);check(size.second*(*s)<=2*1.5*0.5*0.8+1e-12);
++ }
++ check(!theatreScale(16,9,NAN,0.5,16./9.,0.9,0.8));check(!theatreScale(16,9,0,0.5,16./9.,0.9,0.8));
++ std::cout<<"PiP spatial/raster separation, invalid hints and Theatre fit passed\n";
++}

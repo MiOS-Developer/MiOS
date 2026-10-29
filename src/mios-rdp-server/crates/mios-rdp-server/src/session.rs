@@ -80,6 +80,7 @@ impl Session {
         *self.peer.lock().expect("peer") = Some(peer.ip());
         *self.connected_at.lock().expect("t") = Some(Instant::now());
         *self.client.lock().expect("client") = json!({"peer": peer.to_string()});
+        self.stats.bitmap_write.lock().expect("bitmap write").clear();
         drop(self.bitmap.take_pending()); // never hand a previous connection's pending frame to a new one
     }
 
@@ -136,6 +137,7 @@ impl Session {
 
     /// Connection over: stop capture/encode, release input, hand the cursor back, linger the output.
     pub fn end_connection(&self, result: &ServerResult<()>) {
+        self.stats.bitmap_write.lock().expect("bitmap write").clear();
         let dur = self.connected_at.lock().expect("t").take().map(|t| t.elapsed()).unwrap_or_default();
         let peer = self.peer.lock().expect("peer").map(|p| p.to_string()).unwrap_or_default();
         let was = self.attached.swap(false, Ordering::SeqCst);
@@ -216,6 +218,7 @@ impl RdpServerDisplay for Display {
             hide_pointer: self.s.cfg.native.cursor != "client",
             size: self.s.desktop_size(),
             pending: None,
+            reference: None,
             s: Arc::clone(&self.s),
         }))
     }
@@ -260,12 +263,22 @@ struct Updates {
     hide_pointer: bool,
     size: (u32, u32),
     pending: Option<Frame>,
+    reference: Option<(u32,u32,u32,bytes::Bytes)>,
     s: Arc<Session>,
 }
 
 #[async_trait::async_trait]
 impl RdpServerDisplayUpdates for Updates {
     async fn next_update(&mut self) -> ServerResult<Option<DisplayUpdate>> {
+        // IronRDP's serial display loop has completed the preceding bitmap's
+        // encoder and writes before entering here. This is socket completion,
+        // not a client-render acknowledgement (the bitmap protocol has none).
+        let completed = self.s.stats.bitmap_write.lock().expect("bitmap write").complete(Instant::now());
+        if let Some((service,total)) = completed {
+            self.s.stats.bitmap_delivered.fetch_add(1,Ordering::Relaxed);
+            let mut samples=self.s.stats.samples.lock().expect("samples");
+            samples.bitmap_write_us.push(service);samples.bitmap_capture_to_write_us.push(total);
+        }
         if self.s.arc_rejected.load(Ordering::SeqCst) {
             return Ok(None);
         }
@@ -274,13 +287,13 @@ impl RdpServerDisplayUpdates for Updates {
             self.hide_pointer = false;
             return Ok(Some(DisplayUpdate::HidePointer));
         }
-        let f = match self.pending.take() {
+        loop {
+        let mut f = match self.pending.take() {
             Some(f) => f,
             None => {
                 let f = self.bitmap.take().await;
                 let taken = Instant::now();
                 let st = &self.s.stats;
-                st.bitmap_delivered.fetch_add(1, Ordering::Relaxed);
                 let mut smp = st.samples.lock().expect("samples");
                 smp.convert_us.push(f.convert_us);
                 smp.capture_to_send_us.push(taken.duration_since(f.ready_at).as_micros() as u64);
@@ -293,18 +306,30 @@ impl RdpServerDisplayUpdates for Updates {
             self.pending = Some(f);
             return Ok(Some(DisplayUpdate::Resize(DesktopSize { width: self.size.0 as u16, height: self.size.1 as u16 })));
         }
+        if let Some((w,h,stride,reference))=&self.reference {
+            if (*w,*h,*stride)==(f.width,f.height,f.stride) &&
+                !pipeline::stabilize_bitmap(&mut f.data,reference,f.width as usize,f.height as usize,f.stride as usize,self.s.cfg.native.bitmap_damage_threshold) {
+                self.s.stats.skipped_static.fetch_add(1,Ordering::Relaxed);
+                continue;
+            }
+        }
         let (w, h, stride) = (f.width, f.height, f.stride);
+        let ready_at=f.ready_at;
+        let data=bytes::Bytes::from(f.data);
+        self.reference=Some((w,h,stride,data.clone()));
         let upd = BitmapUpdate {
             x: 0,
             y: 0,
             width: std::num::NonZeroU16::new(w as u16).expect("w"),
             height: std::num::NonZeroU16::new(h as u16).expect("h"),
             format: PixelFormat::BgrA32,
-            data: bytes::Bytes::from(f.data),
+            data,
             stride: std::num::NonZeroUsize::new(stride as usize).expect("stride"),
         };
         let _ = &self.s;
-        Ok(Some(DisplayUpdate::Bitmap(upd)))
+        self.s.stats.bitmap_write.lock().expect("bitmap write").begin(ready_at,Instant::now());
+        return Ok(Some(DisplayUpdate::Bitmap(upd)));
+        }
     }
 }
 

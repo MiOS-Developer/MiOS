@@ -182,10 +182,14 @@ impl Device {
             self.grabbed = false;
         }
     }
+    pub fn held_keys(&self) -> io::Result<BTreeSet<u16>> {
+        let mut bits = [0u8; 128];
+        ioctl_ptr(self.file.as_raw_fd(), read_ioctl(0x18, bits.len()), &mut bits)?;
+        Ok(codes(&bits).into_iter().collect())
+    }
     pub fn snapshot(&self) -> io::Result<(BTreeSet<u16>, BTreeMap<u16, Axis>)> {
         let fd = self.file.as_raw_fd();
-        let mut b = [0u8; 128];
-        ioctl_ptr(fd, read_ioctl(0x18, b.len()), &mut b)?;
+        let keys = self.held_keys()?;
         let mut axes = BTreeMap::new();
         for code in self.axes.keys() {
             let mut info = AbsInfo::default();
@@ -203,7 +207,7 @@ impl Device {
                 },
             );
         }
-        Ok((codes(&b).into_iter().collect(), axes))
+        Ok((keys, axes))
     }
     pub fn read_events(&mut self) -> io::Result<Vec<Event>> {
         // A byte buffer avoids alignment and uninitialized-value assumptions.

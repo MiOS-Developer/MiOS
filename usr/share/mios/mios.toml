@@ -6746,7 +6746,8 @@ keepalive_seconds   = 5             # TCP keepalive idle (2 s interval, 3 probes
 udp_transport       = false         # RDP-UDP (Shortpath): a NEW opening; stays false until the operator approves
 log_negotiation     = true          # log the EGFX capability sets, negotiated version, codecs, DISP layouts, RDPEI version
 bitmap_hz           = 15            # frames/s of the classic bitmap path for clients without EGFX/AVC420
-bitmap_slow_queue_ms = 250.0        # bitmap path: delivered-frame queue-age p50 above this steps the capture rate down 20 %/window, below half steps +1 Hz (hysteresis)
+bitmap_damage_threshold = 3         # per RGB channel vs last transmitted bitmap; 0 = exact; 0..16 suppresses tiny background noise without altering desktop rendering
+bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
 slow_ack_ms         = 250.0         # AIMD: median frame-ack latency above this counts as congestion
@@ -8567,7 +8568,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
@@ -8578,6 +8579,13 @@ toggle_key = "SUPER + F12"
 # hypr3d-mios-edge-quality.patch composites the desktop's stack in 3D: that pane over the room, the client at its
 # own opacity, the edge pass over it (no hand-tuned copy here; a [config.glass] table would override keys).
 glass_preset = "mios"
+
+[desktop.hyprland.hypr3d.config.windows]
+theatre_distance = 4.0              # metres in front of the camera at native PiP maximize
+theatre_width = 4.0                 # target screen width in metres; aspect preserved, fitted within the HUD
+theatre_fill = 0.9                  # fraction of the available HUD workarea in the camera frustum
+theatre_seconds = 0.25              # room-pose transition; native maximize/restore owns the OS state
+pip_raster_max_px = 2048            # render surface budget per axis; room magnification stays independent
 
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
