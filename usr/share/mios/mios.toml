@@ -8465,6 +8465,13 @@ bindings = [
   { key = "CTRL + Print", args = "all", label = "Screenshot: all outputs" },
 ]
 
+# mios-controls: the terminal binding editor for [keybindings.global] (usr/share/doc/mios/controls.md). It edits
+# only the user tier's [keybindings.global] bindings and controller.system_layer; these keys tune the editor itself.
+[desktop.controls]
+input_cpu = -1                     # CPU the editor's input thread is pinned to; -1 = the last CPU it may use (others are kept off it)
+backup_suffix = "controls-backup"  # apply keeps the previous user tier as mios.toml.<suffix> (0600)
+mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written)
+
 # ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
 # shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
 # On Linux ShaderGlass is Clone-mode only: WineCap (a Winelib .so next to ShaderGlass.exe) captures the target

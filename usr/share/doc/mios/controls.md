@@ -58,7 +58,7 @@ your edit are shown but never block it. Findings your draft adds block apply.
 `controller.system_layer`. It refuses when the file changed since it was read,
 when anything outside `[keybindings]` would change, or when the result would
 be empty. The write is atomic and mode 0600, and the previous tier is kept as
-`mios.toml.controls-backup` (`[keybindings.global.controls].backup_suffix`).
+`mios.toml.controls-backup` (`[desktop.controls].backup_suffix`).
 The compositor picks the change up on its next configuration reload;
 mios-controls never reloads the session.
 
@@ -69,7 +69,7 @@ below your tier can be rebound but not removed.
 ## Input latency
 
 Terminal input has its own OS thread, which blocks only on input. It is
-pinned to one CPU (`[keybindings.global.controls].input_cpu`, default the
+pinned to one CPU (`[desktop.controls].input_cpu`, default the
 last CPU the process may use), and drawing, validation and file IO run on the
 remaining CPUs. Input is therefore never queued behind a redraw or a
 validation run. Reserving that CPU from other processes needs a host CPU

@@ -1,5 +1,5 @@
 // AI-hint: Main entrypoint for mios-controls: with no verb (on a terminal) the binding-editor TUI; verbs list/check/set/add/remove/pad/restore-defaults/export/import/devices drive the same draft -> validate -> apply pipeline headlessly (dry-run unless --apply).
-// AI-related: usr/share/mios/mios.toml [keybindings.global] [keybindings.global.controls], tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py
+// AI-related: usr/share/mios/mios.toml [keybindings.global] [desktop.controls], tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py
 
 #![forbid(unsafe_code)]
 
@@ -33,14 +33,14 @@ pub struct Report {
     pub findings: Vec<String>,
 }
 
-/// [keybindings.global.controls] string tunable.
+/// [desktop.controls] string tunable.
 pub fn controls_str(merged: &Value, key: &str, fallback: &str) -> String {
-    at(merged, &format!("keybindings.global.controls.{key}")).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(fallback).to_owned()
+    at(merged, &format!("desktop.controls.{key}")).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(fallback).to_owned()
 }
 
-/// [keybindings.global.controls] integer tunable (absent or negative = automatic).
+/// [desktop.controls] integer tunable (absent or negative = automatic).
 pub fn controls_int(merged: &Value, key: &str) -> Option<i64> {
-    at(merged, &format!("keybindings.global.controls.{key}")).and_then(Value::as_integer).filter(|v| *v >= 0)
+    at(merged, &format!("desktop.controls.{key}")).and_then(Value::as_integer).filter(|v| *v >= 0)
 }
 
 /// Create a new private file; never overwrite an existing one.

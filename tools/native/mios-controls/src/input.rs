@@ -1,5 +1,5 @@
-// AI-hint: mios-controls input: one dedicated OS thread owns terminal input -- a blocking crossterm read, pinned to its own CPU ([keybindings.global.controls].input_cpu, default the last online CPU) while every other thread of the app is kept off that CPU -- so input is never delayed by drawing, validation subprocesses or file IO.
-// AI-related: tools/native/mios-controls/src/tui.rs, usr/share/mios/mios.toml [keybindings.global.controls]
+// AI-hint: mios-controls input: one dedicated OS thread owns terminal input -- a blocking crossterm read, pinned to its own CPU ([desktop.controls].input_cpu, default the last online CPU) while every other thread of the app is kept off that CPU -- so input is never delayed by drawing, validation subprocesses or file IO.
+// AI-related: tools/native/mios-controls/src/tui.rs, usr/share/mios/mios.toml [desktop.controls]
 // AI-functions: spawn, choose_cpu, unpin_others
 use crate::tui::Msg;
 use ratatui::crossterm::event;
@@ -39,14 +39,11 @@ pub fn unpin_others(input_cpu: usize, allowed: &[usize]) -> Result<(), String> {
     sched_setaffinity(None, &set(allowed.iter().copied().filter(|c| *c != input_cpu))).map_err(|e| e.to_string())
 }
 
-pub struct Spawned {
-    pub note: String,
-}
-
 /// Start the input thread. It does nothing but block in event::read and forward every event; it is the only
 /// caller of crossterm's reader. The calling thread is moved off the input CPU afterwards, and threads it spawns
 /// later inherit that affinity.
-pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> Spawned {
+/// Returns a one-line description of where the input thread runs (for --help diagnostics, not the UI).
+pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> String {
     let allowed = allowed();
     let cpu = choose_cpu(configured_cpu, &allowed);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -82,7 +79,7 @@ pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> Spawned {
         (Some(c), Err(e)) => format!("input thread not pinned to CPU {c}: {e}"),
         (None, _) => "input thread unpinned (single-CPU affinity)".into(),
     };
-    Spawned { note }
+    note
 }
 
 #[cfg(test)]

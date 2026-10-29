@@ -168,7 +168,7 @@ class Tui(Base):
         r = self.tmux('new-session', '-d', '-s', 'c', '-x', '170', '-y', '45', cmd)
         self.assertEqual(r.returncode, 0, r.stderr)
         s = self.screen('MiOS Controls')
-        for part in ['Peripherals', 'Keyboard', 'Bindings', 'app-drawer', 'input thread']:
+        for part in ['Peripherals', 'Keyboard', 'Bindings', 'app-drawer', '? help']:
             self.assertIn(part, s)
         self.screen('valid:', timeout=60)
         self.tmux('send-keys', '-t', 'c', ']')
@@ -178,7 +178,7 @@ class Tui(Base):
         self.tmux('send-keys', '-t', 'c', 'Enter')
         self.screen('Controller')
         self.tmux('send-keys', '-t', 'c', '?')
-        self.screen('Every edit is a DRAFT')
+        self.screen('TAKING CONTROL')
         self.tmux('send-keys', '-t', 'c', 'x')
         self.tmux('send-keys', '-t', 'c', 'q')
         self.screen('EXITED:0')

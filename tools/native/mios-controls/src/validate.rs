@@ -34,7 +34,7 @@ pub struct Validator {
 
 impl Validator {
     pub fn from_ssot(merged: &Value) -> Self {
-        let mios_gen = at(merged, "keybindings.global.controls.mios_gen")
+        let mios_gen = at(merged, "desktop.controls.mios_gen")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("/usr/bin/mios-gen");

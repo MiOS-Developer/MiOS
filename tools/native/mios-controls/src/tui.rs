@@ -131,9 +131,9 @@ fn key_token(name: &str) -> String {
 
 /// Contract annotations the input-ownership work defines; shown, never edited here.
 const OWNERSHIP: &[(&str, &str)] = &[
-    ("BTN_NORTH", "ownership: TAP focuses the aimed window and gives it ALL inputs (stays in 3D/Theatre); HOLD enters native 2D fullscreen capture"),
-    ("BTN_THUMBL", "ownership: HOLD L3+R3 releases a captured app back to the desktop/session"),
-    ("BTN_THUMBR", "ownership: HOLD L3+R3 releases a captured app back to the desktop/session"),
+    ("BTN_NORTH", "tap: the aimed window gets every control (you stay in the room); hold: fullscreen"),
+    ("BTN_THUMBL", "hold L3+R3: hand control back to the desktop"),
+    ("BTN_THUMBR", "hold L3+R3: hand control back to the desktop"),
 ];
 
 pub struct App {
@@ -156,7 +156,6 @@ pub struct App {
     gen: u64,
     validating: bool,
     status: String,
-    input_note: String,
     help: bool,
     quit: bool,
     theme: Theme,
@@ -198,7 +197,6 @@ impl App {
             gen: 0,
             validating: false,
             status: String::new(),
-            input_note: String::new(),
             help: false,
             quit: false,
             backup_suffix,
@@ -665,8 +663,7 @@ impl App {
         let ctx = self.context().unwrap_or("all contexts");
         let head = Line::from(vec![
             Span::styled(" MiOS Controls ", Style::new().fg(t.accent).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("| context [{ctx}] ([ ]) | {} | ", if self.dirty() { "DRAFT (unsaved)" } else { "saved" })),
-            Span::styled(self.input_note.clone(), Style::new().fg(t.muted)),
+            Span::raw(format!("| context [{ctx}] ([ ]) | {} | ? help", if self.dirty() { "DRAFT (unsaved)" } else { "saved" })),
         ]);
         fr.render_widget(Paragraph::new(head), top);
         let [devs, diagram, detail] = Layout::horizontal([Constraint::Length(26), Constraint::Min(40), Constraint::Length(44)]).areas(body);
@@ -785,6 +782,11 @@ impl App {
         out
     }
 
+    /// [keybindings.global.controller].capture_hold_ms: how long North or L3+R3 is held before it counts as a hold.
+    fn hold_ms(&self) -> i64 {
+        at(&self.merged, "keybindings.global.controller.capture_hold_ms").and_then(Value::as_integer).unwrap_or(500)
+    }
+
     fn draw_pad(&self, fr: &mut Frame, area: Rect) {
         let t = &self.theme;
         let cell = |button: &str| -> Span<'static> {
@@ -813,7 +815,7 @@ impl App {
             Line::from(vec![s(10), Span::raw("( L )"), cell("BTN_THUMBL"), s(4), cell("BTN_THUMBR"), Span::raw("( R )")]),
             Line::from(vec![s(10), Span::styled("left stick", Style::new().fg(t.muted)), s(6), Span::styled("right stick", Style::new().fg(t.muted))]),
             Line::from(""),
-            Line::styled("accent: Guide-layer action; underline: ownership contract", Style::new().fg(t.muted)),
+            Line::styled("highlighted: has a Guide action; underlined: takes or returns control", Style::new().fg(t.muted)),
         ];
         fr.render_widget(Paragraph::new(lines).block(self.block(" Controller ", Focus::Diagram)), area);
     }
@@ -827,6 +829,10 @@ impl App {
             lines.push(Line::from(format!("Guide + {label}: {}", self.draft.system_layer.get(button).map(String::as_str).unwrap_or("-"))));
             for r in self.pad_role(button) {
                 lines.push(Line::from(format!("- {r}")));
+            }
+            if matches!(button, "BTN_NORTH" | "BTN_THUMBL" | "BTN_THUMBR") {
+                let hold = self.hold_ms();
+                lines.push(Line::styled(format!("Taking control: tap North gives the aimed window every control; hold North {hold} ms for fullscreen; hold L3+R3 {hold} ms to hand control back"), Style::new().fg(t.warn)));
             }
             let captured = at(&self.merged, "keybindings.global.controller.captured_system_layer").and_then(Value::as_bool) == Some(true);
             lines.push(Line::styled(
@@ -916,19 +922,21 @@ impl App {
     fn draw_help(&self, fr: &mut Frame) {
         let area = centered(fr.area(), 78, 20);
         fr.render_widget(Clear, area);
-        let text = "Peripherals: pick the keyboard or controller map; connected devices are listed read-only.\n\
-Keyboard: arrows pick a key, Enter jumps to its binding. Bindings table: c chord, a action, x contexts,\n\
-p passthrough, b bypass, t tier, n new, d delete. Controller: arrows pick a button, Enter sets its\n\
-Guide-layer action, d removes a user-tier action.\n\n\
-[ and ] choose the context shown in the 'here' column: on = host handles it, ->app = passed through\n\
-to the focused app/VM, app = application-owned chord, - = not active there.\n\n\
-Every edit is a DRAFT. It is validated by the same collision analysis the image gate runs, against\n\
-the compositor session rendered for the draft. w writes the draft to your user tier only (atomic,\n\
-private, previous tier kept as a backup) and only when the draft adds no findings. R puts the vendor\n\
-and host defaults in the draft; apply then removes your overrides. e/i export and import the binding\n\
-map alone (never anything else from your config).\n\n\
-Input runs on its own CPU thread; drawing and validation never delay it. Mouse: click a pane, wheel\n\
-scrolls. Any key closes this help.";
+        let hold = self.hold_ms();
+        let text = format!("MOVING AROUND  Tab / Shift+Tab switch between Peripherals, the diagram and the Bindings list.\n\
+Arrows, PgUp/PgDn and Home/End move. Enter opens or edits what is selected. Esc closes a box.\n\
+A controller works the same way: D-pad/stick = arrows, South = Enter, East = Esc, bumpers = Tab.\n\n\
+PERIPHERALS  Choose the keyboard map or the controller map. Connected devices are listed.\n\
+KEYBOARD  Highlighted keys have a binding; the selected binding's keys are bold. Enter on a key\n\
+shows its binding. CONTROLLER  Highlighted buttons have a Guide action (hold Guide + button).\n\
+Enter sets it, d removes one you added.\n\n\
+TAKING CONTROL  Tap North: the window you aim at gets every control and you stay in the room.\n\
+Hold North {hold} ms: fullscreen. Hold L3+R3 {hold} ms: control returns to the desktop.\n\n\
+BINDINGS  c chord, a action, x where it works, p let the app have it, b escape chord, t tier,\n\
+n new, d delete. [ and ] pick a place: on = MiOS handles it, ->app = the app gets it,\n\
+app = the app's own key, - = not used there. ! = conflict, * = changed.\n\n\
+SAVING  Changes are a draft until you press w; w only works when the draft has no new conflict.\n\
+R starts from the defaults, u undoes the draft, e/i export or import a map. Any key closes this.");
         fr.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title(" help ")), area);
     }
 }
@@ -945,8 +953,7 @@ pub fn run(layers: Layers) -> Result<(), String> {
     let mut app = App::new(layers, tx.clone());
     let mut terminal = ratatui::init();
     let _ = execute!(std::io::stdout(), EnableMouseCapture);
-    let spawned = crate::input::spawn(tx, input_cpu);
-    app.input_note = spawned.note;
+    let _input = crate::input::spawn(tx, input_cpu);
     app.revalidate();
     let res = (|| -> Result<(), String> {
         loop {
