@@ -234,8 +234,10 @@ mios_section("global-input", function()
  policies["SUPER+c"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+v"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+f11"]={contexts={},passthrough={"vm-passthrough"}}
+ escapes["SUPER+f11"]="SUPER+CTRL+f11"
  policies["SUPER+f12"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+escape"]={contexts={},passthrough={"vm-passthrough"}}
+ escapes["SUPER+escape"]="SUPER+CTRL+escape"
  policies["SUPER+CTRL+equal"]={contexts={},passthrough={}}
  local b=mios_native_hl.bind("SUPER+CTRL+equal",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'"))
  if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal"}) end

@@ -4131,7 +4131,7 @@ vscode_allow_chords = false
 vscode_allow_mnemonics = false
 vscode_passthrough_commands = ["workbench.action.toggleSidebarVisibility"]
 terminal_session = "mios"
-socket_name = "mios-human"
+socket_name = "mios-human"           # the controller's tmux: actions target clients on this server (tmux -L)
 escape_time_ms = 50
 repeat_time_ms = 500
 history_limit = 50000
@@ -4184,12 +4184,16 @@ vscode_shell = "mios mon"
 accept_key = "Enter"
 # One mobile-safe chord for EVERY agent CLI (replaces the desktop-only Ctrl-K): tmux receives it
 # (extended-keys csi-u) and sends the focused CLI's adapter key; unlisted CLIs get the chord itself.
+# Controller: holding South sends this chord in desktop terminals. The Linux VT cannot encode Shift+Enter,
+# so South-hold does nothing on a VT.
 accept_chord = "S-Enter"
 unavailable_message = "No pending-action key adapter for this pane"
 adapters = [
   { kind = "agy", accept_keys = ["C-k"] },
 ]
 
+# Prefix-table keys stay mobile-safe: Tab or one lowercase letter (mios-unit-gen enforces it). The controller does not
+# add prefix keys. Its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3).
 [keybindings.tmux]
 extended_features_index = 120
 extended_keys = "on"
@@ -4214,11 +4218,13 @@ bindings = [
   { key = "f", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-view toggle'", command_windows = "resize-pane -Z" },
 ]
 
+# Read by mios-sync-theme:98 (enabled) and the mios-controls TUI (tui.rs:809, hypr3d_toggle_chord). The router itself uses
+# [desktop.hyprland.hypr3d.controller].toggle_chord.
 [keybindings.controller]
 enabled = true
-hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
+hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]   # mirror of toggle_chord
 
-# --- Global input contract (schema v1: /var/tmp/mios-keybinds/schema.md; spec: the conflict-free keybinds research) ---
+# --- Global input contract (/usr/share/doc/mios/keybinds.md) ---
 # One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
 # 2 VM / Looking Glass / RDP / kernel VT, 3 terminal / POSIX / agent loop, 4 controller. `mios-gate
 # keybind-collisions` fails on a chord bound twice in intersecting contexts, a multi-step prefix clash, a
@@ -4226,6 +4232,8 @@ hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
 # chord stolen from the focused terminal, and a `realized_by = "hyprland"` binding the compositor does not have.
 # mios-inputd (Rust) consumes the same tables; both normalise chords to the vectors in
 # usr/share/mios/keybinds/chord-vectors.json. POSIX/Readline defaults stay with the focused application.
+# Ownership rule: the focused window is either captured (the app owns every keyboard handle except escapes, and every
+# controller input except a held L3+R3 and Guide+Select) or uncaptured (MiOS owns the controller).
 [keybindings.global]
 enabled = true
 mod_key = "SUPER"
@@ -4233,7 +4241,8 @@ bypass_mod = "SUPER+CTRL"            # host-escape modifier: reaches the host ev
 chord_sep = " "                      # separates the steps of a multi-step chord ("CTRL+x CTRL+b")
 action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline"]
 # Chords the focused terminal owns (termios/Readline/job control); no host binding may shadow them there.
-reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e", "CTRL+k", "CTRL+u", "CTRL+w", "CTRL+r", "CTRL+l"]
+# CTRL+b is the tmux prefix and CTRL+s is flow control. mios-inputd already reserves both (config.rs:328-336).
+reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e", "CTRL+k", "CTRL+u", "CTRL+w", "CTRL+r", "CTRL+l", "CTRL+b", "CTRL+s"]
 # Every quickshell: and mios: action a binding fires must be in one of these two (the gate enforces it): an
 # implemented action carries its argv; an action with no runtime handler yet is listed as planned and is reported,
 # never silently launched. hypr:, exec:, tmux: and readline: verbs resolve natively (compositor eval, program, tmux, readline).
@@ -4257,13 +4266,17 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
+# app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
+# console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
 terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
 vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
 game = ["steam_app_.*", "gamescope", "Waydroid"]
 
-# Tier 1: bindings the compositor already realises (realized_by) and the chords reserved for their bypass.
+# Tier 1: bindings the compositor realises (realized_by) and the chords reserved for their bypass.
+# Keep this array short: a host or user tier that declares any row REPLACES the whole array (arrays never merge).
+# Literal compositor binds are audited by the gate without a row. Add a row only to give a chord a bypass or contexts.
 [[keybindings.global.bindings]]
 id = "app-drawer"
 tier = 1
@@ -4304,9 +4317,11 @@ passthrough = ["vm-passthrough"]
 id = "fullscreen"
 tier = 1
 chord = "SUPER+F11"
+bypass = "SUPER+CTRL+F11"
 action = "hypr:fullscreen"
 realized_by = "hyprland"
 passthrough = ["vm-passthrough"]
+note = "The bypass un-fullscreens a captured app or a VM client; fullscreen==2 is itself a capture."
 
 [[keybindings.global.bindings]]
 id = "hypr3d-toggle"
@@ -4320,12 +4335,15 @@ passthrough = ["vm-passthrough"]
 id = "keymap"
 tier = 1
 chord = "SUPER+Escape"
+bypass = "SUPER+CTRL+Escape"
 action = "quickshell:keymap-toggle"
 realized_by = "hyprland"
 passthrough = ["vm-passthrough"]
+note = "The bypass shows the bindings over a captured app or a VM."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
-# On bypass_mod, so it also reaches the host while a VM or a captured app owns the keyboard.
+# On bypass_mod. They reach the host in captured apps and VMs only once mios-gen marks bypass_mod handles as
+# escapes (G1). Until then hyprland.lua:319 disables them there.
 [[keybindings.global.bindings]]
 id = "session-scale-up"
 tier = 1
@@ -4361,8 +4379,12 @@ chord = "SUPER+CTRL+mouse_down"
 action = "mios:session-scale-down"
 realized_by = "hyprland"
 
-# Tier 2: the VM passthrough latch lives on bypass_mod so it works while the VM owns the keyboard
-# (the research proposed Super+Alt+P; that chord would be swallowed by the guest). Reserved, not yet realised.
+# G1: a screenshot that works over a fullscreen game. mios-gen must stop adding a second bind for a row whose chord
+# the compositor tables already bind (global_bindings.rs:53). Only then may this row land.
+
+# Tier 2: VM / remote-client host keys. They live on bypass_mod so they work while the VM owns the keyboard (the
+# research proposed Super+Alt+P; the guest would swallow that chord). Realised by escape handles that mios-gen generates
+# (hyprland.lua global-input section).
 [[keybindings.global.bindings]]
 id = "vm-passthrough-toggle"
 tier = 2
@@ -4406,9 +4428,7 @@ action = "readline:draft-stash"
 contexts = ["terminal"]
 scope = "app"
 
-# Tier 4: controller system layer. Active only while the guide button is held and consumed (zero leak to the
-# application); with the guide NOT held the legacy controls ([desktop.hyprland.hypr3d.controller]) are unchanged.
-# Exact client classes, not regexes; unsupported clients never receive guessed input.
+# VM / remote clients. Exact client classes, not regexes; unsupported clients never receive guessed input.
 [keybindings.global.vm]
 looking_glass_classes = ["looking-glass-client"]
 x11_rdp_classes = ["xfreerdp"]
@@ -4416,28 +4436,35 @@ other_classes = ["wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-
 looking_glass_escape_key = "Scroll_Lock"
 x11_rdp_escape_key = "Control_R"
 
+# Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
+# the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
+# sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
+# Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
+# controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
 enabled = true
-exclusive_grab = true                # private kernel fixtures and legacy parity verified; serve retains recovery_argv
+exclusive_grab = true                # one physical evdev owner; the bridge re-grabs after errors (Restart=on-failure)
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
 capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
-context_stale_ms = 1000                # transport failure never invents terminal focus
-capture_hold_ms = 500                 # north tap captures in room; hold enters 2D fullscreen; held L3+R3 releases
+context_stale_ms = 1000                # transport failure never invents terminal focus; a pending capture waits for it
+capture_hold_ms = 500                 # THE hold threshold: North tap/hold, L3+R3 release, and every nav [tap, hold] pair
 guide_button = "BTN_MODE"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
 cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal"]
 legacy_pad_state_path = "/tmp/mios-hypr3d-pad.bin"
 recovery_argv = ["/usr/libexec/mios/mios-gamepad-hypr3d", "--daemon"]
-debounce_ms = 250
+debounce_ms = 250                     # toggle_chord: both sticks within this window = one chord
 scan_ms = 2000
 pointer_hz = 250
-stick_deadzone = 0.12
+stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav flicks
 pointer_max_speed_px = 18.0
 scroll_sensitivity = 45.0
 
+# Guide held + button (uncaptured contexts with a compositor; none on a VT). BTN_DPAD_* matches pads that report d-pad
+# keys today. HAT d-pads (DualSense, xpad) match once I4 folds ABS_HAT0X/Y into BTN_DPAD_*.
 [keybindings.global.controller.system_layer]
 BTN_TL = "hypr:workspace e-1"
 BTN_TR = "hypr:workspace e+1"
@@ -4450,6 +4477,29 @@ BTN_NORTH = "mios:launch-browser"
 BTN_START = "quickshell:monitor-toggle"
 BTN_THUMBL = "quickshell:lock"
 BTN_THUMBR = "mios:toggle_vm_passthrough"
+BTN_DPAD_LEFT = "hypr:movefocus left"
+BTN_DPAD_RIGHT = "hypr:movefocus right"
+BTN_DPAD_UP = "hypr:movefocus up"
+BTN_DPAD_DOWN = "hypr:movefocus down"
+
+# --- Navigation projection: what an uncaptured controller does outside the room (I2; console I3) ---
+# Value grammar, the same for every profile:
+#   "ns:action"        fires on press. It auto-repeats only if the input has a [nav.repeat] entry.
+#   ["tap", "hold"]    tap fires on release before capture_hold_ms. Hold fires once at capture_hold_ms and never repeats.
+#   "none"             does nothing. This is the only unbind word; "" is rejected (an empty string never overrides).
+# Arrays replace atomically across tiers, so an override always restates both halves.
+# Inputs: BTN_SOUTH/EAST/WEST/NORTH, BTN_TL/TR (bumpers), BTN_TL2/TR2 (triggers, digital at trigger_threshold),
+#   BTN_SELECT/START, BTN_MODE (Guide TAP: released before capture_hold_ms with nothing else pressed), BTN_THUMBL/R
+#   (ignored while their own stick is deflected), BTN_DPAD_* (HAT folded in), LS_*/RS_* (stick directions; RS fires one
+#   flick per deflection), TOGGLE_CHORD (the configured toggle_chord).
+# Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, BTN_START cursor mode, the
+#   toggle_chord room toggle and hold-release. A console profile may claim them, because no compositor runs there.
+# Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout. pointer: = analog wheel.
+#   tmux: = commands for the tmux client in the focused terminal or VT on socket_name: key <k> (prefix-table key k),
+#   focus <dir> (falls through to hypr:movefocus at the window edge), page-up, page-down, session-prev, session-next,
+#   menu, keymap.
+
+# --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -8725,14 +8775,16 @@ cascade_px = 32                            # a window opening over another steps
                                            # depth step, never sharing a plane); 0 = upstream 0.15 m in front (M 1.03)
 pixel_snap = true                          # the texel grid lands on the output pixel grid (sub-pixel shift once it settles)
 
-# Universal USB/Bluetooth controller support for Hypr3D (L3 + R3 chord toggle & dual-stick controls).
+# Hypr3D room controls (camera, movement, grab/resize, CRT, face buttons) and the L3+R3 toggle chord.
+# Consumers: mios-inputd LegacyConfig (config.rs:380-405, every key it names is required) and, until I1 retires it,
+# the legacy recovery daemon /usr/libexec/mios/mios-gamepad-hypr3d (the only reader of the @drop:I1 keys).
 [desktop.hyprland.hypr3d.controller]
 enabled = true
-# Simultaneous thumbstick chord to toggle Hypr3D mode (evdev button event names).
+# Simultaneous thumbstick chord: tap toggles the room (uncaptured); a hold of capture_hold_ms releases a capture.
 toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
-# Chord debounce window in milliseconds to avoid double-triggering when holding both sticks.
+# Chord debounce window in milliseconds. The router uses [keybindings.global.controller].debounce_ms.
 debounce_ms = 250
-# Radial/axis deadzone threshold [0.0..1.0]; stick input below this value is ignored.
+# Radial/axis deadzone threshold [0.0..1.0] for room movement and look.
 deadzone = 0.15
 # Global sensitivity multiplier.
 sensitivity = 1.0
@@ -8746,9 +8798,9 @@ left_stick_mode = "continuous"
 right_stick_mode = "camera"
 # Invert camera pitch (look up/down).
 invert_y = false
-# Allow D-pad (ABS_HAT0X, ABS_HAT0Y) to drive left-stick discrete movement.
+# D-pad (ABS_HAT0X, ABS_HAT0Y) drives discrete movement in the room.
 dpad_enabled = true
-# Polling/sampling interval in milliseconds for analog axes.
+# Polling/sampling interval in milliseconds for analog axes (legacy daemon; the bridge is event driven).
 poll_ms = 10
 # Device filter: "gamepad" checks EV_KEY for BTN_GAMEPAD/BTN_SOUTH or BTN_THUMBL+BTN_THUMBR and EV_ABS.
 device_filter = "gamepad"
@@ -8760,11 +8812,11 @@ grab_axis = "ABS_RZ"
 # Left Trigger (LT) resizes aimed or focused window in 3D space while held.
 resize_button = "BTN_TL2"
 resize_axis = "ABS_Z"
-# Analog trigger threshold [0.0..1.0] for engaging RT grab / LT resize.
+# Analog trigger threshold [0.0..1.0] for engaging RT grab / LT resize (and, I2, the digital LT/RT edge in nav).
 trigger_threshold = 0.30
 # SELECT button cycles through Hypr3D camera views/modes (first-person, third-person behind, third-person front).
 view_mode_button = "BTN_SELECT"
-# START button switches between cursor mode (window interaction) and camera mode (3D space look/move).
+# Duplicate of [keybindings.global.controller].cursor_mode_button, which the router uses.
 cursor_mode_button = "BTN_START"
 # Bottom/South face button (BTN_SOUTH): single-press jumps; double-press within double_press_ms toggles Flying/Hover mode (hold = fly up).
 jump_button = "BTN_SOUTH"
@@ -8773,9 +8825,9 @@ double_press_ms = 350
 crouch_button = "BTN_WEST"
 # North TAP gives the aimed/focused window all inputs in the room; HOLD enters native 2D fullscreen.
 fullscreen_button = "BTN_NORTH"
-# Right top bumper (R1/RB = BTN_TR): toggles ShaderGlass on the aimed/focused window.
+# Right bumper (R1/RB = BTN_TR): CRT toggle in the room; ShaderGlass toggle elsewhere (uncaptured only).
 shaderglass_toggle_button = "BTN_TR"
-# Left top bumper (L1/LB = BTN_TL): cycles ShaderGlass shader presets/types.
+# Left bumper (L1/LB = BTN_TL): CRT cycle in the room; ShaderGlass cycle elsewhere (uncaptured only).
 shaderglass_cycle_button = "BTN_TL"
 
 [desktop.hyprland.boot_sync]
