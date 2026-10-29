@@ -327,6 +327,11 @@ pub mod render_desktop {
                 if let Some(parent) = target_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if target_path.exists() {fs::set_permissions(&target_path,fs::Permissions::from_mode(0o644)).map_err(|e|(e.to_string(),1))?;}
+                }
                 if let Err(e) = fs::write(&target_path, to_write.as_bytes()) {
                     return Err((
                         format!(
@@ -335,6 +340,11 @@ pub mod render_desktop {
                         ),
                         1,
                     ));
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&target_path,fs::Permissions::from_mode(0o644)).map_err(|e|(e.to_string(),1))?;
                 }
             }
         }

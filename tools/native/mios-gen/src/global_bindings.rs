@@ -36,6 +36,7 @@ pub fn finish(data: &Value) -> Result<String,String> {
     let bindings=at(data,"keybindings.global.bindings").and_then(Value::as_array).ok_or("missing global bindings")?;
     let sep=at(data,"keybindings.global.chord_sep").and_then(Value::as_str).ok_or("missing chord separator")?;
     let mut out=String::from("\nmios_section(\"global-input\", function()\n local policies={}\n local escapes={}\n");
+    out+=&format!(" local capture_fullscreen={}\n local capture_tag={}\n",at(data,"keybindings.global.controller.capture_fullscreen").and_then(Value::as_bool).unwrap_or(false),q(at(data,"keybindings.global.controller.capture_tag").and_then(Value::as_str).unwrap_or("")));
     for binding in bindings {
         if binding.get("scope").and_then(Value::as_str)==Some("app") {continue;}
         let chord=binding.get("chord").and_then(Value::as_str).ok_or("binding chord missing")?;
@@ -112,10 +113,11 @@ pub fn finish(data: &Value) -> Result<String,String> {
  local function context()
   local w=hl.get_active_window()
   local tags=w and w.tags or {}
-  if contains(tags,'mios-input-vm-passthrough') then return 'vm-passthrough' end
-  if contains(tags,'mios-input-game') then return 'game' end
+  if (w and capture_fullscreen and tonumber(w.fullscreen)==2) or contains(tags,capture_tag) then return 'app-capture' end
   local ok,room=pcall(function() return hl.plugin.hypr3d.active() end)
   if ok and room then return 'desktop-3d' end
+  if contains(tags,'mios-input-vm-passthrough') then return 'vm-passthrough' end
+  if contains(tags,'mios-input-game') then return 'game' end
   if contains(tags,'mios-input-terminal') then return 'terminal' end
   return 'desktop-2d'
  end
@@ -125,7 +127,7 @@ pub fn finish(data: &Value) -> Result<String,String> {
    local p=policies[canonical(v.key)]
    local enabled=ctx~='vm-passthrough'
    if p then enabled=(#p.contexts==0 or contains(p.contexts,ctx)) and not contains(p.passthrough,ctx) end
-   if v.escape and not p then enabled=true end
+   if ctx=='app-capture' or ctx=='vm-passthrough' then enabled=v.escape==true end
    v.handle:set_enabled(enabled)
   end
  end
@@ -142,6 +144,7 @@ pub fn finish(data: &Value) -> Result<String,String> {
  MIOS_INPUT_POLICY={handles=mios_input_handles,context=context,refresh=refresh}
  hl.on('window.active',refresh)
  hl.on('window.class',refresh)
+ hl.on('window.fullscreen',refresh)
  hl.on('window.update_rules',refresh)
  refresh()
 end)

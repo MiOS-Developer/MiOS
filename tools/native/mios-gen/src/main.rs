@@ -23,6 +23,7 @@ mod indexes;
 mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
+mod nested_session;
 mod render;
 mod sync;
 mod terminal;
@@ -322,6 +323,14 @@ enum Commands {
         /// Report device selection without starting a compositor.
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Run an isolated minimal MiOS desktop as a native PiP window.
+    #[command(name = "nested-session")]
+    NestedSession {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] dry_run: bool,
+        #[arg(long,value_parser=["pip","window","side-by-side"])] layout: Option<String>,
     },
 
     /// Load and toggle the live 3D engine through compositor IPC.
@@ -1414,6 +1423,10 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::NestedSession {root,dry_run,layout} => (
+            "nested-session", "desktop",
+            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,layout.as_deref()).map_err(|e|(e,1)),
+        ),
         Commands::Hyprland3dToggle => (
             "hyprland-3d-toggle", "desktop",
             render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),

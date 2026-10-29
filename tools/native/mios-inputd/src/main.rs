@@ -14,6 +14,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Operation {
     Check,
+    Context,
     Serve,
     Dispatch { action: String },
     VmAction { action: String },
@@ -68,6 +69,10 @@ fn run() -> Result<(), String> {
         _ => (false, false),
     };
     match args.command {
+        Operation::Context => {
+            let c=mios_inputd::runtime::context(&global)?;
+            println!("{}",serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture}));
+        }
         Operation::Dispatch { action } => {
             use std::os::unix::process::CommandExt;
             let argv=mios_inputd::runtime::configured_command(&action,&global)?;

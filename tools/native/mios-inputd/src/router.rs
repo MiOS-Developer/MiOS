@@ -134,6 +134,9 @@ pub struct Router {
     pub cursor: bool,
     pub pad: PadState,
     dropping: bool,
+    capture_target: Option<(String,u64)>,
+    room_capture: bool,
+    pending_guide: bool,
     fraction_x: f64,
     fraction_y: f64,
     fraction_scroll: f64,
@@ -157,6 +160,9 @@ impl Router {
             cursor: false,
             pad: PadState::default(),
             dropping: false,
+            capture_target: None,
+            room_capture: false,
+            pending_guide: false,
             fraction_x: 0.0,
             fraction_y: 0.0,
             fraction_scroll: 0.0,
@@ -165,8 +171,20 @@ impl Router {
     pub fn policy(&self) -> &GlobalConfig {
         &self.global
     }
-    pub fn set_context(&mut self, context: &str) -> Output {
-        if self.context == context {
+    pub fn set_focus(&mut self, context: &str, target: Option<(String,u64)>, from_room: bool) -> Output {
+        let force=self.capture_target!=target && (self.app_owned() || Self::app_context(context));
+        self.capture_target=target; self.room_capture=from_room;
+        self.transition_context(context,force)
+    }
+    fn app_context(context: &str) -> bool { ["game","vm-passthrough","app-capture"].contains(&context) }
+    fn app_owned(&self) -> bool { Self::app_context(&self.context) }
+    pub fn set_context(&mut self, context: &str) -> Output { self.transition_context(context,false) }
+    fn transition_context(&mut self, context: &str, force: bool) -> Output {
+        // Pointer drags and cursor mode survive focus moving between ordinary
+        // desktop clients, terminals and HUDs. Actual capture boundaries reset.
+        let host2d=|v:&str| ["desktop-2d","terminal"].contains(&v);
+        if !force && (self.context == context || (host2d(&self.context) && host2d(context))) {
+            self.context=context.into();
             return Output::default();
         }
         let mut o = self.release_outputs();
@@ -174,6 +192,7 @@ impl Router {
         self.blocked.extend(&self.pressed);
         self.context = context.into();
         self.cursor = false;
+        self.pending_guide = false;
         self.last_jump = None;
         self.pad.neutralize();
         // A held axis must be released before the next context owns it.
@@ -198,6 +217,7 @@ impl Router {
         self.latched.clear();
         self.chord_times.clear();
         self.last_jump = None;
+        self.pending_guide = false;
         self.pad.neutralize();
         o
     }
@@ -357,7 +377,23 @@ impl Router {
             }
             let guide = button_code(&self.global.controller.guide_button).unwrap();
             let guide_held = self.pressed.contains(&guide);
-            if e.code == guide {
+            let captured=self.app_owned() && !self.cursor && !self.global.controller.captured_system_layer;
+            if captured {
+                let escape:Vec<_>=self.global.controller.mode_override_chord.iter().map(|v|button_code(v).unwrap()).collect();
+                if e.value==1 && !already && escape.contains(&e.code) && escape.iter().all(|c|self.pressed.contains(c)) {
+                    o.extend(self.release_outputs()); self.suppressed.extend(&escape); self.pending_guide=false;
+                    self.cursor=true; o.actions.push("input:cursor on".into()); return o;
+                }
+                if e.code==guide && e.value==1 { self.pending_guide=true; return o; }
+                if self.pending_guide && e.code!=guide && e.value==1 {
+                    self.pending_guide=false; self.app_held.insert(guide); o.app.push(Event::new(EV_KEY,guide,1));
+                }
+                if e.code==guide && e.value==0 && self.pending_guide {
+                    self.pending_guide=false;
+                    o.app.extend([Event::new(EV_KEY,guide,1),Event::new(EV_KEY,guide,0)]); return o;
+                }
+            }
+            if !captured && e.code == guide {
                 if e.value == 1 {
                     o.extend(self.release_outputs());
                     self.suppressed
@@ -365,7 +401,7 @@ impl Router {
                 }
                 return o;
             }
-            if guide_held {
+            if !captured && guide_held {
                 if e.value == 1 && !already {
                     let override_codes: Vec<_> = self
                         .global
@@ -410,7 +446,7 @@ impl Router {
                     .iter()
                     .map(|n| button_code(n).unwrap())
                     .collect();
-                if !["game", "vm-passthrough"].contains(&self.context.as_str())
+                if (!self.app_owned() || self.room_capture)
                     && toggle.contains(&e.code)
                     && toggle.iter().all(|c| self.pressed.contains(c))
                 {
@@ -433,7 +469,7 @@ impl Router {
                 }
                 let bindings = self.global.bindings.clone();
                 for b in &bindings {
-                    if !b.chord.starts_with("BTN_") || !b.active_in(&self.context) {
+                    if captured || !b.chord.starts_with("BTN_") || !b.active_in(&self.context) {
                         continue;
                     }
                     let codes: Vec<_> = b
@@ -453,7 +489,7 @@ impl Router {
                         return o;
                     }
                 }
-                let app_context = ["vm-passthrough", "game"].contains(&self.context.as_str());
+                let app_context = self.app_owned();
                 if (!app_context || self.cursor) && self.legacy_action(e.code, now, &mut o) {
                     self.suppressed.insert(e.code);
                     return o;
@@ -678,6 +714,43 @@ mod tests {
     }
     fn key(r: &mut Router, c: u16, v: i32, t: u64) -> Output {
         r.event(Event::new(EV_KEY, c, v), t)
+    }
+    #[test]
+    fn captured_application_owns_guide_combinations_by_default() {
+        let mut r=router();r.global.controller.captured_system_layer=false;r.set_context("app-capture");
+        let mut out=Output::default();
+        for (c,v,t) in [(0x13c,1,1),(0x136,1,2),(0x136,0,3),(0x13c,0,4)] {out.extend(key(&mut r,c,v,t));}
+        assert!(out.actions.is_empty(),"captured app must never switch workspace or fire system actions");
+        assert_eq!(out.app,vec![Event::new(EV_KEY,0x13c,1),Event::new(EV_KEY,0x136,1),Event::new(EV_KEY,0x136,0),Event::new(EV_KEY,0x13c,0)]);
+    }
+    #[test]
+    fn explicit_capture_escape_returns_the_host_cursor_without_leaking_keys() {
+        let mut r=router();r.global.controller.captured_system_layer=false;r.set_context("app-capture");
+        assert!(key(&mut r,0x13c,1,1).app.is_empty());
+        let out=key(&mut r,0x13a,1,2);assert_eq!(out.actions,vec!["input:cursor on"]);assert!(!out.app.iter().any(|e|e.kind==EV_KEY));assert!(r.cursor);
+    }
+    #[test]
+    fn host_cursor_and_drag_survive_terminal_to_desktop_focus_changes() {
+        let mut r=router();r.set_context("terminal");key(&mut r,0x13b,1,1);key(&mut r,0x13b,0,2);
+        key(&mut r,0x138,1,3);assert!(r.cursor);
+        let out=r.set_context("desktop-2d");assert!(r.cursor);assert!(out.pointer.is_empty(),"focus change must not release a drag");
+    }
+    #[test]
+    fn captured_window_identity_change_releases_previous_target() {
+        let mut r=router();r.set_focus("app-capture",Some(("0xaaa".into(),1)),false);
+        key(&mut r,0x130,1,1);
+        let out=r.set_focus("app-capture",Some(("0xbbb".into(),2)),false);
+        assert!(out.app.contains(&Event::new(EV_KEY,0x130,0)));
+        assert!(key(&mut r,0x130,2,2).app.is_empty(),"a held key must not leak into the next window");
+    }
+    #[test]
+    fn selected_room_window_preserves_the_documented_thumbstick_return_chord() {
+        let mut r=router();r.global.controller.captured_system_layer=false;
+        r.set_focus("app-capture",Some(("0xabc".into(),42)),true);
+        key(&mut r,0x13d,1,1);let out=key(&mut r,0x13e,1,2);
+        assert_eq!(out.actions,vec!["mios:hyprland-3d-toggle"]);
+        let mut game=router();game.global.controller.captured_system_layer=false;game.set_context("game");
+        key(&mut game,0x13d,1,1);assert!(key(&mut game,0x13e,1,2).actions.is_empty(),"ordinary games retain both thumbstick buttons");
     }
     #[test]
     fn ordinary_input_reaches_game() {

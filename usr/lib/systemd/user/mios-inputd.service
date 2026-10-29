@@ -1,13 +1,14 @@
 [Unit]
-Description=MiOS native global input policy observer
+Description=MiOS native global input controller bridge
 PartOf=mios-desktop.target
-After=graphical-session.target
+After=graphical-session.target mios-gamepad-hypr3d.service
+Conflicts=mios-gamepad-hypr3d.service
 ConditionFileIsExecutable=/usr/libexec/mios/mios-inputd
 
 [Service]
 Type=simple
 ExecStartPre=/usr/libexec/mios/mios-inputd check
-ExecStart=/usr/libexec/mios/mios-inputd observe
+ExecStart=/usr/libexec/mios/mios-inputd serve
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes

@@ -3,7 +3,7 @@
 use crate::config::{GlobalConfig, LegacyConfig};
 use crate::linux::{self, Device, VirtualDevice};
 use crate::router::{Output, PadState, Router, EV_SYN, SYN_DROPPED, SYN_REPORT};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap,BTreeSet};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -60,17 +60,58 @@ pub(crate) fn ipc(request: &str) -> Result<String, String> {
     Ok(out)
 }
 #[derive(Clone, Debug)]
-struct ContextSnapshot { name: String, address: Option<String>, pid: Option<u64> }
-fn context(cfg: &GlobalConfig) -> ContextSnapshot {
-    let window = ipc("j/activewindow").ok().and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok());
-    let class = window.as_ref().and_then(|v| v.get("class")).and_then(|v| v.as_str());
-    let room = ipc("/eval error('MIOS_INPUT_ROOM:' .. tostring(hl.plugin.hypr3d.active()), 0)")
-        .is_ok_and(|v| v.contains("MIOS_INPUT_ROOM:true"));
-    ContextSnapshot {
-        name: class.map_or_else(|| "terminal".into(), |class| cfg.classify(class, room)),
-        address: window.as_ref().and_then(|v| v.get("address")).and_then(|v|v.as_str()).map(str::to_owned),
-        pid: window.as_ref().and_then(|v|v.get("pid")).and_then(|v|v.as_u64()),
+pub struct ContextSnapshot {
+    pub name: String, pub address: Option<String>, pub pid: Option<u64>,
+    pub room_capture: bool, sampled: Instant,
+}
+fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
+    let class=v.get("class").and_then(|v|v.as_str()).filter(|s|!s.is_empty());
+    let room=v.get("room").and_then(|v|v.as_bool()).unwrap_or(false);
+    let captured=v.get("captured").and_then(|v|v.as_bool()).unwrap_or(false);
+    ContextSnapshot {name:cfg.classify_window(class,room,captured),
+        address:v.get("address").and_then(|v|v.as_str()).filter(|s|!s.is_empty()).map(str::to_owned),
+        pid:v.get("pid").and_then(|v|v.as_u64()).filter(|p|*p>0),
+        room_capture:captured && ((room && v.get("fullscreen").and_then(|v|v.as_u64())==Some(2)) || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),sampled:Instant::now()}
+}
+pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot,String> {
+    let template=r#"local function q(s) return '"'..tostring(s or ''):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',c:byte()) end)..'"' end
+local w=hl.get_active_window(); local room=false; local p=hl.plugin and hl.plugin.hypr3d
+if p and p.active then local ok,v=pcall(p.active); room=ok and v and true or false end
+local captured=false
+if w then
+ if CAPTURE_FULLSCREEN and tonumber(w.fullscreen)==2 then captured=true end
+ for _,tag in pairs(w.tags or {}) do if tag:gsub('%*$','')==CAPTURE_TAG then captured=true end end
+end
+error('MIOS_INPUT_CONTEXT:'..'{"class":'..q(w and w.class)..',"address":'..q(w and w.address)..',"pid":'..tostring(w and w.pid or 0)..',"fullscreen":'..tostring(w and w.fullscreen or 0)..',"handler":'..q(w and w.fullscreen_handler)..',"room":'..tostring(room)..',"captured":'..tostring(captured)..'}',0)"#;
+    let lua=template.replace("CAPTURE_FULLSCREEN",if cfg.controller.capture_fullscreen {"true"}else{"false"})
+        .replace("CAPTURE_TAG",&serde_json::to_string(&cfg.controller.capture_tag).unwrap());
+    let reply=ipc(&format!("/eval {lua}"))?;
+    let json=reply.split_once("MIOS_INPUT_CONTEXT:").and_then(|(_,v)|v.lines().next()).ok_or("compositor context response missing")?;
+    let value:serde_json::Value=serde_json::from_str(json).map_err(|e|format!("invalid native context: {e}"))?;
+    Ok(snapshot(cfg,&value))
+}
+fn event_socket() -> Option<UnixStream> {
+    let rt=std::env::var_os("XDG_RUNTIME_DIR")?;
+    let sig=std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    if sig.contains('/') || sig.contains("..") {return None;}
+    let stream=UnixStream::connect(Path::new(&rt).join("hypr").join(sig).join(".socket2.sock")).ok()?;
+    stream.set_nonblocking(true).ok()?;Some(stream)
+}
+fn wait_context_event(stream:&mut Option<UnixStream>,millis:u64) {
+    use std::os::fd::AsRawFd;
+    if stream.is_none() {*stream=event_socket();}
+    let Some(s)=stream.as_mut() else {std::thread::sleep(Duration::from_millis(millis));return;};
+    let mut poll=libc::pollfd {fd:s.as_raw_fd(),events:libc::POLLIN,revents:0};
+    // SAFETY: one initialized pollfd references a live owned stream.
+    let ready=unsafe{libc::poll(&mut poll,1,millis.min(i32::MAX as u64) as i32)};
+    if ready>0 {
+        let mut bytes=[0u8;8192];
+        match s.read(&mut bytes) {Ok(0)=>*stream=None,Err(e) if e.kind()!=std::io::ErrorKind::WouldBlock=>*stream=None,_=>{}}
     }
+    std::thread::sleep(Duration::from_millis(5));
+}
+fn policy_fingerprint(global:&GlobalConfig,legacy:&LegacyConfig) -> Result<Vec<u8>,String> {
+    serde_json::to_vec(&(global,legacy,&global.resolved_actions)).map_err(|e|e.to_string())
 }
 /// Action strings are policy data, never shell source. Compositor arguments are
 /// encoded as Lua string literals; unsupported verbs fail rather than eval shell.
@@ -260,6 +301,46 @@ fn atomic_packet(path: &Path, pad: &PadState) -> Result<(), String> {
     }
     result.map_err(|e| e.to_string())
 }
+// evdev close() waits for a kernel grace period. Probing rejected devices in the
+// forwarding thread paused physical input for hundreds of milliseconds per scan.
+type DeviceCandidates=std::sync::mpsc::Receiver<Result<Device,String>>;
+type Discovery=(DeviceCandidates,std::thread::JoinHandle<()>);
+fn discovery_worker(
+    explicit:Option<PathBuf>,fixture_only:bool,
+    policy:std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+    known:std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
+    stop:std::sync::Arc<AtomicBool>,
+)->Result<Discovery,String> {
+    use std::os::unix::fs::MetadataExt;
+    let (sender,receiver)=std::sync::mpsc::sync_channel(16);
+    let worker=std::thread::Builder::new().name("mios-devices".into()).spawn(move || {
+        let mut rejected=BTreeMap::new();let mut sent=BTreeMap::new();let mut previous=BTreeSet::new();
+        while !stop.load(Ordering::Relaxed) {
+            let current=known.lock().unwrap().clone();
+            for path in previous.difference(&current) {sent.remove(path);}
+            previous=current.clone();
+            let paths=if let Some(path)=&explicit {Ok(vec![path.clone()])}else{linux::discover().map_err(|e|e.to_string())};
+            let paths=match paths {Ok(v)=>v,Err(e)=>{let _=sender.try_send(Err(e));break}};
+            rejected.retain(|path,_|paths.contains(path));sent.retain(|path,_|paths.contains(path));
+            for path in paths {
+                if stop.load(Ordering::Relaxed) {break;}
+                if current.contains(&path) {continue;}
+                let identity=std::fs::metadata(&path).ok().map(|m|(m.rdev(),m.ino()));
+                if identity.is_some_and(|id|rejected.get(&path)==Some(&id)||sent.get(&path)==Some(&id)) {continue;}
+                match Device::open(&path,fixture_only) {
+                    Ok(device)=> {if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}}
+                    Err(e)=> {if explicit.is_some() {let _=sender.try_send(Err(e.to_string()));return;}if let Some(id)=identity {rejected.insert(path,id);}}
+                }
+            }
+            let delay=Duration::from_millis(policy.lock().unwrap().controller.scan_ms);
+            let until=Instant::now()+delay;
+            while !stop.load(Ordering::Relaxed)&&Instant::now()<until {
+                std::thread::sleep(until.saturating_duration_since(Instant::now()).min(Duration::from_millis(20)));
+            }
+        }
+    }).map_err(|e|e.to_string())?;
+    Ok((receiver,worker))
+}
 pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> Result<(), String> {
     if opt.bridge && !opt.fixture_only {
         // SAFETY: geteuid has no memory/ownership effects.
@@ -317,21 +398,24 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let start = Instant::now();
     let mut scan = start - Duration::from_secs(2);
     let mut last_tick = start;
-    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "terminal".into()), address:None, pid:None };
+    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false,sampled:Instant::now() };
     let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
     let context_stop=std::sync::Arc::new(AtomicBool::new(false));
     let context_worker=if opt.context.is_none() && !opt.fixture_only {
         let cache=shared_focus.clone(); let policy=shared_policy.clone(); let stop=context_stop.clone();
         Some(std::thread::spawn(move || {
+            let mut events=event_socket();
             while !stop.load(Ordering::Relaxed) {
                 let cfg=policy.lock().unwrap().clone();
-                let snapshot=context(&cfg); // IPC never holds the event-loop lock.
-                *cache.lock().unwrap()=snapshot;
-                std::thread::sleep(Duration::from_millis(250));
+                // A failed IPC read never invents terminal focus or resets held input.
+                if let Ok(snapshot)=context(&cfg) { *cache.lock().unwrap()=snapshot; }
+                wait_context_event(&mut events,cfg.controller.context_poll_ms);
             }
         }))
     } else {None};
+    let known_devices=std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let (new_devices,discovery)=discovery_worker(opt.device.clone(),opt.fixture_only,shared_policy.clone(),known_devices.clone(),context_stop.clone())?;
     let mut ctx=focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
     let result = (|| -> Result<(), String> {
@@ -350,7 +434,9 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                             {
                                 break;
                             }
+                            if policy_fingerprint(&global,&legacy)? != policy_fingerprint(&next,&next_legacy)? {
                             for dev in devices.values_mut() {
+                                let cursor=dev.router.cursor;
                                 let out = dev.router.reset();
                                 emit(
                                     out,
@@ -372,35 +458,25 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 let (keys, axes) =
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
                                 dev.router.resync(keys, axes);
+                                dev.router.cursor=cursor;
                             }
                             *shared_policy.lock().map_err(|_| "context policy lock failed")?=next.clone();
                             global = next;
                             legacy = next_legacy;
                             eprintln!("input policy reloaded from layered SSOT");
+                            }
                         }
                         Err(e) => {
                             eprintln!("input policy reload rejected; keeping validated policy: {e}")
                         }
                     }
                 }
-                let paths = if let Some(p) = &opt.device {
-                    vec![p.clone()]
-                } else {
-                    linux::discover().map_err(|e| e.to_string())?
-                };
-                for path in paths {
-                    if devices.contains_key(&path) {
-                        continue;
-                    }
-                    let mut device = match Device::open(&path, opt.fixture_only) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            if opt.device.is_some() {
-                                return Err(e.to_string());
-                            }
-                            continue;
-                        }
-                    };
+            }
+            // Only ready, validated handles cross this channel. No evdev probes or
+            // rejected-node closes occur on the forwarding loop.
+            while let Ok(candidate)=new_devices.try_recv() {
+                    let mut device=candidate?;
+                    let path=device.path.clone();
                     let mut router =
                         Router::new(global.clone(), legacy.clone(), device.axes.clone());
                     router.pad.sequences = seed.sequences;
@@ -420,6 +496,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         "{}",
                         serde_json::json!({"mode":if opt.bridge{"bridge"}else{"observe"},"device":path,"name":device.name})
                     );
+                    known_devices.lock().unwrap().insert(path.clone());
                     devices.insert(
                         path,
                         RunningDevice {
@@ -429,13 +506,17 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                             dropped: false,
                         },
                     );
-                }
             }
-            if let Ok(snapshot)=shared_focus.try_lock() { focus=snapshot.clone(); ctx=focus.name.clone(); }
+            if let Ok(snapshot)=shared_focus.try_lock() { focus=snapshot.clone(); }
+            if !opt.fixture_only && opt.context.is_none() && focus.sampled.elapsed()>Duration::from_millis(global.controller.context_stale_ms) {
+                focus.name="app-capture".into(); focus.room_capture=false;
+            }
+            ctx=focus.name.clone();
             let paths: Vec<_> = devices.keys().cloned().collect();
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
-                let transition = dev.router.set_context(&ctx);
+                let target=focus.address.clone().zip(focus.pid);
+                let transition = dev.router.set_focus(&ctx,target,focus.room_capture);
                 emit(
                     transition,
                     dev,
@@ -499,6 +580,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             &focus,
                         )?;
                         devices.remove(&path);
+                        known_devices.lock().unwrap().remove(&path);
                         if selected.as_ref() == Some(&path) {
                             selected = None;
                         }
@@ -586,6 +668,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     }
     context_stop.store(true, Ordering::Relaxed);
     if let Some(worker)=context_worker { let _=worker.join(); }
+    let _=discovery.join();
     result
 }
 fn legacy_owner_running() -> bool {
@@ -665,6 +748,28 @@ pub fn vm_action(action: &str, global: &GlobalConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_context_captures_arbitrary_apps_and_keeps_an_unfocused_room() {
+        let (cfg,_)=crate::config::tests::fixture();
+        let v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":false,"captured":true,"handler":"hypr3d"});
+        let snap=snapshot(&cfg,&v);assert_eq!(snap.name,"app-capture");assert!(snap.room_capture);
+        let empty=serde_json::json!({"room":true,"captured":false});assert_eq!(snapshot(&cfg,&empty).name,"desktop-3d");
+    }
+    #[test]
+    fn current_room_passthrough_uses_native_fullscreen_state() {
+        let (cfg,_)=crate::config::tests::fixture();
+        let mut v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":true,"fullscreen":2,"captured":true,"handler":"default"});
+        assert!(snapshot(&cfg,&v).room_capture,"the installed room uses the compositor default fullscreen handler");
+        v["room"]=serde_json::json!(false);assert!(!snapshot(&cfg,&v).room_capture,"a normal fullscreen game keeps its thumbstick chord");
+        v["room"]=serde_json::json!(true);v["fullscreen"]=serde_json::json!(0);assert!(!snapshot(&cfg,&v).room_capture,"an explicitly captured windowed app keeps its inputs");
+    }
+    #[test]
+    fn unrelated_ssot_changes_do_not_reset_controller_policy() {
+        let mut doc:toml::Value=include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();let before=policy_fingerprint(&cfg,&legacy).unwrap();
+        doc["theme"]["font"]["size"]=toml::Value::Integer(18);
+        let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();assert_eq!(policy_fingerprint(&cfg,&legacy).unwrap(),before);
+    }
     #[test]
     fn compositor_actions_use_current_lua_api() {
         let v = command_for("hypr:workspace e-1").unwrap();

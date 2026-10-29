@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CONTEXTS: [&str; 6] = [
+pub const CONTEXTS: [&str; 7] = [
     "desktop-2d",
     "desktop-3d",
     "terminal",
     "vm-passthrough",
     "game",
     "controller",
+    "app-capture",
 ];
 pub const VIRTUAL_PREFIX: &str = "mios-vctl";
 
@@ -62,6 +63,11 @@ pub struct ControllerConfig {
     pub debounce_ms: u64,
     pub scan_ms: u64,
     pub recovery_argv: Vec<String>,
+    pub captured_system_layer: bool,
+    pub capture_fullscreen: bool,
+    pub capture_tag: String,
+    pub context_poll_ms: u64,
+    pub context_stale_ms: u64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalConfig {
@@ -191,21 +197,21 @@ impl GlobalConfig {
         Ok(())
     }
     pub fn classify(&self, class: &str, room: bool) -> String {
-        // VM/game classifications outrank room/terminal: application ownership
-        // must survive opening the 3D room around a captured VM/game window.
+        // The room owns unselected windows. Explicit native capture is
+        // evaluated first by classify_window, never guessed from app class.
+        if room { return "desktop-3d".into(); }
         for context in ["vm-passthrough", "game"] {
-            if self.matches(context, class) {
-                return context.into();
-            }
-        }
-        if room {
-            return "desktop-3d".into();
+            if self.matches(context,class) { return context.into(); }
         }
         if self.matches("terminal", class) {
             "terminal".into()
         } else {
             "desktop-2d".into()
         }
+    }
+    pub fn classify_window(&self,class:Option<&str>,room:bool,captured:bool) -> String {
+        if captured { return "app-capture".into(); }
+        class.map_or_else(|| if room {"desktop-3d".into()} else {"desktop-2d".into()},|c|self.classify(c,room))
     }
     fn matches(&self, context: &str, class: &str) -> bool {
         self.contexts.get(context).is_some_and(|patterns| {
@@ -233,6 +239,9 @@ impl GlobalConfig {
         }
         self.vm.validate()?;
         let c = &self.controller;
+        if c.context_poll_ms==0 || c.context_poll_ms>1000 || c.context_stale_ms<c.context_poll_ms || c.context_stale_ms>10000 || c.capture_tag.is_empty() || !c.capture_tag.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_') {
+            return Err("invalid capture/context timing policy".into());
+        }
         if c.recovery_argv.is_empty() || !Path::new(&c.recovery_argv[0]).is_absolute() || c.recovery_argv.iter().any(|a|a.contains('\0')) {
             return Err("controller recovery requires an absolute executable argv".into());
         }
@@ -477,11 +486,16 @@ stick_deadzone=0.12
 pointer_max_speed_px=18.0
 scroll_sensitivity=45.0
 cursor_mode_button="BTN_START"
-cursor_mode_contexts=["desktop-2d","desktop-3d"]
+cursor_mode_contexts=["desktop-2d","desktop-3d","terminal"]
 legacy_pad_state_path="/tmp/mios-hypr3d-pad.bin"
 debounce_ms=250
 scan_ms=2000
 recovery_argv=["/usr/libexec/mios/mios-gamepad-hypr3d","--daemon"]
+captured_system_layer=true
+capture_fullscreen=true
+capture_tag="mios-input-captured"
+context_poll_ms=50
+context_stale_ms=1000
 [keybindings.global.controller.system_layer]
 BTN_TL="hypr:workspace e-1"
 BTN_TR="hypr:workspace e+1"
@@ -540,8 +554,9 @@ BTN_TR="hypr:workspace e+1"
     #[test]
     fn context_priority_and_anchoring() {
         let (c, _) = fixture();
-        assert_eq!(c.classify("steam_app_123", true), "game");
-        assert_eq!(c.classify("looking-glass-client", true), "vm-passthrough");
+        assert_eq!(c.classify("steam_app_123", true), "desktop-3d");
+        assert_eq!(c.classify_window(Some("steam_app_123"),true,true),"app-capture");
+        assert_eq!(c.classify("looking-glass-client", true), "desktop-3d");
         assert_eq!(c.classify("Alacritty", false), "terminal");
         assert_eq!(c.classify("not-Alacritty", false), "desktop-2d");
     }
