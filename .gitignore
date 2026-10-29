@@ -1073,5 +1073,6 @@ usr/share/mios/virtio/*.iso
 !/usr/share/applications/mios-nested-session.desktop
 
 !/usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch
+!/usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch
 
 !/docs/design/mios-desktop-continuation-handoff.md

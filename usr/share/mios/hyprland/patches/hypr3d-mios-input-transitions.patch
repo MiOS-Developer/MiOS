@@ -1,0 +1,32 @@
+# AI-hint: Hypr3D 3D->2D keyboard transition: the window focused in the room keeps the keyboard when the room closes (deactivate3D re-focuses it after the layout restore; visible workspace only, never under a session lock). Without it clearAimFocus leaves the desktop with no focused window and typed keys go nowhere.
+# AI-related: tests/test-hypr3d-input-transitions-live.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches, usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -4896,6 +4896,11 @@
+     if (Compat::setCursorHidden(false) && g_pHyprRenderer)
+         g_pHyprRenderer->setCursorFromName("default", true);
+ 
++    // MiOS input transitions: the window that had the keyboard in the room
++    // keeps it in 2D. clearAimFocus() drops the seat's keyboard focus (the aim
++    // is a room-only state); without this the desktop comes back with no
++    // focused window and typed keys go nowhere until the pointer moves.
++    const PHLWINDOWREF exitFocus = Compat::focusedWindow();
+     clearAimFocus();
+     g_world.clear();
+     g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
+@@ -4914,6 +4919,15 @@
+     unghostWindows();
+     g_renderedOnce = false;
+ 
++    // After the layout restore, so the window is back in its 2D place first.
++    // Only a window still shown on a visible workspace (refocusing must never
++    // switch the operator's workspace), and never under a session lock (the
++    // lock surface owns the keyboard; a lock is also how a room can end).
++    if (const auto W = exitFocus.lock();
++        W && W->m_isMapped && !W->isHidden() && W->m_workspace && W->m_workspace->isVisible() &&
++        !(g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
++        Compat::focusWindow(W);
++
+     HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = true}}})");
+     applyGlobalShaderGlassState(false);
+ 

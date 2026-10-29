@@ -113,7 +113,7 @@ class TestHypr3DCrtSSOT(unittest.TestCase):
         h = data["desktop"]["hyprland"]["hypr3d"]
         self.assertTrue(h.get("enabled"), "Hypr3D must be enabled in SSOT")
         # hypr3d-mios-enter-morph-scale.patch is a trailing delta on the whole series
-        patches = [p for p in h.get("patches", []) if "enter-morph-scale" not in p and "pip-theatre" not in p]
+        patches = [p for p in h.get("patches", []) if "enter-morph-scale" not in p and "pip-theatre" not in p and "input-transitions" not in p]
         self.assertIn(PATCH_REL, patches, f"SSOT patches list must contain {PATCH_REL}")
         self.assertEqual(patches[-2], PATCH_REL, f"{PATCH_REL} must run immediately before the HUD cursor patch")
 
@@ -199,7 +199,7 @@ class TestHypr3DCrtPatch(unittest.TestCase):
     def test_controller_cursor_routes_clicks_to_hud_layers(self):
         with open(HUD_CURSOR_PATCH, "r", encoding="utf-8") as f:
             patch = f.read()
-        self.assertIn("hypr3d-mios-hud-cursor.patch", [p for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p][-1])
+        self.assertIn("hypr3d-mios-hud-cursor.patch", [p for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p and "input-transitions" not in p][-1])
         self.assertIn("Compat::interactiveLayerAt(MON, Pointer::mgr()->position()", patch)
         self.assertIn("Compat::deliverClick(layer, local, button, true, nowMs)", patch)
         self.assertIn("g_clientButtonLayer  = layer", patch)
