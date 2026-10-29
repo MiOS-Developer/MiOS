@@ -18028,6 +18028,8 @@ idle_poll_ms = 120
 active_poll_ms = 16
 config_poll_ms = 2000
 hud_namespaces = ["mios-topbar", "mios-dock", "mios-appmenu"]
+hud_settle_ms = 250                  # a HUD rect must hold this long before PiPs plan around it (dock/drawer morphs never move PiPs)
+hud_max_height_frac = 0.25           # taller HUD surfaces (the dock opened into the full-pane app drawer) are overlays, not bars
 match = [
   { title = "^(Picture-in-Picture)$" },
   { class = "(?i)^discord$", initial_title = "^Discord Popout$" },

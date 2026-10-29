@@ -1,6 +1,7 @@
 // AI-hint: mios-pip-gravity daemon -- gives floating Picture-in-Picture windows soft magnetic flank rails (left/right columns stacked top-to-bottom), HUD (topbar/dock) magnetism without hiding them, aspect-aware sizing and a springy settle. Polls the Hyprland IPC; idles while Hypr3D is active (PiP are freely resizable there). Config comes only from the layered SSOT table [desktop.pip_gravity].
 // AI-related: usr/share/mios/mios.toml [desktop.pip_gravity], usr/lib/systemd/user/mios-pip-gravity.service, tools/native/mios-pip-gravity/src/gravity.rs, usr/share/mios/hyprland/hyprland.lua
 mod gravity;
+mod hud;
 mod window;
 
 use gravity::{plan, spring_step, Params, Rect};
@@ -20,6 +21,8 @@ struct Cfg {
     fit_default_window:bool,
     keep_above:bool,
     hud_ns: Vec<String>,
+    hud_settle: Duration,
+    hud_max_height_frac: f64,
     stiffness: f64,
     damping: f64,
     settle_ms: u128,
@@ -75,6 +78,8 @@ fn load_cfg() -> Result<Cfg, String> {
         fit_default_window:acc.get("fit_default_window").and_then(|v|v.as_bool()).ok_or("PiP fit_default_window missing")?,
         keep_above:acc.get("keep_above").and_then(|v|v.as_bool()).ok_or("PiP keep_above missing")?,
         hud_ns: acc.get("hud_namespaces").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
+        hud_settle: Duration::from_millis(f("hud_settle_ms")? as u64),
+        hud_max_height_frac: { let v = f("hud_max_height_frac")?; if !(0.0..=1.0).contains(&v) { return Err("hud_max_height_frac must be 0..1".into()); } v },
         stiffness: f("spring_stiffness")?,
         damping: f("spring_damping")?,
         settle_ms: f("settle_ms")? as u128,
@@ -243,8 +248,7 @@ fn main() {
         std::process::exit(2)
     });
     let mut tracks: HashMap<String, Track> = HashMap::new();
-    let mut huds: Vec<(String, Rect)> = Vec::new();
-    let mut huds_at = Instant::now() - Duration::from_secs(60);
+    let mut huds = hud::HudTracker::default();
     let mut last_tick = Instant::now();
     let mut config_at=Instant::now();
     loop {
@@ -270,22 +274,28 @@ fn main() {
         }
         if room {tracks.clear();continue;}
         if cfg.keep_above {if let Err(e)=keep_above(&ipc,&clients){eprintln!("PiP stacking: {e}");}}
-        if now.duration_since(huds_at) > Duration::from_secs(2) {
-            huds.clear();
+        // HUD bars, sampled every tick; only settled, bar-sized rects constrain PiPs (the dock morphing into the
+        // full-pane app drawer is a transient overlay, not a bar).
+        {
+            let heights: HashMap<String, f64> = mons.as_array().into_iter().flatten().filter_map(|m| {
+                let sc = m.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0).max(0.1);
+                Some((m.get("name")?.as_str()?.to_string(), m.get("height")?.as_f64()? / sc))
+            }).collect();
+            let mut samples = Vec::new();
             if let Some(Value::Object(m)) = ipc.json("layers") {
-                for (_, mon) in m {
+                for (out, mon) in m {
                     for (_, lvl) in mon.get("levels").and_then(|l| l.as_object()).into_iter().flatten() {
                         for l in lvl.as_array().into_iter().flatten() {
                             let ns = l.get("namespace").and_then(|n| n.as_str()).unwrap_or("");
                             if cfg.hud_ns.iter().any(|h| h == ns) {
                                 let g = |k: &str| l.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                huds.push((ns.to_string(), Rect::new(g("x"), g("y"), g("w"), g("h"))));
+                                samples.push(hud::Sample { key: format!("{out}/{ns}"), rect: Rect::new(g("x"), g("y"), g("w"), g("h")), output_height: heights.get(&out).copied().unwrap_or(0.0) });
                             }
                         }
                     }
                 }
             }
-            huds_at = now;
+            huds.update(&samples, now, cfg.hud_settle, cfg.hud_max_height_frac);
         }
         // candidate PiPs, grouped by monitor id
         let mut by_mon: HashMap<i64, Vec<(String, Rect)>> = HashMap::new();
@@ -331,7 +341,7 @@ fn main() {
             let (mx, my) = (m.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0), m.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0));
             let (mw, mh) = (m.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc, m.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc);
             let mon = Rect::new(mx + num(&res, 0), my + num(&res, 1), mw - num(&res, 0) - num(&res, 2), mh - num(&res, 1) - num(&res, 3));
-            let mon_huds: Vec<Rect> = huds.iter().map(|(_, r)| *r).filter(|r| r.cx() >= mx && r.cx() < mx + mw).collect();
+            let mon_huds: Vec<Rect> = huds.rects().into_iter().filter(|r| r.cx() >= mx && r.cx() < mx + mw).collect();
             let rects: Vec<Rect> = pips.iter().map(|(_, r)| *r).collect();
             let targets = plan(&rects, mon, &mon_huds, &rail_params(&cfg,mon));
             for ((addr, cur), tgt) in pips.iter().zip(targets) {
