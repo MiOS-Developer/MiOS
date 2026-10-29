@@ -68,7 +68,10 @@ pub struct ControllerConfig {
     pub capture_tag: String,
     pub context_poll_ms: u64,
     pub context_stale_ms: u64,
+    #[serde(default = "capture_hold_ms")]
+    pub capture_hold_ms: u64,
 }
+fn capture_hold_ms() -> u64 { 500 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalConfig {
     pub enabled: bool,
@@ -221,6 +224,9 @@ impl GlobalConfig {
         })
     }
     pub fn validate(&self) -> Result<(), String> {
+        if !(100..=3000).contains(&self.controller.capture_hold_ms) {
+            return Err("capture_hold_ms must be 100..=3000".into());
+        }
         if self.chord_sep.is_empty() {
             return Err("empty chord_sep".into());
         }

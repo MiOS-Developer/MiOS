@@ -15,6 +15,7 @@ const CONTEXTS: &[&str] = &[
     "terminal",
     "vm-passthrough",
     "game",
+    "app-capture",
 ];
 
 fn cannot_run(why: impl Into<String>) -> Report {
@@ -106,9 +107,12 @@ fn lua_binds(lua: &str) -> (Vec<String>, usize) {
     let mut dynamic = 0;
     for line in lua.lines() {
         let t = line.trim_start();
-        let Some(rest) = t.strip_prefix("hl.bind(") else {
-            continue;
-        };
+        // Native hold release is the other edge of its declared press chord.
+        // Count the press once; its lifecycle is verified by the native policy test.
+        if t.starts_with("local up=mios_native_hl.bind(") { continue; }
+        let rest = if let Some(rest)=t.strip_prefix("hl.bind(") {rest}
+            else if let Some((_,rest))=t.split_once("mios_native_hl.bind(") {rest}
+            else {continue};
         // the chord expression ends at the first top-level comma that follows the closing quote
         let mut depth_quote = false;
         let mut end = None;
@@ -162,12 +166,18 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
         return Err("[keybindings.global].action_namespaces is empty".into());
     }
     let planned: BTreeSet<String> = str_list(global.get("planned_actions")).into_iter().collect();
+    let native = global.get("native_actions").and_then(Value::as_table);
     let implemented: BTreeSet<String> = global
         .get("action_argv")
         .and_then(Value::as_table)
         .map(|t| t.keys().cloned().collect())
         .unwrap_or_default();
     let mut findings_pre: Vec<String> = Vec::new();
+    for (action,backend) in native.into_iter().flatten() {
+        if action!="mios:vm-command-modifier" || backend.as_str()!=Some("hyprland") || planned.contains(action) || implemented.contains(action) {
+            findings_pre.push(format!("unsupported or conflicting native action realizer: {action}"));
+        }
+    }
     for (a, v) in global.get("action_argv").and_then(Value::as_table).into_iter().flatten() {
         let ok = v.as_array().is_some_and(|x| !x.is_empty() && x.iter().all(|e| e.as_str().is_some_and(|s| !s.is_empty())));
         if !ok {
@@ -223,7 +233,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
             Some((ns, verb)) if !verb.is_empty() && namespaces.contains(ns) => {
                 // rule 7: quickshell:/mios: actions are dispatched by a handler we ship; they must be implemented
                 // (action_argv) or explicitly planned, so an unfinished action is visible instead of silently inert
-                if (ns == "quickshell" || ns == "mios") && !implemented.contains(action) && !planned.contains(action) {
+                if (ns == "quickshell" || ns == "mios") && !implemented.contains(action) && !planned.contains(action) && !native.is_some_and(|n|n.contains_key(action)) {
                     findings.push(format!("{tag}: action {action:?} is neither in [keybindings.global.action_argv] nor planned_actions"));
                 }
             }

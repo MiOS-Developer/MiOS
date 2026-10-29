@@ -1959,6 +1959,7 @@ dependencies = [
  "ironrdp-dvc",
  "ironrdp-egfx",
  "ironrdp-graphics",
+ "ironrdp-nscodec",
  "ironrdp-pdu",
  "ironrdp-rdpdr",
  "ironrdp-rdpeai",

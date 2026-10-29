@@ -380,23 +380,64 @@ impl ConnectionHandler for Hooks {
     }
 }
 
-/// TCP keepalive 5 s idle / 2 s interval / 3 probes + TCP_USER_TIMEOUT 10 s.
-pub fn tune_socket(s: &tokio::net::TcpStream, idle: u64) {
+/// RDP-only bounded TCP queue, keepalive and dead-peer timeout. Zero buffer
+/// settings preserve kernel defaults; no host-wide networking values change.
+pub fn tune_socket(s: &tokio::net::TcpStream, cfg: &crate::config::Native) {
     use std::os::fd::AsRawFd as _;
     let fd = s.as_raw_fd();
     let set = |level: i32, opt: i32, v: i32| {
         // SAFETY: integer socket option on a live TCP socket.
         #[allow(unsafe_code)]
-        unsafe {
-            libc::setsockopt(fd, level, opt, (&raw const v).cast(), size_of::<i32>() as u32);
+        let rc = unsafe {
+            libc::setsockopt(fd, level, opt, (&raw const v).cast(), size_of::<i32>() as u32)
+        };
+        if rc != 0 {
+            warn!(level, opt, value=v, error=%std::io::Error::last_os_error(), "RDP TCP socket option failed");
         }
     };
     set(libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1);
-    set(libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, idle.max(1) as i32);
+    set(libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, cfg.keepalive_seconds.clamp(1, i32::MAX as u64) as i32);
     set(libc::IPPROTO_TCP, libc::TCP_KEEPINTVL, 2);
     set(libc::IPPROTO_TCP, libc::TCP_KEEPCNT, 3);
     set(libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, 10_000);
-    let _ = s.set_nodelay(true);
+    if cfg.tcp_send_buffer_kib > 0 { set(libc::SOL_SOCKET, libc::SO_SNDBUF, (cfg.tcp_send_buffer_kib * 1024) as i32); }
+    if cfg.tcp_notsent_lowat_kib > 0 { set(libc::IPPROTO_TCP, libc::TCP_NOTSENT_LOWAT, (cfg.tcp_notsent_lowat_kib * 1024) as i32); }
+    if let Err(error) = s.set_nodelay(true) { warn!(%error, "RDP TCP_NODELAY failed"); }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+
+    fn option(s: &tokio::net::TcpStream, level: i32, opt: i32) -> i32 {
+        let mut value: i32 = 0;
+        let mut len = size_of::<i32>() as libc::socklen_t;
+        // SAFETY: valid socket and writable integer buffer of exactly len bytes.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::getsockopt(s.as_raw_fd(), level, opt, (&raw mut value).cast(), &raw mut len) };
+        assert_eq!(rc, 0);
+        value
+    }
+
+    #[tokio::test(flavor="current_thread")]
+    async fn queue_bounds_apply_only_when_enabled() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let socket = tokio::net::TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (_peer, _) = listener.accept().await.unwrap();
+        let original = option(&socket, libc::SOL_SOCKET, libc::SO_SNDBUF);
+        let mut cfg = crate::config::Native::default();
+        cfg.tcp_send_buffer_kib=0; cfg.tcp_notsent_lowat_kib=0;
+        tune_socket(&socket, &cfg);
+        assert_eq!(option(&socket, libc::SOL_SOCKET, libc::SO_SNDBUF),original);
+        assert_eq!(option(&socket, libc::IPPROTO_TCP, libc::TCP_NOTSENT_LOWAT),0);
+        cfg.tcp_send_buffer_kib=128; cfg.tcp_notsent_lowat_kib=16;
+        tune_socket(&socket, &cfg);
+        // Linux doubles SO_SNDBUF for bookkeeping.
+        assert_eq!(option(&socket, libc::SOL_SOCKET, libc::SO_SNDBUF),256*1024);
+        assert_eq!(option(&socket, libc::IPPROTO_TCP, libc::TCP_NOTSENT_LOWAT),16*1024);
+        assert!(socket.nodelay().unwrap());
+    }
 }
 
 pub fn peer_ok(cfg: &Config, ip: IpAddr) -> bool {

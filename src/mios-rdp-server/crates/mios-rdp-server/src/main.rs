@@ -77,7 +77,7 @@ fn main() -> Result<()> {
     if let Some(i) = args.iter().position(|a| a == "--bench-capture") {
         let out = args.get(i + 1).cloned().ok_or_else(|| anyhow!("--bench-capture OUTPUT SECONDS"))?;
         let secs: u64 = args.get(i + 2).and_then(|f| f.parse().ok()).unwrap_or(10);
-        return bench_capture(&out, secs, get("--hz").and_then(|h| h.parse().ok()).unwrap_or(90), get("--encode").is_some());
+        return bench_capture(&out, secs, get("--hz").and_then(|h| h.parse().ok()).unwrap_or(90), args.iter().any(|a| a == "--encode"), args.iter().any(|a| a == "--bitmap"));
     }
     let cfg_path = PathBuf::from(get("--config").ok_or_else(|| anyhow!("--config native.json is required"))?);
     let cfg = Config::load(&cfg_path)?;
@@ -494,7 +494,7 @@ async fn serve(cfg: Config) -> Result<()> {
                 drop(stream);
                 continue;
             }
-            session::tune_socket(&stream, cfg.native.keepalive_seconds);
+        session::tune_socket(&stream, &cfg.native);
             if cfg.native.auto_reconnect {
                 if let Some(t) = last_drop {
                     if t.elapsed() > Duration::from_secs(cfg.native.auto_reconnect_seconds) {
@@ -1017,13 +1017,14 @@ fn bench_encode(size: &str, frames: u32, threads: Option<String>) -> Result<()> 
     Ok(())
 }
 
-fn bench_capture(output: &str, secs: u64, hz: u32, with_encode: bool) -> Result<()> {
+fn bench_capture(output: &str, secs: u64, hz: u32, with_encode: bool, bitmap: bool) -> Result<()> {
+    if bitmap && with_encode { bail!("--bitmap and --encode are mutually exclusive"); }
     let stop = Arc::new(AtomicBool::new(false));
     let mut cap = capture::spawn(capture::CaptureParams {
         output: output.to_owned(),
         paint_cursor: true,
         max_hz: Arc::new(AtomicU32::new(hz)),
-        layout: Arc::new(AtomicU32::new(0)),
+        layout: Arc::new(AtomicU32::new(u32::from(bitmap))),
         paused: Arc::new(AtomicBool::new(false)),
         stop: Arc::clone(&stop),
         matrix: gpu::Matrix::Bt709Full,
@@ -1040,12 +1041,41 @@ fn bench_capture(output: &str, secs: u64, hz: u32, with_encode: bool) -> Result<
     let mut enc: Option<encode::OpenH264> = None;
     let mut enc_us = Vec::new();
     let cpu0 = stats::process_cpu_seconds();
+    let mut reference: Option<capture::Frame> = None;
+    let mut bitmap_samples = Vec::new();
+    let mut bitmap_first_bytes = None;
     while t0.elapsed() < Duration::from_secs(secs) {
         match cap.mailbox.take(Duration::from_millis(200)) {
-            Ok(Some(f)) => {
+            Ok(Some(mut f)) => {
                 n += 1;
                 conv.push(f.convert_us);
                 capus.push(f.capture_us);
+                if bitmap {
+                    let encode_rect = |data: &[u8], x: usize, y: usize, w: usize, h: usize| {
+                        ironrdp_nscodec::encoder::encode(&data[y*f.stride as usize+x*4..], w as u16, h as u16, f.stride as usize, ironrdp_server::PixelFormat::BgrA32, 3).len()
+                    };
+                    if let Some(previous) = reference.as_ref().filter(|p| p.width == f.width && p.height == f.height && p.stride == f.stride) {
+                        let w = f.width as usize;
+                        let h = f.height as usize;
+                        let stride = f.stride as usize;
+                        let dirty = |data: &[u8]| -> usize {
+                            (0..h).map(|y| (0..w).filter(|&x| {
+                                let i = y * stride + x * 4;
+                                data[i..i+4] != previous.data[i..i+4]
+                            }).count()).sum()
+                        };
+                        let before = dirty(&f.data);
+                        pipeline::stabilize_bitmap(&mut f.data, &previous.data, w, h, stride, config::Native::default().bitmap_damage_threshold);
+                        let after = dirty(&f.data);
+                        let rects = ironrdp_graphics::diff::find_different_rects_sub::<4>(&previous.data, stride, w, h, &f.data, stride, w, h, 0, 0);
+                        let encoded_bytes: usize=rects.iter().map(|r|encode_rect(&f.data,r.x,r.y,r.width,r.height)).sum();
+                        bitmap_samples.push(json!({"changed_before":before,"changed_after":after,"pixels":w*h,"rectangles":rects.len(),"tile_pixels":rects.iter().map(|r|r.width*r.height).sum::<usize>(),"nscodec_bytes":encoded_bytes}));
+                    } else {
+                        bitmap_first_bytes=Some(encode_rect(&f.data,0,0,f.width as usize,f.height as usize));
+                    }
+                    if let Some(previous) = reference.replace(f) { cap.mailbox.recycle(previous.data); }
+                    continue;
+                }
                 if with_encode {
                     use encode::H264Encoder as _;
                     let e = enc.get_or_insert_with(|| {
@@ -1089,7 +1119,9 @@ fn bench_capture(output: &str, secs: u64, hz: u32, with_encode: bool) -> Result<
             "convert_ms_p50": stats::percentile_u64(&conv, 50.0) / 1000.0, "convert_ms_p95": stats::percentile_u64(&conv, 95.0) / 1000.0,
             "capture_wait_ms_p50": stats::percentile_u64(&capus, 50.0) / 1000.0,
             "encode_ms_p50": stats::percentile_u64(&enc_us, 50.0) / 1000.0, "encode_ms_p95": stats::percentile_u64(&enc_us, 95.0) / 1000.0,
-            "cpu_cores": cpu / wall, "info": info,
+            "cpu_cores": cpu / wall, "info": info, "bitmap_samples": bitmap_samples,
+            "fps_basis": "capture", "bitmap_first_nscodec_bytes": bitmap_first_bytes,
+            "bitmap_probe_color_loss_level": if bitmap { Some(3) } else { None },
         }))?
     );
     Ok(())

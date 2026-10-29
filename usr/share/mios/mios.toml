@@ -4384,6 +4384,7 @@ capture_fullscreen = true              # North-button fullscreen selects ANY app
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
 context_stale_ms = 1000                # transport failure never invents terminal focus
+capture_hold_ms = 500                 # north tap captures in room; hold enters 2D fullscreen; held L3+R3 releases
 guide_button = "BTN_MODE"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
@@ -6743,6 +6744,8 @@ auto_reconnect      = true          # Server Auto-Reconnect Cookie: random per s
 auto_reconnect_seconds = 300        # a cookie older than this after a drop no longer resumes
 auth_backoff_seconds = 2            # per source address after a refused login, doubling per failure (cap 60 s); enforced in mios-rdp-server (auth.rs)
 keepalive_seconds   = 5             # TCP keepalive idle (2 s interval, 3 probes) + TCP_USER_TIMEOUT 10 s: a dead client is dropped in about 15 s
+tcp_send_buffer_kib = 128           # bounded RDP-only kernel send buffer; Linux doubles this for accounting; 0 keeps autotuning
+tcp_notsent_lowat_kib = 16          # RDP-only unsent-byte backpressure threshold; 0 keeps the kernel default
 udp_transport       = false         # RDP-UDP (Shortpath): a NEW opening; stays false until the operator approves
 log_negotiation     = true          # log the EGFX capability sets, negotiated version, codecs, DISP layouts, RDPEI version
 bitmap_hz           = 15            # frames/s of the classic bitmap path for clients without EGFX/AVC420
@@ -8721,7 +8724,7 @@ jump_button = "BTN_SOUTH"
 double_press_ms = 350
 # Left/West face button (BTN_WEST): cycles posture (Stand -> Crouch -> Sit) in walking/gravity mode; hold = fly down in Flying/Hover mode.
 crouch_button = "BTN_WEST"
-# Top/North face button (BTN_NORTH): toggles 2D fullscreen of the aimed/focused window from Hypr3D (Super+F11 equivalent).
+# North TAP gives the aimed/focused window all inputs in the room; HOLD enters native 2D fullscreen.
 fullscreen_button = "BTN_NORTH"
 # Right top bumper (R1/RB = BTN_TR): toggles ShaderGlass on the aimed/focused window.
 shaderglass_toggle_button = "BTN_TR"
@@ -17750,6 +17753,8 @@ Requisite = "graphical-session.target"
 [user_units."mios-shell.service".Service]
 Type = "exec"
 ExecStart = "/usr/bin/quickshell --no-duplicate --path /usr/share/mios/quickshell/Config.qml"
+# The shell launches native apps; a HUD refresh must not signal those clients or their tmux servers.
+KillMode = "process"
 Restart = "on-failure"
 RestartSec = 2
 [user_units."mios-shell.service".Install]

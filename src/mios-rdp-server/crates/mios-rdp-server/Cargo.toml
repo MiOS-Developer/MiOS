@@ -27,6 +27,7 @@ ironrdp-rdpdr = { path = "../../../ironrdp/crates/ironrdp-rdpdr" }
 ironrdp-rdpecam = { path = "../../../ironrdp/crates/ironrdp-rdpecam" }
 ironrdp-rdpel = { path = "../../../ironrdp/crates/ironrdp-rdpel" }
 ironrdp-graphics = { path = "../../../ironrdp/crates/ironrdp-graphics" }
+ironrdp-nscodec = { path = "../../../ironrdp/crates/ironrdp-nscodec" }
 tokio = { version = "1", features = ["rt", "net", "macros", "sync", "time", "io-util", "signal"] }
 tokio-rustls = "0.26"
 rustls-pemfile = "2"

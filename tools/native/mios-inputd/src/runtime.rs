@@ -71,7 +71,7 @@ fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
     ContextSnapshot {name:cfg.classify_window(class,room,captured),
         address:v.get("address").and_then(|v|v.as_str()).filter(|s|!s.is_empty()).map(str::to_owned),
         pid:v.get("pid").and_then(|v|v.as_u64()).filter(|p|*p>0),
-        room_capture:captured && ((room && v.get("fullscreen").and_then(|v|v.as_u64())==Some(2)) || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),sampled:Instant::now()}
+        room_capture:captured && (room || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),sampled:Instant::now()}
 }
 pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot,String> {
     let template=r#"local function q(s) return '"'..tostring(s or ''):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',c:byte()) end)..'"' end
@@ -81,6 +81,7 @@ local captured=false
 if w then
  if CAPTURE_FULLSCREEN and tonumber(w.fullscreen)==2 then captured=true end
  for _,tag in pairs(w.tags or {}) do if tag:gsub('%*$','')==CAPTURE_TAG then captured=true end end
+ if p and p.input_owner then local ok,id=pcall(p.input_owner); if ok and id~=0 and tonumber(w.address)==id then captured=true end end
 end
 error('MIOS_INPUT_CONTEXT:'..'{"class":'..q(w and w.class)..',"address":'..q(w and w.address)..',"pid":'..tostring(w and w.pid or 0)..',"fullscreen":'..tostring(w and w.fullscreen or 0)..',"handler":'..q(w and w.fullscreen_handler)..',"room":'..tostring(room)..',"captured":'..tostring(captured)..'}',0)"#;
     let lua=template.replace("CAPTURE_FULLSCREEN",if cfg.controller.capture_fullscreen {"true"}else{"false"})
@@ -711,6 +712,13 @@ fn config_fingerprint(root: Option<&Path>) -> Vec<(PathBuf, u64, Option<std::tim
 }
 
 pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<String>, String> {
+    if let Some(mode)=action.strip_prefix("input:window ") {
+        if !["on","off","fullscreen"].contains(&mode) {return Err("unsupported window ownership mode".into());}
+        let mode=serde_json::to_string(mode).unwrap();
+        let tag=serde_json::to_string(&global.controller.capture_tag).unwrap();
+        let lua=format!("local p=hl.plugin and hl.plugin.hypr3d;local mode={mode};local function tag(w) if w then hl.dispatch(hl.dsp.window.tag({{window=w,tag=(mode=='off' and '-' or '+')..{tag}}})) end end;if p and p.active() then assert(p.input_capture and p.input_owner,'room input ownership unavailable');local id=p.input_owner();assert(p.input_capture(mode),'no selected room window');if mode~='off' then id=p.input_owner() end;local found=false;for _,w in ipairs(hl.get_windows()) do if tonumber(w.address)==id then tag(w);found=true;break end end;if not found and mode=='off' then tag(hl.get_active_window()) end else local w=hl.get_active_window();if not w then error('no focused window',0) end;tag(w);if mode=='fullscreen' then hl.dispatch(hl.dsp.window.fullscreen({{window=w,mode='fullscreen',action='set'}})) end end");
+        return Ok(vec!["/usr/bin/hyprctl".into(),"eval".into(),lua]);
+    }
     if global.planned_actions.iter().any(|a|a==action) { return Err(format!("action is planned, not implemented: {action}")); }
     global
         .resolved_actions
@@ -770,7 +778,7 @@ mod tests {
         let mut v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":true,"fullscreen":2,"captured":true,"handler":"default"});
         assert!(snapshot(&cfg,&v).room_capture,"the installed room uses the compositor default fullscreen handler");
         v["room"]=serde_json::json!(false);assert!(!snapshot(&cfg,&v).room_capture,"a normal fullscreen game keeps its thumbstick chord");
-        v["room"]=serde_json::json!(true);v["fullscreen"]=serde_json::json!(0);assert!(!snapshot(&cfg,&v).room_capture,"an explicitly captured windowed app keeps its inputs");
+        v["room"]=serde_json::json!(true);v["fullscreen"]=serde_json::json!(0);assert!(snapshot(&cfg,&v).room_capture,"windowed room capture must support the held release chord");
     }
     #[test]
     fn unrelated_ssot_changes_do_not_reset_controller_policy() {

@@ -432,6 +432,14 @@ class TestBackendSelection(unittest.TestCase):
 
 
 class TestSsotDefaults(unittest.TestCase):
+    @unittest.skipUnless(os.access(_SERVER, os.X_OK), "mios-rdp-server not built")
+    def test_capture_probe_rejects_conflicting_pixel_layouts(self):
+        r = subprocess.run([_SERVER, "--bench-capture", "must-not-capture", "0", "--bitmap", "--encode"],
+                           capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("mutually exclusive", r.stderr)
+        self.assertNotIn("capture session created", r.stderr)
+
     """Code defaults == SSOT values ([remote.rdp] server/native_binary in mios-rdp; the sub-tables in mios-rdp-server)."""
 
     @classmethod

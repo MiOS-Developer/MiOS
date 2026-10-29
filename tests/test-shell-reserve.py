@@ -43,6 +43,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -72,6 +73,45 @@ def code(src: str) -> str:
 
 
 # ---- static ------------------------------------------------------------------------------------------------------
+class TestShellLifecycle(unittest.TestCase):
+    def test_shell_shutdown_preserves_launched_clients_in_ssot_and_unit(self):
+        import tomllib
+        with open(os.path.join(ROOT,"usr/share/mios/mios.toml"),"rb") as f:
+            policy=tomllib.load(f)["user_units"]["mios-shell.service"]["Service"]
+        self.assertEqual(policy.get("KillMode"),"process")
+        with open(os.path.join(ROOT,"usr/lib/systemd/user/mios-shell.service")) as f:
+            self.assertIn("KillMode=process\n",f.read())
+
+    @unittest.skipUnless(os.environ.get("MIOS_SHELL_LIFECYCLE_LIVE")=="1" and os.getuid()!=0,
+                         "isolated user-manager lifecycle controls are opt-in")
+    def test_real_user_unit_preserves_child_and_old_policy_kills_it(self):
+        def alive(pid):
+            try:
+                with open(f"/proc/{pid}/stat") as f:return f.read().split(") ",1)[1].split()[0]!="Z"
+            except FileNotFoundError:return False
+        def born(pid):
+            with open(f"/proc/{pid}/stat") as f:return f.read().split(") ",1)[1].split()[19]
+        with tempfile.TemporaryDirectory(prefix="mios-shell-lifecycle-") as tmp:
+            for mode,expected in [("control-group",False),("process",True)]:
+                with self.subTest(kill_mode=mode):
+                    unit=f"mios-shell-lifecycle-{mode}-{os.getpid()}"
+                    path=os.path.join(tmp,mode)
+                    body="import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen(['/usr/bin/sleep','300']);Path(sys.argv[1]).write_text(str(p.pid));time.sleep(300)"
+                    r=subprocess.run(["systemd-run","--user","--collect","--unit="+unit,"--property=KillMode="+mode,
+                                      sys.executable,"-c",body,path],capture_output=True,text=True)
+                    self.assertEqual(r.returncode,0,r.stderr)
+                    end=time.monotonic()+5
+                    while not os.path.exists(path) and time.monotonic()<end:time.sleep(.05)
+                    with open(path) as f:pid=int(f.read())
+                    identity=born(pid)
+                    try:
+                        subprocess.run(["systemctl","--user","stop",unit],check=True)
+                        end=time.monotonic()+3
+                        while alive(pid)!=expected and time.monotonic()<end:time.sleep(.05)
+                        self.assertEqual(alive(pid),expected)
+                    finally:
+                        if alive(pid) and born(pid)==identity:os.kill(pid,signal.SIGTERM)
+
 def static_errors(panel: str, sidebar: str, edge: str) -> list[str]:
     e = []
     p, s, g = code(panel), code(sidebar), code(edge)

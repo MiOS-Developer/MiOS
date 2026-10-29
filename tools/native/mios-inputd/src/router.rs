@@ -136,6 +136,12 @@ pub struct Router {
     dropping: bool,
     capture_target: Option<(String,u64)>,
     room_capture: bool,
+    capture_override: Option<bool>,
+    north_pending: bool,
+    north_elapsed: f64,
+    north_fired: bool,
+    escape_elapsed: f64,
+    escape_fired: bool,
     pending_guide: bool,
     fraction_x: f64,
     fraction_y: f64,
@@ -162,6 +168,12 @@ impl Router {
             dropping: false,
             capture_target: None,
             room_capture: false,
+            capture_override: None,
+            north_pending: false,
+            north_elapsed: 0.0,
+            north_fired: false,
+            escape_elapsed: 0.0,
+            escape_fired: false,
             pending_guide: false,
             fraction_x: 0.0,
             fraction_y: 0.0,
@@ -173,11 +185,14 @@ impl Router {
     }
     pub fn set_focus(&mut self, context: &str, target: Option<(String,u64)>, from_room: bool) -> Output {
         let force=self.capture_target!=target && (self.app_owned() || Self::app_context(context));
-        self.capture_target=target; self.room_capture=from_room;
+        if self.capture_target!=target || self.capture_override==Some(Self::app_context(context)) {
+            self.capture_override=None;
+        }
+        self.capture_target=target; self.room_capture=from_room || context=="desktop-3d";
         self.transition_context(context,force)
     }
     fn app_context(context: &str) -> bool { ["game","vm-passthrough","app-capture"].contains(&context) }
-    fn app_owned(&self) -> bool { Self::app_context(&self.context) }
+    fn app_owned(&self) -> bool { self.capture_override.unwrap_or_else(||Self::app_context(&self.context)) }
     pub fn set_context(&mut self, context: &str) -> Output { self.transition_context(context,false) }
     fn transition_context(&mut self, context: &str, force: bool) -> Output {
         // Pointer drags and cursor mode survive focus moving between ordinary
@@ -218,6 +233,9 @@ impl Router {
         self.chord_times.clear();
         self.last_jump = None;
         self.pending_guide = false;
+        self.north_pending=false;
+        self.escape_elapsed=0.0;
+        self.escape_fired=false;
         self.pad.neutralize();
         o
     }
@@ -266,6 +284,7 @@ impl Router {
         let released: Vec<_> = self.pressed.difference(held).copied().collect();
         let guide = button_code(&self.global.controller.guide_button).unwrap();
         if !held.contains(&guide) { self.pending_guide = false; }
+        if !held.contains(&button_code(&self.legacy.fullscreen_button).unwrap()) { self.north_pending=false; }
         let mut out = Output::default();
         for code in released { out.extend(self.event(Event::new(EV_KEY, code, 0), now)); }
         self.blocked.retain(|c| held.contains(c));
@@ -279,7 +298,27 @@ impl Router {
         button_code(name).is_ok_and(|c| self.pressed.contains(&c) && !self.blocked.contains(&c))
     }
     fn room(&self) -> bool {
-        self.context == "desktop-3d"
+        !self.app_owned() && (self.context == "desktop-3d" || (self.capture_override==Some(false) && self.room_capture))
+    }
+    fn capture_window(&mut self, fullscreen: bool) -> Output {
+        let room=self.room();
+        let mut out=self.release_outputs();
+        self.room_capture=room;
+        self.capture_override=Some(true);
+        self.cursor=false;
+        self.pad.neutralize();
+        self.suppressed.extend(&self.pressed);
+        out.actions.push(format!("input:window {}",if fullscreen {"fullscreen"} else {"on"}));
+        out
+    }
+    fn release_window(&mut self) -> Output {
+        let mut out=self.release_outputs();
+        self.capture_override=Some(false);
+        self.cursor=!self.room_capture;
+        self.pad.neutralize();
+        self.suppressed.extend(&self.pressed);
+        out.actions.push("input:window off".into());
+        out
     }
     fn pointer_mode(&self) -> bool {
         self.cursor && !self.room()
@@ -326,11 +365,9 @@ impl Router {
             return true;
         }
         if code == button_code(&self.legacy.fullscreen_button).unwrap() {
-            if room {
-                self.pad.increment(5);
-            } else {
-                o.actions.push("hypr:fullscreen".into());
-            }
+            self.north_pending=true;
+            self.north_elapsed=0.0;
+            self.north_fired=false;
             return true;
         }
         if room {
@@ -385,6 +422,12 @@ impl Router {
             }
             if e.value == 1 && !already {
                 self.chord_times.insert(e.code, now);
+            }
+            if e.code==button_code(&self.legacy.fullscreen_button).unwrap() && e.value==0 && self.north_pending {
+                self.north_pending=false;
+                self.suppressed.remove(&e.code);
+                if !self.north_fired { o.extend(self.capture_window(false)); }
+                return o;
             }
             if e.value == 0 && self.suppressed.remove(&e.code) {
                 return o;
@@ -463,7 +506,7 @@ impl Router {
                     .iter()
                     .map(|n| button_code(n).unwrap())
                     .collect();
-                if (!self.app_owned() || self.room_capture)
+                if !self.app_owned()
                     && toggle.contains(&e.code)
                     && toggle.iter().all(|c| self.pressed.contains(c))
                 {
@@ -545,7 +588,7 @@ impl Router {
             }
             if !self.room()
                 && !self.pointer_mode()
-                && !self.button(&self.global.controller.guide_button)
+                && (self.app_owned() || !self.button(&self.global.controller.guide_button))
             {
                 o.app.push(e);
             }
@@ -649,6 +692,25 @@ impl Router {
     }
     pub fn tick(&mut self, dt: f64) -> Output {
         let mut o = Output::default();
+        let dt=if dt.is_finite() {dt.clamp(0.0,0.1)} else {0.0};
+        if self.north_pending && !self.north_fired {
+            self.north_elapsed+=dt;
+            if self.north_elapsed*1000.0>=self.global.controller.capture_hold_ms as f64 {
+                self.north_fired=true;
+                o.extend(self.capture_window(true));
+            }
+        }
+        let held=self.legacy.toggle_chord.iter().all(|b|self.button(b));
+        if self.app_owned() && held && !self.escape_fired {
+            self.escape_elapsed+=dt;
+            if self.escape_elapsed*1000.0>=self.global.controller.capture_hold_ms as f64 {
+                self.escape_fired=true;
+                o.extend(self.release_window());
+            }
+        } else if !held {
+            self.escape_elapsed=0.0;
+            self.escape_fired=false;
+        }
         self.update_pad();
         if !self.pointer_mode() {
             return o;
@@ -794,9 +856,59 @@ mod tests {
         let mut r=router();r.global.controller.captured_system_layer=false;
         r.set_focus("app-capture",Some(("0xabc".into(),42)),true);
         key(&mut r,0x13d,1,1);let out=key(&mut r,0x13e,1,2);
-        assert_eq!(out.actions,vec!["mios:hyprland-3d-toggle"]);
+        assert!(out.actions.is_empty(),"a short chord belongs to the captured application");
+        for _ in 0..4 {assert!(r.tick(0.1).actions.is_empty());}
+        assert_eq!(r.tick(0.1).actions,vec!["input:window off"]);
+        assert!(r.room(),"release returns ownership without closing the room");
         let mut game=router();game.global.controller.captured_system_layer=false;game.set_context("game");
         key(&mut game,0x13d,1,1);assert!(key(&mut game,0x13e,1,2).actions.is_empty(),"ordinary games retain both thumbstick buttons");
+    }
+    #[test]
+    fn north_tap_hands_all_controls_to_a_window_without_fullscreen_or_room_motion() {
+        let mut r=router();r.global.controller.captured_system_layer=false;
+        r.set_focus("desktop-3d",Some(("0xabc".into(),42)),false);
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        assert!(key(&mut r,north,1,1).actions.is_empty());
+        assert!(r.tick(0.1).actions.is_empty());
+        assert_eq!(key(&mut r,north,0,2).actions,vec!["input:window on"]);
+        // A stale compositor snapshot must not reactivate host controls while the transaction runs.
+        r.set_focus("desktop-3d",Some(("0xabc".into(),42)),false);
+        let seq=r.pad.sequences;
+        for code in [0x130,0x131,0x133,0x134,0x136,0x137,0x138,0x139,0x13a,0x13b,0x13d,0x13e] {
+            let down=key(&mut r,code,1,3);assert!(down.actions.is_empty(),"host action for {code}");
+            assert!(down.app.contains(&Event::new(EV_KEY,code,1)),"missing app input {code}");
+            key(&mut r,code,0,4);
+        }
+        for code in [0,1,2,3,4,5,16,17] {
+            let event=Event::new(EV_ABS,code,123);
+            assert!(r.event(event,5).app.contains(&event));
+        }
+        assert!(r.tick(0.01).actions.is_empty());
+        assert_eq!((r.pad.lx,r.pad.ly,r.pad.rx,r.pad.ry),(0.0,0.0,0.0,0.0));
+        assert_eq!(r.pad.sequences,seq,"no compositor action sequence may leak");
+        r.set_focus("app-capture",Some(("0xabc".into(),42)),true);
+        assert!(r.app_owned());
+    }
+    #[test]
+    fn north_hold_enters_fullscreen_once_and_a_repaired_release_never_captures() {
+        let mut r=router();r.set_context("desktop-3d");
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        key(&mut r,north,1,1);
+        for _ in 0..4 {assert!(r.tick(0.1).actions.is_empty());}
+        assert_eq!(r.tick(0.1).actions,vec!["input:window fullscreen"]);
+        assert!(r.tick(0.1).actions.is_empty());
+        assert!(key(&mut r,north,0,2).actions.is_empty());
+        let mut missed=router();missed.set_context("desktop-3d");key(&mut missed,north,1,1);
+        assert!(missed.reconcile(&BTreeSet::new(),2).actions.is_empty());
+        for _ in 0..8 {assert!(missed.tick(0.1).actions.is_empty());}
+    }
+    #[test]
+    fn captured_guide_does_not_swallow_application_sticks() {
+        let mut r=router();r.global.controller.captured_system_layer=false;r.set_context("app-capture");
+        key(&mut r,0x13c,1,1);
+        let axis=Event::new(EV_ABS,0,32767);
+        assert!(r.event(axis,2).app.contains(&axis));
+        assert_eq!(r.pad.lx,0.0);
     }
     #[test]
     fn ordinary_input_reaches_game() {

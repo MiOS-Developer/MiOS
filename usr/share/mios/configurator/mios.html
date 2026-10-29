@@ -2297,6 +2297,11 @@
             <label for="f-rdp-bsq">native.bitmap_slow_queue_ms (queue age or encoder/socket-write delay that steps the bitmap rate down)</label>
             <input type="text" id="f-rdp-bsq" data-key="remote.rdp.native.bitmap_slow_queue_ms" data-type="float" placeholder="250.0">
 
+            <label for="f-rdp-tcp-buf">native.tcp_send_buffer_kib (0 keeps kernel autotuning)</label>
+            <input type="number" min="0" max="4096" id="f-rdp-tcp-buf" data-key="remote.rdp.native.tcp_send_buffer_kib" data-type="int" value="128">
+            <label for="f-rdp-tcp-lowat">native.tcp_notsent_lowat_kib (0 keeps kernel default)</label>
+            <input type="number" min="0" max="4096" id="f-rdp-tcp-lowat" data-key="remote.rdp.native.tcp_notsent_lowat_kib" data-type="int" value="16">
+
             <label for="f-rdp-bdt">native.bitmap_damage_threshold (0 = exact pixels; 0–16 ignores tiny colour changes)</label>
             <input type="number" min="0" max="16" id="f-rdp-bdt" data-key="remote.rdp.native.bitmap_damage_threshold" data-type="int" value="3">
 
@@ -3224,6 +3229,7 @@
         <label>Controller input ownership <input data-key="keybindings.global.controller.exclusive_grab" type="checkbox"></label>
         <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
+        <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>

@@ -125,7 +125,9 @@ class InputPolicy(unittest.TestCase):
         daemon = module.GamepadHypr3dDaemon(config=cfg, dry_run=True)
         daemon.hypr3d_active = True
         events = []
-        for name in (cfg.view_mode_button, cfg.cursor_mode_button, cfg.fullscreen_button, cfg.shaderglass_toggle_button, cfg.shaderglass_cycle_button, cfg.jump_button, cfg.crouch_button):
+        # North now transfers ownership on tap and has a separate hold action;
+        # the remaining room controls retain their legacy sequence contract.
+        for name in (cfg.view_mode_button, cfg.cursor_mode_button, cfg.shaderglass_toggle_button, cfg.shaderglass_cycle_button, cfg.jump_button, cfg.crouch_button):
             code = module.KEY_NAMES[name]
             events += [self.key(code), self.key(code, 0)]
         for i, event in enumerate(events):
