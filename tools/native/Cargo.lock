@@ -2042,6 +2042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mios-controls"
+version = "0.3.0"
+dependencies = [
+ "mios-resolver",
+ "ratatui",
+ "rustix 0.38.44",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "toml_edit 0.20.2",
+]
+
+[[package]]
 name = "mios-displays"
 version = "0.3.0"
 dependencies = [

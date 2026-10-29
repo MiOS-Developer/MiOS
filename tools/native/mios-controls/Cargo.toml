@@ -1,0 +1,24 @@
+# AI-hint: Cargo manifest for mios-controls -- the ratatui TUI and CLI that edits the layered [keybindings.global] map (keyboard chords and the controller system layer) as a validated user-tier draft.
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml [keybindings.global], src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py
+
+[package]
+name = "mios-controls"
+version.workspace = true
+edition.workspace = true
+description = "TUI binding editor for the layered [keybindings.global] SSOT map"
+
+[[bin]]
+name = "mios-controls"
+path = "src/main.rs"
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+ratatui = "0.29"
+# sched_setaffinity for the dedicated input thread (safe API; the crate forbids unsafe)
+rustix = { version = "0.38", features = ["process"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -8,6 +8,7 @@ members = [
     "mios-bake-plan",
     "mios-browser",
     "mios-comment-lex",
+    "mios-controls",
     "mios-displays",
     "mios-drift-runner",
     "mios-edge-status",
