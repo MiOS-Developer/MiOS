@@ -1062,3 +1062,8 @@ usr/share/mios/virtio/*.iso
 /usr/libexec/mios/mios-inputd
 /usr/libexec/mios/mios-pip-gravity
 /usr/libexec/mios/mios-menu-candidate
+
+!/usr/share/mios/quickshell/Nested.qml
+!/tools/native/mios-gen/src/nested_session.rs
+
+!/usr/share/applications/mios-nested-session.desktop

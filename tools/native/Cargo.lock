@@ -2139,6 +2139,7 @@ dependencies = [
 name = "mios-pip-gravity"
 version = "0.3.0"
 dependencies = [
+ "mios-resolver",
  "regex",
  "serde_json",
  "toml",

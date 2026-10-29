@@ -25,14 +25,14 @@ application-owned shortcut and never installs a host interception.
 The tiers describe desktop/window actions (1), VM and remote-client host keys
 (2), terminal actions (3), and controller actions (4). A tier is metadata, not
 permission to intercept another application's input. Contexts distinguish the
-2D desktop, 3D desktop, terminal, VM passthrough, and games. Anchored class
-patterns classify a focused window. VM/game classification takes precedence over
-room classification so ordinary input remains available to the focused guest or
-game.
+2D desktop, 3D desktop, terminal, VM passthrough, games, and app capture.
+Native fullscreen state and the `mios-input-captured` tag select capture for any
+application. VM/game classification also uses the configured native metadata.
+Capture takes precedence over room navigation.
 
 `tools/native/mios-resolver/src/keybindings.rs` owns chord normalization for both
 the daemon and gate. Keyboard modifiers are ordered `SUPER`, `CTRL`, `ALT`,
-`SHIFT`; keyboard names normalize to lower case. Controller names retain their
+`SHIFT`, then side-specific `LEFTCTRL` / `RIGHTCTRL`; keyboard names normalize to lower case. `RIGHTCTRL` never collapses into `CTRL`. Controller names retain their
 `BTN_*` spelling and are sorted. Button aliases normalize to the same physical
 button. Multi-step sequences use `chord_sep`. The required shared test vectors
 are `/usr/share/mios/keybinds/chord-vectors.json`.
@@ -60,10 +60,12 @@ input when that application supports mouse reporting. Console mouse interaction
 also requires the console's existing mouse consumer (such as GPM); a pointer
 cannot invent unsupported application menus.
 
-While guide is held, the configured system-layer action consumes the button
-instead of replaying it into an app. Without guide, ordinary VM/game inputs
-pass through. The mode-override chord permits deliberate cursor-mode entry from
-those contexts. Each physical controller has independent chord state; two
+On the desktop, holding Guide enables the configured system layer. Captured
+applications own ordinary buttons and Guide combinations while
+`captured_system_layer = false`. Guide+Select is the explicit host cursor escape;
+the daemon defers Guide until it can resolve that chord. L3+R3 returns the
+selected fullscreen application to its active 3D room; an ordinary game outside
+that transition keeps both buttons. Each physical controller has independent chord state; two
 controllers cannot accidentally form one chord.
 
 In bridge mode the daemon owns the physical evdev descriptor and forwards
@@ -95,14 +97,20 @@ input, named actions and the native 68-byte Hypr3D state without executing
 commands. The daemon checks layered configuration changes while running;
 invalid replacements retain the last validated policy.
 
-The shipped user service starts in **observe mode**. It does not execute actions,
-grab controllers, create application-facing virtual pads, or stop the legacy
-controller daemon. `exclusive_grab = false` remains the vendor default. Physical
-migration is separate: prove private fixtures and compatibility, resolve every
-active action handler, stop the previous sole owner, and explicitly enable the
-bridge. The bridge rejects root execution and concurrent legacy ownership.
-Planned VM passthrough and shell actions must not be described as working until
-their handlers and compositor projection have been verified.
+The shipped user service runs **serve mode**, conflicts with the legacy controller
+service, and consumes the validated global map. `exclusive_grab = true` enables
+one physical evdev owner. The legacy executable remains the configured recovery
+path if the bridge fails. `check` reports unresolved handlers explicitly; the
+current map resolves all active handlers. The bridge rejects root execution and
+concurrent legacy ownership.
+
+Device enumeration runs on the `mios-devices` worker. Rejected nodes are cached
+by device and inode identity, and a bounded channel passes validated handles to
+the forwarding loop. Closing unrelated evdev devices can wait for a kernel grace
+period; these probes and closes must stay off the forwarding thread. Configuration
+reloads retain held input when the effective input policy is unchanged. Native
+focus observation also runs outside the forwarding loop; stale context falls
+back to app capture rather than firing desktop actions.
 
 Run the real executable tests with explicit candidate paths:
 
@@ -124,3 +132,16 @@ expressions or live shortcut-inhibition behavior.
 POSIX signals, Readline editing and the configured tmux prefix remain owned by
 the terminal. Ctrl+B is not a universal background command, and Ctrl+S may be
 terminal flow control. Do not turn either into a global host interception.
+
+
+## Native realization and remapping
+
+The configurator at `/usr/share/mios/configurator/mios.html` provides a global binding editor and the controller system-layer map. Existing native actions retain their identity; their chords and contexts can be remapped. New host bindings use the registered action dispatcher. Application-owned entries remain documentation for the application's own input framework.
+
+`action_argv` contains direct executable argument vectors. The runtime consumes the same registry checked by `mios-gate keybind-collisions`. `planned_actions` explicitly prevents dispatch. `native_actions` declares the Looking Glass hold handler realized synchronously by Hyprland; it is not a spawned key-toggle command. Chord release, focus loss, and configuration reload release the original target's held key.
+
+The compositor projection captures its own binding handles. Ordinary host bindings yield in VM and app-capture contexts; declared bypasses use `dont_inhibit` and `submap_universal`. Rule-generated tags include Hyprland's dynamic `*` marker, which is normalized during context matching. VM commands revalidate address, PID, and class in the compositor transaction. Looking Glass uses the configured escape keysym; X11 FreeRDP uses its verified native Right Ctrl escape. Other clients support host fullscreen without guessing their capture protocol. A sent escape is reported as `native_command_sent`; client capture state remains unknown.
+
+`mios-inputd.service` now runs `serve` and conflicts with the legacy service. The bridge keeps the 68-byte native Hypr3D packet and its event sequence counters. On a bridge error, `serve` executes the configured `recovery_argv`. The legacy executable is retained for this recovery path. Private test devices are explicitly excluded from live discovery; udev permission readiness is awaited in the private test harness.
+
+Verification receipts are in `/var/lib/mios-build/mios-inputd/`. The live native service and private kernel fixtures are verified. The physical DualSense is owned by the running bridge. Packet cadence checks and private kernel fixtures provide separate timing and forwarding evidence; they do not certify every application or transport. Native capture requires applications to use the forwarded evdev gamepad path; direct hidraw/force-feedback forwarding is outside this implementation.

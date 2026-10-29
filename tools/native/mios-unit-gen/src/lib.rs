@@ -274,7 +274,8 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
             }
             tmux += &format!("bind-key {key} {}\n", string(binding, "command")?);
         }
-        // Touch: long-press / right-click opens a menu of the actions a phone cannot chord.
+        // Touch: long-press / right-click opens tmux actions only when the application
+        // has not requested mouse events. Mouse-aware TUIs own their context menus.
         // Wheel and border-drag keep tmux's stock root bindings (mouse on).
         // Menu entries reuse the (platform-resolved) command of the matching bound key, so a
         // Windows host render never carries Linux-only run-shell paths.
@@ -294,10 +295,14 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
         let next_cmd = quote(bound("o", "select-pane -t :.+"));
         let view_cmd = quote(bound("f", "resize-pane -Z"));
         let menu = format!(
-            "display-menu -T 'MiOS' -x M -y M 'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
+            "display-menu -T 'MiOS' -t = -x M -y M 'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
         );
         if config_bool(config, "keybindings", "mouse")? {
-            tmux += &format!("bind-key -T root MouseDown3Pane {menu}\nbind-key -T root MouseDown3Status {menu}\n");
+            // Resolve mouse_any_flag after selecting the clicked pane: using the previously
+            // active pane would route another pane's right-click to the wrong owner.
+            tmux += &format!(
+                "bind-key -T root MouseDown3Pane select-pane -t = \\; if-shell -F '#{{mouse_any_flag}}' {{ send-keys -M }} {{ {menu} }}\nbind-key -T root MouseDown3Status {menu}\n"
+            );
         }
         // One accept chord for every agent CLI (mobile-safe, no Ctrl-K): tmux receives it
         // (extended-keys csi-u) and sends the key the focused CLI's adapter expects.
@@ -1085,6 +1090,22 @@ mod tests {
             .unwrap()
             .iter()
             .all(|row| row["when"] == "!terminalFocus"));
+    }
+
+    #[test]
+    fn mobile_keybindings_mouse_menu_respects_application_tracking() {
+        let ssot = include_str!("../../../../usr/share/mios/mios.toml");
+        let profiles = super::render_keybindings(ssot).unwrap();
+        let tmux = &profiles["usr/share/mios/tmux/mios-keys.tmux.conf"];
+        assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{mouse_any_flag}' { send-keys -M } { display-menu"));
+        assert!(tmux.contains("display-menu -T 'MiOS' -t = -x M -y M"));
+        // The master toggle must disable menu interception as well as mouse capture.
+        let mut doc: toml::Value = toml::from_str(ssot).unwrap();
+        doc["keybindings"]["mouse"] = toml::Value::Boolean(false);
+        let disabled = super::render_keybindings(&toml::to_string(&doc).unwrap()).unwrap();
+        let disabled_tmux = &disabled["usr/share/mios/tmux/mios-keys.tmux.conf"];
+        assert!(!disabled_tmux.contains("set -g mouse on"));
+        assert!(!disabled_tmux.contains("bind-key -T root MouseDown3"));
     }
 
     #[test]

@@ -296,9 +296,10 @@ class Geometry(unittest.TestCase):
         self.assertTrue(w == 0.0 or (w >= self.h and min(tab_clearance(isl, t) for t in tabs) >= self.m - 1e-3))
         self.assertEqual(check(isl, tabs, self.m, self.h), [])
 
-        # Negative control for 3 tiled: old centered round island overlaps middle window tabs by 7.0 px
+        # Negative control: the old centered island must overlap the current vendor tabs.
+        # The overlap amount changes with the shared controls radius and inset.
         bad_isl = {"x": out_w / 2.0 - self.h / 2.0, "w": self.h, "y": self.m, "h": self.h}
-        self.assertAlmostEqual(max(tab_overlap(bad_isl, t) for t in tabs), 7.0, places=1)
+        self.assertGreater(max(tab_overlap(bad_isl, t) for t in tabs), 0.0, "negative control must intersect a real vendor tab")
         self.assertTrue(any("overlaps tab" in e for e in check(bad_isl, tabs, self.m, self.h)))
 
         # 2. 3 floating windows (staggered across top row) -> 0.0 px overlap, clearance >= 8.0 px or hidden
@@ -547,7 +548,7 @@ class Sampler(unittest.TestCase):
         return self.qs
 
     def state(self) -> dict:
-        r = subprocess.run([QS, "ipc", "--path", os.path.join(self.qs, "shell.qml"), "call", "sysmon", "state"],
+        r = subprocess.run([QS, "ipc", "--path", os.path.join(self.qs, "shell.qml"), "--any-display", "call", "sysmon", "state"],
                            capture_output=True, text=True, timeout=20)
         return json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
 

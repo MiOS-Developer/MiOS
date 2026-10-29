@@ -1,0 +1,24 @@
+# AI-hint: User-launchable independent MiOS development desktop; isolated runtime and native HUD.
+# AI-related: tools/native/mios-gen/src/nested_session.rs, desktop.nested
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MiOS Desktop Session
+GenericName=Nested desktop
+Comment=Independent MiOS desktop and Tmux-OS workspace, opening in Picture-in-Picture
+Exec=/usr/bin/mios-gen nested-session
+Icon=preferences-desktop-display
+Categories=System;Development;Utility;
+Keywords=mios;desktop;nested;agent;multiplayer;tmux;pip;
+Terminal=false
+StartupNotify=false
+StartupWMClass=aquamarine
+Actions=window;side-by-side;
+
+[Desktop Action window]
+Name=Open as a window
+Exec=/usr/bin/mios-gen nested-session --layout window
+
+[Desktop Action side-by-side]
+Name=Open side by side
+Exec=/usr/bin/mios-gen nested-session --layout side-by-side

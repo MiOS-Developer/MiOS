@@ -3213,10 +3213,14 @@
         <label>Responses client screen mode <input data-key="agent_cli.interaction.clients.codex.values.tui.alternate_screen" type="text"></label>
         <label>Global input policy <input data-key="keybindings.global.enabled" type="checkbox"></label>
         <label>Host escape modifier <input data-key="keybindings.global.bypass_mod" type="text"></label>
-        <label>Global keyboard bindings (JSON; chord, action, contexts, bypass) <textarea rows="14" data-key="keybindings.global.bindings" data-type="json-array"></textarea></label>
+        <label>Global keyboard bindings <textarea hidden data-key="keybindings.global.bindings" data-type="json-array"></textarea></label>
+        <div id="global-bindings-editor"></div>
+        <button type="button" id="global-binding-add">Add binding</button>
         <label>Controller system button <input data-key="keybindings.global.controller.guide_button" type="text"></label>
         <label>Controller cursor button <input data-key="keybindings.global.controller.cursor_mode_button" type="text"></label>
         <label>Controller input ownership <input data-key="keybindings.global.controller.exclusive_grab" type="checkbox"></label>
+        <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
+        <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>
@@ -3231,6 +3235,16 @@
         <label>Guide + BTN_START action <input data-key="keybindings.global.controller.system_layer.BTN_START" type="text"></label>
         <label>Guide + BTN_THUMBL action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBL" type="text"></label>
         <label>Guide + BTN_THUMBR action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBR" type="text"></label>
+        <details><summary>Picture-in-Picture and desktop sessions</summary>
+        <label>Enable PiP layout <input data-key="desktop.pip_gravity.enabled" type="checkbox"></label>
+        <label>Keep PiPs above application windows <input data-key="desktop.pip_gravity.keep_above" type="checkbox"></label>
+        <label>Snap to the normal window's side space <input data-key="desktop.pip_gravity.fit_default_window" type="checkbox"></label>
+        <label>PiP snap distance <input data-key="desktop.pip_gravity.attract_px" data-type="int" type="number" min="0"></label>
+        <label>Desktop session launch layout <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option></select></label>
+        <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
+        <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
+        <label>Session display height <input data-key="desktop.nested.height" data-type="int" type="number" min="320" max="8192"></label>
+        </details>
         <label>Pending-action prefix key <input data-key="keybindings.agent.accept_key" type="text"></label>
         <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
         <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
@@ -3288,6 +3302,8 @@
         <label>Top bar fullscreen hide delay (ms) <input data-key="desktop.topbar.fullscreen_hide_delay_ms" data-type="int" type="number" min="0"></label>
         <label>Window controls reveal <select data-key="desktop.hyprland.hyprbars.config.reveal_on"><option>focus+proximity</option><option>focus</option><option>proximity</option><option>always</option></select></label>
         <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
+        <label>Opening text reference size (pixels) <input data-key="desktop.hyprland.hypr3d.spawn.text_reference_px" data-type="int" type="number" min="4" max="200"></label>
+        <label>Opening paper long edge (mm; 0 disables cap) <input data-key="desktop.hyprland.hypr3d.spawn.paper_long_edge_mm" data-type="float" type="number" min="0" max="2000" step="1"></label>
         <label>Window controls glass frost <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_blur" data-type="bool"></label>
         <label>Window controls glass (hyprglass preset; frost, tint and lights follow it) <input type="text" data-key="desktop.hyprland.hyprbars.config.glass_preset"></label>
         <label>Window controls colour-layer opacity (SSOT percentage key, e.g. theme.opacity) <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_alpha"></label>
@@ -4807,7 +4823,59 @@ function populateEngineSelects() {
   });
 }
 
+// One editor for the same SSOT array consumed by the native input router.
+function renderGlobalBindings() {
+  const root = document.getElementById("global-bindings-editor");
+  if (!root) return;
+  root.replaceChildren();
+  const bindings = DATA["keybindings.global"]?.bindings || [];
+  const store = () => {
+    DATA["keybindings.global"] = DATA["keybindings.global"] || {};
+    DATA["keybindings.global"].bindings = bindings;
+    const source = document.querySelector('[data-key="keybindings.global.bindings"]');
+    if (source) source.value = JSON.stringify(bindings, null, 2);
+  };
+  for (const [index, binding] of bindings.entries()) {
+    const row = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = binding.id || "New binding";
+    row.appendChild(legend);
+    for (const [key, title] of [["id","Name"],["chord","Shortcut"],["action","Action"],["bypass","Host escape shortcut"],["contexts","Active contexts"],["passthrough","Application-owned contexts"]]) {
+      const label = document.createElement("label");
+      label.textContent = title;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.readOnly = ["app-drawer","terminal","close-window","toggle-placement","fullscreen","hypr3d-toggle","keymap","vm-passthrough-toggle","vm-fullscreen","vm-command-modifier"].includes(binding.id) && (key === "id" || key === "action");
+      input.value = Array.isArray(binding[key]) ? binding[key].join(", ") : (binding[key] || "");
+      input.addEventListener("input", () => {
+        if (key === "contexts" || key === "passthrough") binding[key] = input.value.split(",").map(v => v.trim()).filter(Boolean);
+        else if (key === "bypass" && !input.value.trim()) delete binding[key];
+        else binding[key] = input.value.trim();
+        if (key === "id") legend.textContent = binding.id || "New binding";
+        store();
+      });
+      label.appendChild(input);
+      row.appendChild(label);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove binding";
+    remove.disabled = ["app-drawer","terminal","close-window","toggle-placement","fullscreen","hypr3d-toggle","keymap","vm-passthrough-toggle","vm-fullscreen","vm-command-modifier"].includes(binding.id);
+    if (remove.disabled) remove.title = "Remap this built-in action using its Shortcut field";
+    remove.addEventListener("click", () => { bindings.splice(index, 1); store(); renderGlobalBindings(); });
+    row.appendChild(remove);
+    root.appendChild(row);
+  }
+  document.getElementById("global-binding-add").onclick = () => {
+    let n = bindings.length + 1;
+    while (bindings.some(b => b.id === "binding-" + n)) n++;
+    bindings.push({id:"binding-" + n,tier:1,chord:"",action:"",realized_by:"hyprland",passthrough:["vm-passthrough"]});
+    store(); renderGlobalBindings();
+  };
+}
+
 function refreshFromData() {
+  renderGlobalBindings();
   populateEngineSelects();
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);

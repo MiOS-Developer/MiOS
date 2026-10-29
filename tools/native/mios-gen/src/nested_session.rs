@@ -21,6 +21,24 @@ pub fn project(data:&Value)->Result<String,String>{
  // An independent QML entry point prevents --any-display from addressing the operator's shell.
  let shell=n.get("shell_entry").and_then(Value::as_str).filter(|s|Path::new(s).is_absolute()&&!s.chars().any(char::is_control)).ok_or("desktop.nested.shell_entry must be an absolute path")?;
  out=out.replace("/usr/share/mios/quickshell/Config.qml",shell);
+ // A Wayland backend configure changes the output size without rebuilding its
+ // workspace workarea. Keep the native monitor rule on the actual host viewport;
+ // its prop refresh then recalculates tiled clients, without an initial-mode reset.
+ out+=r#"
+local nested_modes = {}
+local function nested_reflow()
+ for _,m in ipairs(hl.get_monitors()) do
+  local mode = string.format('%dx%d',m.width,m.height)
+  if m.width > 0 and m.height > 0 and nested_modes[m.name] ~= mode then
+   nested_modes[m.name] = mode
+   hl.monitor({output=m.name,mode=mode,position=m.x..'x'..m.y,scale=m.scale,transform=m.transform})
+  end
+ end
+end
+hl.on('monitor.layout_changed', nested_reflow)
+"#;
+ let resize_poll=n.get("resize_poll_ms").and_then(Value::as_integer).filter(|v|(20..=5000).contains(v)).ok_or("desktop.nested.resize_poll_ms must be 20..5000")?;
+ out+=&format!("hl.timer(nested_reflow,{{timeout={resize_poll},type='repeat'}})\n");
  let terminal=command(n,"terminal_argv")?;
  // The parent's placement service must never execute inside this compositor.
  out=out.replace("/usr/bin/miosd placement toggle","/usr/bin/true");
@@ -80,7 +98,7 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
   let shell_log=fs::File::create(owned.0.join("shell.log")).map_err(|e|e.to_string())?;
   let shell_path=data["desktop"]["nested"]["shell_entry"].as_str().ok_or("nested shell entry missing")?;
   shell_child=Some(Command::new("bwrap").args(["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin","--ro-bind"]).arg(&input).args(["/dev/input","--","quickshell","--no-duplicate","--path",shell_path])
-   .env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",inst["instance"].as_str().ok_or("nested signature missing")?).env("WAYLAND_DISPLAY",inst["wl_socket"].as_str().ok_or("nested display missing")?).env("QT_QPA_PLATFORM","wayland").env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
+   .env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",inst["instance"].as_str().ok_or("nested signature missing")?).env("WAYLAND_DISPLAY",inst["wl_socket"].as_str().ok_or("nested display missing")?).env("QT_QPA_PLATFORM","wayland").env("MIOS_NESTED_RESIZE_POLL_MS",data["desktop"]["nested"]["resize_poll_ms"].as_integer().unwrap().to_string()).env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
    .stdout(Stdio::from(shell_log.try_clone().map_err(|e|e.to_string())?)).stderr(Stdio::from(shell_log)).spawn().map_err(|e|e.to_string())?);
 
   let mut target=None;
@@ -137,6 +155,11 @@ mod tests {
  #[test] fn nested_projection_keeps_shell_and_system_manager_separate(){
   let data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
   let out=project(&data).unwrap();assert!(!out.contains("name\"] = \"mios-placement"));assert!(!out.contains("systemctl --user restart mios-desktop.target"));assert!(!out.contains("dbus-update-activation-environment"));assert!(!out.contains("/usr/share/mios/quickshell/Config.qml"));assert!(out.contains("Nested.qml"));assert!(out.contains("no_hardware_cursors\"] = 1"));
+ }
+ #[test] fn nested_resize_interval_is_validated(){
+  let mut data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
+  for value in [20,100,5000] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).is_ok()); }
+  for value in [0,19,5001] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).unwrap_err().contains("resize_poll_ms")); }
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
 }

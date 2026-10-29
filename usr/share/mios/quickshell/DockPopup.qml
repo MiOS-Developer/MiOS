@@ -25,6 +25,42 @@ QS.Scope {
     readonly property bool remoteAttached: shellState.remoteAttached === true
     readonly property var remoteScreen: QS.Quickshell.screens.find(s => s.name === remoteStats.output) || null
     property string previewSettingsAddress: ""
+    property bool pipEnabled: false
+    property string pipError: ""
+    property var pipTarget: null
+    function refreshPip() {
+        pipEnabled = false
+        pipError = ""
+        pipTarget = DockLamp.windowInfo(previewSettingsAddress)
+        if (!pipTarget || phonePreview) return
+        const tags = pipTarget.tags || []
+        pipEnabled = tags.some(t => String(t).replace(/\*$/, "") === "mios-pip-managed")
+    }
+    onPreviewSettingsAddressChanged: refreshPip()
+    function togglePip() {
+        if (pipControl.running || !pipTarget) return
+        const address = String(pipTarget.address || "")
+        const pid = Number(pipTarget.pid || 0)
+        const stable = String(pipTarget.stableId || "")
+        if (!/^0x[0-9a-f]+$/i.test(address) || pid <= 0 || !/^[0-9a-f]+$/i.test(stable)) {
+            pipError = "Native window identity unavailable"
+            return
+        }
+        pipError = ""
+        pipControl.command = ["/usr/bin/mios-pip-gravity", "toggle", "--window", address, "--pid", String(pid), "--stable-id", stable]
+        pipControl.running = true
+    }
+    Process {
+        id: pipControl
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { const result = JSON.parse(text); if (result.address === popups.previewSettingsAddress) popups.pipEnabled = result.pip === true }
+                catch (e) { popups.pipError = "Could not read native PiP state" }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.trim()) popups.pipError = text.trim() }
+
+    }
     property bool previewPinned: false
     readonly property bool phonePreview: previewSourceKind === "phone"
     readonly property var selectedShaderPane: typeof shellState.shaderPane === "function" ? shellState.shaderPane(previewSettingsAddress) : null
@@ -494,7 +530,18 @@ QS.Scope {
                         Text {
                             width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
                             font.family: popups.theme.fontFamily; font.pixelSize: popups.theme.smallFontSize; color: popups.theme.fg
-                            text: popups.phonePreview ? (popups.remoteAttached ? String(popups.remoteStats.output) + " · " + String(popups.remoteStats.codec || "negotiating") + "\n" + Number(popups.remoteStats.fps || 0).toFixed(1) + " RDP FPS · " + Math.round(popups.remoteStats.capture_to_ack_ms_p50 || 0) + " ms" : "No remote device connected") : "ShaderGlass · this application window"
+                            text: popups.phonePreview ? (popups.remoteAttached ? String(popups.remoteStats.output) + " · " + String(popups.remoteStats.codec || "negotiating") + "\n" + Number(popups.remoteStats.fps || 0).toFixed(1) + " RDP FPS · " + Math.round(popups.remoteStats.capture_to_ack_ms_p50 || 0) + " ms" : "No remote device connected") : "Window options"
+                        }
+                        PreviewAction {
+                            visible: !popups.phonePreview
+                            label: popups.pipEnabled ? "Picture-in-Picture: on" : "Picture-in-Picture: off"
+                            enabled: popups.pipTarget !== null && !pipControl.running
+                            onTriggered: popups.togglePip()
+                        }
+                        Text {
+                            width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                            text: popups.pipError; visible: text !== ""
+                            color: popups.theme.error; font.pixelSize: popups.theme.smallFontSize
                         }
                         PreviewAction {
                             visible: !popups.phonePreview
@@ -787,6 +834,7 @@ QS.Scope {
             popups.showPreview({title: o.class || "Application", icon: o.class || "", windows: [{address: address, title: o.title || o.class || "", toplevel: t.wayland, minimized: false}], rect: rect, centerX: rect[0] - popups.dockRoot.monX + rect[2]/2, pinned: true})
             popups.previewSettingsAddress = address
         }
-        function state(): string { return JSON.stringify({open: popups.previewOpen, phone: popups.phonePreview, settings: popups.previewSettingsAddress, pinned: popups.previewPinned, width: previewWin.winW, height: previewWin.winH, icon: popups.previewTargetRect}) }
+        function pip(): void { popups.togglePip() }
+        function state(): string { return JSON.stringify({open: popups.previewOpen, phone: popups.phonePreview, settings: popups.previewSettingsAddress, pip: popups.pipEnabled, pipAvailable: popups.pipTarget !== null, pipError: popups.pipError, pinned: popups.previewPinned, width: previewWin.winW, height: previewWin.winH, icon: popups.previewTargetRect}) }
     }
 }

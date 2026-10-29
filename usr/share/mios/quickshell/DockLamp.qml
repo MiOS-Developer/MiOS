@@ -336,6 +336,15 @@ Singleton {
         if (tl.address) return normAddress(tl.address)
         return ""
     }
+    function windowInfo(address) {
+        const a = normAddress(address)
+        if (!a) return null
+        for (const tl of Hyprland.toplevels.values) {
+            if (addressOf(tl) === a) return tl.lastIpcObject || null
+        }
+        for (const c of lamp.fixtureClients) if (normAddress(c.address) === a) return c
+        return null
+    }
     function stripDesktop(id) {
         const s = String(id || "")
         return s.endsWith(".desktop") ? s.slice(0, -8) : s

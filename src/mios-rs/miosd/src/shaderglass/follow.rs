@@ -41,6 +41,7 @@ pub struct Win {
     pub class: String,
     pub title: String,
     pub pid: i64,
+    pub stable_id: String,
     pub mapped: bool,
     pub hidden: bool,
     pub pinned: bool,
@@ -60,6 +61,7 @@ impl Win {
             class: s("class"),
             title: s("title"),
             pid: c.get("pid").and_then(Json::as_i64).unwrap_or(-1),
+            stable_id: c.get("stableId").map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default(),
             mapped: c.get("mapped").and_then(Json::as_bool).unwrap_or(false),
             hidden: c.get("hidden").and_then(Json::as_bool).unwrap_or(false),
             pinned: c.get("pinned").and_then(Json::as_bool).unwrap_or(false),
@@ -137,6 +139,7 @@ pub struct Policy {
 pub enum Action {
     Place(Rect),
     PlaceTarget(Rect),
+    Workspace(String),
     Show,
     Hide,
     Close,
@@ -165,6 +168,8 @@ pub struct Follower {
     last_pane: Option<Rect>,
     changed_at: Option<Instant>,
     poked_at: Option<Instant>,
+    dragging: bool,
+    workspace: Option<(i64, i64)>,
 }
 
 impl Follower {
@@ -185,6 +190,13 @@ impl Follower {
         self.placed_at = None;
         self.shown = None;
         self.last_pane = None;
+        self.workspace = None;
+    }
+
+    /// Only an explicit setup-mode pointer drag may drive the application
+    /// from the overlay. A compositor/Wine reflow is never user intent.
+    pub fn set_dragging(&mut self, dragging: bool) {
+        self.dragging = dragging;
     }
 
     fn frame(p: &Policy, target: &Win, mons: &[Mon]) -> Duration {
@@ -234,7 +246,9 @@ impl Follower {
             self.last_target = Some(r);
         }
         let within = |at: Option<Instant>| at.is_some_and(|a| now.saturating_duration_since(a) < p.settle);
-        let user_dragged_pane = pane_moved && pane_was_synced && !target_moved && !pane.rect.close_to(&r);
+        let user_dragged_pane = self.dragging && self.shown == Some(true)
+            && !suppressed && on_screen(t, mons)
+            && pane_moved && pane_was_synced && !target_moved && !pane.rect.close_to(&r);
         if user_dragged_pane {
             self.changed_at = Some(now);
         }
@@ -243,6 +257,16 @@ impl Follower {
         let show = on_screen(t, mons) && !suppressed && !(moving && p.on_move == OnMove::Hide);
         let mut actions = Vec::new();
         if show {
+            if pane.monitor != t.monitor
+                && (self.workspace != Some((t.monitor, t.workspace_id)) || !within(self.placed_at)) {
+                let workspace = if t.workspace_name.starts_with("special:") {
+                    t.workspace_name.clone()
+                } else {
+                    t.workspace_id.to_string()
+                };
+                actions.push(Action::Workspace(workspace));
+                self.workspace = Some((t.monitor, t.workspace_id));
+            }
             if user_dragged_pane {
                 actions.push(Action::PlaceTarget(pane.rect));
                 self.last_target = Some(pane.rect);
@@ -302,6 +326,10 @@ pub fn actions_lua(address: &str, target_address: &str, actions: &[Action]) -> S
                 r.x.round(),
                 r.y.round()
             ),
+            Action::Workspace(workspace) => format!(
+                "hl.dispatch(hl.dsp.window.move({{workspace={},follow=false,window=w}}))",
+                lua_str(workspace)
+            ),
             Action::Show => "hl.dispatch(hl.dsp.window.set_prop({prop='opacity', value='0.85 override 0.85 override', window=w}))".into(),
             Action::Hide => "hl.dispatch(hl.dsp.window.set_prop({prop='opacity', value='0 override', window=w}))".into(),
             Action::Close => "pcall(function() hl.dispatch(hl.dsp.window.close({window=w})) end)".into(),
@@ -356,6 +384,7 @@ mod tests {
             class: "kitty".into(),
             title: "t".into(),
             pid: 10,
+            stable_id: String::new(),
             mapped: true,
             hidden: false,
             pinned: false,
@@ -520,7 +549,8 @@ mod tests {
         let mut t = win("0xt", 100.0, 100.0, 1);
         let mut pane = win("0xp", 100.0, 100.0, 1);
         assert_eq!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0).actions, vec![Action::Place(t.rect), Action::Show]);
-        // User drags the ShaderGlass overlay pane with Super+LMB while the target underneath hasn't moved yet.
+        // A setup-mode physical drag, not a compositor-driven reflow.
+        f.set_dragging(true);
         pane.rect.x = 220.0;
         pane.rect.y = 180.0;
         let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(50));
@@ -530,6 +560,51 @@ mod tests {
         t.rect = pane.rect;
         let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(60));
         assert!(s.actions.is_empty(), "{:?}", s.actions);
+    }
+
+    #[test]
+    fn compositor_pane_reflow_never_resizes_the_target() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let t = win("0xt", 100.0, 100.0, 1);
+        let mut pane = win("0xp", 100.0, 100.0, 1);
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
+        pane.rect = Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        let step = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(800));
+        assert_eq!(step.actions, vec![Action::Place(t.rect)]);
+        assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_))));
+    }
+
+    #[test]
+    fn suppressed_mode_roundtrip_restores_overlay_without_moving_application() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let t = win("0xt", 100.0, 100.0, 1);
+        let mut pane = win("0xp", 100.0, 100.0, 1);
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
+        let hidden = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(400));
+        assert_eq!(hidden.actions, vec![Action::Hide]);
+        pane.rect = Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        f.set_dragging(true); // a held button across a transition is not a pane drag
+        let returned = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(800));
+        assert_eq!(returned.actions, vec![Action::Place(t.rect), Action::Show]);
+    }
+
+    #[test]
+    fn pane_output_membership_follows_the_target_not_only_its_pixels() {
+        let now = Instant::now();
+        let mut f = Follower::new();
+        let mut target = win("0xt", 2100.0, 50.0, 3);
+        target.monitor = 1;
+        let mut pane = win("0xp", 100.0, 100.0, 1);
+        pane.pinned = true;
+        let monitors = vec![Mon { id: 1, active_ws: 3, special_ws: 0, refresh: 60.0 }];
+        let step = f.step(&policy(), Some(&target), Some(&pane), &monitors, false, now);
+        assert_eq!(step.actions, vec![Action::Workspace("3".into()), Action::Place(target.rect), Action::Show]);
+        let lua = actions_lua(&pane.address, &target.address, &step.actions);
+        assert!(lua.contains("workspace='3',follow=false,window=w"));
+        assert!(!lua.contains("workspace='3',follow=false,window=t"));
     }
 
     #[test]

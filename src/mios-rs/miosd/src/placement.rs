@@ -78,6 +78,7 @@ pub struct Config {
     pub open_tag: String,
     pub managed_tag: String,
     pub excludes: Vec<Exclusion>,
+    pub opening: Option<mios_resolver::window_opening::Policy>,
 }
 
 /// One SSOT window rule (other than placement) reduced to the match keys a client JSON carries.
@@ -147,6 +148,7 @@ impl Config {
             open_tag: string(t, "open_tag")?,
             managed_tag: string(t, "managed_tag")?,
             excludes: exclusions(doc)?,
+            opening: mios_resolver::window_opening::Policy::from_ssot(doc)?,
         };
         let ratio = |v: f64| v > 0.0 && v <= 1.0;
         if !ratio(cfg.width_ratio) || !ratio(cfg.max_width_ratio) || !ratio(cfg.max_height_ratio) {
@@ -273,6 +275,7 @@ fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
 /// area, the width additionally to `max_width_mm` of physical screen. Logical pixels already
 /// carry the monitor scale (DPI); the millimetre cap keeps windows sane on large panels.
 pub fn size_for(cfg: &Config, usable_w: f64, usable_h: f64, px_per_mm: Option<f64>) -> (f64, f64) {
+    if let Some(opening) = &cfg.opening { return opening.size(usable_w, usable_h, px_per_mm); }
     let mut cap_w = (usable_w * cfg.max_width_ratio).min(cfg.max_width);
     if let Some(ppm) = px_per_mm.filter(|p| *p > 0.0 && cfg.max_width_mm > 0.0) {
         cap_w = cap_w.min(cfg.max_width_mm * ppm);
@@ -293,7 +296,7 @@ pub fn size_for(cfg: &Config, usable_w: f64, usable_h: f64, px_per_mm: Option<f6
 
 /// Centered geometry inside the monitor's usable (non-reserved) area.
 pub fn geometry(cfg: &Config, m: &MonitorBox) -> Geometry {
-    let [rl, rt, rr, rb] = m.reserved;
+    let [rl, rt, rr, rb] = cfg.opening.as_ref().map(|p| p.insets(m.reserved)).unwrap_or(m.reserved);
     let uw = (m.w - rl - rr).max(1.0);
     let uh = (m.h - rt - rb).max(1.0);
     let ppm = (m.width_mm > 0.0).then(|| m.w / m.width_mm);
@@ -309,6 +312,10 @@ pub fn geometry(cfg: &Config, m: &MonitorBox) -> Geometry {
 /// The size the static window rule produces: the same function over the whole monitor
 /// (rule expressions see neither reserved areas nor physical size).
 pub fn rule_size(cfg: &Config, monitor_w: f64, monitor_h: f64) -> (f64, f64) {
+    if let Some(opening) = &cfg.opening {
+        let [l,t,r,b] = opening.safe_insets;
+        return opening.size((monitor_w-l-r).max(1.0), (monitor_h-t-b).max(1.0), None);
+    }
     size_for(cfg, monitor_w, monitor_h, None)
 }
 
@@ -325,6 +332,7 @@ fn lit(v: f64) -> String {
 /// muParser expression pair ("X Y", no other spaces) equal to [`rule_size`]; the session config
 /// projection in tools/native/mios-gen/src/render.rs emits the identical string.
 pub fn rule_size_expression(cfg: &Config) -> String {
+    if let Some(opening) = &cfg.opening { return opening.rule_expression(); }
     let (r, a) = (lit(cfg.width_ratio), lit(cfg.aspect));
     let (minw, minh, maxw) = (lit(cfg.min_width), lit(cfg.min_height), lit(cfg.max_width));
     let (mwr, mhr) = (lit(cfg.max_width_ratio), lit(cfg.max_height_ratio));
@@ -790,6 +798,7 @@ impl Server {
     }
 
     fn filtered(&self, c: &Json) -> bool {
+        if tags(c).contains(&"mios-pip-managed".to_string()) { return false; }
         match &self.class_filter {
             Some(re) => re.is_match(c.get("class").and_then(Json::as_str).unwrap_or("")),
             None => true,
@@ -1006,7 +1015,7 @@ impl Server {
                 drop.push(a);
                 continue;
             };
-            if c.get("floating").and_then(Json::as_bool) != Some(true)
+            if !self.filtered(c) || c.get("floating").and_then(Json::as_bool) != Some(true)
                 || !tags(c).contains(&self.cfg.managed_tag)
             {
                 drop.push(a);
@@ -1370,8 +1379,8 @@ managed_tag = "mios-placed"
             width_mm: 530.0,
         };
         let g = geometry(&cfg(), &m);
-        assert_eq!((g.w, g.h), (1187, 742));
-        assert_eq!((g.x, g.y), (367, 155));
+        assert_eq!((g.w, g.h), (1075, 760));
+        assert_eq!((g.x, g.y), (423, 146));
     }
 
     #[test]
@@ -1385,7 +1394,8 @@ managed_tag = "mios-placed"
             reserved: [0.0; 4],
             width_mm: 697.0,
         };
-        let g = geometry(&cfg(), &m);
+        let mut c=cfg();c.width_ratio=0.8; // request enough width to actually reach the physical cap
+        let g = geometry(&c, &m);
         assert_eq!(g.w, (420.0 * 2560.0 / 697.0_f64).round() as i64);
         assert!(g.h < g.w);
     }
@@ -1401,7 +1411,7 @@ managed_tag = "mios-placed"
             width_mm: 0.0,
         };
         let g = geometry(&cfg(), &m);
-        assert_eq!((g.w, g.h), (742, 1187));
+        assert_eq!((g.w, g.h), (760, 1075));
     }
 
     #[test]

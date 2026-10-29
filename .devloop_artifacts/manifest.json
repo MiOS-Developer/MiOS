@@ -1,26 +1,29 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-28T00:33:36.356607+00:00",
-  "total_artifacts": 45,
+  "last_updated": "2026-10-29T13:23:44.121085+00:00",
+  "total_artifacts": 61,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "d48809065391ecf7b9dd2ef7981d46002c032e4979f552251eccc7fc19baee78",
-      "size_bytes": 27960,
+      "sha256": "8dedbecfb7a2dd2161d4eeac603a6cd0a3205e13cdda9dfb2e450eb898c36135",
+      "size_bytes": 28501,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": false
+        "physical_capture_enabled": true
       }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "4f2f189975aa076716ac401257a8c359e18ef14aadb8413ed92c45d706f5b850",
-      "size_bytes": 638145,
+      "sha256": "9c8069bbe961e80e206c3b20022ff3188eacfcea82f4c731e7f66a2b2a72abbe",
+      "size_bytes": 642871,
       "created_at": "2026-10-22T18:30:16.079532",
-      "metadata": {}
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
     },
     {
       "path": "tools/native/mios-gen/src/main.rs",
@@ -41,21 +44,24 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "7a0090acd5986441d6f000613bb8561761eeb01ed24ec94601c1cd0aa08cf4bd",
-      "size_bytes": 985605,
+      "sha256": "2fba292ef9680e820264a966e448a4b4365559de32df5a239a8141c50ff9f0ef",
+      "size_bytes": 992772,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": false
+        "physical_capture_enabled": true
       }
     },
     {
       "path": "usr/share/mios/hyprland/hyprland.lua",
       "artifact_type": "config",
-      "sha256": "642580856f4b4185776e56ae598c09dca3cb59d94601f0b0c8f05c56cc97ae54",
-      "size_bytes": 33700,
+      "sha256": "f2bd2aa89fc518ba398a56c703bbfa0a2b6b1aba2a36aa0b82cee2c506a6cd38",
+      "size_bytes": 44158,
       "created_at": "2026-10-22T18:30:16.197459",
-      "metadata": {}
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
     },
     {
       "path": "usr/share/wayland-sessions/hyprland.desktop",
@@ -218,12 +224,12 @@
     {
       "path": "tools/native/Cargo.lock",
       "artifact_type": "config",
-      "sha256": "7473384579083a3dff677729be2454088b8b3fea7881652728cb94f192d3eb4c",
-      "size_bytes": 114398,
+      "sha256": "439e75e27d870472aaacaf1305e9fe65f1af4bf423bcedd3c74558bc0a9572ee",
+      "size_bytes": 114536,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": false
+        "physical_capture_enabled": true
       }
     },
     {
@@ -295,12 +301,12 @@
     {
       "path": "usr/share/doc/mios/keybinds.md",
       "artifact_type": "doc",
-      "sha256": "d444d593fad1606d44eda9d5befc3689cc9a3cb4f5a224fa4c6c088e03a50cfc",
-      "size_bytes": 7121,
+      "sha256": "18a5dd6c8637e957aeb49a61fb52daefae541f5c712b5b962a6bbb148442aae2",
+      "size_bytes": 10129,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": false
+        "physical_capture_enabled": true
       }
     },
     {
@@ -434,6 +440,182 @@
       },
       "sha256": "f44344a6dd9d11d1dae021557740faf5f8d5b0d878a7d0039da528b6e31280cc",
       "size_bytes": 31875
+    },
+    {
+      "path": "tools/native/mios-gen/src/nested_session.rs",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "2bb4ac7b906c3d22fd08f51867223d0c74140c4fbf4e5f4350b3b1b2e3b5c124",
+      "size_bytes": 16065,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "tools/native/mios-unit-gen/src/lib.rs",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "11fe79ff4f26e83de945b64e44f70feff27360800a927118061fcb315a40429f",
+      "size_bytes": 55873,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "src/mios-rs/miosd/src/placement.rs",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "16cdac63ed67b6bb0bca72f8dbf6019c7b261517daff951ce456b55e64cfefaf",
+      "size_bytes": 53228,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "src/mios-rs/miosd/src/shaderglass.rs",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "882c8480dfa26fd5614bc3b95533e44093de899cfd8350593cf8ebabcf473927",
+      "size_bytes": 98840,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "src/mios-rs/miosd/src/shaderglass/follow.rs",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "bf53b66b766c097f2e576f3a26fab9668745d20d8018143ead59a355ed5880e9",
+      "size_bytes": 27836,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "tests/test-island-sysmon.py",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "21094b220aad2319b8e08060cb9def1af56f5a6d69c31d89382aa359512f6a1f",
+      "size_bytes": 41190,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/doc/mios/desktop-pip.md",
+      "artifact_type": "doc",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "33b3f5cfb8d6441aa86ab9ac21e067cc944faea152ee57457e1527ccdc249022",
+      "size_bytes": 5342,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/configurator/mios.html",
+      "artifact_type": "config",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "98fa5d6d895044c8e176a0af0c49adfd84898001b63359416694cd88ab2c2f2b",
+      "size_bytes": 419108,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/DockLamp.qml",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "2c29049b825056b4fc1cc04233c4d5146304e0c31f877e32d54b6166910f1dfe",
+      "size_bytes": 41636,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/DockPopup.qml",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "0379a96f34c7747df2497e3114263c4fa6a90fd62f18755a8c2a1267b2835ebe",
+      "size_bytes": 47340,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/PanelWindow.qml",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "6783abd9a73b2272f9fa30617aaa69298c545bb2c8c8b04d88b36a07d89d6246",
+      "size_bytes": 66078,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/Sidebar.qml",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "a7ea360ecddca58e2f0477fbba920fe57a0df86aa9c2970e2359fbe956aa814f",
+      "size_bytes": 65223,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/Nested.qml",
+      "artifact_type": "code",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "68f8954948434064ee7275928014d6eaa0eb06f99bba7aebd4ff2775c18ca5a8",
+      "size_bytes": 3129,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/applications/mios-nested-session.desktop",
+      "artifact_type": "config",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "2df5d1f76919ac79d8a8645e9c4dfbcad98c2cef807909fd5d12f0756744a1d2",
+      "size_bytes": 828,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/share/mios/tmux/mios-keys.tmux.conf",
+      "artifact_type": "config",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "8dc79b51274fa8579702887db94c11d46ca4765de6bbede7431f9d0bb3fc9f29",
+      "size_bytes": 2120,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-desktop.target",
+      "artifact_type": "config",
+      "created_at": "2026-10-29T13:23:44.121085+00:00",
+      "sha256": "600ccf421763c018e1ae0212e21a5bd2059fbaf44409f9a13c85884664d03313",
+      "size_bytes": 392,
+      "metadata": {
+        "verification": "/var/lib/mios-build/mios-inputd/verification.json",
+        "physical_capture_enabled": true
+      }
     }
   ]
 }

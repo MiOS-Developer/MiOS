@@ -1114,9 +1114,41 @@ fn spawn_control(listener: UnixListener, tx: mpsc::Sender<Msg>) {
     });
 }
 
+/// Native identity survives mode/workspace changes, unlike geometry or title.
+/// Address reuse after a close must not transfer an overlay to a different app.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WindowIdentity {
+    address: String,
+    pid: i64,
+    stable_id: String,
+}
+
+impl WindowIdentity {
+    fn from_window(window: &Win) -> Self {
+        Self { address: window.address.clone(), pid: window.pid, stable_id: window.stable_id.clone() }
+    }
+    fn matches(&self, window: &Win) -> bool {
+        self.address == window.address && self.pid == window.pid
+            && (self.stable_id.is_empty() || self.stable_id == window.stable_id)
+    }
+}
+
+fn binding_lua(pane: &str, target: &str, on: bool, target_alive: bool) -> String {
+    let sign = if on { "+" } else { "-" };
+    let mut actions = vec![format!("hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
+        lua_str(&format!("{sign}mios-shaderglass-target:{target}")), lua_str(&format!("address:{pane}")))];
+    if target_alive {
+        actions.push(format!("hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
+            lua_str(&format!("{sign}mios-shaderglass-pane:{pane}")), lua_str(&format!("address:{target}"))));
+    }
+    actions.into_iter().map(|a| format!("pcall(function() {a} end)")).collect::<Vec<_>>().join("; ")
+}
+
 struct Pane {
     id: String,
     target: String,
+    target_identity: WindowIdentity,
+    pane_identity: Option<WindowIdentity>,
     class: String,
     child: Child,
     window: Option<String>,
@@ -1146,7 +1178,7 @@ struct Supervisor {
     cfg: Config,
     hypr: Hypr,
     panes: Vec<Pane>,
-    queue: VecDeque<(String, bool)>,
+    queue: VecDeque<(WindowIdentity, bool)>,
     clients: Vec<Json>,
     clients_at: Option<Instant>,
     mons: Vec<Mon>,
@@ -1203,8 +1235,8 @@ impl Supervisor {
             .map(|p| p.target.clone())
             .collect();
         for (q, _) in &self.queue {
-            if !targets.contains(q) {
-                targets.push(q.clone());
+            if !targets.contains(&q.address) {
+                targets.push(q.address.clone());
             }
         }
         let active = if targets.is_empty() { 0 } else { 1 };
@@ -1255,7 +1287,7 @@ impl Supervisor {
                     let t = addr(if verb.starts_with("0x") { verb } else { target_raw.trim() });
                     if !t.is_empty() {
                         let has = self.panes.iter().any(|p| p.target == t && p.closing.is_none())
-                            || self.queue.iter().any(|(q, _)| *q == t);
+                            || self.queue.iter().any(|(q, _)| q.address == t);
                         let cmd = if has { "detach" } else { "attach" };
                         let _ = self.on_control(&json!({"cmd": cmd, "target": t, "setup": false}));
                     }
@@ -1379,9 +1411,16 @@ impl Supervisor {
     }
 
     fn bind(&mut self, i: usize, a: &str) {
+        let identity = self.panes[i].target_identity.clone();
+        if !self.client(&identity.address).and_then(Win::from_json).is_some_and(|w| identity.matches(&w)) {
+            self.close_pane(i);
+            return;
+        }
+        let pane_identity = self.client(a).and_then(Win::from_json).map(|w| WindowIdentity::from_window(&w));
         let tag = self.cfg.window.passthrough_tag.clone();
         let p = &mut self.panes[i];
         p.window = Some(a.to_owned());
+        p.pane_identity = pane_identity;
         p.follower.reset();
         // Keep the picker request: WineCap opens its ScreenCast session only after this window maps, so
         // deleting it here sent every pick to the stock picker. The MiOS picker consumes it (one-shot), it
@@ -1394,20 +1433,27 @@ impl Supervisor {
         } else {
             follow::passthrough_lua(a, &tag, true)
         };
-        self.eval(&lua);
+        self.eval(&format!("{}; {lua}", binding_lua(a, &target, true, true)));
         self.urgent = true;
     }
 
     fn on_close(&mut self, a: &str) {
         let close = self.cfg.follow.close_with_target;
         let mut to_close = Vec::new();
+        let mut unbind = Vec::new();
         for (i, p) in self.panes.iter_mut().enumerate() {
             if p.window.as_deref() == Some(a) {
+                unbind.push((p.target.clone(), p.target_identity.clone()));
                 p.window = None;
                 p.closing.get_or_insert_with(Instant::now);
             } else if p.target == a && close {
                 to_close.push(i);
             }
+        }
+        for (target, identity) in unbind {
+            let alive = self.client(&target).and_then(Win::from_json)
+                .is_some_and(|w| identity.matches(&w));
+            self.eval(&binding_lua(a, &target, false, alive));
         }
         for i in to_close {
             self.close_pane(i);
@@ -1423,6 +1469,11 @@ impl Supervisor {
         }
         let w = self.panes[i].window.clone();
         let target = self.panes[i].target.clone();
+        let target_alive = self.client(&target).and_then(Win::from_json)
+            .is_some_and(|t| self.panes[i].target_identity.matches(&t));
+        if let Some(pane) = &w {
+            self.eval(&binding_lua(pane, &target, false, target_alive));
+        }
         let mapped = w.as_deref().and_then(|w| self.client(w)).and_then(|c| c.get("mapped")).and_then(Json::as_bool) == Some(true);
         match w {
             Some(w) if mapped => self.eval(&follow::actions_lua(&w, &target, &[follow::Action::Close])),
@@ -1451,7 +1502,7 @@ impl Supervisor {
                 "unit": unit_name(&self.cfg),
                 "panes": self.panes.iter().map(|p| json!({"id": p.id, "target": p.target, "class": p.class, "window": p.window,
                     "pid": p.child.id(), "state": p.state()})).collect::<Vec<_>>(),
-                "queued": self.queue.iter().map(|(t, s)| json!({"target": t, "setup": s})).collect::<Vec<_>>(),
+                "queued": self.queue.iter().map(|(t, s)| json!({"target": t.address, "setup": s})).collect::<Vec<_>>(),
             }),
             "attach" => {
                 let Some(t) = req.get("target").and_then(Json::as_str).filter(|t| !t.is_empty()).map(addr) else {
@@ -1462,7 +1513,7 @@ impl Supervisor {
                     self.sync_hypr3d(&t, true);
                     return json!({"ok": true, "pane": p.id, "state": p.state()});
                 }
-                if self.queue.iter().any(|(q, _)| *q == t) {
+                if self.queue.iter().any(|(q, _)| q.address == t) {
                     self.write_state();
                     self.sync_hypr3d(&t, true);
                     return json!({"ok": true, "state": "queued"});
@@ -1475,7 +1526,10 @@ impl Supervisor {
                     Some(c) if is_pane(&self.cfg, c) => return err(format!("{t} is a ShaderGlass window")),
                     Some(_) => {}
                 }
-                self.queue.push_back((t.clone(), req.get("setup").and_then(Json::as_bool).unwrap_or(false)));
+                let Some(window) = self.client(&t).and_then(Win::from_json).filter(|w| w.mapped) else {
+                    return err("the target is not mapped".into());
+                };
+                self.queue.push_back((WindowIdentity::from_window(&window), req.get("setup").and_then(Json::as_bool).unwrap_or(false)));
                 self.urgent = true;
                 self.write_state();
                 self.sync_hypr3d(&t, true);
@@ -1484,7 +1538,7 @@ impl Supervisor {
             "detach" => {
                 let mut detached_target = req.get("target").and_then(Json::as_str).map(addr);
                 if let Some(ref t) = detached_target {
-                    self.queue.retain(|(q, _)| q != t);
+                    self.queue.retain(|(q, _)| &q.address != t);
                 }
                 let res = match self.find(req) {
                     Some(i) => {
@@ -1545,13 +1599,17 @@ impl Supervisor {
         }
         let Some((target, setup)) = self.queue.pop_front() else { return };
         if let Err(e) = self.launch(&target, setup) {
-            self.log(&format!("{target}: {e}"));
+            self.log(&format!("{}: {e}", target.address));
         }
     }
 
-    fn launch(&mut self, target: &str, setup: bool) -> Result<(), String> {
+    fn launch(&mut self, identity: &WindowIdentity, setup: bool) -> Result<(), String> {
         ensure_portal_backend();
         self.refresh_clients()?;
+        let target = identity.address.as_str();
+        if !self.client(target).and_then(Win::from_json).is_some_and(|w| identity.matches(&w)) {
+            return Err("the queued target window changed before capture launch".into());
+        }
         let class = self
             .client(target)
             .and_then(|c| c.get("class"))
@@ -1621,6 +1679,8 @@ impl Supervisor {
         self.panes.push(Pane {
             id,
             target: target.to_owned(),
+            target_identity: identity.clone(),
+            pane_identity: None,
             class,
             child,
             window: None,
@@ -1678,6 +1738,11 @@ impl Supervisor {
 
     /// Save the restore token WineCap wrote, drop the pane's files.
     fn finish(&mut self, p: Pane) {
+        if let Some(pane) = &p.window {
+            let target_alive = self.client(&p.target).and_then(Win::from_json)
+                .is_some_and(|w| p.target_identity.matches(&w));
+            self.eval(&binding_lua(pane, &p.target, false, target_alive));
+        }
         if let Some(r) = &p.request {
             let _ = std::fs::remove_file(r);
         }
@@ -1713,22 +1778,19 @@ impl Supervisor {
         }
         self.hypr3d_at = Some(now);
         let prev = self.hypr3d;
-        let active = if let Ok(status) = std::fs::read_to_string("/tmp/hypr3d-status.txt") {
-            status
-                .lines()
-                .rev()
-                .find(|l| l.starts_with("active="))
-                .is_some_and(|last| last.starts_with("active=1") && !last.split_whitespace().any(|w| w == "target=0"))
-        } else if let Ok(rt) = runtime_root() {
-            let f = rt.join("hypr3d-active");
+        let active = if let Ok(rt) = runtime_root() {
+            let f = rt.join(format!("hypr3d-active-{}", std::process::id()));
             let _ = std::fs::remove_file(&f);
             let lua = format!(
                 "local p = hl.plugin and hl.plugin.hypr3d; local a = false; if p and p.active then local ok, v = pcall(p.active); a = ok and v and true or false end; local f = io.open({}, 'w'); if f then f:write(a and '1' or '0'); f:close() end",
                 lua_str(&f.display().to_string())
             );
-            self.hypr.eval(&lua).is_ok() && std::fs::read_to_string(&f).map(|s| s.trim() == "1").unwrap_or(false)
+            let value = self.hypr.eval(&lua).ok().and_then(|_| std::fs::read_to_string(&f).ok())
+                .map(|v| v.trim() == "1").unwrap_or(prev);
+            let _ = std::fs::remove_file(&f);
+            value
         } else {
-            false
+            prev
         };
         self.hypr3d = active;
         if prev != active {
@@ -1776,7 +1838,8 @@ impl Supervisor {
         }
         let suppressed = self.hypr3d_active(now);
         // Any held pointer button (Super+LMB drag on pane or target, or hyprbars title drag): poll all panes at frame rate.
-        if self.buttons.down() == Some(true) {
+        let pointer_down = self.buttons.down() == Some(true);
+        if pointer_down {
             for &i in &live {
                 self.panes[i].follower.poke(now);
             }
@@ -1787,8 +1850,12 @@ impl Supervisor {
         for &i in &live {
             let w = self.panes[i].window.clone().unwrap_or_default();
             let target_addr = self.panes[i].target.clone();
-            let target = self.client(&target_addr).and_then(Win::from_json);
-            let pane = self.client(&w).and_then(Win::from_json);
+            let target = self.client(&target_addr).and_then(Win::from_json)
+                .filter(|t| self.panes[i].target_identity.matches(t));
+            let pane = self.client(&w).and_then(Win::from_json)
+                .filter(|w| self.panes[i].pane_identity.as_ref().is_some_and(|id| id.matches(w)));
+            let dragging = self.panes[i].setup && pointer_down;
+            self.panes[i].follower.set_dragging(dragging);
             let step = self.panes[i].follower.step(&self.cfg.follow, target.as_ref(), pane.as_ref(), &self.mons, suppressed, now);
             if !step.actions.is_empty() {
                 if let (Some(sf), Some(t)) = (&self.panes[i].size_file, &target) {
@@ -2006,6 +2073,138 @@ mod tests {
     fn vendor() -> Value {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml");
         std::fs::read_to_string(path).unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn native_window_identity_rejects_address_reuse_but_accepts_mode_changes() {
+        let json = json!({"address":"0x123","pid":11,"stableId":"42","at":[0,0],"size":[800,600],"mapped":true});
+        let original = Win::from_json(&json).unwrap();
+        let identity = WindowIdentity::from_window(&original);
+        let mut changed = original.clone();
+        changed.rect = follow::Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        changed.workspace_id = 4;
+        changed.monitor = 2;
+        assert!(identity.matches(&changed));
+        changed.stable_id = "43".into();
+        assert!(!identity.matches(&changed), "a new native window reusing an address must not inherit capture");
+        changed.stable_id = "42".into();changed.pid = 12;
+        assert!(!identity.matches(&changed), "another process is not the original target");
+    }
+
+    #[test]
+    fn native_association_tags_bind_both_windows_and_cleanup_is_independent() {
+        let bound = binding_lua("0xabc", "0xdef", true, true);
+        assert!(bound.contains("+mios-shaderglass-target:0xdef"));
+        assert!(bound.contains("+mios-shaderglass-pane:0xabc"));
+        assert_eq!(bound.matches("pcall(function()").count(), 2);
+        let gone_target = binding_lua("0xabc", "0xdef", false, false);
+        assert!(gone_target.contains("-mios-shaderglass-target:0xdef"));
+        assert!(!gone_target.contains("address:0xdef"), "never tag an address-reused target");
+    }
+
+    /// Run only in an isolated compositor with three owned, floated fixture windows.
+    /// This dispatches the same follower actions as the supervisor against native snapshots.
+    #[test]
+    #[ignore = "requires explicit owned native compositor fixtures"]
+    fn live_native_association_and_mode_roundtrips() {
+        use std::thread::sleep;
+        use follow::Action;
+        let hypr = Hypr::connect().expect("explicit native compositor");
+        let target = std::env::var("MIOS_SHADER_TARGET").expect("owned target address");
+        let pane = std::env::var("MIOS_SHADER_PANE").expect("owned overlay address");
+        let control = std::env::var("MIOS_SHADER_CONTROL").expect("owned negative control address");
+        let read = |address: &str| -> Win {
+            let clients = hypr.json("clients").unwrap();
+            let v = clients.as_array().unwrap().iter()
+                .find(|v| v["address"].as_str() == Some(address)).expect("fixture mapped");
+            let w = Win::from_json(v).unwrap();
+            assert!(w.title.starts_with("MiOS shader-state check "), "owned fixtures only");
+            w
+        };
+        let tags = |address: &str| -> Vec<String> {
+            let clients = hypr.json("clients").unwrap();
+            clients.as_array().unwrap().iter().find(|v| v["address"].as_str() == Some(address)).unwrap()
+                ["tags"].as_array().unwrap().iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
+        };
+        let original = read(&target);
+        let identity = WindowIdentity::from_window(&original);
+        let wrong = read(&control);
+        assert!(!identity.matches(&wrong), "wrong-window negative control");
+        hypr.eval(&binding_lua(&pane, &target, true, true)).unwrap();
+        assert!(tags(&target).contains(&format!("mios-shaderglass-pane:{pane}")));
+        assert!(tags(&pane).contains(&format!("mios-shaderglass-target:{target}")));
+        assert!(!tags(&control).iter().any(|t| t.starts_with("mios-shaderglass-")));
+
+        let mut follower = Follower::new();
+        let policy = follow::Policy {
+            follow_hz: 0.0, idle: Duration::from_millis(100),
+            settle: Duration::from_millis(50), on_move: follow::OnMove::Follow, close_with_target: true,
+        };
+        let mut synchronize = |suppressed: bool| {
+            for _ in 0..5 {
+                let t = read(&target);
+                let p = read(&pane);
+                assert!(identity.matches(&t), "native identity persists across presentation modes");
+                let monitors = follow::monitors_from_json(&hypr.json("monitors").unwrap());
+                let step = follower.step(&policy, Some(&t), Some(&p), &monitors, suppressed, Instant::now());
+                assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_))),
+                    "mode/reflow must never write application geometry: {:?}", step.actions);
+                if !step.actions.is_empty() {
+                    hypr.eval(&follow::actions_lua(&pane, &target, &step.actions)).unwrap();
+                }
+                sleep(Duration::from_millis(80));
+            }
+            if !suppressed {
+                let t = read(&target);
+                let p = read(&pane);
+                assert!(t.rect.close_to(&p.rect), "overlay follows native application geometry: {:?} {:?}", t.rect, p.rect);
+                assert_eq!(t.monitor, p.monitor, "overlay follows native output ownership");
+            }
+        };
+        synchronize(false);
+        let before = read(&target).rect;
+        hypr.eval(&follow::actions_lua(&pane, &target, &[Action::Place(follow::Rect {
+            x: before.x + 31.0, y: before.y + 29.0, w: before.w - 47.0, h: before.h - 41.0,
+        })])).unwrap();
+        sleep(Duration::from_millis(200));
+        synchronize(false);
+        assert!(read(&target).rect.close_to(&before), "pane-only native reflow did not resize target");
+        println!("native pane reflow: target unchanged, overlay reconciled");
+
+        for mode in ["maximized", "fullscreen"] {
+            for action in ["set", "unset"] {
+                hypr.eval(&format!("hl.dispatch(hl.dsp.window.fullscreen({{window={},mode={},action={}}}))",
+                    lua_str(&format!("address:{target}")), lua_str(mode), lua_str(action))).unwrap();
+                sleep(Duration::from_millis(400));
+                synchronize(false);
+                assert!(tags(&target).contains(&format!("mios-shaderglass-pane:{pane}")));
+                assert!(!tags(&control).iter().any(|t| t.starts_with("mios-shaderglass-")));
+                println!("native mode {mode} {action}: identity/tags/output/geometry retained");
+            }
+        }
+        synchronize(true);
+        synchronize(false);
+        assert!(read(&target).rect.close_to(&before), "suppression return preserves application rect");
+
+        hypr.eval(&format!("hl.dispatch(hl.dsp.window.move({{window={},workspace='special:mios-shader-state-minimized',follow=false}}))",
+            lua_str(&format!("address:{target}")))).unwrap();
+        sleep(Duration::from_millis(200));
+        let hidden = read(&target);
+        assert!(!follow::on_screen(&hidden, &follow::monitors_from_json(&hypr.json("monitors").unwrap())));
+        // No pane->target writes are allowed when the associated target is minimized.
+        let step = Follower::new().step(&policy, Some(&hidden), Some(&read(&pane)),
+            &follow::monitors_from_json(&hypr.json("monitors").unwrap()), false, Instant::now());
+        assert!(step.actions.contains(&Action::Hide));
+        hypr.eval(&follow::actions_lua(&pane, &target, &step.actions)).unwrap();
+        hypr.eval(&format!("hl.dispatch(hl.dsp.window.move({{window={},workspace={},follow=false}}))",
+            lua_str(&format!("address:{target}")), lua_str(&original.workspace_name))).unwrap();
+        sleep(Duration::from_millis(200));
+        synchronize(false);
+        hypr.eval(&binding_lua(&pane, &target, false, true)).unwrap();
+        assert!(!tags(&target).iter().any(|t| t.starts_with("mios-shaderglass-")));
+        assert!(!tags(&pane).iter().any(|t| t.starts_with("mios-shaderglass-")));
+        assert_eq!(read(&control), wrong, "negative control untouched through all modes");
+        println!("native minimize/restore/suppression and wrong-window control passed");
     }
 
     #[test]

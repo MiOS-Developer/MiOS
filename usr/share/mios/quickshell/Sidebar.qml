@@ -25,6 +25,7 @@ QS.Scope {
     id: root
     required property var screen
     required property QtObject shellState
+    property real viewportWidth: 0 // optional native nested output width
     property QtObject theme: Theme {}
     readonly property var dockWindow: dock
     readonly property var phoneRect: dock.lampGeometry.phone_rect || [root.monX, root.monY, 48, 48]
@@ -210,7 +211,7 @@ QS.Scope {
         // contents are scaled to match (`content`), so the dock keeps the policy size on an output the
         // compositor left unscaled.
         readonly property real ui: screen ? Mobile.uiScale(screen.name) : 1
-        readonly property real screenW: screen.width / ui
+        readonly property real screenW: (root.viewportWidth > 0 ? root.viewportWidth : screen.width) / ui
         readonly property real screenH: screen.height / ui
         property int hoveredAppIndex: -1
         property int hoveredMinIndex: -1

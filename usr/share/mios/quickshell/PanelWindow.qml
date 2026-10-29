@@ -43,6 +43,8 @@ import Quickshell.Services.UPower
 QS.PanelWindow {
     id: pill
     required property QtObject shellState
+    property real viewportWidth: 0 // optional native nested output width while Qt screen metadata catches up
+    readonly property real outputWidth: viewportWidth > 0 ? viewportWidth : (screen ? screen.width : 0)
     property QtObject theme: Theme {}
     readonly property var bar: theme.topbar || ({})
     readonly property var commands: bar.commands || ({})
@@ -347,7 +349,7 @@ QS.PanelWindow {
     property QtObject reveal: null
     readonly property bool overFullscreen: !!reveal && reveal.topActive
     readonly property string hudAlignment: "center"
-    readonly property real hudScreenX: mobile ? 0 : ((screen ? screen.width : 0) - width) / 2
+    readonly property real hudScreenX: mobile ? 0 : (outputWidth - width) / 2
     // "mios-topbar-remote" where [desktop.mobile.remote_effects] applies (Mobile.layerNamespace): the
     // compositor draws this layer's glass with the remote preset.
     WlrLayershell.namespace: Mobile.layerNamespace("mios-topbar", screen ? screen.name : "")
@@ -358,8 +360,8 @@ QS.PanelWindow {
     anchors.left: mobile
     anchors.right: mobile
     margins.top: Math.round(theme.edgeMargin * ui)
-    implicitWidth: mobile ? screen.width
-                          : Math.min(Math.ceil((row.implicitWidth + 2 * theme.edgeMargin) * ui), screen.width - Math.round(2 * theme.edgeMargin * ui))
+    implicitWidth: mobile ? outputWidth
+                          : Math.min(Math.ceil((row.implicitWidth + 2 * theme.edgeMargin) * ui), outputWidth - Math.round(2 * theme.edgeMargin * ui))
     implicitHeight: Math.round(rowHeight * ui)
     // Same rule as the dock: the compositor adds margins.top, so one edge margin separates bar and windows.
     // 8 px clearance between pill and windows on mobile too. Under a fullscreen window the zone is 0 (nothing

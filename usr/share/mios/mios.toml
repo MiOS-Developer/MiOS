@@ -4237,9 +4237,15 @@ reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e"
 # Every quickshell: and mios: action a binding fires must be in one of these two (the gate enforces it): an
 # implemented action carries its argv; an action with no runtime handler yet is listed as planned and is reported,
 # never silently launched. hypr:, exec:, tmux: and readline: verbs resolve natively (compositor eval, program, tmux, readline).
-planned_actions = ["quickshell:monitor-toggle", "mios:toggle_vm_passthrough", "mios:vm-fullscreen", "mios:vm-command-modifier"]
+planned_actions = []
+native_actions = { "mios:vm-command-modifier" = "hyprland" }
 
 [keybindings.global.action_argv]
+"quickshell:monitor-toggle" = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal", "--action", "system"]
+"mios:toggle_vm_passthrough" = ["/usr/libexec/mios/mios-inputd", "vm-action", "toggle_vm_passthrough"]
+"mios:vm-fullscreen" = ["/usr/libexec/mios/mios-inputd", "vm-action", "vm-fullscreen"]
+"mios:shaderglass toggle" = ["/usr/bin/mios-shaderglass", "toggle"]
+"mios:shaderglass cycle" = ["/usr/bin/mios-shaderglass", "cycle"]
 "quickshell:drawer-toggle" = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call", "drawer", "toggle"]
 "quickshell:keymap-toggle" = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call", "keymap", "toggle"]
 "mios:placement-toggle" = ["/usr/bin/miosd", "placement", "toggle"]
@@ -4322,6 +4328,7 @@ id = "vm-passthrough-toggle"
 tier = 2
 chord = "SUPER+CTRL+p"
 action = "mios:toggle_vm_passthrough"
+realized_by = "hyprland"
 contexts = ["desktop-2d", "desktop-3d", "vm-passthrough"]
 note = "Sends the focused Looking Glass or X11 FreeRDP native escape; capture state remains client-owned."
 
@@ -4330,6 +4337,7 @@ id = "vm-fullscreen"
 tier = 2
 chord = "SUPER+CTRL+f"
 action = "mios:vm-fullscreen"
+realized_by = "hyprland"
 contexts = ["vm-passthrough"]
 
 [[keybindings.global.bindings]]
@@ -4337,6 +4345,7 @@ id = "vm-command-modifier"
 tier = 2
 chord = "SUPER+CTRL+m"
 action = "mios:vm-command-modifier"
+realized_by = "hyprland"
 contexts = ["vm-passthrough"]
 note = "Hold the Looking Glass native command key; release on chord release, focus loss, or configuration reload."
 
@@ -4369,7 +4378,12 @@ x11_rdp_escape_key = "Control_R"
 
 [keybindings.global.controller]
 enabled = true
-exclusive_grab = false               # stays false until mios-inputd's private fixtures and legacy parity pass
+exclusive_grab = true                # private kernel fixtures and legacy parity verified; serve retains recovery_argv
+captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
+capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
+capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
+context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
+context_stale_ms = 1000                # transport failure never invents terminal focus
 guide_button = "BTN_MODE"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
@@ -7921,6 +7935,8 @@ workspace_count = 10
 # Browser popouts and every modal or picker float; Picture-in-Picture is pinned at a golden-ratio
 # size (0.236 = 0.382 x 0.618 of the monitor width, 16:9) in the bottom-right corner.
 window_rules = [
+  { name = "mios-nested-desktop", match = { class = "^aquamarine$", initial_title = "^aquamarine - WAYLAND-[0-9]+$" }, float = true, pin = true, no_initial_focus = true, no_follow_mouse = true, focus_on_activate = false, tag = "+mios-nested-desktop" },
+  { name = "mios-managed-pip-aspect", match = { tag = "^mios-pip-managed$" }, keep_aspect_ratio = true, no_follow_mouse = true, focus_on_activate = false },
   { name = "mios-browser-pip", match = { class = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal)$", title = "^(Picture-in-Picture)$" }, float = true, pin = true, keep_aspect_ratio = true, size = "monitor_w*0.236 monitor_w*0.13275", move = "monitor_w*0.75 monitor_h*0.68" },
   { name = "mios-browser-dialogs", match = { class = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal|org\\.gnome\\.Epiphany)$", title = "^(Library|About .*|Extension: .*|Page Info.*|Downloads|Print.*|Save As.*|Open File.*|Choose .*|Enter name of file.*)$" }, float = true, center = true },
   { name = "mios-portal", match = { class = "^(mios-portal)$" }, float = true, center = true, size = "window_w window_h" },  # keep the [desktop.portal] size it requests (overrides mios-placement)
@@ -8630,7 +8646,7 @@ walk_bob = false
 [desktop.hyprland.hypr3d.spawn]
 enabled = true
 criterion = "retina"                       # "retina": M = 1 per output and per window; "fixed": the plugin's own placement
-reading_distance_m = 0.65                  # arm's reach (metres in front of the eye): sheet-of-paper retina sizing on every output
+reading_distance_m = 0.55                  # arm's reach (metres in front of the eye): sheet-of-paper retina sizing on every output
 eyeline_offset_m = 0.04                    # lift fresh windows above screen centre to clear the dock/HUD in the 3D room
 tilt_angle_deg = 12.0                      # angled up at a shallow vertical angle (degrees)
 open_effect_3d = "magic-lamp"              # 3D window opening animation ("magic-lamp" | "none")
@@ -8642,6 +8658,8 @@ fit = "resize"
 fit_margin_px = "theme.shell.edge_margin_px"   # a number, or the SSOT key it follows (the shell's edge margin, 8)
 min_text_px = 10                           # push-back legibility floor: M_min = max(1 / render.scale, min_text_px / text size)
 text_size_source = "theme.font"            # size (px) and cell_w_px/cell_h_px + chrome_w_px/chrome_h_px of the text cells
+text_reference_px = 12                      # scale opening cells with the global font size
+paper_long_edge_mm = 297                    # output-physical paper cap; 0 disables
 landscape_cells = [94, 34]                 # paper-like landscape box (960x692 at the SSOT cell grid)
 portrait_cells = [66, 46]                  # paper-like portrait box (680x932 at the SSOT cell grid)
 mobile = "fill"                            # a [desktop.mobile] output: "fill" = the whole fit box (as the 2D mobile profile), "cells"
@@ -16590,6 +16608,7 @@ lint = [
 unit = [
     "tests/test-keybind-collisions.py",
     "tests/test-mios-inputd.py",
+    "tests/test-mios-vm-bindings.py",
     "tests/powershell/run-pester.sh",
     "tests/test-baresafe-emit.py",
     "tests/test-sandbox-seccomp.sh",
@@ -17685,7 +17704,7 @@ bevel_alpha = 1.0
 
 [user_units."mios-desktop.target".Unit]
 Description = "MiOS graphical user session"
-Wants = "mios-gamepad-hypr3d.service mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-framerate.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
+Wants = "mios-inputd.service mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-framerate.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
 Requires = "graphical-session.target"
 After = "graphical-session.target"
 BindsTo = "graphical-session.target"
@@ -17902,17 +17921,18 @@ result_limit = 40
 debounce_ms = 120
 file_min_chars = 2
 
-# Native global-input observer. The legacy daemon retains physical ownership.
+# Native global-input controller bridge; the legacy executable is a recovery path.
 [user_units."mios-inputd.service".Unit]
-Description = "MiOS native global input policy observer"
+Description = "MiOS native global input controller bridge"
 PartOf = "mios-desktop.target"
-After = "graphical-session.target"
+After = "graphical-session.target mios-gamepad-hypr3d.service"
+Conflicts = "mios-gamepad-hypr3d.service"
 ConditionFileIsExecutable = "/usr/libexec/mios/mios-inputd"
 
 [user_units."mios-inputd.service".Service]
 Type = "simple"
 ExecStartPre = "/usr/libexec/mios/mios-inputd check"
-ExecStart = "/usr/libexec/mios/mios-inputd observe"
+ExecStart = "/usr/libexec/mios/mios-inputd serve"
 Restart = "on-failure"
 RestartSec = "3"
 NoNewPrivileges = "yes"
@@ -17929,19 +17949,55 @@ WantedBy = "mios-desktop.target"
 [desktop.pip_gravity]
 enabled = true
 rails = ["left", "right"]            # flank columns; one entry pins every PiP to that side
-rail_margin = 16                     # px from the monitor edge to the rail
-stack_gap = 12                       # px between stacked PiPs
-hud_gap = 12                         # px kept between a PiP and the topbar/dock
+rail_margin = "theme.shell.edge_margin_px" # one global HUD/controls/PiP margin
+stack_gap = "theme.shell.edge_margin_px"
+hud_gap = "theme.shell.edge_margin_px"
 attract_px = 48                      # magnet range: snap to top/bottom/stack lines inside it, hover freely outside
-min_width_frac = 0.15                # aspect-aware size clamp (fraction of monitor width)
-max_width_frac = 0.40
+min_width_frac = 0.02                # small PiPs stay resizable; applications retain their native minimums
+max_width_frac = 1.0                 # manual enlargement may exceed the launch rail; keep within HUD bounds
+initial_width_frac = 0.24             # fallback when the opening policy leaves no flank
+fit_default_window = true
+keep_above = true
 spring_stiffness = 260.0             # springy settle (k); damping c ~ 2*sqrt(k)*zeta
 spring_damping = 22.0
 settle_ms = 350                      # operator must hold still this long before gravity pulls
 idle_poll_ms = 120
 active_poll_ms = 16
+config_poll_ms = 2000
 hud_namespaces = ["mios-topbar", "mios-dock", "mios-appmenu"]
-hypr3d_status_file = "/tmp/hypr3d-status.txt"
 match = [
   { title = "^(Picture-in-Picture)$" },
+  { class = "(?i)^discord$", initial_title = "^Discord Popout$" },
+  { class = "^chromium-browser$", sibling_class = "(?i)^spotify$" },
 ]
+
+# AI-hint: Minimal nested desktop uses native HUD components with its own compositor/runtime and input namespace.
+# AI-related: tools/native/mios-gen/src/nested_session.rs, usr/share/mios/quickshell/Nested.qml
+[desktop.nested]
+resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
+width = 1280
+height = 800
+shell_entry = "/usr/share/mios/quickshell/Nested.qml"
+launch_layout = "pip"
+tmux_socket_name = "mios-nested"
+terminal_session = "tmux-os"
+terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal", "--new"]
+
+[desktop.launchers.mios-nested-session]
+exec_cmd = "/usr/bin/mios-gen nested-session"
+title = "MiOS Desktop Session"
+generic_name = "Nested desktop"
+comment = "Independent MiOS desktop and Tmux-OS workspace, opening in Picture-in-Picture"
+icon = "preferences-desktop-display"
+categories = "System;Development;Utility;"
+keywords = "mios;desktop;nested;agent;multiplayer;tmux;pip;"
+startup_wm_class = "aquamarine"
+startup_notify = false
+ai_hint = "User-launchable independent MiOS development desktop; isolated runtime and native HUD."
+ai_related = "tools/native/mios-gen/src/nested_session.rs, desktop.nested"
+actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-session --layout window"},{id="side-by-side",name="Open side by side",exec="/usr/bin/mios-gen nested-session --layout side-by-side"}]
+
+
+# AI-hint: Native pinned PiP maximize/fullscreen restores the previous pin and geometry.
+[desktop.hyprland.config.binds]
+allow_pin_fullscreen = true

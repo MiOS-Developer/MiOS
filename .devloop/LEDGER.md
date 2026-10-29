@@ -3603,3 +3603,11 @@ Verification: live backend class 12 passing; older worktree class 10 passing; fu
 - 5873493bc/ce26b9319 mios-pip-gravity: per-output planning by window centre, re-home pinned PiPs across outputs, Hypr3D idle test; verified live on DP-3 and HDMI-A-1 (topbar/dock reserved zones respected).
 - a7317722e compiled daemons ignored; version-literals-ssot passes again.
 - Remaining outside this lane: tests/test-photoshoot-capture.py (intent-to-add, no tier), peers' unstaged rdp/shaderglass/unit-gen edits.
+
+## 2026-10-29T13:23:44.121085+00:00 desktop/input continuation
+
+Resumed the dormant RDP refinement participant from commit 0a09ac58d; its T3 fallback and VM lane are already integrated. Finished and installed its remaining ShaderGlass build (41 shader + 12 placement tests). Preserved its active input binary and verified 15 private-kernel/executable controls plus physical packet cadence: max gap 4.34 ms, zero gaps over 250 ms, versus the prior 489 ms discovery stall. Reconciled mixed generator/PiP install copies.
+
+Fixed independent desktop viewport reflow: native monitor rules follow Wayland configure sizes on the SSOT-driven timer, ordinary apps tile to the child workarea, and nested HUD surfaces consume the native viewport width and reassert exclusive rows without destroying the layers. Live 560x392 and 320x224 launch/resize tests verify geometry, centered HUDs, focus/cursor preservation, private Tmux-OS and close cleanup. Added the generated desktop launcher and independent QML entry to explicit tracking. Retained all previous receipts and replaced stale observe-only reporting in /var/lib/mios-build/mios-inputd/.
+
+Verification: input 15, collision 14, VM 7, RDP 36 (3 skips), sysmon 18 (1 root permission skip; separate operator negative passed), seven native gates green including 200 static ELF artifacts. Corrected offscreen test-instance selection and a theme-dependent negative fixture. Hypr3D Theatre/spatial resizing, remote delivery, full shader profile/menu parity and per-session controller/remote/VR assignment remain open. No push or reboot.
