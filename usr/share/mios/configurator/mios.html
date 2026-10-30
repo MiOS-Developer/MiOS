@@ -2323,10 +2323,18 @@
             <input type="number" min="0" max="16" id="f-rdp-bdt" data-key="remote.rdp.native.bitmap_damage_threshold" data-type="int" value="3">
             <label for="f-rdp-progressive">EGFX Progressive for clients without H.264</label>
             <input type="text" id="f-rdp-progressive" data-key="remote.rdp.native.progressive" data-type="bool" placeholder="true">
-            <label for="f-rdp-progressive-hz">Progressive capture ceiling (Hz)</label>
-            <input type="number" min="1" max="240" id="f-rdp-progressive-hz" data-key="remote.rdp.native.progressive_hz" data-type="int" value="30">
+            <label for="f-rdp-progressive-hz">Progressive capture ceiling (Hz; 0 inherits target_hz)</label>
+            <input type="number" min="0" max="240" id="f-rdp-progressive-hz" data-key="remote.rdp.native.progressive_hz" data-type="int" value="0">
             <label for="f-rdp-progressive-quant">Progressive wavelet quantization (6 = most detail)</label>
             <input type="number" min="6" max="15" id="f-rdp-progressive-quant" data-key="remote.rdp.native.progressive_quant" data-type="int" value="8">
+            <label for="f-rdp-mic-enabled">Allow microphone forwarding when the client enables it</label>
+            <input type="text" id="f-rdp-mic-enabled" data-key="remote.rdp.redirect.microphone" data-type="bool" placeholder="true">
+            <label for="f-rdp-audio-control">Native audio control executable</label>
+            <input type="text" id="f-rdp-audio-control" data-key="remote.rdp.native.audio_control_program" value="pactl">
+            <label for="f-rdp-mic-queue">Microphone queue (10 ms packets)</label>
+            <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
+            <label for="f-rdp-mic-source">Microphone source prefix</label>
+            <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
 
             <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
             <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">
