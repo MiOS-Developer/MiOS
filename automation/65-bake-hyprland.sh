@@ -23,6 +23,7 @@ done
 /usr/libexec/mios/mios-gen build-hyprglass --root /
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu
 /usr/libexec/mios/mios-gen render-hyprland --root /
 # Project the user session from the same SSOT before registering the login entry.
 while IFS= read -r _unit; do

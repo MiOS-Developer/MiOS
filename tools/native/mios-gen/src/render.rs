@@ -2652,6 +2652,22 @@ pub mod render_hyprland {
     fn string(value: &Value, path: &str) -> Result<String, String> {
         lua(at(value, path)?)
     }
+
+    /// [desktop.hyprland.mios-appmenu]: the compositor side of the global application menus (the KDE appmenu
+    /// protocol, read by `miosd appmenu serve`). Its own section, so a plugin that fails to load costs only the
+    /// per-window binding (miosd falls back to bus discovery). Disabled or absent: nothing.
+    fn appmenu_lua(h: &Value) -> Result<String, String> {
+        let Some(p) = h.get("mios-appmenu").filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true)) else {
+            return Ok(String::new());
+        };
+        let path = p
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
+                && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
+            .ok_or("desktop.hyprland.mios-appmenu.path must be an absolute FHS path")?;
+        Ok(format!("mios_section(\"mios-appmenu\", function()\nhl.plugin.load({})\nend)\n", lua(&Value::String(path.into()))?))
+    }
     /// The plain (unquoted) string at `path`.
     fn string_value(value: &Value, path: &str) -> Result<String, String> {
         at(value, path)?
@@ -3340,6 +3356,7 @@ end
         if let Some(policy) = &rate_policy {
             out += &framerate_lua(data, policy, login)?;
         }
+        out += &appmenu_lua(h)?;
         // Float-first placement ([desktop.hyprland.placement], miosd placement): emitted before
         // the SSOT window_rules so the PiP/dialog rules after it override its size and position.
         // `float = false` keeps windows Hyprland already floats (parented dialogs, fixed-size
@@ -6655,6 +6672,24 @@ for _, e in ipairs(MIOS_SESSION.errors or {}) do print("error " .. e) end
             assert!(output.contains("systemctl --user stop mios-desktop.target"));
             data["desktop"]["hyprland"]["startup"] = Value::Array(vec![Value::Boolean(true)]);
             assert!(project(&data).unwrap_err().contains("nonempty strings"));
+        }
+
+        #[test]
+        fn appmenu_plugin_loads_in_its_own_section_only_when_enabled() {
+            let mut d = real_ssot();
+            let out = project(&d).unwrap();
+            let want = "mios_section(\"mios-appmenu\", function()\nhl.plugin.load(\"/usr/lib64/mios/mios-appmenu.so\")\nend)\n";
+            assert!(out.contains(want), "the vendor SSOT enables the KDE appmenu protocol plugin");
+            // negative controls: disabled or absent -> no load; a relative or traversing path is refused
+            d["desktop"]["hyprland"]["mios-appmenu"]["enabled"] = Value::Boolean(false);
+            assert!(!project(&d).unwrap().contains("mios-appmenu"));
+            d["desktop"]["hyprland"].as_table_mut().unwrap().remove("mios-appmenu");
+            assert!(!project(&d).unwrap().contains("mios-appmenu"));
+            for bad in ["usr/lib64/mios/mios-appmenu.so", "/usr/lib64/../tmp/x.so", "/usr/lib64/mios/x\n.so"] {
+                let mut x = real_ssot();
+                x["desktop"]["hyprland"]["mios-appmenu"]["path"] = Value::String(bad.into());
+                assert!(project(&x).unwrap_err().contains("mios-appmenu.path"), "{bad}");
+            }
         }
 
         #[test]

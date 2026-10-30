@@ -7133,6 +7133,21 @@ default_remote   = "flathub"  # tail-fallback remote when no beta available
 default_scope    = "system"   # system | user
 noninteractive   = true       # all install/update operations are headless
 
+# System-wide Flatpak override, projected to var/lib/flatpak/overrides/global by `mios-gen render-flatpak-overrides`
+# (never hand-edited). session_bus_talk: well-known names every sandboxed app may talk to. The global application menus
+# need com.canonical.AppMenu.Registrar: it is owned by `miosd appmenu serve`, and talking to it is what makes the
+# exporter's connection visible through the app's xdg-dbus-proxy, so the exporter can read and activate the app's
+# org.gtk.Menus / com.canonical.dbusmenu menus (Qt and Electron also only export a menubar when they can see it).
+# environment_from: override environment variable -> the SSOT key holding its value.
+[flatpak.overrides.global]
+filesystems = ["xdg-config/gtk-4.0:ro", "/etc/gtk-3.0:ro", "xdg-data/themes:ro", "xdg-data/icons:ro", "xdg-config/gtk-3.0:ro", "/etc/gtk-4.0:ro", "!/usr/share/icons", "!/usr/share/themes", "!/usr/share/fonts"]
+session_bus_talk = ["com.canonical.AppMenu.Registrar"]
+[flatpak.overrides.global.environment_from]
+GTK_THEME = "appearance.gtk_theme"
+ADW_DEBUG_COLOR_SCHEME = "appearance.adw_color_scheme"
+XCURSOR_SIZE = "appearance.cursor_size"
+XCURSOR_THEME = "appearance.cursor_theme"
+
 [appearance]
 gtk_theme        = "adw-gtk3-dark"              # GTK3 + libadwaita color-scheme target
 icon_theme       = "Adwaita"                    # gtk-icon-theme-name (GTK settings.ini + dconf interface icon-theme)
@@ -8757,6 +8772,18 @@ path = "/usr/lib64/mios/mios-pacing.so"
 slack_us = 500                     # a frame due within this long counts as due (timer jitter)
 require_vrr = true                 # cap only outputs whose VRR is active (false: also fixed-refresh outputs, judders)
 wallpaper_namespaces = "mios-wallpaper"   # layer namespaces (exact) whose frame callbacks follow the wallpaper rate W
+
+# Global application menus, compositor side (MiOS-original plugin in the tree): serves the KDE appmenu protocol
+# (org_kde_kwin_appmenu_manager v2). Wayland-native Qt 6, Gecko (Zen/Firefox global menu) and Chromium/Electron
+# windows then announce their com.canonical.dbusmenu menubar per surface (set_address), and `miosd appmenu serve`
+# ([user_units."mios-appmenu.service"]) reads the exact window -> menu binding from `hyprctl mios-appmenu` and the
+# `miosappmenu>>` IPC event instead of guessing it from bus objects. Chromium and Electron export a global menu on
+# Wayland only when this protocol is offered. false = no protocol (miosd falls back to bus discovery).
+[desktop.hyprland.mios-appmenu]
+enabled = true
+source_path = "usr/share/mios/hyprland/plugins/mios-appmenu"
+build_system = "make"
+path = "/usr/lib64/mios/mios-appmenu.so"
 
 # Catch-all monitor rule (output = "" matches every output); projected first.
 [desktop.hyprland.monitor]
