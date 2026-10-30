@@ -35,7 +35,7 @@ QS.PanelWindow {
 
     function close() { shellState.drawerOpen = false }
     function launch(entry) {
-        entry.execute()
+        AppLaunch.launch(entry, screen ? screen.name : "", [])
         close()
     }
     function iconFor(appId) {

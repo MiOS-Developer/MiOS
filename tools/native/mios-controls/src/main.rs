@@ -98,6 +98,20 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Leaf rows of a controller table as ("<table>.<path>", value), tables first-level by name.
+fn flatten(v: Option<&Value>, prefix: &str, out: &mut Vec<(String, String)>) {
+    match v {
+        Some(Value::Table(t)) => {
+            for (k, v) in t {
+                flatten(Some(v), &format!("{prefix}.{k}"), out);
+            }
+        }
+        Some(Value::String(s)) => out.push((prefix.to_owned(), s.clone())),
+        Some(v) => out.push((prefix.to_owned(), v.to_string())),
+        None => {}
+    }
+}
+
 fn opt<'a>(a: &'a Args, k: &str) -> Option<&'a str> {
     a.opts.iter().rev().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
 }
@@ -213,6 +227,11 @@ fn run(a: Args) -> Result<ExitCode, String> {
                     "user_tier": layers.user_path,
                     "bindings": draft.bindings,
                     "system_layer": draft.system_layer,
+                    "toggle_chord": model::toggle_chord(&merged),
+                    "mode_override_chord": model::str_list(at(&merged, "keybindings.global.controller.mode_override_chord")),
+                    "nav": at(&merged, "keybindings.global.controller.nav").cloned().unwrap_or(Value::Table(Default::default())),
+                    "room": at(&merged, "keybindings.global.controller.room").cloned().unwrap_or(Value::Table(Default::default())),
+                    "hypr3d": at(&merged, "desktop.hyprland.hypr3d.controller").cloned().unwrap_or(Value::Table(Default::default())),
                 });
                 println!("{v}");
             } else {
@@ -221,6 +240,20 @@ fn run(a: Args) -> Result<ExitCode, String> {
                 }
                 for (k, v) in &draft.system_layer {
                     println!("{:<26} Guide+{k} {v}", "controller.system_layer");
+                }
+                println!("{:<26} {} (tap: Hypr3D room, hold: release capture)", "controller.toggle_chord", model::toggle_chord(&merged).join("+"));
+                println!("{:<26} {} (half-capture)", "controller.mode_override", model::str_list(at(&merged, "keybindings.global.controller.mode_override_chord")).join("+"));
+                for (table, path) in [("controller.nav", "keybindings.global.controller.nav"), ("controller.room", "keybindings.global.controller.room")] {
+                    let mut rows = Vec::new();
+                    flatten(at(&merged, path), table, &mut rows);
+                    for (k, v) in rows {
+                        println!("{k:<26} {v}");
+                    }
+                }
+                if let Some(t) = at(&merged, "desktop.hyprland.hypr3d.controller").and_then(Value::as_table) {
+                    for (k, v) in t.iter().filter(|(k, _)| k.ends_with("_button")) {
+                        println!("{:<26} {k} {}", "controller.hypr3d", v.as_str().unwrap_or(""));
+                    }
                 }
             }
             Ok(ExitCode::SUCCESS)
