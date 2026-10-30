@@ -375,6 +375,34 @@ Singleton {
     }
 
     // ---- minimized windows (special:minimized) ---------------------------------------------------------------------
+    // Origin output of a minimized window, authoritative: Hyprland keeps ONE monitor per workspace, so every window on
+    // special:minimized reports the monitor of whichever window was minimized last (or re-homed after an unplug); the
+    // lamp plugin records each window's own origin (`hyprctl mios-lamp status` -> minimized[].monitor). The QML
+    // caches below only cover a plugin that is not loaded, and they are lost when the shell restarts.
+    property var pluginOrigin: ({})
+    function parseLampStatus(t) {
+        try {
+            const j = JSON.parse(t)
+            const m = {}
+            if (j && Array.isArray(j.minimized)) {
+                for (const e of j.minimized) {
+                    const a = normAddress(e && e.address)
+                    if (a && e.monitor) m[a] = String(e.monitor)
+                }
+            }
+            lamp.pluginOrigin = m
+        } catch (e) {
+            // no plugin / not JSON (plain hyprctl error text): keep the caches as the only source
+            lamp.pluginOrigin = ({})
+        }
+    }
+    property Process lampStatus: Process {
+        command: ["hyprctl", "mios-lamp", "status"]
+        stdout: StdioCollector { onStreamFinished: lamp.parseLampStatus(text) }
+    }
+    function refreshLampStatus() {
+        if (!lampStatus.running) lampStatus.running = true
+    }
     property var originOutput: ({})
     property var originMonitorId: ({})
     function isLiveMonitorName(name) {
@@ -387,6 +415,15 @@ Singleton {
             if (m && String(m.name) === name) return true
         }
         return false
+    }
+    function monitorIdForName(name) {
+        if (!name) return -1
+        const mons = Hyprland.monitors ? Hyprland.monitors.values : []
+        for (let j = 0; j < mons.length; j++) {
+            const m = mons[j]
+            if (m && String(m.name) === name) return m.id
+        }
+        return -1
     }
     function monitorNameForId(monId) {
         if (monId === undefined || monId === null || monId < 0) return ""
@@ -413,13 +450,14 @@ Singleton {
             const addr = normAddress(c.address)
             if (!addr || seen[addr]) continue
             seen[addr] = true
+            const plugMon = lamp.pluginOrigin[addr] || ""
             res.push({
                 address: addr,
                 appId: String(c.class || c.initialClass || c.appId || ""),
                 initialClass: String(c.initialClass || c.class || ""),
                 title: String(c.title || c.class || addr),
                 monitor: c.monitor !== undefined ? c.monitor : "",
-                monitorName: String(c.monitorName || c.monitor || "")
+                monitorName: plugMon || String(c.monitorName || c.monitor || "")
             })
         }
         if (lamp.fixtureView.path !== "") {
@@ -470,8 +508,12 @@ Singleton {
             const validOrig = isLiveMonitorName(savedOrig) ? savedOrig : ""
             const savedMonId = lamp.originMonitorId[addr] !== undefined ? lamp.originMonitorId[addr] : -1
             const validSavedMonName = monitorNameForId(savedMonId)
-            const effMonId = validSavedMonName ? savedMonId : oMonId
-            const monName = validOrig
+            const plugMon = lamp.pluginOrigin[addr] || ""
+            const validPlug = isLiveMonitorName(plugMon) ? plugMon : ""
+            const plugMonId = validPlug ? monitorIdForName(validPlug) : -1
+            const effMonId = plugMonId >= 0 ? plugMonId : (validSavedMonName ? savedMonId : oMonId)
+            const monName = validPlug
+                          || validOrig
                           || monNameFromO
                           || validSavedMonName
             res.push({
@@ -910,12 +952,12 @@ Singleton {
     }
     property Timer refreshSettled: Timer {
         interval: 250
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs(); lamp.refreshLampStatus() }
     }
     // A lamp minimize moves the window to special:minimized after duration_minimize_ms (~520 ms).
     property Timer refreshAfterLamp: Timer {
         interval: 600
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs(); lamp.refreshLampStatus() }
     }
     property Connections hyprWatch: Connections {
         target: Hyprland
@@ -943,6 +985,7 @@ Singleton {
                 prefs_write_count: lamp.prefsWriteCount,
                 last_dispatched: lamp.lastDispatched,
                 minimized_windows: lamp.minimizedWindows,
+                plugin_origin: lamp.pluginOrigin,
                 restoring_windows: lamp.restoringWindows,
                 custom_pinned: lamp.customPinned,
                 starred_apps: lamp.starredApps,

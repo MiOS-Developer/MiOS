@@ -8273,6 +8273,7 @@ launch_timeout_ms = 8000                    # a window mapping this long after a
 hidden_dock = "edge"                        # auto-hidden dock: aim at its edge strip under the icon ("icon": the revealed rect)
 fallback_edge = "bottom"                    # no dock data for the output: a strip in the middle of this edge
 pane_alpha = 0.4                            # layout alpha the rigid glass pane fades to during the lamp
+restore_tree = true                         # a restored tiled window rebuilds its recorded dwindle split tree (structure + ratios); false: slot heuristics only
 minimized_workspace = "special:minimized"
 anim_tag = "mios-lamp-anim"
 windowshade_open = "none-open"              # open shader for lamp-launched windows ([desktop.hyprland.windowshade].shader_dir)

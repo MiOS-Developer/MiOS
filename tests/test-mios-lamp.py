@@ -95,6 +95,8 @@ def lamp_ssot_errors(d: dict) -> list[str]:
         errs.append("remote must be 'same'")
     if not isinstance(lamp.get("hide_hyprbars"), bool):
         errs.append("hide_hyprbars must be a boolean")
+    if not isinstance(lamp.get("restore_tree"), bool):
+        errs.append("restore_tree must be a boolean")
     sh = lamp.get("windowshade_open")
     if sh is not None and (not isinstance(sh, str) or not IDENT.match(sh)):
         errs.append("windowshade_open must be a shader identifier")
@@ -157,6 +159,8 @@ class SsotAndProjection(unittest.TestCase):
             ("anim_tag", "../bad", "anim_tag"),
             ("remote", "lite", "remote"),
             ("hide_hyprbars", "true", "hide_hyprbars"),
+            ("restore_tree", "true", "restore_tree"),
+            ("restore_tree", 1, "restore_tree"),
             ("windowshade_open", "../none", "windowshade_open"),
             ("launch_timeout_ms", 100, "launch_timeout_ms"),
         )
@@ -233,7 +237,17 @@ class PluginHostTests(unittest.TestCase):
             "                    if (splitDesired.x >= pDesired.x + pDesired.w - 8.0) {\n                        dir = 'r';\n                    } else if (pDesired.x >= splitDesired.x + splitDesired.w - 8.0) {\n                        dir = 'l';",
             src,
         )
-        self.assertIn("            if (g_layoutManager && !desiredBoxes.empty()) {", src)
+        self.assertIn("            if (!treeRestored && g_layoutManager && !desiredBoxes.empty()) {", src)
+        # exact tiled restore: the split tree is recorded right before BOTH minimize moves and replayed on restore
+        self.assertEqual(src.count("recordTiles(w);\n"), 2)
+        self.assertIn("            const bool treeRestored = applyTiles(s.workspaceTo, w);\n", src)
+        self.assertIn("dynamic_cast<Layout::Tiled::CDwindleAlgorithm*>", src)
+        self.assertIn('"plugin:mios_lamp:restore_tree"', src)
+        # rollback on a verification mismatch leaves dwindle's own placement
+        self.assertIn("        if (!ok) {\n            for (const auto& b : backup) {", src)
+        # hyprctl dispatch on a Lua config evaluates hl.dispatch(<arg>): legacy dispatcher strings are dead code
+        self.assertNotRegex(src, r'dispatch\("swapwindow')
+        self.assertIn('dispatch(std::format("hl.dsp.window.swap({{direction = \\"{}\\", window = \\"{}\\"}})", swapDir, sel));', src)
         self.assertNotIn("if (false &&", src)
         self.assertIn(
             '                continue; // Do NOT overwrite with "slot", "edge", or "fallback"',
@@ -435,6 +449,11 @@ class DockLampContractIntegration(unittest.TestCase):
                 '        exit 1\n'
                 '        ;;\n'
                 'esac\n'
+                '# the lamp plugin\'s status, when the test provides one (MIOS_TEST_LAMP_STATUS)\n'
+                'if [ "$1 $2" = "mios-lamp status" ] && [ -n "${MIOS_TEST_LAMP_STATUS:-}" ] && [ -f "$MIOS_TEST_LAMP_STATUS" ]; then\n'
+                '    cat "$MIOS_TEST_LAMP_STATUS"\n'
+                '    exit 0\n'
+                'fi\n'
                 'echo "ok"\n'
                 'exit 0\n'
             )
@@ -587,6 +606,43 @@ class DockLampContractIntegration(unittest.TestCase):
             disk_prefs = json.load(f)
         self.assertEqual(disk_prefs["pinned"], ["mios-terminal"])
         self.assertEqual(disk_prefs["starred"], ["mios-portal"])
+
+    def _two_output_minimized(self, status: dict | None) -> dict:
+        # Both minimized windows REPORT the same monitor (Hyprland: one monitor per workspace, special:minimized
+        # follows whichever window was minimized last); only the plugin knows that 0xb0b0 came from HEADLESS-PHONE.
+        fixture = json.dumps({"clients": [
+            {"address": "0xa0a0", "workspace": {"name": "special:minimized"}, "class": "desk.app", "title": "D", "monitorName": "HDMI-A-1"},
+            {"address": "0xb0b0", "workspace": {"name": "special:minimized"}, "class": "phone.app", "title": "P", "monitorName": "HDMI-A-1"},
+        ]})
+        status_path = os.path.join(self.tmp, "lamp-status.json")
+        if status is not None:
+            with open(status_path, "w", encoding="utf-8") as f:
+                json.dump(status, f)
+        os.environ["MIOS_TEST_LAMP_STATUS"] = status_path if status is not None else ""
+        try:
+            self.start_harness(fixture)
+        finally:
+            os.environ.pop("MIOS_TEST_LAMP_STATUS", None)
+        return self.wait_state(lambda s: len(s.get("minimized_windows", [])) == 2 and s.get("write_count", 0) >= 1)
+
+    def test_positive_minimized_origin_comes_from_the_lamp_plugin(self):
+        status = {"version": 1, "enabled": True, "events": "launch,minimize,restore", "animating": [], "minimized": [
+            {"address": "0xa0a0", "workspace": "1", "class": "desk.app", "title": "D", "monitor": "HDMI-A-1", "time_ms": 1},
+            {"address": "0xb0b0", "workspace": "2", "class": "phone.app", "title": "P", "monitor": "HEADLESS-PHONE", "time_ms": 2},
+        ]}
+        st = self._two_output_minimized(status)
+        st = self.wait_state(lambda s: s.get("plugin_origin", {}).get("0xb0b0") == "HEADLESS-PHONE")
+        by = {m["address"]: m["monitorName"] for m in st["minimized_windows"]}
+        self.assertEqual(by, {"0xa0a0": "HDMI-A-1", "0xb0b0": "HEADLESS-PHONE"}, st)
+
+    def test_negative_without_the_plugin_status_the_shared_workspace_monitor_wins(self):
+        # control: no plugin status (plain hyprctl text) -> both tiles land on the reported, shared monitor
+        st = self._two_output_minimized(None)
+        time.sleep(1.0)
+        st = json.loads(self.call_ipc("state"))
+        self.assertEqual(st.get("plugin_origin"), {})
+        by = {m["address"]: m["monitorName"] for m in st["minimized_windows"]}
+        self.assertEqual(by, {"0xa0a0": "HDMI-A-1", "0xb0b0": "HDMI-A-1"}, st)
 
     def test_negative_malformed_fixture_and_bad_address_degrade_safely(self):
         self.start_harness("{malformed json")
