@@ -651,7 +651,13 @@ pub mod tmux_theme {
                 "mios-unit-gen not found (set MIOS_UNIT_GEN or build it)".to_string()
             })?;
             let src = dir.join(".keybindings.in.json");
-            let payload = serde_json::json!({ "keybindings": kb });
+            // The console menu variants read [theme.tmux.console]; nothing else outside [keybindings].
+            let console = merged
+                .get("theme")
+                .and_then(|t| t.get("tmux"))
+                .and_then(|t| t.get("console"))
+                .ok_or_else(|| "Missing [theme.tmux.console] section in layered SSOT".to_string())?;
+            let payload = serde_json::json!({ "keybindings": kb, "theme": { "tmux": { "console": console } } });
             fs::write(&src, payload.to_string()).map_err(|e| format!("{}: {e}", src.display()))?;
             let out = Command::new(&unit_gen)
                 .args(["keybindings", "--from-json"])
@@ -716,7 +722,13 @@ pub mod tmux_theme {
             prepare_dir(dir)?;
             let keys = render_keys(root, dir, &merged)?;
             let omp = render_prompt(root)?;
-            let tmux_conf = format!("{theme}\n{keys}");
+            let body = format!("{theme}\n{keys}");
+            // A pane shell re-sources the human server only when this digest differs from the server's.
+            let digest = {
+                use sha2::{Digest, Sha256};
+                Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>()
+            };
+            let tmux_conf = format!("{body}set -g @mios-conf-digest {digest}\n");
             write_atomic(&dir.join("mios.omp.json"), &omp)?;
             write_atomic(&dir.join("tmux.conf"), &tmux_conf)?;
             Ok(())

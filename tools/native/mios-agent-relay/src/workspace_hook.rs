@@ -11,7 +11,13 @@ use std::path::{Path, PathBuf};
 /// Command the workspace observer pane runs; resize uses it to rebuild a dead observer.
 pub const OBSERVER_COMMAND: &str = "/usr/bin/mios agents --watch";
 /// tmux window option recording the size the last successful pass laid the window out for.
-pub const APPLIED_OPTION: &str = "@mios-workspace-applied";
+pub const APPLIED_OPTION: &str = mios_service_core::tmux_theme::WORKSPACE_APPLIED_OPTION;
+
+/// tmux-side guard every workspace hook is wrapped in (`if-shell -F`): a window already laid out for its current size
+/// spawns no process at all, which covers the events the workspace's own reshaping fires.
+pub fn spawn_guard() -> String {
+    mios_service_core::tmux_theme::workspace_spawn_guard()
+}
 /// A pass plus at most this many coalesced reruns per invocation.
 const MAX_PASSES: usize = 3;
 
@@ -216,6 +222,95 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
     Ok(outcome)
 }
 
+/// The workspace keys (`prefix o` / `prefix f`): `--workspace-focus next|%N` and `--workspace-view toggle|compact|auto`
+/// (port of mios-mcp-server `--workspace-focus`/`--workspace-view`). One process per key press, no interpreter, and the
+/// pass records the size it laid out so the hooks its reshaping fires stay no-ops. Outside a managed workspace, focus
+/// cycles the window's panes; view says the pane is not in one.
+pub fn key(action: &str, value: &str) -> Result<&'static str, String> {
+    let valid = match action {
+        "focus" => value == "next" || pane_id(value),
+        "view" => matches!(value, "toggle" | "compact" | "auto"),
+        _ => return Err("workspace key action must be focus or view".into()),
+    };
+    if !valid {
+        return Err(format!("invalid workspace {action} value"));
+    }
+    let ambient = std::env::var("TMUX").unwrap_or_default();
+    let socket = ambient.rsplitn(3, ',').last().unwrap_or("").to_owned();
+    let pane = std::env::var("TMUX_PANE").unwrap_or_default();
+    if socket.is_empty() || !pane_id(&pane) {
+        return Err("workspace keys run inside MiOS-Tmux (TMUX and TMUX_PANE)".into());
+    }
+    let tmux = |args: &[&str]| workspace_tmux(&socket, args);
+    let merged = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
+    let str_at = |p: &str| get(&merged, p).and_then(toml::Value::as_str).unwrap_or("").to_owned();
+    let ui = context(&socket, &pane, &str_at("keybindings.socket_name"), &str_at("keybindings.terminal_session"))?;
+    let marks: Vec<String> = tmux(&["display-message", "-p", "-t", &pane, "#{@mios-workspace-head}|#{@mios-workspace-worker}"])?
+        .split('|')
+        .map(str::to_owned)
+        .collect();
+    let head = marks.iter().find(|m| !m.is_empty()).cloned().unwrap_or_default();
+    if !pane_id(&head) {
+        if action == "focus" {
+            tmux(&["select-pane", "-t", &format!("{}.+", ui.window)])?;
+            return Ok("plain");
+        }
+        return Err("This pane is not in a native AI workspace".into());
+    }
+    let ws = get(&merged, "mcp.tmux.workspace").ok_or("missing [mcp.tmux.workspace]")?;
+    let ws_json = serde_json::to_value(ws).map_err(|e| e.to_string())?;
+    let start = get(&merged, "terminal.start_directory").and_then(toml::Value::as_str).filter(|d| Path::new(d).is_dir()).unwrap_or("/").to_owned();
+    let directory = std::env::current_dir()
+        .ok()
+        .filter(|d| d.is_absolute() && d.is_dir())
+        .and_then(|d| d.to_str().map(str::to_owned))
+        .unwrap_or(start);
+    let mut request = json!({
+        "action": action,
+        "workspace": ws_json,
+        "adapter": "/usr/libexec/mios/mios-mcp-server",
+        "adapter_python": str_at("mcp.python"),
+        "human_socket": str_at("keybindings.socket_name"),
+        "session": ui.session,
+        "socket": ui.socket,
+        "head": head,
+        "directory": directory,
+    });
+    request[if action == "focus" { "target" } else { "view" }] = json!(value);
+    // One pass at a time per window, shared with the hooks: a key pressed during a hook pass waits for nothing and
+    // marks the pass dirty, so the holder reruns with the new view.
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("mios-workspace-hook");
+    let key = &super::digest(&format!("{socket}|{}", ui.window))[..24];
+    let flight = Flight::acquire(&dir, key)?;
+    workspace(&request)?;
+    if flight.is_some() {
+        let size = tmux(&["display-message", "-p", "-t", &ui.window, "#{window_width}|#{window_height}"])?;
+        if let Some((w, h)) = size.split_once('|') {
+            tmux(&["set-option", "-w", "-t", &ui.window, APPLIED_OPTION, &applied_key(w, h)])?;
+        }
+    }
+    Ok("applied")
+}
+
+/// CLI entry for the workspace keys: an error is shown to the pressing client (display-message), never printed.
+pub fn key_main(args: &[String]) -> ! {
+    let action = args[1].trim_start_matches("--workspace-");
+    let r = match args.get(2) {
+        Some(value) if args.len() == 3 => key(action, value),
+        _ => Err("usage: mios-agent-relay --workspace-focus next|%N | --workspace-view toggle|compact|auto".into()),
+    };
+    if let Err(e) = r {
+        log(&format!("workspace-{action}: {e}"));
+        let ambient = std::env::var("TMUX").unwrap_or_default();
+        let socket = ambient.rsplitn(3, ',').last().unwrap_or("");
+        let pane = std::env::var("TMUX_PANE").unwrap_or_default();
+        if !socket.is_empty() && pane_id(&pane) {
+            let _ = workspace_tmux(socket, &["display-message", "-t", &pane, "-l", &e]);
+        }
+    }
+    std::process::exit(0)
+}
+
 /// CLI entry: never prints (tmux would show it in the pane); failures go to the private hook log.
 pub fn main(args: &[String]) -> ! {
     let r = run(&args[2], args.get(3).map(String::as_str), args.get(4).map(String::as_str));
@@ -260,5 +355,24 @@ mod tests {
         std::env::remove_var("TMUX");
         std::env::remove_var("TMUX_PANE");
         assert_eq!(run("ensure", None, None).unwrap(), "unbound");
+    }
+
+    #[test]
+    fn workspace_keys_validate_before_touching_tmux() {
+        std::env::remove_var("TMUX");
+        std::env::remove_var("TMUX_PANE");
+        assert!(key("resize", "next").unwrap_err().contains("focus or view"));
+        assert!(key("focus", "%1; kill-server").unwrap_err().contains("invalid"));
+        assert!(key("view", "portrait").unwrap_err().contains("invalid"));
+        // Valid values, but no tmux context: refused before any tmux call or SSOT read.
+        assert!(key("focus", "next").unwrap_err().contains("inside MiOS-Tmux"));
+        assert!(key("view", "toggle").unwrap_err().contains("inside MiOS-Tmux"));
+    }
+
+    #[test]
+    fn hook_guard_skips_the_spawn_for_an_already_laid_out_window() {
+        let g = spawn_guard();
+        assert!(g.contains(APPLIED_OPTION) && g.contains("#{window_width}x#{window_height}"), "{g}");
+        assert!(g.starts_with("#{!=:") && !g.contains("#["), "{g}");
     }
 }

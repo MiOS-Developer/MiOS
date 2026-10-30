@@ -39,6 +39,10 @@ if len(_sys.argv) > 1 and _sys.argv[1] in ("--workspace-ensure", "--workspace-re
     _relay = "/usr/libexec/mios/mios-agent-relay"  # [mcp.agents].binary; FHS canonical for the legacy shim
     _event = "ensure" if _sys.argv[1] == "--workspace-ensure" else "resize"
     _os.execv(_relay, [_relay, "--workspace-hook", _event, *_sys.argv[2:4]])
+# Legacy prefix o / prefix f bindings (and mios-terminal) likewise: the workspace keys are native layout passes.
+if len(_sys.argv) == 3 and _sys.argv[1] in ("--workspace-focus", "--workspace-view"):
+    _relay = "/usr/libexec/mios/mios-agent-relay"
+    _os.execv(_relay, [_relay, _sys.argv[1], _sys.argv[2]])
 
 import asyncio
 import json
@@ -891,7 +895,8 @@ class _TmuxBridge:
                         tmux("set-option", "-p", "-t", created, "@mios-workspace-slot", str(physical))
                         tmux("set-option", "-p", "-t", created, "@mios-workspace-dynamic", "1")
                     _workspace_call("resize", {**ui, "pane": workspace_head}, observer_command=_WORKSPACE_OBSERVER_COMMAND)
-                else:
+                elif "1" not in tmux("list-panes", "-t", ui["window"], "-F", "#{pane_floating_flag}").split():
+                    # tmux 3.7 floating panes are not part of a tiled layout; a preset would merge them.
                     tmux("select-layout", "-t", ui["window"], "tiled")
             except BaseException:
                 tmux("kill-pane", "-t", created)
