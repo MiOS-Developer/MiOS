@@ -3141,6 +3141,7 @@ desktop.hyprland.mios-wobbly.config.anchor_k  MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_
 desktop.hyprland.mios-wobbly.config.friction  MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_FRICTION
 desktop.hyprland.mios-wobbly.config.max_stretch  MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_MAX_STRETCH
 desktop.hyprland.mios-wobbly.config.grid  MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_GRID
+desktop.hyprland.mios-wobbly.config.pane_fade  MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_PANE_FADE
 desktop.hyprland.lamp.enabled  MIOS_DESKTOP_HYPRLAND_LAMP_ENABLED
 desktop.hyprland.lamp.events  MIOS_DESKTOP_HYPRLAND_LAMP_EVENTS
 desktop.hyprland.lamp.duration_open_ms  MIOS_DESKTOP_HYPRLAND_LAMP_DURATION_OPEN_MS
@@ -3153,6 +3154,7 @@ desktop.hyprland.lamp.launch_timeout_ms  MIOS_DESKTOP_HYPRLAND_LAMP_LAUNCH_TIMEO
 desktop.hyprland.lamp.hidden_dock  MIOS_DESKTOP_HYPRLAND_LAMP_HIDDEN_DOCK
 desktop.hyprland.lamp.fallback_edge  MIOS_DESKTOP_HYPRLAND_LAMP_FALLBACK_EDGE
 desktop.hyprland.lamp.pane_alpha  MIOS_DESKTOP_HYPRLAND_LAMP_PANE_ALPHA
+desktop.hyprland.lamp.restore_tree  MIOS_DESKTOP_HYPRLAND_LAMP_RESTORE_TREE
 desktop.hyprland.lamp.minimized_workspace  MIOS_DESKTOP_HYPRLAND_LAMP_MINIMIZED_WORKSPACE
 desktop.hyprland.lamp.anim_tag  MIOS_DESKTOP_HYPRLAND_LAMP_ANIM_TAG
 desktop.hyprland.lamp.windowshade_open  MIOS_DESKTOP_HYPRLAND_LAMP_WINDOWSHADE_OPEN
