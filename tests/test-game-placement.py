@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Game window placement: games open centred at the window_opening size on the focused output, fixed-size games are never resized and are pinned to their size (no black regrown area), self-placement is refused; SSOT/configurator wiring, real mios-gen/miosd binaries, and an opt-in live nested PiP session (MIOS_LIVE_NESTED=1) with XWayland, Wine and Vulkan clients.
+# AI-hint: Game window placement: games open centred at the window_opening size on the focused output, fixed-size games are never resized and are pinned to their size (no black regrown area), only root/oversize remaps are refused (operator and game moves partly off-screen or across outputs stand); SSOT/configurator wiring, real mios-gen/miosd binaries, and an opt-in live nested PiP session (MIOS_LIVE_NESTED=1) with XWayland, Wine and Vulkan clients.
 # AI-related: src/mios-rs/miosd/src/placement.rs, tools/native/mios-resolver/src/lib.rs (window_opening::Games), tools/native/mios-gen/src/render.rs, tools/native/mios-gen/src/nested_session.rs, tests/fixtures/game-clients/x11-game-probe.py, usr/share/mios/mios.toml [desktop.hyprland.placement.games]
 # AI-functions: TestGamePlacementWiring, TestGamePlacementBinaries, TestGamePlacementLive
 """Game window placement.
@@ -583,7 +583,7 @@ class TestGamePlacementLive(unittest.TestCase):
         ox, oy, ow, oh = self.output
         self.ctl('output', 'create', 'headless', 'MIOS-TEST-2')
         mons = []
-        for mode in ('1280x720', '1280x720@60', 'preferred'):
+        for mode in ('1280x720', '1920x1080@60', 'preferred'):
             self.ctl('eval', f"hl.monitor({{output='MIOS-TEST-2', mode='{mode}', position='{int(ox + ow)}x0', scale=1}})")
             for _ in range(12):
                 time.sleep(0.25)
