@@ -34,10 +34,9 @@ QS.PanelWindow {
         readonly property int columns: Math.max(2, Math.ceil((keymap.theme.keymap || []).length / 24))
         implicitWidth: grid.implicitWidth + 4 * keymap.theme.edgeMargin
         implicitHeight: title.implicitHeight + grid.implicitHeight + 6 * keymap.theme.edgeMargin
-        radius: Math.min(keymap.theme.radius, 28)
-        color: keymap.theme.withAlpha(keymap.theme.bg, keymap.theme.notificationOpacity)
-        border.width: 1
-        border.color: keymap.theme.outlineColor
+        // the island's glass (Glass.qml) at the notification legibility alpha; no outline (hyprglass draws the rim)
+        radius: Glass.cornerFor(height)
+        color: keymap.theme.withAlpha(Glass.fillHex, keymap.theme.notificationOpacity)
         focus: keymap.open
         Keys.onEscapePressed: keymap.open = false
 

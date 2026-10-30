@@ -89,10 +89,9 @@ QS.PanelWindow {
     }
     Rectangle {
         anchors.fill: parent
-        radius: searchWindow.theme.radius
-        color: searchWindow.theme.withAlpha(searchWindow.theme.bg, searchWindow.theme.panelOpacity)
-        border.width: 1
-        border.color: searchWindow.theme.outlineColor
+        // the island's glass (Glass.qml): corner rule and fill, no outline (hyprglass draws the rim)
+        radius: Glass.cornerFor(height)
+        color: Glass.fill
         clip: true
         Column {
             anchors.fill: parent
