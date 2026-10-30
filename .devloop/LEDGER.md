@@ -3647,3 +3647,7 @@ Actual phone samples on refined308437a7: initial28.5 ACK FPS; 15-window/30-secon
 Operator also requested Phosh. Stable Fedora packages installed successfully: Phosh/Phoc/Mobile Settings0.57.0, Stevia, feedbackd, Calls and dependencies; versions/session entry/RPM verification passed. No host upgrades/removals/reboot or desktop-session restart. Existing SSOT phosh set now includes Mobile Settings; globals regenerated. Full Phosh GUI session not launched. Receipt /var/tmp/mios-phosh-install/receipt.json. The pre-existing DNF offline transaction was already invalid; original metadata retained.
 
 Durable continuation updated in /docs/design/mios-desktop-continuation-handoff.md, including incoming integration through90281a2f6, remaining worktree claims and exact limits. No push and no unrelated staged files included.
+
+## 2026-10-30T02:06:53.352067+00:00 installed Phosh graphical smoke verification
+
+The installed Phosh shell rendered the native app grid in private headless Phoc/Pixman, with isolated D-Bus and XDG state plus in-memory GSettings. Captured /var/tmp/mios-phosh-preview/phosh-headless-preview.png and inspected it. Receipt /var/tmp/mios-phosh-install/preview-receipt.json. Wayland-nested previews stalled capture with both renderer choices; the headless control passed. Full physical-display Phosh login is untested. Stopped only owned Phosh preview units after the smoke check; no MiOS desktop or operator session was stopped.

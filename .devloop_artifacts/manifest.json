@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-30T01:54:34.636288+00:00",
+  "last_updated": "2026-10-30T02:06:53.352067+00:00",
   "total_artifacts": 75,
   "artifacts": [
     {
@@ -20,15 +20,16 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "d616e70c804c3b8b6f821b3fc16e6c0c481296e6e9c69aa7917fc124806906db",
-      "size_bytes": 650569,
+      "sha256": "e3e0f44b1b0d089004c471d6a3c7f53dcba0f85e05c0828f39a3340b54d93057",
+      "size_bytes": 651195,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
         "physical_capture_enabled": true,
         "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00"
+        "checkpoint_at": "2026-10-30T02:06:53.352067+00:00",
+        "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json"
       }
     },
     {
@@ -791,13 +792,14 @@
       "path": "docs/design/mios-desktop-continuation-handoff.md",
       "artifact_type": "doc",
       "created_at": "2026-10-29T21:46:29.751732+00:00",
-      "sha256": "d2e0df66556653d983460eb861dbe0c53eb3920b852344feab80c093654e91df",
-      "size_bytes": 24538,
+      "sha256": "b0dce796cc680a7f76f6b7516dd8c970b98ad35cc0827d690cbc71eca6bcdaa9",
+      "size_bytes": 25161,
       "metadata": {
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00",
+        "checkpoint_at": "2026-10-30T02:06:53.352067+00:00",
         "candidate_status": "live_progressive_and_phosh_with_documented_limits",
-        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json"
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json"
       }
     },
     {

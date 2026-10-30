@@ -86,7 +86,15 @@ the shell executable is `/usr/libexec/phosh` (there is no `phosh` command on PAT
 `phosh-session --version`, `/usr/libexec/phosh --version`, `phoc --version`, RPM
 versions and `rpm -V phosh phoc phosh-mobile-settings` verified successfully.
 The greeter indexes `/usr/share/wayland-sessions`, so Phosh is available for a
-future login. A full Phosh graphical session was not launched. The current
+future login. The installed shell rendered its app grid successfully in a private
+headless Phoc session with Pixman, an isolated D-Bus, in-memory GSettings and
+private XDG config/data/cache/state directories. Screenshot:
+`/var/tmp/mios-phosh-preview/phosh-headless-preview.png`; receipt:
+`/var/tmp/mios-phosh-install/preview-receipt.json`. Wayland-nested Phoc previews
+configured an output but screenshot capture stalled, with both GPU and software
+renderers; that nested path remains unresolved. A full Phosh/GNOME login on the
+physical display was not tested. Only the owned preview units were stopped after
+verification; the MiOS nested desktop and operator sessions were preserved. The current
 desktop/application identities were preserved; no reboot or session restart.
 Receipt: `/var/tmp/mios-phosh-install/receipt.json`, log in the same directory.
 The DNF offline update was already invalid before installation; its metadata was
