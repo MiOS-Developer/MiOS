@@ -7,6 +7,78 @@ The incoming participant is `mios-desktop-repair-session`; outgoing participant
 is `mios-rdp-live-recovery`. These are current participants, not permanent roles.
 The broad desktop goal remains unfinished. Continue coding and live verification.
 
+## Remote hardware continuation — 2026-10-30T03:37Z
+
+This section supersedes the RDP defaults and active binary below. The operator
+added camera, USB, file and microphone forwarding for RDP and compatible remote
+clients. **The full hardware-forwarding request is unfinished.**
+
+* Real MS-RDPEAI microphone forwarding is implemented in `redirect.rs` and live.
+  Native 48 kHz signed PCM mono/stereo is validated, stereo is downmixed, and
+  bounded queues discard stale packets. Each connection owns a PipeWire-Pulse
+  source and private FIFO; close and attached-server shutdown remove them.
+  No physical source/default routing is changed by the implementation.
+* Live server SHA256 is
+  `7ee099f9f5fd1e5fdb148af13d530d6a543b1766b91b4f63813a32b429a65373`,
+  PID `612545` at activation. Package/rollback/activation receipts use the
+  `mios-microphone-wire` stem under `/var/lib/mios-build/rdp-delivery/`.
+  Activation was idle; primary compositor PID5764, application identities and
+  physical monitor geometry were preserved. Production test-auth is false.
+* SSOT microphone permission is now true, still subject to client permission.
+  HTML exposes permission, native audio executable, queue size and source name
+  prefix. `pulseaudio-utils` is included in the remote-desktop package set.
+  Stats expose native readiness, source, bytes, drops and errors. Other device
+  capabilities explicitly report their missing backends.
+* Progressive capture now defaults to `progressive_hz=0`, inheriting the
+  operator's target (90 Hz on this host), rather than imposing my earlier 30 Hz
+  default. This is a ceiling policy, not a measured 90 FPS claim.
+* `WireStream` counts successful socket writes below TLS for every codec.
+  `bitrate_kbps` includes TLS/RDP framing; `encoded_payload_kbps` retains the
+  encoded EGFX payload rate. Bitmap no longer incorrectly reports zero bitrate.
+* Verification: 54 regular Rust tests; both recorded codec fixtures explicitly
+  executed; 37 backend checks, 33 passing and four documented opt-in/operator
+  skips; production hardware/self-test and SSOT/global projection checks.
+  Native callback audio captured 24,000 samples with RMS4480.65. Actual FreeRDP
+  forwarding captured 240,000 synthetic samples with RMS7949.91. Its disabled
+  control created no source, and source/default cleanup passed. No physical mic
+  was recorded. The new attached-SIGTERM check failed on the old binary and
+  passed on the new one. Reproducible fixture:
+  `tests/fixtures/mios-rdp/microphone.py`; run as the desktop operator with
+  `MIOS_RDP_NATIVE_LIVE=1`, `MIOS_RDP_BIN` pointing at a private test-auth build,
+  `--nested-descriptor <owned session.json> --report <owned report.json>`.
+* Wire-codec E2E passed in the owned nested PiP lab: Progressive29.5 ACK FPS,
+  bitmap14.5 write-complete FPS (32–34 Mbps actual socket traffic), AVC29.5 ACK
+  FPS. Reports are `mios-wire-microphone-codec-e2e.json` and
+  `mios-microphone-shutdown-result.json` in the build evidence directory.
+  These measurements use a 30 Hz test target and are not phone FPS.
+* One owned nested lab remains running: descriptor
+  `/var/tmp/mios-rdp-microphone-lab.json`, unit `mios-rdp-microphone-lab`.
+  It uses isolated input and no physical controller assignment. Do not close
+  operator-adopted nested sessions as test cleanup.
+
+Remaining device work: RDPSND native speaker sink, server-side RDPECAM DVC plus
+native video source, RDPDR native filesystem/FUSE operations, URBDRC native USB
+bridge, and compatible non-RDP SPICE/usbredir/USB-IP integration. RDPDR now rejects
+devices instead of claiming empty directories are mounted drives. The upstream
+camera crate has client/PDU code but no server implementation. Generic USB support
+also depends on the client: Microsoft's platform matrix does not offer generic
+USB forwarding on iOS Windows App. Camera/microphone use separate protocols.
+Native worker attempts failed at login or unified endpoint stream startup; no
+device worker implementation or registration is claimed. Worker assignment
+requests remain queued for `mios-desktop-repair-session`.
+
+Build incident: the shared lock was held for18 minutes by a bidirectional
+`git cat-file --batch` pipe deadlock in a generator golden test. Exact process,
+FD and signal evidence is `mios-generator-deadlock-receipt.json`. Only the verified
+Git child received SIGTERM; its generator exited and the golden suite reported
+failure. The generator's write-all-before-output-read pattern in `indexes.rs`
+still needs a concurrent writer/drain fix and a fresh golden pass. Do not claim
+that cancelled suite passed. The desktop coordinator received the root cause
+and failure receipt through the native relay.
+
+Primary references: [PipeWire pipe-source](https://docs.pipewire.org/page_pulse_module_pipe_source.html)
+and [Windows App device compatibility](https://learn.microsoft.com/en-us/windows-app/compare-platforms-features).
+
 ## Continuation update — 2026-10-30T01:54:34.636288+00:00
 
 This section supersedes the older RDP and integration status below. The

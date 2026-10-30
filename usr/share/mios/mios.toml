@@ -6841,8 +6841,10 @@ log_negotiation     = true          # log the EGFX capability sets, negotiated v
 bitmap_hz           = 15            # frames/s of the classic bitmap path for clients without EGFX/AVC420
 bitmap_damage_threshold = 3         # per RGB channel vs last transmitted bitmap; 0 = exact; 0..16 suppresses tiny background noise without altering desktop rendering
 progressive        = true          # EGFX RemoteFX Progressive for clients disabling H.264; false preserves legacy bitmap fallback
-progressive_hz     = 30            # capture ceiling for the acknowledged Progressive path, also bounded by target_hz
+progressive_hz     = 0             # 0 inherits target_hz; nonzero is an explicit lower Progressive capture ceiling
 progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
+audio_control_program = "pactl"    # native PipeWire-Pulse control executable; no shell expansion
+microphone_queue_packets = 8       # bounded 10ms remote microphone queue, drops stale audio
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -6856,7 +6858,7 @@ clipboard_max_mb    = 64            # larger clipboard data is refused in either
 touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remote Touch", mapped to the remote output before it exists
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
 audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
-microphone          = false         # MS-RDPEAI audio input (Phase 5 stub; off until PipeWire virtual source is wired)
+microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
 drives              = false         # MS-RDPDR storage redirection (Phase 6 stub; off until FUSE/mount backend is wired)
 camera              = false         # MS-RDPECAM video capture device redirection (Phase 7 stub; off by default)
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
@@ -6866,6 +6868,7 @@ smartcard           = false         # MS-RDPESC smartcard redirection (off by de
 [remote.rdp.naming]                 # names of the virtual devices (test instances add " test")
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
+microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
 
 
 [flatpak]
@@ -17772,7 +17775,7 @@ pkgs = ["gpm"]
 # RDP front-end + wlroots VNC capture for [remote.rdp] (live-session remote desktop).
 [packages.remote-desktop]
 enable = true
-pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl"]
+pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils"] # pactl/parec for session-owned PipeWire-Pulse device bridges
 
 # Build deps of automation/70-bake-wayvnc-upstream.sh (wayvnc + neatvnc + aml from upstream HEAD,
 # neatvnc/aml static; preferred by the RDP bridge over the distro wayvnc).
