@@ -32,6 +32,14 @@ Prompts remain absent until the MiOS profile declares them.
 """
 from __future__ import annotations
 
+# Legacy tmux hooks (installed before the native hook) still name this script: hand them to the native single-flight
+# relay hook at once, before any import, so a resize storm can never spawn interpreters doing layout work.
+import os as _os, sys as _sys
+if len(_sys.argv) > 1 and _sys.argv[1] in ("--workspace-ensure", "--workspace-resize"):
+    _relay = "/usr/libexec/mios/mios-agent-relay"  # [mcp.agents].binary; FHS canonical for the legacy shim
+    _event = "ensure" if _sys.argv[1] == "--workspace-ensure" else "resize"
+    _os.execv(_relay, [_relay, "--workspace-hook", _event, *_sys.argv[2:4]])
+
 import asyncio
 import json
 import os
