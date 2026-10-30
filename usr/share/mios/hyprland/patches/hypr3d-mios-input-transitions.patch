@@ -1,32 +1,114 @@
-# AI-hint: Hypr3D 3D->2D keyboard transition: the window focused in the room keeps the keyboard when the room closes (deactivate3D re-focuses it after the layout restore; visible workspace only, never under a session lock). Without it clearAimFocus leaves the desktop with no focused window and typed keys go nowhere.
-# AI-related: tests/test-hypr3d-input-transitions-live.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches, usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch
+# AI-hint: Hypr3D 3D->2D keyboard transition (applies after hypr3d-mios-room-input.patch): leaving the room always hands the keyboard to a window. deactivate3D re-focuses, after the layout restore, the window the room had focused at exit; when the room had no aim focus (a quick 0.15-0.4 s re-toggle, or the crosshair on the floor) the window that had the keyboard in 2D when the room opened (saved by enter3D, kept across a re-entry during the exit); then the newest still-shown window in Hyprland's focus history; then the newest window on the room's monitor. Visible workspace, mapped, not no_focus only; never under a session lock. Without it clearAimFocus leaves the desktop with no focused window and typed keys go nowhere.
+# AI-related: tests/test-hypr3d-input-transitions.py, tests/test-hypr3d-input-transitions-live.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches, usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch
+diff --git a/src/main.cpp b/src/main.cpp
+index 7864f43..364bdf1 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -4896,6 +4896,11 @@
+@@ -43,6 +43,7 @@
+ #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+ #include <hyprland/src/config/values/ConfigValues.hpp>
+ #include <hyprland/src/desktop/state/WindowState.hpp>
++#include <hyprland/src/desktop/history/WindowHistoryTracker.hpp>
+ #include <hyprland/src/config/ConfigValue.hpp>
+ #include <hyprland/src/devices/IKeyboard.hpp>
+ #include <hyprland/src/devices/IPointer.hpp>
+@@ -305,6 +306,11 @@ static std::uintptr_t g_skirtFinalRefreshId = 0;
+ // The window that currently owns keyboard focus, as the aim logic last set it.
+ static std::uintptr_t g_lastFocusId = 0;
+ 
++// MiOS input transitions: the window that had the keyboard in 2D when the
++// room opened (enter3D clears focus; the aim owns it in the room). Leaving the
++// room hands the keyboard back to it when the room itself has no focus.
++static PHLWINDOWREF g_preRoomFocus;
++
+ // 3D FPS-style mouse gestures. Super is the modifier: LMB moves the aimed
+ // window in the 3D room, RMB resizes its real Hyprland/Wayland geometry.
+ enum class EPointerGesture : uint8_t {
+@@ -4902,6 +4908,54 @@ static CHyprSignalListener g_pipFullscreenListener;
+ 
+ // --- lifecycle --------------------------------------------------------------
+ 
++// MiOS input transitions: leaving the room always hands the keyboard to a
++// window. In order: the window the room had focused at exit, the window that
++// had the keyboard before the room opened (back to what you were doing in 2D),
++// the newest still-shown window in Hyprland's focus history (the 2D window was
++// closed in the room), then the newest window on the room's monitor. Only a window still shown on a visible workspace
++// (refocusing must never switch the operator's workspace), and nothing under
++// a session lock (the lock surface owns the keyboard; a lock is also how a
++// room can end). Without it a room exit with no aim focus -- a quick
++// re-toggle, or the crosshair on the floor -- left keys going nowhere.
++static bool roomExitFocusable(const PHLWINDOW& W) {
++    return W && W->m_isMapped && !W->isHidden() && W->m_workspace && W->m_workspace->isVisible() &&
++        !(W->m_ruleApplicator && W->m_ruleApplicator->noFocus().valueOrDefault());
++}
++
++static PHLWINDOW roomExitFocusTarget(const PHLWINDOWREF& exitFocus) {
++    if (const auto W = exitFocus.lock(); roomExitFocusable(W))
++        return W;
++    if (const auto W = g_preRoomFocus.lock(); roomExitFocusable(W))
++        return W;
++    if (const auto TRACKER = Desktop::History::windowTracker()) {
++        const auto& HISTORY = TRACKER->fullHistory();
++        for (auto it = HISTORY.rbegin(); it != HISTORY.rend(); ++it)
++            if (const auto W = it->lock(); roomExitFocusable(W))
++                return W;
++    }
++    if (!Desktop::windowState())
++        return nullptr;
++    const auto MON = targetMonitor();
++    PHLWINDOW any;
++    for (const auto& W : Desktop::windowState()->windows()) {
++        if (!roomExitFocusable(W))
++            continue;
++        if (MON && W->m_monitor.lock() == MON)
++            any = W;
++        else if (!any)
++            any = W;
++    }
++    return any;
++}
++
++static void restoreFocusAfterRoom(const PHLWINDOWREF& exitFocus) {
++    const bool LOCKED = g_pSessionLockManager && g_pSessionLockManager->isSessionLocked();
++    const auto W      = LOCKED ? nullptr : roomExitFocusTarget(exitFocus);
++    g_preRoomFocus.reset();
++    if (W)
++        Compat::focusWindow(W);
++}
++
+ static void deactivate3D() {
+     finishClientButton(0);
+     resetPointerGesture();
+@@ -4956,6 +5010,9 @@ static void deactivate3D() {
      if (Compat::setCursorHidden(false) && g_pHyprRenderer)
          g_pHyprRenderer->setCursorFromName("default", true);
  
-+    // MiOS input transitions: the window that had the keyboard in the room
-+    // keeps it in 2D. clearAimFocus() drops the seat's keyboard focus (the aim
-+    // is a room-only state); without this the desktop comes back with no
-+    // focused window and typed keys go nowhere until the pointer moves.
++    // MiOS input transitions: clearAimFocus() drops the seat's keyboard focus
++    // (the aim is a room-only state). Remember who should get it back.
 +    const PHLWINDOWREF exitFocus = Compat::focusedWindow();
      clearAimFocus();
      g_world.clear();
-     g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
-@@ -4914,6 +4919,15 @@
+     g_faceViewer.clear();
+@@ -4976,6 +5033,9 @@ static void deactivate3D() {
      unghostWindows();
      g_renderedOnce = false;
  
 +    // After the layout restore, so the window is back in its 2D place first.
-+    // Only a window still shown on a visible workspace (refocusing must never
-+    // switch the operator's workspace), and never under a session lock (the
-+    // lock surface owns the keyboard; a lock is also how a room can end).
-+    if (const auto W = exitFocus.lock();
-+        W && W->m_isMapped && !W->isHidden() && W->m_workspace && W->m_workspace->isVisible() &&
-+        !(g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
-+        Compat::focusWindow(W);
++    restoreFocusAfterRoom(exitFocus);
 +
      HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = true}}})");
      applyGlobalShaderGlassState(false);
  
+@@ -5015,6 +5075,12 @@ static void requestDeactivate3D() {
+ }
+ 
+ static void enter3D() {
++    // MiOS input transitions: remember the 2D keyboard owner before the room
++    // clears focus. A re-entry while the exit is still finishing (g_active is
++    // still set) keeps the original 2D window: the focus now is the room's.
++    if (!g_active || !g_preRoomFocus.lock())
++        g_preRoomFocus = Compat::focusedWindow();
++
+     // Without this the render stage bails out immediately and the toggle does
+     // nothing at all.
+     g_active = true;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of 2D<->3D keyboard input transitions in an owned nested MiOS PiP session: focus kept across mios-gen hyprland-3d-toggle, real key events (primary -> our PiP window -> nested compositor -> Hypr3D key hook -> focused window), room key ownership, the Super+Left Alt keyboard mode, the input:window capture contract, a window opened in the room and repeated cycles.
+# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of 2D<->3D keyboard input transitions in an owned nested MiOS PiP session: focus kept across mios-gen hyprland-3d-toggle, real key events (primary -> our PiP window -> nested compositor -> Hypr3D key hook -> focused window), room key ownership, the Super+Left Alt keyboard mode, the input:window capture contract, a window opened in the room, repeated cycles, and leaving the room with NO aim focus (rapid 0.4/0.15 s toggles, an immediate re-entry during the exit, the crosshair backed off every window, the 2D window closed in the room): a focused window that receives keys must always come back.
 # AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch, tools/native/mios-gen/src/render.rs (hyprland-3d-toggle), tools/native/mios-inputd/src/runtime.rs (input:window), usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch (input_capture/input_owner), tools/native/mios-gen/src/nested_session.rs, tests/test-mios-controls-live.py
 # Primary compositor: only the stock launcher's PiP adoption and send_key_state to OUR nested window. Everything else is
 # dispatched to the nested compositor. The operator user tier is hash-checked before/after; nothing is written to it.
@@ -182,10 +182,82 @@ def settle(pred, timeout=6.0):
     return pred()
 
 
+def exited_with_keys(n, pw, addr, tag, in_room):
+    """After a room exit: the recorder is focused and a typed key reaches it."""
+    check(f'{tag}: 3D -> 2D', settle(lambda: not n.room(), 15))
+    time.sleep(1.0)
+    act = n.active()
+    check(f'{tag}: a focused window comes back after the exit', act == addr, f'in_room={in_room} after={act} want={addr}')
+    ok, got = typed(pw, 'k', 'k')
+    check(f'{tag}: keys reach it after the exit', ok, repr(got))
+    n.dismiss_search(pw)
+    n.focus(addr)
+    settle(lambda: n.active() == addr, 4)
+
+
+def no_aim_exits(n, pw, addr):
+    """Room exits where the room has no aim focus: the 2D keyboard owner (or the newest still-shown window) gets it back."""
+    for dwell in (0.4, 0.15):
+        n.focus(addr)
+        settle(lambda: n.active() == addr, 4)
+        n.toggle()
+        check(f'rapid toggle {dwell}s: 2D -> 3D', settle(n.room, 10))
+        time.sleep(dwell)
+        in_room = n.active()
+        n.toggle()
+        exited_with_keys(n, pw, addr, f'rapid toggle {dwell}s', in_room)
+    # Re-entry while the exit is still finishing (the deferred teardown is skipped), then out again quickly.
+    n.toggle()
+    settle(n.room, 10)
+    time.sleep(1.0)
+    n.toggle()
+    n.toggle()
+    check('re-entry during the exit: back in the room', settle(n.room, 10))
+    time.sleep(0.3)
+    in_room = n.active()
+    n.toggle()
+    exited_with_keys(n, pw, addr, 're-entry during the exit', in_room)
+    # Back off every window: the crosshair rests on the floor, so the room has no focus at exit.
+    n.toggle()
+    settle(n.room, 10)
+    time.sleep(1.5)
+    sk(pw, '', 's', 'down')
+    time.sleep(2.5)
+    sk(pw, '', 's', 'up')
+    time.sleep(1.0)
+    in_room = n.active()
+    observe('backed off: focus in the room', in_room)
+    n.shot('06-3d-backed-off')
+    n.toggle()
+    exited_with_keys(n, pw, addr, 'backed off (no aim focus)', in_room)
+    # The 2D keyboard owner is closed in the room and nothing is aimed: the newest still-shown window takes it.
+    n.eval("hl.dispatch(hl.dsp.exec_cmd('alacritty --class mios-input-gone -e sleep 300'))")
+    gone = n.wait_window('mios-input-gone')
+    if check('closed 2D owner: a second window mapped', gone):
+        n.focus(gone['address'])
+        check('closed 2D owner: it has the keyboard in 2D', settle(lambda: n.active() == gone['address'], 5), f'active={n.active()}')
+        n.toggle()
+        settle(n.room, 10)
+        time.sleep(1.0)
+        try:
+            os.kill(gone['pid'], signal.SIGTERM)  # our own terminal in our own nested session
+        except ProcessLookupError:
+            pass
+        settle(lambda: not any(c.get('address') == gone['address'] for c in n.clients()), 6)
+        sk(pw, '', 's', 'down')
+        time.sleep(1.5)
+        sk(pw, '', 's', 'up')
+        time.sleep(1.0)
+        in_room = n.active()
+        n.toggle()
+        exited_with_keys(n, pw, addr, 'closed 2D owner (no aim focus)', in_room)
+
+
 def main():
     user_before = sha(USER_TIER)
     pid, portal = primary()
-    if not check('preflight primary compositor + portal', pid == str(PRIMARY_PID) and portal == 1, f'pid={pid} portal={portal}'):
+    # The portal mount count depends on the caller's mount namespace (0 or 1); it must only stay unchanged.
+    if not check('preflight primary compositor (portal recorded)', pid == str(PRIMARY_PID) and portal in (0, 1), f'pid={pid} portal={portal}'):
         return 1
     n = Nested()
     try:
@@ -309,6 +381,8 @@ def main():
         ok, got = typed(pw, 'w', 'w')
         check('Super+F12 chord: 2D keys reach the window', ok, repr(got))
         n.shot('05-2d-final')
+
+        no_aim_exits(n, pw, addr)
     except Exception as e:
         check('driver', False, repr(e))
     finally:
