@@ -60,10 +60,11 @@ QS.PanelWindow {
     Rectangle {
         id: pane
         anchors.fill: parent
-        radius: drawer.theme.radius
-        color: drawer.theme.withAlpha(drawer.theme.bg, drawer.theme.drawerOpacity)
-        border.width: 1
-        border.color: drawer.theme.outlineColor
+        // One glass for every HUD surface (Glass.qml): the window-control tab's corner rule and fill colour, at the
+        // drawer's legibility alpha; no outline -- the rim light is the compositor's hyprglass fresnel, as on the
+        // island and the dock.
+        radius: Glass.cornerFor(height)
+        color: drawer.theme.withAlpha(Glass.fillHex, drawer.theme.drawerOpacity)
         clip: true
 
         Column {
@@ -76,11 +77,11 @@ QS.PanelWindow {
                 width: Math.min(parent.width, drawer.theme.searchWidth)
                 anchors.horizontalCenter: parent.horizontalCenter
                 height: drawer.theme.searchRowHeight
-                radius: drawer.theme.radius
-                color: drawer.theme.withAlpha(drawer.theme.bg, drawer.theme.panelOpacity)
-                border.width: 1
-                border.color: search.activeFocus ? drawer.theme.withAlpha(drawer.theme.accent, drawer.theme.selectionOpacity)
-                                                 : drawer.theme.outlineColor
+                radius: Glass.cornerFor(height)
+                color: Glass.fill
+                // focus ring only (selection colour); the field itself is the island's glass
+                border.width: search.activeFocus ? 1 : 0
+                border.color: drawer.theme.withAlpha(drawer.theme.accent, drawer.theme.selectionOpacity)
                 TextInput {
                     id: search
                     anchors.fill: parent
