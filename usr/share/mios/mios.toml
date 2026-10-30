@@ -4692,6 +4692,19 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #   menu, keymap.
 
 # --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
+# Step P1 (mios-inputd router room table + hypr3d-mios-room-input.patch). Same value grammar as nav: "ns:action" fires on
+# press, except on the toggle_chord buttons (L3/R3), which fire on a clean release (any L3+R3 overlap cancels both
+# singles; R3 is ignored while the right stick is deflected; L3 is not, so sprint works while walking); Guide (BTN_MODE)
+# fires on a tap (released before capture_hold_ms, no other button between); ["tap", "hold"] resolves on release or at
+# capture_hold_ms; "none" unbinds. hypr:hypr3d:<verb> runs hl.plugin.hypr3d.<verb>() in the room's compositor, except a
+# plain hypr:hypr3d:view, which is the packet's view slot (cycles on the next room frame). The North capture button
+# (fullscreen_button) and the toggle chord itself are the ownership contract: the room table cannot claim them.
+[keybindings.global.controller.room]
+BTN_EAST = "hypr:hypr3d:cancel"                       # drop a grab/resize, close a picker, leave the room cursor
+BTN_THUMBL = "hypr:hypr3d:sprint"                     # toggle
+BTN_THUMBR = "hypr:hypr3d:recenter"
+BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
+BTN_MODE = "quickshell:drawer-toggle"
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -8870,7 +8883,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
@@ -8888,6 +8901,17 @@ theatre_width = 4.0                 # target screen width in metres; aspect pres
 theatre_fill = 0.9                  # fraction of the available HUD workarea in the camera frustum
 theatre_seconds = 0.25              # room-pose transition; native maximize/restore owns the OS state
 pip_raster_max_px = 2048            # render surface budget per axis; room magnification stays independent
+# Face the viewer (hypr3d-mios-room-input.patch): a PiP whose centre is within face_distance metres of the camera turns
+# its plane to face the camera POSITION and follows it as the camera moves; a Theatre PiP uses theatre_face_distance.
+# Outside the distance it eases back to the pose it was placed with (that placed pose is what the room remembers).
+# Every turn is an exponential ease with time constant face_seconds (no snapping); face_hysteresis metres beyond the
+# distance end the facing, so a viewer standing on the boundary never flaps. face_viewer = "pip" (managed PiPs only),
+# "all" (every room window) or "off".
+face_viewer = "pip"
+face_distance = 2.0                 # metres, a PiP in its room pose
+theatre_face_distance = 4.0         # metres, a PiP in Theatre (native maximize)
+face_seconds = 0.2                  # ease time constant, seconds (0.01..5)
+face_hysteresis = 0.1               # metres past the distance before facing ends (0..10)
 
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
@@ -8929,6 +8953,10 @@ crt_default_on = false
 [desktop.hyprland.hypr3d.config.player]
 # VR-native locomotion: disable view-only vertical head-bobbing and head-tilt roll while walking.
 walk_bob = false
+# The room's recenter verb (R3 in [keybindings.global.controller.room]): the camera eases onto the focused room window
+# (else the window aim focus last selected, else the nearest room window, else it levels the view) with this time
+# constant, seconds (0.01..5).
+recenter_seconds = 0.3
 
 # Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
 # render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
@@ -10985,6 +11013,10 @@ week_starts_on  = 1               # calendar first weekday: 0 = Sunday, 1 = Mond
 app_menu        = true            # focused app's exported menu (GTK org.gtk.Menus / dbusmenu) when one exists
 popup_ms        = 200             # shell popups (calendar, power, app-menu dropdowns) grow out of their trigger over this long
 sample_interval_ms = 1000         # one shared FPS / ShaderGlass sampler for all islands
+# The fps item reads "<output> FPS/<window> FPS": the output's rendered rate beside the focused window's own committed
+# frame rate (mios-pacing's focused-window meter: buffer commits with damage of the window's surface tree, in 2D and
+# Hypr3D, nested sessions included); the window part shows on the island of the window's output and hides when unknown.
+window_fps = true                 # false = the output rate alone
 # Under a fullscreen window the status island and app-menu pills hide and reserve nothing; touching the
 # top screen edge reveals them as overlays above the window until the pointer leaves (EdgeReveal.qml).
 fullscreen_reveal          = true   # false = they stay hidden under fullscreen windows
@@ -17432,6 +17464,10 @@ unit = [
     "tests/test-hypr3d-spawn.py",
     "tests/test-hypr3d-crt.py",
     "tests/test-hypr3d-controller.py",
+    "tests/test-hypr3d-room-input.py",
+    "tests/test-hypr3d-room-input-live.py",
+    "tests/test-window-fps.py",
+    "tests/test-window-fps-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
