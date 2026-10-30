@@ -28,14 +28,20 @@ and sends each packet as a wave.
   sink opens. Every Wave Confirm from the client advances the stream clock. New
   waves are withheld (`latency_dropped`) while more than
   `speaker_max_latency_ms` of sent audio is unconfirmed. Audio therefore skips
-  ahead after a network stall instead of staying late. Clients that never
-  confirm, or stop confirming for a long time, are never starved: the gate
-  reopens.
+  ahead after a network stall instead of staying late. Before its first
+  confirm, a client gets a start-up window of `max(4 × speaker_max_latency_ms,
+  1 s)`. A client that falls past its window and stops confirming, or never
+  confirms at all, gets only probe waves: the first after one start-up window,
+  then at doubling intervals up to 8 s. The queue toward a stalled connection
+  therefore stays a few packets long. The first confirm for a probe resumes
+  normal streaming at once. MS-RDPEA requires a confirm for every wave, so a
+  conforming client never sees probing.
 * **Silence and underruns.** After `speaker_idle_ms` of exact digital silence,
   the server stops sending (`idle_packets`). It resumes with the first audible
   packet. With `0`, it always streams. A poll period with no samples from the
-  sink counts as a source gap (`source_gaps`). Partial packets are discarded,
-  so the client restarts playback from fresh audio.
+  sink counts as a source gap (`source_gaps`). The tail of a sound shorter
+  than a packet is then sent once, padded with silence, so endings are neither
+  lost nor played late.
 * **Cleanup.** When the client closes the channel or disconnects, or the
   server receives SIGTERM, the sink worker stops. It unloads only the module
   it verifiably owns, matched by module ID, module type and its exact FIFO.
@@ -102,6 +108,13 @@ is only read, to confirm its defaults are unchanged.
 | `speaker-disabled` | Negative control: with `audio_output = false`, no sink is created and the client receives silence. |
 | `restart` | Microphone and speaker work, lab A's `pipewire-pulse` is restarted, both nodes come back under the same names, and the tone and microphone signal pass again. |
 | `restart-norecovery` | Negative control: with `audio_recovery_attempts = 0`, neither node returns. The code before recovery behaved the same way. |
+| `mic-restart` | Microphone only (speaker permission off): the source is recreated under the same name and the synthetic signal reaches it again. |
+| `default-priority` | With the configured defaults cleared, WirePlumber still never picks a session node as the default sink or source. |
+
+Run the same fixture against a build without this code (the pre-speaker
+`main`, `--pulse-namespace` for binaries that ignore `audio_server`) as the
+negative control: `speaker` never gets a sink, and `mic-restart` never gets its
+source back.
 
 `remote_audio.rs` also has an ignored unit test,
 `speaker_sink_tone_reaches_rdpsnd_waves_in_private_lab`. It takes

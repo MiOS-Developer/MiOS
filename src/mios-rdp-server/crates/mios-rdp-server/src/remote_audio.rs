@@ -215,20 +215,29 @@ fn format_label(format: &AudioFormat) -> String {
 #[derive(Debug)]
 pub(crate) struct StreamClock {
     epoch: Instant,
+    started: AtomicBool,
+    first_sent: AtomicU32,
     last_sent: AtomicU32,
     confirmed: AtomicU32,
     confirm_seen: AtomicBool,
-    last_confirm: AtomicU32,
+    last_probe: AtomicU32,
+    probe_interval: AtomicU32,
 }
+
+/// Longest wait between probe waves to a client that stopped confirming.
+const PROBE_INTERVAL_MAX_MS: u32 = 8000;
 
 impl StreamClock {
     pub(crate) fn new() -> Self {
         Self {
             epoch: Instant::now(),
+            started: AtomicBool::new(false),
+            first_sent: AtomicU32::new(0),
             last_sent: AtomicU32::new(0),
             confirmed: AtomicU32::new(0),
             confirm_seen: AtomicBool::new(false),
-            last_confirm: AtomicU32::new(0),
+            last_probe: AtomicU32::new(0),
+            probe_interval: AtomicU32::new(0),
         }
     }
 
@@ -237,13 +246,16 @@ impl StreamClock {
     }
 
     pub(crate) fn sent(&self, ts: u32) {
+        if !self.started.swap(true, Ordering::AcqRel) {
+            self.first_sent.store(ts, Ordering::Release);
+        }
         self.last_sent.store(ts, Ordering::Release);
     }
 
     /// Records a Wave Confirm. MS-RDPEA sets its timestamp to the wave's own
     /// plus the time the client held it, so the newest confirm is a lower
-    /// bound of what the client has received.
-    pub(crate) fn confirm(&self, timestamp: u16, now: u32) {
+    /// bound of what the client has received. Any confirm ends probing.
+    pub(crate) fn confirm(&self, timestamp: u16) {
         let last = self.last_sent.load(Ordering::Acquire);
         let delta = i32::from(timestamp.wrapping_sub(last as u16) as i16);
         let value = last.wrapping_add_signed(delta);
@@ -252,7 +264,7 @@ impl StreamClock {
         if !seen || (value.wrapping_sub(previous) as i32) > 0 {
             self.confirmed.store(value, Ordering::Release);
         }
-        self.last_confirm.store(now, Ordering::Release);
+        self.probe_interval.store(0, Ordering::Release);
         self.confirm_seen.store(true, Ordering::Release);
     }
 
@@ -266,19 +278,41 @@ impl StreamClock {
         Some(backlog.max(0) as u32)
     }
 
-    /// Latency gate: a wave is withheld while the client is more than
-    /// `max_ms` of audio behind. Clients that never confirm, or stop
-    /// confirming for long, are not starved: the gate reopens.
+    /// Latency gate that keeps the outgoing queue bounded. A wave is admitted
+    /// while at most `max_ms` of sent audio is unconfirmed; before the first
+    /// confirm the client gets a start-up window of `max(4 * max_ms, 1000)`.
+    /// Past that the client is behind or stalled: only a probe wave is
+    /// admitted, first after one window and then with a doubling interval up
+    /// to 8 s, so a recovered client confirms and resumes while a stalled one
+    /// queues almost nothing.
     pub(crate) fn admit(&self, now: u32, max_ms: u32) -> bool {
-        let Some(backlog) = self.backlog_ms() else { return true };
-        if backlog <= max_ms {
+        if !self.started.load(Ordering::Acquire) {
             return true;
         }
-        if now.wrapping_sub(self.last_confirm.load(Ordering::Acquire)) > max_ms.saturating_mul(4).max(1000) {
-            self.confirm_seen.store(false, Ordering::Release);
+        let startup = max_ms.saturating_mul(4).max(1000);
+        let (reference, window) = if self.confirm_seen.load(Ordering::Acquire) {
+            (self.confirmed.load(Ordering::Acquire), max_ms)
+        } else {
+            (self.first_sent.load(Ordering::Acquire), startup)
+        };
+        let backlog = (self.last_sent.load(Ordering::Acquire).wrapping_sub(reference) as i32).max(0) as u32;
+        if backlog <= window {
+            self.probe_interval.store(0, Ordering::Release);
             return true;
         }
-        false
+        let interval = self.probe_interval.load(Ordering::Acquire);
+        if interval == 0 {
+            // Just fell behind: the next probe waits one start-up window.
+            self.probe_interval.store(startup, Ordering::Release);
+            self.last_probe.store(now, Ordering::Release);
+            return false;
+        }
+        if now.wrapping_sub(self.last_probe.load(Ordering::Acquire)) < interval {
+            return false;
+        }
+        self.last_probe.store(now, Ordering::Release);
+        self.probe_interval.store(interval.saturating_mul(2).min(PROBE_INTERVAL_MAX_MS), Ordering::Release);
+        true
     }
 }
 
@@ -383,7 +417,7 @@ impl RdpsndServerHandler for SpeakerHandler {
 
     fn wave_confirm(&mut self, _block_no: u8, timestamp: u16) {
         if let Some(stream) = &self.stream {
-            stream.clock.confirm(timestamp, stream.clock.now_ms());
+            stream.clock.confirm(timestamp);
         }
     }
 }
@@ -564,10 +598,14 @@ fn speaker_pump(
                 stats.speaker_gaps.fetch_add(1, Ordering::Relaxed);
                 gap = true;
             }
-            fill = 0;
-            continue;
-        }
-        if pfd.revents & libc::POLLIN != 0 {
+            if fill == 0 {
+                continue;
+            }
+            // Flush the tail of the sound that just ended, padded with
+            // silence, so it is neither lost nor played late.
+            buf[fill..].fill(0);
+            fill = packet;
+        } else if pfd.revents & libc::POLLIN != 0 {
             match reader.read(&mut buf[fill..]) {
                 Ok(0) => anyhow::bail!("speaker sink closed by the audio server"),
                 Ok(n) => {
@@ -642,40 +680,47 @@ mod tests {
     }
 
     #[test]
-    fn latency_gate_bounds_unconfirmed_audio_and_never_starves() {
+    fn latency_gate_withholds_unconfirmed_audio_and_reopens_on_confirms() {
         let clock = StreamClock::new();
-        // Before any confirm the client is not gated.
-        clock.sent(1000);
+        // Before any wave the client is not gated.
         assert!(clock.admit(1000, 200));
+        clock.sent(1000);
         // Confirm for the wave sent at 1000 (16-bit wire timestamp, held 3 ms).
-        clock.confirm(1003, 1003);
+        clock.confirm(1003);
         assert_eq!(clock.backlog_ms(), Some(0));
-        // Client stalls: 300 ms sent past the last confirm closes the gate.
+        // Client falls behind: 300 ms sent past the last confirm closes the gate.
         clock.sent(1303);
         assert_eq!(clock.backlog_ms(), Some(300));
         assert!(!clock.admit(1320, 200), "more than max latency unconfirmed must be withheld");
         // The backlog drains: confirms catch up and the gate reopens.
-        clock.confirm(1250, 1330);
+        clock.confirm(1250);
         assert!(clock.admit(1330, 200));
-        // A client that stops confirming entirely is not starved forever.
+        // A stalled client is probed after one start-up window, then backed off.
         clock.sent(1600);
         assert!(!clock.admit(1600, 200));
-        assert!(clock.admit(1330 + 1001, 200), "stalled confirms reopen the gate");
-        assert_eq!(clock.backlog_ms(), None);
+        assert!(!clock.admit(2500, 200));
+        assert!(clock.admit(2601, 200), "first probe after the start-up window");
+        clock.sent(2601);
+        assert!(!clock.admit(3601, 200), "probe interval doubles");
+        assert!(clock.admit(4602, 200));
+        clock.sent(4602);
+        // The client answers the probe: normal flow resumes at once.
+        clock.confirm(4602);
+        assert!(clock.admit(4622, 200));
     }
 
     #[test]
     fn confirm_timestamps_unwrap_across_the_16_bit_boundary() {
         let clock = StreamClock::new();
         clock.sent(65_530);
-        clock.confirm(65_532, 65_532);
+        clock.confirm(65_532);
         assert_eq!(clock.backlog_ms(), Some(0));
         clock.sent(65_600);
         // Wire timestamp wrapped: 65_590 & 0xffff = 54.
-        clock.confirm(54, 65_590);
+        clock.confirm(54);
         assert_eq!(clock.backlog_ms(), Some(10));
         // An older (second) confirm never moves the confirmed position back.
-        clock.confirm(65_531, 65_595);
+        clock.confirm(65_531);
         assert_eq!(clock.backlog_ms(), Some(10));
     }
 
@@ -782,5 +827,72 @@ mod tests {
         println!("speaker sink -> rdpsnd waves: samples={} rms={rms:.2} waves={}", samples.len(), stats.speaker_waves.load(Ordering::Relaxed));
         let _ = std::fs::remove_dir(cfg.runtime_dir.join("mios-rdp"));
         let _ = std::fs::remove_dir(&cfg.runtime_dir);
+    }
+}
+
+/// Bounded-queue and underrun regressions. Kept in their own module and on
+/// APIs the pre-fix code also has, so the same tests run as negative controls
+/// against it.
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+
+    /// Ten seconds of 20 ms waves to a client that never sends a Wave
+    /// Confirm (or whose connection stalled before its first one): the queue
+    /// must stay bounded instead of growing at the stream's byte rate.
+    #[test]
+    fn speaker_queue_stays_bounded_for_a_client_that_never_confirms() {
+        let clock = StreamClock::new();
+        let mut admitted = 0u32;
+        for i in 0..500u32 {
+            let now = 10_000 + i * 20;
+            if clock.admit(now, 200) {
+                clock.sent(now);
+                admitted += 1;
+            }
+        }
+        // 1 s start-up window (51 waves) plus probes at +1 s, +2 s and +4 s.
+        assert!(admitted <= 60, "admitted {admitted} of 500 waves without a single confirm");
+        assert!(admitted >= 50, "the start-up window must still play: admitted {admitted}");
+    }
+
+    /// The tail of a sound shorter than a packet must reach the client
+    /// (padded with silence) when the sink goes quiet, not be discarded.
+    #[test]
+    fn speaker_flushes_a_partial_packet_when_the_sink_goes_quiet() {
+        use std::io::Write;
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 fills two descriptors, each owned by one File below.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) }, 0);
+        // SAFETY: each descriptor is owned only by its File.
+        let reader = unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fds[0]) };
+        let mut writer = unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fds[1]) };
+        let mut cfg = Config::default();
+        cfg.native.speaker_idle_ms = 0;
+        let packet = 3840;
+        let tail = vec![0x11u8; 1000];
+        writer.write_all(&tail).unwrap();
+        let stats = Arc::new(PipeStats::default());
+        let stop = Arc::new(AtomicBool::new(false));
+        let clock = Arc::new(StreamClock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = {
+            let (stats, stop, clock) = (Arc::clone(&stats), Arc::clone(&stop), Arc::clone(&clock));
+            std::thread::spawn(move || speaker_pump(&cfg, &stats, &stop, &clock, &tx, &reader, packet).map_err(|e| e.to_string()))
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        stop.store(true, Ordering::Release);
+        worker.join().unwrap().unwrap();
+        drop(writer);
+        let mut waves = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let ServerEvent::Rdpsnd(RdpsndServerMessage::Wave(data, _)) = event {
+                waves.push(data);
+            }
+        }
+        assert_eq!(waves.len(), 1, "the partial tail must be sent exactly once");
+        assert_eq!(waves[0].len(), packet, "waves stay whole packets");
+        assert_eq!(&waves[0][..tail.len()], tail.as_slice());
+        assert!(waves[0][tail.len()..].iter().all(|b| *b == 0), "padding is silence");
     }
 }
