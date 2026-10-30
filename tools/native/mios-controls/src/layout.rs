@@ -680,13 +680,14 @@ pub fn neighbour(els: &[El], from: &str, dx: i32, dy: i32) -> Option<String> {
             if along <= 0 {
                 return None;
             }
-            // an element that shares the current one's span across the move is straight ahead: rows of staggered
-            // keys (q -> a, not q -> Super below it) and columns of pad buttons
+            // an element that shares the current one's span across the move is straight ahead and always wins over a
+            // diagonal one: rows of staggered keys (q -> a, not q -> Super below it; a -> Caps, never up to q) and
+            // columns of pad buttons. Only when nothing is straight ahead does the nearest diagonal element count.
             let overlaps = if dy != 0 { e.x0 < cur.x1 && cur.x0 < e.x1 } else { e.y0 < cur.y1 && cur.y0 < e.y1 };
             let off = (ddx * dy).abs() + (ddy * dx).abs();
             let across = if overlaps { 0 } else { off };
             // ties (two keys straight ahead) go to the one whose centre is closest across the move
-            Some(((along + across * 3, off), e.input.clone()))
+            Some(((!overlaps, along + across * 3, off), e.input.clone()))
         })
         .min_by_key(|(score, _)| *score)
         .map(|(_, id)| id)
@@ -798,7 +799,10 @@ mod tests {
         let (els, _) = keyboard_elements(140, 13, g).unwrap();
         assert_eq!(neighbour(&els, "key:q", 1, 0).as_deref(), Some("key:w"));
         assert_eq!(neighbour(&els, "key:q", 0, 1).as_deref(), Some("key:a"));
-        assert_eq!(neighbour(&els, "key:q", 0, -1).as_deref(), Some("key:2"));
+        // q sits half under 1 and half under 2: up picks the closer centre, and down from there comes back to q
+        let up = neighbour(&els, "key:q", 0, -1).expect("q has a key above it");
+        assert!(up == "key:1" || up == "key:2", "{up}");
+        assert_eq!(neighbour(&els, &up, 0, 1).as_deref(), Some("key:q"), "up then down returns to q");
         assert_eq!(neighbour(&els, "key:a", 0, 1).as_deref(), Some("key:z"), "staggered rows: straight down, not diagonal");
         assert_eq!(neighbour(&els, "key:a", -1, 0).as_deref(), Some("key:caps_lock"));
         assert_eq!(neighbour(&els, "key:w", 0, 1).as_deref(), Some("key:s"));
