@@ -2057,7 +2057,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_APP_ID:=org.mios.ShaderGlass}"
 [ -n "${MIOS_DESKTOP_SHADERGLASS_ASSET_PATTERN+x}" ] || MIOS_DESKTOP_SHADERGLASS_ASSET_PATTERN='^ShaderGlass-[0-9][0-9A-Za-z.+-]*-win-x64\.zip$'
 : "${MIOS_DESKTOP_SHADERGLASS_BINARY:=/usr/bin/mios-shaderglass}"
-[ -n "${MIOS_DESKTOP_SHADERGLASS_BINDINGS+x}" ] || MIOS_DESKTOP_SHADERGLASS_BINDINGS='{ args = "toggle", key = "SUPER + G", label = "ShaderGlass: overlay on the active window on/off" },{ args = "cycle", key = "SUPER + SHIFT + G", label = "ShaderGlass: cycle shader preset" },{ args = "setup", key = "SUPER + ALT + G", label = "ShaderGlass: pane setup (shader menu) / back to overlay" }'
+[ -n "${MIOS_DESKTOP_SHADERGLASS_BINDINGS+x}" ] || MIOS_DESKTOP_SHADERGLASS_BINDINGS='{ args = "toggle", key = "SUPER + G", label = "ShaderGlass: overlay on the active window on/off" },{ args = "cycle", key = "SUPER + SHIFT + G", label = "ShaderGlass: next shader (kept for the app)" },{ args = "setup", key = "SUPER + ALT + G", label = "ShaderGlass: pane setup (shader menu) / back to overlay" }'
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_CURSOR:=hidden}"
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_PICKER:=mios}"
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_REQUEST_TTL_MS:=15000}"
@@ -2077,6 +2077,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_INSTALL_DIR:=/usr/lib/mios/shaderglass}"
 : "${MIOS_DESKTOP_SHADERGLASS_INSTALL_FILES:=ShaderGlass.exe,LICENSE,MANUAL.pdf,README.txt,CustomShader.slang}"
 : "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_ARGS:=-f,-input,Choose...}"
+: "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_CYCLE_SHORTCUT:=n}"
 : "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_SETUP_SHORTCUT:=m}"
 : "${MIOS_DESKTOP_SHADERGLASS_LICENSE_MARKERS:=GNU GENERAL PUBLIC LICENSE,Version 3}"
 : "${MIOS_DESKTOP_SHADERGLASS_MAP_TIMEOUT_S:=60}"
@@ -2108,6 +2109,12 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_PROFILE_SHADERNAME:=crt-geom}"
 : "${MIOS_DESKTOP_SHADERGLASS_PROFILE_TRANSPARENT:=0}"
 : "${MIOS_DESKTOP_SHADERGLASS_SOURCE_REPOSITORY:=https://github.com/mausimus/ShaderGlass}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_DIRECTORY:=mios/shaderglass}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_PERSIST:=true}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_RESTART_LIMIT:=2}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_RESUME:=true}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_SAVE_TIMEOUT_MS:=3000}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_STRIP_KEYS:=CaptureWindow,CaptureDesktop,CaptureDevice,CaptureFormat,InputArea,CroppedArea}"
 [ -n "${MIOS_DESKTOP_SHADERGLASS_WINDOW_CLASS+x}" ] || MIOS_DESKTOP_SHADERGLASS_WINDOW_CLASS='^(shaderglass\.exe)$'
 : "${MIOS_DESKTOP_SHADERGLASS_WINDOW_EXCLUDE_FROM_CAPTURES:=false}"
 : "${MIOS_DESKTOP_SHADERGLASS_WINDOW_GLASS_PRESET:=mios}"

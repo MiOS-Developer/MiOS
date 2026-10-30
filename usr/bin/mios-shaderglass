@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-hint: ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, stop, status, install/update, prefix, portal-config. Without a terminal (keybind or drawer) a failure becomes a desktop notification.
+# AI-hint: ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, next shader (cycle, saved per app), save, resume, stop, status, install/update, prefix, portal-config. Without a terminal (keybind or drawer) a failure becomes a desktop notification.
 # AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass], usr/share/applications/mios-shaderglass.desktop
 # AI-functions: main, log_error, notify_error
 
@@ -19,6 +19,8 @@ notify_error() {
 }
 
 hypr3d_is_active() {
+    # /tmp/hypr3d-status.txt is the primary session's room; a nested session (private runtime dir) has its own.
+    [[ "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" == "/run/user/$(id -u)" ]] || return 1
     [[ -f /tmp/hypr3d-status.txt ]] || return 1
     local last_active
     last_active=$(grep '^active=' /tmp/hypr3d-status.txt 2>/dev/null | tail -n 1 || true)
@@ -74,8 +76,8 @@ main() {
     fi
 
     case "${1:-}" in
-        cycle|preset)
-            set -- setup "${@:2}"
+        preset)
+            set -- cycle "${@:2}"
             ;;
         off|clear)
             set -- stop "${@:2}"

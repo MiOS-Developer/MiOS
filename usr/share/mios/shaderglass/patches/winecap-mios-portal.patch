@@ -163,11 +163,11 @@ index 9009415..ede3d59 100644
  	g_dbus_proxy_call(sc.screencast_proxy, "SelectSources",
  					  g_variant_new("(oa{sv})", sc.session_handle, &builder), G_DBUS_CALL_FLAGS_NONE, -1,
  					  sc.cancellable, on_source_selected_cb, NULL);
-
 diff --git a/WineCap/WineCap.c b/WineCap/WineCap.c
+index 713470a..f5ad87b 100644
 --- a/WineCap/WineCap.c
 +++ b/WineCap/WineCap.c
-@@ -17,11 +17,93 @@
+@@ -17,11 +17,201 @@ static int sActive = 0;
  static void *sContext = NULL;
  static int sType = 0;
  
@@ -252,6 +252,114 @@ diff --git a/WineCap/WineCap.c b/WineCap/WineCap.c
 +    EnumWindows(mios_fit_output_window, (LPARAM)&size);
 +}
 +
++/* MiOS command channel. miosd's supervisor keeps each pane's ShaderGlass state
++ * (shader, parameters, scale ...) per application; ShaderGlass writes its live
++ * state only through its own menu commands. The supervisor writes
++ * "<seq> <verb>" to MIOS_WINECAP_COMMAND_FILE; this thread claims it, sends the
++ * matching menu command to this process' ShaderGlass main window (handled on
++ * ShaderGlass' own UI thread before SendMessageTimeout returns) and answers
++ * "<seq> ok" or "<seq> error <reason>" in <file>.ack. <file>.ready announces
++ * the channel. Verbs: save = Processing > Set as default (the supervisor
++ * swaps the default profile around it), next = next shader, menu = menu
++ * toggle. Nothing runs unless the MiOS launcher set the variable. */
++#define MIOS_ID_PROCESSING_SETASDEFAULT 32919
++#define MIOS_IDM_SHADER_NEXT 32841
++#define MIOS_IDM_TOGGLEMENU 32848
++
++static BOOL CALLBACK mios_find_main_window(HWND window, LPARAM opaque)
++{
++    DWORD pid = 0;
++    WCHAR title[128];
++
++    GetWindowThreadProcessId(window, &pid);
++    if (pid != GetCurrentProcessId() || GetWindow(window, GW_OWNER) != NULL ||
++        GetWindowTextW(window, title, sizeof(title) / sizeof(title[0])) <= 0 ||
++        CompareStringOrdinal(title, 13, L"ShaderGlass (", 13, FALSE) != CSTR_EQUAL)
++        return TRUE;
++    *(HWND *)opaque = window;
++    return FALSE;
++}
++
++static void mios_write_file(const char *path, const char *text)
++{
++    char tmp[4096];
++    FILE *f;
++
++    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
++        return;
++    f = fopen(tmp, "w");
++    if (!f)
++        return;
++    fputs(text, f);
++    fclose(f);
++    rename(tmp, path);
++}
++
++static __stdcall DWORD mios_command_thread(LPVOID unused)
++{
++    const char *path = g_getenv("MIOS_WINECAP_COMMAND_FILE");
++    char ready[4096], ack[4096], work[4096], line[128], verb[32], reply[192];
++    unsigned long long seq;
++
++    if (snprintf(ready, sizeof(ready), "%s.ready", path) >= (int)sizeof(ready) ||
++        snprintf(ack, sizeof(ack), "%s.ack", path) >= (int)sizeof(ack) ||
++        snprintf(work, sizeof(work), "%s.work", path) >= (int)sizeof(work))
++        return 1;
++    snprintf(line, sizeof(line), "%d\n", (int)getpid());
++    mios_write_file(ready, line);
++    info("MiOS command channel: %s", path);
++    for (;;) {
++        FILE *f;
++        UINT id = 0;
++        HWND window = NULL;
++        DWORD_PTR result = 0;
++
++        Sleep(50);
++        if (rename(path, work) != 0)
++            continue;
++        line[0] = 0;
++        f = fopen(work, "r");
++        if (f) {
++            if (!fgets(line, sizeof(line), f))
++                line[0] = 0;
++            fclose(f);
++        }
++        unlink(work);
++        if (sscanf(line, "%llu %31s", &seq, verb) != 2)
++            continue;
++        if (!strcmp(verb, "save"))
++            id = MIOS_ID_PROCESSING_SETASDEFAULT;
++        else if (!strcmp(verb, "next"))
++            id = MIOS_IDM_SHADER_NEXT;
++        else if (!strcmp(verb, "menu"))
++            id = MIOS_IDM_TOGGLEMENU;
++        if (id)
++            EnumWindows(mios_find_main_window, (LPARAM)&window);
++        if (!id)
++            snprintf(reply, sizeof(reply), "%llu error unknown verb\n", seq);
++        else if (!window)
++            snprintf(reply, sizeof(reply), "%llu error no ShaderGlass main window\n", seq);
++        else if (!SendMessageTimeoutW(window, WM_COMMAND, id, 0, SMTO_ABORTIFHUNG, 5000, &result))
++            snprintf(reply, sizeof(reply), "%llu error ShaderGlass did not answer\n", seq);
++        else
++            snprintf(reply, sizeof(reply), "%llu ok\n", seq);
++        info("MiOS command %s: %s", verb, reply);
++        mios_write_file(ack, reply);
++    }
++    return 0;
++}
++
++static void mios_start_command_channel(void)
++{
++    static int started = 0;
++    const char *path = g_getenv("MIOS_WINECAP_COMMAND_FILE");
++
++    if (started || !path || !*path)
++        return;
++    started = 1;
++    CreateThread(NULL, 0, mios_command_thread, NULL, 0, NULL);
++}
++
  static void PipeWireCallback(void *data, int width, int height, int pitch)
  {
      if (!sActive)
@@ -261,10 +369,19 @@ diff --git a/WineCap/WineCap.c b/WineCap/WineCap.c
      sCallbackFunc(data, width, height, pitch, sContext);
  }
  
+@@ -45,6 +235,7 @@ CAPTURELIB_API HRESULT WINECAP_CaptureLibInit()
+         return E_FAIL;
+     }
+     info("ScreenCast initialized!");
++    mios_start_command_channel();
+     return S_OK;
+ }
+ 
 diff --git a/WineCap/Makefile b/WineCap/Makefile
+index 199fe15..4f9edeb 100644
 --- a/WineCap/Makefile
 +++ b/WineCap/Makefile
-@@ -2,11 +2,11 @@
+@@ -2,11 +2,11 @@ PIPEWIRE = $(shell pkg-config --cflags --libs libpipewire-0.3)
  GLIB = $(shell pkg-config --cflags --libs gio-unix-2.0)
  
  all:
