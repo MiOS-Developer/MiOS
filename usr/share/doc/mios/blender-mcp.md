@@ -76,6 +76,8 @@ instead:
 * **Idle stop** (`idle_stop_s = 600`). A started server that has had no call
   for that long stops cleanly. The next call starts it again. A call still
   in flight keeps the server alive. `0` keeps it alive for the whole session.
+  A call that arrives while an idle stop is still closing the server waits
+  for it to exit and starts a fresh one; it never gets the closing session.
 * **Bounded restarts**. A failed start, a crash or a failed call counts as
   one failure. A successful call resets the count. The next start waits
   `restart_backoff_s`, doubling with each consecutive failure up to one hour.

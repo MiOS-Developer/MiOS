@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the caller's Blender Lab MCP inside an owned nested MiOS PiP session: the installed Blender GUI runs as a Wayland client of the nested compositor with its add-on bridge on a private loopback port, and the actual mios-mcp-server federates [mcp.servers.blender] for MCP round trips (scene summary, in-process Wayland/session facts, window screenshot). Negative controls: before Blender starts and after it exits the same tool returns a connection error. Primary compositor: read-only queries only.
+# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the caller's Blender Lab MCP inside an owned nested MiOS PiP session: the installed Blender GUI runs as a Wayland client of the nested compositor with its add-on bridge on a private loopback port, and the actual mios-mcp-server federates [mcp.servers.blender] for MCP round trips (scene summary, in-process Wayland/session facts, window screenshot); the round-trip session lists from the cached catalog and starts blmcp on its first call. Negative controls: before Blender starts and after it exits the same tool returns a connection error. Primary compositor: read-only queries only.
 # AI-related: tests/test-blender-mcp-real.py, usr/lib/mios/mios_mcp_federation.py, usr/libexec/mios/mios-mcp-server, usr/share/doc/mios/blender-mcp.md, tools/native/mios-gen/src/nested_session.rs
 
 import asyncio
@@ -110,6 +110,11 @@ def main():
         check("Blender is not a client of the primary compositor",
               not any(c.get("pid") == blender_proc.pid for c in primary_clients))
 
+        # Spawn budget: the first door cached the catalog, so this session lists
+        # blender_* from the cache and starts blmcp on its first call only.
+        cache = OUT / real.fed.load_config(real.tomllib.loads(real.SSOT.read_text()))["log_directory"] / f"{spec.id}.tools.json"
+        check("spawn budget: catalog cached by the first session (0600)",
+              cache.is_file() and cache.stat().st_mode & 0o777 == 0o600)
         names, (summary, facts, shot) = door([
             (tool, {}),
             (spec.namespace + "execute_blender_code", {"code": FACTS}),
