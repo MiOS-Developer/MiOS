@@ -1077,3 +1077,6 @@ usr/share/mios/virtio/*.iso
 !/usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch
 
 !/docs/design/mios-desktop-continuation-handoff.md
+!/tests/fixtures/mios-rdp/storage.py
+!/src/mios-rdp-server/prepare.rs
+!/src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs

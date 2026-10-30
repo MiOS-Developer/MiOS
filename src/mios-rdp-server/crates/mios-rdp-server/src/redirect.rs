@@ -5,17 +5,14 @@
 #![allow(unsafe_code)]
 #![allow(dead_code)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ironrdp_core::impl_as_any;
-use ironrdp_pdu::PduResult;
 use ironrdp_rdpsnd::pdu::{AudioFormat, WaveFormat};
 use ironrdp_rdpsnd::server::{NegotiatedFormat, RdpsndError, RdpsndServerHandler};
 use ironrdp_server::{
-    RdpdrServerBackend, RdpdrServerFactory, RdpeaiServerBackend, RdpeaiServerFactory, ServerEventSender,
-    SoundServerFactory,
+    RdpeaiServerBackend, RdpeaiServerFactory, ServerEventSender, SoundServerFactory,
 };
 use tracing::{debug, info, trace, warn};
 
@@ -30,11 +27,19 @@ use crate::pipeline::PipeStats;
 pub struct MiosSoundHandler {
     formats: Vec<AudioFormat>,
     streaming: Arc<AtomicBool>,
-    sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+    sender: Arc<
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
+    >,
 }
 
 impl MiosSoundHandler {
-    pub fn new(sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>) -> Self {
+    pub fn new(
+        sender: Arc<
+            std::sync::Mutex<
+                Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
+            >,
+        >,
+    ) -> Self {
         Self {
             formats: vec![
                 AudioFormat {
@@ -67,7 +72,10 @@ impl RdpsndServerHandler for MiosSoundHandler {
         &self.formats
     }
 
-    fn choose_format<'a>(&mut self, common: &'a [NegotiatedFormat]) -> Option<&'a NegotiatedFormat> {
+    fn choose_format<'a>(
+        &mut self,
+        common: &'a [NegotiatedFormat],
+    ) -> Option<&'a NegotiatedFormat> {
         if let Some(f) = common.first() {
             info!(format = ?f.format(), "negotiated audio output format (rdpsnd)");
             Some(f)
@@ -82,7 +90,9 @@ impl RdpsndServerHandler for MiosSoundHandler {
         info!(format = ?format.format(), "started audio output streaming to remote client");
         if let Some(ref tx) = *self.sender.lock().unwrap() {
             let silence = vec![0u8; 1920];
-            let _ = tx.send(ironrdp_server::ServerEvent::Rdpsnd(ironrdp_rdpsnd::server::RdpsndServerMessage::Wave(silence, 0)));
+            let _ = tx.send(ironrdp_server::ServerEvent::Rdpsnd(
+                ironrdp_rdpsnd::server::RdpsndServerMessage::Wave(silence, 0),
+            ));
         }
         Ok(())
     }
@@ -94,7 +104,9 @@ impl RdpsndServerHandler for MiosSoundHandler {
 }
 
 pub struct SoundFactory {
-    sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+    sender: Arc<
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
+    >,
 }
 
 impl SoundFactory {
@@ -106,7 +118,10 @@ impl SoundFactory {
 }
 
 impl ServerEventSender for SoundFactory {
-    fn set_sender(&mut self, sender: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
+    fn set_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>,
+    ) {
         *self.sender.lock().unwrap() = Some(sender);
     }
 }
@@ -124,7 +139,9 @@ impl SoundServerFactory for SoundFactory {
 pub struct MiosRdpeaiBackend {
     formats: Vec<AudioFormat>,
     capturing: Arc<AtomicBool>,
-    sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+    sender: Arc<
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
+    >,
     cfg: Config,
     stats: Arc<PipeStats>,
     pipe: Option<MicrophonePipe>,
@@ -132,12 +149,22 @@ pub struct MiosRdpeaiBackend {
 
 impl std::fmt::Debug for MiosRdpeaiBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MiosRdpeaiBackend").field("capturing", &self.capturing).finish_non_exhaustive()
+        f.debug_struct("MiosRdpeaiBackend")
+            .field("capturing", &self.capturing)
+            .finish_non_exhaustive()
     }
 }
 
 impl MiosRdpeaiBackend {
-    pub fn new(sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>, cfg: Config, stats: Arc<PipeStats>) -> Self {
+    pub fn new(
+        sender: Arc<
+            std::sync::Mutex<
+                Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
+            >,
+        >,
+        cfg: Config,
+        stats: Arc<PipeStats>,
+    ) -> Self {
         Self {
             formats: vec![
                 AudioFormat {
@@ -174,8 +201,15 @@ impl RdpeaiServerBackend for MiosRdpeaiBackend {
     }
 
     fn on_formats_negotiated(&mut self, negotiated: &[AudioFormat]) {
-        info!(count = negotiated.len(), "MS-RDPEAI microphone formats negotiated with client");
-        if let Some((index, fmt)) = negotiated.iter().enumerate().find(|(_, f)| microphone_format(f)) {
+        info!(
+            count = negotiated.len(),
+            "MS-RDPEAI microphone formats negotiated with client"
+        );
+        if let Some((index, fmt)) = negotiated
+            .iter()
+            .enumerate()
+            .find(|(_, f)| microphone_format(f))
+        {
             if let Some(ref tx) = *self.sender.lock().unwrap() {
                 let open_msg = ironrdp_server::RdpeaiServerMessage::Open {
                     frames_per_packet: 480,
@@ -190,7 +224,10 @@ impl RdpeaiServerBackend for MiosRdpeaiBackend {
 
     fn on_open_reply(&mut self, result: i32) {
         if result >= 0 {
-            self.pipe = Some(MicrophonePipe::spawn(self.cfg.clone(), Arc::clone(&self.stats)));
+            self.pipe = Some(MicrophonePipe::spawn(
+                self.cfg.clone(),
+                Arc::clone(&self.stats),
+            ));
             self.capturing.store(true, Ordering::SeqCst);
             info!(result, "MS-RDPEAI microphone stream opened successfully");
         } else {
@@ -201,10 +238,20 @@ impl RdpeaiServerBackend for MiosRdpeaiBackend {
     }
 
     fn on_audio_data(&mut self, format: &AudioFormat, data: &[u8]) {
-        if !self.capturing.load(Ordering::Acquire) { return; }
+        if !self.capturing.load(Ordering::Acquire) {
+            return;
+        }
         match microphone_pcm(format, data) {
-            Some(pcm) => if let Some(pipe) = &self.pipe { pipe.send(pcm); },
-            None => { self.stats.microphone_dropped.fetch_add(1, Ordering::Relaxed); }
+            Some(pcm) => {
+                if let Some(pipe) = &self.pipe {
+                    pipe.send(pcm);
+                }
+            }
+            None => {
+                self.stats
+                    .microphone_dropped
+                    .fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -216,7 +263,9 @@ impl RdpeaiServerBackend for MiosRdpeaiBackend {
 }
 
 pub struct RdpeaiFactory {
-    sender: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+    sender: Arc<
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
+    >,
     cfg: Config,
     stats: Arc<PipeStats>,
 }
@@ -232,29 +281,46 @@ impl RdpeaiFactory {
 }
 
 impl ServerEventSender for RdpeaiFactory {
-    fn set_sender(&mut self, sender: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
+    fn set_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>,
+    ) {
         *self.sender.lock().unwrap() = Some(sender);
     }
 }
 
 impl RdpeaiServerFactory for RdpeaiFactory {
     fn build_backend(&self) -> Box<dyn RdpeaiServerBackend> {
-        Box::new(MiosRdpeaiBackend::new(Arc::clone(&self.sender), self.cfg.clone(), Arc::clone(&self.stats)))
+        Box::new(MiosRdpeaiBackend::new(
+            Arc::clone(&self.sender),
+            self.cfg.clone(),
+            Arc::clone(&self.stats),
+        ))
     }
 }
 
 // Each channel owns a native PipeWire-Pulse source and a bounded FIFO writer.
 // Never wait for an audio device or a child process on the RDP event thread.
 fn microphone_format(f: &AudioFormat) -> bool {
-    f.format == WaveFormat::PCM && f.n_samples_per_sec == 48000 && f.bits_per_sample == 16
-        && (1..=2).contains(&f.n_channels) && f.n_block_align == f.n_channels * 2
+    f.format == WaveFormat::PCM
+        && f.n_samples_per_sec == 48000
+        && f.bits_per_sample == 16
+        && (1..=2).contains(&f.n_channels)
+        && f.n_block_align == f.n_channels * 2
         && f.n_avg_bytes_per_sec == 48000 * u32::from(f.n_block_align)
 }
 
 fn microphone_pcm(format: &AudioFormat, data: &[u8]) -> Option<Vec<u8>> {
-    if !microphone_format(format) || data.is_empty() || data.len() > 19200 * usize::from(format.n_channels)
-        || data.len() % usize::from(format.n_block_align) != 0 { return None; }
-    if format.n_channels == 1 { return Some(data.to_vec()); }
+    if !microphone_format(format)
+        || data.is_empty()
+        || data.len() > 19200 * usize::from(format.n_channels)
+        || data.len() % usize::from(format.n_block_align) != 0
+    {
+        return None;
+    }
+    if format.n_channels == 1 {
+        return Some(data.to_vec());
+    }
     let mut mono = Vec::with_capacity(data.len() / 2);
     for frame in data.chunks_exact(4) {
         let l = i16::from_le_bytes([frame[0], frame[1]]) as i32;
@@ -281,19 +347,25 @@ impl MicrophonePipe {
         *stats.microphone_error.lock().unwrap() = None;
         *stats.microphone_source.lock().unwrap() = None;
         stats.microphone_workers.fetch_add(1, Ordering::AcqRel);
-        let result = std::thread::Builder::new().name("mios-remote-mic".into()).spawn(move || {
-            if let Err(e) = microphone_worker(&cfg, &worker_stats, generation, &stopping, rx) {
-                warn!(error = %e, "remote microphone source unavailable");
-                if worker_stats.microphone_generation.load(Ordering::Acquire) == generation {
-                    *worker_stats.microphone_error.lock().unwrap() = Some(e.to_string());
+        let result = std::thread::Builder::new()
+            .name("mios-remote-mic".into())
+            .spawn(move || {
+                if let Err(e) = microphone_worker(&cfg, &worker_stats, generation, &stopping, rx) {
+                    warn!(error = %e, "remote microphone source unavailable");
+                    if worker_stats.microphone_generation.load(Ordering::Acquire) == generation {
+                        *worker_stats.microphone_error.lock().unwrap() = Some(e.to_string());
+                    }
                 }
-            }
-            if worker_stats.microphone_generation.load(Ordering::Acquire) == generation {
-                worker_stats.microphone_ready.store(false, Ordering::Release);
-                *worker_stats.microphone_source.lock().unwrap() = None;
-            }
-            worker_stats.microphone_workers.fetch_sub(1, Ordering::AcqRel);
-        });
+                if worker_stats.microphone_generation.load(Ordering::Acquire) == generation {
+                    worker_stats
+                        .microphone_ready
+                        .store(false, Ordering::Release);
+                    *worker_stats.microphone_source.lock().unwrap() = None;
+                }
+                worker_stats
+                    .microphone_workers
+                    .fetch_sub(1, Ordering::AcqRel);
+            });
         if let Err(e) = result {
             stats.microphone_workers.fetch_sub(1, Ordering::AcqRel);
             *stats.microphone_error.lock().unwrap() = Some(e.to_string());
@@ -303,37 +375,61 @@ impl MicrophonePipe {
 
     fn send(&self, pcm: Vec<u8>) {
         if self.tx.try_send((std::time::Instant::now(), pcm)).is_err() {
-            self.stats.microphone_dropped.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .microphone_dropped
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
 impl Drop for MicrophonePipe {
-    fn drop(&mut self) { self.stop.store(true, Ordering::Release); }
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
 }
 
 fn audio_control(cfg: &Config, args: &[String]) -> anyhow::Result<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    let mut child = Command::new(&cfg.native.audio_control_program).args(args)
+    let mut child = Command::new(&cfg.native.audio_control_program)
+        .args(args)
         .env("XDG_RUNTIME_DIR", format!("/run/user/{}", cfg.operator_uid))
-        .env("PULSE_SERVER", format!("unix:/run/user/{}/pulse/native", cfg.operator_uid))
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        .env(
+            "PULSE_SERVER",
+            format!("unix:/run/user/{}/pulse/native", cfg.operator_uid),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let status = loop {
-        if let Some(status) = child.try_wait()? { break status; }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
         if Instant::now() >= deadline {
-            let _ = child.kill(); let _ = child.wait();
+            let _ = child.kill();
+            let _ = child.wait();
             anyhow::bail!("audio control timed out");
         }
         std::thread::sleep(Duration::from_millis(10));
     };
     let mut output = String::new();
-    child.stdout.take().unwrap().take(8192).read_to_string(&mut output)?;
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .take(8192)
+        .read_to_string(&mut output)?;
     if !status.success() {
         let mut error = String::new();
-        child.stderr.take().unwrap().take(2048).read_to_string(&mut error)?;
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .take(2048)
+            .read_to_string(&mut error)?;
         anyhow::bail!("audio control failed: {}", error.trim());
     }
     Ok(output)
@@ -355,29 +451,54 @@ impl Drop for MicrophoneSource<'_> {
     }
 }
 
-fn microphone_worker(cfg: &Config, stats: &PipeStats, generation: u64, stop: &AtomicBool,
-    rx: std::sync::mpsc::Receiver<(std::time::Instant, Vec<u8>)>) -> anyhow::Result<()> {
+fn microphone_worker(
+    cfg: &Config,
+    stats: &PipeStats,
+    generation: u64,
+    stop: &AtomicBool,
+    rx: std::sync::mpsc::Receiver<(std::time::Instant, Vec<u8>)>,
+) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     use std::time::{Duration, Instant};
     let parent = cfg.runtime_dir.join("mios-rdp");
     std::fs::create_dir_all(&parent)?;
-    let name = format!("{}-{}-{generation}", cfg.naming.microphone_source_prefix, std::process::id());
+    let name = format!(
+        "{}-{}-{generation}",
+        cfg.naming.microphone_source_prefix,
+        std::process::id()
+    );
     let dir = parent.join(&name);
     std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-    let mut owned = MicrophoneSource { cfg, dir, module: None };
+    let mut owned = MicrophoneSource {
+        cfg,
+        dir,
+        module: None,
+    };
     let fifo = owned.dir.join("audio.fifo");
     let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes())?;
     // SAFETY: path is NUL-terminated and mkfifo retains no pointer.
-    if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } != 0 { return Err(std::io::Error::last_os_error().into()); }
-    let module = audio_control(cfg, &[
-        "load-module".into(), "module-pipe-source".into(), format!("source_name={name}"),
-        format!("file={}", fifo.display()), "format=s16le".into(), "rate=48000".into(), "channels=1".into(),
-        "source_properties=device.description=MiOS-Remote-Microphone".into(),
-    ])?;
+    if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let module = audio_control(
+        cfg,
+        &[
+            "load-module".into(),
+            "module-pipe-source".into(),
+            format!("source_name={name}"),
+            format!("file={}", fifo.display()),
+            "format=s16le".into(),
+            "rate=48000".into(),
+            "channels=1".into(),
+            "source_properties=device.description=MiOS-Remote-Microphone".into(),
+        ],
+    )?;
     owned.module = Some(module.trim().parse::<u32>()?);
-    let mut writer = std::fs::OpenOptions::new().write(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW).open(&fifo)?;
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(&fifo)?;
     use std::os::fd::AsRawFd;
     // Bound the native FIFO too: an idle consumer must not accumulate seconds of stale audio.
     // SAFETY: fcntl receives a live fd and integer size; failure preserves the kernel default.
@@ -396,12 +517,20 @@ fn microphone_worker(cfg: &Config, stats: &PipeStats, generation: u64, stop: &At
         let mut offset = 0;
         while offset < pcm.len() && !stop.load(Ordering::Acquire) {
             if Instant::now().duration_since(received) > max_age {
-                stats.microphone_dropped.fetch_add(1, Ordering::Relaxed); break;
+                stats.microphone_dropped.fetch_add(1, Ordering::Relaxed);
+                break;
             }
             match writer.write(&pcm[offset..]) {
                 Ok(0) => anyhow::bail!("microphone FIFO closed"),
-                Ok(n) => { offset += n; stats.microphone_bytes.fetch_add(n as u64, Ordering::Relaxed); }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+                Ok(n) => {
+                    offset += n;
+                    stats
+                        .microphone_bytes
+                        .fetch_add(n as u64, Ordering::Relaxed);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(1))
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             }
@@ -410,158 +539,7 @@ fn microphone_worker(cfg: &Config, stats: &PipeStats, generation: u64, stop: &At
     Ok(())
 }
 
-// ============================================================================
-// 3. Drives / Storage Redirection (MS-RDPEFS over RDPDR)
-// ============================================================================
-
-#[derive(Debug, Default)]
-pub struct MiosRdpdrBackend {
-    shares_dir: PathBuf,
-}
-
-impl MiosRdpdrBackend {
-    pub fn new(runtime_dir: impl AsRef<Path>) -> Self {
-        let shares_dir = runtime_dir.as_ref().join("mios-rdp").join("drives");
-        Self { shares_dir }
-    }
-}
-
-impl_as_any!(MiosRdpdrBackend);
-
-impl RdpdrServerBackend for MiosRdpdrBackend {
-    fn on_device_announce(&mut self, devices: &[ironrdp_rdpdr::pdu::efs::DeviceAnnounceHeader]) -> Vec<(u32, bool)> {
-        // An empty directory is not a mounted client drive. Until the native
-        // filesystem backend is connected, reject announces without touching
-        // paths derived from a remote client's PreferredDosName.
-        warn!(count = devices.len(), "RDPDR device forwarding unavailable: no native filesystem backend");
-        devices
-            .iter()
-            .map(|d| {
-                (d.device_id(), false)
-            })
-            .collect()
-    }
-
-    fn on_device_remove(&mut self, device_ids: &[u32]) {
-        info!(removed = ?device_ids, "MS-RDPEFS client removed storage devices");
-    }
-
-    fn on_client_name(&mut self, computer_name: &str) {
-        info!(name = %computer_name, "MS-RDPEFS client computer name received");
-    }
-
-    fn on_create_complete(&mut self, _response: &ironrdp_rdpdr::pdu::efs::DeviceCreateResponse) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_close_complete(&mut self, _response: &ironrdp_rdpdr::pdu::efs::DeviceCloseResponse) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_read_complete(&mut self, _response: &ironrdp_rdpdr::pdu::efs::DeviceReadResponse) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_write_complete(&mut self, _response: &ironrdp_rdpdr::pdu::efs::DeviceWriteResponse) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_flush_buffers_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::DeviceFlushBuffersResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_device_control_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::DeviceControlResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_query_information_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveQueryInformationResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_set_information_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveSetInformationResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_query_directory_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveQueryDirectoryResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_notify_change_directory_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveNotifyChangeDirectoryResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_query_volume_information_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveQueryVolumeInformationResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_lock_control_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveLockControlResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_query_security_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveQuerySecurityResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn on_set_security_complete(
-        &mut self,
-        _response: &ironrdp_rdpdr::pdu::efs::ClientDriveSetSecurityResponse,
-    ) -> PduResult<()> {
-        Ok(())
-    }
-
-    fn close(&mut self) {
-        info!("MS-RDPEFS storage channel closed");
-    }
-}
-
-pub struct RdpdrFactory {
-    runtime_dir: PathBuf,
-}
-
-impl RdpdrFactory {
-    pub fn new(runtime_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            runtime_dir: runtime_dir.into(),
-        }
-    }
-}
-
-impl ServerEventSender for RdpdrFactory {
-    fn set_sender(&mut self, _: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {}
-}
-
-impl RdpdrServerFactory for RdpdrFactory {
-    fn build_backend(&self) -> Box<dyn RdpdrServerBackend> {
-        Box::new(MiosRdpdrBackend::new(&self.runtime_dir))
-    }
-}
+// Native filesystem redirection is implemented in remote_storage.rs.
 
 // ============================================================================
 // 4. Location (MS-RDPEL) & Geoclue NMEA Writer
@@ -662,18 +640,28 @@ mod tests {
         if cfg.redirect.microphone {
             factory_registered = true;
         }
-        assert!(!factory_registered, "microphone disabled must not register factory");
+        assert!(
+            !factory_registered,
+            "microphone disabled must not register factory"
+        );
 
         cfg.redirect.microphone = true;
         if cfg.redirect.microphone {
             factory_registered = true;
         }
-        assert!(factory_registered, "microphone enabled must register factory");
+        assert!(
+            factory_registered,
+            "microphone enabled must register factory"
+        );
     }
 
     #[test]
     fn microphone_pcm_validates_format_and_packet_boundaries() {
-        let backend = MiosRdpeaiBackend::new(Arc::new(std::sync::Mutex::new(None)), Config::default(), Arc::new(PipeStats::default()));
+        let backend = MiosRdpeaiBackend::new(
+            Arc::new(std::sync::Mutex::new(None)),
+            Config::default(),
+            Arc::new(PipeStats::default()),
+        );
         let mut mono = backend.formats[0].clone();
         assert_eq!(microphone_pcm(&mono, &[1, 2, 3, 4]).unwrap(), [1, 2, 3, 4]);
         assert!(microphone_pcm(&mono, &[1]).is_none());
@@ -682,8 +670,14 @@ mod tests {
         mono.n_samples_per_sec = 44100;
         assert!(microphone_pcm(&mono, &[0, 0]).is_none());
         let stereo = &backend.formats[1];
-        let frames: Vec<u8> = [i16::MAX, i16::MAX, i16::MIN, i16::MIN, 1000, -1000].iter().flat_map(|v| v.to_le_bytes()).collect();
-        let expected: Vec<u8> = [i16::MAX, i16::MIN, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let frames: Vec<u8> = [i16::MAX, i16::MAX, i16::MIN, i16::MIN, 1000, -1000]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let expected: Vec<u8> = [i16::MAX, i16::MIN, 0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
         assert_eq!(microphone_pcm(stereo, &frames).unwrap(), expected);
         assert!(microphone_pcm(stereo, &[0, 0]).is_none());
     }
@@ -692,14 +686,22 @@ mod tests {
     fn microphone_ignores_audio_before_capture_and_negotiates_supported_format() {
         let stats = Arc::new(PipeStats::default());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut backend = MiosRdpeaiBackend::new(Arc::new(std::sync::Mutex::new(Some(tx))), Config::default(), Arc::clone(&stats));
+        let mut backend = MiosRdpeaiBackend::new(
+            Arc::new(std::sync::Mutex::new(Some(tx))),
+            Config::default(),
+            Arc::clone(&stats),
+        );
         backend.on_audio_data(&backend.formats[0].clone(), &[1]);
         assert_eq!(stats.microphone_dropped.load(Ordering::Relaxed), 0);
         let good = backend.formats[0].clone();
-        let mut bad = good.clone(); bad.n_samples_per_sec = 8000;
+        let mut bad = good.clone();
+        bad.n_samples_per_sec = 8000;
         backend.on_formats_negotiated(&[bad, good]);
         match rx.try_recv().unwrap() {
-            ironrdp_server::ServerEvent::Rdpeai(ironrdp_server::RdpeaiServerMessage::Open { initial_format, .. }) => assert_eq!(initial_format, 1),
+            ironrdp_server::ServerEvent::Rdpeai(ironrdp_server::RdpeaiServerMessage::Open {
+                initial_format,
+                ..
+            }) => assert_eq!(initial_format, 1),
             _ => panic!("expected microphone Open"),
         }
         backend.on_open_reply(-1);
@@ -719,35 +721,85 @@ mod tests {
         assert_ne!(uid, 0, "run this check as the desktop operator");
         let mut cfg = Config::default();
         cfg.operator_uid = uid;
-        cfg.runtime_dir = PathBuf::from(format!("/run/user/{uid}/mios-microphone-test-{}", std::process::id()));
+        cfg.runtime_dir = PathBuf::from(format!(
+            "/run/user/{uid}/mios-microphone-test-{}",
+            std::process::id()
+        ));
         cfg.naming.microphone_source_prefix = "mios-microphone-test".into();
         cfg.redirect.microphone = true;
-        let defaults = || (audio_control(&cfg, &["get-default-source".into()]).unwrap(), audio_control(&cfg, &["get-default-sink".into()]).unwrap());
+        let defaults = || {
+            (
+                audio_control(&cfg, &["get-default-source".into()]).unwrap(),
+                audio_control(&cfg, &["get-default-sink".into()]).unwrap(),
+            )
+        };
         let before = defaults();
         let stats = Arc::new(PipeStats::default());
-        let mut backend = MiosRdpeaiBackend::new(Arc::new(std::sync::Mutex::new(None)), cfg.clone(), Arc::clone(&stats));
+        let mut backend = MiosRdpeaiBackend::new(
+            Arc::new(std::sync::Mutex::new(None)),
+            cfg.clone(),
+            Arc::clone(&stats),
+        );
         let format = backend.formats[0].clone();
         backend.on_open_reply(0);
         let deadline = Instant::now() + Duration::from_secs(6);
         while !stats.microphone_ready.load(Ordering::Acquire) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(stats.microphone_ready.load(Ordering::Acquire), "{:?}", stats.microphone_error.lock().unwrap());
+        assert!(
+            stats.microphone_ready.load(Ordering::Acquire),
+            "{:?}",
+            stats.microphone_error.lock().unwrap()
+        );
         let source = stats.microphone_source.lock().unwrap().clone().unwrap();
-        assert!(audio_control(&cfg, &["list".into(), "short".into(), "sources".into()]).unwrap().contains(&source));
+        assert!(
+            audio_control(&cfg, &["list".into(), "short".into(), "sources".into()])
+                .unwrap()
+                .contains(&source)
+        );
         struct Capture(std::process::Child);
-        impl Drop for Capture { fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); } }
-        let mut capture = Capture(Command::new("parec").args([
-            format!("--device={source}"), "--raw".into(), "--format=s16le".into(), "--rate=48000".into(), "--channels=1".into(), "--latency-msec=10".into(),
-        ]).env("PULSE_SERVER", format!("unix:/run/user/{uid}/pulse/native"))
-            .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap());
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut capture = Capture(
+            Command::new("parec")
+                .args([
+                    format!("--device={source}"),
+                    "--raw".into(),
+                    "--format=s16le".into(),
+                    "--rate=48000".into(),
+                    "--channels=1".into(),
+                    "--latency-msec=10".into(),
+                ])
+                .env("PULSE_SERVER", format!("unix:/run/user/{uid}/pulse/native"))
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
         let output = capture.0.stdout.take().unwrap();
-        let reader = std::thread::spawn(move || { let mut data = Vec::new(); output.take(48000).read_to_end(&mut data).unwrap(); data });
+        let reader = std::thread::spawn(move || {
+            let mut data = Vec::new();
+            output.take(48000).read_to_end(&mut data).unwrap();
+            data
+        });
         for packet in 0..160 {
-            let pcm: Vec<u8> = (0..480).flat_map(|i| {
-                let sample = if packet < 20 { 0 } else { (12000.0 * (std::f64::consts::TAU * 440.0 * f64::from(packet * 480 + i) / 48000.0).sin()) as i16 };
-                sample.to_le_bytes()
-            }).collect();
+            let pcm: Vec<u8> = (0..480)
+                .flat_map(|i| {
+                    let sample = if packet < 20 {
+                        0
+                    } else {
+                        (12000.0
+                            * (std::f64::consts::TAU * 440.0 * f64::from(packet * 480 + i)
+                                / 48000.0)
+                                .sin()) as i16
+                    };
+                    sample.to_le_bytes()
+                })
+                .collect();
             backend.on_audio_data(&format, &pcm);
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -755,39 +807,40 @@ mod tests {
         let data = reader.join().unwrap();
         backend.on_close();
         let deadline = Instant::now() + Duration::from_secs(6);
-        while stats.microphone_ready.load(Ordering::Acquire) && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+        while stats.microphone_ready.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(!stats.microphone_ready.load(Ordering::Acquire));
-        assert!(!audio_control(&cfg, &["list".into(), "short".into(), "sources".into()]).unwrap().contains(&source));
+        assert!(
+            !audio_control(&cfg, &["list".into(), "short".into(), "sources".into()])
+                .unwrap()
+                .contains(&source)
+        );
         assert_eq!(before, defaults(), "physical audio defaults changed");
         let _ = std::fs::remove_dir(cfg.runtime_dir.join("mios-rdp"));
         let _ = std::fs::remove_dir(&cfg.runtime_dir);
-        let samples: Vec<i16> = data.chunks_exact(2).map(|v| i16::from_le_bytes([v[0], v[1]])).collect();
-        assert!(samples.len() >= 9600, "only {} captured samples", samples.len());
-        assert!(samples[..480].iter().all(|v| v.abs() < 10), "silence control missing");
-        let rms = (samples.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / samples.len() as f64).sqrt();
+        let samples: Vec<i16> = data
+            .chunks_exact(2)
+            .map(|v| i16::from_le_bytes([v[0], v[1]]))
+            .collect();
+        assert!(
+            samples.len() >= 9600,
+            "only {} captured samples",
+            samples.len()
+        );
+        assert!(
+            samples[..480].iter().all(|v| v.abs() < 10),
+            "silence control missing"
+        );
+        let rms = (samples.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>()
+            / samples.len() as f64)
+            .sqrt();
         assert!(rms > 1000.0, "tone missing: RMS {rms}");
         assert!(stats.microphone_bytes.load(Ordering::Relaxed) >= 19200);
-        println!("native RDPEAI callback roundtrip: samples={} rms={rms:.2} bytes={} defaults_unchanged=true source_removed=true", samples.len(), stats.microphone_bytes.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn rdpdr_storage_path_matches_canonical() {
-        let runtime = PathBuf::from("/run/user/1000");
-        let backend = MiosRdpdrBackend::new(&runtime);
-        assert_eq!(backend.shares_dir, runtime.join("mios-rdp").join("drives"));
-    }
-
-    #[test]
-    fn rdpdr_does_not_claim_unimplemented_mounts_or_create_client_paths() {
-        use ironrdp_rdpdr::pdu::efs::{DeviceAnnounceHeader, Devices};
-        let root = std::env::temp_dir().join(format!("mios-rdpdr-negative-{}", std::process::id()));
-        assert!(!root.exists());
-        let mut backend = MiosRdpdrBackend::new(&root);
-        let mut devices = Devices::new();
-        devices.add_drive(1, "files".into());
-        let announced = [devices.device(1).unwrap().clone(), DeviceAnnounceHeader::new_smartcard(2)];
-        assert_eq!(backend.on_device_announce(&announced), [(1, false), (2, false)]);
-        assert!(!root.exists(), "unmounted client devices must create no directories");
+        println!(
+            "native RDPEAI callback roundtrip: samples={} rms={rms:.2} bytes={} defaults_unchanged=true source_removed=true",
+            samples.len(),
+            stats.microphone_bytes.load(Ordering::Relaxed)
+        );
     }
 }
-

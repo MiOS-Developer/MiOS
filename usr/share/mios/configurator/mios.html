@@ -2335,6 +2335,16 @@
             <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
             <label for="f-rdp-mic-source">Microphone source prefix</label>
             <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
+            <label for="f-rdp-files-enabled">Allow client-selected shared folders</label>
+            <input type="text" id="f-rdp-files-enabled" data-key="remote.rdp.redirect.drives" data-type="bool" placeholder="true">
+            <label for="f-rdp-drive-timeout">Remote file request timeout (ms)</label>
+            <input type="number" min="100" max="60000" id="f-rdp-drive-timeout" data-key="remote.rdp.native.drive_timeout_ms" data-type="int" value="10000">
+            <label for="f-rdp-drive-devices">File devices per connection</label>
+            <input type="number" min="1" max="64" id="f-rdp-drive-devices" data-key="remote.rdp.native.drive_max_devices" data-type="int" value="16">
+            <label for="f-rdp-drive-entries">Remote file cache entry limit</label>
+            <input type="number" min="64" max="65536" id="f-rdp-drive-entries" data-key="remote.rdp.native.drive_max_entries" data-type="int" value="4096">
+            <label for="f-rdp-drive-io">Remote file IO chunk (KiB)</label>
+            <input type="number" min="4" max="1024" step="4" id="f-rdp-drive-io" data-key="remote.rdp.native.drive_io_kib" data-type="int" value="256">
 
             <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
             <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">

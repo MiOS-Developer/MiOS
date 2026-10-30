@@ -7,6 +7,18 @@ The incoming participant is `mios-desktop-repair-session`; outgoing participant
 is `mios-rdp-live-recovery`. These are current participants, not permanent roles.
 The broad desktop goal remains unfinished. Continue coding and live verification.
 
+## Native remote file forwarding — 2026-10-30T15:17:25.535969+00:00
+
+This supersedes the older RDPDR stub status below. Real RDPDR client drives are now exposed as per-connection native FUSE filesystems under the operator runtime directory. Reads, writes, listings, create, mkdir, rename, truncate, delete and remote volume capacity are implemented. Device, inode, directory and IO limits are bounded; traversal/reparse entries are rejected. A transport timeout poisons that connection until reconnect, preventing late replies from matching a new request. Lookup references and open file handles preserve native unlink/recreate semantics. Client permission remains required.
+
+Live server SHA256 `a19368271b9144ee680d58dfacf98e949a06676a291075e1cf1903f2ca0c0a54`, PID `2581937` at idle activation. Primary compositor5764, application identities and physical monitor geometry were preserved. Production test-auth is false. Package and rollback use `mios-storage` under `/var/lib/mios-build/rdp-delivery`. The native unit uses KillMode=mixed so SIGTERM reaches the server first and its owned FUSE/audio workers can unmount before systemd kills remaining children. No desktop restart occurred.
+
+Verification: 59 regular Rust tests, three static source-preparer tests, both recorded codec fixtures, 33 backend checks and four documented skips. Real FreeRDP redirected 262144 bytes client-to-host and 98304 bytes host-to-client; filesystem mutations, open-unlinked files, volume capacity, disabled permission and attached service-stop cleanup passed. Current microphone regression captured 240000 synthetic samples with RMS7954.2; default routing and cleanup passed. Reports: `mios-storage-service-result.json`, `mios-storage-network-result.json` and `mios-storage-microphone-regression.json` in the evidence directory. These are private nested-session tests, not phone FPS measurements.
+
+The upstream RDPDR server advertises USER_LOGGEDON but omitted the negotiated notification. `prepare.rs` is a static Rust compatibility generator executed before dependency compilation; known source boundaries and positive/negative/idempotence tests guard the fix. A first fixture used a shared upstream symlink; only our change was restored, the cache hash verified, and this build now uses an isolated checkout. See `mios-rdp-storage-upstream-isolation.json`. Package receipt metadata was corrected after discovering a packaging helper loop variable shadowed the candidate name; installed binary hashes were unaffected.
+
+The operator explicitly requested camera forwarding next. Camera, native speaker sink, generic USB and compatible non-RDP device bridges remain unfinished. The owned nested PiP lab stays open with a visible test status; the operator confirmed earlier closures were intentional.
+
 ## Remote hardware continuation — 2026-10-30T03:37Z
 
 This section supersedes the RDP defaults and active binary below. The operator

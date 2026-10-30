@@ -50,6 +50,10 @@ pub struct Native {
     pub progressive_quant: u8,
     pub audio_control_program: String,
     pub microphone_queue_packets: usize,
+    pub drive_timeout_ms: u64,
+    pub drive_max_devices: usize,
+    pub drive_max_entries: usize,
+    pub drive_io_kib: u32,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -96,6 +100,10 @@ impl Default for Native {
             progressive_quant: 8,
             audio_control_program: "pactl".into(),
             microphone_queue_packets: 8,
+            drive_timeout_ms: 10000,
+            drive_max_devices: 16,
+            drive_max_entries: 4096,
+            drive_io_kib: 256,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -141,7 +149,7 @@ impl Default for Redirect {
             audio_output: false,
             microphone: true,
             camera: false,
-            drives: false,
+            drives: true,
             location: false,
             timezone: "report".into(),
             smartcard: false,
@@ -264,6 +272,11 @@ impl Config {
     }
 
     pub fn validate(&mut self) -> Result<()> {
+        if !(100..=60000).contains(&self.native.drive_timeout_ms) || !(1..=64).contains(&self.native.drive_max_devices)
+            || !(64..=65536).contains(&self.native.drive_max_entries) || !(4..=1024).contains(&self.native.drive_io_kib)
+            || self.native.drive_io_kib % 4 != 0 {
+            bail!("drive limits: timeout_ms 100..60000, devices 1..64, entries 64..65536, IO 4..1024 KiB aligned to 4 KiB");
+        }
         let prefix = &self.naming.microphone_source_prefix;
         if prefix.is_empty() || prefix.len() > 64 || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
             bail!("microphone source prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");
@@ -413,6 +426,14 @@ mod tests {
         }
         let mut cfg = Config::default(); cfg.native.audio_control_program.clear();
         assert!(cfg.validate().is_err());
+    }
+    #[test]
+    fn native_drive_limits_reject_unbounded_or_unaligned_values() {
+        let mut cfg=Config::default();cfg.validate().unwrap();
+        cfg.native.drive_io_kib=17;assert!(cfg.validate().unwrap_err().to_string().contains("drive limits"));
+        cfg.native.drive_io_kib=16;cfg.native.drive_timeout_ms=99;assert!(cfg.validate().is_err());
+        cfg.native.drive_timeout_ms=100;cfg.native.drive_max_devices=65;assert!(cfg.validate().is_err());
+        cfg.native.drive_max_devices=16;cfg.native.drive_max_entries=63;assert!(cfg.validate().is_err());
     }
 
     #[test]
