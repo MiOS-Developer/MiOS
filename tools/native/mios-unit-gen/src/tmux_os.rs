@@ -818,9 +818,19 @@ pub(crate) fn render_tmux_keys(
         }
     }
 
-    // `mios-menu`: the entry point the controller's `tmux:menu` verb runs (mios-bindings-final FINAL.md 3.3):
-    // the same size- and console-aware opener as prefix Space and the status-line right-click.
+    // `mios-menu`: the same size- and console-aware opener as prefix Space and the status-line right-click, by
+    // name (the command prompt, scripts with one client). An alias appends its CLI arguments to the END of its
+    // expansion, so `-c <client>` cannot aim it: run from outside, tmux picks the client. The controller's
+    // `tmux:menu` verb (FINAL.md 3.3) therefore uses the client-exact route
+    //   tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>
+    // whose key words the server publishes as @mios-menu-keys, so a caller never re-derives them from the SSOT.
     out += &format!("set -s command-alias[{slot}] {}\n", quote(&format!("mios-menu={}", opener("root")?)));
+    let prefix = req_str(config, "keybindings", "tmux_prefix")?;
+    if prefix.is_empty() || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(gm(format!("[keybindings].tmux_prefix {prefix:?} is not a tmux key name")));
+    }
+    // Two argv words (split on the space, no shell): send-keys -c <client> -K <prefix> <menu_key>.
+    out += &format!("set -s @mios-menu-keys {}\n", quote(&format!("{prefix} {menu_key}")));
 
     for b in &binds {
         if let Some(v) = &b.gate {
@@ -1102,7 +1112,9 @@ mod tests {
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Status") && l.contains("'mios-menu-root-vt-mouse'")));
-        assert!(aliases.iter().any(|l| l.contains("\"mios-menu=if-shell -F ")), "controller tmux:menu entry point");
+        assert!(aliases.iter().any(|l| l.contains("\"mios-menu=if-shell -F ")), "mios-menu by name");
+        // (a) the controller's client-exact tmux:menu route: send-keys -c <client> -K <prefix> <menu_key>
+        assert!(conf.lines().any(|l| l == "set -s @mios-menu-keys \"C-b Space\""), "client-exact menu route published");
         let vt = aliases.iter().find(|l| l.contains("\"mios-menu-root-vt=")).unwrap();
         assert!(vt.contains("-b single") && vt.contains("mios-menu-pane-vt") && !vt.contains("'mios-menu-pane'"));
         assert!(!vt.contains("#2") && !vt.contains("#F"), "console variant must not carry hex colours");

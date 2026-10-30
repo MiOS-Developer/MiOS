@@ -57,6 +57,9 @@ struct Bound {
     contexts: BTreeSet<String>,
     legacy: bool,
     realized: bool,
+    /// What a compositor-table entry runs (its exec command, or the hypr: verb of its native dispatcher); None when
+    /// unknown or not a table entry.
+    runs: Option<String>,
 }
 
 /// The default context set: every context a compositor serves (all but `console`).
@@ -140,6 +143,54 @@ fn lua_binds(lua: &str) -> (Vec<String>, usize) {
         }
     }
     (chords, dynamic)
+}
+
+/// The command render-hyprland binds to [desktop.hyprland.hypr3d].toggle_key.
+const HYPR3D_TOGGLE_COMMAND: &str = "/usr/bin/mios-gen hyprland-3d-toggle";
+
+/// What a compositor-table entry runs: the exec command (screenshot entries: `binary args`), or the hypr: verb of the
+/// native dispatchers a realized row can name. None for anything else.
+fn entry_runs(ssot: &Value, path: &str, e: &Value) -> Option<String> {
+    if path == "desktop.screenshot.bindings" {
+        let binary = ssot.get("desktop")?.get("screenshot")?.get("binary")?.as_str()?;
+        let args = e.get("args").and_then(Value::as_str).unwrap_or("");
+        return Some(std::iter::once(binary).chain(args.split_whitespace()).collect::<Vec<_>>().join(" "));
+    }
+    let args = e.get("args");
+    match e.get("dispatcher").and_then(Value::as_str)? {
+        "exec_cmd" => args.and_then(Value::as_str).map(str::to_owned),
+        "window.close" => Some("hypr:killactive".into()),
+        "window.fullscreen" if args.and_then(|a| a.get("mode")).and_then(Value::as_str) == Some("fullscreen") => {
+            Some("hypr:fullscreen".into())
+        }
+        _ => None,
+    }
+}
+
+/// Whether an entry that runs `runs` realizes `action`: exactly its [keybindings.global.action_argv], the `exec:`
+/// program, or the same hypr: verb. (mios-gen applies the same rule to the literal Lua binds, global_bindings.rs.)
+fn runs_action(argv: Option<&toml::Table>, action: &str, runs: &str) -> bool {
+    if let Some(a) = argv.and_then(|t| t.get(action)).and_then(Value::as_array) {
+        let words: Vec<&str> = a.iter().filter_map(Value::as_str).collect();
+        return !words.is_empty() && words.join(" ") == runs;
+    }
+    if let Some(prog) = action.strip_prefix("exec:") {
+        return runs.split_whitespace().any(|t| t == prog || t.ends_with(&format!("/{prog}")));
+    }
+    action.starts_with("hypr:") && action == runs
+}
+
+/// The prefix keys [keybindings.tmux] binds by name rather than in `bindings` (MiOS-Tmux menus, launcher, float
+/// panes) and the agent accept key: `tmux:key` may send them too (`tmux:key Space` opens the MiOS menu).
+fn tmux_named_keys(ssot: &Value) -> Vec<String> {
+    let kb = ssot.get("keybindings");
+    let tmux = kb.and_then(|k| k.get("tmux"));
+    let float = tmux.and_then(|t| t.get("float"));
+    let s = |t: Option<&Value>, k: &str| t.and_then(|t| t.get(k)).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_owned);
+    [s(tmux, "menu_key"), s(tmux, "launcher_key"), s(float, "new_key"), s(float, "toggle_key"), s(float, "lift_key"), s(kb.and_then(|k| k.get("agent")), "accept_key")]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 pub struct Analysis {
@@ -246,7 +297,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
     findings.extend(tmux_root_findings(ssot, &reserved));
     let mut bound: Vec<Bound> = Vec::new();
     let mut ids = BTreeSet::new();
-    let mut realized: Vec<(String, Vec<String>)> = Vec::new();
+    let mut realized: Vec<(String, Vec<String>, String)> = Vec::new();
 
     let entries = global
         .get("bindings")
@@ -345,6 +396,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                         contexts: all_contexts(),
                         legacy: false,
                         realized: false,
+                        runs: None,
                     });
                 }
                 Err(err) => findings.push(format!("{tag}: bypass {by:?}: {err}")),
@@ -358,7 +410,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                 ));
             }
             if !realized_by.is_empty() {
-                realized.push((tag.clone(), steps.clone()));
+                realized.push((tag.clone(), steps.clone(), action.to_string()));
             }
             bound.push(Bound {
                 source: "keybindings.global".into(),
@@ -367,6 +419,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                 contexts: effective,
                 legacy: false,
                 realized: !realized_by.is_empty(),
+                runs: None,
             });
         }
     }
@@ -397,10 +450,55 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                         contexts: all_contexts(),
                         legacy: true,
                         realized: false,
+                        runs: entry_runs(ssot, &path, e),
                     });
                 }
                 Err(err) => findings.push(format!("{path}[{i}]: key {k:?}: {err}")),
             }
+        }
+    }
+
+    // [desktop.hyprland.hypr3d].toggle_key is a compositor bind of its own (render-hyprland binds it, rejecting a
+    // chord another table holds), not a `bindings` table: audit it like one so the gate and the generator agree.
+    if let Some(h3d) = ssot
+        .get("desktop")
+        .and_then(|d| d.get("hyprland"))
+        .and_then(|h| h.get("hypr3d"))
+        .filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true))
+    {
+        if let Some(k) = h3d.get("toggle_key").and_then(Value::as_str) {
+            match normalize_chord(k, false) {
+                Ok(steps) => {
+                    legacy_count += 1;
+                    bound.push(Bound {
+                        source: "desktop.hyprland.hypr3d".into(),
+                        id: "desktop.hyprland.hypr3d.toggle_key".into(),
+                        steps,
+                        contexts: all_contexts(),
+                        legacy: true,
+                        realized: false,
+                        runs: Some(HYPR3D_TOGGLE_COMMAND.into()),
+                    });
+                }
+                Err(err) => findings.push(format!("desktop.hyprland.hypr3d.toggle_key {k:?}: {err}")),
+            }
+        }
+    }
+
+    // A realized_by row whose chord a compositor-table entry holds must be realized BY that entry (it runs the row's
+    // action). Otherwise the row is shadowed or dead and the realized-row exemption below would hide it (D1).
+    let argv = global.get("action_argv").and_then(Value::as_table);
+    for (tag, steps, action) in &realized {
+        let owners: Vec<&Bound> = bound
+            .iter()
+            .filter(|b| b.legacy && b.source != "hyprland.lua" && &b.steps == steps)
+            .collect();
+        if !owners.is_empty() && !owners.iter().any(|b| b.runs.as_deref().is_some_and(|r| runs_action(argv, action, r))) {
+            findings.push(format!(
+                "{tag}: realized_by hyprland on {} but that chord is {} in the compositor tables, which does not run {action}",
+                steps.join(" "),
+                owners.iter().map(|b| b.id.as_str()).collect::<Vec<_>>().join(", ")
+            ));
         }
     }
 
@@ -417,6 +515,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                     contexts: all_contexts(),
                     legacy: true,
                     realized: false,
+                    runs: None,
                 });
             }
             Err(err) => findings.push(format!("hyprland.lua: hl.bind({c:?}): {err}")),
@@ -424,7 +523,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
     }
 
     // a declared binding that claims the compositor realizes it must exist in the compositor tables
-    for (tag, steps) in &realized {
+    for (tag, steps, _) in &realized {
         let found = bound
             .iter()
             .any(|b| b.source == "hyprland.lua" && &b.steps == steps);
@@ -577,7 +676,11 @@ pub fn controller_audit(
         .chain(ssot.get("keybindings").and_then(|kb| kb.get("tmux")).and_then(|t| t.get("bindings")).and_then(Value::as_array))
         .flatten()
         .filter_map(|r| r.get("key").and_then(Value::as_str).map(str::to_owned))
+        .chain(tmux_named_keys(ssot))
         .collect();
+    // tmux:menu runs `send-keys -c <client> -K <tmux_prefix> <menu_key>` (the bare `mios-menu` alias cannot be aimed
+    // at a client), so it needs the menu key.
+    let menu_key = ssot.get("keybindings").and_then(|kb| kb.get("tmux")).and_then(|t| t.get("menu_key")).and_then(Value::as_str).filter(|k| !k.is_empty());
     let check_action = |tag: &str, a: &str, console: bool, out: &mut Vec<String>| {
         if a.is_empty() {
             out.push(format!("{tag}: \"\" is not a value; use \"none\" to unbind"));
@@ -601,6 +704,8 @@ pub fn controller_audit(
                     let (v, arg) = verb.split_once(' ').unwrap_or((verb, ""));
                     if !TMUX_VERBS.contains(&v) {
                         out.push(format!("{tag}: unknown tmux verb {v:?}"));
+                    } else if v == "menu" && menu_key.is_none() {
+                        out.push(format!("{tag}: tmux:menu needs [keybindings.tmux].menu_key (its client-exact route is send-keys -c <client> -K <tmux_prefix> <menu_key>)"));
                     } else if v == "key" && !prefix_keys.contains(arg) {
                         out.push(format!("{tag}: tmux:key {arg:?} is not a prefix key bound in [keybindings.tmux]/[keybindings.actions]"));
                     }
@@ -907,6 +1012,38 @@ passthrough = ["vm-passthrough"]
         assert!(a.findings.iter().any(|f| f.contains("namespace")));
     }
 
+    /// D1: a realized_by row moved onto a chord a compositor-table entry holds for ANOTHER action is reported (the
+    /// realized-row exemption used to hide it, and the generator dropped the row's handle). Positive control: the
+    /// entry that realizes the row (same exec argv, same hypr: verb) is still one binding with no finding.
+    #[test]
+    fn realized_row_on_another_entrys_chord_is_found() {
+        let row = |chord: &str, action: &str| format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:session-scale-up\" = [\"/usr/bin/mios-gen\", \"session-scale\", \"up\"]\n[[keybindings.global.bindings]]\nid = \"session-scale-up\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + J\", dispatcher = \"layout\", args = \"togglesplit\", label = \"Toggle split direction\" }}, {{ key = \"SUPER + K\", dispatcher = \"exec_cmd\", args = \"/usr/bin/mios-gen session-scale up\", label = \"Scale up\" }}, {{ key = \"SUPER + C\", dispatcher = \"window.close\", label = \"Close\" }} ]\n");
+        let lua = "hl.bind(\"SUPER + J\", hl.dsp.layout(\"togglesplit\"))\nhl.bind(\"SUPER + K\", hl.dsp.exec_cmd(\"/usr/bin/mios-gen session-scale up\"))\nhl.bind(\"SUPER + C\", hl.dsp.window.close())\n";
+        let probe = |chord: &str, action: &str| analyze(&row(chord, action).parse().unwrap(), Some(lua)).unwrap().findings;
+        let bad = probe("SUPER+J", "mios:session-scale-up");
+        assert!(bad.iter().any(|f| f.contains("session-scale-up: realized_by hyprland on SUPER+j but that chord is desktop.hyprland.bindings:Toggle split direction")), "{bad:?}");
+        let bad_hypr = probe("SUPER+J", "hypr:killactive");
+        assert!(bad_hypr.iter().any(|f| f.contains("does not run hypr:killactive")), "{bad_hypr:?}");
+        // positive controls: the entry runs exactly the row's argv / hypr: verb
+        assert!(probe("SUPER+K", "mios:session-scale-up").is_empty(), "{:?}", probe("SUPER+K", "mios:session-scale-up"));
+        assert!(probe("SUPER+C", "hypr:killactive").is_empty(), "{:?}", probe("SUPER+C", "hypr:killactive"));
+    }
+
+    /// (b) [desktop.hyprland.hypr3d].toggle_key is audited: SUPER+G is ShaderGlass, so the room toggle there collides
+    /// (render-hyprland rejects it too). Control: SUPER+F12 (the shipped key) is clean and realizes hypr3d-toggle.
+    #[test]
+    fn hypr3d_toggle_key_is_audited() {
+        let ssot = |key: &str| format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:hyprland-3d-toggle\" = [\"/usr/bin/mios-gen\", \"hyprland-3d-toggle\"]\n[[keybindings.global.bindings]]\nid = \"hypr3d-toggle\"\ntier = 1\nchord = \"SUPER+F12\"\naction = \"mios:hyprland-3d-toggle\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.shaderglass]\nbindings = [ {{ key = \"SUPER + G\", args = \"toggle\", label = \"ShaderGlass\" }} ]\n[desktop.hyprland.hypr3d]\nenabled = true\ntoggle_key = \"{key}\"\n");
+        let lua = "hl.bind(\"SUPER + G\", hl.dsp.exec_cmd(\"/usr/bin/mios-shaderglass toggle\"))\n hl.bind(\"SUPER + F12\", hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\n";
+        let f = |key: &str| analyze(&ssot(key).parse().unwrap(), Some(lua)).unwrap().findings;
+        let bad = f("SUPER + G");
+        assert!(bad.iter().any(|x| x.contains("collision chord SUPER+g") && x.contains("desktop.hyprland.hypr3d.toggle_key")), "{bad:?}");
+        assert!(f("SUPER + F12").is_empty(), "{:?}", f("SUPER + F12"));
+        let mut off: Value = ssot("SUPER + G").parse().unwrap();
+        off["desktop"]["hyprland"]["hypr3d"]["enabled"] = Value::Boolean(false);
+        assert!(analyze(&off, Some(lua)).unwrap().findings.is_empty(), "a disabled room binds no toggle key");
+    }
+
     #[test]
     fn legacy_table_and_lua_same_bind_is_one_binding_but_two_tables_collide() {
         let toml = format!("{BASE}\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + C\", label = \"close\" }}, {{ key = \"super+c\", label = \"copy\" }} ]\n");
@@ -929,7 +1066,7 @@ passthrough = ["vm-passthrough"]
 
     #[test]
     fn realized_by_matches_a_compositor_bind_and_drift_is_found() {
-        let toml = format!("{BASE}\n[[keybindings.global.bindings]]\nid = \"close\"\ntier = 1\nchord = \"SUPER+c\"\naction = \"hypr:killactive\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + C\", label = \"close\" }} ]\n");
+        let toml = format!("{BASE}\n[[keybindings.global.bindings]]\nid = \"close\"\ntier = 1\nchord = \"SUPER+c\"\naction = \"hypr:killactive\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + C\", dispatcher = \"window.close\", label = \"close\" }} ]\n");
         let v: Value = toml.parse().unwrap();
         let a = analyze(
             &v,
@@ -1059,6 +1196,7 @@ passthrough = ["vm-passthrough"]
 [[keybindings.actions]]
 key = "t"
 [keybindings.tmux]
+menu_key = "Space"
 bindings = [{ key = "p" }, { key = "n" }, { key = "w" }, { key = "f" }, { key = "z" }, { key = "y" }]
 [keybindings.global]
 bypass_mod = "SUPER+CTRL"
@@ -1167,6 +1305,16 @@ crouch_button = "BTN_WEST"
         assert!(g.is_empty(), "{g:?}");
     }
 
+    /// (a) `tmux:key Space` (the menu key, bound by name, not in `bindings`) is a valid client-exact route; a key
+    /// that is bound nowhere is still rejected.
+    #[test]
+    fn named_tmux_keys_are_prefix_keys() {
+        let ok = audit(&NAV.replacen("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key Space\"", 1));
+        assert!(ok.is_empty(), "{ok:?}");
+        let bad = audit(&NAV.replacen("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key Space\"", 1).replacen("menu_key = \"Space\"\n", "", 1));
+        assert!(bad.iter().any(|x| x.contains("tmux:key \"Space\" is not a prefix key")), "{bad:?}");
+    }
+
     #[test]
     fn nav_grammar_violations_are_findings() {
         let cases = [
@@ -1175,6 +1323,8 @@ crouch_button = "BTN_WEST"
             ("BTN_MODE = \"quickshell:drawer-toggle\"", "BTN_MODE = \"bogus\"", "must be <namespace>:<verb>"),
             ("BTN_MODE = \"tmux:menu\"", "BTN_MODE = \"hypr:killactive\"", "cannot run on the console"),
             ("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key q\"", "tmux:key \"q\" is not a prefix key"),
+            // (a) tmux:menu is client-exact only through the menu key; without one it has no route
+            ("menu_key = \"Space\"\n", "", "tmux:menu needs [keybindings.tmux].menu_key"),
             ("RS_LEFT = \"tmux:focus left\"", "RS_LEFT = \"tmux:warp left\"", "unknown tmux verb"),
             ("BTN_THUMBR = \"key:CTRL+0\"", "BTN_THUMBR = \"key:CTRL+0\"\nBTN_NORTH = \"key:F\"", "owned by the capture contract"),
             ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ngame = \"desktop\"", "captured contexts belong to the app"),

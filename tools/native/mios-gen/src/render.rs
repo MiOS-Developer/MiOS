@@ -5068,7 +5068,7 @@ report("again")
                 wb.as_bool().ok_or("desktop.hyprland.hypr3d.config.player.walk_bob must be boolean")?;
             }
         }
-        // [desktop.hyprland.hypr3d.spawn] is read at SUPER+G: check it here so render-hyprland --check catches it.
+        // [desktop.hyprland.hypr3d.spawn] is read by the room toggle (toggle_key): check it here so render-hyprland --check catches it.
         crate::hypr3d_spawn::Policy::from_ssot(data)?;
         if let Some(ctrl) = table.get("controller") {
             let ctrl_tbl = ctrl.as_table().ok_or("desktop.hyprland.hypr3d.controller must be a table")?;
@@ -5109,7 +5109,7 @@ report("again")
             for (group, key) in HYPR3D_RATE_KEYS {
                 if config.get(group).and_then(|g| g.get(key)).is_some() {
                     return Err(format!(
-                        "desktop.hyprland.hypr3d.config.{group}.{key} is superseded by [desktop.framerate] (SUPER+G and miosd send the running tier's rate); remove it"
+                        "desktop.hyprland.hypr3d.config.{group}.{key} is superseded by [desktop.framerate] (the Hypr3D room toggle, [desktop.hyprland.hypr3d].toggle_key, and miosd send the running tier's rate); remove it"
                     ));
                 }
             }
@@ -5122,7 +5122,7 @@ report("again")
 
     // ---- desktop frame rate ([desktop.framerate], miosd framerate) ------------------------------------------------
     // The policy table and precedence live in mios_resolver::framerate (one copy for miosd, this projection and the
-    // tests). Here: the login/reload projection and the Hypr3D keys SUPER+G sends.
+    // tests). Here: the login/reload projection and the Hypr3D keys the room toggle (toggle_key) sends.
     use mios_resolver::framerate::{Inputs as RateInputs, Policy as RatePolicy, State as RateState};
 
     /// Hypr3D's rate keys (hypr3d-mios-frame-rate.patch): render.max_fps = D, render.glass_fps = G, world.live_fps = W.
@@ -5211,7 +5211,7 @@ report("again")
         Ok(out)
     }
 
-    /// The running tier's Hypr3D keys into `config` (the table SUPER+G sends): miosd's live state, else the login plan.
+    /// The running tier's Hypr3D keys into `config` (the table the room toggle sends): miosd's live state, else the login plan.
     /// render.max_fps = D (0 = every output frame: unlocked), render.glass_fps = G, world.live_fps = W.
     fn hypr3d_rate_overlay(config: &mut Value, policy: &RatePolicy, live: Option<&RateState>, login: &RateInputs) -> Result<(), String> {
         let (desktop, cap, glass, wallpaper) = match live {
@@ -5235,7 +5235,7 @@ report("again")
     }
 
     /// `hyprland-session` exports the running hardware profile to the compositor, so every
-    /// binding the compositor runs (SUPER+G among them) inherits it.
+    /// binding the compositor runs (the room toggle among them) inherits it.
     const SESSION_PROFILE_ENV: &str = "MIOS_DESKTOP_HARDWARE_PROFILE";
 
     /// `[desktop.hyprland.hardware_profiles.<p>].hypr3d_render_scale`: a number in the plugin's 1..4 range.
@@ -5388,7 +5388,7 @@ report("again")
         if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
         let mut config = hypr3d_session_config(&data, std::env::var(SESSION_PROFILE_ENV).ok().as_deref(),
             &fs::read_to_string("/proc/cmdline").unwrap_or_default())?;
-        // [desktop.framerate]: the running tier's rates, so SUPER+G never resets what miosd applied.
+        // [desktop.framerate]: the running tier's rates, so the room toggle never resets what miosd applied.
         if let Some(policy) = framerate_policy(&data)? {
             let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
             let live = runtime.as_deref().and_then(|r| RateState::read_live(&policy.state_path(r), Path::new("/")));
@@ -5503,7 +5503,7 @@ report("again")
             if name.is_empty() || name.chars().any(char::is_control) {
                 return Err("Invalid desktop session name".into());
             }
-            // Read at SUPER+G, not at login: check it here so render-hyprland --check catches it.
+            // Read at the room toggle, not at login: check it here so render-hyprland --check catches it.
             if let Some(scale) = cfg.get("hypr3d_render_scale") {
                 hypr3d_render_scale(scale, &format!("desktop.hyprland.hardware_profiles.{id}.hypr3d_render_scale"))?;
             }

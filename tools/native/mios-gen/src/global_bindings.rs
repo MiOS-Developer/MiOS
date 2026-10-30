@@ -26,17 +26,64 @@ fn is_bypass(chord: &str, prefix: &str) -> bool { chord.strip_prefix(prefix).is_
 fn lua_literal(expr: &str) -> Option<String> {
     expr.split("..").map(|p|p.trim().strip_prefix('"')?.strip_suffix('"').map(str::to_owned)).collect()
 }
-/// Canonical chords the compositor already binds literally (`hl.bind("<chord>", ...)` lines of `lua`). A global row
-/// whose chord is in this set gets no second dispatch bind: the literal handle realizes it (C-22).
-pub fn literal_chords(lua: &str, sep: &str) -> std::collections::BTreeSet<String> {
-    let mut out=std::collections::BTreeSet::new();
+/// The literal compositor binds of `lua` (`hl.bind("<chord>", <dispatcher>...)` lines): canonical chord -> the
+/// dispatcher expressions bound on it. A global row whose chord is here gets no second dispatch bind when one of
+/// those dispatchers realizes the row's own action (C-22); any other literal on its chord is a collision.
+pub fn literal_binds(lua: &str, sep: &str) -> std::collections::BTreeMap<String,Vec<String>> {
+    let mut out:std::collections::BTreeMap<String,Vec<String>>=std::collections::BTreeMap::new();
     for line in lua.lines() {
         let Some(rest)=line.trim_start().strip_prefix("hl.bind(") else {continue};
-        let mut quoted=false; let mut end=None;
-        for (i,c) in rest.char_indices() { if c=='"' {quoted=!quoted} if c==',' && !quoted {end=Some(i);break} }
-        if let Some(chord)=end.and_then(|e|lua_literal(&rest[..e])) { if let Ok(c)=canonical(&chord,sep) {out.insert(c);} }
+        let mut quoted=false; let mut escaped=false; let mut end=None;
+        for (i,c) in rest.char_indices() {
+            if escaped {escaped=false; continue}
+            if c=='\\' && quoted {escaped=true; continue}
+            if c=='"' {quoted=!quoted}
+            if c==',' && !quoted {end=Some(i);break}
+        }
+        let Some(e)=end else {continue};
+        if let Some(chord)=lua_literal(&rest[..e]) {
+            if let Ok(c)=canonical(&chord,sep) { out.entry(c).or_default().push(rest[e+1..].trim().to_owned()); }
+        }
     }
     out
+}
+/// Canonical chords the compositor already binds literally (the keys of [`literal_binds`]).
+#[cfg(test)]
+pub fn literal_chords(lua: &str, sep: &str) -> std::collections::BTreeSet<String> {
+    literal_binds(lua,sep).into_keys().collect()
+}
+/// The command of a literal `hl.dsp.exec_cmd("...")` dispatcher (Lua string escapes undone), else None.
+fn exec_command(dispatcher: &str) -> Option<String> {
+    let body=dispatcher.strip_prefix("hl.dsp.exec_cmd(")?.trim_start().strip_prefix('"')?;
+    let mut out=String::new(); let mut chars=body.chars();
+    while let Some(c)=chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? { 'n'=>out.push('\n'), 't'=>out.push('\t'), 'r'=>out.push('\r'), d if d.is_ascii_digit() => {
+                let mut n=d.to_digit(10)?; for _ in 0..2 { let d=chars.next()?.to_digit(10)?; n=n*10+d; } out.push(char::from_u32(n)?);
+            } o => out.push(o) },
+            c => out.push(c),
+        }
+    }
+    None
+}
+/// Whether a literal compositor `dispatcher` runs `binding`'s own action, i.e. the literal bind IS the row's
+/// realization: an action with [keybindings.global.action_argv] runs exactly that argv, `exec:<prog>` runs `prog`,
+/// and the hypr: verbs the compositor tables carry map to their native dispatchers. Anything else is another action.
+pub fn realizes(data: &Value, binding: &Value, dispatcher: &str) -> bool {
+    let Some(action)=binding.get("action").and_then(Value::as_str) else {return false};
+    if let Some(argv)=at(data,"keybindings.global.action_argv").and_then(|a|a.get(action)).and_then(Value::as_array) {
+        let argv=argv.iter().map(Value::as_str).collect::<Option<Vec<_>>>().unwrap_or_default();
+        return !argv.is_empty() && exec_command(dispatcher).as_deref()==Some(argv.join(" ").as_str());
+    }
+    if let Some(prog)=action.strip_prefix("exec:") {
+        return exec_command(dispatcher).is_some_and(|cmd| cmd.split_whitespace().any(|t| t==prog || t.ends_with(&format!("/{prog}"))));
+    }
+    match action {
+        "hypr:killactive" => dispatcher.starts_with("hl.dsp.window.close("),
+        "hypr:fullscreen" => dispatcher.starts_with("hl.dsp.window.fullscreen(") && dispatcher.contains("\"fullscreen\""),
+        _ => false,
+    }
 }
 pub fn prelude(data: &Value) -> Result<String,String> {
     if at(data,"keybindings.global.enabled").and_then(Value::as_bool)!=Some(true) {return Ok(String::new());}
@@ -85,7 +132,7 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
     let bindings=at(data,"keybindings.global.bindings").and_then(Value::as_array).ok_or("missing global bindings")?;
     let sep=at(data,"keybindings.global.chord_sep").and_then(Value::as_str).ok_or("missing chord separator")?;
     let prefix=bypass_prefix(data)?;
-    let bound=literal_chords(literal,sep);
+    let bound=literal_binds(literal,sep);
     let ctl=|k:&str| at(data,&format!("keybindings.global.controller.{k}"));
     let mut out=String::from("\nmios_section(\"global-input\", function()\n local policies={}\n local escapes={}\n");
     out+=&format!(" local capture_fullscreen={}\n local capture_tag={}\n local release_tag={}\n",
@@ -107,7 +154,21 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
         }
         let escape=is_bypass(&chord,&prefix);
         let flags=if escape {",{dont_inhibit=true,submap_universal=true}"} else {""};
-        if binding.get("tier").and_then(Value::as_integer)!=Some(2) && !bound.contains(&chord) {
+        // C-22: the literal bind on this chord realizes the row -> no second handle. A literal that runs a different
+        // action would make the row dead (no handle of its own) and hide the collision, so it is an error (D1).
+        let realized=match bound.get(&chord) {
+            None => false,
+            Some(dispatchers) if dispatchers.iter().any(|d| realizes(data,binding,d)) => true,
+            Some(dispatchers) => {
+                let id=binding.get("id").and_then(Value::as_str).unwrap_or("?");
+                let action=binding.get("action").and_then(Value::as_str).unwrap_or("?");
+                if binding.get("tier").and_then(Value::as_integer)!=Some(2) {
+                    return Err(format!("[keybindings.global] {id}: chord {chord} is already bound by the compositor to {} (not {action}); choose a free chord", dispatchers.join(" and ")));
+                }
+                false
+            }
+        };
+        if binding.get("tier").and_then(Value::as_integer)!=Some(2) && !realized {
             let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
             let quoted=format!("'{}'",action.replace('\'', "'\\''"));
             // The dispatcher is kept with the handle so a `bypass` on this row binds the same action (escapes below).
@@ -639,6 +700,35 @@ for _,v in ipairs(MIOS_INPUT_POLICY.handles) do
  if v.key=='Print' then assert(not v.handle.enabled,'plain Print belongs to the captured app') end
 end
 "#);
+    }
+
+    /// D1: a realized_by row moved onto a chord the compositor binds literally for ANOTHER action is an error (it used
+    /// to be silently dropped: no dispatch bind, no finding, a dead row). Controls: the vendor projection renders, the
+    /// literal that IS the row's realization (same argv) still suppresses the second handle, and an exec: row is
+    /// realized by a literal running its program.
+    #[test]
+    fn remapped_row_on_a_foreign_literal_chord_is_rejected() {
+        let mut d=vendor();
+        let literal=" hl.bind(\"Print\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\nhl.bind(\"SUPER + J\", hl.dsp.layout(\"togglesplit\"))\n";
+        assert!(finish(&d,literal).is_ok(),"control: the vendor rows render");
+        row_mut(&mut d,"session-scale-up")["chord"]=Value::String("SUPER+J".into());
+        let err=finish(&d,literal).unwrap_err();
+        assert!(err.contains("session-scale-up: chord SUPER+j is already bound by the compositor to hl.dsp.layout(\"togglesplit\"))"),"{err}");
+        let mut d=vendor();
+        row_mut(&mut d,"screenshot-region")["chord"]=Value::String("SUPER+J".into());
+        assert!(finish(&d,literal).unwrap_err().contains("screenshot-region: chord SUPER+j"));
+        // realization rules
+        let v=vendor();
+        let b=|t:&str| -> Value { toml::from_str(t).unwrap() };
+        assert!(realizes(&v,&b("action='mios:screenshot-region'"),"hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))"));
+        assert!(!realizes(&v,&b("action='mios:screenshot-region'"),"hl.dsp.exec_cmd(\"/usr/bin/mios-shot window\"))"));
+        assert!(realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty -e /usr/libexec/mios/mios-terminal\"))"));
+        assert!(!realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty\"))"));
+        assert!(realizes(&v,&b("action='hypr:killactive'"),"hl.dsp.window.close())"));
+        assert!(!realizes(&v,&b("action='hypr:killactive'"),"hl.dsp.layout(\"togglesplit\"))"));
+        assert!(realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"fullscreen\", [\"action\"] = \"toggle\"}))"));
+        assert!(!realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"maximized\"}))"));
+        assert_eq!(exec_command("hl.dsp.exec_cmd(\"a \\\"b\\\" \\065\")"),Some("a \"b\" A".into()));
     }
 
     #[test]

@@ -142,8 +142,8 @@ registry entry. The session's `/dev/input` is empty unless devices are assigned
 * **hypr3d** sizes the window to the session's logical size, clamped into the work
   area minus the shell edge margin, so the session renders at fit scale 1 (one
   texel per parent pixel) and the room's Retina opening shows it at its flat size.
-  A closed room is opened through the same path as SUPER+G
-  (`hyprland-3d-toggle`) when `desktop.nested.targets.hypr3d.open_room` is true;
+  A closed room is opened through the same path as the room toggle (SUPER+F12,
+  `hyprland-3d-toggle`) when `desktop.nested.targets.hypr3d.open_room` is true;
   otherwise the launch is refused. The launch succeeds only after the room's
   `export_layout()` lists the window.
 

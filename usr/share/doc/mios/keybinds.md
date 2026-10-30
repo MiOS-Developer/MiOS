@@ -308,7 +308,13 @@ controller or MCP can drive it through `send-keys -c CLIENT -K`. A menu opened
 by right-click also takes mouse clicks. Menus opened by a key are keyboard-only:
 tmux ignores the starting item of a menu that handles the mouse (`-M`), and
 Enter must choose an item without a mouse. The
-`mios-menu` alias is the entry point for the controller's `tmux:menu` verb. A
+controller's `tmux:menu` verb is client-exact: it runs
+`tmux -L <socket> send-keys -c <client> -K <prefix> <menu_key>`, and the
+server publishes those two key words as `@mios-menu-keys`
+(`tmux show -sv @mios-menu-keys` prints `C-b Space`). The `mios-menu` command
+alias opens the same menu by name from the command prompt, but it cannot be
+aimed at a client: tmux appends CLI arguments to an alias's expansion, so run
+from outside tmux it opens on whichever client tmux picks. A
 client shorter than `[keybindings.tmux].menu_min_client_rows` gets
 `menu_too_small_message` instead of a silently dropped menu.
 

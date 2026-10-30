@@ -188,7 +188,7 @@ Why the VT·plain cells are "none": a bare shell might be running any program, s
 | `tmux:focus <dir>` | `display -p -c <client> '#{pane_at_<dir>}'`. If it prints 1 on the desktop, run `hypr:movefocus <dir>`; otherwise send `-K <prefix> h/j/k/l`. |
 | `tmux:page-up` / `page-down` | `copy-mode -eu -t <pane>` / `send-keys -X page-down` (only when the pane is in a mode). |
 | `tmux:session-prev` / `next` | `switch-client -c <client> -p` / `-n`. |
-| `tmux:menu` | The `mios-menu` command alias that U1 generates from the same items as MouseDown3 (mios-keys.tmux.conf:30-31), centred. |
+| `tmux:menu` | `tmux -L <socket_name> send-keys -c <client_tty> -K <tmux_prefix> <menu_key>` (= `tmux:key <menu_key>`): the same menu as prefix Space, on exactly that client. mios-keys.tmux.conf publishes the two key words as the server option `@mios-menu-keys`. The `mios-menu` command alias opens the same menu by name but cannot be aimed: tmux appends CLI arguments to the end of an alias's expansion, so `-c` never reaches display-menu and a CLI caller gets whichever client tmux picks. |
 | `tmux:keymap` | `display-popup -c <client> -E "/usr/libexec/mios/mios-inputd map --text \| less"`. |
 | Client discovery (C-09) | On the desktop: a tmux client process under the focused terminal's pid, matched by `#{client_pid}`. On a VT: the client whose `client_tty` is `/dev/tty<active>`. If none is found, the `*_plain` profile applies. |
 | `mios:graphical-vt` | Ctrl+Alt+F<VTNr> for this user's graphical session, VTNr from logind. |

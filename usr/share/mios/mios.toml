@@ -4216,7 +4216,9 @@ adapters = [
 # or digit, one of *`:?[]=,$!&(){}<>, or Space Enter Tab BTab BSpace Up Down Left Right PPage NPage) and rejects
 # duplicates across bindings, menu/launcher keys, float keys and [keybindings.agent].accept_key. The controller
 # does not add prefix keys: its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3)
-# and its tmux:menu verb runs the generated mios-menu command alias.
+# and its tmux:menu verb is client-exact: `tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>`, the
+# key words published by the server as @mios-menu-keys. The generated `mios-menu` command alias opens the same menu by
+# name (command prompt, one-client scripts) but cannot be aimed: tmux appends CLI arguments to an alias's expansion.
 [keybindings.tmux]
 # MiOS-Tmux (tmux-os), tier 3 of [keybindings.global] in the terminal context. Every binding below is in the
 # PREFIX table ([keybindings].tmux_prefix, then one key), so none can shadow a reserved_terminal chord; the
@@ -8590,7 +8592,7 @@ mode_confirm_s = 15                # a new mode is restored after this long unle
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
 modeset_min_interval_s = 30        # at least this long between two modesets of one output
 pacing_plugin = "mios-pacing"      # the [desktop.hyprland.<name>] compositor plugin that holds the cap
-state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, SUPER+G
+state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, the Hypr3D room toggle
 user_fragment = "50-framerate.toml"        # `miosd framerate set-unlocked` writes `unlocked` here (user-tier mios.d)
 [desktop.framerate.profiles]       # power profile -> tier; "unknown" = any other profile or no profile daemon
 power-saver = "power-saver"
@@ -8975,7 +8977,7 @@ recenter_seconds = 0.3
 
 # Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
 # render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
-# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by SUPER+G and
+# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by the room toggle (toggle_key) and
 # miosd framerate; mios-gen rejects them here while the policy is enabled.
 
 # Retina window opening (hypr3d-mios-retina-spawn.patch; tools/native/mios-gen/src/hypr3d_spawn.rs). A window opens in
@@ -17483,6 +17485,23 @@ unit = [
     "tests/test-hypr3d-room-input-live.py",
     "tests/test-window-fps.py",
     "tests/test-window-fps-live.py",
+    # Opt-in live suites (MIOS_LIVE_NESTED=1 inside a MiOS desktop session; each prints "skip:" and exits 0
+    # otherwise) and real-binary suites (candidate binaries via MIOS_GEN / MIOS_CONTROLS / MIOS_MIOSD / ...).
+    "tests/test-generators-g1-live.py",
+    "tests/test-global-bindings-s0-live.py",
+    "tests/test-mios-controls-live.py",
+    "tests/test-nested-multiuse-live.py",
+    "tests/test-nested-session-scaling.py",
+    "tests/test-pip-gravity-drawer-live.py",
+    "tests/test-blender-mcp-live.py",
+    "tests/test-blender-mcp-real.py",
+    "tests/test-keymap-overlay.py",
+    "tests/test-mios-controls.py",
+    "tests/test-session-selector-controller.py",
+    "tests/test-tmux-menu-alias.py",
+    "tests/test-tmux-workspace-hook-storm.py",
+    "tests/test-mcp-federation.py",
+    "tests/test-nested-multiuse.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
