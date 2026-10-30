@@ -204,6 +204,40 @@ Use `mios terminal`, `mios terminal --action ai`, `mios mcp` or, on Windows CMD,
 verb dispatch, unrelated MCP client configuration and editor settings, with
 backups when owned files change. See [mobile shortcuts](guides/mobile-keybindings.md).
 
+## MiOS-Tmux floats, hidden sessions and the apps catalogue
+
+**Floating panes.** tmux 3.7 floating panes (`pane_floating_flag = 1`) are not
+part of a tiled layout. Both the relay (`mios-agent-relay` workspace) and the
+MCP server never run `select-layout` on a window that holds one: they log the
+skip and keep the floats. Workspace setup counts tiled panes only.
+
+In a managed workspace window, MiOS-Tmux never creates a native float. Ctrl+B,
+then `*` opens the float shell instead, and `F`, `!`, `{` and `}` refuse. The
+float shell is a hidden per-session tmux session
+(`[keybindings.tmux.float].session_prefix` + the parent session id digits). It
+is shown in a popup, carries `@mios-bare 1`, and is killed when its parent
+session closes (a spawn-free `session-closed` hook).
+
+**Hidden sessions.** The effective hidden set is
+`[terminal.sessions].hidden_session_prefixes` plus the fixed worker-parking
+prefix `mios-workspace-`. That prefix is part of the relay's storage contract,
+not a tunable. These sessions are never offered by:
+
+- `miosd sessions`;
+- `choose-tree` (filtered by `@mios-visible-session`);
+- session cycling (Ctrl+B, then `(` or `)`).
+
+Workspace hooks call the native relay (`--workspace-hook ensure`), never an
+interpreter. tmux itself skips bare and hidden sessions, and windows already laid
+out for their size, without starting any process. The float-shell reaper
+(`session-closed`) is pure tmux commands as well.
+
+**Apps catalogue.** `miosd sessions --list` prints
+`{"nodes": [...], "apps": [{id, label, section, mode}]}`. `apps` holds the
+installed `[[terminal.tuis]]` rows for this terminal. It is read-only data for
+the Portal, the controller app and agents. MCP has no tool that launches a TUI
+into a human session; such a tool would need an owner lease first.
+
 ## Licensing and validation
 
 MiOS's repository license is Apache-2.0. Upstream tmux-mcp's README declares MIT;

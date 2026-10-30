@@ -17,8 +17,16 @@
 // surfaces named in wallpaper_namespaces at most W times a second (phase-locked deadlines; a held callback is never
 // dropped: a timer releases it at the deadline). The wallpaper then presents at W on every output (remote ones too:
 // W is process-wide), and Host.qml steps once per presented frame. 0 = no throttle.
+// Window frame rate (operator 2026-10-30: the island shows "<host> FPS/<window> FPS"): the plugin follows the focused
+// window -- the window that has the controls, whatever its kind (native, Flatpak, game, VM, remote, nested, PiP,
+// Theatre; Hypr3D focuses the aimed/captured window) -- and counts the client commits of its surface tree (toplevel
+// and subsurfaces) that attach a buffer with damage: the rate the window itself presents, independent of the output
+// rate and of 2D or Hypr3D rendering. Only the focused tree is listened to (no per-commit cost anywhere else).
+// `hyprctl mios-pacing status` reports it as "window" ({address, class, output, fps, frames, surfaces}; null with no
+// focused window) and `hyprctl mios-pacing window` prints that object alone.
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp, usr/share/mios/hyprland/plugins/mios-pacing/Makefile,
 // AI-related: usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing], src/mios-rs/miosd/src/framerate.rs
+// AI-related: usr/share/mios/quickshell/PanelWindow.qml, usr/share/mios/quickshell/Config.qml, usr/share/mios/quickshell/Nested.qml, tests/test-window-fps.py
 // The protocol header first: a host SDK may carry an empty src/protocols/types/content-type-v1.hpp that shadows the
 // generated one for the relative include in ContentType.hpp.
 #include <hyprland/protocols/content-type-v1.hpp>
@@ -39,6 +47,9 @@
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/protocols/core/Subcompositor.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/notification/NotificationOverlay.hpp>
 
@@ -104,6 +115,15 @@ namespace {
         std::string          reason   = "no frame yet";
     };
     std::unordered_map<std::string, SOutput> g_outputs; // by connector name
+
+    // The focused window whose committed frames are counted (see the header).
+    struct SFocusedWindow {
+        PHLWINDOWREF                     window;
+        WP<CWLSurfaceResource>           root;
+        std::vector<CHyprSignalListener> listeners;
+        MiosPacing::SWindowRate          rate;
+        uint64_t                         follows = 0;
+    } g_focused;
     std::vector<CHyprSignalListener>         g_listeners;
     SP<SHyprCtlCommand>                      g_cmd;
 
@@ -287,6 +307,67 @@ namespace {
         g_wallpapers.clear();
     }
 
+    // ---- focused window frame rate ----
+
+    // Count the frames `s` commits and follow the subsurfaces it gains (and has) the same way.
+    void watchSurface(const SP<CWLSurfaceResource>& s) {
+        if (!s)
+            return;
+        const auto KEY = reinterpret_cast<std::uintptr_t>(s.get());
+        g_focused.listeners.push_back(s->m_events.stateCommit.listen([KEY](auto state) {
+            if (g_exiting || !state)
+                return;
+            if (MiosPacing::isFrame(state->updated.bits.buffer, !!state->buffer, !state->damage.empty() || !state->bufferDamage.empty()))
+                g_focused.rate.tick(KEY, MiosPacing::Clock::now());
+        }));
+        g_focused.listeners.push_back(s->m_events.newSubsurface.listen([](auto sub) {
+            if (!g_exiting && sub)
+                watchSurface(sub->m_surface.lock());
+        }));
+        for (const auto& sub : s->m_subsurfaces)
+            if (const auto SUB = sub.lock())
+                watchSurface(SUB->m_surface.lock());
+    }
+
+    SP<CWLSurfaceResource> rootOf(const PHLWINDOW& w) {
+        const auto WL = w ? w->wlSurface() : nullptr;
+        return WL ? WL->resource() : nullptr;
+    }
+
+    // Follow `w` (null: nothing focused). A new window or a new root surface starts a fresh meter.
+    void follow(const PHLWINDOW& w) {
+        const auto ROOT = rootOf(w);
+        if (w == g_focused.window.lock() && ROOT.get() == g_focused.root.get() && (ROOT || !w))
+            return;
+        g_focused.listeners.clear();
+        g_focused.rate.clear();
+        g_focused.window = w;
+        g_focused.root   = ROOT;
+        ++g_focused.follows;
+        if (w && ROOT)
+            watchSurface(ROOT);
+    }
+
+    void followFocused() {
+        if (g_exiting)
+            return;
+        const auto FS = Desktop::focusState();
+        follow(FS ? FS->window() : nullptr);
+    }
+
+    std::string jsonEscape(const std::string& s);
+
+    std::string windowJson() {
+        followFocused(); // a focus change that sent no event (a raw focus reset) is caught here
+        const auto W = g_focused.window.lock();
+        if (!W || !W->m_isMapped || !g_focused.root.lock())
+            return "null";
+        const auto MON = W->m_monitor.lock();
+        return std::format("{{\"address\":\"0x{:x}\",\"class\":\"{}\",\"output\":\"{}\",\"fps\":{:.2f},\"frames\":{},\"surfaces\":{},\"follows\":{}}}",
+                           reinterpret_cast<std::uintptr_t>(W.get()), jsonEscape(W->m_class), jsonEscape(MON ? MON->m_name : ""),
+                           g_focused.rate.fps(MiosPacing::Clock::now()), g_focused.rate.frames, g_focused.rate.surfaces.size(), g_focused.follows);
+    }
+
     // ---- global Hyprland notification forwarding to MiOS Global Notifications (top-center glass island) ----
 
     void forwardToMiosNotifications(const std::string& text, const CHyprColor& color, float timeMs, eIcons icon) {
@@ -457,7 +538,7 @@ namespace {
                                jsonEscape(w.ns), jsonEscape(w.output), w.sentMeter.fps(NOW), w.sent, w.held, w.released);
             first = false;
         }
-        return out + "]}";
+        return out + "],\"window\":" + windowJson() + "}";
     }
 
     std::string hyprctl(eHyprCtlOutputFormat, std::string request) {
@@ -470,6 +551,8 @@ namespace {
             rest.remove_suffix(1);
         if (rest.empty() || rest == "status")
             return statusJson();
+        if (rest == "window")
+            return windowJson();
         if (rest == "reset") {
             for (auto& [name, o] : g_outputs) {
                 o.admitted = o.deferred = o.rescheduled = 0;
@@ -479,9 +562,10 @@ namespace {
                 w.sent = w.held = w.released = 0;
                 w.sentMeter.t.clear();
             }
+            g_focused.rate.clear();
             return "ok";
         }
-        return "usage: hyprctl mios-pacing status | reset";
+        return "usage: hyprctl mios-pacing status | window | reset";
     }
 }
 
@@ -566,15 +650,25 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return;
         outputOf(mon).rendered.tick(MiosPacing::Clock::now());
     }));
+    g_listeners.push_back(Event::bus()->m_events.window.active.listen([](PHLWINDOW w, Desktop::eFocusReason) {
+        if (!g_exiting)
+            follow(w);
+    }));
+    g_listeners.push_back(Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {
+        if (!g_exiting && (g_focused.window.expired() || w.get() == g_focused.window.get()))
+            follow(nullptr);
+    }));
+    followFocused();
     g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "mios-pacing", .exact = false, .fn = hyprctl});
 
-    return {"mios-pacing", "Per-output frame cap for the MiOS frame-rate policy (VRR outputs)", "MiOS", "1.0"};
+    return {"mios-pacing", "Per-output frame cap for the MiOS frame-rate policy (VRR outputs); focused-window frame meter", "MiOS", "1.1"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_exiting = true;
     releaseWallpapers(); // the hooks are still installed here; with g_exiting they pass straight through
     g_listeners.clear();
+    g_focused.listeners.clear();
     if (g_cmd)
         HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_cmd);
     for (auto& [name, o] : g_outputs)

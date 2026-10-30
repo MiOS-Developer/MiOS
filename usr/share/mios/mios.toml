@@ -4118,6 +4118,24 @@ tier = "common"
 namespace = "terminal_"
 note = "Native MiOS terminal component; installed in every MiOS image."
 
+# Caller-owned MCP servers. An [mcp.servers.<id>] declared ONLY in a user tier
+# (~/.config/mios/mios.toml or its mios.d/) is invisible to the shared
+# agent-pipe (another user, ProtectHome). The caller's own MiOS MCP front door
+# runs it as the caller (stdio only, minimal environment + its declared env)
+# and re-exports its tools as <namespace><tool>; native names always win.
+# Example: the per-user Blender Lab MCP (usr/share/doc/mios/blender-mcp.md).
+[mcp.federation]
+enabled = true
+serve_http = false                  # Streamable HTTP front door never federates unless true
+startup_timeout_s = 30              # initialize + tools/list budget per server
+call_timeout_s = 300                # one tools/call (renders and scene queries)
+restart_backoff_s = 10              # first retry delay after a failure; doubles per consecutive failure (cap 3600)
+max_restarts = 5                    # consecutive failures before a server stays down until the front door restarts
+catalog_cache = true                # list cached tools without starting the server; it starts on the first call
+idle_stop_s = 600                   # stop a started server after this many seconds without a call (0 = never)
+max_tools_per_server = 256
+log_directory = "mios/mcp-federation"  # child stderr, under $XDG_STATE_HOME, 0700/0600
+
 # Shared human interface. SSH receives plain Ctrl-b + one ordinary key;
 # Desktop shortcuts use Ctrl+Alt+Shift plus the same letter, avoiding OS Super shortcuts.
 [keybindings]
@@ -4142,7 +4160,7 @@ label = "MiOS Terminal"
 key = "t"
 command = "/usr/libexec/mios/mios-terminal"
 desktop_command = "alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal"   # no action: the global session selector ([terminal.sessions])
-tmux_command = "new-window"
+tmux_command = "new-window -c '#{pane_current_path}'"   # new windows keep the pane's directory
 tmux_command_windows = "new-window"
 vscode_command = "workbench.action.terminal.toggleTerminal"
 
@@ -4152,7 +4170,7 @@ label = "MiOS AI"
 key = "a"
 command = "/usr/bin/mios ai"
 desktop_command = "alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action ai"
-tmux_command = "run-shell '/usr/libexec/mios/mios-terminal --action ai'"
+tmux_command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --action ai\""   # -b: never block the client; run-shell jobs get no (or a stale) TMUX_PANE
 tmux_command_windows = "new-window -n MiOS-AI 'mios.cmd ai'"
 vscode_command = "runCommands"
 vscode_shell = "mios ai"
@@ -4163,7 +4181,7 @@ label = "MiOS Agents"
 key = "g"
 command = "mios agents --watch"
 desktop_command = "alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action agents"
-tmux_command = "run-shell '/usr/libexec/mios/mios-terminal --action agents'"
+tmux_command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --action agents\""   # -b: never block the client; run-shell jobs get no (or a stale) TMUX_PANE
 tmux_command_windows = "new-window -n MiOS-Agents 'mios.cmd agents --watch'"
 vscode_command = "runCommands"
 vscode_shell = "mios agents --watch"
@@ -4174,7 +4192,7 @@ label = "MiOS System Monitor"
 key = "m"
 command = "mios mon"
 desktop_command = "alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action system"
-tmux_command = "new-window -n MiOS-System mios mon"
+tmux_command = "new-window -n 'MiOS System Monitor' -c '#{pane_current_path}' mios mon"   # one window name with mios-terminal --action system
 tmux_command_windows = "new-window -n MiOS-System 'mios.cmd mon'"
 vscode_command = "runCommands"
 vscode_shell = "mios mon"
@@ -4188,34 +4206,208 @@ accept_key = "Enter"
 # so South-hold does nothing on a VT.
 accept_chord = "S-Enter"
 unavailable_message = "No pending-action key adapter for this pane"
+accept_note = "Accept the agent prompt (works without extended keys)"
 adapters = [
   { kind = "agy", accept_keys = ["C-k"] },
 ]
 
-# Prefix-table keys stay mobile-safe: Tab or one lowercase letter (mios-unit-gen enforces it). The controller does not
-# add prefix keys. Its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3).
+# Mobile rule: every action below is also reachable from the MiOS menu (prefix Space) with arrows and Enter, so
+# punctuation, digit and Shift keys are accelerators only. mios-unit-gen enforces the key grammar (one ASCII letter
+# or digit, one of *`:?[]=,$!&(){}<>, or Space Enter Tab BTab BSpace Up Down Left Right PPage NPage) and rejects
+# duplicates across bindings, menu/launcher keys, float keys and [keybindings.agent].accept_key. The controller
+# does not add prefix keys: its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3)
+# and its tmux:menu verb runs the generated mios-menu command alias.
 [keybindings.tmux]
+# MiOS-Tmux (tmux-os), tier 3 of [keybindings.global] in the terminal context. Every binding below is in the
+# PREFIX table ([keybindings].tmux_prefix, then one key), so none can shadow a reserved_terminal chord; the
+# only root-table keys are [keybindings.agent].accept_chord and the right-click menus (mouse = true).
+# mios-unit-gen keybindings projects this table into usr/share/mios/tmux/mios-keys.tmux.conf (never hand-edit).
 extended_features_index = 120
-extended_keys = "on"
+extended_feature_slots  = 8         # terminal-features[index .. index+slots-1] is MiOS-owned: cleared, then set, on every reload
+extended_keys = "on"                # on | off | always (off also clears the MiOS terminal-features slots)
 extended_keys_format = "csi-u"
 extended_key_terms = ["xterm*", "kitty*", "foot*", "alacritty*"]
+command_alias_index = 200           # command-alias[index .. index+slots-1] holds the generated menus
+command_alias_slots = 32
+menu_key = "Space"                  # prefix + this key opens the MiOS menu (mirrors SUPER+Space, the desktop drawer)
+launcher_key = "e"                  # prefix + this key opens the Apps and TUIs menu ([[terminal.tuis]])
+menu_note = "MiOS menu: apps, pane, window, session"
+launcher_note = "Apps and TUIs launcher"
+pane_menu_note = "MiOS pane menu (apps that use the mouse keep the click)"
+# The generated menus must fit the smallest client MiOS sizes ([terminal].rows); a smaller client gets this
+# message instead of a silently dropped menu. Rows = items + separators + 2 border rows; 1 row is the status line.
+menu_min_client_rows = 20
+menu_too_small_message = "Terminal too small for the MiOS menu: prefix ? lists every key"
+# Panes of a managed AI workspace (relay-owned layout) refuse layout-breaking keys with this message.
+managed_refusal_message = "Managed AI workspace pane: use the float shell instead"
+reload_message = "MiOS-Tmux configuration reloaded"
 bindings = [
-  { key = "h", command = "select-pane -L" },
-  { key = "j", command = "select-pane -D" },
-  { key = "k", command = "select-pane -U" },
-  { key = "l", command = "select-pane -R" },
-  { key = "s", command = "split-window -v" },
-  { key = "v", command = "split-window -h" },
-  { key = "n", command = "next-window" },
-  { key = "p", command = "previous-window" },
-  { key = "w", command = "choose-tree -Zw" },
-  { key = "z", command = "resize-pane -Z" },
-  { key = "y", command = "copy-mode" },
-  { key = "d", command = "detach-client" },
-  { key = "Tab", command = "send-keys BTab" },
-  { key = "b", command = "send-prefix" },
-  { key = "o", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-focus next'", command_windows = "select-pane -t :.+" },
-  { key = "f", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-view toggle'", command_windows = "resize-pane -Z" },
+  { key = "h", command = "select-pane -L", note = "Pane left" },
+  { key = "j", command = "select-pane -D", note = "Pane down" },
+  { key = "k", command = "select-pane -U", note = "Pane up" },
+  { key = "l", command = "select-pane -R", note = "Pane right" },
+  { key = "s", command = "split-window -v -c '#{pane_current_path}'", note = "Split below (keeps the directory)" },
+  { key = "v", command = "split-window -h -c '#{pane_current_path}'", note = "Split right (keeps the directory)" },
+  { key = "n", command = "next-window", note = "Next window" },
+  { key = "p", command = "previous-window", note = "Previous window" },
+  { key = "w", command = "choose-tree -Zw -f '#{E:@mios-visible-session}'", note = "Choose a window or pane (arrows, Enter)" },
+  { key = "z", command = "resize-pane -Z", note = "Zoom the pane (also hides floating panes)" },
+  { key = "y", command = "copy-mode", note = "Copy and scroll mode" },
+  { key = "d", command = "detach-client", note = "Detach this client" },
+  { key = "Tab", command = "send-keys BTab", note = "Send Shift-Tab (mobile keyboards)" },
+  { key = "b", command = "send-prefix", note = "Send the prefix to the pane" },
+  { key = "o", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-agent-relay --workspace-focus next\"", command_windows = "select-pane -t :.+", note = "Next pane or next agent" },   # native relay ([mcp.agents].binary): no interpreter per key press
+  { key = "f", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-agent-relay --workspace-view toggle\"", command_windows = "resize-pane -Z", note = "Compact or auto AI workspace view" },   # native relay layout pass
+  # Upstream essentials, restored so the keyboard alone (Linux VT, SSH, phones) can run every pane action.
+  { key = ":", command = "command-prompt", note = "Command prompt" },
+  { key = "?", command = "list-keys -N", note = "List these keys (arrows, PgUp, PgDn, q)" },
+  { key = "[", command = "copy-mode", note = "Copy and scroll mode" },
+  { key = "]", command = "paste-buffer -p", note = "Paste the latest buffer" },
+  { key = "=", command = "choose-buffer -Z", note = "Choose a buffer to paste" },
+  { key = ",", command = "command-prompt -I '#W' { rename-window -- '%%' }", note = "Rename the window" },
+  { key = "$", command = "command-prompt -I '#S' { rename-session -- '%%' }", note = "Rename the session" },
+  { key = "c", command = "new-window -c '#{pane_current_path}'", note = "New window (keeps the directory)" },
+  { key = "0", command = "select-window -t :=0", note = "Window 0" },
+  { key = "1", command = "select-window -t :=1", note = "Window 1" },
+  { key = "2", command = "select-window -t :=2", note = "Window 2" },
+  { key = "3", command = "select-window -t :=3", note = "Window 3" },
+  { key = "4", command = "select-window -t :=4", note = "Window 4" },
+  { key = "5", command = "select-window -t :=5", note = "Window 5" },
+  { key = "6", command = "select-window -t :=6", note = "Window 6" },
+  { key = "7", command = "select-window -t :=7", note = "Window 7" },
+  { key = "8", command = "select-window -t :=8", note = "Window 8" },
+  { key = "9", command = "select-window -t :=9", note = "Window 9" },
+  { key = "!", command = "break-pane", note = "Break the pane into its own window", managed = "refuse" },
+  { key = "q", command = "display-panes", note = "Show pane numbers (press one to pick it)" },
+  { key = "(", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --session-cycle prev --client #{q:client_name}\"", command_windows = "switch-client -p", note = "Previous session (skips hidden sessions)" },
+  { key = ")", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --session-cycle next --client #{q:client_name}\"", command_windows = "switch-client -n", note = "Next session (skips hidden sessions)" },
+  { key = "{", command = "swap-pane -U", note = "Swap the pane up", managed = "refuse" },
+  { key = "}", command = "swap-pane -D", note = "Swap the pane down", managed = "refuse" },
+  { key = "Up", command = "select-pane -U", repeat = true, note = "Pane up" },
+  { key = "Down", command = "select-pane -D", repeat = true, note = "Pane down" },
+  { key = "Left", command = "select-pane -L", repeat = true, note = "Pane left" },
+  { key = "Right", command = "select-pane -R", repeat = true, note = "Pane right" },
+  { key = "H", command = "resize-pane -L 5", repeat = true, note = "Resize the pane left by 5" },
+  { key = "J", command = "resize-pane -D 5", repeat = true, note = "Resize the pane down by 5" },
+  { key = "K", command = "resize-pane -U 5", repeat = true, note = "Resize the pane up by 5" },
+  { key = "L", command = "resize-pane -R 5", repeat = true, note = "Resize the pane right by 5" },
+  { key = "PPage", command = "copy-mode -eu", note = "Scroll up (copy mode; leaves at the bottom)" },
+  { key = "NPage", command = "if-shell -F '#{pane_in_mode}' 'send-keys -X page-down'", note = "Scroll down in copy mode" },
+  { key = "x", menu = "kill-pane", note = "Kill the pane (asks first; No is the default)" },
+  { key = "&", menu = "kill-window", note = "Kill the window (asks first; No is the default)" },
+]
+
+# Floating panes. tmux 3.7 floats natively (new-pane without -h/-v) but a native float cannot be hidden,
+# so the toggle key shows a popup over a persistent per-session hidden session instead.
+[keybindings.tmux.float]
+enabled        = true
+new_key        = "*"           # native floating pane at pane_width x pane_height, centred, cwd kept (upstream tmux default key)
+toggle_key     = "`"           # show or hide the session's float shell (quake-console convention)
+lift_key       = "F"           # float the current tiled pane into the float shell, or dock a floating pane back
+pane_width     = "70%"
+pane_height    = "60%"
+shell_width    = "80%"
+shell_height   = "75%"
+shell_title    = " float "
+shell_status   = "off"         # status line inside the float shell: off saves phone rows
+session_prefix = "mios-float-" # one hidden session per parent session: prefix + the parent's session id digits
+min_version    = "3.7"         # native floats are emitted only under %if for tmux at or above this version
+new_note       = "New floating pane (keeps the directory)"
+toggle_note    = "Show or hide the float shell"
+lift_note      = "Float the pane, or dock a floating pane"
+single_pane_message = "Only one pane here: prefix * opens a new floating pane"
+origin_gone_message = "The original window is gone: the pane stays in the float shell"
+
+# Generated menus (command aliases mios-menu-ID and the Linux-console variant mios-menu-ID-vt). Every menu is
+# keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks.
+# Item forms: { label, key } runs the prefix binding of that key; { label, key, command } runs command;
+# { label, key, menu = "ID" } opens another menu; { separator = true }. Optional: mode = "copy" (enabled only in
+# copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
+[[keybindings.tmux.menus]]
+id = "root"
+title = "MiOS"
+items = [
+  { label = "Apps and TUIs...", key = "e" },
+  { label = "Float shell", key = "`" },
+  { label = "New floating pane", key = "*" },
+  { separator = true },
+  { label = "Pane >", key = "P", menu = "pane" },
+  { label = "Window >", key = "W", menu = "window" },
+  { label = "Session >", key = "S", menu = "session" },
+  { separator = true },
+  { label = "Command prompt", key = ":" },
+  { label = "Keys", key = "?" },
+  { label = "Detach", key = "d" },
+]
+
+[[keybindings.tmux.menus]]
+id = "pane"
+title = "MiOS pane"
+items = [
+  { label = "Next pane", key = "o" },
+  { label = "Zoom", key = "z" },
+  { label = "Compact / auto view", key = "f" },
+  { label = "Copy / scroll", key = "y", command = "copy-mode -e" },
+  { label = "Go to top", key = "<", command = "send-keys -X history-top", mode = "copy" },
+  { label = "Go to bottom", key = ">", command = "send-keys -X history-bottom", mode = "copy" },
+  { label = "Paste", key = "]" },
+  { label = "Split below", key = "s" },
+  { label = "Split right", key = "v" },
+  { label = "Float / dock", key = "F", managed = "disable" },
+  { label = "Kill pane...", key = "x" },
+  { separator = true },
+  { label = "New window", key = "t" },
+  { label = "Detach", key = "d" },
+  { label = "MiOS...", key = "Space", menu = "root" },
+]
+
+[[keybindings.tmux.menus]]
+id = "window"
+title = "Window"
+items = [
+  { label = "New window", key = "t" },
+  { label = "Rename...", key = "," },
+  { label = "Next", key = "n" },
+  { label = "Previous", key = "p" },
+  { label = "Choose window", key = "w" },
+  { label = "Break pane to window", key = "!", managed = "disable" },
+  { label = "Kill window...", key = "&" },
+  { separator = true },
+  { label = "< Back", key = "BSpace", menu = "root" },
+]
+
+[[keybindings.tmux.menus]]
+id = "session"
+title = "Session"
+items = [
+  { label = "Choose session", key = "s", command = "choose-tree -Zs -f '#{E:@mios-visible-session}'" },
+  { label = "New bare Tmux-OS session", key = "N", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --new --client #{q:client_name}\"", platforms = ["linux"] },
+  { label = "Rename...", key = "$" },
+  { label = "Previous", key = "(" },
+  { label = "Next", key = ")" },
+  { label = "Reload MiOS config", key = "R", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --reload\"", platforms = ["linux"] },
+  { label = "Detach", key = "d" },
+  { separator = true },
+  { label = "< Back", key = "BSpace", menu = "root" },
+]
+
+# Kill confirmation as a two-item menu (controller vocabulary: arrows + Enter); start = 1 selects No.
+[[keybindings.tmux.menus]]
+id = "kill-pane"
+title = "Kill pane #{pane_index}?"
+start = 1
+items = [
+  { label = "Yes, kill the pane", key = "y", command = "kill-pane" },
+  { label = "No", key = "n", command = "" },
+]
+
+[[keybindings.tmux.menus]]
+id = "kill-window"
+title = "Kill window #{window_index}?"
+start = 1
+items = [
+  { label = "Yes, kill the window", key = "y", command = "kill-window" },
+  { label = "No", key = "n", command = "" },
 ]
 
 # Read by mios-sync-theme:98 (enabled) and the mios-controls TUI (tui.rs:809, hypr3d_toggle_chord). The router itself uses
@@ -4500,6 +4692,19 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #   menu, keymap.
 
 # --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
+# Step P1 (mios-inputd router room table + hypr3d-mios-room-input.patch). Same value grammar as nav: "ns:action" fires on
+# press, except on the toggle_chord buttons (L3/R3), which fire on a clean release (any L3+R3 overlap cancels both
+# singles; R3 is ignored while the right stick is deflected; L3 is not, so sprint works while walking); Guide (BTN_MODE)
+# fires on a tap (released before capture_hold_ms, no other button between); ["tap", "hold"] resolves on release or at
+# capture_hold_ms; "none" unbinds. hypr:hypr3d:<verb> runs hl.plugin.hypr3d.<verb>() in the room's compositor, except a
+# plain hypr:hypr3d:view, which is the packet's view slot (cycles on the next room frame). The North capture button
+# (fullscreen_button) and the toggle chord itself are the ownership contract: the room table cannot claim them.
+[keybindings.global.controller.room]
+BTN_EAST = "hypr:hypr3d:cancel"                       # drop a grab/resize, close a picker, leave the room cursor
+BTN_THUMBL = "hypr:hypr3d:sprint"                     # toggle
+BTN_THUMBR = "hypr:hypr3d:recenter"
+BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
+BTN_MODE = "quickshell:drawer-toggle"
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -8686,7 +8891,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
@@ -8704,6 +8909,17 @@ theatre_width = 4.0                 # target screen width in metres; aspect pres
 theatre_fill = 0.9                  # fraction of the available HUD workarea in the camera frustum
 theatre_seconds = 0.25              # room-pose transition; native maximize/restore owns the OS state
 pip_raster_max_px = 2048            # render surface budget per axis; room magnification stays independent
+# Face the viewer (hypr3d-mios-room-input.patch): a PiP whose centre is within face_distance metres of the camera turns
+# its plane to face the camera POSITION and follows it as the camera moves; a Theatre PiP uses theatre_face_distance.
+# Outside the distance it eases back to the pose it was placed with (that placed pose is what the room remembers).
+# Every turn is an exponential ease with time constant face_seconds (no snapping); face_hysteresis metres beyond the
+# distance end the facing, so a viewer standing on the boundary never flaps. face_viewer = "pip" (managed PiPs only),
+# "all" (every room window) or "off".
+face_viewer = "pip"
+face_distance = 2.0                 # metres, a PiP in its room pose
+theatre_face_distance = 4.0         # metres, a PiP in Theatre (native maximize)
+face_seconds = 0.2                  # ease time constant, seconds (0.01..5)
+face_hysteresis = 0.1               # metres past the distance before facing ends (0..10)
 
 [desktop.hyprland.hypr3d.config.world]
 panorama_mirror = false
@@ -8745,6 +8961,10 @@ crt_default_on = false
 [desktop.hyprland.hypr3d.config.player]
 # VR-native locomotion: disable view-only vertical head-bobbing and head-tilt roll while walking.
 walk_bob = false
+# The room's recenter verb (R3 in [keybindings.global.controller.room]): the camera eases onto the focused room window
+# (else the window aim focus last selected, else the nearest room window, else it levels the view) with this time
+# constant, seconds (0.01..5).
+recenter_seconds = 0.3
 
 # Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
 # render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
@@ -8849,7 +9069,7 @@ shaderglass_toggle_button = "BTN_TR"
 shaderglass_cycle_button = "BTN_TL"
 
 [desktop.hyprland.boot_sync]
-enabled = true
+enabled = true  # GRUB (mios.desktop.gpu=) picks the login default; a login choice for another GPU selects its managed boot entry and reboots (sudo -n mios-gen hyprland-boot-profile)
 
 # Hardware profiles share the compositor, shell, theme, bindings and services.
 # pci is optional host/user identity; pci_file preserves the existing host selector.
@@ -10531,6 +10751,187 @@ node_host_glob   = "*"         # tailnet HostName filter for nodes
 ssh_user         = ""          # empty = the local login user (owner of the remote human socket)
 ssh_port         = 22
 ssh_timeout_s    = 3
+# Internal sessions the selector, choose-tree pickers and session cycling never list. Must include
+# [keybindings.tmux.float].session_prefix; "mios-workspace-" (agent worker parking) is always hidden as well.
+hidden_session_prefixes = ["mios-float-"]
+
+# Apps and TUIs launcher: one catalogue for prefix e in tmux-os and the "TUI apps" section of miosd sessions.
+[terminal.tui_launcher]
+enabled       = true
+title         = "Apps"
+app_target    = "session"  # outside tmux (selector): "session" = a window in the bare [terminal.sessions].new_session_name session (created if missing); "new" = a new bare session each time
+popup_width   = "90%"
+popup_height  = "80%"
+sections      = ["mios", "system", "files", "dev", "net", "media", "edit"]
+# Popup TUIs run under this scope, never in the tmux server's own cgroup (an OOM there would end every session).
+popup_scope   = ["systemd-run", "--user", "--scope", "--collect", "--quiet", "-p", "OOMPolicy=continue", "--"]
+empty_message = "No installed TUI fits this terminal"
+
+# One row per TUI. mode: popup (transient, Esc closes) | window (long-lived; MCP/controller targetable) | float
+# (native floating pane). A row whose argv[0] is not an executable (absolute path, or found on PATH) is hidden.
+# vt_ok = false hides the row on the Linux console; argv_vt replaces argv there. hold = true (popup only) keeps
+# the popup open after the program exits. The AI CLIs come from [[keybindings.actions]] and are listed first.
+[[terminal.tuis]]
+id = "mon"
+label = "System monitor"
+section = "mios"
+mode = "window"
+vt_ok = true
+argv = ["/usr/libexec/mios/mios-dashboard", "--monitor"]
+
+[[terminal.tuis]]
+id = "fans"
+label = "Fans"
+section = "mios"
+mode = "popup"
+vt_ok = true
+argv = ["/usr/bin/mios-fanctl", "tui"]
+
+[[terminal.tuis]]
+id = "controls"
+label = "Controls and keys"
+section = "mios"
+mode = "window"
+vt_ok = true
+argv = ["/usr/bin/mios-controls"]
+
+[[terminal.tuis]]
+id = "btop"
+label = "btop"
+section = "system"
+mode = "window"
+vt_ok = true
+argv = ["btop", "--config", "/etc/btop/btop.conf"]
+argv_vt = ["btop", "-t", "--config", "/etc/btop/btop.conf"]
+
+[[terminal.tuis]]
+id = "top"
+label = "top"
+section = "system"
+mode = "popup"
+vt_ok = true
+argv = ["top"]
+
+[[terminal.tuis]]
+id = "htop"
+label = "htop"
+section = "system"
+mode = "window"
+vt_ok = true
+argv = ["htop"]
+
+[[terminal.tuis]]
+id = "nvtop"
+label = "nvtop (GPU)"
+section = "system"
+mode = "window"
+vt_ok = true
+argv = ["nvtop"]
+
+[[terminal.tuis]]
+id = "journal"
+label = "System journal"
+section = "system"
+mode = "window"
+vt_ok = true
+argv = ["journalctl", "-f", "-n", "200"]
+
+[[terminal.tuis]]
+id = "yazi"
+label = "yazi files"
+section = "files"
+mode = "window"
+vt_ok = false
+argv = ["yazi"]
+
+[[terminal.tuis]]
+id = "ranger"
+label = "ranger files"
+section = "files"
+mode = "window"
+vt_ok = true
+argv = ["ranger"]
+
+[[terminal.tuis]]
+id = "mc"
+label = "Midnight Commander"
+section = "files"
+mode = "window"
+vt_ok = true
+argv = ["mc"]
+
+[[terminal.tuis]]
+id = "ncdu"
+label = "Disk usage (ncdu)"
+section = "files"
+mode = "window"
+vt_ok = true
+argv = ["ncdu"]
+
+[[terminal.tuis]]
+id = "lazygit"
+label = "lazygit"
+section = "dev"
+mode = "window"
+vt_ok = true
+argv = ["lazygit"]
+
+[[terminal.tuis]]
+id = "nmtui"
+label = "Network (nmtui)"
+section = "net"
+mode = "popup"
+vt_ok = true
+argv = ["nmtui"]
+
+[[terminal.tuis]]
+id = "bluetoothctl"
+label = "Bluetooth (bluetoothctl)"
+section = "net"
+mode = "popup"
+vt_ok = true
+argv = ["bluetoothctl"]
+
+[[terminal.tuis]]
+id = "bluetuith"
+label = "Bluetooth (bluetuith)"
+section = "net"
+mode = "popup"
+vt_ok = true
+argv = ["bluetuith"]
+
+[[terminal.tuis]]
+id = "pulsemixer"
+label = "Audio mixer"
+section = "media"
+mode = "popup"
+vt_ok = true
+argv = ["pulsemixer"]
+
+[[terminal.tuis]]
+id = "vim"
+label = "vim"
+section = "edit"
+mode = "window"
+vt_ok = true
+argv = ["vim"]
+
+[[terminal.tuis]]
+id = "nano"
+label = "nano"
+section = "edit"
+mode = "window"
+vt_ok = true
+argv = ["nano"]
+
+[[terminal.tuis]]
+id = "fastfetch"
+label = "System summary"
+section = "mios"
+mode = "popup"
+vt_ok = true
+hold = true
+argv = ["fastfetch"]
 
 [terminal.windows]
 command_timeout_ms = 3000 # bounded control clients; never kill an existing tmux server
@@ -10620,6 +11021,10 @@ week_starts_on  = 1               # calendar first weekday: 0 = Sunday, 1 = Mond
 app_menu        = true            # focused app's exported menu (GTK org.gtk.Menus / dbusmenu) when one exists
 popup_ms        = 200             # shell popups (calendar, power, app-menu dropdowns) grow out of their trigger over this long
 sample_interval_ms = 1000         # one shared FPS / ShaderGlass sampler for all islands
+# The fps item reads "<output> FPS/<window> FPS": the output's rendered rate beside the focused window's own committed
+# frame rate (mios-pacing's focused-window meter: buffer commits with damage of the window's surface tree, in 2D and
+# Hypr3D, nested sessions included); the window part shows on the island of the window's output and hides when unknown.
+window_fps = true                 # false = the output rate alone
 # Under a fullscreen window the status island and app-menu pills hide and reserve nothing; touching the
 # top screen edge reveals them as overlays above the window until the pointer leaves (EdgeReveal.qml).
 fullscreen_reveal          = true   # false = they stay hidden under fullscreen windows
@@ -10914,6 +11319,28 @@ remote_truecolor_terms = ["linux", "vt*"]  # an SSH client declaring one of thes
 remote_term            = "xterm-256color"  # must match a truecolor_terms pattern and have terminfo, or the client keeps its own TERM
 narrow_cols            = 120  # clients narrower than this (phones; the wide line needs ~115 columns) get the compact status: session pill, window list, sysmon mobile_items without watts, time; 0 = always the wide line
 narrow_sysmon_cols     = 24   # column budget of that sysmon segment: items past it drop from the end, as on the mobile island
+# tmux events that run the AI workspace auto-split: the native single-flight hook ([mcp.agents].binary
+# --workspace-hook ensure), never an interpreter. tmux itself decides first, without a process: bare Tmux-OS sessions
+# (@mios-bare), hidden sessions ([terminal.sessions].hidden_session_prefixes) and windows already laid out for their
+# current size (@mios-workspace-applied) spawn nothing, so resizing and layout switching cannot flood the host.
+workspace_hooks        = ["client-attached", "client-session-changed", "client-resized", "client-active"]
+
+# Linux console clients (kernel VT: 8/16 colours, 512-glyph font, no rounded arcs). A tmux client whose TERM
+# matches terms (or that is not UTF-8) gets ASCII status glyphs, single borders and these named colours, per
+# client: a VT and a desktop client attached to one session each see their own variant. An SSH client whose
+# TERM matches remote_truecolor_terms is re-declared as remote_term before it attaches, so it is not a console.
+[theme.tmux.console]
+terms                = ["linux*", "vt*"]
+border_lines         = "single"
+fg                   = "white"
+bg                   = "black"
+accent               = "blue"
+cursor               = "yellow"
+muted                = "brightblack"
+success              = "green"
+menu_style           = "bg=black,fg=white"
+menu_selected_style  = "bg=yellow,fg=black"
+menu_border_style    = "fg=white"
 
 # [theme.edge] -- edge-to-edge terminals on every surface MiOS configures. The
 # insets themselves are [theme].padding / [theme].scrollbar_state; this table
@@ -16999,6 +17426,7 @@ unit = [
     "tests/test-flatpak-run-env-strip.py",
     "tests/test-profile-gateway-model.py",
     "tests/test-tmux-oom-policy.py",
+    "tests/test-tmux-os.py",
     "tests/test-hyprland-shader-contract.py",
     "tests/test-template-conform-sparse-bound.py",
     "tests/test-portal-product.py",
@@ -17044,6 +17472,10 @@ unit = [
     "tests/test-hypr3d-spawn.py",
     "tests/test-hypr3d-crt.py",
     "tests/test-hypr3d-controller.py",
+    "tests/test-hypr3d-room-input.py",
+    "tests/test-hypr3d-room-input-live.py",
+    "tests/test-window-fps.py",
+    "tests/test-window-fps-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
@@ -18107,8 +18539,10 @@ match = [
   { class = "^chromium-browser$", sibling_class = "(?i)^spotify$" },
 ]
 
-# AI-hint: Minimal nested desktop uses native HUD components with its own compositor/runtime and input namespace.
-# AI-related: tools/native/mios-gen/src/nested_session.rs, usr/share/mios/quickshell/Nested.qml
+# AI-hint: Nested MiOS desktop sessions (mios-gen nested-session): own compositor, runtime, HUD, Tmux-OS namespace and input
+# namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
+# output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.
+# AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/nested_devices.rs, usr/share/mios/quickshell/Nested.qml, usr/share/doc/mios/desktop-pip.md
 [desktop.nested]
 resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
 width = 1280
@@ -18117,10 +18551,48 @@ scale_mode = "fit"                    # fit: the session keeps width x height lo
 scale_min = 0.25
 scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
-launch_layout = "pip"
-tmux_socket_name = "mios-nested"
+launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
+tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"
 terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal", "--new"]
+seat = ""                             # default seat label (--seat); "" = an unlabelled session (several may run at once); a label is unique among live sessions
+user_label = ""                       # display name of the session's user (--user; exported to the session); "" = the seat label
+registry_dir = "mios/nested-sessions" # under the parent XDG_RUNTIME_DIR: one JSON entry per live session (seat, compositor socket, assigned devices) -- the mios-inputd contract
+private_tmp = "seat"                  # always | seat (labelled seats: a second user, a remote user, a room seat) | never: a private /tmp (<runtime>/tmp, removed with the session) isolates every plugin state file and the legacy room packet; the unlabelled development session keeps the shared /tmp
+private_files = ["/tmp/hypr3d-status.txt", "/tmp/mios-hypr3d-crt.state", "/tmp/hypr3d-skirt-mask.pgm"]  # with the shared /tmp: plugin state files each session binds its own empty copy over, so a room in the session never touches the parent's (files elsewhere are bound with a private /tmp too)
+
+# Per-target policy. scale_mode (fit | native) overrides [desktop.nested].scale_mode for that target; pip, window,
+# side-by-side and hypr3d keep the logical width x height (fit), a whole output or remote display maps 1:1 (native).
+[desktop.nested.targets.output]
+output = ""                           # parent output for --target output; "" = --output (or the seat preset's output) is required
+scale_mode = "native"
+
+[desktop.nested.targets.remote]
+outputs = []                          # remote display outputs by exact name, tried after [remote.rdp].virtual_output
+output_prefixes = ["HEADLESS-"]       # then the first attached output with one of these prefixes ([desktop.displays] remote outputs)
+wait_ms = 0                           # wait this long for a remote client to attach its output; 0 = refuse at once
+scale_mode = "native"
+
+[desktop.nested.targets.hypr3d]
+open_room = true                      # open the parent's room through the real hyprland-3d-toggle path when it is closed; false = refuse
+scale_mode = "fit"                    # the window opens at width x height logical px (fit scale 1: one texel per parent pixel), fitted into the work area
+
+# Input devices bound into a session's otherwise empty /dev/input (--device, a seat preset's devices, else default).
+# Specs: /dev/input/eventN or a by-id/by-path link, name:<exact evdev name>, or virtual-pad (the seat's mios-inputd pad).
+# Binding makes the nodes openable inside the session (applications, games, an in-session bridge); the registry entry
+# tells mios-inputd which nodes a session owns so it can stop routing them to the parent and forward keyboard/pointer
+# input into the session's compositor (the session compositor itself reads only its parent window's Wayland seat).
+[desktop.nested.devices]
+default = []                          # [] = no physical input in the session (isolated)
+allow_kinds = ["controller", "keyboard", "pointer"]   # kinds from evdev capabilities: controller | keyboard | pointer | other
+allow_virtual = true                  # uinput-created nodes (mios-inputd virtual pads, test devices)
+exclusive = true                      # refuse a node another live session already holds
+include_joystick = true               # also bind the device's legacy /dev/input/jsN
+virtual_pad_name = "MiOS Nested Pad {seat}"   # evdev name mios-inputd gives a seat's virtual pad
+virtual_pad_wait_ms = 3000            # how long virtual-pad waits for that pad to appear
+
+# Seat presets: [desktop.nested.seats.<seat>] user = "...", target = "...", output = "...", devices = ["..."]; CLI flags win.
+[desktop.nested.seats]
 
 [desktop.launchers.mios-nested-session]
 exec_cmd = "/usr/bin/mios-gen nested-session"
@@ -18134,7 +18606,7 @@ startup_wm_class = "aquamarine"
 startup_notify = false
 ai_hint = "User-launchable independent MiOS development desktop; isolated runtime and native HUD."
 ai_related = "tools/native/mios-gen/src/nested_session.rs, desktop.nested"
-actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-session --layout window"},{id="side-by-side",name="Open side by side",exec="/usr/bin/mios-gen nested-session --layout side-by-side"}]
+actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-session --layout window"},{id="side-by-side",name="Open side by side",exec="/usr/bin/mios-gen nested-session --layout side-by-side"},{id="hypr3d",name="Open in the 3D room",exec="/usr/bin/mios-gen nested-session --target hypr3d"},{id="remote",name="Open on the remote display",exec="/usr/bin/mios-gen nested-session --target remote"}]
 
 
 # AI-hint: Native pinned PiP maximize/fullscreen restores the previous pin and geometry.
