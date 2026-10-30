@@ -130,8 +130,24 @@ pub fn button_code(name: &str) -> Result<u16, String> {
         "BTN_DPAD_DOWN" => Ok(0x221),
         "BTN_DPAD_LEFT" => Ok(0x222),
         "BTN_DPAD_RIGHT" => Ok(0x223),
+        // I4 (C-15b): stick directions as pseudo-keys for the Guide system layer (one action per flick). They lie past
+        // KEY_MAX (0x2ff), so no evdev event can ever carry one; nav parses LS_*/RS_* as stick inputs before this.
+        "LS_UP" => Ok(STICK_PSEUDO),
+        "LS_DOWN" => Ok(STICK_PSEUDO + 1),
+        "LS_LEFT" => Ok(STICK_PSEUDO + 2),
+        "LS_RIGHT" => Ok(STICK_PSEUDO + 3),
+        "RS_UP" => Ok(STICK_PSEUDO + 4),
+        "RS_DOWN" => Ok(STICK_PSEUDO + 5),
+        "RS_LEFT" => Ok(STICK_PSEUDO + 6),
+        "RS_RIGHT" => Ok(STICK_PSEUDO + 7),
         _ => Err(format!("unknown controller button {name}")),
     }
+}
+/// First stick pseudo-key code (LS_UP); LS_* then RS_* in UP, DOWN, LEFT, RIGHT order. Never a real evdev code.
+pub const STICK_PSEUDO: u16 = 0x300;
+/// A stick pseudo-key (LS_*/RS_*), not a button a device can press.
+pub fn is_stick_pseudo(code: u16) -> bool {
+    (STICK_PSEUDO..STICK_PSEUDO + 8).contains(&code)
 }
 pub fn axis_code(name: &str) -> Result<u16, String> {
     match name {

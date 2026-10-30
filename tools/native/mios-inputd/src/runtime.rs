@@ -18,7 +18,8 @@ pub struct Options {
     pub root: Option<PathBuf>,
     pub bridge: bool,
     pub fixture_only: bool,
-    pub device: Option<PathBuf>,
+    /// Explicit devices (the fixture tier, `--device`, or the nodes a nested session holds); empty = discover all.
+    pub devices: Vec<PathBuf>,
     pub context: Option<String>,
     pub duration: Option<Duration>,
     pub pad_path: PathBuf,
@@ -39,6 +40,11 @@ pub struct Options {
     /// Re-select the compositor when the signature's socket dies (the physical bridge always does; a fixture only in
     /// a private XDG_RUNTIME_DIR it names with --rediscover).
     pub rediscover: bool,
+    /// I4: `bridge --nested <seat>`: follow that nested session (its compositor via the environment main set, its
+    /// private room packet) and own only the controller nodes assigned to it. Key and compositor actions project into
+    /// the session; there is no virtual pad clone: a captured app in the session reads the assigned node itself (the
+    /// grab is released while it owns the pad).
+    pub nested: Option<crate::nested::Session>,
 }
 struct RunningDevice {
     device: Device,
@@ -633,6 +639,13 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
                 "killactive" => "hl.dispatch(hl.dsp.window.close())".into(),
                 "togglefloating" => "hl.dispatch(hl.dsp.window.float({action='toggle'}))".into(),
                 "movefocus" => format!("hl.dispatch(hl.dsp.focus({{direction={q}}}))"),
+                // C-15b (I4): Guide + right-stick flick moves the focused window (Hyprland 0.56 hl.window.move).
+                "movewindow" => {
+                    if !["left", "right", "up", "down"].contains(&arg.as_str()) {
+                        return Err(format!("movewindow needs left, right, up or down, not {arg:?}"));
+                    }
+                    format!("hl.dispatch(hl.dsp.window.move({{direction={q}}}))")
+                }
                 name if name.starts_with("hypr3d:") => {
                     let name = &name[7..];
                     if !crate::config::ROOM_VERBS.contains(&name) {
@@ -776,6 +789,9 @@ struct Sinks {
     project: bool,
     /// Fixture tier with --console-sink-fd: console-context key: strokes as Linux console bytes into this fd.
     console_sink: Option<std::fs::File>,
+    /// I4 `--nested`: the session reads only its parent window's seat, so key: is projected into its compositor (never
+    /// the uinput keyboard, which the host would read) and pointer output is not sent to the host's virtual pointer.
+    nested: bool,
 }
 impl Sinks {
     /// tmux verbs run for the physical bridge and for a fixture that projects somewhere (a nested compositor or a VT pty).
@@ -799,9 +815,10 @@ pub fn graphical_vt_chord(vt: Option<u32>) -> Option<String> {
 fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &ContextSnapshot) -> Result<Option<bool>, String> {
     if sinks.bridge {
         if let Some(virtual_pad) = &mut device.output {
-            virtual_pad.write(&output.app).map_err(|e| e.to_string())?;
+            // O-7: the clone reports the driver's own codes (a quirk remapped them for routing only).
+            virtual_pad.write(&device.device.physical_events(&output.app)).map_err(|e| e.to_string())?;
         }
-        if sinks.execute_actions && !output.pointer.is_empty() {
+        if sinks.execute_actions && !sinks.nested && !output.pointer.is_empty() {
             if sinks.pointer.is_none() {
                 sinks.pointer = Some(VirtualDevice::pointer().map_err(|e| e.to_string())?);
             }
@@ -827,7 +844,7 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
             // On a VT the kernel console reads the same uinput keyboard (C-16); the fixture tier writes the bytes the
             // console keymap would deliver into the pty that stands in for the VT.
             let chord = crate::nav::parse_key_chord(chord)?;
-            if sinks.execute_actions {
+            if sinks.execute_actions && !sinks.nested {
                 sinks.stroke(&chord)?;
                 submitted = true;
             } else if let (true, Some(sink)) = (device.router.console(), &mut sinks.console_sink) {
@@ -917,31 +934,50 @@ fn atomic_packet(path: &Path, pad: &PadState) -> Result<(), String> {
 // forwarding thread paused physical input for hundreds of milliseconds per scan.
 type DeviceCandidates=std::sync::mpsc::Receiver<Result<Device,String>>;
 type Discovery=(DeviceCandidates,std::thread::JoinHandle<()>);
+/// Nodes the host bridge must leave alone: assigned to a live nested session (path -> seat). Refreshed every scan.
+type Assigned=std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf,String>>>;
+#[allow(clippy::too_many_arguments)]
 fn discovery_worker(
-    explicit:Option<PathBuf>,fixture_only:bool,
+    explicit:Vec<PathBuf>,fixture_only:bool,
     policy:std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
     known:std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
     stop:std::sync::Arc<AtomicBool>,
+    assigned:Assigned,
+    nested:bool,
 )->Result<Discovery,String> {
     use std::os::unix::fs::MetadataExt;
     let (sender,receiver)=std::sync::mpsc::sync_channel(16);
     let worker=std::thread::Builder::new().name("mios-devices".into()).spawn(move || {
         let mut rejected=BTreeMap::new();let mut sent=BTreeMap::new();let mut previous=BTreeSet::new();
+        let mut skipped:BTreeSet<PathBuf>=BTreeSet::new();
         while !stop.load(Ordering::Relaxed) {
             let current=known.lock().unwrap().clone();
             for path in previous.difference(&current) {sent.remove(path);}
             previous=current.clone();
-            let paths=if let Some(path)=&explicit {Ok(vec![path.clone()])}else{linux::discover().map_err(|e|e.to_string())};
+            let paths=if !explicit.is_empty() {Ok(explicit.clone())}else{linux::discover().map_err(|e|e.to_string())};
+            let held=assigned.lock().map(|a|a.clone()).unwrap_or_default();
+            skipped.retain(|p|held.contains_key(p));
             let paths=match paths {Ok(v)=>v,Err(e)=>{let _=sender.try_send(Err(e));break}};
             rejected.retain(|path,_|paths.contains(path));sent.retain(|path,_|paths.contains(path));
             for path in paths {
                 if stop.load(Ordering::Relaxed) {break;}
                 if current.contains(&path) {continue;}
+                // I4: a node a live nested session holds belongs to that session (and its own `bridge --nested`).
+                if let Some(seat)=held.get(&path) {
+                    if skipped.insert(path.clone()) { eprintln!("{}",serde_json::json!({"nested":"skipped","device":path,"seat":seat})); }
+                    continue;
+                }
                 let identity=std::fs::metadata(&path).ok().map(|m|(m.rdev(),m.ino()));
                 if identity.is_some_and(|id|rejected.get(&path)==Some(&id)||sent.get(&path)==Some(&id)) {continue;}
                 match Device::open(&path,fixture_only) {
+                    // A seat's agent pad ([desktop.nested.devices].virtual_pad_name) is never the host's controller.
+                    Ok(device) if !nested && crate::nested::seat_pad_name_matches(&policy.lock().unwrap().seat_pad_name,&device.name) => {
+                        eprintln!("{}",serde_json::json!({"nested":"seat-pad","device":path,"name":device.name}));
+                        drop(device);
+                        if let Some(id)=identity {rejected.insert(path,id);}
+                    }
                     Ok(device)=> {if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}}
-                    Err(e)=> {if explicit.is_some() {let _=sender.try_send(Err(e.to_string()));return;}
+                    Err(e)=> {if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
                         if let Some(id)=identity {rejected.insert(path,id);}}
                 }
             }
@@ -1044,8 +1080,8 @@ pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<Pa
         eprintln!("{}", serde_json::json!({"serve":"bridge","reason":"seat and device access available"}));
     }
     let pad_path = global.controller.legacy_pad_state_path.clone();
-    run(global, legacy, Options { root, bridge: true, fixture_only: false, device: None, context: None, duration: None, pad_path, live_context: false, write_pad: true,
-        logind_state: Some(PathBuf::from("/run/systemd")), console_tty: None, console_sink_fd: None, rediscover: true })
+    run(global, legacy, Options { root, bridge: true, fixture_only: false, devices: vec![], context: None, duration: None, pad_path, live_context: false, write_pad: true,
+        logind_state: Some(PathBuf::from("/run/systemd")), console_tty: None, console_sink_fd: None, rediscover: true, nested: None })
 }
 pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> Result<(), String> {
     if opt.bridge && !opt.fixture_only {
@@ -1069,8 +1105,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             );
         }
     }
-    if opt.fixture_only && opt.device.is_none() {
+    if opt.fixture_only && opt.devices.is_empty() && opt.nested.is_none() {
         return Err("fixture mode requires one explicit owned device".into());
+    }
+    if opt.nested.as_ref().is_some_and(|n| n.controllers.is_empty()) {
+        return Err("the nested session holds no controller node (launch it with --device virtual-pad or a pad's /dev/input path)".into());
     }
     if opt.live_context && !opt.fixture_only {
         return Err("--live-context is a fixture-tier option (the physical bridge always follows its compositor)".into());
@@ -1084,7 +1123,9 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or("XDG_RUNTIME_DIR missing")?;
-    let lockname = if opt.fixture_only {
+    let lockname = if opt.nested.is_some() {
+        "mios-inputd-nested.lock"
+    } else if opt.fixture_only {
         "mios-inputd-fixture.lock"
     } else {
         "mios-inputd.lock"
@@ -1093,7 +1134,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     install_stop_handlers();
     STOP.store(false, Ordering::Relaxed);
     let mut devices: BTreeMap<PathBuf, RunningDevice> = BTreeMap::new();
-    let follow = opt.context.is_none() && (!opt.fixture_only || opt.live_context || opt.logind_state.is_some());
+    let follow = opt.context.is_none() && (!opt.fixture_only || opt.live_context || opt.logind_state.is_some() || opt.nested.is_some());
+    let nested = opt.nested.is_some();
     let mut selected: Option<PathBuf> = None;
     let mut seed = PadState::default();
     if opt.bridge && opt.write_pad {
@@ -1120,12 +1162,13 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         pointer: None,
         children: vec![],
         ownership: if follow && opt.bridge { Some(OwnershipWorker::spawn(shared_policy.clone())?) } else { None },
-        actions: if opt.bridge && (!opt.fixture_only || opt.live_context || console_sink.is_some()) { Some(ActionWorker::spawn(shared_policy.clone())?) } else { None },
+        actions: if opt.bridge && (!opt.fixture_only || opt.live_context || nested || console_sink.is_some()) { Some(ActionWorker::spawn(shared_policy.clone())?) } else { None },
         keyboard: None,
         bridge: opt.bridge,
         execute_actions: opt.bridge && !opt.fixture_only,
-        project: opt.bridge && opt.fixture_only && opt.live_context,
+        project: opt.bridge && ((opt.fixture_only && opt.live_context) || nested),
         console_sink,
+        nested,
     };
     let context_stop=std::sync::Arc::new(AtomicBool::new(false));
     let context_worker=if follow {
@@ -1218,13 +1261,39 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         }))
     } else {None};
     let known_devices=std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
-    let (new_devices,discovery)=discovery_worker(opt.device.clone(),opt.fixture_only,shared_policy.clone(),known_devices.clone(),context_stop.clone())?;
+    // The registry lives in the host runtime (a nested bridge already switched XDG_RUNTIME_DIR to its session's).
+    let registry=if nested { None } else { std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join(&global.nested_registry)) };
+    let assigned:Assigned=std::sync::Arc::new(std::sync::Mutex::new(registry.as_deref().map(|r| crate::nested::assigned_nodes(r,Path::new("/proc"))).unwrap_or_default()));
+    let explicit=opt.nested.as_ref().map(|n| n.controllers.clone()).unwrap_or_else(|| opt.devices.clone());
+    let (new_devices,discovery)=discovery_worker(explicit,opt.fixture_only,shared_policy.clone(),known_devices.clone(),context_stop.clone(),assigned.clone(),nested)?;
     let mut ctx=focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) && opt.duration.is_none_or(|d| start.elapsed() < d) {
             if scan.elapsed() >= Duration::from_millis(global.controller.scan_ms) {
                 scan = Instant::now();
+                if let Some(n)=&opt.nested {
+                    if !n.alive(Path::new("/proc")) {
+                        eprintln!("{}", serde_json::json!({"nested":"ended","seat":n.seat}));
+                        break;
+                    }
+                }
+                if let Some(r)=&registry {
+                    let now=crate::nested::assigned_nodes(r,Path::new("/proc"));
+                    // A node a session claimed after this bridge owned it: hand it over (outputs to rest, grab released).
+                    let taken:Vec<PathBuf>=devices.keys().filter(|p| now.contains_key(*p)).cloned().collect();
+                    for path in taken {
+                        if let Some(mut dev)=devices.remove(&path) {
+                            let out=dev.router.reset();
+                            emit(out,&mut dev,&mut sinks,&focus)?;
+                            dev.device.release();
+                            known_devices.lock().unwrap().remove(&path);
+                            if selected.as_ref()==Some(&path) { selected=None; }
+                            eprintln!("{}", serde_json::json!({"nested":"released","device":path,"seat":now[&path]}));
+                        }
+                    }
+                    if let Ok(mut a)=assigned.lock() { *a=now; }
+                }
                 let stamp = config_fingerprint(opt.root.as_deref());
                 if stamp != config_stamp {
                     config_stamp = stamp;
@@ -1250,6 +1319,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     dev.device.snapshot().map_err(|e| e.to_string())?.1,
                                 );
                                 dev.router.pad.sequences = seq;
+                                dev.device.apply_quirks(&next.controller.quirks);
                                 dev.router.analog_triggers = dev.device.analog_triggers();
                                 dev.router.tmux = focus.tmux_client.is_some();
                                 dev.router.set_context(&ctx);
@@ -1275,6 +1345,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             while let Ok(candidate)=new_devices.try_recv() {
                     let mut device=candidate?;
                     let path=device.path.clone();
+                    let quirks=device.apply_quirks(&global.controller.quirks);
+                    if !quirks.is_empty() {
+                        eprintln!("{}", serde_json::json!({"quirks":quirks,"device":path,"driver":device.driver(),"usb_id":format!("{:04x}:{:04x}",device.usb_id().0,device.usb_id().1)}));
+                    }
                     let mut router =
                         Router::new(global.clone(), legacy.clone(), device.axes.clone());
                     router.pad.sequences = seed.sequences;
@@ -1295,7 +1369,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 .grab()
                                 .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
                         }
-                        Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?)
+                        // A nested session sees only its own /dev/input: no clone (it would appear on the host).
+                        if nested { None } else { Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?) }
                     } else {
                         None
                     };
@@ -1411,6 +1486,18 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 }
                 let out = dev.router.tick(dt);
                 if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
+                // I4 --nested: a captured app in the session reads the assigned node itself, so the grab is released
+                // while the app owns the pad (the bridge still sees the held toggle_chord that releases it).
+                if nested && opt.bridge {
+                    let want = !dev.router.app_owned();
+                    if want && !dev.device.grabbed() {
+                        dev.device.grab().map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
+                        eprintln!("{}", serde_json::json!({"nested":"grab","device":path}));
+                    } else if !want && dev.device.grabbed() {
+                        dev.device.release();
+                        eprintln!("{}", serde_json::json!({"nested":"passthrough","device":path}));
+                    }
+                }
             }
             for (source, owned) in adopt {
                 for (path, dev) in devices.iter_mut() {
@@ -1845,6 +1932,20 @@ mod tests {
                 assert!(configured_command(a, &cfg).is_ok(), "room action without a dispatcher: {a}");
             }
         }
+    }
+    #[test]
+    fn guide_layer_move_window_and_renamed_monitor_resolve() {
+        let v = command_for("hypr:movewindow left").unwrap();
+        assert_eq!(v[2], r#"hl.dispatch(hl.dsp.window.move({direction="left"}))"#);
+        assert!(command_for("hypr:movewindow sideways").is_err());
+        let (g, _) = crate::config::tests::fixture_nav();
+        assert!(configured_command("mios:system-monitor", &g).unwrap().iter().any(|a| a == "system"));
+        assert!(configured_command("quickshell:monitor-toggle", &g).unwrap_err().contains("no installed IPC handler"), "C-19: the old alias is gone");
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (g, _) = GlobalConfig::from_value(&v).unwrap();
+        assert_eq!(configured_command("mios:volume up", &g).unwrap()[0], "/usr/bin/wpctl");
+        assert_eq!(configured_command("mios:media next", &g).unwrap(), vec!["/usr/bin/playerctl", "next"]);
+        assert!(unsupported_actions(&g).is_empty(), "{:?}", unsupported_actions(&g));
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {

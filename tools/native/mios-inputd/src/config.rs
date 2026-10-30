@@ -101,6 +101,152 @@ pub struct ControllerConfig {
     /// I3: the Linux console (VT) side: the pty bridge's pointer source (gpm or evdev) for tmux-os mouse reports.
     #[serde(default)]
     pub console: ConsoleConfig,
+    /// I4 (O-7): `[keybindings.global.controller.quirks.<name>]` per-driver code fixups. MiOS maps by evdev codes; a
+    /// quirk names a kernel driver (sysfs) or USB ids and remaps the codes that driver reports into the positional
+    /// Linux gamepad layout (BTN_NORTH = top face button, BTN_DPAD_* = the d-pad).
+    #[serde(default)]
+    pub quirks: BTreeMap<String, Quirk>,
+    /// I4: the agent virtual controller (`mios-inputd vpad`): a per-session uinput pad driven with eased analog curves.
+    #[serde(default)]
+    pub agent_pad: AgentPadConfig,
+}
+/// One per-driver quirk (O-7). `drivers` are kernel driver names (`/sys/class/input/eventN/device/device/driver`),
+/// `ids` are `vvvv:pppp` USB ids (hex); either matches. `remap` maps a reported code to the positional code: keys are
+/// button names or hex codes ("0x2c0" = BTN_TRIGGER_HAPPY1), values are button names. The map must be one-to-one so
+/// the captured app still receives the driver's own codes (the virtual pad is a clone of the device).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Quirk {
+    /// A higher tier turns a vendor quirk off with `enabled = false` (tables merge per key, so an empty remap could not).
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub drivers: Vec<String>,
+    #[serde(default)]
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub remap: BTreeMap<String, String>,
+    #[serde(default)]
+    pub note: String,
+}
+fn yes() -> bool {
+    true
+}
+/// A remap key: a button name or a hex evdev key code (0x100..=0x2ff).
+pub fn quirk_code(name: &str) -> Result<u16, String> {
+    if let Some(hex) = name.strip_prefix("0x") {
+        let c = u16::from_str_radix(hex, 16).map_err(|_| format!("quirk code {name}: hex evdev key code"))?;
+        return if (0x100..=0x2ff).contains(&c) { Ok(c) } else { Err(format!("quirk code {name}: outside the evdev button range 0x100..0x2ff")) };
+    }
+    let c = button_code(name)?;
+    if mios_resolver::keybindings::is_stick_pseudo(c) {
+        return Err(format!("quirk code {name}: a stick direction is not a reported code"));
+    }
+    Ok(c)
+}
+impl Quirk {
+    /// The reported -> positional code map.
+    pub fn codes(&self) -> Result<BTreeMap<u16, u16>, String> {
+        let mut out = BTreeMap::new();
+        let mut targets = BTreeSet::new();
+        for (from, to) in &self.remap {
+            let (f, t) = (quirk_code(from)?, quirk_code(to)?);
+            if !targets.insert(t) {
+                return Err(format!("quirk remap: {to} is the target of two codes (the map must be one-to-one)"));
+            }
+            out.insert(f, t);
+        }
+        Ok(out)
+    }
+    pub fn matches(&self, driver: Option<&str>, vendor: u16, product: u16) -> bool {
+        let id = format!("{vendor:04x}:{product:04x}");
+        self.enabled && (driver.is_some_and(|d| self.drivers.iter().any(|x| x == d)) || self.ids.iter().any(|x| x.eq_ignore_ascii_case(&id)))
+    }
+}
+/// The remap for one device: every matching quirk's map (later names win on a shared code), as (forward, inverse).
+pub fn quirk_maps(quirks: &BTreeMap<String, Quirk>, driver: Option<&str>, vendor: u16, product: u16) -> (Vec<String>, BTreeMap<u16, u16>) {
+    let mut names = vec![];
+    let mut map = BTreeMap::new();
+    for (name, q) in quirks {
+        if q.matches(driver, vendor, product) {
+            if let Ok(m) = q.codes() {
+                names.push(name.clone());
+                map.extend(m);
+            }
+        }
+    }
+    (names, map)
+}
+/// [keybindings.global.controller.agent_pad] (I4): the agent virtual controller. A pad is a uinput gamepad held by one
+/// `mios-inputd vpad hold` process; every stick/trigger change is an eased ramp sampled at `rate_hz`, never a jump.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentPadConfig {
+    pub enabled: bool,
+    /// evdev name of an unseated pad (it drives the session it is created in); `{id}` is the pad id. A seat's pad is
+    /// named by [desktop.nested.devices].virtual_pad_name, so `mios-gen nested-session --device virtual-pad` binds it.
+    pub name: String,
+    /// `vvvv:pppp` USB ids the pad reports (BUS_VIRTUAL).
+    pub usb_id: String,
+    /// Motion sample rate.
+    pub rate_hz: u32,
+    /// Default curve: linear, in, out or in-out (cubic smoothstep: zero velocity at both ends).
+    pub ease: String,
+    /// Default ramp length; `min_ms` is the floor every ramp is stretched to, so nothing ever teleports.
+    pub ramp_ms: u64,
+    pub min_ms: u64,
+    pub max_ms: u64,
+    /// A button tap's press length.
+    pub tap_ms: u64,
+    /// The holder exits (destroying the pad) after this long without a command while every axis is at rest.
+    pub idle_exit_s: u64,
+    /// Under $XDG_RUNTIME_DIR: one control socket and state file per pad.
+    pub socket_dir: String,
+}
+impl Default for AgentPadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: "MiOS Agent Pad {id}".into(),
+            usb_id: "1209:4d50".into(),
+            rate_hz: 250,
+            ease: "in-out".into(),
+            ramp_ms: 400,
+            min_ms: 80,
+            max_ms: 10_000,
+            tap_ms: 80,
+            idle_exit_s: 900,
+            socket_dir: "mios-inputd/vpad".into(),
+        }
+    }
+}
+pub const EASES: [&str; 4] = ["linear", "in", "out", "in-out"];
+impl AgentPadConfig {
+    pub fn usb(&self) -> Result<(u16, u16), String> {
+        let (v, p) = self.usb_id.split_once(':').ok_or("agent_pad.usb_id: vvvv:pppp")?;
+        let h = |s: &str| u16::from_str_radix(s, 16).map_err(|_| "agent_pad.usb_id: hex vvvv:pppp".to_string());
+        Ok((h(v)?, h(p)?))
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        self.usb()?;
+        if !self.name.contains("{id}") || self.name.len() > 60 || self.name.chars().any(char::is_control) || self.name.starts_with(VIRTUAL_PREFIX) {
+            return Err("agent_pad.name: a printable evdev name with {id} (not in the mios-vctl namespace)".into());
+        }
+        if !(10..=1000).contains(&self.rate_hz) || !EASES.contains(&self.ease.as_str()) {
+            return Err("agent_pad: rate_hz 10..=1000 and ease linear|in|out|in-out".into());
+        }
+        if self.min_ms == 0 || self.min_ms > self.ramp_ms || self.ramp_ms > self.max_ms || self.max_ms > 60_000 || !(10..=2000).contains(&self.tap_ms) {
+            return Err("agent_pad: 0 < min_ms <= ramp_ms <= max_ms <= 60000 and tap_ms 10..=2000".into());
+        }
+        if !(10..=86_400).contains(&self.idle_exit_s) {
+            return Err("agent_pad.idle_exit_s: 10..=86400".into());
+        }
+        let p = Path::new(&self.socket_dir);
+        if self.socket_dir.is_empty() || p.is_absolute() || !p.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+            return Err("agent_pad.socket_dir: a relative path under XDG_RUNTIME_DIR without '..'".into());
+        }
+        Ok(())
+    }
 }
 /// [keybindings.global.controller.console] (I3, C-18). The console bridge wraps a VT tmux client in a pty and turns
 /// pointer events into mouse reports (SGR 1006, or the legacy encoding) only while the client has mouse mode on.
@@ -220,6 +366,13 @@ pub struct GlobalConfig {
     /// [keybindings.tmux].menu_key (U1): prefix + this key opens the generated MiOS menu; `tmux:menu` sends it.
     #[serde(default)]
     pub tmux_menu_key: Option<String>,
+    /// I4: [desktop.nested].registry_dir (under XDG_RUNTIME_DIR): live nested sessions and the input nodes assigned to
+    /// them. The host bridge never opens an assigned node; `bridge --nested <seat>` opens only those.
+    #[serde(default)]
+    pub nested_registry: String,
+    /// I4: [desktop.nested.devices].virtual_pad_name: a seat's agent pad (`{seat}`); the host bridge never owns one.
+    #[serde(default)]
+    pub seat_pad_name: String,
 }
 impl GlobalConfig {
     pub fn load(root: Option<&Path>) -> Result<(Self, LegacyConfig), String> {
@@ -236,6 +389,10 @@ impl GlobalConfig {
             .map_err(|e: toml::de::Error| e.to_string())?;
         cfg.resolve_actions(v)?;
         cfg.resolve_tmux(v);
+        let nested = v.get("desktop").and_then(|d| d.get("nested"));
+        cfg.nested_registry = nested.and_then(|n| n.get("registry_dir")).and_then(toml::Value::as_str).unwrap_or("mios/nested-sessions").to_owned();
+        cfg.seat_pad_name = nested.and_then(|n| n.get("devices")).and_then(|d| d.get("virtual_pad_name")).and_then(toml::Value::as_str)
+            .unwrap_or("MiOS Nested Pad {seat}").to_owned();
         cfg.validate()?;
         cfg.controller.nav = crate::nav::NavConfig::from_value(cfg.controller.nav_table.as_ref(), &crate::nav::Ctx {
             namespaces: &cfg.action_namespaces,
@@ -301,7 +458,8 @@ impl GlobalConfig {
                 let id = action.get("id").and_then(toml::Value::as_str).unwrap_or("");
                 let mapped = match id {
                     "terminal" => Some("exec:mios-terminal"),
-                    "system" => Some("quickshell:monitor-toggle"),
+                    // C-19 (I4): the system monitor is a MiOS action, not a shell IPC target.
+                    "system" => Some("mios:system-monitor"),
                     _ => None,
                 };
                 if let (Some(mapped), Some(command)) = (
@@ -429,6 +587,24 @@ impl GlobalConfig {
             return Err("capture_osd_argv: an absolute program and one argument carrying {message}".into());
         }
         c.console.validate()?;
+        c.agent_pad.validate()?;
+        for (name, q) in &c.quirks {
+            q.codes().map_err(|e| format!("controller.quirks.{name}: {e}"))?;
+            if q.drivers.is_empty() && q.ids.is_empty() {
+                return Err(format!("controller.quirks.{name}: names no driver and no USB id"));
+            }
+            for id in &q.ids {
+                let ok = id.split_once(':').is_some_and(|(a, b)| a.len() == 4 && b.len() == 4 && u16::from_str_radix(a, 16).is_ok() && u16::from_str_radix(b, 16).is_ok());
+                if !ok { return Err(format!("controller.quirks.{name}: id {id:?} must be vvvv:pppp (hex)")); }
+            }
+        }
+        let nested = Path::new(&self.nested_registry);
+        if nested.is_absolute() || !nested.components().all(|c| matches!(c, std::path::Component::Normal(_))) || self.nested_registry.is_empty() {
+            return Err("desktop.nested.registry_dir: a relative path without '..'".into());
+        }
+        if !self.seat_pad_name.contains("{seat}") || self.seat_pad_name.len() > 60 || self.seat_pad_name.chars().any(char::is_control) {
+            return Err("desktop.nested.devices.virtual_pad_name: a printable evdev name with {seat}".into());
+        }
         if c.recovery_argv.is_some() {
             return Err("controller recovery_argv is retired: serve exits or idles instead of starting a second pad owner".into());
         }
@@ -442,8 +618,14 @@ impl GlobalConfig {
         {
             return Err("invalid controller rate/deadzone/sensitivity".into());
         }
-        button_code(&c.guide_button)?;
-        button_code(&c.cursor_mode_button)?;
+        // Stick pseudo-keys (LS_*/RS_*, I4) name stick flicks of the system layer only; no chord or role takes them.
+        let real = |b: &str| -> Result<u16, String> {
+            let code = button_code(b)?;
+            if mios_resolver::keybindings::is_stick_pseudo(code) { return Err(format!("{b} is a stick direction, not a button")); }
+            Ok(code)
+        };
+        real(&c.guide_button)?;
+        real(&c.cursor_mode_button)?;
         if c.scan_ms == 0
             || c.scan_ms > 60_000
             || c.debounce_ms == 0
@@ -458,14 +640,17 @@ impl GlobalConfig {
             return Err("empty mode override chord".into());
         }
         for b in &c.mode_override_chord {
-            button_code(b)?;
+            real(b)?;
         }
         for (button, action) in &c.system_layer {
-            button_code(button)?;
+            // A button (Guide + button) or, since I4, a stick direction (Guide + one flick: LS_UP, RS_LEFT, ...).
+            if button_code(button)? == real(&c.guide_button)? {
+                return Err(format!("system_layer {button}: the guide button is the layer's modifier"));
+            }
             validate_action_in(action, &self.action_namespaces)?;
         }
         for (button, value) in &c.room {
-            let code = button_code(button)?;
+            let code = real(button).map_err(|e| format!("room {button}: {e}"))?;
             let (tap, hold) = value.parts();
             if let RoomAction::TapHold(v) = value {
                 if v.len() != 2 {
@@ -743,6 +928,76 @@ BTN_TR="hypr:workspace e+1"
             .insert("room".into(), room);
         GlobalConfig::from_value(&v)
     }
+    fn vendor_with(edit: impl FnOnce(&mut toml::Value)) -> Result<(GlobalConfig, LegacyConfig), String> {
+        let mut v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        edit(&mut v);
+        GlobalConfig::from_value(&v)
+    }
+    fn controller(v: &mut toml::Value) -> &mut toml::value::Table {
+        v["keybindings"]["global"]["controller"].as_table_mut().unwrap()
+    }
+    #[test]
+    fn vendor_quirks_map_xpad_to_the_positional_layout() {
+        let (g, _) = vendor_with(|_| {}).unwrap();
+        let (names, map) = quirk_maps(&g.controller.quirks, Some("xpad"), 0x1234, 0x5678);
+        assert_eq!(names, vec!["xpad"]);
+        assert_eq!(map.get(&0x134), Some(&0x133), "physical Y (top) reports BTN_WEST -> BTN_NORTH");
+        assert_eq!(map.get(&0x133), Some(&0x134));
+        assert_eq!(map.get(&0x2c0), Some(&0x222), "dpad_to_buttons left");
+        assert_eq!(map.get(&0x2c3), Some(&0x221), "dpad_to_buttons down");
+        assert_eq!(quirk_maps(&g.controller.quirks, None, 0x045e, 0x028e).0, vec!["xpad"], "matched by USB id (uinput fixture)");
+        assert!(quirk_maps(&g.controller.quirks, Some("playstation"), 0x054c, 0x0ce6).1.is_empty(), "DualSense is positional: no fixup");
+        assert!(quirk_maps(&g.controller.quirks, None, 0x1209, 0x4d50).1.is_empty(), "the agent pad is positional");
+        let (g, _) = vendor_with(|v| { controller(v)["quirks"]["xpad"].as_table_mut().unwrap().insert("enabled".into(), false.into()); }).unwrap();
+        assert!(quirk_maps(&g.controller.quirks, Some("xpad"), 0x045e, 0x028e).1.is_empty(), "enabled = false turns the vendor quirk off");
+    }
+    #[test]
+    fn quirks_stick_pseudo_keys_and_the_agent_pad_are_validated() {
+        type Edit = Box<dyn FnOnce(&mut toml::Value)>;
+        let set = |path: &'static [&'static str], val: toml::Value| -> Edit {
+            Box::new(move |v: &mut toml::Value| {
+                let mut t = controller(v);
+                for k in &path[..path.len() - 1] {
+                    t = t.entry(k.to_string()).or_insert_with(|| toml::Value::Table(Default::default())).as_table_mut().unwrap();
+                }
+                t.insert(path[path.len() - 1].into(), val);
+            })
+        };
+        let remap = |pairs: &[(&str, &str)]| toml::Value::Table(pairs.iter().map(|(a, b)| (a.to_string(), toml::Value::from(*b))).collect());
+        let cases: Vec<(Edit, &str)> = vec![
+            (set(&["quirks", "xpad", "remap"], remap(&[("BTN_NORTH", "BTN_WEST"), ("BTN_SOUTH", "BTN_WEST")])), "one-to-one"),
+            (set(&["quirks", "xpad", "remap"], remap(&[("0x400", "BTN_WEST")])), "outside the evdev button range"),
+            (set(&["quirks", "xpad", "remap"], remap(&[("LS_UP", "BTN_WEST")])), "stick direction"),
+            (set(&["quirks", "xpad", "ids"], toml::Value::Array(vec!["45e:28e".into()])), "vvvv:pppp"),
+            (set(&["quirks", "bare", "remap"], remap(&[("BTN_NORTH", "BTN_WEST")])), "names no driver"),
+            (set(&["room", "LS_UP"], "hypr:hypr3d:cancel".into()), "stick direction, not a button"),
+            (set(&["guide_button"], "LS_UP".into()), "stick direction"),
+            (set(&["system_layer", "BTN_MODE"], "hypr:killactive".into()), "the layer's modifier"),
+            (set(&["system_layer", "LS_NOWHERE"], "hypr:killactive".into()), "unknown controller button"),
+            (set(&["agent_pad", "rate_hz"], 0.into()), "rate_hz"),
+            (set(&["agent_pad", "ease"], "bounce".into()), "ease"),
+            (set(&["agent_pad", "name"], "MiOS Agent Pad".into()), "{id}"),
+            (set(&["agent_pad", "name"], "mios-vctl-agent-{id}".into()), "mios-vctl"),
+            (set(&["agent_pad", "min_ms"], 0.into()), "min_ms"),
+            (set(&["agent_pad", "socket_dir"], "../escape".into()), "socket_dir"),
+            (set(&["agent_pad", "usb_id"], "zz:1".into()), "usb_id"),
+            (set(&["agent_pad", "warp"], true.into()), "unknown field"),
+        ];
+        for (i, (edit, why)) in cases.into_iter().enumerate() {
+            let e = vendor_with(edit).err().unwrap_or_else(|| panic!("case {i} accepted ({why})"));
+            assert!(e.contains(why), "case {i}: {e}");
+        }
+        assert!(vendor_with(set(&["system_layer", "RS_UP"], "hypr:movewindow up".into())).is_ok());
+        assert!(vendor_with(set(&["quirks", "x", "drivers"], toml::Value::Array(vec!["hid-nintendo".into()]))).is_ok(), "a quirk without remap is inert, not an error");
+    }
+    #[test]
+    fn stick_pseudo_keys_are_never_real_codes() {
+        for n in ["LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT", "RS_UP", "RS_DOWN", "RS_LEFT", "RS_RIGHT"] {
+            let c = button_code(n).unwrap();
+            assert!(c > 0x2ff && mios_resolver::keybindings::is_stick_pseudo(c), "{n}");
+        }
+        assert!(normalize_chord("BTN_SOUTH+LS_UP", " ").is_err(), "a chord takes buttons only");
+    }
     #[test]
     fn vendor_room_table_is_declared_and_valid() {
         let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
@@ -927,9 +1182,10 @@ mod action_tests {
         assert!(c.resolved_actions["exec:mios-terminal"]
             .iter()
             .any(|s| s == "-e"));
-        assert!(c.resolved_actions["quickshell:monitor-toggle"]
+        assert!(c.resolved_actions["mios:system-monitor"]
             .iter()
             .any(|s| s == "system"));
+        assert!(!c.resolved_actions.contains_key("quickshell:monitor-toggle"), "C-19: the old alias is gone");
         assert_eq!(c.resolved_actions["quickshell:lock"], vec!["hyprlock"]);
     }
 }

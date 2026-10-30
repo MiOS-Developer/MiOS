@@ -947,6 +947,8 @@ impl Router {
             self.update_pad();
             if self.nav_active() && !self.guide_layer() {
                 self.nav_flicks(&mut o);
+            } else if self.system_layer_held() {
+                self.layer_flicks(&mut o);
             }
             if self.forwards_frames() {
                 o.app.push(e);
@@ -1099,6 +1101,10 @@ impl Router {
             if self.nav_active() && !self.guide_layer() { self.nav_wheel(dt, &mut o); }
             return o;
         }
+        // C-15b (I4): with Guide held the sticks are system-layer flicks: no pointer motion, wheel or clicks.
+        if self.system_layer_held() {
+            return o;
+        }
         let ControllerConfig {
             stick_deadzone,
             pointer_max_speed_px,
@@ -1174,6 +1180,34 @@ impl Router {
     /// Guide held as the system-layer modifier (never on a VT, R-08).
     fn guide_layer(&self) -> bool {
         !self.console() && self.button(&self.global.controller.guide_button)
+    }
+    /// The Guide system layer is live: Guide held, a compositor runs, and no captured app owns Guide (unless the SSOT
+    /// sets captured_system_layer). Its actions come from [controller.system_layer], keyed by button or LS_*/RS_*.
+    pub fn system_layer_held(&self) -> bool {
+        self.guide_layer() && !(self.app_owned() && !self.global.controller.captured_system_layer)
+    }
+    /// C-15b (I4): one system-layer action per stick flick (LS_*/RS_* pseudo-keys), re-armed below flick_off. A stick
+    /// already deflected when Guide went down is not armed (the Guide press flushed nav with the current deflection).
+    fn layer_flicks(&mut self, o: &mut Output) {
+        let (on, off) = (self.global.controller.nav.flick_on, self.global.controller.nav.flick_off);
+        for (i, right) in [(0usize, false), (1, true)] {
+            let (xa, ya) = self.stick_axes(right);
+            let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
+            let mag = x.hypot(y);
+            if mag < off {
+                self.nav.armed[i] = true;
+                continue;
+            }
+            if !self.nav.armed[i] || mag < on {
+                continue;
+            }
+            self.nav.armed[i] = false;
+            let dir = if x.abs() >= y.abs() { if x > 0.0 { 3 } else { 2 } } else if y > 0.0 { 1 } else { 0 };
+            let code = mios_resolver::keybindings::STICK_PSEUDO + if right { 4 } else { 0 } + dir;
+            // Any flick makes the Guide press a modifier, never a Guide tap (drawer).
+            self.guide_tap = None;
+            if let Some(a) = self.system_action(code) { o.actions.push(a); }
+        }
     }
     fn fire(&mut self, action: &str, o: &mut Output) {
         if action == "none" {
@@ -1273,7 +1307,7 @@ impl Router {
             let v = self.axes.get(&code).map_or(0, |a| a.value.signum());
             let old = if code == 16 { self.nav.hat.0 } else { self.nav.hat.1 };
             if code == 16 { self.nav.hat.0 = v } else { self.nav.hat.1 = v }
-            if !nav || guide || v == old {
+            if v == old {
                 return;
             }
             let button = |v: i32| match (code, v) {
@@ -1283,6 +1317,15 @@ impl Router {
                 (17, 1) => Some(BTN_DPAD_DOWN),
                 _ => None,
             };
+            // C-15b (I4): under Guide the HAT is the system layer's BTN_DPAD_* (one action per press, no repeat), so
+            // a HAT pad (DualSense, xpad) focuses windows exactly like a BTN_DPAD pad.
+            if self.system_layer_held() {
+                if let Some(a) = button(v).and_then(|b| self.system_action(b)) { o.actions.push(a); self.guide_tap = None; }
+                return;
+            }
+            if !nav || guide {
+                return;
+            }
             if let Some(b) = button(old) { self.nav_release(Input::Button(b), o); }
             if let Some(b) = button(v) { self.nav_press(Input::Button(b), o); }
             return;
@@ -1299,6 +1342,13 @@ impl Router {
                 return;
             }
             self.nav.triggers[i] = on;
+            // C-15b (I4): a pad without BTN_TL2/TR2 (xpad) reaches the system layer's LT/RT through the same edge.
+            if self.analog_triggers && self.system_layer_held() {
+                if on {
+                    if let Some(a) = self.system_action(button) { o.actions.push(a); self.guide_tap = None; }
+                }
+                return;
+            }
             if nav && self.analog_triggers && !guide {
                 if on { self.nav_press(Input::Button(button), o) } else { self.nav_release(Input::Button(button), o) }
             }
@@ -2563,5 +2613,148 @@ mod console_contract {
         key(&mut r, 0x13a, 1);
         let o = key(&mut r, START, 1);
         assert!(!o.actions.contains(&"mios:launch-browser".to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod guide_layer_contract {
+    //! I4 (C-15b): the Guide system layer on every pad shape: HAT d-pads, stick flicks (LS_*/RS_*), analog-only
+    //! triggers; one action per press or flick, no pointer under Guide, nothing leaks to a captured app.
+    use super::*;
+    const GUIDE: u16 = 0x13c;
+    fn axes() -> BTreeMap<u16, Axis> {
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] { axes.insert(c, Axis { min: -32768, max: 32767, value: 0 }); }
+        for c in [2, 5] { axes.insert(c, Axis { min: 0, max: 255, value: 0 }); }
+        for c in [16, 17] { axes.insert(c, Axis { min: -1, max: 1, value: 0 }); }
+        axes
+    }
+    fn vendor(context: &str) -> Router {
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (c, l) = GlobalConfig::from_value(&v).unwrap();
+        Router::with_context(c, l, axes(), context)
+    }
+    fn key(r: &mut Router, c: u16, v: i32) -> Output { r.event(Event::new(EV_KEY, c, v), 0) }
+    fn abs(r: &mut Router, c: u16, v: i32) -> Output { let mut o = r.event(Event::new(EV_ABS, c, v), 0); o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0)); o }
+    fn wait(r: &mut Router, ms: u64) -> Output { let mut o = Output::default(); for _ in 0..ms / 10 { o.extend(r.tick(0.01)); } o }
+
+    #[test]
+    fn vendor_layer_declares_every_i4_row() {
+        let r = vendor("desktop-2d");
+        let l = &r.policy().controller.system_layer;
+        assert_eq!(l["BTN_START"], "mios:system-monitor");
+        for (k, v) in [("LS_UP", "mios:volume up"), ("LS_DOWN", "mios:volume down"), ("LS_LEFT", "mios:media previous"), ("LS_RIGHT", "mios:media next"),
+                       ("RS_LEFT", "hypr:movewindow left"), ("RS_RIGHT", "hypr:movewindow right"), ("RS_UP", "hypr:movewindow up"), ("RS_DOWN", "hypr:movewindow down")] {
+            assert_eq!(l[k], v);
+        }
+    }
+    #[test]
+    fn hat_under_guide_focuses_once_per_press_and_never_repeats() {
+        let mut r = vendor("desktop-2d");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 16, -1));
+        o.extend(wait(&mut r, 1000));
+        assert_eq!(o.actions, vec!["hypr:movefocus left"], "one action, no 400/60 repeat under Guide");
+        let mut o = abs(&mut r, 16, 0);
+        o.extend(abs(&mut r, 17, 1));
+        o.extend(abs(&mut r, 17, 0));
+        o.extend(abs(&mut r, 17, -1));
+        assert_eq!(o.actions, vec!["hypr:movefocus down", "hypr:movefocus up"]);
+        let o = key(&mut r, GUIDE, 0);
+        assert!(o.actions.is_empty() && o.pointer.is_empty() && o.app.is_empty(), "{o:?}");
+    }
+    #[test]
+    fn a_quick_guide_hat_is_never_also_a_guide_tap() {
+        let mut r = vendor("desktop-2d");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 16, 1));
+        o.extend(abs(&mut r, 16, 0));
+        o.extend(key(&mut r, GUIDE, 0));
+        assert_eq!(o.actions, vec!["hypr:movefocus right"], "no drawer on the Guide release");
+    }
+    #[test]
+    fn hat_without_guide_reaches_a_captured_app_unchanged_and_guide_stays_the_apps() {
+        let mut r = vendor("app-capture");
+        let o = abs(&mut r, 16, -1);
+        assert!(o.actions.is_empty());
+        assert!(o.app.contains(&Event::new(EV_ABS, 16, -1)), "{o:?}");
+        abs(&mut r, 16, 0);
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 16, 1));
+        o.extend(key(&mut r, GUIDE, 0));
+        assert!(o.actions.is_empty(), "captured_system_layer=false: the app owns Guide + d-pad");
+        assert!(o.app.contains(&Event::new(EV_KEY, GUIDE, 1)) && o.app.contains(&Event::new(EV_ABS, 16, 1)), "{o:?}");
+    }
+    #[test]
+    fn left_stick_flicks_set_volume_and_media_once_per_deflection() {
+        let mut r = vendor("desktop-2d");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 1, -32767));
+        o.extend(wait(&mut r, 800));
+        o.extend(abs(&mut r, 1, -30000));
+        assert_eq!(o.actions, vec!["mios:volume up"], "held deflection does not repeat");
+        assert!(o.pointer.is_empty(), "no wheel under Guide: {:?}", o.pointer);
+        let mut o = abs(&mut r, 1, 0);
+        o.extend(abs(&mut r, 1, 32767));
+        o.extend(abs(&mut r, 1, 0));
+        o.extend(abs(&mut r, 0, -32767));
+        o.extend(abs(&mut r, 0, 0));
+        o.extend(abs(&mut r, 0, 32767));
+        assert_eq!(o.actions, vec!["mios:volume down", "mios:media previous", "mios:media next"]);
+    }
+    #[test]
+    fn right_stick_flick_moves_the_window_and_no_pointer_moves_under_guide() {
+        let mut r = vendor("desktop-2d");
+        let o = key(&mut r, 0x13b, 1);
+        assert!(o.actions.iter().any(|a| a == "input:cursor on"), "{o:?}");
+        key(&mut r, 0x13b, 0);
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 3, 32767));
+        o.extend(wait(&mut r, 300));
+        o.extend(abs(&mut r, 5, 255));
+        o.extend(wait(&mut r, 100));
+        assert_eq!(o.actions, vec!["hypr:movewindow right"]);
+        assert!(o.pointer.iter().all(|e| e.kind == EV_KEY && e.value == 0 || e.kind == EV_SYN), "no motion or click under Guide: {:?}", o.pointer);
+        // Guide released with the stick still deflected: cursor mode moves the pointer again, nothing else fires.
+        let mut o = key(&mut r, GUIDE, 0);
+        o.extend(wait(&mut r, 100));
+        assert!(o.pointer.iter().any(|e| e.kind == EV_REL && e.code == 0), "the pointer is back after Guide: {:?}", o.pointer);
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+    }
+    #[test]
+    fn a_stick_already_deflected_when_guide_goes_down_does_not_fire() {
+        let mut r = vendor("desktop-2d");
+        abs(&mut r, 3, 32767);
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 3, 32000));
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        let mut o = abs(&mut r, 3, 0);
+        o.extend(abs(&mut r, 3, -32767));
+        assert_eq!(o.actions, vec!["hypr:movewindow left"], "re-armed below flick_off");
+    }
+    #[test]
+    fn analog_only_triggers_reach_the_layer_and_digital_pads_fire_once() {
+        let mut r = vendor("desktop-2d");
+        r.analog_triggers = true;
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 2, 255));
+        o.extend(abs(&mut r, 2, 200));
+        o.extend(abs(&mut r, 2, 0));
+        o.extend(abs(&mut r, 5, 255));
+        assert_eq!(o.actions, vec!["hypr:movetoworkspace e-1", "hypr:movetoworkspace e+1"]);
+        // A DualSense reports BTN_TL2 and ABS_Z together: the button alone fires.
+        let mut r = vendor("desktop-2d");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(key(&mut r, 0x138, 1));
+        o.extend(abs(&mut r, 2, 255));
+        assert_eq!(o.actions, vec!["hypr:movetoworkspace e-1"]);
+    }
+    #[test]
+    fn guide_stays_no_modifier_on_a_vt() {
+        let mut r = vendor("console");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(abs(&mut r, 16, -1));
+        o.extend(abs(&mut r, 1, -32767));
+        assert!(!o.actions.iter().any(|a| a.starts_with("hypr:") || a.starts_with("mios:volume")), "{:?}", o.actions);
     }
 }

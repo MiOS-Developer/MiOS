@@ -96,6 +96,11 @@ enum Operation {
         /// Fixture tier: re-select the compositor when the followed socket dies (use a private XDG_RUNTIME_DIR).
         #[arg(long, requires = "fixture_only")]
         rediscover: bool,
+        /// I4: route the controllers assigned to the nested session of this seat (from the [desktop.nested]
+        /// registry) into that session: its compositor, its private room packet. With --fixture-only only fixture
+        /// pads; without it any assigned pad. The host bridge never owns an assigned node.
+        #[arg(long, conflicts_with_all = ["device", "live_context", "pad_path", "logind_state", "console_tty", "console_sink_fd", "rediscover"])]
+        nested: Option<String>,
     },
     /// Capture (on, fullscreen) or release (off) the focused window: the same transaction North and a held
     /// toggle_chord run, for every window kind.
@@ -116,6 +121,54 @@ enum Operation {
         #[arg(long, default_value = "dualsense")]
         layout: String,
     },
+    /// I4: the agent virtual controller: a per-session uinput gamepad driven with eased analog ramps (JSON out; the
+    /// same argv is the [verbs.virtual_controller] tool). ops: create, stick, trigger, button, dpad, release, wait,
+    /// status, info, assign, unassign, destroy, list.
+    Vpad(VpadArgs),
+}
+#[derive(clap::Args)]
+struct VpadArgs {
+    op: String,
+    /// The pad: a seat label (`create --seat`) or a pad id.
+    #[arg(long, default_value = "agent")]
+    pad: String,
+    /// create: a seat's pad, named by [desktop.nested.devices].virtual_pad_name so `mios-gen nested-session --seat
+    /// <seat> --device virtual-pad` binds it; the pad key is the seat. assign: the session's seat (default: the pad's).
+    #[arg(long)]
+    seat: Option<String>,
+    #[arg(long)]
+    stick: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    x: Option<f64>,
+    #[arg(long, allow_hyphen_values = true)]
+    y: Option<f64>,
+    #[arg(long)]
+    side: Option<String>,
+    #[arg(long)]
+    value: Option<f64>,
+    #[arg(long)]
+    button: Option<String>,
+    #[arg(long)]
+    action: Option<String>,
+    #[arg(long)]
+    dir: Option<String>,
+    /// Ramp (or tap) length; stretched to [agent_pad].min_ms at least.
+    #[arg(long)]
+    ms: Option<u64>,
+    /// Hold the target this long, then ease back to rest over the same ramp.
+    #[arg(long)]
+    hold_ms: Option<u64>,
+    #[arg(long)]
+    ease: Option<String>,
+    /// Return only when every ramp has finished.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    wait: Option<bool>,
+    /// Test tier: name the pad mios-input-fixture-vpad-<pad> (only fixture bridges open it; assign runs a fixture bridge).
+    #[arg(long, hide = true)]
+    fixture: bool,
+    /// hold: the pad is a seat's pad (internal; create passes it).
+    #[arg(long, hide = true)]
+    seat_pad: bool,
 }
 fn run() -> Result<(), String> {
     let args = Cli::parse();
@@ -143,6 +196,10 @@ fn run() -> Result<(), String> {
     }
     let (global, legacy) = GlobalConfig::load(args.root.as_deref())?;
     #[cfg(target_os = "linux")]
+    if let Operation::Vpad(v) = &args.command {
+        return vpad(&global, args.root.as_deref(), v);
+    }
+    #[cfg(target_os = "linux")]
     if let Operation::ConsoleBridge { vt, mouse, gpm_socket, pointer_device, log, argv } = &args.command {
         let c = &global.controller.console;
         let gpm_socket = gpm_socket.clone().unwrap_or_else(|| c.gpm_socket.clone());
@@ -165,6 +222,23 @@ fn run() -> Result<(), String> {
     let (logind_state, console_tty, console_sink_fd, rediscover) = match &args.command {
         Operation::Bridge { logind_state, console_tty, console_sink_fd, rediscover, .. } => (logind_state.clone(), console_tty.clone(), *console_sink_fd, *rediscover),
         _ => (None, None, None, false),
+    };
+    // I4 --nested: resolve the session in the host runtime, then follow it (its runtime, compositor and display).
+    #[cfg(target_os = "linux")]
+    let (nested, pad_override) = match &args.command {
+        Operation::Bridge { nested: Some(seat), .. } => {
+            let rt = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?;
+            let s = mios_inputd::nested::session(&rt.join(&global.nested_registry), std::path::Path::new("/proc"), seat)?;
+            // Single-threaded here: no other thread reads the environment yet.
+            std::env::set_var("XDG_RUNTIME_DIR", &s.runtime);
+            std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &s.instance);
+            std::env::set_var("WAYLAND_DISPLAY", &s.wayland_display);
+            std::env::remove_var("DISPLAY");
+            eprintln!("{}", serde_json::json!({"nested":"follow","seat":seat,"runtime":s.runtime,"instance":s.instance,"pad_state":s.pad_state,"controllers":s.controllers}));
+            let pad = Some(s.pad_state.clone());
+            (Some(s), pad)
+        }
+        _ => (None, pad_override),
     };
     match args.command {
         Operation::Context { lua: true } => println!("{}",serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})),
@@ -282,6 +356,7 @@ fn run() -> Result<(), String> {
             device, seconds, ..
         } => {
             let write_pad = bridge && (!fixture_only || pad_override.is_some());
+            let devices = device.into_iter().collect();
             let pad_path = pad_override.unwrap_or_else(|| global.controller.legacy_pad_state_path.clone());
             mios_inputd::runtime::run(
                 global,
@@ -290,7 +365,7 @@ fn run() -> Result<(), String> {
                     root: args.root,
                     bridge,
                     fixture_only,
-                    device,
+                    devices,
                     context: None,
                     duration: seconds.map(std::time::Duration::from_secs),
                     pad_path,
@@ -300,6 +375,7 @@ fn run() -> Result<(), String> {
                     console_tty,
                     console_sink_fd,
                     rediscover,
+                    nested,
                 },
             )?;
         }
@@ -344,6 +420,40 @@ fn resolve(global: &GlobalConfig, action: &str, client: Option<&mios_inputd::run
         return Ok(serde_json::json!({"pointer":"mios-vctl-pointer","analog":true}));
     }
     Ok(serde_json::json!(mios_inputd::runtime::configured_command(action, global)?))
+}
+
+/// `mios-inputd vpad <op>`: every op prints one JSON object (the MCP tool reads it as its result).
+#[cfg(target_os = "linux")]
+fn vpad(global: &GlobalConfig, root: Option<&std::path::Path>, v: &VpadArgs) -> Result<(), String> {
+    use mios_inputd::vpad;
+    let key = v.seat.clone().filter(|_| v.op == "create").unwrap_or_else(|| v.pad.clone());
+    let out = match v.op.as_str() {
+        "hold" => return vpad::hold(global.clone(), root.map(Into::into), &v.pad, v.seat_pad, v.fixture),
+        "create" => {
+            let r = vpad::create(global, root, &key, v.seat.is_some(), v.fixture)?;
+            serde_json::json!({"ok": true, "created": r, "next": if v.seat.is_some() {
+                format!("mios-gen nested-session --layout pip --seat {key} --device {}; then mios-inputd vpad assign --pad {key}", if v.fixture { format!("name:{}", r["name"].as_str().unwrap_or("")) } else { "virtual-pad".into() })
+            } else if v.fixture { "a fixture pad: only fixture-tier bridges open it".into() } else { "the session's own bridge routes this pad like any controller".into() }})
+        }
+        "list" => vpad::list(global)?,
+        op @ ("stick" | "trigger" | "button" | "dpad" | "release" | "status" | "info" | "assign" | "unassign" | "destroy" | "wait") => {
+            let mut req = serde_json::json!({"op": op});
+            let o = req.as_object_mut().unwrap();
+            let mut put = |k: &str, val: serde_json::Value| { if !val.is_null() { o.insert(k.into(), val); } };
+            put("stick", serde_json::json!(v.stick)); put("x", serde_json::json!(v.x)); put("y", serde_json::json!(v.y));
+            put("side", serde_json::json!(v.side)); put("value", serde_json::json!(v.value)); put("button", serde_json::json!(v.button));
+            put("action", serde_json::json!(v.action)); put("dir", serde_json::json!(v.dir)); put("ms", serde_json::json!(v.ms));
+            put("hold_ms", serde_json::json!(v.hold_ms)); put("ease", serde_json::json!(v.ease)); put("seat", serde_json::json!(v.seat));
+            let mut r = vpad::request(global, &v.pad, &req)?;
+            if v.wait == Some(true) && !["wait", "destroy", "status", "info"].contains(&op) {
+                r = serde_json::json!({"reply": r, "wait": vpad::request(global, &v.pad, &serde_json::json!({"op": "wait"}))?});
+            }
+            r
+        }
+        op => return Err(format!("vpad {op}: create, stick, trigger, button, dpad, release, wait, status, info, assign, unassign, destroy or list")),
+    };
+    println!("{out}");
+    Ok(())
 }
 
 fn unresolved_actions(global: &GlobalConfig) -> Vec<String> {

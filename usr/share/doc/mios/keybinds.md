@@ -179,9 +179,9 @@ sensors are not forwarded.
 | East | app | app | close window | Esc · Ctrl+C | Esc · Ctrl+C |
 | West | app | app | terminal | Tab · BTab | Tab · BTab |
 | North | app | app | browser | zoom pane | none |
-| D-pad | app | app | focus window (HAT d-pads [step I4]) | arrows | arrows |
-| Left stick | app | scroll | volume (Y), previous/next track (X) [step I4] | page up/down | arrows |
-| Right stick | app | pointer | move window [step I4] | focus pane | none (the pointer in cursor mode) |
+| D-pad | app | app | focus window (HAT and button d-pads alike) | arrows | arrows |
+| Left stick | app | scroll | flick up/down = volume +/- 5 %, left/right = previous/next track | page up/down | arrows |
+| Right stick | app | pointer | flick = move window | focus pane | none (the pointer in cursor mode) |
 | LT / RT | app | right / left click | move window to previous/next workspace | previous/next tmux window | PageUp / PageDown |
 | LB / RB | app | app | previous/next workspace | previous/next tmux session | BTab / Tab |
 | Select | app | app | Guide+Select = cursor / half-capture | session tree · bindings popup | none |
@@ -190,6 +190,11 @@ sensors are not forwarded.
 | L3 / R3 | app | app | lock / VM passthrough latch | new tmux window / compact view | none |
 | L3+R3 tap | app | app | suppressed | back to the graphical VT | back to the graphical VT |
 | L3+R3 hold | release capture | release capture | suppressed | | |
+
+Guide held (desktop): every row fires once per press or stick flick and never repeats; a
+stick that was already pushed when Guide went down waits until it is centred again. LT/RT
+work on pads that report triggers only as axes (Xbox). While Guide is held the sticks do not
+move the pointer or scroll, and a Guide press that fired a layer action is not a Guide tap.
 
 On a VT:
 - **Shift+Enter cannot be sent.** The console encodes it like Enter, so South has no hold there.
@@ -221,6 +226,8 @@ On a VT:
 | `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D, terminal and VT behavior (`console_tmux`, `console_plain`) |
 | `[keybindings.global.controller.room]` | room additions: East, L3, R3, Select, Guide tap |
 | `[keybindings.global.controller.console]` | the VT tmux mouse bridge: `bridge`, pointer source (`mouse`, `gpm_socket`, `pointer_names`, `cell_px`), `keymap_argv` |
+| `[keybindings.global.controller.quirks.<name>]` | per-driver code fixups (see 3.4) |
+| `[keybindings.global.controller.agent_pad]` | the agent virtual controller (see 3.5) |
 | `[desktop.hyprland.hypr3d.controller]` | room camera, movement, grab/resize, CRT, face buttons, toggle chord |
 
 How a nav value is written:
@@ -232,7 +239,8 @@ Profiles may say `inherits = "<profile>"`. Context-to-profile is a table, so a s
 line reverts one context. For example, `desktop-2d = "vpad"` sends the pad to the virtual
 gamepad in ordinary windows, as it did before navigation existed.
 
-Inputs: `BTN_*`, `BTN_DPAD_*`, `BTN_TL2`/`BTN_TR2`, `LS_*`/`RS_*` and `TOGGLE_CHORD`.
+Inputs: `BTN_*`, `BTN_DPAD_*`, `BTN_TL2`/`BTN_TR2`, `LS_*`/`RS_*` and `TOGGLE_CHORD`. In the
+system layer, `LS_*`/`RS_*` are stick flicks (one action per flick).
 
 Namespaces: `key:`, `pointer:`, `tmux:`, `hypr:`, `quickshell:` and `mios:`.
 
@@ -402,6 +410,52 @@ VM commands revalidate address, PID and class in the compositor transaction:
 - X11 FreeRDP uses its native Right Ctrl escape.
 - Other clients get host fullscreen without guessing their capture protocol.
 
+### 3.4 Any pad, mapped by evdev codes
+
+MiOS reads every controller by its Linux evdev codes in the positional gamepad layout: the
+top face button is BTN_NORTH (capture), the left one BTN_WEST, and the d-pad is a HAT or
+BTN_DPAD_*. A driver that reports differently gets a quirk in
+`[keybindings.global.controller.quirks.<name>]`: `drivers` (the kernel driver) or `ids`
+(`vvvv:pppp`) select the pads, and `remap` maps each reported code to the positional one
+(button names or hex codes, one-to-one). The vendor `xpad` quirk swaps the Xbox face
+buttons (Y reports BTN_WEST, X reports BTN_NORTH) and turns xpad's d-pad buttons
+(BTN_TRIGGER_HAPPY1..4) into BTN_DPAD_*. A DualSense needs none. The remap only steers
+MiOS: a captured game still receives the pad's own codes. `enabled = false` in a higher
+tier turns a vendor quirk off.
+
+### 3.5 The agent virtual controller
+
+`mios-inputd vpad <op>` gives an agent (or a script) a controller of its own: a virtual
+gamepad that moves smoothly. Every stick or trigger change is an eased ramp
+(`[keybindings.global.controller.agent_pad]`: `rate_hz`, `ease`, `ramp_ms`, `min_ms`), so a
+Hypr3D camera driven by it speeds up and slows down instead of jumping. Each op prints JSON;
+the agent tool `virtual_controller` runs the same command.
+
+```sh
+mios-inputd vpad create --pad agent                    # a pad the session's own bridge routes
+mios-inputd vpad stick --pad agent --stick left --y -1 --ms 600 --hold-ms 1000   # walk forward, then stop
+mios-inputd vpad stick --pad agent --stick right --x 0.5 --ms 400 --wait         # turn, and wait for it
+mios-inputd vpad button --pad agent --button BTN_SOUTH # tap (also press / release)
+mios-inputd vpad dpad --pad agent --dir left
+mios-inputd vpad release --pad agent                   # everything back to rest
+mios-inputd vpad destroy --pad agent                   # (or it exits after idle_exit_s at rest)
+```
+
+A nested session gets its own controller:
+
+```sh
+mios-inputd vpad create --seat p2                      # named for seat p2 ([desktop.nested.devices].virtual_pad_name)
+mios-gen nested-session --layout pip --seat p2 --device virtual-pad
+mios-inputd vpad assign --pad p2                       # route it into that session
+```
+
+`assign` runs `mios-inputd bridge --nested p2`, which follows only that session: its
+compositor, its own Hypr3D room packet, and only the pads assigned to it. The same works for
+a physical pad: `--device /dev/input/eventN` on the session, then
+`mios-inputd bridge --nested p2`. While an app inside the session captures the pad, the
+bridge lets go of it and the app reads it directly; the held L3+R3 still releases it. The
+desktop's own bridge never takes a pad that a nested session holds, or a seat's pad.
+
 A sent escape is reported as `native_command_sent`. The client's capture state remains
 unknown.
 
@@ -425,7 +479,11 @@ server socket. The daemon:
 - rejects a duplicate bridge;
 - releases held keys and timers on any change of context, profile or owner, on a Guide
   press, on disconnect and on a dropped evdev frame;
-- resynchronizes after drops.
+- resynchronizes after drops;
+- never opens a node that a live nested session holds (`[desktop.nested].registry_dir`),
+  hands one over when a session claims it later, and never owns a seat's agent pad;
+- applies the SSOT quirk table to each pad it opens (`observe` and `bridge` log the
+  matching quirks).
 
 Each physical controller has its own chord state, so two controllers can never form one
 chord. Force feedback and hidraw forwarding are not implemented.
@@ -476,6 +534,11 @@ MIOS_INPUTD_BIN=/path/to/mios-inputd MIOS_INPUTD_OLD_BIN=/path/to/pre-I1/mios-in
   MIOS_INPUTD_OLD_SSOT=/path/to/pre-I1/mios.toml MIOS_INPUTD_UNIT_TEST=1 python3 /tests/test-inputd-ownership.py
 # live, in an owned nested session driven by a private uinput pad (xpad and DualSense layouts)
 MIOS_LIVE_NESTED=1 MIOS_INPUTD_BIN=/path/to/mios-inputd python3 /tests/test-inputd-ownership-live.py
+# Guide layer, quirk table, agent pad and nested passthrough (fixture pads and a fake compositor)
+MIOS_INPUTD_BIN=/path/to/mios-inputd MIOS_INPUTD_OLD_BIN=/path/to/pre-I4/mios-inputd \
+  MIOS_INPUTD_OLD_SSOT=/path/to/pre-I4/mios.toml MIOS_INPUTD_UINPUT_TEST=1 python3 /tests/test-inputd-platform.py
+# live: the agent pad walks and turns the Hypr3D camera of an owned nested PiP session
+MIOS_LIVE_NESTED=1 MIOS_INPUTD_BIN=/path/to/mios-inputd python3 /tests/test-inputd-vpad-live.py
 ```
 
 If the gate binary is missing, the collision tests fail instead of skipping.

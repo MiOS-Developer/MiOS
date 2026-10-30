@@ -4443,7 +4443,7 @@ planned_actions = []
 native_actions = { "mios:vm-command-modifier" = "hyprland" }
 
 [keybindings.global.action_argv]
-"quickshell:monitor-toggle" = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal", "--action", "system"]
+"mios:system-monitor" = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal", "--action", "system"]
 "mios:toggle_vm_passthrough" = ["/usr/libexec/mios/mios-inputd", "vm-action", "toggle_vm_passthrough"]
 "mios:vm-fullscreen" = ["/usr/libexec/mios/mios-inputd", "vm-action", "vm-fullscreen"]
 "mios:shaderglass toggle" = ["/usr/bin/mios-shaderglass", "toggle"]
@@ -4457,6 +4457,10 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
 "mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
+"mios:volume up" = ["/usr/bin/wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]
+"mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
+"mios:media previous" = ["/usr/bin/playerctl", "previous"]
+"mios:media next" = ["/usr/bin/playerctl", "next"]
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
@@ -4666,8 +4670,10 @@ stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav
 pointer_max_speed_px = 18.0
 scroll_sensitivity = 45.0
 
-# Guide held + button (uncaptured contexts with a compositor; none on a VT). BTN_DPAD_* matches pads that report d-pad
-# keys today. HAT d-pads (DualSense, xpad) match once I4 folds ABS_HAT0X/Y into BTN_DPAD_*.
+# Guide held + button (uncaptured contexts with a compositor; none on a VT). One action per press, never repeated.
+# BTN_DPAD_* matches BTN_DPAD pads and HAT d-pads alike (I4 folds ABS_HAT0X/Y into BTN_DPAD_*), BTN_TL2/TR2 also fire
+# from analog-only triggers (xpad) at trigger_threshold, and LS_*/RS_* are stick flicks (one per deflection past
+# nav.flick_on, re-armed below nav.flick_off). With Guide held the sticks never move the pointer or scroll.
 [keybindings.global.controller.system_layer]
 BTN_TL = "hypr:workspace e-1"
 BTN_TR = "hypr:workspace e+1"
@@ -4677,13 +4683,21 @@ BTN_SOUTH = "hypr:togglefloating"
 BTN_EAST = "hypr:killactive"
 BTN_WEST = "exec:mios-terminal"
 BTN_NORTH = "mios:launch-browser"
-BTN_START = "quickshell:monitor-toggle"
+BTN_START = "mios:system-monitor"
 BTN_THUMBL = "quickshell:lock"
 BTN_THUMBR = "mios:toggle_vm_passthrough"
 BTN_DPAD_LEFT = "hypr:movefocus left"
 BTN_DPAD_RIGHT = "hypr:movefocus right"
 BTN_DPAD_UP = "hypr:movefocus up"
 BTN_DPAD_DOWN = "hypr:movefocus down"
+LS_UP = "mios:volume up"
+LS_DOWN = "mios:volume down"
+LS_LEFT = "mios:media previous"
+LS_RIGHT = "mios:media next"
+RS_LEFT = "hypr:movewindow left"
+RS_RIGHT = "hypr:movewindow right"
+RS_UP = "hypr:movewindow up"
+RS_DOWN = "hypr:movewindow down"
 
 # --- Navigation projection: what an uncaptured controller does outside the room (I2; console I3) ---
 # Value grammar, the same for every profile:
@@ -4856,6 +4870,42 @@ BTN_THUMBR = "hypr:hypr3d:recenter"
 BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
 BTN_MODE = "quickshell:drawer-toggle"
 
+# --- Per-driver quirks (I4, operator decision O-7): MiOS maps every pad by its evdev codes (the positional Linux gamepad
+# layout: BTN_NORTH = the top face button, BTN_DPAD_* or the HAT = the d-pad). A quirk fixes a driver that reports
+# otherwise. [controller.quirks.<name>]: drivers = kernel driver names (sysfs), ids = "vvvv:pppp" USB ids (either
+# matches); remap = { reported = "positional" } (keys: button names or hex codes such as "0x2c0"; one-to-one). The
+# remap applies to routing only: a captured app gets the driver's own codes through the virtual pad clone.
+# xpad: the Xbox top button (Y) reports BTN_Y = 0x134 (BTN_WEST) and the left one (X) BTN_X = 0x133 (BTN_NORTH), the
+# reverse of the positional layout hid-playstation (DualSense) reports; xpad's dpad_to_buttons mode reports the d-pad as
+# BTN_TRIGGER_HAPPY1..4 (left, right, up, down). Confirm on hardware with `mios-inputd observe` (tests.md T-C28).
+[keybindings.global.controller.quirks.xpad]
+enabled = true                       # a higher tier sets false to turn the quirk off (T-C28 reads raw codes that way)
+drivers = ["xpad"]
+ids = ["045e:028e", "045e:02ea", "045e:0b12"]   # Xbox 360, Xbox One S, Xbox Series X|S over USB (always xpad)
+remap = { BTN_NORTH = "BTN_WEST", BTN_WEST = "BTN_NORTH", "0x2c0" = "BTN_DPAD_LEFT", "0x2c1" = "BTN_DPAD_RIGHT", "0x2c2" = "BTN_DPAD_UP", "0x2c3" = "BTN_DPAD_DOWN" }
+note = "Xbox face-button order and dpad_to_buttons d-pad"
+
+# --- The agent virtual controller (I4): `mios-inputd vpad <op>` (the [verbs.virtual_controller] tool runs the same argv).
+# A pad is a uinput gamepad (DualSense-like: positional face buttons, digital + analog triggers, HAT d-pad) held by one
+# holder process per pad; every stick and trigger change is an eased ramp sampled at rate_hz, so a camera driven by it
+# accelerates and stops smoothly (no teleport: any ramp is at least min_ms long). An unseated pad ("agent") is routed by
+# the session's own bridge like any controller. `vpad create --seat <s>` names it [desktop.nested.devices].
+# virtual_pad_name, so `mios-gen nested-session --seat <s> --device virtual-pad` binds it into that session (and the
+# host bridge never owns it); `vpad assign --pad <s>` then runs `mios-inputd bridge --nested <s>`: nav and the room map
+# reach the session's own compositor and its private room packet (Hypr3D inside the session moves with the pad).
+[keybindings.global.controller.agent_pad]
+enabled = true
+name = "MiOS Agent Pad {id}"         # an unseated pad's evdev name ({id} = --pad)
+usb_id = "1209:4d50"                 # vvvv:pppp the pad reports (BUS_VIRTUAL)
+rate_hz = 250                        # ramp sample rate
+ease = "in-out"                      # default curve: linear | in | out | in-out (cubic, zero velocity at both ends)
+ramp_ms = 400                        # default ramp length
+min_ms = 80                          # every ramp is stretched to at least this (nothing teleports)
+max_ms = 10000                       # longest ramp, hold or tap
+tap_ms = 80                          # a button or d-pad tap's press length
+idle_exit_s = 900                    # the holder exits (pad destroyed) after this long at rest without a command
+socket_dir = "mios-inputd/vpad"      # under XDG_RUNTIME_DIR: <pad>.sock (control, 0600), <pad>.json (state), logs
+
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
 
@@ -4950,7 +5000,7 @@ verbs = ["knowledge_search", "remember", "recall", "ingest", "summarize"]
 
 [routing.domains.computer_use]
 desc  = "GUI pixel/element control of the screen via mouse and keyboard"
-verbs = ["cu_screenshot", "cu_ground", "cu_atspi_query", "cu_window_list", "cu_click", "cu_type", "cu_key", "cu_key_combo", "pc_screenshot", "pc_type", "pc_key", "pc_click", "pc_find_element", "pc_click_element", "pc_list_elements"]
+verbs = ["cu_screenshot", "cu_ground", "cu_atspi_query", "cu_window_list", "cu_click", "cu_type", "cu_key", "cu_key_combo", "pc_screenshot", "pc_type", "pc_key", "pc_click", "pc_find_element", "pc_click_element", "pc_list_elements", "virtual_controller"]
 
 [routing.domains.code_shell]
 desc  = "run code, shell, or PowerShell commands (incl. explaining what a script/code does)"
@@ -13106,6 +13156,54 @@ cmd = "if [ {action} = 'screenshot' ]; then mios-computer-use screenshot /tmp/li
   type = "integer"
   [verbs.linux_input.params.y]
   type = "integer"
+
+# The agent virtual controller ([keybindings.global.controller.agent_pad]): create a uinput gamepad, drive it with eased
+# analog ramps (sticks/triggers never jump), tap buttons and the d-pad, hand it to a nested session, destroy it.
+[verbs.virtual_controller]
+section = "Computer-use"
+sig = "op, pad?, seat?, stick?, x?, y?, side?, value?, button?, action?, dir?, ms?, hold_ms?, ease?, wait?"
+desc = "Drive a virtual game controller (agent pad) smoothly: op='create' (seat=<label> makes a nested seat's pad), 'stick' (stick=left|right, x/y in -1..1 eased over ms, optional hold_ms then eases back), 'trigger' (side, value 0..1), 'button' (BTN_SOUTH.., action tap|press|release), 'dpad' (dir), 'release' (all to rest), 'assign' (route it into the nested session of seat), 'status', 'destroy', 'list'. Moves the Hypr3D camera/walk smoothly in the room it controls."
+examples = ["create a virtual controller for nested seat agent1", "walk forward with the virtual controller for 1.5 seconds", "turn the 3D camera right smoothly", "press A on the agent pad"]
+tier = "rare"
+permission = "write"
+cmd = "/usr/libexec/mios/mios-inputd vpad {op!}{pad?--pad}{seat?--seat}{stick?--stick}{x?--x}{y?--y}{side?--side}{value?--value}{button?--button}{action?--action}{dir?--dir}{ms?--ms}{hold_ms?--hold-ms}{ease?--ease}{wait?--wait}"
+  [verbs.virtual_controller.params.op]
+  type = "string"
+  enum = ["create", "stick", "trigger", "button", "dpad", "release", "wait", "status", "info", "assign", "unassign", "destroy", "list"]
+  [verbs.virtual_controller.params.pad]
+  type = "string"
+  desc = "Pad key: a seat label or a pad id (default agent)."
+  [verbs.virtual_controller.params.seat]
+  type = "string"
+  [verbs.virtual_controller.params.stick]
+  type = "string"
+  enum = ["left", "right"]
+  [verbs.virtual_controller.params.x]
+  type = "number"
+  [verbs.virtual_controller.params.y]
+  type = "number"
+  [verbs.virtual_controller.params.side]
+  type = "string"
+  enum = ["left", "right"]
+  [verbs.virtual_controller.params.value]
+  type = "number"
+  [verbs.virtual_controller.params.button]
+  type = "string"
+  [verbs.virtual_controller.params.action]
+  type = "string"
+  enum = ["tap", "press", "release"]
+  [verbs.virtual_controller.params.dir]
+  type = "string"
+  enum = ["left", "right", "up", "down", "center"]
+  [verbs.virtual_controller.params.ms]
+  type = "integer"
+  [verbs.virtual_controller.params.hold_ms]
+  type = "integer"
+  [verbs.virtual_controller.params.ease]
+  type = "string"
+  enum = ["linear", "in", "out", "in-out"]
+  [verbs.virtual_controller.params.wait]
+  type = "boolean"
 
 [verbs.file_edit]
 section = "File edits"
