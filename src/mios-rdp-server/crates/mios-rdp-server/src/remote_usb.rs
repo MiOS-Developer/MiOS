@@ -1573,8 +1573,17 @@ mod tests {
                 class_codes: if composite { UsbClassCodes::PER_INTERFACE } else { UsbClassCodes { class_code: class, sub_class_code: 6, protocol_code: 0x50 } },
                 num_configurations: 1,
             },
+            // A composite device (per-interface class, several interfaces) announces only USB\COMPOSITE:
+            // a harmless first interface hides `class` in the second one.
             active_config: Some(UsbConfigInfo {
-                interfaces: vec![UsbInterfaceInfo { class_codes: UsbClassCodes { class_code: class, sub_class_code: 6, protocol_code: 0x50 } }],
+                interfaces: if composite {
+                    vec![
+                        UsbInterfaceInfo { class_codes: UsbClassCodes { class_code: 0x08, sub_class_code: 6, protocol_code: 0x50 } },
+                        UsbInterfaceInfo { class_codes: UsbClassCodes { class_code: class, sub_class_code: 1, protocol_code: 1 } },
+                    ]
+                } else {
+                    vec![UsbInterfaceInfo { class_codes: UsbClassCodes { class_code: class, sub_class_code: 6, protocol_code: 0x50 } }]
+                },
             }),
             speed: UsbConnectionSpeed::High,
             isochronous: false,
@@ -1613,10 +1622,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let completion = InterfaceId::try_from(5).unwrap();
         let mut server = UrbdrcDeviceServer::new(Box::new(Decide { policy, verdicts: tx }), completion).unwrap();
-        let caps = match dec(&server.start(11).unwrap()[0]) {
-            UrbdrcServerDevicePdu::Caps(c) => c,
-            other => panic!("expected caps, got {other:?}"),
-        };
+        let UrbdrcServerDevicePdu::Caps(caps) = dec(&server.start(11).unwrap()[0]) else { panic!("expected caps") };
         let resp = server
             .process(11, &enc(&UrbdrcClientDevicePdu::Caps(RimExchangeCapabilityResponse { msg_id: caps.msg_id, capability: Capability::RimCapabilityVersion01, result: 0 })))
             .unwrap();
