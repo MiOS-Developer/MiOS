@@ -35,7 +35,8 @@ MIOS_GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 MIOSD = os.environ.get('MIOSD', '/usr/bin/miosd')
 PROBE = ROOT / 'tests/fixtures/game-clients/x11-game-probe.py'
 RULE = re.compile(r'^hl\.window_rule\(.*\["name"\] = "(mios-placement[^"]*)".*\)$')
-GAME_KEYS = ['enabled', 'class', 'extra_class', 'content_game', 'suppress_client_geometry', 'pin_fixed_size', 'oversize', 'tag', 'fixed_tag']
+GAME_KEYS = ['enabled', 'class', 'extra_class', 'content_game', 'suppress_client_geometry', 'pin_fixed_size', 'oversize', 'tag', 'fixed_tag',
+             'candidate_tag']
 
 
 def clean_env(**kw):
@@ -60,7 +61,7 @@ class TestGamePlacementWiring(unittest.TestCase):
             node = node[part]
         self.assertIn('steam_app_.*', node, 'Proton games (WM_CLASS steam_app_<id>) are in the shared list')
         self.assertIn(self.games['oversize'], ('fit', 'keep'))
-        self.assertNotEqual(self.games['tag'], self.games['fixed_tag'])
+        self.assertEqual(len({self.games['tag'], self.games['fixed_tag'], self.games['candidate_tag']}), 3)
         self.assertIs(self.doc['desktop']['hyprland']['config']['xwayland']['force_zero_scaling'], False)
 
     def test_configurator_exposes_every_key(self):
@@ -78,10 +79,13 @@ class TestGamePlacementWiring(unittest.TestCase):
         self.assertIn(f'["size"] = {size}', rules['mios-placement-games'], 'one opening size for every window')
         for fixed in ('mios-placement-games-fixed', 'mios-placement-games-content-fixed'):
             self.assertNotIn('["size"]', rules[fixed], 'a fixed-size game is never sized by the compositor')
-            self.assertIn('["float"] = true}', rules[fixed], 'matches only windows Hyprland floated itself')
+            self.assertIn('["float"] = true', rules[fixed], 'matches only windows Hyprland floated itself')
+            self.assertIn('["modal"] = false', rules[fixed], 'modal dialogs are never game candidates')
+            self.assertNotIn('["center"]', rules[fixed], 'a floated candidate (maybe a Wine dialog) is not moved by the rule')
+            self.assertIn(f'["tag"] = "+{self.games["candidate_tag"]}"', rules[fixed], 'the rule tags a candidate, never a game')
         for name, line in rules.items():
-            if name.startswith('mios-placement-games'):
-                self.assertIn('["suppress_event"] = "x11configurerequest"', line)
+            # Suppressing every ConfigureRequest froze a game's own resolution changes; miosd refuses only remaps.
+            self.assertNotIn('suppress_event', line, name)
 
     def test_probe_fixture_compiles(self):
         subprocess.run([sys.executable, '-m', 'py_compile', str(PROBE)], check=True)
@@ -180,14 +184,33 @@ class TestGamePlacementLive(unittest.TestCase):
         cls.rule_results = {n: cls.ctl('eval', line).strip() for n, line in cls.rules.items()}
         cls.daemon = subprocess.Popen([MIOSD, 'placement', 'serve'], env=cls.env,
                                       stdout=open(cls.out / 'placement.log', 'w'), stderr=subprocess.STDOUT)
-        time.sleep(1.0)
+        # The nested fit scale can land seconds after session.json (observed 1280x800 at scale 1, then 1392x1002
+        # logical): wait until the output and its reserved area hold still, then sample. Assertions re-sample too
+        # (refresh), since the PiP parent can still be resized mid-run.
+        last, since, end = None, time.monotonic(), time.monotonic() + 30
+        while time.monotonic() < end:
+            try:
+                m = json.loads(cls.ctl('-j', 'monitors'))[0]
+                key = (m['width'], m['height'], m['scale'], tuple(m.get('reserved', [])))
+            except (ValueError, IndexError, KeyError):
+                key = None
+            if key != last:
+                last, since = key, time.monotonic()
+            elif key is not None and time.monotonic() - since >= 3.0:
+                break
+            time.sleep(0.25)
+        cls.refresh()
+        (cls.out / 'setup.json').write_text(json.dumps({'session': cls.session, 'rules': cls.rule_results,
+                                                        'geometry': cls.geometry, 'output': cls.output}, indent=1))
+
+    @classmethod
+    def refresh(cls):
+        """Live output and policy geometry: a placement is judged against the output it was made on."""
         geo = subprocess.run([MIOSD, 'placement', 'geometry'], env=cls.env, capture_output=True, text=True, timeout=30)
         cls.geometry = json.loads(geo.stdout)[0]
         mon = json.loads(cls.ctl('-j', 'monitors'))[0]
         cls.scale = mon['scale']
         cls.output = (mon['x'], mon['y'], mon['width'] / mon['scale'], mon['height'] / mon['scale'])
-        (cls.out / 'setup.json').write_text(json.dumps({'session': cls.session, 'rules': cls.rule_results,
-                                                        'geometry': cls.geometry, 'output': cls.output}, indent=1))
 
     @classmethod
     def tearDownClass(cls):
@@ -256,6 +279,7 @@ class TestGamePlacementLive(unittest.TestCase):
         return self.wait_for(pred, 3)
 
     def policy(self):
+        self.refresh()
         g = self.geometry['geometry']
         return (g['x'], g['y'], g['w'], g['h'])
 
@@ -266,6 +290,7 @@ class TestGamePlacementLive(unittest.TestCase):
         self.assertLessEqual(abs(cy - (py + ph / 2)), tol, f'{c["class"]} at {c["at"]} {c["size"]}, policy {self.policy()}')
 
     def assert_inside_output(self, c):
+        self.refresh()
         ox, oy, ow, oh = self.output
         x, y = c['at']
         w, h = c['size']
@@ -340,6 +365,60 @@ class TestGamePlacementLive(unittest.TestCase):
         p, _ = self.probe('mios-not-a-game', '--fixed', '--size', '480x320', '--pos', f'{pos[0]},{pos[1]}')
         c = self.settled(lambda c: c['class'] == 'mios-not-a-game')
         self.assertEqual(tuple(c['at']), pos)
+        self.stop(p)
+
+    def test_15_fixed_game_changes_its_own_resolution(self):
+        # A windowed game applying 640x400 from its menu: hints re-pinned, then a size-only ConfigureRequest. Rejected
+        # lane (every ConfigureRequest suppressed): stays 480x320, renders 640x400 into it (cropped).
+        self.require_x11()
+        p, log = self.probe('steam_app_4201', '--fixed', '--size', '480x320', '--change-size', '640x400', '--change-at', '3500')
+        c0 = self.settled(lambda c: c['class'] == 'steam_app_4201')
+        self.assertEqual(c0['size'], [480, 320])
+        time.sleep(3.5)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4201', 1.5)
+        events = [json.loads(l) for l in open(log)]
+        (self.out / 'resolution.json').write_text(json.dumps({'placed': c0, 'after': c, 'events': events}, indent=1))
+        self.assertTrue(any(e['event'] == 'request' and e['w'] == 640 for e in events), 'probe issued its resolution change')
+        self.assertEqual(c['size'], [640, 400], f'the game could not change its own size: {c["at"]} {c["size"]}')
+        last = [e for e in events if e['event'] == 'configure'][-1]
+        self.assertEqual((last['w'], last['h']), (640, 400), 'the client was configured to the size it asked for')
+        self.assert_inside_output(c)
+        self.stop(p)
+
+    def test_16_wine_dialog_is_not_a_game(self):
+        # A resizable WM_TRANSIENT_FOR dialog of a Wine application (class setup.exe matches the game list's .+\.exe):
+        # Hyprland floats it, but it is no game. Rejected lane: tagged fixed, re-centred, pinned, resizes reverted.
+        self.require_x11()
+        p, _ = self.probe('setup.exe', '--transient', '--title', 'app dialog', '--size', '420x300', '--pos', '120,90', seconds=25)
+        d0 = self.wait_for(lambda c: c['class'] == 'setup.exe' and c['title'] == 'app dialog', 15)
+        self.assertIsNotNone(d0)
+        d1 = self.settled(lambda c: c['address'] == d0['address'], 2.0)
+        bare = [t.rstrip('*') for t in d1['tags']]
+        self.assertNotIn('mios-place-game-fixed', bare, d1['tags'])
+        self.assertNotIn('mios-place-game', bare, d1['tags'])
+        self.assertEqual((d1['at'], d1['size']), (d0['at'], d0['size']), 'the dialog was moved or resized')
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x=700, y=500, window='address:{d0['address']}'}}))")
+        samples = []
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 4.0:
+            c = self.wait_for(lambda c: c['address'] == d0['address'], 1)
+            samples.append([round(time.monotonic() - t0, 2), c['size']])
+            time.sleep(0.25)
+        (self.out / 'dialog.json').write_text(json.dumps({'mapped': d0, 'settled': d1, 'samples': samples}, indent=1))
+        self.assertTrue(all(s[1] == [700, 500] for s in samples[2:]), f'the dialog resize was reverted: {samples}')
+        self.stop(p)
+
+    def test_17_resizable_game_root_remap_is_refused(self):
+        self.require_x11()
+        p, log = self.probe('steam_app_4107', '--size', '1600x1000', '--pos', '0,0', '--remap-root', '2500')
+        c0 = self.settled(lambda c: c['class'] == 'steam_app_4107')
+        time.sleep(2.0)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4107', 1.0)
+        events = [json.loads(l) for l in open(log)]
+        self.assertTrue(any(e['event'] == 'request' for e in events), 'probe issued its root-size request')
+        self.assertEqual(tuple(c['at'] + c['size']), tuple(c0['at'] + c0['size']), f'remap honoured: {c["at"]} {c["size"]}')
+        last = [e for e in events if e['event'] == 'configure'][-1]
+        self.assertEqual((last['w'], last['h']), tuple(c['size']), 'refusal answered with the real geometry')
         self.stop(p)
 
     def test_20_toggle_never_resizes_a_fixed_game(self):

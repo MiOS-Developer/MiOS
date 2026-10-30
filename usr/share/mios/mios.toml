@@ -8308,16 +8308,22 @@ managed_tag = "mios-placed"
 # itself, so the `float = false` rule above never matched it and it stayed wherever it asked (0,0 of the XWayland
 # root, or off the output's edge); and a floating X11 window's later ConfigureRequests are honoured, so Wine/Proton
 # moved it back to 0,0 at the root size (recorded: Forza Horizon 6 / steam_app_2483190 remapped itself to 3840x1080,
-# both outputs). suppress_client_geometry refuses those requests (Hyprland answers with the real geometry, so the
-# client's swapchain matches what is shown). Fixed-size games are never resized: Hyprland ignores size hints when
-# resizing X11 windows, and a game that never recreates its swapchain shows black wherever the window grew. A fixed
-# game larger than the HUD-free area is centred on the whole output; one larger than the output takes `oversize`
-# ("fit" = opening size; Wine/DXVK re-render at any size, "keep" = centred and cropped). Fixed games are not tiled on
-# move, Super+V re-centres them instead of tiling them, and pin_fixed_size sets their min_size == max_size == the
-# placed size (clamps drags) and has miosd restore an XWayland one that a dispatch grew anyway (Hyprland's resize
-# dispatch ignores both), after the pointer is released and at most a few times per window. class names an SSOT key holding the shared game-class
+# both outputs). A floated window of a game class is a game only when its X11 hints say min == max and it is no
+# dialog (WM_TRANSIENT_FOR, modal, or a non-NORMAL window type): Wine dialogs (class <app>.exe) keep their place.
+# suppress_client_geometry refuses only a game's remap to the XWayland root or off its output (miosd puts it back
+# and Hyprland's resize answers with the real geometry); a game's own windowed resolution change stands. Fixed-size
+# games are never resized: Hyprland ignores size hints when resizing X11 windows, and a game that never recreates
+# its swapchain shows black wherever the window grew. A fixed game larger than the HUD-free area is centred on the
+# whole output; one larger than the output takes `oversize` ("fit" = opening size; Wine/DXVK re-render at any size,
+# "keep" = centred and cropped). Fixed games are not tiled on move, Super+V re-centres them instead of tiling them,
+# and pin_fixed_size sets their min_size == max_size == the placed size (clamps drags; re-pinned when the game
+# declares a new size) and has miosd restore an XWayland one that a dispatch grew anyway (Hyprland's resize
+# dispatch ignores both) to its declared size, after the pointer is released and settle_ms, at most a few times per
+# window. class names an SSOT key holding the shared game-class
 # list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
-# content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland).
+# content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland). Tags: `tag` = a
+# resizable game (rule), `candidate_tag` = a floated window of a game class (rule; maybe a dialog), `fixed_tag` = a
+# confirmed fixed-size game (set by miosd).
 [desktop.hyprland.placement.games]
 enabled = true
 class = "keybindings.global.contexts.game"
@@ -8328,6 +8334,7 @@ pin_fixed_size = true
 oversize = "fit"
 tag = "mios-place-game"
 fixed_tag = "mios-place-game-fixed"
+candidate_tag = "mios-place-game-candidate"
 
 
 # Window controls on every window: hyprbars (hyprland-plugins, latest upstream) with the

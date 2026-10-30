@@ -15,6 +15,10 @@ ConfigureRequests in X root coordinates. This probe reproduces those requests on
   --pos X,Y          USPosition request at map time (SDL/Wine CW_USEDEFAULT-less windows)
   --root-size        map at the root size at 0,0 (borderless "fullscreen" over every output)
   --remap-root MS    MS ms after mapping, ConfigureRequest to 0,0 at the root size (the Forza remap)
+  --change-size WxH  --change-at MS after mapping: re-pin the hints to WxH (when fixed) and send a size-only
+                     ConfigureRequest (a windowed game applying a new resolution from its settings menu)
+  --transient        map a resizable parent window of the same class first and make this window
+                     WM_TRANSIENT_FOR it (a Wine application's installer/file/settings dialog)
   --fullscreen       _NET_WM_STATE_FULLSCREEN at map time
   --borderless       _MOTIF_WM_HINTS decorations = 0
   --no-adapt         keep painting only the original size and set no window background (a GL/Vulkan game that
@@ -90,6 +94,14 @@ class Probe:
             self.win.change_property(self.d.intern_atom('_NET_WM_STATE'), Xatom.ATOM, 32,
                                      [self.d.intern_atom('_NET_WM_STATE_FULLSCREEN')])
         self.log = open(a.log, 'a', buffering=1) if a.log else sys.stdout
+        self.parent = None
+        if a.transient:
+            self.parent = self.s.root.create_window(0, 0, 900, 600, 0, self.s.root_depth, X.InputOutput, X.CopyFromParent,
+                                                    event_mask=X.StructureNotifyMask, background_pixel=self.s.white_pixel)
+            self.parent.set_wm_name(a.title + ' main')
+            self.parent.set_wm_class(a.cls, a.cls)
+            self.parent.change_property(self.d.intern_atom('_NET_WM_PID'), Xatom.CARDINAL, 32, [__import__('os').getpid()])
+            self.win.change_property(self.d.intern_atom('WM_TRANSIENT_FOR'), Xatom.WINDOW, 32, [self.parent.id])
 
     def hints(self, w, h):
         flags = 0
@@ -113,9 +125,14 @@ class Probe:
 
     def run(self):
         self.emit(event='start', root_w=self.root[0], root_h=self.root[1], x=self.x, y=self.y, w=self.w, h=self.h)
+        if self.parent:
+            self.parent.map()
+            self.d.flush()
+            time.sleep(1.5)
         self.win.map()
         self.d.flush()
         remap_at = time.monotonic() + self.a.remap_root / 1000.0 if self.a.remap_root >= 0 else None
+        change_at = time.monotonic() + self.a.change_at / 1000.0 if self.a.change_size else None
         end = time.monotonic() + self.a.seconds
         while time.monotonic() < end:
             if remap_at is not None and time.monotonic() >= remap_at:
@@ -125,6 +142,15 @@ class Probe:
                     self.hints(rw, rh)
                 self.win.configure(x=0, y=0, width=rw, height=rh)
                 self.emit(event='request', x=0, y=0, w=rw, h=rh)
+                self.d.flush()
+            if change_at is not None and time.monotonic() >= change_at:
+                change_at = None
+                cw, ch = parse_pair(self.a.change_size, 'x')
+                if self.a.wine_hints or self.a.fixed:
+                    self.hints(cw, ch)
+                self.paint_size = (cw, ch)
+                self.win.configure(width=cw, height=ch)
+                self.emit(event='request', w=cw, h=ch)
                 self.d.flush()
             while self.d.pending_events():
                 e = self.d.next_event()
@@ -154,6 +180,9 @@ def main():
     p.add_argument('--wine-hints', action='store_true')
     p.add_argument('--root-size', action='store_true')
     p.add_argument('--remap-root', type=int, default=-1, metavar='MS')
+    p.add_argument('--change-size', metavar='WxH')
+    p.add_argument('--change-at', type=int, default=3000, metavar='MS')
+    p.add_argument('--transient', action='store_true')
     p.add_argument('--fullscreen', action='store_true')
     p.add_argument('--borderless', action='store_true')
     p.add_argument('--no-adapt', action='store_true')
