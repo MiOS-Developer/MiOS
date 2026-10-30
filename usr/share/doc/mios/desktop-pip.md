@@ -1,5 +1,5 @@
 <!-- AI-hint: Per-window Picture-in-Picture on the MiOS desktop: any Hyprland window can be PiP-ified from the dock preview settings, reversibly, with the original geometry stored on the window itself; mios-pip-gravity owns the magnetic layout. -->
-<!-- AI-related: tools/native/mios-pip-gravity/src/{main.rs,window.rs}, usr/share/mios/quickshell/DockPopup.qml, usr/share/mios/mios.toml [desktop.pip_gravity], usr/share/doc/mios/README.md -->
+<!-- AI-related: tools/native/mios-pip-gravity/src/{main.rs,window.rs,gravity.rs,matrix.rs}, tests/test-pip-behaviours-live.py, usr/share/mios/quickshell/DockPopup.qml, usr/share/mios/mios.toml [desktop.pip_gravity], usr/share/doc/mios/README.md -->
 
 # Desktop Picture-in-Picture (any window)
 
@@ -26,10 +26,12 @@ shader controls sit together per window.
   flags re-applied in order, origin tag removed. A window that was tiled goes back to tiling.
 - **Magnetic layout.** While PiP panes exist, `mios-pip-gravity` gives them soft flank rails
   (left/right columns stacked top-to-bottom) and HUD magnetism without hiding them, with
-  aspect-aware sizing and a springy settle; it keeps managed panes above newly mapped
-  floating windows. Automatic PiP recognition also runs while Hypr3D is active; flat rail
+  aspect-aware sizing and a springy settle; it keeps managed panes on top (see *Stay on top*).
+  Automatic PiP recognition also runs while Hypr3D is active; flat rail
   placement pauses while the room owns spatial placement. Configuration comes only from the layered SSOT table
-  `[desktop.pip_gravity]`.
+  `[desktop.pip_gravity]`. Compositor events (window map/close, focus, pin, fullscreen,
+  layer changes) wake the daemon at once, paced to at most one tick per `active_poll_ms`;
+  title changes are not wake events (a client may retitle every frame); polling (`idle_poll_ms`) is the fallback.
 
 ## Interaction model
 
@@ -57,7 +59,37 @@ sizes and client-rendered content, including any padding they draw internally.
 Spotify's native mini-player uses a Chromium class and a changing track title.
 Recognition therefore requires a same-process Spotify sibling rather than a song
 title match. Discord uses its initial popout title; changing channel titles do
-not remove PiP. The fullscreen controller preserves pinned PiP geometry across
+not remove PiP. The shipped `match` rules cover Discord's call, stream and video
+popouts for the native client, its Flatpak/PTB/Canary builds and Vesktop
+(`initial_title = "^Discord Popout$"`), Spotify's mini-player (Flatpak or RPM
+`spotify` sibling), Firefox-family `Picture-in-Picture` and Chromium-family
+`Picture in picture` windows. The Discord and Spotify main windows and ordinary
+Chromium windows are never captured.
+
+**Size magnets.** Within `size_snap_px` of the minimum width (`min_width_px`,
+and `min_width_frac` of the output), the launch (flank) width or the maximum
+width, a resized PiP snaps exactly to it; between the magnets any size stays.
+A smaller resize springs back to the minimum. The maximum is the largest
+aspect-true size inside the HUD work area (and `max_width_frac`). Magnets and
+the clamp act on each PiP's *natural* size: the size the operator (or the
+client) last chose. The daemon only updates it on a resize that is not its own,
+so a size the packer squeezed a PiP to never snaps to a magnet later. A frame
+the daemon dispatched counts as its own for one second after its newest
+dispatch (a busy compositor applies frames a few ticks late); after that an
+operator resize to the same size is the operator's.
+
+`min_width_px`, `size_snap_px` and `fullscreen_release_ms` were added after the
+first shipped table. An SSOT without them (the binary installed before its SSOT)
+turns that feature off -- no absolute minimum, no size magnets, no release delay
+-- and `check` notes it on stderr; a present but invalid value is still rejected.
+
+**Packing.** Several PiPs stack top-to-bottom on their rail; an overfull rail
+moves PiPs to the other flank before both columns are squeezed at one uniform
+scale, always clear of HUD bars. On a small output an overfull squeeze wins over
+`min_width_px` (no overlap, never under a HUD). Windows enlarged across both
+flanks fall back to one shared sequence. The plan iterates positions to an exact
+fixed point and emits the integer geometry the daemon applies, so re-planning a
+settled layout reproduces it and nothing moves again on the next tick. The fullscreen controller preserves pinned PiP geometry across
 2D maximize and fullscreen. Managed PiP in Hypr3D separates spatial scale from
 native raster size: client size hints and `pip_raster_max_px` bound allocations,
 while the room can continue enlarging or shrinking the surface. Returning from a
@@ -70,6 +102,39 @@ Native PiP maximize enters Theatre presentation. The screen targets
 the HUD workarea. `theatre_fill` and `theatre_seconds` control fit and transition.
 Unmaximize restores the original room pose, native size and pin state. Automatic
 hover focus cannot dismiss Theatre while moving the pointer across its screen.
+
+## Stay on top
+
+Hyprland 0.56 draws pinned floating windows after every unpinned window and
+hit-tests them first, including over fullscreen windows and special workspaces.
+That pinned layer is the native stay-on-top: PiP never needs re-raising above an
+ordinary window, so the daemon no longer churns the z-order (or the pointer
+focus) when another window opens or is clicked. With `keep_above = true` it only:
+
+- re-pins a floating, non-fullscreen managed PiP that stayed unpinned for
+  `settle_ms` (a fullscreen PiP is unpinned natively and re-pinned by
+  `binds:allow_pin_fullscreen` on restore, so that transient never counts);
+- raises a PiP above another *pinned* non-PiP window that overlaps it.
+
+Leaving PiP is the toggle (`off`), not unpinning.
+
+The window rules `mios-browser-pip` and `mios-chromium-pip` float and pin
+browser PiP windows at map without the daemon. On an output the mobile layout
+classifies as mobile, `mios-mobile-<output>` tiles every new window by design
+and overrides those float rules; there the daemon's adoption (`on`) floats and
+pins the PiP. Set `MIOS_PIP_GRAVITY_TRACE=1` in the daemon's environment to log
+room transitions and releases, kept/dropped tracks and natural-size updates on stderr.
+
+## Fullscreen, maximize and Theatre matrix
+
+| Situation | Behaviour |
+|---|---|
+| Another window fullscreen | PiPs stay drawn and interactive above it (pinned layer). The HUDs auto-hide and the reserved area collapses, but PiPs keep planning against the last ordinary bounds, so none moves or resizes. |
+| That window leaves fullscreen | The bounds latch holds for `fullscreen_release_ms` while the HUDs return, then fresh bounds apply. No jump in either direction. |
+| Another window maximized | Same latch; maximize keeps the HUD work area. |
+| A PiP maximized / fullscreen | Gravity never fights it. Maximize stays inside the HUD work area. Its pre-fullscreen slot stays reserved in the plan, so neighbours hold still. Unmaximize restores the exact slot and the pin. |
+| Hypr3D room active | Flat placement pauses; animations stop, every PiP keeps its last flat slot. Adoption continues. A maximized PiP is the room's Theatre presentation (see above). |
+| Room closed | The room keeps ownership of each PiP until that window has been geometrically still for `settle_ms`: Hypr3D's close keeps moving and re-rastering windows for many ticks, and none of those frames is an operator resize (the natural size is never updated, nothing is dispatched, neighbours plan around the kept slots). Then the PiP returns at once, exactly, to its kept slot and natural size (a window the close left a pixel or two off is moved back, although that is inside the ordinary settle tolerance). A PiP still maximized after the room keeps its slot reserved until it is restored and still. A move or resize made while the room's close is still running is the room's and is undone. |
 
 ## ShaderGlass and mode state
 
@@ -85,8 +150,9 @@ The supervisor continues following native target geometry while the pane is
 hidden in a room. `hypr3d.effect_in_room()` distinguishes room composition from
 native 2D fullscreen passthrough, where the actual overlay must become visible.
 The same live ShaderGlass process retains shader/profile settings across these
-changes; this does not imply that an unsaved application profile survives an
-application restart.
+changes. A new pane (re-attach, crash relaunch, supervisor resume, a nested
+session) starts with the profile miosd saved for the target's window class; see
+`shaderglass.md`.
 
 The isolated renderer proof covers first/third/front camera views, repeated
 2D/3D round trips, native fullscreen handoff, attachment removal/reattachment,
