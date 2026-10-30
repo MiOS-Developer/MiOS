@@ -16,12 +16,12 @@ QS.PanelWindow {
     required property Item trigger
     property bool open: false
     property string align: "center"
-    property real panelWidth: 200
-    property real panelHeight: 100
-    property real gap: theme.edgeMargin / 2
+    property real panelWidth: Glass.bar
+    property real panelHeight: Glass.bar
+    property real gap: Glass.gap                    // one gap below the bar it grows out of (design language)
     property int duration: 200
-    property real triggerRadius: trigger ? Glass.cornerFor(trigger.height) : 0
-    property real panelRadius: Glass.cornerFor(Math.min(panelWidth, panelHeight))
+    property real triggerRadius: trigger ? Glass.corner(Math.min(trigger.width, trigger.height)) : 0
+    property real panelRadius: Glass.panelRadius(panelWidth, panelHeight)
     default property alias content: emerge.content
     readonly property alias progress: emerge.progress
 
@@ -30,20 +30,20 @@ QS.PanelWindow {
     }
     readonly property AnchorSpec anchor: AnchorSpec {}
     property var host: anchor.window
-    property real hostHeight: host ? host.height : theme.topHeight
+    property real hostHeight: host ? host.height : Glass.bar
     property real hostScreenX: host ? (typeof host.hudScreenX === "number" ? host.hudScreenX
         : (host.mobile ? 0 : (host.screen ? (host.screen.width - host.width) / 2 : 0))) : 0
-    property real hostScreenY: host && host.margins ? host.margins.top : theme.edgeMargin
-    readonly property real screenWidth: host && host.screen ? host.screen.width : 1920
+    property real hostScreenY: host && host.margins ? host.margins.top : Glass.gap
+    readonly property real screenWidth: host && host.screen ? host.screen.width : panelWidth + 2 * Glass.gap
     // Trigger rectangle in the bar window's coordinates.
     // mapToItem() is not reactive: touch the geometry that moves the trigger (and `open`, so every
     // opening re-reads it) to keep the mapping current.
     readonly property rect trigRect: {
-        if (!trigger) return Qt.rect(0, 0, theme.topHeight, theme.topHeight)
+        if (!trigger) return Qt.rect(0, 0, Glass.bar, Glass.bar)
         const deps = [open, trigger.x, trigger.y, trigger.width, trigger.height,
                       trigger.parent ? trigger.parent.x : 0, trigger.parent ? trigger.parent.width : 0,
                       host ? host.width : 0, host ? host.height : 0]
-        if (!deps.length) return Qt.rect(0, 0, theme.topHeight, theme.topHeight)
+        if (!deps.length) return Qt.rect(0, 0, Glass.bar, Glass.bar)
         const p0 = trigger.mapToItem(null, 0, 0)
         const p1 = trigger.mapToItem(null, trigger.width, trigger.height)
         return Qt.rect(p0.x, p0.y, Math.max(1, p1.x - p0.x), Math.max(1, p1.y - p0.y))
@@ -52,8 +52,8 @@ QS.PanelWindow {
     readonly property real wantX: align === "right" ? trigRect.x + trigRect.width - panelWidth
                                 : align === "left" ? trigRect.x
                                 : trigRect.x + trigRect.width / 2 - panelWidth / 2
-    readonly property real popupX: Math.max(theme.edgeMargin - hostScreenX,
-                                            Math.min(wantX, screenWidth - hostScreenX - panelWidth - theme.edgeMargin))
+    readonly property real popupX: Math.max(Glass.gap - hostScreenX,
+                                            Math.min(wantX, screenWidth - hostScreenX - panelWidth - Glass.gap))
     readonly property rect fromScreenRect: Qt.rect(Math.round(hostScreenX + trigRect.x), Math.round(hostScreenY + trigRect.y),
                                                    Math.max(1, Math.round(trigRect.width)), Math.max(1, Math.round(trigRect.height)))
     readonly property rect toScreenRect: Qt.rect(Math.round(hostScreenX + popupX), Math.round(hostScreenY + hostHeight + gap),

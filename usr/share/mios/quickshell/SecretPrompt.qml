@@ -33,29 +33,28 @@ PanelWindow {
         }
 
         // Centered modal card
-        Rectangle {
+        GlassSurface {
             id: modalBox
             width: 440
-            height: 240
+            height: body.implicitHeight + 2 * Glass.panelPad
             anchors.centerIn: parent
-            // the island's glass (Glass.qml): corner rule and fill at the notification legibility alpha, no outline
-            radius: Glass.cornerFor(height)
+            // the island's glass (GlassSurface): corner rule and fill at the notification legibility alpha, no outline
             color: theme.withAlpha(Glass.fillHex, theme.notificationOpacity)
 
             ColumnLayout {
+                id: body
                 anchors.fill: parent
-                anchors.margins: 24
-                spacing: 16
+                anchors.margins: Glass.panelPad
+                spacing: Glass.gap
 
                 // Header / Title
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: Glass.gap
 
-                    Rectangle {
-                        width: 8
-                        height: 22
-                        radius: theme.radius
+                    GlassSurface {
+                        width: Glass.inset
+                        height: Glass.control
                         color: theme.cursor // Orange accent stripe
                     }
 
@@ -74,30 +73,29 @@ PanelWindow {
                     text: promptMessage
                     color: theme.subtle
                     font.family: theme.fontFamily
-                    font.pixelSize: theme.fontSize + 1
+                    font.pixelSize: theme.fontSize
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
 
                 // Password input box
-                Rectangle {
+                GlassSurface {
                     Layout.fillWidth: true
-                    height: 40
-                    radius: theme.radius
-                    color: Qt.darker(theme.bg, 1.6)
-                    border.color: passwordInput.activeFocus ? theme.cursor : theme.muted
-                    border.width: 1
+                    height: Glass.bar
+                    color: theme.withAlpha(theme.bg, theme.notificationOpacity)
+                    borderColor: passwordInput.activeFocus ? theme.cursor : theme.muted
+                    hairline: true
 
                     TextInput {
                         id: passwordInput
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 12
+                        anchors.leftMargin: Glass.bar / 2
+                        anchors.rightMargin: Glass.bar / 2
                         verticalAlignment: TextInput.AlignVCenter
                         echoMode: TextInput.Password
                         color: theme.fg
                         font.family: theme.fontFamily
-                        font.pixelSize: theme.fontSize + 2
+                        font.pixelSize: theme.fontSize
                         focus: true
 
                         onAccepted: submitSecret()
@@ -109,23 +107,22 @@ PanelWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignRight
-                    spacing: 12
+                    spacing: Glass.gap
 
                     // Cancel button
-                    Rectangle {
+                    GlassSurface {
                         width: 90
-                        height: 36
-                        radius: theme.radius
+                        height: Glass.bar
                         color: cancelHover.hovered ? theme.outlineColor : "transparent"
-                        border.color: theme.muted
-                        border.width: 1
+                        borderColor: theme.muted
+                        hairline: true
 
                         Text {
                             anchors.centerIn: parent
                             text: "Cancel"
                             color: theme.muted
                             font.family: theme.fontFamily
-                            font.pixelSize: theme.fontSize + 1
+                            font.pixelSize: theme.fontSize
                         }
 
                         HoverHandler { id: cancelHover }
@@ -133,10 +130,9 @@ PanelWindow {
                     }
 
                     // Unlock button
-                    Rectangle {
+                    GlassSurface {
                         width: 100
-                        height: 36
-                        radius: theme.radius
+                        height: Glass.bar
                         color: unlockHover.hovered ? theme.cursor : theme.accent
 
                         Text {
@@ -144,7 +140,7 @@ PanelWindow {
                             text: "Unlock"
                             color: theme.fg
                             font.family: theme.fontFamily
-                            font.pixelSize: theme.fontSize + 1
+                            font.pixelSize: theme.fontSize
                             font.bold: true
                         }
 

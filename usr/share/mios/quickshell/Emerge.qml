@@ -42,7 +42,7 @@ Item {
 
     NumberAnimation { id: anim; target: em; property: "progress" }
 
-    Rectangle {
+    GlassSurface {
         id: glass
         x: em.lerp(em.fromRect.x, em.toRect.x)
         y: em.lerp(em.fromRect.y, em.toRect.y)
@@ -51,8 +51,8 @@ Item {
         radius: Math.min(em.lerp(em.fromRadius, em.toRadius), width / 2, height / 2)
         color: Qt.rgba(em.lerp(em.fromFill.r, em.fill.r), em.lerp(em.fromFill.g, em.fill.g),
                        em.lerp(em.fromFill.b, em.fill.b), em.lerp(em.fromFill.a, em.fill.a))
-        border.width: 1
-        border.color: em.outline
+        hairline: true
+        borderColor: em.outline
         clip: true
         Item {
             id: body

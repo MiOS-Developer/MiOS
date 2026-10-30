@@ -33,10 +33,10 @@ QS.PanelWindow {
     }
     property bool requestedOpen: shellState.searchOpen && (!shellState.searchScreen || shellState.searchScreen === outputName)
     visible: requestedOpen
-    implicitWidth: Math.min(theme.searchWidth, screen.width - 2 * theme.edgeMargin)
+    implicitWidth: Math.min(theme.searchWidth, screen.width - 2 * Glass.gap)
     property int shownRows: Math.max(0, Math.min(results.length, theme.searchVisibleRows,
-        Math.floor((screen.height - margins.top - 4 * theme.edgeMargin) / theme.searchRowHeight) - 2))
-    implicitHeight: theme.searchRowHeight * (query ? shownRows + 2 : 1) + 2 * theme.edgeMargin
+        Math.floor((screen.height - margins.top - 4 * Glass.gap) / theme.searchRowHeight) - 2))
+    implicitHeight: theme.searchRowHeight * (query ? shownRows + 2 : 1) + 2 * Glass.panelPad
     anchors.top: true
     margins.top: Math.round(screen.height * theme.searchTopFraction)
     exclusiveZone: 0
@@ -87,15 +87,15 @@ QS.PanelWindow {
             onStreamFinished: if (text.trim() && locate.requested === searchWindow.query) searchWindow.fileError = "The local file index is unavailable."
         }
     }
-    Rectangle {
+    GlassSurface {
+        id: box
         anchors.fill: parent
-        // the island's glass (Glass.qml): corner rule and fill, no outline (hyprglass draws the rim)
-        radius: Glass.cornerFor(height)
+        // the island's glass (GlassSurface: Glass.corner rule and fill), no outline (hyprglass draws the rim)
         color: Glass.fill
         clip: true
         Column {
             anchors.fill: parent
-            anchors.margins: searchWindow.theme.edgeMargin
+            anchors.margins: Glass.panelPad
             spacing: 0
             TextInput {
                 id: input
@@ -132,17 +132,17 @@ QS.PanelWindow {
                 clip: true
                 model: searchWindow.results
                 currentIndex: 0
-                delegate: Rectangle {
+                delegate: GlassSurface {
                     required property var modelData
                     required property int index
                     width: list.width
                     height: searchWindow.theme.searchRowHeight
-                    radius: searchWindow.theme.radius
+                    radius: Glass.inner(box.radius, Glass.panelPad)   // concentric with the box
                     color: index === list.currentIndex ? searchWindow.theme.withAlpha(searchWindow.theme.accent, searchWindow.theme.selectionOpacity) : "transparent"
                     Image {
                         id: icon
                         anchors.left: parent.left
-                        anchors.leftMargin: searchWindow.theme.edgeMargin
+                        anchors.leftMargin: Glass.gap
                         anchors.verticalCenter: parent.verticalCenter
                         width: searchWindow.theme.appIcon
                         height: width
@@ -152,7 +152,7 @@ QS.PanelWindow {
                         anchors.left: icon.right
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.margins: searchWindow.theme.edgeMargin
+                        anchors.margins: Glass.gap
                         Text {
                             width: parent.width
                             text: modelData.label
