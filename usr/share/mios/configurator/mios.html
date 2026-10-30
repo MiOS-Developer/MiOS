@@ -1869,6 +1869,23 @@
             <label for="f-mcp-proto">mcp.protocol_version (MCP revision token declared on the initialize handshake)</label>
             <input type="text" id="f-mcp-proto" data-key="mcp.protocol_version" placeholder="2025-11-25">
             <fieldset>
+              <legend>Your own MCP servers (federation)</legend>
+              <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+                An <code>[mcp.servers.&lt;id&gt;]</code> you declare only in your own settings runs as you and its
+                tools appear in your MiOS MCP tools as <code>&lt;namespace&gt;&lt;tool&gt;</code> (Blender, for example).
+              </p>
+              <label>Run my own MCP servers <input type="text" data-key="mcp.federation.enabled" data-type="bool" placeholder="true"></label>
+              <label>Also offer them over the HTTP front door <input type="text" data-key="mcp.federation.serve_http" data-type="bool" placeholder="false"></label>
+              <label>Startup timeout (seconds) <input type="text" data-key="mcp.federation.startup_timeout_s" data-type="int" placeholder="30"></label>
+              <label>Tool call timeout (seconds) <input type="text" data-key="mcp.federation.call_timeout_s" data-type="int" placeholder="300"></label>
+              <label>Restart backoff (seconds, doubles per failure) <input type="text" data-key="mcp.federation.restart_backoff_s" data-type="int" placeholder="10"></label>
+              <label>Give up after this many failures in a row <input type="text" data-key="mcp.federation.max_restarts" data-type="int" placeholder="5"></label>
+              <label>List cached tools without starting the server <input type="text" data-key="mcp.federation.catalog_cache" data-type="bool" placeholder="true"></label>
+              <label>Stop an unused server after (seconds, 0 = never) <input type="text" data-key="mcp.federation.idle_stop_s" data-type="int" placeholder="600"></label>
+              <label>Maximum tools per server <input type="text" data-key="mcp.federation.max_tools_per_server" data-type="int" placeholder="256"></label>
+              <label>Log directory (under XDG_STATE_HOME) <input type="text" data-key="mcp.federation.log_directory" placeholder="mios/mcp-federation"></label>
+            </fieldset>
+            <fieldset>
               <legend>Responsive terminal workspace</legend>
               <label>Apply to human tmux sessions <input type="text" data-key="mcp.tmux.workspace.global_sessions" data-type="bool"></label>
               <label>Enter tmux from local and interactive SSH shells <input type="text" data-key="terminal.startup.auto_attach" data-type="bool"></label>

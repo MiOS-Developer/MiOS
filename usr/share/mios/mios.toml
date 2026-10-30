@@ -4118,6 +4118,24 @@ tier = "common"
 namespace = "terminal_"
 note = "Native MiOS terminal component; installed in every MiOS image."
 
+# Caller-owned MCP servers. An [mcp.servers.<id>] declared ONLY in a user tier
+# (~/.config/mios/mios.toml or its mios.d/) is invisible to the shared
+# agent-pipe (another user, ProtectHome). The caller's own MiOS MCP front door
+# runs it as the caller (stdio only, minimal environment + its declared env)
+# and re-exports its tools as <namespace><tool>; native names always win.
+# Example: the per-user Blender Lab MCP (usr/share/doc/mios/blender-mcp.md).
+[mcp.federation]
+enabled = true
+serve_http = false                  # Streamable HTTP front door never federates unless true
+startup_timeout_s = 30              # initialize + tools/list budget per server
+call_timeout_s = 300                # one tools/call (renders and scene queries)
+restart_backoff_s = 10              # first retry delay after a failure; doubles per consecutive failure (cap 3600)
+max_restarts = 5                    # consecutive failures before a server stays down until the front door restarts
+catalog_cache = true                # list cached tools without starting the server; it starts on the first call
+idle_stop_s = 600                   # stop a started server after this many seconds without a call (0 = never)
+max_tools_per_server = 256
+log_directory = "mios/mcp-federation"  # child stderr, under $XDG_STATE_HOME, 0700/0600
+
 # Shared human interface. SSH receives plain Ctrl-b + one ordinary key;
 # Desktop shortcuts use Ctrl+Alt+Shift plus the same letter, avoiding OS Super shortcuts.
 [keybindings]
