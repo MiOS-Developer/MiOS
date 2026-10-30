@@ -2720,6 +2720,8 @@ remote.rdp.native.bitmap_damage_threshold  MIOS_REMOTE_RDP_NATIVE_BITMAP_DAMAGE_
 remote.rdp.native.progressive  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE
 remote.rdp.native.progressive_hz  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE_HZ
 remote.rdp.native.progressive_quant  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE_QUANT
+remote.rdp.native.audio_control_program  MIOS_REMOTE_RDP_NATIVE_AUDIO_CONTROL_PROGRAM
+remote.rdp.native.microphone_queue_packets  MIOS_REMOTE_RDP_NATIVE_MICROPHONE_QUEUE_PACKETS
 remote.rdp.native.bitmap_slow_queue_ms  MIOS_REMOTE_RDP_NATIVE_BITMAP_SLOW_QUEUE_MS
 remote.rdp.native.bitmap_min_hz  MIOS_REMOTE_RDP_NATIVE_BITMAP_MIN_HZ
 remote.rdp.native.egfx_wait_ms  MIOS_REMOTE_RDP_NATIVE_EGFX_WAIT_MS
@@ -2739,6 +2741,7 @@ remote.rdp.redirect.timezone  MIOS_REMOTE_RDP_REDIRECT_TIMEZONE
 remote.rdp.redirect.smartcard  MIOS_REMOTE_RDP_REDIRECT_SMARTCARD
 remote.rdp.naming.touch_device  MIOS_REMOTE_RDP_NAMING_TOUCH_DEVICE
 remote.rdp.naming.pen_device  MIOS_REMOTE_RDP_NAMING_PEN_DEVICE
+remote.rdp.naming.microphone_source_prefix  MIOS_REMOTE_RDP_NAMING_MICROPHONE_SOURCE_PREFIX
 flatpak.prefer_beta  MIOS_FLATPAK_PREFER_BETA
 flatpak.default_remote  MIOS_FLATPAK_DEFAULT_REMOTE
 flatpak.default_scope  MIOS_FLATPAK_DEFAULT_SCOPE
