@@ -144,6 +144,32 @@ reveal_on = "focus"
 '''
 
 
+def refine(png, comp, scale):
+    """Sub-pixel disc geometry of one button blob: anti-aliased edges weighted by how far each pixel has moved from the
+    glass behind the button towards the button's own colour (a projection in RGB), along the blob's centre column and row.
+    Returns (cx, cy, x0, x1) in logical px."""
+    from PIL import Image
+    im = Image.open(png).convert('RGB')
+    W, H = im.size
+    x0, y0, x1, y1 = comp[:4]
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    core = im.getpixel((cx, cy))
+    def weight(p, bg):
+        d = [core[i] - bg[i] for i in range(3)]
+        n = sum(v * v for v in d) or 1
+        return max(0.0, min(1.0, sum((p[i] - bg[i]) * d[i] for i in range(3)) / n))
+    pad = 4
+    bg_v = im.getpixel((cx, max(0, y0 - pad)))
+    col = [(y, weight(im.getpixel((cx, y)), bg_v)) for y in range(max(0, y0 - pad), min(H, y1 + pad))]
+    wsum = sum(w for _, w in col) or 1
+    ccy = sum((y + 0.5) * w for y, w in col) / wsum
+    bg_h = im.getpixel((max(0, x0 - pad), cy))
+    row = [(x, weight(im.getpixel((x, cy)), bg_h)) for x in range(max(0, x0 - pad), min(W, x1 + pad))]
+    hsum = sum(w for _, w in row) or 1
+    ccx = sum((x + 0.5) * w for x, w in row) / hsum
+    return ccx / scale, ccy / scale, (ccx - hsum / 2) / scale, (ccx + hsum / 2) / scale
+
+
 def main():
     user = OUT / f'{LABEL}-user.toml'
     user.write_text(USER_TOML)
@@ -283,12 +309,12 @@ def main():
             c = next((c for c in clients() if c['address'] == win), None)
             if not c:
                 return None
+            # reveal_on = focus (the private user tier): the focused window's tab is raised without a pointer; park
+            # the pointer low inside the window so it is never captured over the row
             x, y = c['at']
-            pad = (bridge.get('hyprbars') or {}).get('bar_padding', 52)
-            ptr(x + W, y + H)    # leave, then re-enter (no enter event under a stationary pointer)
-            time.sleep(0.3)
-            ptr(x + pad + 20, max(1, y - 8))
-            time.sleep(1.2)
+            w, h = c['size']
+            ptr(x + w / 2, y + max(1, h - 12))
+            time.sleep(1.5)
             return c
 
         colours = {k: hexrgb(bridge[k]) for k in ('error', 'warning', 'success')}
@@ -297,25 +323,37 @@ def main():
             """The bar row: button centres (pixels), pill and island centres (layer geometry), gaps."""
             ly = layers()
             app = ipc('appmenu', 'state') or {}
-            top = ipc('topbar', 'state') or {}
+            top = ipc('mobile', 'state')   # island geometry: the "mobile" IPC state on mobile outputs ...
+            top = top if isinstance(top, dict) else {}
             row = {}
             band = (0, 0, int(W * scale / 2), int((bridge['shell']['edge_margin_px'] + bridge['shell']['top_height_px'] + 12) * scale))
-            b = blobs(png, colours, band, tol=90, min_px=int(20 * scale * scale))
+            b = blobs(png, colours, band, tol=75, min_px=int(12 * scale * scale))
+            size = ((bridge.get('hyprbars') or {}).get('buttons') or [16])[0] * scale
             btn = []
             for name in ('error', 'warning', 'success'):
-                if b.get(name):
-                    c = max(b[name], key=lambda t: t[4])
-                    btn.append({'name': name, 'x0': c[0] / scale, 'x1': c[2] / scale, 'cy': (c[1] + c[3]) / 2 / scale,
-                                'h': (c[3] - c[1]) / scale})
+                # a button: a round blob about the projected button size (not the tinted glass around it)
+                comps = [t for t in b.get(name, []) if 0.4 * size <= t[2] - t[0] <= 1.4 * size and 0.4 * size <= t[3] - t[1] <= 1.4 * size
+                         and 0.7 <= (t[2] - t[0]) / max(1, t[3] - t[1]) <= 1.4]   # round: never a text cursor block
+                if comps:
+                    c = max(comps, key=lambda t: t[4])
+                    cx, cy, bx0, bx1 = refine(png, c, scale)
+                    btn.append({'name': name, 'x0': round(bx0, 2), 'x1': round(bx1, 2), 'cx': round(cx, 2), 'cy': round(cy, 2),
+                                'blob': c[:4]})
             btn.sort(key=lambda t: t['x0'])
             row['buttons'] = btn
             if 'mios-appmenu' in ly:
                 x, y, w, h = ly['mios-appmenu']
                 row['pill'] = {'x': x, 'y': y, 'w': w, 'h': h, 'cy': y + h / 2}
             isl = (top.get('island') or {})
-            if 'mios-topbar' in ly and isl:
-                y = ly['mios-topbar'][1] + (isl.get('px') or {}).get('y', 0) * 0
-                row['island'] = {'y': ly['mios-topbar'][1], 'h': isl.get('height'), 'cy': ly['mios-topbar'][1] + (isl.get('height') or 0) / 2}
+            row['layers'] = ly
+            if 'mios-topbar' in ly and not isl.get('height'):
+                # ... the desktop island is its whole layer surface (anchored top, margins.top = the row's top)
+                x, y, w, h = ly['mios-topbar']
+                isl = {'top': y, 'height': h}
+            if isl.get('height'):
+                # the island is anchored at the surface top (islandTop = margins.top); ui = 1 on these outputs
+                row['island'] = {'y': isl.get('top'), 'h': isl['height'], 'cy': isl.get('top', 0) + isl['height'] / 2,
+                                 'layer': ly.get('mios-topbar')}
             row['tabs'] = app.get('tabs')
             row['row_left'] = app.get('row_left')
             metrics[label] = row
@@ -336,7 +374,9 @@ def main():
         check('bar row: buttons, app-menu pill and island share one vertical centre (<= 1 px at scale 1)',
               len(cys) >= 4 and max(cys) - min(cys) <= 1.0, [round(c, 2) for c in cys])
         bts = row.get('buttons', [])
-        gaps = [round(bts[i + 1]['x0'] - bts[i]['x1'], 2) for i in range(len(bts) - 1)]
+        # gap = centre pitch - the projected button size (anti-aliased disc edges make edge-to-edge read ~1 px wide)
+        bsize = ((bridge.get('hyprbars') or {}).get('buttons') or [0])[0]
+        gaps = [round(bts[i + 1]['cx'] - bts[i]['cx'] - bsize, 2) for i in range(len(bts) - 1)]
         check('bar row: gaps between window buttons equal the inset token', ins is not None and len(gaps) == 2 and all(abs(g - ins) <= 1.0 for g in gaps),
               {'gaps': gaps, 'inset_px': ins})
         # the tab's body edge: its published extent includes the fillet that flares into the window edge
@@ -384,16 +424,38 @@ def main():
         ipc('drawer', 'toggle')
         time.sleep(1.0)
 
+        # ---- standalone shell surfaces: the keymap overlay and the secret prompt (each its own Quickshell entry) ----
+        for name, entry, call in (('keymap', 'Keymap.qml', ('keymap', 'toggle')), ('secret-prompt', 'SecretPrompt.qml', None)):
+            f = str(QS_DIR / entry)
+            proc = subprocess.Popen(['bwrap', '--die-with-parent', '--bind', '/', '/', '--dev-bind', '/dev', '/dev',
+                                     '--ro-bind', str(d / 'input'), '/dev/input', '--', QS, '--path', f],
+                                    env=dict(shell_env, MIOS_SECRET_PROMPT_TITLE='Design fixture', MIOS_SECRET_PROMPT_MSG='Nothing is read.'),
+                                    stdout=open(OUT / f'{LABEL}-{name}.log', 'w'), stderr=subprocess.STDOUT)
+            time.sleep(4.0)
+            if call:
+                sh([QS, 'ipc', '--path', f, '--any-display', 'call', *call], env=shell_env)
+                time.sleep(1.5)
+            shot(name)
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            time.sleep(0.5)
+
         # ---- fullscreen + top edge reveal ---------------------------------------------------------------------------
         ev(f"hl.dispatch(hl.dsp.window.fullscreen({{mode='fullscreen', action='set', window='address:{A}'}}))")
         time.sleep(1.5)
         shot('fullscreen')
         ptr(W / 2, H / 2)
         time.sleep(0.3)
-        ptr(W / 4, 0)
+        ptr(W - 3, 0)
         time.sleep(1.5)
         p = shot('fullscreen-reveal')
-        measure_row(p, 'fullscreen_reveal')
+        fr = measure_row(p, 'fullscreen_reveal')
+        fcys = [t['cy'] for t in fr.get('buttons', [])] + [fr[k]['cy'] for k in ('pill', 'island') if k in fr]
+        check('bar row: over a fullscreen window the revealed row shares the inset controls tab centre (<= 1 px)',
+              len(fcys) >= 4 and max(fcys) - min(fcys) <= 1.0, [round(c, 2) for c in fcys])
         ev(f"hl.dispatch(hl.dsp.window.fullscreen({{mode='fullscreen', action='unset', window='address:{A}'}}))")
         ptr(W / 2, H / 2)
         time.sleep(1.0)
