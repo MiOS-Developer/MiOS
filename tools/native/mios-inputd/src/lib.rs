@@ -3,6 +3,7 @@
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod linux;
+pub mod nav;
 pub mod router;
 #[cfg(target_os = "linux")]
 pub mod runtime;

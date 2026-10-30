@@ -1,4 +1,4 @@
-// AI-hint: Linux evdev/uinput file-descriptor ownership, capability cloning and private fixture gate.
+// AI-hint: Linux evdev/uinput file-descriptor ownership, capability cloning, the virtual pointer and keyboard, and private fixture gates.
 // AI-related: docs.kernel.org/input/uinput.html, docs.kernel.org/input/event-codes.html
 use crate::config::VIRTUAL_PREFIX;
 use crate::router::{Axis, Event, EV_ABS, EV_KEY, EV_REL, EV_SYN, SYN_REPORT};
@@ -171,6 +171,10 @@ impl Device {
             grabbed: false,
         })
     }
+    /// The pad reports its triggers only as axes (xpad: ABS_Z/ABS_RZ, no BTN_TL2/BTN_TR2): nav synthesizes edges.
+    pub fn analog_triggers(&self) -> bool {
+        !self.keys.contains(&0x138) && !self.keys.contains(&0x139) && (self.abs.contains_key(&2) || self.abs.contains_key(&5))
+    }
     pub fn grab(&mut self) -> io::Result<()> {
         ioctl_int(self.file.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1)?;
         self.grabbed = true;
@@ -334,7 +338,22 @@ impl VirtualDevice {
             },
             &[0x110, 0x111],
             &BTreeMap::new(),
-            &[0, 1, 8],
+            // REL_X, REL_Y, REL_HWHEEL (C-11), REL_WHEEL.
+            &[0, 1, 6, 8],
+        )
+    }
+    /// C-07: the nav projection's virtual keyboard. udev classifies `mios-vctl-keyboard` as a keyboard (before the
+    /// `mios-vctl-*` catch-all that hides the virtual pads from libinput); the compositor pins it to the US layout.
+    pub fn keyboard() -> io::Result<Self> {
+        Self::keyboard_named(&format!("{VIRTUAL_PREFIX}-keyboard"))
+    }
+    fn keyboard_named(name: &str) -> io::Result<Self> {
+        Self::create(
+            name,
+            InputId { bustype: 6, vendor: 0, product: 0, version: 1 },
+            &crate::nav::keyboard_codes(),
+            &BTreeMap::new(),
+            &[],
         )
     }
     pub fn fixture() -> io::Result<Self> {
@@ -699,6 +718,45 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     )
 }
 
+/// C-07 proof without touching any session: create the bridge's virtual keyboard under a fixture name (still inside the
+/// `mios-vctl-*` libinput-ignored namespace), grab its event node exclusively before writing, project each `key:` chord
+/// as the bridge does, and report what an exclusive reader received.
+pub fn fixture_keys(chords: &[String]) -> Result<serde_json::Value, String> {
+    let parsed = chords.iter().map(|c| crate::nav::parse_key_chord(c.strip_prefix("key:").unwrap_or(c))).collect::<Result<Vec<_>, _>>()?;
+    let mut kbd = VirtualDevice::keyboard_named(&format!("{VIRTUAL_PREFIX}-fixture-keyboard")).map_err(|e| e.to_string())?;
+    let mut path = None;
+    for _ in 0..200 {
+        if let Ok(p) = kbd.event_path() {
+            path = Some(p);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let path = path.ok_or("fixture keyboard did not enumerate")?;
+    let mut reader = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(&path).map_err(|e| e.to_string())?;
+    ioctl_int(reader.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1).map_err(|e| format!("exclusive grab of the fixture keyboard: {e}"))?;
+    let rejected = Device::open(&path, false).err().is_some_and(|e| e.to_string().contains("replay loop"));
+    let mut strokes = vec![];
+    for chord in &parsed {
+        kbd.write(&crate::nav::stroke(chord)).map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let size = std::mem::size_of::<InputEvent>();
+        let mut bytes = vec![0u8; size * 64];
+        let n = match reader.read(&mut bytes) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(e) => return Err(e.to_string()),
+        };
+        let keys: Vec<(u16, i32)> = bytes[..n].chunks_exact(size).map(|b| {
+            // SAFETY: one complete kernel input_event per chunk.
+            let e = unsafe { std::ptr::read_unaligned(b.as_ptr().cast::<InputEvent>()) };
+            (e.kind, e.code, e.value)
+        }).filter(|(k, _, _)| *k == EV_KEY).map(|(_, c, v)| (c, v)).collect();
+        strokes.push(keys);
+    }
+    Ok(serde_json::json!({"keyboard": kbd.name, "path": path, "exclusive_reader": true, "rejected_by_discovery": rejected, "strokes": strokes}))
+}
+
 /// Only the parent fixture invokes this helper on its explicitly named virtual pad.
 pub fn fixture_grab(path: &Path) -> Result<(), String> {
     let mut device = Device::open(path, true).map_err(|e| e.to_string())?;
@@ -715,9 +773,10 @@ pub fn fixture_grab(path: &Path) -> Result<(), String> {
 /// destroys the device. Layouts differ by USB id and axis ranges only; both report the Linux gamepad codes
 /// (BTN_SOUTH..BTN_THUMBR, sticks ABS_X/Y/RX/RY, triggers ABS_Z/RZ, HAT0X/Y).
 pub fn fixture_pad(layout: &str) -> Result<(), String> {
-    let (vendor, product, trigger_max) = match layout {
-        "dualsense" => (0x054c, 0x0ce6, 255),
-        "xpad" => (0x045e, 0x028e, 255),
+    // xpad reports its triggers only as ABS_Z/ABS_RZ (no BTN_TL2/BTN_TR2); DualSense reports both.
+    let (vendor, product, trigger_max, digital_triggers) = match layout {
+        "dualsense" => (0x054c, 0x0ce6, 255, true),
+        "xpad" => (0x045e, 0x028e, 255, false),
         _ => return Err(format!("unknown fixture layout {layout} (dualsense, xpad)")),
     };
     let mut abs = BTreeMap::new();
@@ -730,7 +789,7 @@ pub fn fixture_pad(layout: &str) -> Result<(), String> {
     for code in [16u16, 17] {
         abs.insert(code, AbsInfo { minimum: -1, maximum: 1, ..AbsInfo::default() });
     }
-    let keys = (0x130..=0x13e).filter(|c| ![0x132, 0x135].contains(c)).collect::<Vec<_>>();
+    let keys = (0x130..=0x13e).filter(|c| ![0x132, 0x135].contains(c) && (digital_triggers || ![0x138, 0x139].contains(c))).collect::<Vec<_>>();
     let mut pad = VirtualDevice::create(
         &format!("mios-input-fixture-{layout}"),
         InputId { bustype: 3, vendor, product, version: 1 },

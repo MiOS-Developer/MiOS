@@ -148,8 +148,7 @@ enabled = true
 mod_key = "SUPER"
 bypass_mod = "SUPER+CTRL"            # host-escape modifier: reaches the host even while a VM owns the keyboard
 chord_sep = " "                      # separates the steps of a multi-step chord ("CTRL+x CTRL+b")
-action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline"]   # @drop:I2
-#@I2 action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline", "key", "pointer"]   # replaces the line above
+action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline", "key", "pointer"]   # replaces the line above
 # Chords the focused terminal owns (termios/Readline/job control); no host binding may shadow them there.
 # CTRL+b is the tmux prefix and CTRL+s is flow control. mios-inputd already reserves both (config.rs:328-336).
 reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e", "CTRL+k", "CTRL+u", "CTRL+w", "CTRL+r", "CTRL+l", "CTRL+b", "CTRL+s"]
@@ -379,7 +378,8 @@ capture_tag = "mios-input-captured"    # native per-window capture for windowed 
 release_tag = "mios-input-released"            # set by a held L3+R3 release; cancels fullscreen==2, capture_tag and
                                                # input_owner capture for that window (any kind) until North captures again
 capture_fullscreen_tag = "mios-input-fullscreen"  # marks a fullscreen the bridge set (North hold); release unsets it
-#@I2 capture_osd = true                  # notify on every capture/release: "Controller -> <app>. Hold L3+R3 to release."
+capture_osd = true                  # notify on every capture/release: "Controller -> <app>. Hold L3+R3 to release."
+capture_osd_argv = ["/usr/bin/notify-send", "-a", "MiOS Controller", "-e", "-t", "2500", "-h", "string:x-canonical-private-synchronous:mios-controller", "{message}"]
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
 context_stale_ms = 1000                # transport failure never invents terminal focus; an unconfirmed capture/release
                                        # reverts after this long (a failed ownership transaction reverts at once)
@@ -387,7 +387,7 @@ capture_hold_ms = 500                 # THE hold threshold: North tap/hold, L3+R
 guide_button = "BTN_MODE"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
-cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal"]
+cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough"]   # I2: every uncaptured window alike
 legacy_pad_state_path = "/tmp/mios-hypr3d-pad.bin"
 debounce_ms = 250                     # toggle_chord: both sticks within this window = one chord
 scan_ms = 2000                        # device scan; also how often serve re-checks seat/device access while idle
@@ -440,72 +440,75 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #   tmux: = commands for the tmux client in the focused terminal or VT on socket_name: key <k> (prefix-table key k),
 #   focus <dir> (falls through to hypr:movefocus at the window edge), page-up, page-down, session-prev, session-next,
 #   menu, keymap.
-#@I2 [keybindings.global.controller.nav]
-#@I2 enabled = true
-#@I2 flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
-#@I2 flick_off = 0.3                     # the stick must fall below this before it can flick again
-#@I2
-#@I2 # Context -> profile. A table merges per key, so a higher tier changes one context without restating the rest.
-#@I2 # "vpad" forwards the pad to the virtual gamepad instead (the behaviour before nav; operator decision O-1).
-#@I2 [keybindings.global.controller.nav.contexts]
-#@I2 desktop-2d = "desktop"
-#@I2 terminal = "terminal"               # terminal_tmux when a tmux client runs under the focused terminal, else terminal_plain
+[keybindings.global.controller.nav]
+enabled = true
+flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
+flick_off = 0.3                     # the stick must fall below this before it can flick again
+tmux_sockets = ["mios-human", "mios-nested"]   # I2: tmux servers whose clients select a *_tmux profile
+
+# Context -> profile. A table merges per key, so a higher tier changes one context without restating the rest.
+# "vpad" forwards the pad to the virtual gamepad instead (the behaviour before nav; operator decision O-1).
+[keybindings.global.controller.nav.contexts]
+desktop-2d = "desktop"
+terminal = "terminal"               # terminal_tmux when a tmux client runs under the focused terminal, else terminal_plain
+game = "desktop"                    # I2 (operator decision): a class never decides the controller; uncaptured = nav
+vm-passthrough = "desktop"
 #@I3 console = "console"                 # console_tmux when a tmux client is attached to the active VT, else console_plain
-#@I2
-#@I2 # input -> [delay_ms, rate_ms]. Inputs not listed never repeat. Hold actions never repeat.
-#@I2 [keybindings.global.controller.nav.repeat]
-#@I2 BTN_DPAD_UP = [400, 60]
-#@I2 BTN_DPAD_DOWN = [400, 60]
-#@I2 BTN_DPAD_LEFT = [400, 60]
-#@I2 BTN_DPAD_RIGHT = [400, 60]
-#@I2 BTN_TL2 = [500, 250]
-#@I2 BTN_TR2 = [500, 250]
-#@I2 LS_UP = [500, 250]                  # discrete actions only (VT paging); pointer: wheel is analog and ignores it
-#@I2 LS_DOWN = [500, 250]
-#@I2
-#@I2 [keybindings.global.controller.nav.desktop]
-#@I2 BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
-#@I2 BTN_EAST = ["key:ESC", "key:ALT+LEFT"]
-#@I2 BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
-#@I2 BTN_DPAD_UP = "key:UP"
-#@I2 BTN_DPAD_DOWN = "key:DOWN"
-#@I2 BTN_DPAD_LEFT = "key:LEFT"
-#@I2 BTN_DPAD_RIGHT = "key:RIGHT"
-#@I2 LS_UP = "pointer:wheel-up"
-#@I2 LS_DOWN = "pointer:wheel-down"
-#@I2 LS_LEFT = "pointer:hwheel-left"
-#@I2 LS_RIGHT = "pointer:hwheel-right"
-#@I2 RS_LEFT = "hypr:movefocus left"
-#@I2 RS_RIGHT = "hypr:movefocus right"
-#@I2 RS_UP = "hypr:movefocus up"
-#@I2 RS_DOWN = "hypr:movefocus down"
-#@I2 BTN_TL2 = "key:CTRL+SHIFT+TAB"
-#@I2 BTN_TR2 = "key:CTRL+TAB"
-#@I2 BTN_SELECT = ["key:COMPOSE", "quickshell:keymap-toggle"]
-#@I2 BTN_MODE = "quickshell:drawer-toggle"
-#@I2 BTN_THUMBL = "key:CTRL+t"
-#@I2 BTN_THUMBR = "key:CTRL+0"
-#@I2
-#@I2 [keybindings.global.controller.nav.terminal_tmux]
-#@I2 inherits = "desktop"
-#@I2 BTN_EAST = ["key:ESC", "key:CTRL+c"]
-#@I2 RS_LEFT = "tmux:focus left"
-#@I2 RS_RIGHT = "tmux:focus right"
-#@I2 RS_UP = "tmux:focus up"
-#@I2 RS_DOWN = "tmux:focus down"
-#@I2 BTN_TL2 = "tmux:key p"
-#@I2 BTN_TR2 = "tmux:key n"
-#@I2 BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
-#@I2 BTN_THUMBL = "tmux:key t"
-#@I2 BTN_THUMBR = "tmux:key f"
-#@I2
-#@I2 [keybindings.global.controller.nav.terminal_plain]
-#@I2 inherits = "desktop"
-#@I2 BTN_EAST = ["key:ESC", "key:CTRL+c"]
-#@I2 BTN_TL2 = "key:SHIFT+PAGEUP"
-#@I2 BTN_TR2 = "key:SHIFT+PAGEDOWN"
-#@I2 BTN_SELECT = ["none", "quickshell:keymap-toggle"]
-#@I2 BTN_THUMBL = "exec:mios-terminal"
+
+# input -> [delay_ms, rate_ms]. Inputs not listed never repeat. Hold actions never repeat.
+[keybindings.global.controller.nav.repeat]
+BTN_DPAD_UP = [400, 60]
+BTN_DPAD_DOWN = [400, 60]
+BTN_DPAD_LEFT = [400, 60]
+BTN_DPAD_RIGHT = [400, 60]
+BTN_TL2 = [500, 250]
+BTN_TR2 = [500, 250]
+LS_UP = [500, 250]                  # discrete actions only (VT paging); pointer: wheel is analog and ignores it
+LS_DOWN = [500, 250]
+
+[keybindings.global.controller.nav.desktop]
+BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
+BTN_EAST = ["key:ESC", "key:ALT+LEFT"]
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+BTN_DPAD_UP = "key:UP"
+BTN_DPAD_DOWN = "key:DOWN"
+BTN_DPAD_LEFT = "key:LEFT"
+BTN_DPAD_RIGHT = "key:RIGHT"
+LS_UP = "pointer:wheel-up"
+LS_DOWN = "pointer:wheel-down"
+LS_LEFT = "pointer:hwheel-left"
+LS_RIGHT = "pointer:hwheel-right"
+RS_LEFT = "hypr:movefocus left"
+RS_RIGHT = "hypr:movefocus right"
+RS_UP = "hypr:movefocus up"
+RS_DOWN = "hypr:movefocus down"
+BTN_TL2 = "key:CTRL+SHIFT+TAB"
+BTN_TR2 = "key:CTRL+TAB"
+BTN_SELECT = ["key:COMPOSE", "quickshell:keymap-toggle"]
+BTN_MODE = "quickshell:drawer-toggle"
+BTN_THUMBL = "key:CTRL+t"
+BTN_THUMBR = "key:CTRL+0"
+
+[keybindings.global.controller.nav.terminal_tmux]
+inherits = "desktop"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+RS_LEFT = "tmux:focus left"
+RS_RIGHT = "tmux:focus right"
+RS_UP = "tmux:focus up"
+RS_DOWN = "tmux:focus down"
+BTN_TL2 = "tmux:key p"
+BTN_TR2 = "tmux:key n"
+BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
+BTN_THUMBL = "tmux:key t"
+BTN_THUMBR = "tmux:key f"
+
+[keybindings.global.controller.nav.terminal_plain]
+inherits = "desktop"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+BTN_TL2 = "key:SHIFT+PAGEUP"
+BTN_TR2 = "key:SHIFT+PAGEDOWN"
+BTN_SELECT = ["none", "quickshell:keymap-toggle"]
+BTN_THUMBL = "exec:mios-terminal"
 #@I3
 #@I3 [keybindings.global.controller.nav.console_tmux]
 #@I3 inherits = "terminal_tmux"

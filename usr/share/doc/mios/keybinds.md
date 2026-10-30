@@ -74,8 +74,10 @@ app owns the input, or uncaptured, so MiOS owns it.**
   a tag-only capture or release changes the host chords at once. The keyboard projection
   does not read `release_tag` yet: a fullscreen you made yourself still counts as captured
   for the keyboard after a controller release [step G1].
-- **Notice.** Every capture and release shows "Controller -> <app>. Hold L3+R3 to
-  release." [step I2]
+- **Notice.** Every capture the compositor confirms shows "Controller -> <app>. Hold
+  L3+R3 to release.", and every release shows "Controller -> MiOS. <app> released."
+  (`capture_osd`, `capture_osd_argv`; the chord name follows `toggle_chord`). A focus
+  change or a refused capture shows nothing.
 - A VM client's own keyboard/mouse capture state stays owned by the client.
 - Before login, at a greeter, or while another user's session is active on the seat,
   MiOS synthesizes no input [step I3].
@@ -117,12 +119,14 @@ The same control means the same thing everywhere MiOS owns input:
 
 A tap fires when you release the button before 500 ms. A hold fires once at 500 ms and
 never repeats. An L3 or R3 click is ignored while its own stick is deflected, and an
-overlap of L3 and R3 cancels both single clicks [step I2].
+overlap of L3 and R3 cancels both single clicks. L3 and R3 act on release, because they
+might still become the L3+R3 chord.
 
 ### 3.1 Desktop
 
-Unless marked otherwise, every cell in the 2D, terminal and Cursor columns is [step I2].
-Today those inputs go to the virtual gamepad, and in cursor mode the buttons are dropped.
+Every uncaptured window navigates the same way, whatever its class: a game or VM window
+is an ordinary window until North captures it. The terminal profile depends on whether a
+MiOS tmux client runs in that terminal (a server listed in `nav.tmux_sockets`).
 
 | Input | 2D app | Terminal with tmux | Terminal without tmux | Cursor mode | Hypr3D room |
 |---|---|---|---|---|---|
@@ -165,8 +169,8 @@ sensors are not forwarded.
 | Start | app | back to full capture | system monitor | copy mode | none |
 | Guide tap | replayed to app | replayed to app | (modifier) | MiOS menu | none |
 | L3 / R3 | app | app | lock / VM passthrough latch | new tmux window / compact view | none |
-| L3+R3 tap | app | app | suppressed [step I2] | back to the graphical VT | back to the graphical VT |
-| L3+R3 hold | release capture | release capture | suppressed [step I2] | | |
+| L3+R3 tap | app | app | suppressed | back to the graphical VT | back to the graphical VT |
+| L3+R3 hold | release capture | release capture | suppressed | | |
 
 On a VT:
 - **Shift+Enter cannot be sent.** The console encodes it like Enter, so South has no hold there.
@@ -181,7 +185,7 @@ On a VT:
 |---|---|
 | `[keybindings.global.controller]` | Guide button, half-capture chord, cursor mode, capture keys, timing, pointer |
 | `[keybindings.global.controller.system_layer]` | Guide-held actions |
-| `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D, terminal and VT behavior [step I2/I3] |
+| `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D and terminal behavior (VT profiles [step I3]) |
 | `[keybindings.global.controller.room]` | room additions [step P1] |
 | `[desktop.hyprland.hypr3d.controller]` | room camera, movement, grab/resize, CRT, face buttons, toggle chord |
 
@@ -192,7 +196,7 @@ How a nav value is written:
 
 Profiles may say `inherits = "<profile>"`. Context-to-profile is a table, so a single
 line reverts one context. For example, `desktop-2d = "vpad"` sends the pad to the virtual
-gamepad in ordinary windows, as before step I2.
+gamepad in ordinary windows, as it did before navigation existed.
 
 Inputs: `BTN_*`, `BTN_DPAD_*`, `BTN_TL2`/`BTN_TR2`, `LS_*`/`RS_*` and `TOGGLE_CHORD`.
 
@@ -285,8 +289,15 @@ and built by the native build workflow (static-linkage policy).
 
 The user service runs `serve`. In bridge mode the daemon owns each physical gamepad
 evdev node (`exclusive_grab = true`) and forwards captured input through one `mios-vctl-*`
-virtual gamepad. The virtual pointer and the virtual keyboard [step I2] are separate
-devices. The daemon:
+virtual gamepad. The virtual pointer (`mios-vctl-pointer`, with both wheels) and the
+virtual keyboard (`mios-vctl-keyboard`) are separate devices. udev classifies the keyboard
+as a keyboard before the `mios-vctl-*` rule that hides the virtual pads from libinput.
+Every `key:` action is one atomic stroke (modifiers, key, release), so no virtual key is
+ever left held. The strokes are US key codes; the compositor pins the device to the US
+layout once mios-gen emits its per-device rule [step G1], and until then a non-US session
+layout reinterprets them. `tmux:` actions run against the tmux client found under the focused
+terminal (by `/proc`, with no process spawned per focus change), on that client's own
+server socket. The daemon:
 - excludes its own outputs from discovery;
 - rejects a duplicate bridge;
 - releases held keys and timers on any change of context, profile or owner, on a Guide

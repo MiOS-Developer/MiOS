@@ -3249,6 +3249,16 @@
         <label>Bridge-fullscreen tag (North hold; a release unsets only this fullscreen) <input data-key="keybindings.global.controller.capture_fullscreen_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
         <label>Unconfirmed capture/release timeout (ms) <input data-key="keybindings.global.controller.context_stale_ms" data-type="int" type="number" min="1" max="10000"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
+        <label>Capture notice (Controller -> app; hold L3+R3 to release) <input data-key="keybindings.global.controller.capture_osd" type="checkbox"></label>
+        <label>Capture notice command (argv; {message} is replaced) <textarea data-key="keybindings.global.controller.capture_osd_argv" data-type="json-array"></textarea></label>
+        <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <label>Right-stick flick threshold <input data-key="keybindings.global.controller.nav.flick_on" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
+        <label>Right-stick re-arm threshold <input data-key="keybindings.global.controller.nav.flick_off" data-type="float" type="number" min="0" max="0.95" step="0.05"></label>
+        <label>tmux servers driven by the controller (-L names) <textarea data-key="keybindings.global.controller.nav.tmux_sockets" data-type="json-array"></textarea></label>
+        <label>Ordinary windows: nav profile ("vpad" = raw gamepad) <input data-key="keybindings.global.controller.nav.contexts.desktop-2d" type="text"></label>
+        <label>Terminals: nav profile (terminal = terminal_tmux / terminal_plain) <input data-key="keybindings.global.controller.nav.contexts.terminal" type="text"></label>
+        <label>Game-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.game" type="text"></label>
+        <label>VM/remote-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.vm-passthrough" type="text"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>
         <label>Guide + BTN_TL action <input data-key="keybindings.global.controller.system_layer.BTN_TL" type="text"></label>

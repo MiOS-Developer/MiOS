@@ -171,7 +171,7 @@ for _,d in ipairs(D) do print('DISPATCH '..d.kind..' '..tostring(d.v)) end
 
     def test_c02_release_tags_and_unsets_only_a_bridge_fullscreen(self):
         result, d = self.lua(self.window_lua('off'), self.W_BRIDGE_FS)
-        self.assertEqual(result, 'RESULT MIOS_INPUT_WINDOW_OK:0xabc')
+        self.assertEqual(result, 'RESULT MIOS_INPUT_WINDOW_OK:0xabc steam_app_570', 'the marker carries the captured class (the C-32 OSD names it)')
         self.assertEqual(d, ['tag -mios-input-captured', 'tag +mios-input-released', 'tag -mios-input-fullscreen', 'fullscreen unset'])
         result, d = self.lua(self.window_lua('off'), self.W_USER_FS)
         self.assertEqual(d, ['tag -mios-input-captured', 'tag +mios-input-released'], 'a Super+F11 fullscreen is never undone by a release')

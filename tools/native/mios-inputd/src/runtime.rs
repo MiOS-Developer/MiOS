@@ -1,4 +1,4 @@
-// AI-hint: Native controller service, bounded compositor IPC and named action dispatch.
+// AI-hint: Native controller service, bounded compositor IPC, named action dispatch, the virtual keyboard/tmux/OSD projections and /proc tmux client discovery.
 // AI-related: keybindings.global, desktop.hyprland.hypr3d.controller, mios-inputd.service
 use crate::config::{GlobalConfig, LegacyConfig};
 use crate::linux::{self, Device, VirtualDevice};
@@ -22,8 +22,9 @@ pub struct Options {
     pub context: Option<String>,
     pub duration: Option<Duration>,
     pub pad_path: PathBuf,
-    /// Fixture tier only: follow the selected compositor (HYPRLAND_INSTANCE_SIGNATURE, e.g. an owned nested session)
-    /// and run its ownership transactions there. Every other action stays printed and is never executed.
+    /// Fixture tier only: follow the selected compositor (HYPRLAND_INSTANCE_SIGNATURE, e.g. an owned nested session),
+    /// run its ownership transactions there and project nav output (key:, hypr:, tmux:) into it. quickshell:, exec: and
+    /// mios: actions stay printed and are never executed; no uinput keyboard or pointer is created.
     pub live_context: bool,
     /// Write the room packet. The physical bridge always does; a fixture only to an explicit private path.
     pub write_pad: bool,
@@ -68,6 +69,105 @@ pub(crate) fn ipc(request: &str) -> Result<String, String> {
 pub struct ContextSnapshot {
     pub name: String, pub address: Option<String>, pub pid: Option<u64>,
     pub room_capture: bool, pub released: bool, sampled: Instant,
+    pub class: Option<String>,
+    /// C-09: the MiOS tmux client running under the focused terminal, if any.
+    pub tmux_client: Option<TmuxClient>,
+}
+/// A tmux client found under the focused window's process tree, by /proc alone (no spawn per focus change).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct TmuxClient {
+    pub pid: u32,
+    /// The client's tty: the `-c target-client` name.
+    pub tty: String,
+    /// The server socket (TMUX_TMPDIR, -L or -S resolved), so a verb reaches exactly the server that client uses.
+    pub socket: PathBuf,
+}
+fn proc_parent(stat: &str) -> Option<u32> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+/// C-09: the first tmux client below `pid` whose server socket name is one of `sockets`.
+pub fn tmux_client_under(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> Option<TmuxClient> {
+    let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for entry in std::fs::read_dir(proc_root).ok()?.filter_map(Result::ok) {
+        let Some(child) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if let Some(parent) = std::fs::read_to_string(entry.path().join("stat")).ok().as_deref().and_then(proc_parent) {
+            children.entry(parent).or_default().push(child);
+        }
+    }
+    let mut queue = std::collections::VecDeque::from([(pid, 0u8)]);
+    let mut visited = 0;
+    while let Some((p, depth)) = queue.pop_front() {
+        visited += 1;
+        if visited > 4096 {
+            break;
+        }
+        if p != pid {
+            if let Some(c) = tmux_client_at(proc_root, p, sockets, uid) {
+                return Some(c);
+            }
+        }
+        if depth < 8 {
+            for c in children.get(&p).into_iter().flatten() {
+                queue.push_back((*c, depth + 1));
+            }
+        }
+    }
+    None
+}
+fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> Option<TmuxClient> {
+    let dir = proc_root.join(pid.to_string());
+    let cmdline = std::fs::read(dir.join("cmdline")).ok()?;
+    let args: Vec<String> = cmdline.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    if Path::new(args.first()?).file_name()?.to_str()? != "tmux" {
+        return None;
+    }
+    let comm = std::fs::read_to_string(dir.join("comm")).unwrap_or_default();
+    if comm.trim().ends_with("server") {
+        return None;
+    }
+    let (mut name, mut path) = ("default".to_owned(), None);
+    let mut i = 1;
+    while i < args.len() {
+        let a = &args[i];
+        if !a.starts_with('-') || a == "--" {
+            break;
+        }
+        for (flag, slot) in [("-L", 0), ("-S", 1)] {
+            if let Some(v) = a.strip_prefix(flag) {
+                let v = if v.is_empty() { i += 1; args.get(i).cloned().unwrap_or_default() } else { v.to_owned() };
+                if slot == 0 { name = v } else { path = Some(PathBuf::from(v)) }
+            }
+        }
+        if a == "-f" || a == "-c" || a == "-T" {
+            i += 1;
+        }
+        i += 1;
+    }
+    let socket = match path {
+        Some(p) => {
+            name = p.file_name()?.to_str()?.to_owned();
+            p
+        }
+        None => {
+            let env = std::fs::read(dir.join("environ")).unwrap_or_default();
+            let tmpdir = env.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"TMUX_TMPDIR=")).map(|v| String::from_utf8_lossy(v).into_owned())
+                .filter(|v| !v.is_empty()).unwrap_or_else(|| "/tmp".into());
+            Path::new(&tmpdir).join(format!("tmux-{uid}")).join(&name)
+        }
+    };
+    if !sockets.contains(&name) {
+        return None;
+    }
+    use std::os::unix::fs::FileTypeExt;
+    if !std::fs::metadata(&socket).ok()?.file_type().is_socket() {
+        return None;
+    }
+    let tty = std::fs::read_link(dir.join("fd/0")).ok()?.to_str()?.to_owned();
+    if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
+        return None;
+    }
+    Some(TmuxClient { pid, tty, socket })
 }
 fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
     let class=v.get("class").and_then(|v|v.as_str()).filter(|s|!s.is_empty());
@@ -77,7 +177,13 @@ fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
         address:v.get("address").and_then(|v|v.as_str()).filter(|s|!s.is_empty()).map(str::to_owned),
         pid:v.get("pid").and_then(|v|v.as_u64()).filter(|p|*p>0),
         room_capture:captured && (room || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),
-        released:v.get("released").and_then(|v|v.as_bool()).unwrap_or(false),sampled:Instant::now()}
+        released:v.get("released").and_then(|v|v.as_bool()).unwrap_or(false),sampled:Instant::now(),
+        class:class.map(str::to_owned),tmux_client:None}
+}
+/// Whether this context's nav mapping chooses between `<name>_tmux` and `<name>_plain`, so discovery is worth a scan.
+fn wants_tmux(cfg:&GlobalConfig,context:&str) -> bool {
+    let nav=&cfg.controller.nav;
+    nav.enabled && nav.contexts.get(context).is_some_and(|p| !nav.profiles.contains_key(p) && nav.profiles.contains_key(&format!("{p}_tmux")))
 }
 /// The capture predicate (INV-4), identical for every window kind: fullscreen==2 (when capture_fullscreen),
 /// capture_tag or the room's input_owner capture a window, and release_tag cancels all three. When the generated
@@ -149,16 +255,143 @@ else
 end
 local okp,policy=pcall(function() return MIOS_INPUT_POLICY end)
 if okp and type(policy)=='table' and type(policy.refresh)=='function' then pcall(policy.refresh) end
-error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or ''),0)"#,
+error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or '')..' '..tostring(target and target.class or ''),0)"#,
         mode=s(mode),cap=s(&c.capture_tag),rel=s(&c.release_tag),fs=s(&c.capture_fullscreen_tag),expect=s(expect.unwrap_or(""))))
 }
-/// Run one ownership transaction against the selected compositor; Ok(address) only on the success marker.
-pub fn window_transaction(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<String,String> {
+/// Run one ownership transaction against the selected compositor; Ok((address, class)) only on the success marker.
+pub fn window_transaction(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<(String,String),String> {
     let reply=ipc(&format!("/eval {}",window_lua(mode,cfg,expect)?))?;
     match reply.split_once("MIOS_INPUT_WINDOW_OK:") {
-        Some((_,addr)) => Ok(addr.lines().next().unwrap_or("").trim().to_owned()),
+        Some((_,rest)) => {
+            let line=rest.lines().next().unwrap_or("").trim();
+            let (addr,class)=line.split_once(' ').unwrap_or((line,""));
+            Ok((addr.to_owned(),class.trim().to_owned()))
+        }
         None => Err(reply.trim().chars().take(400).collect()),
     }
+}
+/// C-32: the capture OSD text. The release chord is named from toggle_chord, so a remap never shows a stale label.
+pub fn osd_message(mode: &str, class: &str, toggle_chord: &[String]) -> String {
+    let chord=toggle_chord.iter().map(|b| match b.as_str() {"BTN_THUMBL"=>"L3".to_owned(),"BTN_THUMBR"=>"R3".to_owned(),
+        o=>o.trim_start_matches("BTN_").to_owned()}).collect::<Vec<_>>().join("+");
+    let app=if class.is_empty() {"the focused window"} else {class};
+    if mode=="off" { format!("Controller -> MiOS. {app} released.") } else { format!("Controller -> {app}. Hold {chord} to release.") }
+}
+/// Run a short-lived helper with a hard deadline; its stdout (bounded) is the result.
+fn run_bounded(argv: &[String], timeout: Duration) -> Result<String,String> {
+    let (program,rest)=argv.split_first().ok_or("empty argv")?;
+    // TMUX/TMUX_PANE would make the tmux CLI resolve "current" against the caller's own pane, never the target client.
+    let mut child=Command::new(program).args(rest).env_remove("TMUX").env_remove("TMUX_PANE").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;
+    let deadline=Instant::now()+timeout;
+    loop {
+        if let Some(status)=child.try_wait().map_err(|e|e.to_string())? {
+            let mut out=String::new();
+            if let Some(s)=child.stdout.take() { let _=s.take(1<<16).read_to_string(&mut out); }
+            return if status.success() {Ok(out)} else {Err(format!("{program} exited {status}"))};
+        }
+        if Instant::now()>=deadline { let _=child.kill(); let _=child.wait(); return Err(format!("{program} timed out")); }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+/// C-30: argv of a tmux verb that needs no reply, against the exact server and client discovery found.
+pub fn tmux_argv(cfg: &GlobalConfig, client: &TmuxClient, verb: &str) -> Result<Vec<String>,String> {
+    crate::nav::validate_tmux(verb,&cfg.tmux_prefix_keys)?;
+    let base=|rest:&[&str]| -> Vec<String> {
+        ["/usr/bin/tmux","-S"].into_iter().map(str::to_owned).chain([client.socket.to_string_lossy().into_owned()])
+            .chain(rest.iter().map(|s|(*s).to_owned())).collect()
+    };
+    let words:Vec<_>=verb.split_whitespace().collect();
+    Ok(match words.as_slice() {
+        ["key",k] => base(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]),
+        ["session-prev"] => base(&["switch-client","-c",&client.tty,"-p"]),
+        ["session-next"] => base(&["switch-client","-c",&client.tty,"-n"]),
+        ["focus",d] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,&format!("#{{pane_at_{d}}}")]),
+        ["page-up"] | ["page-down"] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,"#{pane_id} #{pane_in_mode}"]),
+        _ => return Err(format!("tmux:{verb} has no runtime projection yet (U1 menu alias / I3 keymap popup)")),
+    })
+}
+/// Run a tmux verb (C-30), including the two-step ones: `focus` falls through to the compositor at the pane edge.
+fn run_tmux(cfg: &GlobalConfig, client: &TmuxClient, verb: &str) -> Result<Vec<String>,String> {
+    let t=Duration::from_millis(1000);
+    let argv=tmux_argv(cfg,client,verb)?;
+    let words:Vec<_>=verb.split_whitespace().collect();
+    let mut ran=vec![argv[3..].join(" ")];
+    let sock=client.socket.to_string_lossy().into_owned();
+    let tmux=|rest:&[&str]| -> Vec<String> { ["/usr/bin/tmux","-S",&sock].into_iter().map(str::to_owned).chain(rest.iter().map(|s|(*s).to_owned())).collect() };
+    match words.as_slice() {
+        ["focus",d] => {
+            let edge=run_bounded(&argv,t)?.trim()=="1";
+            if edge {
+                let lua=command_for(&format!("hypr:movefocus {d}"))?.remove(2);
+                let reply=ipc(&format!("/eval {lua}"))?;
+                ran.push(format!("hypr:movefocus {d} -> {}",reply.trim()));
+            } else {
+                let k=match *d {"left"=>"h","down"=>"j","up"=>"k",_=>"l"};
+                let step=tmux(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]);
+                run_bounded(&step,t)?;
+                ran.push(step[3..].join(" "));
+            }
+        }
+        ["page-up"] | ["page-down"] => {
+            let out=run_bounded(&argv,t)?;
+            let mut it=out.split_whitespace();
+            let (pane,mode)=(it.next().unwrap_or("").to_owned(),it.next()==Some("1"));
+            if !pane.starts_with('%') { return Err("tmux did not report the client's pane".into()); }
+            let step=if words[0]=="page-up" { tmux(&["copy-mode","-eu","-t",&pane]) } else if mode { tmux(&["send-keys","-t",&pane,"-X","page-down"]) } else { return Ok(ran) };
+            run_bounded(&step,t)?;
+            ran.push(step[3..].join(" "));
+        }
+        _ => { run_bounded(&argv,t)?; }
+    }
+    Ok(ran)
+}
+/// Jobs that must not block the forwarding loop: tmux verbs, the capture OSD, and (fixture tier with --live-context)
+/// the compositor projections of key: and hypr: into the followed (nested) compositor.
+enum Job {
+    Tmux { verb: String, client: TmuxClient },
+    Lua { action: String, lua: String },
+}
+struct ActionWorker {
+    jobs: Option<std::sync::mpsc::SyncSender<Job>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl ActionWorker {
+    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self,String> {
+        let (jobs,inbox)=std::sync::mpsc::sync_channel::<Job>(16);
+        let worker=std::thread::Builder::new().name("mios-actions".into()).spawn(move || {
+            while let Ok(job)=inbox.recv() {
+                let cfg=match policy.lock() { Ok(c)=>c.clone(), Err(_)=>break };
+                match job {
+                    Job::Tmux{verb,client} => {
+                        let r=run_tmux(&cfg,&client,&verb);
+                        eprintln!("{}",serde_json::json!({"tmux":verb,"client":client.tty,"ok":r.is_ok(),"ran":r.as_ref().ok(),"error":r.as_ref().err()}));
+                    }
+                    Job::Lua{action,lua} => {
+                        let r=ipc(&format!("/eval {lua}"));
+                        eprintln!("{}",serde_json::json!({"projected":action,"ok":r.as_ref().is_ok_and(|v|v.trim()=="ok"),"reply":r.as_ref().map(|v|v.trim().chars().take(200).collect::<String>()).unwrap_or_else(|e|e.clone())}));
+                    }
+                }
+            }
+        }).map_err(|e|e.to_string())?;
+        Ok(Self{jobs:Some(jobs),worker:Some(worker)})
+    }
+    fn submit(&self, job: Job) -> bool {
+        self.jobs.as_ref().is_some_and(|j| j.try_send(job).is_ok())
+    }
+}
+impl Drop for ActionWorker {
+    fn drop(&mut self) {
+        self.jobs=None;
+        if let Some(w)=self.worker.take() { let _=w.join(); }
+    }
+}
+/// The compositor projection of one key: stroke (a nested session's focused window): down then up.
+fn key_lua(chord: &crate::nav::KeyChord, window: &str) -> String {
+    let (sym,mods)=crate::nav::keysym(chord);
+    let q=|v:&str| serde_json::to_string(v).unwrap();
+    let w=q(&format!("address:{window}"));
+    format!("hl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='down',window={w}}}))\nhl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='up',window={w}}}))",
+        m=q(&mods),k=q(&sym))
 }
 fn event_socket() -> Option<UnixStream> {
     let rt=std::env::var_os("XDG_RUNTIME_DIR")?;
@@ -299,32 +532,42 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
 }
 /// Ownership transactions run off the forwarding loop; their result reverts a pending capture/release at once when the
 /// compositor refused it (C-03), instead of leaving the app or the room holding the pad.
+type OwnershipRequest = (u64, String, Option<String>, Vec<String>);
 struct OwnershipWorker {
-    requests: Option<std::sync::mpsc::Sender<(u64, String, Option<String>)>>,
+    requests: Option<std::sync::mpsc::Sender<OwnershipRequest>>,
     results: std::sync::mpsc::Receiver<(u64, String, Result<String, String>)>,
     last: u64,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl OwnershipWorker {
     fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
-        let (requests, inbox) = std::sync::mpsc::channel::<(u64, String, Option<String>)>();
+        let (requests, inbox) = std::sync::mpsc::channel::<OwnershipRequest>();
         let (outbox, results) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new().name("mios-ownership".into()).spawn(move || {
-            while let Ok((seq, mode, expect)) = inbox.recv() {
+            while let Ok((seq, mode, expect, toggle)) = inbox.recv() {
                 let cfg = policy.lock().map(|c| c.clone());
-                let result = match cfg {
-                    Ok(cfg) => window_transaction(&mode, &cfg, expect.as_deref()),
+                let result = match &cfg {
+                    Ok(cfg) => window_transaction(&mode, cfg, expect.as_deref()),
                     Err(_) => Err("ownership policy lock failed".into()),
                 };
-                if outbox.send((seq, mode, result)).is_err() { break; }
+                // C-32: one notice per confirmed capture or release, never for a refused transaction or a focus change.
+                if let (Ok(cfg), Ok((_, class))) = (&cfg, &result) {
+                    if cfg.controller.capture_osd {
+                        let message = osd_message(&mode, class, &toggle);
+                        let argv: Vec<String> = cfg.controller.capture_osd_argv.iter().map(|a| a.replace("{message}", &message)).collect();
+                        let r = run_bounded(&argv, Duration::from_millis(2000));
+                        eprintln!("{}", serde_json::json!({"osd": message, "mode": mode, "ok": r.is_ok(), "error": r.err()}));
+                    }
+                }
+                if outbox.send((seq, mode, result.map(|(a, _)| a))).is_err() { break; }
             }
         }).map_err(|e| e.to_string())?;
         Ok(Self { requests: Some(requests), results, last: 0, worker: Some(worker) })
     }
-    fn submit(&mut self, mode: &str, expect: Option<String>) -> Result<(), String> {
+    fn submit(&mut self, mode: &str, expect: Option<String>, toggle: Vec<String>) -> Result<(), String> {
         self.last += 1;
         self.requests.as_ref().ok_or("ownership worker stopped")?
-            .send((self.last, mode.into(), expect)).map_err(|_| "ownership worker stopped".to_string())
+            .send((self.last, mode.into(), expect, toggle)).map_err(|_| "ownership worker stopped".to_string())
     }
 }
 impl Drop for OwnershipWorker {
@@ -335,10 +578,15 @@ impl Drop for OwnershipWorker {
 }
 struct Sinks {
     pointer: Option<VirtualDevice>,
+    keyboard: Option<VirtualDevice>,
     children: Vec<(Instant, Child)>,
     ownership: Option<OwnershipWorker>,
+    actions: Option<ActionWorker>,
     bridge: bool,
     execute_actions: bool,
+    /// Fixture tier with --live-context: project nav output (key:, hypr:, tmux:) into the followed compositor
+    /// instead of the uinput keyboard; quickshell:, exec: and mios: stay printed.
+    project: bool,
 }
 /// Returns the ownership change this output requested (`input:window on|fullscreen` = true, `off` = false), which the
 /// caller applies to every other controller of the session.
@@ -364,8 +612,35 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
         if let Some(mode) = action.strip_prefix("input:window ") {
             ownership = Some(mode != "off");
             if let Some(worker) = &mut sinks.ownership {
-                worker.submit(mode, focus.address.clone())?;
+                worker.submit(mode, focus.address.clone(), device.router.legacy_toggle_chord())?;
                 submitted = true;
+            }
+        } else if let Some(chord) = action.strip_prefix("key:") {
+            // C-07: an atomic stroke on the mios-vctl-keyboard virtual keyboard (US layout), or, on the fixture tier
+            // following a nested compositor, the same keysym sent to its focused window.
+            let chord = crate::nav::parse_key_chord(chord)?;
+            if sinks.execute_actions {
+                if sinks.keyboard.is_none() {
+                    sinks.keyboard = Some(VirtualDevice::keyboard().map_err(|e| e.to_string())?);
+                }
+                sinks.keyboard.as_mut().unwrap().write(&crate::nav::stroke(&chord)).map_err(|e| e.to_string())?;
+                submitted = true;
+            } else if sinks.project {
+                if let (Some(worker), Some(window)) = (&sinks.actions, &focus.address) {
+                    submitted = worker.submit(Job::Lua { action: action.clone(), lua: key_lua(&chord, window) });
+                }
+            }
+        } else if let Some(verb) = action.strip_prefix("tmux:") {
+            // C-30: only against the tmux client discovery found; without one the *_plain profile is active.
+            if sinks.execute_actions || sinks.project {
+                if let (Some(worker), Some(client)) = (&sinks.actions, &focus.tmux_client) {
+                    submitted = worker.submit(Job::Tmux { verb: verb.into(), client: client.clone() });
+                }
+            }
+        } else if sinks.project && action.starts_with("hypr:") {
+            if let Some(worker) = &sinks.actions {
+                let lua = configured_command(&action, device.router.policy())?.remove(2);
+                submitted = worker.submit(Job::Lua { action: action.clone(), lua });
             }
         } else if sinks.execute_actions {
             let args = configured_command(&action, device.router.policy())?;
@@ -443,7 +718,8 @@ fn discovery_worker(
                 if identity.is_some_and(|id|rejected.get(&path)==Some(&id)||sent.get(&path)==Some(&id)) {continue;}
                 match Device::open(&path,fixture_only) {
                     Ok(device)=> {if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}}
-                    Err(e)=> {if explicit.is_some() {let _=sender.try_send(Err(e.to_string()));return;}if let Some(id)=identity {rejected.insert(path,id);}}
+                    Err(e)=> {if explicit.is_some() {let _=sender.try_send(Err(e.to_string()));return;}
+                        if let Some(id)=identity {rejected.insert(path,id);}}
                 }
             }
             let delay=Duration::from_millis(policy.lock().unwrap().controller.scan_ms);
@@ -605,25 +881,42 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let mut scan = start - Duration::from_secs(2);
     let mut last_tick = start;
     let mut last_reconcile = start;
-    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false, released:false, sampled:Instant::now() };
+    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false, released:false, sampled:Instant::now(), class:None, tmux_client:None };
     let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
     let mut sinks = Sinks {
         pointer: None,
         children: vec![],
         ownership: if follow && opt.bridge { Some(OwnershipWorker::spawn(shared_policy.clone())?) } else { None },
+        actions: if opt.bridge && (!opt.fixture_only || opt.live_context) { Some(ActionWorker::spawn(shared_policy.clone())?) } else { None },
+        keyboard: None,
         bridge: opt.bridge,
         execute_actions: opt.bridge && !opt.fixture_only,
+        project: opt.bridge && opt.fixture_only && opt.live_context,
     };
     let context_stop=std::sync::Arc::new(AtomicBool::new(false));
     let context_worker=if follow {
         let cache=shared_focus.clone(); let policy=shared_policy.clone(); let stop=context_stop.clone();
         Some(std::thread::spawn(move || {
             let mut events=event_socket();
+            // SAFETY: getuid has no memory/ownership effects.
+            let uid=unsafe{libc::getuid()};
+            let mut tmux_cache:Option<(u64,Instant,Option<TmuxClient>)>=None;
             while !stop.load(Ordering::Relaxed) {
                 let cfg=policy.lock().unwrap().clone();
                 // A failed IPC read never invents terminal focus or resets held input.
-                if let Ok(snapshot)=context(&cfg) { *cache.lock().unwrap()=snapshot; }
+                if let Ok(mut snapshot)=context(&cfg) {
+                    // C-09: /proc only, at most once a second per focused terminal (tmux may start inside it later).
+                    if let (Some(pid),true)=(snapshot.pid,wants_tmux(&cfg,&snapshot.name)) {
+                        let fresh=tmux_cache.as_ref().is_some_and(|(p,t,_)| *p==pid && t.elapsed()<Duration::from_millis(1000));
+                        if !fresh {
+                            let found=u32::try_from(pid).ok().and_then(|p| tmux_client_under(Path::new("/proc"),p,&cfg.controller.nav.tmux_sockets,uid));
+                            tmux_cache=Some((pid,Instant::now(),found));
+                        }
+                        snapshot.tmux_client=tmux_cache.as_ref().and_then(|(_,_,c)|c.clone());
+                    }
+                    *cache.lock().unwrap()=snapshot;
+                }
                 wait_context_event(&mut events,cfg.controller.context_poll_ms);
             }
         }))
@@ -661,6 +954,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     dev.device.snapshot().map_err(|e| e.to_string())?.1,
                                 );
                                 dev.router.pad.sequences = seq;
+                                dev.router.analog_triggers = dev.device.analog_triggers();
+                                dev.router.tmux = focus.tmux_client.is_some();
                                 dev.router.set_context(&ctx);
                                 let (keys, axes) =
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
@@ -687,6 +982,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     let mut router =
                         Router::new(global.clone(), legacy.clone(), device.axes.clone());
                     router.pad.sequences = seed.sequences;
+                    router.analog_triggers = device.analog_triggers();
+                    router.tmux = focus.tmux_client.is_some();
                     router.set_context(&ctx);
                     if let Ok((keys, axes)) = device.snapshot() {
                         router.resync(keys, axes);
@@ -729,7 +1026,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
                 let target=focus.address.clone().zip(focus.pid);
-                let transition = dev.router.set_focus(&ctx,target,focus.room_capture);
+                let mut transition = dev.router.set_tmux(focus.tmux_client.is_some());
+                transition.extend(dev.router.set_focus(&ctx,target,focus.room_capture));
                 emit(transition, dev, &mut sinks, &focus)?;
                 match dev.device.read_events() {
                     Ok(events) => {
@@ -915,6 +1213,8 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
         .unwrap_or_else(|| command_for(action))
 }
 pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
+    let probe = TmuxClient { pid: 0, tty: "/dev/pts/0".into(), socket: PathBuf::from("/tmp/probe") };
+    let nav = global.controller.nav.actions();
     global
         .controller
         .system_layer
@@ -926,7 +1226,14 @@ pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
                 .filter(|b| b.scope == "host" && b.chord.starts_with("BTN_"))
                 .map(|b| &b.action),
         )
-        .filter(|a| configured_command(a, global).is_err())
+        .chain(nav.iter())
+        .filter(|a| match a.split_once(':').map_or("", |(n, _)| n) {
+            _ if a.as_str() == "none" => false,
+            "key" => crate::nav::parse_key_chord(&a[4..]).is_err(),
+            "pointer" => false,
+            "tmux" => tmux_argv(global, &probe, &a[5..]).is_err(),
+            _ => configured_command(a, global).is_err(),
+        })
         .cloned()
         .collect()
 }
@@ -1013,6 +1320,70 @@ mod tests {
         assert!(off.contains("pcall(policy.refresh)"),"the keyboard policy re-reads the tags in the same transaction");
         assert!(window_lua("toggle",&cfg,None).is_err());
         assert_eq!(configured_command("input:window off",&cfg).unwrap()[2],off);
+    }
+    fn fake_proc(t: &Path, pid: u32, ppid: u32, comm: &str, argv: &[&str], env: &str, tty: &str) {
+        let d = t.join(pid.to_string());
+        std::fs::create_dir_all(d.join("fd")).unwrap();
+        std::fs::write(d.join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0")).unwrap();
+        std::fs::write(d.join("comm"), format!("{comm}\n")).unwrap();
+        std::fs::write(d.join("cmdline"), argv.iter().map(|a| format!("{a}\0")).collect::<String>()).unwrap();
+        std::fs::write(d.join("environ"), env).unwrap();
+        if !tty.is_empty() { std::os::unix::fs::symlink(tty, d.join("fd/0")).unwrap(); }
+    }
+    #[test]
+    fn tmux_client_discovery_reads_proc_and_honours_the_socket_list() {
+        let t = std::env::temp_dir().join(format!("mios-inputd-proc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let sockdir = t.join("sock/tmux-1000");
+        std::fs::create_dir_all(&sockdir).unwrap();
+        let _human = std::os::unix::net::UnixListener::bind(sockdir.join("mios-human")).unwrap();
+        let _other = std::os::unix::net::UnixListener::bind(sockdir.join("scratch")).unwrap();
+        let tmpdir = format!("TMUX_TMPDIR={}\0", t.join("sock").display());
+        let proc_root = t.join("proc");
+        fake_proc(&proc_root, 100, 1, "alacritty", &["alacritty"], "", "");
+        fake_proc(&proc_root, 101, 100, "mios-terminal", &["/bin/bash", "/usr/libexec/mios/mios-terminal"], "", "/dev/pts/7");
+        fake_proc(&proc_root, 102, 101, "tmux: client", &["tmux", "-L", "mios-human", "attach", "-t", "=mios"], &tmpdir, "/dev/pts/7");
+        fake_proc(&proc_root, 200, 1, "foot", &["foot"], "", "");
+        fake_proc(&proc_root, 201, 200, "tmux: client", &["tmux", "-Lscratch", "new"], &tmpdir, "/dev/pts/8");
+        fake_proc(&proc_root, 300, 1, "kitty", &["kitty"], "", "");
+        fake_proc(&proc_root, 301, 300, "bash", &["bash"], "", "/dev/pts/9");
+        let socks = vec!["mios-human".to_owned(), "mios-nested".to_owned()];
+        let c = tmux_client_under(&proc_root, 100, &socks, 1000).expect("the mios-human client under the terminal");
+        assert_eq!((c.pid, c.tty.as_str(), c.socket.clone()), (102, "/dev/pts/7", sockdir.join("mios-human")));
+        assert!(tmux_client_under(&proc_root, 200, &socks, 1000).is_none(), "a server outside tmux_sockets selects the plain profile");
+        assert!(tmux_client_under(&proc_root, 300, &socks, 1000).is_none(), "a bare shell has no client");
+        assert!(tmux_client_under(&proc_root, 102, &socks, 1000).is_none(), "the focused pid itself is the terminal, not a child");
+        std::fs::remove_dir_all(&t).unwrap();
+    }
+    #[test]
+    fn tmux_verbs_target_the_discovered_client_and_validate_keys() {
+        let (cfg, _) = crate::config::tests::fixture_nav();
+        let c = TmuxClient { pid: 1, tty: "/dev/pts/7".into(), socket: "/run/t/mios-human".into() };
+        assert_eq!(tmux_argv(&cfg, &c, "key p").unwrap(), ["/usr/bin/tmux", "-S", "/run/t/mios-human", "send-keys", "-c", "/dev/pts/7", "-K", "C-b", "p"]);
+        assert_eq!(tmux_argv(&cfg, &c, "focus left").unwrap()[3..], ["display-message", "-p", "-c", "/dev/pts/7", "-t", "/dev/pts/7", "#{pane_at_left}"]);
+        assert_eq!(tmux_argv(&cfg, &c, "session-next").unwrap()[3..], ["switch-client", "-c", "/dev/pts/7", "-n"]);
+        assert!(tmux_argv(&cfg, &c, "key q").unwrap_err().contains("prefix-table"), "q is not bound in the SSOT prefix table");
+        assert!(tmux_argv(&cfg, &c, "menu").is_err(), "the menu alias is U1's");
+        assert!(unsupported_actions(&cfg).is_empty(), "every vendor nav action resolves: {:?}", unsupported_actions(&cfg));
+    }
+    #[test]
+    fn capture_osd_names_the_app_and_the_release_chord() {
+        let chord = vec!["BTN_THUMBL".to_owned(), "BTN_THUMBR".to_owned()];
+        assert_eq!(osd_message("on", "org.gnome.Nautilus", &chord), "Controller -> org.gnome.Nautilus. Hold L3+R3 to release.");
+        assert_eq!(osd_message("fullscreen", "steam_app_570", &chord), "Controller -> steam_app_570. Hold L3+R3 to release.");
+        assert_eq!(osd_message("off", "steam_app_570", &chord), "Controller -> MiOS. steam_app_570 released.");
+        assert_eq!(osd_message("on", "x", &["BTN_TL".into(), "BTN_TR".into()]), "Controller -> x. Hold TL+TR to release.");
+        let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (cfg, _) = GlobalConfig::from_value(&vendor).unwrap();
+        assert!(cfg.controller.capture_osd && cfg.controller.capture_osd_argv.iter().any(|a| a == "{message}"));
+        let lua = window_lua("on", &cfg, None).unwrap();
+        assert!(lua.contains("..' '..tostring(target and target.class or '')"), "the transaction reports the class it captured");
+    }
+    #[test]
+    fn key_projection_into_a_followed_compositor_is_quoted() {
+        let lua = key_lua(&crate::nav::parse_key_chord("CTRL+SHIFT+TAB").unwrap(), "0xabc\"x");
+        assert!(lua.contains("mods=\"CTRL SHIFT\",key=\"Tab\",state='down',window=\"address:0xabc\\\"x\""), "{lua}");
+        assert_eq!(lua.matches("send_key_state").count(), 2);
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {

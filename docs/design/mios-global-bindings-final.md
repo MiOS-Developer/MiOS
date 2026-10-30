@@ -1,4 +1,4 @@
-<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and I1 landed; G1 U1 I2-I4 P1 GT M1 pending). -->
+<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0, I1 and I2 landed; G1 U1 I3 I4 P1 GT M1 pending). -->
 <!-- AI-related: usr/share/mios/mios.toml [keybindings.*], docs/design/mios-global-bindings-staged.patch.toml, docs/design/mios-global-bindings-tests.md, usr/share/doc/mios/keybinds.md, tools/native/mios-inputd -->
 # MiOS global bindings: FINAL spec (controller + keyboard)
 
@@ -13,6 +13,15 @@ Labels:
 - Step tags (§7): S0, G1, U1, I1, I2, I3, I4, P1, GT, M1. A behavior tagged with a step is DECLARED in the patch but commented out, and becomes IMPLEMENTED when that step lands.
 
 **I1 as landed (operator decision 2026-10-29, supersedes O-1/O-4 defaults for the controller):** capture and release are identical for every window kind. No class list (`game`, `vm-passthrough`) captures the controller; those classes only scope keyboard passthrough. inputd's controller owner is `app` only for `app-capture` (fullscreen==2, `capture_tag` or the room `input_owner`, each cancelled by `release_tag`). The legacy daemon unit has no `[Install]`.
+
+**I2 as landed** (tools/native/mios-inputd/src/nav.rs, router.rs, runtime.rs; tests: router `nav_contract`, tests/test-inputd-nav.py, tests/test-inputd-nav-live.py). Differences from the text below:
+- Every uncaptured window navigates alike (operator decision): `nav.contexts` maps `game` and `vm-passthrough` to `desktop` too, and `cursor_mode_contexts` lists every uncaptured context. A class never decides who gets the controller.
+- `tmux:` verbs address the server of the client that discovery found (`tmux -S <socket>`, with the socket resolved from the client's `-L`/`-S` and `TMUX_TMPDIR`, because MiOS terminals set `TMUX_TMPDIR`), not `-L socket_name`. Which servers count is the SSOT list `nav.tmux_sockets` (`mios-human`, `mios-nested`). Discovery reads `/proc` only (once per second per focused terminal, no spawn).
+- The HAT d-pad folds into `BTN_DPAD_*` for nav (the system-layer fold stays I4). Pads that report triggers only as axes (xpad: no BTN_TL2/TR2) get digital nav edges at `trigger_threshold`.
+- `capture_osd_argv` (default `notify-send`) is the notifier; the OSD runs after the compositor confirmed the transaction, whose success marker now carries the window class.
+- `inherits` is resolved in mios-inputd (nav.rs), not in mios-resolver. `tmux:menu` (U1 alias) and `tmux:keymap` (I3 popup) validate but have no runtime projection yet; no shipped profile uses them.
+- An empty `""` in any tier reaches the grammar and is a validation error (the Rust resolver does not drop it).
+- The fixture tier with `--live-context` projects `key:` (send_key_state to the focused window), `hypr:` and `tmux:` into the followed (nested) compositor, so the live test needs no uinput keyboard on the operator's seat.
 
 Deliverables in this directory:
 - `ssot-keybindings.patch.toml`: the complete replacement tables.

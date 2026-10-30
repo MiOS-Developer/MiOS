@@ -55,6 +55,14 @@ Baseline that every step must keep: the gate reports 0 findings on `/` (today: 1
 
 ## I2: nav grammar
 
+Landed. Router unit tests `nav_contract` (C-08 timing, INV-6, R-23, R-26, C-11, C-13, grammar), runtime unit tests
+(C-09 discovery over a fake /proc, C-30 argv, C-32 text), tests/test-inputd-nav.py (real binary; with
+MIOS_INPUTD_UINPUT_TEST=1 a grabbed fixture keyboard, and a fixture pad driving the bridge against a fake compositor
+socket and a private tmux server), tests/test-inputd-nav-live.py (MIOS_LIVE_NESTED=1, an owned nested session).
+Old-binary negative controls: MIOS_INPUTD_OLD_BIN = the I1 binary (uncaptured buttons reach the pad, cursor mode drops
+South, no OSD). Not provable here: "an SSH client attached to the same session never sees its focus changed" (tmux's
+active pane is per window, shared by every client of that window).
+
 | ID | Positive control | Negative control |
 |---|---|---|
 | C-07 | `udevadm info` on the virtual keyboard shows `ID_INPUT_KEYBOARD=1` and no `LIBINPUT_IGNORE_DEVICE`. `key:ENTER` produces KEY_ENTER. | The virtual pad (`mios-vctl-event*`) still has `LIBINPUT_IGNORE_DEVICE=1`. The bridge never grabs a physical keyboard: discovery rejects devices without BTN_SOUTH (linux.rs:125). |

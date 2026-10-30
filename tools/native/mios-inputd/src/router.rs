@@ -1,6 +1,7 @@
-// AI-hint: Per-controller input state machine; system actions never enter app replay.
+// AI-hint: Per-controller input state machine: ownership contract first, then the nav projection of uncaptured windows (tap/hold, repeat, flicks, HAT fold, thumb/Guide disambiguation); system actions never enter app replay.
 // AI-related: usr/libexec/mios/mios-gamepad-hypr3d, keybindings.global.controller
 use crate::config::{axis_code, button_code, ControllerConfig, GlobalConfig, LegacyConfig};
+use crate::nav::{Dir, Input, Value, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub const EV_SYN: u16 = 0;
@@ -121,12 +122,38 @@ impl PadState {
 /// room camera (or the host pointer) at the same time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sink {
-    /// The virtual pad: the captured app (or, uncaptured until I2, the focused client).
+    /// The virtual pad: the captured app (or an uncaptured context whose nav profile is "vpad").
     App,
     /// The Hypr3D room packet (camera, movement, grab/resize).
     Room,
     /// The host pointer (cursor mode or half-capture).
     Pointer,
+    /// The nav projection of an uncaptured window (I2): sticks become wheel/flicks, the HAT becomes arrows.
+    Nav,
+}
+/// One nav input held down: its value (frozen at press), timers and whether its hold already fired.
+#[derive(Clone, Debug)]
+struct Held {
+    value: Value,
+    elapsed: f64,
+    fired: bool,
+    next: f64,
+    repeat: Option<(u64, u64)>,
+    /// A thumbstick click resolves on release (it may still become part of the toggle chord).
+    deferred: bool,
+}
+/// Per-device nav state (INV-6: flushed on any context, profile, owner or target change, a Guide press and SYN_DROPPED).
+#[derive(Clone, Debug, Default)]
+struct NavState {
+    held: BTreeMap<Input, Held>,
+    profile: Option<String>,
+    armed: [bool; 2],
+    stick_dir: [Option<Dir>; 2],
+    hat: (i32, i32),
+    triggers: [bool; 2],
+    thumbs_cancelled: bool,
+    wheel: f64,
+    hwheel: f64,
 }
 pub struct Router {
     global: GlobalConfig,
@@ -160,6 +187,19 @@ pub struct Router {
     fraction_x: f64,
     fraction_y: f64,
     fraction_scroll: f64,
+    fraction_hwheel: f64,
+    nav: NavState,
+    /// A MiOS tmux client runs under the focused terminal (C-09): selects `<profile>_tmux` over `<profile>_plain`.
+    pub tmux: bool,
+    /// The pad reports analog triggers only (no BTN_TL2/TR2, e.g. xpad): nav synthesizes their digital edges.
+    pub analog_triggers: bool,
+    /// Kernel-truth repair is releasing buttons: a repaired release never fires a tap.
+    repairing: bool,
+    /// Guide pressed alone and not yet held past capture_hold_ms (R-26): its release is the Guide tap.
+    guide_tap: Option<f64>,
+    /// Guide + a toggle-chord button: the system-layer action waits for the release, so Guide+L3+R3 fires neither.
+    guide_thumb: Option<u16>,
+    guide_thumb_cancel: bool,
     #[cfg(test)]
     pub(crate) mutant_room_forward: bool,
 }
@@ -195,12 +235,29 @@ impl Router {
             fraction_x: 0.0,
             fraction_y: 0.0,
             fraction_scroll: 0.0,
+            fraction_hwheel: 0.0,
+            nav: NavState { armed: [true; 2], ..NavState::default() },
+            tmux: false,
+            analog_triggers: false,
+            repairing: false,
+            guide_tap: None,
+            guide_thumb: None,
+            guide_thumb_cancel: false,
             #[cfg(test)]
             mutant_room_forward: false,
         }
     }
+    /// Construct and settle the nav profile of the initial context.
+    pub fn with_context(global: GlobalConfig, legacy: LegacyConfig, axes: BTreeMap<u16, Axis>, context: &str) -> Self {
+        let mut r = Self::new(global, legacy, axes);
+        r.set_context(context);
+        r
+    }
     pub fn policy(&self) -> &GlobalConfig {
         &self.global
+    }
+    pub fn legacy_toggle_chord(&self) -> Vec<String> {
+        self.legacy.toggle_chord.clone()
     }
     /// Capture is decided by ownership alone (North capture, fullscreen==2, capture_tag or the room's input_owner,
     /// cancelled by release_tag): the snapshot names that "app-capture". A window's class (game, VM, remote client,
@@ -221,7 +278,15 @@ impl Router {
             self.capture_override=None;
         }
         self.capture_target=target; self.room_capture=from_room || context=="desktop-3d";
-        self.transition_context(context,force,owned,room)
+        let mut o=self.transition_context(context,force,owned,room);
+        // INV-6: a held nav input never repeats into, or resolves its tap/hold in, another window.
+        if target_changed { o.extend(self.nav_flush()); }
+        o
+    }
+    /// C-09: whether a MiOS tmux client runs under the focused terminal. A profile change flushes nav state.
+    pub fn set_tmux(&mut self, tmux: bool) -> Output {
+        self.tmux=tmux;
+        self.nav_sync()
     }
     pub fn set_context(&mut self, context: &str) -> Output {
         let (owned,room)=(self.app_owned(),self.room());
@@ -232,7 +297,7 @@ impl Router {
         // (and a compositor confirming a capture this bridge already applied). Ownership or room boundaries reset.
         let previous=std::mem::replace(&mut self.context,context.into());
         if !force && self.app_owned()==was_owned && self.room()==was_room {
-            return Output::default();
+            return self.nav_sync();
         }
         self.context=previous;
         let mut o = self.release_outputs();
@@ -251,6 +316,7 @@ impl Router {
         if !o.app.is_empty() {
             o.app.push(Event::new(EV_SYN, SYN_REPORT, 0));
         }
+        o.extend(self.nav_sync());
         o
     }
     pub fn reset(&mut self) -> Output {
@@ -271,6 +337,9 @@ impl Router {
         self.escape_elapsed=0.0;
         self.escape_fired=false;
         self.pad.neutralize();
+        o.extend(self.nav_flush());
+        self.guide_tap=None;
+        self.guide_thumb=None;
         o
     }
     fn release_outputs(&mut self) -> Output {
@@ -320,7 +389,10 @@ impl Router {
         if !held.contains(&guide) { self.pending_guide = false; }
         if !held.contains(&button_code(&self.legacy.fullscreen_button).unwrap()) { self.north_pending=false; }
         let mut out = Output::default();
+        if !held.contains(&guide) { self.guide_tap = None; }
+        self.repairing = true;
         for code in released { out.extend(self.event(Event::new(EV_KEY, code, 0), now)); }
+        self.repairing = false;
         self.blocked.retain(|c| held.contains(c));
         self.suppressed.retain(|c| held.contains(c));
         self.chord_times.retain(|c, _| held.contains(c));
@@ -339,7 +411,19 @@ impl Router {
         if self.room() {
             return Sink::Room;
         }
-        if self.pointer_mode() && (!self.half_capture() || self.pointer_axis(code)) {
+        if self.half_capture() {
+            return if self.pointer_axis(code) { Sink::Pointer } else { Sink::App };
+        }
+        if self.app_owned() {
+            return Sink::App;
+        }
+        if self.pointer_mode() && self.pointer_axis(code) {
+            return Sink::Pointer;
+        }
+        if self.nav_active() {
+            return Sink::Nav;
+        }
+        if self.pointer_mode() {
             return Sink::Pointer;
         }
         Sink::App
@@ -362,6 +446,8 @@ impl Router {
         self.pending_guide=false;
         self.pad.neutralize();
         self.suppressed.extend(&self.pressed);
+        let mut out = out;
+        out.extend(self.nav_sync());
         out
     }
     fn capture_window(&mut self, fullscreen: bool) -> Output {
@@ -398,7 +484,7 @@ impl Router {
     }
     /// Frames (SYN and non-axis events) reach the app whenever any of its input can.
     fn forwards_frames(&self) -> bool {
-        !self.room() && (!self.pointer_mode() || self.half_capture())
+        !self.room() && (!self.pointer_mode() || self.half_capture()) && !self.nav_active()
     }
     fn legacy_action(&mut self, code: u16, now: u64, o: &mut Output) -> bool {
         let room = self.room();
@@ -500,6 +586,25 @@ impl Router {
             if e.value == 1 && !already {
                 self.chord_times.insert(e.code, now);
             }
+            let toggle_codes: Vec<u16> = self.legacy.toggle_chord.iter().map(|n| button_code(n).unwrap()).collect();
+            // C-13: Guide + a toggle-chord button fires its system-layer action on release, and only if the other
+            // chord button never joined (Guide+L3+R3 = neither lock nor the VM latch).
+            if e.value == 0 && self.guide_thumb == Some(e.code) {
+                self.guide_thumb = None;
+                if !self.guide_thumb_cancel && !self.repairing {
+                    if let Some(action) = self.system_action(e.code) { o.actions.push(action); }
+                }
+            }
+            if !toggle_codes.iter().any(|c| self.pressed.contains(c)) {
+                self.guide_thumb_cancel = false;
+                self.nav.thumbs_cancelled = false;
+            }
+            // R-23: any overlap of the toggle-chord buttons cancels both single clicks, fast (room toggle) or slow.
+            if e.value == 1 && toggle_codes.contains(&e.code) && toggle_codes.iter().all(|c| self.pressed.contains(c)) {
+                self.nav.thumbs_cancelled = true;
+                for c in &toggle_codes { self.nav.held.remove(&Input::Button(*c)); }
+                if self.guide_thumb.is_some() { self.guide_thumb = None; self.guide_thumb_cancel = true; }
+            }
             if e.code==button_code(&self.legacy.fullscreen_button).unwrap() && e.value==0 && self.north_pending {
                 self.north_pending=false;
                 self.suppressed.remove(&e.code);
@@ -531,7 +636,7 @@ impl Router {
                 let escape:Vec<_>=self.global.controller.mode_override_chord.iter().map(|v|button_code(v).unwrap()).collect();
                 if e.value==1 && !already && escape.contains(&e.code) && escape.iter().all(|c|self.pressed.contains(c)) {
                     o.extend(self.release_outputs()); self.suppressed.extend(&escape); self.pending_guide=false;
-                    self.cursor=!self.cursor;
+                    self.cursor = !self.cursor;
                     o.actions.push(format!("input:cursor {}",if self.cursor {"on"} else {"off"}));
                     return o;
                 }
@@ -549,10 +654,25 @@ impl Router {
                     o.extend(self.release_outputs());
                     self.suppressed
                         .extend(self.pressed.iter().filter(|c| **c != guide));
+                    // INV-6/R-26: a Guide press cancels pending nav timers; alone, it may become the Guide tap.
+                    o.extend(self.nav_flush());
+                    self.guide_tap = (self.pressed.len() == 1).then_some(0.0);
+                } else if e.value == 0 && self.guide_tap.take().is_some() && !self.repairing && self.nav_active() {
+                    if let Some(Value::Press(a)) = self.nav_value(Input::Button(guide)) { Self::fire(&a, &mut o); }
                 }
                 return o;
             }
             if !app_guide && guide_held {
+                if e.value == 1 && !already {
+                    self.guide_tap = None;
+                }
+                if e.value == 1 && !already && toggle_codes.contains(&e.code) && self.system_action(e.code).is_some() {
+                    if !self.guide_thumb_cancel {
+                        if self.guide_thumb.is_some() { self.guide_thumb = None; self.guide_thumb_cancel = true; } else { self.guide_thumb = Some(e.code); }
+                    }
+                    self.suppressed.insert(e.code);
+                    return o;
+                }
                 if e.value == 1 && !already {
                     let override_codes: Vec<_> = self
                         .global
@@ -661,10 +781,16 @@ impl Router {
                     return o;
                 }
                 if !half {
+                    // C-11: cursor mode keeps every other button's nav meaning.
+                    if self.nav_active() { self.nav_button(e, &mut o); }
                     return o;
                 }
             }
             if self.room() {
+                return o;
+            }
+            if self.nav_active() {
+                self.nav_button(e, &mut o);
                 return o;
             }
             if e.value == 0 {
@@ -689,8 +815,12 @@ impl Router {
             {
                 o.app.push(e);
             }
+            self.nav_axis(e.code, sink == Sink::Nav, &mut o);
         } else if e.kind == EV_SYN && e.code == SYN_REPORT {
             self.update_pad();
+            if self.nav_active() && !self.button(&self.global.controller.guide_button) {
+                self.nav_flicks(&mut o);
+            }
             if self.forwards_frames() {
                 o.app.push(e);
             }
@@ -815,8 +945,14 @@ impl Router {
             self.escape_elapsed=0.0;
             self.escape_fired=false;
         }
+        if let Some(t) = &mut self.guide_tap {
+            *t += dt * 1000.0;
+            if *t >= self.global.controller.capture_hold_ms as f64 { self.guide_tap = None; }
+        }
+        self.nav_timers(dt, &mut o);
         self.update_pad();
         if !self.pointer_mode() {
+            if self.nav_active() && !self.button(&self.global.controller.guide_button) { self.nav_wheel(dt, &mut o); }
             return o;
         }
         let ControllerConfig {
@@ -837,12 +973,19 @@ impl Router {
                 o.pointer.push(Event::new(EV_REL, code, value));
             }
         }
-        let (_, scroll) = self.stick(0, 1, stick_deadzone, 1.0);
+        let (hscroll, scroll) = self.stick(0, 1, stick_deadzone, 1.0);
         self.fraction_scroll -= scroll * scroll_sensitivity * dt;
         let wheel = self.fraction_scroll.trunc() as i32;
         self.fraction_scroll -= f64::from(wheel);
         if wheel != 0 {
             o.pointer.push(Event::new(EV_REL, 8, wheel));
+        }
+        // C-11: the left stick's X scrolls sideways (REL_HWHEEL) in cursor mode too.
+        self.fraction_hwheel += hscroll * scroll_sensitivity * dt;
+        let hwheel = self.fraction_hwheel.trunc() as i32;
+        self.fraction_hwheel -= f64::from(hwheel);
+        if hwheel != 0 {
+            o.pointer.push(Event::new(EV_REL, 6, hwheel));
         }
         let rt = self.trigger_down(
             &self.legacy.grab_button,
@@ -860,6 +1003,244 @@ impl Router {
             o.pointer.push(Event::new(EV_SYN, SYN_REPORT, 0));
         }
         o
+    }
+}
+impl Router {
+    fn system_action(&self, code: u16) -> Option<String> {
+        self.global.controller.system_layer.iter().find(|(name, _)| button_code(name).ok() == Some(code)).map(|(_, a)| a.clone())
+    }
+    /// The nav profile that owns the controller now, or None (captured, the room, an unlisted context or "vpad").
+    pub fn nav_profile(&self) -> Option<String> {
+        if self.app_owned() || self.room() {
+            return None;
+        }
+        self.global.controller.nav.profile_name(&self.context, self.tmux)
+    }
+    pub fn nav_active(&self) -> bool {
+        self.nav.profile.is_some() && !self.app_owned() && !self.room()
+    }
+    fn nav_value(&self, input: Input) -> Option<Value> {
+        let p = self.nav.profile.as_ref()?;
+        self.global.controller.nav.profiles.get(p)?.get(&input).cloned()
+    }
+    fn fire(action: &str, o: &mut Output) {
+        if action != "none" {
+            o.actions.push(action.to_owned());
+        }
+    }
+    /// INV-6: cancel every tap/hold timer and auto-repeat, and forget held nav inputs (their release fires nothing).
+    /// Key output is atomic strokes, so no virtual key is ever left down.
+    fn nav_flush(&mut self) -> Output {
+        self.nav.held.clear();
+        self.nav.stick_dir = [None; 2];
+        self.nav.wheel = 0.0;
+        self.nav.hwheel = 0.0;
+        let (lx, ly) = self.stick(0, 1, self.global.controller.stick_deadzone, 1.0);
+        let (rx, ry) = self.right_axes();
+        let (rx, ry) = self.stick(rx, ry, self.global.controller.stick_deadzone, 1.0);
+        let off = self.global.controller.nav.flick_off;
+        self.nav.armed = [lx.hypot(ly) < off, rx.hypot(ry) < off];
+        Output::default()
+    }
+    /// Follow the current profile; a change flushes nav state, and moving between vpad and nav releases the pad.
+    fn nav_sync(&mut self) -> Output {
+        let want = self.nav_profile();
+        if want == self.nav.profile {
+            return Output::default();
+        }
+        let crossing = want.is_some() != self.nav.profile.is_some();
+        let mut o = self.nav_flush();
+        if crossing && !self.app_owned() {
+            let mut app: Vec<_> = self.app_held.iter().map(|c| Event::new(EV_KEY, *c, 0)).collect();
+            self.app_held.clear();
+            for (code, axis) in &self.axes {
+                app.push(Event::new(EV_ABS, *code, axis.neutral(*code)));
+            }
+            if !app.is_empty() {
+                app.push(Event::new(EV_SYN, SYN_REPORT, 0));
+            }
+            o.app.extend(app);
+        }
+        self.nav.profile = want;
+        o
+    }
+    fn nav_press(&mut self, input: Input, o: &mut Output) {
+        let thumb = matches!(input, Input::Button(0x13d | 0x13e));
+        if thumb && (self.nav.thumbs_cancelled || self.thumb_stick_deflected(input)) {
+            return;
+        }
+        let Some(value) = self.nav_value(input) else { return };
+        let repeat = match &value {
+            Value::Press(a) if !thumb => {
+                Self::fire(a, o);
+                self.global.controller.nav.repeat.get(&input).copied()
+            }
+            _ => None,
+        };
+        let next = repeat.map_or(0.0, |(d, _)| d as f64);
+        self.nav.held.insert(input, Held { value, elapsed: 0.0, fired: false, next, repeat, deferred: thumb });
+    }
+    fn nav_release(&mut self, input: Input, o: &mut Output) {
+        let Some(h) = self.nav.held.remove(&input) else { return };
+        if self.repairing || (h.deferred && self.thumb_stick_deflected(input)) {
+            return;
+        }
+        match &h.value {
+            Value::TapHold(t, _) if !h.fired => Self::fire(t, o),
+            Value::Press(a) if h.deferred => Self::fire(a, o),
+            _ => {}
+        }
+    }
+    /// R-23: an L3 or R3 click while its own stick is outside stick_deadzone is a sloppy click, never an action.
+    fn thumb_stick_deflected(&self, input: Input) -> bool {
+        let (x, y) = if input == Input::Button(0x13d) { (0, 1) } else { self.right_axes() };
+        let (x, y) = self.stick(x, y, self.global.controller.stick_deadzone, 1.0);
+        x != 0.0 || y != 0.0
+    }
+    fn nav_button(&mut self, e: Event, o: &mut Output) {
+        if e.value == 1 && !self.nav.held.contains_key(&Input::Button(e.code)) {
+            self.nav_press(Input::Button(e.code), o);
+        } else if e.value == 0 {
+            self.nav_release(Input::Button(e.code), o);
+        }
+    }
+    /// The HAT d-pad folds into BTN_DPAD_* and analog-only triggers get digital edges, for nav only.
+    fn nav_axis(&mut self, code: u16, nav: bool, o: &mut Output) {
+        let guide = self.button(&self.global.controller.guide_button);
+        if code == 16 || code == 17 {
+            let v = self.axes.get(&code).map_or(0, |a| a.value.signum());
+            let old = if code == 16 { self.nav.hat.0 } else { self.nav.hat.1 };
+            if code == 16 { self.nav.hat.0 = v } else { self.nav.hat.1 = v }
+            if !nav || guide || v == old {
+                return;
+            }
+            let button = |v: i32| match (code, v) {
+                (16, -1) => Some(BTN_DPAD_LEFT),
+                (16, 1) => Some(BTN_DPAD_RIGHT),
+                (17, -1) => Some(BTN_DPAD_UP),
+                (17, 1) => Some(BTN_DPAD_DOWN),
+                _ => None,
+            };
+            if let Some(b) = button(old) { self.nav_release(Input::Button(b), o); }
+            if let Some(b) = button(v) { self.nav_press(Input::Button(b), o); }
+            return;
+        }
+        let (rx, ry) = self.right_axes();
+        let triggers = [(axis_code(&self.legacy.resize_axis).unwrap(), 0x138u16), (axis_code(&self.legacy.grab_axis).unwrap(), 0x139)];
+        for (i, (a, button)) in triggers.into_iter().enumerate() {
+            if a != code || a == rx || a == ry {
+                continue;
+            }
+            let t = self.axes.get(&a).map_or(0.0, Axis::trigger);
+            let on = if self.nav.triggers[i] { t >= (self.legacy.trigger_threshold - 0.1).max(0.05) } else { t >= self.legacy.trigger_threshold };
+            if on == self.nav.triggers[i] {
+                return;
+            }
+            self.nav.triggers[i] = on;
+            if nav && self.analog_triggers && !guide {
+                if on { self.nav_press(Input::Button(button), o) } else { self.nav_release(Input::Button(button), o) }
+            }
+            return;
+        }
+    }
+    fn stick_axes(&self, right: bool) -> (u16, u16) {
+        if right { self.right_axes() } else { (0, 1) }
+    }
+    fn is_pointer(&self, input: Input) -> bool {
+        matches!(self.nav_value(input), Some(Value::Press(a)) if a.starts_with("pointer:"))
+    }
+    /// Discrete stick directions: one flick per deflection past flick_on; the stick re-arms below flick_off.
+    fn nav_flicks(&mut self, o: &mut Output) {
+        let (on, off) = (self.global.controller.nav.flick_on, self.global.controller.nav.flick_off);
+        for (i, right) in [(0usize, false), (1, true)] {
+            let (xa, ya) = self.stick_axes(right);
+            let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
+            let mag = x.hypot(y);
+            if mag < off {
+                if let Some(d) = self.nav.stick_dir[i].take() {
+                    self.nav_release(Input::Stick { right, dir: d }, o);
+                }
+                self.nav.armed[i] = true;
+                continue;
+            }
+            if !self.nav.armed[i] || mag < on {
+                continue;
+            }
+            let dir = if x.abs() >= y.abs() { if x > 0.0 { Dir::Right } else { Dir::Left } } else if y > 0.0 { Dir::Down } else { Dir::Up };
+            let input = Input::Stick { right, dir };
+            if self.is_pointer(input) {
+                continue;
+            }
+            self.nav.armed[i] = false;
+            self.nav.stick_dir[i] = Some(dir);
+            self.nav_press(input, o);
+        }
+    }
+    /// Analog wheel for stick directions mapped to pointer: (the vertical and horizontal parts separately).
+    fn nav_wheel(&mut self, dt: f64, o: &mut Output) {
+        let sens = self.global.controller.scroll_sensitivity;
+        for right in [false, true] {
+            let (xa, ya) = self.stick_axes(right);
+            let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
+            for (amount, dir) in [(-y, if y < 0.0 { Dir::Up } else { Dir::Down }), (x, if x > 0.0 { Dir::Right } else { Dir::Left })] {
+                if amount == 0.0 {
+                    continue;
+                }
+                let Some(Value::Press(a)) = self.nav_value(Input::Stick { right, dir }) else { continue };
+                let m = amount.abs() * sens * dt;
+                match a.as_str() {
+                    "pointer:wheel-up" => self.nav.wheel += m,
+                    "pointer:wheel-down" => self.nav.wheel -= m,
+                    "pointer:hwheel-right" => self.nav.hwheel += m,
+                    "pointer:hwheel-left" => self.nav.hwheel -= m,
+                    _ => {}
+                }
+            }
+        }
+        let mut any = false;
+        for (code, frac) in [(8u16, &mut self.nav.wheel), (6, &mut self.nav.hwheel)] {
+            let v = frac.trunc() as i32;
+            *frac -= f64::from(v);
+            if v != 0 {
+                o.pointer.push(Event::new(EV_REL, code, v));
+                any = true;
+            }
+        }
+        if any {
+            o.pointer.push(Event::new(EV_SYN, SYN_REPORT, 0));
+        }
+    }
+    /// Tap/hold resolution at capture_hold_ms (a hold fires once) and auto-repeat for string values with a repeat entry.
+    fn nav_timers(&mut self, dt: f64, o: &mut Output) {
+        if self.nav.held.is_empty() {
+            return;
+        }
+        let hold = self.global.controller.capture_hold_ms as f64;
+        let ms = dt * 1000.0;
+        let mut fire = vec![];
+        for h in self.nav.held.values_mut() {
+            h.elapsed += ms;
+            match &h.value {
+                Value::TapHold(_, hold_action) if !h.fired && h.elapsed + 1e-6 >= hold => {
+                    h.fired = true;
+                    fire.push(hold_action.clone());
+                }
+                Value::Press(a) if !h.deferred => {
+                    if let Some((_, rate)) = h.repeat {
+                        let mut n = 0;
+                        while h.elapsed + 1e-6 >= h.next && n < 16 {
+                            fire.push(a.clone());
+                            h.next += rate as f64;
+                            n += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for a in fire {
+            Self::fire(&a, o);
+        }
     }
 }
 pub fn radial(mut x: f64, mut y: f64, deadzone: f64, sensitivity: f64) -> (f64, f64) {
@@ -1419,7 +1800,7 @@ mod ownership_contract {
                                o.extend(r.event(Event::new(EV_KEY, b, v), now)); }
                     4..=7 => { let code = [0u16, 1, 3, 4][(g.next() % 4) as usize]; let v = (g.next() % 65536) as i32 - 32768;
                                o.extend(r.event(Event::new(EV_ABS, code, v), now)); o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), now)); }
-                    8 => { if g.next() % 2 == 0 { o.extend(r.adopt_ownership(g.next() % 2 == 0)); } else { o.extend(r.ownership_failed()); } }
+                    8 => { if g.next().is_multiple_of(2) { o.extend(r.adopt_ownership(g.next().is_multiple_of(2))); } else { o.extend(r.ownership_failed()); } }
                     _ => o.extend(r.tick(0.02)),
                 }
                 o.extend(r.tick(0.005));
@@ -1462,5 +1843,291 @@ mod held_parity {
         r.event(Event::new(EV_KEY, 0x130, 0), 1010);
         r.tick(0.01);
         assert!(!r.pad.south);
+    }
+}
+
+#[cfg(test)]
+mod nav_contract {
+    //! I2: the navigation grammar for every uncaptured window (tests.md C-07..C-13, INV-6, R-23, R-26).
+    use super::*;
+    const SOUTH: u16 = 0x130; const EAST: u16 = 0x131; const NORTH: u16 = 0x133; const LB: u16 = 0x136;
+    const TL2: u16 = 0x138; const TR2: u16 = 0x139; const SELECT: u16 = 0x13a; const START: u16 = 0x13b;
+    const GUIDE: u16 = 0x13c; const L3: u16 = 0x13d; const R3: u16 = 0x13e;
+    fn axes() -> BTreeMap<u16, Axis> {
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] { axes.insert(c, Axis { min: -32768, max: 32767, value: 0 }); }
+        for c in [2, 5] { axes.insert(c, Axis { min: 0, max: 255, value: 0 }); }
+        for c in [16, 17] { axes.insert(c, Axis { min: -1, max: 1, value: 0 }); }
+        axes
+    }
+    fn nav(context: &str) -> Router {
+        let (c, l) = crate::config::tests::fixture_nav();
+        Router::with_context(c, l, axes(), context)
+    }
+    fn plain(context: &str) -> Router {
+        let (c, l) = crate::config::tests::fixture();
+        Router::with_context(c, l, axes(), context)
+    }
+    fn key(r: &mut Router, c: u16, v: i32) -> Output { r.event(Event::new(EV_KEY, c, v), 0) }
+    fn abs(r: &mut Router, c: u16, v: i32) -> Output { let mut o = r.event(Event::new(EV_ABS, c, v), 0); o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0)); o }
+    fn wait(r: &mut Router, ms: u64) -> Output { let mut o = Output::default(); for _ in 0..ms / 10 { o.extend(r.tick(0.01)); } o }
+    fn tap(r: &mut Router, c: u16, ms: u64) -> Output { let mut o = key(r, c, 1); o.extend(wait(r, ms)); o.extend(key(r, c, 0)); o }
+
+    #[test]
+    fn south_tap_is_enter_and_hold_is_shift_enter_once() {
+        let mut r = nav("desktop-2d");
+        assert_eq!(r.nav_profile().as_deref(), Some("desktop"));
+        let o = tap(&mut r, SOUTH, 100);
+        assert_eq!(o.actions, vec!["key:ENTER"]);
+        assert!(o.app.is_empty(), "an uncaptured window gets nav, not the virtual pad");
+        let o = tap(&mut r, SOUTH, 600);
+        assert_eq!(o.actions, vec!["key:SHIFT+ENTER"], "the hold fires once at capture_hold_ms; the release adds nothing");
+        assert_eq!(tap(&mut r, SOUTH, 2000).actions, vec!["key:SHIFT+ENTER"], "a 2 s hold never repeats");
+        assert_eq!(tap(&mut r, EAST, 50).actions, vec!["key:ESC"]);
+        assert_eq!(tap(&mut r, 0x134, 50).actions, vec!["key:TAB"]);
+    }
+    #[test]
+    fn hat_dpad_repeats_400_60_and_stops_on_focus_change() {
+        let mut r = nav("desktop-2d");
+        let mut o = abs(&mut r, 17, -1);
+        o.extend(wait(&mut r, 1000));
+        assert_eq!(o.actions, vec!["key:UP"; 12], "1 + (1 + floor((1000-400)/60)) arrows");
+        assert!(abs(&mut r, 17, 0).actions.is_empty());
+        // INV-6: a held arrow stops repeating the moment focus moves to another window, of any class.
+        let mut r = nav("desktop-2d");
+        r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        abs(&mut r, 16, 1); let before = wait(&mut r, 500).actions.len();
+        r.set_focus("game", Some(("0xgame".into(), 2)), false);
+        assert!(wait(&mut r, 1000).actions.is_empty(), "repeat must stop on a focus change ({before} before)");
+        assert!(abs(&mut r, 16, 0).actions.is_empty(), "the release in the next window fires nothing");
+        // ... and on a capture.
+        let mut r = nav("desktop-2d");
+        abs(&mut r, 16, -1); wait(&mut r, 450);
+        r.set_focus("app-capture", None, false);
+        let o = wait(&mut r, 500);
+        assert!(o.actions.is_empty());
+    }
+    #[test]
+    fn every_uncaptured_window_kind_navigates_alike() {
+        for context in ["desktop-2d", "game", "vm-passthrough"] {
+            let mut r = nav(context);
+            assert_eq!(tap(&mut r, SOUTH, 50).actions, vec!["key:ENTER"], "{context}");
+            assert_eq!(tap(&mut r, TR2, 50).actions, vec!["key:CTRL+TAB"], "{context}");
+            assert_eq!(tap(&mut r, NORTH, 50).actions, vec!["input:window on"], "North still captures in {context}");
+        }
+        // Negative control: without nav (the pre-I2 SSOT) an uncaptured window got raw pad buttons.
+        let mut r = plain("desktop-2d");
+        let o = tap(&mut r, SOUTH, 50);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, SOUTH, 1)));
+        // O-1 revert line: desktop-2d = "vpad" forwards the pad again.
+        let (c, l) = crate::config::tests::fixture_nav_with(|v| { v["keybindings"]["global"]["controller"]["nav"]["contexts"]["desktop-2d"] = "vpad".into(); });
+        let mut r = Router::with_context(c, l, axes(), "desktop-2d");
+        let o = tap(&mut r, SOUTH, 50);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, SOUTH, 1)), "vpad forwards");
+    }
+    #[test]
+    fn captured_and_room_never_navigate() {
+        let mut r = nav("app-capture");
+        assert!(r.nav_profile().is_none());
+        let o = tap(&mut r, SOUTH, 50);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, SOUTH, 1)));
+        let mut r = nav("desktop-3d");
+        assert!(tap(&mut r, SOUTH, 50).actions.is_empty() && r.pad.sequences[2] == 1, "the room keeps South = jump");
+    }
+    #[test]
+    fn terminal_profile_follows_the_tmux_client() {
+        let mut r = nav("terminal");
+        assert_eq!(r.nav_profile().as_deref(), Some("terminal_plain"));
+        assert_eq!(tap(&mut r, TL2, 50).actions, vec!["key:SHIFT+PAGEUP"]);
+        assert_eq!(tap(&mut r, EAST, 600).actions, vec!["key:CTRL+c"]);
+        r.set_tmux(true);
+        assert_eq!(r.nav_profile().as_deref(), Some("terminal_tmux"));
+        assert_eq!(tap(&mut r, TL2, 50).actions, vec!["tmux:key p"]);
+        assert_eq!(tap(&mut r, SOUTH, 50).actions, vec!["key:ENTER"], "inherits desktop");
+        assert_eq!(tap(&mut r, SELECT, 50).actions, vec!["tmux:key w"]);
+        // A tmux client appearing mid-hold flushes the plain profile's timers (INV-6).
+        let mut r = nav("terminal");
+        key(&mut r, SOUTH, 1); wait(&mut r, 200);
+        r.set_tmux(true);
+        assert!(wait(&mut r, 600).actions.is_empty() && key(&mut r, SOUTH, 0).actions.is_empty());
+        // tmux: never fires without a client: the plain profile has no tmux: value at all.
+        let plain = nav("terminal");
+        let p = &plain.global.controller.nav.profiles["terminal_plain"];
+        assert!(p.values().all(|v| v.actions().iter().all(|a| !a.starts_with("tmux:"))));
+    }
+    #[test]
+    fn right_stick_flicks_focus_once_per_deflection() {
+        let mut r = nav("desktop-2d");
+        let mut o = abs(&mut r, 3, 30000);
+        o.extend(wait(&mut r, 1500));
+        o.extend(abs(&mut r, 3, 25000));
+        assert_eq!(o.actions, vec!["hypr:movefocus right"], "one flick, no repeat");
+        assert!(abs(&mut r, 3, 15000).actions.is_empty(), "between flick_off and flick_on: still disarmed");
+        abs(&mut r, 3, 0);
+        assert_eq!(abs(&mut r, 4, -30000).actions, vec!["hypr:movefocus up"]);
+        abs(&mut r, 4, 0);
+        r.set_tmux(true); r.set_context("terminal");
+        assert_eq!(abs(&mut r, 3, -30000).actions, vec!["tmux:focus left"]);
+        assert!(abs(&mut r, 3, 15000).actions.is_empty(), "small reverse deflection is no flick");
+    }
+    #[test]
+    fn left_stick_scrolls_both_wheels_analog() {
+        let mut r = nav("desktop-2d");
+        abs(&mut r, 1, -32767);
+        let o = wait(&mut r, 200);
+        let wheel: i32 = o.pointer.iter().filter(|e| e.kind == EV_REL && e.code == 8).map(|e| e.value).sum();
+        assert!(wheel > 0, "stick up = wheel up ({wheel})");
+        assert!(o.actions.is_empty() && o.app.is_empty());
+        abs(&mut r, 1, 0); abs(&mut r, 0, 32767);
+        let o = wait(&mut r, 200);
+        assert!(o.pointer.iter().any(|e| e.kind == EV_REL && e.code == 6 && e.value > 0), "stick right = REL_HWHEEL right");
+        assert!(o.pointer.iter().all(|e| !(e.kind == EV_REL && e.code == 8)));
+    }
+    #[test]
+    fn cursor_mode_keeps_button_meanings_and_adds_hwheel() {
+        let mut r = nav("desktop-2d");
+        assert_eq!(tap(&mut r, START, 10).actions, vec!["input:cursor on"]);
+        assert_eq!(tap(&mut r, SOUTH, 50).actions, vec!["key:ENTER"], "C-11: South is Enter in cursor mode");
+        let o = key(&mut r, TR2, 1);
+        assert!(o.pointer.contains(&Event::new(EV_KEY, 0x110, 1)) && o.actions.is_empty(), "RT is still the left click");
+        let o = wait(&mut r, 800); assert!(o.actions.iter().all(|a| a != "key:CTRL+TAB"));
+        key(&mut r, TR2, 0);
+        abs(&mut r, 0, 32767);
+        assert!(wait(&mut r, 100).pointer.iter().any(|e| e.kind == EV_REL && e.code == 6 && e.value > 0));
+        abs(&mut r, 0, 0);
+        assert_eq!(abs(&mut r, 17, 1).actions, vec!["key:DOWN"], "the d-pad is arrows in cursor mode");
+        // Negative: the pre-I2 router dropped buttons in cursor mode.
+        let mut p = plain("desktop-2d");
+        tap(&mut p, START, 10);
+        let o = tap(&mut p, SOUTH, 50);
+        assert!(o.actions.is_empty() && o.app.is_empty());
+    }
+    #[test]
+    fn thumb_clicks_resolve_on_release_and_the_chord_cancels_them() {
+        let mut r = nav("desktop-2d");
+        assert!(key(&mut r, L3, 1).actions.is_empty(), "L3 waits for the release");
+        assert_eq!(key(&mut r, L3, 0).actions, vec!["key:CTRL+t"]);
+        assert_eq!(tap(&mut r, R3, 50).actions, vec!["key:CTRL+0"]);
+        // Fast chord: the room toggle only.
+        let mut o = r.event(Event::new(EV_KEY, L3, 1), 1000);
+        o.extend(r.event(Event::new(EV_KEY, R3, 1), 1100));
+        o.extend(key(&mut r, L3, 0)); o.extend(key(&mut r, R3, 0));
+        assert_eq!(o.actions, vec!["mios:hyprland-3d-toggle"]);
+        // Slow overlap (outside debounce_ms): no singles and no toggle.
+        let mut r = nav("desktop-2d");
+        let mut o = r.event(Event::new(EV_KEY, L3, 1), 1000);
+        o.extend(wait(&mut r, 400));
+        o.extend(r.event(Event::new(EV_KEY, R3, 1), 1400));
+        o.extend(key(&mut r, R3, 0)); o.extend(key(&mut r, L3, 0));
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        // Sloppy click: L3 while the left stick is deflected does nothing.
+        let mut r = nav("desktop-2d");
+        abs(&mut r, 0, 30000);
+        assert!(tap(&mut r, L3, 50).actions.is_empty());
+        abs(&mut r, 0, 0);
+        assert_eq!(tap(&mut r, L3, 50).actions, vec!["key:CTRL+t"]);
+    }
+    #[test]
+    fn guide_l3_r3_fires_neither_lock_nor_latch() {
+        let (mut c, l) = crate::config::tests::fixture_nav();
+        c.controller.system_layer.insert("BTN_THUMBL".into(), "quickshell:lock".into());
+        c.controller.system_layer.insert("BTN_THUMBR".into(), "mios:toggle_vm_passthrough".into());
+        let mut r = Router::with_context(c, l, axes(), "desktop-2d");
+        let mut o = key(&mut r, GUIDE, 1);
+        for (code, v) in [(L3, 1), (R3, 1), (L3, 0), (R3, 0), (GUIDE, 0)] { o.extend(key(&mut r, code, v)); }
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        let mut o = key(&mut r, GUIDE, 1);
+        for (code, v) in [(L3, 1), (L3, 0), (GUIDE, 0)] { o.extend(key(&mut r, code, v)); }
+        assert_eq!(o.actions, vec!["quickshell:lock"], "Guide+L3 alone still locks, on release");
+    }
+    #[test]
+    fn guide_tap_opens_the_drawer_only_when_alone_and_short() {
+        let mut r = nav("desktop-2d");
+        assert_eq!(tap(&mut r, GUIDE, 100).actions, vec!["quickshell:drawer-toggle"]);
+        assert!(tap(&mut r, GUIDE, 600).actions.is_empty(), "a Guide hold is the system-layer modifier");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(tap(&mut r, LB, 20)); o.extend(key(&mut r, GUIDE, 0));
+        assert_eq!(o.actions, vec!["hypr:workspace e-1"], "Guide+LB is the system layer, never the drawer too");
+        // R-26: a Guide press cancels a pending South hold.
+        key(&mut r, SOUTH, 1); wait(&mut r, 200);
+        let mut o = key(&mut r, GUIDE, 1); o.extend(wait(&mut r, 600)); o.extend(key(&mut r, GUIDE, 0)); o.extend(key(&mut r, SOUTH, 0));
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        // Negative: the pre-I2 router swallowed the uncaptured Guide tap.
+        let mut p = plain("desktop-2d");
+        assert!(tap(&mut p, GUIDE, 100).actions.is_empty());
+    }
+    #[test]
+    fn analog_only_triggers_get_digital_edges() {
+        let mut r = nav("desktop-2d"); r.analog_triggers = true;
+        assert_eq!(abs(&mut r, 5, 200).actions, vec!["key:CTRL+TAB"]);
+        let o = wait(&mut r, 760);
+        assert_eq!(o.actions, vec!["key:CTRL+TAB"; 2], "500/250 repeat: at 500 and 750 ms");
+        assert!(abs(&mut r, 5, 0).actions.is_empty());
+        assert_eq!(abs(&mut r, 2, 255).actions, vec!["key:CTRL+SHIFT+TAB"]);
+        // A pad with digital triggers (DualSense) gets exactly one action per pull, from the button.
+        let mut d = nav("desktop-2d");
+        let mut o = abs(&mut d, 5, 200); o.extend(key(&mut d, TR2, 1)); o.extend(key(&mut d, TR2, 0)); o.extend(abs(&mut d, 5, 0));
+        assert_eq!(o.actions, vec!["key:CTRL+TAB"]);
+    }
+    #[test]
+    fn repaired_releases_fire_nothing() {
+        let mut r = nav("desktop-2d");
+        key(&mut r, SOUTH, 1);
+        let o = r.reconcile(&BTreeSet::new(), 5);
+        assert!(o.actions.is_empty(), "a missed release repaired from kernel truth is not a tap");
+        key(&mut r, GUIDE, 1);
+        assert!(r.reconcile(&BTreeSet::new(), 6).actions.is_empty());
+    }
+    #[test]
+    fn grammar_validation_two_sided() {
+        let with = |path: &[&str], val: toml::Value| crate::config::tests::try_fixture_nav_with(|v| {
+            let mut t = &mut v["keybindings"]["global"]["controller"]["nav"];
+            for p in &path[..path.len() - 1] { t = &mut t[*p]; }
+            t.as_table_mut().unwrap().insert(path[path.len() - 1].into(), val);
+        });
+        // Arrays replace atomically: a user [tap, "none"] really unbinds the hold.
+        let (c, l) = with(&["desktop", "BTN_SOUTH"], toml::Value::Array(vec!["key:SPACE".into(), "none".into()])).unwrap();
+        let mut r = Router::with_context(c, l, axes(), "desktop-2d");
+        assert!(tap(&mut r, SOUTH, 700).actions.is_empty());
+        assert_eq!(tap(&mut r, SOUTH, 50).actions, vec!["key:SPACE"]);
+        for (path, val, why) in [
+            (vec!["desktop", "BTN_SOUTH"], toml::Value::from(""), "\"\" is not a value"),
+            (vec!["desktop", "BTN_SOUTH"], toml::Value::from("app"), "namespace"),
+            (vec!["terminal_tmux", "BTN_TL2"], toml::Value::from("tmux:key q"), "prefix-table key"),
+            (vec!["desktop", "BTN_TL"], toml::Value::from("key:ENTER"), "capture contract"),
+            (vec!["desktop", "BTN_MODE"], toml::Value::Array(vec!["key:ENTER".into(), "key:ESC".into()]), "Guide hold"),
+            (vec!["desktop", "BTN_SOUTH"], toml::Value::from("pointer:wheel-up"), "only LS_*/RS_*"),
+            (vec!["desktop", "BTN_SOUTH"], toml::Value::from("key:HYPER+a"), "unknown modifier"),
+            (vec!["desktop", "inherits"], toml::Value::from("terminal_plain"), "cycle"),
+            (vec!["repeat", "RS_LEFT"], toml::Value::Array(vec![400.into(), 60.into()]), "never repeat"),
+            (vec!["contexts", "app-capture"], toml::Value::from("desktop"), "not an uncaptured"),
+            (vec!["contexts", "desktop-2d"], toml::Value::from("missing"), "no profile"),
+        ] {
+            let e = with(&path, val).err().unwrap_or_default();
+            assert!(e.contains(why), "{path:?}: {e}");
+        }
+    }
+    #[test]
+    fn axis_owner_property_holds_with_nav() {
+        // INV-5 with the nav sink in play: the room packet and host wheel/pointer never share a frame.
+        let mut g = 12345u64;
+        let mut next = || { g = g.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); g >> 33 };
+        for seed in 0..24 {
+            let mut r = nav("desktop-2d");
+            let _ = seed;
+            for _ in 0..300 {
+                let mut o = Output::default();
+                match next() % 6 {
+                    0 => { let c = ["desktop-2d", "desktop-3d", "terminal", "game", "app-capture"][(next() % 5) as usize]; o.extend(r.set_focus(c, Some((format!("0x{}", next() % 3), 1)), c == "desktop-3d")); }
+                    1 => { let b = [SOUTH, START, L3, R3, NORTH, GUIDE][(next() % 6) as usize]; o.extend(key(&mut r, b, (next() % 2) as i32)); }
+                    _ => { let code = [0u16, 1, 3, 4][(next() % 4) as usize]; o.extend(abs(&mut r, code, (next() % 65536) as i32 - 32768)); }
+                }
+                o.extend(r.tick(0.01));
+                let pad_live = r.pad.lx != 0.0 || r.pad.ly != 0.0 || r.pad.rx != 0.0 || r.pad.ry != 0.0;
+                let host = o.pointer.iter().any(|e| e.kind == EV_REL);
+                let app = o.app.iter().any(|e| e.kind == EV_ABS && [0, 1, 3, 4].contains(&e.code) && e.value.unsigned_abs() > 4000);
+                assert!(!(pad_live && (host || app)) && !(host && app), "context {} owned {} cursor {}", r.context, r.app_owned(), r.cursor);
+            }
+        }
     }
 }

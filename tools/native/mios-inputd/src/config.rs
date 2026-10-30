@@ -77,14 +77,33 @@ pub struct ControllerConfig {
     pub context_stale_ms: u64,
     #[serde(default = "capture_hold_ms")]
     pub capture_hold_ms: u64,
+    /// C-32: notify on every capture and release ("Controller -> <app>. Hold L3+R3 to release.").
+    #[serde(default)]
+    pub capture_osd: bool,
+    /// The notifier argv; one argument carries `{message}`. Runs off the forwarding loop after the compositor
+    /// confirmed the ownership transaction.
+    #[serde(default)]
+    pub capture_osd_argv: Vec<String>,
+    /// The raw [keybindings.global.controller.nav] table (serialized so a policy edit reloads every router).
+    #[serde(default, rename = "nav")]
+    pub nav_table: Option<toml::Value>,
+    /// The resolved nav projection (step I2): profiles with `inherits` applied.
+    #[serde(skip)]
+    pub nav: crate::nav::NavConfig,
 }
 fn capture_hold_ms() -> u64 { 500 }
+fn default_namespaces() -> Vec<String> {
+    ["hypr", "exec", "quickshell", "mios", "tmux", "readline"].into_iter().map(str::to_owned).collect()
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalConfig {
     pub enabled: bool,
     pub mod_key: String,
     pub bypass_mod: String,
     pub chord_sep: String,
+    /// Every action is `<namespace>:<verb>` with a namespace from this SSOT list (key: and pointer: since I2).
+    #[serde(default = "default_namespaces")]
+    pub action_namespaces: Vec<String>,
     pub contexts: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub reserved_terminal: Vec<String>,
@@ -100,6 +119,12 @@ pub struct GlobalConfig {
     pub native_actions: BTreeMap<String, String>,
     #[serde(skip)]
     pub resolved_actions: BTreeMap<String, Vec<String>>,
+    /// [keybindings].tmux_prefix: the prefix `tmux:key` sends with `send-keys -K`.
+    #[serde(default)]
+    pub tmux_prefix: String,
+    /// The tmux prefix-table keys the SSOT binds ([keybindings.actions].key and [keybindings.tmux].bindings[].key).
+    #[serde(default)]
+    pub tmux_prefix_keys: BTreeSet<String>,
 }
 impl GlobalConfig {
     pub fn load(root: Option<&Path>) -> Result<(Self, LegacyConfig), String> {
@@ -115,7 +140,14 @@ impl GlobalConfig {
             .try_into()
             .map_err(|e: toml::de::Error| e.to_string())?;
         cfg.resolve_actions(v)?;
+        cfg.resolve_tmux(v);
         cfg.validate()?;
+        cfg.controller.nav = crate::nav::NavConfig::from_value(cfg.controller.nav_table.as_ref(), &crate::nav::Ctx {
+            namespaces: &cfg.action_namespaces,
+            tmux_prefix_keys: &cfg.tmux_prefix_keys,
+            contexts: &CONTEXTS,
+            deadzone: cfg.controller.stick_deadzone,
+        })?;
         let legacy: LegacyConfig = v
             .get("desktop")
             .and_then(|v| v.get("hyprland"))
@@ -127,6 +159,16 @@ impl GlobalConfig {
             .map_err(|e: toml::de::Error| e.to_string())?;
         legacy.validate()?;
         Ok((cfg, legacy))
+    }
+    fn resolve_tmux(&mut self, v: &toml::Value) {
+        let kb = v.get("keybindings");
+        self.tmux_prefix = kb.and_then(|k| k.get("tmux_prefix")).and_then(toml::Value::as_str).unwrap_or("C-b").to_owned();
+        let keys = |arr: Option<&toml::Value>| -> Vec<String> {
+            arr.and_then(toml::Value::as_array).into_iter().flatten()
+                .filter_map(|a| a.get("key").and_then(toml::Value::as_str).map(str::to_owned)).collect()
+        };
+        self.tmux_prefix_keys = keys(kb.and_then(|k| k.get("actions"))).into_iter()
+            .chain(keys(kb.and_then(|k| k.get("tmux")).and_then(|t| t.get("bindings")))).collect();
     }
     fn resolve_actions(&mut self, v: &toml::Value) -> Result<(), String> {
         // Reuse existing desktop launch definitions. A terminal entry must open
@@ -192,7 +234,7 @@ impl GlobalConfig {
             }
         }
         for (action, argv) in &self.action_argv {
-            validate_action(action)?;
+            validate_action_in(action, &self.action_namespaces)?;
             if argv.is_empty() || argv.iter().any(|a| a.is_empty() || a.contains('\0')) {
                 return Err(format!("invalid action argv: {action}"));
             }
@@ -260,6 +302,13 @@ impl GlobalConfig {
         if c.capture_tag==c.release_tag || c.capture_tag==c.capture_fullscreen_tag || c.release_tag==c.capture_fullscreen_tag {
             return Err("capture_tag, release_tag and capture_fullscreen_tag must be distinct".into());
         }
+        if self.action_namespaces.is_empty() || self.action_namespaces.iter().any(|n| n.is_empty() || n == "input" || !n.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())) {
+            return Err("action_namespaces: lowercase names; input: is reserved for the bridge's own ownership verbs".into());
+        }
+        if c.capture_osd && (c.capture_osd_argv.is_empty() || !c.capture_osd_argv[0].starts_with('/')
+            || c.capture_osd_argv.iter().any(|a| a.contains('\0')) || !c.capture_osd_argv.iter().any(|a| a.contains("{message}"))) {
+            return Err("capture_osd_argv: an absolute program and one argument carrying {message}".into());
+        }
         if c.recovery_argv.is_some() {
             return Err("controller recovery_argv is retired: serve exits or idles instead of starting a second pad owner".into());
         }
@@ -293,7 +342,7 @@ impl GlobalConfig {
         }
         for (button, action) in &c.system_layer {
             button_code(button)?;
-            validate_action(action)?;
+            validate_action_in(action, &self.action_namespaces)?;
         }
         let mut ids = BTreeSet::new();
         for b in &self.bindings {
@@ -315,7 +364,7 @@ impl GlobalConfig {
                 }
             }
             normalize_chord(&b.chord, &self.chord_sep)?;
-            validate_action(&b.action)?;
+            validate_action_in(&b.action, &self.action_namespaces)?;
             if let Some(bypass) = &b.bypass {
                 let n = normalize_chord(bypass, &self.chord_sep)?;
                 if !n.starts_with(&format!("{}+", self.bypass_mod)) {
@@ -377,10 +426,14 @@ impl GlobalConfig {
     }
 }
 pub fn validate_action(action: &str) -> Result<(), String> {
+    validate_action_in(action, &default_namespaces())
+}
+/// An action is `<namespace>:<verb>` with a namespace from [keybindings.global].action_namespaces.
+pub fn validate_action_in(action: &str, namespaces: &[String]) -> Result<(), String> {
     let (namespace, verb) = action
         .split_once(':')
         .ok_or_else(|| format!("action needs namespace: {action}"))?;
-    if !["hypr", "exec", "quickshell", "mios", "tmux", "readline"].contains(&namespace)
+    if !namespaces.iter().any(|n| n == namespace)
         || verb.is_empty()
         || action.chars().any(|c| c.is_control())
     {
@@ -522,6 +575,28 @@ BTN_TR="hypr:workspace e+1"
             .insert("global".into(), section["keybindings"]["global"].clone());
         v["keybindings"]["global"].as_table_mut().unwrap().insert("vm".into(), vm);
         GlobalConfig::from_value(&v).unwrap()
+    }
+    /// The fixture plus the vendor nav tables, key:/pointer: namespaces and the vendor tmux prefix keys (step I2).
+    pub fn fixture_nav() -> (GlobalConfig, LegacyConfig) {
+        fixture_nav_with(|_| {})
+    }
+    pub fn fixture_nav_with(edit: impl FnOnce(&mut toml::Value)) -> (GlobalConfig, LegacyConfig) {
+        try_fixture_nav_with(edit).unwrap()
+    }
+    pub fn try_fixture_nav_with(edit: impl FnOnce(&mut toml::Value)) -> Result<(GlobalConfig, LegacyConfig), String> {
+        let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (cfg, _) = fixture();
+        let mut v = vendor.clone();
+        let mut global = toml::Value::try_from(&cfg).unwrap();
+        let g = global.as_table_mut().unwrap();
+        g.remove("tmux_prefix"); g.remove("tmux_prefix_keys");
+        g.insert("action_namespaces".into(), vendor["keybindings"]["global"]["action_namespaces"].clone());
+        let c = g.get_mut("controller").unwrap().as_table_mut().unwrap();
+        c.insert("nav".into(), vendor["keybindings"]["global"]["controller"]["nav"].clone());
+        c.insert("cursor_mode_contexts".into(), vendor["keybindings"]["global"]["controller"]["cursor_mode_contexts"].clone());
+        v["keybindings"].as_table_mut().unwrap().insert("global".into(), global);
+        edit(&mut v);
+        GlobalConfig::from_value(&v)
     }
     #[test]
     fn canonical_modifier_order() {
