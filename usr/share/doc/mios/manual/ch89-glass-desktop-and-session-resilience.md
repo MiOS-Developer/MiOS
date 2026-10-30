@@ -615,7 +615,9 @@ inside those rows, and the HUD stays visible. Only a **true fullscreen** window
 (mode 2) hides the island and the dock; their edge hot zones stay
 (`EdgeReveal.qml`). `[desktop.hyprland.config.misc] on_focus_under_fullscreen = 2`
 makes a newly focused window come to the front over fullscreen or maximized
-content. That window is shown and takes input. Floating windows (dialogs, PiPs,
+content. That window is shown and takes input. The value is also Hyprland
+0.56's default; the SSOT pins it so the HUD contract does not depend on the
+upstream default. Floating windows (dialogs, PiPs,
 pickers) open above fullscreen content and leave it fullscreen.
 
 If tiled windows run under the HUD (`hyprctl -j monitors` shows

@@ -47,6 +47,11 @@ ROUNDS = int(os.environ.get('MIOS_CHURN_ROUNDS', '3'))
 results = []
 
 
+# Logical rows a maximized window must keep between the reserved HUD rows (tests/test-shell-hud-live.py has the same
+# guard with its negative control).
+MIN_FREE_ROWS = 120
+
+
 def check(name, ok, detail=''):
     results.append((name, bool(ok), str(detail)))
     print(f"{'PASS' if ok else 'FAIL'} {name} {detail}", flush=True)
@@ -198,9 +203,14 @@ def main():
                 hgt = round((m.get('width') if m.get('transform', 0) % 2 else m.get('height', 0)) / sc)
                 hc('eval', f"hl.dispatch(hl.dsp.window.fullscreen({{mode='maximized', action='unset', window='address:{a}'}}))")
                 time.sleep(1.0)
-                ok = (c.get('fullscreen') == 1 and res[1] > 0 and res[3] > 0 and c['at'][1] >= res[1]
-                      and c['at'][1] + c['size'][1] <= hgt - res[3])
-                detail = f"window={c.get('at')}+{c.get('size')} reserved={res} height={hgt}"
+                size = c.get('size') or [0, 0]
+                # a visible window on an output tall enough to hold one: the PiP host can shrink the nested output
+                # below the reserved rows, and Hyprland then reports a non-positive size the bounds alone accept
+                ok = (hgt - res[1] - res[3] >= MIN_FREE_ROWS and size[0] > 0 and size[1] > 0
+                      and c.get('fullscreen') == 1 and res[1] > 0 and res[3] > 0 and c['at'][1] >= res[1]
+                      and c['at'][1] + size[1] <= hgt - res[3])
+                detail = (f"window={c.get('at')}+{size} reserved={res} height={hgt} "
+                          f"free_rows={hgt - res[1] - res[3]} (min {MIN_FREE_ROWS})")
                 if out_size() == before:
                     return ok, detail
             return None, 'output kept resizing: ' + detail

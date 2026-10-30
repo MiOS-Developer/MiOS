@@ -49,6 +49,45 @@ def sh(a, env=None, timeout=30):
     return subprocess.run(a, capture_output=True, text=True, env=env, timeout=timeout)
 
 
+# Logical rows a maximized window must keep between the reserved HUD rows; a shorter nested output (the PiP host can
+# shrink it) cannot show the window, and Hyprland then reports a non-positive size that the bounds alone accept.
+MIN_FREE_ROWS = 120
+
+
+def inside_reserved(c, res, height):
+    """A maximized window is inside the reserved rows only with a visible size on a tall enough output."""
+    at, size = c.get('at') or [0, 0], c.get('size') or [0, 0]
+    if height - res[1] - res[3] < MIN_FREE_ROWS:
+        return False
+    if size[0] <= 0 or size[1] <= 0:
+        return False
+    return (c.get('fullscreen') == 1 and res[1] > 0 and res[3] > 0 and at[1] >= res[1]
+            and at[1] + size[1] <= height - res[3])
+
+
+def inside_reserved_pre_fix(c, res, height):
+    """The check before the size/height guard, kept as the negative control of inside_reserved."""
+    return (c.get('fullscreen') == 1 and res[1] > 0 and res[3] > 0 and c['at'][1] >= res[1]
+            and c['at'][1] + c['size'][1] <= height - res[3])
+
+
+def volume_now():
+    """The default sink's (volume, muted) from WirePlumber, independent of the shell under test."""
+    r = sh(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
+    try:
+        return float(r.stdout.split()[1]), '[MUTED]' in r.stdout
+    except (IndexError, ValueError):
+        return None, None
+
+
+def restore_volume(saved):
+    level, muted = saved
+    if level is None:
+        return
+    sh(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{level:.2f}'])
+    sh(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1' if muted else '0'])
+
+
 def shells_in(runtime):
     """Quickshell processes of this nested session only (matched by XDG_RUNTIME_DIR), never the primary shell."""
     pids = []
@@ -66,7 +105,24 @@ def shells_in(runtime):
     return pids
 
 
+def build_vptr(d):
+    """The virtual-pointer fixture, compiled into the evidence directory; None without gcc / wayland-scanner."""
+    if not (shutil.which('gcc') and shutil.which('wayland-scanner') and shutil.which('pkg-config')):
+        return None
+    d.mkdir(parents=True, exist_ok=True)
+    fx = TREE / 'tests/fixtures/shell-hud'
+    ok = sh(['wayland-scanner', 'client-header', str(fx / 'wlr-virtual-pointer-unstable-v1.xml'),
+             str(d / 'vp-client-protocol.h')]).returncode == 0
+    ok = ok and sh(['wayland-scanner', 'private-code', str(fx / 'wlr-virtual-pointer-unstable-v1.xml'),
+                    str(d / 'vp-protocol.c')]).returncode == 0
+    flags = sh(['pkg-config', '--cflags', '--libs', 'wayland-client']).stdout.split()
+    ok = ok and sh(['gcc', '-O1', f'-I{d}', '-o', str(d / 'vptr'), str(fx / 'vptr.c'), str(d / 'vp-protocol.c'),
+                    *flags]).returncode == 0
+    return str(d / 'vptr') if ok else None
+
+
 def main():
+    saved_volume = [None]   # (level, muted) of the default sink before any volume check
     launch_env = dict(os.environ, MIOS_VENDOR_TOML=SSOT)
     launch_env.pop('MIOS_TOML', None)
     launcher = subprocess.Popen(['/usr/bin/mios-gen', 'nested-session', '--layout', 'pip'], env=launch_env,
@@ -127,6 +183,32 @@ def main():
         def shot(name):
             sh(['grim', str(OUT / f'{name}.png')], env=env)
 
+        # a real pointer in the nested session (zwlr_virtual_pointer_v1), built from the fixture
+        vptr = build_vptr(OUT / 'vptr')
+
+        def ptr(x, y, mode):
+            w, h = logical()
+            name = monitor().get('name', '')
+            r = sh([vptr, name, str(int(x)), str(int(y)), mode], env=dict(env, VPTR_W=str(w), VPTR_H=str(h)))
+            return r.returncode == 0
+
+        def real_wheel(x, y, notches):
+            # Hyprland sends no pointer enter to a surface that mapped under a stationary pointer: leave, re-enter
+            ptr(x, y + 300, 'hover')
+            time.sleep(0.3)
+            ptr(x, y, 'hover')
+            time.sleep(0.4)
+            return ptr(x, y, f'scroll:{notches}')
+
+        def island_centre(qml):
+            st_ = ipc(qml, 'topbar', 'state') or {}
+            ly = layers().get('mios-topbar')
+            if not ly:
+                return None
+            hud = st_.get('hud') or {}
+            x = hud['x'] + hud['width'] / 2 if hud.get('width') else ly[0] + ly[2] / 2
+            return x, ly[1] + ly[3] / 2
+
         # The shell under test: a private copy of the theme bridge (the negative control flips volume_scroll in it),
         # PipeWire from the user's runtime (the nested runtime has no PipeWire socket), batteries shown in the island.
         bridge_src = Path(os.environ.get('MIOS_THEME_BRIDGE') or Path.home() / '.local/state/mios/theme/theme.json')
@@ -185,17 +267,26 @@ def main():
         shot('hud-initial')
 
         # ---- maximize stays inside the reserved rows -----------------------------------------------------------------
+        # the guard itself: the verifier's degenerate run (output shrunk to 328 rows under 176+288 reserved, window
+        # size [444,-142]) passed the old bounds check; a real maximized window passes both
+        degenerate = ({'fullscreen': 1, 'at': [0, 176], 'size': [444, -142]}, [0, 176, 0, 288], 328)
+        sane = ({'fullscreen': 1, 'at': [0, 44], 'size': [1280, 604]}, [0, 44, 0, 72], 720)
+        check('NEGATIVE CONTROL: the old maximize check accepts a window with no visible size; the guarded one rejects it',
+              inside_reserved_pre_fix(*degenerate) and not inside_reserved(*degenerate)
+              and inside_reserved_pre_fix(*sane) and inside_reserved(*sane))
+
         def maximize_inside():
             ev(f"hl.dispatch(hl.dsp.window.fullscreen({{mode='maximized', action='set', window='address:{A}'}}))")
             time.sleep(1.5)
             c = next((c for c in clients() if c['address'] == A), {})
             res = monitor().get('reserved') or [0, 0, 0, 0]
+            height = logical()[1]
             ls = layers()
-            ok = (c.get('fullscreen') == 1 and res[1] > 0 and res[3] > 0 and c['at'][1] >= res[1]
-                  and c['at'][1] + c['size'][1] <= H - res[3] and 'mios-topbar' in ls and 'mios-dock' in ls)
+            ok = inside_reserved(c, res, height) and 'mios-topbar' in ls and 'mios-dock' in ls
             ev(f"hl.dispatch(hl.dsp.window.fullscreen({{mode='maximized', action='unset', window='address:{A}'}}))")
             time.sleep(1.0)
-            return ok, {'window': (c.get('at'), c.get('size'), c.get('fullscreen')), 'reserved': res, 'layers': sorted(ls), 'H': H}
+            return ok, {'window': (c.get('at'), c.get('size'), c.get('fullscreen')), 'reserved': res, 'layers': sorted(ls),
+                        'height': height, 'free_rows': height - res[1] - res[3], 'min_free_rows': MIN_FREE_ROWS}
 
         ok, det = maximize_inside()
         shot('maximized')
@@ -261,7 +352,7 @@ def main():
 
         configured = sh(['env', '-u', 'MIOS_TOML', '/usr/bin/mios-toml-get', 'desktop.hyprland.config.misc',
                          'on_focus_under_fullscreen'], env=launch_env).stdout.strip()
-        check('SSOT pins on_focus_under_fullscreen = 2', configured == '2', configured)
+        check('SSOT pins on_focus_under_fullscreen = 2 (also the Hyprland 0.56 default)', configured == '2', configured)
         ok, det = tiled_over_fullscreen(2)
         check('a newly focused tiled window comes to the front over fullscreen content and takes input', ok, det)
         ok_neg, det_neg = tiled_over_fullscreen(0)
@@ -275,6 +366,9 @@ def main():
         if not vol or vol.get('percent', -1) < 0:
             check('default sink reachable for the volume checks', False, vol)
         else:
+            saved_volume[0] = volume_now()
+            check('the default sink is restored from WirePlumber afterwards (level and mute)', saved_volume[0][0] is not None,
+                  saved_volume[0])
             before = vol['percent']
             step = int(vol['step_pct'])
             up = 1 if before + step <= 100 else -1
@@ -310,6 +404,45 @@ def main():
             time.sleep(1.0)
             final = ipc(QML, 'topbar', 'state')['volume']['percent']
             check('volume left as found', final == before, (before, final))
+
+            # wheel-up never lowers a sink that sits above volume_max_pct (set the maximum below the current level)
+            if before > step:
+                nb = dict(base_bridge)
+                nb['topbar'] = dict(base_bridge.get('topbar') or {}, volume_max_pct=before - step)
+                bridge.write_text(json.dumps(nb))
+                time.sleep(1.5)
+                over = ipc(QML, 'topbar', 'volumeWheel', '120')
+                time.sleep(0.4)
+                over_state = ipc(QML, 'topbar', 'state')['volume']
+                check('wheel-up on a sink above volume_max_pct keeps its level (never lowers it)',
+                      over == before and over_state['percent'] == before, (before, before - step, over, over_state['percent']))
+                bridge.write_text(json.dumps(base_bridge))
+                time.sleep(1.0)
+                restore_volume(saved_volume[0])
+                time.sleep(0.4)
+
+            # the real wheel over the island (zwlr_virtual_pointer), not the IPC
+            centre = island_centre(QML)
+            if vptr and centre:
+                level0 = volume_now()[0]
+                real_wheel(centre[0], centre[1], up)
+                time.sleep(0.6)
+                level1 = volume_now()[0]
+                chip = ipc(QML, 'topbar', 'state')['volume']
+                shot('volume-real-wheel')
+                check('a real wheel notch over the island steps the volume once and shows the chip',
+                      level0 is not None and level1 is not None and round((level1 - level0) * 100) == up * step and chip['chip'],
+                      (level0, level1, chip))
+                real_wheel(centre[0], centre[1], -up)
+                time.sleep(0.6)
+                check('the opposite real notch restores it', volume_now()[0] == level0, (level0, volume_now()))
+            else:
+                check('real pointer available for the wheel check (gcc, wayland-scanner, island mapped)', False,
+                      (vptr, centre))
+            restore_volume(saved_volume[0])
+            time.sleep(0.4)
+            check('volume and mute left as found (WirePlumber)', volume_now() == saved_volume[0],
+                  (saved_volume[0], volume_now()))
             if Path(OLD_QML).is_file() and Path(OLD_QML).resolve() != Path(QML).resolve():
                 start_shell(OLD_QML, 'old')
                 old = sh([QS, 'ipc', '--path', OLD_QML, '--any-display', 'call', 'topbar', 'volumeWheel', '120'], env=shell_env)
@@ -318,6 +451,15 @@ def main():
                       # quickshell ipc exits 0 and prints "Function not found." for an unknown IPC function
                       (old.returncode != 0 or 'not found' in (old.stdout + old.stderr).lower()) and 'volume' not in old_state,
                       (old.returncode, old.stdout[:120], old.stderr[:120]))
+                centre = island_centre(OLD_QML)
+                if vptr and centre:
+                    level0 = volume_now()[0]
+                    real_wheel(centre[0], centre[1], up)
+                    time.sleep(0.6)
+                    level1 = volume_now()[0]
+                    restore_volume(saved_volume[0])
+                    check('NEGATIVE CONTROL: the previous shell QML ignores the same real wheel over the island',
+                          level0 is not None and level1 == level0, (level0, level1))
                 shell = start_shell(QML, 'tree3')
 
         # ---- device battery glyphs ------------------------------------------------------------------------------
@@ -336,6 +478,8 @@ def main():
     except Exception as e:  # report, then clean up
         check('driver', False, repr(e))
     finally:
+        if saved_volume[0]:
+            restore_volume(saved_volume[0])
         if env:
             for pid in shells_in(str(d)):
                 try:

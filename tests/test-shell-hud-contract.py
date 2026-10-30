@@ -135,7 +135,105 @@ class TestSsot(unittest.TestCase):
             self.assertIn(f'data-key="desktop.topbar.{k}"', html, k)
 
 
+QML_TOOL = os.environ.get("MIOS_QML_TOOL", "/usr/lib64/qt6/bin/qml")
+# The commit before the wheel-up clamp fix: its volumeWheel lowers a sink that sits above volume_max_pct.
+PRE_CLAMP_FIX = "5b24d4716"
+WHEEL_CASES = [  # (label, volume, muted, max, deltas) -> expected (volume, muted, last return)
+    ("step up", 0.30, False, 1.0, [120], (0.35, False, 35)),
+    ("step down", 0.30, False, 1.0, [-120], (0.25, False, 25)),
+    ("clamp at max", 0.98, False, 1.0, [120], (1.0, False, 100)),
+    ("floor at zero", 0.02, False, 1.0, [-120], (0.0, False, 0)),
+    ("above max: wheel-up keeps the level", 1.30, False, 1.0, [120], (1.30, False, 130)),
+    ("above max: wheel-down steps from it", 1.30, False, 1.0, [-120], (1.25, False, 125)),
+    ("muted: wheel-up unmutes and steps", 0.30, True, 1.0, [120], (0.35, False, 35)),
+    ("muted: wheel-down stays muted", 0.30, True, 1.0, [-120], (0.25, True, 25)),
+    ("half notches accumulate", 0.30, False, 1.0, [60, 60], (0.35, False, 35)),
+]
+
+
+def function_text(qml: str, name: str) -> str:
+    """The source of `function <name>(...) { ... }` (brace-matched) from a QML file."""
+    start = re.search(r"\n\s*function " + re.escape(name) + r"\(deltaY\)\s*\{", qml)
+    if not start:
+        raise AssertionError(f"function {name} not found")
+    i = qml.index("{", start.start())
+    depth = 0
+    for j in range(i, len(qml)):
+        depth += {"{": 1, "}": -1}.get(qml[j], 0)
+        if depth == 0:
+            return qml[start.start():j + 1].strip()
+    raise AssertionError("unbalanced braces")
+
+
+def run_wheel_cases(qml_source: str) -> dict:
+    """Run the island's real volumeWheel() in Qt's own QML engine (offscreen) against a mock sink."""
+    fn = function_text(qml_source, "volumeWheel")
+    cases = ",".join("[%s,%s,%s,%s,[%s]]" % (json_num(v), str(m).lower(), json_num(mx), json_num(0), ",".join(map(str, d)))
+                     for _, v, m, mx, d, _ in WHEEL_CASES)
+    doc = """import QtQuick
+Item {
+    id: pill
+    property bool volumeScroll: true
+    property real volumeStepPct: 5
+    property real volumeMax: 1.0
+    property real volumeWheelAcc: 0
+    property int osd: 0
+    QtObject { id: sinkObj; property int id: 1; property QtObject audio: QtObject { property real volume: 0; property bool muted: false } }
+    property var sink: sinkObj
+    function showVolumeOsd() { osd++ }
+    %s
+    Component.onCompleted: {
+        const out = []
+        for (const c of [%s]) {
+            sinkObj.audio.volume = c[0]; sinkObj.audio.muted = c[1]; volumeMax = c[2]; volumeWheelAcc = 0
+            let r = -1
+            for (const d of c[4]) r = volumeWheel(d)
+            out.push([Math.round(sinkObj.audio.volume * 100) / 100, sinkObj.audio.muted, r])
+        }
+        console.log("RESULT " + JSON.stringify(out))
+        Qt.quit()
+    }
+}
+""" % (fn, cases)
+    with tempfile.TemporaryDirectory(prefix="mios-wheel-") as d:
+        path = os.path.join(d, "wheel.qml")
+        with open(path, "w") as f:
+            f.write(doc)
+        r = subprocess.run([QML_TOOL, path], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_FORCE_STDERR_LOGGING="1",
+                                    QT_LOGGING_RULES="qml=true;js=true;default.debug=true"))
+    line = next((l for l in (r.stdout + r.stderr).splitlines() if "RESULT " in l), None)
+    if line is None:
+        raise AssertionError("qml run failed: " + (r.stdout + r.stderr)[-800:])
+    import json
+    got = json.loads(line.split("RESULT ", 1)[1])
+    return {label: tuple(g) for (label, *_), g in zip(WHEEL_CASES, got)}
+
+
+def json_num(x: float) -> str:
+    return repr(float(x))
+
+
 class TestQml(unittest.TestCase):
+    @unittest.skipUnless(os.access(QML_TOOL, os.X_OK), "needs Qt's qml tool")
+    def test_volume_wheel_behaviour(self):
+        """The real volumeWheel() in Qt's QML engine: steps, clamps, floors, mute, accumulation, and wheel-up never
+        lowers a sink that another app set above volume_max_pct."""
+        got = run_wheel_cases(read(os.path.join(QS, "PanelWindow.qml")))
+        for label, *_, want in WHEEL_CASES:
+            self.assertEqual(got[label], (want[0], want[1], want[2]), label)
+
+    @unittest.skipUnless(os.access(QML_TOOL, os.X_OK), "needs Qt's qml tool")
+    def test_volume_wheel_negative_control_pre_fix(self):
+        """The volumeWheel() before the clamp fix drops a 130 % sink to 100 % on wheel-up (the defect)."""
+        r = subprocess.run(["git", "-C", ROOT, "show", f"{PRE_CLAMP_FIX}:usr/share/mios/quickshell/PanelWindow.qml"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            self.skipTest("pre-fix commit not reachable from this checkout")
+        got = run_wheel_cases(r.stdout)
+        self.assertEqual(got["above max: wheel-up keeps the level"], (1.0, False, 100))
+        self.assertEqual(got["step up"], (0.35, False, 35))   # the rest of the harness agrees with the old code
+
     def test_island_scroll_volume(self):
         t = read(os.path.join(QS, "PanelWindow.qml"))
         self.assertRegex(t, r"WheelHandler\s*\{[^}]*pill\.volumeWheel\(event\.angleDelta\.y\)")

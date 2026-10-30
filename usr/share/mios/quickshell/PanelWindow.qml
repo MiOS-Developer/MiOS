@@ -529,9 +529,13 @@ QS.PanelWindow {
         const notches = volumeWheelAcc > 0 ? Math.floor(volumeWheelAcc / 120) : Math.ceil(volumeWheelAcc / 120)
         if (notches === 0) return -1
         volumeWheelAcc -= notches * 120
-        const next = Math.max(0, Math.min(volumeMax, Math.round(sink.audio.volume * 100 + notches * volumeStepPct) / 100))
+        // Wheel-up never lowers the level: a sink another app set above volume_max_pct stays where it is (up only
+        // unmutes it); wheel-down steps down from wherever it is.
+        const current = sink.audio.volume
+        const stepped = Math.round(current * 100 + notches * volumeStepPct) / 100
+        const next = notches > 0 ? Math.max(current, Math.min(volumeMax, stepped)) : Math.max(0, Math.min(current, stepped))
         if (sink.audio.muted && notches > 0) sink.audio.muted = false
-        sink.audio.volume = next
+        if (next !== current) sink.audio.volume = next
         showVolumeOsd()
         return Math.round(next * 100)
     }

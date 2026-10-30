@@ -9171,6 +9171,8 @@ disable_splash_rendering = true
 # (dialogs, PiPs, pickers) open above fullscreen and maximized windows and keep them fullscreen/maximized.
 # Maximized (mode 1) windows fill the work area inside the HUD's reserved rows; only a true fullscreen window (mode 2)
 # auto-hides the status island and the dock (usr/share/mios/quickshell/EdgeReveal.qml; tests/test-shell-hud-live.py).
+# 2 is also Hyprland 0.56's own default: the key pins the HUD contract explicitly (a changed upstream default or a
+# lower-tier override then shows here); it is not a behaviour change against the stock compositor.
 on_focus_under_fullscreen = 2
 [desktop.hyprland.config.general]
 layout = "dwindle"

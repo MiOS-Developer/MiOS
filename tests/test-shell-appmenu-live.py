@@ -65,6 +65,22 @@ def shells_in(runtime):
     return pids
 
 
+def build_vptr(d):
+    """The virtual-pointer fixture (tests/fixtures/shell-hud/vptr.c); None without gcc / wayland-scanner."""
+    import shutil
+    if not (shutil.which('gcc') and shutil.which('wayland-scanner') and shutil.which('pkg-config')):
+        return None
+    d.mkdir(parents=True, exist_ok=True)
+    fx = TREE / 'tests/fixtures/shell-hud'
+    xml = str(fx / 'wlr-virtual-pointer-unstable-v1.xml')
+    ok = sh(['wayland-scanner', 'client-header', xml, str(d / 'vp-client-protocol.h')]).returncode == 0
+    ok = ok and sh(['wayland-scanner', 'private-code', xml, str(d / 'vp-protocol.c')]).returncode == 0
+    flags = sh(['pkg-config', '--cflags', '--libs', 'wayland-client']).stdout.split()
+    ok = ok and sh(['gcc', '-O1', f'-I{d}', '-o', str(d / 'vptr'), str(fx / 'vptr.c'), str(d / 'vp-protocol.c'),
+                    *flags]).returncode == 0
+    return str(d / 'vptr') if ok else None
+
+
 def main():
     launch_env = dict(os.environ, MIOS_VENDOR_TOML=SSOT)
     launch_env.pop('MIOS_TOML', None)
@@ -142,9 +158,53 @@ def main():
             except ValueError:
                 return None if r.returncode or 'not found' in r.stdout.lower() else r.stdout.strip()
 
+        def monitor():
+            try:
+                return (json.loads(hc('-j', 'monitors') or '[{}]') or [{}])[0]
+            except ValueError:
+                return {}
+
+        def logical():
+            m = monitor()
+            sc = m.get('scale') or 1
+            w, h = (m.get('height', 0), m.get('width', 0)) if m.get('transform', 0) % 2 else (m.get('width', 0), m.get('height', 0))
+            return round(w / sc), round(h / sc)
+
+        # The PiP output is usually narrower than the [desktop.mobile] breakpoint, so the session's own policy calls it
+        # mobile, which hides the sound item and the app menu. The app-menu checks are about the desktop island: hand
+        # the shell under test a desktop verdict for this output (the policy file itself is left untouched).
+        desk_json = OUT / 'desktop-outputs.json'
+
+        def write_desktop_verdict():
+            try:
+                j = json.loads((d / 'mios-mobile-outputs.json').read_text())
+            except (OSError, ValueError):
+                j = {'version': 1, 'outputs': {}, 'config': {}}
+            verdicts = {name: bool(o.get('mobile')) for name, o in j.get('outputs', {}).items()}
+            for o in j.get('outputs', {}).values():
+                o['mobile'] = False
+            desk_json.write_text(json.dumps(j))
+            return verdicts
+
+        vptr = build_vptr(OUT / 'vptr')
+
+        def ptr(x, y, mode):
+            w, h = logical()
+            r = sh([vptr, monitor().get('name', ''), str(int(x)), str(int(y)), mode],
+                   env=dict(env, VPTR_W=str(w), VPTR_H=str(h)))
+            return r.returncode == 0
+
+        def click(x, y):
+            # Hyprland sends no pointer enter to a surface that mapped under a stationary pointer: leave, re-enter
+            ptr(x, y + 300, 'hover')
+            time.sleep(0.2)
+            ptr(x, y, 'hover')
+            time.sleep(0.2)
+            return ptr(x, y, 'click')
+
         def start_shell(qml, label, items):
             stop_shells()
-            senv = dict(env, MIOS_NESTED_TOPBAR_ITEMS=items)
+            senv = dict(env, MIOS_NESTED_TOPBAR_ITEMS=items, MIOS_MOBILE_OUTPUTS_JSON=str(desk_json))
             p = subprocess.Popen(['bwrap', '--die-with-parent', '--bind', '/', '/', '--dev-bind', '/dev', '/dev',
                                   '--ro-bind', str(d / 'input'), '/dev/input', '--', QS, '--no-duplicate', '--path', qml],
                                  env=senv, stdout=open(OUT / f'shell-{label}.log', 'w'), stderr=subprocess.STDOUT)
@@ -199,6 +259,9 @@ def main():
                 break
             time.sleep(0.2)
 
+        policy = write_desktop_verdict()
+        check('the shell under test gets a desktop verdict for the PiP output (policy verdict recorded)',
+              desk_json.is_file(), {'policy_mobile': policy, 'logical': logical()})
         exporter = subprocess.Popen([MIOSD, 'appmenu', 'serve'], env=env,
                                     stdout=open(OUT / 'exporter.log', 'w'), stderr=subprocess.STDOUT)
         helpers.append(exporter)
@@ -240,6 +303,45 @@ def main():
                 time.sleep(0.2)
             check('activating the exported item reaches the application', r.returncode == 0 and marker.is_file(),
                   (r.returncode, r.stderr[:200]))
+
+        # ---- the same through a REAL pointer: click the pill, then the item ------------------------------------------
+        if vptr and item and isinstance(st, dict):
+            marker.unlink(missing_ok=True)
+            ly = layers().get('mios-appmenu')
+            opened = None
+            if ly:
+                y = ly[1] + min(ly[3], 40) / 2
+                left = int(ly[0] + st.get('row_left', 8))
+                for x in range(left, left + int(st.get('width', 300)), 6):   # scan the pill row left to right
+                    click(x, y)
+                    time.sleep(0.35)
+                    s2 = ipc(QML, 'appmenu', 'state') or {}
+                    if s2.get('open_menu', -1) >= 0:
+                        opened = (x, y, s2.get('open_menu'))
+                        break
+            shot('appmenu-real-click-open')
+            check('a REAL pointer click on the File pill opens its dropdown', opened is not None and opened[2] == 0, opened)
+            hit = None
+            if opened and opened[2] == 0:
+                time.sleep(0.6)
+                for y in range(int(opened[1] + 14), int(opened[1] + 140), 6):   # the "Mark" row sits under the pill
+                    if (ipc(QML, 'appmenu', 'state') or {}).get('open_menu', -1) != 0:
+                        click(opened[0], opened[1])
+                        time.sleep(0.6)
+                    ptr(opened[0] + 30, y, 'hover')
+                    time.sleep(0.25)
+                    ptr(opened[0] + 30, y, 'click')
+                    for _ in range(6):
+                        if marker.is_file():
+                            break
+                        time.sleep(0.2)
+                    if marker.is_file():
+                        hit = (opened[0] + 30, y)
+                        break
+            check('a REAL pointer click on the dropdown item "Mark" reaches the application', hit is not None, hit)
+            ipc(QML, 'appmenu', 'close')
+        else:
+            check('real pointer available for the click checks (gcc, wayland-scanner, exported item)', False, (vptr, item))
 
         # ---- NEGATIVE CONTROL: an app without a menubar gets its name only -------------------------------------------
         _bare, c2 = launch_app('org.mios.MenuFixtureBare', OUT / 'marker-bare.txt', '--no-menus')
