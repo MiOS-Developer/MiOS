@@ -2711,6 +2711,9 @@ remote.rdp.native.udp_transport  MIOS_REMOTE_RDP_NATIVE_UDP_TRANSPORT
 remote.rdp.native.log_negotiation  MIOS_REMOTE_RDP_NATIVE_LOG_NEGOTIATION
 remote.rdp.native.bitmap_hz  MIOS_REMOTE_RDP_NATIVE_BITMAP_HZ
 remote.rdp.native.bitmap_damage_threshold  MIOS_REMOTE_RDP_NATIVE_BITMAP_DAMAGE_THRESHOLD
+remote.rdp.native.progressive  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE
+remote.rdp.native.progressive_hz  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE_HZ
+remote.rdp.native.progressive_quant  MIOS_REMOTE_RDP_NATIVE_PROGRESSIVE_QUANT
 remote.rdp.native.bitmap_slow_queue_ms  MIOS_REMOTE_RDP_NATIVE_BITMAP_SLOW_QUEUE_MS
 remote.rdp.native.bitmap_min_hz  MIOS_REMOTE_RDP_NATIVE_BITMAP_MIN_HZ
 remote.rdp.native.egfx_wait_ms  MIOS_REMOTE_RDP_NATIVE_EGFX_WAIT_MS

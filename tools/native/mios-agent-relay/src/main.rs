@@ -1,6 +1,8 @@
 // AI-hint: Transactional caller-owned agent mailboxes with leases, idempotent sends and recipient receipts.
 // AI-related: usr/libexec/mios/mios-mcp-server, usr/share/mios/mios.toml [mcp.agents]
 // AI-functions: main, dispatch
+mod workspace_hook;
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1466,6 +1468,23 @@ fn workspace_escape_format(value: &str) -> String {
     value.replace('#', "##")
 }
 
+/// The window-resized hook for a managed workspace: this binary's native single-flight hook (never an interpreter),
+/// so the workspace's own pane reshaping cannot re-trigger itself into a process flood.
+fn workspace_resize_hook(witness: &str, head: &str, socket: &str) -> Result<String, String> {
+    let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_str().ok_or("relay path is not UTF-8")?;
+    let command = format!(
+        "env TMUX={} TMUX_PANE={} {} --workspace-hook resize {} {}",
+        quote(witness),
+        quote(head),
+        quote(exe),
+        quote(head),
+        quote(socket)
+    );
+    Ok(format!("run-shell -b {}", quote(&command)))
+}
+
 fn workspace_lock(path: &Path, name: &str) -> Result<fs::File, String> {
     mios_service_core::process::workspace_lock(path, name).map_err(|e| e.to_string())
 }
@@ -2360,27 +2379,13 @@ fn workspace(request: &Value) -> Result<Value, String> {
             &head,
             "#{socket_path},#{pid},#{session_id}",
         ])?;
-        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
-        let command = format!(
-            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-            quote(&witness),
-            quote(&head),
-            quote(
-                request["adapter_python"]
-                    .as_str()
-                    .unwrap_or(string(config, "tui_python")?)
-            ),
-            quote(string(request, "adapter")?),
-            quote(&head),
-            quote(socket)
-        );
         tmux(&[
             "set-hook",
             "-w",
             "-t",
             &window,
             "window-resized[100]",
-            &format!("run-shell -b {}", quote(&command)),
+            &workspace_resize_hook(&witness, &head, socket)?,
         ])?;
         let mut resize = request.clone();
         resize["action"] = json!("resize");
@@ -2599,21 +2604,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 &head,
                 "#{socket_path},#{pid},#{session_id}",
             ])?;
-            let shell_quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-            let hook_command = format!(
-                "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-                shell_quote(&witness),
-                shell_quote(&head),
-                shell_quote(
-                    request["adapter_python"]
-                        .as_str()
-                        .unwrap_or(string(config, "tui_python")?)
-                ),
-                shell_quote(string(request, "adapter")?),
-                shell_quote(&head),
-                shell_quote(socket)
-            );
-            let hook = format!("run-shell -b {}", shell_quote(&hook_command));
+            let hook = workspace_resize_hook(&witness, &head, socket)?;
             tmux(&["set-hook", "-w", "-t", &head, "window-resized[100]", &hook])?;
             Ok(())
         })();
@@ -2745,7 +2736,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     // Re-entering an existing workspace upgrades its hook as well as its
     // geometry, including installations whose overlay scripts are mode 0644.
-    if let Some(adapter) = request["adapter"].as_str() {
+    {
         let witness = tmux(&[
             "display-message",
             "-p",
@@ -2753,26 +2744,13 @@ fn workspace(request: &Value) -> Result<Value, String> {
             &head,
             "#{socket_path},#{pid},#{session_id}",
         ])?;
-        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
-        let interpreter = request["adapter_python"]
-            .as_str()
-            .unwrap_or(string(config, "tui_python")?);
-        let command = format!(
-            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-            quote(&witness),
-            quote(&head),
-            quote(interpreter),
-            quote(adapter),
-            quote(&head),
-            quote(socket)
-        );
         tmux(&[
             "set-hook",
             "-w",
             "-t",
             window,
             "window-resized[100]",
-            &format!("run-shell -b {}", quote(&command)),
+            &workspace_resize_hook(&witness, &head, socket)?,
         ])?;
     }
     if fields[6] == "1" {
@@ -3605,6 +3583,9 @@ fn workspace_menu(request: &Value) -> Result<Value, Box<dyn std::error::Error>> 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--workspace-hook" {
+        workspace_hook::main(&args);
+    }
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
         if args.len() == 2 && args[1] == "--workspace-menu" {
             let mut raw = String::new();

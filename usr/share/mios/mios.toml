@@ -6840,6 +6840,9 @@ udp_transport       = false         # RDP-UDP (Shortpath): a NEW opening; stays 
 log_negotiation     = true          # log the EGFX capability sets, negotiated version, codecs, DISP layouts, RDPEI version
 bitmap_hz           = 15            # frames/s of the classic bitmap path for clients without EGFX/AVC420
 bitmap_damage_threshold = 3         # per RGB channel vs last transmitted bitmap; 0 = exact; 0..16 suppresses tiny background noise without altering desktop rendering
+progressive        = true          # EGFX RemoteFX Progressive for clients disabling H.264; false preserves legacy bitmap fallback
+progressive_hz     = 30            # capture ceiling for the acknowledged Progressive path, also bounded by target_hz
+progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -9149,6 +9152,7 @@ enable = true   # default ON; toggle via /configurator.html (configurator.packag
 pkgs = [
     "phosh",
     "phoc",
+    "phosh-mobile-settings",
     "gnome-calls",
     "feedbackd",
 ]
