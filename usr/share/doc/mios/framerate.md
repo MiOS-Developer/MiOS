@@ -33,14 +33,22 @@ When the daemon switches a display mode, it picks the mode like this:
 1. An advertised (EDID) mode within `mode_tolerance_hz` (0.5) of D is used as it is.
 2. Otherwise, with `modes = "extended-vblank"`, the daemon derives a timing from the panel's own EDID. It takes the
    fastest detailed timing at the output's size and adds blank lines to the vertical front porch until the rate is
-   D. The pixel clock, horizontal timing and line rate stay the same, so the panel sees its native timing with longer
-   frames. This is also what VRR does on every frame.
+   D. The horizontal timing stays the same, so the panel sees its native timing with longer frames. This is also what
+   VRR does on every frame.
+   - The pixel clock is truncated to whole MHz first. Hyprland 0.56 reads a modeline's clock as a float into the
+     `uint32_t` `drmModeModeInfo.clock`, then multiplies by 1000 (`config/shared/monitor/Parser.cpp`). A fraction of
+     a MHz is therefore dropped. The daemon derives the timing from the clock Hyprland really programs, so the rate
+     it plans, verifies and reports is the rate on the wire.
+   - The line rate drops by less than 1 MHz / htotal. On DP-3 that is 161.566 to 161.479 kHz, or 0.05 %.
 3. Otherwise, the nearest advertised mode is used.
 
 DP-3 (LG 24GL600F) advertises 144, 120, 100, 75, 60 and 50 Hz, but no 90 Hz mode. Its range limits are 48-144 Hz.
 For 90 Hz the daemon derives this timing:
 
-    modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync    # 90.009 Hz, 161.566 kHz
+    modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync    # 90.010 Hz, 161.479 kHz
+
+The earlier derivation kept the 144 Hz clock, `modeline 332.18 ... 1795`, which claims 90.009 Hz. Hyprland programs
+332 MHz from it, so the panel would really get 89.960 Hz. The unit tests keep that string as a negative control.
 
 `miosd framerate modeline DP-3 --hz 90` prints this timing without changing anything. The command refuses in these
 cases:
@@ -62,6 +70,17 @@ extended-vblank refuse the other value, so a host or user tier opts in.
   until you run `miosd framerate confirm-mode --reset`.
 - A mode pinned in `[desktop.hyprland.monitors.<name>].mode` is never changed.
 - Stopping the daemon restores every mode it changed.
+- The way back is never a mode the output does not advertise. The daemon names the mode an output shows (its baseline,
+  and the snapshot for every revert) in this order:
+  1. the exact string it set itself (an advertised mode or its own modeline), while the output still shows it;
+  2. the advertised mode the output shows;
+  3. the shown mode, for an output that advertises nothing (a virtual or nested output);
+  4. otherwise the configured monitor rule's advertised mode: "preferred" is the EDID's first timing, "highrr" the
+     fastest. This covers a modeline set by someone else, for example a one-off trial.
+
+  The fourth case is logged. Going back to it is a real change, so it is not exempt from the confirmation. A
+  `WxH@Hz` string of an unadvertised rate is never used. Hyprland would turn it into a custom CVT timing without
+  reduced blanking, which is not in the EDID.
 - A config reload re-applies the mode the daemon set. This includes a modeline. Only a `WxH@Hz` string or a
   well-formed modeline from the state file is replayed.
 
@@ -74,12 +93,19 @@ The daemon does this natively once a host or user tier opts in:
     mode_outputs = ["DP-3"]
 
 After a SIGHUP (or the next start) the daemon holds every tier on DP-3 with a display mode instead of the VRR cap.
+A mode pinned in `[desktop.hyprland.monitors.DP-3].mode` takes precedence: a pinned `mode_outputs` output keeps the
+VRR cap when it has one.
 Each new mode goes through the guards above: verified within 5 s, restored after 15 s unless
 `miosd framerate confirm-mode` keeps it. Remove the fragment to go back to the VRR cap.
 
 `miosd framerate modeline DP-3 --hz 90` prints the timing and the `hl.monitor` Lua that applies and restores it,
 without changing anything. A one-off trial outside the daemon (arm a 15 s revert timer first, switch, verify, confirm
-or let it revert) is a lead/operator integration step and is not shipped in the image.
+or let it revert) is a lead/operator integration step and is not shipped in the image. Its rules:
+
+- Only the operator confirms, after looking at the panel. `hyprctl` reports the new mode even when the panel shows
+  no signal, so a script cannot tell. The same holds for `miosd framerate confirm-mode`.
+- Before the trial is made persistent (the `[desktop.framerate]` fragment above), the panel goes back to its
+  advertised mode. The daemon's baseline is then that mode, and its own guarded switch brings 90 Hz back.
 
 ## Hypr3D windows open at Retina size
 

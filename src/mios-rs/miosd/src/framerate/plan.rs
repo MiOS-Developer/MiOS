@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
-use mios_resolver::edid_timing::{self, Porch, RangeLimits, Timing};
+use mios_resolver::edid_timing::{self, RangeLimits, Timing};
 use mios_resolver::framerate::{whole_hz, Inputs, Mechanism, OutputState, Policy, Rates, State, STATE_VERSION};
 use serde_json::Value as Json;
 
@@ -203,7 +203,7 @@ pub fn extended_mode(m: &Monitor, target: f64, tolerance_hz: f64) -> Result<Stri
     if (base.refresh_hz() - target).abs() <= tolerance_hz {
         return Err(format!("{target} Hz is the base timing's own rate"));
     }
-    edid_timing::extended_vblank(&base, target, tolerance_hz, e.range.as_ref(), Porch::Front)
+    edid_timing::extended_vblank_modeline(&base, target, tolerance_hz, e.range.as_ref())
         .map(|t| t.modeline())
         .map_err(|why| format!("{why:?}"))
 }
@@ -241,7 +241,9 @@ pub fn plan(policy: &Policy, inputs: &Inputs, monitors: &[Monitor], env: &Env) -
         }
         let cappable = env.pacing && (m.vrr || !env.require_vrr);
         let target = if rates.cap_hz == 0 { m.max_hz() } else { f64::from(rates.cap_hz) };
-        let mechanism = if policy.mode_output(&m.name) { Mechanism::Mode } else { policy.mechanism };
+        // mode_outputs forces the mode path, except on an output whose mode the operator pinned: that one keeps the
+        // policy's own mechanism (the VRR cap where it can), since the daemon never changes a pinned mode
+        let mechanism = if policy.mode_output(&m.name) && !env.pinned.contains(&m.name) { Mechanism::Mode } else { policy.mechanism };
         let mech = match mechanism {
             Mechanism::Cap if cappable => Mech::VrrCap,
             Mechanism::Cap => Mech::Uncapped(if env.pacing { "no active VRR" } else { "pacing plugin not loaded" }),
@@ -325,6 +327,61 @@ pub fn rates_lua(plan: &Plan, policy: &Policy, c: Consumers) -> String {
     format!("(function()\n{body}end)()")
 }
 
+/// The way back to the mode an output shows now, as a mode string the daemon can program without inventing a timing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Restore {
+    pub mode: String,
+    /// `mode` is what the output shows (true) or, for a mode it does not advertise and the daemon did not set, the
+    /// configured monitor rule's advertised mode (false: going there is a real change, so it is not exempt from the
+    /// confirmation guard)
+    pub exact: bool,
+}
+
+/// How the daemon names the mode `m` shows, for its baseline and every revert snapshot. A "WxH@Hz" string of a mode
+/// the output does NOT advertise is never used: Hyprland would program it as a custom CVT timing (no reduced
+/// blanking, not in the EDID). In order:
+/// 1. `set`: the exact mode string (an advertised mode or its own modeline) the daemon last put on this output, when
+///    the output still shows it;
+/// 2. the advertised mode the output shows (refresh within 0.01 Hz);
+/// 3. an output that advertises nothing (a virtual or nested output: its modes are custom anyway): the shown mode;
+/// 4. otherwise (someone else's custom mode or modeline, e.g. the DP-3 apply script's): the configured rule's mode
+///    (`rule`: [desktop.hyprland.monitors.<output>].mode, else the catch-all's, "preferred" by default) among the
+///    advertised modes at the current size -- "highrr" the fastest, "preferred" the EDID's first timing, else the
+///    fastest -- with `exact = false`.
+pub fn restorable_mode(m: &Monitor, set: Option<&str>, rule: &str) -> Restore {
+    if let Some(s) = set.filter(|s| verified(Some(m), s)) {
+        return Restore { mode: s.to_owned(), exact: true };
+    }
+    let here: Vec<f64> = m.modes.iter().filter(|(w, h, _)| *w == m.width && *h == m.height).map(|x| x.2).collect();
+    // hyprctl lists advertised modes to 0.01 Hz ("1920x1080@144.00Hz" for 143.998): the nearest within 0.01
+    let near = |target: f64| {
+        here.iter().copied().filter(|hz| (hz - target).abs() < 0.01).min_by(|a, b| (a - target).abs().total_cmp(&(b - target).abs()))
+    };
+    if let Some(hz) = near(m.refresh) {
+        return Restore { mode: mode_string(m.width, m.height, hz), exact: true };
+    }
+    if m.modes.is_empty() {
+        return Restore { mode: mode_string(m.width, m.height, m.refresh), exact: true };
+    }
+    let fastest = here.iter().copied().fold(None::<f64>, |a, hz| Some(a.map_or(hz, |a| a.max(hz))));
+    let preferred = m
+        .edid
+        .as_ref()
+        .and_then(|e| e.timings.first())
+        .filter(|t| t.hdisplay == m.width && t.vdisplay == m.height)
+        .and_then(|t| near(t.refresh_hz()));
+    let hz = match rule {
+        "highrr" => fastest,
+        "preferred" => preferred.or(fastest),
+        _ => fastest,
+    };
+    match hz {
+        Some(hz) => Restore { mode: mode_string(m.width, m.height, hz), exact: false },
+        // nothing advertised at this size (another resolution's custom mode): the rule's named mode, as the config does
+        None => Restore { mode: rule.to_owned(), exact: false },
+    }
+}
+
 /// `hl.monitor` for a mode switch (advertised or modeline), keeping the output's position, scale and transform.
 pub fn monitor_lua(m: &Monitor, mode: &str) -> String {
     let scale = format!("{:.6}", m.scale);
@@ -339,7 +396,7 @@ pub fn monitor_lua(m: &Monitor, mode: &str) -> String {
 }
 
 /// Two mode strings ("WxH@Hz" or modelines) name the same mode (same size, refresh within 0.5 Hz: 143.998 and 144.00
-/// are one mode; an extended-vblank 90.009 Hz modeline and "1920x1080@90.00" too).
+/// are one mode; the extended-vblank 90.010 Hz modeline and "1920x1080@90.00" too).
 pub fn same_mode(a: &str, b: &str) -> bool {
     match (mode_dims(a), mode_dims(b)) {
         (Some((aw, ah, az)), Some((bw, bh, bz))) => aw == bw && ah == bh && (az - bz).abs() < 0.5,
@@ -385,14 +442,14 @@ impl PendingMode {
 }
 
 /// Test hook (MIOS_FRAMERATE_TEST_MODES = "NAME=WxH@Hz,WxH@Hz;NAME2=..."): extra advertised modes for VIRTUAL
-/// outputs (HEADLESS-* only: their modes are custom anyway, and a headless output lists only the custom mode it was
-/// last given), so the nested test exercises the modeset, confirmation and revert path. A real panel's (EDID) list is
-/// never touched.
+/// outputs (HEADLESS-* and WAYLAND-* only -- a headless or a nested Wayland-backend output: their modes are custom
+/// anyway, and such an output lists only the custom mode it was last given, or none), so the nested tests exercise
+/// the modeset, confirmation, revert and baseline paths. A real panel's (EDID) list is never touched.
 pub fn inject_test_modes(monitors: &mut [Monitor], spec: &str) {
     for entry in spec.split(';') {
         let Some((name, modes)) = entry.split_once('=') else { continue };
         let name = name.trim();
-        if !name.starts_with("HEADLESS-") {
+        if !(name.starts_with("HEADLESS-") || name.starts_with("WAYLAND-")) {
             continue;
         }
         if let Some(m) = monitors.iter_mut().find(|m| m.name == name) {
@@ -609,7 +666,10 @@ mod tests {
         Edid::parse(&bytes).expect("the fixture parses")
     }
 
-    const DP3_90: &str = "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync";
+    /// The 90 Hz extended-vblank modeline with Hyprland's whole-MHz clock (90.010 Hz as Hyprland programs it).
+    const DP3_90: &str = "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync";
+    /// The pre-fix derivation (332.18 MHz, vtotal 1795): 90.009 on paper, 89.960 Hz on the wire.
+    const DP3_90_FRACTIONAL: &str = "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync";
 
     fn extended(p: &Policy, outputs: &[&str]) -> Policy {
         let mut q = p.clone();
@@ -624,7 +684,7 @@ mod tests {
         let mut mons = monitors(false);
         mons[0].edid = Some(dp3_edid());
         let mode = |profile: &str, gaming: bool, pol: &Policy, ms: &[Monitor], e: &Env| plan(pol, &inputs(profile, false, gaming), ms, e).outputs["DP-3"].mech.clone();
-        assert_eq!(mode("performance", false, &p, &mons, &env(true)), Mech::Mode(DP3_90.into()), "90: the 144 Hz timing with 673 more blank lines");
+        assert_eq!(mode("performance", false, &p, &mons, &env(true)), Mech::Mode(DP3_90.into()), "90: the 144 Hz timing (whole-MHz clock) with 672 more blank lines");
         assert_eq!(mode("balanced", false, &p, &mons, &env(true)), Mech::Mode("1920x1080@60.00".into()), "60 is advertised: no custom timing");
         assert_eq!(mode("balanced", true, &p, &mons, &env(true)), Mech::Mode("1920x1080@119.98".into()), "120: 119.98 is within 0.5 Hz");
         let mut u = p.clone();
@@ -632,11 +692,13 @@ mod tests {
         assert_eq!(plan(&u, &Inputs::default(), &mons, &env(true)).outputs["DP-3"].mech, Mech::Mode("1920x1080@144.00".into()));
         // the modeline is what Hyprland is told, and what verification and the confirm set compare against
         let m = &mons[0];
-        assert!(monitor_lua(m, DP3_90).contains("mode = 'modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync'"));
-        assert_eq!(mode_dims(DP3_90).map(|d| (d.0, d.1, (d.2 * 1000.0).round() / 1000.0)), Some((1920, 1080, 90.009)));
+        assert!(monitor_lua(m, DP3_90).contains("mode = 'modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync'"));
+        assert_eq!(mode_dims(DP3_90).map(|d| (d.0, d.1, (d.2 * 1000.0).round() / 1000.0)), Some((1920, 1080, 90.01)));
+        // negative control: the fractional-MHz modeline is 89.960 Hz as Hyprland parses it, not the 90.009 it claims
+        assert_eq!(mode_dims(DP3_90_FRACTIONAL).map(|d| (d.2 * 1000.0).round() / 1000.0), Some(89.96));
         let mut shown = m.clone();
-        shown.refresh = 90.00862;
-        assert!(verified(Some(&shown), DP3_90), "the panel showing 90.009 Hz verifies the modeline");
+        shown.refresh = 90.01037;
+        assert!(verified(Some(&shown), DP3_90), "the panel showing 90.010 Hz verifies the modeline");
         assert!(!verified(Some(m), DP3_90), "still at 144: not verified");
         assert!(same_mode(DP3_90, "1920x1080@90.01") && !same_mode(DP3_90, "1920x1080@99.93"));
         assert!(!needs_confirm(15, &m.identity, DP3_90, None, &[(m.identity.clone(), [DP3_90.to_string()].into())].into()));
@@ -672,7 +734,13 @@ mod tests {
         assert_eq!(mech(&p, &mons, &e), Mech::Mode("1920x1080@99.93".into()), "a modeline that failed verification is never retried");
         let mut e = env(true);
         e.pinned.insert("DP-3".into());
-        assert!(matches!(mech(&extended(&base, &["DP-3"]), &mons, &e), Mech::Uncapped(_)), "a pinned mode wins over mode_outputs");
+        assert!(matches!(mech(&extended(&base, &["DP-3"]), &mons, &e), Mech::Uncapped(_)), "no VRR: a pinned mode wins over mode_outputs");
+        // with VRR active a pinned mode_outputs output keeps the cap (the daemon never changes its mode, but still holds D)
+        let mut vrr = monitors(true);
+        vrr[0].edid = Some(dp3_edid());
+        let pinned_vrr = plan(&extended(&base, &["DP-3"]), &inputs("performance", false, false), &vrr, &e);
+        assert_eq!((pinned_vrr.outputs["DP-3"].mech.clone(), pinned_vrr.outputs["DP-3"].cap_hz), (Mech::VrrCap, 90), "pinned + mode_outputs + VRR: the cap");
+        assert_eq!(plan(&extended(&base, &["DP-3"]), &inputs("performance", false, false), &vrr, &env(true)).outputs["DP-3"].mech, Mech::Mode(DP3_90.into()), "control: unpinned, mode_outputs still forces the mode");
         let mut e = env(true);
         e.declined.insert(mons[0].identity.clone());
         assert!(matches!(mech(&p, &mons, &e), Mech::Uncapped(_)), "a declined panel gets no more modesets");
@@ -681,6 +749,45 @@ mod tests {
         assert!(extended_mode(&mons[0], 165.0, 0.5).unwrap_err().contains("AboveBase"));
         assert_eq!(Edid::parse(&[0u8; 128]), None, "not an EDID");
         assert_eq!(mode_dims("modeline 1 2 3"), None);
+    }
+
+    #[test]
+    fn the_way_back_is_never_a_mode_the_output_does_not_advertise() {
+        let mut dp3 = monitors(true).remove(0);
+        dp3.edid = Some(dp3_edid());
+        // advertised and shown: exact
+        assert_eq!(restorable_mode(&dp3, None, "preferred"), Restore { mode: "1920x1080@144.00".into(), exact: true });
+        let mut at60 = dp3.clone();
+        at60.refresh = 60.0;
+        assert_eq!(restorable_mode(&at60, None, "preferred"), Restore { mode: "1920x1080@60.00".into(), exact: true });
+        // D1: DP-3 on the apply script's confirmed 90 Hz modeline (hyprctl reports 90.01037), set by someone else
+        let mut on90 = dp3.clone();
+        on90.refresh = 90.01037;
+        let pre_fix = mode_string(on90.width, on90.height, on90.refresh);
+        assert_eq!(pre_fix, "1920x1080@90.01", "negative control: the pre-fix capture");
+        assert!(!on90.modes.iter().any(|m| (m.2 - 90.01).abs() < 1.0), "...is no advertised mode: Hyprland would invent a CVT timing for it");
+        let r = restorable_mode(&on90, None, "preferred");
+        assert_eq!(r, Restore { mode: "1920x1080@144.00".into(), exact: false }, "the rule's mode: preferred = the EDID's first timing (144)");
+        assert!(on90.modes.iter().any(|m| same_mode(&r.mode, &mode_string(m.0, m.1, m.2))), "an advertised mode");
+        assert_eq!(restorable_mode(&on90, None, "highrr").mode, "1920x1080@144.00");
+        let mut no_edid = on90.clone();
+        no_edid.edid = None;
+        assert_eq!(restorable_mode(&no_edid, None, "preferred").mode, "1920x1080@144.00", "no EDID: the fastest advertised mode");
+        // the daemon's own modeline: it knows the exact string
+        assert_eq!(restorable_mode(&on90, Some(DP3_90), "preferred"), Restore { mode: DP3_90.into(), exact: true });
+        assert_eq!(restorable_mode(&dp3, Some(DP3_90), "preferred").mode, "1920x1080@144.00", "a stale `set` (not shown any more) is ignored");
+        // a virtual output advertises nothing: its shown mode is the only name it has
+        let rdp = &monitors(false)[1];
+        assert_eq!(restorable_mode(rdp, None, "preferred"), Restore { mode: "1170x2532@90.00".into(), exact: true });
+        // a custom mode at a size with no advertised mode: the rule's named mode, never a WxH@Hz
+        let mut odd = on90.clone();
+        odd.width = 1600;
+        odd.height = 900;
+        assert_eq!(restorable_mode(&odd, None, "preferred"), Restore { mode: "preferred".into(), exact: false });
+        // a guessed way back is not exempt from the confirmation guard; a shown one is
+        let none = ModeSets::new();
+        assert!(!needs_confirm(15, &dp3.identity, "1920x1080@144.00", Some("1920x1080@144.00"), &none));
+        assert!(needs_confirm(15, &dp3.identity, "1920x1080@144.00", Some(r.mode.as_str()).filter(|_| r.exact), &none));
     }
 
     #[test]
@@ -802,7 +909,7 @@ mod tests {
     fn test_modes_reach_only_virtual_outputs() {
         let mut mons = monitors(false);
         mons[1].modes.clear();
-        inject_test_modes(&mut mons, "DP-3=1920x1080@30;HEADLESS-MIOS-RDP=1170x2532@60,1170x2532@120,bad; HEADLESS-X=1x1@1");
+        inject_test_modes(&mut mons, "DP-3=1920x1080@30;HEADLESS-MIOS-RDP=1170x2532@60,1170x2532@120,bad; HEADLESS-X=1x1@1;eDP-1=1x1@1");
         assert_eq!(mons[0].modes.len(), 10, "a real panel's EDID list is never replaced");
         assert_eq!(mons[1].modes, vec![(1170, 2532, 60.0), (1170, 2532, 120.0)]);
         let mut again = mons.clone();

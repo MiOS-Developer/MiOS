@@ -8,7 +8,7 @@
 # AI-related: src/mios-rs/miosd/src/framerate.rs, src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/edid_timing.rs,
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing, usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.hypr3d.spawn],
 # AI-related: tests/test-framerate.py, tests/test-hypr3d-retina-spawn.py, tools/native/mios-gen/src/nested_session.rs
-# AI-functions: Nest, Bus, Daemon, synth_edid, tier_checks, room_checks, modeline_for, modeset_checks, apply_script_checks, retina_checks
+# AI-functions: Nest, Bus, Daemon, synth_edid, tier_checks, room_checks, modeline_for, modeset_checks, baseline_checks, apply_script_checks, retina_checks
 """Live frame-rate + Retina checks in an owned nested PiP session.
 
 Primary compositor: only the launcher's own PiP window appears there; nothing is dispatched to it. The nested
@@ -17,7 +17,8 @@ home, user tier and private buses (nothing activatable). The nested Hyprland is 
 
 Env: MIOS_LIVE_NESTED=1; MIOS_GEN (candidate launcher; needs extended-vblank), MIOS_FR_MIOSD, MIOS_FR_WALLPAPERD,
 MIOS_FR_PACING_SO, MIOS_FR_HYPR3D_SO (default: installed); MIOS_LIVE_OUT (outside /tmp: the nest's /tmp is private);
-MIOS_FR_APPLY_SCRIPT (optional: the lead's DP-3 apply script, rehearsed on the nested output).
+MIOS_FR_APPLY_SCRIPT (optional: the lead's DP-3 apply script, rehearsed on the nested output); MIOS_FR_PREFIX_MIOSD
+(optional: a miosd built before the exact-baseline fix, the negative control of baseline_checks).
 The nested window's frame callbacks follow the PRIMARY's own rate (its cap, 60 Hz at power-saver), so the tiers here
 are scaled below it (18/24/30/36 Hz; divisors are the vendor ones); the vendor table itself is unit-tested in
 tests/test-framerate.py.
@@ -255,6 +256,13 @@ class Nest:
     def monitor(self):
         return json.loads(self.hc("-j", "monitors"))[0]
 
+    def status_path(self):
+        """Hypr3D's /tmp/hypr3d-status.txt as this run sees it: the launcher binds an empty per-session copy over it
+        ([desktop.nested].private_files, <session runtime>/private/<n>-hypr3d-status.txt) when the session shares /tmp;
+        else the file in the private /tmp."""
+        found = sorted(self.dir.glob("private/*-hypr3d-status.txt")) if self.dir else []
+        return found[0] if found else OUT / "tmp" / "hypr3d-status.txt"
+
     def pacing(self):
         try:
             return json.loads(self.hc("mios-pacing", "status"))
@@ -308,9 +316,9 @@ class Daemon:
     def fragment(self, name, text):
         (self.frag / name).write_text(text)
 
-    def start(self, **extra):
+    def start(self, binary=None, **extra):
         self.log = open(OUT / "daemon.log", "a")
-        self.p = subprocess.Popen([MIOSD, "framerate", "serve"], env=self.env(**extra), stdout=self.log, stderr=subprocess.STDOUT)
+        self.p = subprocess.Popen([binary or MIOSD, "framerate", "serve"], env=self.env(**extra), stdout=self.log, stderr=subprocess.STDOUT)
         time.sleep(2)
 
     def hup(self):
@@ -407,7 +415,7 @@ def tier_checks(n, d, bus, out_name, max_hz):
 
 def room_checks(n, d, bus):
     """Hypr3D: the running tier's D/G/W reach the room (status `pacing:` line) and follow a tier change."""
-    status = OUT / "tmp" / "hypr3d-status.txt"
+    status = n.status_path()
     out = n.hc("plugin", "load", H3D_SO)
     check("hypr3d candidate loads in the nest", "ok" in out.lower() or "loaded" in out.lower() or "Plugin hypr3d" in n.hc("plugin", "list"), out)
     d.hup()
@@ -495,6 +503,57 @@ def modeset_checks(n, d, bus):
     (d.frag / "70-mode.toml").unlink(missing_ok=True)
 
 
+def baseline_checks(n, d, bus):
+    """D1 (the verifier's): the daemon's baseline and revert snapshot must never be a "WxH@Hz" of a mode the output does
+    not advertise (Hyprland would program a custom CVT timing for it). Here the nested output advertises (test hook
+    MIOS_FRAMERATE_TEST_MODES) 50 and 30 Hz but shows 60 -- the shape of DP-3 on the apply script's modeline. The
+    candidate names the configured rule's advertised mode as the way back and says why; a pre-fix miosd
+    (MIOS_FR_PREFIX_MIOSD) names the unadvertised 60.00 (the negative control reproduces the defect)."""
+    m = n.monitor()
+    name, w, h = m["name"], m["width"], m["height"]
+    shown = f"{w}x{h}@{m['refreshRate']:.2f}"
+    advertised = [f"{w}x{h}@50.00", f"{w}x{h}@30.00"]
+    frag = f'[desktop.framerate]\nmode_outputs = ["{name}"]\nmodes = "extended-vblank"\nmodeset_hold_ms = 0\nmodeset_min_interval_s = 0\n'
+    bus.profile("performance")
+
+    def run(binary, tag):
+        d.stop()
+        d.state_home = OUT / f"state-baseline-{tag}"
+        d.fragment("70-mode.toml", frag)
+        mark = len(d.text())
+        d.start(binary=binary, MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}", MIOS_FRAMERATE_TEST_MODES=f"{name}={','.join(advertised)}")
+        sw = wait(lambda: re.search(rf"{re.escape(name)}: mode (\S+)( \(the configured rule's mode[^)]*\))? -> (\S+)", d.text()[mark:]), timeout=20)
+        wait(lambda: re.search(r"(verified after \d+ ms|not verified within \d+ ms)", d.text()[mark:]), timeout=15)
+        d.stop()
+        return sw, d.text()[mark:]
+
+    pre = os.environ.get("MIOS_FR_PREFIX_MIOSD", "")
+    if pre and os.access(pre, os.X_OK):
+        sw, text = run(pre, "prefix")
+        check("baseline (negative control): a pre-fix miosd names the shown, UNADVERTISED mode as its way back (D1 reproduced)",
+              sw and sw.group(1) == shown and shown not in advertised, (sw.group(0) if sw else text[-400:]))
+    sw, text = run(MIOSD, "candidate")
+    base = re.search(rf"{re.escape(name)}: baseline (\S+)", text)
+    check("baseline: the candidate's baseline is an advertised mode, not the shown unadvertised one",
+          base and base.group(1) in advertised and base.group(1) != shown and "does not advertise" in text, (base.group(0) if base else text[-400:]))
+    check("baseline: the switch's revert snapshot is that advertised mode, and the log says why",
+          sw and sw.group(1) in advertised and sw.group(2) and f"it shows {shown}" in sw.group(2), (sw.group(0) if sw else text[-400:]))
+    # control: an output that advertises nothing keeps its shown mode as the only name it has (no guess)
+    d.state_home = OUT / "state-baseline-modeless"
+    mark = len(d.text())
+    d.start(MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}")
+    wait(lambda: re.search(rf"{re.escape(name)}: baseline (\S+)", d.text()[mark:]), timeout=20)
+    wait(lambda: re.search(r"(verified after \d+ ms|not verified within \d+ ms)", d.text()[mark:]), timeout=15)
+    d.stop()
+    b2 = re.search(rf"{re.escape(name)}: baseline (\S+)(.*)", d.text()[mark:])
+    check("baseline (control): an output advertising nothing keeps its shown mode, no rule guess",
+          b2 and b2.group(1) == shown and "does not advertise" not in b2.group(2), (b2.group(0) if b2 else d.text()[mark:][-300:]))
+    back = wait(lambda: abs(n.monitor()["refreshRate"] - m["refreshRate"]) < 0.5, timeout=8)
+    check("baseline: the nested output is back at its own mode after the runs", back, n.monitor()["refreshRate"])
+    (d.frag / "70-mode.toml").unlink(missing_ok=True)
+    d.state_home = OUT / "state"
+
+
 def apply_script_checks(n, d):
     """MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh) rehearsed on the NESTED output with the synthetic EDID:
     `check` is read-only and prints the CLI's modeline; `apply` arms the transient revert timer FIRST, then switches; a
@@ -529,6 +588,51 @@ def apply_script_checks(n, d):
     log = (adir / "log").read_text()
     active = sh(["systemctl", "--user", "is-active", f"{unit}.timer"], env=env).stdout.strip()
     check("apply script: the timer fired, found the revert done and left nothing behind", "already reverted" in log and active != "active", f"{active} {log[-300:]}")
+    # `restore` is the way back even after a confirm (revert is a no-op then): idempotent on the snapshot
+    r = sh(["bash", script, "restore", str(adir), "--output", name], env=env)
+    check("apply script: restore puts the snapshot back and verifies it", r.returncode == 0 and "restored:" in (adir / "log").read_text()
+          and abs(n.monitor()["refreshRate"] - base) < 0.5, (r.stdout + r.stderr)[-300:])
+    # confirm is the operator's: no tty (a script, an agent) -> refused, nothing confirmed. A copy of the dir that looks
+    # like a verified apply (no timer behind it: its unit name is a dummy)
+    import shutil
+    fake = OUT / "apply-fake-verified"
+    shutil.rmtree(fake, ignore_errors=True)
+    shutil.copytree(adir, fake)
+    (fake / "reverted").unlink(missing_ok=True)
+    (fake / "applied").write_text("rehearsal\n")
+    (fake / "unit").write_text("mios-dp3-90hz-revert-rehearsal-none\n")
+    c = sh(["bash", script, "confirm", str(fake)], env=env, stdin=subprocess.DEVNULL)
+    check("apply script: confirm without a terminal is refused (operator only) and confirms nothing",
+          c.returncode != 0 and "operator's decision" in c.stderr and not (fake / "confirmed").exists(), c.stdout + c.stderr)
+    # persist: restores the snapshot FIRST (so the daemon's baseline is it), then the fragment and SIGHUP; unpersist
+    # removes it. The fake dir stands in for a confirmed apply; the daemon is this run's own.
+    (fake / "confirmed").write_text("rehearsal\n")
+    bins = " ".join(b for b in (MIOSD, GEN, WALLPAPERD) if os.access(b, os.X_OK))
+    penv = dict(env, MIOS_FR_CHECK_BINS=bins, MIOS_USER_TOML_D=str(d.frag))
+    # a fresh state home: modeset_checks blocklisted this modeline for the panel identity in the shared one
+    d.state_home = OUT / "state-persist"
+    d.start(MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}")
+    wait(lambda: d.state().get("pid") == d.p.pid, timeout=10)
+    mark = len(d.text())
+    frag = d.frag / "56-framerate-extended-vblank.toml"
+    r = sh(["bash", script, "persist", str(fake), *args], env=penv, timeout=40)
+    flog = (fake / "log").read_text()
+    order_ok = flog.rfind("restored:") >= 0 and flog.rfind("restored:") < flog.rfind("wrote ")
+    check("apply script: persist restores the snapshot first, then writes the fragment and SIGHUPs the daemon",
+          r.returncode == 0 and order_ok and frag.exists() and 'modes = "extended-vblank"' in frag.read_text(), (r.stdout + r.stderr + flog)[-500:])
+    b = wait(lambda: re.search(rf"{re.escape(name)}: baseline (\S+)", d.text()[mark:]), timeout=15)
+    check("apply script: after persist the daemon's baseline is the restored snapshot mode",
+          b and abs(float(b.group(1).split("@")[1]) - base) < 0.5, (b.group(0) if b else d.text()[mark:][-300:]))
+    wait(lambda: re.search(r"(verified after \d+ ms|not verified within \d+ ms)", d.text()[mark:]), timeout=15)
+    r = sh(["bash", script, "unpersist", *args], env=penv)
+    check("apply script: unpersist removes the fragment", r.returncode == 0 and not frag.exists(), r.stdout + r.stderr)
+    d.stop()
+    d.state_home = OUT / "state"
+    old_bins = " ".join(p for p in ("/usr/bin/miosd",) if os.access(p, os.X_OK))
+    if old_bins and b"restore_exact" not in open("/usr/bin/miosd", "rb").read():
+        r = sh(["bash", script, "persist", str(fake), *args, "--miosd", "/usr/bin/miosd"], env=dict(penv, MIOS_FR_CHECK_BINS=old_bins))
+        check("apply script (control): persist refuses a miosd without the exact-baseline fix and writes nothing",
+              r.returncode != 0 and not frag.exists(), (r.stdout + r.stderr)[-300:])
 
 
 # Retina in the nested PiP session: its output at the size and scale the session has. Both are the PARENT window's
@@ -545,7 +649,7 @@ def retina_checks(n):
     out = n.monitor()["name"]
     mon = n.monitor()
     env = clean_env(MIOS_H3R_NEST_SIG=n.sig, MIOS_H3R_NEST_XDG=str(n.dir), MIOS_H3R_NEST_WL=n.wl,
-                    MIOS_H3R_NEST_STATUS=str(OUT / "tmp" / "hypr3d-status.txt"), MIOS_H3R_NEW_SO=H3D_SO, MIOS_GEN=GEN,
+                    MIOS_H3R_NEST_STATUS=str(n.status_path()), MIOS_H3R_NEW_SO=H3D_SO, MIOS_GEN=GEN,
                     MIOS_H3R_NEST_OUTPUT=out, MIOS_H3R_EVIDENCE=str(OUT / "retina"), MIOS_H3R_CASE="nested-pip",
                     MIOS_H3R_SSOT=str(WT_SSOT))
     r = sh([sys.executable, str(ROOT / "tests/test-hypr3d-retina-spawn.py"), "-v", "NestedStatus", "NestedToggleStatus"], env=env, timeout=600)
@@ -579,6 +683,7 @@ def main():
         tier_checks(n, d, bus, out_name, max_hz)
         room_checks(n, d, bus)
         modeset_checks(n, d, bus)
+        baseline_checks(n, d, bus)
         apply_script_checks(n, d)
         retina_checks(n)
     except Exception as e:  # noqa: BLE001 -- the run must always clean up and report

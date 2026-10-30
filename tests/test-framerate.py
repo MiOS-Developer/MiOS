@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Desktop frame-rate policy ([desktop.framerate]; operator 2026-10-23: performance 90, balanced / power-saver /
+# AI-hint: Desktop frame-rate policy ([desktop.framerate]; the operator's table: performance 90, balanced / power-saver /
 # battery 60, gaming 120, unlocked = no cap; glass 1/3 of the desktop rate, 1/2 for gaming and unlocked; wallpaper 1/2,
 # full rate when unlocked), in four tiers, each with positive and negative controls:
 #   1. SSOT/source (always): the tier table is the operator's (a Python mirror of mios_resolver::framerate derives D, G
@@ -238,7 +238,7 @@ class SsotAndSource(unittest.TestCase):
         self.assertEqual(self.fr["mode_outputs"], [], "the vendor default keeps every VRR output on the instant cap")
         self.assertEqual(self.fr["mode_tolerance_hz"], 0.5)
         plan = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate", "plan.rs"))
-        for need in ("pub fn choose_mode(", "Porch::Front", "policy.mode_output(&m.name)", "mode_dims(mode)", "match choose_mode(m, target, policy"):
+        for need in ("pub fn choose_mode(", "edid_timing::extended_vblank_modeline(", "policy.mode_output(&m.name)", "mode_dims(mode)", "match choose_mode(m, target, policy"):
             self.assertIn(need, plan, need)
         res = read(os.path.join(ROOT, "tools", "native", "mios-resolver", "src", "edid_timing.rs"))
         self.assertIn("pub fn extended_vblank(", res)
@@ -248,6 +248,26 @@ class SsotAndSource(unittest.TestCase):
         # negative control: the advertised-only selector (before this change) is flagged
         old = plan.replace("match choose_mode(m, target, policy", "match nearest_mode(m, target")
         self.assertNotIn("match choose_mode(m, target, policy", old)
+        # the modeline clock is whole MHz (Hyprland truncates the fraction) and parsed the way Hyprland does
+        self.assertIn("Timing { clock_khz: self.clock_khz / 1000 * 1000, ..*self }", res)
+        self.assertIn("(mhz.trunc() as u32) * 1000", res)
+        self.assertNotIn("(mhz * 1000.0).round() as u32", res, "the pre-fix parse kept the fraction Hyprland drops")
+
+    def test_baseline_and_revert_snapshots_never_name_an_unadvertised_mode(self) -> None:
+        """D1: the daemon's baseline and every revert snapshot come from plan::restorable_mode (the exact string it set,
+        else the advertised mode shown, else the configured rule's advertised mode), never mode_string(current)."""
+        src = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate.rs"))
+        plan = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate", "plan.rs"))
+        self.assertIn("pub fn restorable_mode(m: &Monitor, set: Option<&str>, rule: &str) -> Restore", plan)
+        self.assertIn("baseline: BTreeMap<String, plan::Restore>,", src)
+        self.assertIn("let here = plan::restorable_mode(m, self.set.get(&m.name).map(String::as_str), &self.cfg.rule(&m.name));", src)
+        self.assertIn("self.switch(m, &here, &want,", src)
+        self.assertIn(".filter(|b| b.exact).map(|b| b.mode.clone())", src, "a guessed baseline is not exempt from the confirm guard")
+        # negative control: the pre-fix capture (the shown WxH@Hz as the baseline and the switch snapshot)
+        for pre in ("self.baseline.entry(m.name.clone()).or_insert(current.clone());", "self.switch(m, &current, &want,"):
+            self.assertNotIn(pre, src, pre)
+        # mode_outputs never overrides a pinned mode's own mechanism (D4)
+        self.assertIn("policy.mode_output(&m.name) && !env.pinned.contains(&m.name)", plan)
         for name, keys in (("modes", ("advertised", "extended-vblank")),):
             self.assertIn(self.fr[name], keys)
 
@@ -402,9 +422,20 @@ def lua() -> str:
     raise unittest.SkipTest("no Lua interpreter")
 
 
+def hyprland_modeline_hz(line: str) -> float:
+    """The refresh Hyprland 0.56 programs for a modeline (config/shared/monitor/Parser.cpp): the clock is read as a
+    float into the uint32 drmModeModeInfo.clock (truncated to whole MHz), then multiplied by 1000."""
+    f = line.split()
+    if f[0] == "modeline":
+        f = f[1:]
+    clock_khz = int(float(f[0])) * 1000
+    return clock_khz * 1000 / (int(f[4]) * int(f[8]))
+
+
 def edid_oracle(path: str, hz: float) -> dict:
-    """Independent Python derivation (not the Rust code): the fixture's fastest 1920x1080 DTD, its vertical total
-    grown so clock / (htotal * vtotal) is nearest `hz`, the added lines in the front porch."""
+    """Independent Python derivation (not the Rust code): the fixture's fastest 1920x1080 DTD with its clock truncated
+    to whole MHz (all a Hyprland modeline can carry), its vertical total grown so clock / (htotal * vtotal) is nearest
+    `hz`, the added lines in the front porch."""
     data = bytes(int(b, 16) for line in open(path) if not line.startswith("#") for b in line.split())
     best = None
     for k in range(4):
@@ -419,11 +450,14 @@ def edid_oracle(path: str, hz: float) -> dict:
         hz0 = clock * 1000 / ((ha + hb) * (va + vb))
         if (ha, va) == (1920, 1080) and (best is None or hz0 > best["hz"]):
             best = dict(clock=clock, ha=ha, hss=ha + hso, hse=ha + hso + hsw, ht=ha + hb, va=va, vss=va + vso, vse=va + vso + vsw, vt=va + vb, hz=hz0)
+    exact_line_khz = best["clock"] / best["ht"]
+    best["clock"] = best["clock"] // 1000 * 1000
     vt = round(best["clock"] * 1000 / (best["ht"] * hz))
     grow = vt - best["vt"]
-    mhz = f"{best['clock'] / 1000:.3f}".rstrip("0").rstrip(".")
+    mhz = str(best["clock"] // 1000)
     line = f"modeline {mhz} {best['ha']} {best['hss']} {best['hse']} {best['ht']} {best['va']} {best['vss'] + grow} {best['vse'] + grow} {vt} +hsync +vsync"
-    return {"modeline": line, "refresh_hz": best["clock"] * 1000 / (best["ht"] * vt), "base_hz": best["hz"], "line_khz": best["clock"] / best["ht"]}
+    return {"modeline": line, "refresh_hz": best["clock"] * 1000 / (best["ht"] * vt), "base_hz": best["hz"], "line_khz": best["clock"] / best["ht"],
+            "base_line_khz": exact_line_khz}
 
 
 @unittest.skipUnless(MIOSD, "MIOS_FR_MIOSD (a candidate miosd with `framerate modeline`) not set")
@@ -435,24 +469,45 @@ class ModelineCli(unittest.TestCase):
         env["MIOS_VENDOR_TOML"] = SSOT
         return run([binary or MIOSD, "framerate", "modeline", *args], env=env)
 
-    def test_dp3_90_hz_matches_the_oracle_and_keeps_the_line_rate(self) -> None:
+    def test_dp3_90_hz_matches_the_oracle_and_what_hyprland_programs(self) -> None:
         r = self.cli("DP-3", "--edid", EDID_FIXTURE, "--hz", "90", "--json")
         self.assertEqual(r.returncode, 0, r.stderr)
         j = json.loads(r.stdout)
         o = edid_oracle(EDID_FIXTURE, 90)
         self.assertEqual(j["modeline"], o["modeline"])
-        self.assertEqual(j["modeline"], "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync")
+        self.assertEqual(j["modeline"], "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync")
         self.assertAlmostEqual(j["refresh_hz"], o["refresh_hz"], places=6)
-        self.assertLess(abs(j["refresh_hz"] - 90), 0.05)
-        self.assertAlmostEqual(j["line_khz"], o["line_khz"], places=6, msg="same pixel clock and line rate as the 144 Hz timing")
+        # the rate the CLI reports (and the apply script verifies against) is the one Hyprland programs and reports
+        self.assertAlmostEqual(j["refresh_hz"], hyprland_modeline_hz(j["modeline"]), places=9)
+        self.assertAlmostEqual(j["refresh_hz"], 90.0104, places=3)
+        self.assertAlmostEqual(j["line_khz"], o["line_khz"], places=6)
+        self.assertAlmostEqual(j["line_khz"], 161.479, places=3)
+        self.assertLess((o["base_line_khz"] - j["line_khz"]) / o["base_line_khz"], 0.001, "the line rate is within 0.1 % of the 144 Hz timing's")
         self.assertAlmostEqual(j["base_hz"], 143.998, places=3)
         self.assertEqual((j["range"]["min_v_hz"], j["range"]["max_v_hz"]), (48, 144))
-        self.assertIn("mode = 'modeline 332.18", j["apply_lua"])
+        self.assertIn("mode = 'modeline 332 1920", j["apply_lua"])
         self.assertIn("mode = '1920x1080@144.00'", j["restore_lua"], "the way back is the current advertised mode")
+        self.assertIs(j["restore_exact"], True, "an --edid output shows its base timing")
         for hz in (60, 75, 100, 120):
             r = self.cli("--edid", EDID_FIXTURE, "--hz", str(hz), "--json")
             self.assertEqual(r.returncode, 0, (hz, r.stderr))
-            self.assertEqual(json.loads(r.stdout)["modeline"], edid_oracle(EDID_FIXTURE, hz)["modeline"], hz)
+            k = json.loads(r.stdout)
+            self.assertEqual(k["modeline"], edid_oracle(EDID_FIXTURE, hz)["modeline"], hz)
+            self.assertLess(abs(hyprland_modeline_hz(k["modeline"]) - hz), 0.05, hz)
+
+    def test_negative_control_the_pre_fix_modeline_is_not_what_hyprland_programs(self) -> None:
+        """MIOS_FR_PREFIX_MIOSD (a miosd built before the whole-MHz fix): its 90 Hz modeline keeps the 332.18 MHz
+        clock and claims 90.009 Hz, but Hyprland programs 89.960 Hz from it."""
+        pre = os.environ.get("MIOS_FR_PREFIX_MIOSD", "")
+        self.assertAlmostEqual(hyprland_modeline_hz("modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync"), 89.9602, places=3)
+        if not (pre and os.access(pre, os.X_OK)):
+            self.skipTest("MIOS_FR_PREFIX_MIOSD not set")
+        r = self.cli("DP-3", "--edid", EDID_FIXTURE, "--hz", "90", "--json", binary=pre)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertEqual(j["modeline"], "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync")
+        self.assertGreater(abs(j["refresh_hz"] - hyprland_modeline_hz(j["modeline"])), 0.04, "the pre-fix CLI's rate is not the programmed one")
+        self.assertNotIn("restore_exact", j, "the pre-fix CLI cannot tell a shown mode from a guessed one")
 
     def test_negative_controls_refuse_what_the_panel_cannot_carry(self) -> None:
         for args, why in ((("--hz", "40"), "OutOfRange"), (("--hz", "165"), "AboveBase"), (("--hz", "144"), "base timing's own rate"),
@@ -542,7 +597,7 @@ class Projection(unittest.TestCase):
     def test_a_live_modeline_is_replayed_on_reload_and_garbage_is_not(self) -> None:
         """A config reload re-applies the mode miosd switched to -- an extended-vblank modeline too (else DP-3 would
         bounce back to 144 Hz at every reload). Only a WxH@Hz or a well-formed modeline is replayed."""
-        line = "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync"
+        line = "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync"
         with tempfile.TemporaryDirectory() as t:
             fake = os.path.join(t, "miosd")   # a live writer: /proc/<pid>/comm must read "miosd"
             shutil.copy("/usr/bin/sleep", fake)

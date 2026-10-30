@@ -1,12 +1,13 @@
 // AI-hint: EDID detailed timings (base block + CTA-861 extension DTDs, the display range limits descriptor) and the
 //          extended-vblank derivation the frame-rate policy uses for a rate the panel does not advertise (DP-3: 90 Hz
-//          on a 144 Hz panel): the fastest native timing with a longer vertical FRONT porch -- the same pixel clock and
-//          line rate (so a driver's HorizSync window and the panel's scaler see the 144 Hz timing), only more blank
-//          lines per frame. That is exactly what VRR does on every frame and what amdgpu's freesync_video modes do.
+//          on a 144 Hz panel): the fastest native timing with a longer vertical FRONT porch -- the horizontal timing
+//          and (to within the whole-MHz clock a Hyprland 0.56 modeline can carry) the line rate of the 144 Hz timing,
+//          only more blank lines per frame. That is what VRR does on every frame and what amdgpu's freesync_video
+//          modes do. Modelines are parsed the way Hyprland programs them (clock truncated to whole MHz).
 //          Pure: unit-tested on the real DP-3 (LG 24GL600F) descriptor bytes.
 // AI-related: tools/native/mios-resolver/src/framerate.rs ([desktop.framerate].modes = "extended-vblank"),
 // AI-related: src/mios-rs/miosd/src/framerate/plan.rs (mode fallback), src/mios-rs/miosd/src/framerate.rs (`miosd framerate modeline`)
-// AI-functions: detailed_timings, range_limits, extended_vblank, Timing::modeline, Timing::parse_modeline, with_extra_dtd
+// AI-functions: detailed_timings, range_limits, extended_vblank, extended_vblank_modeline, Timing::whole_mhz, Timing::modeline, Timing::parse_modeline, with_extra_dtd
 //! EDID timings and extended-vblank modes.
 
 /// One display timing (a DRM mode): pixel clock in kHz (EDID resolution: 10 kHz) and the horizontal / vertical
@@ -86,7 +87,16 @@ impl Timing {
         )
     }
 
-    /// Parse a modeline (with or without the leading `modeline` word, as Hyprland's parser accepts it).
+    /// The same timing with the pixel clock truncated to whole MHz: what Hyprland 0.56 programs for a modeline. Its
+    /// parser (config/shared/monitor/Parser.cpp) reads the clock with `ASSIGN_OR_FAIL(mode.clock, float)` into
+    /// `drmModeModeInfo.clock`, a `uint32_t`, and only then multiplies by 1000: "332.18" becomes 332000 kHz.
+    pub fn whole_mhz(&self) -> Timing {
+        Timing { clock_khz: self.clock_khz / 1000 * 1000, ..*self }
+    }
+
+    /// Parse a modeline (with or without the leading `modeline` word, as Hyprland's parser accepts it) into the timing
+    /// Hyprland 0.56 programs from it: the clock's fraction of a MHz is dropped (`whole_mhz`), so the refresh is the
+    /// one `hyprctl monitors` will report.
     pub fn parse_modeline(s: &str) -> Option<Timing> {
         let mut it = s.split_whitespace().peekable();
         if it.peek().is_some_and(|w| w.eq_ignore_ascii_case("modeline")) {
@@ -109,7 +119,8 @@ impl Timing {
             }
         }
         let t = Timing {
-            clock_khz: (mhz * 1000.0).round() as u32,
+            // float -> uint32 (truncation), then * 1000: Hyprland's own arithmetic
+            clock_khz: if mhz.is_finite() && mhz >= 1.0 && mhz < f64::from(u32::MAX / 1000) { (mhz.trunc() as u32) * 1000 } else { 0 },
             hdisplay: n[0],
             hsync_start: n[1],
             hsync_end: n[2],
@@ -304,6 +315,19 @@ pub fn extended_vblank(base: &Timing, target_hz: f64, tolerance_hz: f64, limits:
     Ok(t)
 }
 
+/// The extended-vblank MODELINE for Hyprland: `base` with its clock truncated to whole MHz first (the only clocks a
+/// Hyprland 0.56 modeline can carry, see `Timing::whole_mhz`), then slowed to `target_hz` through the front porch. The
+/// line rate drops by under 1 MHz / htotal (DP-3: 161.566 -> 161.479 kHz, -0.05 %); the refresh is what Hyprland
+/// programs and reports (DP-3 at 90: 332 MHz, vtotal 1794, 90.010 Hz). The clock never rises, so a panel's maximum
+/// pixel clock still holds.
+pub fn extended_vblank_modeline(base: &Timing, target_hz: f64, tolerance_hz: f64, limits: Option<&RangeLimits>) -> Result<Timing, NoMode> {
+    let q = base.whole_mhz();
+    if q.clock_khz == 0 {
+        return Err(NoMode::Imprecise);
+    }
+    extended_vblank(&q, target_hz, tolerance_hz, limits, Porch::Front)
+}
+
 /// `edid` with `t` added as a detailed timing descriptor (an EDID override blob for drivers that accept only EDID
 /// modes): into the first CTA-861 extension's free DTD space when there is room, else replacing a base-block dummy
 /// descriptor (tag 0x10). Checksums are recomputed. None when there is no free slot or `t` does not fit a DTD.
@@ -391,6 +415,48 @@ mod tests {
     }
 
     #[test]
+    fn the_hyprland_modeline_has_a_whole_mhz_clock_and_reports_90_010() {
+        let e = dp3_edid();
+        let base = fastest_at(&detailed_timings(&e), 1920, 1080).unwrap();
+        let t = extended_vblank_modeline(&base, 90.0, 0.05, range_limits(&e).as_ref()).unwrap();
+        assert_eq!(t.modeline(), "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync");
+        assert_eq!(t.clock_khz, 332_000);
+        // what Hyprland programs from that string is exactly this timing (a whole-MHz clock survives its parse)
+        assert_eq!(Timing::parse_modeline(&t.modeline()), Some(t));
+        assert!((t.refresh_hz() - 90.0102).abs() < 0.0005, "{}", t.refresh_hz());
+        assert!((t.line_khz() - 161.479).abs() < 0.001, "{}", t.line_khz());
+        assert!(t.line_khz() <= base.line_khz() && (base.line_khz() - t.line_khz()) / base.line_khz() < 0.001, "the line rate drops by < 0.1 %");
+        assert!(t.clock_khz <= base.clock_khz, "never above the panel's own clock");
+        // horizontal timing, sync pulse and back porch kept; only the front porch grew
+        assert_eq!((t.hsync_start, t.hsync_end, t.htotal), (base.hsync_start, base.hsync_end, base.htotal));
+        assert_eq!((t.vsync_end - t.vsync_start, t.vtotal - t.vsync_end), (base.vsync_end - base.vsync_start, base.vtotal - base.vsync_end));
+        // every tier rate the panel's range allows, each landing where Hyprland reports it
+        for hz in [48.0, 60.0, 75.0, 90.0, 100.0, 120.0] {
+            let m = extended_vblank_modeline(&base, hz, 0.05, range_limits(&e).as_ref()).unwrap();
+            let shown = Timing::parse_modeline(&m.modeline()).unwrap().refresh_hz();
+            assert!((shown - hz).abs() <= 0.05, "{hz}: Hyprland would program {shown}");
+        }
+    }
+
+    #[test]
+    fn negative_control_a_fractional_mhz_modeline_is_not_what_hyprland_programs() {
+        // the pre-fix derivation: the 144 Hz clock 332.18 MHz kept, vtotal 1795 -> 90.009 Hz on paper
+        let e = dp3_edid();
+        let base = fastest_at(&detailed_timings(&e), 1920, 1080).unwrap();
+        let paper = extended_vblank(&base, 90.0, 0.05, range_limits(&e).as_ref(), Porch::Front).unwrap();
+        assert_eq!(paper.modeline(), "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync");
+        assert!((paper.refresh_hz() - 90.0086).abs() < 0.0005);
+        // Hyprland 0.56 parses "332.18" into a uint32 (332) and multiplies by 1000: 89.960 Hz at 161.479 kHz
+        let programmed = Timing::parse_modeline(&paper.modeline()).unwrap();
+        assert_eq!(programmed.clock_khz, 332_000);
+        assert!((programmed.refresh_hz() - 89.9604).abs() < 0.0005, "{}", programmed.refresh_hz());
+        assert_ne!(programmed, paper, "the paper timing is not the one on the wire");
+        // a clock below 1 MHz (0 after the cast) or junk never parses
+        assert_eq!(Timing::parse_modeline("0.5 1920 1944 1976 2056 1080 1083 1088 1122"), None);
+        assert_eq!(Timing::parse_modeline("inf 1920 1944 1976 2056 1080 1083 1088 1122"), None);
+    }
+
+    #[test]
     fn ninety_hz_is_the_144_timing_with_a_longer_front_porch() {
         let e = dp3_edid();
         let base = fastest_at(&detailed_timings(&e), 1920, 1080).unwrap();
@@ -432,9 +498,10 @@ mod tests {
 
     #[test]
     fn modeline_round_trips_and_rejects_garbage() {
-        let t = Timing::parse_modeline("modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync").unwrap();
-        assert_eq!(t.vtotal, 1795);
+        let t = Timing::parse_modeline("modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync").unwrap();
+        assert_eq!(t.vtotal, 1794);
         assert_eq!(Timing::parse_modeline(&t.modeline()), Some(t));
+        assert_eq!(Timing::parse_modeline("modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync").map(|t| t.clock_khz), Some(332_000), "truncated, as Hyprland does");
         assert_eq!(Timing::parse_modeline("148.5 1920 2008 2052 2200 1080 1084 1089 1125 -hsync +vsync").map(|t| t.hsync_positive), Some(false));
         for bad in ["modeline", "modeline 332 1920 1944", "modeline x 1 2 3 4 5 6 7 8", "modeline 1 100 50 60 70 10 11 12 13", "modeline 1 1 1 1 1 1 1 1 1 +wat"] {
             assert_eq!(Timing::parse_modeline(bad), None, "{bad}");

@@ -8554,9 +8554,10 @@ live_resample = true
 # mode_outputs lists outputs that use modes even with VRR (a real fixed-rate scanout, e.g. DP-3 at 90 Hz).
 # Mode selection: the advertised (EDID) mode nearest D when one is within mode_tolerance_hz; otherwise, with
 # modes = "extended-vblank", the panel's fastest EDID timing at the output's size with a longer vertical front porch
-# (same pixel clock and line rate, only more blank lines per frame -- what VRR does on every frame): DP-3 (LG
-# 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90 is `modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795
-# +hsync +vsync` = 90.009 Hz (`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
+# (its horizontal timing, the clock truncated to whole MHz as a Hyprland 0.56 modeline carries it, only more blank
+# lines per frame -- what VRR does on every frame): DP-3 (LG 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90
+# is `modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync` = 90.010 Hz as Hyprland programs it
+# (`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
 # modes = "advertised" never applies a timing the panel did not list (90 -> 99.93/100). The vendor value stays
 # "advertised" (a miosd / mios-gen / mios-wallpaperd built before extended-vblank refuses the other value); a host or
 # user tier opts in (`modes = "extended-vblank"`, mode_outputs = ["DP-3"]) once those binaries carry it. A mode switch is verified within revert_timeout_ms (mode
