@@ -186,9 +186,7 @@ impl Config {
 
 fn exclusions(doc: &Value) -> Result<Vec<Exclusion>, String> {
     let mut out = Vec::new();
-    let Some(rules) = get(doc, "desktop.hyprland.window_rules").and_then(Value::as_array) else {
-        return Ok(out);
-    };
+    let rules = get(doc, "desktop.hyprland.window_rules").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
     'rule: for rule in rules {
         let name = rule
             .get("name")
