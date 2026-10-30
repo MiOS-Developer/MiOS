@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-29T21:46:29.751732+00:00",
-  "total_artifacts": 73,
+  "last_updated": "2026-10-30T02:06:53.352067+00:00",
+  "total_artifacts": 75,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -20,15 +20,16 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "e2f553f425cca52412e43415f321c009367f42513b08b0067494adbde799086c",
-      "size_bytes": 648578,
+      "sha256": "e3e0f44b1b0d089004c471d6a3c7f53dcba0f85e05c0828f39a3340b54d93057",
+      "size_bytes": 651195,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
         "physical_capture_enabled": true,
-        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-30T02:06:53.352067+00:00",
+        "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json"
       }
     },
     {
@@ -50,15 +51,15 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "85bb06dc490d7105cbb362ca081e5822c2eba520fbf06b17d6a13640ff92e2b1",
-      "size_bytes": 994020,
+      "sha256": "fa2f40d75439b508969503d84cfcf0d2632f29dd58810ac0edaacee95f6a57c6",
+      "size_bytes": 1001965,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
         "physical_capture_enabled": true,
-        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00"
       }
     },
     {
@@ -554,14 +555,14 @@
       "path": "usr/share/mios/configurator/mios.html",
       "artifact_type": "config",
       "created_at": "2026-10-29T13:23:44.121085+00:00",
-      "sha256": "409ad94295a5d27bfcf2481456165d48715db75373ae500a8028805eda046431",
-      "size_bytes": 420998,
+      "sha256": "1f7d2ce6dc88201c46b1e4333e6059d05e00b41019909ce0643d6eedf6a06ef1",
+      "size_bytes": 423461,
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
         "physical_capture_enabled": true,
-        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00"
       }
     },
     {
@@ -656,37 +657,39 @@
       "path": "src/mios-rdp-server/crates/mios-rdp-server/src/config.rs",
       "artifact_type": "source",
       "created_at": "2026-10-29T17:28:58.310336+00:00",
-      "sha256": "323c14d6b47d30c4c85fefe2144938af47fe46ba8fd879a2400f68c1a64ad78c",
-      "size_bytes": 14223,
+      "sha256": "99396cf55441f74e42d98447f06218bed0055aeff048517ecb46e0ff45afab6c",
+      "size_bytes": 15277,
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
-        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00"
       }
     },
     {
       "path": "src/mios-rdp-server/crates/mios-rdp-server/src/main.rs",
       "artifact_type": "source",
       "created_at": "2026-10-29T17:28:58.310336+00:00",
-      "sha256": "6f629f3901f04f78048b719e8fc2d0723f88d52039bdbe138c14f7b4b13e0b59",
-      "size_bytes": 55071,
+      "sha256": "cfad0dea1d21ab797a7af207d09541686de9b4833d69cad319c61b3c99a9750a",
+      "size_bytes": 55472,
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
-        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00"
       }
     },
     {
       "path": "src/mios-rdp-server/crates/mios-rdp-server/src/pipeline.rs",
       "artifact_type": "source",
       "created_at": "2026-10-29T17:28:58.310336+00:00",
-      "sha256": "d0fa9f0d46d2fdcec4dde2bfc9741804cef86dd3826e01544981f0c73535f0cb",
-      "size_bytes": 40597,
+      "sha256": "fc444e3087ca1274aa80d7e68e5d24bd2c8a939836095768cdeee90c15a9df53",
+      "size_bytes": 58804,
       "metadata": {
-        "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
-        "candidate_status": "verified_not_activated_on_primary"
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00",
+        "handoff": "/docs/design/mios-desktop-continuation-handoff.md"
       }
     },
     {
@@ -789,12 +792,40 @@
       "path": "docs/design/mios-desktop-continuation-handoff.md",
       "artifact_type": "doc",
       "created_at": "2026-10-29T21:46:29.751732+00:00",
-      "sha256": "85c62a60524f720a1c01bf3a7742f70196fc5e1ff9a3e7b6e5010f6269b2b4ab",
-      "size_bytes": 18611,
+      "sha256": "b0dce796cc680a7f76f6b7516dd8c970b98ad35cc0827d690cbc71eca6bcdaa9",
+      "size_bytes": 25161,
       "metadata": {
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00",
-        "candidate_status": "mixed_live_and_packaged_see_handoff"
+        "checkpoint_at": "2026-10-30T02:06:53.352067+00:00",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json"
+      }
+    },
+    {
+      "path": "automation/lib/globals.sh",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T01:54:34.636288+00:00",
+      "sha256": "1c7002b41c1feb48ae097fb2ccda729cdf15377e3a0b3cc9dab42a46c750b46d",
+      "size_bytes": 630538,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00",
+        "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits"
+      }
+    },
+    {
+      "path": "automation/lib/globals.ps1",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T01:54:34.636288+00:00",
+      "sha256": "0515435d7afa72da0b671a8a3ff7d1691b0788cc8a9caf70921bc09500ef84a4",
+      "size_bytes": 1419511,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T01:54:34.636288+00:00",
+        "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json",
+        "candidate_status": "live_progressive_and_phosh_with_documented_limits"
       }
     }
   ]
