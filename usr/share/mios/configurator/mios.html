@@ -3465,6 +3465,10 @@
         <label>Top bar reveals over fullscreen windows (top-edge hot zone) <input type="text" data-key="desktop.topbar.fullscreen_reveal" data-type="bool"></label>
         <label>Top bar fullscreen reveal zone (pixels) <input data-key="desktop.topbar.fullscreen_reveal_px" data-type="int" type="number" min="1"></label>
         <label>Top bar fullscreen hide delay (ms) <input data-key="desktop.topbar.fullscreen_hide_delay_ms" data-type="int" type="number" min="0"></label>
+        <label>Scroll on the status island changes the volume <input type="text" data-key="desktop.topbar.volume_scroll" data-type="bool"></label>
+        <label>Volume per wheel notch (%) <input data-key="desktop.topbar.volume_scroll_step_pct" data-type="int" type="number" min="1" max="25"></label>
+        <label>Highest volume the wheel sets (%) <input data-key="desktop.topbar.volume_max_pct" data-type="int" type="number" min="1" max="150"></label>
+        <label>Volume percentage shown after a change (ms; 0 hides it) <input data-key="desktop.topbar.volume_osd_ms" data-type="int" type="number" min="0"></label>
         <label>Top bar FPS also shows the focused window's frame rate ("144 FPS/92 FPS") <input type="text" data-key="desktop.topbar.window_fps" data-type="bool"></label>
         <label>Window controls reveal <select data-key="desktop.hyprland.hyprbars.config.reveal_on"><option>focus+proximity</option><option>focus</option><option>proximity</option><option>always</option></select></label>
         <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
