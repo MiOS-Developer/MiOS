@@ -31,7 +31,11 @@ def primary():
     mons = json.loads(sh(['hyprctl', '-j', 'monitors']).stdout)
     # The primary's own document-portal mounts; nested sessions (ours and other lanes') mount theirs under their runtime.
     portal = sum(1 for l in open('/proc/self/mountinfo') if 'fuse.portal' in l and 'mios-nested-desktop-' not in l)
-    return sh(['pgrep', '-x', 'Hyprland', '-o']).stdout.strip(), portal, {m['name']: m['scale'] for m in mons}
+    # The primary's pid is the instance this session's HYPRLAND_INSTANCE_SIGNATURE names, never the oldest Hyprland:
+    # after the primary restarts, the oldest one is another lane's nested compositor.
+    sig = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE', '')
+    inst = next((i for i in json.loads(sh(['hyprctl', '-j', 'instances']).stdout or '[]') if i.get('instance') == sig), {})
+    return inst.get('pid'), portal, {m['name']: m['scale'] for m in mons}
 
 
 class Nested:
