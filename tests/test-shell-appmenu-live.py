@@ -105,9 +105,12 @@ def main():
             return
 
         # A private session bus: the exporter, the fixture apps and the shell under test share it; the primary
-        # session's mios-appmenu (and its AppMenu registrar) never see any of this.
+        # session's mios-appmenu (and its AppMenu registrar) never see any of this. It runs with the nested
+        # session's XDG_RUNTIME_DIR: --session activates the standard services, and a GTK app activating
+        # xdg-document-portal on a bus that carries the operator's runtime dir lazily unmounts the operator's
+        # $XDG_RUNTIME_DIR/doc (the portal's stale-mount cleanup), killing the primary portal (exit 21).
         r = sh(['dbus-daemon', '--session', '--fork', '--print-address=1', '--print-pid=1',
-                f'--address=unix:path={OUT}/bus'])
+                f'--address=unix:path={OUT}/bus'], env=env)
         lines = r.stdout.split()
         check('private D-Bus session bus', r.returncode == 0 and len(lines) >= 2, r.stderr[:200])
         if r.returncode != 0:
