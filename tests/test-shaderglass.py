@@ -319,8 +319,13 @@ class Projection(unittest.TestCase):
         self.assertIn('["tag"] = "+hyprglass_preset_mios"', section)
         for b in ssot()["desktop"]["shaderglass"]["bindings"]:
             self.assertIn(f'hl.bind("{b["key"]}", hl.dsp.exec_cmd("/usr/bin/mios-shaderglass {b["args"]}"))', section)
+        # The [desktop.mobile] tile rule never takes the pane while the overlay is enabled (its tile would win
+        # over the pane rule's float + pin); a disabled overlay leaves the rule as it was.
+        exclusion = ', class = "negative:^(shaderglass\\\\.exe)$"'
+        self.assertIn("match = {workspace = sel, float = false" + exclusion + "}, tile = true", on)
         # Negative control: the rules are gone again when disabled, everything else is identical.
-        self.assertEqual(off, on.replace(section + "\nend)\n", ""), "enabling must add exactly the shaderglass section")
+        self.assertEqual(off, on.replace(section + "\nend)\n", "").replace(exclusion, ""),
+                         "enabling must add exactly the shaderglass section and the mobile tile exclusion")
 
     def test_live_resample_fps_reaches_hg_config(self) -> None:
         with tempfile.TemporaryDirectory() as t:
