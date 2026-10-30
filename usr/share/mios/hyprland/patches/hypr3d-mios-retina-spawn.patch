@@ -7,7 +7,7 @@ client's glyphs at their flat-desktop size, whatever font, app zoom or text scal
 camera-facing window M = window_scale x d1 / distance, d1 = (logical height / 100 / 2) / tan(kFovDeg / 2) -- the
 1:1 distance the fullscreen passthrough and the view morph already use -- so the stock 0.5 / 5 m gave M = 0.85 on
 1080p, 1.13 on 1440p and 0.66 on a 390x844 phone (measured). Every key defaults to upstream behaviour; mios-gen
-(tools/native/mios-gen/src/hypr3d_spawn.rs, [desktop.hyprland.hypr3d.spawn]) sends them at SUPER+G:
+(tools/native/mios-gen/src/hypr3d_spawn.rs, [desktop.hyprland.hypr3d.spawn]) sends them at the room toggle (toggle_key, SUPER+F12):
 
 - windows.pixel_exact: window_scale = spawn_distance / d1(target monitor), re-derived every frame from the
   plugin's own monitor size (follows mode, scale and transform changes and hot-plug). The reading distance stays a

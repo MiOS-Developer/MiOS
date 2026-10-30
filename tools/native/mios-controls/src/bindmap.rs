@@ -2,7 +2,7 @@
 // AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-inputd/src/router.rs, tools/native/mios-controls/src/layout.rs, usr/share/mios/mios.toml [keybindings] [desktop.hyprland.hypr3d.controller]
 // AI-functions: collect, lua_binds, conflicts, finding_chords, layers_of, layer_title, split_chord, Source::editable
 use crate::layout::{key_alias, mouse_input, tmux_to_key};
-use crate::model::{at, field, str_list, Draft, CONTEXTS, GLOBAL_BINDINGS, ROOM, SYSTEM_LAYER, TMUX_BINDINGS};
+use crate::model::{at, field, str_list, Draft, GLOBAL_BINDINGS, ROOM, SYSTEM_LAYER, TMUX_BINDINGS};
 use std::collections::{BTreeMap, BTreeSet};
 use toml::Value;
 
@@ -150,8 +150,9 @@ fn key_use_parts(pre: &[String], mods: &[String], key: &str) -> (String, String)
     (format!("key:{alias}"), layer_of(pre, mods))
 }
 
+/// The contexts of a row without `contexts`: every one except the console (the gate's default set).
 fn all_contexts() -> Vec<String> {
-    CONTEXTS.iter().map(|c| c.to_string()).collect()
+    crate::model::default_contexts().map(str::to_owned).collect()
 }
 
 /// Make a keyboard/mouse use from a chord, or None (with the chord kept as a pad/other use by the caller).

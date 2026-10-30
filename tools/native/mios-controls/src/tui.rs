@@ -204,8 +204,12 @@ enum Hit {
     PickItem(usize),
 }
 
-/// Contract annotations the input-ownership work defines; shown, never edited here.
-const HOLD_NOTE: &str = "Tap North: the aimed window takes control. Hold North: fullscreen. Hold L3+R3: release.";
+/// Inputs the diagram shows as notes, not buttons: MiOS binds none of them (FINAL.md section 3, Touchpad and Motion rows).
+const PAD_NOTES: &[&str] = &[
+    "[Touchpad] host touchpad (libinput): pointer, click, 2-finger scroll",
+    "[Motion] gyro/accelerometer: not forwarded, no MiOS use",
+    "[D-pad] HAT (ABS_HAT0X/Y) or BTN_DPAD_* keys: one meaning",
+];
 
 pub struct App {
     layers: Layers,
@@ -2192,7 +2196,7 @@ impl App {
             ]);
             fr.render_widget(Paragraph::new(legend), Rect::new(inner.x, y, inner.width, 1));
             let hint = if self.view == View::Controller {
-                HOLD_NOTE.to_string()
+                format!("Tap North: the aimed window takes control. Hold North: fullscreen. Hold {}: release.", self.release_label())
             } else {
                 let extra = self.extra_keys();
                 if extra.is_empty() {
@@ -2290,7 +2294,7 @@ impl App {
         };
         let contexts: BTreeSet<String> = match b.get("contexts") {
             Some(v) => str_list(Some(v)).into_iter().collect(),
-            None => CONTEXTS.iter().map(|c| c.to_string()).collect(),
+            None => crate::model::default_contexts().map(str::to_owned).collect(),
         };
         let pass: BTreeSet<String> = str_list(b.get("passthrough")).into_iter().collect();
         if !contexts.contains(ctx) {
@@ -2470,7 +2474,14 @@ impl App {
         fr.render_widget(Paragraph::new(lines), area);
     }
 
-    /// [keybindings.global.controller].capture_hold_ms: how long North or L3+R3 is held before it counts as a hold.
+    /// The release chord in the current family's labels, from its one source
+    /// ([desktop.hyprland.hypr3d.controller].toggle_chord; never a hard-coded L3+R3).
+    fn release_label(&self) -> String {
+        let fam = self.family();
+        crate::model::toggle_chord(&self.merged).iter().map(|b| fam.label(b, self.glyphs.ascii_labels)).collect::<Vec<_>>().join("+")
+    }
+
+    /// [keybindings.global.controller].capture_hold_ms: how long North or the toggle chord is held before it counts as a hold.
     fn hold_ms(&self) -> i64 {
         at(&self.merged, "keybindings.global.controller.capture_hold_ms").and_then(Value::as_integer).unwrap_or(500)
     }
@@ -2487,7 +2498,7 @@ impl App {
             "EVERY USE  The list shows everything the selected input does: global bindings, compositor binds, tmux-os keys, terminal-reserved chords, the Guide layer, the Hypr3D room and fixed roles. A dash marks a read-only one (its place is shown).".to_string(),
             "REBIND  r on a use, then move to the new input and press Enter (or press c and then the physical input). a changes the action (a list, or type one), n binds something new on the selected input, d deletes. Realized compositor binds move together with their global binding; Guide-layer and room buttons swap.".to_string(),
             "CAPTURE  c, then press a key, mouse button or wheel, controller button, trigger or stick: it is selected on its drawing. Esc cancels; it stops by itself after [desktop.controls].capture_timeout_ms.".to_string(),
-            format!("TAKING CONTROL  Tap North: the window you aim at gets every control and you stay in the room. Hold North {hold} ms: fullscreen. Hold L3+R3 {hold} ms: control returns to the desktop."),
+            format!("TAKING CONTROL  Tap North: the window you aim at gets every control and you stay in the room. Hold North {hold} ms: fullscreen. Hold {} {hold} ms: control returns to the desktop.", self.release_label()),
             "SEARCH  / finds keys, buttons, actions and sources; Enter jumps to a result on its drawing.".to_string(),
             "DEVICES  the connected keyboards, mice and controllers with their family, buttons and a profile of what is bound; Enter shows that device's drawing (its missing buttons are dimmed). f cycles the controller drawing (Xbox, PlayStation, Nintendo, generic).".to_string(),
             "SAVING  Changes are a draft. u undoes, U redoes, z throws the draft away, R starts from the defaults. w applies only when the draft adds no conflict (the compositor session and tmux-os keys are re-rendered and checked first). e / i export or import the binding map.".to_string(),

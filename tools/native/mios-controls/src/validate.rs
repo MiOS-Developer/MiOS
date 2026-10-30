@@ -36,7 +36,12 @@ pub struct Validator {
 }
 
 impl Validator {
+    /// `MIOS_GEN` (a candidate generator under test, as mios-sync-theme reads it) wins over
+    /// [desktop.controls].mios_gen.
     pub fn from_ssot(merged: &Value) -> Self {
+        if let Some(p) = std::env::var_os("MIOS_GEN").filter(|p| !p.is_empty()) {
+            return Self { mios_gen: PathBuf::from(p) };
+        }
         let mios_gen = at(merged, "desktop.controls.mios_gen")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
@@ -65,8 +70,12 @@ impl Validator {
 
     fn mios_gen(&self, layers: &Layers, draft: &Path, args: &[&str]) -> Result<std::process::Output, String> {
         let root = layers.root.display().to_string();
-        Command::new(&self.mios_gen)
-            .args(args)
+        let mut cmd = Command::new(&self.mios_gen);
+        if crate::model::rooted(&layers.root) {
+            // the explicit root's vendor tier, never the session's MIOS_TOML / MIOS_VENDOR_TOML
+            cmd.env_remove("MIOS_TOML").env_remove("MIOS_VENDOR_TOML_D").env("MIOS_VENDOR_TOML", layers.root.join("usr/share/mios/mios.toml"));
+        }
+        cmd.args(args)
             .args(["--root", &root])
             .env("MIOS_USER_TOML", draft)
             .env("MIOS_TOML_ROOT", &root)
