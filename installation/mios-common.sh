@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Field.sh, usr/lib/mios/mios_toml.py, mios.toml
+# AI-related: automation/lib/root-merge.sh, mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Field.sh, usr/lib/mios/mios_toml.py, mios.toml
 
 mios_ssot_layers() {
     local p
@@ -114,6 +114,57 @@ mios_ensure_rust() {
     fi
     log_warn "Rust could not be installed (no repo/network?) -- native components deferred"
     return 1
+}
+
+# mios_root_merge <root> <repo> [branch] -- make <root> the MiOS Git worktree
+# of <repo>@<branch> ("/ IS $ROOT"), then prove it. The one implementation:
+# automation/lib/root-merge.sh and the Linux FHS installer both call this.
+mios_root_merge() {
+    local root="${1:-}" repo="${2:-}" branch="${3:-main}"
+    [[ -n "$root" ]] || { log_err "[root-merge] empty root"; return 2; }
+    [[ -n "$repo" ]] || { log_err "[root-merge] empty repository"; return 2; }
+    # Git writes files as 0666/0777 minus the umask and records only the
+    # executable bit, so an inherited umask 077 (sudo keeps the caller's)
+    # would leave an OS root of 0600 data files that no service can read.
+    # The subshell confines the umask to the merge.
+    (
+        umask 022
+        mkdir -p -- "$root" || { log_err "[root-merge] cannot create root ${root}"; exit 2; }
+        real="$(cd "$root" && pwd -P)" || exit 2
+        g() { git -c safe.directory="$real" -C "$real" "$@"; }
+        if [[ ! -e "${real}/.git" ]]; then
+            g init -q -b "$branch" || { log_err "[root-merge] git init ${real} failed"; exit 1; }
+        fi
+        # An existing .git must make <root> itself the top level; otherwise git
+        # resolves a parent repository and every later step would act on it.
+        top="$(g rev-parse --show-toplevel 2>/dev/null)" || top=""
+        [[ "$top" == "$real" ]] || {
+            log_err "[root-merge] ${real}/.git is not the Git top level of ${real} (resolved '${top}')"
+            exit 1
+        }
+        if g remote get-url origin >/dev/null 2>&1; then
+            g remote set-url origin "$repo" || exit 1
+        else
+            g remote add origin "$repo" || exit 1
+        fi
+        g config core.autocrlf false || exit 1
+        err="$(g fetch -q --depth=1 origin "$branch" 2>&1)" || {
+            log_err "[root-merge] fetch ${branch} from ${repo} failed: ${err}"
+            exit 1
+        }
+        g reset -q --hard FETCH_HEAD || { log_err "[root-merge] reset ${real} to FETCH_HEAD failed"; exit 1; }
+        g checkout -q -B "$branch" || { log_err "[root-merge] checkout -B ${branch} failed"; exit 1; }
+        g config "branch.${branch}.remote" origin || exit 1
+        g config "branch.${branch}.merge" "refs/heads/${branch}" || exit 1
+        # Post-conditions: the merged root is the fetched commit, on the branch,
+        # with every tracked file (content and executable bit) unmodified.
+        [[ "$(g rev-parse HEAD)" == "$(g rev-parse FETCH_HEAD)" ]] \
+            || { log_err "[root-merge] HEAD is not the fetched ${branch}"; exit 1; }
+        [[ "$(g symbolic-ref --short HEAD)" == "$branch" ]] \
+            || { log_err "[root-merge] HEAD is not on ${branch}"; exit 1; }
+        g diff --quiet --exit-code \
+            || { log_err "[root-merge] tracked files differ from ${branch} after the merge"; exit 1; }
+    )
 }
 
 # ============================================================================
