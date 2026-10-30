@@ -3254,7 +3254,26 @@
         <label>Keep PiPs above application windows <input data-key="desktop.pip_gravity.keep_above" type="checkbox"></label>
         <label>Snap to the normal window's side space <input data-key="desktop.pip_gravity.fit_default_window" type="checkbox"></label>
         <label>PiP snap distance <input data-key="desktop.pip_gravity.attract_px" data-type="int" type="number" min="0"></label>
-        <label>Desktop session launch layout <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option></select></label>
+        <label>Desktop session launch target <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option><option value="output">Whole output (second local user)</option><option value="remote">Remote display output</option><option value="hypr3d">Hypr3D room window</option></select></label>
+        <label>Default session seat label (empty = unlabelled) <input data-key="desktop.nested.seat" type="text" pattern="[a-z0-9][a-z0-9-]{0,31}"></label>
+        <label>Session user display name (empty = the seat label) <input data-key="desktop.nested.user_label" type="text" maxlength="64"></label>
+        <label>Session registry directory (under the runtime directory) <input data-key="desktop.nested.registry_dir" type="text"></label>
+        <label>Per-session private plugin state files (comma separated) <input data-key="desktop.nested.private_files" data-array="csv" type="text"></label>
+        <label>Whole-output target: default output (empty = --output required) <input data-key="desktop.nested.targets.output.output" type="text"></label>
+        <label>Whole-output target scaling <select data-key="desktop.nested.targets.output.scale_mode"><option value="native">Output pixels 1:1</option><option value="fit">Scale the desktop to the output</option></select></label>
+        <label>Remote target: output names (comma separated, after the RDP virtual output) <input data-key="desktop.nested.targets.remote.outputs" data-array="csv" type="text"></label>
+        <label>Remote target: output name prefixes (comma separated) <input data-key="desktop.nested.targets.remote.output_prefixes" data-array="csv" type="text"></label>
+        <label>Remote target: wait for a client to attach (ms, 0 = refuse at once) <input data-key="desktop.nested.targets.remote.wait_ms" data-type="int" type="number" min="0" max="600000"></label>
+        <label>Remote target scaling <select data-key="desktop.nested.targets.remote.scale_mode"><option value="native">Output pixels 1:1</option><option value="fit">Scale the desktop to the output</option></select></label>
+        <label>Hypr3D target: open the room when closed <input data-key="desktop.nested.targets.hypr3d.open_room" type="checkbox"></label>
+        <label>Hypr3D target scaling <select data-key="desktop.nested.targets.hypr3d.scale_mode"><option value="fit">Scale the desktop to the window</option><option value="native">Window pixels 1:1</option></select></label>
+        <label>Session devices assigned by default (comma separated specs) <input data-key="desktop.nested.devices.default" data-array="csv" type="text"></label>
+        <label>Assignable device kinds (controller, keyboard, pointer, other) <input data-key="desktop.nested.devices.allow_kinds" data-array="csv" type="text"></label>
+        <label>Allow virtual (uinput) devices <input data-key="desktop.nested.devices.allow_virtual" type="checkbox"></label>
+        <label>One session per device <input data-key="desktop.nested.devices.exclusive" type="checkbox"></label>
+        <label>Also assign the legacy joystick node <input data-key="desktop.nested.devices.include_joystick" type="checkbox"></label>
+        <label>Seat virtual pad name ({seat} = the seat label) <input data-key="desktop.nested.devices.virtual_pad_name" type="text"></label>
+        <label>Virtual pad wait (ms) <input data-key="desktop.nested.devices.virtual_pad_wait_ms" data-type="int" type="number" min="0" max="60000"></label>
         <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
         <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
         <label>Session display height <input data-key="desktop.nested.height" data-type="int" type="number" min="320" max="8192"></label>

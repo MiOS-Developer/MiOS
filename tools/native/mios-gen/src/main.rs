@@ -24,6 +24,7 @@ mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
+mod nested_devices;
 mod session_scale;
 mod render;
 mod sync;
@@ -326,12 +327,29 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Run an isolated minimal MiOS desktop as a native PiP window.
+    /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
     #[command(name = "nested-session")]
     NestedSession {
         #[arg(long)] root: Option<PathBuf>,
         #[arg(long)] dry_run: bool,
-        #[arg(long,value_parser=["pip","window","side-by-side"])] layout: Option<String>,
+        /// Launch target ([desktop.nested].launch_layout): pip, window, side-by-side, output, remote or hypr3d.
+        #[arg(long="target",visible_alias="layout",value_parser=["pip","window","side-by-side","output","remote","hypr3d"])] layout: Option<String>,
+        /// Parent output for the output target (required there) or an explicit remote display output.
+        #[arg(long)] output: Option<String>,
+        /// Seat label (a-z, 0-9, '-'): the session's identity, tmux namespace suffix and [desktop.nested.seats.<seat>] preset.
+        #[arg(long)] seat: Option<String>,
+        /// Display name of the session's user (default: the seat label).
+        #[arg(long)] user: Option<String>,
+        /// Assign an input device (repeatable): /dev/input/eventN or a by-id/by-path link, name:<evdev name>, or virtual-pad.
+        #[arg(long="device")] device: Vec<String>,
+        /// Assign no device, overriding the seat preset and [desktop.nested.devices].default.
+        #[arg(long,conflicts_with="device")] no_devices: bool,
+        /// Print the resolved launch (target, identity, resolved devices) as JSON and exit without starting anything.
+        #[arg(long)] plan: bool,
+        /// List the host's input devices with their kind and current session assignment (JSON).
+        #[arg(long)] list_devices: bool,
+        /// List live nested sessions from the registry (JSON).
+        #[arg(long)] list_sessions: bool,
     },
 
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
@@ -1431,9 +1449,9 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::NestedSession {root,dry_run,layout} => (
+        Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
-            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,layout.as_deref()).map_err(|e|(e,1)),
+            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
         ),
         Commands::SessionScale {root,direction} => (
             "session-scale", "desktop",

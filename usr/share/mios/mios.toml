@@ -18088,8 +18088,10 @@ match = [
   { class = "^chromium-browser$", sibling_class = "(?i)^spotify$" },
 ]
 
-# AI-hint: Minimal nested desktop uses native HUD components with its own compositor/runtime and input namespace.
-# AI-related: tools/native/mios-gen/src/nested_session.rs, usr/share/mios/quickshell/Nested.qml
+# AI-hint: Nested MiOS desktop sessions (mios-gen nested-session): own compositor, runtime, HUD, Tmux-OS namespace and input
+# namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
+# output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.
+# AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/nested_devices.rs, usr/share/mios/quickshell/Nested.qml, usr/share/doc/mios/desktop-pip.md
 [desktop.nested]
 resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
 width = 1280
@@ -18098,10 +18100,47 @@ scale_mode = "fit"                    # fit: the session keeps width x height lo
 scale_min = 0.25
 scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
-launch_layout = "pip"
-tmux_socket_name = "mios-nested"
+launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
+tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"
 terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal", "--new"]
+seat = ""                             # default seat label (--seat); "" = an unlabelled session (several may run at once); a label is unique among live sessions
+user_label = ""                       # display name of the session's user (--user; exported to the session); "" = the seat label
+registry_dir = "mios/nested-sessions" # under the parent XDG_RUNTIME_DIR: one JSON entry per live session (seat, compositor socket, assigned devices) -- the mios-inputd contract
+private_files = ["/tmp/hypr3d-status.txt", "/tmp/mios-hypr3d-crt.state", "/tmp/hypr3d-skirt-mask.pgm"]  # shared-/tmp files compositor plugins write; each session binds its own empty copy so a room in the session never touches the parent's
+
+# Per-target policy. scale_mode (fit | native) overrides [desktop.nested].scale_mode for that target; pip, window,
+# side-by-side and hypr3d keep the logical width x height (fit), a whole output or remote display maps 1:1 (native).
+[desktop.nested.targets.output]
+output = ""                           # parent output for --target output; "" = --output (or the seat preset's output) is required
+scale_mode = "native"
+
+[desktop.nested.targets.remote]
+outputs = []                          # remote display outputs by exact name, tried after [remote.rdp].virtual_output
+output_prefixes = ["HEADLESS-"]       # then the first attached output with one of these prefixes ([desktop.displays] remote outputs)
+wait_ms = 0                           # wait this long for a remote client to attach its output; 0 = refuse at once
+scale_mode = "native"
+
+[desktop.nested.targets.hypr3d]
+open_room = true                      # open the parent's room through the real hyprland-3d-toggle path when it is closed; false = refuse
+scale_mode = "fit"                    # the window opens at width x height logical px (fit scale 1: one texel per parent pixel), fitted into the work area
+
+# Input devices bound into a session's otherwise empty /dev/input (--device, a seat preset's devices, else default).
+# Specs: /dev/input/eventN or a by-id/by-path link, name:<exact evdev name>, or virtual-pad (the seat's mios-inputd pad).
+# Binding makes the nodes openable inside the session (applications, games, an in-session bridge); the registry entry
+# tells mios-inputd which nodes a session owns so it can stop routing them to the parent and forward keyboard/pointer
+# input into the session's compositor (the session compositor itself reads only its parent window's Wayland seat).
+[desktop.nested.devices]
+default = []                          # [] = no physical input in the session (isolated)
+allow_kinds = ["controller", "keyboard", "pointer"]   # kinds from evdev capabilities: controller | keyboard | pointer | other
+allow_virtual = true                  # uinput-created nodes (mios-inputd virtual pads, test devices)
+exclusive = true                      # refuse a node another live session already holds
+include_joystick = true               # also bind the device's legacy /dev/input/jsN
+virtual_pad_name = "MiOS Nested Pad {seat}"   # evdev name mios-inputd gives a seat's virtual pad
+virtual_pad_wait_ms = 3000            # how long virtual-pad waits for that pad to appear
+
+# Seat presets: [desktop.nested.seats.<seat>] user = "...", target = "...", output = "...", devices = ["..."]; CLI flags win.
+[desktop.nested.seats]
 
 [desktop.launchers.mios-nested-session]
 exec_cmd = "/usr/bin/mios-gen nested-session"
@@ -18115,7 +18154,7 @@ startup_wm_class = "aquamarine"
 startup_notify = false
 ai_hint = "User-launchable independent MiOS development desktop; isolated runtime and native HUD."
 ai_related = "tools/native/mios-gen/src/nested_session.rs, desktop.nested"
-actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-session --layout window"},{id="side-by-side",name="Open side by side",exec="/usr/bin/mios-gen nested-session --layout side-by-side"}]
+actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-session --layout window"},{id="side-by-side",name="Open side by side",exec="/usr/bin/mios-gen nested-session --layout side-by-side"},{id="hypr3d",name="Open in the 3D room",exec="/usr/bin/mios-gen nested-session --target hypr3d"},{id="remote",name="Open on the remote display",exec="/usr/bin/mios-gen nested-session --target remote"}]
 
 
 # AI-hint: Native pinned PiP maximize/fullscreen restores the previous pin and geometry.

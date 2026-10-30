@@ -1,8 +1,14 @@
-// AI-hint: Isolated native MiOS development desktop, embedded in a guarded parent PiP window.
-// AI-related: desktop.nested, Quickshell Nested.qml, mios-pip-gravity, global_bindings
-use std::{env,fs,io::{Read,Write},os::{unix::{fs::{PermissionsExt,MetadataExt,symlink},net::UnixStream}},path::{Path,PathBuf},process::{Command,Stdio},thread,time::Duration};
-use serde_json::Value as Json;
+// AI-hint: Isolated native MiOS desktop sessions for many uses: a parent PiP/window (default), a whole attached output for a second local user, the parent's remote display output (RDP/VNC), or a Hypr3D room window; per-session seat/user identity, private tmux namespace and assigned evdev nodes bound into its namespace.
+// AI-related: desktop.nested, tools/native/mios-gen/src/nested_devices.rs, Quickshell Nested.qml, mios-pip-gravity, global_bindings, remote.rdp.virtual_output, render_hyprland::toggle_3d
+use std::{env,fs,io::{Read,Write},os::{unix::{fs::{PermissionsExt,MetadataExt,symlink},net::UnixStream}},path::{Path,PathBuf},process::{Command,Stdio},thread,time::{Duration,Instant}};
+use serde_json::{json,Value as Json};
 use toml::Value;
+use crate::nested_devices::{self as devices,Device};
+
+/// Launch targets. pip/window/side-by-side embed the session in a parent window; output fills an attached parent
+/// output (a second local user); remote fills the parent's remote display output (served by the existing RDP/VNC
+/// path); hypr3d places the session as a window of the parent's Hypr3D room.
+pub const TARGETS:[&str;6]=["pip","window","side-by-side","output","remote","hypr3d"];
 
 /// The fit scale for a viewport: the largest-fitting scale for the logical width x height, clamped, then the nearest
 /// multiple of 1/120 (Wayland fractional scale) whose logical size is whole in both axes, so the compositor never
@@ -36,8 +42,19 @@ fn nested_scaling(n:&Value)->Result<(String,f64,f64),String>{
  if lo>hi {return Err("desktop.nested.scale_min must not exceed scale_max".into());}
  Ok((mode.to_owned(),lo,hi))
 }
+/// The scale mode a target uses: [desktop.nested.targets.<target>].scale_mode, else [desktop.nested].scale_mode.
+pub fn target_scale_mode(n:&Value,target:&str)->Result<String,String>{
+ let base=nested_scaling(n)?.0;
+ match n.get("targets").and_then(|t|t.get(target)).and_then(|t|t.get("scale_mode")) {
+  None=>Ok(base),
+  Some(Value::String(s)) if ["fit","native"].contains(&s.as_str())=>Ok(s.clone()),
+  Some(_)=>Err(format!("desktop.nested.targets.{target}.scale_mode must be fit or native")),
+ }
+}
 fn number(v:&Value,key:&str)->Result<i64,String>{v.get(key).and_then(Value::as_integer).filter(|n|(320..=8192).contains(n)).ok_or(format!("desktop.nested.{key} must be 320..8192"))}
-pub fn project(data:&Value)->Result<String,String>{
+pub fn project(data:&Value)->Result<String,String>{project_for(data,None)}
+/// The nested compositor's Lua configuration; `scale_mode` overrides [desktop.nested].scale_mode (a launch target's own).
+pub fn project_for(data:&Value,scale_mode:Option<&str>)->Result<String,String>{
  let n=&data["desktop"]["nested"];let (width,height)=(number(n,"width")?,number(n,"height")?);
  let mut d=data.clone();d["desktop"]["hyprland"]["placement"]["enabled"]=Value::Boolean(false);
  // The session owns its output scale (fit/zoom below); the global automatic scale policy must not re-apply its own.
@@ -55,7 +72,8 @@ pub fn project(data:&Value)->Result<String,String>{
  // its prop refresh then recalculates tiled clients, without an initial-mode reset.
  // scale_mode "fit" keeps the session's logical desktop at width x height whatever the viewport (a PiP shows the
  // whole desktop scaled down, an enlarged window scales it up); "native" maps viewport pixels 1:1.
- let (mode,smin,smax)=nested_scaling(n)?;
+ let (mut mode,smin,smax)=nested_scaling(n)?;
+ if let Some(m)=scale_mode { if !["fit","native"].contains(&m){return Err(format!("nested scale mode {m:?} must be fit or native"));} mode=m.to_owned(); }
  let zstep=data.get("desktop").and_then(|d|d.get("scaling")).and_then(|s|s.get("session_step")).and_then(|v|v.as_float().or_else(||v.as_integer().map(|i|i as f64))).filter(|v|*v>0.0&&*v<=1.0).unwrap_or(0.125);
  out+=&format!("local nested_fit={{mode='{mode}',w={width},h={height},min={smin},max={smax},zoom=1,zstep={zstep}}}\n");
  out+=r#"
@@ -108,6 +126,11 @@ fn ipc(rt:&Path,sig:&str,cmd:&str)->Result<String,String>{
  s.set_read_timeout(Some(Duration::from_secs(2))).map_err(|e|e.to_string())?;s.write_all(cmd.as_bytes()).map_err(|e|e.to_string())?;
  let mut out=String::new();s.read_to_string(&mut out).map_err(|e|e.to_string())?;Ok(out)
 }
+/// A Lua eval that must succeed: Hyprland answers "ok", anything else is its error text.
+fn eval(rt:&Path,sig:&str,code:&str)->Result<(),String>{
+ let r=ipc(rt,sig,&format!("/eval {code}"))?;if r.trim()=="ok"{Ok(())}else{Err(r.trim().to_owned())}
+}
+fn lua_str(s:&str)->String{serde_json::to_string(s).unwrap()}
 // A window-list snapshot is not a close request: temporary IPC failures,
 // workspace changes or compositor reconfiguration must not kill a desktop.
 // Subscribe after proving the new parent's identity, so old events from a
@@ -145,14 +168,144 @@ impl ParentEvents {
 }
 struct OwnedDir(PathBuf);
 impl Drop for OwnedDir {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
-pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
- let data=mios_resolver::resolve_merged(Some(root),false).map_err(|e|e.to_string())?;let config=project(&data)?;
- if dry_run {print!("{config}");return Ok(());}
+
+/// Command-line choices; each unset field falls back to the seat preset, then [desktop.nested].
+#[derive(Debug,Default,Clone)]
+pub struct Options { pub target:Option<String>, pub output:Option<String>, pub seat:Option<String>, pub user:Option<String>, pub devices:Vec<String>, pub no_devices:bool, pub plan:bool, pub list_devices:bool, pub list_sessions:bool }
+
+/// The resolved launch: identity, target and the device specs (resolved to nodes later, against the host).
+#[derive(Debug,Clone,PartialEq)]
+pub struct Plan { pub target:String, pub output:Option<String>, pub seat:String, pub user:String, pub specs:Vec<String>, pub scale_mode:String, pub tmux_socket:String, pub terminal_session:String }
+
+fn opt_str<'a>(v:Option<&'a Value>,key:&str)->Result<Option<&'a str>,String>{
+ match v { None=>Ok(None), Some(Value::String(s)) if !s.chars().any(char::is_control)=>Ok(Some(s.as_str())), Some(_)=>Err(format!("{key} must be a string")) }
+}
+fn ident(s:&str)->bool{!s.is_empty()&&s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')}
+pub fn plan(data:&Value,o:&Options)->Result<Plan,String>{
+ let n=&data["desktop"]["nested"];
+ let seat=match o.seat.as_deref() { Some(s)=>s.to_owned(), None=>opt_str(n.get("seat"),"desktop.nested.seat")?.unwrap_or("").to_owned() };
+ if !seat.is_empty()&&!devices::valid_seat(&seat){return Err(format!("seat {seat:?} must be 1..32 of a-z, 0-9 and '-' (not leading)"));}
+ let preset=if seat.is_empty(){None}else{n.get("seats").and_then(|s|s.get(&seat))};
+ if let Some(p)=preset { if !p.is_table(){return Err(format!("desktop.nested.seats.{seat} must be a table"));} }
+ let pk=|k:&str|format!("desktop.nested.seats.{seat}.{k}");
+ let target=match o.target.as_deref() { Some(t)=>t.to_owned(), None=>match opt_str(preset.and_then(|p|p.get("target")),&pk("target"))? { Some(t)=>t.to_owned(), None=>n.get("launch_layout").and_then(Value::as_str).ok_or("nested launch_layout missing")?.to_owned() } };
+ if !TARGETS.contains(&target.as_str()){return Err(format!("nested target {target:?} must be one of {}",TARGETS.join(", ")));}
+ let output=match o.output.as_deref() { Some(v)=>Some(v.to_owned()), None=>opt_str(preset.and_then(|p|p.get("output")),&pk("output"))?.map(str::to_owned).or_else(||if target=="output"{n.get("targets").and_then(|t|t.get("output")).and_then(|t|t.get("output")).and_then(Value::as_str).filter(|s|!s.is_empty()).map(str::to_owned)}else{None}) }.filter(|s|!s.is_empty());
+ if let Some(out)=&output { if out.chars().any(|c|c.is_control()||c=='"'||c=='\\'){return Err(format!("output name {out:?} is not valid"));} if !["output","remote"].contains(&target.as_str()){return Err(format!("--output applies to the output and remote targets, not {target}"));} }
+ if target=="output"&&output.is_none(){return Err("the output target needs an output: --output NAME, desktop.nested.seats.<seat>.output or desktop.nested.targets.output.output".into());}
+ let user=match o.user.as_deref() { Some(u)=>u.to_owned(), None=>opt_str(preset.and_then(|p|p.get("user")),&pk("user"))?.map(str::to_owned).or_else(||n.get("user_label").and_then(Value::as_str).filter(|s|!s.is_empty()).map(str::to_owned)).unwrap_or_else(||seat.clone()) };
+ if user.len()>64||user.chars().any(char::is_control){return Err("user label must be at most 64 printable characters".into());}
+ let pol=devices::Policy::from_ssot(n)?;
+ let specs=if o.no_devices{Vec::new()}else if !o.devices.is_empty(){o.devices.clone()}else if let Some(d)=preset.and_then(|p|p.get("devices")){
+  d.as_array().ok_or(format!("{} must be an array",pk("devices")))?.iter().map(|s|s.as_str().map(str::to_owned).ok_or(format!("{} entries must be strings",pk("devices")))).collect::<Result<_,_>>()?
+ }else{pol.default.clone()};
+ if specs.iter().any(|s|s=="virtual-pad")&&seat.is_empty(){return Err("the virtual-pad device needs a seat label (--seat): the input bridge names a session's pad after its seat".into());}
+ let base_socket=n.get("tmux_socket_name").and_then(Value::as_str).ok_or("nested tmux_socket_name missing")?;
+ let terminal_session=n.get("terminal_session").and_then(Value::as_str).ok_or("nested terminal_session missing")?.to_owned();
+ let tmux_socket=if seat.is_empty(){base_socket.to_owned()}else{format!("{base_socket}-{seat}")};
+ if ![tmux_socket.as_str(),terminal_session.as_str()].iter().all(|s|ident(s)){return Err("nested terminal identifiers must be sanitized".into());}
+ Ok(Plan{scale_mode:target_scale_mode(n,&target)?,target,output,seat,user,specs,tmux_socket,terminal_session})
+}
+
+/// A parent output by exact name, else the first output whose name starts with one of `prefixes`.
+pub fn pick_output<'a>(monitors:&'a Json,names:&[String],prefixes:&[String])->Option<&'a Json>{
+ let list=monitors.as_array()?;
+ let usable=|m:&&Json|m["width"].as_i64().unwrap_or(0)>0&&m["height"].as_i64().unwrap_or(0)>0&&!m["disabled"].as_bool().unwrap_or(false);
+ names.iter().find_map(|n|list.iter().filter(usable).find(|m|m["name"].as_str()==Some(n.as_str())))
+  .or_else(||prefixes.iter().find_map(|p|list.iter().filter(usable).find(|m|m["name"].as_str().is_some_and(|s|s.starts_with(p.as_str())))))
+}
+fn strs(v:Option<&Value>)->Vec<String>{v.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|s|!s.is_empty()).map(str::to_owned).collect()}
+/// The remote display output the existing remote path serves: an explicit name, else remote.rdp.virtual_output, the
+/// [desktop.nested.targets.remote] outputs, then its output_prefixes. Waits up to wait_ms for a client to attach.
+fn remote_output(data:&Value,rt:&Path,sig:&str,explicit:Option<&str>)->Result<Json,String>{
+ let r=&data["desktop"]["nested"]["targets"]["remote"];
+ let mut names:Vec<String>=explicit.map(|s|vec![s.to_owned()]).unwrap_or_default();
+ if explicit.is_none(){
+  names.extend(data["remote"]["rdp"]["virtual_output"].as_str().filter(|s|!s.is_empty()).map(str::to_owned));
+  names.extend(strs(r.get("outputs")));
+ }
+ let prefixes=if explicit.is_none(){strs(r.get("output_prefixes"))}else{Vec::new()};
+ let wait=r.get("wait_ms").and_then(Value::as_integer).filter(|v|(0..=600000).contains(v)).ok_or("desktop.nested.targets.remote.wait_ms must be 0..600000")? as u64;
+ let end=Instant::now()+Duration::from_millis(wait);
+ loop {
+  let monitors:Json=serde_json::from_str(&ipc(rt,sig,"j/monitors")?).map_err(|e|e.to_string())?;
+  if let Some(m)=pick_output(&monitors,&names,&prefixes){return Ok(m.clone());}
+  if Instant::now()>=end {
+   let have:Vec<&str>=monitors.as_array().into_iter().flatten().filter_map(|m|m["name"].as_str()).collect();
+   return Err(format!("no remote display output is attached (looked for {names:?}, prefixes {prefixes:?}; outputs: {have:?}); connect a remote client first or raise desktop.nested.targets.remote.wait_ms"));
+  }
+  thread::sleep(Duration::from_millis(250));
+ }
+}
+fn host_output(rt:&Path,sig:&str,name:&str)->Result<Json,String>{
+ let monitors:Json=serde_json::from_str(&ipc(rt,sig,"j/monitors")?).map_err(|e|e.to_string())?;
+ pick_output(&monitors,&[name.to_owned()],&[]).cloned().ok_or_else(||format!("parent output {name:?} is not attached (outputs: {:?})",monitors.as_array().into_iter().flatten().filter_map(|m|m["name"].as_str()).collect::<Vec<_>>()))
+}
+/// Room-window geometry: the session's logical width x height (its fit scale is then 1: one texel per parent pixel)
+/// clamped into the output's work area minus the shell edge margin, centred in it.
+pub fn room_box(m:&Json,width:f64,height:f64,edge:f64)->(f64,f64,f64,f64){
+ let num=|k:&str|m[k].as_f64().unwrap_or(0.0);let scale=num("scale").max(0.1);
+ let r=|i:usize|m["reserved"][i].as_f64().unwrap_or(0.0);
+ let (aw,ah)=((num("width")/scale-r(0)-r(2)-2.0*edge).max(1.0),(num("height")/scale-r(1)-r(3)-2.0*edge).max(1.0));
+ let k=(aw/width).min(ah/height).min(1.0);
+ let (w,h)=((width*k).floor().max(1.0),(height*k).floor().max(1.0));
+ (num("x")+r(0)+edge+((aw-w)/2.0).floor(),num("y")+r(1)+edge+((ah-h)/2.0).floor(),w,h)
+}
+fn private_files(n:&Value)->Result<Vec<PathBuf>,String>{
+ strs(n.get("private_files")).into_iter().map(PathBuf::from).map(|p|if p.is_absolute()&&p.file_name().is_some()&&!p.starts_with("/dev")&&!p.starts_with("/proc")&&p.components().all(|c|!matches!(c,std::path::Component::ParentDir)){Ok(p)}else{Err(format!("desktop.nested.private_files entry {} must be an absolute file path outside /dev and /proc",p.display()))}).collect()
+}
+
+fn list_devices(data:&Value,rt:&Path)->Result<Json,String>{
+ let pol=devices::Policy::from_ssot(&data["desktop"]["nested"])?;
+ let sessions=devices::live_sessions(&rt.join(&pol.registry_dir),false);
+ let mut out=Vec::new();
+ let mut nodes:Vec<String>=fs::read_dir(devices::HOST.dev).into_iter().flatten().flatten().map(|e|e.file_name().to_string_lossy().into_owned()).filter(|n|n.starts_with("event")).collect();
+ nodes.sort_by_key(|n|n.trim_start_matches("event").parse::<u64>().unwrap_or(u64::MAX));
+ let open=devices::Policy{allow_kinds:devices::KINDS.iter().map(|s|s.to_string()).collect(),allow_virtual:true,..pol};
+ for n in nodes {
+  let path=devices::HOST.dev.join(&n);
+  let owner=sessions.iter().find(|(_,s)|s["devices"].as_array().into_iter().flatten().any(|d|d["path"].as_str()==Some(&path.to_string_lossy()))).map(|(_,s)|s["seat"].clone());
+  match devices::resolve_one(&devices::HOST,&path.to_string_lossy(),"",&open) {
+   Ok(d)=>{let mut j=d.to_json();j["assigned_to"]=owner.unwrap_or(Json::Null);out.push(j);},
+   Err(e)=>out.push(json!({"path":path,"error":e})),
+  }
+ }
+ Ok(Json::Array(out))
+}
+
+pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
+ let data=mios_resolver::resolve_merged(Some(root),false).map_err(|e|e.to_string())?;
+ let n=&data["desktop"]["nested"];
  let parent=PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR missing")?);
+ let policy=devices::Policy::from_ssot(n)?;
+ let registry=parent.join(&policy.registry_dir);
+ if o.list_devices {println!("{}",list_devices(&data,&parent)?);return Ok(());}
+ if o.list_sessions {println!("{}",Json::Array(devices::live_sessions(&registry,false).into_iter().map(|(_,j)|j).collect()));return Ok(());}
+ let plan=plan(&data,o)?;
+ let config=project_for(&data,Some(&plan.scale_mode))?;
+ if dry_run {print!("{config}");return Ok(());}
+ let assigned:Vec<Device>=devices::resolve(&devices::HOST,&plan.specs,&plan.seat,&policy)?;
+ if o.plan {
+  println!("{}",json!({"target":plan.target,"output":plan.output,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"tmux_socket_name":plan.tmux_socket,"terminal_session":plan.terminal_session,"devices":assigned.iter().map(Device::to_json).collect::<Vec<_>>()}));
+  return Ok(());
+ }
  let signature=env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_|"parent compositor signature missing")?;
  let display=env::var("WAYLAND_DISPLAY").map_err(|_|"parent Wayland display missing")?;
  let display=if Path::new(&display).is_absolute(){PathBuf::from(display)}else{parent.join(display)};
- let owned=OwnedDir(parent.join(format!("mios-nested-desktop-{}",std::process::id())));
+ // Preflight in the parent before anything starts: a missing output or room leaves nothing behind.
+ let target_output:Option<Json>=match plan.target.as_str() {
+  "output"=>Some(host_output(&parent,&signature,plan.output.as_deref().unwrap_or_default())?),
+  "remote"=>Some(remote_output(&data,&parent,&signature,plan.output.as_deref())?),
+  _=>None,
+ };
+ let room=&n["targets"]["hypr3d"];
+ let open_room=room.get("open_room").and_then(Value::as_bool).ok_or("desktop.nested.targets.hypr3d.open_room must be a boolean")?;
+ if plan.target=="hypr3d"&&!open_room {
+  eval(&parent,&signature,"assert(hl.plugin.hypr3d and hl.plugin.hypr3d.active(), 'the Hypr3D room is not open in the parent (desktop.nested.targets.hypr3d.open_room is false)')")?;
+ }
+ let me=std::process::id();
+ let mut claim=devices::Claim::take(&registry,&plan.seat,&assigned,policy.exclusive,json!({"state":"starting","target":plan.target,"user":plan.user,"parent_runtime":parent,"parent_instance":signature}))?;
+ let owned=OwnedDir(parent.join(format!("mios-nested-desktop-{me}")));
  fs::create_dir(&owned.0).map_err(|e|e.to_string())?;fs::set_permissions(&owned.0,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
  let user=mios_resolver::user_toml_path(Some(root));
  let old_fragments=env::var_os("MIOS_USER_TOML_D").map(PathBuf::from).unwrap_or_else(||user.parent().unwrap_or(Path::new(".")).join("mios.d"));
@@ -162,20 +315,28 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
   let entry=entry.map_err(|e|e.to_string())?;if entry.path().is_file()&&entry.path().extension().is_some_and(|v|v=="toml"){let name=entry.file_name();symlink(fs::canonicalize(entry.path()).map_err(|e|e.to_string())?,fragments.join(&name)).map_err(|e|e.to_string())?;names.push(name);}
  }}
  names.sort();let last=names.last().map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||"mios".into());
- let socket_name=data["desktop"]["nested"]["tmux_socket_name"].as_str().ok_or("nested tmux_socket_name missing")?;
- let terminal_session=data["desktop"]["nested"]["terminal_session"].as_str().ok_or("nested terminal_session missing")?;
- if [socket_name,terminal_session].iter().any(|s|s.is_empty()||!s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')){return Err("nested terminal identifiers must be sanitized".into());}
+ let (socket_name,terminal_session)=(plan.tmux_socket.as_str(),plan.terminal_session.as_str());
  let tmux_root=owned.0.join("tmux");fs::create_dir(&tmux_root).map_err(|e|e.to_string())?;
  let socket_root_text=tmux_root.to_string_lossy();
  let patch=toml::toml!{ [keybindings] socket_name=socket_name terminal_session=terminal_session [terminal] socket_root=(socket_root_text.as_ref()) default_action="terminal" [terminal.sessions] selector=false new_session_name=terminal_session };
  fs::write(fragments.join(format!("{last}-mios-nested.toml")),toml::to_string(&patch).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  let focused:Json=serde_json::from_str(&ipc(&parent,&signature,"j/activewindow")?).map_err(|e|e.to_string())?;
  let input=owned.0.join("input");fs::create_dir(&input).map_err(|e|e.to_string())?;
+ // Mask real evdev nodes and the legacy room packet in this process tree; expose only the assigned nodes. Plugin
+ // state files the compositor writes under the shared /tmp get a private copy per session.
+ let mut sandbox:Vec<String>=["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin"].map(String::from).to_vec();
+ let private=owned.0.join("private");fs::create_dir(&private).map_err(|e|e.to_string())?;
+ for (i,p) in private_files(n)?.iter().enumerate() {
+  let copy=private.join(format!("{i}-{}",p.file_name().unwrap().to_string_lossy()));fs::write(&copy,b"").map_err(|e|e.to_string())?;
+  sandbox.extend(["--bind".into(),copy.to_string_lossy().into_owned(),p.to_string_lossy().into_owned()]);
+ }
+ sandbox.extend(devices::bind_args(&input,&assigned)?);
+ let device_list=assigned.iter().flat_map(|d|d.nodes()).map(|p|p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+ let identity=[("MIOS_NESTED_SEAT",plan.seat.as_str()),("MIOS_NESTED_USER",plan.user.as_str()),("MIOS_NESTED_TARGET",plan.target.as_str()),("MIOS_NESTED_DEVICES",device_list.as_str())];
  let path=owned.0.join("hyprland.lua");fs::write(&path,config).map_err(|e|e.to_string())?;
  let log=fs::File::create(owned.0.join("desktop.log")).map_err(|e|e.to_string())?;
- // Mask real evdev nodes and the legacy room packet in this process tree only.
- let mut child=Command::new("bwrap").args(["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin","--ro-bind"]).arg(&input).args(["/dev/input","--","/usr/bin/Hyprland","--config"]).arg(&path)
- .env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
+ let mut child=Command::new("bwrap").args(&sandbox).args(["--","/usr/bin/Hyprland","--config"]).arg(&path)
+ .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
  .stdout(Stdio::from(log.try_clone().map_err(|e|e.to_string())?)).stderr(Stdio::from(log)).spawn().map_err(|e|e.to_string())?;
  let mut shell_child=None;
  let result=(||{
@@ -188,9 +349,9 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
   }
   let inst=selected.ok_or("nested compositor did not become ready")?;let pid=inst["pid"].as_u64().ok_or("nested PID missing")?;
   let shell_log=fs::File::create(owned.0.join("shell.log")).map_err(|e|e.to_string())?;
-  let shell_path=data["desktop"]["nested"]["shell_entry"].as_str().ok_or("nested shell entry missing")?;
-  shell_child=Some(Command::new("bwrap").args(["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin","--ro-bind"]).arg(&input).args(["/dev/input","--","quickshell","--no-duplicate","--path",shell_path])
-   .env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",inst["instance"].as_str().ok_or("nested signature missing")?).env("WAYLAND_DISPLAY",inst["wl_socket"].as_str().ok_or("nested display missing")?).env("QT_QPA_PLATFORM","wayland").env("MIOS_NESTED_RESIZE_POLL_MS",data["desktop"]["nested"]["resize_poll_ms"].as_integer().unwrap().to_string()).env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
+  let shell_path=n["shell_entry"].as_str().ok_or("nested shell entry missing")?;
+  shell_child=Some(Command::new("bwrap").args(&sandbox).args(["--","quickshell","--no-duplicate","--path",shell_path])
+   .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",inst["instance"].as_str().ok_or("nested signature missing")?).env("WAYLAND_DISPLAY",inst["wl_socket"].as_str().ok_or("nested display missing")?).env("QT_QPA_PLATFORM","wayland").env("MIOS_NESTED_RESIZE_POLL_MS",n["resize_poll_ms"].as_integer().unwrap().to_string()).env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
    .stdout(Stdio::from(shell_log.try_clone().map_err(|e|e.to_string())?)).stderr(Stdio::from(shell_log)).spawn().map_err(|e|e.to_string())?);
 
   let mut target=None;
@@ -201,30 +362,70 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
   }
   let w=target.ok_or("parent could not identify the owned nested output")?;
   let address=w["address"].as_str().ok_or("nested address missing")?;let stable=w["stableId"].as_str().ok_or("nested stable id missing")?;
-  let layout=layout.unwrap_or(data["desktop"]["nested"]["launch_layout"].as_str().ok_or("nested launch_layout missing")?);
-  if !["pip","window","side-by-side"].contains(&layout){return Err("nested layout must be pip, window, or side-by-side".into());}
+  let layout=plan.target.as_str();
+  let edge=data["theme"]["shell"]["edge_margin_px"].as_float().or_else(||data["theme"]["shell"]["edge_margin_px"].as_integer().map(|n|n as f64)).ok_or("global edge margin missing")?;
+  let mut room_window=false;
   if layout=="pip" {
    let pip=Command::new("/usr/bin/mios-pip-gravity").args(["on","--window",address,"--pid",&pid.to_string(),"--stable-id",stable]).status().map_err(|e|e.to_string())?;if !pip.success(){return Err("nested PiP adoption failed".into());}
   }else{
-   let mut code=format!("local w=nil;for _,v in ipairs(hl.get_windows()) do if v.address=={} then w=v end end;if not w or w.pid~={pid} or w.stable_id~=tonumber({},16) then error('nested identity changed',0) end;local target={};hl.dispatch(hl.dsp.window.pin({{window=target,action='disable'}}));hl.dispatch(hl.dsp.window.tag({{window=target,tag='+mios-pip-disabled'}}));",serde_json::to_string(address).unwrap(),serde_json::to_string(stable).unwrap(),serde_json::to_string(&format!("address:{address}")).unwrap());
-   if layout=="side-by-side" {
-    let monitors:Json=serde_json::from_str(&ipc(&parent,&signature,"j/monitors")?).map_err(|e|e.to_string())?;
-    let m=monitors.as_array().and_then(|v|v.iter().find(|m|m["id"]==w["monitor"])).ok_or("nested parent monitor missing")?;
-    let num=|k:&str|m[k].as_f64().unwrap_or(0.0);let scale=num("scale").max(0.1);
-    let edge=data["theme"]["shell"]["edge_margin_px"].as_float().or_else(||data["theme"]["shell"]["edge_margin_px"].as_integer().map(|n|n as f64)).ok_or("global edge margin missing")?;
-    let reserved=|i:usize|m["reserved"][i].as_f64().unwrap_or(0.0);
-    let width=(num("width")/scale/2.0-2.0*edge).max(1.0);let height=(num("height")/scale-reserved(1)-reserved(3)-2.0*edge).max(1.0);
-    code+=&format!("hl.dispatch(hl.dsp.window.resize({{window=target,x={width},y={height},exact=true}}));hl.dispatch(hl.dsp.window.move({{window=target,x={},y={}}}));",num("x")+num("width")/scale/2.0+edge,num("y")+reserved(1)+edge);
+   let mut code=format!("local w=nil;for _,v in ipairs(hl.get_windows()) do if v.address=={} then w=v end end;if not w or w.pid~={pid} or w.stable_id~=tonumber({},16) then error('nested identity changed',0) end;local target={};hl.dispatch(hl.dsp.window.pin({{window=target,action='disable'}}));hl.dispatch(hl.dsp.window.tag({{window=target,tag='+mios-pip-disabled'}}));",lua_str(address),lua_str(stable),lua_str(&format!("address:{address}")));
+   let monitors:Json=serde_json::from_str(&ipc(&parent,&signature,"j/monitors")?).map_err(|e|e.to_string())?;
+   let own=monitors.as_array().and_then(|v|v.iter().find(|m|m["id"]==w["monitor"])).ok_or("nested parent monitor missing")?;
+   match layout {
+    "side-by-side"=>{
+     let m=own;let num=|k:&str|m[k].as_f64().unwrap_or(0.0);let scale=num("scale").max(0.1);
+     let reserved=|i:usize|m["reserved"][i].as_f64().unwrap_or(0.0);
+     let width=(num("width")/scale/2.0-2.0*edge).max(1.0);let height=(num("height")/scale-reserved(1)-reserved(3)-2.0*edge).max(1.0);
+     code+=&format!("hl.dispatch(hl.dsp.window.resize({{window=target,x={width},y={height},exact=true}}));hl.dispatch(hl.dsp.window.move({{window=target,x={},y={}}}));",num("x")+num("width")/scale/2.0+edge,num("y")+reserved(1)+edge);
+    }
+    "output"|"remote"=>{
+     let name=target_output.as_ref().and_then(|m|m["name"].as_str()).ok_or("target output missing")?;
+     code+=&format!("hl.dispatch(hl.dsp.window.move({{monitor={},window=target}}));hl.dispatch(hl.dsp.window.fullscreen({{window=target,mode='fullscreen',action='set'}}));",lua_str(name));
+    }
+    "hypr3d"=>{
+     let (x,y,bw,bh)=room_box(own,number(n,"width")? as f64,number(n,"height")? as f64,edge);
+     code+=&format!("hl.dispatch(hl.dsp.window.resize({{window=target,x={bw},y={bh},exact=true}}));hl.dispatch(hl.dsp.window.move({{window=target,x={x},y={y}}}));");
+    }
+    _=>{}
    }
-   let _=ipc(&parent,&signature,&format!("/eval {code}"))?;
+   eval(&parent,&signature,&code)?;
+   if let Some(m)=&target_output {
+    // The session is placed only when the parent reports it fullscreen on that output.
+    let mut ok=false;
+    for _ in 0..40 {
+     let v:Json=serde_json::from_str(&ipc(&parent,&signature,"j/clients")?).map_err(|e|e.to_string())?;
+     if v.as_array().into_iter().flatten().any(|c|c["address"].as_str()==Some(address)&&c["monitor"]==m["id"]&&c["fullscreen"].as_i64().unwrap_or(0)>0){ok=true;break;}
+     thread::sleep(Duration::from_millis(100));
+    }
+    if !ok {return Err(format!("the nested window did not become fullscreen on {}",m["name"]));}
+   }
+   if layout=="hypr3d" {
+    let active=eval(&parent,&signature,"assert(hl.plugin.hypr3d and hl.plugin.hypr3d.active(), 'room closed')").is_ok();
+    if !active {
+     if !open_room {return Err("the Hypr3D room closed before the session joined it".into());}
+     crate::render::render_hyprland::toggle_3d(root)?;
+    }
+    let probe=format!("local j=hl.plugin.hypr3d.export_layout();assert(string.find(j,{},1,true),'nested window is not a room window')",lua_str(&format!("\"id\":\"{address}\"")));
+    for _ in 0..50 { if eval(&parent,&signature,&probe).is_ok(){room_window=true;break;} thread::sleep(Duration::from_millis(100)); }
+    if !room_window {return Err("the nested window did not join the Hypr3D room".into());}
+   }
   }
   // Only return focus if this launch itself took it. A later operator focus change wins.
+  if !["output","remote","hypr3d"].contains(&layout) {
   if let (Some(a),Some(p),Some(stable))=(focused["address"].as_str(),focused["pid"].as_u64(),focused["stableId"].as_str()) {
-   let restore=format!("local current=hl.get_active_window();if current and current.pid=={pid} then for _,v in ipairs(hl.get_windows()) do if v.address=={} and v.pid=={p} and v.stable_id==tonumber({},16) then hl.dispatch(hl.dsp.focus({{window={}}}));break end end end",serde_json::to_string(a).unwrap(),serde_json::to_string(stable).unwrap(),serde_json::to_string(&format!("address:{a}")).unwrap());
+   let restore=format!("local current=hl.get_active_window();if current and current.pid=={pid} then for _,v in ipairs(hl.get_windows()) do if v.address=={} and v.pid=={p} and v.stable_id==tonumber({},16) then hl.dispatch(hl.dsp.focus({{window={}}}));break end end end",lua_str(a),lua_str(stable),lua_str(&format!("address:{a}")));
    let _=ipc(&parent,&signature,&format!("/eval {restore}"))?;
   }
-  let descriptor=serde_json::json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"isolated_input":true,"physical_controllers_assigned":false,"tmux_socket":tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name)),"terminal_session":terminal_session});
+  }
+  let device_json:Vec<Json>=assigned.iter().map(Device::to_json).collect();
+  let controllers=assigned.iter().any(|d|d.kind=="controller");
+  let tmux_socket=tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name));
+  let mut descriptor=json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"target":layout,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"isolated_input":true,"devices":device_json,"physical_controllers_assigned":controllers,"registry":claim.path,"tmux_socket":tmux_socket,"terminal_session":terminal_session});
+  if let Some(m)=&target_output {descriptor["output"]=m["name"].clone();}
+  if layout=="remote" {descriptor["remote"]=json!({"output":target_output.as_ref().map(|m|m["name"].clone()),"server":data["remote"]["rdp"]["server"].clone()});}
+  if layout=="hypr3d" {descriptor["room_window"]=json!(room_window);}
   fs::write(owned.0.join("session.json"),format!("{descriptor}\n")).map_err(|e|e.to_string())?;
+  claim.update(json!({"state":"running","runtime":owned.0,"instance":inst["instance"],"wayland_display":inst["wl_socket"],"compositor_pid":pid,"parent_window":address,"output":descriptor.get("output").cloned().unwrap_or(Json::Null),"descriptor":owned.0.join("session.json")}))?;
   println!("{descriptor}");
   let mut parent_events=ParentEvents::connect(&parent,&signature);
   loop {
@@ -238,13 +439,15 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
  if result.is_err(){let _=child.kill();let _=child.wait();
  if let Ok(log)=fs::read_to_string(owned.0.join("desktop.log")){let tail=log.lines().rev().take(24).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");eprintln!("Nested desktop log tail:\n{tail}");}
 }
+ drop(claim);
  result
 }
 #[cfg(test)]
 mod tests {
  use super::*;
+ fn ssot()->Value{toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap()}
  #[test] fn nested_projection_keeps_shell_and_system_manager_separate(){
-  let data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
+  let data=ssot();
   let out=project(&data).unwrap();assert!(!out.contains("name\"] = \"mios-placement"));assert!(!out.contains("systemctl --user restart mios-desktop.target"));assert!(!out.contains("dbus-update-activation-environment"));assert!(!out.contains("/usr/share/mios/quickshell/Config.qml"));assert!(out.contains("Nested.qml"));assert!(out.contains("no_hardware_cursors\"] = 1"));
  }
  #[test] fn nested_projection_turns_off_the_automatic_scale_policy(){
@@ -280,7 +483,7 @@ mod tests {
   assert_eq!(rows[6][0],1.0,"native maps pixels 1:1");
  }
  #[test] fn nested_resize_interval_is_validated(){
-  let mut data=toml::from_str::<Value>(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap().join("usr/share/mios/mios.toml")).unwrap()).unwrap();
+  let mut data=ssot();
   for value in [20,100,5000] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).is_ok()); }
   for value in [0,19,5001] { data["desktop"]["nested"]["resize_poll_ms"]=Value::Integer(value);assert!(project(&data).unwrap_err().contains("resize_poll_ms")); }
  }
@@ -300,4 +503,64 @@ mod tests {
   drop(server);assert!(!events.closed("0xabc"));
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
+
+ #[test] fn targets_resolve_from_cli_then_seat_preset_then_ssot(){
+  let mut d=ssot();
+  let p=plan(&d,&Options::default()).unwrap();
+  assert_eq!((p.target.as_str(),p.seat.as_str(),p.tmux_socket.as_str(),p.scale_mode.as_str()),("pip","","mios-nested","fit"),"the unlabelled default session is unchanged");
+  assert!(p.specs.is_empty(),"no device is assigned by default");
+  d["desktop"]["nested"]["seats"]=toml::from_str::<Value>("[p2]\nuser='Player Two'\ntarget='output'\noutput='HDMI-A-1'\ndevices=['virtual-pad']").unwrap();
+  let p=plan(&d,&Options{seat:Some("p2".into()),..Default::default()}).unwrap();
+  assert_eq!((p.target.as_str(),p.output.as_deref(),p.user.as_str(),p.tmux_socket.as_str(),p.scale_mode.as_str()),("output",Some("HDMI-A-1"),"Player Two","mios-nested-p2","native"));
+  assert_eq!(p.specs,vec!["virtual-pad".to_owned()]);
+  let p=plan(&d,&Options{seat:Some("p2".into()),target:Some("hypr3d".into()),devices:vec!["/dev/input/event4".into()],..Default::default()}).unwrap();
+  assert_eq!((p.target.as_str(),p.scale_mode.as_str(),p.specs.len()),("hypr3d","fit",1),"CLI wins over the preset");
+  assert!(plan(&d,&Options{seat:Some("p2".into()),no_devices:true,..Default::default()}).unwrap().specs.is_empty());
+  assert_eq!(plan(&d,&Options{seat:Some("p3".into()),..Default::default()}).unwrap().user,"p3","the seat labels its user when none is named");
+  assert_eq!(plan(&d,&Options{target:Some("remote".into()),..Default::default()}).unwrap().scale_mode,"native");
+ }
+ #[test] fn invalid_plans_are_refused_before_anything_starts(){
+  let d=ssot();
+  let e=|o:Options|plan(&d,&o).unwrap_err();
+  assert!(e(Options{target:Some("output".into()),..Default::default()}).contains("needs an output"));
+  assert!(e(Options{target:Some("pip".into()),output:Some("DP-1".into()),..Default::default()}).contains("applies to the output and remote"));
+  assert!(e(Options{target:Some("tv".into()),..Default::default()}).contains("must be one of"));
+  assert!(e(Options{seat:Some("Bad Seat".into()),..Default::default()}).contains("seat"));
+  assert!(e(Options{devices:vec!["virtual-pad".into()],..Default::default()}).contains("needs a seat"));
+  assert!(e(Options{target:Some("output".into()),output:Some("DP\"1".into()),..Default::default()}).contains("not valid"));
+  assert!(e(Options{user:Some("a\nb".into()),..Default::default()}).contains("user label"));
+  let mut bad=d.clone();bad["desktop"]["nested"]["targets"]["remote"]["scale_mode"]=Value::String("stretch".into());
+  assert!(plan(&bad,&Options{target:Some("remote".into()),..Default::default()}).unwrap_err().contains("targets.remote.scale_mode"));
+ }
+ #[test] fn target_scale_mode_reaches_the_projection(){
+  let d=ssot();
+  assert!(project_for(&d,Some("native")).unwrap().contains("local nested_fit={mode='native'"));
+  assert!(project_for(&d,None).unwrap().contains("local nested_fit={mode='fit'"));
+  assert!(project_for(&d,Some("zoom")).is_err());
+ }
+ #[test] fn outputs_are_picked_by_name_then_prefix_and_never_unusable(){
+  let m:Json=json!([{"id":0,"name":"DP-3","width":1920,"height":1080},{"id":1,"name":"HEADLESS-2","width":0,"height":0},{"id":2,"name":"HEADLESS-MIOS-RDP-1","width":1100,"height":2080},{"id":3,"name":"HEADLESS-MIOS-RDP","width":1100,"height":2080,"disabled":true}]);
+  let s=|v:&[&str]|v.iter().map(|s|s.to_string()).collect::<Vec<_>>();
+  assert_eq!(pick_output(&m,&s(&["HEADLESS-MIOS-RDP"]),&s(&["HEADLESS-"])).unwrap()["id"],2,"a disabled exact name loses to a usable prefix match; a 0x0 output is skipped");
+  assert_eq!(pick_output(&m,&s(&["DP-3"]),&[]).unwrap()["id"],0);
+  assert!(pick_output(&m,&s(&["HDMI-A-1"]),&[]).is_none());
+  assert!(pick_output(&m,&[],&s(&["WAYLAND-"])).is_none());
+ }
+ #[test] fn room_box_fits_the_work_area_at_one_texel_per_pixel(){
+  let m=json!({"x":1920,"y":0,"width":1920,"height":1080,"scale":1.0,"reserved":[0,44,0,72]});
+  assert_eq!(room_box(&m,1280.0,800.0,8.0),(1920.0+8.0+312.0,44.0+8.0+((1080.0-116.0-16.0-800.0)/2.0f64).floor(),1280.0,800.0),"fits unscaled, centred");
+  let small=json!({"x":0,"y":0,"width":1280,"height":800,"scale":1.0,"reserved":[0,44,0,72]});
+  let (_,_,w,h)=room_box(&small,1280.0,800.0,8.0);
+  assert!(w<=1280.0-16.0&&h<=800.0-116.0-16.0&&((w/h)-1.6).abs()<0.01,"shrunk into the work area, aspect kept: {w}x{h}");
+  let hidpi=json!({"x":0,"y":0,"width":3840,"height":2160,"scale":2.0,"reserved":[0,0,0,0]});
+  assert_eq!(room_box(&hidpi,1280.0,800.0,8.0).2,1280.0,"logical size on a scaled output");
+ }
+ #[test] fn private_files_are_absolute_files_outside_dev_and_proc(){
+  let ok:Value=toml::from_str("private_files=['/tmp/hypr3d-status.txt']").unwrap();
+  assert_eq!(private_files(&ok).unwrap(),vec![PathBuf::from("/tmp/hypr3d-status.txt")]);
+  for bad in ["private_files=['tmp/x']","private_files=['/dev/input/event1']","private_files=['/proc/self/x']","private_files=['/tmp/../etc/passwd']"] {
+   assert!(private_files(&toml::from_str::<Value>(bad).unwrap()).is_err(),"{bad}");
+  }
+  assert!(!private_files(&ssot()["desktop"]["nested"]).unwrap().is_empty(),"the SSOT privatizes the room plugin's state files");
+ }
 }
