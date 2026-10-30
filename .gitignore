@@ -802,6 +802,8 @@ usr/lib/systemd/system/*
 !/usr/lib/systemd/system/subagent.slice
 !/usr/lib/systemd/system/system.slice.d/
 !/usr/lib/systemd/system/system.slice.d/**
+!/usr/lib/systemd/system/user-.slice.d/
+!/usr/lib/systemd/system/user-.slice.d/10-mios-*.conf
 !/usr/lib/systemd/system/*.scope.d/
 !/usr/lib/systemd/system/*.scope.d/**
 !/usr/lib/systemd/system/*.socket.d/

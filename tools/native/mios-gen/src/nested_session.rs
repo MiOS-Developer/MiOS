@@ -351,6 +351,9 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   println!("{}",json!({"target":plan.target,"output":plan.output,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"tmux_socket_name":plan.tmux_socket,"terminal_session":plan.terminal_session,"devices":assigned.iter().map(Device::to_json).collect::<Vec<_>>()}));
   return Ok(());
  }
+ // Memory admission before anything starts: a nested session must not push the host into the OOM killer.
+ let admission=crate::mem_admit::Policy::from_ssot(&data)?;
+ crate::mem_admit::admit(&admission,Path::new("/proc/meminfo"),true,"nested-session")?;
  let signature=env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_|"parent compositor signature missing")?;
  let display=env::var("WAYLAND_DISPLAY").map_err(|_|"parent Wayland display missing")?;
  let display=if Path::new(&display).is_absolute(){PathBuf::from(display)}else{parent.join(display)};

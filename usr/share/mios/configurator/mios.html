@@ -3385,6 +3385,9 @@
         <label>Also assign the legacy joystick node <input data-key="desktop.nested.devices.include_joystick" type="checkbox"></label>
         <label>Seat virtual pad name ({seat} = the seat label) <input data-key="desktop.nested.devices.virtual_pad_name" type="text"></label>
         <label>Virtual pad wait (ms) <input data-key="desktop.nested.devices.virtual_pad_wait_ms" data-type="int" type="number" min="0" max="60000"></label>
+        <label>Memory admission floor (MiB available) <input data-key="system.memory_admission.min_available_mb" data-type="int" type="number" min="0" max="1048576"></label>
+        <label>Memory admission poll (ms) <input data-key="system.memory_admission.poll_ms" data-type="int" type="number" min="1" max="60000"></label>
+        <label>Memory admission wait (s) <input data-key="system.memory_admission.wait_timeout_s" data-type="int" type="number" min="0" max="86400"></label>
         <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
         <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
         <label>Session display height <input data-key="desktop.nested.height" data-type="int" type="number" min="320" max="8192"></label>

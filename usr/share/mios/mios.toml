@@ -756,6 +756,23 @@ Requires = "sysinit.target"
 After = "sysinit.target"
 
 
+# Desktop memory protection (operator 2026-10-30, after agent lanes OOM-hung the host). memory.low is
+# hierarchical: a child's floor only holds if every ancestor has one, so the user slice, the login session
+# scope (the primary Hyprland) and the user manager (shell, portal, apps) each get a floor. Agent work has
+# none and is reclaimed first; mios-gen mem-admit ([system.memory_admission]) keeps it from starting at all
+# when MemAvailable is low.
+[units."user-.slice.d/10-mios-memory.conf".Slice]
+comment = "# AI-hint: Memory floor for every user slice, so the kernel reclaims system services and agent work before the operator's session.\n# AI-related: usr/share/mios/mios.toml [system.memory_admission], session-.scope.d/10-mios-memory.conf, user@.service.d/10-mios-memory.conf"
+MemoryLow = "10G"
+
+[units."session-.scope.d/10-mios-memory.conf".Scope]
+comment = "# AI-hint: Memory floor for the login session scope that holds the primary compositor (Hyprland via greetd).\n# AI-related: usr/share/mios/mios.toml, user-.slice.d/10-mios-memory.conf"
+MemoryLow = "4G"
+
+[units."user@.service.d/10-mios-memory.conf".Service]
+comment = "# AI-hint: Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.\n# AI-related: usr/share/mios/mios.toml, mios-shell.service.d/10-mios-memory.conf"
+MemoryLow = "6G"
+
 [units."mios-gpu-pv-detect.service".Unit]
 comment = "# AI-hint: Systemd unit that executes /usr/libexec/mios/gpu-pv-detect to detect Hyper-V GPU Partitioning (GPU-PV) capabilities during boot, enabling hardware acceleration for guests on Microsoft Hyper-V hosts.\n# AI-related: /usr/libexec/mios/gpu-pv-detect, systemd-modules-load.service, display-manager.service, multi-user.target"
 Description = "'MiOS' Hyper-V GPU-PV Guest Detection"
@@ -18473,6 +18490,10 @@ WantedBy = "mios-desktop.target"
 # Application menu exporter (src/mios-rs/miosd/src/appmenu.rs): writes the focused window's
 # GTK org.gtk.Menus / dbusmenu menus to $XDG_RUNTIME_DIR/mios/appmenu.json for the top bar and owns
 # com.canonical.AppMenu.Registrar.
+[user_units."mios-shell.service.d/10-mios-memory.conf".Service]
+comment = "# AI-hint: Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.\n# AI-related: usr/share/mios/mios.toml, user@.service.d/10-mios-memory.conf"
+MemoryLow = "2G"
+
 [user_units."mios-appmenu.service".Unit]
 Description = "MiOS application menu exporter (GTK org.gtk.Menus + dbusmenu AppMenu registrar)"
 Documentation = "file:///usr/share/doc/mios/manual/root.md"
@@ -18709,6 +18730,14 @@ match = [
 # namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
 # output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.
 # AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/nested_devices.rs, usr/share/mios/quickshell/Nested.qml, usr/share/doc/mios/desktop-pip.md
+# Memory admission (operator 2026-10-30): `mios-gen mem-admit [--wait]` and every nested-session launch
+# refuse to start while MemAvailable is below min_available_mb; --wait polls every poll_ms for up to
+# wait_timeout_s. Agent lanes run it before each build and nested session.
+[system.memory_admission]
+min_available_mb = 12288
+poll_ms          = 2000
+wait_timeout_s   = 1800
+
 [desktop.nested]
 resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
 width = 1280

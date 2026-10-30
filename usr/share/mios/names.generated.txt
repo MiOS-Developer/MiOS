@@ -4082,6 +4082,12 @@ units.mios-gpu-nvidia.service.d/10-cycle-fix.conf.Unit.comment  MIOS_UNITS_MIOS_
 units.mios-gpu-nvidia.service.d/10-cycle-fix.conf.Unit.DefaultDependencies  MIOS_UNITS_MIOS_GPU_NVIDIA_SERVICE_D_10_CYCLE_FIX_CONF_UNIT_DEFAULTDEPENDENCIES
 units.mios-gpu-nvidia.service.d/10-cycle-fix.conf.Unit.Requires  MIOS_UNITS_MIOS_GPU_NVIDIA_SERVICE_D_10_CYCLE_FIX_CONF_UNIT_REQUIRES
 units.mios-gpu-nvidia.service.d/10-cycle-fix.conf.Unit.After  MIOS_UNITS_MIOS_GPU_NVIDIA_SERVICE_D_10_CYCLE_FIX_CONF_UNIT_AFTER
+units.user-.slice.d/10-mios-memory.conf.Slice.comment  MIOS_UNITS_USER__SLICE_D_10_MIOS_MEMORY_CONF_SLICE_COMMENT
+units.user-.slice.d/10-mios-memory.conf.Slice.MemoryLow  MIOS_UNITS_USER__SLICE_D_10_MIOS_MEMORY_CONF_SLICE_MEMORYLOW
+units.session-.scope.d/10-mios-memory.conf.Scope.comment  MIOS_UNITS_SESSION__SCOPE_D_10_MIOS_MEMORY_CONF_SCOPE_COMMENT
+units.session-.scope.d/10-mios-memory.conf.Scope.MemoryLow  MIOS_UNITS_SESSION__SCOPE_D_10_MIOS_MEMORY_CONF_SCOPE_MEMORYLOW
+units.user@.service.d/10-mios-memory.conf.Service.comment  MIOS_UNITS_USER__SERVICE_D_10_MIOS_MEMORY_CONF_SERVICE_COMMENT
+units.user@.service.d/10-mios-memory.conf.Service.MemoryLow  MIOS_UNITS_USER__SERVICE_D_10_MIOS_MEMORY_CONF_SERVICE_MEMORYLOW
 units.mios-gpu-pv-detect.service.Unit.comment  MIOS_UNITS_MIOS_GPU_PV_DETECT_SERVICE_UNIT_COMMENT
 units.mios-gpu-pv-detect.service.Unit.Description  MIOS_UNITS_MIOS_GPU_PV_DETECT_SERVICE_UNIT_DESCRIPTION
 units.mios-gpu-pv-detect.service.Unit.DefaultDependencies  MIOS_UNITS_MIOS_GPU_PV_DETECT_SERVICE_UNIT_DEFAULTDEPENDENCIES
@@ -10132,6 +10138,9 @@ desktop.pip_gravity.hud_namespaces  MIOS_DESKTOP_PIP_GRAVITY_HUD_NAMESPACES
 desktop.pip_gravity.hud_settle_ms  MIOS_DESKTOP_PIP_GRAVITY_HUD_SETTLE_MS
 desktop.pip_gravity.hud_max_height_frac  MIOS_DESKTOP_PIP_GRAVITY_HUD_MAX_HEIGHT_FRAC
 desktop.pip_gravity.match  MIOS_DESKTOP_PIP_GRAVITY_MATCH
+system.memory_admission.min_available_mb  MIOS_SYSTEM_MEMORY_ADMISSION_MIN_AVAILABLE_MB
+system.memory_admission.poll_ms  MIOS_SYSTEM_MEMORY_ADMISSION_POLL_MS
+system.memory_admission.wait_timeout_s  MIOS_SYSTEM_MEMORY_ADMISSION_WAIT_TIMEOUT_S
 desktop.nested.resize_poll_ms  MIOS_DESKTOP_NESTED_RESIZE_POLL_MS
 desktop.nested.width  MIOS_DESKTOP_NESTED_WIDTH
 desktop.nested.height  MIOS_DESKTOP_NESTED_HEIGHT
@@ -10229,6 +10238,8 @@ user_units.mios-shell.service.Service.KillMode  MIOS_USER_UNITS_MIOS_SHELL_SERVI
 user_units.mios-shell.service.Service.Restart  MIOS_USER_UNITS_MIOS_SHELL_SERVICE_SERVICE_RESTART
 user_units.mios-shell.service.Service.RestartSec  MIOS_USER_UNITS_MIOS_SHELL_SERVICE_SERVICE_RESTARTSEC
 user_units.mios-shell.service.Install.WantedBy  MIOS_USER_UNITS_MIOS_SHELL_SERVICE_INSTALL_WANTEDBY
+user_units.mios-shell.service.d/10-mios-memory.conf.Service.comment  MIOS_USER_UNITS_MIOS_SHELL_SERVICE_D_10_MIOS_MEMORY_CONF_SERVICE_COMMENT
+user_units.mios-shell.service.d/10-mios-memory.conf.Service.MemoryLow  MIOS_USER_UNITS_MIOS_SHELL_SERVICE_D_10_MIOS_MEMORY_CONF_SERVICE_MEMORYLOW
 user_units.mios-appmenu.service.Unit.Description  MIOS_USER_UNITS_MIOS_APPMENU_SERVICE_UNIT_DESCRIPTION
 user_units.mios-appmenu.service.Unit.Documentation  MIOS_USER_UNITS_MIOS_APPMENU_SERVICE_UNIT_DOCUMENTATION
 user_units.mios-appmenu.service.Unit.PartOf  MIOS_USER_UNITS_MIOS_APPMENU_SERVICE_UNIT_PARTOF

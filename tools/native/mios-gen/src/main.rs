@@ -26,6 +26,7 @@ mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
+mod mem_admit;
 mod nested_devices;
 mod session_scale;
 mod render;
@@ -371,6 +372,16 @@ enum Commands {
         #[arg(long,conflicts_with_all=["desktop","all","portal_only"])] flatpak: Option<String>,
         #[arg(long,conflicts_with_all=["desktop","flatpak","portal_only"])] all: bool,
         #[arg(long,conflicts_with_all=["desktop","flatpak","all"])] portal_only: bool,
+    },
+
+    /// Memory admission: exit 0 when MemAvailable is at least [system.memory_admission].min_available_mb, 3 when not (JSON verdict on stdout).
+    #[command(name = "mem-admit")]
+    MemAdmit {
+        #[arg(long)] root: Option<PathBuf>,
+        /// Poll until admitted or [system.memory_admission].wait_timeout_s passes.
+        #[arg(long)] wait: bool,
+        /// Read this meminfo file instead of /proc/meminfo (tests).
+        #[arg(long)] meminfo: Option<PathBuf>,
     },
 
     /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
@@ -1568,6 +1579,10 @@ fn main() -> ExitCode {
         Commands::AppPreflight {root,desktop,flatpak,all,portal_only} => (
             "app-preflight", "desktop",
             app_preflight::run(&root.unwrap_or_else(||PathBuf::from("/")),desktop.as_deref(),flatpak.as_deref(),all,portal_only).map_err(|e|(e,1)),
+        ),
+        Commands::MemAdmit {root,wait,meminfo} => (
+            "mem-admit", "desktop",
+            mem_admit::run(&root.unwrap_or_else(||PathBuf::from("/")),wait,meminfo.as_deref()),
         ),
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
