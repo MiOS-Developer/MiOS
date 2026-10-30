@@ -45,6 +45,9 @@ pub struct Native {
     pub udp_transport: bool,
     pub log_negotiation: bool,
     pub bitmap_hz: u32,
+    pub progressive: bool,
+    pub progressive_hz: u32,
+    pub progressive_quant: u8,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -86,6 +89,9 @@ impl Default for Native {
             udp_transport: false,
             log_negotiation: true,
             bitmap_hz: 15,
+            progressive: true,
+            progressive_hz: 30,
+            progressive_quant: 8,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -270,6 +276,9 @@ impl Config {
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
         n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));
+        if !(1..=240).contains(&n.progressive_hz) || !(6..=15).contains(&n.progressive_quant) {
+            bail!("progressive_hz must be 1..=240 and progressive_quant must be 6..=15");
+        }
         if n.bitmap_damage_threshold > 16 { bail!("bitmap_damage_threshold must be 0..=16"); }
         if n.tcp_send_buffer_kib > 4096 || n.tcp_notsent_lowat_kib > 4096 {
             bail!("tcp_send_buffer_kib and tcp_notsent_lowat_kib must be 0..=4096");
@@ -397,5 +406,20 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.bind_device, None);
         assert_eq!(c.tailscale_interface, "tailscale0");
+    }
+
+    #[test]
+    fn progressive_quality_and_rate_are_bounded_and_configurable() {
+        for (hz, quant) in [(1,6), (30,8), (240,15)] {
+            let mut c=Config::default();
+            c.native.progressive_hz=hz; c.native.progressive_quant=quant;
+            c.validate().unwrap();
+            assert_eq!(c.native.progressive_hz,hz); assert_eq!(c.native.progressive_quant,quant);
+        }
+        for (hz, quant) in [(0,8), (241,8), (30,5), (30,16)] {
+            let mut c=Config::default();
+            c.native.progressive_hz=hz; c.native.progressive_quant=quant;
+            assert!(c.validate().unwrap_err().to_string().contains("progressive_"));
+        }
     }
 }
