@@ -351,7 +351,8 @@ end)
 -- outputs without an operator-saved scale when apply_to allows (deferred to a one-shot timer, never
 -- inside the event), and its mobile flag (logical short side under the breakpoint) selects the
 -- phone profile: a per-output workspace rule (one-window layout, no top gap so the window meets the
--- shell's shoulders) and a window rule that tiles new windows there. Mobile windows keep the GLOBAL
+-- shell's shoulders) and a window rule that tiles new windows there (never a window class whose own rule
+-- floats and pins it: the ShaderGlass pane; this rule is made later, so it would win). Mobile windows keep the GLOBAL
 -- decoration (rounding, border, shadow, hyprglass) exactly like desktop windows. Their controls:
 -- hyprbars_tab = "mobile" puts them on the window's own glass split into two touch tabs (hyprbars:mobile,
 -- when the plugin took the mobile keys: mios_state.hyprbars_mobile; otherwise the shell draws them),
@@ -512,7 +513,7 @@ end
     rules[name] = {
      hl.workspace_rule({workspace = sel, layout = M.layout, gaps_in = M.gaps_in,
       gaps_out = {top = 0, right = M.gaps_out, bottom = M.gaps_out, left = M.gaps_out}}),
-     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false}, tile = true}),
+     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false, class = "negative:^(shaderglass\\.exe)$"}, tile = true}),
     }
     local tabbed = false
     if mobiletabs then

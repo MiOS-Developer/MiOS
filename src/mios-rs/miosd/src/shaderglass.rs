@@ -36,10 +36,12 @@ use crate::placement::{addr, lua_str, Buttons, Hypr};
 mod follow;
 mod picker;
 mod release;
+mod state;
 mod wine;
 mod zip;
 
 use follow::{Follower, Mon, OnMove, Policy, Win};
+use state::{Attached, StateCfg, Store};
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ShaderglassCommand {
@@ -103,6 +105,19 @@ pub enum ShaderglassCommand {
         #[arg(long)]
         window: Option<String>,
     },
+    /// Next ShaderGlass shader on a pane (the active window or pane by default); the choice is saved for the class
+    #[command(alias = "next")]
+    Cycle {
+        #[arg(long)]
+        window: Option<String>,
+    },
+    /// Save a pane's live ShaderGlass state as its class profile now (it is also saved on setup exit, cycle and close)
+    Save {
+        #[arg(long)]
+        window: Option<String>,
+    },
+    /// Start the supervisor and re-attach the panes a supervisor that died left attached
+    Resume,
     /// Close every pane and stop the supervisor
     Stop,
     /// The installed release and the running panes, as JSON
@@ -272,6 +287,7 @@ pub struct Config {
     pub wine: WineCfg,
     pub launch_args: Vec<String>,
     pub setup_shortcut: String,
+    pub cycle_shortcut: String,
     pub profile: Vec<(String, String)>,
     pub window: WindowCfg,
     pub follow: Policy,
@@ -279,6 +295,7 @@ pub struct Config {
     pub capture: CaptureCfg,
     pub winecap: WinecapCfg,
     pub xdph: XdphCfg,
+    pub state: StateCfg,
 }
 
 fn get<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
@@ -364,6 +381,15 @@ impl<'a> Section<'a> {
     }
 }
 
+/// A file path relative to $XDG_RUNTIME_DIR (per session: a nested session has a runtime directory of its own).
+fn runtime_relative(st: &Section, key: &str) -> Result<String, String> {
+    let p = st.str(key)?;
+    if p.starts_with('/') || p.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+        return Err(format!("desktop.shaderglass.state.{key} must be a relative file path under $XDG_RUNTIME_DIR"));
+    }
+    Ok(p)
+}
+
 fn size_value(s: &str) -> bool {
     let digits = s.trim_end_matches(|c: char| "KMGTkmgt".contains(c));
     !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit()) && s.len() - digits.len() <= 1
@@ -379,6 +405,7 @@ impl Config {
         let c = t.sub("capture")?;
         let wc = t.sub("winecap")?;
         let b = wc.sub("builder")?;
+        let st = t.sub("state")?;
         let x = Section::of(doc, "desktop.hyprland.xdph")?;
         let app_id = t.str("app_id")?;
         if !app_id.contains('.') || !app_id.bytes().all(|ch| ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_') {
@@ -446,6 +473,7 @@ impl Config {
             },
             launch_args: l.list("args")?,
             setup_shortcut: l.str("setup_shortcut")?,
+            cycle_shortcut: l.str("cycle_shortcut")?,
             profile,
             window: WindowCfg {
                 class: win.regex("class")?,
@@ -525,7 +553,46 @@ impl Config {
                 custom_picker_binary: x.any_str("custom_picker_binary")?,
                 stock_picker: x.str("stock_picker")?,
             },
+            state: StateCfg {
+                persist: st.boolean("persist")?,
+                directory: {
+                    let p = st.str("directory")?;
+                    if p.starts_with('/') || p.split('/').any(|c| c.is_empty() || c == "..") {
+                        return Err("desktop.shaderglass.state.directory must be a relative path under $XDG_STATE_HOME".into());
+                    }
+                    p
+                },
+                save_timeout: st.millis("save_timeout_ms", 100)?,
+                restart_limit: {
+                    let n = st.num("restart_limit")?;
+                    if n > 10.0 || n.fract() != 0.0 {
+                        return Err(st.err("restart_limit", "an integer 0..10"));
+                    }
+                    n as u32
+                },
+                resume: st.boolean("resume")?,
+                strip_keys: {
+                    let k = st.list("strip_keys")?;
+                    if k.iter().any(|x| x.is_empty() || !x.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')) {
+                        return Err("desktop.shaderglass.state.strip_keys are ShaderGlass profile mnemonics".into());
+                    }
+                    for need in ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat"] {
+                        if !k.iter().any(|x| x == need) {
+                            return Err(format!("desktop.shaderglass.state.strip_keys must strip {need} (miosd chooses the capture source)"));
+                        }
+                    }
+                    k
+                },
+                runtime_state: runtime_relative(&st, "runtime_state")?,
+                room_requests: runtime_relative(&st, "room_requests")?,
+            },
         };
+        if cfg.state.runtime_state == cfg.state.room_requests {
+            return Err("desktop.shaderglass.state runtime_state and room_requests must differ".into());
+        }
+        if cfg.cycle_shortcut == cfg.setup_shortcut {
+            return Err("desktop.shaderglass.launch cycle_shortcut and setup_shortcut must differ".into());
+        }
         if cfg.window.pane_tag == cfg.window.passthrough_tag {
             return Err("desktop.shaderglass.window pane_tag and passthrough_tag must differ".into());
         }
@@ -625,6 +692,21 @@ pub(crate) fn runtime_root() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// A session's 2D/3D hand-over file ([desktop.shaderglass.state] runtime_state / room_requests): under the
+/// session's own $XDG_RUNTIME_DIR -- the primary's /run/user/<uid>, a nested session's private runtime
+/// directory -- never a host-global /tmp file another session (or a sandbox with a private /tmp) shares.
+pub(crate) fn session_file_in(runtime: &Path, rel: &str) -> PathBuf {
+    runtime.join(rel)
+}
+
+fn session_file(rel: &str) -> PathBuf {
+    let path = session_file_in(&crate::placement::runtime_dir(), rel);
+    if let Some(dir) = path.parent() {
+        let _ = ensure_private_dir(dir);
+    }
+    path
+}
+
 fn control_socket() -> Result<PathBuf, String> {
     Ok(runtime_root()?.join("control.sock"))
 }
@@ -633,9 +715,60 @@ fn token_store_path() -> PathBuf {
     state_home().join("mios/shaderglass/restore-tokens.json")
 }
 
-pub fn unit_name(cfg: &Config) -> String {
-    format!("app-mios-{}@overlay.service", cfg.app_id)
+/// $XDG_STATE_HOME/<[desktop.shaderglass.state].directory>
+pub(crate) fn state_dir(cfg: &Config) -> PathBuf {
+    state_home().join(&cfg.state.directory)
 }
+
+/// The shared store, as this session's ([`unit_instance`]) view of it.
+pub(crate) fn open_store(cfg: &Config) -> Store {
+    let rt = crate::placement::runtime_dir();
+    Store::open(&state_dir(cfg), &unit_instance(primary_session(), &rt), &rt)
+}
+
+/// ShaderGlass' own default profile in the prefix (%LOCALAPPDATA%\ShaderGlassDefault.sgp).
+fn default_profile_path(cfg: &Config) -> Option<PathBuf> {
+    wine::local_appdata(&wine::prefix_dir(cfg)).map(|d| d.join("ShaderGlassDefault.sgp"))
+}
+
+/// Whether this process runs in the user manager's own session (XDG_RUNTIME_DIR = /run/user/<uid>), not in a
+/// nested MiOS session (which has a private runtime directory and compositor of its own).
+pub(crate) fn primary_session() -> bool {
+    is_primary_runtime(&crate::placement::runtime_dir(), unsafe { libc::getuid() })
+}
+
+/// The primary session's runtime directory is the user manager's own, /run/user/<uid>; anything else is a
+/// nested session (it may never touch the user manager: no import-environment, no portal restart).
+pub(crate) fn is_primary_runtime(runtime: &Path, uid: u32) -> bool {
+    runtime == Path::new(&format!("/run/user/{uid}"))
+}
+
+/// The instance of the supervisor unit: "overlay" in the primary session, "overlay-<hash of the runtime
+/// directory>" in a nested one (each session runs its own supervisor against its own compositor).
+pub fn unit_instance(primary: bool, runtime: &Path) -> String {
+    if primary {
+        return state::PRIMARY_SESSION.into();
+    }
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in runtime.as_os_str().as_encoded_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("overlay-{:08x}", h as u32)
+}
+
+pub fn unit_name(cfg: &Config) -> String {
+    format!("app-mios-{}@{}.service", cfg.app_id, unit_instance(primary_session(), &crate::placement::runtime_dir()))
+}
+
+/// The environment the supervisor unit carries over from the caller: the compositor, the SSOT tiers a test or
+/// a nested session points at, the XDG homes, and -- outside the primary session -- the private runtime
+/// directory (the user manager would otherwise hand the supervisor the primary's).
+pub const SUPERVISOR_ENV: &[&str] = &[
+    "WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CURRENT_DESKTOP", "AQ_DRM_DEVICES", "MIOS_ROOT",
+    "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_USER_TOML", "MIOS_USER_TOML_D", "XDG_DATA_HOME", "XDG_STATE_HOME",
+    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "PIPEWIRE_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+];
 
 fn installed(cfg: &Config) -> Option<Json> {
     std::fs::read(cfg.install_dir.join("INSTALLED.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())
@@ -700,6 +833,14 @@ pub fn supervisor_unit_args(cfg: &Config, exe: &Path, env: &[(String, String)]) 
         a.push("-p".into());
         a.push(p);
     }
+    // A supervisor that crashed (a panic, an abort) comes back and resumes its panes ([desktop.shaderglass.state]
+    // resume); systemd's start limit bounds it, and a stop, the idle exit or a clean exit is never restarted.
+    if cfg.state.resume {
+        for p in ["Restart=on-failure", "RestartSec=2", "StartLimitIntervalSec=120", "StartLimitBurst=3"] {
+            a.push("-p".into());
+            a.push(p.into());
+        }
+    }
     for (k, v) in env {
         a.push(format!("--setenv={k}={v}"));
     }
@@ -715,10 +856,13 @@ fn start_supervisor(cfg: &Config) -> Result<(), String> {
         return Ok(());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let env: Vec<(String, String)> = ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CURRENT_DESKTOP", "AQ_DRM_DEVICES", "MIOS_ROOT"]
+    let mut env: Vec<(String, String)> = SUPERVISOR_ENV
         .iter()
         .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| ((*k).to_owned(), v)))
         .collect();
+    if !primary_session() {
+        env.push(("XDG_RUNTIME_DIR".into(), crate::placement::runtime_dir().display().to_string()));
+    }
     let st = Command::new("systemd-run")
         .args(supervisor_unit_args(cfg, &exe, &env))
         .stdin(Stdio::null())
@@ -845,6 +989,11 @@ fn query_available_source_types() -> u32 {
 /// so WineCap sees AvailableSourceTypes != 0 on org.freedesktop.portal.ScreenCast even if the
 /// portal backend crashed earlier in the session.
 fn ensure_portal_backend() {
+    // A nested session's compositor is not the one the user manager's portal serves: never import its
+    // environment into, or restart a service of, the operator's session.
+    if !primary_session() {
+        return;
+    }
     let _sig = match std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => match Hypr::connect() {
@@ -983,11 +1132,48 @@ fn setup(cfg: &Config, window: Option<&str>) -> Result<String, String> {
     Ok(control(&with_cmd(pane_or_target(cfg, window)?, "setup"))?.to_string())
 }
 
+/// Next shader on a pane, saved for its class.
+fn cycle(cfg: &Config, window: Option<&str>) -> Result<String, String> {
+    if !supervisor_running() {
+        return Err("no ShaderGlass pane is running".into());
+    }
+    Ok(control(&with_cmd(pane_or_target(cfg, window)?, "cycle"))?.to_string())
+}
+
+fn save(cfg: &Config, window: Option<&str>) -> Result<String, String> {
+    if !supervisor_running() {
+        return Err("no ShaderGlass pane is running".into());
+    }
+    Ok(control(&with_cmd(pane_or_target(cfg, window)?, "save"))?.to_string())
+}
+
+/// Start the supervisor (it resumes what a dead one left attached) and report.
+fn resume(cfg: &Config) -> Result<String, String> {
+    require_enabled(cfg)?;
+    require_installed(cfg)?;
+    if supervisor_running() {
+        return Ok(json!({"resumed": false, "reason": "the supervisor is running"}).to_string());
+    }
+    let pending = open_store(cfg).attached();
+    if pending.is_empty() {
+        return Ok(json!({"resumed": false, "reason": "nothing was left attached"}).to_string());
+    }
+    ensure_portal_backend();
+    wine::ensure_prefix(cfg)?;
+    start_supervisor(cfg)?;
+    Ok(json!({"resumed": true, "attached": pending.len(), "supervisor": control(&json!({"cmd": "status"})).ok()}).to_string())
+}
+
 fn stop(cfg: &Config) -> Result<String, String> {
-    let _ = std::fs::write("/tmp/mios-shaderglass.state", "active=0\ntargets=\n");
+    let _ = write_private(&session_file(&cfg.state.runtime_state), b"active=0\ntargets=\n");
     if supervisor_running() {
         control(&json!({"cmd": "stop"}))?;
         return Ok("stopping every ShaderGlass pane".into());
+    }
+    // Nothing to resume after an explicit stop -- in this session; another session's record is its own.
+    let mut store = open_store(cfg);
+    if !store.attached().is_empty() {
+        store.set_attached(&[])?;
     }
     // A unit whose supervisor no longer answers.
     let _ = Command::new("systemctl").args(["--user", "stop", &unit_name(cfg)]).stderr(Stdio::null()).status();
@@ -1002,6 +1188,7 @@ fn status(cfg: &Config) -> Json {
         "unit": unit_name(cfg),
         "supervisor": control(&json!({"cmd": "status"})).ok(),
         "prefix": wine::prefix_dir(cfg),
+        "state": open_store(cfg).to_status(),
     })
 }
 
@@ -1053,9 +1240,23 @@ fn portal_config(cfg: &Config, check: bool, write: bool) -> Result<String, Strin
 // ---------------------------------------------------------------- supervisor
 
 static STOP: AtomicBool = AtomicBool::new(false);
+/// STOP came from a signal, not from `mios-shaderglass stop`.
+static SIGNALLED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
+    SIGNALLED.store(true, Ordering::SeqCst);
     STOP.store(true, Ordering::SeqCst);
+}
+
+/// Whether a pane whose ShaderGlass exited with a failure is relaunched: only when nobody asked for the close
+/// (a crash, an OOM kill, a killed Wine), the pane had mapped (it worked before), the relaunch budget is not
+/// spent and the supervisor is not stopping. A clean exit (File > Exit) is the operator's choice.
+fn relaunch_after_exit(p: &Pane, limit: u32, stopping: bool) -> bool {
+    relaunch_decision(p.requested_close, p.pane_identity.is_some(), p.restarts, limit, stopping)
+}
+
+pub(crate) fn relaunch_decision(requested_close: bool, had_mapped: bool, restarts: u32, limit: u32, stopping: bool) -> bool {
+    !requested_close && had_mapped && restarts < limit && !stopping
 }
 
 enum Msg {
@@ -1133,6 +1334,29 @@ impl WindowIdentity {
     }
 }
 
+/// Float and pin a pane the static rules missed. The rules match the title, and winewayland maps the window
+/// before ShaderGlass titles it, so under the Wayland driver the pane mapped tiled: the layout then owned its
+/// geometry, every placement was ignored and WineCap's client fit fought the tile forever. Empty when the
+/// pane already floats and is pinned.
+/// Whether to (re-)send the float/pin fix to a pane that still reports otherwise: once the last one had the
+/// settle time to land, and at most [`follow::PLACE_RETRIES`] times until the pane reports floating and pinned
+/// (then the budget starts over) -- a pane something else keeps tiling is never re-sent the fix every tick.
+pub(crate) fn layer_fix_due(sent: u32, last: Option<Instant>, now: Instant, settle: Duration) -> bool {
+    sent < follow::PLACE_RETRIES && last.is_none_or(|t| now.saturating_duration_since(t) >= settle)
+}
+
+pub(crate) fn pane_layer_lua(address: &str, client: &Json) -> String {
+    let w = lua_str(&format!("address:{address}"));
+    let mut out = String::new();
+    if client.get("floating").and_then(Json::as_bool) != Some(true) {
+        out += &format!("; pcall(function() hl.dispatch(hl.dsp.window.float({{window={w},action='enable'}})) end)");
+    }
+    if client.get("pinned").and_then(Json::as_bool) != Some(true) {
+        out += &format!("; pcall(function() hl.dispatch(hl.dsp.window.pin({{window={w},action='enable'}})) end)");
+    }
+    out
+}
+
 fn binding_lua(pane: &str, target: &str, on: bool, target_alive: bool) -> String {
     let sign = if on { "+" } else { "-" };
     let mut actions = vec![format!("hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
@@ -1142,6 +1366,15 @@ fn binding_lua(pane: &str, target: &str, on: bool, target_alive: bool) -> String
             lua_str(&format!("{sign}mios-shaderglass-pane:{pane}")), lua_str(&format!("address:{target}"))));
     }
     actions.into_iter().map(|a| format!("pcall(function() {a} end)")).collect::<Vec<_>>().join("; ")
+}
+
+/// A pane waiting for its launch: the target's native identity, setup or overlay, and how many times it was
+/// relaunched after ShaderGlass died on its own.
+#[derive(Clone, Debug)]
+struct Queued {
+    identity: WindowIdentity,
+    setup: bool,
+    restarts: u32,
 }
 
 struct Pane {
@@ -1160,7 +1393,21 @@ struct Pane {
     size_file: Option<PathBuf>,
     request: Option<PathBuf>,
     closing: Option<Instant>,
+    /// The supervisor (detach, target closed, stop) asked for the close: never relaunched.
+    requested_close: bool,
     term_sent: bool,
+    /// The WineCap command channel of this process (MIOS_WINECAP_COMMAND_FILE).
+    command: Option<state::Command>,
+    /// The class profile ShaderGlass was started with.
+    profile: Option<PathBuf>,
+    restarts: u32,
+    /// The last profile save of this pane: Ok(shader) or Err(reason).
+    saved: Option<Result<String, String>>,
+    /// Whether ShaderGlass' menu bar is shown, as its WineCap last reported (None: never asked / no channel).
+    menu: Option<bool>,
+    /// Float/pin fixes ([`pane_layer_lua`]) sent since the pane last reported floating and pinned, and when.
+    layer_sent: u32,
+    layer_at: Option<Instant>,
 }
 
 impl Pane {
@@ -1178,7 +1425,7 @@ struct Supervisor {
     cfg: Config,
     hypr: Hypr,
     panes: Vec<Pane>,
-    queue: VecDeque<(WindowIdentity, bool)>,
+    queue: VecDeque<Queued>,
     clients: Vec<Json>,
     clients_at: Option<Instant>,
     mons: Vec<Mon>,
@@ -1187,11 +1434,16 @@ struct Supervisor {
     buttons: Buttons,
     hypr3d: bool,
     hypr3d_at: Option<Instant>,
-    store: Json,
     urgent: bool,
     fast: bool,
     /// ShaderGlass windows that belong to no pane (logged once).
     ignored: std::collections::HashSet<String>,
+    /// Profiles and the attached-pane record ([desktop.shaderglass.state]).
+    state: Store,
+    /// Stopped by a signal (unit stop, logout, upgrade): the attached record stays for the next start to resume.
+    keep_attached: bool,
+    /// What the runtime_state file holds (rewritten on change only).
+    runtime_state: Option<String>,
 }
 
 /// Grace periods for a closing pane: WM_CLOSE, then SIGTERM, then SIGKILL.
@@ -1227,23 +1479,113 @@ impl Supervisor {
         self.urgent = true;
     }
 
-    fn write_state(&self) {
+    fn write_state(&mut self) {
         let mut targets: Vec<String> = self
             .panes
             .iter()
             .filter(|p| p.closing.is_none())
             .map(|p| p.target.clone())
             .collect();
-        for (q, _) in &self.queue {
-            if !targets.contains(&q.address) {
-                targets.push(q.address.clone());
+        for q in &self.queue {
+            if !targets.contains(&q.identity.address) {
+                targets.push(q.identity.address.clone());
             }
         }
         let active = if targets.is_empty() { 0 } else { 1 };
-        let _ = std::fs::write(
-            "/tmp/mios-shaderglass.state",
-            format!("active={active}\ntargets={}\n", targets.join(",")),
-        );
+        let text = format!("active={active}\ntargets={}\n", targets.join(","));
+        // Written on change only (this runs every tick).
+        if self.runtime_state.as_deref() != Some(text.as_str()) {
+            if let Err(e) = write_private(&session_file(&self.cfg.state.runtime_state), text.as_bytes()) {
+                self.log(&format!("runtime state: {e}"));
+            }
+            self.runtime_state = Some(text);
+        }
+        self.record_attached();
+    }
+
+    /// The panes a restarted supervisor would resume (live and queued ones; never while a signal stops us).
+    fn record_attached(&mut self) {
+        if self.keep_attached || !self.cfg.state.resume {
+            return;
+        }
+        let mut list: Vec<Attached> = self
+            .panes
+            .iter()
+            .filter(|p| !p.requested_close)
+            .map(|p| Attached {
+                address: p.target_identity.address.clone(),
+                pid: p.target_identity.pid,
+                stable_id: p.target_identity.stable_id.clone(),
+                class: p.class.clone(),
+                setup: p.setup,
+            })
+            .collect();
+        for q in &self.queue {
+            if !list.iter().any(|a| a.address == q.identity.address) {
+                let class = self.client(&q.identity.address).and_then(|c| c.get("class")).and_then(Json::as_str).unwrap_or("").to_owned();
+                list.push(Attached { address: q.identity.address.clone(), pid: q.identity.pid, stable_id: q.identity.stable_id.clone(), class, setup: q.setup });
+            }
+        }
+        if let Err(e) = self.state.set_attached(&list) {
+            self.log(&format!("state: {e}"));
+        }
+    }
+
+    /// Save pane `i`'s live ShaderGlass state as its class profile (WineCap runs "Set as default"; the
+    /// operator's own default is put back). Needs a mapped pane whose WineCap has the command channel.
+    fn save_pane(&mut self, i: usize) -> Result<String, String> {
+        if !self.cfg.state.persist {
+            return Err("profile persistence is off ([desktop.shaderglass.state].persist = false)".into());
+        }
+        let Some(default) = default_profile_path(&self.cfg) else {
+            return Err("the Wine prefix has no user profile directory".into());
+        };
+        let timeout = self.cfg.state.save_timeout;
+        let Supervisor { panes, state, cfg, .. } = self;
+        let p = &mut panes[i];
+        if p.window.is_none() || p.closing.is_some() {
+            return Err("that pane is not running".into());
+        }
+        let Some(cmd) = p.command.as_mut() else {
+            return Err("that pane has no WineCap command channel".into());
+        };
+        if !cmd.ready() {
+            return Err("this WineCap has no MiOS command channel (reinstall: mios-shaderglass install --force)".into());
+        }
+        let class = p.class.clone();
+        let r = state::save_profile(state, &cfg.state, &class, &default, || cmd.run("save", timeout).map(|_| ()))
+            .map(|prof| state::profile_shader(&prof).unwrap_or_default());
+        p.saved = Some(r.clone());
+        match &r {
+            Ok(shader) => eprintln!("[miosd shaderglass] {}: saved the ShaderGlass profile of class {class} ({shader})", p.target),
+            Err(e) => eprintln!("[miosd shaderglass] {}: profile not saved: {e}", p.target),
+        }
+        r
+    }
+
+    /// Show (`on`) or hide ShaderGlass' menu in pane `i` through its WineCap command channel. Some(shown
+    /// afterwards, as ShaderGlass reports it) when the channel answered; None when it is not available or
+    /// failed (the caller sends ShaderGlass' key instead, a relative toggle).
+    fn set_menu_in_pane(&mut self, i: usize, on: bool) -> Option<bool> {
+        let timeout = self.cfg.state.save_timeout;
+        let c = self.panes[i].command.as_mut().filter(|c| c.ready())?;
+        match c.run(if on { "menu-on" } else { "menu-off" }, timeout) {
+            Ok(detail) => {
+                // An answer without the state (it cannot happen with this patch) counts as done.
+                let shown = state::menu_shown(&detail).unwrap_or(on);
+                self.panes[i].menu = Some(shown);
+                if shown != on {
+                    let target = self.panes[i].target.clone();
+                    self.log(&format!("{target}: ShaderGlass kept its menu {}", if shown { "shown" } else { "hidden" }));
+                }
+                Some(shown)
+            }
+            Err(e) => {
+                let target = self.panes[i].target.clone();
+                self.log(&format!("{target}: menu through WineCap: {e}; sending the key"));
+                None
+            }
+        }
     }
 
     fn sync_hypr3d(&self, target: &str, on: bool) {
@@ -1254,7 +1596,8 @@ impl Supervisor {
     }
 
     fn drain_3d_requests(&mut self) {
-        let req_path = Path::new("/tmp/mios-shaderglass-3d-request.txt");
+        let req_file = session_file(&self.cfg.state.room_requests);
+        let req_path = req_file.as_path();
         let Ok(content) = std::fs::read_to_string(req_path) else { return };
         let _ = std::fs::remove_file(req_path);
         for raw in content.lines() {
@@ -1287,7 +1630,7 @@ impl Supervisor {
                     let t = addr(if verb.starts_with("0x") { verb } else { target_raw.trim() });
                     if !t.is_empty() {
                         let has = self.panes.iter().any(|p| p.target == t && p.closing.is_none())
-                            || self.queue.iter().any(|(q, _)| q.address == t);
+                            || self.queue.iter().any(|q| q.identity.address == t);
                         let cmd = if has { "detach" } else { "attach" };
                         let _ = self.on_control(&json!({"cmd": cmd, "target": t, "setup": false}));
                     }
@@ -1429,11 +1772,18 @@ impl Supervisor {
         let target = p.target.clone();
         self.log(&format!("{a}: pane for {target} mapped ({})", if setup { "setup" } else { "overlay" }));
         let lua = if setup {
-            follow::setup_lua(a, &tag, true, &self.cfg.setup_shortcut)
+            // A pane launched in setup: the menu through the WineCap channel when it is already up, else the key.
+            let menu = self.set_menu_in_pane(i, true);
+            follow::setup_lua(a, &tag, true, menu.is_none().then_some(self.cfg.setup_shortcut.as_str()))
         } else {
             follow::passthrough_lua(a, &tag, true)
         };
-        self.eval(&format!("{}; {lua}", binding_lua(a, &target, true, true)));
+        let layer = self.client(a).map(|c| pane_layer_lua(a, c)).unwrap_or_default();
+        if !layer.is_empty() {
+            self.panes[i].layer_sent = 1;
+            self.panes[i].layer_at = Some(Instant::now());
+        }
+        self.eval(&format!("{}; {lua}{layer}", binding_lua(a, &target, true, true)));
         self.urgent = true;
     }
 
@@ -1466,6 +1816,11 @@ impl Supervisor {
     fn close_pane(&mut self, i: usize) {
         if self.panes[i].closing.is_some() {
             return;
+        }
+        self.panes[i].requested_close = true;
+        // Keep what the operator chose in this pane for the next one on this class.
+        if self.panes[i].window.is_some() && self.cfg.state.persist {
+            let _ = self.save_pane(i);
         }
         let w = self.panes[i].window.clone();
         let target = self.panes[i].target.clone();
@@ -1501,19 +1856,25 @@ impl Supervisor {
                 "ok": true,
                 "unit": unit_name(&self.cfg),
                 "panes": self.panes.iter().map(|p| json!({"id": p.id, "target": p.target, "class": p.class, "window": p.window,
-                    "pid": p.child.id(), "state": p.state()})).collect::<Vec<_>>(),
-                "queued": self.queue.iter().map(|(t, s)| json!({"target": t.address, "setup": s})).collect::<Vec<_>>(),
+                    "pid": p.child.id(), "state": p.state(), "profile": p.profile, "restarts": p.restarts,
+                    "command_channel": p.command.as_ref().is_some_and(state::Command::ready), "menu": p.menu, "placement_gave_up": p.follower.gave_up(),
+                    "saved": p.saved.as_ref().map(|r| match r { Ok(s) => json!({"ok": true, "shader": s}), Err(e) => json!({"ok": false, "error": e}) })})).collect::<Vec<_>>(),
+                "queued": self.queue.iter().map(|q| json!({"target": q.identity.address, "setup": q.setup, "restarts": q.restarts})).collect::<Vec<_>>(),
+                // Whether the supervisor sees the Hypr3D room (panes hidden, processes and profiles kept).
+                "hypr3d_room": self.hypr3d,
+                "state": self.state.to_status(),
             }),
             "attach" => {
                 let Some(t) = req.get("target").and_then(Json::as_str).filter(|t| !t.is_empty()).map(addr) else {
                     return err("attach needs a target".into());
                 };
-                if let Some(p) = self.panes.iter().find(|p| p.target == t && p.closing.is_none()) {
+                if let Some(reply) = self.panes.iter().find(|p| p.target == t && p.closing.is_none())
+                    .map(|p| json!({"ok": true, "pane": p.id, "state": p.state()})) {
                     self.write_state();
                     self.sync_hypr3d(&t, true);
-                    return json!({"ok": true, "pane": p.id, "state": p.state()});
+                    return reply;
                 }
-                if self.queue.iter().any(|(q, _)| q.address == t) {
+                if self.queue.iter().any(|q| q.identity.address == t) {
                     self.write_state();
                     self.sync_hypr3d(&t, true);
                     return json!({"ok": true, "state": "queued"});
@@ -1529,7 +1890,11 @@ impl Supervisor {
                 let Some(window) = self.client(&t).and_then(Win::from_json).filter(|w| w.mapped) else {
                     return err("the target is not mapped".into());
                 };
-                self.queue.push_back((WindowIdentity::from_window(&window), req.get("setup").and_then(Json::as_bool).unwrap_or(false)));
+                self.queue.push_back(Queued {
+                    identity: WindowIdentity::from_window(&window),
+                    setup: req.get("setup").and_then(Json::as_bool).unwrap_or(false),
+                    restarts: 0,
+                });
                 self.urgent = true;
                 self.write_state();
                 self.sync_hypr3d(&t, true);
@@ -1538,7 +1903,7 @@ impl Supervisor {
             "detach" => {
                 let mut detached_target = req.get("target").and_then(Json::as_str).map(addr);
                 if let Some(ref t) = detached_target {
-                    self.queue.retain(|(q, _)| &q.address != t);
+                    self.queue.retain(|q| &q.identity.address != t);
                 }
                 let res = match self.find(req) {
                     Some(i) => {
@@ -1562,11 +1927,46 @@ impl Supervisor {
                 let entering = !self.panes[i].setup;
                 self.panes[i].setup = entering;
                 self.panes[i].follower.reset();
-                self.eval(&follow::setup_lua(&w, &self.cfg.window.passthrough_tag, entering, &self.cfg.setup_shortcut));
+                // The menu is shown / hidden inside ShaderGlass (WineCap channel) when it can; ShaderGlass' key
+                // (a relative toggle) otherwise.
+                let menu = self.set_menu_in_pane(i, entering);
+                let key = menu.is_none().then_some(self.cfg.setup_shortcut.as_str());
+                self.eval(&follow::setup_lua(&w, &self.cfg.window.passthrough_tag, entering, key));
                 self.urgent = true;
-                json!({"ok": true, "setup": entering})
+                self.write_state();
+                // Leaving setup is when the operator is done choosing: keep it for the class.
+                let saved = if entering || !self.cfg.state.persist { None } else { Some(self.save_pane(i)) };
+                json!({"ok": true, "setup": entering, "menu": menu, "saved": saved.map(|r| r.is_ok())})
+            }
+            "cycle" => {
+                let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
+                let Some(w) = self.panes[i].window.clone() else { return err("that pane has not mapped yet".into()) };
+                let timeout = self.cfg.state.save_timeout;
+                let via = match self.panes[i].command.as_mut().filter(|c| c.ready()) {
+                    Some(c) => match c.run("next", timeout) {
+                        Ok(_) => "winecap",
+                        Err(e) => return err(e),
+                    },
+                    None => {
+                        // An older WineCap: ShaderGlass' own accelerator, sent to the pane (best effort, unsaved).
+                        self.eval(&follow::key_press_lua(&w, &self.cfg.cycle_shortcut));
+                        "shortcut"
+                    }
+                };
+                let saved = if via == "winecap" && self.cfg.state.persist { self.save_pane(i).ok() } else { None };
+                json!({"ok": true, "via": via, "shader": saved})
+            }
+            "save" => {
+                let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
+                match self.save_pane(i) {
+                    Ok(shader) => json!({"ok": true, "shader": shader, "profile": self.state.profile_path(&self.panes[i].class)}),
+                    Err(e) => err(e),
+                }
             }
             "stop" => {
+                // An explicit stop: nothing to resume afterwards.
+                self.keep_attached = false;
+                let _ = self.state.set_attached(&[]);
                 STOP.store(true, Ordering::SeqCst);
                 json!({"ok": true})
             }
@@ -1597,13 +1997,14 @@ impl Supervisor {
         if self.panes.iter().any(|p| p.window.is_none() && p.closing.is_none()) {
             return;
         }
-        let Some((target, setup)) = self.queue.pop_front() else { return };
-        if let Err(e) = self.launch(&target, setup) {
-            self.log(&format!("{}: {e}", target.address));
+        let Some(q) = self.queue.pop_front() else { return };
+        if let Err(e) = self.launch(&q.identity, q.setup, q.restarts) {
+            self.log(&format!("{}: {e}", q.identity.address));
+            self.write_state();
         }
     }
 
-    fn launch(&mut self, identity: &WindowIdentity, setup: bool) -> Result<(), String> {
+    fn launch(&mut self, identity: &WindowIdentity, setup: bool, restarts: u32) -> Result<(), String> {
         ensure_portal_backend();
         self.refresh_clients()?;
         let target = identity.address.as_str();
@@ -1622,7 +2023,9 @@ impl Supervisor {
         ensure_private_dir(&panes_dir)?;
         let token_file = if self.cfg.capture.restore_tokens {
             let counts = picker::class_counts(&self.clients);
-            let token = picker::choose_token(&self.store, &class, target, counts.get(&class).copied().unwrap_or(0));
+            // The store on disk: another session's pane may have saved a token since this supervisor started.
+            let tokens = picker::load_store(&token_store_path());
+            let token = picker::choose_token(&tokens, &class, target, counts.get(&class).copied().unwrap_or(0));
             let f = panes_dir.join(format!("{id}.restore-token"));
             write_private(&f, token.as_deref().unwrap_or("").as_bytes())?;
             if token.is_some() {
@@ -1650,15 +2053,38 @@ impl Supervisor {
         } else {
             None
         };
+        // The class profile this pane starts with (ShaderGlass loads its last argument as a profile, after its
+        // default): what the operator last chose for this class, in any session and presentation mode.
+        // Without one, a snapshot of the operator's default taken while no save swaps it ([`state::launch_profile`]).
+        let snapshot = panes_dir.join(format!("{id}.default.sgp"));
+        let profile = match default_profile_path(&self.cfg) {
+            Some(default) => state::launch_profile(&self.state, &self.cfg.state, &class, &default, &snapshot).unwrap_or_else(|e| {
+                self.log(&format!("{target}: launch profile: {e}"));
+                None
+            }),
+            None if self.cfg.state.persist => self.state.saved_profile(&class),
+            None => None,
+        };
+        let profile_arg = profile.as_deref().and_then(state::windows_path);
+        // The WineCap command channel: next shader and the setup menu always, the profile save when persisting.
+        let command = {
+            let c = state::Command::new(panes_dir.join(format!("{id}.cmd")));
+            c.cleanup();
+            Some(c)
+        };
         let (set, remove) = wine::env(&self.cfg, token_file.as_deref());
         let mut cmd = Command::new(&self.cfg.wine.binary);
         cmd.arg(self.cfg.install_dir.join(&self.cfg.exe))
             .args(&self.cfg.launch_args)
+            .args(profile_arg.iter())
             .envs(set)
             .current_dir(wine::prefix_dir(&self.cfg))
             .stdin(Stdio::null());
         if let Some(sf) = &size_file {
             cmd.env("MIOS_WINECAP_SIZE_FILE", sf);
+        }
+        if let Some(c) = &command {
+            cmd.env("MIOS_WINECAP_COMMAND_FILE", &c.file);
         }
         for k in remove {
             cmd.env_remove(k);
@@ -1675,7 +2101,12 @@ impl Supervisor {
                 return Err(format!("{}: {e}", self.cfg.wine.binary));
             }
         };
-        self.log(&format!("{target}: ShaderGlass started (pid {}) for class {class}", child.id()));
+        self.log(&format!(
+            "{target}: ShaderGlass started (pid {}) for class {class}{}{}",
+            child.id(),
+            profile.as_ref().map(|p| format!(" with profile {}", p.display())).unwrap_or_default(),
+            if restarts > 0 { format!(" (relaunch {restarts})") } else { String::new() }
+        ));
         self.panes.push(Pane {
             id,
             target: target.to_owned(),
@@ -1692,7 +2123,15 @@ impl Supervisor {
             size_file,
             request,
             closing: None,
+            requested_close: false,
             term_sent: false,
+            command,
+            profile,
+            restarts,
+            saved: None,
+            menu: None,
+            layer_sent: 0,
+            layer_at: None,
         });
         self.write_state();
         Ok(())
@@ -1705,12 +2144,12 @@ impl Supervisor {
             match p.child.try_wait() {
                 Ok(Some(st)) => {
                     eprintln!("[miosd shaderglass] {}: ShaderGlass exited ({st})", p.target);
-                    done.push(i);
+                    done.push((i, !st.success()));
                     continue;
                 }
                 Ok(None) => {}
                 Err(_) => {
-                    done.push(i);
+                    done.push((i, false));
                     continue;
                 }
             }
@@ -1730,10 +2169,54 @@ impl Supervisor {
                 }
             }
         }
-        for i in done.into_iter().rev() {
+        for (i, failed) in done.into_iter().rev() {
             let p = self.panes.remove(i);
+            let relaunch = failed && relaunch_after_exit(&p, self.cfg.state.restart_limit, self.stopping());
+            let item = Queued { identity: p.target_identity.clone(), setup: p.setup, restarts: p.restarts + 1 };
             self.finish(p);
+            if relaunch {
+                let alive = self.refresh_clients().is_ok()
+                    && self.client(&item.identity.address).and_then(Win::from_json).is_some_and(|w| item.identity.matches(&w) && w.mapped);
+                if alive && !self.queue.iter().any(|q| q.identity.address == item.identity.address) {
+                    self.log(&format!("{}: ShaderGlass died on its own; relaunching it ({}/{}) with the saved profile",
+                        item.identity.address, item.restarts, self.cfg.state.restart_limit));
+                    self.queue.push_back(item);
+                    self.write_state();
+                }
+            }
         }
+    }
+
+    fn stopping(&self) -> bool {
+        STOP.load(Ordering::SeqCst)
+    }
+
+    /// Queue the panes a supervisor that died (or was stopped by a signal) left attached, when the very same
+    /// native windows are still there.
+    fn resume(&mut self) {
+        if !self.cfg.state.resume {
+            return;
+        }
+        let list = self.state.attached();
+        if list.is_empty() {
+            return;
+        }
+        if let Err(e) = self.refresh_clients() {
+            self.log(&format!("resume: {e}"));
+            return;
+        }
+        for a in list {
+            let identity = WindowIdentity { address: a.address.clone(), pid: a.pid, stable_id: a.stable_id.clone() };
+            let live = self.client(&a.address).and_then(Win::from_json).filter(|w| identity.matches(w) && w.mapped);
+            match live {
+                Some(w) if !self.cfg.window.class.is_match(&w.class) => {
+                    self.log(&format!("{}: resuming the ShaderGlass pane ({}, {})", a.address, a.class, if a.setup { "setup" } else { "overlay" }));
+                    self.queue.push_back(Queued { identity, setup: a.setup, restarts: 0 });
+                }
+                _ => self.log(&format!("{}: not resumed (the window is gone or is another window now)", a.address)),
+            }
+        }
+        self.write_state();
     }
 
     /// Save the restore token WineCap wrote, drop the pane's files.
@@ -1749,20 +2232,35 @@ impl Supervisor {
         if let Some(s) = &p.size_file {
             let _ = std::fs::remove_file(s);
         }
+        if let Some(c) = &p.command {
+            c.cleanup();
+        }
+        // The default-profile snapshot the pane was started with (never a class profile).
+        if let Some(prof) = p.profile.as_deref().filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".default.sgp"))) {
+            if runtime_root().is_ok_and(|rt| prof.starts_with(rt)) {
+                let _ = std::fs::remove_file(prof);
+            }
+        }
         if let Some(f) = &p.token_file {
             let token = std::fs::read_to_string(f).unwrap_or_default();
-            if picker::remember_token(&mut self.store, &p.class, &p.target, token.trim()) {
-                let path = token_store_path();
-                let saved = path
-                    .parent()
-                    .ok_or_else(|| "token store has no parent".to_string())
-                    .and_then(ensure_private_dir)
-                    .and_then(|_| write_private(&path, self.store.to_string().as_bytes()));
-                if let Err(e) = saved {
-                    self.log(&format!("restore tokens: {e}"));
-                } else {
-                    self.log(&format!("{}: restore token saved for class {}", p.target, p.class));
-                }
+            // Reload-modify-write: the token store is shared with every other session's supervisor.
+            let path = token_store_path();
+            let saved = path
+                .parent()
+                .ok_or_else(|| "token store has no parent".to_string())
+                .and_then(ensure_private_dir)
+                .and_then(|_| {
+                    state::update_json(&path, |doc| {
+                        if !doc.is_object() {
+                            *doc = json!({});
+                        }
+                        picker::remember_token(doc, &p.class, &p.target, token.trim())
+                    })
+                });
+            match saved {
+                Err(e) => self.log(&format!("restore tokens: {e}")),
+                Ok(true) => self.log(&format!("{}: restore token saved for class {}", p.target, p.class)),
+                Ok(false) => {}
             }
             let _ = std::fs::remove_file(f);
         }
@@ -1854,6 +2352,20 @@ impl Supervisor {
                 .filter(|t| self.panes[i].target_identity.matches(t));
             let pane = self.client(&w).and_then(Win::from_json)
                 .filter(|w| self.panes[i].pane_identity.as_ref().is_some_and(|id| id.matches(w)));
+            match self.client(&w).map(|c| pane_layer_lua(&w, c)).filter(|l| !l.is_empty()) {
+                Some(layer) => {
+                    let p = &mut self.panes[i];
+                    if layer_fix_due(p.layer_sent, p.layer_at, now, self.cfg.follow.settle) {
+                        p.layer_sent += 1;
+                        p.layer_at = Some(now);
+                        evals.push(layer.trim_start_matches("; ").to_owned());
+                        if p.layer_sent == follow::PLACE_RETRIES {
+                            eprintln!("[miosd shaderglass] {w}: the pane still does not float and pin; leaving its layer to the rules");
+                        }
+                    }
+                }
+                None => self.panes[i].layer_sent = 0,
+            }
             let dragging = self.panes[i].setup && pointer_down;
             self.panes[i].follower.set_dragging(dragging);
             let step = self.panes[i].follower.step(&self.cfg.follow, target.as_ref(), pane.as_ref(), &self.mons, suppressed, now);
@@ -1879,6 +2391,7 @@ impl Supervisor {
             self.eval(&lua);
         }
         for i in gone {
+            self.panes[i].requested_close = true;
             self.panes[i].closing.get_or_insert(now);
         }
         self.fast = next < self.cfg.follow.idle;
@@ -1886,6 +2399,11 @@ impl Supervisor {
     }
 
     fn shutdown(&mut self) {
+        // A signal (unit stop, logout, miosd upgrade) keeps the attached record for the next start.
+        self.record_attached();
+        if !self.keep_attached {
+            let _ = self.state.set_attached(&[]);
+        }
         self.queue.clear();
         for i in 0..self.panes.len() {
             self.close_pane(i);
@@ -1929,8 +2447,8 @@ fn serve(cfg: Config) -> Result<(), String> {
     spawn_events(tx.clone());
     spawn_control(listener, tx);
     let idle_exit = cfg.idle_exit;
+    let store = open_store(&cfg);
     let mut sv = Supervisor {
-        store: picker::load_store(&token_store_path()),
         cfg,
         hypr,
         panes: Vec::new(),
@@ -1946,7 +2464,19 @@ fn serve(cfg: Config) -> Result<(), String> {
         urgent: false,
         fast: false,
         ignored: std::collections::HashSet::new(),
+        state: store,
+        keep_attached: false,
+        runtime_state: None,
     };
+    if let Some(default) = default_profile_path(&sv.cfg) {
+        // Never while another session's save has the default swapped out (that save restores it itself).
+        match state::recover_default_when_idle(&sv.state.dir, &default, sv.cfg.state.save_timeout) {
+            Ok(true) => sv.log("restored the operator's ShaderGlass default profile after an interrupted save"),
+            Ok(false) => {}
+            Err(e) => sv.log(&format!("default profile recovery: {e}")),
+        }
+    }
+    sv.resume();
     sv.write_state();
     sv.log(&format!("serving on {} for {}", sock.display(), sv.hypr.dir().display()));
     let mut next = Instant::now();
@@ -1975,6 +2505,9 @@ fn serve(cfg: Config) -> Result<(), String> {
             sv.log("stopping");
             sv.shutdown();
             break;
+        }
+        if SIGNALLED.load(Ordering::SeqCst) {
+            sv.keep_attached = true;
         }
         sv.reap();
         sv.launch_next();
@@ -2046,6 +2579,9 @@ pub fn run(cmd: &ShaderglassCommand) -> Result<(), String> {
         ShaderglassCommand::Detach { window } => print(detach(&cfg, window.as_deref())?),
         ShaderglassCommand::Toggle => print(toggle(&cfg)?),
         ShaderglassCommand::Setup { window } => print(setup(&cfg, window.as_deref())?),
+        ShaderglassCommand::Cycle { window } => print(cycle(&cfg, window.as_deref())?),
+        ShaderglassCommand::Save { window } => print(save(&cfg, window.as_deref())?),
+        ShaderglassCommand::Resume => print(resume(&cfg)?),
         ShaderglassCommand::Stop => print(stop(&cfg)?),
         ShaderglassCommand::Status => print(serde_json::to_string_pretty(&status(&cfg)).map_err(|e| e.to_string())?),
         ShaderglassCommand::Serve => serve(cfg),
@@ -2089,6 +2625,16 @@ mod tests {
         assert!(!identity.matches(&changed), "a new native window reusing an address must not inherit capture");
         changed.stable_id = "42".into();changed.pid = 12;
         assert!(!identity.matches(&changed), "another process is not the original target");
+    }
+
+    #[test]
+    fn a_pane_the_rules_missed_is_floated_and_pinned_once() {
+        let tiled = json!({"address": "0xp", "floating": false, "pinned": false});
+        let l = pane_layer_lua("0xp", &tiled);
+        assert!(l.contains("window.float({window=\"address:0xp\",action='enable'})") || l.contains("window.float({window='address:0xp',action='enable'})"), "{l}");
+        assert!(l.contains("window.pin("), "{l}");
+        assert_eq!(pane_layer_lua("0xp", &json!({"floating": true, "pinned": true})), "", "a ruled pane is left alone");
+        assert!(!pane_layer_lua("0xp", &json!({"floating": true, "pinned": false})).contains("float("));
     }
 
     #[test]
@@ -2157,7 +2703,7 @@ mod tests {
             if !suppressed {
                 let t = read(&target);
                 let p = read(&pane);
-                assert!(t.rect.close_to(&p.rect), "overlay follows native application geometry: {:?} {:?}", t.rect, p.rect);
+                assert!(t.rect.same(&p.rect), "overlay follows native application geometry exactly: {:?} {:?}", t.rect, p.rect);
                 assert_eq!(t.monitor, p.monitor, "overlay follows native output ownership");
             }
         };
@@ -2262,6 +2808,18 @@ mod tests {
             (vec!["desktop", "shaderglass", "winecap", "patches"], Value::Array(vec![s("/etc/x.patch")]), "repository-relative"),
             (vec!["desktop", "shaderglass", "profile", "CaptureWindow"], s("kitty"), "CaptureWindow"),
             (vec!["desktop", "hyprland", "xdph", "config"], s("/etc/xdph.conf"), "XDG_CONFIG_HOME"),
+            (vec!["desktop", "shaderglass", "state", "directory"], s("/var/lib/sg"), "relative path under $XDG_STATE_HOME"),
+            (vec!["desktop", "shaderglass", "state", "directory"], s("mios/../x"), "relative path under $XDG_STATE_HOME"),
+            (vec!["desktop", "shaderglass", "state", "save_timeout_ms"], Value::Integer(10), "save_timeout_ms"),
+            (vec!["desktop", "shaderglass", "state", "restart_limit"], Value::Integer(99), "restart_limit"),
+            (vec!["desktop", "shaderglass", "state", "persist"], s("yes"), "persist"),
+            (vec!["desktop", "shaderglass", "state", "strip_keys"], Value::Array(vec![s("InputArea")]), "CaptureWindow"),
+            (vec!["desktop", "shaderglass", "state", "strip_keys"], Value::Array(vec![s("Capture Window")]), "mnemonics"),
+            (vec!["desktop", "shaderglass", "launch", "cycle_shortcut"], s("m"), "must differ"),
+            (vec!["desktop", "shaderglass", "state", "runtime_state"], s("/tmp/mios-shaderglass.state"), "under $XDG_RUNTIME_DIR"),
+            (vec!["desktop", "shaderglass", "state", "runtime_state"], s("../mios-shaderglass.state"), "under $XDG_RUNTIME_DIR"),
+            (vec!["desktop", "shaderglass", "state", "room_requests"], s("/tmp/mios-shaderglass-3d-request.txt"), "under $XDG_RUNTIME_DIR"),
+            (vec!["desktop", "shaderglass", "state", "room_requests"], s("mios/shaderglass/active.state"), "must differ"),
         ];
         for (path, v, needle) in cases {
             let e = Config::from_ssot(&set(&path, v)).expect_err(needle);
@@ -2270,6 +2828,84 @@ mod tests {
         let mut missing = base.clone();
         missing["desktop"].as_table_mut().unwrap().remove("shaderglass");
         assert!(Config::from_ssot(&missing).unwrap_err().contains("desktop.shaderglass"));
+    }
+
+    #[test]
+    fn vendor_state_policy_persists_profiles_and_strips_the_capture_source() {
+        let cfg = Config::from_ssot(&vendor()).unwrap();
+        assert!(cfg.state.persist && cfg.state.resume);
+        assert_eq!(cfg.state.directory, "mios/shaderglass");
+        assert_eq!(cfg.state.restart_limit, 2);
+        for k in ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat", "InputArea", "CroppedArea"] {
+            assert!(cfg.state.strip_keys.iter().any(|x| x == k), "{k}");
+        }
+        assert_eq!((cfg.setup_shortcut.as_str(), cfg.cycle_shortcut.as_str()), ("m", "n"));
+        // The hand-over files live under the session's runtime directory, never in the shared /tmp.
+        for rel in [&cfg.state.runtime_state, &cfg.state.room_requests] {
+            for rt in ["/run/user/1000", "/run/user/1000/mios-nested-desktop-1"] {
+                let f = session_file_in(Path::new(rt), rel);
+                assert!(f.starts_with(rt) && !f.starts_with("/tmp"), "{}", f.display());
+            }
+        }
+        assert_ne!(
+            session_file_in(Path::new("/run/user/1000"), &cfg.state.runtime_state),
+            session_file_in(Path::new("/run/user/1000/mios-nested-desktop-1"), &cfg.state.runtime_state),
+            "a nested session never shares the primary's"
+        );
+        let mut missing = vendor();
+        missing["desktop"]["shaderglass"].as_table_mut().unwrap().remove("state");
+        assert!(Config::from_ssot(&missing).unwrap_err().contains("desktop.shaderglass.state"));
+    }
+
+    #[test]
+    fn only_a_pane_that_died_on_its_own_is_relaunched() {
+        // requested_close, had_mapped, restarts, limit, stopping
+        assert!(relaunch_decision(false, true, 0, 2, false), "a crash of a working pane relaunches");
+        assert!(relaunch_decision(false, true, 1, 2, false));
+        assert!(!relaunch_decision(false, true, 2, 2, false), "budget spent");
+        assert!(!relaunch_decision(true, true, 0, 2, false), "detach / target closed / stop never relaunch");
+        assert!(!relaunch_decision(false, false, 0, 2, false), "a pane that never mapped is not retried forever");
+        assert!(!relaunch_decision(false, true, 0, 2, true), "never while the supervisor stops");
+        assert!(!relaunch_decision(false, true, 0, 0, false), "restart_limit 0");
+    }
+
+    #[test]
+    fn each_session_runs_its_own_supervisor_unit() {
+        assert_eq!(unit_instance(true, Path::new("/run/user/1000")), "overlay");
+        let a = unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-1"));
+        let b = unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-2"));
+        assert!(a.starts_with("overlay-") && a != b && a != "overlay");
+        assert_eq!(a, unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-1")), "stable");
+        for k in ["MIOS_VENDOR_TOML", "XDG_STATE_HOME", "XDG_DATA_HOME", "PIPEWIRE_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "HYPRLAND_INSTANCE_SIGNATURE"] {
+            assert!(SUPERVISOR_ENV.contains(&k), "{k}");
+        }
+        assert!(!SUPERVISOR_ENV.contains(&"XDG_RUNTIME_DIR"), "added only outside the primary session");
+        // Only the user manager's own runtime directory is the primary session (ensure_portal_backend acts there only).
+        assert!(is_primary_runtime(Path::new("/run/user/1000"), 1000));
+        assert!(!is_primary_runtime(Path::new("/run/user/1000/mios-nested-desktop-1"), 1000));
+        assert!(!is_primary_runtime(Path::new("/run/user/1001"), 1000));
+        assert_eq!(state::PRIMARY_SESSION, unit_instance(true, Path::new("/run/user/1000")), "the store keys the primary as its unit");
+    }
+
+    #[test]
+    fn the_float_pin_fix_is_bounded_and_paced() {
+        let t0 = Instant::now();
+        let settle = Duration::from_millis(300);
+        assert!(layer_fix_due(0, None, t0, settle), "first time");
+        assert!(!layer_fix_due(1, Some(t0), t0 + Duration::from_millis(10), settle), "not before the last one could land");
+        assert!(layer_fix_due(1, Some(t0), t0 + settle, settle));
+        assert!(!layer_fix_due(follow::PLACE_RETRIES, Some(t0), t0 + Duration::from_secs(60), settle), "bounded");
+        // Negative control: the old tick sent it whenever the pane reported otherwise -- every tick, unbounded.
+        let mut sent = 0;
+        let mut last = None;
+        for tick in 0..1000u64 {
+            let now = t0 + Duration::from_millis(tick * 8);
+            if layer_fix_due(sent, last, now, settle) {
+                sent += 1;
+                last = Some(now);
+            }
+        }
+        assert_eq!(sent, follow::PLACE_RETRIES, "1000 ticks of a pane that never floats: {sent} fixes");
     }
 
     #[test]
@@ -2320,10 +2956,16 @@ mod tests {
         let cfg = Config::from_ssot(&vendor()).unwrap();
         let a = supervisor_unit_args(&cfg, Path::new("/usr/bin/miosd"), &[("DISPLAY".into(), ":0".into())]);
         let joined = a.join(" ");
-        assert!(joined.starts_with("--user --collect --quiet --unit app-mios-org.mios.ShaderGlass@overlay.service"), "{joined}");
+        assert!(joined.starts_with(&format!("--user --collect --quiet --unit {}", unit_name(&cfg))), "{joined}");
+        assert!(unit_name(&cfg).starts_with("app-mios-org.mios.ShaderGlass@overlay"), "{}", unit_name(&cfg));
         for p in ["-p MemoryMax=4G", "-p KillMode=mixed", "-p OOMPolicy=continue", "--setenv=DISPLAY=:0"] {
             assert!(joined.contains(p), "{p}: {joined}");
         }
+        assert!(joined.contains("-p Restart=on-failure"), "a crashed supervisor comes back to resume: {joined}");
+        assert!(joined.contains("-p StartLimitBurst=3"), "a supervisor that cannot start is not restarted forever: {joined}");
+        let mut no_resume = cfg.clone();
+        no_resume.state.resume = false;
+        assert!(!supervisor_unit_args(&no_resume, Path::new("/usr/bin/miosd"), &[]).join(" ").contains("Restart="), "resume = false: never restarted");
         assert!(joined.ends_with("-- /usr/bin/miosd shaderglass serve"), "{joined}");
     }
 
@@ -2338,6 +2980,10 @@ mod tests {
         let p = |v: &[&str]| Cli::try_parse_from(std::iter::once("shaderglass").chain(v.iter().copied()));
         assert!(matches!(p(&["toggle"]).unwrap().cmd, ShaderglassCommand::Toggle));
         assert!(matches!(p(&["setup"]).unwrap().cmd, ShaderglassCommand::Setup { window: None }));
+        assert!(matches!(p(&["cycle"]).unwrap().cmd, ShaderglassCommand::Cycle { window: None }));
+        assert!(matches!(p(&["next", "--window", "0x2"]).unwrap().cmd, ShaderglassCommand::Cycle { window: Some(_) }));
+        assert!(matches!(p(&["save"]).unwrap().cmd, ShaderglassCommand::Save { window: None }));
+        assert!(matches!(p(&["resume"]).unwrap().cmd, ShaderglassCommand::Resume));
         assert!(matches!(p(&["start", "--window", "0xab"]).unwrap().cmd, ShaderglassCommand::Attach { window: Some(ref w), setup: false } if w == "0xab"));
         assert!(matches!(p(&["attach", "--setup"]).unwrap().cmd, ShaderglassCommand::Attach { setup: true, .. }));
         assert!(matches!(p(&["detach", "--window", "0x1"]).unwrap().cmd, ShaderglassCommand::Detach { window: Some(_) }));

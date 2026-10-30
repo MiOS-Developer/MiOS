@@ -150,8 +150,9 @@ The supervisor continues following native target geometry while the pane is
 hidden in a room. `hypr3d.effect_in_room()` distinguishes room composition from
 native 2D fullscreen passthrough, where the actual overlay must become visible.
 The same live ShaderGlass process retains shader/profile settings across these
-changes; this does not imply that an unsaved application profile survives an
-application restart.
+changes. A new pane (re-attach, crash relaunch, supervisor resume, a nested
+session) starts with the profile miosd saved for the target's window class; see
+`shaderglass.md`.
 
 The isolated renderer proof covers first/third/front camera views, repeated
 2D/3D round trips, native fullscreen handoff, attachment removal/reattachment,

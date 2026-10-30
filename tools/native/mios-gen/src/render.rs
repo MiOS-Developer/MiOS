@@ -3824,7 +3824,8 @@ end
 -- outputs without an operator-saved scale when apply_to allows (deferred to a one-shot timer, never
 -- inside the event), and its mobile flag (logical short side under the breakpoint) selects the
 -- phone profile: a per-output workspace rule (one-window layout, no top gap so the window meets the
--- shell's shoulders) and a window rule that tiles new windows there. Mobile windows keep the GLOBAL
+-- shell's shoulders) and a window rule that tiles new windows there (never a window class whose own rule
+-- floats and pins it: the ShaderGlass pane; this rule is made later, so it would win). Mobile windows keep the GLOBAL
 -- decoration (rounding, border, shadow, hyprglass) exactly like desktop windows. Their controls:
 -- hyprbars_tab = "mobile" puts them on the window's own glass split into two touch tabs (hyprbars:mobile,
 -- when the plugin took the mobile keys: mios_state.hyprbars_mobile; otherwise the shell draws them),
@@ -3936,7 +3937,7 @@ do
     rules[name] = {
      hl.workspace_rule({workspace = sel, layout = M.layout, gaps_in = M.gaps_in,
       gaps_out = {top = 0, right = M.gaps_out, bottom = M.gaps_out, left = M.gaps_out}}),
-     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false}, tile = true}),
+     hl.window_rule({name = "mios-mobile-" .. name, match = @@TILE_MATCH@@, tile = true}),
     }
     local tabbed = false
     if mobiletabs then
@@ -4132,7 +4133,25 @@ end
             ("nil".to_string(), String::new())
         };
         let explicit = explicit_scales(data)?;
+        // The tile rule is made when an output appears, after every static rule, so its `tile` would override
+        // the float + pin the ShaderGlass pane rule sets ([desktop.shaderglass.window].class): while the overlay
+        // is enabled (its rules are projected), that class is never matched (Hyprland's "negative:" regex).
+        let tile_match = match data
+            .get("desktop")
+            .and_then(|d| d.get("shaderglass"))
+            .filter(|s| s.get("enabled").and_then(Value::as_bool) == Some(true))
+            .and_then(|s| s.get("window"))
+            .and_then(|w| w.get("class"))
+            .and_then(Value::as_str)
+        {
+            Some(class) if !class.is_empty() => {
+                regex::Regex::new(class).map_err(|e| format!("desktop.shaderglass.window.class: {e}"))?;
+                format!("{{workspace = sel, float = false, class = {}}}", lua(&Value::String(format!("negative:{class}")))?)
+            }
+            _ => "{workspace = sel, float = false}".to_string(),
+        };
         let body = MOBILE_LUA
+            .replace("@@TILE_MATCH@@", &tile_match)
             .replace("@@ENABLED@@", &enabled.to_string())
             .replace("@@PORTRAIT@@", &portrait.to_string())
             .replace("@@BREAKPOINT@@", &breakpoint.to_string())
@@ -4338,6 +4357,19 @@ end
             }
             assert!(chunk.contains("MIOS_SCALE_EXPLICIT = {}") && chunk.contains("local EXPLICIT = MIOS_SCALE_EXPLICIT"), "{chunk}");
             assert!(!chunk.contains("@@"), "unfilled placeholder: {chunk}");
+            // The tile rule never takes the ShaderGlass pane (its own rule floats and pins it).
+            assert!(
+                chunk.contains(r#"match = {workspace = sel, float = false, class = "negative:^(shaderglass\\.exe)$"}, tile = true"#),
+                "{chunk}"
+            );
+            // Negative control: without the ShaderGlass table the rule tiles every non-floating window (the old rule).
+            let mut no_sg = vendor();
+            no_sg["desktop"].as_table_mut().unwrap().remove("shaderglass");
+            assert!(mobile_profile(&no_sg).unwrap().contains("match = {workspace = sel, float = false}, tile = true"));
+            // A disabled overlay projects no ShaderGlass rule, and the tile rule names no ShaderGlass class either.
+            let mut off = vendor();
+            off["desktop"]["shaderglass"].as_table_mut().unwrap().insert("enabled".into(), Value::Boolean(false));
+            assert!(!mobile_profile(&off).unwrap().contains("shaderglass"));
             // Without [desktop.scaling] the legacy rule is projected (no policy function).
             let mut legacy = vendor();
             legacy["desktop"].as_table_mut().unwrap().remove("scaling");
