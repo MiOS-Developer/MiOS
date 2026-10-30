@@ -2335,6 +2335,36 @@
             <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
             <label for="f-rdp-mic-source">Microphone source prefix</label>
             <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
+            <label for="f-rdp-camera-enabled">Allow cameras selected and permitted by the remote client</label>
+            <input type="text" id="f-rdp-camera-enabled" data-key="remote.rdp.redirect.camera" data-type="bool" placeholder="true">
+            <label for="f-rdp-camera-video-program">Native video executable</label>
+            <input type="text" id="f-rdp-camera-video-program" data-key="remote.rdp.native.camera_video_program" value="gst-launch-1.0">
+            <label for="f-rdp-camera-graph-program">Native camera graph executable</label>
+            <input type="text" id="f-rdp-camera-graph-program" data-key="remote.rdp.native.camera_graph_program" value="pw-dump">
+            <label for="f-rdp-camera-max-width">Maximum camera width</label>
+            <input type="number" id="f-rdp-camera-max-width" data-key="remote.rdp.native.camera_max_width" min="16" max="1920" data-type="int" value="1280">
+            <label for="f-rdp-camera-max-height">Maximum camera height</label>
+            <input type="number" id="f-rdp-camera-max-height" data-key="remote.rdp.native.camera_max_height" min="16" max="1080" data-type="int" value="720">
+            <label for="f-rdp-camera-max-fps">Maximum camera frame rate</label>
+            <input type="number" id="f-rdp-camera-max-fps" data-key="remote.rdp.native.camera_max_fps" min="1" max="60" data-type="int" value="30">
+            <label for="f-rdp-camera-max-devices">Cameras per connection</label>
+            <input type="number" id="f-rdp-camera-max-devices" data-key="remote.rdp.native.camera_max_devices" min="1" max="8" data-type="int" value="4">
+            <label for="f-rdp-camera-poll-ms">Camera consumer polling (ms)</label>
+            <input type="number" id="f-rdp-camera-poll-ms" data-key="remote.rdp.native.camera_poll_ms" min="250" max="2000" data-type="int" value="500">
+            <label for="f-rdp-camera-timeout-ms">Camera frame timeout (ms)</label>
+            <input type="number" id="f-rdp-camera-timeout-ms" data-key="remote.rdp.native.camera_timeout_ms" min="2000" max="30000" data-type="int" value="10000">
+            <label for="f-rdp-camera-source">Camera source prefix</label>
+            <input type="text" id="f-rdp-camera-source" data-key="remote.rdp.naming.camera_source_prefix" value="mios-remote-camera">
+            <label for="f-rdp-files-enabled">Allow client-selected shared folders</label>
+            <input type="text" id="f-rdp-files-enabled" data-key="remote.rdp.redirect.drives" data-type="bool" placeholder="true">
+            <label for="f-rdp-drive-timeout">Remote file request timeout (ms)</label>
+            <input type="number" min="100" max="60000" id="f-rdp-drive-timeout" data-key="remote.rdp.native.drive_timeout_ms" data-type="int" value="10000">
+            <label for="f-rdp-drive-devices">File devices per connection</label>
+            <input type="number" min="1" max="64" id="f-rdp-drive-devices" data-key="remote.rdp.native.drive_max_devices" data-type="int" value="16">
+            <label for="f-rdp-drive-entries">Remote file cache entry limit</label>
+            <input type="number" min="64" max="65536" id="f-rdp-drive-entries" data-key="remote.rdp.native.drive_max_entries" data-type="int" value="4096">
+            <label for="f-rdp-drive-io">Remote file IO chunk (KiB)</label>
+            <input type="number" min="4" max="1024" step="4" id="f-rdp-drive-io" data-key="remote.rdp.native.drive_io_kib" data-type="int" value="256">
 
             <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
             <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">
@@ -3376,6 +3406,35 @@
         <label>Displays app confirm countdown (seconds; 0 = no automatic revert) <input data-key="desktop.displays.confirm_seconds" data-type="int" type="number" min="0"></label>
         <label>Displays app save tier <select data-key="desktop.displays.save_tier"><option>host</option><option>user</option></select></label>
         <label>First-logon display setup: pixel density for 100 % scale (recommended scale = output dpi / this) <input data-key="desktop.displays.setup.reference_dpi" data-type="int" type="number" min="48"></label>
+        <label>Desktop frame-rate policy (power profile, battery, GameMode) <input type="text" data-key="desktop.framerate.enabled" data-type="bool"></label>
+        <label>Frame rate unlocked (no cap anywhere; at your own risk) <input type="text" data-key="desktop.framerate.unlocked" data-type="bool"></label>
+        <label>Frame-rate mechanism <select data-key="desktop.framerate.mechanism"><option value="auto">VRR cap, else a display mode</option><option value="cap">VRR cap only (never a modeset)</option><option value="mode">Display modes only</option></select></label>
+        <label>Frame-rate display modes <select data-key="desktop.framerate.modes"><option value="advertised">Advertised (EDID) modes only</option><option value="extended-vblank">Advertised, else extended vertical blank (real 90 Hz on a 144 Hz panel)</option></select></label>
+        <label>Outputs held by a display mode even with VRR (JSON list, e.g. ["DP-3"]) <textarea data-key="desktop.framerate.mode_outputs" data-type="json-array"></textarea></label>
+        <label>Display-mode match tolerance (Hz) <input data-key="desktop.framerate.mode_tolerance_hz" data-type="float" type="number" min="0.001" max="5" step="0.05"></label>
+        <label>New display mode confirm countdown (seconds; 0 = no automatic revert) <input data-key="desktop.framerate.mode_confirm_s" data-type="int" type="number" min="0" max="600"></label>
+        <label>Unverified display mode revert (ms) <input data-key="desktop.framerate.revert_timeout_ms" data-type="int" type="number" min="1000" max="60000"></label>
+        <label>Frame-rate tier hold before a modeset (ms) <input data-key="desktop.framerate.modeset_hold_ms" data-type="int" type="number" min="0" max="600000"></label>
+        <label>Minimum time between modesets (seconds) <input data-key="desktop.framerate.modeset_min_interval_s" data-type="int" type="number" min="0" max="3600"></label>
+        <label>Gaming exit hold (ms) <input data-key="desktop.framerate.gaming_exit_hold_ms" data-type="int" type="number" min="0" max="60000"></label>
+        <label>Power saver desktop rate (Hz) <input data-key="desktop.framerate.tiers.power-saver.desktop_hz" data-type="int" type="number" min="1" max="1000"></label>
+        <label>Power saver glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.power-saver.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Power saver wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.power-saver.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Balanced desktop rate (Hz) <input data-key="desktop.framerate.tiers.balanced.desktop_hz" data-type="int" type="number" min="1" max="1000"></label>
+        <label>Balanced glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.balanced.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Balanced wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.balanced.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>On battery desktop rate (Hz) <input data-key="desktop.framerate.tiers.battery.desktop_hz" data-type="int" type="number" min="1" max="1000"></label>
+        <label>On battery glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.battery.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>On battery wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.battery.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Performance desktop rate (Hz) <input data-key="desktop.framerate.tiers.performance.desktop_hz" data-type="int" type="number" min="1" max="1000"></label>
+        <label>Performance glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.performance.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Performance wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.performance.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Gaming desktop rate (Hz) <input data-key="desktop.framerate.tiers.gaming.desktop_hz" data-type="int" type="number" min="1" max="1000"></label>
+        <label>Gaming glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.gaming.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Gaming wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.gaming.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Unlocked desktop rate (0 = the output maximum) <input data-key="desktop.framerate.tiers.unlocked.desktop_hz" data-type="int" type="number" min="0" max="1000"></label>
+        <label>Unlocked glass rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.unlocked.glass_divisor" data-type="int" type="number" min="1" max="16"></label>
+        <label>Unlocked wallpaper rate divisor (desktop rate / this) <input data-key="desktop.framerate.tiers.unlocked.wallpaper_divisor" data-type="int" type="number" min="1" max="16"></label>
         <label>Hyprland keyboard layout <input data-key="desktop.hyprland.config.input.kb_layout" type="text"></label>
         <label>Hyprland launcher <input data-key="desktop.hyprland.launcher" type="text"></label>
         <p>Window placement: new windows open floating and centred at one size from the monitor's usable area (logical pixels, so the monitor scale carries DPI); dragging a placed window drops it into the tiling layout; Super+V floats the active window at the same size or tiles it.</p>
@@ -3423,6 +3482,12 @@
         <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
         <label>Opening text reference size (pixels) <input data-key="desktop.hyprland.hypr3d.spawn.text_reference_px" data-type="int" type="number" min="4" max="200"></label>
         <label>Opening paper long edge (mm; 0 disables cap) <input data-key="desktop.hyprland.hypr3d.spawn.paper_long_edge_mm" data-type="float" type="number" min="0" max="2000" step="1"></label>
+        <label>3D window opening size <select data-key="desktop.hyprland.hypr3d.spawn.criterion"><option value="retina">Retina (one window pixel per screen pixel, text as on the flat desktop)</option><option value="fixed">Fixed (the plugin's own placement)</option></select></label>
+        <label>3D opening reading distance (metres) <input data-key="desktop.hyprland.hypr3d.spawn.reading_distance_m" data-type="float" type="number" min="0.3" max="100" step="0.05"></label>
+        <label>3D oversized window fit <select data-key="desktop.hyprland.hypr3d.spawn.fit"><option value="resize">Resize into the work area</option><option value="distance">Push back only</option><option value="off">Off (may be cropped)</option></select></label>
+        <label>3D push-back legibility floor (text pixels) <input data-key="desktop.hyprland.hypr3d.spawn.min_text_px" data-type="int" type="number" min="1" max="200"></label>
+        <label>3D cascade step for overlapping windows (pixels; 0 = upstream) <input data-key="desktop.hyprland.hypr3d.spawn.cascade_px" data-type="int" type="number" min="0" max="512"></label>
+        <label>3D pixel-grid snap <input type="text" data-key="desktop.hyprland.hypr3d.spawn.pixel_snap" data-type="bool"></label>
         <label>Window controls glass frost <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_blur" data-type="bool"></label>
         <label>Window controls glass (hyprglass preset; frost, tint and lights follow it) <input type="text" data-key="desktop.hyprland.hyprbars.config.glass_preset"></label>
         <label>Window controls colour-layer opacity (SSOT percentage key, e.g. theme.opacity) <input type="text" data-key="desktop.hyprland.hyprbars.config.pill_alpha"></label>

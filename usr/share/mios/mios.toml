@@ -7050,6 +7050,18 @@ progressive_hz     = 0             # 0 inherits target_hz; nonzero is an explici
 progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
 audio_control_program = "pactl"    # native PipeWire-Pulse control executable; no shell expansion
 microphone_queue_packets = 8       # bounded 10ms remote microphone queue, drops stale audio
+camera_video_program = "gst-launch-1.0" # native decoder and PipeWire video provider
+camera_graph_program = "pw-dump"   # inspect only the session-owned video node
+camera_max_width = 1280             # maximum negotiated camera dimensions (16..1920)
+camera_max_height = 720             # 16..1080
+camera_max_fps = 30                 # negotiated source rate ceiling, 1..60
+camera_max_devices = 4              # bounded camera announcements per connection, 1..8
+camera_poll_ms = 500                # native consumer detection interval, 250..2000 ms
+camera_timeout_ms = 10000           # startup/active source frame timeout, 2000..30000 ms
+drive_timeout_ms = 10000           # timeout poisons drive transport until reconnect, preventing late-response reuse
+drive_max_devices = 16             # total accepted/hot-removed file devices per connection, 1..64
+drive_max_entries = 4096           # bounded native inode and directory-entry caches, 64..65536
+drive_io_kib = 256                 # native file read/write chunk ceiling, 4..1024 in 4KiB multiples
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -7064,8 +7076,8 @@ touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remot
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
 audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
 microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
-drives              = false         # MS-RDPDR storage redirection (Phase 6 stub; off until FUSE/mount backend is wired)
-camera              = false         # MS-RDPECAM video capture device redirection (Phase 7 stub; off by default)
+drives              = true          # negotiated client folders -> session-owned native FUSE mounts; client selects what to share
+camera              = true          # client-selected cameras become per-session native PipeWire video sources
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
 timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
 smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
@@ -7074,6 +7086,7 @@ smartcard           = false         # MS-RDPESC smartcard redirection (off by de
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
 microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
+camera_source_prefix = "mios-remote-camera" # unique Video/Source node per selected remote camera
 
 
 [flatpak]
@@ -8601,8 +8614,17 @@ live_resample = true
 # keep their own refresh and pacing ([remote.rdp]) and are never capped or re-moded; G and W still apply there.
 # Mechanism: "auto" holds D with the mios-pacing compositor plugin on an output that runs VRR (60/90/120 are real
 # panel refresh rates inside the VRR range: no modeset, instant) and, on an output without active VRR, switches to
-# the advertised (EDID) mode nearest D (a modeset: the screen blanks; 90 has no EDID mode on most panels -> 99.93/100);
-# "cap" never changes a mode; "mode" always uses modes. A mode switch is verified within revert_timeout_ms (mode
+# a display mode for D (a modeset: the screen blanks); "cap" never changes a mode; "mode" always uses modes;
+# mode_outputs lists outputs that use modes even with VRR (a real fixed-rate scanout, e.g. DP-3 at 90 Hz).
+# Mode selection: the advertised (EDID) mode nearest D when one is within mode_tolerance_hz; otherwise, with
+# modes = "extended-vblank", the panel's fastest EDID timing at the output's size with a longer vertical front porch
+# (its horizontal timing, the clock truncated to whole MHz as a Hyprland 0.56 modeline carries it, only more blank
+# lines per frame -- what VRR does on every frame): DP-3 (LG 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90
+# is `modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync` = 90.010 Hz as Hyprland programs it
+# (`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
+# modes = "advertised" never applies a timing the panel did not list (90 -> 99.93/100). The vendor value stays
+# "advertised" (a miosd / mios-gen / mios-wallpaperd built before extended-vblank refuses the other value); a host or
+# user tier opts in (`modes = "extended-vblank"`, mode_outputs = ["DP-3"]) once those binaries carry it. A mode switch is verified within revert_timeout_ms (mode
 # shown, output present, DPMS on) or reverted and the mode blocklisted ($XDG_STATE_HOME/mios/framerate/bad-modes.json).
 # Every automatic display-mode change to a mode the operator has not kept on that panel before is restored after
 # mode_confirm_s unless `miosd framerate confirm-mode` keeps it (an on-screen notification says so); without an answer
@@ -8616,7 +8638,9 @@ debounce_ms = 750                  # inputs settle this long before an apply (on
 self_check_s = 60                  # re-read every input and re-apply what drifted (a plugin reload, a config reload)
 gaming_exit_hold_ms = 3000         # gaming holds this long after the last GameMode client left (launchers re-register)
 mechanism = "auto"                 # auto | cap | mode (see above)
-modes = "advertised"               # mode selection: only modes the output advertises (EDID) are applied automatically
+modes = "advertised"               # advertised | extended-vblank (see above): a non-EDID rate only by a longer vertical blank
+mode_outputs = []                  # outputs held by a display mode even with VRR + the cap (e.g. ["DP-3"]: real 90 Hz)
+mode_tolerance_hz = 0.5            # an advertised mode this close to D is used; an extended-vblank timing must land this close
 revert_timeout_ms = 5000           # an unverified mode switch is reverted after this long
 mode_confirm_s = 15                # a new mode is restored after this long unless confirmed (0 = no confirmation)
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
@@ -8944,7 +8968,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
@@ -18248,7 +18272,7 @@ pkgs = ["gpm"]
 # RDP front-end + wlroots VNC capture for [remote.rdp] (live-session remote desktop).
 [packages.remote-desktop]
 enable = true
-pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils"] # pactl/parec for session-owned PipeWire-Pulse device bridges
+pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264"] # native remote audio, files and camera decoding
 
 # Build deps of automation/70-bake-wayvnc-upstream.sh (wayvnc + neatvnc + aml from upstream HEAD,
 # neatvnc/aml static; preferred by the RDP bridge over the distro wayvnc).
@@ -18482,6 +18506,7 @@ Nice = -2
 CPUWeight = 200
 MemoryMax = "1G"
 KillSignal = "SIGTERM"
+KillMode = "mixed"
 TimeoutStopSec = 15
 [user_units."mios-rdp-native.service".Install]
 WantedBy = "mios-desktop.target"
