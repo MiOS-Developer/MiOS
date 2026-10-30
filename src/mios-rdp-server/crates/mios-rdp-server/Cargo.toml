@@ -52,3 +52,4 @@ xkbcommon = { version = "0.9", default-features = false }
 png = "0.18"
 memmap2 = "0.9"
 sha2 = "0.10"
+fuser = { version = "0.18", default-features = false }

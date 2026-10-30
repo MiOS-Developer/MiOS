@@ -7071,6 +7071,18 @@ progressive_hz     = 0             # 0 inherits target_hz; nonzero is an explici
 progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
 audio_control_program = "pactl"    # native PipeWire-Pulse control executable; no shell expansion
 microphone_queue_packets = 8       # bounded 10ms remote microphone queue, drops stale audio
+camera_video_program = "gst-launch-1.0" # native decoder and PipeWire video provider
+camera_graph_program = "pw-dump"   # inspect only the session-owned video node
+camera_max_width = 1280             # maximum negotiated camera dimensions (16..1920)
+camera_max_height = 720             # 16..1080
+camera_max_fps = 30                 # negotiated source rate ceiling, 1..60
+camera_max_devices = 4              # bounded camera announcements per connection, 1..8
+camera_poll_ms = 500                # native consumer detection interval, 250..2000 ms
+camera_timeout_ms = 10000           # startup/active source frame timeout, 2000..30000 ms
+drive_timeout_ms = 10000           # timeout poisons drive transport until reconnect, preventing late-response reuse
+drive_max_devices = 16             # total accepted/hot-removed file devices per connection, 1..64
+drive_max_entries = 4096           # bounded native inode and directory-entry caches, 64..65536
+drive_io_kib = 256                 # native file read/write chunk ceiling, 4..1024 in 4KiB multiples
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -7085,8 +7097,8 @@ touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remot
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
 audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
 microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
-drives              = false         # MS-RDPDR storage redirection (Phase 6 stub; off until FUSE/mount backend is wired)
-camera              = false         # MS-RDPECAM video capture device redirection (Phase 7 stub; off by default)
+drives              = true          # negotiated client folders -> session-owned native FUSE mounts; client selects what to share
+camera              = true          # client-selected cameras become per-session native PipeWire video sources
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
 timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
 smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
@@ -7095,6 +7107,7 @@ smartcard           = false         # MS-RDPESC smartcard redirection (off by de
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
 microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
+camera_source_prefix = "mios-remote-camera" # unique Video/Source node per selected remote camera
 
 
 [flatpak]
@@ -18251,7 +18264,7 @@ pkgs = ["gpm"]
 # RDP front-end + wlroots VNC capture for [remote.rdp] (live-session remote desktop).
 [packages.remote-desktop]
 enable = true
-pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils"] # pactl/parec for session-owned PipeWire-Pulse device bridges
+pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264"] # native remote audio, files and camera decoding
 
 # Build deps of automation/70-bake-wayvnc-upstream.sh (wayvnc + neatvnc + aml from upstream HEAD,
 # neatvnc/aml static; preferred by the RDP bridge over the distro wayvnc).
@@ -18485,6 +18498,7 @@ Nice = -2
 CPUWeight = 200
 MemoryMax = "1G"
 KillSignal = "SIGTERM"
+KillMode = "mixed"
 TimeoutStopSec = 15
 [user_units."mios-rdp-native.service".Install]
 WantedBy = "mios-desktop.target"
