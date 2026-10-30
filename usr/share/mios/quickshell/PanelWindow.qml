@@ -630,6 +630,17 @@ QS.PanelWindow {
                     color: pill.online ? pill.theme.fg : pill.theme.muted
                     Hit { onClicked: pill.run("network") }
                 }
+                // Inbound: a remote device attached to this session (RDP). Moved here from the dock (the dock is
+                // localhost/sessions, the topbar inbound/external/systems); the click opens the device's controls.
+                Glyph {
+                    id: remoteGlyph
+                    visible: pill.shown("remote") && pill.shellState.remoteAttached === true
+                    text: "\u{f011c} " + String(((pill.shellState.rdpStats || {}).client || {}).peer || "")
+                    textFormat: Text.PlainText
+                    color: pill.theme.success
+                    Accessible.name: "Remote device connected"
+                    Hit { onClicked: if (typeof pill.shellState.phoneRequested === "function") pill.shellState.phoneRequested() }
+                }
                 Glyph {
                     id: soundGlyph
                     visible: !pill.mobile && pill.shown("sound") && !!pill.sink && !!pill.sink.audio
@@ -678,7 +689,7 @@ QS.PanelWindow {
                 }
 
                 Rectangle {
-                    visible: (dateGlyph.visible || timeGlyph.visible) && (netGlyph.visible || soundGlyph.visible || batteryItems.width > 0 || sysmonItems.visible || fpsGlyph.visible)
+                    visible: (dateGlyph.visible || timeGlyph.visible) && (netGlyph.visible || remoteGlyph.visible || soundGlyph.visible || batteryItems.width > 0 || sysmonItems.visible || fpsGlyph.visible)
                     width: 1; height: pill.theme.topHeight / 2; y: (pill.theme.topHeight - height) / 2
                     color: pill.theme.outlineColor
                 }

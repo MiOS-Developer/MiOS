@@ -18,6 +18,7 @@ toml = { workspace = true }
 toml_edit = { workspace = true }
 walkdir = { workspace = true }
 tempfile = { workspace = true }
+libc = "0.2"
 mios-resolver = { path = "../mios-resolver" }
 mios-service-core = { path = "../mios-service-core" }
 mios-unit-gen = { path = "../mios-unit-gen" }

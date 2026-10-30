@@ -21,6 +21,7 @@ QS.ShellRoot {
         property var frameOutputs: []
         property var frameWindow: null   // mios-pacing's focused-window meter ({address, class, output, fps, ...})
         property var rdpStats: ({})
+        signal phoneRequested()   // the topbar's inbound "remote" item asks the dock popups for the device controls
         property real frameSampleTime: Date.now() / 1000
         property string rdpOutput: "HEADLESS-MIOS-RDP"
         property var shaderStatus: ({})

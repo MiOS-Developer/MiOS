@@ -15,6 +15,7 @@ mod btop_theme;
 mod display_scale;
 mod hypr3d_spawn;
 mod docs;
+mod dock;
 mod greeter;
 mod grub;
 use render::desktop_boot;
@@ -359,6 +360,13 @@ enum Commands {
         /// Report device selection without starting a compositor.
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Dock HUD backend: window-portability targets, verified moves, and the on-screen keyboard nested in the expanded dock.
+    #[command(name = "dock")]
+    Dock {
+        #[command(subcommand)]
+        action: DockAction,
     },
 
     /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
@@ -786,6 +794,31 @@ enum Commands {
         /// Generate configuration (alias for default execution)
         #[arg(long)]
         generate: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DockAction {
+    /// Where windows can go and how each move really happens (JSON); with --address, how that window's app moves.
+    Targets {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] address: Option<String>,
+    },
+    /// Move one window to a target and verify it (output: live; session: migrate a containerized/stateless app).
+    Move {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] target: String,
+        #[arg(long)] address: String,
+        #[arg(long)] dry_run: bool,
+    },
+    /// Run the Phosh on-screen keyboard inside the expanded dock (layer surface rewritten to the dock's rect).
+    Osk {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] width: u32,
+        #[arg(long)] height: Option<u32>,
+        #[arg(long)] bottom: i32,
+        #[arg(long)] force_show: bool,
+        #[arg(long)] private_bus: bool,
     },
 }
 
@@ -1544,6 +1577,14 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::Dock { action } => (
+            "dock", "desktop",
+            match action {
+                DockAction::Targets { root, address } => dock::targets(&root.unwrap_or_else(|| PathBuf::from("/")), address.as_deref()).map(|v| println!("{v}")),
+                DockAction::Move { root, target, address, dry_run } => dock::move_window(&root.unwrap_or_else(|| PathBuf::from("/")), &target, &address, dry_run).map(|v| println!("{v}")),
+                DockAction::Osk { root, width, height, bottom, force_show, private_bus } => dock::osk(&root.unwrap_or_else(|| PathBuf::from("/")), &dock::OskOptions { width, height, bottom, force_show, private_bus }),
+            }.map_err(|e| (e, 1)),
+        ),
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
