@@ -482,6 +482,76 @@ static void testCrossOutputMinimizedFallback() {
     CHECK(t.source == "minimized" && near(t.rect.x, 3200), "cross-output minimized fallback finds window on HEADLESS-2 (%s, x=%f)", t.source.c_str(), t.rect.x);
 }
 
+static STileTree threeTiles(double rootRatio, double colRatio) {
+    // root: [ column(C over B) | A ], the layout a user gets after dragging the root split to 60/40
+    STileTree t;
+    t.nodes = {STileNode{true, "C"}, STileNode{true, "B"}, STileNode{false, "", true, colRatio, {0, 1}}, STileNode{true, "A"},
+               STileNode{false, "", false, rootRatio, {2, 3}}};
+    t.root  = 4;
+    return t;
+}
+
+static bool boxIs(const std::map<std::string, SRect>& m, const std::string& a, SRect r) {
+    const auto it = m.find(a);
+    return it != m.end() && near(it->second.x, r.x, 1e-6) && near(it->second.y, r.y, 1e-6) && near(it->second.w, r.w, 1e-6) && near(it->second.h, r.h, 1e-6);
+}
+
+static void testTileTree() {
+    const SRect area{0, 132, 1392, 654};
+    const auto  t = threeTiles(0.6, 1.0);
+    CHECK(tileTreeValid(t), "three-tile snapshot is valid");
+    const auto b = tileBoxes(t, area);
+    // root split 0.6: first child gets 1392/2*0.6 = 417.6
+    CHECK(boxIs(b, "A", {417.6, 132, 974.4, 654}) && boxIs(b, "C", {0, 132, 417.6, 327}) && boxIs(b, "B", {0, 459, 417.6, 327}),
+          "custom root ratio: A=(%f,%f,%f,%f)", b.at("A").x, b.at("A").y, b.at("A").w, b.at("A").h);
+
+    // rt_A: A comes back while C and B tile alone -> the snapshot covers {A,B,C} exactly, structure and ratio intact
+    const auto full = projectTileTree(t, {"A", "B", "C"});
+    CHECK(full && tileBoxes(*full, area) == b, "projection onto every leaf reproduces the recorded boxes");
+
+    // fifo: B then C minimized; restoring B projects B's snapshot onto {A,B}: C's slot collapses into B
+    const auto ab = projectTileTree(t, {"A", "B"});
+    CHECK(ab && tileLeaves(*ab).size() == 2, "projection onto {A,B} keeps two leaves");
+    if (ab) {
+        const auto bb = tileBoxes(*ab, area);
+        CHECK(boxIs(bb, "B", {0, 132, 417.6, 654}) && boxIs(bb, "A", {417.6, 132, 974.4, 654}), "collapsed column keeps the root ratio");
+    }
+    // newest-first: C's snapshot (taken with only A and C tiled) does not contain B -> B's older, fuller one is used
+    STileTree cSnap;
+    cSnap.nodes = {STileNode{true, "C"}, STileNode{true, "A"}, STileNode{false, "", false, 0.6, {0, 1}}};
+    cSnap.root  = 2;
+    const auto picked = pickTileTree({cSnap, t}, {"A", "B", "C"});
+    CHECK(picked && tileBoxes(*picked, area) == b, "fifo second restore picks the snapshot that still has every window");
+    const auto pickedAC = pickTileTree({cSnap, t}, {"A", "C"});
+    CHECK(pickedAC && tileLeaves(*pickedAC).size() == 2 && tileBoxes(*pickedAC, area).at("C").w > 417.0 && tileBoxes(*pickedAC, area).at("C").w < 418.0,
+          "newest snapshot wins when it covers the windows");
+
+    // negative controls: a window the snapshot never saw, an empty set, a corrupt tree
+    CHECK(!projectTileTree(t, {"A", "B", "C", "D"}), "a new window (D) opened meanwhile -> no exact tree, dwindle keeps its own placement");
+    CHECK(!projectTileTree(t, {}), "empty window set is rejected");
+    auto dup = t;
+    dup.nodes[1].address = "C";
+    CHECK(!tileTreeValid(dup) && !projectTileTree(dup, {"A", "C"}), "duplicate leaf rejected");
+    auto badRatio = t;
+    badRatio.nodes[4].splitRatio = 2.5;
+    CHECK(!tileTreeValid(badRatio), "ratio outside dwindle's 0.1..1.9 rejected");
+    auto cycle = t;
+    cycle.nodes[2].child[1] = 4;
+    CHECK(!tileTreeValid(cycle), "cyclic tree rejected");
+    auto oob = t;
+    oob.nodes[4].child[0] = 9;
+    CHECK(!tileTreeValid(oob), "out-of-range child rejected");
+
+    // orientation: autoSplit follows each node's aspect; recorded orientation only without it
+    const auto tall = tileBoxes(t, {0, 0, 600, 1200});
+    CHECK(near(tall.at("A").y, 1200.0 / 2.0 * 0.6, 1e-6) && near(tall.at("A").x, 0.0), "tall area stacks the root split (A.y=%f)", tall.at("A").y);
+    const auto kept = tileBoxes(t, {0, 0, 600, 1200}, false);
+    CHECK(near(kept.at("A").x, 600.0 / 2.0 * 0.6, 1e-6) && near(kept.at("A").y, 0.0), "without autoSplit the recorded side-by-side split is kept");
+    // negative control: the equal-halves layout dwindle produces without the tree differs from the recorded one
+    const auto halves = tileBoxes(threeTiles(1.0, 1.0), area);
+    CHECK(!(halves == b), "equal halves != recorded 60/40 layout (what a slot-only restore lands on)");
+}
+
 int main() {
     testEndpointsAndMapping();
     testShape();
@@ -496,6 +566,7 @@ int main() {
     testRestoreTargetPersistence();
     testTiledSlotRestoration();
     testCrossOutputMinimizedFallback();
+    testTileTree();
     std::printf("lampmath: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

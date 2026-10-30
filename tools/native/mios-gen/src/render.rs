@@ -4876,6 +4876,7 @@ report("again")
             return Err("desktop.hyprland.lamp.remote must be \"same\" (every output, local or remote, gets the same lamp)".into());
         }
         let hide_bars = t.get("hide_hyprbars").and_then(Value::as_bool).ok_or("desktop.hyprland.lamp.hide_hyprbars must be a boolean")?;
+        let restore_tree = t.get("restore_tree").and_then(Value::as_bool).ok_or("desktop.hyprland.lamp.restore_tree must be a boolean")?;
         let shade_open = match t.get("windowshade_open") {
             None => None,
             Some(v) => Some(v.as_str().filter(|s| ident(s)).ok_or("desktop.hyprland.lamp.windowshade_open must name a shader in windowshade.shader_dir")?),
@@ -4890,6 +4891,7 @@ report("again")
         cfg.insert("hidden_dock".into(), Value::String(word("hidden_dock", &["edge", "icon"])?));
         cfg.insert("fallback_edge".into(), Value::String(word("fallback_edge", &["bottom", "top", "left", "right"])?));
         cfg.insert("pane_alpha".into(), Value::Float(pane));
+        cfg.insert("restore_tree".into(), Value::Boolean(restore_tree));
         cfg.insert("minimized_workspace".into(), Value::String(ws.into()));
         cfg.insert("anim_tag".into(), Value::String(tag.into()));
         let mut plugin = toml::map::Map::new();
@@ -4942,6 +4944,7 @@ report("again")
             assert!(l.contains("if hl.plugin.mios_lamp then"), "{l}");
             assert!(l.contains("[\"events\"] = \"launch,minimize,restore\""), "{l}");
             assert!(l.contains("[\"minimized_workspace\"] = \"special:minimized\""), "{l}");
+            assert!(l.contains("[\"restore_tree\"] = true"), "{l}");
             assert!(l.contains("\"+shader_open:\" .. fx") && l.contains("mios-shader-none-open.glsl"), "{l}");
             assert!(l.contains("[\"hyprbars:no_bar\"] = true"), "{l}");
             assert!(!l.contains("hl.plugin.load"), "the enabled wobble section already loads the plugin: {l}");
@@ -5027,6 +5030,8 @@ report("again")
                 ("anim_tag", Value::String("bad tag".into())),
                 ("remote", Value::String("lighter".into())),
                 ("hide_hyprbars", Value::String("true".into())),
+                ("restore_tree", Value::String("true".into())),
+                ("restore_tree", Value::Integer(1)),
                 ("windowshade_open", Value::String("../x".into())),
                 ("launch_timeout_ms", Value::Integer(10)),
             ] {
@@ -6998,6 +7003,14 @@ pub mod hyprglass_build {
         value(p, "source_repository")
     }
 
+    /// Fixed prefix the plugin SDK temp dir is mapped to (`-ffile-prefix-map`), so two builds of the
+    /// same source against the same SDK are byte-identical whatever temp dir each one used.
+    const PLUGIN_SDK_PREFIX: &str = "/usr/src/mios-hyprland-sdk";
+
+    fn sdk_prefix_map(sdk: &Path) -> String {
+        format!("-ffile-prefix-map={}={PLUGIN_SDK_PREFIX}", sdk.display())
+    }
+
     fn plugin_build_system<'a>(p: &'a Value, plugin: &str) -> Result<&'a str, String> {
         match p.get("build_system") {
             None => Ok("make"),
@@ -7094,6 +7107,15 @@ pub mod hyprglass_build {
     #[cfg(test)]
     mod upstream_tests {
         use super::*;
+        #[test]
+        fn sdk_prefix_map_hides_the_temp_dir_behind_a_fixed_prefix() {
+            let a = sdk_prefix_map(Path::new("/tmp/mios-hyprglass-build-AAAAAA"));
+            let b = sdk_prefix_map(Path::new("/tmp/mios-hyprglass-build-BBBBBB"));
+            assert_eq!(a, "-ffile-prefix-map=/tmp/mios-hyprglass-build-AAAAAA=/usr/src/mios-hyprland-sdk");
+            // both builds name the same mapped prefix; only the (discarded) source side differs
+            assert_eq!(a.rsplit('=').next(), b.rsplit('=').next());
+            assert_ne!(a, b);
+        }
         #[test]
         fn plugin_build_system_accepts_cmake_and_rejects_invalid_configuration() {
             let data: Value = toml::from_str("[default]\n[make]\nbuild_system = 'make'\n[cmake]\nbuild_system = 'cmake'\n[unknown]\nbuild_system = 'other'\n[wrong_type]\nbuild_system = 1\n").unwrap();
@@ -7314,6 +7336,9 @@ pub mod hyprglass_build {
             .split_whitespace()
             .map(str::to_string),
         );
+        // Reproducible plugins: header paths reach the binary through __FILE__ (assert/log macros); the
+        // SDK lives in a random temp dir, so map it to a fixed prefix or every build hashes differently.
+        includes.push(sdk_prefix_map(sdk));
         let repo = sdk.join("source");
         // Local-source mode: a MiOS-original plugin kept in the tree (`source_path`, repo-relative
         // under --root) is copied instead of cloned; the image commit is its pin.
