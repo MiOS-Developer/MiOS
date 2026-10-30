@@ -79,6 +79,8 @@ pub struct Config {
     pub managed_tag: String,
     pub excludes: Vec<Exclusion>,
     pub opening: Option<mios_resolver::window_opening::Policy>,
+    /// [desktop.hyprland.placement.games]: game windows open on the focused output (see [`game_plan`]).
+    pub games: Option<mios_resolver::window_opening::Games>,
 }
 
 /// One SSOT window rule (other than placement) reduced to the match keys a client JSON carries.
@@ -149,6 +151,7 @@ impl Config {
             managed_tag: string(t, "managed_tag")?,
             excludes: exclusions(doc)?,
             opening: mios_resolver::window_opening::Policy::from_ssot(doc)?,
+            games: mios_resolver::window_opening::Games::from_ssot(doc)?,
         };
         let ratio = |v: f64| v > 0.0 && v <= 1.0;
         if !ratio(cfg.width_ratio) || !ratio(cfg.max_width_ratio) || !ratio(cfg.max_height_ratio) {
@@ -535,6 +538,86 @@ pub(crate) fn pair(c: &Json, key: &str) -> Option<(f64, f64)> {
     Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))
 }
 
+// ---------------------------------------------------------------- game windows
+
+/// Which game rule placed a window. The resizable rule's tag wins: Hyprland re-evaluates rules once the
+/// general rule floats a window, so a resizable game carries both tags; a fixed-size one only its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GameKind {
+    Resizable,
+    Fixed,
+}
+
+pub fn game_kind(cfg: &Config, c: &Json) -> Option<GameKind> {
+    let g = cfg.games.as_ref()?;
+    let t = tags(c);
+    if t.contains(&g.tag) {
+        Some(GameKind::Resizable)
+    } else if t.contains(&g.fixed_tag) {
+        Some(GameKind::Fixed)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GamePlan {
+    pub monitor: i64,
+    pub geometry: Geometry,
+    pub resized: bool,
+    /// Active workspace of the focused output when the window opened elsewhere (X11 games are put on the output
+    /// their requested position falls in, e.g. 0,0 of the XWayland root = the leftmost output).
+    pub workspace: Option<i64>,
+    pub lua: String,
+}
+
+/// Geometry for a game window: the focused output (the operator launched it there; the window's own monitor only
+/// when no output reports focus), centred in its usable area, resizable games at the opening size and fixed-size
+/// games at their own size ([`mios_resolver::window_opening::game_geometry`]). `managed` tags a resizable game so a
+/// drag tiles it like any placed window; fixed-size games are never tiled (that would resize them).
+pub fn game_plan(cfg: &Config, c: &Json, monitors: &Json, kind: GameKind, managed: Option<&str>) -> Option<GamePlan> {
+    let address = c.get("address").and_then(Json::as_str)?;
+    let boxes = monitor_boxes(monitors);
+    let all = monitors.as_array()?;
+    let focused = all.iter().find(|m| m.get("focused").and_then(Json::as_bool) == Some(true));
+    let own = c.get("monitor").and_then(Json::as_i64).unwrap_or(0);
+    let mon = focused.and_then(|m| m.get("id").and_then(Json::as_i64)).unwrap_or(own);
+    let m = boxes.get(&mon)?;
+    let active_ws = all
+        .iter()
+        .find(|x| x.get("id").and_then(Json::as_i64) == Some(mon))
+        .and_then(|x| x.pointer("/activeWorkspace/id"))
+        .and_then(Json::as_i64);
+    let [rl, rt, rr, rb] = cfg.opening.as_ref().map(|p| p.insets(m.reserved)).unwrap_or(m.reserved);
+    let usable = (m.x + rl, m.y + rt, (m.w - rl - rr).max(1.0), (m.h - rt - rb).max(1.0));
+    let p = geometry(cfg, m);
+    let policy = (p.x as f64, p.y as f64, p.w as f64, p.h as f64);
+    let fixed = match kind {
+        GameKind::Fixed => Some(pair(c, "size")?),
+        GameKind::Resizable => None,
+    };
+    let oversize = cfg.games.as_ref().map(|g| g.oversize).unwrap_or(mios_resolver::window_opening::Oversize::Fit);
+    let (x, y, w, h, resized) =
+        mios_resolver::window_opening::game_geometry(fixed, usable, (m.x, m.y, m.w, m.h), policy, oversize);
+    let g = Geometry { x: x as i64, y: y as i64, w: w as i64, h: h as i64 };
+    let ws = c.pointer("/workspace/id").and_then(Json::as_i64);
+    let workspace = active_ws.filter(|a| *a > 0 && ws.is_some_and(|w| w > 0) && ws != Some(*a));
+    let win = lua_str(&format!("address:{address}"));
+    let mut lua = format!("local w={win}; ");
+    if let Some(id) = workspace {
+        lua += &format!("hl.dispatch(hl.dsp.window.move({{workspace='{id}', silent=true, window=w}})); ");
+    }
+    lua += "hl.dispatch(hl.dsp.window.float({action='enable', window=w})); ";
+    if resized {
+        lua += &format!("hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); ", g.w, g.h);
+    }
+    lua += &format!("hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))", g.x, g.y);
+    if let (GameKind::Resizable, Some(t)) = (kind, managed) {
+        lua += &format!("; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))", lua_str(&format!("+{t}")));
+    }
+    Some(GamePlan { monitor: mon, geometry: g, resized, workspace, lua })
+}
+
 // ---------------------------------------------------------------- evdev button state
 
 /// Reads mouse button state with EVIOCGKEY on every input device exposing BTN_LEFT. Read-only
@@ -838,7 +921,8 @@ impl Server {
         else {
             return Ok(false);
         };
-        if !self.filtered(c) || !tags(c).contains(&self.cfg.open_tag) {
+        let game = game_kind(&self.cfg, c);
+        if !self.filtered(c) || (game.is_none() && !tags(c).contains(&self.cfg.open_tag)) {
             return Ok(true);
         }
         let floating = c.get("floating").and_then(Json::as_bool) == Some(true);
@@ -858,6 +942,25 @@ impl Server {
                 "{address}: matches window rule {}, left alone",
                 ex.name
             ));
+            return Ok(true);
+        }
+        if let Some(kind) = game {
+            // No size gate: a game's own geometry is exactly what is being corrected.
+            let Some(plan) = game_plan(&self.cfg, c, &self.hypr.json("monitors")?, kind, Some(&self.cfg.managed_tag))
+            else {
+                return Ok(false);
+            };
+            self.hypr.eval(&plan.lua)?;
+            let g = plan.geometry;
+            self.log(&format!(
+                "{address}: game ({kind:?}) placed {}x{}+{}+{} on monitor {}{}",
+                g.w, g.h, g.x, g.y, plan.monitor,
+                if plan.resized { "" } else { " at its own size" }
+            ));
+            if kind == GameKind::Resizable {
+                let last = (g.x as f64, g.y as f64, g.w as f64, g.h as f64);
+                self.tracked.insert(address.to_owned(), Track::Arming { last, since: Instant::now() });
+            }
             return Ok(true);
         }
         let monitors = monitor_boxes(&self.hypr.json("monitors")?);
@@ -1237,6 +1340,11 @@ fn toggle(cfg: &Config, window: Option<String>) -> Result<(), String> {
         .and_then(Json::as_str)
         .ok_or("no active window")?
         .to_owned();
+    if game_kind(cfg, &c) == Some(GameKind::Fixed) {
+        // Tiling resizes; a fixed-size game cannot re-render at another size. Re-centre it instead.
+        let plan = game_plan(cfg, &c, &hypr.json("monitors")?, GameKind::Fixed, None).ok_or("game window monitor not found")?;
+        return hypr.eval(&plan.lua);
+    }
     if c.get("floating").and_then(Json::as_bool) == Some(true) {
         return hypr.eval(&tile_lua(&a, &cfg.managed_tag));
     }
@@ -1445,6 +1553,123 @@ managed_tag = "mios-placed"
         let other: Json = serde_json::json!({"class": "zen", "title": "Zen"});
         assert!(c.excludes[0].matches(&pip));
         assert!(!c.excludes[0].matches(&other));
+    }
+
+    fn cfg_games(oversize: &str) -> Config {
+        let doc: Value = toml::from_str(&format!(
+            r#"
+[keybindings.global.contexts]
+game = ["steam_app_.*", "gamescope"]
+[desktop.hyprland.placement]
+enabled = true
+scope = "all"
+width_ratio = 0.56
+aspect = 1.414
+min_width_px = 640
+min_height_px = 400
+max_width_px = 1800
+max_width_ratio = 0.9
+max_height_ratio = 0.9
+max_width_mm = 420
+tile_on_move = true
+move_threshold_px = 24
+settle_ms = 220
+poll_ms = 100
+size_tolerance_px = 4
+open_tag = "mios-place-new"
+managed_tag = "mios-placed"
+[desktop.hyprland.placement.games]
+enabled = true
+class = "keybindings.global.contexts.game"
+extra_class = ['.+\.exe']
+content_game = true
+suppress_client_geometry = true
+oversize = "{oversize}"
+tag = "mios-place-game"
+fixed_tag = "mios-place-game-fixed"
+"#
+        ))
+        .expect("toml");
+        Config::from_ssot(&doc).expect("config")
+    }
+
+    /// The recorded layout: two 1920x1080 outputs, HUD reserving 44 top / 72 bottom, DP-3 (right) focused.
+    fn two_outputs() -> Json {
+        serde_json::json!([
+            {"id": 0, "name": "HDMI-A-1", "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0, "transform": 0,
+             "reserved": [0, 44, 0, 72], "physicalWidth": 530, "physicalHeight": 300, "focused": false, "activeWorkspace": {"id": 1}},
+            {"id": 1, "name": "DP-3", "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1.0, "transform": 0,
+             "reserved": [0, 44, 0, 72], "physicalWidth": 530, "physicalHeight": 300, "focused": true, "activeWorkspace": {"id": 2}}
+        ])
+    }
+
+    fn game(class: &str, at: (i64, i64), size: (i64, i64), tags: &[&str]) -> Json {
+        serde_json::json!({"address": "0x55c311fcf040", "class": class, "at": [at.0, at.1], "size": [size.0, size.1],
+            "monitor": 0, "workspace": {"id": 1, "name": "1"}, "floating": true, "fullscreen": 0, "pinned": false,
+            "xwayland": true, "tags": tags})
+    }
+
+    #[test]
+    fn forza_root_remap_opens_on_the_focused_output() {
+        // Journal: steam_app_2483190 mapped 1920x1080, then 3840x1080 at 0,0 (the XWayland root, both outputs).
+        let c = cfg_games("fit");
+        let w = game("steam_app_2483190", (0, 0), (3840, 1080), &["mios-place-game-fixed*"]);
+        assert_eq!(game_kind(&c, &w), Some(GameKind::Fixed));
+        let p = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, Some("mios-placed")).unwrap();
+        assert_eq!(p.monitor, 1, "the focused output, not the root origin's");
+        assert_eq!(p.workspace, Some(2), "moved to the focused output's workspace");
+        assert!(p.resized, "larger than the output: fit to the opening size");
+        let g = p.geometry;
+        assert!(g.x >= 1920 && g.x + g.w <= 3840 && g.y >= 44 && g.y + g.h <= 1080 - 72, "{g:?}");
+        assert!(p.lua.contains("workspace='2', silent=true") && p.lua.contains("hl.dsp.window.resize"));
+        assert!(!p.lua.contains("mios-placed"), "fixed-size games are never tiled on move");
+        // keep: centred on the output at its own size (cropped), never resized.
+        let k = game_plan(&cfg_games("keep"), &w, &two_outputs(), GameKind::Fixed, None).unwrap();
+        assert!(!k.resized && !k.lua.contains("resize"));
+        assert_eq!((k.geometry.x, k.geometry.w), (1920 + (1920 - 3840) / 2, 3840));
+    }
+
+    #[test]
+    fn fixed_size_game_is_centred_at_its_own_size() {
+        // The offscreen spawn: a 640x480 non-resizable window that asked for 700,500 of another output.
+        let c = cfg_games("fit");
+        let w = game("steam_app_12", (700, 500), (640, 480), &["mios-place-game-fixed*"]);
+        let p = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, Some("mios-placed")).unwrap();
+        assert!(!p.resized && !p.lua.contains("resize"), "never resized: no black regrown area");
+        assert_eq!((p.geometry.w, p.geometry.h), (640, 480));
+        assert_eq!((p.geometry.x, p.geometry.y), (1920 + 640, 44 + (1080 - 44 - 72 - 480) / 2));
+        // 1920x1080 fits the output but not the HUD-free area: whole output, still not resized.
+        let full = game("steam_app_12", (0, 0), (1920, 1080), &["mios-place-game-fixed*"]);
+        let p = game_plan(&c, &full, &two_outputs(), GameKind::Fixed, None).unwrap();
+        assert_eq!((p.geometry.x, p.geometry.y, p.resized), (1920, 0, false));
+    }
+
+    #[test]
+    fn resizable_game_takes_the_opening_size_on_the_focused_output() {
+        let c = cfg_games("fit");
+        let w = game("steam_app_11", (0, 0), (1920, 1080), &["mios-place-game*", "mios-place-game-fixed*", "mios-place-new*"]);
+        assert_eq!(game_kind(&c, &w), Some(GameKind::Resizable), "the resizable rule's tag wins");
+        let p = game_plan(&c, &w, &two_outputs(), GameKind::Resizable, Some("mios-placed")).unwrap();
+        let mut focused = MonitorBox { x: 1920.0, y: 0.0, w: 1920.0, h: 1080.0, reserved: [0.0, 44.0, 0.0, 72.0], width_mm: 530.0 };
+        assert_eq!(p.geometry, geometry(&c, &focused));
+        assert!(p.resized && p.lua.contains("tag='+mios-placed'"));
+        // No focus reported: the window's own output.
+        let mut mons = two_outputs();
+        mons[1]["focused"] = Json::Bool(false);
+        let p = game_plan(&c, &w, &mons, GameKind::Resizable, None).unwrap();
+        focused.x = 0.0;
+        assert_eq!((p.monitor, p.workspace, p.geometry), (0, None, geometry(&c, &focused)));
+    }
+
+    #[test]
+    fn without_the_games_table_a_game_is_left_where_it_asked() {
+        // Negative control: the previous configuration has no game tags, so on_open falls through to the size gate
+        // ("floated at 3840x1080, not the placement size; left alone" in the recorded journal).
+        let w = game("steam_app_2483190", (0, 0), (3840, 1080), &["mios-place-game-fixed*"]);
+        assert_eq!(game_kind(&cfg(), &w), None);
+        assert!(cfg().games.is_none());
+        let other = game("Alacritty", (0, 0), (640, 480), &["mios-place-new*"]);
+        assert_eq!(game_kind(&cfg_games("fit"), &other), None, "ordinary windows keep the general path");
     }
 
     #[test]

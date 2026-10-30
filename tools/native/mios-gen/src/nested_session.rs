@@ -143,6 +143,11 @@ impl ParentEvents {
   }
  }
 }
+/// The nested XWayland's listening socket as a DISPLAY value usable outside the sandbox ("unix:<dir>/X<n>").
+fn x11_socket(dir:&Path)->Option<String>{
+ let mut n:Vec<(u32,PathBuf)>=fs::read_dir(dir).ok()?.flatten().filter_map(|e|{let name=e.file_name().into_string().ok()?;let d=name.strip_prefix('X')?;d.parse::<u32>().ok().map(|v|(v,e.path()))}).collect();
+ n.sort();n.first().map(|(_,p)|format!("unix:{}",p.display()))
+}
 struct OwnedDir(PathBuf);
 impl Drop for OwnedDir {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
 pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
@@ -171,10 +176,15 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
  fs::write(fragments.join(format!("{last}-mios-nested.toml")),toml::to_string(&patch).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  let focused:Json=serde_json::from_str(&ipc(&parent,&signature,"j/activewindow")?).map_err(|e|e.to_string())?;
  let input=owned.0.join("input");fs::create_dir(&input).map_err(|e|e.to_string())?;
+ // XWayland: inside bwrap's user namespace the host's root-owned /tmp/.X11-unix reads as uid 65534 and Hyprland refuses
+ // it ("Failed to find a suitable socket for XWayland"), so a nested session had no X11 at all (no Steam/Proton/Wine/
+ // SDL-X11 game). An owned 0700 directory takes its place in this process tree only. Display numbers stay unique through
+ // the shared /tmp/.X<n>-lock files; clients outside the tree use session.json "x11_display" (DISPLAY=unix:<socket>).
+ let x11=owned.0.join("x11");fs::create_dir(&x11).map_err(|e|e.to_string())?;fs::set_permissions(&x11,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
  let path=owned.0.join("hyprland.lua");fs::write(&path,config).map_err(|e|e.to_string())?;
  let log=fs::File::create(owned.0.join("desktop.log")).map_err(|e|e.to_string())?;
  // Mask real evdev nodes and the legacy room packet in this process tree only.
- let mut child=Command::new("bwrap").args(["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin","--ro-bind"]).arg(&input).args(["/dev/input","--","/usr/bin/Hyprland","--config"]).arg(&path)
+ let mut child=Command::new("bwrap").args(["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev","--ro-bind","/dev/null","/tmp/mios-hypr3d-pad.bin","--ro-bind"]).arg(&input).arg("/dev/input").arg("--bind").arg(&x11).args(["/tmp/.X11-unix","--","/usr/bin/Hyprland","--config"]).arg(&path)
  .env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE")
  .stdout(Stdio::from(log.try_clone().map_err(|e|e.to_string())?)).stderr(Stdio::from(log)).spawn().map_err(|e|e.to_string())?;
  let mut shell_child=None;
@@ -223,7 +233,9 @@ pub fn run(root:&Path,dry_run:bool,layout:Option<&str>)->Result<(),String>{
    let restore=format!("local current=hl.get_active_window();if current and current.pid=={pid} then for _,v in ipairs(hl.get_windows()) do if v.address=={} and v.pid=={p} and v.stable_id==tonumber({},16) then hl.dispatch(hl.dsp.focus({{window={}}}));break end end end",serde_json::to_string(a).unwrap(),serde_json::to_string(stable).unwrap(),serde_json::to_string(&format!("address:{a}")).unwrap());
    let _=ipc(&parent,&signature,&format!("/eval {restore}"))?;
   }
-  let descriptor=serde_json::json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"isolated_input":true,"physical_controllers_assigned":false,"tmux_socket":tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name)),"terminal_session":terminal_session});
+  let mut x11_display=None;
+  for _ in 0..40 {x11_display=x11_socket(&x11);if x11_display.is_some(){break;}thread::sleep(Duration::from_millis(50));}
+  let descriptor=serde_json::json!({"runtime":owned.0,"instance":inst,"x11_display":x11_display,"parent_window":address,"layout":layout,"isolated_input":true,"physical_controllers_assigned":false,"tmux_socket":tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name)),"terminal_session":terminal_session});
   fs::write(owned.0.join("session.json"),format!("{descriptor}\n")).map_err(|e|e.to_string())?;
   println!("{descriptor}");
   let mut parent_events=ParentEvents::connect(&parent,&signature);
@@ -298,6 +310,13 @@ mod tests {
   assert!(!events.closed("0xabc")); // unavailable snapshot/event is not a close
   server.write_all(b"closewindow>>0xother\n").unwrap();assert!(!events.closed("0xabc"));
   drop(server);assert!(!events.closed("0xabc"));
+ }
+ #[test] fn nested_x11_display_is_the_numbered_socket_not_the_fallback(){
+  let d=std::env::temp_dir().join(format!("mios-nested-x11-{}",std::process::id()));let _=fs::remove_dir_all(&d);fs::create_dir(&d).unwrap();
+  assert_eq!(x11_socket(&d),None,"no XWayland yet");
+  for f in ["X12_","X12","notes","X3x"] {fs::write(d.join(f),"").unwrap();}
+  assert_eq!(x11_socket(&d),Some(format!("unix:{}",d.join("X12").display())));
+  let _=fs::remove_dir_all(&d);
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
 }

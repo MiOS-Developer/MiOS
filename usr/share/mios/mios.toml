@@ -8091,6 +8091,30 @@ size_tolerance_px = 4
 open_tag = "mios-place-new"
 managed_tag = "mios-placed"
 
+# Game windows (Steam/Proton/Wine/SDL/gamescope) open on the FOCUSED output, centred, resizable ones at the same
+# DPI-aware window_opening size as every window. Games defeated the general rule two ways: a game that declares a
+# fixed size (WM_NORMAL_HINTS min == max: Wine non-resizable windows, SDL without RESIZABLE) is floated by Hyprland
+# itself, so the `float = false` rule above never matched it and it stayed wherever it asked (0,0 of the XWayland
+# root, or off the output's edge); and a floating X11 window's later ConfigureRequests are honoured, so Wine/Proton
+# moved it back to 0,0 at the root size (recorded: Forza Horizon 6 / steam_app_2483190 remapped itself to 3840x1080,
+# both outputs). suppress_client_geometry refuses those requests (Hyprland answers with the real geometry, so the
+# client's swapchain matches what is shown). Fixed-size games are never resized: Hyprland ignores size hints when
+# resizing X11 windows, and a game that never recreates its swapchain shows black wherever the window grew. A fixed
+# game larger than the HUD-free area is centred on the whole output; one larger than the output takes `oversize`
+# ("fit" = opening size; Wine/DXVK re-render at any size, "keep" = centred and cropped). Fixed games are not tiled on
+# move, and Super+V re-centres them instead of tiling them. class names an SSOT key holding the shared game-class
+# list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
+# content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland).
+[desktop.hyprland.placement.games]
+enabled = true
+class = "keybindings.global.contexts.game"
+extra_class = ['.+\.exe']
+content_game = true
+suppress_client_geometry = true
+oversize = "fit"
+tag = "mios-place-game"
+fixed_tag = "mios-place-game-fixed"
+
 
 # Window controls on every window: hyprbars (hyprland-plugins, latest upstream) with the
 # MiOS overlay patch -- the bar draws inside the window's top edge over its content, reserves no
@@ -8983,6 +9007,12 @@ enabled = true
 [desktop.hyprland.config.cursor]
 hide_on_touch = false
 no_hardware_cursors = 0
+# X11 (XWayland: Steam, Proton/Wine, SDL-X11 games) coordinates and configure sizes stay logical px, the units the
+# placement geometry and the window_opening size are computed in, on every output scale; a scaled output upscales
+# the X11 buffer. true would report device px to X11 clients and their positions per output, which the placement
+# daemon and the X11 root layout (the union of the outputs) do not share.
+[desktop.hyprland.config.xwayland]
+force_zero_scaling = false
 
 
 [packages.hyprland]
