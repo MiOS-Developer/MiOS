@@ -3,8 +3,10 @@
 // AI-functions: parse_block, validate, apply, Effective, override_value, render, empty_block, line
 
 use crate::record::{canonical_status, Index, Schema, STATUSES};
+use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::OnceLock;
 
 /// The first line of a TASKS.md the dev-loop toolkit reads overrides from; any other first line makes it foreign.
 pub const BANNER: &str = "# TASKS";
@@ -207,6 +209,30 @@ pub fn apply(records: &[Value], lines: &[OverrideLine], idx: &Index) -> Effectiv
         records: recs,
         overridden,
     }
+}
+
+// ---------------------------------------------------------------- contradictions
+
+/// Identify tasks with a title/status contradiction: status is not "completed"
+/// but the title contains a completion indicator (matching \bDONE\b).
+pub fn find_contradictions(records: &[Value], idx: &Index) -> Vec<String> {
+    static DONE_RE: OnceLock<Regex> = OnceLock::new();
+    let rx = DONE_RE.get_or_init(|| {
+        Regex::new(r"\bDONE\b").expect("valid static regex")
+    });
+    let mut errs = Vec::new();
+    for r in records {
+        let status = s(r, "status");
+        let title = s(r, "title");
+        if status != "completed" && rx.is_match(title) {
+            let id = s(r, "id");
+            errs.push(format!(
+                "{}: title/status contradiction: status is '{status}' but title claims 'DONE' ({title:?})",
+                idx.label(id),
+            ));
+        }
+    }
+    errs
 }
 
 // ---------------------------------------------------------------- render
