@@ -92,14 +92,22 @@ its negative control.
      asserted gone and the stripped binary must still run), and then renamed
      into place. A missing directory is created 0755 and journalled.
    * SELinux labels are restored on exactly the installed paths.
+   * Every staged file is opened once and read only through that open file.
+     The kernel's path of the open file must be the stage path, it must be a
+     regular file, and its owner must be the stage's owner. A stage entry or
+     ancestor swapped for a symlink (or a hard link to a root-owned file) after
+     validation is refused, never copied as root.
    * Asserts: no pre-existing directory changed mode or owner
      (`stat -c %a /usr /usr/bin /usr/lib64` is printed: 755 755 555), and every
      installed file matches what was prepared.
    * Any failure or interrupt undoes the partial install: replaced files come
      back from the backup, created files and directories are removed, and the
      journal is kept as `txn-….failed`.
-   * A second install is refused while one is active
-     (`install-candidate.sh status --root /`).
+   * A second install is refused while one is active. Check with
+     `sudo src/quickshell/install-candidate.sh status --root /`: the state
+     directory is 0700 root, so `status` needs `sudo`. Without it, `status`
+     stops with "permission denied … run status with sudo" instead of
+     reporting "no active install".
    * It starts, stops and signals nothing. The running shell keeps the binary
      it has mapped, because each file is replaced by rename, not rewritten.
    * `rpm -V quickshell` reports the replaced files as modified until rollback
@@ -118,6 +126,14 @@ its negative control.
 
 ## Rollback
 
+**Roll back only before any quickshell package update.** A `dnf upgrade`
+rewrites the installed files. Restoring the 0.2.1 backup over them would
+downgrade the newer package and delete paths it now owns. The script checks
+for this: every installed file must still have the SHA256 recorded in the
+install journal. If any file changed, `rollback` lists those files, stops and
+touches nothing. Use `dnf reinstall quickshell` in that case; the backup stays
+in `txn-…`.
+
 * `sudo src/quickshell/install-candidate.sh rollback --root /` checks every
   backup against its recorded SHA256, restores each replaced file by
   rename (mode, owner, label and the original absolute `qs` link included),
@@ -131,6 +147,11 @@ its negative control.
 
 ## Known limits
 
+* The `--root /` code path (internal prefix empty) is tested in a user-namespace
+  sandbox whose `/` is a tmpfs: the host `/usr` is read-only and only the four
+  destination directories are scratch copies. A shim replaces `setpriv` there,
+  because the sandbox forbids `setgroups`. The script itself has never run
+  against the real `/`.
 * Validated in a nested session only. The primary desktop has not run the
   candidate.
 * Rapid toplevel churn and socket stalls are synthetic. Real long-running sessions

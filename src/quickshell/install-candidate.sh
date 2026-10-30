@@ -8,7 +8,7 @@
 # stops and signals nothing: the running shell keeps the binary it has mapped.
 # AI-related: /usr/share/doc/mios/quickshell-candidate.md, /tests/test-quickshell-candidate-install.py,
 # /src/quickshell/patches/hyprland-event-socket-reconnect.patch, /automation/66-bake-quickshell.sh
-# AI-functions: main, parse_args, validate_stage, do_plan, do_install, do_rollback, do_status, undo_entries
+# AI-functions: main, parse_args, validate_stage, ancestors_of, dir_snapshot, open_stage_file, check_state_readable, do_plan, do_install, do_rollback, do_status, undo_entries
 
 set -euo pipefail
 
@@ -133,6 +133,20 @@ validate_stage() {
     log_info "stage: $version (${#ENTRIES[@]} files)"
 }
 
+# Open the staged file "$1" (relative) on fd 3 and prove that the open file is that very stage file: the kernel's
+# own path of the open file (/proc/self/fd/3) must be "$STAGE/$1", it must be a regular file, and it must belong to
+# the stage's owner. The copy then reads only through fd 3, so a stage entry or ancestor swapped for a symlink (or a
+# hard link to a root-owned file) between validate_stage and the copy can never make root read anything else.
+open_stage_file() {
+    local rel=$1 opened owner
+    exec 3<"$STAGE/$rel" || die "cannot open staged $rel"
+    opened=$(readlink /proc/self/fd/3) || die "cannot resolve staged $rel"
+    [[ $opened == "$STAGE/$rel" ]] || die "staged $rel resolves to $opened, not into the stage; refusing"
+    [[ $(stat -L -c %F /proc/self/fd/3) == "regular file" ]] || die "staged $rel is not a regular file; refusing"
+    owner=$(stat -L -c %u /proc/self/fd/3)
+    [[ $owner == "$(stat -c %u -- "$STAGE")" ]] || die "staged $rel is owned by uid $owner, not the stage owner; refusing"
+}
+
 # Every ancestor directory of a destination must be a real directory (never a symlink out of the root) or absent.
 check_ancestors() {
     local rel=$1 path=$R part
@@ -144,18 +158,30 @@ check_ancestors() {
     done
 }
 
+# Every directory strictly below the root on the way to "$R/$1", deepest first. ${d%/*} always shortens d, so the
+# walk ends for every root: for --root / (R="") it stops after /usr instead of looping on "dirname / = /", which
+# matched the old "$R"/* test forever.
+ancestors_of() {
+    local d=$R/$1
+    d=${d%/*}
+    while [[ $d == "$R"/?* ]]; do printf '%s\n' "$d"; d=${d%/*}; done
+}
+
 # mode uid gid of every existing ancestor (and /usr, /usr/bin, /usr/lib64, /usr/share), for the post-install assert
 dir_snapshot() {
-    local e rel d
+    local e d
     {
         printf '%s\n' "$R/usr" "$R/usr/bin" "$R/usr/lib64" "$R/usr/share"
         for e in "${ENTRIES[@]}"; do
-            rel=$(cut -f2 <<<"$e")
-            d=$(dirname -- "$R/$rel")
-            while [[ $d == "$R"/* ]]; do printf '%s\n' "$d"; d=$(dirname -- "$d"); done
+            e=${e#*$'\t'}
+            ancestors_of "${e%%$'\t'*}"
         done
-    } | sort -u | while read -r d; do [[ -d $d ]] && stat -c '%a %u %g %n' -- "$d"; done
-    return 0
+    } | sort -u | while IFS= read -r d; do
+        # a missing directory is simply not listed (the install creates it); a stat failure is loud
+        if [[ -d $d ]]; then
+            stat -c '%a %u %g %n' -- "$d" || { log_error "cannot stat $d"; exit 1; }
+        fi
+    done
 }
 
 do_plan() {
@@ -207,6 +233,11 @@ on_install_exit() {
 journal() { printf '%s\n' "$1" >>"$JOURNAL"; }
 
 file_digest() { if [[ -L $1 ]]; then printf 'link:%s\n' "$(readlink -- "$1")"; else sha256sum -- "$1" | cut -d' ' -f1; fi; }
+# like file_digest, but "missing" for a path that does not exist and "unreadable" when it cannot be hashed
+current_digest() {
+    if [[ ! -e $1 && ! -L $1 ]]; then echo missing; return 0; fi
+    file_digest "$1" 2>/dev/null || echo unreadable
+}
 
 do_install() {
     validate_stage
@@ -220,10 +251,11 @@ do_install() {
     mkdir -m 0700 -- "$TXN" "$TXN/backup"
     JOURNAL=$TXN/journal.tsv
     : >"$JOURNAL"
-    dir_snapshot >"$TXN/dirs.before"
     trap on_install_exit EXIT
     trap 'exit 130' INT TERM HUP
     INSTALLING=1
+    dir_snapshot >"$TXN/dirs.before" || die "cannot snapshot the destination directories"
+    [[ -s $TXN/dirs.before ]] || die "no destination directory exists under ${R:-/}"
 
     local owner=()
     if [[ $EUID -eq 0 ]]; then owner=(-o root -g root); fi
@@ -265,7 +297,9 @@ do_install() {
             if [[ $EUID -eq 0 ]]; then chown -h root:root -- "$tmp"; fi
         elif [[ $rel == usr/bin/quickshell ]]; then
             # the stage holds a RelWithDebInfo build; ship it stripped like the package
-            strip --strip-unneeded -o "$tmp" -- "$STAGE/$rel"
+            open_stage_file "$rel"
+            strip --strip-unneeded -o "$tmp" -- /proc/self/fd/3
+            exec 3<&-
             chmod 0755 -- "$tmp"
             if [[ $EUID -eq 0 ]]; then chown root:root -- "$tmp"; fi
             if readelf -S -W -- "$tmp" | grep -q '\.debug_'; then die "stripped binary still carries debug sections"; fi
@@ -273,7 +307,9 @@ do_install() {
                 || die "stripped binary does not run"
         else
             mode=$(mode_for "$rel")
-            install -m "$mode" "${owner[@]}" -T -- "$STAGE/$rel" "$tmp"
+            open_stage_file "$rel"
+            install -m "$mode" "${owner[@]}" -T -- /proc/self/fd/3 "$tmp"
+            exec 3<&-
         fi
         prepared+=("$tmp"$'\t'"$rel"$'\t'"$(file_digest "$tmp")")
     done
@@ -299,10 +335,11 @@ do_install() {
         restorecon -F -- "${paths[@]}"
     fi
     # 5. asserts: no pre-existing directory changed mode or owner; every file is what was prepared
-    local before_n after_n
-    before_n=$(wc -l <"$TXN/dirs.before")
-    after_n=$(dir_snapshot | grep -Fxc -f "$TXN/dirs.before" || true)
-    [[ $before_n == "$after_n" ]] || { diff <(cat "$TXN/dirs.before") <(dir_snapshot) >&2 || true; die "directory modes or owners changed"; }
+    local dirs_after missing
+    dirs_after=$(dir_snapshot) || die "cannot snapshot the destination directories after the install"
+    # every "mode uid gid path" line from before must still be present verbatim (new directories may be added)
+    missing=$(grep -Fxv -f <(printf '%s\n' "$dirs_after") -- "$TXN/dirs.before" || true)
+    [[ -z $missing ]] || { printf 'changed: %s\n' "$missing" >&2; die "directory modes or owners changed"; }
     for p in "${prepared[@]}"; do
         rel=$(cut -f2 <<<"$p"); digest=$(cut -f3 <<<"$p")
         [[ $(file_digest "$R/$rel") == "$digest" ]] || die "$R/$rel does not match the prepared file"
@@ -335,6 +372,17 @@ do_rollback() {
             [[ $(file_digest "$TXN/backup/$rel") == "$digest" ]] || die "backup $TXN/backup/$rel does not verify"
         done <"$TXN/backup.tsv"
     fi
+    # every installed file must still be exactly what this install wrote: after a quickshell package update (or any
+    # other change) restoring the 0.2.1 backup would downgrade the newer files and delete paths the package now owns
+    local changed=() want
+    while IFS=$'\t' read -r kind rel want; do
+        case "$kind" in replace|create) ;; *) continue ;; esac
+        [[ $(current_digest "$R/$rel") == "$want" ]] || changed+=("$R/$rel")
+    done <"$JOURNAL"
+    if [[ ${#changed[@]} -gt 0 ]]; then
+        printf 'changed since the install: %s\n' "${changed[@]}" >&2
+        die "${#changed[@]} installed file(s) changed since the install (a quickshell package update?); nothing was touched. Run 'dnf reinstall quickshell' instead; the backup stays in $TXN"
+    fi
     undo_entries
     # verify: replaced files are byte-identical to the backup, created ones are gone
     local bad=0 restored=()
@@ -357,7 +405,19 @@ do_rollback() {
     log_info "nothing was restarted: restart the shell only when the operator agrees"
 }
 
+# A state directory the caller cannot search looks exactly like "no install" (the state is 0700 root), so find the
+# nearest ancestor that is visible and refuse unless it can be searched (and, for the state itself, read).
+check_state_readable() {
+    local p=$STATE
+    while [[ -n $p && ! -d $p ]]; do p=${p%/*}; done
+    p=${p:-/}
+    if [[ ! -x $p || ( $p == "$STATE" && ! -r $p ) || ( -e $STATE/current && ! -r $STATE/current ) ]]; then
+        die "cannot read the install state under $STATE (permission denied on $p); run status with sudo"
+    fi
+}
+
 do_status() {
+    check_state_readable
     if [[ -s $STATE/current ]]; then
         local t; t=$STATE/$(cat -- "$STATE/current")
         echo "active: $t"
