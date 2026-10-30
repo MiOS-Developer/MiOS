@@ -548,5 +548,85 @@ class Nested(unittest.TestCase):
         self.assertIn("scale=2", out["scale2_msaa4"]["status"])
 
 
+GLASS_PATCH = "usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch"
+
+
+def patch_defects(text: str) -> list[str]:
+    """Structural defects of a git patch: a diff --git header whose paths disagree with each other or with the
+    ---/+++ file it introduces, blank in-hunk context lines (git emits a single space), and hunks whose @@ counts do
+    not match their body. Hunks are walked by their counts so only real context lines are judged."""
+    import re
+
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    found: list[str] = []
+    header = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            m = re.fullmatch(r"diff --git a/(\S+) b/(\S+)", line)
+            header = m.groups() if m else None
+            if not m or m.group(1) != m.group(2):
+                found.append(f"{i + 1}: inconsistent header {line!r}")
+        elif line.startswith(("--- a/", "+++ b/")) and header and line[6:] != header[1]:
+            found.append(f"{i + 1}: {line!r} disagrees with its diff --git header")
+        m = re.match(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@", line)
+        if m:
+            old = int(m.group(1) if m.group(1) is not None else 1)
+            new = int(m.group(2) if m.group(2) is not None else 1)
+            i += 1
+            while (old > 0 or new > 0) and i < len(lines):
+                body = lines[i]
+                if body == "":
+                    found.append(f"{i + 1}: blank in-hunk context line (missing leading space)")
+                    old -= 1
+                    new -= 1
+                elif body[0] == " ":
+                    old -= 1
+                    new -= 1
+                elif body[0] == "-":
+                    old -= 1
+                elif body[0] == "+":
+                    new -= 1
+                elif body[0] != "\\":
+                    found.append(f"{i + 1}: unexpected hunk line {body!r}")
+                    break
+                i += 1
+            if old or new:
+                found.append(f"{i}: hunk body does not match its @@ counts")
+            continue
+        i += 1
+    return found
+
+
+class SeriesHygiene(unittest.TestCase):
+    """The glass patch is the base of the SSOT Hypr3D series: git-format headers on every patch, and the glass patch
+    byte-normalized as git would regenerate it (no blank in-hunk context lines, no foreign build-host paths)."""
+
+    def test_checker_rejects_malformed_samples(self):
+        good = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n \n-b\n+c\n"
+        self.assertEqual(patch_defects(good), [])
+        self.assertTrue(any("blank in-hunk" in d for d in patch_defects(good.replace("\n \n", "\n\n"))))
+        foreign = good.replace("diff --git a/f b/f", "diff --git a/var/lib/mios-build/x/f b/f")
+        self.assertTrue(any("inconsistent header" in d for d in patch_defects(foreign)))
+        self.assertTrue(any("@@ counts" in d for d in patch_defects(good.replace("-1,3 +1,3", "-1,4 +1,4"))))
+
+    def test_series_headers_are_consistent(self):
+        for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]:
+            with open(os.path.join(ROOT, p), encoding="utf-8") as f:
+                text = f.read()
+            bad = [d for d in patch_defects(text) if "blank in-hunk" not in d]
+            self.assertEqual(bad, [], p)
+
+    def test_glass_patch_is_normalized(self):
+        self.assertIn(GLASS_PATCH, ssot()["desktop"]["hyprland"]["hypr3d"]["patches"][:1])
+        with open(os.path.join(ROOT, GLASS_PATCH), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(patch_defects(text), [])
+        self.assertNotIn("/var/lib/mios-build", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
