@@ -3260,6 +3260,11 @@
         <label>Keep PiPs above application windows <input data-key="desktop.pip_gravity.keep_above" type="checkbox"></label>
         <label>Snap to the normal window's side space <input data-key="desktop.pip_gravity.fit_default_window" type="checkbox"></label>
         <label>PiP snap distance <input data-key="desktop.pip_gravity.attract_px" data-type="int" type="number" min="0"></label>
+        <label>Smallest PiP width (px) <input data-key="desktop.pip_gravity.min_width_px" data-type="int" type="number" min="0" max="4096"></label>
+        <label>PiP size snap distance (px; 0 = off) <input data-key="desktop.pip_gravity.size_snap_px" data-type="int" type="number" min="0" max="512"></label>
+        <label>Smallest PiP width (fraction of the screen) <input data-key="desktop.pip_gravity.min_width_frac" data-type="float" type="number" min="0" max="1" step="0.01"></label>
+        <label>Largest PiP width (fraction of the screen) <input data-key="desktop.pip_gravity.max_width_frac" data-type="float" type="number" min="0" max="1" step="0.01"></label>
+        <label>Keep PiPs still after fullscreen ends (ms) <input data-key="desktop.pip_gravity.fullscreen_release_ms" data-type="int" type="number" min="0" max="10000"></label>
         <label>Desktop session launch layout <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option></select></label>
         <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
         <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
