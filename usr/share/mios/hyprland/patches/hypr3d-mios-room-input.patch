@@ -1,0 +1,815 @@
+MiOS room input for Hypr3D (applies after hypr3d-mios-pip-theatre.patch; spec docs/design/mios-global-bindings-final.md P1).
+
+1. The [keybindings.global.controller.room] verbs (C-14a), as dispatchers (hypr3d:cancel, hypr3d:sprint,
+   hypr3d:recenter) and Lua functions next to input_owner/input_capture:
+   - hl.plugin.hypr3d.cancel() backs out one level, innermost first: an active grab or resize, then the CRT window
+     picker (now a tracked child in its own process group, titles passed as argv, never shell source), then the room
+     cursor. It returns what it cancelled ("resize", "grab", "picker", "cursor" or "none").
+   - hl.plugin.hypr3d.sprint([toggle|on|off]) latches the keyboard sprint speed until it is turned off or the room
+     closes. It returns the new state.
+   - hl.plugin.hypr3d.recenter() eases the camera onto the focused room window (else the window aim focus last
+     selected, since looking away clears focus; else the nearest room window; else it levels the view) with
+     [config.player].recenter_seconds.
+   All three change nothing while the room does not own input or a captured window does (the ownership contract).
+2. Face the viewer ([config.windows] face_viewer, face_distance, theatre_face_distance, face_seconds,
+   face_hysteresis): a PiP whose centre is within its viewing distance of the camera (2 m, Theatre 4 m) turns its
+   plane normal toward the camera POSITION and follows it as the camera moves; outside it eases back to the pose it
+   was placed with. Every change is an exponential ease, a hysteresis band stops boundary flapping, and grabs,
+   resizes, the view morph and the fullscreen passthrough own the pose while they run. Saved room poses and the
+   Theatre's restore pose record the placed pose, never a facing turn. The pure math is src/World/FaceViewer.hpp,
+   checked by tests/mios-face-viewer.cpp in ctest.
+3. export_layout() gains room_input (sprint, gesture, resize, drag, cursor, picker, recentering and the face
+   settings) and per-window pip, facing, base_yaw and base_pitch, for the live checks.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5e04958..94baba5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -182,3 +182,9 @@ if(BUILD_TESTING)
+  add_test(NAME mios-pip-geometry COMMAND mios-pip-geometry)
+  set_tests_properties(mios-pip-geometry PROPERTIES TIMEOUT 5)
+ endif()
++
++if(BUILD_TESTING)
++ add_executable(mios-face-viewer tests/mios-face-viewer.cpp)
++ add_test(NAME mios-face-viewer COMMAND mios-face-viewer)
++ set_tests_properties(mios-face-viewer PROPERTIES TIMEOUT 5)
++endif()
+diff --git a/src/World/FaceViewer.hpp b/src/World/FaceViewer.hpp
+new file mode 100644
+index 0000000..8407429
+--- /dev/null
++++ b/src/World/FaceViewer.hpp
+@@ -0,0 +1,146 @@
++#pragma once
++
++// MiOS room input (hypr3d-mios-room-input.patch): the pure math behind
++//  * PiP face-the-viewer: a PiP within its viewing distance of the camera (windows.face_distance, Theatre:
++//    windows.theatre_face_distance) turns its plane normal toward the camera POSITION and follows it as the camera
++//    moves; outside it eases back to the pose it was placed with. Every change is an exponential ease
++//    (windows.face_seconds), so nothing snaps, and a hysteresis band (windows.face_hysteresis) keeps a viewer
++//    standing on the boundary from flapping between the two targets.
++//  * the room's recenter verb: the camera eases to look at a point.
++// Conventions (World3D.cpp / ScreenProject.cpp / Camera.cpp): a window's normal is
++// (sin yaw cos p, -sin p, cos yaw cos p); the camera's forward is (sin yaw cos p, sin p, -cos yaw cos p).
++// No Hyprland dependency: tests/mios-face-viewer.cpp checks it in ctest.
++
++#include <algorithm>
++#include <cmath>
++
++namespace H3D::FaceViewer {
++
++constexpr float kPi  = 3.14159265358979323846f;
++constexpr float kTau = 6.28318530717958647692f;
++// The plugin clamps every window pitch to this (World3D::updateDrag): a window never lies flat.
++constexpr float kPitchLimit = 1.5f;
++
++struct SAngles {
++    float yaw = 0.f, pitch = 0.f;
++};
++
++inline float wrapPi(float a) {
++    if (!std::isfinite(a))
++        return 0.f;
++    a = std::remainder(a, kTau);
++    return a;
++}
++
++// The yaw/pitch whose window normal points from `cx,cy,cz` (window centre) toward `ex,ey,ez` (the eye).
++// A degenerate offset (the eye inside the centre) keeps `fallback`.
++inline SAngles faceToward(float cx, float cy, float cz, float ex, float ey, float ez, SAngles fallback) {
++    const float dx = ex - cx, dy = ey - cy, dz = ez - cz;
++    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
++    if (!std::isfinite(len) || len < 1e-4f)
++        return fallback;
++    SAngles out;
++    out.yaw   = std::atan2(dx / len, dz / len);
++    out.pitch = std::clamp(std::asin(std::clamp(-dy / len, -1.f, 1.f)), -kPitchLimit, kPitchLimit);
++    return out;
++}
++
++// The camera yaw/pitch that looks from the eye at a point (Camera::forward inverted).
++inline SAngles lookAt(float ex, float ey, float ez, float px, float py, float pz, float pitchLimit, SAngles fallback) {
++    const float dx = px - ex, dy = py - ey, dz = pz - ez;
++    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
++    if (!std::isfinite(len) || len < 1e-4f)
++        return fallback;
++    SAngles out;
++    out.yaw   = std::atan2(dx / len, -dz / len);
++    out.pitch = std::clamp(std::asin(std::clamp(dy / len, -1.f, 1.f)), -pitchLimit, pitchLimit);
++    return out;
++}
++
++// Inside the viewing distance? `wasFacing` applies the hysteresis band: facing starts at <= limit and ends only
++// beyond limit + hysteresis. A non-positive limit disables facing.
++inline bool withinViewingDistance(float distance, float limit, float hysteresis, bool wasFacing) {
++    if (!std::isfinite(distance) || !std::isfinite(limit) || limit <= 0.f)
++        return false;
++    const float band = std::max(0.f, std::isfinite(hysteresis) ? hysteresis : 0.f);
++    return wasFacing ? distance <= limit + band : distance <= limit;
++}
++
++// The fraction of the remaining angle one frame of `dt` seconds covers with time constant `seconds`
++// (1 - e^(-dt/seconds)). dt is clamped to 0.1 s, so a long frame never jumps; seconds <= 0 is clamped to 1 ms.
++inline float easeAlpha(float dt, float seconds) {
++    if (!std::isfinite(dt) || dt <= 0.f)
++        return 0.f;
++    const float tau = std::isfinite(seconds) ? std::max(seconds, 0.001f) : 0.2f;
++    return 1.f - std::exp(-std::min(dt, 0.1f) / tau);
++}
++
++// Ease an angle toward a target along the shorter way round.
++inline float easeAngle(float current, float target, float alpha) {
++    return wrapPi(current + wrapPi(target - current) * std::clamp(alpha, 0.f, 1.f));
++}
++
++struct SPose {
++    float yaw = 0.f, pitch = 0.f, roll = 0.f;
++};
++
++// Per-window face-the-viewer state. `base` is the pose the window was placed with (by the operator, the spawn,
++// Theatre or a restore); `applied` is what this module last wrote into the entity.
++struct SState {
++    bool  init = false, facing = false;
++    SPose base{}, applied{};
++};
++
++inline bool samePose(const SPose& a, const SPose& b) {
++    return std::fabs(wrapPi(a.yaw - b.yaw)) < 1e-6f && std::fabs(a.pitch - b.pitch) < 1e-6f &&
++        std::fabs(wrapPi(a.roll - b.roll)) < 1e-6f;
++}
++
++// Another owner (a grab, a resize, the view morph, the fullscreen passthrough) drives the pose this frame: adopt it
++// as the placed pose and stop facing until the window is free again (the hysteresis restarts from outside).
++inline void adopt(SState& s, const SPose& current) {
++    s.init = true;
++    s.facing = false;
++    s.base = s.applied = current;
++}
++
++// One frame. `pose` is the entity's pose as the frame built it (normally exactly what this module wrote last frame;
++// anything else means another writer placed the window, and that becomes its new base). `limit` is the viewing
++// distance for this window (<= 0 = never face). Returns true while the pose is still easing (the caller keeps
++// damaging the output so the motion completes).
++inline bool step(SState& s, SPose& pose, float cx, float cy, float cz, float ex, float ey, float ez, float limit,
++                 float hysteresis, float seconds, float dt) {
++    if (!s.init) {
++        s.init = true;
++        s.base = s.applied = pose;
++    } else if (!samePose(pose, s.applied)) {
++        s.base = pose;
++    }
++    const float dx = ex - cx, dy = ey - cy, dz = ez - cz;
++    s.facing = withinViewingDistance(std::sqrt(dx * dx + dy * dy + dz * dz), limit, hysteresis, s.facing);
++    SPose target = s.base;
++    if (s.facing) {
++        const SAngles a = faceToward(cx, cy, cz, ex, ey, ez, SAngles{s.base.yaw, s.base.pitch});
++        target = SPose{a.yaw, a.pitch, 0.f};
++    }
++    // Ease from what is on screen (the last applied pose): a new base from another writer (Theatre's per-frame
++    // placement, a restore) is approached smoothly too, never jumped to.
++    const SPose from = s.applied;
++    const float alpha = easeAlpha(dt, seconds);
++    SPose next;
++    next.yaw   = easeAngle(from.yaw, target.yaw, alpha);
++    next.pitch = std::clamp(from.pitch + (target.pitch - from.pitch) * alpha, -kPitchLimit, kPitchLimit);
++    next.roll  = easeAngle(from.roll, target.roll, alpha);
++    pose = s.applied = next;
++    return std::fabs(wrapPi(target.yaw - next.yaw)) > 1e-4f || std::fabs(target.pitch - next.pitch) > 1e-4f ||
++        std::fabs(wrapPi(target.roll - next.roll)) > 1e-4f;
++}
++
++// The window normal for a yaw/pitch (the plugin's convention), for tests and the live probe.
++inline void normalOf(float yaw, float pitch, float& nx, float& ny, float& nz) {
++    nx = std::sin(yaw) * std::cos(pitch);
++    ny = -std::sin(pitch);
++    nz = std::cos(yaw) * std::cos(pitch);
++}
++
++} // namespace H3D::FaceViewer
+diff --git a/src/main.cpp b/src/main.cpp
+index f4555c9..7864f43 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,4 +1,7 @@
+ #include "World/PipGeometry.hpp"
++#include "World/FaceViewer.hpp"
++#include <sys/wait.h>
++#include <cerrno>
+ #include <hyprland/src/plugins/PluginAPI.hpp>
+ #include <hyprland/src/plugins/PluginSystem.hpp>
+ #include <dlfcn.h>
+@@ -212,6 +215,29 @@ static SPiPTheatre g_pipTheatre;
+ static float g_cfgTheatreDistance=4.f, g_cfgTheatreWidth=4.f, g_cfgTheatreFill=0.9f;
+ static float g_cfgTheatreSeconds=0.25f, g_cfgPiPRasterMax=2048.f;
+ 
++// MiOS room input (hypr3d-mios-room-input.patch). [desktop.hyprland.hypr3d.config.windows]:
++// face_viewer = "pip" | "all" | "off": which room windows turn to face the camera POSITION while it is within their
++// viewing distance (face_distance; a Theatre PiP: theatre_face_distance), following it as it moves and easing back
++// to the pose they were placed with outside it (face_seconds time constant, face_hysteresis band). The placed pose
++// stays the remembered room pose (saved poses never record a facing turn).
++enum class EFaceViewer : uint8_t { Off, PiP, All };
++static EFaceViewer g_cfgFaceViewer=EFaceViewer::PiP;
++static float g_cfgFaceDistance=2.f, g_cfgTheatreFaceDistance=4.f, g_cfgFaceSeconds=0.2f, g_cfgFaceHysteresis=0.1f;
++static std::unordered_map<std::uintptr_t, FaceViewer::SState> g_faceViewer;
++// [keybindings.global.controller.room] verbs (spec P1, C-14a): hl.plugin.hypr3d.sprint() latches the run speed
++// until toggled off or the room closes; recenter() eases the camera onto the room's windows over
++// [desktop.hyprland.hypr3d.config.player].recenter_seconds; cancel() backs out one level (grab/resize, then the
++// CRT window picker, then the room cursor).
++static bool g_sprintLatched=false;
++static float g_cfgRecenterSeconds=0.3f;
++struct SRecenter { bool active=false; float yaw=0.f, pitch=0.f, left=0.f; };
++static SRecenter g_recenter;
++static std::uintptr_t g_recenterAnchor=0; // the last window aim focus gave focus to
++static pid_t g_crtPickerPid=0;
++static void recenterStep(float dt);
++static void reapCrtPicker();
++static void faceViewerBase(std::uintptr_t id, SViewPose& pose);
++
+ static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
+ // The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
+ // own default, so the exit's "moved in the room?" test needs this separate record).
+@@ -1473,6 +1499,8 @@ static Vector2D crosshairLogical() {
+ static void resetMovementKeys() {
+     g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
+     g_keyUp = g_keyDown = g_keySprint = false;
++    g_sprintLatched = false;
++    g_recenter = {};
+     g_superHeld = false;
+     g_altHeld = false;
+     g_shiftHeld = false;
+@@ -2170,6 +2198,7 @@ static void updateAimFocus(float dt) {
+     if (WINDOW) {
+         Compat::focusWindow(WINDOW);
+         g_lastFocusId = FOCUS;
++        g_recenterAnchor = FOCUS; // MiOS room input: recenter returns here after the view leaves every window
+     }
+     else {
+         Compat::clearFocus();
+@@ -2264,7 +2293,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
+  }
+  const auto* e=g_world.find(id);if(!e) return;
+  g_pipTheatre.id=id;g_pipTheatre.window=w;
+- g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};
++ g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};faceViewerBase(id,g_pipTheatre.saved); // MiOS room input: the placed pose, not a facing turn
+  g_pipTheatre.saved.scaleMul=retinaMul(id);
+  const auto previous=g_fsStableBoxes.find(id);
+  g_pipTheatre.sourceBox=previous!=g_fsStableBoxes.end() ? previous->second : CBox{e->logicalLeft+mon->m_position.x,e->logicalTop+mon->m_position.y,e->logicalWidth,e->logicalHeight};
+@@ -2276,7 +2305,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
+  g_pipTheatre.rasterBox=CBox{mon->m_position.x+fit.x+(fit.w-source.w*sized->rasterFactor)*.5,mon->m_position.y+fit.y+(fit.h-source.h*sized->rasterFactor)*.5,source.w*sized->rasterFactor,source.h*sized->rasterFactor};
+  const auto& cam=g_scene.camera();
+  g_pipTheatre.id=id;g_pipTheatre.window=w;
+- g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};
++ g_pipTheatre.saved=SViewPose{e->center,e->yaw,e->pitch,e->roll};faceViewerBase(id,g_pipTheatre.saved); // MiOS room input: the placed pose, not a facing turn
+  const auto area=retinaFitArea(mon);
+  const auto up=cross(cam.right(),cam.forward());
+  const float offset=static_cast<float>((mon->m_size.y*0.5-(area.y+area.h*0.5))/mon->m_size.y)*2*g_cfgTheatreDistance*retinaTan();
+@@ -2306,6 +2335,30 @@ static void placePiPTheatre(World3D::SEntity& e,const PHLMONITOR& mon,const CBox
+ 
+ // Keep the optical/depth multiplier separate from extra room magnification.
+ // Reversing a large resize can then recover the original native pixel density.
++// MiOS room input: face-the-viewer (g_cfgFaceViewer). Runs on the entity the frame just built, after Theatre placed
++// it, so attached popups and menus inherit the turned pose. A grab, a resize, the view morph and the fullscreen
++// passthrough own the pose while they run: the window adopts their result as its placed pose.
++static bool g_faceViewerMoving=false;
++static void faceViewer(World3D::SEntity& e,const Compat::SWindowInfo& info,float dt) {
++ if(info.attached || info.isLayer || !info.window) return;
++ if(g_cfgFaceViewer==EFaceViewer::Off || (g_cfgFaceViewer==EFaceViewer::PiP && !managedPiP(info.window))) {g_faceViewer.erase(e.id);return;}
++ auto& st=g_faceViewer[e.id];
++ const FaceViewer::SPose cur{e.yaw,e.pitch,e.roll};
++ if(g_viewMorph!=EViewMorph::None || g_fsPhase!=EFullscreenPhase::None ||
++    (g_world.dragActive() && g_world.draggedId()==e.id) || (g_resize.active && g_resize.id==e.id)) {FaceViewer::adopt(st,cur);return;}
++ const float limit=e.id==g_pipTheatre.id ? g_cfgTheatreFaceDistance : g_cfgFaceDistance;
++ const auto& eye=g_scene.camera().position;
++ FaceViewer::SPose pose=cur;
++ if(FaceViewer::step(st,pose,e.center.x,e.center.y,e.center.z,eye.x,eye.y,eye.z,limit,g_cfgFaceHysteresis,g_cfgFaceSeconds,dt))
++  g_faceViewerMoving=true;
++ e.yaw=pose.yaw;e.pitch=pose.pitch;e.roll=pose.roll;
++}
++// The placed (un-turned) pose of a window, for the room memory: a facing turn is a view of the window, not a move.
++static void faceViewerBase(std::uintptr_t id,SViewPose& pose) {
++ const auto it=g_faceViewer.find(id);
++ if(it==g_faceViewer.end() || !it->second.init) return;
++ pose.yaw=it->second.base.yaw;pose.pitch=it->second.base.pitch;pose.roll=it->second.base.roll;
++}
+ struct SPiPRasterOptics { PHLWINDOWREF window; float baseMul=1.f; };
+ static std::unordered_map<std::uintptr_t,SPiPRasterOptics> g_pipRasterOptics;
+ static bool resizePiPRaster(const PHLWINDOW& w,const CBox& start,float startMul,double wanted,CBox& out) {
+@@ -2969,6 +3022,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+         }
+ 
+         placePiPTheatre(entity, mon, BOX);
++        faceViewer(entity, info, dt);
+         ENTITIES.push_back(entity);
+     }
+ 
+@@ -2995,6 +3049,9 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+     }
+ 
+     g_world.setEntities(std::move(ENTITIES), false);
++    // MiOS room input: forget closed windows; keep the frames coming while a facing turn eases.
++    std::erase_if(g_faceViewer,[](const auto& kv){return !g_world.find(kv.first);});
++    if(g_faceViewerMoving) {g_faceViewerMoving=false;damageCurrentMonitor();}
+ 
+     // --- build the draw list from world + snapshot ---
+     g_renderWindows.clear();
+@@ -4292,6 +4349,7 @@ static void beginExit3D() {
+             }
+             MW.roomPose.box2D       = MW.box2D;
+             g_savedPoses[ENTITY.id] = MW.roomPose;
++            faceViewerBase(ENTITY.id, g_savedPoses[ENTITY.id]);
+             MW.stack                = static_cast<float>(i) * kMorphStackEps;
+             ++i;
+             g_viewMorphWins[ENTITY.id] = MW;
+@@ -4357,6 +4415,7 @@ static void beginExit3D() {
+ 
+         MW.roomPose.box2D       = MW.box2D;
+         g_savedPoses[ENTITY.id] = MW.roomPose;
++        faceViewerBase(ENTITY.id, g_savedPoses[ENTITY.id]);
+ 
+         MW.stack = static_cast<float>(i) * kMorphStackEps;
+         ++i;
+@@ -4526,6 +4585,7 @@ static void saveViewPoses() {
+             }
+         }
+ 
++        faceViewerBase(E.id, POSE);
+         g_savedPoses[E.id] = POSE;
+     }
+ }
+@@ -4898,6 +4958,8 @@ static void deactivate3D() {
+ 
+     clearAimFocus();
+     g_world.clear();
++    g_faceViewer.clear();
++    g_recenterAnchor = 0;
+     g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
+     g_retinaSettle.clear();
+     g_winAnims3D.clear();
+@@ -5282,7 +5344,7 @@ static void applyCameraMovement(float dt) {
+         const float postureMult =
+             (g_playerPosture == EPlayerPosture::Crouch) ? 0.55f :
+             (g_playerPosture == EPlayerPosture::Sit)    ? 0.25f : 1.0f;
+-        const float SPEED = CAM.moveSpeed * (g_keySprint ? 2.5f : 1.0f) * postureMult;
++        const float SPEED = CAM.moveSpeed * ((g_keySprint || g_sprintLatched) ? 2.5f : 1.0f) * postureMult;
+         const Vec3  TARGET =
+             CAM.flatForward() * (FORWARD * SPEED) +
+             CAM.right() * (STRAFE * SPEED);
+@@ -5300,7 +5362,7 @@ static void applyCameraMovement(float dt) {
+ 
+     // --- flying: all three axes are key-driven ---
+     const float SPEED =
+-        CAM.moveSpeed * (g_keySprint ? 2.5f : 1.0f) * (MOVING ? 1.0f : 0.0f);
++        CAM.moveSpeed * ((g_keySprint || g_sprintLatched) ? 2.5f : 1.0f) * (MOVING ? 1.0f : 0.0f);
+     const Vec3 TARGET =
+         CAM.flatForward() * (FORWARD * SPEED) +
+         CAM.right() * (STRAFE * SPEED) +
+@@ -5638,6 +5700,8 @@ static void update3D(float dt) {
+         g_input.reset();
+     }
+     pollGamepadState(dt);
++    recenterStep(dt);
++    reapCrtPicker();
+ 
+     // Release capture unconditionally when the view no longer owns input, so
+     // a disappearing monitor or a closing transition can never strand the
+@@ -5822,7 +5886,7 @@ static void update3D(float dt) {
+                                             VEL.GetZ() * VEL.GetZ());
+                 const auto ST = !g_grounded
+                     ? CPlayerModel::EState::Jump
+-                    : HSP > 0.4f ? (g_keySprint ? CPlayerModel::EState::Run
++                    : HSP > 0.4f ? ((g_keySprint || g_sprintLatched) ? CPlayerModel::EState::Run
+                                                 : CPlayerModel::EState::Walk)
+                                  : CPlayerModel::EState::Idle;
+                 g_scene.player()->setState(ST);
+@@ -8222,12 +8286,30 @@ static void selectWindowCrt() {
+     }
+ 
+     if (hasMenu) {
+-        std::string inputList;
+-        for (const auto& entry : entries) {
+-            inputList += entry.second + "\\n";
+-        }
+-        std::string cmd = "sh -c 'CHOICE=$(printf \"" + inputList + "\" | (wofi --dmenu -p \"Hypr3D ShaderGlass Window\" 2>/dev/null || rofi -dmenu -p \"Hypr3D ShaderGlass Window\" 2>/dev/null || zenity --list --column=\"Windows\" --title=\"Hypr3D ShaderGlass Window\" 2>/dev/null) | awk \"{print \\$1}\"); if [ -n \"$CHOICE\" ]; then hyprctl dispatch hypr3d:crt \"$CHOICE\"; fi' &";
+-        system(cmd.c_str());
++        // MiOS room input: the picker is a tracked child (its own process group), so the room's cancel verb can
++        // close it. Window titles reach it as argv, never as shell source.
++        static const char* SCRIPT =
++            "CHOICE=$(printf '%s\\n' \"$@\" | (wofi --dmenu -p 'Hypr3D ShaderGlass Window' 2>/dev/null || "
++            "rofi -dmenu -p 'Hypr3D ShaderGlass Window' 2>/dev/null || "
++            "zenity --list --column=Windows --title='Hypr3D ShaderGlass Window' 2>/dev/null) | awk '{print $1}'); "
++            "if [ -n \"$CHOICE\" ]; then exec hyprctl dispatch hypr3d:crt \"$CHOICE\"; fi";
++        std::vector<std::string> args{"/bin/sh", "-c", SCRIPT, "hypr3d-crt-picker"};
++        for (const auto& entry : entries)
++            args.push_back(entry.second);
++        std::vector<char*> argv;
++        for (auto& a : args)
++            argv.push_back(a.data());
++        argv.push_back(nullptr);
++        if (g_crtPickerPid > 0)
++            kill(-g_crtPickerPid, SIGTERM);
++        posix_spawnattr_t attr;
++        posix_spawnattr_init(&attr);
++        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
++        posix_spawnattr_setpgroup(&attr, 0);
++        pid_t pid = 0;
++        if (posix_spawn(&pid, "/bin/sh", nullptr, &attr, argv.data(), ::environ) == 0)
++            g_crtPickerPid = pid;
++        posix_spawnattr_destroy(&attr);
+     } else {
+         cycleCrtPreset();
+     }
+@@ -8769,6 +8851,22 @@ static int luaConfig(lua_State* L) {
+           return luaL_error(L,"hypr3d.config: invalid PiP Theatre settings");
+          g_cfgTheatreDistance=distance;g_cfgTheatreWidth=width;g_cfgTheatreFill=fill;g_cfgTheatreSeconds=seconds;g_cfgPiPRasterMax=budget;
+         }
++        {
++         // MiOS room input: face-the-viewer. Validated as one group; a partial table keeps the other values.
++         std::string scope;
++         float nearM=g_cfgFaceDistance,theatre=g_cfgTheatreFaceDistance,ease=g_cfgFaceSeconds,band=g_cfgFaceHysteresis;
++         if(!SET_STRING(idx,"face_viewer",scope,"windows.face_viewer") ||
++            !SET_NUM(idx,"face_distance",nearM,"windows.face_distance") || !std::isfinite(nearM) || nearM<0 || nearM>100 ||
++            !SET_NUM(idx,"theatre_face_distance",theatre,"windows.theatre_face_distance") || !std::isfinite(theatre) || theatre<0 || theatre>100 ||
++            !SET_NUM(idx,"face_seconds",ease,"windows.face_seconds") || !std::isfinite(ease) || ease<0.01f || ease>5 ||
++            !SET_NUM(idx,"face_hysteresis",band,"windows.face_hysteresis") || !std::isfinite(band) || band<0 || band>10)
++          return luaL_error(L,"hypr3d.config: invalid face-the-viewer settings (face_viewer pip|all|off, face_distance/theatre_face_distance 0..100 m, face_seconds 0.01..5, face_hysteresis 0..10 m)");
++         if(scope=="pip") g_cfgFaceViewer=EFaceViewer::PiP;
++         else if(scope=="all") g_cfgFaceViewer=EFaceViewer::All;
++         else if(scope=="off") g_cfgFaceViewer=EFaceViewer::Off;
++         else if(!scope.empty()) return luaL_error(L,"hypr3d.config: windows.face_viewer must be \"pip\", \"all\" or \"off\"");
++         g_cfgFaceDistance=nearM;g_cfgTheatreFaceDistance=theatre;g_cfgFaceSeconds=ease;g_cfgFaceHysteresis=band;
++        }
+         if (!SET_NUM(idx, "window_scale", g_cfgWindowScale,
+                      "windows.window_scale"))
+             return luaL_error(L, "hypr3d.config: windows.window_scale must be a number");
+@@ -8944,6 +9042,13 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: player.flying must be a boolean");
+         if (!SET_BOOL(idx, "walk_bob", g_cfgWalkBob, "player.walk_bob"))
+             return luaL_error(L, "hypr3d.config: player.walk_bob must be a boolean");
++        {
++            // MiOS room input: the recenter verb's ease time constant (seconds).
++            float rs = g_cfgRecenterSeconds;
++            if (!SET_NUM(idx, "recenter_seconds", rs, "player.recenter_seconds") || !std::isfinite(rs) || rs < 0.01f || rs > 5.f)
++                return luaL_error(L, "hypr3d.config: player.recenter_seconds must be a number in 0.01..5");
++            g_cfgRecenterSeconds = rs;
++        }
+         if (!SET_BOOL(idx, "collision", g_playerCollision, "player.collision"))
+             return luaL_error(L, "hypr3d.config: player.collision must be a boolean");
+         {
+@@ -10258,6 +10363,152 @@ static SDispatchResult dispatchClick(std::string args) {
+     return {};
+ }
+ 
++// MiOS room input: [keybindings.global.controller.room] verbs (spec P1, C-14a). Room-only: while the room does not
++// own input, or a captured app does (the ownership contract), they change nothing.
++static void reapCrtPicker() {
++    if (g_crtPickerPid <= 0)
++        return;
++    int status = 0;
++    const pid_t r = waitpid(g_crtPickerPid, &status, WNOHANG);
++    if (r == g_crtPickerPid || (r < 0 && errno == ECHILD))
++        g_crtPickerPid = 0;
++}
++
++// cancel: back out ONE level, innermost first -- an active grab or resize, then the CRT window picker, then the
++// room cursor (typing mode back to the camera). Returns what it cancelled ("grab", "resize", "picker", "cursor",
++// "none").
++static std::string roomCancel() {
++    if (!ownsInput() || appOwnsInput())
++        return "none";
++    if (g_resize.active || (g_pointerDown && g_pointerGesture == EPointerGesture::ResizeReal)) {
++        resetPointerGesture();
++        damageCurrentMonitor();
++        return "resize";
++    }
++    if (g_world.dragActive() || (g_pointerDown && g_pointerGesture != EPointerGesture::None)) {
++        resetPointerGesture();
++        damageCurrentMonitor();
++        return "grab";
++    }
++    reapCrtPicker();
++    if (g_crtPickerPid > 0) {
++        kill(-g_crtPickerPid, SIGTERM);
++        reapCrtPicker();
++        g_crtPickerPid = 0; // reaped later by the frame pump if still exiting
++        return "picker";
++    }
++    if (g_keyboardMode == EKeyboardMode::Window) {
++        setKeyboardMode(EKeyboardMode::Space);
++        damageCurrentMonitor();
++        return "cursor";
++    }
++    return "none";
++}
++
++// sprint: "toggle" (default), "on" or "off". The latch runs at the keyboard sprint speed until it is turned off or
++// the room closes. Returns the new state.
++static bool roomSprint(const std::string& arg) {
++    if (!ownsInput() || appOwnsInput())
++        return g_sprintLatched;
++    if (arg == "on" || arg == "1" || arg == "true")
++        g_sprintLatched = true;
++    else if (arg == "off" || arg == "0" || arg == "false")
++        g_sprintLatched = false;
++    else
++        g_sprintLatched = !g_sprintLatched;
++    notify(std::string("[hypr3d] sprint ") + (g_sprintLatched ? "on" : "off"), CHyprColor{0.2f, 0.8f, 0.4f, 1.0f});
++    damageCurrentMonitor();
++    return g_sprintLatched;
++}
++
++// recenter: ease the camera onto the room -- the focused room window, else the window aim focus last selected
++// (looking away clears focus), else the nearest room window, else the room's group frame, else just level the view.
++// Returns false when the room does not own input.
++static bool roomRecenter() {
++    if (!ownsInput() || appOwnsInput())
++        return false;
++    auto& cam = g_scene.camera();
++    const FaceViewer::SAngles now{cam.yaw, cam.pitch};
++    FaceViewer::SAngles target{cam.yaw, 0.f};
++    const World3D::SEntity* E = nullptr;
++    if (const auto W = Compat::focusedWindow())
++        E = g_world.find(Compat::windowId(W));
++    // Looking away clears aim focus: then the window aim focus last selected, else the nearest room window.
++    if (!E && g_recenterAnchor)
++        E = g_world.find(g_recenterAnchor);
++    if (!E) {
++        float best = INFINITY;
++        for (const auto& e : g_world.entities()) {
++            const auto W = Compat::findWindowById(e.id);
++            if (!W || !W->m_isMapped)
++                continue;
++            const Vec3 d = e.center - cam.position;
++            const float dist = d.x * d.x + d.y * d.y + d.z * d.z;
++            if (dist < best) {
++                best = dist;
++                E = &e;
++            }
++        }
++    }
++    if (E)
++        target = FaceViewer::lookAt(cam.position.x, cam.position.y, cam.position.z, E->center.x, E->center.y, E->center.z,
++                                    Camera::kPitchLimit, target);
++    else if (g_groupFrame.valid)
++        target = FaceViewer::lookAt(cam.position.x, cam.position.y, cam.position.z, g_groupFrame.P0.x, g_groupFrame.P0.y,
++                                    g_groupFrame.P0.z, Camera::kPitchLimit, target);
++    (void)now;
++    g_recenter = SRecenter{true, target.yaw, target.pitch, 6.f * g_cfgRecenterSeconds + 0.5f};
++    damageCurrentMonitor();
++    return true;
++}
++
++static void recenterStep(float dt) {
++    if (!g_recenter.active)
++        return;
++    if (!ownsInput() || appOwnsInput()) {
++        g_recenter = {};
++        return;
++    }
++    auto& cam = g_scene.camera();
++    const float alpha = FaceViewer::easeAlpha(dt, g_cfgRecenterSeconds);
++    const float dyaw = FaceViewer::wrapPi(g_recenter.yaw - cam.yaw), dpitch = g_recenter.pitch - cam.pitch;
++    cam.applyLook(dyaw * alpha, dpitch * alpha);
++    g_recenter.left -= std::clamp(dt, 0.f, 0.1f);
++    if ((std::fabs(dyaw) < 1e-3f && std::fabs(dpitch) < 1e-3f) || g_recenter.left <= 0.f)
++        g_recenter.active = false;
++    damageCurrentMonitor();
++}
++
++static std::string trimArg(std::string args) {
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
++        args.erase(args.begin());
++    while (!args.empty() && std::isspace(static_cast<unsigned char>(args.back())))
++        args.pop_back();
++    return args;
++}
++
++static SDispatchResult dispatchCancel(std::string) {
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    roomCancel();
++    return {};
++}
++
++static SDispatchResult dispatchSprint(std::string args) {
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    const auto arg = trimArg(args);
++    roomSprint(arg.empty() ? "toggle" : arg);
++    return {};
++}
++
++static SDispatchResult dispatchRecenter(std::string) {
++    if (!ownsInput())
++        return {.success = false, .error = "hypr3d not active or not owning input"};
++    roomRecenter();
++    return {};
++}
++
+ static SDispatchResult dispatchView(std::string args) {
+     while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
+         args.erase(args.begin());
+@@ -10321,7 +10572,14 @@ static int luaExportLayout(lua_State* L) {
+         << "\",\"fullscreen_phase\":" << static_cast<int>(g_fsPhase) << ",\"view_morph\":" << static_cast<int>(g_viewMorph) << ",\"owns_input\":" << (ownsInput()?"true":"false") << ",\"camera\":{\"x\":" << cam.position.x
+         << ",\"y\":" << cam.position.y << ",\"z\":" << cam.position.z
+         << ",\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch
+-        << ",\"mode\":" << g_viewMode << "},\"windows\":[";
++        << ",\"mode\":" << g_viewMode << "},\"room_input\":{\"sprint\":" << (g_sprintLatched?"true":"false")
++        << ",\"gesture\":" << static_cast<int>(g_pointerDown ? g_pointerGesture : EPointerGesture::None)
++        << ",\"resize\":" << (g_resize.active?"true":"false") << ",\"drag\":" << (g_world.dragActive()?"true":"false")
++        << ",\"cursor\":" << (g_keyboardMode==EKeyboardMode::Window?"true":"false") << ",\"picker\":" << (g_crtPickerPid>0?"true":"false")
++        << ",\"recentering\":" << (g_recenter.active?"true":"false")
++        << ",\"face_viewer\":\"" << (g_cfgFaceViewer==EFaceViewer::Off?"off":g_cfgFaceViewer==EFaceViewer::All?"all":"pip")
++        << "\",\"face_distance\":" << g_cfgFaceDistance << ",\"theatre_face_distance\":" << g_cfgTheatreFaceDistance
++        << ",\"face_seconds\":" << g_cfgFaceSeconds << ",\"face_hysteresis\":" << g_cfgFaceHysteresis << "},\"windows\":[";
+     bool first=true;
+     for (const auto& e:g_world.entities()) {
+         if (!first) out << ',';
+@@ -10333,7 +10591,16 @@ static int luaExportLayout(lua_State* L) {
+             << ",\"scale\":" << e.spawnScale << ",\"left\":" << box.x
+             << ",\"top\":" << box.y << ",\"width\":" << box.w
+             << ",\"height\":" << box.h << ",\"rendered_width\":" << e.width << ",\"rendered_height\":" << e.height
+-            << ",\"shader_composited\":" << (g_shaderComposited.contains(e.id)?"true":"false") << '}';
++            << ",\"shader_composited\":" << (g_shaderComposited.contains(e.id)?"true":"false");
++        {
++            const auto W=Compat::findWindowById(e.id);
++            const auto F=g_faceViewer.find(e.id);
++            out << ",\"pip\":" << (W && managedPiP(W)?"true":"false")
++                << ",\"facing\":" << (F!=g_faceViewer.end() && F->second.facing?"true":"false");
++            if (F!=g_faceViewer.end() && F->second.init)
++                out << ",\"base_yaw\":" << F->second.base.yaw << ",\"base_pitch\":" << F->second.base.pitch;
++        }
++        out << '}';
+     }
+     out << "]}";
+     const auto json=out.str();lua_pushlstring(L,json.data(),json.size());return 1;
+@@ -10472,6 +10739,27 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick))
+         throw std::runtime_error("[hypr3d] failed to register click dispatcher");
+ 
++    // MiOS room input: the [keybindings.global.controller.room] verbs, as dispatchers and Lua functions.
++    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:cancel", dispatchCancel) ||
++        !HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:sprint", dispatchSprint) ||
++        !HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:recenter", dispatchRecenter))
++        throw std::runtime_error("[hypr3d] failed to register room input dispatchers");
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "cancel", [](lua_State* L) -> int {
++            const auto what = roomCancel();
++            lua_pushlstring(L, what.data(), what.size());
++            return 1;
++        }) ||
++        !HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "sprint", [](lua_State* L) -> int {
++            const std::string arg = lua_gettop(L) >= 1 && lua_isstring(L, 1) ? trimArg(lua_tostring(L, 1)) : "toggle";
++            lua_pushboolean(L, roomSprint(arg.empty() ? "toggle" : arg));
++            return 1;
++        }) ||
++        !HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "recenter", [](lua_State* L) -> int {
++            lua_pushboolean(L, roomRecenter());
++            return 1;
++        }))
++        throw std::runtime_error("[hypr3d] failed to register Lua room input verbs");
++
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "jump", [](lua_State* L) -> int {
+         std::string arg;
+         if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
+@@ -10747,6 +11035,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ 
+ APICALL EXPORT void PLUGIN_EXIT() {
+     // No event may call back into an unmapped plugin, even after a failed reload.
++    if (g_crtPickerPid > 0) // MiOS room input: the picker child never outlives the plugin
++        kill(-g_crtPickerPid, SIGTERM);
+     g_pipFullscreenListener.reset();
+     g_renderPreListener.reset();
+     g_renderStageListener.reset();
+diff --git a/tests/mios-face-viewer.cpp b/tests/mios-face-viewer.cpp
+new file mode 100644
+index 0000000..ba303b4
+--- /dev/null
++++ b/tests/mios-face-viewer.cpp
+@@ -0,0 +1,127 @@
++// AI-hint: Executable positive/negative controls for PiP face-the-viewer (viewing distance, hysteresis, eased follow, return to the placed pose) and the room recenter look-at.
++// AI-related: src/World/FaceViewer.hpp, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.config.windows]
++#include "../src/World/FaceViewer.hpp"
++#include <cmath>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++
++using namespace H3D::FaceViewer;
++
++static void check(bool v, const std::string& what) {
++    if (!v)
++        throw std::runtime_error("face-viewer regression: " + what);
++}
++
++// Angle (degrees) between the window normal and the direction from the window centre to the eye.
++static float offAxisDeg(const SPose& p, float cx, float cy, float cz, float ex, float ey, float ez) {
++    float nx, ny, nz;
++    normalOf(p.yaw, p.pitch, nx, ny, nz);
++    float dx = ex - cx, dy = ey - cy, dz = ez - cz;
++    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
++    dx /= len; dy /= len; dz /= len;
++    return std::acos(std::clamp(nx * dx + ny * dy + nz * dz, -1.f, 1.f)) * 180.f / kPi;
++}
++
++static float poseDeltaDeg(const SPose& a, const SPose& b) {
++    float ax, ay, az, bx, by, bz;
++    normalOf(a.yaw, a.pitch, ax, ay, az);
++    normalOf(b.yaw, b.pitch, bx, by, bz);
++    return std::acos(std::clamp(ax * bx + ay * by + az * bz, -1.f, 1.f)) * 180.f / kPi;
++}
++
++int main() {
++    const float dt = 1.f / 60.f, tau = 0.2f, hyst = 0.1f;
++    // faceToward points the normal at the eye, for every direction (including straight up / down: pitch clamp).
++    for (float ex : {-3.f, 0.f, 2.f})
++        for (float ey : {-1.f, 0.f, 1.5f})
++            for (float ez : {-2.f, 0.5f, 4.f}) {
++                const auto a = faceToward(0, 0, 0, ex, ey, ez, {});
++                const float off = offAxisDeg({a.yaw, a.pitch, 0}, 0, 0, 0, ex, ey, ez);
++                const float elev = std::asin(std::fabs(ey) / std::sqrt(ex * ex + ey * ey + ez * ez));
++                check(elev > kPitchLimit || off < 0.1f, "faceToward aims the normal at the eye");
++            }
++    // lookAt is the camera convention: forward = (sin y cos p, sin p, -cos y cos p)
++    {
++        const auto l = lookAt(1, 2, 3, 4, 1, -1, 1.5f, {});
++        const float fx = std::sin(l.yaw) * std::cos(l.pitch), fy = std::sin(l.pitch), fz = -std::cos(l.yaw) * std::cos(l.pitch);
++        const float dx = 3, dy = -1, dz = -4, len = std::sqrt(dx * dx + dy * dy + dz * dz);
++        check(std::fabs(fx - dx / len) < 1e-5f && std::fabs(fy - dy / len) < 1e-5f && std::fabs(fz - dz / len) < 1e-5f, "lookAt");
++    }
++    // hysteresis: starts at <= limit, ends only beyond limit + band; limit <= 0 never faces
++    check(withinViewingDistance(2.0f, 2.f, hyst, false), "facing starts at the limit");
++    check(!withinViewingDistance(2.05f, 2.f, hyst, false), "not inside before it starts");
++    check(withinViewingDistance(2.05f, 2.f, hyst, true), "the band keeps it facing");
++    check(!withinViewingDistance(2.11f, 2.f, hyst, true), "facing ends beyond the band");
++    check(!withinViewingDistance(0.1f, 0.f, hyst, false) && !withinViewingDistance(NAN, 2.f, hyst, false), "disabled / invalid");
++
++    // A PiP placed at the origin facing +Z (the room's spawn pose), the viewer walks around it.
++    const SPose placed{0.f, 0.f, 0.f};
++    SState s;
++    SPose p = placed;
++    float maxStep = 0.f;
++    // 1) viewer 1.5 m away, 60 degrees to the side: inside 2 m -> the PiP turns to face the eye, smoothly
++    float ex = 1.5f * std::sin(60.f * kPi / 180.f), ey = 0.3f, ez = 1.5f * std::cos(60.f * kPi / 180.f);
++    check(offAxisDeg(p, 0, 0, 0, ex, ey, ez) > 55.f, "precondition: the placed pose does not face the side viewer");
++    for (int i = 0; i < 120; ++i) {
++        const SPose before = p;
++        step(s, p, 0, 0, 0, ex, ey, ez, 2.f, hyst, tau, dt);
++        maxStep = std::max(maxStep, poseDeltaDeg(before, p));
++    }
++    check(offAxisDeg(p, 0, 0, 0, ex, ey, ez) < 0.5f, "inside the viewing distance the normal faces the camera");
++    check(maxStep < 6.f, "no snapping: <= 6 deg per 60 Hz frame for a 61 deg turn (tau 0.2 s)");
++    // 2) the viewer keeps moving (orbiting at 1.2 m): the PiP follows, lagging only by the ease
++    float worstFollow = 0.f;
++    for (int i = 0; i < 240; ++i) {
++        const float ang = (60.f - i * 0.25f) * kPi / 180.f;
++        ex = 1.2f * std::sin(ang); ez = 1.2f * std::cos(ang); ey = 0.2f;
++        step(s, p, 0, 0, 0, ex, ey, ez, 2.f, hyst, tau, dt);
++        if (i > 60)
++            worstFollow = std::max(worstFollow, offAxisDeg(p, 0, 0, 0, ex, ey, ez));
++    }
++    check(worstFollow < 4.f, "follows the moving camera (steady-state lag < 4 deg at 15 deg/s)");
++    // 3) the viewer leaves (3 m, outside 2 m + band): the PiP eases back to the pose it was placed with
++    ex = 3.f * std::sin(1.f); ez = 3.f * std::cos(1.f); ey = 0.f;
++    maxStep = 0.f;
++    for (int i = 0; i < 180; ++i) {
++        const SPose before = p;
++        step(s, p, 0, 0, 0, ex, ey, ez, 2.f, hyst, tau, dt);
++        maxStep = std::max(maxStep, poseDeltaDeg(before, p));
++    }
++    check(poseDeltaDeg(p, placed) < 0.05f, "outside the viewing distance it returns to its placed pose");
++    check(offAxisDeg(p, 0, 0, 0, ex, ey, ez) > 50.f, "NEGATIVE: outside the distance it does not face the camera");
++    check(maxStep < 6.f, "the return is eased too");
++    // 4) Theatre distance: 3 m faces with a 4 m limit, not with the 2 m one
++    {
++        SState a, b;
++        SPose pa = placed, pb = placed;
++        for (int i = 0; i < 240; ++i) {
++            step(a, pa, 0, 0, 0, ex, ey, ez, 4.f, hyst, tau, dt);
++            step(b, pb, 0, 0, 0, ex, ey, ez, 2.f, hyst, tau, dt);
++        }
++        check(offAxisDeg(pa, 0, 0, 0, ex, ey, ez) < 0.5f, "Theatre 4 m: faces a viewer at 3 m");
++        check(poseDeltaDeg(pb, placed) < 1e-3f, "regular 2 m: a viewer at 3 m leaves the PiP as placed");
++    }
++    // 5) another writer re-places the window (Theatre / restore): it becomes the new base, approached smoothly
++    {
++        SState c;
++        SPose pc = placed;
++        step(c, pc, 0, 0, 0, 0, 0, 5, 2.f, hyst, tau, dt); // far viewer: settles on the placed pose
++        SPose moved{1.0f, 0.2f, 0.f};
++        pc = moved;
++        step(c, pc, 0, 0, 0, 0, 0, 5, 2.f, hyst, tau, dt);
++        check(poseDeltaDeg(pc, placed) < 6.f, "a new base is eased toward, not jumped to");
++        for (int i = 0; i < 200; ++i)
++            step(c, pc, 0, 0, 0, 0, 0, 5, 2.f, hyst, tau, dt);
++        check(poseDeltaDeg(pc, moved) < 0.05f, "and becomes the rest pose");
++        // adopt(): a drag owns the pose; it becomes the base and facing restarts from outside
++        c.facing = true;
++        adopt(c, SPose{0.5f, 0.f, 0.f});
++        check(!c.facing && samePose(c.base, SPose{0.5f, 0.f, 0.f}), "adopt");
++    }
++    // 6) NEGATIVE control of the smoothing itself: an un-eased (snapping) follow fails the per-frame bound
++    check(easeAlpha(dt, tau) < 0.1f && easeAlpha(1.0f, tau) < 0.40f && easeAlpha(0.f, tau) == 0.f,
++          "eased: a 60 Hz frame covers < 10 % of the gap; a 1 s stall is clamped to one 0.1 s step");
++    std::cout << "face-viewer: facing inside the distance, follow, eased return, Theatre limit, hysteresis, look-at passed\n";
++    return 0;
++}

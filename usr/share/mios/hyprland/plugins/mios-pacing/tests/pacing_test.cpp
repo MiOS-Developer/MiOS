@@ -1,6 +1,7 @@
 // AI-hint: Host tests for mios-pacing's pure frame gate (pacing.hpp) with a simulated clock: a cap holds the admitted
 //          rate at 60/90/120 within 1% whatever the request rate, deferred frames rescheduled at the deadline lose
-//          nothing, no cap admits everything, idle gaps resync, exclusions and the uncapped reasons (negative controls).
+//          nothing, no cap admits everything, idle gaps resync, exclusions and the uncapped reasons (negative controls);
+//          the focused window's committed-frame rate (fastest surface of its tree; non-frame commits never count).
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp, usr/share/mios/hyprland/plugins/mios-pacing/Makefile
 #include "../pacing.hpp"
 
@@ -108,6 +109,47 @@ int main() {
     for (int i = 0; i <= 90; ++i)
         m.tick(t + i * P);
     CHECK(std::abs(m.fps(t + 90 * P) - 90.0) < 1.0, "meter reads 90 (%.2f)", m.fps(t + 90 * P));
+
+    // Focused-window rate: a 24 FPS video subsurface under an idle toplevel is a 24 FPS window.
+    {
+        SWindowRate r;
+        const auto  V = periodOf(24);
+        for (int i = 0; i <= 48; ++i)
+            r.tick(0x2000, t + i * V);
+        r.tick(0x1000, t); // the toplevel's one configure frame
+        CHECK(std::abs(r.fps(t + 48 * V) - 24.0) < 0.5, "video subsurface: 24 (%.2f)", r.fps(t + 48 * V));
+        CHECK(r.surfaces.size() == 1, "the idle toplevel dropped out (%zu)", r.surfaces.size());
+        CHECK(r.frames == 50, "every frame counted (%llu)", static_cast<unsigned long long>(r.frames));
+        // An idle window reads 0 after a second; nothing is tracked any more.
+        CHECK(r.fps(t + 48 * V + std::chrono::milliseconds(1500)) == 0.0, "idle: 0");
+        CHECK(r.surfaces.empty(), "idle: no surface left");
+    }
+    // A toplevel repainting at 60 around a 30 FPS video is a 60 FPS window (the fastest surface; never the sum).
+    {
+        SWindowRate r;
+        const auto  A = periodOf(60), B = periodOf(30);
+        for (int i = 0; i <= 120; ++i)
+            r.tick(0x1000, t + i * A);
+        for (int i = 0; i <= 60; ++i)
+            r.tick(0x2000, t + i * B);
+        const double F = r.fps(t + 120 * A);
+        CHECK(std::abs(F - 60.0) < 0.5, "fastest surface: 60 (%.2f)", F);
+        r.clear();
+        CHECK(r.fps(t) == 0.0 && r.frames == 0, "clear: a new focus starts at nothing");
+    }
+    // A 92 FPS game toplevel.
+    {
+        SWindowRate r;
+        const auto  G = periodOf(92);
+        for (int i = 0; i <= 184; ++i)
+            r.tick(0x1000, t + i * G);
+        CHECK(std::abs(r.fps(t + 184 * G) - 92.0) < 0.5, "game: 92 (%.2f)", r.fps(t + 184 * G));
+    }
+    // What a frame is (negative controls: state-only commits, an unmap, a damage-less re-attach).
+    CHECK(isFrame(true, true, true), "new buffer with damage: a frame");
+    CHECK(!isFrame(false, true, true), "no new buffer: not a frame");
+    CHECK(!isFrame(true, false, false), "null buffer (unmap): not a frame");
+    CHECK(!isFrame(true, true, false), "buffer without damage: not a frame");
 
     if (g_fail) {
         std::printf("%d failure(s)\n", g_fail);

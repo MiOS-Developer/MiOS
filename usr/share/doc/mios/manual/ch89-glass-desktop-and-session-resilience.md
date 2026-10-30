@@ -299,6 +299,25 @@ Modern browsers distributed as Flatpaks (such as Zen Browser, `app.zen_browser.z
 - Binds host copies of `libdbusmenu-glib` and `libdbusmenu-gtk3` into `~/.var/app/app.zen_browser.zen/mios-dbusmenu/` via Flatpak filesystem overrides.
 - Injects a per-user `LD_LIBRARY_PATH` wrapper, enabling sandboxed Gecko/Zen instances to export menubars to `miosd` and render top-bar pills identically to native host software.
 
+#### Frame-Rate Readout: Host FPS / Window FPS
+The status island's `fps` item (`[desktop.topbar.visibility].fps`) reads `<host> FPS/<window> FPS`, for example
+`144 FPS/92 FPS`. The first number is the output's rendered rate. The second is the focused window's own frame rate:
+the window that has the controls, whatever its kind (native, Flatpak, game, VM, remote, nested session, PiP, Theatre;
+in Hypr3D the room focuses the window it aims at or has captured).
+- The compositor plugin `mios-pacing` (`usr/share/mios/hyprland/plugins/mios-pacing`) follows the focused window and
+  counts the client commits of its surface tree that attach a buffer with damage. The tree is the toplevel plus every
+  subsurface, because a video player or a game may present on a subsurface. The window's rate is its fastest surface
+  over the last second. Only the focused tree is listened to, so other windows cost nothing per commit.
+- `hyprctl mios-pacing status` carries it as `"window": {address, class, output, fps, frames, surfaces, follows}`, or
+  `null` with nothing focused. `hyprctl mios-pacing window` prints that object alone.
+- The shell samples the status once per `[desktop.topbar].sample_interval_ms`. The window part shows on the island of
+  the output the window is on, reads `0 FPS` for a window that presents nothing, and is hidden when it is unknown:
+  nothing focused, a plugin without the meter, or `[desktop.topbar].window_fps = false`.
+- It works in 2D and in the Hypr3D room, where windows are drawn as textures but their own commits are still counted,
+  and in nested sessions. A nested session's island (`Nested.qml`) reads its own compositor.
+- Known Hypr3D limit: a GStreamer `waylandsink` video subsurface stops presenting when the room opens, and the
+  meter then reports it truthfully as 0.
+
 ---
 
 ### <a name="89_float_first_window_placement"></a>89.4 Float-First Window Placement & Automated Tiling

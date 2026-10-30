@@ -191,7 +191,7 @@ class Static(unittest.TestCase):
         self.assertTrue(h["config"]["render"]["texel_sharp"])
         # no hard-coded window placement left in the room config: the policy derives it per output
         self.assertNotIn("window_scale", h["config"].get("windows", {}))
-        patches = [p for p in h["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p]  # trailing delta patch
+        patches = [p for p in h["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p and "room-input" not in p]  # trailing delta patch
         self.assertEqual(len(patches), len(set(patches)))
         edge = patches.index("usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch")
         self.assertLess(edge, len(patches) - 2)
