@@ -444,9 +444,18 @@ class TestGamePlacementLive(unittest.TestCase):
         p, _ = self.probe('steam_app_4106', '--fixed', '--no-adapt', '--size', '480x320', '--color', '40a0e0')
         c = self.settled(lambda c: c['class'] == 'steam_app_4106')
         self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x=840, y=600, window='address:{c['address']}'}}))")
-        c = self.settled(lambda c: c['class'] == 'steam_app_4106', 1.2)
+        # The restore waits for settle_ms and for every pointer button (the host's evdev) to be released, so allow a
+        # few seconds; the old code never restores at all.
+        t0, latency = time.monotonic(), None
+        while time.monotonic() - t0 < 4.0:
+            c = self.wait_for(lambda c: c['class'] == 'steam_app_4106', 1)
+            if c['size'] == [480, 320] and time.monotonic() - t0 > 0.1:
+                latency = round(time.monotonic() - t0, 2)
+                break
+            time.sleep(0.05)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4106', 0.5)
         frac = black_fraction(self.shot('pin-after'), c['at'] + c['size'], self.scale)
-        (self.out / 'pin.json').write_text(json.dumps({'black': frac, 'client': c}))
+        (self.out / 'pin.json').write_text(json.dumps({'black': frac, 'restore_latency_s': latency, 'client': c}))
         self.assertEqual(c['size'], [480, 320], f'fixed-size game grown to {c["size"]} (black {frac})')
         self.assertLess(frac, 0.05, f'black area after resize: {frac}')
         self.stop(p)
