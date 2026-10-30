@@ -629,7 +629,7 @@ QS.PanelWindow {
                     visible: pill.shown("network")
                     text: pill.online ? "\u{f06f3}" : "\u{f06f4}"
                     color: pill.online ? pill.theme.fg : pill.theme.muted
-                    Hit { onClicked: pill.run("network") }
+                    Hit { onClicked: pill.togglePopup("network", "network") }
                 }
                 Glyph {
                     id: soundGlyph
@@ -640,7 +640,7 @@ QS.PanelWindow {
                     Hit {
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton && pill.sink.audio) pill.sink.audio.muted = !pill.sink.audio.muted
-                            else pill.run("sound")
+                            else pill.togglePopup("sound", "sound")
                         }
                         onWheel: wheel => pill.volumeWheel(wheel.angleDelta.y)
                     }
@@ -739,7 +739,7 @@ QS.PanelWindow {
                     color: pill.theme.fg
                     Accessible.name: "Volume " + (pill.volumeMuted ? "muted" : pill.volumePct + "%")
                 }
-                Hit { onClicked: pill.run("sound") }
+                Hit { onClicked: pill.togglePopup("sound", "sound") }
             }
         }
         Tab {
@@ -938,6 +938,8 @@ QS.PanelWindow {
         enabled: pill.onFocusedScreen
         function openCalendar(): void { pill.popup = "calendar" }
         function openPower(): void { pill.popup = "power" }
+        function openSound(): void { pill.popup = "sound" }
+        function openNetwork(): void { pill.popup = "network" }
         function openSysmon(): void { pill.popup = "sysmon" }
         function openSettings(): void { pill.popup = "settings" }
         function openBatteries(): void { pill.popup = "batteries" }
@@ -968,7 +970,7 @@ QS.PanelWindow {
     }
     // A click anywhere outside the island and its open popup dismisses the popup.
     HyprlandFocusGrab {
-        windows: [pill, calendarPanel, powerPanel, controlsPanel, appMenuPanel, sysmonPanel, settingsPanel, batteriesPanel]
+        windows: [pill, calendarPanel, powerPanel, soundPanel, networkPanel, controlsPanel, appMenuPanel, sysmonPanel, settingsPanel, batteriesPanel]
         active: pill.popup !== ""
         onCleared: pill.popup = ""
     }
@@ -1199,81 +1201,209 @@ QS.PanelWindow {
         }
     }
 
-    // Power, session and system settings, grown out of the power glyph.
-    MeltPopup {
-        id: powerPanel
+    // ---- the island's modular popups (sound, network, power): [desktop.topbar.popups.<name>.modules] -----------------
+    // Each popup is its SSOT modules, enabled ones only, in their `order`, separated by a hairline; every row is bar tall
+    // (the design language), so the popups are no taller per row than the island and the app-menu pills.
+    function modulesOf(name) {
+        const m = (((bar.popups || {})[name]) || {}).modules || {}
+        return Object.keys(m).filter(k => m[k] && m[k].enabled !== false)
+                     .sort((a, b) => (Number(m[a].order) || 0) - (Number(m[b].order) || 0))
+    }
+    // Opens a modular popup, or runs its settings command when every module is switched off.
+    function togglePopup(name, fallback) {
+        if (!modulesOf(name).length) { run(fallback); return }
+        popup = popup === name ? "" : name
+    }
+    PwObjectTracker { objects: [Pipewire.defaultAudioSource] }
+    readonly property var source: Pipewire.defaultAudioSource
+    function nodeName(n) { return !n ? "" : (n.description || n.nickname || n.name || "") }
+
+    component ActionRow: GlassSurface {
+        id: actionRow
+        property string key: ""
+        property string icon: ""
+        property string label: ""
+        width: parent ? parent.width : 0
+        height: Glass.bar
+        color: actionHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            x: Glass.gap
+            spacing: Glass.gap
+            Glyph { text: actionRow.icon }
+            Glyph { text: actionRow.label }
+        }
+        MouseArea { id: actionHit; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: pill.run(actionRow.key) }
+    }
+    component ActionList: Column {
+        id: actionList
+        property var items: []
+        width: parent ? parent.width : 0
+        Repeater {
+            model: actionList.items.filter(it => !!pill.commands[it.key])
+            delegate: ActionRow { required property var modelData; key: modelData.key; icon: modelData.icon; label: modelData.label }
+        }
+    }
+    // A level track for a PipeWire node (sink or source): mute toggle, a capsule track (click / drag / wheel, capped at
+    // [desktop.topbar] volume_max_pct) and the percentage.
+    component VolumeRow: Item {
+        id: vr
+        property var node: null
+        readonly property var audio: node ? node.audio : null
+        width: parent ? parent.width : 0
+        height: Glass.bar
+        Glyph {
+            id: muteGlyph
+            x: Glass.gap
+            width: Glass.bar
+            text: !vr.audio ? "" : vr.audio.muted ? "\u{f075f}" : "\u{f057e}"
+            color: vr.audio && vr.audio.muted ? pill.theme.muted : pill.theme.fg
+            Hit { onClicked: if (vr.audio) vr.audio.muted = !vr.audio.muted }
+        }
+        Glyph {
+            id: pctGlyph
+            anchors.right: parent.right
+            anchors.rightMargin: Glass.gap
+            width: Glass.bar + Glass.gap
+            horizontalAlignment: Text.AlignRight
+            text: vr.audio ? Math.round(vr.audio.volume * 100) + "%" : ""
+        }
+        GlassSurface {
+            id: track
+            anchors.left: muteGlyph.right
+            anchors.right: pctGlyph.left
+            anchors.leftMargin: Glass.inset
+            anchors.rightMargin: Glass.inset
+            anchors.verticalCenter: parent.verticalCenter
+            height: Glass.inset
+            color: pill.theme.outlineColor
+            GlassSurface {
+                height: parent.height
+                width: parent.width * Math.max(0, Math.min(1, vr.audio ? vr.audio.volume / pill.volumeMax : 0))
+                color: vr.audio && vr.audio.muted ? pill.theme.muted : pill.theme.accent
+            }
+            MouseArea {
+                anchors.fill: parent
+                anchors.topMargin: -Glass.gap
+                anchors.bottomMargin: -Glass.gap
+                cursorShape: Qt.PointingHandCursor
+                function setAt(x) { if (vr.audio) vr.audio.volume = Math.max(0, Math.min(pill.volumeMax, x / Math.max(1, width) * pill.volumeMax)) }
+                onPressed: mouse => setAt(mouse.x)
+                onPositionChanged: mouse => { if (pressed) setAt(mouse.x) }
+                onWheel: wheel => { if (vr.audio) vr.audio.volume = Math.max(0, Math.min(pill.volumeMax, vr.audio.volume + (wheel.angleDelta.y > 0 ? 1 : -1) * pill.volumeStepPct / 100)) }
+            }
+        }
+    }
+    component NodeModule: Column {
+        id: nm
+        property var node: null
+        property string title: ""
+        width: parent ? parent.width : 0
+        Glyph {
+            x: Glass.gap
+            width: parent.width - 2 * Glass.gap
+            text: nm.title + (nm.node ? " · " + pill.nodeName(nm.node) : " · none")
+            textFormat: Text.PlainText   // device names come from PipeWire: never markup
+            elide: Text.ElideRight
+            color: pill.theme.subtle
+        }
+        VolumeRow { node: nm.node; visible: !!nm.node }
+    }
+    // Every enabled module of one popup, in order, a hairline between modules.
+    component ModuleColumn: Column {
+        id: mc
+        property string popupName: ""
+        property var builders: ({})
+        Repeater {
+            model: pill.modulesOf(mc.popupName)
+            delegate: Column {
+                required property var modelData
+                required property int index
+                width: mc.width
+                Item {
+                    visible: index > 0
+                    width: parent.width
+                    height: visible ? Glass.gap : 0
+                    Rectangle { anchors.centerIn: parent; width: parent.width - 2 * Glass.gap; height: Glass.hairline; color: pill.theme.outlineColor }
+                }
+                Loader { width: parent.width; sourceComponent: mc.builders[modelData] || null }
+            }
+        }
+    }
+    component ModularPopup: MeltPopup {
+        id: mpop
+        property string name: ""
+        property var builders: ({})
         anchor.window: pill
         theme: pill.theme
-        trigger: powerGlyph
-        align: "right"
-        open: pill.popup === "power"
+        open: pill.popup === name
         duration: pill.popupMs
-        panelWidth: 240
-        readonly property var items: [
-            { key: "settings", icon: "\u{f0493}", label: "Settings" },
-            { key: "display", icon: "\u{f0379}", label: "Display" },
-            { key: "sound", icon: "\u{f057e}", label: "Sound" },
-            { key: "network", icon: "\u{f06f3}", label: "Network" },
-            { key: "power_settings", icon: "\u{f06a5}", label: "Power" },
-            { key: "account", icon: "\u{f0004}", label: "Account" },
-            { key: "", icon: "", label: "" },
-            { key: "lock", icon: "\u{f033e}", label: "Lock" },
-            { key: "logout", icon: "\u{f0343}", label: "Log out" },
-            { key: "suspend", icon: "\u{f04b2}", label: "Suspend" },
-            { key: "reboot", icon: "\u{f0709}", label: "Restart" },
-            { key: "poweroff", icon: "\u{f0425}", label: "Shut down" },
-        ]
-        readonly property real contentHeight: {
-            let h = 0
-            for (const it of items) {
-                if (!it.key) h += Glass.gap
-                else if (pill.commands[it.key]) h += Glass.bar
-            }
-            return Math.max(h, menu.implicitHeight)
+        panelWidth: 280
+        panelHeight: modules.implicitHeight + 2 * Glass.panelPad
+        ModuleColumn {
+            id: modules
+            x: Glass.panelPad
+            y: Glass.panelPad
+            width: mpop.panelWidth - 2 * Glass.panelPad
+            popupName: mpop.name
+            builders: mpop.builders
         }
-        panelHeight: contentHeight + 2 * Glass.panelPad
-        Item {
-            anchors.fill: parent
-            Column {
-                id: menu
-                x: Glass.panelPad
-                y: Glass.panelPad
-                width: parent.width - 2 * Glass.panelPad
-                Glyph { text: "This computer"; font.bold: true }
-                Repeater {
-                    model: powerPanel.items
-                    delegate: GlassSurface {
-                        required property var modelData
-                        width: menu.width
-                        height: modelData.key ? Glass.bar : Glass.gap
-                        visible: !modelData.key || !!pill.commands[modelData.key]
-                        color: rowHit.containsMouse && modelData.key ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
-                        Rectangle {
-                            visible: !modelData.key
-                            anchors.centerIn: parent
-                            width: parent.width - 2 * Glass.gap
-                            height: Glass.hairline
-                            color: pill.theme.outlineColor
-                        }
-                        Row {
-                            visible: !!modelData.key
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: Glass.gap
-                            spacing: Glass.gap
-                            Glyph { text: modelData.icon; height: parent.parent.height }
-                            Glyph { text: modelData.label; height: parent.parent.height }
-                        }
-                        MouseArea {
-                            id: rowHit
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            enabled: !!modelData.key
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: pill.run(modelData.key)
-                        }
-                    }
+    }
+
+    Component { id: soundOutputModule; NodeModule { title: "Output"; node: pill.sink } }
+    Component { id: soundInputModule; NodeModule { title: "Input"; node: pill.source } }
+    Component { id: soundSettingsModule; ActionList { items: [{ key: "sound", icon: "\u{f0493}", label: "Sound settings" }] } }
+    Component {
+        id: networkStatusModule
+        Column {
+            width: parent ? parent.width : 0
+            Glyph { x: Glass.gap; text: pill.online ? "Online" : "Offline"; font.bold: true; color: pill.online ? pill.theme.fg : pill.theme.muted }
+            Repeater {
+                model: Networking.devices.values
+                delegate: Row {
+                    required property var modelData
+                    x: Glass.gap
+                    spacing: Glass.gap
+                    Glyph { text: modelData.connected ? "\u{f06f3}" : "\u{f06f4}"; color: modelData.connected ? pill.theme.fg : pill.theme.muted }
+                    Glyph { text: String(modelData.name || "") + " · " + (modelData.connected ? "connected" : "disconnected"); textFormat: Text.PlainText; color: pill.theme.subtle }
                 }
             }
         }
+    }
+    Component { id: networkSettingsModule; ActionList { items: [{ key: "network", icon: "\u{f0493}", label: "Network settings" }] } }
+    Component {
+        id: powerSettingsModule
+        ActionList { items: [
+            { key: "settings", icon: "\u{f0493}", label: "Settings" }, { key: "display", icon: "\u{f0379}", label: "Display" },
+            { key: "sound", icon: "\u{f057e}", label: "Sound" }, { key: "network", icon: "\u{f06f3}", label: "Network" },
+            { key: "power_settings", icon: "\u{f06a5}", label: "Power" }, { key: "account", icon: "\u{f0004}", label: "Account" }] }
+    }
+    Component { id: powerSessionModule; ActionList { items: [{ key: "lock", icon: "\u{f033e}", label: "Lock" }, { key: "logout", icon: "\u{f0343}", label: "Log out" }] } }
+    Component {
+        id: powerPowerModule
+        ActionList { items: [{ key: "suspend", icon: "\u{f04b2}", label: "Suspend" }, { key: "reboot", icon: "\u{f0709}", label: "Restart" },
+                             { key: "poweroff", icon: "\u{f0425}", label: "Shut down" }] }
+    }
+
+    ModularPopup {
+        id: soundPanel
+        name: "sound"
+        trigger: soundGlyph
+        builders: ({ output: soundOutputModule, input: soundInputModule, settings: soundSettingsModule })
+    }
+    ModularPopup {
+        id: networkPanel
+        name: "network"
+        trigger: netGlyph
+        builders: ({ status: networkStatusModule, settings: networkSettingsModule })
+    }
+    // Power, session and system settings, grown out of the power glyph.
+    ModularPopup {
+        id: powerPanel
+        name: "power"
+        trigger: powerGlyph
+        align: "right"
+        panelWidth: 240
+        builders: ({ settings: powerSettingsModule, session: powerSessionModule, power: powerPowerModule })
     }
 }

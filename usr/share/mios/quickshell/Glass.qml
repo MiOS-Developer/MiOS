@@ -24,6 +24,8 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
+import Quickshell.Wayland
 
 Singleton {
     id: glass
@@ -111,7 +113,22 @@ Singleton {
 
     // ---- material -----------------------------------------------------------------------------------
     readonly property string fillHex: colour(barsCfg.pill_palette) || theme.bg
+    // ---- glass opacity per window state ([theme.shell.glass_states]) -----------------------------------
+    // One global level for the whole shell, from the focused window: fullscreen / maximized (Wayland toplevel state),
+    // tiled or floating (Hyprland's client "floating"), "focused" with no window. "vr_passthrough" is reserved.
+    readonly property var activeTop: ToplevelManager.activeToplevel
+    readonly property string windowState: {
+        const t = glass.activeTop
+        if (!t) return "focused"
+        if (t.fullscreen) return "fullscreen"
+        if (t.maximized) return "maximized"
+        const h = Hyprland.activeToplevel
+        const o = h && h.lastIpcObject ? h.lastIpcObject : null
+        return o && o.floating === false ? "tiled" : "focused"
+    }
     readonly property real fillAlpha: {
+        const s = (theme.glassStates || {})[glass.windowState + "_pct"]
+        if (typeof s === "number" && s >= 0 && s <= 100) return s / 100
         const p = percent(barsCfg.pill_alpha)
         return (p >= 0 && p <= 100) ? p / 100 : theme.panelOpacity
     }

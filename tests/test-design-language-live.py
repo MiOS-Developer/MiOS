@@ -250,7 +250,7 @@ def main():
         check('theme bridge generated from the tree SSOT', (bridge_dir / 'theme.json').is_file(), r.stderr[-300:])
         bridge = json.loads((bridge_dir / 'theme.json').read_text())
         shell_env = dict(env, PIPEWIRE_RUNTIME_DIR=UID_RUNTIME, MIOS_THEME_BRIDGE=str(bridge_dir / 'theme.json'),
-                         MIOS_NESTED_TOPBAR_ITEMS=os.environ.get('MIOS_DESIGN_ITEMS', 'app_menu,clock'))
+                         MIOS_NESTED_TOPBAR_ITEMS=os.environ.get('MIOS_DESIGN_ITEMS', 'app_menu,network,sound,clock,power'))
         qml = str(QS_DIR / 'Nested.qml')
 
         def ipc(*call):
@@ -394,8 +394,8 @@ def main():
         shot('window-tab')
 
         # ---- island popups (the controls) -------------------------------------------------------------------------
-        for name, call in (('calendar', 'openCalendar'), ('power', 'openPower'), ('sysmon', 'openSysmon'),
-                           ('settings', 'openSettings')):
+        for name, call in (('calendar', 'openCalendar'), ('power', 'openPower'), ('sound', 'openSound'),
+                           ('network', 'openNetwork'), ('sysmon', 'openSysmon'), ('settings', 'openSettings')):
             ipc('topbar', call)
             time.sleep(1.0)
             shot(f'popup-{name}')

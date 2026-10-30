@@ -11156,6 +11156,23 @@ drawer_full_pane         = true # app drawer morphs out of the dock to the full 
 drawer_pane_margin_px    = 48   # full-pane drawer inset from the usable screen area on every side
 drawer_fill_opacity_pct  = 55   # full-pane drawer glass fill: the dock fill morphs to bg at this alpha (legible over busy windows)
 
+# Glass opacity per window state (operator 2026-10-30: "Glass layers get GLOBAL opacity levels per state"). The colour
+# layer of every shell glass surface (status island, app-menu pills, dock, popups, notifications -- Glass.fill) takes the
+# level of the state of the focused window, globally: one level at a time for the whole shell, never per surface.
+#   focused        -- a focused floating window, or no window (the desktop)
+#   tiled          -- a focused tiled window
+#   maximized      -- a focused maximized window (the HUD stays shown and reserved)
+#   fullscreen     -- a focused fullscreen window (the HUD is hidden; this is the revealed row's and dock's level)
+#   vr_passthrough -- reserved for the Hypr3D room / a future passthrough view (not consumed yet: see the design-unify
+#                     lane report's research note; the room keeps the focused level until it is)
+# Values are 0..100 percent of [colors].bg over the hyprglass "mios" glass (fill_opacity_pct is the vendor level).
+[theme.shell.glass_states]
+focused_pct        = 22
+tiled_pct          = 22
+maximized_pct      = 22
+fullscreen_pct     = 22
+vr_passthrough_pct = 22
+
 # Global web stylesheet (usr/share/mios/theme/templates/mios-web.css.tmpl), projected as
 # user-origin CSS into every MiOS browser: Epiphany's profile user-stylesheet.css and Zen chrome/userContent.css.
 # Sites that style themselves keep their own colours; unstyled defaults take the SSOT palette.
@@ -11202,6 +11219,43 @@ date       = false
 clock      = true
 power      = true
 fps        = false
+
+# Island popups (operator 2026-10-30: the sound / network / power "controls" were bloated: make their information
+# relevant, modular, toggleable and customizable). Each popup is built from SSOT-declared modules in `order` (lower
+# first); `enabled = false` drops a module. A popup with no enabled module falls back to its settings command. Every
+# module is laid out on the design language ([theme.shell]): bar-tall rows, concentric panel padding, capsule controls.
+# sound:   output   -- the default output device's name, a volume track (wheel / drag, capped at volume_max_pct) and mute
+#          input    -- the default microphone's name and mute
+#          settings -- opens [desktop.topbar.commands].sound
+# network: status   -- online / offline and each network device with its state
+#          settings -- opens [desktop.topbar.commands].network
+# power:   settings -- Settings, Display, Sound, Network, Power, Account ([desktop.topbar.commands])
+#          session  -- Lock, Log out
+#          power    -- Suspend, Restart, Shut down
+[desktop.topbar.popups.sound.modules.output]
+enabled = true
+order = 1
+[desktop.topbar.popups.sound.modules.input]
+enabled = true
+order = 2
+[desktop.topbar.popups.sound.modules.settings]
+enabled = true
+order = 3
+[desktop.topbar.popups.network.modules.status]
+enabled = true
+order = 1
+[desktop.topbar.popups.network.modules.settings]
+enabled = true
+order = 2
+[desktop.topbar.popups.power.modules.settings]
+enabled = true
+order = 1
+[desktop.topbar.popups.power.modules.session]
+enabled = true
+order = 2
+[desktop.topbar.popups.power.modules.power]
+enabled = true
+order = 3
 
 # Commands the bar runs; settings panels need XDG_CURRENT_DESKTOP=GNOME outside GNOME Shell.
 [desktop.topbar.commands]

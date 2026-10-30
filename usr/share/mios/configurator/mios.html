@@ -3513,6 +3513,12 @@
         <label>Top pill width (pixels) <input data-key="theme.shell.top_width_px" data-type="int" type="number" min="1"></label>
         <label>Shared surface radius (pixels) <input data-key="desktop.hyprland.config.decoration.rounding" data-type="int" type="number" min="0"></label>
         <label>Glass panel fill (%) <input data-key="theme.shell.fill_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <p>Glass opacity per window state: the shell glass (island, pills, dock, popups) takes the level of the focused window&#39;s state, globally.</p>
+        <label>Glass fill, focused floating window or desktop (%) <input data-key="theme.shell.glass_states.focused_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, tiled window (%) <input data-key="theme.shell.glass_states.tiled_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, maximized window (%) <input data-key="theme.shell.glass_states.maximized_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, fullscreen window (revealed HUD) (%) <input data-key="theme.shell.glass_states.fullscreen_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, VR passthrough (reserved) (%) <input data-key="theme.shell.glass_states.vr_passthrough_pct" data-type="int" type="number" min="0" max="100"></label>
         <label>Surface outline opacity (%) <input data-key="theme.shell.outline_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
         <label>Shell edge margin (pixels) <input data-key="theme.shell.edge_margin_px" data-type="int" type="number" min="0"></label>
         <p>Design language: one geometry for every surface. The bar height (top pill height) sizes the status island, app-menu pills, window-controls tab and popup rows; the inset pads bars and panels and spaces the window buttons (button size = bar height minus two insets); the edge margin is every outer margin and gap between groups; the shared surface radius rounds windows and tall surfaces (shorter ones are capsules); the corner curve is the one corner shape everywhere (2 = circular arc).</p>
@@ -3527,6 +3533,23 @@
         <label>Highest volume the wheel sets (%) <input data-key="desktop.topbar.volume_max_pct" data-type="int" type="number" min="1" max="150"></label>
         <label>Volume percentage shown after a change (ms; 0 hides it) <input data-key="desktop.topbar.volume_osd_ms" data-type="int" type="number" min="0"></label>
         <label>Top bar FPS also shows the focused window's frame rate ("144 FPS/92 FPS") <input type="text" data-key="desktop.topbar.window_fps" data-type="bool"></label>
+        <p>Island popups: each sound, network and power popup is built from modules; switch a module off or change its order (lower first).</p>
+        <label>Sound popup: output module <input type="text" data-key="desktop.topbar.popups.sound.modules.output.enabled" data-type="bool"></label>
+        <label>Sound popup: output module order <input data-key="desktop.topbar.popups.sound.modules.output.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Sound popup: input module <input type="text" data-key="desktop.topbar.popups.sound.modules.input.enabled" data-type="bool"></label>
+        <label>Sound popup: input module order <input data-key="desktop.topbar.popups.sound.modules.input.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Sound popup: settings module <input type="text" data-key="desktop.topbar.popups.sound.modules.settings.enabled" data-type="bool"></label>
+        <label>Sound popup: settings module order <input data-key="desktop.topbar.popups.sound.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Network popup: status module <input type="text" data-key="desktop.topbar.popups.network.modules.status.enabled" data-type="bool"></label>
+        <label>Network popup: status module order <input data-key="desktop.topbar.popups.network.modules.status.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Network popup: settings module <input type="text" data-key="desktop.topbar.popups.network.modules.settings.enabled" data-type="bool"></label>
+        <label>Network popup: settings module order <input data-key="desktop.topbar.popups.network.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: settings module <input type="text" data-key="desktop.topbar.popups.power.modules.settings.enabled" data-type="bool"></label>
+        <label>Power popup: settings module order <input data-key="desktop.topbar.popups.power.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: session module <input type="text" data-key="desktop.topbar.popups.power.modules.session.enabled" data-type="bool"></label>
+        <label>Power popup: session module order <input data-key="desktop.topbar.popups.power.modules.session.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: power module <input type="text" data-key="desktop.topbar.popups.power.modules.power.enabled" data-type="bool"></label>
+        <label>Power popup: power module order <input data-key="desktop.topbar.popups.power.modules.power.order" data-type="int" type="number" min="1" max="20"></label>
         <label>Window controls reveal <select data-key="desktop.hyprland.hyprbars.config.reveal_on"><option>focus+proximity</option><option>focus</option><option>proximity</option><option>always</option></select></label>
         <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
         <label>Opening text reference size (pixels) <input data-key="desktop.hyprland.hypr3d.spawn.text_reference_px" data-type="int" type="number" min="4" max="200"></label>
