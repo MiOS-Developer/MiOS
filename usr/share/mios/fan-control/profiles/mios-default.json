@@ -1,7 +1,7 @@
 {
   "id": "mios-default",
-  "name": "MiOS default (quiet: -30 %)",
-  "version": 8,
+  "name": "MiOS default (quiet: -40 %)",
+  "version": 9,
   "description": "MiOS vendor profile. Drives only headers identified with confidence: pwm4 on the ROG CROSSHAIR X870E EXTREME nct6799 (the one tach-reporting fan on a normal firmware curve) from k10temp Tctl, never below 30 % (the cpu label puts it under the daemon hard 30 % floor). pwm6/pwm7 are pump headers (firmware flat 100 %) and every other header stays on firmware control. Members absent on other boards are skipped by the daemon.",
   "controls": [
     {
@@ -39,19 +39,19 @@
         },
         {
           "temp_c": 55.0,
-          "output_pct": 31.5
+          "output_pct": 30.0
         },
         {
           "temp_c": 65.0,
-          "output_pct": 38.5
+          "output_pct": 33.0
         },
         {
           "temp_c": 75.0,
-          "output_pct": 52.5
+          "output_pct": 45.0
         },
         {
           "temp_c": 85.0,
-          "output_pct": 70.0
+          "output_pct": 60.0
         },
         {
           "temp_c": 90.0,
