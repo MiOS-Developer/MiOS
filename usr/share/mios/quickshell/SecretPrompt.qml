@@ -16,8 +16,9 @@ PanelWindow {
     color: "transparent"
 
     property QtObject theme: Theme {}
-    property string promptTitle: Process.env["MIOS_SECRET_PROMPT_TITLE"] || "MiOS Secure Authentication"
-    property string promptMessage: Process.env["MIOS_SECRET_PROMPT_MSG"] || "Enter password or secret token:"
+    // miosd passes the caller's title and message in the environment (Quickshell.env; Process has no env table)
+    property string promptTitle: Quickshell.env("MIOS_SECRET_PROMPT_TITLE") || "MiOS Secure Authentication"
+    property string promptMessage: Quickshell.env("MIOS_SECRET_PROMPT_MSG") || "Enter password or secret token:"
 
     // Backdrop overlay
     Rectangle {
@@ -37,10 +38,9 @@ PanelWindow {
             width: 440
             height: 240
             anchors.centerIn: parent
-            radius: theme.radius
-            color: theme.bg
-            border.color: theme.outlineColor
-            border.width: 1
+            // the island's glass (Glass.qml): corner rule and fill at the notification legibility alpha, no outline
+            radius: Glass.cornerFor(height)
+            color: theme.withAlpha(Glass.fillHex, theme.notificationOpacity)
 
             ColumnLayout {
                 anchors.fill: parent

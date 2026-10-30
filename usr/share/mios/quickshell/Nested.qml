@@ -59,6 +59,9 @@ QS.ShellRoot {
                 onTriggered: Hyprland.refreshMonitors()
             }
             MiOS.EdgeReveal { id: reveal; screen: modelData }
+            // The focused app's exported menus as glass pills (AppMenu.qml, appmenu.json in this session's runtime);
+            // shown only when MIOS_NESTED_TOPBAR_ITEMS lists app_menu (topbarShown), like the desktop shell's Config.qml.
+            MiOS.AppMenu { screen: modelData; shellState: state; reveal: reveal }
             MiOS.PanelWindow { id: nestedBar; viewportWidth: outputScope.viewportWidth; screen: modelData; shellState: state; reveal: reveal }
             MiOS.Sidebar { id: nestedDock; viewportWidth: outputScope.viewportWidth; screen: modelData; shellState: state; reveal: reveal }
             MiOS.Search { screen: modelData; outputName: modelData.name; shellState: state }

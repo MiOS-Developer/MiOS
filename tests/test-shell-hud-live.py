@@ -259,8 +259,8 @@ def main():
             time.sleep(0.8)
             return ok, det
 
-        configured = sh(['env', '-u', 'MIOS_TOML', '/usr/bin/mios-toml-get', 'desktop.hyprland.config.misc.on_focus_under_fullscreen'],
-                        env=launch_env).stdout.strip()
+        configured = sh(['env', '-u', 'MIOS_TOML', '/usr/bin/mios-toml-get', 'desktop.hyprland.config.misc',
+                         'on_focus_under_fullscreen'], env=launch_env).stdout.strip()
         check('SSOT pins on_focus_under_fullscreen = 2', configured == '2', configured)
         ok, det = tiled_over_fullscreen(2)
         check('a newly focused tiled window comes to the front over fullscreen content and takes input', ok, det)
@@ -315,7 +315,9 @@ def main():
                 old = sh([QS, 'ipc', '--path', OLD_QML, '--any-display', 'call', 'topbar', 'volumeWheel', '120'], env=shell_env)
                 old_state = ipc(OLD_QML, 'topbar', 'state') or {}
                 check('NEGATIVE CONTROL: the previous shell QML has no scroll-volume percentage (no IPC, no volume state)',
-                      old.returncode != 0 and 'volume' not in old_state, (old.returncode, old.stdout[:120], old.stderr[:120]))
+                      # quickshell ipc exits 0 and prints "Function not found." for an unknown IPC function
+                      (old.returncode != 0 or 'not found' in (old.stdout + old.stderr).lower()) and 'volume' not in old_state,
+                      (old.returncode, old.stdout[:120], old.stderr[:120]))
                 shell = start_shell(QML, 'tree3')
 
         # ---- device battery glyphs ------------------------------------------------------------------------------

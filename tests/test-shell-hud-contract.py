@@ -75,6 +75,7 @@ SURFACES = {  # file -> the main surface's id (or None: the first Rectangle carr
     "AppDrawer.qml": "pane",
     "Search.qml": None,
     "Keymap.qml": "card",
+    "SecretPrompt.qml": "modalBox",
 }
 
 
@@ -172,6 +173,29 @@ class TestQml(unittest.TestCase):
         t = read(os.path.join(QS, "Nested.qml"))
         self.assertIn('MIOS_NESTED_TOPBAR_ITEMS', t)
         self.assertIn('"clock,fps,workspaces"', t)  # default unchanged
+
+    def test_nested_app_menu(self):
+        """The nested shell carries the desktop's app-menu pills (Config.qml parity), gated by topbarShown."""
+        t = read(os.path.join(QS, "Nested.qml"))
+        self.assertRegex(t, r"MiOS\.AppMenu \{ screen: modelData; shellState: state; reveal: reveal \}")
+        a = read(os.path.join(QS, "AppMenu.qml"))
+        self.assertIn('shellState.topbarShown("app_menu")', a)  # hidden unless the item is listed
+        self.assertIn("radius: Glass.cornerFor(height)", a)      # the pills are the island's glass blobs
+        r = subprocess.run(["git", "-C", ROOT, "show", "main:usr/share/mios/quickshell/Nested.qml"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:  # negative control: main's nested shell has no app menus
+            self.assertNotIn("MiOS.AppMenu", r.stdout)
+
+    def test_secret_prompt_reads_caller_text(self):
+        """miosd passes the prompt title/message in the environment; Process (Quickshell.Io) has no env table."""
+        t = read(os.path.join(QS, "SecretPrompt.qml"))
+        self.assertIn('Quickshell.env("MIOS_SECRET_PROMPT_TITLE")', t)
+        self.assertIn('Quickshell.env("MIOS_SECRET_PROMPT_MSG")', t)
+        self.assertNotIn("Process.env", t)
+        r = subprocess.run(["git", "-C", ROOT, "show", "main:usr/share/mios/quickshell/SecretPrompt.qml"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:  # negative control: main reads a non-existent Process.env and shows no title
+            self.assertIn("Process.env", r.stdout)
 
 
 class TestQuickshellPatches(unittest.TestCase):

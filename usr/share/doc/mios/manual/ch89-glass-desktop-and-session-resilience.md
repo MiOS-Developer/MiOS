@@ -577,3 +577,43 @@ enabled adaptive-sync output. Confirm the live output with `hyprctl monitors -j`
 A guest compositor frame-rate measurement does not establish Looking Glass
 delivery rate; verify the existing viewer's image, cursor movement and frame
 statistics separately.
+
+### <a name="89_hud_bounds_and_island_controls"></a>89.9 HUD Bounds, Foreground Windows and Island Controls
+
+The status island and the dock are centred on every output and reserve their
+rows. A **maximized** window (Hyprland fullscreen mode 1) fills only the work area
+inside those rows, and the HUD stays visible. Only a **true fullscreen** window
+(mode 2) hides the island and the dock; their edge hot zones stay
+(`EdgeReveal.qml`). `[desktop.hyprland.config.misc] on_focus_under_fullscreen = 2`
+makes a newly focused window come to the front over fullscreen or maximized
+content. That window is shown and takes input. Floating windows (dialogs, PiPs,
+pickers) open above fullscreen content and leave it fullscreen.
+
+If tiled windows run under the HUD (`hyprctl -j monitors` shows
+`reserved=[0,0,0,0]` while no window is fullscreen), the shell's Qt bindings are
+frozen. Before Quickshell 0.3.x, this was the update-group leak in
+`HyprlandToplevel`. See `/usr/share/doc/mios/quickshell-candidate.md` for the
+fixed build and its install and rollback plan.
+
+Island controls (`[desktop.topbar]`, also in the configurator):
+
+* `volume_scroll`, `volume_scroll_step_pct`, `volume_max_pct` and
+  `volume_osd_ms`. The mouse wheel anywhere on the island steps the default
+  sink's volume. Every change shows a percentage chip for `volume_osd_ms`.
+  High-resolution wheels accumulate to whole notches.
+* Batteries: each device battery shows a device glyph (controller, mouse,
+  keyboard, headset, phone and others) and then a charge-level glyph. The system
+  battery shows only its level glyph.
+* Window-control proximity: `[desktop.hyprland.hyprbars.config] reveal_radius`
+  is narrow (8 px), so the glass tab rises only when the pointer is close to it.
+
+Every HUD surface uses the island's glass, `Glass.qml`: the drawer, search,
+keymap, app-menu pills and dropdowns, and the secret prompt. Each takes the corner
+rule `Glass.cornerFor(height)` and the shared fill. None draws its own outline;
+hyprglass's fresnel provides the rim.
+
+Development sessions (`mios-gen nested-session`) run `Nested.qml`, which carries
+the same app-menu pills as the desktop shell. The nested shell shows them when
+`MIOS_NESTED_TOPBAR_ITEMS` lists `app_menu`. Live checks (opt-in, owned nested
+PiP session; `MIOS_LIVE_NESTED=1`): `tests/test-shell-hud-live.py`,
+`tests/test-shell-appmenu-live.py`, `tests/test-quickshell-candidate-live.py`.
