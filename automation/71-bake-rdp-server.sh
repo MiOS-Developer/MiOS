@@ -119,6 +119,15 @@ if [[ -z "$DESTDIR" ]]; then
     ln -sfn /var/lib/mios-build/rdp-native/ironrdp "$ROOT_DIR/src/ironrdp"
 fi
 
+# Compile the compatibility preparer as a native static build tool. This runs
+# before Cargo sees the dependency; build.rs would run too late for that.
+PREP_TARGET="$(get build.native.linux.targets "$(uname -m)")"
+[[ -n "$PREP_TARGET" ]] || { mios_err "native static Rust target missing from SSOT"; exit 1; }
+rustc --edition=2024 --target="$PREP_TARGET" -O -C codegen-units=1 "$SRC/prepare.rs" -o "$BUILD_DIR/mios-rdp-source-prepare"
+rustc --edition=2024 --target="$PREP_TARGET" --test "$SRC/prepare.rs" -o "$BUILD_DIR/mios-rdp-source-prepare-tests"
+"$BUILD_DIR/mios-rdp-source-prepare-tests"
+"$BUILD_DIR/mios-rdp-source-prepare" "$BUILD_DIR/ironrdp" > "$BUILD_DIR/source-preparation.json"
+
 (cd "$BUILD_DIR/src" && cargo build --release --target "$TARGET" -p mios-rdp-server -p mios-rdp-priv)
 (cd "$BUILD_DIR/src" && cargo test --release --target "$TARGET" -p mios-rdp-server -p mios-rdp-priv)
 BIN="$BUILD_DIR/src/target/$TARGET/release"
@@ -148,9 +157,9 @@ if [[ -f "${ROOT_DIR}/usr/lib/pam.d/mios-rdp" ]]; then
     install -m 0644 "${pam_src}" "${pam_etc}"
 fi
 
-python3 -I - "$OUT_DIR/build.json" "$URL" "$SHA" "$SRC_HASH" "$LOCK_HASH" "$SELF" "$("$BIN/mios-rdp-server" --version 2>/dev/null || echo mios-rdp-server)" "$OUT_DIR/mios-rdp-server" "$OUT_DIR/mios-rdp-priv" <<'PY'
+python3 -I - "$OUT_DIR/build.json" "$URL" "$SHA" "$SRC_HASH" "$LOCK_HASH" "$SELF" "$("$BIN/mios-rdp-server" --version 2>/dev/null || echo mios-rdp-server)" "$OUT_DIR/mios-rdp-server" "$OUT_DIR/mios-rdp-priv" "$BUILD_DIR/source-preparation.json" <<'PY'
 import json, os, sys, time, hashlib
-out, url, sha, src, lock, selftest, ver, srv_path, priv_path = sys.argv[1:10]
+out, url, sha, src, lock, selftest, ver, srv_path, priv_path, preparation = sys.argv[1:11]
 
 def file_sha256(p):
     h = hashlib.sha256()
@@ -164,6 +173,7 @@ rec = {
     "version": ver,
     "ironrdp": {"repo": url, "commit": sha},
     "source_sha256": src,
+    "source_preparation": json.load(open(preparation)),
     "cargo_lock_sha256": lock,
     "target": "x86_64-unknown-linux-gnu",
     "features": ["egfx", "helper", "nscodec"],

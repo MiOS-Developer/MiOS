@@ -23,6 +23,8 @@ mod gpu;
 mod input;
 mod pipeline;
 mod redirect;
+mod remote_storage;
+mod remote_camera;
 mod session;
 mod stats;
 mod tls;
@@ -451,9 +453,11 @@ async fn serve(cfg: Config) -> Result<()> {
         builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new(cfg.clone(), Arc::clone(&s.stats)))));
     }
     if cfg.redirect.drives {
-        builder = builder.with_rdpdr_factory(Some(Box::new(redirect::RdpdrFactory::new(&cfg.runtime_dir))));
+        builder = builder.with_rdpdr_factory(Some(Box::new(remote_storage::Factory::new(cfg.clone(), Arc::clone(&s.stats)))));
     }
-    let _cam = if cfg.redirect.camera { Some(redirect::CameraManager::new(true)) } else { None };
+    if cfg.redirect.camera {
+        builder = builder.with_static_channel_factory(Box::new(remote_camera::Factory {cfg:cfg.clone(),stats:Arc::clone(&s.stats)}));
+    }
     let _loc = if cfg.redirect.location { Some(redirect::LocationWriter::new()) } else { None };
     redirect::log_redirections(&cfg);
     if cfg.native.auto_reconnect {
@@ -545,7 +549,7 @@ async fn serve(cfg: Config) -> Result<()> {
     info!("stopping");
     drop(server);
     let microphone_deadline = Instant::now() + Duration::from_secs(12);
-    while s.stats.microphone_workers.load(Ordering::Acquire) > 0 && Instant::now() < microphone_deadline {
+    while (s.stats.microphone_workers.load(Ordering::Acquire) > 0 || s.stats.drive_workers.load(Ordering::Acquire) > 0 || s.stats.camera_workers.load(Ordering::Acquire) > 0) && Instant::now() < microphone_deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let d = Arc::clone(&display);
@@ -769,8 +773,12 @@ async fn stats_loop(s: Arc<Session>) {
             "device_forwarding": {
                 "microphone": {"implemented": true, "permitted": s.cfg.redirect.microphone, "protocol": "MS-RDPEAI"},
                 "audio_output": {"implemented": false, "permitted": s.cfg.redirect.audio_output, "reason": "native_sink_backend_pending"},
-                "camera": {"implemented": false, "permitted": s.cfg.redirect.camera, "reason": "server_channel_and_native_video_source_pending"},
-                "drives": {"implemented": false, "permitted": s.cfg.redirect.drives, "reason": "native_filesystem_backend_pending"},
+                "camera": {"implemented": true, "permitted": s.cfg.redirect.camera, "protocol": "MS-RDPECAM",
+                    "sources": s.stats.camera_sources.lock().unwrap().clone(),
+                    "frames_forwarded": s.stats.camera_frames.load(Ordering::Relaxed),
+                    "bytes_forwarded": s.stats.camera_bytes.load(Ordering::Relaxed),
+                    "error": s.stats.camera_error.lock().unwrap().clone()},
+                "drives": {"implemented": true, "permitted": s.cfg.redirect.drives, "mounts": s.stats.drive_mounts.lock().unwrap().clone(), "error": s.stats.drive_error.lock().unwrap().clone()},
                 "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},
             },
             "encoded_payload_kbps": doc_core.3.round(),

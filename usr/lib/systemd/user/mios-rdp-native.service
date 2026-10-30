@@ -20,6 +20,7 @@ Nice=-2
 CPUWeight=200
 MemoryMax=1G
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=15
 
 [Install]

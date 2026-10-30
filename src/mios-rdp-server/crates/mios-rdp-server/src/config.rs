@@ -50,6 +50,18 @@ pub struct Native {
     pub progressive_quant: u8,
     pub audio_control_program: String,
     pub microphone_queue_packets: usize,
+    pub camera_video_program: String,
+    pub camera_graph_program: String,
+    pub camera_max_width: u32,
+    pub camera_max_height: u32,
+    pub camera_max_fps: u32,
+    pub camera_max_devices: usize,
+    pub camera_poll_ms: u64,
+    pub camera_timeout_ms: u64,
+    pub drive_timeout_ms: u64,
+    pub drive_max_devices: usize,
+    pub drive_max_entries: usize,
+    pub drive_io_kib: u32,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -96,6 +108,18 @@ impl Default for Native {
             progressive_quant: 8,
             audio_control_program: "pactl".into(),
             microphone_queue_packets: 8,
+            camera_video_program: "gst-launch-1.0".into(),
+            camera_graph_program: "pw-dump".into(),
+            camera_max_width: 1280,
+            camera_max_height: 720,
+            camera_max_fps: 30,
+            camera_max_devices: 4,
+            camera_poll_ms: 500,
+            camera_timeout_ms: 10000,
+            drive_timeout_ms: 10000,
+            drive_max_devices: 16,
+            drive_max_entries: 4096,
+            drive_io_kib: 256,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -140,8 +164,8 @@ impl Default for Redirect {
             pen: true,
             audio_output: false,
             microphone: true,
-            camera: false,
-            drives: false,
+            camera: true,
+            drives: true,
             location: false,
             timezone: "report".into(),
             smartcard: false,
@@ -155,6 +179,7 @@ pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
     pub microphone_source_prefix: String,
+    pub camera_source_prefix: String,
 }
 
 impl Default for Naming {
@@ -163,6 +188,7 @@ impl Default for Naming {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
             microphone_source_prefix: "mios-remote-microphone".into(),
+            camera_source_prefix: "mios-remote-camera".into(),
         }
     }
 }
@@ -264,6 +290,11 @@ impl Config {
     }
 
     pub fn validate(&mut self) -> Result<()> {
+        if !(100..=60000).contains(&self.native.drive_timeout_ms) || !(1..=64).contains(&self.native.drive_max_devices)
+            || !(64..=65536).contains(&self.native.drive_max_entries) || !(4..=1024).contains(&self.native.drive_io_kib)
+            || self.native.drive_io_kib % 4 != 0 {
+            bail!("drive limits: timeout_ms 100..60000, devices 1..64, entries 64..65536, IO 4..1024 KiB aligned to 4 KiB");
+        }
         let prefix = &self.naming.microphone_source_prefix;
         if prefix.is_empty() || prefix.len() > 64 || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
             bail!("microphone source prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");
@@ -294,6 +325,16 @@ impl Config {
         n.max_bitrate_kbps = n.max_bitrate_kbps.max(n.min_bitrate_kbps);
         n.initial_bitrate_kbps = n.initial_bitrate_kbps.clamp(n.min_bitrate_kbps, n.max_bitrate_kbps);
         n.qp_min = n.qp_min.clamp(0, 51);
+        if !(16..=1920).contains(&n.camera_max_width) || !(16..=1080).contains(&n.camera_max_height)
+            || !(1..=60).contains(&n.camera_max_fps) || !(1..=8).contains(&n.camera_max_devices)
+            || !(250..=2000).contains(&n.camera_poll_ms) || !(2000..=30000).contains(&n.camera_timeout_ms)
+            || n.camera_video_program.is_empty() || n.camera_graph_program.is_empty() {
+            bail!("invalid native camera program, resolution, FPS, device or timing bounds");
+        }
+        let prefix=&self.naming.camera_source_prefix;
+        if prefix.is_empty() || prefix.len()>48 || !prefix.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_') {
+            bail!("invalid camera source prefix");
+        }
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
         n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));
@@ -413,6 +454,14 @@ mod tests {
         }
         let mut cfg = Config::default(); cfg.native.audio_control_program.clear();
         assert!(cfg.validate().is_err());
+    }
+    #[test]
+    fn native_drive_limits_reject_unbounded_or_unaligned_values() {
+        let mut cfg=Config::default();cfg.validate().unwrap();
+        cfg.native.drive_io_kib=17;assert!(cfg.validate().unwrap_err().to_string().contains("drive limits"));
+        cfg.native.drive_io_kib=16;cfg.native.drive_timeout_ms=99;assert!(cfg.validate().is_err());
+        cfg.native.drive_timeout_ms=100;cfg.native.drive_max_devices=65;assert!(cfg.validate().is_err());
+        cfg.native.drive_max_devices=16;cfg.native.drive_max_entries=63;assert!(cfg.validate().is_err());
     }
 
     #[test]
