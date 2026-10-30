@@ -471,8 +471,16 @@ class TestGamePlacementLive(unittest.TestCase):
             time.sleep(0.2)
         return samples
 
-    def refused_in_log(self, address):
-        return [l for l in (self.out / 'placement.log').read_text().splitlines() if address in l and 'refused' in l]
+    def log_mark(self):
+        """Offset into placement.log: Hyprland reuses a closed window's address, so a later window must not be
+        judged by an earlier one's log lines."""
+        return (self.out / 'placement.log').stat().st_size
+
+    def refused_in_log(self, address, mark=0):
+        with open(self.out / 'placement.log', 'rb') as f:
+            f.seek(mark)
+            lines = f.read().decode(errors='replace').splitlines()
+        return [l for l in lines if address in l and 'refused' in l]
 
     def restart_daemon(self, log):
         """`miosd placement serve` restarted (per-window state lost): what is mapped is adopted again."""
@@ -485,6 +493,7 @@ class TestGamePlacementLive(unittest.TestCase):
 
     def operator_move(self, name, cls_name, args, target):
         self.require_x11()
+        self.mark = self.log_mark()
         p, _ = self.probe(cls_name, *args, seconds=20)
         c0 = self.settled(lambda c: c['class'] == cls_name, 2.0)
         self.ctl('eval', f"hl.dispatch(hl.dsp.window.move({{x={target[0]}, y={target[1]}, window='address:{c0['address']}'}}))")
@@ -504,7 +513,7 @@ class TestGamePlacementLive(unittest.TestCase):
         last = samples[-1]
         self.assertFalse(last[3] and (last[1], last[2]) == (c0['at'], c0['size']), f'operator move undone: {samples}')
         self.assertTrue(not last[3] or last[1] == list(target), f'neither at the drop point nor tiled: {samples}')
-        self.assertEqual(self.refused_in_log(c0['address']), [])
+        self.assertEqual(self.refused_in_log(c0['address'], self.mark), [])
 
     def test_23_operator_move_of_fixed_game_partly_offscreen(self):
         self.refresh()
@@ -513,7 +522,7 @@ class TestGamePlacementLive(unittest.TestCase):
         c0, samples = self.operator_move('fixed-game', 'steam_app_4301', ['--fixed', '--size', '480x320'], target)
         self.assertTrue(all(s[1] == list(target) and s[2] == [480, 320] and s[3] for s in samples[2:]),
                         f'fixed game not left where the operator put it: {samples}')
-        self.assertEqual(self.refused_in_log(c0['address']), [])
+        self.assertEqual(self.refused_in_log(c0['address'], self.mark), [])
 
     def test_24_game_moving_itself_partly_offscreen_stands(self):
         # Position alone is never refused, whoever moved it (the round-2 code refused this and the operator's moves).
@@ -537,6 +546,7 @@ class TestGamePlacementLive(unittest.TestCase):
         self.require_x11()
         self.refresh()
         ox, oy, ow, oh = self.output
+        mark = self.log_mark()
         p, log = self.probe('steam_app_4303', '--size', '1600x1000', '--pos', '0,0', '--remap-root', '2500',
                             '--remap-to', f'40,0,{int(ow) + 300}x{int(oh) - 100}', seconds=12)
         c0 = self.settled(lambda c: c['class'] == 'steam_app_4303')
@@ -546,7 +556,7 @@ class TestGamePlacementLive(unittest.TestCase):
         self.stop(p)
         self.assertTrue(any(e['event'] == 'request' and e['w'] == int(ow) + 300 for e in events), 'probe issued its remap')
         self.assertEqual(tuple(c['at'] + c['size']), tuple(c0['at'] + c0['size']), f'oversize remap honoured: {c["at"]} {c["size"]}')
-        self.assertTrue(self.refused_in_log(c0['address']), 'no refusal logged')
+        self.assertTrue(self.refused_in_log(c0['address'], mark), 'no refusal logged')
 
     def test_26_fixed_game_readopted_after_daemon_restart(self):
         # A placed fixed game is watched again after `miosd placement serve` restarts (a grow is restored).
@@ -591,6 +601,7 @@ class TestGamePlacementLive(unittest.TestCase):
               if re.match(r'^\s*hl\.window_rule\(\{\["name"\] = "mios-shaderglass(-glass)?"', l)]
         self.assertTrue(sg, f'no mios-shaderglass rule in {LUA}')
         evals = [self.ctl('eval', l).strip() for l in sg]
+        mark = self.log_mark()
         p, _ = self.probe('shaderglass.exe', '--title', 'ShaderGlass (live)', '--size', '800x600', seconds=40)
         c0 = self.settled(lambda c: c['class'] == 'shaderglass.exe', 1.6)
         a = c0['address']
@@ -604,8 +615,11 @@ class TestGamePlacementLive(unittest.TestCase):
         self.restart_daemon('placement-sg-restarted.log')
         place(ox, oy, ow, oh)
         rec['after_restart'] = self.sample(a, 3.0)
-        rec['log'] = [l for n in ('placement.log', 'placement-sg-restarted.log')
-                      for l in (self.out / n).read_text().splitlines() if a in l]
+        with open(self.out / 'placement.log', 'rb') as f:
+            f.seek(mark)
+            before = f.read().decode(errors='replace').splitlines()
+        after = (self.out / 'placement-sg-restarted.log').read_text().splitlines()
+        rec['log'] = [l for l in before + after if a in l]
         (self.out / 'shaderglass-restart.json').write_text(json.dumps(rec, indent=1))
         self.stop(p)
         self.assertTrue(rec['mapped'][3], f'pane not pinned by the shaderglass rule: {rec["mapped"]}')
@@ -644,7 +658,7 @@ class TestGamePlacementLive(unittest.TestCase):
             c0, samples = self.operator_move(name, cls_name, args, target)
             last = samples[-1]
             self.assertFalse(last[3] and last[1] == c0['at'], f'{name}: drag across outputs undone: {samples}')
-            self.assertEqual(self.refused_in_log(c0['address']), [], name)
+            self.assertEqual(self.refused_in_log(c0['address'], self.mark), [], name)
 
     def wine(self, exe, cls_name):
         prefix = os.environ.get('MIOS_LIVE_WINEPREFIX')
