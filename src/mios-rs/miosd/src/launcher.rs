@@ -880,12 +880,14 @@ pub struct Overlay {
     pub title: String,
     pub entries: Vec<Entry>,
     pub sel: usize,
+    /// First entry shown: a list longer than the popup scrolls with the selection.
+    pub offset: usize,
 }
 
 impl Overlay {
     fn new(title: String, entries: Vec<Entry>, start: usize) -> Self {
         let sel = (start..entries.len()).chain(0..start).find(|&i| entries[i].enabled).unwrap_or(0);
-        Overlay { title, entries, sel }
+        Overlay { title, entries, sel, offset: 0 }
     }
     fn step(&mut self, down: bool) {
         let n = self.entries.len();
@@ -1195,7 +1197,7 @@ impl<'a> Ui<'a> {
                 Input::Click { x, y, .. } => {
                     let r = self.overlay_rect;
                     if x > r.x && x + 1 < r.x + r.width && y >= r.y + 1 && y + 1 < r.y + r.height {
-                        let i = (y - r.y - 1) as usize;
+                        let i = ov.offset + (y - r.y - 1) as usize;
                         if let Some(e) = ov.entries.get(i).cloned().filter(|e| e.enabled) {
                             ov.sel = i;
                             return self.choose(e.choice, ctx);
@@ -1334,7 +1336,7 @@ impl<'a> Ui<'a> {
         let help = &self.cfg.help;
         let hx = area.x + area.width.saturating_sub(help.len() as u16) / 2;
         buf.set_stringn(hx, area.y + area.height.saturating_sub(1), help, area.width as usize, Style::default().fg(muted).bg(bg));
-        if let Some(ov) = self.overlay.last() {
+        if let Some(ov) = self.overlay.last_mut() {
             let w = ov.entries.iter().map(|e| e.label.chars().count()).chain(std::iter::once(ov.title.chars().count())).max().unwrap_or(10) as u16 + 6;
             let w = w.min(area.width);
             let h = (ov.entries.len() as u16 + 2).min(area.height);
@@ -1357,8 +1359,15 @@ impl<'a> Ui<'a> {
             let t = format!(" {} ", ov.title);
             let tx = r.x + r.width.saturating_sub(t.chars().count() as u16) / 2;
             buf.set_stringn(tx, r.y, &t, r.width as usize, bs.add_modifier(Modifier::BOLD));
-            for (i, e) in ov.entries.iter().enumerate() {
-                let y = r.y + 1 + i as u16;
+            // Keep the selection in view when the list is taller than the popup.
+            let rows = r.height.saturating_sub(2).max(1) as usize;
+            if ov.sel < ov.offset {
+                ov.offset = ov.sel;
+            } else if ov.sel >= ov.offset + rows {
+                ov.offset = ov.sel + 1 - rows;
+            }
+            for (i, e) in ov.entries.iter().enumerate().skip(ov.offset) {
+                let y = r.y + 1 + (i - ov.offset) as u16;
                 if y + 1 >= r.y + r.height {
                     break;
                 }
@@ -2165,5 +2174,29 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let j = serde_json::to_string(&ops).unwrap();
         assert!(j.contains("\"op\":\"tmux\"") && j.contains("\"op\":\"exec\""));
         assert_eq!(serde_json::from_str::<Vec<Op>>(&j).unwrap(), ops);
+    }
+
+    #[test]
+    fn a_long_options_list_scrolls_with_its_selection_and_clicks_hit_the_row_shown() {
+        let c = cfg();
+        let mut ui = Ui::new(&c, sections(), Rect::new(0, 0, 60, 10), None);
+        let pick = |n: usize| Choice::Ops(vec![tmux_op(&["display-message", &format!("target {n}")])]);
+        ui.open_overlay(Overlay::new("Move".into(), (0..20).map(|n| entry(format!("target {n}"), true, pick(n))).collect(), 0));
+        for _ in 0..15 {
+            assert_eq!(ui.input(Input::Down, &ctx(), &|_| None), Outcome::Stay);
+        }
+        let area = ui.area;
+        let mut buf = Buffer::empty(area);
+        ui.draw(&mut buf, area);
+        let text = buf_text(&buf);
+        // Negative control: without the scroll offset the popup drew entries 0..7 and the selection (15) was off-screen.
+        assert!(text.contains("target 15") && !text.contains("target 0 "), "{text}");
+        let ov = ui.overlay.last().unwrap();
+        assert!(ov.offset > 0 && ov.sel == 15);
+        let (first, r) = (ov.offset, ui.overlay_rect);
+        match ui.input(Input::Click { x: r.x + 2, y: r.y + 1, right: false }, &ctx(), &|_| None) {
+            Outcome::Done(ops) => assert_eq!(ops, vec![tmux_op(&["display-message", &format!("target {first}")])], "the row shown, not entries[0]"),
+            o => panic!("{o:?}"),
+        }
     }
 }

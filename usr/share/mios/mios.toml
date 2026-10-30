@@ -4324,7 +4324,7 @@ origin_gone_message = "The original window is gone: the pane stays in the float 
 # prefix + menu_key and prefix + launcher_key (that one starts on the apps), by the controller's tmux:menu verb (the
 # same prefix key), and from anywhere on the desktop by CTRL+SUPER (the tmux-os-launcher row of [keybindings.global]).
 # Input: arrows (d-pad), the wheel (left stick), PgUp/PgDn/Home/End, the item's key, Enter or a click (A) opens,
-# Esc or Ctrl+C (B) backs out, Shift+Tab jumps to the next section; Tab, Shift+Enter (A held), m or a right-click opens
+# Esc or Ctrl+C (B) backs out, Shift+Tab jumps to the next section; Tab, Shift+Enter (A held), Menu or a right-click opens
 # the selected row's options: instance management (go to, pop out to its own desktop window, float or tile, move to
 # a window or a session, close) or how to open an app (popup, window, floating pane, its own desktop window).
 # Prefix keys run as if typed on the launching client once the popup closes (send-keys -c CLIENT -K); menu rows run

@@ -227,7 +227,8 @@ them [step GT].
 | Ctrl+Alt+Shift+T / A / G / M | terminal / AI / agents / system monitor |
 | Super+Ctrl+= / - / 0, Super+Ctrl+wheel | session scale (live over captured apps and VMs [step G1]) |
 | Super+Ctrl+P / F / M | VM passthrough latch / VM fullscreen / Looking Glass command key (held) |
-| tmux `Ctrl-b` + one key | MiOS-Tmux prefix table (section 4.1); `Ctrl-b Space` opens the MiOS menu |
+| Ctrl+Super (press both, release, no other key) | the tmux-os launcher (section 4.2): the focused terminal's tmux-os client, else a new terminal |
+| tmux `Ctrl-b` + one key | MiOS-Tmux prefix table (section 4.1); `Ctrl-b Space` opens the tmux-os launcher |
 | tmux Shift+Enter | agent accept |
 
 Every tmux action is also reachable from the MiOS menu with arrows and Enter, so the
@@ -262,14 +263,15 @@ Everything is projected from `mios.toml` into
 | `[keybindings.tmux].bindings` | each row: `key`, `command` or `menu`, `note` (shown by `Ctrl+B ?`), optional `repeat`, `platforms`, `managed = "refuse"` |
 | `[keybindings.tmux].menu_key`, `launcher_key` | `Space` (MiOS menu) and `e` (Apps and TUIs) |
 | `[keybindings.tmux.float]` | `*` new native floating pane, `` ` `` float shell toggle, `F` float or dock the pane |
-| `[[keybindings.tmux.menus]]` | the menus, as command aliases `mios-menu-ID` and console variants `mios-menu-ID-vt` |
+| `[[keybindings.tmux.menus]]` | the menus, as command aliases `mios-menu-ID` and console variants `mios-menu-ID-vt`, and the key table `mios-menu-ID` (row key -> row command) |
+| `[keybindings.tmux.launcher]` | the launcher popup on `Space` and `e` (`miosd launcher`) |
 | `[keybindings.agent].accept_key` | `Enter`: accept the agent prompt without extended keys |
 | `[[terminal.tuis]]`, `[terminal.tui_launcher]` | the Apps and TUIs menu, also listed by `miosd sessions` |
 
 | After Ctrl+B | Action |
 |---|---|
-| `Space` | MiOS menu (Apps, float shell, floating pane, Pane/Window/Session submenus) |
-| `e` | Apps and TUIs launcher |
+| `Space` | the tmux-os launcher (section 4.2); with `[keybindings.tmux.launcher].enabled = false` the MiOS menu |
+| `e` | the tmux-os launcher on its first app; with the launcher off the Apps and TUIs menu |
 | `` ` `` / `*` / `F` | float shell toggle / new floating pane / float or dock the pane |
 | `h j k l`, arrows | select a pane (arrows repeat) |
 | `H J K L` | resize the pane by 5 |
@@ -289,7 +291,8 @@ Everything is projected from `mios.toml` into
 | `Tab` / `b` | send Shift+Tab / send the prefix |
 | `:` / `?` / `d` | command prompt / list keys / detach |
 
-**Menus.** Every menu starts on its first item. Up/Down (or k/j), Home/End,
+**Menus.** Titles are centred and `{ header = "TEXT" }` rows group the items under
+a centred, disabled heading (the arrows skip it). Every menu starts on its first item. Up/Down (or k/j), Home/End,
 PgUp/PgDn, Enter, Esc or q, and the item's shortcut letter drive it. A
 controller or MCP can drive it through `send-keys -c CLIENT -K`. A menu opened
 by right-click also takes mouse clicks. Menus opened by a key are keyboard-only:
@@ -323,6 +326,70 @@ targets those tables send (`h j k l p n t f w y z Space PPage NPage ( )`) and th
 `mios-menu` alias. mios-controls validates `[keybindings.global]`; the tmux
 generator validates `[keybindings.tmux]`; neither reinterprets the other's
 table.
+
+### 4.2 The tmux-os launcher
+
+`miosd launcher` is the launcher for everything in tmux-os: one centred popup
+(`[keybindings.tmux.launcher]`) with grouped sections under headers, an aligned
+key column, and two columns once the popup is `two_column_min_width` wide.
+
+| Section | Rows |
+|---|---|
+| Running | every window and native floating pane of the visible sessions, and the float-shell panes |
+| AI and agents | `[[keybindings.actions]]` (their prefix keys) |
+| Apps | one section per `[terminal.tui_launcher].sections` group with an installed TUI |
+| Tmux-OS, Pane, Window, Session | the rows of the generated menus named in `menu_sections` |
+
+It opens from `Ctrl-b Space`, `Ctrl-b e` (on the first app), the controller's
+`tmux:menu` verb (it sends `Ctrl-b Space`), `mios-terminal --launcher`, and from
+anywhere on the desktop with **Ctrl+Super**: press both, in either order, and
+release them with no other key between. The `tmux-os-launcher` row of
+`[keybindings.global]` has `trigger = "release"`, so the generator binds all four
+modifier keys (`Super_L/R`, `Control_L/R`, with Super and Ctrl held) as release
+handles. Only the first release fires, and none fires once another key was
+pressed, so every `Super+Ctrl+<key>` binding still works. The row is on
+`bypass_mod`, so it is an escape handle and works over captured apps and VMs.
+If the focused window runs a tmux-os client, the launcher opens on that client.
+Otherwise a new terminal enters the bare Tmux-OS session and opens it there.
+
+| Input | Keyboard | Mouse | Controller (nav projection) |
+|---|---|---|---|
+| Move | arrows; Left/Right switch columns | wheel | d-pad, left stick (wheel) |
+| Page | PgUp / PgDn, Home / End | | triggers (`tmux:key p` / `n`) |
+| Next section | Shift+Tab | | West held |
+| Open | Enter, Space, the row's key | left click | South (A) |
+| Options | Tab, Shift+Enter, Menu, Shift+F10 | right click | West (X), South held |
+| Back / close | Esc, `q`, Ctrl+C | click outside | East (B), East held |
+
+The controller column is what the mios-inputd nav projection (`terminal_tmux`,
+`console_tmux`) delivers: plain keys, wheel events and `tmux:` verbs. The
+launcher reads nothing from the pad itself, so every row also works from a
+keyboard, a mouse or `send-keys -c CLIENT -K`.
+
+**Options** of a running instance: go to it; pop it out to its own desktop window
+(it moves into a new session `popout_session_prefix` + its name and a new
+`desktop_terminal` attaches to it; without a desktop the session name is shown);
+float the pane or tile (dock) it; move it to another window or a new one; move
+its window to another session or a new one; rename the window; close it after a
+confirmation that starts on No. Options of an app: open it the usual way, as a
+popup, as a window, as a floating pane, or in its own desktop window. Rows that
+cannot apply (managed AI workspace panes, a window with a single pane to float)
+are disabled, not hidden.
+
+`pick` (the popup) changes nothing itself. It writes the chosen steps to a 0600
+file under `$XDG_RUNTIME_DIR/mios-launcher` and exits, and `open` runs them on
+the same client once the popup has closed. So a choice that opens another popup
+or menu (a popup TUI, the float shell, a kill confirmation) works, and every
+step names its client. Menu rows run through the generated key table of their
+menu (`switch-client -c CLIENT -T mios-menu-ID`, then the row's key).
+`miosd launcher list [--width N]` prints the sections (and the drawn screen)
+for scripts and tests.
+
+**Nested sessions.** With `[desktop.nested].selector = true` (the default) the
+terminal of a nested MiOS session opens the TUI session selector (`miosd
+sessions`) of the session's own tmux namespace: its instances, the TUIs, the
+apps and a new Tmux-OS session. It never attaches a tmux-os session straight
+away. `selector_tailnet = true` also lists the tailnet nodes.
 
 ## 5. Binding data and normalization
 

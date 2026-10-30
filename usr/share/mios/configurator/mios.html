@@ -3384,6 +3384,8 @@
         <label>Seat virtual pad name ({seat} = the seat label) <input data-key="desktop.nested.devices.virtual_pad_name" type="text"></label>
         <label>Virtual pad wait (ms) <input data-key="desktop.nested.devices.virtual_pad_wait_ms" data-type="int" type="number" min="0" max="60000"></label>
         <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
+        <label>Session terminal opens the TUI session selector (instances, TUIs, apps) <input data-key="desktop.nested.selector" data-type="bool" type="checkbox"></label>
+        <label>Session selector lists tailnet nodes <input data-key="desktop.nested.selector_tailnet" data-type="bool" type="checkbox"></label>
         <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
         <label>Session display height <input data-key="desktop.nested.height" data-type="int" type="number" min="320" max="8192"></label>
         <label>Session scaling <select data-key="desktop.nested.scale_mode"><option value="fit">Scale the desktop to the window</option><option value="native">Window pixels 1:1</option></select></label>
@@ -3410,6 +3412,14 @@
         <label>Pending-action prefix key <input data-key="keybindings.agent.accept_key" type="text"></label>
         <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
         <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
+        <label>Tmux-OS launcher (prefix Space / e, CTRL+SUPER) <input data-key="keybindings.tmux.launcher.enabled" data-type="bool" type="checkbox"></label>
+        <label>Launcher popup width (percent of the terminal) <input data-key="keybindings.tmux.launcher.popup_width" type="text" pattern="[0-9]{1,3}%"></label>
+        <label>Launcher popup height (percent of the terminal) <input data-key="keybindings.tmux.launcher.popup_height" type="text" pattern="[0-9]{1,3}%"></label>
+        <label>Launcher two-column layout from (columns) <input data-key="keybindings.tmux.launcher.two_column_min_width" data-type="int" type="number" min="40" max="1000"></label>
+        <label>Launcher starts on <select data-key="keybindings.tmux.launcher.start_section"><option value="running">Running instances</option><option value="ai">AI and agents</option><option value="apps">Apps and TUIs</option><option value="root">Tmux-OS actions</option></select></label>
+        <label>Running instances listed <input data-key="keybindings.tmux.launcher.instance_limit" data-type="int" type="number" min="1" max="1000"></label>
+        <label>Popped-out instance session prefix <input data-key="keybindings.tmux.launcher.popout_session_prefix" type="text" pattern="[A-Za-z0-9._-]{1,16}"></label>
+        <p>The launcher's right-click (Tab, Shift+Enter, controller A held) opens an instance's options: go to, pop out to its own desktop window, float or tile, move to a window or a session, rename, close.</p>
         <label>Completed agent pane timeout (seconds; zero keeps panes) <input data-key="mcp.tmux.completed_pane_timeout_s" data-type="int" type="number" min="0"></label>
         <label>Default GPU profile <select data-key="desktop.hyprland.hardware_profile"><option value="igpu">iGPU (default)</option><option value="dgpu">dGPU</option></select></label>
         <label>Synchronize GRUB and GPU login sessions <input data-key="desktop.hyprland.boot_sync.enabled" data-type="bool" type="checkbox"></label>
