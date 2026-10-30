@@ -1,5 +1,5 @@
 <!-- AI-hint: Global input SSOT, ownership contract, final controller and keyboard map, native Rust port and verification. -->
-<!-- AI-related: usr/share/mios/mios.toml [keybindings.global], tools/native/mios-inputd, tools/native/mios-resolver/src/keybindings.rs, src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-controls -->
+<!-- AI-related: usr/share/mios/mios.toml [keybindings.global], tools/native/mios-inputd, tools/native/mios-resolver/src/keybindings.rs, src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-controls, [keybindings.tmux], tools/native/mios-unit-gen/src/tmux_os.rs, usr/share/mios/tmux/mios-keys.tmux.conf -->
 # MiOS global input bindings
 
 `/usr/share/mios/mios.toml` declares the vendor map under `[keybindings]` and
@@ -227,13 +227,102 @@ them [step GT].
 | Ctrl+Alt+Shift+T / A / G / M | terminal / AI / agents / system monitor |
 | Super+Ctrl+= / - / 0, Super+Ctrl+wheel | session scale (live over captured apps and VMs [step G1]) |
 | Super+Ctrl+P / F / M | VM passthrough latch / VM fullscreen / Looking Glass command key (held) |
-| tmux `Ctrl-b` + t a g m h j k l s v n p w z y d Tab b o f | new window, AI, agents, monitor, pane focus, split, next/previous window, tree, zoom, copy mode, detach, BTab, send prefix, next workspace pane, compact view |
+| tmux `Ctrl-b` + one key | MiOS-Tmux prefix table (section 4.1); `Ctrl-b Space` opens the MiOS menu |
 | tmux Shift+Enter | agent accept |
 
-tmux prefix keys stay mobile-safe: Tab or one lowercase letter. POSIX signals, Readline
+Every tmux action is also reachable from the MiOS menu with arrows and Enter, so the
+punctuation and Shift prefix keys are accelerators, not requirements. POSIX signals, Readline
 editing and the tmux prefix belong to the terminal. `reserved_terminal` lists the chords
 that no host binding may take there, including `Ctrl+B` (tmux prefix) and `Ctrl+S` (flow
 control). Do not turn either into a global host interception.
+
+### 4.1 MiOS-Tmux (tier 3, terminal context)
+
+MiOS-Tmux is the tier-3 owner of `[keybindings].tmux_prefix` (Ctrl+B). Every
+tmux-os binding is in the **prefix table**: the prefix, then one key. A second
+step after the prefix cannot shadow a `reserved_terminal` chord, so the prefix
+table may use any key. The **root table** holds only:
+
+- `[keybindings.agent].accept_chord` (Shift+Enter);
+- the right-click menus, which are mouse events.
+
+`mios-unit-gen keybindings` refuses a root key that normalises to a
+`reserved_terminal` chord. The prefix itself is exempt, because it is the
+tier-3 owner's own chord. `mios-gate keybind-collisions` applies the same rule.
+
+Terminals never deliver SUPER chords to tmux, but only because Hyprland grabs
+the bound chords first. Kitty and foot can report Super under the kitty keyboard
+protocol, so SUPER is never a tmux key.
+
+Everything is projected from `mios.toml` into
+`/usr/share/mios/tmux/mios-keys.tmux.conf`:
+
+| SSOT | Projects |
+|---|---|
+| `[keybindings.tmux].bindings` | each row: `key`, `command` or `menu`, `note` (shown by `Ctrl+B ?`), optional `repeat`, `platforms`, `managed = "refuse"` |
+| `[keybindings.tmux].menu_key`, `launcher_key` | `Space` (MiOS menu) and `e` (Apps and TUIs) |
+| `[keybindings.tmux.float]` | `*` new native floating pane, `` ` `` float shell toggle, `F` float or dock the pane |
+| `[[keybindings.tmux.menus]]` | the menus, as command aliases `mios-menu-ID` and console variants `mios-menu-ID-vt` |
+| `[keybindings.agent].accept_key` | `Enter`: accept the agent prompt without extended keys |
+| `[[terminal.tuis]]`, `[terminal.tui_launcher]` | the Apps and TUIs menu, also listed by `miosd sessions` |
+
+| After Ctrl+B | Action |
+|---|---|
+| `Space` | MiOS menu (Apps, float shell, floating pane, Pane/Window/Session submenus) |
+| `e` | Apps and TUIs launcher |
+| `` ` `` / `*` / `F` | float shell toggle / new floating pane / float or dock the pane |
+| `h j k l`, arrows | select a pane (arrows repeat) |
+| `H J K L` | resize the pane by 5 |
+| `s` / `v` | split below / right, keeping the directory |
+| `t` / `c` | new window, keeping the directory |
+| `n` / `p`, `0`-`9` | next / previous window, window N |
+| `(` / `)` | previous / next session, skipping hidden sessions |
+| `w` | choose a window or pane |
+| `z`, `y` or `[`, `PgUp` / `PgDn` | zoom, copy mode, scroll back / forward |
+| `]` / `=` | paste / choose a buffer |
+| `,` / `$` | rename the window / session |
+| `x` / `&` | kill the pane / window: a Yes/No menu that starts on No |
+| `!`, `{` / `}`, `q` | break the pane out, swap panes, show pane numbers |
+| `a` / `g` / `m` | MiOS AI / agents / system monitor |
+| `o` / `f` | next pane or agent / compact or automatic AI view |
+| `Enter` | accept the agent prompt |
+| `Tab` / `b` | send Shift+Tab / send the prefix |
+| `:` / `?` / `d` | command prompt / list keys / detach |
+
+**Menus.** Every menu starts on its first item. Up/Down (or k/j), Home/End,
+PgUp/PgDn, Enter, Esc or q, and the item's shortcut letter drive it. A
+controller or MCP can drive it through `send-keys -c CLIENT -K`. A menu opened
+by right-click also takes mouse clicks. Menus opened by a key are keyboard-only:
+tmux ignores the starting item of a menu that handles the mouse (`-M`), and
+Enter must choose an item without a mouse. The
+`mios-menu` alias is the entry point for the controller's `tmux:menu` verb. A
+client shorter than `[keybindings.tmux].menu_min_client_rows` gets
+`menu_too_small_message` instead of a silently dropped menu.
+
+**Linux console.** A client whose `TERM` matches `[theme.tmux.console].terms`
+(or one that is not UTF-8) is a console client. It gets ASCII status glyphs,
+`single` borders and the named colours of `[theme.tmux.console]`. Status
+formats are evaluated per client, so a console client and a desktop client in
+the same session each see their own variant. SSH phones that send `linux` are
+re-declared as `[theme.tmux].remote_term` first, so they are not console
+clients.
+
+**Managed AI workspaces.** In panes of a managed AI workspace (the relay owns
+their layout):
+
+- `*` opens the float shell instead of a native float;
+- `F`, `!`, `{` and `}` refuse with `managed_refusal_message`;
+- the matching menu items are disabled.
+
+Floating panes cannot be resized from the keyboard (a tmux limit). The mouse
+moves and resizes them, and zoom (`z`) hides them.
+
+**Controller.** The bindings-final design owns the controller: the `tmux:`
+verbs, the `key:` namespace and console nav. MiOS-Tmux guarantees the prefix
+targets those tables send (`h j k l p n t f w y z Space PPage NPage ( )`) and the
+`mios-menu` alias. mios-controls validates `[keybindings.global]`; the tmux
+generator validates `[keybindings.tmux]`; neither reinterprets the other's
+table.
 
 ## 5. Binding data and normalization
 
