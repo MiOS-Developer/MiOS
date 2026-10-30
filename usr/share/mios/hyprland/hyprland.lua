@@ -38,8 +38,9 @@ mios_section("framerate", function()
  local tier = s:match('"tier"%s*:%s*"([%w%-]+)"')
  if comm == "miosd" and tier and n("desktop_hz") and n("cap_hz") and n("glass_fps") and n("wallpaper_fps") then
   mios_rate = {tier = tier, desktop_hz = n("desktop_hz"), cap_hz = n("cap_hz"), glass_fps = n("glass_fps"), wallpaper_fps = n("wallpaper_fps"), wallpaper_paced = s:match('"wallpaper_paced"%s*:%s*true') ~= nil, source = "state"}
-  for name, mode in s:gmatch('"mode%.([%w%-_%.]+)"%s*:%s*"(%d+x%d+@[%d%.]+)"') do
-   local m = local_output(name) and hl.get_monitor(name)
+  for name, mode in s:gmatch('"mode%.([%w%-_%.]+)"%s*:%s*"([^"]+)"') do
+   local ok = mode:match('^%d+x%d+@[%d%.]+$') or mode:match('^modeline [%d%. ]+ [%+%-]hsync [%+%-]vsync$')
+   local m = ok and local_output(name) and hl.get_monitor(name)
    if m then hl.monitor({output = name, mode = mode, position = m.x .. "x" .. m.y, scale = m.scale, transform = m.transform}) end
   end
  elseif mios_rate.cap_hz == 0 then
