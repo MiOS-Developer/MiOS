@@ -65,18 +65,21 @@ extended-vblank refuse the other value, so a host or user tier opts in.
 - A config reload re-applies the mode the daemon set. This includes a modeline. Only a `WxH@Hz` string or a
   well-formed modeline from the state file is replayed.
 
-### Trying DP-3 at a real 90 Hz (operator or lead)
+### Holding DP-3 at a real 90 Hz
 
-The lane script `apply-dp3-90hz.sh` (in the lane report directory) runs these steps:
+The daemon does this natively once a host or user tier opts in:
 
-1. `check` is read-only. It shows the derived modeline, the `hl.monitor` Lua that applies it and the Lua that restores
-   the current mode.
-2. `apply` arms a transient user timer first. The timer restores the previous mode after 15 s. Then `apply` switches
-   the mode and verifies it within 5 s. If verification fails, it reverts at once.
-3. Run `confirm <dir>` within the 15 s to keep the mode.
-4. `persist <dir>` makes it permanent. It needs the extended-vblank binaries to be installed. It writes the user-tier
-   fragment `modes = "extended-vblank"`, `mode_outputs = ["DP-3"]`. After that, the daemon holds every tier on DP-3
-   with a display mode, and its own 15 s guard covers each new mode. `unpersist` goes back to the VRR cap.
+    [desktop.framerate]
+    modes = "extended-vblank"
+    mode_outputs = ["DP-3"]
+
+After a SIGHUP (or the next start) the daemon holds every tier on DP-3 with a display mode instead of the VRR cap.
+Each new mode goes through the guards above: verified within 5 s, restored after 15 s unless
+`miosd framerate confirm-mode` keeps it. Remove the fragment to go back to the VRR cap.
+
+`miosd framerate modeline DP-3 --hz 90` prints the timing and the `hl.monitor` Lua that applies and restores it,
+without changing anything. A one-off trial outside the daemon (arm a 15 s revert timer first, switch, verify, confirm
+or let it revert) is a lead/operator integration step and is not shipped in the image.
 
 ## Hypr3D windows open at Retina size
 

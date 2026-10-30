@@ -833,11 +833,13 @@ class NestedStatus(unittest.TestCase):
         try:
             n.open3d(RETINA % (o["dist"], o["spawn"][0], o["spawn"][1], o["m_min"]))
             st = n.status("spawn:")
+            mon_line = n.status("monitor=")
         finally:
             n.close3d()
-        self.assertIn(" exact=1 ", st)
+        why = f"{st} | {mon_line} | hyprctl {m['width']}x{m['height']} s{m['scale']} t{m['transform']} | oracle {o}"
+        self.assertIn(" exact=1 ", st, why)
         got = float(re.search(r" scale=([0-9.]+)", st).group(1))
-        self.assertAlmostEqual(got, o["S"], places=4)
+        self.assertAlmostEqual(got, o["S"], places=4, msg=why)
         area = re.search(r" area=([0-9.-]+),([0-9.-]+),([0-9.]+)x([0-9.]+)", st)
         self.assertIsNotNone(area, st)
         self.assertAlmostEqual(float(area.group(3)), o["fit"][0], places=3)

@@ -16,7 +16,8 @@ compositor gets the candidate plugins; the daemon runs against the nested instan
 home, user tier and private buses (nothing activatable). The nested Hyprland is SIGTERMed at the end.
 
 Env: MIOS_LIVE_NESTED=1; MIOS_GEN (candidate launcher; needs extended-vblank), MIOS_FR_MIOSD, MIOS_FR_WALLPAPERD,
-MIOS_FR_PACING_SO, MIOS_FR_HYPR3D_SO (default: installed); MIOS_LIVE_OUT (outside /tmp: the nest's /tmp is private).
+MIOS_FR_PACING_SO, MIOS_FR_HYPR3D_SO (default: installed); MIOS_LIVE_OUT (outside /tmp: the nest's /tmp is private);
+MIOS_FR_APPLY_SCRIPT (optional: the lead's DP-3 apply script, rehearsed on the nested output).
 The nested window's frame callbacks follow the PRIMARY's own rate (its cap), so the tiers here are scaled below it
 (20/24/30/40 Hz; divisors are the vendor ones); the vendor table itself is unit-tested in tests/test-framerate.py.
 """
@@ -36,6 +37,7 @@ WALLPAPERD = os.environ.get("MIOS_FR_WALLPAPERD", "/usr/bin/mios-wallpaperd")
 PACING_SO = os.environ.get("MIOS_FR_PACING_SO", "/usr/lib64/mios/mios-pacing.so")
 H3D_SO = os.environ.get("MIOS_FR_HYPR3D_SO", "/usr/lib64/mios/hypr3d.so")
 QML = "/usr/lib64/qt6/bin/qml"
+T0 = time.time()
 TIERS = {"power-saver": 20, "balanced": 20, "battery": 24, "performance": 30, "gaming": 40}   # scaled (see above)
 results = []
 
@@ -61,7 +63,8 @@ def clean_env(**extra):
 
 def primary_facts():
     pid = sh(["pgrep", "-x", "Hyprland", "-o"]).stdout.strip()
-    return {"pid": pid, "portal_mounts": open("/proc/self/mountinfo").read().count("fuse.portal"),
+    fr = sh(["systemctl", "--user", "show", "-p", "MainPID", "--value", "mios-framerate.service"]).stdout.strip()
+    return {"pid": pid, "framerate_pid": fr, "portal_mounts": open("/proc/self/mountinfo").read().count("fuse.portal"),
             "clients": len(json.loads(sh(["hyprctl", "-j", "clients"]).stdout or "[]"))}
 
 
@@ -288,11 +291,16 @@ class Daemon:
         self.n, self.bus = nest, bus
         self.frag = OUT / "daemon.d"
         self.frag.mkdir(exist_ok=True)
+        (self.frag / "60-fr-live-test.toml").write_text((OUT / "frag" / "60-fr-live-test.toml").read_text())
+        (OUT / "none-host.toml").write_text("")
         self.state_home = OUT / "state"
         self.p = None
 
     def env(self, **extra):
-        return self.n.env(MIOS_VENDOR_TOML=str(WT_SSOT), MIOS_USER_TOML=str(OUT / "none.toml"), MIOS_USER_TOML_D=str(self.frag),
+        # every tier private: the worktree vendor SSOT, an empty host tier, no user file, this run's fragment dir (the
+        # scaled tier table + the plugin paths, the same fragment the nested session loads; set-unlocked writes here)
+        return self.n.env(MIOS_VENDOR_TOML=str(WT_SSOT), MIOS_HOST_TOML=str(OUT / "none-host.toml"),
+                          MIOS_USER_TOML=str(OUT / "none.toml"), MIOS_USER_TOML_D=str(self.frag),
                           XDG_STATE_HOME=str(self.state_home), DBUS_SYSTEM_BUS_ADDRESS=self.bus.addr["system"],
                           DBUS_SESSION_BUS_ADDRESS=self.bus.addr["session"], **extra)
 
@@ -309,6 +317,14 @@ class Daemon:
 
     def cli(self, *a):
         return sh([MIOSD, "framerate", *a], env=self.env())
+
+    def unlocked(self, on):
+        """set-unlocked into this run's fragment dir WITHOUT its reload (that signals the primary's
+        mios-framerate.service through the user manager), then SIGHUP this run's own daemon."""
+        r = self.cli("set-unlocked", "on" if on else "off", "--no-reload")
+        if r.returncode:
+            raise RuntimeError(r.stderr)
+        self.hup()
 
     def state(self):
         try:
@@ -354,7 +370,7 @@ def tier_checks(n, d, bus, out_name, max_hz):
     expect["unlocked"] = (max_hz, 0, max_hz // 2, max_hz)
     steps = [("power-saver", lambda: bus.profile("power-saver")), ("performance", lambda: bus.profile("performance")),
              ("gaming", lambda: bus.gaming(1)), ("performance", lambda: bus.gaming(0)), ("battery", lambda: bus.battery(True)),
-             ("unlocked", lambda: d.cli("set-unlocked", "on")), ("battery", lambda: d.cli("set-unlocked", "off"))]
+             ("unlocked", lambda: d.unlocked(True)), ("battery", lambda: d.unlocked(False))]
     for want, act in steps:
         act()
         st = wait(lambda: d.state() if d.state().get("tier") == want else None, timeout=15)
@@ -461,6 +477,40 @@ def modeset_checks(n, d, bus):
     (d.frag / "70-mode.toml").unlink(missing_ok=True)
 
 
+def apply_script_checks(n, d):
+    """MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh): rehearsed on the NESTED output with the synthetic EDID --
+    check is read-only; apply arms the transient revert timer first, then the modeset; unconfirmed, the timer restores
+    the previous mode (positive), and a confirmed apply keeps it past the window (the control)."""
+    script = os.environ.get("MIOS_FR_APPLY_SCRIPT")
+    if not script:
+        return
+    m = n.monitor()
+    name, base = m["name"], m["refreshRate"]
+    hz = TIERS["performance"]
+    env = d.env(MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}",
+                DBUS_SESSION_BUS_ADDRESS=f"unix:path={os.environ['XDG_RUNTIME_DIR']}/bus")   # the user manager: the timer
+    args = ["--output", name, "--hz", str(hz), "--miosd", MIOSD, "--timeout", "8"]
+    r = sh(["bash", script, "check", *args], env=env)
+    check("apply script: check is read-only and derives the modeline", r.returncode == 0 and "modeline" in r.stdout and abs(n.monitor()["refreshRate"] - base) < 0.5, (r.stdout + r.stderr)[-400:])
+    for confirm in (False, True):
+        tag = "confirmed" if confirm else "unconfirmed"
+        adir = OUT / f"apply-{tag}"
+        r = sh(["bash", script, "apply", *args, "--dir", str(adir)], env=env, timeout=40)
+        shown = n.monitor()["refreshRate"]
+        check(f"apply script ({tag}): the modeset shows D", r.returncode == 0 and abs(shown - hz) < 0.5, f"{shown} {(r.stdout + r.stderr)[-300:]}")
+        if confirm:
+            c = sh(["bash", script, "confirm", str(adir)], env=env)
+            check("apply script: confirm within the window", c.returncode == 0, c.stdout + c.stderr)
+        time.sleep(11)
+        now = n.monitor()["refreshRate"]
+        if confirm:
+            check("apply script (confirmed): the mode stays past the window (control)", abs(now - hz) < 0.5 and not (adir / "reverted").exists(), now)
+            sh(["hyprctl", "-i", n.sig, "eval", (adir / "restore.lua").read_text()], env=n.env())
+            wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=6)
+        else:
+            check("apply script (unconfirmed): the timer restored the previous mode", abs(now - base) < 0.5 and (adir / "reverted").exists(), f"{now} {(adir / 'log').read_text()[-300:] if (adir / 'log').exists() else ''}")
+
+
 def retina_checks(n):
     """Hypr3D Retina spawn at the nested output's scale: the plugin's live d1 / window scale / fit area against the
     independent oracle (tests/test-hypr3d-retina-spawn.py NestedStatus), landscape and portrait (transform 1)."""
@@ -504,6 +554,7 @@ def main():
         tier_checks(n, d, bus, out_name, max_hz)
         room_checks(n, d, bus)
         modeset_checks(n, d, bus)
+        apply_script_checks(n, d)
         retina_checks(n)
     except Exception as e:  # noqa: BLE001 -- the run must always clean up and report
         check("harness", False, repr(e))
@@ -514,8 +565,13 @@ def main():
             bus.stop()
         n.stop()
         after = primary_facts()
-        check("primary compositor untouched (same pid, portal mounts, no lost clients)",
-              after["pid"] == before["pid"] and after["portal_mounts"] == before["portal_mounts"] and after["clients"] >= before["clients"] - 0, (before, after))
+        # the primary is shared with other running work (its clients and portal mounts come and go on their own):
+        # the assertion is the compositor itself; the counts are recorded as evidence only
+        check("primary compositor untouched (same pid)", after["pid"] == before["pid"] and after["pid"], (before, after))
+        check("primary's mios-framerate.service was not signalled by this run",
+              after["framerate_pid"] == before["framerate_pid"] and "Reloading" not in sh(["journalctl", "--user", "-u", "mios-framerate.service", "--since", f"@{int(T0)}", "-q", "--no-pager"]).stdout
+              and "SSOT reloaded" not in sh(["journalctl", "--user", "-u", "mios-framerate.service", "--since", f"@{int(T0)}", "-q", "--no-pager"]).stdout,
+              (before["framerate_pid"], after["framerate_pid"]))
         (OUT / "results.json").write_text(json.dumps({"results": results, "primary": [before, after]}, indent=1))
     bad = [r for r in results if not r["ok"]]
     print(f"{len(results) - len(bad)}/{len(results)} passed; evidence {OUT}")

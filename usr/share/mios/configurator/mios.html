@@ -3304,7 +3304,7 @@
         <label>Desktop frame-rate policy (power profile, battery, GameMode) <input type="text" data-key="desktop.framerate.enabled" data-type="bool"></label>
         <label>Frame rate unlocked (no cap anywhere; at your own risk) <input type="text" data-key="desktop.framerate.unlocked" data-type="bool"></label>
         <label>Frame-rate mechanism <select data-key="desktop.framerate.mechanism"><option value="auto">VRR cap, else a display mode</option><option value="cap">VRR cap only (never a modeset)</option><option value="mode">Display modes only</option></select></label>
-        <label>Frame-rate display modes <select data-key="desktop.framerate.modes"><option value="extended-vblank">Advertised, else extended vertical blank (real 90 Hz on a 144 Hz panel)</option><option value="advertised">Advertised (EDID) modes only</option></select></label>
+        <label>Frame-rate display modes <select data-key="desktop.framerate.modes"><option value="advertised">Advertised (EDID) modes only</option><option value="extended-vblank">Advertised, else extended vertical blank (real 90 Hz on a 144 Hz panel)</option></select></label>
         <label>Outputs held by a display mode even with VRR (JSON list, e.g. ["DP-3"]) <textarea data-key="desktop.framerate.mode_outputs" data-type="json-array"></textarea></label>
         <label>Display-mode match tolerance (Hz) <input data-key="desktop.framerate.mode_tolerance_hz" data-type="float" type="number" min="0.001" max="5" step="0.05"></label>
         <label>New display mode confirm countdown (seconds; 0 = no automatic revert) <input data-key="desktop.framerate.mode_confirm_s" data-type="int" type="number" min="0" max="600"></label>
