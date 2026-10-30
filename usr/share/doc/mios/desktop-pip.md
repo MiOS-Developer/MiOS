@@ -73,7 +73,15 @@ A smaller resize springs back to the minimum. The maximum is the largest
 aspect-true size inside the HUD work area (and `max_width_frac`). Magnets and
 the clamp act on each PiP's *natural* size: the size the operator (or the
 client) last chose. The daemon only updates it on a resize that is not its own,
-so a size the packer squeezed a PiP to never snaps to a magnet later.
+so a size the packer squeezed a PiP to never snaps to a magnet later. A frame
+the daemon dispatched counts as its own for one second after its newest
+dispatch (a busy compositor applies frames a few ticks late); after that an
+operator resize to the same size is the operator's.
+
+`min_width_px`, `size_snap_px` and `fullscreen_release_ms` were added after the
+first shipped table. An SSOT without them (the binary installed before its SSOT)
+turns that feature off -- no absolute minimum, no size magnets, no release delay
+-- and `check` notes it on stderr; a present but invalid value is still rejected.
 
 **Packing.** Several PiPs stack top-to-bottom on their rail; an overfull rail
 moves PiPs to the other flank before both columns are squeezed at one uniform
@@ -115,7 +123,7 @@ browser PiP windows at map without the daemon. On an output the mobile layout
 classifies as mobile, `mios-mobile-<output>` tiles every new window by design
 and overrides those float rules; there the daemon's adoption (`on`) floats and
 pins the PiP. Set `MIOS_PIP_GRAVITY_TRACE=1` in the daemon's environment to log
-room transitions, kept/dropped tracks and natural-size updates on stderr.
+room transitions and releases, kept/dropped tracks and natural-size updates on stderr.
 
 ## Fullscreen, maximize and Theatre matrix
 
@@ -126,7 +134,7 @@ room transitions, kept/dropped tracks and natural-size updates on stderr.
 | Another window maximized | Same latch; maximize keeps the HUD work area. |
 | A PiP maximized / fullscreen | Gravity never fights it. Maximize stays inside the HUD work area. Its pre-fullscreen slot stays reserved in the plan, so neighbours hold still. Unmaximize restores the exact slot and the pin. |
 | Hypr3D room active | Flat placement pauses; animations stop, every PiP keeps its last flat slot. Adoption continues. A maximized PiP is the room's Theatre presentation (see above). |
-| Room closed | Flat placement resumes from the kept slots: whatever the room moved or re-rastered (native size) is not taken as an operator resize, so every PiP returns at once to its kept slot and natural size. A PiP still maximized after the room keeps its slot reserved until it is restored. |
+| Room closed | The room keeps ownership of each PiP until that window has been geometrically still for `settle_ms`: Hypr3D's close keeps moving and re-rastering windows for many ticks, and none of those frames is an operator resize (the natural size is never updated, nothing is dispatched, neighbours plan around the kept slots). Then the PiP returns at once to its kept slot and natural size. A PiP still maximized after the room keeps its slot reserved until it is restored and still. A move or resize made while the room's close is still running is the room's and is undone. |
 
 ## ShaderGlass and mode state
 

@@ -7,6 +7,7 @@
 #   MIOS_LIVE_NESTED=1 MIOS_PIP_GRAVITY=<candidate> [MIOS_PIP_GRAVITY_OLD=<old binary> MIOS_PIP_SSOT_OLD=<old mios.toml>] \
 #     [MIOS_NESTED_RUNTIME=<existing owned nested runtime dir>] [MIOS_PIP_HYPR3D_SO=/usr/lib64/mios/hypr3d.so] \
 #     [MIOS_PIP_PHASES=rules,detection,sizes,matrix,pipfull,theatre] [MIOS_PIP_SQUEEZE_N=10] \
+#     [MIOS_PIP_GRAVITY_TRACE=1 [MIOS_PIP_GRAVITY_PREFIX=<pre-fix candidate>]] \
 #     python3 tests/test-pip-behaviours-live.py
 # Without MIOS_NESTED_RUNTIME the test launches its own `mios-gen nested-session --layout pip` and stops it at the end.
 import json, os, signal, subprocess, sys, tempfile, time, tomllib
@@ -19,6 +20,8 @@ OLD = os.environ.get('MIOS_PIP_GRAVITY_OLD', '')
 SSOT = os.environ.get('MIOS_VENDOR_TOML', str(REPO / 'usr/share/mios/mios.toml'))
 SSOT_OLD = os.environ.get('MIOS_PIP_SSOT_OLD', '')
 H3D = os.environ.get('MIOS_PIP_HYPR3D_SO', '')
+PREFIX = os.environ.get('MIOS_PIP_GRAVITY_PREFIX', '')  # a pre-fix candidate binary: the room-exit negative control
+TRACE = os.environ.get('MIOS_PIP_GRAVITY_TRACE') == '1'
 PHASES = set((os.environ.get('MIOS_PIP_PHASES') or 'rules,detection,sizes,matrix,pipfull,theatre').split(','))
 results = []
 
@@ -481,6 +484,8 @@ def theatre(nest, label, cand):
     # Room 2 on squeezed rails: Theatre (a PiP maximized inside the room), leave the room, restore it.
     addrs, g0 = crowd(nest, SQUEEZE_N)
     g0 = settle(nest, addrs)
+    log = OUT / f'daemon-{label}.log'
+    mark = log.stat().st_size if log.exists() else 0
     th = min(addrs, key=lambda a: g0[a][2])  # on the squeezed rail
     print(f'TRACE [{label}] theatre PiP {th} slot {g0[th]}', flush=True)
     try:
@@ -496,6 +501,15 @@ def theatre(nest, label, cand):
     others = moved(s, g0, skip=(th,))
     nest.dsp(th, "fullscreen({window=TARGET,mode='maximized',action='unset'})")
     g1 = settle(nest, addrs)
+    # Deterministic room-exit control (the geometric checks above can be masked by the launch magnet): with
+    # MIOS_PIP_GRAVITY_TRACE=1 the daemon logs every natural-size update; none may come from the room's close.
+    drift = [l for l in (log.read_bytes()[mark:].decode(errors='replace').splitlines() if TRACE and log.exists() else []) if 'natural size' in l]
+    if label == 'prefix':
+        check(f'[{label}] NEGATIVE CONTROL: the pre-fix daemon takes the room close frames for operator resizes', drift, f'{len(drift)} natural-size updates')
+        print(f'OBSERVED [{label}] Theatre: neighbours moved={others} layout restored={g1 == g0}', flush=True)
+        return
+    if cand and TRACE:
+        check(f'[{label}] leaving the room and the Theatre restore never change a natural size', not drift, drift[:3])
     if cand:
         check(f'[{label}] after Theatre the neighbours kept their slots', not others, others)
         check(f'[{label}] Theatre PiP restores to its slot and the layout is unchanged', g1 == g0 and nest.client(th)['pinned'], f'{g0} -> {g1}')
@@ -583,6 +597,8 @@ def main():
             if not SSOT_OLD:
                 (OUT / 'old-mios.toml').write_text(sh(['git', '-C', str(REPO), 'show', 'main:usr/share/mios/mios.toml']).stdout)
             run_label(nest, 'old', OLD, old_ssot, False)
+        if PREFIX:
+            run_label(nest, 'prefix', PREFIX, SSOT, True)
         run_label(nest, 'candidate', NEW, SSOT, True)
     finally:
         nest.stop()

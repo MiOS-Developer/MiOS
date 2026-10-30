@@ -51,12 +51,27 @@ fn matchers_from(acc:&toml::Value)->Result<Vec<Matcher>,String> {
     }
     Ok(matchers)
 }
+/// Keys added after the first shipped [desktop.pip_gravity] table. An SSOT without them (the binary installed before
+/// the SSOT that introduced them) turns that one feature off -- exactly the behaviour before the key existed -- instead of
+/// refusing the whole table (which failed `ExecStartPre=check` and every nested PiP launch). A present but invalid value
+/// is still rejected.
+const OPTIONAL_KEYS: &[&str] = &["min_width_px", "size_snap_px", "fullscreen_release_ms"];
 fn load_cfg() -> Result<Cfg, String> {
     let doc=mios_resolver::resolve_merged(None,false).map_err(|e|e.to_string())?;
+    cfg_from(&doc)
+}
+/// The [desktop.pip_gravity] keys of OPTIONAL_KEYS missing from `doc`.
+fn missing_optional(doc:&toml::Value)->Vec<&'static str> {
+    let acc=doc.get("desktop").and_then(|d|d.get("pip_gravity"));
+    OPTIONAL_KEYS.iter().copied().filter(|k|acc.is_none_or(|a|a.get(k).is_none())).collect()
+}
+fn cfg_from(doc:&toml::Value) -> Result<Cfg, String> {
     let acc=doc.get("desktop").and_then(|d|d.get("pip_gravity")).ok_or("desktop.pip_gravity missing")?;
     let f = |k: &str| -> Result<f64, String> {
-        let value=acc.get(k).ok_or(format!("[desktop.pip_gravity].{k} missing"))?;
-        let value=if let Some(path)=value.as_str(){path.split('.').try_fold(&doc,|v,k|v.get(k)).ok_or(format!("invalid PiP metric reference: {path}"))?}else{value};
+        let Some(value)=acc.get(k) else {
+            return if OPTIONAL_KEYS.contains(&k) {Ok(0.0)} else {Err(format!("[desktop.pip_gravity].{k} missing"))};
+        };
+        let value=if let Some(path)=value.as_str(){path.split('.').try_fold(doc,|v,k|v.get(k)).ok_or(format!("invalid PiP metric reference: {path}"))?}else{value};
         value.as_float().or(value.as_integer().map(|i|i as f64)).filter(|v|v.is_finite()&&*v>=0.0).ok_or(format!("invalid PiP metric {k}"))
     };
     let rails: Vec<String> = acc
@@ -84,7 +99,7 @@ fn load_cfg() -> Result<Cfg, String> {
         },
         matchers,
         initial_width_frac:f("initial_width_frac")?,
-        opening:mios_resolver::window_opening::Policy::from_ssot(&doc)?,
+        opening:mios_resolver::window_opening::Policy::from_ssot(doc)?,
         fit_default_window:acc.get("fit_default_window").and_then(|v|v.as_bool()).ok_or("PiP fit_default_window missing")?,
         keep_above:acc.get("keep_above").and_then(|v|v.as_bool()).ok_or("PiP keep_above missing")?,
         hud_ns: acc.get("hud_namespaces").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
@@ -180,58 +195,103 @@ struct Track {
     natural: (f64, f64),
     /// The last frames this daemon dispatched (newest last). A busy compositor applies a frame a tick or more late, so
     /// a window showing ANY of them is ours, not an operator resize (that misread adopted animation frames as natural
-    /// sizes and shrank PiPs step by step).
+    /// sizes and shrank PiPs step by step). They expire FRAME_GRACE after the newest dispatch: a stale frame list made a
+    /// much later operator resize to one of those sizes count as ours, so the next tick re-animated it back.
     expected: Vec<Rect>,
+    dispatched_at: Option<Instant>,
     stable_since: Instant,
     settled: bool,
     anim: Option<([f64; 4], [f64; 4], Rect)>,
-    /// Hypr3D owned placement since `last` was observed: the room may move the window and change its native raster
-    /// size, and leaving the room resumes flat placement from the kept slot (`last`, `natural`), not from what the
-    /// room left behind.
-    from_room: bool,
+    /// Hypr3D owns placement (see RoomHold).
+    room: Option<RoomHold>,
+}
+
+/// Room ownership of one PiP. While the room is active, and after it closed until the window has been geometrically
+/// still for `settle_ms` (Hypr3D's close keeps moving and re-rastering windows for many ticks), every move and resize
+/// is the room's: the natural size is never updated, nothing is dispatched, and the PiP plans from its kept flat slot.
+/// Only then does flat placement resume, restoring the kept slot and natural size at once.
+#[derive(Clone, Copy, Debug)]
+struct RoomHold {
+    slot: Rect,
+    /// Start of the current stillness run after the room closed (None while the room is active).
+    still_since: Option<Instant>,
 }
 
 /// Dispatched frames remembered per PiP (about 260 ms of animation at the active tick).
 const EXPECTED_FRAMES: usize = 16;
+/// Dispatched frames stay "ours" this long after the newest dispatch (the compositor's worst observed apply lag is a few
+/// ticks), then expire.
+const FRAME_GRACE: Duration = Duration::from_millis(1000);
 
 impl Track {
     fn new(cur: Rect, now: Instant) -> Self {
-        Track { last: cur, natural: (cur.w, cur.h), expected: Vec::new(), stable_since: now, settled: false, anim: None, from_room: false }
+        Track { last: cur, natural: (cur.w, cur.h), expected: Vec::new(), dispatched_at: None, stable_since: now, settled: false, anim: None, room: None }
     }
-    /// Planning input: the kept flat slot when returning from the room, else the current position; always the
-    /// natural size.
+    /// The room took over placement this tick. The kept slot is the last flat geometry; re-entering the room before a
+    /// release finished keeps the original slot (the window is still where the room left it).
+    fn enter_room(&mut self) {
+        let slot = self.room.map_or(self.last, |h| h.slot);
+        self.room = Some(RoomHold { slot, still_since: None });
+        self.anim = None;
+        self.settled = true;
+    }
+    /// The room (or its release) still owns this PiP: flat placement must not observe or move it.
+    fn held(&self) -> bool {
+        self.room.is_some()
+    }
+    /// The flat slot this PiP keeps (its kept room slot while held).
+    fn kept(&self) -> Rect {
+        self.room.map_or(self.last, |h| h.slot)
+    }
+    /// Planning input: the kept flat slot while the room owns it, else the current position; always the natural size.
     fn plan_input(&self, cur: Rect) -> Rect {
-        let at = if self.from_room { self.last } else { cur };
+        let at = if self.held() { self.kept() } else { cur };
         Rect::new(at.x, at.y, self.natural.0, self.natural.1)
     }
     /// The window shows frames of ours. Position and size are matched independently: a move applies at once while a
     /// resize lands only when the client commits a buffer of the new size, so under load the position can come from a
     /// newer frame than the size.
-    fn ours(&self, cur: Rect) -> bool {
+    fn ours(&self, cur: Rect, now: Instant) -> bool {
+        if self.dispatched_at.is_none_or(|at| now.duration_since(at) > FRAME_GRACE) {
+            return false;
+        }
         let near = |a: f64, b: f64| (a - b).abs() < gravity::SETTLE_PX;
         self.expected.iter().any(|e| near(e.x, cur.x) && near(e.y, cur.y)) && self.expected.iter().any(|e| near(e.w, cur.w) && near(e.h, cur.h))
     }
     /// Record a frame dispatched to the compositor.
-    fn dispatched(&mut self, frame: Rect) {
+    fn dispatched(&mut self, frame: Rect, now: Instant) {
         if self.expected.len() >= EXPECTED_FRAMES {
             self.expected.remove(0);
         }
         self.expected.push(frame);
+        self.dispatched_at = Some(now);
     }
     /// Observe the window's current geometry once per flat tick (before the settle/animate step).
     fn observe(&mut self, cur: Rect, now: Instant, settle: Duration) {
         let close = |a: Rect, b: Rect| (a.x - b.x).abs() < gravity::SETTLE_PX && (a.y - b.y).abs() < gravity::SETTLE_PX && (a.w - b.w).abs() < gravity::SETTLE_PX && (a.h - b.h).abs() < gravity::SETTLE_PX;
-        if self.from_room {
-            // Back from the room: whatever moved or resized it there was the room, not the operator. Keep the natural
-            // size and restore the kept slot at once.
-            self.from_room = false;
+        if self.dispatched_at.is_some_and(|at| now.duration_since(at) > FRAME_GRACE) {
             self.expected.clear();
-            if !close(self.last, cur) {
-                self.anim = None;
-                self.settled = false;
-                self.stable_since = now.checked_sub(settle).unwrap_or(now);
+            self.dispatched_at = None;
+        }
+        if let Some(hold) = self.room.as_mut() {
+            // Leaving the room: whatever moves or resizes the window now is the room's close, not the operator.
+            self.expected.clear();
+            self.dispatched_at = None;
+            self.anim = None;
+            match hold.still_since {
+                // first flat tick: start the stillness run (`last` is the pre-room geometry, not comparable)
+                None => hold.still_since = Some(now),
+                Some(_) if !close(self.last, cur) => hold.still_since = Some(now),
+                Some(since) if now.duration_since(since) >= settle => {
+                    // Still for settle_ms: release. Restore the kept slot and natural size at once (no further wait).
+                    trace(&format!("room released {:?} (kept slot {:?}, natural {:?})", cur, hold.slot, self.natural));
+                    self.room = None;
+                    self.settled = false;
+                    self.stable_since = now.checked_sub(settle).unwrap_or(now);
+                }
+                Some(_) => {}
             }
-        } else if !self.ours(cur) && !close(self.last, cur) {
+        } else if !self.ours(cur, now) && !close(self.last, cur) {
             // moved/resized by the operator (or the client): wait until they let go, then re-plan
             if (cur.w - self.last.w).abs() >= gravity::SETTLE_PX || (cur.h - self.last.h).abs() >= gravity::SETTLE_PX {
                 trace(&format!("natural size {:?} -> {:?} (resize not ours; last {:?}, newest frame {:?})", self.natural, (cur.w, cur.h), self.last, self.expected.last()));
@@ -357,7 +417,13 @@ fn main() {
 
     if std::env::args().nth(1).as_deref() == Some("check") {
         match load_cfg() {
-            Ok(c) => println!("ok enabled={} rails L={} R={} matchers={}", c.enabled, c.params.left, c.params.right, c.matchers.len()),
+            Ok(c) => {
+                println!("ok enabled={} rails L={} R={} matchers={}", c.enabled, c.params.left, c.params.right, c.matchers.len());
+                if let Ok(doc)=mios_resolver::resolve_merged(None,false) {
+                    let off=missing_optional(&doc);
+                    if !off.is_empty() {eprintln!("note: [desktop.pip_gravity] lacks {} (older SSOT): those features are off", off.join(", "));}
+                }
+            }
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(2)
@@ -408,7 +474,7 @@ fn main() {
         }
         if room {
             // Hypr3D owns placement (Theatre included). Keep each PiP's last flat slot, drop animations; re-plan on exit.
-            for t in tracks.values_mut() {t.anim=None;t.settled=true;t.from_room=true;}
+            for t in tracks.values_mut() {t.enter_room();}
             continue;
         }
         if cfg.keep_above {if let Err(e)=keep_above(&ipc,&clients,&mut unpinned,now,Duration::from_millis(cfg.settle_ms as u64)){eprintln!("PiP stacking: {e}");}}
@@ -448,8 +514,9 @@ fn main() {
             if window::has_tag(c,window::OPT_OUT) || !window::has_tag(c,window::MANAGED) {continue;}
             if c.get("fullscreen").and_then(|f| f.as_i64()).unwrap_or(0) != 0 {
                 if let Some(t) = tracks.get(s("address")) {
-                    let mid = monitor_at(&mons, t.last.cx(), t.last.cy()).unwrap_or_else(|| c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0));
-                    by_mon.entry(mid).or_default().push((s("address").to_string(), t.last, true));
+                    let kept = t.kept();
+                    let mid = monitor_at(&mons, kept.cx(), kept.cy()).unwrap_or_else(|| c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0));
+                    by_mon.entry(mid).or_default().push((s("address").to_string(), kept, true));
                 }
                 continue;
             }
@@ -500,7 +567,7 @@ fn main() {
             let bounds = latch.bounds(mid, fresh, fullscreen, now, cfg.fullscreen_release);
             let (mon, mon_huds) = (bounds.area, bounds.huds);
             // Current positions with natural sizes (a PiP seen for the first time: its current size).
-            let rects: Vec<Rect> = pips.iter().map(|(a, r, frozen)| match tracks.get(a) { Some(t) if !*frozen => t.plan_input(*r), Some(t) => Rect::new(t.last.x, t.last.y, t.natural.0, t.natural.1), None => *r }).collect();
+            let rects: Vec<Rect> = pips.iter().map(|(a, r, frozen)| match tracks.get(a) { Some(t) if !*frozen => t.plan_input(*r), Some(t) => { let k = t.kept(); Rect::new(k.x, k.y, t.natural.0, t.natural.1) }, None => *r }).collect();
             let targets = plan(&rects, mon, &mon_huds, &rail_params(&cfg,mon));
             for ((addr, cur, frozen), tgt) in pips.iter().zip(targets) {
                 if *frozen {continue;}
@@ -509,6 +576,8 @@ fn main() {
                 let natural = t.natural;
                 t.observe(*cur, now, Duration::from_millis(cfg.settle_ms as u64));
                 if t.natural != natural {trace(&format!("  ^ {addr} fullscreen={} anim={}", clients.as_array().into_iter().flatten().find(|c| c["address"].as_str() == Some(addr)).map_or(-1, |c| c["fullscreen"].as_i64().unwrap_or(-1)), t.anim.is_some()));}
+                // Leaving the room: hold still (never dispatch) until the room's close has finished moving this window.
+                if t.held() {continue;}
                 // Another PiP can change a settled window's target while this window itself is still.
                 if t.settled && !close(tgt,*cur) {
                     t.settled=false;
@@ -536,7 +605,7 @@ fn main() {
                         id.guard(), r.w, r.h, r.x, r.y
                     );
                     let _ = ipc.send(&cmd);
-                    t.dispatched(r);
+                    t.dispatched(r, now);
                     if done {
                         t.anim = None;
                         t.settled = true;
@@ -551,22 +620,75 @@ fn main() {
 mod track_tests {
  use super::*;
  const SETTLE: Duration = Duration::from_millis(350);
- #[test] fn returning_from_the_room_restores_the_kept_slot_and_natural_size_at_once() {
-  let t0 = Instant::now();
+ /// Settled in a squeezed slot (our own plan) with the natural size the operator chose, then the room ran.
+ fn roomed(t0: Instant) -> (Track, Rect) {
   let slot = Rect::new(1172.0, 140.0, 212.0, 100.0);
-  // Settled in a squeezed slot (our own plan); the natural size is what the operator chose.
   let mut t = Track::new(Rect::new(1172.0, 140.0, 272.0, 128.0), t0);
   t.last = slot;
   t.settled = true;
-  t.from_room = true; // the room ran
+  t.enter_room();
+  (t, slot)
+ }
+ #[test] fn returning_from_the_room_restores_the_kept_slot_and_natural_size_once_the_window_is_still() {
+  let t0 = Instant::now();
+  let (mut t, slot) = roomed(t0);
   let room_left = Rect::new(1153.0, 571.0, 231.0, 109.0); // moved and re-rastered by Hypr3D
-  assert_eq!(t.plan_input(room_left), Rect::new(1172.0, 140.0, 272.0, 128.0), "plans from the kept slot and the natural size");
-  let now = t0 + Duration::from_secs(5);
+  assert_eq!(t.plan_input(room_left), Rect::new(slot.x, slot.y, 272.0, 128.0), "plans from the kept slot and the natural size");
+  let exit = t0 + Duration::from_secs(5);
+  t.observe(room_left, exit, SETTLE);
+  assert!(t.held(), "the first flat tick only starts the stillness run");
+  t.observe(room_left, exit + Duration::from_millis(200), SETTLE);
+  assert!(t.held(), "not yet still for settle_ms");
+  let now = exit + SETTLE;
   t.observe(room_left, now, SETTLE);
   assert_eq!(t.natural, (272.0, 128.0), "the room's raster size is not an operator resize");
-  assert!(!t.settled && now.duration_since(t.stable_since) >= SETTLE, "restored at once, no settle wait");
-  assert!(!t.from_room);
+  assert!(!t.held() && !t.settled && now.duration_since(t.stable_since) >= SETTLE, "released: restored at once, no further wait");
   assert_eq!(t.plan_input(room_left), Rect::new(1153.0, 571.0, 272.0, 128.0), "afterwards ordinary planning from the current position");
+ }
+ /// The verifier's live2 trace: after `room active=false` Hypr3D's close kept moving and resizing the window for twelve
+ /// ticks (218x103 -> 264x125 while it flew back), and the old release on the first flat tick took each frame for an
+ /// operator resize.
+ #[test] fn the_rooms_close_animation_over_several_ticks_never_becomes_the_natural_size() {
+  let t0 = Instant::now();
+  let (mut t, slot) = roomed(t0);
+  let mut now = t0 + Duration::from_secs(5);
+  let close: Vec<Rect> = (0..12).map(|i| { let k = i as f64; Rect::new(1169.0 - 4.0 * k, 590.0 - 24.0 * k, 215.0 + 4.0 * k, 102.0 + 2.0 * k) }).collect();
+  for f in &close {
+   t.observe(*f, now, SETTLE);
+   assert_eq!(t.natural, (272.0, 128.0), "room frame {f:?} is not an operator resize");
+   assert!(t.held(), "still moving: the room keeps ownership");
+   assert_eq!(t.plan_input(*f), Rect::new(slot.x, slot.y, 272.0, 128.0), "neighbours plan around the kept slot meanwhile");
+   now += Duration::from_millis(16);
+  }
+  // the animation ended where it ended; still for settle_ms -> released into the kept slot with the natural size
+  let end = *close.last().unwrap();
+  t.observe(end, now, SETTLE);
+  t.observe(end, now + SETTLE, SETTLE);
+  assert!(!t.held());
+  assert_eq!(t.natural, (272.0, 128.0));
+  // re-entering the room before a release finished keeps the original flat slot, not the room geometry
+  let (mut t, slot) = roomed(t0);
+  t.observe(close[0], now, SETTLE);
+  t.enter_room();
+  assert_eq!(t.kept(), slot);
+ }
+ #[test] fn expired_dispatched_frames_no_longer_hide_a_later_operator_resize() {
+  let t0 = Instant::now();
+  let mut t = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
+  let frames = [Rect::new(8.0, 150.0, 262.0, 123.0), Rect::new(8.0, 160.0, 240.0, 113.0), Rect::new(8.0, 180.0, 212.0, 100.0)];
+  for (i, f) in frames.iter().enumerate() { t.dispatched(*f, t0 + Duration::from_millis(16 * i as u64)); }
+  t.settled = true;
+  t.observe(frames[2], t0 + Duration::from_millis(48), SETTLE); // settled on our last frame
+  // 60 s later the operator drags the bottom-right edge to exactly the size of an old animation frame
+  let later = t0 + Duration::from_secs(60);
+  t.observe(Rect::new(8.0, 180.0, 240.0, 113.0), later, SETTLE);
+  assert_eq!(t.natural, (240.0, 113.0), "an operator resize long after the animation is the operator's");
+  assert!(!t.settled && t.stable_since == later);
+  // within the grace the same observation is still a lagging frame of ours
+  let mut t = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
+  for (i, f) in frames.iter().enumerate() { t.dispatched(*f, t0 + Duration::from_millis(16 * i as u64)); }
+  t.observe(Rect::new(8.0, 180.0, 240.0, 113.0), t0 + Duration::from_millis(200), SETTLE);
+  assert_eq!(t.natural, (272.0, 128.0));
  }
  #[test] fn negative_control_an_operator_resize_updates_the_natural_size_and_waits_for_the_release() {
   let t0 = Instant::now();
@@ -593,14 +715,14 @@ mod track_tests {
   let t0 = Instant::now();
   let mut t = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
   let frames = [Rect::new(8.0, 150.0, 262.0, 123.0), Rect::new(8.0, 160.0, 250.0, 118.0), Rect::new(8.0, 168.0, 240.0, 113.0)];
-  for f in frames { t.dispatched(f); }
+  for f in frames { t.dispatched(f, t0); }
   t.anim = Some(([8.0, 168.0, 240.0, 113.0], [0.0; 4], Rect::new(8.0, 180.0, 212.0, 100.0)));
   t.observe(frames[0], t0 + Duration::from_millis(48), SETTLE); // the compositor is two frames behind
   assert_eq!(t.natural, (272.0, 128.0), "an in-flight frame of ours never becomes the natural size");
   assert!(t.anim.is_some(), "the animation continues");
   // negative control: the single-frame memory the daemon had before misreads the same lag as an operator resize
   let mut old = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
-  old.dispatched(frames[2]);
+  old.dispatched(frames[2], t0);
   old.expected.drain(..old.expected.len() - 1);
   old.observe(frames[0], t0 + Duration::from_millis(48), SETTLE);
   assert_eq!(old.natural, (262.0, 123.0), "one remembered frame: the lagging frame is taken for an operator resize");
@@ -609,7 +731,7 @@ mod track_tests {
   let t0 = Instant::now();
   let mut t = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
   let frames = [Rect::new(8.0, 150.0, 262.0, 123.0), Rect::new(8.0, 160.0, 250.0, 118.0), Rect::new(8.0, 168.0, 240.0, 113.0)];
-  for f in frames { t.dispatched(f); }
+  for f in frames { t.dispatched(f, t0); }
   // newest position, the client still at the oldest size
   t.observe(Rect::new(8.0, 168.0, 262.0, 123.0), t0 + Duration::from_millis(48), SETTLE);
   assert_eq!(t.natural, (272.0, 128.0));
@@ -623,7 +745,7 @@ mod track_tests {
   let t0 = Instant::now();
   let mut t = Track::new(Rect::new(8.0, 140.0, 272.0, 128.0), t0);
   let frame = Rect::new(8.0, 160.0, 212.0, 100.0);
-  t.dispatched(frame);
+  t.dispatched(frame, t0);
   t.settled = true;
   t.observe(frame, t0 + Duration::from_millis(16), SETTLE);
   assert_eq!(t.natural, (272.0, 128.0));
@@ -701,5 +823,34 @@ mod matcher_tests {
   assert!(!m.matches(&pop,&serde_json::json!([{"address":"0x2","pid":124,"class":"spotify"}])));
   assert!(m.matches(&pop,&serde_json::json!([{"address":"0x2","pid":123,"class":"spotify"}])));
   let mut track=pop.clone();track["initialTitle"]=serde_json::json!("Any track • Any artist");assert!(m.matches(&track,&serde_json::json!([{"address":"0x2","pid":123,"class":"spotify"}])));
+ }
+}
+
+#[cfg(test)]
+mod cfg_tests {
+ use super::*;
+ fn shipped()->toml::Value {
+  let path=concat!(env!("CARGO_MANIFEST_DIR"),"/../../../usr/share/mios/mios.toml");
+  toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+ }
+ #[test] fn the_shipped_ssot_sets_every_key() {
+  let c=cfg_from(&shipped()).unwrap();
+  assert_eq!((c.params.min_w_px,c.params.size_snap,c.fullscreen_release),(160.0,24.0,Duration::from_millis(600)));
+  assert!(missing_optional(&shipped()).is_empty());
+ }
+ /// The binary installed before the SSOT that introduced its newer keys (deployment order): those features are off,
+ /// the daemon (and `check`, the service's ExecStartPre) still runs.
+ #[test] fn an_older_ssot_without_the_newer_keys_turns_those_features_off_instead_of_failing() {
+  let mut doc=shipped();
+  let acc=doc["desktop"]["pip_gravity"].as_table_mut().unwrap();
+  for k in OPTIONAL_KEYS {acc.remove(*k);}
+  let c=cfg_from(&doc).expect("older SSOT accepted");
+  assert_eq!((c.params.min_w_px,c.params.size_snap,c.fullscreen_release),(0.0,0.0,Duration::ZERO));
+  assert_eq!(missing_optional(&doc),OPTIONAL_KEYS.to_vec());
+  // negative controls: an invalid value is still rejected, and so is a missing original key
+  let mut bad=shipped();bad["desktop"]["pip_gravity"].as_table_mut().unwrap().insert("min_width_px".into(),toml::Value::Integer(-1));
+  assert!(cfg_from(&bad).is_err());
+  let mut old=shipped();old["desktop"]["pip_gravity"].as_table_mut().unwrap().remove("settle_ms");
+  assert_eq!(cfg_from(&old).err().as_deref(),Some("[desktop.pip_gravity].settle_ms missing"));
  }
 }
