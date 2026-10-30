@@ -8437,12 +8437,14 @@ launcher = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-di
 launcher_keys = ["SPACE", "R"]
 workspace_count = 10
 # Terminals keep the global decoration opacity and blur; forcing them opaque hid Hyprglass on tiled windows.
-# Browser popouts and every modal or picker float; Picture-in-Picture is pinned at a golden-ratio
-# size (0.236 = 0.382 x 0.618 of the monitor width, 16:9) in the bottom-right corner.
+# Browser popouts and every modal or picker float; Picture-in-Picture (Firefox-family "Picture-in-Picture",
+# Chromium-family "Picture in picture") is pinned at a golden-ratio size (0.236 = 0.382 x 0.618 of the monitor
+# width, 16:9) in the bottom-right corner until mios-pip-gravity adopts it onto a flank rail.
 window_rules = [
   { name = "mios-nested-desktop", match = { class = "^aquamarine$", initial_title = "^aquamarine - WAYLAND-[0-9]+$" }, float = true, pin = true, no_initial_focus = true, no_follow_mouse = true, focus_on_activate = false, tag = "+mios-nested-desktop" },
   { name = "mios-managed-pip-aspect", match = { tag = "^mios-pip-managed$" }, keep_aspect_ratio = true, no_follow_mouse = true, focus_on_activate = false },
   { name = "mios-browser-pip", match = { class = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal)$", title = "^(Picture-in-Picture)$" }, float = true, pin = true, keep_aspect_ratio = true, size = "monitor_w*0.236 monitor_w*0.13275", move = "monitor_w*0.75 monitor_h*0.68" },
+  { name = "mios-chromium-pip", match = { class = "^(chromium|chromium-browser|Chromium-browser|org\\.chromium\\.Chromium|google-chrome|brave-browser|com\\.brave\\.Browser|microsoft-edge)$", title = "^(Picture in picture)$" }, float = true, pin = true, keep_aspect_ratio = true, size = "monitor_w*0.236 monitor_w*0.13275", move = "monitor_w*0.75 monitor_h*0.68" },
   { name = "mios-browser-dialogs", match = { class = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal|org\\.gnome\\.Epiphany)$", title = "^(Library|About .*|Extension: .*|Page Info.*|Downloads|Print.*|Save As.*|Open File.*|Choose .*|Enter name of file.*)$" }, float = true, center = true },
   { name = "mios-portal", match = { class = "^(mios-portal)$" }, float = true, center = true, size = "window_w window_h" },  # keep the [desktop.portal] size it requests (overrides mios-placement)
   { name = "mios-modal-dialogs", match = { modal = true }, float = true, center = true },
@@ -8626,7 +8628,8 @@ shader_dir = "/usr/share/mios/hyprland/shaders"
 open = "glass-dissolve-open"
 close = "glass-dissolve-close"   # operator choice 2026-10-16 (live demo of every family)
 overrides = [
-  { name = "mios-fx-pip", match = { title = "^(Picture-in-Picture)$" }, open = "none-open", close = "none-close" },
+  { name = "mios-fx-pip", match = { title = "^(Picture-in-Picture|Picture in picture)$" }, open = "none-open", close = "none-close" },
+  { name = "mios-fx-pip-popout", match = { initial_title = "^Discord Popout$" }, open = "none-open", close = "none-close" },
   { name = "mios-fx-modal", match = { modal = true }, open = "none-open", close = "none-close" },
   { name = "mios-fx-portals", match = { class = "^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\\.freedesktop\\.impl\\.portal\\..*)$" }, open = "none-open", close = "none-close" },
 ]
@@ -8645,7 +8648,8 @@ path = "/usr/lib64/mios/mios-wobbly.so"
 tag = "mios-wobbly"
 exclude_tag = "mios-nowobbly"
 exclude = [
-  { match = { title = "^(Picture-in-Picture)$" } },
+  { match = { title = "^(Picture-in-Picture|Picture in picture)$" } },
+  { match = { initial_title = "^Discord Popout$" } },
   { match = { modal = true } },
 ]
 [desktop.hyprland.mios-wobbly.config]
@@ -8756,8 +8760,17 @@ live_resample = true
 # keep their own refresh and pacing ([remote.rdp]) and are never capped or re-moded; G and W still apply there.
 # Mechanism: "auto" holds D with the mios-pacing compositor plugin on an output that runs VRR (60/90/120 are real
 # panel refresh rates inside the VRR range: no modeset, instant) and, on an output without active VRR, switches to
-# the advertised (EDID) mode nearest D (a modeset: the screen blanks; 90 has no EDID mode on most panels -> 99.93/100);
-# "cap" never changes a mode; "mode" always uses modes. A mode switch is verified within revert_timeout_ms (mode
+# a display mode for D (a modeset: the screen blanks); "cap" never changes a mode; "mode" always uses modes;
+# mode_outputs lists outputs that use modes even with VRR (a real fixed-rate scanout, e.g. DP-3 at 90 Hz).
+# Mode selection: the advertised (EDID) mode nearest D when one is within mode_tolerance_hz; otherwise, with
+# modes = "extended-vblank", the panel's fastest EDID timing at the output's size with a longer vertical front porch
+# (its horizontal timing, the clock truncated to whole MHz as a Hyprland 0.56 modeline carries it, only more blank
+# lines per frame -- what VRR does on every frame): DP-3 (LG 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90
+# is `modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync` = 90.010 Hz as Hyprland programs it
+# (`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
+# modes = "advertised" never applies a timing the panel did not list (90 -> 99.93/100). The vendor value stays
+# "advertised" (a miosd / mios-gen / mios-wallpaperd built before extended-vblank refuses the other value); a host or
+# user tier opts in (`modes = "extended-vblank"`, mode_outputs = ["DP-3"]) once those binaries carry it. A mode switch is verified within revert_timeout_ms (mode
 # shown, output present, DPMS on) or reverted and the mode blocklisted ($XDG_STATE_HOME/mios/framerate/bad-modes.json).
 # Every automatic display-mode change to a mode the operator has not kept on that panel before is restored after
 # mode_confirm_s unless `miosd framerate confirm-mode` keeps it (an on-screen notification says so); without an answer
@@ -8771,7 +8784,9 @@ debounce_ms = 750                  # inputs settle this long before an apply (on
 self_check_s = 60                  # re-read every input and re-apply what drifted (a plugin reload, a config reload)
 gaming_exit_hold_ms = 3000         # gaming holds this long after the last GameMode client left (launchers re-register)
 mechanism = "auto"                 # auto | cap | mode (see above)
-modes = "advertised"               # mode selection: only modes the output advertises (EDID) are applied automatically
+modes = "advertised"               # advertised | extended-vblank (see above): a non-EDID rate only by a longer vertical blank
+mode_outputs = []                  # outputs held by a display mode even with VRR + the cap (e.g. ["DP-3"]: real 90 Hz)
+mode_tolerance_hz = 0.5            # an advertised mode this close to D is used; an extended-vblank timing must land this close
 revert_timeout_ms = 5000           # an unverified mode switch is reverted after this long
 mode_confirm_s = 15                # a new mode is restored after this long unless confirmed (0 = no confirmation)
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
@@ -8973,7 +8988,7 @@ map_timeout_s = 60                 # a pane window that does not map within this
 # Keybinds, projected by mios-gen render-hyprland as hl.bind(key, exec "<binary> <args>"); labels feed the Super+Escape map.
 bindings = [
   { key = "SUPER + G", args = "toggle", label = "ShaderGlass: overlay on the active window on/off" },
-  { key = "SUPER + SHIFT + G", args = "cycle", label = "ShaderGlass: cycle shader preset" },
+  { key = "SUPER + SHIFT + G", args = "cycle", label = "ShaderGlass: next shader (kept for the app)" },
   { key = "SUPER + ALT + G", args = "setup", label = "ShaderGlass: pane setup (shader menu) / back to overlay" },
 ]
 [desktop.shaderglass.wine]
@@ -8990,6 +9005,7 @@ dll_overrides = "mscoree,mshtml="  # no Mono/Gecko installer prompt when the pre
 # through WineCap's single Linux input entry (no menu clicks).
 args = ["-f", "-input", "Choose..."]
 setup_shortcut = "m"               # ShaderGlass' menu toggle, sent to the pane when setup mode starts and ends
+cycle_shortcut = "n"               # ShaderGlass' next-shader key: `cycle` sends it only to a pane whose WineCap has no MiOS command channel (unsaved)
 # Seeded once as %LOCALAPPDATA%\ShaderGlassDefault.sgp (ShaderGlass' default profile, loaded at start) when the prefix
 # has none; Processing > Set as default replaces it and is never overwritten. Keys are ShaderGlass' profile
 # mnemonics (ShaderGlass/Options.h); a shader the release no longer ships falls back to ShaderGlass' own default.
@@ -9043,6 +9059,19 @@ settle_ms = 300                    # how long after the last change the fast rat
 on_move = "follow"                 # follow | hide (pane transparent until the target settles)
 close_with_target = true           # the pane closes when its target does
 hide_in_hypr3d = true              # transparent while Hypr3DGlass is active (it would become its own slab)
+# What survives a pane: ShaderGlass keeps its live state only in memory, so miosd saves it per target window class
+# through the patched WineCap (ShaderGlass' own "Set as default", swapped so the operator's default is never touched)
+# when a pane closes, leaves setup mode or cycles, and starts the next pane of that class with it -- after a detach,
+# a crash, a supervisor restart, in a nested session and through 2D/Hypr3D room/Theatre/PiP/fullscreen alike.
+[desktop.shaderglass.state]
+persist = true                     # false = every pane starts from the default profile; nothing is saved
+directory = "mios/shaderglass"     # under $XDG_STATE_HOME: state.json + profiles/<class>.sgp (0700/0600; the restore tokens live here too)
+save_timeout_ms = 3000             # how long ShaderGlass may take to write a profile (WineCap command channel)
+restart_limit = 2                  # a pane whose ShaderGlass dies on its own (crash, OOM, killed Wine) is relaunched on the same window this often (0 = never)
+resume = true                      # a supervisor that died or was stopped by a signal re-attaches its panes on its next start (same native window only)
+strip_keys = ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat", "InputArea", "CroppedArea"]   # never kept in a class profile: miosd chooses the capture source
+runtime_state = "mios/shaderglass/active.state"        # under $XDG_RUNTIME_DIR (per session; a nested session has its own): "active=<0|1>" + "targets=<addresses>" of this session's panes
+room_requests = "mios/shaderglass/room-requests.txt"   # under $XDG_RUNTIME_DIR: the session's queue of Hypr3D room requests ("attach|detach|toggle <address>", "off"), consumed by its supervisor
 # Screencast policy. The pane only ever captures a window: WineCap offers window sources only, and the MiOS picker
 # ([desktop.hyprland.xdph].custom_picker_binary) answers the supervisor's one-shot request with the target window
 # (no click); every other screencast request gets the stock picker.
@@ -9085,7 +9114,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
@@ -18744,8 +18773,8 @@ UMask = "0077"
 WantedBy = "default.target"
 
 
-# AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware, and settle with a spring. Consumed by tools/native/mios-pip-gravity. Hypr3D: disabled there (PiP are freely resizable in the room).
-# AI-related: tools/native/mios-pip-gravity/src/main.rs, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip
+# AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom, packed across both rails before squeezing), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware with minimum/launch/maximum size magnets, stay on top through Hyprland's native pinned layer, and settle with a spring. Spotify's mini-player, Discord call/stream/video popouts and browser PiP windows are adopted automatically on map. Maximize/fullscreen (any window) and Theatre/Hypr3D never move them. Consumed by tools/native/mios-pip-gravity. Hypr3D: flat placement pauses there (PiP are freely resizable in the room); adoption continues.
+# AI-related: tools/native/mios-pip-gravity/src/{main.rs,gravity.rs,matrix.rs,window.rs}, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
 [desktop.pip_gravity]
 enabled = true
 rails = ["left", "right"]            # flank columns; one entry pins every PiP to that side
@@ -18754,10 +18783,13 @@ stack_gap = "theme.shell.edge_margin_px"
 hud_gap = "theme.shell.edge_margin_px"
 attract_px = 48                      # magnet range: snap to top/bottom/stack lines inside it, hover freely outside
 min_width_frac = 0.02                # small PiPs stay resizable; applications retain their native minimums
-max_width_frac = 1.0                 # manual enlargement may exceed the launch rail; keep within HUD bounds
+min_width_px = 160                   # absolute smallest PiP width (logical px); a smaller resize springs back to it
+max_width_frac = 1.0                 # manual enlargement may exceed the launch rail; keep within HUD bounds (aspect-true)
+size_snap_px = 24                    # size magnets: within this many px of the minimum, launch (flank) or maximum width the size snaps exactly; 0 = off
 initial_width_frac = 0.24             # fallback when the opening policy leaves no flank
 fit_default_window = true
-keep_above = true
+keep_above = true                    # native stay-on-top: keep PiPs pinned (Hyprland's always-above layer) and above other pinned windows
+fullscreen_release_ms = 600          # after a maximize/fullscreen ends, keep the pre-fullscreen PiP bounds this long while the HUDs return
 spring_stiffness = 260.0             # springy settle (k); damping c ~ 2*sqrt(k)*zeta
 spring_damping = 22.0
 settle_ms = 350                      # operator must hold still this long before gravity pulls
@@ -18767,10 +18799,15 @@ config_poll_ms = 2000
 hud_namespaces = ["mios-topbar", "mios-dock", "mios-appmenu"]
 hud_settle_ms = 250                  # a HUD rect must hold this long before PiPs plan around it (dock/drawer morphs never move PiPs)
 hud_max_height_frac = 0.25           # taller HUD surfaces (the dock opened into the full-pane app drawer) are overlays, not bars
+# Automatic adoption on map (a window leaving PiP gets mios-pip-disabled and is never re-captured). Firefox-family
+# "Picture-in-Picture" and Chromium-family "Picture in picture" windows; Discord's call, stream and video popouts
+# (initial title "Discord Popout"; channel titles change later) for the native client, its Flatpak/PTB/Canary builds
+# and Vesktop; Spotify's mini-player (a Chromium document-PiP window whose title is the current track) only when a
+# same-process Spotify window exists, so ordinary Chromium windows are never captured.
 match = [
-  { title = "^(Picture-in-Picture)$" },
-  { class = "(?i)^discord$", initial_title = "^Discord Popout$" },
-  { class = "^chromium-browser$", sibling_class = "(?i)^spotify$" },
+  { title = "^(Picture-in-Picture|Picture in picture)$" },
+  { class = "(?i)^(discord|discordptb|discordcanary|vesktop|com\\.discordapp\\.discord(ptb|canary)?)$", initial_title = "^Discord Popout$" },
+  { class = "^(chromium-browser|Chromium-browser|chromium)$", sibling_class = "(?i)^(spotify|com\\.spotify\\.client)$" },
 ]
 
 # AI-hint: Nested MiOS desktop sessions (mios-gen nested-session): own compositor, runtime, HUD, Tmux-OS namespace and input

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Desktop frame-rate policy ([desktop.framerate]; operator 2026-10-23: performance 90, balanced / power-saver /
+# AI-hint: Desktop frame-rate policy ([desktop.framerate]; the operator's table: performance 90, balanced / power-saver /
 # battery 60, gaming 120, unlocked = no cap; glass 1/3 of the desktop rate, 1/2 for gaming and unlocked; wallpaper 1/2,
 # full rate when unlocked), in four tiers, each with positive and negative controls:
 #   1. SSOT/source (always): the tier table is the operator's (a Python mirror of mios_resolver::framerate derives D, G
@@ -48,6 +48,8 @@ STAGE = os.environ.get("MIOS_FR_STAGE", "")
 NEST = os.environ.get("MIOS_FR_NEST", "")
 H3D_SO = os.environ.get("MIOS_FR_HYPR3D_SO", "")
 UPSTREAM = os.environ.get("MIOS_FR_UPSTREAM", "")
+MIOSD = os.environ.get("MIOS_FR_MIOSD", "")   # a candidate miosd with `framerate modeline`
+EDID_FIXTURE = os.path.join(ROOT, "tests", "fixtures", "framerate", "dp3-lg-24gl600f.edid.hex")
 # negative controls: the builds installed on the host before this change (they must NOT cap)
 OLD_GEN = os.environ.get("MIOS_FR_OLD_GEN", "/usr/bin/mios-gen")
 OLD_MIOSD = os.environ.get("MIOS_FR_OLD_MIOSD", "/usr/bin/miosd")
@@ -227,6 +229,48 @@ class SsotAndSource(unittest.TestCase):
         old = src.replace("plan::needs_confirm(", "plan::verified(").replace("srv.restore_modes();", "")
         self.assertTrue([n for n in ("plan::needs_confirm(", "srv.restore_modes();") if n not in old])
 
+    def test_extended_vblank_mode_selection_contract(self) -> None:
+        """DP-3 has no 90 Hz EDID mode: with modes = "extended-vblank" the mode path derives one from the 144 Hz timing
+        (a longer vertical front porch); no output is forced off the VRR cap by the vendor default."""
+        # vendor: "advertised" (binaries built before extended-vblank refuse the other value, and / is live: a merge
+        # must never break the next render); a host/user tier opts in
+        self.assertEqual(self.fr["modes"], "advertised")
+        self.assertEqual(self.fr["mode_outputs"], [], "the vendor default keeps every VRR output on the instant cap")
+        self.assertEqual(self.fr["mode_tolerance_hz"], 0.5)
+        plan = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate", "plan.rs"))
+        for need in ("pub fn choose_mode(", "edid_timing::extended_vblank_modeline(", "policy.mode_output(&m.name)", "mode_dims(mode)", "match choose_mode(m, target, policy"):
+            self.assertIn(need, plan, need)
+        res = read(os.path.join(ROOT, "tools", "native", "mios-resolver", "src", "edid_timing.rs"))
+        self.assertIn("pub fn extended_vblank(", res)
+        src = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate.rs"))
+        self.assertIn('const DRM_SYSFS: &str = "/sys/class/drm";', src)
+        self.assertIn("Modeline {", src)
+        # negative control: the advertised-only selector (before this change) is flagged
+        old = plan.replace("match choose_mode(m, target, policy", "match nearest_mode(m, target")
+        self.assertNotIn("match choose_mode(m, target, policy", old)
+        # the modeline clock is whole MHz (Hyprland truncates the fraction) and parsed the way Hyprland does
+        self.assertIn("Timing { clock_khz: self.clock_khz / 1000 * 1000, ..*self }", res)
+        self.assertIn("(mhz.trunc() as u32) * 1000", res)
+        self.assertNotIn("(mhz * 1000.0).round() as u32", res, "the pre-fix parse kept the fraction Hyprland drops")
+
+    def test_baseline_and_revert_snapshots_never_name_an_unadvertised_mode(self) -> None:
+        """D1: the daemon's baseline and every revert snapshot come from plan::restorable_mode (the exact string it set,
+        else the advertised mode shown, else the configured rule's advertised mode), never mode_string(current)."""
+        src = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate.rs"))
+        plan = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate", "plan.rs"))
+        self.assertIn("pub fn restorable_mode(m: &Monitor, set: Option<&str>, rule: &str) -> Restore", plan)
+        self.assertIn("baseline: BTreeMap<String, plan::Restore>,", src)
+        self.assertIn("let here = plan::restorable_mode(m, self.set.get(&m.name).map(String::as_str), &self.cfg.rule(&m.name));", src)
+        self.assertIn("self.switch(m, &here, &want,", src)
+        self.assertIn(".filter(|b| b.exact).map(|b| b.mode.clone())", src, "a guessed baseline is not exempt from the confirm guard")
+        # negative control: the pre-fix capture (the shown WxH@Hz as the baseline and the switch snapshot)
+        for pre in ("self.baseline.entry(m.name.clone()).or_insert(current.clone());", "self.switch(m, &current, &want,"):
+            self.assertNotIn(pre, src, pre)
+        # mode_outputs never overrides a pinned mode's own mechanism (D4)
+        self.assertIn("policy.mode_output(&m.name) && !env.pinned.contains(&m.name)", plan)
+        for name, keys in (("modes", ("advertised", "extended-vblank")),):
+            self.assertIn(self.fr[name], keys)
+
     def test_precedence_and_rates_per_tier(self) -> None:
         fr = self.fr
         expect = {  # (profile, battery, gaming) -> (tier, D, G, W) on a 144 Hz output
@@ -317,12 +361,16 @@ class SsotAndSource(unittest.TestCase):
         self.assertTrue(paced_contract_errors(host.replace("running: host.fixedSteps === 0 && !host.paced", "running: host.fixedSteps === 0")))
         self.assertTrue(paced_contract_errors(host.replace("host.refusePacing(rate)", "console.info(rate)")))
         self.assertEqual(self.d["theme"]["wallpaper"]["framerate"], 30, "the look's reference rate is unchanged")
-        # negative control: the host before the change (committed tree) steps at a fixed rate
-        old = run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/wallpaper/Host.qml"])
-        oldmesh = run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/wallpaper/MeshGradient.qml"])
-        oldfrag = run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/wallpaper/shaders/ocean-sim.frag"])
+        # negative control: the host before the change steps at a fixed rate -- the parent of the commit that brought
+        # the live-rate contract (git log -S finds it whatever HEAD is; before that commit, HEAD itself is "before")
+        intro = run(["git", "-C", ROOT, "log", "--format=%H", "-S", 'query["ctl"]', "--", "usr/share/mios/wallpaper/Host.qml"])
+        commits = intro.stdout.split() if intro.returncode == 0 else []
+        before = f"{commits[-1]}^" if commits else "HEAD"
+        old = run(["git", "-C", ROOT, "show", f"{before}:usr/share/mios/wallpaper/Host.qml"])
+        oldmesh = run(["git", "-C", ROOT, "show", f"{before}:usr/share/mios/wallpaper/MeshGradient.qml"])
+        oldfrag = run(["git", "-C", ROOT, "show", f"{before}:usr/share/mios/wallpaper/shaders/ocean-sim.frag"])
         if old.returncode == 0 and oldmesh.returncode == 0 and oldfrag.returncode == 0:
-            self.assertTrue(host_contract_errors(old.stdout, oldmesh.stdout, oldfrag.stdout))
+            self.assertTrue(host_contract_errors(old.stdout, oldmesh.stdout, oldfrag.stdout), f"the host at {before} must fail the contract")
         wd = read(os.path.join(ROOT, "tools", "native", "mios-wallpaperd", "src", "main.rs"))
         self.assertIn('.env("QML_XHR_ALLOW_FILE_READ", "1")', wd)
         self.assertIn("fn rate_query", wd)
@@ -356,6 +404,7 @@ local monitors = { { name = "DP-3", x = 0, y = 0, width = 1920, height = 1080, r
 hl.get_monitors = function() return monitors end
 hl.get_monitor = function(n) return monitors[1] end
 hl.plugin.load = function(p) out[#out + 1] = "load " .. p end
+hl.monitor = function(t) out[#out + 1] = "monitor " .. tostring(t.output) .. " " .. tostring(t.mode) end
 hl.config = function(t) walk(t, "") end
 hl.plugin.hyprglass = setmetatable({ config = function(t) walk(t, ":plugin:hyprglass") end }, { __index = function() return function() end end })
 dofile(os.getenv("CHUNK"))
@@ -373,10 +422,119 @@ def lua() -> str:
     raise unittest.SkipTest("no Lua interpreter")
 
 
+def hyprland_modeline_hz(line: str) -> float:
+    """The refresh Hyprland 0.56 programs for a modeline (config/shared/monitor/Parser.cpp): the clock is read as a
+    float into the uint32 drmModeModeInfo.clock (truncated to whole MHz), then multiplied by 1000."""
+    f = line.split()
+    if f[0] == "modeline":
+        f = f[1:]
+    clock_khz = int(float(f[0])) * 1000
+    return clock_khz * 1000 / (int(f[4]) * int(f[8]))
+
+
+def edid_oracle(path: str, hz: float) -> dict:
+    """Independent Python derivation (not the Rust code): the fixture's fastest 1920x1080 DTD with its clock truncated
+    to whole MHz (all a Hyprland modeline can carry), its vertical total grown so clock / (htotal * vtotal) is nearest
+    `hz`, the added lines in the front porch."""
+    data = bytes(int(b, 16) for line in open(path) if not line.startswith("#") for b in line.split())
+    best = None
+    for k in range(4):
+        d = data[54 + 18 * k:72 + 18 * k]
+        clock = (d[0] | d[1] << 8) * 10
+        if clock == 0:
+            continue
+        ha, hb = d[2] | (d[4] >> 4) << 8, d[3] | (d[4] & 15) << 8
+        va, vb = d[5] | (d[7] >> 4) << 8, d[6] | (d[7] & 15) << 8
+        hso, hsw = d[8] | ((d[11] >> 6) & 3) << 8, d[9] | ((d[11] >> 4) & 3) << 8
+        vso, vsw = (d[10] >> 4) | ((d[11] >> 2) & 3) << 4, (d[10] & 15) | (d[11] & 3) << 4
+        hz0 = clock * 1000 / ((ha + hb) * (va + vb))
+        if (ha, va) == (1920, 1080) and (best is None or hz0 > best["hz"]):
+            best = dict(clock=clock, ha=ha, hss=ha + hso, hse=ha + hso + hsw, ht=ha + hb, va=va, vss=va + vso, vse=va + vso + vsw, vt=va + vb, hz=hz0)
+    exact_line_khz = best["clock"] / best["ht"]
+    best["clock"] = best["clock"] // 1000 * 1000
+    vt = round(best["clock"] * 1000 / (best["ht"] * hz))
+    grow = vt - best["vt"]
+    mhz = str(best["clock"] // 1000)
+    line = f"modeline {mhz} {best['ha']} {best['hss']} {best['hse']} {best['ht']} {best['va']} {best['vss'] + grow} {best['vse'] + grow} {vt} +hsync +vsync"
+    return {"modeline": line, "refresh_hz": best["clock"] * 1000 / (best["ht"] * vt), "base_hz": best["hz"], "line_khz": best["clock"] / best["ht"],
+            "base_line_khz": exact_line_khz}
+
+
+@unittest.skipUnless(MIOSD, "MIOS_FR_MIOSD (a candidate miosd with `framerate modeline`) not set")
+class ModelineCli(unittest.TestCase):
+    """The real binary derives DP-3's 90 Hz timing from the panel's EDID (fixture), read-only, no compositor."""
+
+    def cli(self, *args: str, binary: str = "") -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items() if k not in ("HYPRLAND_INSTANCE_SIGNATURE", "MIOS_TOML")}
+        env["MIOS_VENDOR_TOML"] = SSOT
+        return run([binary or MIOSD, "framerate", "modeline", *args], env=env)
+
+    def test_dp3_90_hz_matches_the_oracle_and_what_hyprland_programs(self) -> None:
+        r = self.cli("DP-3", "--edid", EDID_FIXTURE, "--hz", "90", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        o = edid_oracle(EDID_FIXTURE, 90)
+        self.assertEqual(j["modeline"], o["modeline"])
+        self.assertEqual(j["modeline"], "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync")
+        self.assertAlmostEqual(j["refresh_hz"], o["refresh_hz"], places=6)
+        # the rate the CLI reports (and the apply script verifies against) is the one Hyprland programs and reports
+        self.assertAlmostEqual(j["refresh_hz"], hyprland_modeline_hz(j["modeline"]), places=9)
+        self.assertAlmostEqual(j["refresh_hz"], 90.0104, places=3)
+        self.assertAlmostEqual(j["line_khz"], o["line_khz"], places=6)
+        self.assertAlmostEqual(j["line_khz"], 161.479, places=3)
+        self.assertLess((o["base_line_khz"] - j["line_khz"]) / o["base_line_khz"], 0.001, "the line rate is within 0.1 % of the 144 Hz timing's")
+        self.assertAlmostEqual(j["base_hz"], 143.998, places=3)
+        self.assertEqual((j["range"]["min_v_hz"], j["range"]["max_v_hz"]), (48, 144))
+        self.assertIn("mode = 'modeline 332 1920", j["apply_lua"])
+        self.assertIn("mode = '1920x1080@144.00'", j["restore_lua"], "the way back is the current advertised mode")
+        self.assertIs(j["restore_exact"], True, "an --edid output shows its base timing")
+        for hz in (60, 75, 100, 120):
+            r = self.cli("--edid", EDID_FIXTURE, "--hz", str(hz), "--json")
+            self.assertEqual(r.returncode, 0, (hz, r.stderr))
+            k = json.loads(r.stdout)
+            self.assertEqual(k["modeline"], edid_oracle(EDID_FIXTURE, hz)["modeline"], hz)
+            self.assertLess(abs(hyprland_modeline_hz(k["modeline"]) - hz), 0.05, hz)
+
+    def test_negative_control_the_pre_fix_modeline_is_not_what_hyprland_programs(self) -> None:
+        """MIOS_FR_PREFIX_MIOSD (a miosd built before the whole-MHz fix): its 90 Hz modeline keeps the 332.18 MHz
+        clock and claims 90.009 Hz, but Hyprland programs 89.960 Hz from it."""
+        pre = os.environ.get("MIOS_FR_PREFIX_MIOSD", "")
+        self.assertAlmostEqual(hyprland_modeline_hz("modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync"), 89.9602, places=3)
+        if not (pre and os.access(pre, os.X_OK)):
+            self.skipTest("MIOS_FR_PREFIX_MIOSD not set")
+        r = self.cli("DP-3", "--edid", EDID_FIXTURE, "--hz", "90", "--json", binary=pre)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertEqual(j["modeline"], "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync")
+        self.assertGreater(abs(j["refresh_hz"] - hyprland_modeline_hz(j["modeline"])), 0.04, "the pre-fix CLI's rate is not the programmed one")
+        self.assertNotIn("restore_exact", j, "the pre-fix CLI cannot tell a shown mode from a guessed one")
+
+    def test_negative_controls_refuse_what_the_panel_cannot_carry(self) -> None:
+        for args, why in ((("--hz", "40"), "OutOfRange"), (("--hz", "165"), "AboveBase"), (("--hz", "144"), "base timing's own rate"),
+                          (("--hz", "90", "--size", "2560x1440"), "no EDID timing at 2560x1440")):
+            r = self.cli("--edid", EDID_FIXTURE, *args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn(why, r.stderr + r.stdout, args)
+        with tempfile.NamedTemporaryFile("w", suffix=".hex") as f:
+            f.write("00 11 22\n")
+            f.flush()
+            r = self.cli("--edid", f.name, "--hz", "90")
+            self.assertNotEqual(r.returncode, 0)
+        self.assertNotEqual(self.cli("--edid", EDID_FIXTURE).returncode, 0, "--edid without --hz has no tier to read")
+        # the installed miosd (before this change) has no such command
+        if os.access(OLD_MIOSD, os.X_OK) and os.path.realpath(OLD_MIOSD) != os.path.realpath(MIOSD):
+            old = self.cli("--edid", EDID_FIXTURE, "--hz", "90", binary=OLD_MIOSD)
+            self.assertNotEqual(old.returncode, 0, "the old daemon cannot derive the 90 Hz timing")
+
+
 @unittest.skipUnless(GEN, "MIOS_FR_GEN (a mios-gen with the framerate projection) not set")
 class Projection(unittest.TestCase):
-    def render(self, text: str, profile: str | None, battery: bool) -> tuple[int, str, str]:
+    def render(self, text: str, profile: str | None, battery: bool, state: str | None = None, gen: str = "") -> tuple[int, str, str]:
         with tempfile.TemporaryDirectory() as t:
+            if state is not None:
+                os.makedirs(f"{t}/rt/mios/framerate")
+                with open(f"{t}/rt/mios/framerate/state.json", "w") as f:
+                    f.write(state)
             os.makedirs(f"{t}/usr/share/mios")
             os.makedirs(f"{t}/etc/tuned")
             with open(f"{t}/usr/share/mios/mios.toml", "w") as f:
@@ -397,7 +555,7 @@ class Projection(unittest.TestCase):
             # all three into the scratch root; the login inputs come from the root's etc/tuned and sys/class.
             env.update(MIOS_VENDOR_TOML=f"{t}/usr/share/mios/mios.toml", MIOS_USER_TOML=f"{t}/none.toml",
                        MIOS_HOST_TOML=f"{t}/none-host.toml", XDG_RUNTIME_DIR=f"{t}/rt", HOME=t)
-            r = run([GEN, "render-hyprland", "--root", t, "--runtime"], env=env)
+            r = run([gen or GEN, "render-hyprland", "--root", t, "--runtime"], env=env)
             if r.returncode != 0:
                 return r.returncode, "", r.stderr + r.stdout
             chunk = f"{t}/chunk.lua"
@@ -436,6 +594,36 @@ class Projection(unittest.TestCase):
         self.assertIn("rate unlocked 144 0 72 144", out)
         self.assertIn(":plugin:mios_pacing:max_fps=0", out)
 
+    def test_a_live_modeline_is_replayed_on_reload_and_garbage_is_not(self) -> None:
+        """A config reload re-applies the mode miosd switched to -- an extended-vblank modeline too (else DP-3 would
+        bounce back to 144 Hz at every reload). Only a WxH@Hz or a well-formed modeline is replayed."""
+        line = "modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync"
+        with tempfile.TemporaryDirectory() as t:
+            fake = os.path.join(t, "miosd")   # a live writer: /proc/<pid>/comm must read "miosd"
+            shutil.copy("/usr/bin/sleep", fake)
+            p = subprocess.Popen([fake, "60"])
+            try:
+                def state(modes: dict) -> str:
+                    body = {"version": 1, "pid": p.pid, "seq": 1, "tier": "performance", "desktop_hz": 90, "cap_hz": 90, "glass_fps": 30,
+                            "wallpaper_fps": 45, "max_hz": 144, "unlocked": False, "wallpaper_paced": False, "inputs": {}, "outputs": {}}
+                    body.update({f"mode.{k}": v for k, v in modes.items()})
+                    return json.dumps(body)
+                rc, _, out = self.render(read(SSOT), "performance", False, state({"DP-3": line, "HDMI-A-1": "1920x1080@60.00\" ; os.exit() --"}))
+                self.assertEqual(rc, 0, out)
+                self.assertIn(f"monitor DP-3 {line}", out, "the live modeline is replayed")
+                self.assertNotIn("monitor HDMI-A-1", out, "a mode string that is neither WxH@Hz nor a modeline is never applied")
+                self.assertIn("rate performance 90 90 30 45", out)
+                rc, _, out = self.render(read(SSOT), "performance", False, state({"DP-3": "1920x1080@60.00"}))
+                self.assertIn("monitor DP-3 1920x1080@60.00", out, "advertised modes still replay")
+                # negative control: the installed generator (before this change) drops the modeline at a reload
+                if os.access(OLD_GEN, os.X_OK) and os.path.realpath(OLD_GEN) != os.path.realpath(GEN):
+                    rc, _, out = self.render(read(SSOT), "performance", False, state({"DP-3": line}), gen=OLD_GEN)
+                    if rc == 0:
+                        self.assertNotIn(f"monitor DP-3 {line}", out, "the old projection would bounce DP-3 back to its static rule")
+            finally:
+                p.kill()
+                p.wait()
+
     def test_disabled_policy_projects_nothing(self) -> None:
         text = read(SSOT)
         off = with_key(text, "desktop.framerate", "enabled", "false")
@@ -449,7 +637,16 @@ class Projection(unittest.TestCase):
     @unittest.skipUnless(os.access(OLD_GEN, os.X_OK), "no installed mios-gen")
     def test_installed_generator_projects_no_cap(self) -> None:
         """Negative control: the mios-gen installed before this change, on the policy SSOT, sets no frame cap and no
-        policy glass rate (nothing on the host caps today)."""
+        policy glass rate (nothing on the host caps today). Once the policy is deployed (the installed generator carries
+        the projection, as on this host) there is no pre-policy generator on the host; the disabled-policy test is
+        then the negative control for the projection itself."""
+        try:
+            with open(OLD_GEN, "rb") as f:
+                deployed = b'mios_section("framerate"' in f.read()
+        except OSError:
+            self.skipTest(f"{OLD_GEN} is not readable")
+        if deployed:
+            self.skipTest(f"{OLD_GEN} already carries the frame-rate projection (deployed); see test_disabled_policy_projects_nothing")
         global GEN
         new, GEN = GEN, OLD_GEN
         try:

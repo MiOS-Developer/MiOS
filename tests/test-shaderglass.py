@@ -319,8 +319,13 @@ class Projection(unittest.TestCase):
         self.assertIn('["tag"] = "+hyprglass_preset_mios"', section)
         for b in ssot()["desktop"]["shaderglass"]["bindings"]:
             self.assertIn(f'hl.bind("{b["key"]}", hl.dsp.exec_cmd("/usr/bin/mios-shaderglass {b["args"]}"))', section)
+        # The [desktop.mobile] tile rule never takes the pane while the overlay is enabled (its tile would win
+        # over the pane rule's float + pin); a disabled overlay leaves the rule as it was.
+        exclusion = ', class = "negative:^(shaderglass\\\\.exe)$"'
+        self.assertIn("match = {workspace = sel, float = false" + exclusion + "}, tile = true", on)
         # Negative control: the rules are gone again when disabled, everything else is identical.
-        self.assertEqual(off, on.replace(section + "\nend)\n", ""), "enabling must add exactly the shaderglass section")
+        self.assertEqual(off, on.replace(section + "\nend)\n", "").replace(exclusion, ""),
+                         "enabling must add exactly the shaderglass section and the mobile tile exclusion")
 
     def test_live_resample_fps_reaches_hg_config(self) -> None:
         with tempfile.TemporaryDirectory() as t:
@@ -553,7 +558,9 @@ class Miosd(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "no ShaderGlass pane is running"))
         st = json.loads(self.sg("status").stdout)
         self.assertIsNone(st["supervisor"])
-        self.assertEqual(st["unit"], "app-mios-org.mios.ShaderGlass@overlay.service")
+        # This test runs with a private XDG_RUNTIME_DIR, i.e. as a non-primary session: its own supervisor unit
+        # instance, so it never stops or replaces the operator's app-mios-org.mios.ShaderGlass@overlay.service.
+        self.assertRegex(st["unit"], r"^app-mios-org\.mios\.ShaderGlass@overlay-[0-9a-f]{8}\.service$")
 
 
 # ---------------------------------------------------------------- 4. upstream

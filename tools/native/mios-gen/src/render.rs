@@ -3824,7 +3824,8 @@ end
 -- outputs without an operator-saved scale when apply_to allows (deferred to a one-shot timer, never
 -- inside the event), and its mobile flag (logical short side under the breakpoint) selects the
 -- phone profile: a per-output workspace rule (one-window layout, no top gap so the window meets the
--- shell's shoulders) and a window rule that tiles new windows there. Mobile windows keep the GLOBAL
+-- shell's shoulders) and a window rule that tiles new windows there (never a window class whose own rule
+-- floats and pins it: the ShaderGlass pane; this rule is made later, so it would win). Mobile windows keep the GLOBAL
 -- decoration (rounding, border, shadow, hyprglass) exactly like desktop windows. Their controls:
 -- hyprbars_tab = "mobile" puts them on the window's own glass split into two touch tabs (hyprbars:mobile,
 -- when the plugin took the mobile keys: mios_state.hyprbars_mobile; otherwise the shell draws them),
@@ -3936,7 +3937,7 @@ do
     rules[name] = {
      hl.workspace_rule({workspace = sel, layout = M.layout, gaps_in = M.gaps_in,
       gaps_out = {top = 0, right = M.gaps_out, bottom = M.gaps_out, left = M.gaps_out}}),
-     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false}, tile = true}),
+     hl.window_rule({name = "mios-mobile-" .. name, match = @@TILE_MATCH@@, tile = true}),
     }
     local tabbed = false
     if mobiletabs then
@@ -4132,7 +4133,25 @@ end
             ("nil".to_string(), String::new())
         };
         let explicit = explicit_scales(data)?;
+        // The tile rule is made when an output appears, after every static rule, so its `tile` would override
+        // the float + pin the ShaderGlass pane rule sets ([desktop.shaderglass.window].class): while the overlay
+        // is enabled (its rules are projected), that class is never matched (Hyprland's "negative:" regex).
+        let tile_match = match data
+            .get("desktop")
+            .and_then(|d| d.get("shaderglass"))
+            .filter(|s| s.get("enabled").and_then(Value::as_bool) == Some(true))
+            .and_then(|s| s.get("window"))
+            .and_then(|w| w.get("class"))
+            .and_then(Value::as_str)
+        {
+            Some(class) if !class.is_empty() => {
+                regex::Regex::new(class).map_err(|e| format!("desktop.shaderglass.window.class: {e}"))?;
+                format!("{{workspace = sel, float = false, class = {}}}", lua(&Value::String(format!("negative:{class}")))?)
+            }
+            _ => "{workspace = sel, float = false}".to_string(),
+        };
         let body = MOBILE_LUA
+            .replace("@@TILE_MATCH@@", &tile_match)
             .replace("@@ENABLED@@", &enabled.to_string())
             .replace("@@PORTRAIT@@", &portrait.to_string())
             .replace("@@BREAKPOINT@@", &breakpoint.to_string())
@@ -4338,6 +4357,19 @@ end
             }
             assert!(chunk.contains("MIOS_SCALE_EXPLICIT = {}") && chunk.contains("local EXPLICIT = MIOS_SCALE_EXPLICIT"), "{chunk}");
             assert!(!chunk.contains("@@"), "unfilled placeholder: {chunk}");
+            // The tile rule never takes the ShaderGlass pane (its own rule floats and pins it).
+            assert!(
+                chunk.contains(r#"match = {workspace = sel, float = false, class = "negative:^(shaderglass\\.exe)$"}, tile = true"#),
+                "{chunk}"
+            );
+            // Negative control: without the ShaderGlass table the rule tiles every non-floating window (the old rule).
+            let mut no_sg = vendor();
+            no_sg["desktop"].as_table_mut().unwrap().remove("shaderglass");
+            assert!(mobile_profile(&no_sg).unwrap().contains("match = {workspace = sel, float = false}, tile = true"));
+            // A disabled overlay projects no ShaderGlass rule, and the tile rule names no ShaderGlass class either.
+            let mut off = vendor();
+            off["desktop"]["shaderglass"].as_table_mut().unwrap().insert("enabled".into(), Value::Boolean(false));
+            assert!(!mobile_profile(&off).unwrap().contains("shaderglass"));
             // Without [desktop.scaling] the legacy rule is projected (no policy function).
             let mut legacy = vendor();
             legacy["desktop"].as_table_mut().unwrap().remove("scaling");
@@ -5129,7 +5161,7 @@ report("again")
         seed.insert("wallpaper_paced".into(), Value::Boolean(false));
         seed.insert("source".into(), Value::String("login".into()));
         let mut out = format!(
-            "local mios_rate = {seed}\nmios_section(\"framerate\", function()\n local excluded = {prefixes}\n local function local_output(name)\n  for _, p in ipairs(excluded) do if name:sub(1, #p) == p then return false end end\n  return true\n end\n local runtime = os.getenv(\"XDG_RUNTIME_DIR\")\n local f = runtime and io.open(runtime .. {state}, \"r\")\n local s = \"\"\n if f then s = f:read(\"*a\") or \"\" f:close() end\n local pid = s:match('\"pid\"%s*:%s*(%d+)')\n local c = pid and io.open(\"/proc/\" .. pid .. \"/comm\", \"r\")\n local comm = \"\"\n if c then comm = c:read(\"*l\") or \"\" c:close() end\n local function n(k) return tonumber(s:match('\"' .. k .. '\"%s*:%s*(%d+)')) end\n local tier = s:match('\"tier\"%s*:%s*\"([%w%-]+)\"')\n if comm == \"miosd\" and tier and n(\"desktop_hz\") and n(\"cap_hz\") and n(\"glass_fps\") and n(\"wallpaper_fps\") then\n  mios_rate = {{tier = tier, desktop_hz = n(\"desktop_hz\"), cap_hz = n(\"cap_hz\"), glass_fps = n(\"glass_fps\"), wallpaper_fps = n(\"wallpaper_fps\"), wallpaper_paced = s:match('\"wallpaper_paced\"%s*:%s*true') ~= nil, source = \"state\"}}\n  for name, mode in s:gmatch('\"mode%.([%w%-_%.]+)\"%s*:%s*\"(%d+x%d+@[%d%.]+)\"') do\n   local m = local_output(name) and hl.get_monitor(name)\n   if m then hl.monitor({{output = name, mode = mode, position = m.x .. \"x\" .. m.y, scale = m.scale, transform = m.transform}}) end\n  end\n elseif mios_rate.cap_hz == 0 then\n  local max = 0\n  for _, m in ipairs(hl.get_monitors() or {{}}) do\n   if local_output(m.name) then\n    for _, mode in ipairs(m.available_modes or {{}}) do max = math.max(max, math.floor(mode.refresh_rate + 0.5)) end\n   end\n  end\n  mios_rate.desktop_hz = max\n  mios_rate.glass_fps = math.floor(max / {gdiv})\n  mios_rate.wallpaper_fps = math.floor(max / {wdiv})\n end\n mios_state.framerate = mios_rate\nend)\n",
+            "local mios_rate = {seed}\nmios_section(\"framerate\", function()\n local excluded = {prefixes}\n local function local_output(name)\n  for _, p in ipairs(excluded) do if name:sub(1, #p) == p then return false end end\n  return true\n end\n local runtime = os.getenv(\"XDG_RUNTIME_DIR\")\n local f = runtime and io.open(runtime .. {state}, \"r\")\n local s = \"\"\n if f then s = f:read(\"*a\") or \"\" f:close() end\n local pid = s:match('\"pid\"%s*:%s*(%d+)')\n local c = pid and io.open(\"/proc/\" .. pid .. \"/comm\", \"r\")\n local comm = \"\"\n if c then comm = c:read(\"*l\") or \"\" c:close() end\n local function n(k) return tonumber(s:match('\"' .. k .. '\"%s*:%s*(%d+)')) end\n local tier = s:match('\"tier\"%s*:%s*\"([%w%-]+)\"')\n if comm == \"miosd\" and tier and n(\"desktop_hz\") and n(\"cap_hz\") and n(\"glass_fps\") and n(\"wallpaper_fps\") then\n  mios_rate = {{tier = tier, desktop_hz = n(\"desktop_hz\"), cap_hz = n(\"cap_hz\"), glass_fps = n(\"glass_fps\"), wallpaper_fps = n(\"wallpaper_fps\"), wallpaper_paced = s:match('\"wallpaper_paced\"%s*:%s*true') ~= nil, source = \"state\"}}\n  for name, mode in s:gmatch('\"mode%.([%w%-_%.]+)\"%s*:%s*\"([^\"]+)\"') do\n   local ok = mode:match('^%d+x%d+@[%d%.]+$') or mode:match('^modeline [%d%. ]+ [%+%-]hsync [%+%-]vsync$')\n   local m = ok and local_output(name) and hl.get_monitor(name)\n   if m then hl.monitor({{output = name, mode = mode, position = m.x .. \"x\" .. m.y, scale = m.scale, transform = m.transform}}) end\n  end\n elseif mios_rate.cap_hz == 0 then\n  local max = 0\n  for _, m in ipairs(hl.get_monitors() or {{}}) do\n   if local_output(m.name) then\n    for _, mode in ipairs(m.available_modes or {{}}) do max = math.max(max, math.floor(mode.refresh_rate + 0.5)) end\n   end\n  end\n  mios_rate.desktop_hz = max\n  mios_rate.glass_fps = math.floor(max / {gdiv})\n  mios_rate.wallpaper_fps = math.floor(max / {wdiv})\n end\n mios_state.framerate = mios_rate\nend)\n",
             seed = lua(&Value::Table(seed))?,
             prefixes = lua(&prefixes)?,
             state = lua(&Value::String(format!("/{}", policy.state_file)))?,
