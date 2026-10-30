@@ -250,7 +250,7 @@ def main():
         check('theme bridge generated from the tree SSOT', (bridge_dir / 'theme.json').is_file(), r.stderr[-300:])
         bridge = json.loads((bridge_dir / 'theme.json').read_text())
         shell_env = dict(env, PIPEWIRE_RUNTIME_DIR=UID_RUNTIME, MIOS_THEME_BRIDGE=str(bridge_dir / 'theme.json'),
-                         MIOS_NESTED_TOPBAR_ITEMS=os.environ.get('MIOS_DESIGN_ITEMS', 'app_menu,network,sound,clock,power'))
+                         MIOS_NESTED_TOPBAR_ITEMS=os.environ.get('MIOS_DESIGN_ITEMS', 'app_menu,clock'))
         qml = str(QS_DIR / 'Nested.qml')
 
         def ipc(*call):
@@ -272,15 +272,18 @@ def main():
             if shells_in(str(d)) and any(c['class'] == 'mios-nested-terminal' for c in clients()):
                 break
             time.sleep(0.2)
-        stop_shells()
-        subprocess.Popen(['bwrap', '--die-with-parent', '--bind', '/', '/', '--dev-bind', '/dev', '/dev',
-                          '--ro-bind', str(d / 'input'), '/dev/input', '--', QS, '--no-duplicate', '--path', qml],
-                         env=shell_env, stdout=open(OUT / f'{LABEL}-shell.log', 'w'), stderr=subprocess.STDOUT)
-        for _ in range(150):
-            if isinstance(ipc('topbar', 'state'), dict):
-                break
-            time.sleep(0.2)
-        time.sleep(2.5)
+        def start_shell(tag):
+            stop_shells()
+            subprocess.Popen(['bwrap', '--die-with-parent', '--bind', '/', '/', '--dev-bind', '/dev', '/dev',
+                              '--ro-bind', str(d / 'input'), '/dev/input', '--', QS, '--no-duplicate', '--path', qml],
+                             env=shell_env, stdout=open(OUT / f'{LABEL}-shell{tag}.log', 'w'), stderr=subprocess.STDOUT)
+            for _ in range(150):
+                if isinstance(ipc('topbar', 'state'), dict):
+                    break
+                time.sleep(0.2)
+            time.sleep(2.5)
+
+        start_shell('')
         st = ipc('topbar', 'state')
         check('shell under test is up', isinstance(st, dict), type(st))
         # The session's own terminal (tmux, agent lanes) is closed: only a fixture window is ever captured.
@@ -393,7 +396,12 @@ def main():
         raise_tab(A)
         shot('window-tab')
 
-        # ---- island popups (the controls) -------------------------------------------------------------------------
+        # ---- island popups (the controls): the island with every item that opens one (the measured row above keeps the
+        # island narrow enough that the 464 px viewport leaves the raised tab room beside it) ----------------------------
+        shell_env['MIOS_NESTED_TOPBAR_ITEMS'] = os.environ.get('MIOS_DESIGN_POPUP_ITEMS', 'app_menu,network,sound,clock,power')
+        start_shell('-popups')
+        ev(f"hl.dispatch(hl.dsp.focus({{window='address:{A}'}}))")
+        time.sleep(1.0)
         for name, call in (('calendar', 'openCalendar'), ('power', 'openPower'), ('sound', 'openSound'),
                            ('network', 'openNetwork'), ('sysmon', 'openSysmon'), ('settings', 'openSettings')):
             ipc('topbar', call)
