@@ -8849,6 +8849,8 @@ save_timeout_ms = 3000             # how long ShaderGlass may take to write a pr
 restart_limit = 2                  # a pane whose ShaderGlass dies on its own (crash, OOM, killed Wine) is relaunched on the same window this often (0 = never)
 resume = true                      # a supervisor that died or was stopped by a signal re-attaches its panes on its next start (same native window only)
 strip_keys = ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat", "InputArea", "CroppedArea"]   # never kept in a class profile: miosd chooses the capture source
+runtime_state = "mios/shaderglass/active.state"        # under $XDG_RUNTIME_DIR (per session; a nested session has its own): "active=<0|1>" + "targets=<addresses>" of this session's panes
+room_requests = "mios/shaderglass/room-requests.txt"   # under $XDG_RUNTIME_DIR: the session's queue of Hypr3D room requests ("attach|detach|toggle <address>", "off"), consumed by its supervisor
 # Screencast policy. The pane only ever captures a window: WineCap offers window sources only, and the MiOS picker
 # ([desktop.hyprland.xdph].custom_picker_binary) answers the supervisor's one-shot request with the target window
 # (no click); every other screencast request gets the stock picker.

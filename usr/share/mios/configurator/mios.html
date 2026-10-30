@@ -3329,6 +3329,8 @@
         <label>Profile save timeout (ms) <input data-key="desktop.shaderglass.state.save_timeout_ms" data-type="int" type="number" min="100" max="60000" step="100"></label>
         <label>Relaunch a crashed pane (times; 0 = never) <input data-key="desktop.shaderglass.state.restart_limit" data-type="int" type="number" min="0" max="10" step="1"></label>
         <label>Re-attach panes after a supervisor restart <input data-key="desktop.shaderglass.state.resume" data-type="bool" type="checkbox"></label>
+        <label>Session pane summary (under $XDG_RUNTIME_DIR) <input data-key="desktop.shaderglass.state.runtime_state" type="text"></label>
+        <label>Session Hypr3D room requests (under $XDG_RUNTIME_DIR) <input data-key="desktop.shaderglass.state.room_requests" type="text"></label>
         <label>Pane follow rate (Hz; 0 = the output's refresh) <input data-key="desktop.shaderglass.follow.follow_hz" data-type="float" type="number" min="0" step="1"></label>
         <label>Hide the pane in the Hypr3D room <input data-key="desktop.shaderglass.follow.hide_in_hypr3d" data-type="bool" type="checkbox"></label>
         <p>The ShaderGlass profile chosen in a pane (setup menu, Super+Shift+G) is saved for the application's window class when the pane closes, leaves setup or cycles, and the next pane of that class starts with it -- in the desktop, the Hypr3D room, Theatre, PiP and nested sessions alike.</p>

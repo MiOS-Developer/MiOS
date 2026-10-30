@@ -1,6 +1,6 @@
-// AI-hint: miosd shaderglass state: per-class ShaderGlass profiles and the pane/window-state store that survives pane restarts, supervisor restarts and every 2D/3D presentation mode -- the WineCap command channel (save/next/menu inside the ShaderGlass process), the crash-safe default-profile swap that turns ShaderGlass' "Set as default" into a per-class profile, and the attached-pane record a restarted supervisor resumes.
+// AI-hint: miosd shaderglass state: per-class ShaderGlass profiles and the pane/window-state store shared by every session (reload-modify-write under a lock; the attached record per session) that survives pane restarts, supervisor restarts and every 2D/3D presentation mode -- the WineCap command channel (save/next/menu inside the ShaderGlass process), the crash-safe default-profile swap that turns ShaderGlass' "Set as default" into a per-class profile, and the attached-pane record a restarted supervisor resumes.
 // AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/shaderglass/patches/winecap-mios-portal.patch, usr/share/mios/mios.toml [desktop.shaderglass.state]
-// AI-functions: StateCfg, Store, Attached, Command, sanitize_profile, profile_shader, windows_path, class_slug, save_profile, recover_default
+// AI-functions: StateCfg, Store, Attached, Command, update_json, sanitize_profile, profile_shader, windows_path, class_slug, save_profile, launch_profile, recover_default, recover_default_when_idle
 
 //! ShaderGlass keeps its live state (shader, parameters, pixel size, output scale, frame skip, flips, ...) only
 //! in memory; the one profile it writes without a file dialog is `%LOCALAPPDATA%\ShaderGlassDefault.sgp`
@@ -27,6 +27,10 @@ pub struct StateCfg {
     pub restart_limit: u32,
     pub resume: bool,
     pub strip_keys: Vec<String>,
+    /// The session's pane summary ("active=<0|1>\ntargets=<a,b>"), relative to $XDG_RUNTIME_DIR.
+    pub runtime_state: String,
+    /// The session's Hypr3D room request queue (one "<verb> <address>" per line), relative to $XDG_RUNTIME_DIR.
+    pub room_requests: String,
 }
 
 /// The file names inside the state directory.
@@ -36,6 +40,12 @@ pub const DEFAULT_BACKUP: &str = "default-backup.sgp";
 /// Marks "there was no operator default" for [`recover_default`].
 pub const DEFAULT_ABSENT: &str = "default-backup.absent";
 pub const SAVE_LOCK: &str = "save.lock";
+/// The supervisor session of the user manager's own (primary) desktop; a nested session is
+/// "overlay-<hash of its runtime directory>" (`unit_instance`).
+pub const PRIMARY_SESSION: &str = "overlay";
+/// How long a reload-modify-write of a shared JSON document may wait for another session's (it holds the
+/// lock only to read, change and rename one small file).
+const JSON_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A ShaderGlass window class (or any class) as a file name: [a-z0-9._-]; anything else becomes '_' and adds a
 /// hash of the original, so two classes never share a profile.
@@ -165,44 +175,111 @@ impl Attached {
     }
 }
 
-/// $XDG_STATE_HOME/<directory>/state.json: {"version": 1, "classes": {class: {profile, shader, saved_ms}},
-/// "attached": [...]}, 0600 in a 0700 directory, written atomically.
+/// A shared JSON document (state.json, restore-tokens.json) changed by reload-modify-write: an exclusive flock on
+/// `<file>.lock`, the document read from disk, `change` applied, and the result renamed into place -- so two
+/// supervisors (the primary and a nested session share $XDG_STATE_HOME) never write back a stale copy over each
+/// other's changes. `change` returns whether it changed anything; nothing is written otherwise.
+pub fn update_json(path: &Path, change: impl FnOnce(&mut Json) -> bool) -> Result<bool, String> {
+    let dir = path.parent().ok_or_else(|| format!("{}: no parent", path.display()))?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: no file name", path.display()))?;
+    let _lock = Lock::take(dir, &format!("{name}.lock"), true, JSON_LOCK_TIMEOUT)?;
+    let mut doc = read_json(path).unwrap_or(Json::Null);
+    if !change(&mut doc) {
+        return Ok(false);
+    }
+    super::write_private(path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?.as_bytes())?;
+    Ok(true)
+}
+
+fn read_json(path: &Path) -> Option<Json> {
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok())
+}
+
+/// state.json as this version keeps it: {"version": 1, "classes": {class: {profile, shader, saved_ms}},
+/// "sessions": {session: {"runtime": dir, "attached": [...]}}}. Anything unreadable starts empty; the
+/// single "attached" list of the first store version belonged to the primary session.
+fn normalize(doc: Json) -> Json {
+    let mut doc = match doc {
+        Json::Object(m) if m.get("version").and_then(Json::as_u64) == Some(1) => Json::Object(m),
+        _ => json!({"version": 1}),
+    };
+    if !doc.get("classes").is_some_and(Json::is_object) {
+        doc["classes"] = json!({});
+    }
+    if !doc.get("sessions").is_some_and(Json::is_object) {
+        doc["sessions"] = json!({});
+    }
+    if let Some(old) = doc.as_object_mut().and_then(|m| m.remove("attached")) {
+        if old.as_array().is_some_and(|a| !a.is_empty()) && doc["sessions"].get(PRIMARY_SESSION).is_none() {
+            doc["sessions"][PRIMARY_SESSION] = json!({"runtime": "", "attached": old});
+        }
+    }
+    doc
+}
+
+/// Drop the record of every nested session whose runtime directory is gone (it can never resume).
+fn prune_sessions(doc: &mut Json) {
+    if let Some(m) = doc.get_mut("sessions").and_then(Json::as_object_mut) {
+        m.retain(|k, v| {
+            let rt = v.get("runtime").and_then(Json::as_str).unwrap_or("");
+            k == PRIMARY_SESSION || rt.is_empty() || Path::new(rt).is_dir()
+        });
+    }
+}
+
+/// $XDG_STATE_HOME/<directory>/state.json, 0600 in a 0700 directory. Shared by every session of the user:
+/// the class profiles are common, the attached-pane record is per session ([`PRIMARY_SESSION`] or a nested
+/// session's key). Nothing is cached: every read is the file on disk, every write a reload-modify-write
+/// ([`update_json`]), so one session never undoes another's save or clears another's record.
 #[derive(Debug)]
 pub struct Store {
     pub dir: PathBuf,
-    doc: Json,
+    session: String,
+    runtime: String,
+    /// The attached record this session last wrote (a supervisor records it every tick: written on change only).
+    written: Option<Vec<Attached>>,
 }
 
 impl Store {
-    pub fn load(dir: &Path) -> Store {
-        let doc = std::fs::read(dir.join(STORE))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Json>(&b).ok())
-            .filter(|d| d.get("version").and_then(Json::as_u64) == Some(1))
-            .unwrap_or_else(|| json!({"version": 1, "classes": {}, "attached": []}));
-        Store { dir: dir.to_owned(), doc }
+    /// The store in `dir` for `session` (its supervisor runtime directory is `runtime`).
+    pub fn open(dir: &Path, session: &str, runtime: &Path) -> Store {
+        Store { dir: dir.to_owned(), session: session.to_owned(), runtime: runtime.display().to_string(), written: None }
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    fn path(&self) -> PathBuf {
+        self.dir.join(STORE)
+    }
+
+    fn doc(&self) -> Json {
+        normalize(read_json(&self.path()).unwrap_or(Json::Null))
+    }
+
+    fn update(&self, change: impl FnOnce(&mut Json) -> bool) -> Result<bool, String> {
         super::ensure_private_dir(&self.dir)?;
-        super::write_private(&self.dir.join(STORE), serde_json::to_string_pretty(&self.doc).map_err(|e| e.to_string())?.as_bytes())
+        update_json(&self.path(), |raw| {
+            let mut doc = normalize(raw.take());
+            let changed = change(&mut doc);
+            prune_sessions(&mut doc);
+            *raw = doc;
+            changed
+        })
     }
 
     pub fn profile_path(&self, class: &str) -> PathBuf {
         self.dir.join(PROFILES).join(format!("{}.sgp", class_slug(class)))
     }
 
-    /// The class profile a pane launches with: recorded and still a valid profile on disk.
+    /// The class profile a pane launches with: recorded (by any session) and still a valid profile on disk.
     pub fn saved_profile(&self, class: &str) -> Option<PathBuf> {
-        self.doc.pointer(&format!("/classes/{}", json_pointer_escape(class)))?;
+        self.doc().get("classes")?.get(class)?;
         let p = self.profile_path(class);
         let text = std::fs::read_to_string(&p).ok()?;
         sanitize_profile(&text, &[]).map(|_| p)
     }
 
     #[cfg(test)]
-    pub fn class_entry(&self, class: &str) -> Option<&Json> {
-        self.doc.get("classes")?.get(class)
+    pub fn class_entry(&self, class: &str) -> Option<Json> {
+        self.doc().get("classes")?.get(class).cloned()
     }
 
     /// Write `profile` (already sanitized) as the class profile and record it.
@@ -217,36 +294,60 @@ impl Store {
             "shader": profile_shader(profile),
             "saved_ms": super::picker::now_ms(),
         });
-        if !self.doc.get("classes").is_some_and(Json::is_object) {
-            self.doc["classes"] = json!({});
-        }
-        self.doc["classes"][class] = entry;
-        self.save()?;
+        self.update(|doc| {
+            doc["classes"][class] = entry;
+            true
+        })?;
         Ok(path)
     }
 
+    /// The panes this session left attached.
     pub fn attached(&self) -> Vec<Attached> {
-        self.doc.get("attached").and_then(Json::as_array).into_iter().flatten().filter_map(Attached::from_json).collect()
+        self.doc()["sessions"]
+            .get(&self.session)
+            .and_then(|s| s.get("attached"))
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Attached::from_json)
+            .collect()
     }
 
-    /// Replace the attached record; writes only on change.
+    /// Replace this session's attached record (an empty list removes it); writes only on change. Other
+    /// sessions' records are kept.
     pub fn set_attached(&mut self, list: &[Attached]) -> Result<bool, String> {
-        let new = Json::Array(list.iter().map(Attached::to_json).collect());
-        if self.doc.get("attached") == Some(&new) {
+        if self.written.as_deref() == Some(list) {
             return Ok(false);
         }
-        self.doc["attached"] = new;
-        self.save()?;
-        Ok(true)
+        let (session, runtime) = (self.session.clone(), self.runtime.clone());
+        let new = Json::Array(list.iter().map(Attached::to_json).collect());
+        let wrote = self.update(|doc| {
+            let sessions = doc["sessions"].as_object_mut().expect("normalized");
+            let cur = sessions.get(&session).and_then(|s| s.get("attached")).cloned().unwrap_or(json!([]));
+            if cur == new {
+                return false;
+            }
+            if list.is_empty() {
+                sessions.remove(&session);
+            } else {
+                sessions.insert(session.clone(), json!({"runtime": runtime, "attached": new}));
+            }
+            true
+        })?;
+        self.written = Some(list.to_vec());
+        Ok(wrote)
     }
 
     pub fn to_status(&self) -> Json {
-        json!({"dir": self.dir, "classes": self.doc.get("classes").cloned().unwrap_or(json!({})), "attached": self.doc.get("attached").cloned().unwrap_or(json!([]))})
+        let doc = self.doc();
+        json!({
+            "dir": self.dir,
+            "session": self.session,
+            "classes": doc["classes"],
+            "attached": doc["sessions"].get(&self.session).and_then(|s| s.get("attached")).cloned().unwrap_or(json!([])),
+            "sessions": doc["sessions"].as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        })
     }
-}
-
-fn json_pointer_escape(s: &str) -> String {
-    s.replace('~', "~0").replace('/', "~1")
 }
 
 // ---------------------------------------------------------------- WineCap command channel
@@ -355,24 +456,27 @@ pub fn recover_default(state_dir: &Path, default_path: &Path) -> Result<bool, St
     Ok(false)
 }
 
-/// An exclusive flock on `<state dir>/save.lock` (a primary and a nested supervisor share the prefix).
+/// An flock on `<dir>/<name>`: exclusive (`save.lock` around a default-profile swap, `<file>.lock` around a
+/// reload-modify-write) or shared (a pane launch reading the operator's default while no swap runs). A
+/// primary and a nested supervisor share the prefix and $XDG_STATE_HOME.
 struct Lock(std::fs::File);
 
 impl Lock {
-    fn take(dir: &Path, timeout: Duration) -> Result<Lock, String> {
+    fn take(dir: &Path, name: &str, exclusive: bool, timeout: Duration) -> Result<Lock, String> {
         use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::io::AsRawFd;
         super::ensure_private_dir(dir)?;
-        let path = dir.join(SAVE_LOCK);
+        let path = dir.join(name);
         let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).mode(0o600).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let op = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
         let until = Instant::now() + timeout;
         loop {
             // SAFETY: flock on an fd we own.
-            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            if unsafe { libc::flock(f.as_raw_fd(), op | libc::LOCK_NB) } == 0 {
                 return Ok(Lock(f));
             }
             if Instant::now() >= until {
-                return Err(format!("{}: another ShaderGlass save holds the lock", path.display()));
+                return Err(format!("{}: held by another ShaderGlass supervisor", path.display()));
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -389,6 +493,15 @@ impl Drop for Lock {
     }
 }
 
+/// [`recover_default`] at a supervisor's start, only while no save runs (another session's swap in progress
+/// holds `save.lock`, and its own recovery puts the default back): Ok(false) when that save holds it.
+pub fn recover_default_when_idle(state_dir: &Path, default_path: &Path, timeout: Duration) -> Result<bool, String> {
+    match Lock::take(state_dir, SAVE_LOCK, true, timeout) {
+        Ok(_lock) => recover_default(state_dir, default_path),
+        Err(_) => Ok(false),
+    }
+}
+
 /// Save the pane's live state as `class`'s profile through ShaderGlass' "Set as default" (`run_save` asks the
 /// pane and returns once ShaderGlass wrote `default_path`), leaving the operator's own default as it was.
 /// Returns the sanitized profile that was recorded.
@@ -399,7 +512,7 @@ pub fn save_profile(
     default_path: &Path,
     run_save: impl FnOnce() -> Result<(), String>,
 ) -> Result<String, String> {
-    let _lock = Lock::take(&store.dir, cfg.save_timeout)?;
+    let _lock = Lock::take(&store.dir, SAVE_LOCK, true, cfg.save_timeout)?;
     recover_default(&store.dir, default_path)?;
     let backup = store.dir.join(DEFAULT_BACKUP);
     let absent = store.dir.join(DEFAULT_ABSENT);
@@ -419,6 +532,37 @@ pub fn save_profile(
     Ok(profile)
 }
 
+/// The profile a pane of `class` launches with (ShaderGlass' last argument, loaded after its default): the
+/// class profile when one is saved (and `persist` is on), else a snapshot of the operator's default written to
+/// `snapshot`. The snapshot is taken under a shared `save.lock`, i.e. never while a save in any session has
+/// the default swapped out, and ShaderGlass reads it instead of the live default -- so a save another session
+/// starts while this pane's Wine is still starting cannot leave the pane without the operator's default. When
+/// a save holds the lock past `save_timeout`, the backup it made is the operator's default. None: there is no
+/// operator default (ShaderGlass' built-in one applies).
+pub fn launch_profile(store: &Store, cfg: &StateCfg, class: &str, default_path: &Path, snapshot: &Path) -> Result<Option<PathBuf>, String> {
+    if cfg.persist {
+        if let Some(p) = store.saved_profile(class) {
+            return Ok(Some(p));
+        }
+    }
+    let backup = store.dir.join(DEFAULT_BACKUP);
+    let text = match Lock::take(&store.dir, SAVE_LOCK, false, cfg.save_timeout) {
+        // No save runs: a backup (or the "absent" mark) is what a killed save left, and it -- not the file
+        // ShaderGlass wrote meanwhile -- is the operator's default ([`recover_default`] puts it back).
+        Ok(_shared) if backup.is_file() => std::fs::read_to_string(&backup).ok(),
+        Ok(_shared) if store.dir.join(DEFAULT_ABSENT).is_file() => None,
+        Ok(_shared) => std::fs::read_to_string(default_path).ok(),
+        Err(_) => std::fs::read_to_string(&backup).ok(),
+    };
+    match text.as_deref().and_then(|t| sanitize_profile(t, &cfg.strip_keys)) {
+        Some(p) => {
+            super::write_private(snapshot, p.as_bytes())?;
+            Ok(Some(snapshot.to_owned()))
+        }
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,7 +575,13 @@ mod tests {
             restart_limit: 2,
             resume: true,
             strip_keys: ["CaptureWindow", "CaptureDesktop", "InputArea", "CroppedArea"].iter().map(|s| (*s).to_owned()).collect(),
+            runtime_state: "mios/shaderglass/active.state".into(),
+            room_requests: "mios/shaderglass/room-requests.txt".into(),
         }
+    }
+
+    fn store(dir: &Path) -> Store {
+        Store::open(dir, PRIMARY_SESSION, Path::new("/"))
     }
 
     const WRITTEN: &str = "ProfileVersion \"1.1\"\r\nPixelSize \"2\"\r\nShaderCategory \"crt\"\r\nShaderName \"crt-lottes\"\r\nInputArea \"0 0 0 0\"\r\nCroppedArea \"0 0 0 0\"\r\nCaptureWindow \"Choose...\"\r\nParam-1-hardScan \"-6.000000\"\r\n";
@@ -477,14 +627,14 @@ mod tests {
     fn the_store_round_trips_profiles_and_attached_panes() {
         let d = tempfile::tempdir().unwrap();
         let dir = d.path().join("st");
-        let mut s = Store::load(&dir);
+        let mut s = store(&dir);
         assert!(s.saved_profile("kitty").is_none());
         let p = sanitize_profile(WRITTEN, &cfg().strip_keys).unwrap();
         let path = s.record_profile("kitty", &p).unwrap();
         let a = Attached { address: "0xabc".into(), pid: 7, stable_id: "9".into(), class: "kitty".into(), setup: true };
         assert!(s.set_attached(std::slice::from_ref(&a)).unwrap());
         assert!(!s.set_attached(std::slice::from_ref(&a)).unwrap(), "unchanged: no write");
-        let s2 = Store::load(&dir);
+        let s2 = store(&dir);
         assert_eq!(s2.saved_profile("kitty"), Some(path.clone()));
         assert_eq!(s2.class_entry("kitty").unwrap()["shader"], "crt/crt-lottes");
         assert_eq!(s2.attached(), vec![a]);
@@ -494,10 +644,87 @@ mod tests {
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         // A truncated (0-byte) profile on disk is never handed to ShaderGlass (it would show a modal error).
         std::fs::write(&path, b"").unwrap();
-        assert!(Store::load(&dir).saved_profile("kitty").is_none());
+        assert!(store(&dir).saved_profile("kitty").is_none());
         // A corrupt store starts empty instead of failing.
         std::fs::write(dir.join(STORE), b"{not json").unwrap();
-        assert!(Store::load(&dir).attached().is_empty());
+        assert!(store(&dir).attached().is_empty());
+    }
+
+    #[test]
+    fn two_sessions_sharing_the_store_never_lose_each_others_updates() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("st");
+        let nested_rt = d.path().join("nested-run");
+        std::fs::create_dir(&nested_rt).unwrap();
+        // Both supervisors run at once: each opened the store before the other wrote anything.
+        let mut primary = store(&dir);
+        let mut nested = Store::open(&dir, "overlay-0badf00d", &nested_rt);
+        let p = sanitize_profile(WRITTEN, &cfg().strip_keys).unwrap();
+        let a = |addr: &str, class: &str| Attached { address: addr.into(), pid: 1, stable_id: "1".into(), class: class.into(), setup: false };
+        primary.record_profile("kitty", &p).unwrap();
+        primary.set_attached(&[a("0x1", "kitty")]).unwrap();
+        nested.record_profile("foot", &p).unwrap();
+        nested.set_attached(&[a("0x2", "foot")]).unwrap();
+        primary.record_profile("kitty", &p).unwrap();
+        // Each sees the other's class profile, and its own attached record only.
+        assert!(primary.saved_profile("foot").is_some(), "the nested session's save is seen by the primary");
+        assert!(nested.saved_profile("kitty").is_some());
+        assert_eq!(primary.attached(), vec![a("0x1", "kitty")]);
+        assert_eq!(nested.attached(), vec![a("0x2", "foot")]);
+        // An explicit stop in the nested session clears its own record, never the primary's.
+        nested.set_attached(&[]).unwrap();
+        assert!(nested.attached().is_empty());
+        assert_eq!(store(&dir).attached(), vec![a("0x1", "kitty")], "the primary can still resume");
+        assert!(store(&dir).class_entry("foot").is_some() && store(&dir).class_entry("kitty").is_some());
+        // Negative control: the old whole-document write-back (load once, write the in-memory copy) loses
+        // the update another session made in between.
+        let stale = std::fs::read(dir.join(STORE)).unwrap();
+        nested.record_profile("alacritty", &p).unwrap();
+        std::fs::write(dir.join(STORE), &stale).unwrap();
+        assert!(store(&dir).class_entry("alacritty").is_none(), "a stale write-back drops it (what reload-modify-write prevents)");
+    }
+
+    #[test]
+    fn concurrent_writers_keep_every_class() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("st");
+        let p = sanitize_profile(WRITTEN, &cfg().strip_keys).unwrap();
+        let threads: Vec<_> = (0..4)
+            .map(|t| {
+                let (dir, p) = (dir.clone(), p.clone());
+                std::thread::spawn(move || {
+                    let mut s = Store::open(&dir, &format!("overlay-{t:08x}"), Path::new("/"));
+                    for i in 0..10 {
+                        s.record_profile(&format!("class-{t}-{i}"), &p).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let doc = store(&dir).doc();
+        assert_eq!(doc["classes"].as_object().unwrap().len(), 40, "no lost update under contention");
+    }
+
+    #[test]
+    fn the_first_store_version_migrates_and_dead_sessions_are_pruned() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("st");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(STORE), r#"{"version": 1, "classes": {}, "attached": [{"address": "0x1", "pid": 3, "stable_id": "", "class": "kitty", "setup": false}]}"#).unwrap();
+        assert_eq!(store(&dir).attached().len(), 1, "the single list was the primary's");
+        let gone = d.path().join("gone-run");
+        std::fs::create_dir(&gone).unwrap();
+        let mut n = Store::open(&dir, "overlay-00000001", &gone);
+        n.set_attached(&[Attached { address: "0x9".into(), pid: 1, stable_id: "".into(), class: "foot".into(), setup: false }]).unwrap();
+        assert_eq!(store(&dir).to_status()["sessions"].as_array().unwrap().len(), 2);
+        std::fs::remove_dir(&gone).unwrap();
+        // The next write anywhere drops the session whose runtime directory is gone; the primary is kept.
+        store(&dir).record_profile("kitty", &sanitize_profile(WRITTEN, &[]).unwrap()).unwrap();
+        let st = store(&dir).to_status();
+        assert_eq!(st["sessions"], json!([PRIMARY_SESSION]));
+        assert!(store(&dir).doc().get("attached").is_none(), "migrated, not kept twice");
     }
 
     #[test]
@@ -506,7 +733,7 @@ mod tests {
         let dir = d.path().join("st");
         let default = d.path().join("ShaderGlassDefault.sgp");
         std::fs::write(&default, "ProfileVersion \"1.1\"\r\nShaderName \"operator\"\r\n").unwrap();
-        let mut s = Store::load(&dir);
+        let mut s = store(&dir);
         let c = cfg();
         let p = save_profile(&mut s, &c, "kitty", &default, || {
             std::fs::write(&default, WRITTEN).map_err(|e| e.to_string())
@@ -516,7 +743,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&default).unwrap(), "ProfileVersion \"1.1\"\r\nShaderName \"operator\"\r\n", "operator default restored");
         assert!(!dir.join(DEFAULT_BACKUP).exists() && !dir.join(DEFAULT_ABSENT).exists());
         // Negative control: a pane that answers without writing must not record the operator's default as its state.
-        let mut s = Store::load(&dir);
+        let mut s = store(&dir);
         let before = std::fs::read_to_string(s.profile_path("foot")).ok();
         assert!(save_profile(&mut s, &c, "foot", &default, || Ok(())).is_err());
         assert_eq!(std::fs::read_to_string(s.profile_path("foot")).ok(), before);
@@ -546,6 +773,76 @@ mod tests {
         std::fs::write(&default, WRITTEN).unwrap();
         assert!(recover_default(&dir, &default).unwrap());
         assert!(!default.exists());
+    }
+
+    #[test]
+    fn a_pane_launch_never_starts_without_the_operators_default() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("st");
+        let default = d.path().join("ShaderGlassDefault.sgp");
+        let snap = d.path().join("pane.default.sgp");
+        const OPERATOR: &str = "ProfileVersion \"1.1\"\r\nShaderName \"operator\"\r\nCaptureWindow \"x\"\r\n";
+        std::fs::write(&default, OPERATOR).unwrap();
+        let c = cfg();
+        let mut s = store(&dir);
+        // No class profile: a sanitized snapshot of the operator's default.
+        let p = launch_profile(&s, &c, "kitty", &default, &snap).unwrap().unwrap();
+        assert_eq!(p, snap);
+        let text = std::fs::read_to_string(&snap).unwrap();
+        assert!(text.contains("operator") && !text.contains("CaptureWindow"), "{text}");
+        // Another session is mid-save (default swapped out, save.lock held): the snapshot is still the
+        // operator's default, from the backup, not the missing file or the pane state ShaderGlass writes.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (dir2, default2) = (dir.clone(), default.clone());
+        let saver = std::thread::spawn(move || {
+            let mut other = Store::open(&dir2, "overlay-00000002", Path::new("/"));
+            save_profile(&mut other, &cfg(), "foot", &default2, || {
+                tx.send(()).unwrap();
+                std::thread::sleep(Duration::from_millis(900));
+                std::fs::write(&default2, WRITTEN).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        });
+        rx.recv().unwrap();
+        assert!(!default.exists(), "the swap removed the operator's default");
+        let short = StateCfg { save_timeout: Duration::from_millis(200), ..c.clone() };
+        let _ = std::fs::remove_file(&snap);
+        launch_profile(&s, &short, "kitty", &default, &snap).unwrap();
+        assert!(std::fs::read_to_string(&snap).unwrap().contains("operator"), "the backup is the operator's default");
+        // Negative control: reading the live default at that moment (what a launch without the lock did) gets nothing.
+        assert!(std::fs::read_to_string(&default).is_err());
+        saver.join().unwrap();
+        assert!(std::fs::read_to_string(&default).unwrap().contains("operator"), "restored after the save");
+        // A saved class profile wins.
+        let path = s.record_profile("kitty", &sanitize_profile(WRITTEN, &c.strip_keys).unwrap()).unwrap();
+        assert_eq!(launch_profile(&s, &c, "kitty", &default, &snap).unwrap(), Some(path));
+        // persist off: the default, never the class profile.
+        let off = StateCfg { persist: false, ..c.clone() };
+        assert_eq!(launch_profile(&s, &off, "kitty", &default, &snap).unwrap(), Some(snap.clone()));
+        // A killed save left its backup: it is the operator's default, not what ShaderGlass wrote.
+        std::fs::write(dir.join(DEFAULT_BACKUP), OPERATOR).unwrap();
+        std::fs::write(&default, WRITTEN).unwrap();
+        launch_profile(&s, &off, "foot", &default, &snap).unwrap();
+        assert!(std::fs::read_to_string(&snap).unwrap().contains("operator"));
+        // No operator default at all: ShaderGlass' built-in default.
+        std::fs::remove_file(dir.join(DEFAULT_BACKUP)).unwrap();
+        std::fs::remove_file(&default).unwrap();
+        assert_eq!(launch_profile(&s, &off, "foot", &default, &snap).unwrap(), None);
+    }
+
+    #[test]
+    fn a_starting_supervisor_never_recovers_under_another_sessions_save() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("st");
+        std::fs::create_dir_all(&dir).unwrap();
+        let default = d.path().join("ShaderGlassDefault.sgp");
+        std::fs::write(dir.join(DEFAULT_BACKUP), "ProfileVersion \"1.1\"\r\nShaderName \"operator\"\r\n").unwrap();
+        let held = Lock::take(&dir, SAVE_LOCK, true, Duration::from_millis(50)).unwrap();
+        assert!(!recover_default_when_idle(&dir, &default, Duration::from_millis(100)).unwrap(), "a save runs: left to it");
+        assert!(!default.exists() && dir.join(DEFAULT_BACKUP).exists());
+        drop(held);
+        assert!(recover_default_when_idle(&dir, &default, Duration::from_millis(100)).unwrap(), "a killed save's backup is restored");
+        assert!(std::fs::read_to_string(&default).unwrap().contains("operator"));
     }
 
     #[test]

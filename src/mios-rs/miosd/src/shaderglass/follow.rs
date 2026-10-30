@@ -21,7 +21,9 @@ const TOLERANCE: f64 = 1.0;
 const EXACT: f64 = 0.5;
 /// How often one target rectangle is re-sent to a pane that does not land on it (a fractional output scale
 /// that cannot represent it, a client that snaps its size) before the follower accepts where it is. A new
-/// target rectangle gets a new budget, so a bounded number of dispatches per target change, never a loop.
+/// target rectangle gets a new budget, and so does a pane that moves away from where it kept landing (the
+/// operator or Wine pushed it off): a bounded number of dispatches per change, never a loop, and a large drift
+/// after a give-up is still corrected.
 pub const PLACE_RETRIES: u32 = 3;
 /// Shortest poll interval, whatever the refresh rate claims.
 const MIN_FRAME: Duration = Duration::from_millis(2);
@@ -191,6 +193,8 @@ pub struct Follower {
     workspace: Option<(i64, i64)>,
     /// Drift re-placements of the current target rectangle that did not land ([`PLACE_RETRIES`]).
     misses: u32,
+    /// Where the pane was when the last of those was counted: a pane found anywhere else moved on its own.
+    missed_at: Option<Rect>,
 }
 
 impl Follower {
@@ -213,6 +217,7 @@ impl Follower {
         self.last_pane = None;
         self.workspace = None;
         self.misses = 0;
+        self.missed_at = None;
     }
 
     /// Whether the follower gave up re-sending the current target rectangle (the pane cannot land on it).
@@ -272,9 +277,12 @@ impl Follower {
             }
             self.last_target = Some(r);
             self.misses = 0;
+            self.missed_at = None;
         }
-        if pane.rect.same(&r) {
+        // Landed, or moved away from where it kept missing: a new budget.
+        if pane.rect.same(&r) || self.missed_at.is_some_and(|m| !m.same(&pane.rect)) {
             self.misses = 0;
+            self.missed_at = None;
         }
         let within = |at: Option<Instant>| at.is_some_and(|a| now.saturating_duration_since(a) < p.settle);
         let user_dragged_pane = self.dragging && self.shown == Some(true)
@@ -317,6 +325,7 @@ impl Follower {
                 if needs_place || drifted {
                     if drifted && !needs_place {
                         self.misses += 1;
+                        self.missed_at = Some(pane.rect);
                     }
                     actions.push(Action::Place(r));
                     self.placed = Some(r);
@@ -650,6 +659,40 @@ mod tests {
         let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_secs(20));
         assert_eq!(s.actions, vec![Action::Place(t.rect)]);
         assert!(!f.gave_up());
+    }
+
+    #[test]
+    fn a_large_drift_after_a_give_up_is_still_corrected() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let t = win("0xt", 100.0, 100.0, 1);
+        let mut pane = t.clone();
+        pane.address = "0xp".into();
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
+        // The fractional-scale case: the pane always lands one pixel short, until the follower gives up.
+        pane.rect.w -= 1.0;
+        let mut at = t0;
+        for _ in 0..10 {
+            at += Duration::from_millis(400);
+            f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, at);
+        }
+        assert!(f.gave_up());
+        // Then the pane is pushed 200 px away, the target unchanged (the verifier's probe): re-placed.
+        let short = pane.rect;
+        pane.rect.x += 200.0;
+        let mut sent = 0;
+        for _ in 0..30 {
+            at += Duration::from_millis(400);
+            let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, at);
+            if s.actions.iter().any(|a| matches!(a, Action::Place(_))) {
+                sent += 1;
+                // It lands where it always lands (one pixel short) again.
+                pane.rect = short;
+            }
+        }
+        assert!(sent >= 1, "a 200 px drift after the give-up is corrected");
+        assert!(sent <= PLACE_RETRIES + 1, "and still bounded: {sent}");
+        assert!(f.gave_up(), "back at the spot it cannot leave: given up again, no loop");
     }
 
     #[test]

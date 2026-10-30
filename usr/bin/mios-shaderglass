@@ -19,8 +19,23 @@ notify_error() {
 }
 
 hypr3d_is_active() {
-    # /tmp/hypr3d-status.txt is the primary session's room; a nested session (private runtime dir) has its own.
-    [[ "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" == "/run/user/$(id -u)" ]] || return 1
+    local uid rdir
+    uid=$(id -u)
+    rdir="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+    if [[ "$rdir" != "/run/user/$uid" ]]; then
+        # A nested session (private runtime dir): ask its own compositor whether its Hypr3D room is up. The
+        # plugin's /tmp/hypr3d-status.txt is per session only inside the nested sandbox ([desktop.nested]
+        # private_files / private_tmp); the compositor's answer holds wherever this runs.
+        local probe="$rdir/mios-shaderglass-room.$$" v=""
+        [[ "$probe" != *"'"* && "$probe" != *'\'* ]] || return 1
+        rm -f "$probe"
+        hyprctl eval "local p = hl.plugin and hl.plugin.hypr3d; local a = false; if p and p.active then local ok, v = pcall(p.active); a = ok and v and true or false end; local f = io.open('$probe', 'w'); if f then f:write(a and '1' or '0'); f:close() end" >/dev/null 2>&1 || true
+        v=$(cat "$probe" 2>/dev/null || true)
+        rm -f "$probe"
+        [[ "$v" == 1 ]]
+        return
+    fi
+    # The primary session's room.
     [[ -f /tmp/hypr3d-status.txt ]] || return 1
     local last_active
     last_active=$(grep '^active=' /tmp/hypr3d-status.txt 2>/dev/null | tail -n 1 || true)
