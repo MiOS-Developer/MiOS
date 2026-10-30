@@ -7058,7 +7058,8 @@ camera_max_fps = 30                 # negotiated source rate ceiling, 1..60
 camera_max_devices = 4              # bounded camera announcements per connection, 1..8
 camera_poll_ms = 500                # native consumer detection interval, 250..2000 ms
 camera_timeout_ms = 10000           # startup/active source frame timeout, 2000..30000 ms
-camera_v4l2 = true                  # also serve V4L2-only apps: publish single-plane YUY2 (planar I420 cannot negotiate with PipeWire's V4L2 library); run them with `mios-camera-v4l2 <app>`
+camera_provider_restarts = 3        # bounded native provider restarts after its decoder process exits (e.g. a consumer's failed buffer negotiation), 0..8; 0 closes the camera
+camera_v4l2 = true                  # also serve V4L2-only apps through PipeWire's V4L2 compatibility library: run them with `mios-camera-v4l2 <app>` (the BGRA source is single-plane; no kernel module)
 camera_v4l2_library = "/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so" # pipewire-v4l2 compatibility library the launcher preloads; absolute path
 camera_pipewire_runtime = ""        # "" = the operator's PipeWire (/run/user/<uid>); an absolute runtime dir targets a private lab PipeWire instead
 drive_timeout_ms = 10000           # timeout poisons drive transport until reconnect, preventing late-response reuse
