@@ -1435,7 +1435,9 @@ crouch_button = "BTN_WEST"
     #[test]
     fn staged_all_steps_controller_map_passes_the_audit() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/design/mios-global-bindings-staged.patch.toml");
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        // A missing spec is a failure, never a silent pass: a source-only snapshot without docs/ hid a red audit (V5).
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e} (run the gate tests in a full-tree checkout)", path.display()));
         let mut out = String::new();
         for line in text.lines() {
             if line.contains("# @drop:") {
