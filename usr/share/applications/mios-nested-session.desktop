@@ -13,7 +13,7 @@ Keywords=mios;desktop;nested;agent;multiplayer;tmux;pip;
 Terminal=false
 StartupNotify=false
 StartupWMClass=aquamarine
-Actions=window;side-by-side;
+Actions=window;side-by-side;hypr3d;remote;
 
 [Desktop Action window]
 Name=Open as a window
@@ -22,3 +22,11 @@ Exec=/usr/bin/mios-gen nested-session --layout window
 [Desktop Action side-by-side]
 Name=Open side by side
 Exec=/usr/bin/mios-gen nested-session --layout side-by-side
+
+[Desktop Action hypr3d]
+Name=Open in the 3D room
+Exec=/usr/bin/mios-gen nested-session --target hypr3d
+
+[Desktop Action remote]
+Name=Open on the remote display
+Exec=/usr/bin/mios-gen nested-session --target remote

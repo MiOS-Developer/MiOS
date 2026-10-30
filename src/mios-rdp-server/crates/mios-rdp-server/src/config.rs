@@ -45,6 +45,11 @@ pub struct Native {
     pub udp_transport: bool,
     pub log_negotiation: bool,
     pub bitmap_hz: u32,
+    pub progressive: bool,
+    pub progressive_hz: u32,
+    pub progressive_quant: u8,
+    pub audio_control_program: String,
+    pub microphone_queue_packets: usize,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -86,6 +91,11 @@ impl Default for Native {
             udp_transport: false,
             log_negotiation: true,
             bitmap_hz: 15,
+            progressive: true,
+            progressive_hz: 0,
+            progressive_quant: 8,
+            audio_control_program: "pactl".into(),
+            microphone_queue_packets: 8,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -94,6 +104,14 @@ impl Default for Native {
             max_width: 4096,
             max_height: 4096,
         }
+    }
+}
+
+impl Native {
+    /// Zero inherits the operator's remote display target instead of imposing
+    /// a separate codec cap. A nonzero value is an explicit lower ceiling.
+    pub fn progressive_ceiling(&self, target: u32) -> u32 {
+        if self.progressive_hz == 0 { target.max(1) } else { self.progressive_hz.min(target).max(1) }
     }
 }
 
@@ -121,7 +139,7 @@ impl Default for Redirect {
             touch: true,
             pen: true,
             audio_output: false,
-            microphone: false,
+            microphone: true,
             camera: false,
             drives: false,
             location: false,
@@ -136,6 +154,7 @@ impl Default for Redirect {
 pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
+    pub microphone_source_prefix: String,
 }
 
 impl Default for Naming {
@@ -143,6 +162,7 @@ impl Default for Naming {
         Self {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
+            microphone_source_prefix: "mios-remote-microphone".into(),
         }
     }
 }
@@ -244,6 +264,13 @@ impl Config {
     }
 
     pub fn validate(&mut self) -> Result<()> {
+        let prefix = &self.naming.microphone_source_prefix;
+        if prefix.is_empty() || prefix.len() > 64 || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            bail!("microphone source prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");
+        }
+        if self.native.audio_control_program.is_empty() || self.native.audio_control_program.contains('\0') || !(1..=128).contains(&self.native.microphone_queue_packets) {
+            bail!("audio_control_program must be nonempty and microphone_queue_packets must be 1..=128");
+        }
         if !(1..=240).contains(&self.target_hz) {
             bail!("target_hz {} out of 1..240", self.target_hz);
         }
@@ -270,6 +297,9 @@ impl Config {
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
         n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));
+        if n.progressive_hz > 240 || !(6..=15).contains(&n.progressive_quant) {
+            bail!("progressive_hz must be 0..=240 and progressive_quant must be 6..=15");
+        }
         if n.bitmap_damage_threshold > 16 { bail!("bitmap_damage_threshold must be 0..=16"); }
         if n.tcp_send_buffer_kib > 4096 || n.tcp_notsent_lowat_kib > 4096 {
             bail!("tcp_send_buffer_kib and tcp_notsent_lowat_kib must be 0..=4096");
@@ -368,6 +398,24 @@ mod tests {
     }
 
     #[test]
+    fn microphone_endpoint_settings_are_bounded() {
+        for packets in [1, 8, 128] {
+            let mut cfg = Config::default(); cfg.native.microphone_queue_packets = packets;
+            cfg.validate().unwrap();
+        }
+        for packets in [0, 129] {
+            let mut cfg = Config::default(); cfg.native.microphone_queue_packets = packets;
+            assert!(cfg.validate().unwrap_err().to_string().contains("microphone_queue_packets"));
+        }
+        for name in ["", "../audio", "source name", "source\0"] {
+            let mut cfg = Config::default(); cfg.naming.microphone_source_prefix = name.into();
+            assert!(cfg.validate().unwrap_err().to_string().contains("microphone source prefix"));
+        }
+        let mut cfg = Config::default(); cfg.native.audio_control_program.clear();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
     fn bitmap_noise_threshold_has_an_exact_mode_and_bounded_loss() {
         for threshold in [0,3,16] {
             let mut c=Config::default();c.native.bitmap_damage_threshold=threshold;
@@ -397,5 +445,26 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.bind_device, None);
         assert_eq!(c.tailscale_interface, "tailscale0");
+    }
+
+    #[test]
+    fn progressive_quality_and_rate_are_bounded_and_configurable() {
+        for (hz, quant) in [(0,8), (1,6), (30,8), (240,15)] {
+            let mut c=Config::default();
+            c.native.progressive_hz=hz; c.native.progressive_quant=quant;
+            c.validate().unwrap();
+            assert_eq!(c.native.progressive_hz,hz); assert_eq!(c.native.progressive_quant,quant);
+        }
+        for (hz, quant) in [(241,8), (30,5), (30,16)] {
+            let mut c=Config::default();
+            c.native.progressive_hz=hz; c.native.progressive_quant=quant;
+            assert!(c.validate().unwrap_err().to_string().contains("progressive_"));
+        }
+        let mut n=Native::default();
+        assert_eq!(n.progressive_ceiling(90),90);
+        assert_eq!(n.progressive_ceiling(144),144);
+        n.progressive_hz=30;
+        assert_eq!(n.progressive_ceiling(90),30);
+        assert_eq!(n.progressive_ceiling(15),15);
     }
 }

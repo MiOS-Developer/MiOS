@@ -937,6 +937,7 @@ etc/profile.d/80-systemd-osc-context.sh
 !/src/mios-rdp-server
 !/src/mios-rdp-server/
 !/src/mios-rdp-server/**
+!/tests/fixtures/mios-rdp/microphone.py
 /src/mios-rdp-server/target/
 /src/mios-rdp-server/**/target/
 

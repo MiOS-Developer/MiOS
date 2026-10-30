@@ -7,6 +7,173 @@ The incoming participant is `mios-desktop-repair-session`; outgoing participant
 is `mios-rdp-live-recovery`. These are current participants, not permanent roles.
 The broad desktop goal remains unfinished. Continue coding and live verification.
 
+## Remote hardware continuation — 2026-10-30T03:37Z
+
+This section supersedes the RDP defaults and active binary below. The operator
+added camera, USB, file and microphone forwarding for RDP and compatible remote
+clients. **The full hardware-forwarding request is unfinished.**
+
+* Real MS-RDPEAI microphone forwarding is implemented in `redirect.rs` and live.
+  Native 48 kHz signed PCM mono/stereo is validated, stereo is downmixed, and
+  bounded queues discard stale packets. Each connection owns a PipeWire-Pulse
+  source and private FIFO; close and attached-server shutdown remove them.
+  No physical source/default routing is changed by the implementation.
+* Live server SHA256 is
+  `7ee099f9f5fd1e5fdb148af13d530d6a543b1766b91b4f63813a32b429a65373`,
+  PID `612545` at activation. Package/rollback/activation receipts use the
+  `mios-microphone-wire` stem under `/var/lib/mios-build/rdp-delivery/`.
+  Activation was idle; primary compositor PID5764, application identities and
+  physical monitor geometry were preserved. Production test-auth is false.
+* SSOT microphone permission is now true, still subject to client permission.
+  HTML exposes permission, native audio executable, queue size and source name
+  prefix. `pulseaudio-utils` is included in the remote-desktop package set.
+  Stats expose native readiness, source, bytes, drops and errors. Other device
+  capabilities explicitly report their missing backends.
+* Progressive capture now defaults to `progressive_hz=0`, inheriting the
+  operator's target (90 Hz on this host), rather than imposing my earlier 30 Hz
+  default. This is a ceiling policy, not a measured 90 FPS claim.
+* `WireStream` counts successful socket writes below TLS for every codec.
+  `bitrate_kbps` includes TLS/RDP framing; `encoded_payload_kbps` retains the
+  encoded EGFX payload rate. Bitmap no longer incorrectly reports zero bitrate.
+* Verification: 54 regular Rust tests; both recorded codec fixtures explicitly
+  executed; 37 backend checks, 33 passing and four documented opt-in/operator
+  skips; production hardware/self-test and SSOT/global projection checks.
+  Native callback audio captured 24,000 samples with RMS4480.65. Actual FreeRDP
+  forwarding captured 240,000 synthetic samples with RMS7949.91. Its disabled
+  control created no source, and source/default cleanup passed. No physical mic
+  was recorded. The new attached-SIGTERM check failed on the old binary and
+  passed on the new one. Reproducible fixture:
+  `tests/fixtures/mios-rdp/microphone.py`; run as the desktop operator with
+  `MIOS_RDP_NATIVE_LIVE=1`, `MIOS_RDP_BIN` pointing at a private test-auth build,
+  `--nested-descriptor <owned session.json> --report <owned report.json>`.
+* Wire-codec E2E passed in the owned nested PiP lab: Progressive29.5 ACK FPS,
+  bitmap14.5 write-complete FPS (32–34 Mbps actual socket traffic), AVC29.5 ACK
+  FPS. Reports are `mios-wire-microphone-codec-e2e.json` and
+  `mios-microphone-shutdown-result.json` in the build evidence directory.
+  These measurements use a 30 Hz test target and are not phone FPS.
+* One owned nested lab remains running: descriptor
+  `/var/tmp/mios-rdp-microphone-lab.json`, unit `mios-rdp-microphone-lab`.
+  It uses isolated input and no physical controller assignment. Do not close
+  operator-adopted nested sessions as test cleanup.
+
+Remaining device work: RDPSND native speaker sink, server-side RDPECAM DVC plus
+native video source, RDPDR native filesystem/FUSE operations, URBDRC native USB
+bridge, and compatible non-RDP SPICE/usbredir/USB-IP integration. RDPDR now rejects
+devices instead of claiming empty directories are mounted drives. The upstream
+camera crate has client/PDU code but no server implementation. Generic USB support
+also depends on the client: Microsoft's platform matrix does not offer generic
+USB forwarding on iOS Windows App. Camera/microphone use separate protocols.
+Native worker attempts failed at login or unified endpoint stream startup; no
+device worker implementation or registration is claimed. Worker assignment
+requests remain queued for `mios-desktop-repair-session`.
+
+Build incident: the shared lock was held for18 minutes by a bidirectional
+`git cat-file --batch` pipe deadlock in a generator golden test. Exact process,
+FD and signal evidence is `mios-generator-deadlock-receipt.json`. Only the verified
+Git child received SIGTERM; its generator exited and the golden suite reported
+failure. The generator's write-all-before-output-read pattern in `indexes.rs`
+still needs a concurrent writer/drain fix and a fresh golden pass. Do not claim
+that cancelled suite passed. The desktop coordinator received the root cause
+and failure receipt through the native relay.
+
+Primary references: [PipeWire pipe-source](https://docs.pipewire.org/page_pulse_module_pipe_source.html)
+and [Windows App device compatibility](https://learn.microsoft.com/en-us/windows-app/compare-platforms-features).
+
+## Continuation update — 2026-10-30T01:54:34.636288+00:00
+
+This section supersedes the older RDP and integration status below. The
+operator requested continued coding after the initial handoff. Root was advanced
+by the incoming participant through `90281a2f6`, integrating Controls, nested fit
+scaling, session scaling, PiP drawer behavior and the S0 global binding contract.
+Other platform/input/shell worktrees remain separate; inspect their receipts
+before integrating. No broad backlog completion is claimed.
+
+### RDP Progressive is implemented and live
+
+* Production server SHA256 `362a4f9b45943a5b4122cca8fbc67e119d73669504eafe1407df42484c155b39`, PID
+  `2939898` at activation. Installed under
+  `/usr/libexec/mios/rdp-native/mios-rdp-server`. Recheck the PID before use.
+* The final verified package is `/var/lib/mios-build/rdp-delivery/mios-progressive-final-candidate`.
+  Production hardware self-tests explicitly report `test_auth_build=false`;
+  the private test-auth build was never installed into the production path.
+* The new path selects RemoteFX Progressive when EGFX is ready and AVC420 is
+  unavailable. Old V8/V8.1 thin clients retain the legacy fallback. Independent
+  damaged 64x64 tiles reference only the last successfully submitted frame;
+  edge pixels are replicated and frame acknowledgements bound queued work.
+* SSOT and HTML expose `remote.rdp.native.progressive=true`,
+  `progressive_hz=30`, `progressive_quant=8` (valid quantization 6..15).
+  Set progressive false to preserve the legacy fallback. H.264 remains preferred
+  for capable clients. Generic `fps_basis` identifies client EGFX acknowledgements
+  versus legacy bitmap socket-write completion.
+* The final refinement reuses one 64 KiB entropy scratch buffer instead of
+  retaining large scratch capacities in every encoded tile. It also clears a
+  previous connection's bitmap pacing/reporting state when EGFX takes ownership.
+* Verification: 48 regular Rust tests, both recorded fixtures executed explicitly,
+  37 backend checks (33 pass, four documented live/operator skips), OpenH264/EGL
+  self-tests and SSOT/global projection checks. Real DVC negotiation, ACK
+  backpressure, encode/decode, edge tiles, malformed frames, retained contexts and
+  the real encoding thread's stale-connection state are covered.
+* A recorded 1100x2080 frame encoded to 58,492 bytes; the first encoding measured
+  23.2 ms before scratch reuse. All 594 tiles decoded successfully. Prior measured
+  NSCodec updates were 1–2.7 MB. These fixture measurements are not phone FPS.
+* Actual nested PiP + FreeRDP delivery: Progressive 29.5 acknowledged FPS,
+  explicit Progressive-disabled bitmap control 14.5 write-complete FPS, AVC420
+  29.5 acknowledged FPS. The final repeated test is
+  `/var/lib/mios-build/rdp-delivery/mios-progressive-final-e2e.json`; screenshots/log paths are in that JSON.
+  The test's owned nested output was mirrored. Creating another headless output
+  under this Wayland-only nested backend yielded 0x0 and GBM EINVAL; that separate
+  nested-platform limitation remains open.
+* The actual mobile peer subsequently connected to the refined Progressive build
+  `308437a7...`: a single initial sample showed 28.5 ACK FPS. A 30-second, 15-window
+  sample showed 16.5–22.5 FPS, median
+  18.5, median capture-to-ACK p50 68.3 ms.
+  These are remote client frame acknowledgements, not local compositor FPS or
+  measured display scanouts. Record variation; do not advertise the peak as a
+  sustained rate. Source: `/var/lib/mios-build/rdp-delivery/mios-progressive-phone-samples.json`.
+* The final `362a4f9b...` build adds the connection-state reset and was activated
+  afterward, only when the phone disconnected. Its next phone connection still
+  needs sampling. The activation receipt is
+  `/var/lib/mios-build/rdp-delivery/mios-progressive-final-activation.json`; rollback package is
+  `/var/lib/mios-build/rdp-delivery/mios-progressive-final-rollback`.
+* Each activation guard required the client to be idle, and verified primary
+  compositor PID 5764, existing application identities and physical output
+  geometry. No desktop restart or reboot occurred. The old idle helper finished;
+  do not launch it again against an already-created rollback directory.
+* Remaining RDP work: longer real phone motion/latency/input checks, bitmap wire
+  bitrate telemetry (legacy still reports zero), and quality/rate adaptation
+  under poor links. H.264 AIMD does not currently adjust Progressive quality.
+
+### Phosh installation requested by the operator
+
+The existing `[packages.phosh]` section was already enabled. The host is a writable
+Fedora 44 filesystem, so the authorized native DNF install completed directly:
+Phosh 0.57.0, Phoc 0.57.0, Mobile Settings 0.57.0, Stevia 0.57.0, feedbackd and
+Calls, with dependencies. Only stable repositories were used for the transaction;
+updates-testing was disabled for this command. No installed packages were removed
+or upgraded. Mobile Settings was added to the existing SSOT package set so image
+builds retain it. No default desktop selection was changed.
+
+`/usr/share/wayland-sessions/phosh.desktop` launches `/usr/bin/phosh-session`;
+the shell executable is `/usr/libexec/phosh` (there is no `phosh` command on PATH).
+`phosh-session --version`, `/usr/libexec/phosh --version`, `phoc --version`, RPM
+versions and `rpm -V phosh phoc phosh-mobile-settings` verified successfully.
+The greeter indexes `/usr/share/wayland-sessions`, so Phosh is available for a
+future login. The installed shell rendered its app grid successfully in a private
+headless Phoc session with Pixman, an isolated D-Bus, in-memory GSettings and
+private XDG config/data/cache/state directories. Screenshot:
+`/var/tmp/mios-phosh-preview/phosh-headless-preview.png`; receipt:
+`/var/tmp/mios-phosh-install/preview-receipt.json`. Wayland-nested Phoc previews
+configured an output but screenshot capture stalled, with both GPU and software
+renderers; that nested path remains unresolved. A full Phosh/GNOME login on the
+physical display was not tested. Only the owned preview units were stopped after
+verification; the MiOS nested desktop and operator sessions were preserved. The current
+desktop/application identities were preserved; no reboot or session restart.
+Receipt: `/var/tmp/mios-phosh-install/receipt.json`, log in the same directory.
+The DNF offline update was already invalid before installation; its metadata was
+backed up there. It was not repaired or executed as part of this installation.
+
+### Historical checkpoint details follow
+
 ## Authorization and preservation
 
 The operator already authorized applying completed, verified changes LIVE. Do

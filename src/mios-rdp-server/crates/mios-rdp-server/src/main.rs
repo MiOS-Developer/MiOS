@@ -411,11 +411,10 @@ async fn serve(cfg: Config) -> Result<()> {
         .with_connection_handler(Some(Box::new(session::Hooks { s: Arc::clone(&s) })))
         .with_connection_policy(ConnectionPolicy::Reject)
         .with_honor_client_desktop_size(Some(DesktopSize { width: cfg.native.max_width, height: cfg.native.max_height }));
-    // Legacy bitmap codecs for clients that negotiate EGFX without AVC420. Microsoft's Windows App on
-    // iOS/macOS sets AVC_DISABLED in every EGFX capability set and lists only NSCodec in its bitmap-codec
-    // capability, so with IronRDP's default list (RemoteFX, QOI, QOIZ) it got raw/RLE bitmap updates:
-    // several MB per 1100x2080 frame and TCP back-pressure on the phone link (mios, 2026-10-23).
-    // IronRDP ranks NSCodec below RemoteFX/QOI, so clients that offer those keep them.
+    // Legacy fallback when EGFX is unavailable or Progressive is disabled.
+    // AVC_DISABLED clients use acknowledged EGFX Progressive by default; their
+    // legacy bitmap-codec list is independent of EGFX capability negotiation.
+    // Offer NSCodec too so a deliberate fallback still compresses mobile frames.
     {
         use ironrdp_pdu::rdp::capability_sets::{Codec, CodecProperty, NsCodec, server_codecs_capabilities};
         let mut codecs = server_codecs_capabilities(&[]).map_err(|e| anyhow!("server bitmap codecs: {e}"))?;
@@ -449,7 +448,7 @@ async fn serve(cfg: Config) -> Result<()> {
         builder = builder.with_sound_factory(Some(Box::new(redirect::SoundFactory::new())));
     }
     if should_enable_microphone(&cfg) {
-        builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new())));
+        builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new(cfg.clone(), Arc::clone(&s.stats)))));
     }
     if cfg.redirect.drives {
         builder = builder.with_rdpdr_factory(Some(Box::new(redirect::RdpdrFactory::new(&cfg.runtime_dir))));
@@ -482,6 +481,7 @@ async fn serve(cfg: Config) -> Result<()> {
     let stats_task = tokio::task::spawn_local(stats_loop(Arc::clone(&s)));
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut last_drop: Option<Instant> = None;
+    let mut shutdown_requested = false;
     let res: Result<()> = async {
         loop {
             let (stream, peer_addr) = tokio::select! {
@@ -506,11 +506,13 @@ async fn serve(cfg: Config) -> Result<()> {
             server.set_connection_local_addr(stream.local_addr().ok());
             info!(peer = %peer_addr, "connection");
             let r = {
-                let fut = server.run_connection(stream);
+                let fut = server.run_connection(session::WireStream::new(stream, Arc::clone(&s.stats)));
                 tokio::pin!(fut);
                 loop {
                     tokio::select! {
                         r = &mut fut => break r,
+                        _ = term.recv() => { shutdown_requested = true; break Ok(()); },
+                        _ = tokio::signal::ctrl_c() => { shutdown_requested = true; break Ok(()); },
                         a = listener.accept() => {
                             if let Ok((s2, p2)) = a {
                                 info!(peer = %p2, "refused: a session is live (ConnectionPolicy::Reject)");
@@ -523,6 +525,7 @@ async fn serve(cfg: Config) -> Result<()> {
             let s2 = Arc::clone(&s);
             let rr = r.as_ref().map(|_| ()).map_err(|e| ironrdp_server::ServerError::reason("connection", format!("{e:#}")));
             tokio::task::spawn_blocking(move || s2.end_connection(&rr)).await?;
+            if shutdown_requested { break Ok(()); }
             if cfg.native.auto_reconnect {
                 if r.is_ok() || s.arc_rejected.load(Ordering::SeqCst) {
                     server.set_auto_reconnect_cookie(Some(random_cookie())); // clean logoff or rejected ARC: cookie invalidated
@@ -540,6 +543,11 @@ async fn serve(cfg: Config) -> Result<()> {
     .await;
     stats_task.abort();
     info!("stopping");
+    drop(server);
+    let microphone_deadline = Instant::now() + Duration::from_secs(12);
+    while s.stats.microphone_workers.load(Ordering::Acquire) > 0 && Instant::now() < microphone_deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let d = Arc::clone(&display);
     let _ = tokio::task::spawn_blocking(move || d.shutdown()).await;
     let _ = input_tx.send(input::Cmd::Stop);
@@ -609,7 +617,7 @@ fn now_epoch() -> f64 {
 
 async fn stats_loop(s: Arc<Session>) {
     let mut iv = tokio::time::interval(Duration::from_secs_f64(stats::WINDOW_SECS));
-    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let mut prev_cpu = stats::process_cpu_seconds();
     let mut prev_t = Instant::now();
     let mut busy_windows = 0u32;
@@ -630,12 +638,14 @@ async fn stats_loop(s: Arc<Session>) {
             st.bitmap_frames.load(Ordering::Relaxed),
             st.skipped_rc.load(Ordering::Relaxed),
             st.bitmap_delivered.load(Ordering::Relaxed),
+            st.wire_bytes.load(Ordering::Relaxed),
         );
         let rate = |a: u64, b: u64| (a.saturating_sub(b)) as f64 / dt;
         // EGFX client acks/s + completed bitmap encoder/socket-write operations/s.
         // Bitmap has no display acknowledgement; these are not measured phone scanouts.
         // Bitmap frames queued but not drained are reported separately (bitmap_queued_fps).
         let fps = rate(cur.2, prev.2) + rate(cur.7, prev.7);
+        let wire_kbps = rate(cur.8, prev.8) * 8.0 / 1000.0;
         let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6), rate(cur.5, prev.5), rate(cur.7, prev.7));
         prev = cur;
         let cpu = stats::process_cpu_seconds();
@@ -729,6 +739,7 @@ async fn stats_loop(s: Arc<Session>) {
             "pacing": s.cfg.refresh_pacing,
             "gpu_guard": s.cfg.native.gpu_guard,
             "fps": (doc_core.2 * 10.0).round() / 10.0,
+            "fps_basis": if st.bitmap_mode.load(Ordering::Relaxed) { "socket_write_complete" } else { "egfx_frame_ack" },
             "captured_fps": (doc_core.0 * 10.0).round() / 10.0,
             "encoded_fps": (doc_core.1 * 10.0).round() / 10.0,
             "static_skipped_fps": (doc_core.4 * 10.0).round() / 10.0,
@@ -743,13 +754,32 @@ async fn stats_loop(s: Arc<Session>) {
             "bitmap_stale_dropped": st.bitmap_stale_dropped.load(Ordering::Relaxed),
             "bitmap_hz": s.cfg.native.bitmap_hz,
             "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),
-            "bitrate_kbps": doc_core.3.round(),
+            "progressive_quant": s.cfg.native.progressive_quant,
+            "progressive_capture_hz": s.cfg.native.progressive_ceiling(s.cfg.target_hz),
+            "bitrate_kbps": wire_kbps.round(),
+            "bitrate_basis": "socket_write_including_tls_and_rdp",
+            "microphone": {
+                "enabled": s.cfg.redirect.microphone,
+                "native_ready": s.stats.microphone_ready.load(Ordering::Relaxed),
+                "source": s.stats.microphone_source.lock().unwrap().clone(),
+                "bytes_forwarded": s.stats.microphone_bytes.load(Ordering::Relaxed),
+                "packets_dropped": s.stats.microphone_dropped.load(Ordering::Relaxed),
+                "error": s.stats.microphone_error.lock().unwrap().clone(),
+            },
+            "device_forwarding": {
+                "microphone": {"implemented": true, "permitted": s.cfg.redirect.microphone, "protocol": "MS-RDPEAI"},
+                "audio_output": {"implemented": false, "permitted": s.cfg.redirect.audio_output, "reason": "native_sink_backend_pending"},
+                "camera": {"implemented": false, "permitted": s.cfg.redirect.camera, "reason": "server_channel_and_native_video_source_pending"},
+                "drives": {"implemented": false, "permitted": s.cfg.redirect.drives, "reason": "native_filesystem_backend_pending"},
+                "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},
+            },
+            "encoded_payload_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,
             "frames_in_flight": st.frames_in_flight.load(Ordering::Relaxed),
             "backpressured": st.backpressured.load(Ordering::Relaxed),
             "idr": st.idr.load(Ordering::Relaxed),
             "refined": st.refined.load(Ordering::Relaxed),
-            "codec": active_codec(s.gfx.avc420.load(Ordering::Relaxed), cur.1, cur.5, st.bitmap_mode.load(Ordering::Relaxed)),
+            "codec": active_codec(s.gfx.avc420.load(Ordering::Relaxed), s.gfx.progressive.load(Ordering::Relaxed), cur.1, cur.5, st.bitmap_mode.load(Ordering::Relaxed)),
             "h264_profile_level": level.map(|(p, l)| json!({"profile_idc": p, "level_idc": l})),
             "slices": st.last_slices.load(Ordering::Relaxed),
             "surface": [surface.0, surface.1],
@@ -886,11 +916,13 @@ pub(crate) fn should_enable_microphone(cfg: &Config) -> bool {
     false
 }
 
-pub(crate) fn active_codec(avc420: bool, encoded: u64, bitmap_frames: u64, bitmap_mode: bool) -> &'static str {
+pub(crate) fn active_codec(avc420: bool, progressive: bool, encoded: u64, bitmap_frames: u64, bitmap_mode: bool) -> &'static str {
     if bitmap_mode || (bitmap_frames > 0 && encoded == 0) {
         "bitmap"
     } else if avc420 && encoded > 0 {
         "avc420"
+    } else if progressive && encoded > 0 {
+        "progressive"
     } else if bitmap_frames > 0 {
         "bitmap"
     } else {
@@ -915,11 +947,13 @@ mod tests {
     fn active_codec_reports_bitmap_when_forced_to_bitmap_mode() {
         // When EGFX negotiates AVC420 (avc420=true) but the pipeline is in bitmap_mode (encoded=0, bitmap_frames>0),
         // stats.json must report "bitmap", never "avc420".
-        assert_eq!(active_codec(true, 0, 25, true), "bitmap");
-        assert_eq!(active_codec(true, 0, 25, false), "bitmap");
-        assert_eq!(active_codec(true, 100, 0, false), "avc420");
-        assert_eq!(active_codec(false, 0, 10, false), "bitmap");
-        assert_eq!(active_codec(true, 0, 0, false), "none");
+        assert_eq!(active_codec(true, false, 0, 25, true), "bitmap");
+        assert_eq!(active_codec(true, false, 0, 25, false), "bitmap");
+        assert_eq!(active_codec(true, false, 100, 0, false), "avc420");
+        assert_eq!(active_codec(false, false, 0, 10, false), "bitmap");
+        assert_eq!(active_codec(true, false, 0, 0, false), "none");
+        assert_eq!(active_codec(false, true, 10, 0, false), "progressive");
+        assert_eq!(active_codec(false, true, 10, 2, true), "bitmap");
     }
 }
 

@@ -1,6 +1,8 @@
 // AI-hint: Transactional caller-owned agent mailboxes with leases, idempotent sends and recipient receipts.
 // AI-related: usr/libexec/mios/mios-mcp-server, usr/share/mios/mios.toml [mcp.agents]
 // AI-functions: main, dispatch
+mod workspace_hook;
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1440,6 +1442,31 @@ fn run(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::E
     }
     Ok(result)
 }
+/// tmux 3.7 floating panes are not part of a tiled layout: a layout preset would merge or move them.
+/// Workspace code never lays out a window that holds one (MiOS-Tmux opens floats elsewhere in managed
+/// windows; this is the defensive half). Older tmux has no pane_floating_flag and reports no floats.
+fn has_floating_pane(
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+    window: &str,
+) -> Result<bool, String> {
+    Ok(tmux(&["list-panes", "-t", window, "-F", "#{pane_floating_flag}"])?
+        .lines()
+        .any(|l| l.trim() == "1"))
+}
+
+/// `select-layout` unless the window holds a floating pane (logged, then skipped).
+fn select_layout_tiled_only(
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+    window: &str,
+    layout: &str,
+) -> Result<(), String> {
+    if has_floating_pane(tmux, window)? {
+        // Silent: hooks run this under run-shell -b, which would show any output in the pane.
+        return Ok(());
+    }
+    tmux(&["select-layout", "-t", window, layout]).map(|_| ())
+}
+
 // The workspace owns blank reservations explicitly. MCP may claim those panes;
 // it must never infer ownership from an idle shell in the operator's window.
 fn workspace_tmux(socket: &str, args: &[&str]) -> Result<String, String> {
@@ -1464,6 +1491,28 @@ fn workspace_tmux(socket: &str, args: &[&str]) -> Result<String, String> {
 
 fn workspace_escape_format(value: &str) -> String {
     value.replace('#', "##")
+}
+
+/// The window-resized hook for a managed workspace: this binary's native single-flight hook (never an interpreter),
+/// so the workspace's own pane reshaping cannot re-trigger itself into a process flood.
+fn workspace_resize_hook(witness: &str, head: &str, socket: &str) -> Result<String, String> {
+    let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_str().ok_or("relay path is not UTF-8")?;
+    let command = format!(
+        "env TMUX={} TMUX_PANE={} {} --workspace-hook resize {} {}",
+        quote(witness),
+        quote(head),
+        quote(exe),
+        quote(head),
+        quote(socket)
+    );
+    // Guarded inside tmux: a resize our own pass already laid out (the usual case) starts no process at all.
+    Ok(format!(
+        "if-shell -F {} {{ run-shell -b {} }}",
+        quote(&workspace_hook::spawn_guard()),
+        quote(&command)
+    ))
 }
 
 fn workspace_lock(path: &Path, name: &str) -> Result<fs::File, String> {
@@ -2168,20 +2217,26 @@ fn workspace(request: &Value) -> Result<Value, String> {
         if !tmux(&["display-message", "-p", "-t", &head, "#{@mios-mcp-owner}"])?.is_empty() {
             return Ok(json!({"managed":false,"layout":"automation"}));
         }
+        // Bare Tmux-OS sessions (and the float shells MiOS-Tmux keeps per session) never become workspaces.
+        if tmux(&["display-message", "-p", "-t", &head, "#{@mios-bare}"])? == "1" {
+            return Ok(json!({"managed":false,"layout":"bare"}));
+        }
         let rows = tmux(&[
             "list-panes",
             "-t",
             &window,
             "-F",
-            "#{pane_id}|#{@mios-mcp-owner}",
+            "#{pane_id}|#{pane_floating_flag}|#{@mios-mcp-owner}",
         ])?;
         let mut workers = Vec::new();
         let mut owner = String::new();
         for row in rows.lines() {
-            let Some((pane, candidate)) = row.split_once(['\t', '|']) else {
+            let mut fields = row.splitn(3, '|');
+            let (Some(pane), Some(floating), Some(candidate)) = (fields.next(), fields.next(), fields.next()) else {
                 return Err("invalid startup pane record".into());
             };
-            if pane == head {
+            // Only tiled panes count: a floating pane is the operator's overlay, not a workspace member.
+            if pane == head || floating == "1" {
                 continue;
             }
             if candidate.is_empty() || (!owner.is_empty() && owner != candidate) {
@@ -2211,7 +2266,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 ])?;
                 created.push(pane.clone());
                 tmux(&["set-option", "-p", "-t", &pane, "@mios-mcp-owner", &owner])?;
-                tmux(&["select-layout", "-t", &window, "tiled"])?;
+                select_layout_tiled_only(&tmux, &window, "tiled")?;
             }
             let mut adopt = request.clone();
             adopt["action"] = json!("adopt");
@@ -2360,27 +2415,13 @@ fn workspace(request: &Value) -> Result<Value, String> {
             &head,
             "#{socket_path},#{pid},#{session_id}",
         ])?;
-        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
-        let command = format!(
-            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-            quote(&witness),
-            quote(&head),
-            quote(
-                request["adapter_python"]
-                    .as_str()
-                    .unwrap_or(string(config, "tui_python")?)
-            ),
-            quote(string(request, "adapter")?),
-            quote(&head),
-            quote(socket)
-        );
         tmux(&[
             "set-hook",
             "-w",
             "-t",
             &window,
             "window-resized[100]",
-            &format!("run-shell -b {}", quote(&command)),
+            &workspace_resize_hook(&witness, &head, socket)?,
         ])?;
         let mut resize = request.clone();
         resize["action"] = json!("resize");
@@ -2599,21 +2640,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 &head,
                 "#{socket_path},#{pid},#{session_id}",
             ])?;
-            let shell_quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-            let hook_command = format!(
-                "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-                shell_quote(&witness),
-                shell_quote(&head),
-                shell_quote(
-                    request["adapter_python"]
-                        .as_str()
-                        .unwrap_or(string(config, "tui_python")?)
-                ),
-                shell_quote(string(request, "adapter")?),
-                shell_quote(&head),
-                shell_quote(socket)
-            );
-            let hook = format!("run-shell -b {}", shell_quote(&hook_command));
+            let hook = workspace_resize_hook(&witness, &head, socket)?;
             tmux(&["set-hook", "-w", "-t", &head, "window-resized[100]", &hook])?;
             Ok(())
         })();
@@ -2745,7 +2772,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     // Re-entering an existing workspace upgrades its hook as well as its
     // geometry, including installations whose overlay scripts are mode 0644.
-    if let Some(adapter) = request["adapter"].as_str() {
+    {
         let witness = tmux(&[
             "display-message",
             "-p",
@@ -2753,26 +2780,13 @@ fn workspace(request: &Value) -> Result<Value, String> {
             &head,
             "#{socket_path},#{pid},#{session_id}",
         ])?;
-        let quote = |v: &str| format!("'{}'", v.replace('\'', "'\\''"));
-        let interpreter = request["adapter_python"]
-            .as_str()
-            .unwrap_or(string(config, "tui_python")?);
-        let command = format!(
-            "env TMUX={} TMUX_PANE={} {} {} --workspace-resize {} {}",
-            quote(&witness),
-            quote(&head),
-            quote(interpreter),
-            quote(adapter),
-            quote(&head),
-            quote(socket)
-        );
         tmux(&[
             "set-hook",
             "-w",
             "-t",
             window,
             "window-resized[100]",
-            &format!("run-shell -b {}", quote(&command)),
+            &workspace_resize_hook(&witness, &head, socket)?,
         ])?;
     }
     if fields[6] == "1" {
@@ -3177,7 +3191,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 anchor.clone()
             };
             tmux(&["join-pane", "-d", "-s", pane, "-t", &target])?;
-            tmux(&["select-layout", "-t", &destination, "tiled"])?;
+            select_layout_tiled_only(&tmux, &destination, "tiled")?;
         }
     }
     if !compact && resource.is_empty() {
@@ -3260,6 +3274,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     for (key, value) in borders {
         tmux(&["set-option", "-w", "-t", window, key, &value])?;
+    }
+    if has_floating_pane(&tmux, window)? {
+        // Reported in the result, never printed (run-shell -b would show it in the pane).
+        return Ok(json!({"managed":true,"layout":"floating"}));
     }
     tmux(&["select-layout", "-t", window, &layout])?;
     // Older tmux releases ignore pane IDs in a saved layout and assign cells
@@ -3605,6 +3623,12 @@ fn workspace_menu(request: &Value) -> Result<Value, Box<dyn std::error::Error>> 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--workspace-hook" {
+        workspace_hook::main(&args);
+    }
+    if args.len() >= 2 && matches!(args[1].as_str(), "--workspace-focus" | "--workspace-view") {
+        workspace_hook::key_main(&args);
+    }
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
         if args.len() == 2 && args[1] == "--workspace-menu" {
             let mut raw = String::new();

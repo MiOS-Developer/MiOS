@@ -14,12 +14,12 @@ index c02a3da2..b42ff23c 100644
 +if(NOT HYPRLAND_USE_COMPOSITOR_GRAPHICS)
 +    pkg_check_modules(HYPRGRAPHICS REQUIRED IMPORTED_TARGET hyprgraphics)
 +endif()
-
+ 
  add_library(hypr3d SHARED
      src/main.cpp
 @@ -131,7 +137,6 @@ target_include_directories(hypr3d
  )
-
+ 
  target_link_libraries(hypr3d PRIVATE
 -    PkgConfig::HYPRGRAPHICS
      PkgConfig::PIXMAN
@@ -32,7 +32,7 @@ index c02a3da2..b42ff23c 100644
 +if(NOT HYPRLAND_USE_COMPOSITOR_GRAPHICS)
 +    target_link_libraries(hypr3d PRIVATE PkgConfig::HYPRGRAPHICS)
 +endif()
-
+ 
  set_target_properties(hypr3d PROPERTIES
      PREFIX ""
      OUTPUT_NAME "hypr3d"
@@ -68,32 +68,32 @@ index 6c667e04..73e8fbed 100644
 @@ -832,7 +832,7 @@ bool CWindowCapture::makeSnapshotPopup(const WP<Desktop::View::CPopup>& popup,
      return true;
  }
-
+ 
 -bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force) {
 +bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force, bool picking) {
      if (!layer || !monitor)
          return false;
-
+ 
 @@ -896,7 +896,7 @@ bool CWindowCapture::makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& mon
          snapshot.alphaValid &&
          (snapshot.alphaW * 4 != PW || snapshot.alphaH * 4 != PH);
-
+ 
 -    if (!snapshot.alphaValid || SIZE_CHANGED || snapshot.maskAge % 32 == 1) {
 +    if (picking && (!snapshot.alphaValid || SIZE_CHANGED || snapshot.maskAge % 32 == 1)) {
          auto* GLFB = dynamic_cast<Render::GL::CGLFramebuffer*>(fb.get());
-
+ 
          // The layer sits at its box position inside the monitor-sized
 diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
 index 619d6a65..6f92072d 100644
 --- a/src/HyprlandCompat/WindowCapture.hpp
 +++ b/src/HyprlandCompat/WindowCapture.hpp
 @@ -116,7 +116,7 @@ class CWindowCapture {
-
+ 
      // Same for a layer-shell surface (panel/bar): monitor-sized capture at
      // the layer's monitor-local box, no decorations, no off-screen pull.
 -    bool makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force = false);
 +    bool makeSnapshotLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool force = false, bool picking = true);
-
+ 
      // A window's popup (menu, tooltip), captured at its own box; `box` is
      // its monitor-local box.
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
@@ -101,17 +101,17 @@ index 7cbe2909..3b347fed 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -2,6 +2,7 @@
-
+ 
  #include "../../third_party/font8x8_basic.h"
-
+ 
 +#include <array>
  #include <cstdio>
  #include <cstdlib>
  #include <cstring>
 @@ -31,6 +32,49 @@ namespace {
-
+ 
  constexpr float PI = 3.14159265358979323846f;
-
+ 
 +// One mapping for the visible environment and glass reflections. Captured
 +// Hyprland layers use logical top-down texture coordinates. A flat wallpaper
 +// is a cube-face image, not an equirectangular panorama with collapsed poles.
@@ -168,7 +168,7 @@ index 7cbe2909..3b347fed 100644
 +    std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
 +    std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
  };
-
+ 
  // Split a polygon by a plane. Pieces on the positive side go to `front`,
 @@ -69,15 +118,22 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
      front.alpha    = poly.alpha;
@@ -180,12 +180,12 @@ index 7cbe2909..3b347fed 100644
 +    front.glassSurface = back.glassSurface = poly.glassSurface;
 +    front.glassMetrics = back.glassMetrics = poly.glassMetrics;
      hasFront = hasBack = false;
-
+ 
      const size_t COUNT = poly.verts.size();
 -    if (COUNT < 3 || COUNT > 32)
 +    if (COUNT < 3)
          return;
-
+ 
 -    float dist[32];
 -    for (size_t i = 0; i < COUNT; ++i)
 +    std::vector<float> dist(COUNT);
@@ -193,12 +193,12 @@ index 7cbe2909..3b347fed 100644
          dist[i] = dot(poly.verts[i].p - pl, n);
 +        if (std::abs(dist[i]) < 1e-4f) dist[i] = 0.f;
 +    }
-
+ 
      for (size_t i = 0; i < COUNT; ++i) {
          const size_t J = (i + 1) % COUNT;
 @@ -119,63 +175,71 @@ struct SBspNode {
  };
-
+ 
  static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
 -    if (polys.empty())
 -        return;
@@ -320,11 +320,11 @@ index 7cbe2909..3b347fed 100644
 +        node.back=std::make_unique<SBspNode>(); bspBuild(*node.back,backList,depth+1);
      }
  }
-
+ 
 @@ -206,6 +270,11 @@ static GLuint compileShader(
      if (!shader)
          return 0;
-
+ 
 +    std::string expanded(source);
 +    const std::string marker = "MIOS_ENVIRONMENT_UV";
 +    if (const auto at = expanded.find(marker); at != std::string::npos)
@@ -336,7 +336,7 @@ index 7cbe2909..3b347fed 100644
 @@ -368,6 +437,28 @@ static void appendQuad(
      );
  }
-
+ 
 +std::vector<float> buildEnvironmentDome() {
 +    // Structural tessellation, not a wallpaper resolution: the original
 +    // GPU texture stays live and keeps its output dimensions. Duplicate
@@ -360,21 +360,21 @@ index 7cbe2909..3b347fed 100644
 +}
 +
  } // namespace
-
+ 
  GLScene::GLScene() {
 @@ -403,8 +494,10 @@ uniform mat4 uMVP;
  uniform vec4 uUVRect;
-
+ 
  out vec2 vUV;
 +out vec3 vWorldPosition;
-
+ 
  void main() {
 +    vWorldPosition = aPosition; // glass BSP vertices are already in world space
      gl_Position = uMVP * vec4(aPosition, 1.0);
      vUV = aUV * uUVRect.zw + uUVRect.xy;
  }
 @@ -412,19 +505,610 @@ void main() {
-
+ 
      static constexpr const char* sceneFragmentShader = R"GLSL(
  #version 300 es
 -
@@ -403,7 +403,7 @@ index 7cbe2909..3b347fed 100644
 +uniform vec4 uGlassSurface;
 +uniform vec4 uGlassMetrics;
  out vec4 fragColor;
-
+ 
 +
 +
 +/*
@@ -987,12 +987,12 @@ index 7cbe2909..3b347fed 100644
 +        return;
 +    }
      vec4 c = uTextured != 0 ? texture(uTexture, vUV) * uColor : uColor;
-
+ 
      // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
 @@ -568,57 +1252,42 @@ void main() {
      if (!m_blitProgram)
          return false;
-
+ 
 +    // A camera-centred UV sphere: translation never moves the environment,
 +    // while yaw, pitch, roll, zoom and the reverse view share the scene basis.
      static constexpr const char* panoramaVertexShader = R"GLSL(
@@ -1070,11 +1070,11 @@ index 7cbe2909..3b347fed 100644
 +    fragColor = vec4(miosEnvironmentColor(uPanorama, vDirection, uLiveWallpaper, uMirror, uLod).rgb, 1.0);
  }
  )GLSL";
-
+ 
 @@ -690,6 +1359,27 @@ void main() {
              "uPremult"
          );
-
+ 
 +    m_glassBackground = glGetUniformLocation(m_sceneProgram, "uGlassBackground");
 +    m_glassEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassEnvironment");
 +    m_glassHasEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassHasEnvironment");
@@ -1105,12 +1105,12 @@ index 7cbe2909..3b347fed 100644
          );
 +    m_panoramaMirrorLoc = glGetUniformLocation(m_panoramaProgram, "uMirror");
 +    m_panoramaLiveWallpaper = glGetUniformLocation(m_panoramaProgram, "uLiveWallpaper");
-
+ 
      m_panoramaSampler =
          glGetUniformLocation(
 @@ -770,6 +1462,12 @@ void main() {
  }
-
+ 
  bool GLScene::createMeshes() {
 +    const auto dome = buildEnvironmentDome();
 +    glGenVertexArrays(1, &m_domeVAO);
@@ -1124,7 +1124,7 @@ index 7cbe2909..3b347fed 100644
 @@ -803,6 +1501,24 @@ bool GLScene::createMeshes() {
          -0.5f, 0.0f, -0.5f
      );
-
+ 
 +    // Centre platform: a disc on the ground plane, opaque while the rest of the
 +    // floor is translucent. Same vertex layout as the floor (pos + uv).
 +    {
@@ -1145,11 +1145,11 @@ index 7cbe2909..3b347fed 100644
 +
      glGenVertexArrays(1, &m_floorVAO);
      glGenBuffers(1, &m_floorVBO);
-
+ 
 @@ -1019,6 +1735,16 @@ bool GLScene::ensureSceneFramebuffer(
-
+ 
      glBindTexture(GL_TEXTURE_2D, 0);
-
+ 
 +    if (!m_glassColor)
 +        glGenTextures(1, &m_glassColor);
 +    glBindTexture(GL_TEXTURE_2D, m_glassColor);
@@ -1161,12 +1161,12 @@ index 7cbe2909..3b347fed 100644
 +    glBindTexture(GL_TEXTURE_2D, 0);
 +
      glBindRenderbuffer(GL_RENDERBUFFER, m_sceneDepth);
-
+ 
      glRenderbufferStorage(
 @@ -1128,14 +1854,29 @@ void GLScene::drawFloor(
      glCullFace(GL_BACK);
      glFrontFace(GL_CCW);
-
+ 
 +    // The ground is translucent so the living wallpaper shows through it; only
 +    // the centre platform stays solid.
 +    glEnable(GL_BLEND);
@@ -1191,22 +1191,22 @@ index 7cbe2909..3b347fed 100644
 +        0.018f, 0.026f, 0.040f, 0.90f
      );
 +    glDepthMask(oldDepthMask);
-
+ 
      glCullFace(static_cast<GLenum>(oldCullMode));
      glFrontFace(static_cast<GLenum>(oldFrontFace));
 @@ -1500,7 +2241,7 @@ void GLScene::refreshPlayer() {
  }
-
+ 
  void GLScene::drawPanorama(float aspect) {
 -    if (!m_panoramaTex || !m_panoramaProgram)
 +    if ((!m_environmentTex && !m_panoramaTex) || !m_panoramaProgram)
          return;
-
+ 
      glUseProgram(m_panoramaProgram);
 @@ -1535,7 +2276,7 @@ void GLScene::drawPanorama(float aspect) {
      // 2*tanX / screenWidth radians.
      float lod = 0.0f;
-
+ 
 -    if (m_panoramaW > 0 && m_sceneWidth > 0) {
 +    if (!m_environmentTex && m_panoramaW > 0 && m_sceneWidth > 0) {
          const float texelsPerPixel =
@@ -1218,16 +1218,16 @@ index 7cbe2909..3b347fed 100644
      glUniform1f(m_panoramaLod, lod);
 +    glUniform1f(m_panoramaMirrorLoc, m_panoramaMirror ? 1.f : 0.f);
 +    glUniform1i(m_panoramaLiveWallpaper, m_environmentTex != 0);
-
+ 
      glActiveTexture(GL_TEXTURE0);
 -    glBindTexture(GL_TEXTURE_2D, m_panoramaTex);
 +    glBindTexture(GL_TEXTURE_2D, m_environmentTex ? m_environmentTex : m_panoramaTex);
      glUniform1i(m_panoramaSampler, 0);
-
+ 
      // Pure background: no depth interaction, everything else draws on top.
      glDisable(GL_DEPTH_TEST);
      glDepthMask(GL_FALSE);
-
+ 
 -    glBindVertexArray(m_fullscreenVAO);
 -    glDrawArrays(GL_TRIANGLES, 0, 6);
 +    const bool culled = glIsEnabled(GL_CULL_FACE);
@@ -1236,7 +1236,7 @@ index 7cbe2909..3b347fed 100644
 +    glDrawArrays(GL_TRIANGLES, 0, m_domeVertexCount);
      glBindVertexArray(0);
 +    if (culled) glEnable(GL_CULL_FACE);
-
+ 
      glDepthMask(GL_TRUE);
      glEnable(GL_DEPTH_TEST);
 @@ -1650,6 +2396,11 @@ void GLScene::drawWindows(
@@ -1248,7 +1248,7 @@ index 7cbe2909..3b347fed 100644
 +        slab.front.glassMetrics = window.glassMetrics;
 +        slab.front.glassUV = {window.u0, window.v0,
 +                             window.u1 - window.u0, window.v1 - window.v0};
-
+ 
          for (int c = 0; c < 4; ++c) {
              SWVert V{
 @@ -1683,6 +2434,10 @@ void GLScene::drawWindows(
@@ -1259,7 +1259,7 @@ index 7cbe2909..3b347fed 100644
 +            slab.back.glassSurface = slab.front.glassSurface;
 +            slab.back.glassMetrics = slab.front.glassMetrics;
 +            slab.back.glassUV = slab.front.glassUV;
-
+ 
              for (int c = 0; c < 4; ++c) {
                  SWVert V{
 @@ -1732,6 +2487,7 @@ void GLScene::drawWindows(
@@ -1267,13 +1267,13 @@ index 7cbe2909..3b347fed 100644
                      wall.tex   = window.texture;
                      wall.alpha = window.alpha;
 +                    wall.glassWall = slab.front.glassFace;
-
+ 
                      wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
                      wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
 @@ -1744,7 +2500,17 @@ void GLScene::drawWindows(
                  }
              };
-
+ 
 -            if (window.outlines && !window.outlines->empty()) {
 +            if (slab.front.glassFace) {
 +                // Extrude the same surface the face shader masks. Do not trace
@@ -1292,15 +1292,15 @@ index 7cbe2909..3b347fed 100644
 @@ -1792,7 +2558,7 @@ void GLScene::drawWindows(
          for (auto& P : S.inner)
              polys.push_back(std::move(P));
-
+ 
 -        polys.push_back(std::move(S.fromBehind ? S.back : S.front));
 +        polys.push_back(std::move(S.fromBehind && !S.back.verts.empty() ? S.back : S.front));
      }
-
+ 
      if (polys.empty())
 @@ -1837,7 +2603,7 @@ void GLScene::drawWindows(
      glUniform1i(m_scenePremult, m_windowsPremultiplied ? 1 : 0);
-
+ 
      glEnable(GL_DEPTH_TEST);
 -    glDepthMask(GL_TRUE);
 +    glDepthMask(GL_FALSE); // BSP owns translucent window order; retain opaque depth test.
@@ -1308,9 +1308,9 @@ index 7cbe2909..3b347fed 100644
      if (m_windowsPremultiplied)
          glBlendFuncSeparate(
 @@ -1855,6 +2621,31 @@ void GLScene::drawWindows(
-
+ 
      glActiveTexture(GL_TEXTURE0);
-
+ 
 +    GLint oldTexture1 = 0, oldTexture2 = 0, oldReadFBO = 0;
 +    glActiveTexture(GL_TEXTURE2);
 +    glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTexture2);
@@ -1351,12 +1351,12 @@ index 7cbe2909..3b347fed 100644
 +               ordered[j].glassSurface == ordered[i].glassSurface &&
 +               ordered[j].glassMetrics == ordered[i].glassMetrics)
              ++j;
-
+ 
          verts.clear();
 @@ -1900,12 +2696,40 @@ void GLScene::drawWindows(
          glUniform1i(m_sceneTextured, 1);
          glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
-
+ 
 +        // Do not sample the framebuffer we are drawing into. Refresh the
 +        // separate copy per face batch so nearer panes refract farther panes.
 +        // During the desktop morph retain the original alpha pipeline.
@@ -1379,10 +1379,10 @@ index 7cbe2909..3b347fed 100644
 +        }
          glDrawArrays(GL_TRIANGLES, 0,
                       static_cast<GLint>(verts.size() / 5));
-
+ 
          i = j;
      }
-
+ 
 +    glUniform1i(m_glassFace, 0);
 +    glUniform1i(m_glassWall, 0);
 +    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(oldReadFBO));
@@ -1396,7 +1396,7 @@ index 7cbe2909..3b347fed 100644
      glBindTexture(GL_TEXTURE_2D, 0);
 @@ -2764,6 +3588,11 @@ void GLScene::shutdown() {
  }
-
+ 
  void GLScene::destroyGLObjects() {
 +    m_environmentTex = 0; // borrowed, released by the layer capture owner
 +    if (m_domeVBO) glDeleteBuffers(1, &m_domeVBO);
@@ -1409,7 +1409,7 @@ index 7cbe2909..3b347fed 100644
 @@ -2827,6 +3656,10 @@ void GLScene::destroyGLObjects() {
          m_floorVBO = 0;
      }
-
+ 
 +    if (m_discVAO) {
 +        glDeleteVertexArrays(1, &m_discVAO);
 +        m_discVAO = 0;
@@ -1420,7 +1420,7 @@ index 7cbe2909..3b347fed 100644
 @@ -2847,6 +3680,11 @@ void GLScene::destroyGLObjects() {
          m_sceneDepth = 0;
      }
-
+ 
 +    if (m_glassColor) {
 +        glDeleteTextures(1, &m_glassColor);
 +        m_glassColor = 0;
@@ -1435,7 +1435,7 @@ index 083d93f2..04c2a2d2 100644
 +++ b/src/Render/GLScene.hpp
 @@ -7,6 +7,7 @@
  #include "World/Picking.hpp"
-
+ 
  #include <algorithm>
 +#include <array>
  #include <cstdint>
@@ -1498,12 +1498,12 @@ index 083d93f2..04c2a2d2 100644
 @@ -48,6 +96,9 @@ class GLScene {
          // texture so a caller with a tightly-fit texture needs no bookkeeping.
          float u0 = 0.f, v0 = 0.f, u1 = 1.f, v1 = 1.f;
-
+ 
 +        // Actual surface rect in normalized top-down capture-box coordinates.
 +        std::array<float,4> glassSurface{0.f,0.f,1.f,1.f};
 +        std::array<float,4> glassMetrics{800.f,600.f,12.f,0.f};
          float alpha = 1.0f;
-
+ 
          // Depth slab: thickness in world units, extruded BACKWARDS along the
 @@ -80,6 +131,9 @@ class GLScene {
      // image is (re)loaded lazily inside render() when the file changes.
@@ -1512,16 +1512,16 @@ index 083d93f2..04c2a2d2 100644
 +    // Borrowed from the background-layer capture owner until the next render.
 +    // Zero restores the optional file panorama; this class never deletes it.
 +    void setEnvironmentTexture(unsigned int texture) { m_environmentTex = texture; }
-
+ 
      // What the crosshair currently points at, or 0 for "nothing". Ray is cast
      // through the centre of the screen from the camera, never from the OS
 @@ -310,6 +364,7 @@ class GLScene {
-
+ 
      unsigned int m_sceneFBO = 0;
      unsigned int m_sceneColor = 0;
 +    unsigned int m_glassColor = 0; // independent scene-backdrop copy
      unsigned int m_sceneDepth = 0;
-
+ 
      unsigned int m_sceneProgram = 0;
 @@ -352,6 +407,18 @@ class GLScene {
      int m_sceneColorUniform = -1;
@@ -1539,7 +1539,7 @@ index 083d93f2..04c2a2d2 100644
 +    bool m_panoramaMirror = false;
 +    std::array<int, GLASS_PARAMETERS.size()> m_glassParameters{};
 +    std::array<int, 3> m_glassColors{}, m_glassAlphas{};
-
+ 
      int m_blitTexture = -1;
      int m_blitAlpha = -1;
 @@ -370,6 +437,9 @@ class GLScene {
@@ -1550,7 +1550,7 @@ index 083d93f2..04c2a2d2 100644
 +    unsigned int m_domeVAO = 0, m_domeVBO = 0;
 +    int m_domeVertexCount = 0;
      int m_panoramaW = 0;
-
+ 
      int  m_width = 0, m_height = 0;
 diff --git a/src/main.cpp b/src/main.cpp
 index 14dce494..d6d9d69b 100644
@@ -1562,9 +1562,9 @@ index 14dce494..d6d9d69b 100644
  static Compat::CWindowCapture g_capture;
 +// Background layers belong to the environment, never the window/picking list.
 +static Compat::CWindowCapture g_environmentCapture;
-
+ 
  static bool g_active = false;
-
+ 
 @@ -1449,6 +1451,8 @@ static void startFramePump() {
                  // destroy GL objects here, outside any render pass.
                  if (g_captureReleasePending && !g_active) {
@@ -1573,11 +1573,11 @@ index 14dce494..d6d9d69b 100644
 +                    g_environmentCapture.releaseAll();
                      g_captureReleasePending = false;
                  }
-
+ 
 @@ -1625,6 +1629,31 @@ static void serviceCapture() {
-
+ 
      g_capturing = true;
-
+ 
 +    // Keep the background's FBO alive independently from window retention.
 +    // Only a full-output background layer can become the environment; bars,
 +    // overlays and client windows can never be captured into the dome.
@@ -1604,11 +1604,11 @@ index 14dce494..d6d9d69b 100644
 +    g_environmentCapture.retainOnly(environmentIds);
 +
      const auto INFOS = Compat::enumerateEligibleWindows(MON, g_cfgUnderLayers);
-
+ 
      if (g_viewMorphArmed) {
 @@ -2065,6 +2094,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              (LAST_FS_WIN && entity.id == Compat::windowId(LAST_FS_WIN));
-
+ 
          render.alpha = IS_FS_WINDOW ? 1.0f : g_fsFade;
 +        // Mask glass with the client surface, never the shadow/decorated quad.
 +        if (auto W = Compat::findWindowById(entity.id);
@@ -1624,27 +1624,27 @@ index 14dce494..d6d9d69b 100644
 +                std::max(0.f, static_cast<float>(W->rounding())), 1.f};
 +        }
 +
-
+ 
          // Depth slab (windows.depth): silhouette source priority -- the
          // outline traced from the snapshot texture's real alpha (exact
 @@ -3454,6 +3497,8 @@ static void deactivate3D() {
      resetMovementKeys();
-
+ 
      g_capture.releaseAll();
 +    g_scene.setEnvironmentTexture(0);
 +    g_environmentCapture.releaseAll();
      Compat::setPointerCapture(false);
-
+ 
      unghostWindows();
 @@ -3592,6 +3637,8 @@ static void enter3D() {
      }
-
+ 
      g_capture.releaseAll();
 +    g_scene.setEnvironmentTexture(0);
 +    g_environmentCapture.releaseAll();
-
+ 
      resetMovementKeys();
-
+ 
 @@ -6355,11 +6402,44 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: world.monitor must be a string");
          if (!SET_BOOL(idx, "under_layers", g_cfgUnderLayers, "world.under_layers"))
@@ -1659,7 +1659,7 @@ index 14dce494..d6d9d69b 100644
              return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
          lua_pop(L, 1);
      }
-
+ 
 +    idx = SECTION("glass", "glass");
 +    if (idx == -1)
 +        return luaL_error(L, "hypr3d.config: glass must be a table");
@@ -1690,7 +1690,7 @@ index 14dce494..d6d9d69b 100644
      idx = SECTION("windows", "windows");
      if (idx == -1)
          return luaL_error(L, "hypr3d.config: windows must be a table");
-diff --git a/var/lib/mios-build/mios-graphical-sessions/renderer-changes-final/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 new file mode 100644
 index 00000000..b6596045
 --- /dev/null

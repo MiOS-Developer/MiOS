@@ -1984,10 +1984,12 @@ dependencies = [
 name = "mios-agent-relay"
 version = "0.3.0"
 dependencies = [
+ "mios-resolver",
  "mios-service-core",
  "serde_json",
  "sha2",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -2095,6 +2097,7 @@ dependencies = [
  "flate2",
  "mios-resolver",
  "mios-service-core",
+ "mios-unit-gen",
  "regex",
  "serde",
  "serde_json",
