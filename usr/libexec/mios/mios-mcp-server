@@ -1615,12 +1615,13 @@ def _federation(http=False):
 
 
 async def _federation_status() -> dict:
-    """Start every caller-owned member once, list its tools, stop it: a receipt."""
+    """Start every caller-owned member once (cache or not), list its tools,
+    stop it: a receipt of the live state, which also refreshes the catalog cache."""
     federation = _federation()
     if federation is None:
         return {"enabled": False, "servers": [], "tools": []}
     try:
-        rows = await federation.tool_rows(set())
+        rows = await federation.tool_rows(set(), live=True)
         return {"enabled": True, **federation.status(), "tools": sorted(row["name"] for row in rows)}
     finally:
         await federation.close()

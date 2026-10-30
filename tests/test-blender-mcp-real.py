@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Real-binary test of the caller's Blender Lab MCP through the MiOS MCP front door: the installed Blender launches headless, the add-on bridge serves a private loopback port (background mode), and the actual mios-mcp-server federates the caller's [mcp.servers.blender] stdio server (blender_* tools, one scene round trip). Negative controls: no bridge -> tool error; federation off -> no blender_* tools. Opt-in (MIOS_TEST_LIVE=1); skips when the caller declares no Blender server.
+# AI-hint: Real-binary test of the caller's Blender Lab MCP through the MiOS MCP front door: the installed Blender launches headless, the add-on bridge serves a private loopback port (background mode), and the actual mios-mcp-server federates the caller's [mcp.servers.blender] stdio server (blender_* tools, one scene round trip). Spawn budget: a list-only session exports the cached catalog without starting the server. Negative controls: no bridge -> tool error; federation off -> no blender_* tools. Opt-in (MIOS_TEST_LIVE=1); skips when the caller declares no Blender server.
 # AI-related: usr/lib/mios/mios_mcp_federation.py, usr/libexec/mios/mios-mcp-server, usr/share/doc/mios/blender-mcp.md, tests/test-mcp-federation.py, tests/test-blender-mcp-live.py
 
 import asyncio
@@ -131,6 +131,19 @@ def main():
     check("front door lists the caller's Blender tools", len(tools) >= 10, f"{len(tools)} tools")
     check("NEGATIVE: no Blender bridge -> tool error, not a fake result",
           dead is not None and dead.is_error and "Cannot connect" in text(dead), text(dead)[:120])
+
+    # Spawn budget: the first session cached the catalog; a NEW session that only
+    # lists must export the same tools without starting the Python MCP server
+    # (its stderr log is reopened with O_TRUNC on every start, bumping mtime).
+    fed_dir = out / fed.load_config(tomllib.loads(SSOT.read_text()))["log_directory"]
+    cache, log = fed_dir / f"{spec.id}.tools.json", fed_dir / f"{spec.id}.log"
+    check("spawn budget: catalog cached 0600", cache.is_file() and cache.stat().st_mode & 0o777 == 0o600)
+    before = log.stat().st_mtime_ns
+    time.sleep(0.05)
+    names, _ = asyncio.run(asyncio.wait_for(door(env, []), 240))
+    check("spawn budget: list-only session exports cached Blender tools",
+          sorted(n for n in names if n.startswith(spec.namespace)) == tools, f"{len(tools)} tools")
+    check("spawn budget: list-only session started no MCP server child", log.stat().st_mtime_ns == before)
 
     bridge = subprocess.Popen([blender, "-b", "--online-mode", "-c", "blender_mcp", "--host", "127.0.0.1",
                                "--port", str(port)], stdout=open(out / "bridge.log", "w"),

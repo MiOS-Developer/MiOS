@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Unit + protocol tests of caller-owned MCP federation: [mcp.federation] policy validation, tier ownership (user-only ids run as the caller; system ids never), a real stdio fixture server through Federation and through the actual mios-mcp-server front door, env isolation, native-name precedence and the --tmux-only / disabled / HTTP negative controls.
+# AI-hint: Unit + protocol tests of caller-owned MCP federation: [mcp.federation] policy validation, tier ownership (user-only ids run as the caller; system ids never), a real stdio fixture server through Federation and through the actual mios-mcp-server front door, env isolation, native-name precedence, the spawn budget (cached catalog lists without spawning, idle stop, bounded exponential restarts) and the --tmux-only / disabled / HTTP / cache-off negative controls.
 # AI-related: usr/lib/mios/mios_mcp_federation.py, usr/libexec/mios/mios-mcp-server, usr/share/mios/mios.toml [mcp.federation], usr/share/doc/mios/blender-mcp.md
 
 import asyncio
@@ -34,7 +34,8 @@ sys.path.insert(0, str(ROOT / "usr/lib/mios"))
 import mios_mcp_federation as fed  # noqa: E402
 
 POLICY = {"enabled": True, "serve_http": False, "startup_timeout_s": 30, "call_timeout_s": 30,
-          "restart_backoff_s": 0, "max_tools_per_server": 16, "log_directory": "mios/mcp-federation"}
+          "restart_backoff_s": 0, "max_tools_per_server": 16, "log_directory": "mios/mcp-federation",
+          "max_restarts": 5, "catalog_cache": True, "idle_stop_s": 0}
 
 FIXTURE = textwrap.dedent('''
     import os, sys
@@ -52,12 +53,18 @@ FIXTURE = textwrap.dedent('''
         return ",".join(sorted(os.environ))
 
     @server.tool()
+    def pid() -> str:
+        """This child's process id."""
+        return str(os.getpid())
+
+    @server.tool()
     def translate_frames() -> str:
         """Collides with a native name once namespaced as ''."""
         return "fixture"
 
     if os.environ.get("FIXTURE_MARK"):
-        open(os.environ["FIXTURE_MARK"], "w").close()
+        with open(os.environ["FIXTURE_MARK"], "a") as mark:
+            mark.write(f"{os.getpid()}\\n")
     if os.environ.get("FIXTURE_CRASH") == "1":
         sys.exit(3)
     server.run()
@@ -110,12 +117,17 @@ class PolicyTests(Base):
         config = fed.load_config(tomllib.loads(SSOT.read_text()))
         self.assertTrue(config["enabled"])
         self.assertFalse(config["serve_http"], "HTTP federation must be opt-in")
+        # The spawn budget is on by default: no unbounded per-session children.
+        self.assertTrue(config["catalog_cache"])
+        self.assertGreater(config["idle_stop_s"], 0)
+        self.assertGreaterEqual(config["restart_backoff_s"], 1)
 
     def test_missing_and_invalid_policy_rejected(self):
         with self.assertRaisesRegex(ValueError, "missing"):
             fed.load_config({"mcp": {}})
         for key, bad in (("enabled", 1), ("startup_timeout_s", 0), ("max_tools_per_server", 1.5),
-                         ("log_directory", "/abs"), ("log_directory", "a/../b")):
+                         ("log_directory", "/abs"), ("log_directory", "a/../b"), ("catalog_cache", "yes"),
+                         ("max_restarts", 0), ("max_restarts", 2.5), ("idle_stop_s", -1)):
             with self.subTest(key=key, bad=bad), self.assertRaises(ValueError):
                 fed.load_config({"mcp": {"federation": {**POLICY, key: bad}}})
 
@@ -144,13 +156,19 @@ class OwnershipTests(Base):
                                   "badns": "config-error", "off": "disabled"})
 
 
-class MemberTests(Base):
+class MemberBase(Base):
     def run_async(self, coroutine):
         return asyncio.run(asyncio.wait_for(coroutine, 120))
 
-    def federation(self, **decl):
+    def federation(self, policy=None, **decl):
         specs, rows = self.declare(fixture=self.fixture_decl(**decl))
-        return fed.Federation(POLICY, specs, rows, state_home=str(self.dir / "state"))
+        return fed.Federation({**POLICY, **(policy or {})}, specs, rows, state_home=str(self.dir / "state"))
+
+    def spawned(self, mark):
+        return len(mark.read_text().split()) if mark.exists() else 0
+
+
+class MemberTests(MemberBase):
 
     def test_round_trip_namespace_and_native_precedence(self):
         async def body():
@@ -160,12 +178,13 @@ class MemberTests(Base):
                 federation.start_background()
                 rows = await federation.tool_rows({"fx_translate_frames"})
                 names = sorted(row["name"] for row in rows)
-                self.assertEqual(names, ["fx_echo", "fx_env_keys"])
+                self.assertEqual(names, ["fx_echo", "fx_env_keys", "fx_pid"])
                 self.assertEqual(federation.collisions[0]["name"], "fx_translate_frames")
                 self.assertTrue(rows[0]["description"].startswith("[Fixture] "))
                 result = await federation.call("fx_echo", {"text": "hi"})
                 self.assertFalse(result.is_error)
                 self.assertEqual(result.content[0].text, "echo:hi")
+                self.assertEqual(federation.members[0].failures, 0)
                 keys = (await federation.call("fx_env_keys", {})).content[0].text.split(",")
                 self.assertIn("FX_DECLARED", keys)
                 self.assertNotIn("FRONT_DOOR_SECRET_PROBE", keys)
@@ -202,6 +221,148 @@ class MemberTests(Base):
         self.run_async(body())
 
 
+class SpawnBudgetTests(MemberBase):
+    """One front door per agent session must never become a process storm."""
+
+    def test_cached_catalog_lists_without_spawning(self):
+        mark = self.dir / "spawns"
+
+        async def body():
+            first = self.federation(env={"FIXTURE_MARK": str(mark), "FX_SECRET": "s3cr3t-value"})
+            try:
+                await first.tool_rows(set())
+            finally:
+                await first.close()
+            self.assertEqual(self.spawned(mark), 1)
+            cache = Path(first.log_dir) / "fixture.tools.json"
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("s3cr3t-value", cache.read_text(), "declared env values never reach the cache")
+            # A NEW front door (the next agent session): lists from the cache, spawns nothing.
+            second = self.federation(env={"FIXTURE_MARK": str(mark), "FX_SECRET": "s3cr3t-value"})
+            try:
+                second.start_background()
+                self.assertIsNone(second.warm, "a cached member is not warmed")
+                rows = await second.tool_rows(set())
+                self.assertIn("fx_echo", [row["name"] for row in rows])
+                self.assertEqual(self.spawned(mark), 1, "listing a cached catalog must not spawn")
+                self.assertEqual(second.status()["servers"][0]["catalog"], "cached")
+                result = await second.call("fx_echo", {"text": "cold"})
+                self.assertEqual(result.content[0].text, "echo:cold")
+                self.assertEqual(self.spawned(mark), 2, "the first call starts it, once")
+                await second.call("fx_echo", {"text": "warm"})
+                self.assertEqual(self.spawned(mark), 2)
+            finally:
+                await second.close()
+        self.run_async(body())
+
+    def test_negative_cache_off_or_changed_declaration_spawns(self):
+        mark = self.dir / "spawns"
+
+        async def body():
+            for policy, env in (({}, {}), ({"catalog_cache": False}, {}), ({}, {"FX_CHANGED": "1"})):
+                federation = self.federation(policy, env={"FIXTURE_MARK": str(mark), **env})
+                try:
+                    await federation.tool_rows(set())
+                finally:
+                    await federation.close()
+            # 1 (fills the cache) + 1 (cache off) + 1 (fingerprint changed)
+            self.assertEqual(self.spawned(mark), 3)
+        self.run_async(body())
+
+    def test_idle_member_stops_and_restarts_on_demand(self):
+        async def body():
+            federation = self.federation({"idle_stop_s": 1})
+            try:
+                await federation.tool_rows(set())
+                pid = int((await federation.call("fx_pid", {})).content[0].text)
+                await asyncio.sleep(3)
+                self.assertEqual(federation.status()["servers"][0]["status"], "idle-stopped")
+                await asyncio.sleep(0.5)
+                with self.assertRaises(ProcessLookupError, msg="the idle child must have exited"):
+                    os.kill(pid, 0)
+                again = int((await federation.call("fx_pid", {})).content[0].text)
+                self.assertNotEqual(again, pid)
+                self.assertEqual(federation.members[0].failures, 0, "an idle stop is not a failure")
+            finally:
+                await federation.close()
+        self.run_async(body())
+
+    def test_call_during_idle_teardown_gets_a_fresh_server(self):
+        """A call that lands while an idle stop is still closing the child must
+        not be handed the closing session (and must not count as a failure)."""
+        async def body():
+            federation = self.federation({"idle_stop_s": 1})
+            try:
+                await federation.tool_rows(set())
+                first = int((await federation.call("fx_pid", {})).content[0].text)
+                member = federation.members[0]
+                caught = False
+                for _ in range(600):  # bounded poll, 6 s at most
+                    if member.status == "idle-stopped" and member.task is not None and not member.task.done():
+                        caught = True
+                        break
+                    await asyncio.sleep(0.01)
+                result = await federation.call("fx_pid", {})
+                self.assertFalse(result.is_error, result.content[0].text)
+                self.assertNotEqual(int(result.content[0].text), first)
+                self.assertEqual(member.failures, 0)
+                if caught:
+                    self.assertEqual(member.spawns, 2)
+            finally:
+                await federation.close()
+        self.run_async(body())
+
+    def test_negative_idle_stop_disabled_keeps_member(self):
+        async def body():
+            federation = self.federation({"idle_stop_s": 0})
+            try:
+                await federation.tool_rows(set())
+                pid = int((await federation.call("fx_pid", {})).content[0].text)
+                await asyncio.sleep(3)
+                os.kill(pid, 0)  # still alive
+                self.assertEqual(federation.status()["servers"][0]["status"], "ready")
+            finally:
+                await federation.close()
+        self.run_async(body())
+
+    def test_crash_loop_is_bounded_by_max_restarts(self):
+        mark = self.dir / "spawns"
+
+        async def body():
+            federation = self.federation({"max_restarts": 3, "catalog_cache": False},
+                                         env={"FIXTURE_CRASH": "1", "FIXTURE_MARK": str(mark)})
+            try:
+                for _ in range(10):
+                    await federation.tool_rows(set())
+                    result = await federation.call("fx_echo", {"text": "x"}) if federation.owns("fx_echo") else None
+                    self.assertIsNone(result)
+                self.assertEqual(self.spawned(mark), 3, "exactly max_restarts spawns, then it gives up")
+                self.assertEqual(federation.status()["servers"][0]["status"], "gave-up")
+            finally:
+                await federation.close()
+        self.run_async(body())
+
+    def test_negative_backoff_gates_immediate_restart(self):
+        mark = self.dir / "spawns"
+
+        async def body():
+            federation = self.federation({"restart_backoff_s": 60, "catalog_cache": False},
+                                         env={"FIXTURE_CRASH": "1", "FIXTURE_MARK": str(mark)})
+            try:
+                for _ in range(5):
+                    await federation.tool_rows(set())
+                self.assertEqual(self.spawned(mark), 1, "a failed server is not retried inside its backoff")
+                member = federation.members[0]
+                self.assertEqual(member.backoff_s(), 60)
+                member.failures = 3
+                self.assertEqual(member.backoff_s(), 240, "backoff doubles per consecutive failure")
+                member.failures = 40
+                self.assertEqual(member.backoff_s(), 3600, "backoff is capped")
+            finally:
+                await federation.close()
+        self.run_async(body())
+
+
 class FrontDoorTests(Base):
     """The actual mios-mcp-server over stdio, with a private caller tier."""
 
@@ -218,7 +379,7 @@ class FrontDoorTests(Base):
                    MIOS_USER_TOML_D=str(self.dir / "no-user.d"), XDG_STATE_HOME=str(self.dir / "state"))
         return env
 
-    def session(self, *args):
+    def session(self, *args, call=True):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -230,7 +391,7 @@ class FrontDoorTests(Base):
                         await client.initialize()
                         names = {tool.name for tool in (await client.list_tools()).tools}
                         echo = (await client.call_tool("fx_echo", {"text": "door"})
-                                if "fx_echo" in names else None)
+                                if call and "fx_echo" in names else None)
                         return names, echo
         return asyncio.run(asyncio.wait_for(body(), 180))
 
@@ -240,6 +401,16 @@ class FrontDoorTests(Base):
         self.assertIn("fx_echo", names)
         self.assertIn("translate_frames", names, "native catalog must remain")
         self.assertEqual(echo.content[0].text, "echo:door")
+
+    def test_second_front_door_lists_cached_tools_without_spawning(self):
+        mark = self.dir / "spawns"
+        self.tier(fixture=self.fixture_decl(env={"FIXTURE_MARK": str(mark)}))
+        self.session()
+        self.assertEqual(len(mark.read_text().split()), 1)
+        mark.unlink()
+        names, _ = self.session(call=False)
+        self.assertIn("fx_echo", names)
+        self.assertFalse(mark.exists(), "a new session that only lists must not spawn the server")
 
     def test_negative_disabled_policy_exports_nothing(self):
         self.tier(federation=False, fixture=self.fixture_decl())

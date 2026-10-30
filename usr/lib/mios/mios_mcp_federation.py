@@ -20,6 +20,15 @@ pointers, endpoints, tokens). Its stderr goes to a private per-server log
 under ``$XDG_STATE_HOME/<[mcp.federation].log_directory>``. Federation is
 never offered over the HTTP front door unless ``serve_http`` says so.
 
+Spawn budget (one front door per agent session must never become a process
+storm): with ``catalog_cache`` a member's tool catalog is cached (0600, keyed
+by a fingerprint of its declaration) so a new front door lists the tools
+WITHOUT starting the server; the server starts on the first call only. A
+started member stops after ``idle_stop_s`` without calls. Failed starts back
+off exponentially from ``restart_backoff_s`` and stop for good (until the
+front door restarts) after ``max_restarts`` consecutive failures. No timer,
+watcher or loop runs per member: every start is caused by a list or a call.
+
 The MCP SDK is imported lazily, so configuration parsing is usable (and
 unit-testable) from any Python; running members needs the SDK 2.x the front
 door already requires.
@@ -28,6 +37,8 @@ door already requires.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -42,14 +53,18 @@ _NAMESPACE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
 # The strictest common client rule (OpenAI/Anthropic function names).
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
-_BOOL_KEYS = ("enabled", "serve_http")
+_BOOL_KEYS = ("enabled", "serve_http", "catalog_cache")
 # key -> (minimum, maximum); seconds or counts, all required in SSOT.
 _NUMBER_KEYS = {
     "startup_timeout_s": (1, 600),
     "call_timeout_s": (1, 3600),
     "restart_backoff_s": (0, 3600),
     "max_tools_per_server": (1, 1024),
+    "idle_stop_s": (0, 86400),
+    "max_restarts": (1, 100),
 }
+_INTEGRAL = {"max_tools_per_server", "max_restarts"}
+_BACKOFF_CAP_S = 3600
 
 
 def load_config(merged: dict) -> dict:
@@ -64,7 +79,7 @@ def load_config(merged: dict) -> dict:
         out[key] = table[key]
     for key, (low, high) in _NUMBER_KEYS.items():
         value = table.get(key)
-        integral = key == "max_tools_per_server"
+        integral = key in _INTEGRAL
         if type(value) is bool or not isinstance(value, int if integral else (int, float)):
             raise ValueError(f"[mcp.federation].{key} must be a number")
         if not low <= value <= high:
@@ -104,6 +119,19 @@ class Spec:
     namespace: str
     label: str
     allowed_tools: list = field(default_factory=list)
+
+
+def fingerprint(spec: Spec) -> str:
+    """Catalog-cache key: the declaration plus the command's identity. Only
+    the digest is stored, never the declared env values."""
+    try:
+        stat = os.stat(spec.command)
+        identity = [stat.st_size, stat.st_mtime_ns]
+    except OSError:
+        identity = None
+    material = json.dumps([spec.command, identity, spec.args, sorted(spec.env.items()), spec.cwd,
+                           spec.namespace, sorted(spec.allowed_tools)], sort_keys=True)
+    return hashlib.sha256(material.encode()).hexdigest()
 
 
 def _spec(sid: str, cfg: dict) -> Spec:
@@ -175,6 +203,8 @@ class _Member:
         self.spec = spec
         self.config = config
         self.log_path = os.path.join(log_dir, f"{spec.id}.log")
+        self.cache_path = os.path.join(log_dir, f"{spec.id}.tools.json")
+        self.fingerprint = fingerprint(spec)
         self.status = "idle"
         self.error = None
         self.server_info = None
@@ -185,17 +215,75 @@ class _Member:
         self.stop = asyncio.Event()
         self.started = None
         self.lock = asyncio.Lock()
+        self.failures = 0      # consecutive unexpected ends (failed start, crash, failed call)
+        self.spawns = 0        # children started by this front door
+        self.inflight = 0
+        self.last_used = 0.0
+        self.stopping = False  # halt()/idle stop: an expected end, not a failure
+        self.cached = self._read_cache() if config["catalog_cache"] else None
+
+    def _read_cache(self):
+        try:
+            with open(self.cache_path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if (not isinstance(data, dict) or data.get("fingerprint") != self.fingerprint
+                or not isinstance(data.get("tools"), list)):
+            return None
+        tools = [t for t in data["tools"] if isinstance(t, dict) and isinstance(t.get("name"), str)]
+        return {"tools": tools, "server_info": data.get("server_info")}
+
+    def _write_cache(self) -> None:
+        """Atomic 0600 write: a torn cache is never read back as a catalog."""
+        rows = [tool.model_dump(by_alias=True, exclude_none=True) for tool in self.tools]
+        data = {"fingerprint": self.fingerprint, "server_info": self.server_info, "tools": rows}
+        tmp = f"{self.cache_path}.{os.getpid()}.tmp"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+            os.replace(tmp, self.cache_path)
+            self.cached = {"tools": rows, "server_info": self.server_info}
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def catalog(self) -> list:
+        """Tool rows: the live listing when running, else the valid cache."""
+        if self.tools:
+            return [tool.model_dump(by_alias=True, exclude_none=True) for tool in self.tools]
+        return list(self.cached["tools"]) if self.cached else []
+
+    def gave_up(self) -> bool:
+        return self.failures >= self.config["max_restarts"]
+
+    def backoff_s(self) -> float:
+        if self.failures <= 0:
+            return 0
+        return min(self.config["restart_backoff_s"] * 2 ** (self.failures - 1), _BACKOFF_CAP_S)
 
     async def ensure(self) -> None:
         async with self.lock:
             if self.task is not None and not self.task.done():
-                if self.session is None:
-                    await self._wait_ready()
+                if not self.stopping:
+                    if self.session is None:
+                        await self._wait_ready()
+                    return
+                # An idle stop is tearing the child down: let it finish (bounded),
+                # then start a fresh one instead of handing out a closing session.
+                await self._reap()
+            if self.gave_up():
+                self.status = "gave-up"
                 return
-            if self.started is not None and time.monotonic() - self.started < self.config["restart_backoff_s"]:
+            if self.started is not None and time.monotonic() - self.started < self.backoff_s():
                 return
             self.ready, self.stop = asyncio.Event(), asyncio.Event()
-            self.started = time.monotonic()
+            self.started = self.last_used = time.monotonic()
+            self.stopping = False
+            self.spawns += 1
             self.status, self.error = "starting", None
             self.task = asyncio.create_task(self._owner(), name=f"mios-mcp-federation-{self.spec.id}")
             await self._wait_ready()
@@ -204,9 +292,10 @@ class _Member:
         try:
             await asyncio.wait_for(asyncio.shield(self.ready.wait()), self.config["startup_timeout_s"])
         except asyncio.TimeoutError:
+            await self.halt()
+            self.failures += 1
             self.status = "startup-timeout"
             self.error = f"no initialize/tools/list within {self.config['startup_timeout_s']}s"
-            await self.halt()
 
     async def _owner(self) -> None:
         from mcp import ClientSession, StdioServerParameters, types
@@ -235,8 +324,10 @@ class _Member:
                         self.tools = tools
                         self.session = session
                         self.status = "ready"
+                        if self.config["catalog_cache"]:
+                            self._write_cache()
                         self.ready.set()
-                        await self.stop.wait()
+                        await self._serve_until_idle()
         except asyncio.CancelledError:
             raise
         except BaseException as error:  # noqa: BLE001 -- ExceptionGroup from anyio included
@@ -249,13 +340,41 @@ class _Member:
             self.tools = []
             if self.status == "ready":
                 self.status = "stopped"
+            if self.status in {"failed", "startup-timeout"} and not self.stopping:
+                self.failures += 1
             self.ready.set()
 
+    async def _serve_until_idle(self) -> None:
+        """Hold the session until halt() or idle_stop_s without a call. One
+        bounded wait per member, re-armed only by its own timeout."""
+        idle = self.config["idle_stop_s"]
+        while not self.stop.is_set():
+            if idle <= 0:
+                await self.stop.wait()
+                return
+            remaining = idle if self.inflight else self.last_used + idle - time.monotonic()
+            if remaining <= 0:
+                # Unpublish the session before teardown awaits anything, so no
+                # call can pick up a session that is about to close.
+                self.stopping = True
+                self.session = None
+                self.status = "idle-stopped"
+                return
+            try:
+                await asyncio.wait_for(self.stop.wait(), remaining)
+            except asyncio.TimeoutError:
+                pass
+
     async def halt(self) -> None:
-        task = self.task
-        if task is None:
+        if self.task is None:
             return
+        self.stopping = True
         self.stop.set()
+        await self._reap()
+
+    async def _reap(self) -> None:
+        """Wait (5 s at most) for the owner task to exit, else cancel it."""
+        task = self.task
         try:
             await asyncio.wait_for(asyncio.shield(task), 5)
         except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
@@ -267,7 +386,9 @@ class _Member:
 
     def row(self) -> dict:
         out = {"id": self.spec.id, "label": self.spec.label, "status": self.status,
-               "namespace": self.spec.namespace, "tools_count": len(self.tools)}
+               "namespace": self.spec.namespace, "tools_count": len(self.catalog()),
+               "catalog": "live" if self.tools else ("cached" if self.cached else "none"),
+               "spawns": self.spawns, "failures": self.failures}
         if self.error:
             out["error"] = self.error
         if self.server_info:
@@ -311,29 +432,40 @@ class Federation:
         return any(name.startswith(member.spec.namespace) for member in self.members)
 
     def start_background(self) -> None:
-        """Warm every member without delaying the MCP initialize handshake."""
+        """Learn uncached catalogs without delaying the MCP initialize
+        handshake; a member with a valid cached catalog is not started."""
         os.makedirs(self.log_dir, mode=0o700, exist_ok=True)
-        self.warm = asyncio.create_task(self._ensure_all(), name="mios-mcp-federation-warm")
+        if any(self._needs_start(member, live=False) for member in self.members):
+            self.warm = asyncio.create_task(self._ensure_all(live=False), name="mios-mcp-federation-warm")
 
-    async def _ensure_all(self) -> None:
+    @staticmethod
+    def _needs_start(member: _Member, live: bool) -> bool:
+        if member.session is not None:
+            return False
+        return live or member.cached is None
+
+    async def _ensure_all(self, live: bool) -> None:
         os.makedirs(self.log_dir, mode=0o700, exist_ok=True)
-        await asyncio.gather(*(member.ensure() for member in self.members), return_exceptions=True)
+        await asyncio.gather(*(member.ensure() for member in self.members
+                               if self._needs_start(member, live)), return_exceptions=True)
 
-    async def tool_rows(self, reserved: set) -> list:
-        """MCP tool rows for every ready member; native names always win."""
-        await self._ensure_all()
+    async def tool_rows(self, reserved: set, live: bool = False) -> list:
+        """MCP tool rows for every member (live, or its cached catalog without
+        starting it); native names always win. live=True starts every member."""
+        await self._ensure_all(live)
         routes, rows, collisions = {}, [], []
         for member in self.members:
             spec = member.spec
-            for tool in member.tools[:self.config["max_tools_per_server"]]:
-                name = spec.namespace + tool.name
+            for tool in member.catalog()[:self.config["max_tools_per_server"]]:
+                upstream = tool["name"]
+                name = spec.namespace + upstream
                 if not _TOOL_NAME.fullmatch(name) or name in reserved or name in routes:
-                    collisions.append({"server": spec.id, "tool": tool.name, "name": name})
+                    collisions.append({"server": spec.id, "tool": upstream, "name": name})
                     continue
-                row = tool.model_dump(by_alias=True, exclude_none=True)
+                row = dict(tool)
                 row["name"] = name
-                row["description"] = f"[{spec.label}] " + (row.get("description") or tool.name)
-                routes[name] = (member, tool.name)
+                row["description"] = f"[{spec.label}] " + (row.get("description") or upstream)
+                routes[name] = (member, upstream)
                 rows.append(row)
         self.routes, self.collisions = routes, collisions
         return rows
@@ -348,19 +480,27 @@ class Federation:
             return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=True)
 
         member, upstream = self.routes[name]
+        os.makedirs(self.log_dir, mode=0o700, exist_ok=True)
         await member.ensure()
         session = member.session
         if session is None:
             return failure(f"{member.spec.label} MCP server is {member.status}: {member.error or 'not running'}")
+        member.inflight += 1
+        member.last_used = time.monotonic()
         try:
             result = await session.call_tool(upstream, arguments,
                                              read_timeout_seconds=self.config["call_timeout_s"])
         except BaseException as error:  # noqa: BLE001 -- the transport may have died
             if isinstance(error, asyncio.CancelledError):
                 raise
-            member.status, member.error = "failed", f"{type(error).__name__}: {error}"
+            member.failures += 1
             await member.halt()
+            member.status, member.error = "failed", f"{type(error).__name__}: {error}"
             return failure(f"{member.spec.label} MCP call failed: {member.error}")
+        finally:
+            member.inflight -= 1
+            member.last_used = time.monotonic()
+        member.failures = 0
         if not isinstance(result, types.CallToolResult):
             return failure(f"{member.spec.label} returned an unsupported {type(result).__name__}")
         return result

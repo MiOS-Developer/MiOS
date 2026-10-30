@@ -54,7 +54,37 @@ you, so it:
   `serve_http = true`, and never from the agent-pipe's `--tmux-only` child.
 
 Tunables: `enabled`, `serve_http`, `startup_timeout_s`, `call_timeout_s`,
-`restart_backoff_s`, `max_tools_per_server`, `log_directory`.
+`restart_backoff_s`, `max_restarts`, `catalog_cache`, `idle_stop_s`,
+`max_tools_per_server`, `log_directory`.
+
+## Spawn budget
+
+Every agent session opens its own stdio front door. If each one started
+`blmcp` (a Python process, about 68 MB idle) as soon as it opened, a burst of
+sessions would become a burst of Python children. The front door bounds this
+instead:
+
+* **Cached catalog** (`catalog_cache = true`). The first start writes the
+  tool list to `$XDG_STATE_HOME/mios/mcp-federation/<id>.tools.json` (0600,
+  written atomically). The cache is keyed by a SHA-256 of the declaration
+  (command and its size/mtime, args, env, cwd, namespace, allowed_tools).
+  Only the digest is stored, never the env values. A new session lists the
+  `blender_*` tools from the cache and starts nothing. The server starts on
+  the first `blender_*` call. A changed declaration invalidates the cache.
+  The cache is rewritten each time the server starts, so after an
+  in-place `blmcp` upgrade the next started session lists the new tools.
+* **Idle stop** (`idle_stop_s = 600`). A started server that has had no call
+  for that long stops cleanly. The next call starts it again. A call still
+  in flight keeps the server alive. `0` keeps it alive for the whole session.
+* **Bounded restarts**. A failed start, a crash or a failed call counts as
+  one failure. A successful call resets the count. The next start waits
+  `restart_backoff_s`, doubling with each consecutive failure up to one hour.
+  After `max_restarts` failures in a row the server stays down
+  (`gave-up`) until the front door restarts.
+
+Nothing in this path is a timer, watcher or loop of its own. Only a tool
+list or a tool call can start a server, and the idle wait is one bounded
+wait inside the member that already exists.
 
 ## Verify
 
@@ -75,6 +105,9 @@ loopback port. They never touch your saved Blender preferences or port 9876.
 Each has negative controls: with no bridge listening the tool returns
 *Cannot connect to Blender*, and with federation disabled no `blender_*`
 tool is listed.
+The real-binary test also checks the spawn budget with the real `blmcp`: a
+second session that only lists tools exports the same 26 cached tools, and
+the server's log is not reopened, so nothing was started.
 
 ## Notes
 

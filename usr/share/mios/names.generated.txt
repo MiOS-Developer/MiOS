@@ -1039,6 +1039,9 @@ mcp.federation.serve_http  MIOS_MCP_FEDERATION_SERVE_HTTP
 mcp.federation.startup_timeout_s  MIOS_MCP_FEDERATION_STARTUP_TIMEOUT_S
 mcp.federation.call_timeout_s  MIOS_MCP_FEDERATION_CALL_TIMEOUT_S
 mcp.federation.restart_backoff_s  MIOS_MCP_FEDERATION_RESTART_BACKOFF_S
+mcp.federation.max_restarts  MIOS_MCP_FEDERATION_MAX_RESTARTS
+mcp.federation.catalog_cache  MIOS_MCP_FEDERATION_CATALOG_CACHE
+mcp.federation.idle_stop_s  MIOS_MCP_FEDERATION_IDLE_STOP_S
 mcp.federation.max_tools_per_server  MIOS_MCP_FEDERATION_MAX_TOOLS_PER_SERVER
 mcp.federation.log_directory  MIOS_MCP_FEDERATION_LOG_DIRECTORY
 keybindings.enabled  MIOS_KEYBINDINGS_ENABLED

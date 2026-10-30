@@ -4129,7 +4129,10 @@ enabled = true
 serve_http = false                  # Streamable HTTP front door never federates unless true
 startup_timeout_s = 30              # initialize + tools/list budget per server
 call_timeout_s = 300                # one tools/call (renders and scene queries)
-restart_backoff_s = 10              # minimum seconds between restarts of a failed server
+restart_backoff_s = 10              # first retry delay after a failure; doubles per consecutive failure (cap 3600)
+max_restarts = 5                    # consecutive failures before a server stays down until the front door restarts
+catalog_cache = true                # list cached tools without starting the server; it starts on the first call
+idle_stop_s = 600                   # stop a started server after this many seconds without a call (0 = never)
 max_tools_per_server = 256
 log_directory = "mios/mcp-federation"  # child stderr, under $XDG_STATE_HOME, 0700/0600
 
