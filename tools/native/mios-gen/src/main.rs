@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod agent_interaction;
+#[cfg(unix)]
+mod app_preflight;
 mod ai;
 mod btop_theme;
 mod display_scale;
@@ -359,6 +361,16 @@ enum Commands {
         /// Report device selection without starting a compositor.
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Validate a desktop launch and recover a missing document-portal mount before sandbox creation.
+    #[cfg(unix)]
+    AppPreflight {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long,conflicts_with_all=["flatpak","all","portal_only"])] desktop: Option<String>,
+        #[arg(long,conflicts_with_all=["desktop","all","portal_only"])] flatpak: Option<String>,
+        #[arg(long,conflicts_with_all=["desktop","flatpak","portal_only"])] all: bool,
+        #[arg(long,conflicts_with_all=["desktop","flatpak","all"])] portal_only: bool,
     },
 
     /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
@@ -1544,6 +1556,11 @@ fn main() -> ExitCode {
                 },
             )
         }
+        #[cfg(unix)]
+        Commands::AppPreflight {root,desktop,flatpak,all,portal_only} => (
+            "app-preflight", "desktop",
+            app_preflight::run(&root.unwrap_or_else(||PathBuf::from("/")),desktop.as_deref(),flatpak.as_deref(),all,portal_only).map_err(|e|(e,1)),
+        ),
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
@@ -2058,7 +2075,7 @@ fn main() -> ExitCode {
         }
     };
 
-    if cli.format == "json" {
+    if cli.format == "json" && subcommand != "app-preflight" {
         match &result {
             Ok(()) => {
                 let json = serde_json::json!({

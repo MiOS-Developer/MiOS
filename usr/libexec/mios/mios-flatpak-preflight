@@ -16,6 +16,13 @@ USAGE
     exit 64
 fi
 
+# Native desktop callers share the Rust guard used by the dock and drawer.
+# Keep the bootstrap/WSL compatibility path below for its separate bus repair.
+if [[ $EUID -ne 0 && -n ${XDG_RUNTIME_DIR:-} && -z ${WSL_INTEROP:-} ]] &&
+    [[ -x /usr/bin/mios-gen ]] && ! [[ $(< /proc/sys/kernel/osrelease) == *[Mm]icrosoft* ]]; then
+    exec /usr/bin/mios-gen app-preflight --flatpak "$APP_ID"
+fi
+
 if ! command -v flatpak >/dev/null 2>&1; then
     printf '{"ok":false,"verb":"flatpak_preflight","app":"%s","error_kind":"flatpak_missing"}\n' "$APP_ID"
     exit 1
