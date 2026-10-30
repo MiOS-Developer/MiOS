@@ -1,4 +1,4 @@
-// Hypr3D retina-spawn test window: white, a 40x40 marker at (10,10) and one 10 px from the bottom-right corner
+// AI-hint: Hypr3D retina-spawn test window (tests/test-hypr3d-retina-spawn.py Nest.client): white, a 40x40 marker at (10,10) and one 10 px from the bottom-right corner
 // (centroids span (w-60) x (h-60) logical px; their midpoint is the window centre), a 1-logical-px black/white
 // grating band and text at the SSOT [theme.font] size (12 px) and 16 px.
 // Arguments: <w> <h> [<marker colour A> <marker colour B>] [fixed] -- "fixed" sets the minimum size to the size

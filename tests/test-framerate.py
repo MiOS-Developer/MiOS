@@ -583,7 +583,7 @@ class Projection(unittest.TestCase):
     def test_installed_generator_projects_no_cap(self) -> None:
         """Negative control: the mios-gen installed before this change, on the policy SSOT, sets no frame cap and no
         policy glass rate (nothing on the host caps today). Once the policy is deployed (the installed generator carries
-        the projection: live since 2026-10-24) there is no pre-policy generator on the host; the disabled-policy test is
+        the projection, as on this host) there is no pre-policy generator on the host; the disabled-policy test is
         then the negative control for the projection itself."""
         try:
             with open(OLD_GEN, "rb") as f:

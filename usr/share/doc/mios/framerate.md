@@ -102,3 +102,26 @@ Windows larger than the work area are handled in two steps:
 The configurator shows the criterion, reading distance, fit, legibility floor, cascade and pixel snap.
 `mios-gen hyprland-3d-spawn` prints the plan for each output. `tests/test-hypr3d-retina-spawn.py` measures M on
 screen in a nested room, and `MIOS_H3R_NEST_OUTPUT` selects that room's output.
+
+## Verifying in a nested session
+
+`tests/test-framerate-retina-nested-live.py` (opt-in, `MIOS_LIVE_NESTED=1`) runs every check in an owned nested
+PiP session (`mios-gen nested-session --layout pip`). The daemon there uses private buses with fake power-profile,
+UPower and GameMode services, and a private SSOT tier. The test checks the following:
+
+- each tier's cap, presented rate, glass rate and wallpaper rate;
+- the Hypr3D room's rates;
+- the extended-vblank plan and its revert path;
+- the Retina numbers of the plugin and of `mios-gen hyprland-3d-toggle`, compared with an independent oracle.
+
+A nested session has these limits:
+
+- **The tiers are scaled.** The nested window gets frame callbacks at the primary's own cap, so the test uses tiers
+  of 18, 24, 30 and 36 Hz instead of the real ones.
+- **A modeline cannot be verified.** Hyprland takes a modeline only on a DRM output, so a nested output cannot show
+  one. The test covers the planned modeline and the revert-and-blocklist path. The verified path, where a mode is
+  kept only after `confirm-mode`, needs the real panel.
+- **The PiP window sets the viewport.** The primary owns the PiP window's size and orientation. A mode, scale or
+  transform requested from inside the nested session shows in `hyprctl`, but the output keeps the size the parent
+  gave it. Headless outputs do not work in a nested session: they get no swapchain. So rotated and phone outputs
+  (1170x2532 at scale 3, mobile) are covered by the oracle and CLI tiers of `tests/test-hypr3d-retina-spawn.py`.

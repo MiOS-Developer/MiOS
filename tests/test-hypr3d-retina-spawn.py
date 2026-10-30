@@ -474,6 +474,9 @@ class Nest:
         # the test windows open as the desktop's placement opens them: floating at their own size, centred in the work
         # area (a nested MiOS session disables placement and would tile them; the headless nest floats them anyway)
         self.ev('hl.window_rule({name = "mios-h3r-test", match = {title = "^h3r-win"}, float = true, center = true})')
+        # new windows and the room (Hypr3D targetMonitor()) go to the focused output: make it the one under test
+        if not self.mon.get("focused"):
+            self.ev("hl.dispatch(hl.dsp.focus({monitor = '%s'}))" % NEST_OUTPUT)
 
     def hc(self, *a, check=True):
         p = subprocess.run(["hyprctl", "-i", NEST_SIG, *a], env=self.env, capture_output=True, text=True, timeout=20)
@@ -845,6 +848,23 @@ class NestedStatus(unittest.TestCase):
         self.assertAlmostEqual(float(area.group(3)), o["fit"][0], places=3)
         self.assertAlmostEqual(float(area.group(4)), o["fit"][1], places=3)
 
+    def test_stock_keys_are_not_retina(self):
+        """Negative control on the same output: the plugin's own placement (pixel_exact off, 0.5 at 5 m) reports
+        exact=0 and a window scale that is not the oracle's d / d1 (so the positive check above can fail)."""
+        n = Nest()
+        m = n.mon
+        o = oracle(ssot(), m["width"], m["height"], float(m["scale"]), int(m["transform"]), tuple(m["reserved"]))
+        n.plugin(NEW_SO)
+        try:
+            n.open3d(STOCK)
+            st = n.status("spawn:")
+        finally:
+            n.close3d()
+        self.assertIn(" exact=0 ", st, st)
+        got = float(re.search(r" scale=([0-9.]+)", st).group(1))
+        self.assertAlmostEqual(got, 0.5, places=4, msg=st)
+        self.assertGreater(abs(got - o["S"]), 0.01, f"the stock scale equals the Retina scale here: {st} {o}")
+
 
 @unittest.skipUnless(NESTED and OLD_SO, "nested Hypr3D session + MIOS_H3R_OLD_SO (a plugin without the transform patch)")
 class NestedTransform(unittest.TestCase):
@@ -953,6 +973,72 @@ class NestedToggle(unittest.TestCase):
         self.assertNotIn("error", r)
         self.assertAlmostEqual(r["M"][0], want, delta=0.003)
         self.assertIn(" exact=0 ", st)
+
+
+@unittest.skipUnless(NESTED and MIOS_GEN, "nested Hypr3D session + MIOS_GEN not provided")
+class NestedToggleStatus(unittest.TestCase):
+    """The real `mios-gen hyprland-3d-toggle` (SUPER+G) on the nest's output, judged by the plugin's live status numbers
+    only -- no screenshots, so it also holds on a nested PiP output below scale 1, where one logical px is a fraction
+    of a pixel: mios-gen's per-output window scale (from the output's mode, scale, transform, bars, mobile verdict and
+    text size), spawn box and fit area are the oracle's. criterion = "fixed" (the control) sends no Retina keys."""
+
+    def toggle_status(self, vendor):
+        n = Nest()
+        n.plugin(NEW_SO)
+        env = hermetic_env(vendor)
+        env.update(XDG_RUNTIME_DIR=NEST_XDG, HYPRLAND_INSTANCE_SIGNATURE=NEST_SIG, WAYLAND_DISPLAY=NEST_WL)
+
+        def toggle():
+            return subprocess.run([MIOS_GEN, "hyprland-3d-toggle"], env=env, capture_output=True, text=True, timeout=60)
+        p = toggle()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        try:
+            time.sleep(4.0)
+            self.assertEqual(n.hc("eval", "assert(hl.plugin.hypr3d.active(), 'room closed')"), "ok")
+            st = n.status("spawn:")
+        finally:
+            p2 = toggle()
+            time.sleep(3.0)
+        self.assertEqual(p2.returncode, 0, p2.stderr)
+        self.assertEqual(n.hc("eval", "assert(not hl.plugin.hypr3d.active(), 'room open')"), "ok")
+        # the [desktop.mobile] verdict is an INPUT of the plan (the global display-scale policy decides it: a small PiP
+        # viewport is mobile-sized); the oracle takes it from the same CLI, and checks everything derived from it
+        # (criterion "fixed" has no plan: the CLI refuses it, and the control needs no verdict)
+        plan = subprocess.run([MIOS_GEN, "hyprland-3d-spawn", "--output", NEST_OUTPUT], env=env, capture_output=True, text=True, timeout=60)
+        if vendor == SSOT:
+            self.assertEqual(plan.returncode, 0, plan.stderr)
+        mobile = bool(json.loads(plan.stdout)["outputs"][0]["mobile"]) if plan.returncode == 0 else None
+        with open(evidence(f"{CASE}-toggle-status-{os.path.basename(vendor)}.txt"), "w") as f:
+            f.write(f"{st}\nmobile={mobile}\n{plan.stdout}\n")
+        return st, n.mon, mobile
+
+    def test_toggle_sends_the_retina_plan_for_this_output(self):
+        st, m, mobile = self.toggle_status(SSOT)
+        o = oracle(ssot(), m["width"], m["height"], float(m["scale"]), int(m["transform"]), tuple(m["reserved"]), mobile)
+        why = f"{st} | hyprctl {m['width']}x{m['height']} s{m['scale']} t{m['transform']} r{m['reserved']} mobile={mobile} | oracle {o}"
+        self.assertIn(" exact=1 ", st, why)
+        self.assertIn(" fit=resize ", st, why)
+        self.assertAlmostEqual(float(re.search(r" scale=([0-9.]+)", st).group(1)), o["S"], places=4, msg=why)
+        self.assertAlmostEqual(float(re.search(r" d=([0-9.]+)", st).group(1)), o["dist"], places=4, msg=why)
+        self.assertIn(f" spawnBox={o['spawn'][0]}x{o['spawn'][1]} ", st, why)
+        area = re.search(r" area=([0-9.-]+),([0-9.-]+),([0-9.]+)x([0-9.]+)", st)
+        self.assertIsNotNone(area, why)
+        self.assertAlmostEqual(float(area.group(3)), o["fit"][0], places=3, msg=why)
+        self.assertAlmostEqual(float(area.group(4)), o["fit"][1], places=3, msg=why)
+
+    def test_toggle_with_the_policy_off_sends_no_retina_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(SSOT, encoding="utf-8") as f:
+                data = f.read()
+            self.assertIn('criterion = "retina"', data)
+            fixed = os.path.join(tmp, "fixed.toml")
+            with open(fixed, "w") as f:
+                f.write(data.replace('criterion = "retina"', 'criterion = "fixed"'))
+            st, m, _mobile = self.toggle_status(fixed)
+        # "fixed" sends the old per-output constants (no live pixel_exact, no fit): the window is not at M = 1
+        self.assertIn(" exact=0 ", st, st)
+        self.assertIn(" fit=off ", st, st)
+        self.assertGreater(abs(float(re.search(r" M=([0-9.]+)", st).group(1)) - 1.0), 0.02, st)
 
 
 # ---- tier 5: the operator's own applications -------------------------------------------------------------------------

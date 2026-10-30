@@ -8,7 +8,7 @@
 # AI-related: src/mios-rs/miosd/src/framerate.rs, src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/edid_timing.rs,
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing, usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.hypr3d.spawn],
 # AI-related: tests/test-framerate.py, tests/test-hypr3d-retina-spawn.py, tools/native/mios-gen/src/nested_session.rs
-# AI-functions: Nest, Bus, Daemon, synth_edid, tier_checks, room_checks, modeset_checks, retina_checks
+# AI-functions: Nest, Bus, Daemon, synth_edid, tier_checks, room_checks, modeline_for, modeset_checks, apply_script_checks, retina_checks
 """Live frame-rate + Retina checks in an owned nested PiP session.
 
 Primary compositor: only the launcher's own PiP window appears there; nothing is dispatched to it. The nested
@@ -18,8 +18,9 @@ home, user tier and private buses (nothing activatable). The nested Hyprland is 
 Env: MIOS_LIVE_NESTED=1; MIOS_GEN (candidate launcher; needs extended-vblank), MIOS_FR_MIOSD, MIOS_FR_WALLPAPERD,
 MIOS_FR_PACING_SO, MIOS_FR_HYPR3D_SO (default: installed); MIOS_LIVE_OUT (outside /tmp: the nest's /tmp is private);
 MIOS_FR_APPLY_SCRIPT (optional: the lead's DP-3 apply script, rehearsed on the nested output).
-The nested window's frame callbacks follow the PRIMARY's own rate (its cap), so the tiers here are scaled below it
-(20/24/30/40 Hz; divisors are the vendor ones); the vendor table itself is unit-tested in tests/test-framerate.py.
+The nested window's frame callbacks follow the PRIMARY's own rate (its cap, 60 Hz at power-saver), so the tiers here
+are scaled below it (18/24/30/36 Hz; divisors are the vendor ones); the vendor table itself is unit-tested in
+tests/test-framerate.py.
 """
 import json, os, re, signal, subprocess, sys, time
 from pathlib import Path
@@ -38,7 +39,7 @@ PACING_SO = os.environ.get("MIOS_FR_PACING_SO", "/usr/lib64/mios/mios-pacing.so"
 H3D_SO = os.environ.get("MIOS_FR_HYPR3D_SO", "/usr/lib64/mios/hypr3d.so")
 QML = "/usr/lib64/qt6/bin/qml"
 T0 = time.time()
-TIERS = {"power-saver": 20, "balanced": 20, "battery": 24, "performance": 30, "gaming": 40}   # scaled (see above)
+TIERS = {"power-saver": 18, "balanced": 18, "battery": 24, "performance": 30, "gaming": 36}   # scaled (see above)
 results = []
 
 
@@ -354,12 +355,19 @@ def wait(pred, timeout=12.0, step=0.25):
 
 
 def sample(n, out_name, seconds=4.0):
-    """Presented fps of the nested output and the wallpaper callbacks/s, after the plugin's averaging settles."""
-    time.sleep(seconds)
+    """Presented fps of the nested output, the wallpaper callbacks/s (after the plugin's averaging settles) and the
+    wallpaper frame callbacks the plugin HELD during the window (its throttle at work)."""
+    def wp(st):
+        w = [x for x in st.get("wallpapers", []) if x.get("output") == out_name]
+        return w[0] if w else {}
+    time.sleep(seconds / 2)
+    held0 = wp(n.pacing()).get("held")
+    time.sleep(seconds / 2)
     st = n.pacing()
     o = [x for x in st.get("outputs", []) if x["name"] == out_name]
-    w = [x for x in st.get("wallpapers", []) if x.get("output") == out_name]
-    return (o[0]["rendered_fps"] if o else None), (w[0]["callbacks_fps"] if w else None), st
+    w = wp(st)
+    held = (w["held"] - held0) if (held0 is not None and "held" in w) else None
+    return (o[0]["rendered_fps"] if o else None), w.get("callbacks_fps"), held, st
 
 
 def tier_checks(n, d, bus, out_name, max_hz):
@@ -380,15 +388,20 @@ def tier_checks(n, d, bus, out_name, max_hz):
         check(f"tier {want}: plugin cap", n.opt("plugin:mios_pacing:max_fps") == cap, n.opt("plugin:mios_pacing:max_fps"))
         g = n.opt("plugin:hyprglass:windows:live_resample_fps")
         check(f"tier {want}: glass rate", g == G and n.opt("plugin:hyprglass:layers:live_resample_fps") == G, g)
-        fps, wcb, raw = sample(n, out_name)
+        fps, wcb, held, raw = sample(n, out_name)
         if cap:
             check(f"tier {want}: presented fps held at the cap", fps is not None and fps <= cap * 1.03 + 0.5 and fps >= cap * 0.8, f"{fps} for cap {cap}")
-        else:   # negative control: uncapped, the nest presents at the parent's rate, well above the largest tier
-            check(f"tier {want}: uncapped presents above every cap (control)", fps is not None and fps > max(TIERS.values()) * 1.15, fps)
-        if wcb is not None:
-            check(f"tier {want}: wallpaper callbacks at W", abs(wcb - W) <= max(1.5, 0.12 * W), f"{wcb}/s for W={W}")
-        else:
+        else:   # negative control: uncapped, the nest presents at the parent's rate, above the largest tier
+            check(f"tier {want}: uncapped presents above every cap (control)", fps is not None and fps > max(TIERS.values()) * 1.1, fps)
+        if wcb is None:
             check(f"tier {want}: wallpaper surface present", False, raw.get("wallpapers"))
+        elif cap:
+            check(f"tier {want}: wallpaper callbacks at W (the plugin holds the rest)", abs(wcb - W) <= max(1.5, 0.12 * W) and (held or 0) > 0,
+                  f"{wcb}/s for W={W}, held {held}")
+        else:   # negative control: W = D = the output's maximum (not D/2): the wallpaper presents at the full rate, far
+            # above every paced W (the plugin still trims Qt's doubled commits down to W, so `held` is not zero)
+            check(f"tier {want}: wallpaper at the full rate W = D (control)", abs(wcb - W) <= max(1.5, 0.12 * W) and wcb > max(TIERS.values()) // 2 * 1.5,
+                  f"{wcb}/s for W={W}, held {held}")
         (OUT / f"pacing-{want}.json").write_text(json.dumps(raw, indent=1))
 
 
@@ -399,6 +412,8 @@ def room_checks(n, d, bus):
     check("hypr3d candidate loads in the nest", "ok" in out.lower() or "loaded" in out.lower() or "Plugin hypr3d" in n.hc("plugin", "list"), out)
     d.hup()
     time.sleep(2)
+    bus.battery(False)   # battery outranks the profile: back on mains, the profile tiers below decide
+    wait(lambda: d.state().get("tier") == "power-saver", timeout=15)
     status.write_text("")
     n.hc("eval", 'local p=assert(hl.plugin.hypr3d); p.config({world={monitor="%s"}, player={flying=true}}); p.open()' % n.monitor()["name"])
     try:
@@ -422,115 +437,125 @@ def room_checks(n, d, bus):
         time.sleep(2)
 
 
+def modeline_for(n, hz):
+    """The independent CLI derivation (`miosd framerate modeline --edid`) of the extended-vblank timing for the nested
+    output's size from the synthetic EDID: what the daemon must plan."""
+    m = n.monitor()
+    r = sh([MIOSD, "framerate", "modeline", m["name"], "--edid", str(OUT / "nest.edid"), "--size", f"{m['width']}x{m['height']}", "--hz", str(hz), "--json"],
+           env=clean_env(MIOS_VENDOR_TOML=str(WT_SSOT), MIOS_HOST_TOML=str(OUT / "none-host.toml"), MIOS_USER_TOML=str(OUT / "none.toml"),
+                         MIOS_USER_TOML_D=str(OUT / "daemon.d")))
+    return json.loads(r.stdout)["modeline"] if r.returncode == 0 else None
+
+
 def modeset_checks(n, d, bus):
-    """mode_outputs + extended-vblank on the nested output (a virtual output: the EDID comes through the test hook).
-    Hyprland takes the modeline only on DRM outputs; on this Wayland output it falls back to a custom mode at the
-    modeline's size and refresh -- enough to drive the daemon's verify / 15 s confirm-or-revert / confirm / stop path."""
+    """mode_outputs + extended-vblank on the nested output (a virtual output: its EDID comes through the test hook).
+    Hyprland takes a modeline only on a DRM output ("Tried to set custom modeline on non-DRM output") and a Wayland-
+    backend output keeps the parent's 60 Hz, so here the daemon's planned modeline can never verify: the checks are the
+    plan (against the CLI derivation), the switch, the unverified path (reverted at once, blocklisted, never retried)
+    and the advertised negative control. The verified 15 s confirm-or-revert path needs a DRM panel (the lead's DP-3
+    apply script); its logic is unit-tested in plan.rs."""
     m = n.monitor()
     name, base = m["name"], m["refreshRate"]
     edid = OUT / "nest.edid"
     edid.write_bytes(synth_edid(m["width"], m["height"]))
+    D = TIERS["performance"]
     # negative control first: modes = "advertised" never derives a modeline
     d.fragment("70-mode.toml", f'[desktop.framerate]\nmode_outputs = ["{name}"]\nmodes = "advertised"\nmodeset_hold_ms = 0\nmodeset_min_interval_s = 0\n')
     d.stop()
     d.start(MIOS_FRAMERATE_TEST_EDID=f"{name}={edid}")
     bus.profile("performance")
-    time.sleep(6)
-    st = d.state()
-    check("advertised: no extended-vblank modeline is planned", "modeline" not in json.dumps(st), st.get("outputs"))
-    # positive: extended-vblank -> the modeline at the output's size, D = 30 Hz
+    wait(lambda: d.state().get("tier") == "performance", timeout=15)
+    time.sleep(4)
+    check("advertised: no extended-vblank modeline is planned", "modeline" not in d.text() and "modeline" not in json.dumps(d.state()), d.state().get("outputs"))
+    # positive: extended-vblank -> the modeline at the output's size for D
+    want = modeline_for(n, D)
+    check(f"the CLI derives a {D} Hz extended-vblank modeline for the nested size", want and want.startswith("modeline "), want)
+    mark = len(d.text())
     d.fragment("70-mode.toml", f'[desktop.framerate]\nmode_outputs = ["{name}"]\nmodes = "extended-vblank"\nmodeset_hold_ms = 0\nmodeset_min_interval_s = 0\n')
     d.cli("confirm-mode", "--reset")
     d.hup()
-    t0 = time.monotonic()
-    st = wait(lambda: d.state() if "modeline" in str(d.state().get(f"mode.{name}", "")) else None, timeout=10)
-    check("extended-vblank: the plan is a modeline for D", st is not None, (st or d.state()).get(f"mode.{name}"))
-    log = wait(lambda: re.search(r"(verified after \d+ ms|not verified within \d+ ms)", d.text()), timeout=12)
+    log = wait(lambda: re.search(r"(verified after \d+ ms|not verified within \d+ ms)", d.text()[mark:]), timeout=15)
+    new = d.text()[mark:]
+    check("extended-vblank: the daemon switched to the CLI's modeline for D", want and f"-> {want} (a modeset" in new, new[-500:])
     took = log.group(1) if log else None
-    check("the daemon applied the modeline and judged it", took is not None, d.text()[-600:])
-    if took and took.startswith("verified"):
-        tv = time.monotonic()
-        shown = n.monitor()["refreshRate"]
-        check("the output shows D after the switch", abs(shown - TIERS["performance"]) < 0.5, shown)
-        back = wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=25, step=0.2)
-        dt = time.monotonic() - tv
-        check("unconfirmed: the previous mode is back after mode_confirm_s (15 s)", back and 13.0 <= dt <= 19.0, f"{dt:.1f} s")
-        check("unconfirmed: the daemon logs the decline", "not confirmed within the deadline" in d.text())
-        st = wait(lambda: "declined" in d.cli("status").stdout or "no automatic modesets" in d.cli("status").stdout, timeout=3)
-        check("unconfirmed: no more automatic modesets on the panel", st, d.cli("status").stdout[-300:])
-        # confirmed path: reset, re-plan, confirm within the window; the mode stays past the deadline
-        d.cli("confirm-mode", "--reset")
+    check("the daemon judged the switch within revert_timeout_ms", took is not None, new[-400:])
+    if took and took.startswith("not verified"):
+        back = wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=6)
+        check("not verified (a non-DRM output): reverted at once and blocklisted", back and f"blocklisting {want}" in d.text()[mark:], d.text()[mark:][-400:])
+        mark2 = len(d.text())
         d.hup()
-        ok = wait(lambda: abs(n.monitor()["refreshRate"] - TIERS["performance"]) < 0.5, timeout=12)
-        r = d.cli("confirm-mode")
-        check("confirm-mode answers within the window", ok and r.returncode == 0, r.stdout + r.stderr)
-        time.sleep(18)
-        check("confirmed: the mode stays past the deadline", abs(n.monitor()["refreshRate"] - TIERS["performance"]) < 0.5, n.monitor()["refreshRate"])
-        d.stop()
-        back = wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=8)
-        check("stopping the daemon restores the baseline mode", back and "restoring the mode it had before" in d.text(), n.monitor()["refreshRate"])
+        time.sleep(5)
+        again = d.text()[mark2:]
+        check("a blocklisted modeline is never retried (control)", f"-> {want}" not in again, again[-300:])
     elif took:
-        check("not verified: reverted at once and blocklisted", "blocklisting" in d.text() and abs(n.monitor()["refreshRate"] - base) < 0.5, d.text()[-400:])
-        d.stop()
-    else:
-        d.stop()
+        check("verified on this output (a DRM-backed nest?): the output shows D", abs(n.monitor()["refreshRate"] - D) < 0.5, n.monitor()["refreshRate"])
+    d.stop()
+    back = wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=8)
+    check("after the daemon stops the output shows its baseline mode", back, n.monitor()["refreshRate"])
     (d.frag / "70-mode.toml").unlink(missing_ok=True)
 
 
 def apply_script_checks(n, d):
-    """MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh): rehearsed on the NESTED output with the synthetic EDID --
-    check is read-only; apply arms the transient revert timer first, then the modeset; unconfirmed, the timer restores
-    the previous mode (positive), and a confirmed apply keeps it past the window (the control)."""
+    """MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh) rehearsed on the NESTED output with the synthetic EDID:
+    `check` is read-only and prints the CLI's modeline; `apply` arms the transient revert timer FIRST, then switches; a
+    non-DRM output cannot show the modeline, so the script's own verification fails and it reverts at once (the timer
+    then finds the revert done and does nothing); `confirm` after a revert is refused (the control). The verified +
+    confirm path needs the real DRM panel."""
     script = os.environ.get("MIOS_FR_APPLY_SCRIPT")
     if not script:
         return
     m = n.monitor()
     name, base = m["name"], m["refreshRate"]
     hz = TIERS["performance"]
-    env = d.env(MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}",
-                DBUS_SESSION_BUS_ADDRESS=f"unix:path={os.environ['XDG_RUNTIME_DIR']}/bus")   # the user manager: the timer
-    args = ["--output", name, "--hz", str(hz), "--miosd", MIOSD, "--timeout", "8"]
+    env = d.env(MIOS_FRAMERATE_TEST_EDID=f"{name}={OUT / 'nest.edid'}")
+    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={os.environ['XDG_RUNTIME_DIR']}/bus"   # the user manager: the timer
+    timeout = 8
+    args = ["--output", name, "--hz", str(hz), "--miosd", MIOSD, "--timeout", str(timeout)]
+    want = modeline_for(n, hz)
     r = sh(["bash", script, "check", *args], env=env)
-    check("apply script: check is read-only and derives the modeline", r.returncode == 0 and "modeline" in r.stdout and abs(n.monitor()["refreshRate"] - base) < 0.5, (r.stdout + r.stderr)[-400:])
-    for confirm in (False, True):
-        tag = "confirmed" if confirm else "unconfirmed"
-        adir = OUT / f"apply-{tag}"
-        r = sh(["bash", script, "apply", *args, "--dir", str(adir)], env=env, timeout=40)
-        shown = n.monitor()["refreshRate"]
-        check(f"apply script ({tag}): the modeset shows D", r.returncode == 0 and abs(shown - hz) < 0.5, f"{shown} {(r.stdout + r.stderr)[-300:]}")
-        if confirm:
-            c = sh(["bash", script, "confirm", str(adir)], env=env)
-            check("apply script: confirm within the window", c.returncode == 0, c.stdout + c.stderr)
-        time.sleep(11)
-        now = n.monitor()["refreshRate"]
-        if confirm:
-            check("apply script (confirmed): the mode stays past the window (control)", abs(now - hz) < 0.5 and not (adir / "reverted").exists(), now)
-            sh(["hyprctl", "-i", n.sig, "eval", (adir / "restore.lua").read_text()], env=n.env())
-            wait(lambda: abs(n.monitor()["refreshRate"] - base) < 0.5, timeout=6)
-        else:
-            check("apply script (unconfirmed): the timer restored the previous mode", abs(now - base) < 0.5 and (adir / "reverted").exists(), f"{now} {(adir / 'log').read_text()[-300:] if (adir / 'log').exists() else ''}")
+    check("apply script: check is read-only and prints the CLI's modeline", r.returncode == 0 and want and want in r.stdout and abs(n.monitor()["refreshRate"] - base) < 0.5,
+          (r.stdout + r.stderr)[-400:])
+    adir = OUT / "apply-rehearsal"
+    t0 = time.monotonic()
+    r = sh(["bash", script, "apply", *args, "--dir", str(adir)], env=env, timeout=40)
+    log = (adir / "log").read_text() if (adir / "log").exists() else ""
+    unit = (adir / "unit").read_text().strip() if (adir / "unit").exists() else ""
+    check("apply script: the revert timer is armed before the modeset", unit and log.find("revert armed") >= 0 and log.find("revert armed") < log.find("applying:"), log[-400:])
+    check("apply script: unverified on a non-DRM output -> reverted at once, rc 1", r.returncode == 1 and (adir / "reverted").exists() and "NOT verified" in log
+          and abs(n.monitor()["refreshRate"] - base) < 0.5, (r.stdout + r.stderr)[-300:])
+    c = sh(["bash", script, "confirm", str(adir)], env=env)
+    check("apply script: confirm after the revert is refused (control)", c.returncode != 0 and "too late" in c.stderr, c.stdout + c.stderr)
+    wait(lambda: "already reverted" in ((adir / "log").read_text() if (adir / "log").exists() else ""), timeout=timeout + 8 - (time.monotonic() - t0))
+    log = (adir / "log").read_text()
+    active = sh(["systemctl", "--user", "is-active", f"{unit}.timer"], env=env).stdout.strip()
+    check("apply script: the timer fired, found the revert done and left nothing behind", "already reverted" in log and active != "active", f"{active} {log[-300:]}")
 
 
+# Retina in the nested PiP session: its output at the size and scale the session has. Both are the PARENT window's
+# (the PiP on the primary): a mode, scale (the session zoom included) or transform requested from inside a Wayland-
+# backend output is reported by hyprctl but not committed (the room keeps the parent-sized output: evidence in the lane
+# report), and headless outputs get no swapchain in the nest; so a portrait/mobile-shaped viewport needs a portrait
+# PiP, which only the primary's PiP gravity can give. Rotated and phone (1170x2532 @3, mobile) outputs are the
+# oracle/CLI tiers of tests/test-hypr3d-retina-spawn.py.
 def retina_checks(n):
-    """Hypr3D Retina spawn at the nested output's scale: the plugin's live d1 / window scale / fit area against the
-    independent oracle (tests/test-hypr3d-retina-spawn.py NestedStatus), landscape and portrait (transform 1)."""
+    """Hypr3D Retina spawn in the nested room at the nested output's scale: NestedStatus (the plugin's live d1 / window
+    scale / fit area against the independent oracle; the stock keys are its negative control) and NestedToggleStatus
+    (the real `mios-gen hyprland-3d-toggle`: mios-gen's per-output plan reaches the room; criterion "fixed" = control)."""
+    (OUT / "retina").mkdir(exist_ok=True)
+    out = n.monitor()["name"]
+    mon = n.monitor()
     env = clean_env(MIOS_H3R_NEST_SIG=n.sig, MIOS_H3R_NEST_XDG=str(n.dir), MIOS_H3R_NEST_WL=n.wl,
                     MIOS_H3R_NEST_STATUS=str(OUT / "tmp" / "hypr3d-status.txt"), MIOS_H3R_NEW_SO=H3D_SO, MIOS_GEN=GEN,
-                    MIOS_H3R_NEST_OUTPUT=n.monitor()["name"], MIOS_H3R_EVIDENCE=str(OUT / "retina"))
-    (OUT / "retina").mkdir(exist_ok=True)
-    m = n.monitor()
-    for case, transform in (("landscape", 0), ("portrait", 1)):
-        if int(n.monitor()["transform"]) != transform:
-            n.hc("eval", "hl.monitor({output = '%s', mode = '%dx%d', position = '0x0', scale = %.6f, transform = %d})"
-                 % (m["name"], m["width"], m["height"], m["scale"], transform))
-            time.sleep(3)
-        mon = n.monitor()
-        r = sh([sys.executable, str(ROOT / "tests/test-hypr3d-retina-spawn.py"), "NestedStatus"], env=dict(env, MIOS_H3R_CASE=case), timeout=300)
-        (OUT / "retina" / f"{case}-status.log").write_text(r.stdout + r.stderr)
-        check(f"retina {case}: live spawn numbers match the oracle at scale {mon['scale']:.3f} ({mon['width']}x{mon['height']} t{mon['transform']})",
-              r.returncode == 0, (r.stdout + r.stderr)[-400:])
-    if int(n.monitor()["transform"]) != 0:
-        n.hc("eval", "hl.monitor({output = '%s', mode = '%dx%d', position = '0x0', scale = %.6f, transform = 0})" % (m["name"], m["width"], m["height"], m["scale"]))
+                    MIOS_H3R_NEST_OUTPUT=out, MIOS_H3R_EVIDENCE=str(OUT / "retina"), MIOS_H3R_CASE="nested-pip",
+                    MIOS_H3R_SSOT=str(WT_SSOT))
+    r = sh([sys.executable, str(ROOT / "tests/test-hypr3d-retina-spawn.py"), "-v", "NestedStatus", "NestedToggleStatus"], env=env, timeout=600)
+    (OUT / "retina" / "nested-pip-status.log").write_text(r.stdout + r.stderr)
+    ran = re.search(r"Ran (\d+) test", r.stderr)
+    ev = OUT / "retina" / "nested-pip-toggle-status-mios.toml.txt"
+    verdict = re.search(r"mobile=(\w+)", ev.read_text()) if ev.exists() else None
+    check(f"retina: plugin + mios-gen toggle numbers match the oracle on {out} {mon['width']}x{mon['height']} @{float(mon['scale']):.3f} "
+          f"(logical {mon['width'] / float(mon['scale']):.0f}x{mon['height'] / float(mon['scale']):.0f}, mobile={verdict.group(1) if verdict else '?'})",
+          r.returncode == 0 and ran and int(ran.group(1)) == 4 and "skipped" not in r.stderr, (r.stdout + r.stderr)[-500:])
 
 
 def main():
