@@ -131,7 +131,7 @@ MiOS tmux client runs in that terminal (a server listed in `nav.tmux_sockets`).
 | Input | 2D app | Terminal with tmux | Terminal without tmux | Cursor mode | Hypr3D room |
 |---|---|---|---|---|---|
 | South | Enter · Shift+Enter | Enter · agent accept | Enter · Shift+Enter | as the context | jump; double = fly; hold = up |
-| East | Esc · Alt+Left | Esc · Ctrl+C | Esc · Ctrl+C | as the context | cancel grab/picker/room cursor [step P1] |
+| East | Esc · Alt+Left | Esc · Ctrl+C | Esc · Ctrl+C | as the context | cancel: drop a grab/resize, close the CRT picker, leave the room cursor |
 | West | Tab · Shift+Tab | Tab · Shift+Tab | Tab · Shift+Tab | as the context | posture; hold = down |
 | North | capture · fullscreen | capture · fullscreen | capture · fullscreen | capture · fullscreen | room capture · 2D fullscreen |
 | D-pad | arrows | arrows | arrows | arrows | move |
@@ -141,12 +141,29 @@ MiOS tmux client runs in that terminal (a server listed in `nav.tmux_sockets`).
 | RT | next tab | next tmux window | page down | left click (shipped) | grab |
 | LB | ShaderGlass cycle (shipped) | same | same | same | CRT cycle |
 | RB | ShaderGlass toggle (shipped) | same | same | same | CRT toggle |
-| Select | context menu · overlay | session tree · overlay | none · overlay | as the context | camera view (shipped) · overlay [step P1] |
+| Select | context menu · overlay | session tree · overlay | none · overlay | as the context | camera view · bindings overlay |
 | Start | cursor on (shipped) | cursor on | cursor on | cursor off | room cursor/camera |
-| Guide tap | app drawer | app drawer | app drawer | app drawer | app drawer [step P1] |
-| L3 | new tab (Ctrl+T) | new tmux window | new terminal window | as the context | sprint [step P1] |
-| R3 | zoom reset (Ctrl+0) | compact/auto view | font size reset | as the context | recenter [step P1] |
+| Guide tap | app drawer | app drawer | app drawer | app drawer | app drawer |
+| L3 | new tab (Ctrl+T) | new tmux window | new terminal window | as the context | sprint toggle |
+| R3 | zoom reset (Ctrl+0) | compact/auto view | font size reset | as the context | recenter the camera |
 | L3+R3 tap | enter the room (shipped) | same | same | same | leave the room |
+
+In the room, `[keybindings.global.controller.room]` adds East, L3, R3, Select and the Guide tap
+to the camera map, and only while the room is not captured (a captured window, whatever its
+kind, receives those buttons). East fires on press. L3 and R3 fire on a clean release: any
+overlap of the two cancels both, and the overlap inside the chord debounce is the room toggle.
+R3 is ignored while the right stick is deflected; L3 is not, so the sprint toggle works while
+you walk. Select fires its tap on release (the view cycles on the next room frame) and its hold
+once at 500 ms. The Guide tap fires on a release before 500 ms with no other button in between.
+North (capture) and the toggle chord belong to the ownership contract, so the room table cannot
+claim them.
+
+Face the viewer: a PiP in the room whose centre is within `face_distance` (2 m) of the camera,
+or `theatre_face_distance` (4 m) in PiP Theatre, turns its plane to face the camera position and
+follows it while the camera moves. Outside that distance it eases back to the pose you placed it
+with, and that placed pose is the one the room remembers. Every turn is eased (`face_seconds`),
+and `face_hysteresis` keeps a viewer on the boundary from flapping. The keys are in
+`[desktop.hyprland.hypr3d.config.windows]`.
 
 DualSense touchpad: libinput drives it as an ordinary touchpad in every graphical context,
 including captured apps, where it acts like any mouse. MiOS does not bind it. The motion
@@ -186,7 +203,7 @@ On a VT:
 | `[keybindings.global.controller]` | Guide button, half-capture chord, cursor mode, capture keys, timing, pointer |
 | `[keybindings.global.controller.system_layer]` | Guide-held actions |
 | `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D and terminal behavior (VT profiles [step I3]) |
-| `[keybindings.global.controller.room]` | room additions [step P1] |
+| `[keybindings.global.controller.room]` | room additions: East, L3, R3, Select, Guide tap |
 | `[desktop.hyprland.hypr3d.controller]` | room camera, movement, grab/resize, CRT, face buttons, toggle chord |
 
 How a nav value is written:

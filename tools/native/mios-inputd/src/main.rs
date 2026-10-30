@@ -192,7 +192,17 @@ fn run() -> Result<(), String> {
                     Step::Context{context} => output.extend(router.set_focus(&context, Some((format!("0x{context}"),1)), false)),
                 }
             }
-            output.extend(router.tick(input.tick_ms as f64 / 1000.0));
+            // The router clamps one tick to 100 ms (a stalled loop never jumps), so a longer replay clock advances in
+            // 100 ms steps: a [tap, hold] hold or North hold can be replayed (tick_ms <= 100 is one tick, as before).
+            let mut left = input.tick_ms;
+            loop {
+                let step = left.min(100);
+                output.extend(router.tick(step as f64 / 1000.0));
+                left -= step;
+                if left == 0 {
+                    break;
+                }
+            }
             // Each action's projection: argv, or the key strokes of a key: chord. Nothing is executed.
             let resolved:Vec<_>=output.actions.iter().map(|a| match resolve(&global,a,client.as_ref()) {
                 Ok(v)=>serde_json::json!({"action":a,"projection":v}),

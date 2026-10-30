@@ -445,23 +445,11 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
                 "movefocus" => format!("hl.dispatch(hl.dsp.focus({{direction={q}}}))"),
                 name if name.starts_with("hypr3d:") => {
                     let name = &name[7..];
-                    if ![
-                        "mode",
-                        "view",
-                        "crt",
-                        "grab",
-                        "resize",
-                        "fly",
-                        "posture",
-                        "click",
-                        "fullscreen",
-                        "jump",
-                    ]
-                    .contains(&name)
-                    {
+                    if !crate::config::ROOM_VERBS.contains(&name) {
                         return Err(format!("unsupported room action {name}"));
                     }
-                    if ["fullscreen", "jump"].contains(&name) && arg.is_empty() {
+                    // A bare verb takes the plugin's default argument (cancel/recenter have none; sprint toggles).
+                    if ["fullscreen", "jump", "cancel", "sprint", "recenter"].contains(&name) && arg.is_empty() {
                         format!("hl.plugin.hypr3d.{name}()")
                     } else {
                         format!("hl.plugin.hypr3d.{name}({q})")
@@ -1220,6 +1208,16 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
 pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
     let probe = TmuxClient { pid: 0, tty: "/dev/pts/0".into(), socket: PathBuf::from("/tmp/probe") };
     let nav = global.controller.nav.actions();
+    let room: Vec<String> = global
+        .controller
+        .room
+        .values()
+        .flat_map(|v| {
+            let (tap, hold) = v.parts();
+            std::iter::once(tap.to_owned()).chain(hold.map(str::to_owned))
+        })
+        .filter(|a| a != "none")
+        .collect();
     global
         .controller
         .system_layer
@@ -1232,6 +1230,7 @@ pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
                 .map(|b| &b.action),
         )
         .chain(nav.iter())
+        .chain(room.iter())
         .filter(|a| match a.split_once(':').map_or("", |(n, _)| n) {
             _ if a.as_str() == "none" => false,
             "key" => crate::nav::parse_key_chord(&a[4..]).is_err(),
@@ -1393,6 +1392,25 @@ mod tests {
         let lua = key_lua(&crate::nav::parse_key_chord("CTRL+SHIFT+TAB").unwrap(), "0xabc\"x");
         assert!(lua.contains("mods=\"CTRL SHIFT\",key=\"Tab\",state='down',window=\"address:0xabc\\\"x\""), "{lua}");
         assert_eq!(lua.matches("send_key_state").count(), 2);
+    }
+    #[test]
+    fn room_verbs_reach_the_plugin_lua_api() {
+        // spec P1 (C-14a/b): the room table's verbs become hl.plugin.hypr3d.<verb>(...) in the room's compositor
+        assert_eq!(command_for("hypr:hypr3d:cancel").unwrap()[2], "hl.plugin.hypr3d.cancel()");
+        assert_eq!(command_for("hypr:hypr3d:sprint").unwrap()[2], "hl.plugin.hypr3d.sprint()");
+        assert_eq!(command_for("hypr:hypr3d:sprint on").unwrap()[2], "hl.plugin.hypr3d.sprint(\"on\")");
+        assert_eq!(command_for("hypr:hypr3d:recenter").unwrap()[2], "hl.plugin.hypr3d.recenter()");
+        assert_eq!(command_for("hypr:hypr3d:view").unwrap()[2], "hl.plugin.hypr3d.view(\"\")");
+        assert!(command_for("hypr:hypr3d:unknown").unwrap_err().contains("unsupported room action"));
+        // every vendor room action has an installed dispatcher
+        let doc: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (cfg, _) = GlobalConfig::from_value(&doc).unwrap();
+        for v in cfg.controller.room.values() {
+            let (tap, hold) = v.parts();
+            for a in std::iter::once(tap).chain(hold).filter(|a| *a != "none") {
+                assert!(configured_command(a, &cfg).is_ok(), "room action without a dispatcher: {a}");
+            }
+        }
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {

@@ -1,6 +1,6 @@
 // AI-hint: Per-controller input state machine: ownership contract first, then the nav projection of uncaptured windows (tap/hold, repeat, flicks, HAT fold, thumb/Guide disambiguation); system actions never enter app replay.
 // AI-related: usr/libexec/mios/mios-gamepad-hypr3d, keybindings.global.controller
-use crate::config::{axis_code, button_code, ControllerConfig, GlobalConfig, LegacyConfig};
+use crate::config::{axis_code, button_code, ControllerConfig, GlobalConfig, LegacyConfig, RoomAction};
 use crate::nav::{Dir, Input, Value, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -118,6 +118,15 @@ impl PadState {
         self.west = false;
     }
 }
+/// A room-table press waiting for its release (tap) or its hold threshold (spec P1, C-14b).
+#[derive(Clone, Debug)]
+struct RoomPending {
+    tap: String,
+    hold: Option<String>,
+    elapsed: f64,
+    fired: bool,
+    cancelled: bool,
+}
 /// Who consumes an axis this frame (INV-5). Exactly one sink per axis per frame, so no stick can move an app and the
 /// room camera (or the host pointer) at the same time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +165,8 @@ struct NavState {
     hwheel: f64,
 }
 pub struct Router {
+    /// Room-table presses waiting for their release or hold (spec P1, C-14b).
+    room_pending: BTreeMap<u16, RoomPending>,
     global: GlobalConfig,
     legacy: LegacyConfig,
     pub axes: BTreeMap<u16, Axis>,
@@ -195,8 +206,9 @@ pub struct Router {
     pub analog_triggers: bool,
     /// Kernel-truth repair is releasing buttons: a repaired release never fires a tap.
     repairing: bool,
-    /// Guide pressed alone and not yet held past capture_hold_ms (R-26): its release is the Guide tap.
-    guide_tap: Option<f64>,
+    /// Guide pressed alone and not yet held past capture_hold_ms (R-26): its release is the Guide tap (the nav
+    /// profile's BTN_MODE in an uncaptured window, the room table's BTN_MODE in the room). (press time, ticked ms)
+    guide_tap: Option<(u64, f64)>,
     /// Guide + a toggle-chord button: the system-layer action waits for the release, so Guide+L3+R3 fires neither.
     guide_thumb: Option<u16>,
     guide_thumb_cancel: bool,
@@ -206,6 +218,7 @@ pub struct Router {
 impl Router {
     pub fn new(global: GlobalConfig, legacy: LegacyConfig, axes: BTreeMap<u16, Axis>) -> Self {
         Self {
+            room_pending: BTreeMap::new(),
             global,
             legacy,
             axes,
@@ -303,6 +316,8 @@ impl Router {
         let mut o = self.release_outputs();
         self.suppressed.extend(&self.pressed);
         self.blocked.extend(&self.pressed);
+        self.room_pending.clear();
+        self.guide_tap = None;
         self.context = context.into();
         self.cursor = false;
         self.pending_guide = false;
@@ -336,6 +351,7 @@ impl Router {
         self.north_pending=false;
         self.escape_elapsed=0.0;
         self.escape_fired=false;
+        self.room_pending.clear();
         self.pad.neutralize();
         o.extend(self.nav_flush());
         self.guide_tap=None;
@@ -386,6 +402,12 @@ impl Router {
         if self.dropping { return Output::default(); }
         let released: Vec<_> = self.pressed.difference(held).copied().collect();
         let guide = button_code(&self.global.controller.guide_button).unwrap();
+        // A repaired release never resolves a room tap or a Guide tap: it is not evidence of the operator's release.
+        for c in &released {
+            if let Some(p) = self.room_pending.get_mut(c) {
+                p.cancelled = true;
+            }
+        }
         if !held.contains(&guide) { self.pending_guide = false; }
         if !held.contains(&button_code(&self.legacy.fullscreen_button).unwrap()) { self.north_pending=false; }
         let mut out = Output::default();
@@ -438,6 +460,8 @@ impl Router {
     fn set_ownership(&mut self, owned: bool) -> Output {
         let room=self.room();
         let out=self.release_outputs();
+        self.room_pending.clear();
+        self.guide_tap = None;
         if owned { self.room_capture=room; }
         self.capture_override=Some(owned);
         self.override_ms=0.0;
@@ -478,6 +502,51 @@ impl Router {
         self.override_ms=0.0;
         let context=self.context.clone();
         self.transition_context(&context,false,owned,room)
+    }
+    fn room_entry(&self, code: u16) -> Option<RoomAction> {
+        self.global
+            .controller
+            .room
+            .iter()
+            .find(|(name, _)| button_code(name).ok() == Some(code))
+            .map(|(_, v)| v.clone())
+    }
+    /// A room action: "none" does nothing; a bare hypr:hypr3d:view is the packet's view slot (no process, next room
+    /// frame); anything else is dispatched like every other action.
+    fn room_fire(&mut self, action: &str, o: &mut Output) {
+        match action {
+            "none" | "" => {}
+            "hypr:hypr3d:view" => self.pad.increment(0),
+            a => o.actions.push(a.into()),
+        }
+    }
+    fn toggle_codes(&self) -> Vec<u16> {
+        self.legacy.toggle_chord.iter().filter_map(|n| button_code(n).ok()).collect()
+    }
+    fn stick_deflected(&self, code: u16) -> bool {
+        let (x, y) = if code == button_code("BTN_THUMBL").unwrap_or(0x13d) { (0, 1) } else { self.right_axes() };
+        let x = self.axes.get(&x).map_or(0.0, Axis::centered);
+        let y = self.axes.get(&y).map_or(0.0, Axis::centered);
+        x.hypot(y) > self.global.controller.stick_deadzone
+    }
+    /// The room table for a press (spec P1, C-14b). Returns true when the table owns the button.
+    fn room_press(&mut self, code: u16, o: &mut Output) -> bool {
+        let Some(value) = self.room_entry(code) else { return false };
+        let toggle = self.toggle_codes();
+        let (tap, hold) = value.parts();
+        let (tap, hold) = (tap.to_owned(), hold.map(str::to_owned));
+        if hold.is_none() && !toggle.contains(&code) {
+            self.room_fire(&tap, o);
+        } else {
+            // L3/R3 (toggle_chord members) fire on a clean release: any overlap with another chord button cancels
+            // both singles (R-23). R3 is also ignored while the right stick is deflected; L3 is not, so the sprint
+            // toggle works while walking with the left stick.
+            let overlap = toggle.contains(&code) && toggle.iter().any(|c| *c != code && self.pressed.contains(c));
+            let r3 = button_code("BTN_THUMBR").ok() == Some(code);
+            let cancelled = overlap || (r3 && self.stick_deflected(code));
+            self.room_pending.insert(code, RoomPending { tap, hold, elapsed: 0.0, fired: false, cancelled });
+        }
+        true
     }
     fn pointer_mode(&self) -> bool {
         self.cursor && !self.room()
@@ -611,6 +680,16 @@ impl Router {
                 if !self.north_fired { o.extend(self.capture_window(false)); }
                 return o;
             }
+            // Room table: a pending tap resolves on its own release (before any suppression swallows it).
+            if e.value == 0 {
+                if let Some(p) = self.room_pending.remove(&e.code) {
+                    self.suppressed.remove(&e.code);
+                    if !p.fired && !p.cancelled && self.room() {
+                        self.room_fire(&p.tap, &mut o);
+                    }
+                    return o;
+                }
+            }
             if e.value == 0 && self.suppressed.remove(&e.code) {
                 return o;
             }
@@ -655,10 +734,27 @@ impl Router {
                     self.suppressed
                         .extend(self.pressed.iter().filter(|c| **c != guide));
                     // INV-6/R-26: a Guide press cancels pending nav timers; alone, it may become the Guide tap.
+                    // A Guide press also cancels pending room taps/holds (INV-6).
                     o.extend(self.nav_flush());
-                    self.guide_tap = (self.pressed.len() == 1).then_some(0.0);
-                } else if e.value == 0 && self.guide_tap.take().is_some() && !self.repairing && self.nav_active() {
-                    if let Some(Value::Press(a)) = self.nav_value(Input::Button(guide)) { Self::fire(&a, &mut o); }
+                    for p in self.room_pending.values_mut() {
+                        p.cancelled = true;
+                    }
+                    if !already {
+                        self.guide_tap = (self.pressed.len() == 1).then_some((now, 0.0));
+                    }
+                } else if e.value == 0 && !self.repairing {
+                    // A tap is short on the tick clock (the live loop) and on the event clock (replays without ticks).
+                    let hold = self.global.controller.capture_hold_ms;
+                    if self.guide_tap.take().is_some_and(|(at, _)| now.saturating_sub(at) < hold) {
+                        if self.nav_active() {
+                            if let Some(Value::Press(a)) = self.nav_value(Input::Button(guide)) { Self::fire(&a, &mut o); }
+                        } else if self.room() {
+                            if let Some(value) = self.room_entry(guide) {
+                                let tap = value.parts().0.to_owned();
+                                self.room_fire(&tap, &mut o);
+                            }
+                        }
+                    }
                 }
                 return o;
             }
@@ -711,6 +807,17 @@ impl Router {
                 return o;
             }
             if e.value == 1 && !already {
+                if self.room() {
+                    // R-23: any overlap of the toggle_chord buttons cancels both room singles (L3 sprint, R3 recenter).
+                    let toggle = self.toggle_codes();
+                    if toggle.contains(&e.code) && toggle.iter().any(|c| *c != e.code && self.pressed.contains(c)) {
+                        for c in &toggle {
+                            if let Some(p) = self.room_pending.get_mut(c) {
+                                p.cancelled = true;
+                            }
+                        }
+                    }
+                }
                 let toggle: Vec<_> = self
                     .legacy
                     .toggle_chord
@@ -760,8 +867,13 @@ impl Router {
                         return o;
                     }
                 }
-                // Host (legacy) actions -- ShaderGlass, cursor mode, North capture, room buttons -- belong to an
-                // uncaptured controller only. A captured app keeps every one of these buttons, half-capture included.
+                // The room table (spec P1) and the host (legacy) actions -- ShaderGlass, cursor mode, North capture,
+                // room buttons -- belong to an uncaptured controller only. A captured app keeps every one of these
+                // buttons, half-capture and a room capture included.
+                if !owned && self.room() && self.room_press(e.code, &mut o) {
+                    self.suppressed.insert(e.code);
+                    return o;
+                }
                 if !owned && self.legacy_action(e.code, now, &mut o) {
                     self.suppressed.insert(e.code);
                     return o;
@@ -934,6 +1046,23 @@ impl Router {
                 o.extend(self.capture_window(true));
             }
         }
+        if self.room() {
+            // Room [tap, hold]: the hold fires once at capture_hold_ms (spec P1).
+            let hold_ms = self.global.controller.capture_hold_ms as f64;
+            let mut due = Vec::new();
+            for p in self.room_pending.values_mut() {
+                if let Some(hold) = p.hold.clone().filter(|_| !p.fired && !p.cancelled) {
+                    p.elapsed += dt;
+                    if p.elapsed * 1000.0 >= hold_ms {
+                        p.fired = true;
+                        due.push(hold);
+                    }
+                }
+            }
+            for a in due {
+                self.room_fire(&a, &mut o);
+            }
+        }
         let held=self.legacy.toggle_chord.iter().all(|b|self.button(b));
         if self.app_owned() && held && !self.escape_fired {
             self.escape_elapsed+=dt;
@@ -945,7 +1074,7 @@ impl Router {
             self.escape_elapsed=0.0;
             self.escape_fired=false;
         }
-        if let Some(t) = &mut self.guide_tap {
+        if let Some((_, t)) = &mut self.guide_tap {
             *t += dt * 1000.0;
             if *t >= self.global.controller.capture_hold_ms as f64 { self.guide_tap = None; }
         }
@@ -1843,6 +1972,143 @@ mod held_parity {
         r.event(Event::new(EV_KEY, 0x130, 0), 1010);
         r.tick(0.01);
         assert!(!r.pad.south);
+    }
+    // ---- spec P1 (C-14b): [keybindings.global.controller.room] from the vendor SSOT ----
+    fn key(r: &mut Router, c: u16, v: i32, t: u64) -> Output {
+        r.event(Event::new(EV_KEY, c, v), t)
+    }
+    fn vendor_room() -> Router {
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (g, l) = GlobalConfig::from_value(&v).unwrap();
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] {
+            axes.insert(c, Axis { min: -32768, max: 32767, value: 0 });
+        }
+        let mut r = Router::new(g, l, axes);
+        r.set_context("desktop-3d");
+        r
+    }
+    const EAST: u16 = 0x131;
+    const SELECT: u16 = 0x13a;
+    const GUIDE: u16 = 0x13c;
+    const L3: u16 = 0x13d;
+    const R3: u16 = 0x13e;
+    #[test]
+    fn room_east_cancels_on_press_and_never_reaches_an_app() {
+        let mut r = vendor_room();
+        let o = key(&mut r, EAST, 1, 10);
+        assert_eq!(o.actions, vec!["hypr:hypr3d:cancel".to_string()]);
+        assert!(o.app.is_empty());
+        assert!(key(&mut r, EAST, 0, 20).actions.is_empty(), "release fires nothing more");
+    }
+    #[test]
+    fn room_l3_sprints_and_r3_recenters_on_a_clean_release() {
+        let mut r = vendor_room();
+        assert!(key(&mut r, L3, 1, 10).actions.is_empty(), "a stick click waits for its release (chord disambiguation)");
+        assert_eq!(key(&mut r, L3, 0, 60).actions, vec!["hypr:hypr3d:sprint".to_string()]);
+        assert!(key(&mut r, R3, 1, 600).actions.is_empty());
+        assert_eq!(key(&mut r, R3, 0, 650).actions, vec!["hypr:hypr3d:recenter".to_string()]);
+        // L3 is NOT ignored while walking (left stick deflected): sprint is used while moving
+        r.axes.get_mut(&1).unwrap().value = -30000;
+        key(&mut r, L3, 1, 1000);
+        assert_eq!(key(&mut r, L3, 0, 1050).actions, vec!["hypr:hypr3d:sprint".to_string()]);
+    }
+    #[test]
+    fn room_stick_click_overlap_is_the_room_toggle_never_a_single() {
+        let mut r = vendor_room();
+        key(&mut r, L3, 1, 10);
+        let o = key(&mut r, R3, 1, 30);
+        assert_eq!(o.actions, vec!["mios:hyprland-3d-toggle".to_string()], "L3+R3 inside debounce = the room toggle");
+        let mut all = key(&mut r, L3, 0, 80).actions;
+        all.extend(key(&mut r, R3, 0, 90).actions);
+        assert!(all.is_empty(), "NEGATIVE: the chord never also fires sprint or recenter: {all:?}");
+        // slow overlap (outside debounce): no toggle and still no singles (R-23)
+        let mut r = vendor_room();
+        key(&mut r, L3, 1, 10);
+        let mut all = key(&mut r, R3, 1, 410).actions;
+        all.extend(key(&mut r, R3, 0, 450).actions);
+        all.extend(key(&mut r, L3, 0, 460).actions);
+        assert!(all.is_empty(), "slow overlap fires nothing: {all:?}");
+    }
+    #[test]
+    fn room_r3_is_ignored_while_the_right_stick_is_deflected() {
+        let mut r = vendor_room();
+        r.axes.get_mut(&3).unwrap().value = 30000;
+        key(&mut r, R3, 1, 10);
+        assert!(key(&mut r, R3, 0, 50).actions.is_empty());
+    }
+    #[test]
+    fn room_select_tap_is_the_view_slot_and_hold_is_the_keymap() {
+        let mut r = vendor_room();
+        key(&mut r, SELECT, 1, 10);
+        let o = key(&mut r, SELECT, 0, 100);
+        assert!(o.actions.is_empty(), "the tap spawns no process: {:?}", o.actions);
+        assert_eq!(r.pad.sequences[0], 1, "tap = packet view slot 0 at release (next room frame)");
+        key(&mut r, SELECT, 1, 200);
+        // one tick is clamped to 100 ms: advance the clock in 100 ms steps
+        let ticks = |r: &mut Router, n: usize| (0..n).flat_map(|_| r.tick(0.1).actions).collect::<Vec<_>>();
+        assert!(ticks(&mut r, 4).is_empty(), "no hold before capture_hold_ms");
+        assert_eq!(ticks(&mut r, 1), vec!["quickshell:keymap-toggle".to_string()]);
+        assert!(ticks(&mut r, 10).is_empty(), "a hold fires once");
+        assert!(key(&mut r, SELECT, 0, 2000).actions.is_empty());
+        assert_eq!(r.pad.sequences[0], 1, "NEGATIVE: a hold does not also cycle the view");
+    }
+    #[test]
+    fn room_guide_tap_opens_the_drawer_only_as_a_clean_tap() {
+        let mut r = vendor_room();
+        key(&mut r, GUIDE, 1, 10);
+        assert_eq!(key(&mut r, GUIDE, 0, 120).actions, vec!["quickshell:drawer-toggle".to_string()]);
+        // Guide + a button is the system layer, not a tap
+        key(&mut r, GUIDE, 1, 1000);
+        let layer = key(&mut r, 0x130, 1, 1010).actions;
+        key(&mut r, 0x130, 0, 1020);
+        assert_eq!(layer, vec!["hypr:togglefloating".to_string()]);
+        assert!(key(&mut r, GUIDE, 0, 1100).actions.is_empty(), "NEGATIVE: Guide+South never also opens the drawer");
+        // a long Guide hold is not a tap
+        key(&mut r, GUIDE, 1, 3000);
+        assert!(key(&mut r, GUIDE, 0, 3600).actions.is_empty(), "NEGATIVE: held past capture_hold_ms");
+    }
+    #[test]
+    fn room_table_is_room_only_and_respects_capture() {
+        // desktop-2d: East is not the room's cancel
+        let mut r = vendor_room();
+        r.set_context("desktop-2d");
+        let o = key(&mut r, EAST, 1, 10);
+        assert!(!o.actions.iter().any(|a| a.contains("hypr3d")), "outside the room East is not cancel: {:?}", o.actions);
+        // a captured window owns East: it reaches the app, never the room table
+        let mut r = vendor_room();
+        r.global.controller.captured_system_layer = false;
+        r.set_context("app-capture");
+        let o = key(&mut r, EAST, 1, 10);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, EAST, 1)), "app-capture: {o:?}");
+        // O-1/O-4: an uncaptured game or VM class is an ordinary window: neither the room table nor the app sees East
+        for ctx in ["game", "vm-passthrough"] {
+            let mut r = vendor_room();
+            r.set_context(ctx);
+            let mut o = key(&mut r, EAST, 1, 10);
+            o.extend(key(&mut r, EAST, 0, 40));
+            assert!(o.app.iter().all(|e| e.code != EAST), "{ctx}: an uncaptured class never gets the pad: {o:?}");
+            assert_eq!(o.actions, vec!["key:ESC".to_string()], "{ctx}: East tap is the nav Escape");
+        }
+        // a room capture (North tap): the captured window owns East too
+        let mut r = vendor_room();
+        r.set_focus("desktop-3d", Some(("0xabc".into(), 42)), false);
+        key(&mut r, 0x133, 1, 10);
+        key(&mut r, 0x133, 0, 50);
+        let o = key(&mut r, EAST, 1, 100);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, EAST, 1)), "room capture owns East: {o:?}");
+    }
+    #[test]
+    fn room_pending_is_flushed_on_context_change_and_kernel_repair() {
+        let mut r = vendor_room();
+        key(&mut r, SELECT, 1, 10);
+        r.set_context("desktop-2d");
+        r.set_context("desktop-3d");
+        assert!((0..10).all(|_| r.tick(0.1).actions.is_empty()), "INV-6: a context change cancels the pending hold");
+        let mut r = vendor_room();
+        key(&mut r, L3, 1, 10);
+        let o = r.reconcile(&BTreeSet::new(), 20);
+        assert!(o.actions.is_empty(), "a repaired release is not a tap: {:?}", o.actions);
     }
 }
 
