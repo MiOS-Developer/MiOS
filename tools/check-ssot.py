@@ -930,7 +930,9 @@ except ModuleNotFoundError:  # pragma: no cover -- py<3.11
 rs_TOML = "usr/share/mios/mios.toml"
 rs_UNIT_DIR = "usr/lib/systemd/system"
 
-# Both halves of the resolver twin. Neither may keep the retired names alive.
+# The walk keep-list is [generation.walk].emit_keep in the SSOT; both halves of
+# the resolver twin read it from there. The twin sources are still scanned so a
+# re-introduced private copy cannot resurrect the retired names either.
 rs_KEEP_LISTS = ("usr/lib/mios/mios_toml.py",
               "tools/native/mios-ssot-walk/src/lib.rs")
 rs_RETIRED_NAMES = ("MIOS_PROFILE_ROLE", "MIOS_PROFILE_FEATURES")
@@ -1087,6 +1089,12 @@ def rs_check_profile_retired(data: dict, root: str) -> list:
                 viol.append("[profile].%s is retired -- blade capabilities are a "
                             "closed set; grant one with `mios blade "
                             "add-capability`" % key)
+    walk = (data.get("generation") or {}).get("walk") if isinstance(data.get("generation"), dict) else None
+    keep = walk.get("emit_keep") if isinstance(walk, dict) else None
+    for name in rs_RETIRED_NAMES:
+        if isinstance(keep, list) and name in keep:
+            viol.append("[generation.walk].emit_keep still lists %s -- the retired "
+                        "[profile] keys must not be resurrected by a keep-list" % name)
     for rel in rs_KEEP_LISTS:
         path = os.path.join(root, rel)
         try:

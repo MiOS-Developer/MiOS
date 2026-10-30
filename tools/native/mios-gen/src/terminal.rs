@@ -437,17 +437,10 @@ pub mod tmux_theme {
             env::var(key).ok().filter(|v| !v.trim().is_empty())
         }
 
-        /// Sorted `*.toml` drop-ins of `dir` (systemd `.d` ordering by basename).
+        /// Sorted `*.toml` drop-ins of `dir`: the resolver's own discovery, so this
+        /// reader and mios-resolver can never order or select fragments differently.
         fn fragments(dir: &Path) -> Vec<PathBuf> {
-            let mut out: Vec<PathBuf> = match fs::read_dir(dir) {
-                Ok(rd) => rd
-                    .filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| p.is_file() && p.extension().map(|x| x == "toml").unwrap_or(false))
-                    .collect(),
-                Err(_) => Vec::new(),
-            };
-            out.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-            out
+            mios_resolver::layers::fragments(dir)
         }
 
         /// Layer paths, lowest precedence first (mirrors `mios_toml.layer_paths`):
@@ -504,30 +497,11 @@ pub mod tmux_theme {
             layers
         }
 
-        /// Recursive merge: later wins; an empty string never overrides a non-empty value below it.
+        /// Recursive merge with the resolver's overlay rule (later wins; an empty
+        /// string never overrides a value below it). A private copy here let `""`
+        /// blank an integer or table that mios-resolver and mios_toml.py kept.
         pub fn deep_merge(dst: &mut toml::Value, src: toml::Value) {
-            match (dst, src) {
-                (toml::Value::Table(d), toml::Value::Table(s)) => {
-                    for (k, v) in s {
-                        match d.get_mut(&k) {
-                            Some(existing) if existing.is_table() && v.is_table() => {
-                                deep_merge(existing, v)
-                            }
-                            Some(existing) => {
-                                let empty = v.as_str().map(|x| x.is_empty()).unwrap_or(false);
-                                let below_set = !matches!(existing.as_str(), Some("") | None);
-                                if !(empty && below_set) {
-                                    *existing = v;
-                                }
-                            }
-                            None => {
-                                d.insert(k, v);
-                            }
-                        }
-                    }
-                }
-                (d, s) => *d = s,
-            }
+            mios_resolver::merge::deep_merge(dst, src)
         }
 
         /// Full layered SSOT. The vendor tier is mandatory; a missing or unreadable host/user
