@@ -110,6 +110,13 @@ focus) when another window opens or is clicked. With `keep_above = true` it only
 
 Leaving PiP is the toggle (`off`), not unpinning.
 
+The window rules `mios-browser-pip` and `mios-chromium-pip` float and pin
+browser PiP windows at map without the daemon. On an output the mobile layout
+classifies as mobile, `mios-mobile-<output>` tiles every new window by design
+and overrides those float rules; there the daemon's adoption (`on`) floats and
+pins the PiP. Set `MIOS_PIP_GRAVITY_TRACE=1` in the daemon's environment to log
+room transitions, kept/dropped tracks and natural-size updates on stderr.
+
 ## Fullscreen, maximize and Theatre matrix
 
 | Situation | Behaviour |
