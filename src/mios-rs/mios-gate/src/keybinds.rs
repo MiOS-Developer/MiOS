@@ -301,6 +301,25 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                 continue;
             }
         };
+        // rule 9: trigger = "release" marks a modifier-only chord (its key is one of its own modifier keys); the
+        // generator binds every modifier key of the set as a release handle
+        match e.get("trigger").and_then(Value::as_str) {
+            None | Some("press") => {}
+            Some("release") => {
+                let (mods, leaf) = steps[0].rsplit_once('+').unwrap_or(("", steps[0].as_str()));
+                let own = mods.split('+').any(|m| match m {
+                    "SUPER" => leaf.starts_with("super_"),
+                    "CTRL" => leaf.starts_with("control_"),
+                    "ALT" => leaf.starts_with("alt_"),
+                    "SHIFT" => leaf.starts_with("shift_"),
+                    _ => false,
+                });
+                if steps.len() != 1 || !own || !matches!(&leaf[leaf.len().saturating_sub(2)..], "_l" | "_r") {
+                    findings.push(format!("{tag}: trigger = \"release\" needs a modifier-only chord whose key is one of its own modifier keys, not {}", steps.join(" ")));
+                }
+            }
+            Some(other) => findings.push(format!("{tag}: trigger {other:?} must be press or release")),
+        }
         // rule 2: in vm-passthrough only bypass_mod chords may be host-bound
         if scope == "host"
             && effective.contains("vm-passthrough")
@@ -731,6 +750,19 @@ passthrough = ["vm-passthrough"]
                     "input {input:?} must be rejected"
                 ),
             }
+        }
+    }
+
+    #[test]
+    fn release_trigger_needs_a_modifier_only_chord() {
+        let row = |chord: &str, trigger: &str| {
+            format!("\n[[keybindings.global.bindings]]\nid = \"launch\"\ntier = 1\nchord = \"{chord}\"\ntrigger = \"{trigger}\"\naction = \"quickshell:launcher\"\npassthrough = [\"vm-passthrough\"]\n")
+        };
+        let ok = run(&row("SUPER+CTRL+Super_L", "release"));
+        assert!(ok.findings.iter().all(|f| !f.contains("trigger")), "{:?}", ok.findings);
+        for bad in [row("SUPER+CTRL+p", "release"), row("SUPER+Control_L", "release"), row("SUPER+CTRL+Super_L", "hold")] {
+            let a = run(&bad);
+            assert!(a.findings.iter().any(|f| f.contains("trigger")), "{bad}: {:?}", a.findings);
         }
     }
 

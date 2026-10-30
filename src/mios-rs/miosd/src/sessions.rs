@@ -130,7 +130,7 @@ fn integer(v: &Value, path: &str) -> Result<i64, String> {
     text(v, path)?.as_integer().ok_or_else(|| format!("{path} must be an integer"))
 }
 
-fn color(hex: &str) -> Color {
+pub(crate) fn color(hex: &str) -> Color {
     let h = hex.trim_start_matches('#');
     let byte = |i: usize| u8::from_str_radix(h.get(i..i + 2).unwrap_or("00"), 16).unwrap_or(0);
     Color::Rgb(byte(0), byte(2), byte(4))
@@ -405,13 +405,13 @@ extern "C" fn restore_on_signal(sig: libc::c_int) {
     }
 }
 
-struct TermGuard {
+pub(crate) struct TermGuard {
     previous: Vec<(libc::c_int, libc::sigaction)>,
 }
 
 impl TermGuard {
     /// Capture cooked-mode termios and arm the signal handlers BEFORE entering raw mode.
-    fn arm() -> Self {
+    pub(crate) fn arm() -> Self {
         let mut t: libc::termios = unsafe { std::mem::zeroed() };
         // SAFETY: tcgetattr writes into a valid termios; failure (no tty) leaves SAVED unset.
         if unsafe { libc::tcgetattr(0, &mut t) } == 0 {

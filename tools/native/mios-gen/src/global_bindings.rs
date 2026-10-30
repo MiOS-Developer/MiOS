@@ -15,6 +15,35 @@ pub fn key(data: &Value, id: &str, fallback: &str) -> String {
     if normalize_chord(selected,"\0").ok()==normalize_chord(fallback,"\0").ok() {fallback.into()} else {selected.into()}
 
 }
+/// The modifier mask of [keybindings.global].bypass_mod in canonical order (e.g. "SUPER+CTRL").
+fn bypass_mods(data:&Value,sep:&str)->Result<String,String>{
+    let m=at(data,"keybindings.global.bypass_mod").and_then(Value::as_str).ok_or("missing bypass_mod")?;
+    Ok(canonical(&format!("{m}+x"),sep)?.trim_end_matches("+x").to_owned())
+}
+/// The keysyms of one modifier, as the compositor names them.
+fn modifier_keys(m:&str)->&'static [&'static str]{
+    match m {"SUPER"=>&["Super_L","Super_R"],"CTRL"=>&["Control_L","Control_R"],"ALT"=>&["Alt_L","Alt_R"],"SHIFT"=>&["Shift_L","Shift_R"],_=>&[]}
+}
+/// `trigger = "release"` rows: a modifier-only chord written as its modifiers plus one of their own keys
+/// ("SUPER+CTRL+Super_L"). Returns every release handle the chord needs: each modifier key of the set, with the
+/// whole set held, so the chord fires on whichever key is released first. None for an ordinary (press) row.
+pub fn release_chords(binding:&Value,chord:&str,sep:&str)->Result<Option<Vec<String>>,String>{
+    let id=binding.get("id").and_then(Value::as_str).unwrap_or("?");
+    match binding.get("trigger").and_then(Value::as_str) {
+        None|Some("press")=>return Ok(None),
+        Some("release")=>{}
+        Some(other)=>return Err(format!("binding {id}: trigger {other:?} must be press or release")),
+    }
+    if chord.contains(sep) {return Err(format!("binding {id}: a release chord is one step"));}
+    let (mods,leaf)=chord.rsplit_once('+').ok_or_else(||format!("binding {id}: a release chord needs its modifiers"))?;
+    let mods:Vec<&str>=mods.split('+').collect();
+    let owns=mods.iter().any(|m|modifier_keys(m).iter().any(|k|k.eq_ignore_ascii_case(leaf)));
+    if !owns || mods.iter().any(|m|modifier_keys(m).is_empty()) {
+        return Err(format!("binding {id}: trigger = \"release\" is for modifier-only chords: the key must be one of the chord's own modifier keys (e.g. SUPER+CTRL+Super_L)"));
+    }
+    let prefix=mods.join("+");
+    Ok(Some(mods.iter().flat_map(|m|modifier_keys(m).iter().map(|k|format!("{prefix}+{k}"))).collect()))
+}
 pub fn prelude(data: &Value) -> Result<String,String> {
     if at(data,"keybindings.global.enabled").and_then(Value::as_bool)!=Some(true) {return Ok(String::new());}
     // A local hl proxy captures only handles created by this projection. No
@@ -49,6 +78,18 @@ pub fn finish(data: &Value) -> Result<String,String> {
         out+=&format!(" policies[{}]={{contexts={},passthrough={}}}\n",q(&chord),array(contexts)?,array(pass)?);
         if let Some(bypass)=binding.get("bypass").and_then(Value::as_str) {
             out+=&format!(" escapes[{}]={}\n",q(&chord),q(&canonical(bypass,sep)?));
+        }
+        if let Some(keys)=release_chords(binding,&chord,sep)? {
+            // A modifier-only chord: every modifier key of the chord is a release handle (one fires per chord, in
+            // either press order; none fires once another key was pressed, so SUPER+CTRL+<key> binds still work).
+            let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
+            let quoted=format!("'{}'",action.replace('\'', "'\\''"));
+            let escape=chord.rsplit_once('+').map(|(m,_)|m)==Some(bypass_mods(data,sep)?.as_str());
+            for k in keys {
+                if canonical(&k,sep)?!=chord {out+=&format!(" policies[{}]=policies[{}]\n",q(&canonical(&k,sep)?),q(&chord));}
+                out+=&format!(" local b=mios_native_hl.bind({},mios_native_hl.dsp.exec_cmd({}),{{release=true,dont_inhibit=true,submap_universal=true}})\n if b then table.insert(mios_input_handles,{{handle=b,key={},escape={escape}}}) end\n",q(&k),q(&format!("/usr/libexec/mios/mios-inputd dispatch {quoted}")),q(&k));
+            }
+            continue;
         }
         if binding.get("tier").and_then(Value::as_integer)!=Some(2) && !["app-drawer","terminal","close-window","toggle-placement","fullscreen","hypr3d-toggle","keymap"].contains(&binding.get("id").and_then(Value::as_str).unwrap_or("")) {
             let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
@@ -196,6 +237,38 @@ io.write('native policy controls passed')
         let dir=tempfile::tempdir().unwrap();let file=dir.path().join("policy.lua");std::fs::write(&file,text).unwrap();
         let output=std::process::Command::new("lua").arg(&file).output().expect("native Lua interpreter required");
         assert!(output.status.success(),"{}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn modifier_only_release_chord_binds_every_modifier_key_as_an_escape() {
+        let d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let lua=finish(&d).unwrap();
+        for k in ["Super_L","Super_R","Control_L","Control_R"] {
+            let line=format!("mios_native_hl.bind(\"SUPER+CTRL+{k}\",mios_native_hl.dsp.exec_cmd(\"/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'\"),{{release=true,dont_inhibit=true,submap_universal=true}})");
+            assert!(lua.contains(&line),"missing {line}\n{lua}");
+        }
+        assert_eq!(lua.matches("dispatch 'mios:tmux-os-launcher'").count(),4,"one handle per modifier key, nothing else");
+        assert!(lua.contains("key=\"SUPER+CTRL+Control_R\",escape=true}"),"on bypass_mod: an escape handle");
+        assert!(lua.contains("policies[\"SUPER+CTRL+control_l\"]=policies[\"SUPER+CTRL+super_l\"]"));
+        // Negative control: the same row without trigger = "release" is one press bind on Super_L (it would fire on
+        // the press and swallow every SUPER+CTRL+<key> chord typed after it).
+        let mut press=d.clone();
+        let row=press["keybindings"]["global"]["bindings"].as_array_mut().unwrap().iter_mut().find(|b|b["id"].as_str()==Some("tmux-os-launcher")).unwrap();
+        row.as_table_mut().unwrap().remove("trigger");
+        let plain=finish(&press).unwrap();
+        assert_eq!(plain.matches("dispatch 'mios:tmux-os-launcher'").count(),1);
+        assert!(!plain.contains("SUPER+CTRL+Control_L") && plain.contains("mios_native_hl.bind(\"SUPER+CTRL+super_l\",mios_native_hl.dsp.exec_cmd(\"/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'\"))\n"),"a press row is one press handle: {plain}");
+    }
+
+    #[test]
+    fn release_trigger_is_only_for_modifier_only_chords() {
+        let row=|chord:&str,trigger:&str|->Value{toml::from_str(&format!("id='x'\nchord='{chord}'\ntrigger='{trigger}'")).unwrap()};
+        assert_eq!(release_chords(&row("SUPER+CTRL+Super_L","release"),"SUPER+CTRL+super_l"," ").unwrap().unwrap().len(),4);
+        assert_eq!(release_chords(&row("SUPER+Super_L","release"),"SUPER+super_l"," ").unwrap().unwrap(),["SUPER+Super_L","SUPER+Super_R"]);
+        assert!(release_chords(&row("SUPER+CTRL+p","release"),"SUPER+CTRL+p"," ").is_err(),"a key that is no modifier of the chord");
+        assert!(release_chords(&row("SUPER+Control_L","release"),"SUPER+control_l"," ").is_err(),"Control_L without CTRL in the set");
+        assert!(release_chords(&row("SUPER+CTRL+Super_L","hold"),"SUPER+CTRL+super_l"," ").is_err());
+        assert!(release_chords(&row("SUPER+CTRL+Super_L","press"),"SUPER+CTRL+super_l"," ").unwrap().is_none());
     }
 
     #[test]

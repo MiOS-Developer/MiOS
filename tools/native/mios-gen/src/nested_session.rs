@@ -311,6 +311,19 @@ fn spawn_sandboxed(log:&Path,mut make:impl FnMut()->Command)->Result<std::proces
  unreachable!()
 }
 
+/// The session's user-tier fragment: its own tmux namespace, and how its terminal enters it. With
+/// [desktop.nested].selector the terminal drops to the TUI session selector (instances, TUIs, apps) of that namespace
+/// (tailnet nodes only with selector_tailnet); without it, straight into terminal_session.
+pub fn user_patch(n:&Value,socket_name:&str,terminal_session:&str,socket_root:&str)->Result<Value,String>{
+ let flag=|k:&str,d:bool|->Result<bool,String>{match n.get(k){None=>Ok(d),Some(Value::Boolean(b))=>Ok(*b),Some(_)=>Err(format!("desktop.nested.{k} must be a boolean"))}};
+ let selector=flag("selector",false)?;
+ let mut patch=Value::Table(toml::toml!{ [keybindings] socket_name=socket_name terminal_session=terminal_session [terminal] socket_root=socket_root default_action="terminal" [terminal.sessions] selector=selector new_session_name=terminal_session });
+ if selector&&!flag("selector_tailnet",false)? {
+  if let Some(t)=patch.get_mut("terminal").and_then(|t|t.get_mut("sessions")).and_then(Value::as_table_mut) {t.insert("node_os".into(),Value::Array(Vec::new()));}
+ }
+ Ok(patch)
+}
+
 fn list_devices(data:&Value,rt:&Path)->Result<Json,String>{
  let pol=devices::Policy::from_ssot(&data["desktop"]["nested"])?;
  let sessions=devices::live_sessions(&rt.join(&pol.registry_dir),false);
@@ -378,7 +391,7 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
  let (socket_name,terminal_session)=(plan.tmux_socket.as_str(),plan.terminal_session.as_str());
  let tmux_root=owned.0.join("tmux");fs::create_dir(&tmux_root).map_err(|e|e.to_string())?;
  let socket_root_text=tmux_root.to_string_lossy();
- let patch=toml::toml!{ [keybindings] socket_name=socket_name terminal_session=terminal_session [terminal] socket_root=(socket_root_text.as_ref()) default_action="terminal" [terminal.sessions] selector=false new_session_name=terminal_session };
+ let patch=user_patch(n,socket_name,terminal_session,&socket_root_text)?;
  fs::write(fragments.join(format!("{last}-mios-nested.toml")),toml::to_string(&patch).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  let focused:Json=serde_json::from_str(&ipc(&parent,&signature,"j/activewindow")?).map_err(|e|e.to_string())?;
  let input=owned.0.join("input");fs::create_dir(&input).map_err(|e|e.to_string())?;
@@ -578,6 +591,24 @@ mod tests {
   assert!(!events.closed("0xabc")); // unavailable snapshot/event is not a close
   server.write_all(b"closewindow>>0xother\n").unwrap();assert!(!events.closed("0xabc"));
   drop(server);assert!(!events.closed("0xabc"));
+ }
+ #[test] fn the_session_terminal_drops_to_the_selector_of_its_own_namespace(){
+  let d=ssot();let n=&d["desktop"]["nested"];
+  let p=user_patch(n,"mios-nested","tmux-os","/run/x/tmux").unwrap();
+  assert_eq!(p["terminal"]["sessions"]["selector"].as_bool(),Some(true),"the shipped entry is the selector");
+  assert_eq!(p["terminal"]["sessions"]["node_os"].as_array().map(Vec::len),Some(0),"no tailnet nodes inside a session");
+  assert_eq!((p["keybindings"]["socket_name"].as_str(),p["terminal"]["socket_root"].as_str()),(Some("mios-nested"),Some("/run/x/tmux")));
+  let argv=n["terminal_argv"].as_array().unwrap();
+  assert!(!argv.iter().any(|a|a.as_str()==Some("--new")),"the terminal must not start a bare session itself: {argv:?}");
+  // Negative control: the previous entry (selector off) attaches the session directly and keeps tailnet defaults.
+  let mut old=n.clone();old["selector"]=Value::Boolean(false);
+  let p=user_patch(&old,"mios-nested","tmux-os","/run/x/tmux").unwrap();
+  assert_eq!(p["terminal"]["sessions"]["selector"].as_bool(),Some(false));
+  assert!(p["terminal"]["sessions"].get("node_os").is_none());
+  let mut tail=n.clone();tail["selector_tailnet"]=Value::Boolean(true);
+  assert!(user_patch(&tail,"s","t","/r").unwrap()["terminal"]["sessions"].get("node_os").is_none());
+  let mut bad=n.clone();bad["selector"]=Value::String("yes".into());
+  assert!(user_patch(&bad,"s","t","/r").is_err());
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
 
