@@ -50,6 +50,14 @@ pub struct Native {
     pub progressive_quant: u8,
     pub audio_control_program: String,
     pub microphone_queue_packets: usize,
+    pub camera_video_program: String,
+    pub camera_graph_program: String,
+    pub camera_max_width: u32,
+    pub camera_max_height: u32,
+    pub camera_max_fps: u32,
+    pub camera_max_devices: usize,
+    pub camera_poll_ms: u64,
+    pub camera_timeout_ms: u64,
     pub drive_timeout_ms: u64,
     pub drive_max_devices: usize,
     pub drive_max_entries: usize,
@@ -100,6 +108,14 @@ impl Default for Native {
             progressive_quant: 8,
             audio_control_program: "pactl".into(),
             microphone_queue_packets: 8,
+            camera_video_program: "gst-launch-1.0".into(),
+            camera_graph_program: "pw-dump".into(),
+            camera_max_width: 1280,
+            camera_max_height: 720,
+            camera_max_fps: 30,
+            camera_max_devices: 4,
+            camera_poll_ms: 500,
+            camera_timeout_ms: 10000,
             drive_timeout_ms: 10000,
             drive_max_devices: 16,
             drive_max_entries: 4096,
@@ -148,7 +164,7 @@ impl Default for Redirect {
             pen: true,
             audio_output: false,
             microphone: true,
-            camera: false,
+            camera: true,
             drives: true,
             location: false,
             timezone: "report".into(),
@@ -163,6 +179,7 @@ pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
     pub microphone_source_prefix: String,
+    pub camera_source_prefix: String,
 }
 
 impl Default for Naming {
@@ -171,6 +188,7 @@ impl Default for Naming {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
             microphone_source_prefix: "mios-remote-microphone".into(),
+            camera_source_prefix: "mios-remote-camera".into(),
         }
     }
 }
@@ -307,6 +325,16 @@ impl Config {
         n.max_bitrate_kbps = n.max_bitrate_kbps.max(n.min_bitrate_kbps);
         n.initial_bitrate_kbps = n.initial_bitrate_kbps.clamp(n.min_bitrate_kbps, n.max_bitrate_kbps);
         n.qp_min = n.qp_min.clamp(0, 51);
+        if !(16..=1920).contains(&n.camera_max_width) || !(16..=1080).contains(&n.camera_max_height)
+            || !(1..=60).contains(&n.camera_max_fps) || !(1..=8).contains(&n.camera_max_devices)
+            || !(250..=2000).contains(&n.camera_poll_ms) || !(2000..=30000).contains(&n.camera_timeout_ms)
+            || n.camera_video_program.is_empty() || n.camera_graph_program.is_empty() {
+            bail!("invalid native camera program, resolution, FPS, device or timing bounds");
+        }
+        let prefix=&self.naming.camera_source_prefix;
+        if prefix.is_empty() || prefix.len()>48 || !prefix.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_') {
+            bail!("invalid camera source prefix");
+        }
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
         n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));

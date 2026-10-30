@@ -3663,3 +3663,8 @@ The broader remote hardware request is unfinished: native speaker sink, camera s
 ## 2026-10-30T15:17:25.535969+00:00 — mios-native-storage-live
 
 Native RDPDR FUSE bridge is active at a19368271b9144ee680d58dfacf98e949a06676a291075e1cf1903f2ca0c0a54. Real FreeRDP enabled/disabled and managed-service stop controls, file mutation and open-unlink semantics passed; microphone regression passed. 59 Rust, three preparation tests, two codec fixtures, 33 backend passes/four skips. Shared source cache restoration and package metadata corrections are documented in docs/design/mios-desktop-continuation-handoff.md. Camera is the next user-requested task; not implemented yet.
+
+
+## 2026-10-30T15:52:07.134521+00:00 — mios-native-camera-live
+
+Camera channels and native PipeWire sources are live at bb6dcd8f3ef84e7b217daf40fb528d0311acb5e676a82041bcd5a75c2d5ddcba; idle RDP-only activation preserved compositor5764/apps/physical geometry. 67 Rust, four preparation tests, two codec fixtures, four native camera cases across three codecs and channel teardown,33 backend passes/four skips, full TCP/TLS microphone and file regressions passed. Physical phone camera negotiation is awaiting reconnect; not claimed passed. PipeWire dependency update/Pulse crash, scoped recovery and failed idle watcher are recorded in docs/design/mios-desktop-continuation-handoff.md. Module cleanup now guards against audio-daemon ID reuse. No push by this lane.

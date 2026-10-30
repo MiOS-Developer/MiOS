@@ -1080,3 +1080,6 @@ usr/share/mios/virtio/*.iso
 !/tests/fixtures/mios-rdp/storage.py
 !/src/mios-rdp-server/prepare.rs
 !/src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs
+!/src/mios-rdp-server/crates/mios-rdp-server/src/remote_camera.rs
+!/tests/fixtures/mios-rdp/camera.py
+!/usr/share/doc/mios/remote-camera.md

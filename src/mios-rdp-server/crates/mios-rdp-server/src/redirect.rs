@@ -444,11 +444,32 @@ struct MicrophoneSource<'a> {
 impl Drop for MicrophoneSource<'_> {
     fn drop(&mut self) {
         if let Some(module) = self.module {
-            let _ = audio_control(self.cfg, &["unload-module".into(), module.to_string()]);
+            // Module IDs can be reused after the audio daemon restarts. Never
+            // unload an unrelated source merely because its numeric ID matches.
+            if audio_control(self.cfg, &["list".into(), "short".into(), "modules".into()])
+                .is_ok_and(|modules| {
+                    microphone_module_owned(&modules, module, &self.dir.join("audio.fifo"))
+                })
+            {
+                let _ = audio_control(self.cfg, &["unload-module".into(), module.to_string()]);
+            }
         }
         let _ = std::fs::remove_file(self.dir.join("audio.fifo"));
         let _ = std::fs::remove_dir(&self.dir);
     }
+}
+
+fn microphone_module_owned(modules: &str, module: u32, fifo: &std::path::Path) -> bool {
+    let id = module.to_string();
+    let file = format!("file={}", fifo.display());
+    modules.lines().any(|line| {
+        let mut fields = line.split('\t');
+        fields.next() == Some(id.as_str())
+            && fields.next() == Some("module-pipe-source")
+            && fields
+                .next()
+                .is_some_and(|args| args.split_ascii_whitespace().any(|arg| arg == file))
+    })
 }
 
 fn microphone_worker(
@@ -591,26 +612,6 @@ impl LocationWriter {
 // 5. Camera (MS-RDPECAM)
 // ============================================================================
 
-pub struct CameraManager {
-    enabled: bool,
-}
-
-impl CameraManager {
-    pub fn new(enabled: bool) -> Self {
-        Self { enabled }
-    }
-
-    pub fn channel_name() -> &'static str {
-        ironrdp_rdpecam::ENUMERATION_CHANNEL_NAME
-    }
-
-    pub fn on_client_device_added(&self, device_name: &str) {
-        if self.enabled {
-            info!(device = %device_name, "MS-RDPECAM client camera device discovered; creating PipeWire camera node");
-        }
-    }
-}
-
 // ============================================================================
 // 6. Timezone & Smartcard reporting
 // ============================================================================
@@ -631,6 +632,24 @@ pub fn log_redirections(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn microphone_cleanup_checks_module_ownership_not_reused_id() {
+        let path = std::path::Path::new("/run/user/1000/mios-test/audio.fifo");
+        assert!(microphone_module_owned(
+            "42\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo rate=48000\t\n",
+            42,
+            path
+        ));
+        for modules in [
+            "42\tmodule-echo-cancel\tfile=/run/user/1000/mios-test/audio.fifo\n",
+            "42\tmodule-pipe-source\tfile=/run/user/1000/another/audio.fifo\n",
+            "43\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo\n",
+            "42\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo-extra\n",
+        ] {
+            assert!(!microphone_module_owned(modules, 42, path));
+        }
+    }
 
     #[test]
     fn microphone_toggle_determines_factory_registration() {

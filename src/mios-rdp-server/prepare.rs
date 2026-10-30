@@ -1,4 +1,4 @@
-// AI-hint: Build-time compatibility preparation for the upstream RDPDR server: send the logon notification it advertises, only when negotiated, so real clients announce filesystem devices. Compile and execute before Cargo compiles the dependency.
+// AI-hint: Static build-time preparation for negotiated RDPDR logon and connection-local dynamic channel extension hooks. Validate known upstream boundaries before mutation; run before dependency compilation.
 // AI-related: automation/71-bake-rdp-server.sh, src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs
 // AI-functions: prepare, replacement
 #![forbid(unsafe_code)]
@@ -51,6 +51,72 @@ fn replacement(source: &str) -> Result<Option<String>, String> {
     Ok(Some(result))
 }
 
+// Extension hooks keep the compositor/display and all negotiated DVCs in the
+// upstream session. Camera device names are discovered only after connection.
+fn camera_extension(source: &str) -> Result<Option<String>, String> {
+    if source.contains("// MiOS: connection-local dynamic channel extension") {
+        return Ok(None);
+    }
+    let edits = [
+        (
+            "    fn attach(&self, acceptor: &mut Acceptor);",
+            r#"    fn attach(&self, acceptor: &mut Acceptor);
+    // MiOS: connection-local dynamic channel extension
+    fn attach_dynamic(&self, _channels: &mut dvc::DrdynvcServer, _sender: mpsc::UnboundedSender<ServerEvent>) {}"#,
+        ),
+        (
+            "    Echo(EchoServerMessage),",
+            r#"    Echo(EchoServerMessage),
+    /// Run a connection-local extension and write its resulting SVC messages.
+    DvcAction(Box<dyn FnOnce(&mut dvc::DrdynvcServer) -> PduResult<Vec<ironrdp_svc::SvcMessage>> + Send>),"#,
+        ),
+        (
+            "            Self::Echo(..) => f.write_str(\"Echo(..)\"),",
+            "            Self::Echo(..) => f.write_str(\"Echo(..)\"),\n            Self::DvcAction(..) => f.write_str(\"DvcAction(..)\"),",
+        ),
+        (
+            "        acceptor.attach_static_channel(dvc);",
+            r#"        let mut dvc = dvc;
+        for factory in &self.static_channel_factories {
+            factory.attach_dynamic(&mut dvc, self.ev_sender.clone());
+        }
+        acceptor.attach_static_channel(dvc);"#,
+        ),
+        (
+            "                ServerEvent::Echo(msg) => match msg {",
+            r#"                ServerEvent::DvcAction(action) => {
+                    let messages = {
+                        let Some(drdynvc) = conn.static_channels.get_by_type_mut::<dvc::DrdynvcServer>()
+                            .and_then(|svc| svc.channel_processor_downcast_mut::<dvc::DrdynvcServer>()) else { continue; };
+                        match action(drdynvc) {
+                            Ok(messages) => messages,
+                            Err(error) => { warn!(?error, "Dynamic channel extension failed"); continue; }
+                        }
+                    };
+                    if messages.is_empty() { continue; }
+                    let channel_id = conn.get_channel_id_by_type::<dvc::DrdynvcServer>()
+                        .ok_or_else(|| ServerError::channel("DRDYNVC channel not found"))?;
+                    let data = server_encode_svc_messages(messages, channel_id, user_channel_id)
+                        .map_err(ServerError::encode)?;
+                    writer.write_all(&data).await.map_err(|e| ServerError::io("write_all", e))?;
+                }
+                ServerEvent::Echo(msg) => match msg {"#,
+        ),
+    ];
+    for (old, _) in edits {
+        if source.matches(old).count() != 1 {
+            return Err(format!(
+                "upstream dynamic-channel extension boundary changed: {old}; no source changed"
+            ));
+        }
+    }
+    let mut result = source.to_owned();
+    for (old, new) in edits {
+        result = result.replacen(old, new, 1);
+    }
+    Ok(Some(result))
+}
+
 fn prepare(root: &Path) -> Result<bool, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let path = root.join("crates/ironrdp-rdpdr/src/server.rs");
@@ -58,11 +124,25 @@ fn prepare(root: &Path) -> Result<bool, String> {
     if !canonical.starts_with(&root) {
         return Err("RDPDR source resolves outside the supplied upstream checkout".into());
     }
+    let dynamic_path = root.join("crates/ironrdp-server/src/server.rs");
+    if !dynamic_path
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(&root)
+    {
+        return Err("dynamic channel source resolves outside upstream checkout".into());
+    }
+    let dynamic_source = fs::read_to_string(&dynamic_path).map_err(|e| e.to_string())?;
+    let dynamic_update = camera_extension(&dynamic_source)?;
     let source = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let server_update = replacement(&source)?;
     // A future upstream implementation needs no MiOS capability accessor.
     if server_update.is_none() && !source.contains("// MiOS: negotiated RDPDR logon notification.")
     {
+        if let Some(updated) = dynamic_update {
+            write_atomic(&dynamic_path, &updated)?;
+            return Ok(true);
+        }
         return Ok(false);
     }
     let efs = root.join("crates/ironrdp-rdpdr/src/pdu/efs.rs");
@@ -86,7 +166,10 @@ fn prepare(root: &Path) -> Result<bool, String> {
             1,
         ))
     };
-    let changed = server_update.is_some() || efs_update.is_some();
+    let changed = server_update.is_some() || efs_update.is_some() || dynamic_update.is_some();
+    if let Some(updated) = dynamic_update {
+        write_atomic(&dynamic_path, &updated)?;
+    }
     if let Some(updated) = server_update {
         write_atomic(&path, &updated)?;
     }
@@ -123,7 +206,9 @@ fn main() {
         std::process::exit(2);
     }
     match prepare(Path::new(&args[0])) {
-        Ok(changed) => println!("{{\"fix\":\"rdpdr-negotiated-logon\",\"changed\":{changed}}}"),
+        Ok(changed) => {
+            println!("{{\"fix\":\"rdpdr-logon-and-dynamic-extension\",\"changed\":{changed}}}")
+        }
         Err(error) => {
             eprintln!("RDP source preparation: {error}");
             std::process::exit(1);
@@ -148,6 +233,12 @@ mod tests {
                 "impl CapabilityMessage {\n}\n",
             )
             .unwrap();
+            fs::create_dir_all(root.join("crates/ironrdp-server/src")).unwrap();
+            fs::write(
+                root.join("crates/ironrdp-server/src/server.rs"),
+                include_str!("../ironrdp/crates/ironrdp-server/src/server.rs"),
+            )
+            .unwrap();
             Self(root)
         }
     }
@@ -156,6 +247,9 @@ mod tests {
             let _ = fs::remove_file(self.0.join("crates/ironrdp-rdpdr/src/server.rs"));
             let _ = fs::remove_file(self.0.join("crates/ironrdp-rdpdr/src/pdu/efs.rs"));
             let _ = fs::remove_dir(self.0.join("crates/ironrdp-rdpdr/src/pdu"));
+            let _ = fs::remove_file(self.0.join("crates/ironrdp-server/src/server.rs"));
+            let _ = fs::remove_dir(self.0.join("crates/ironrdp-server/src"));
+            let _ = fs::remove_dir(self.0.join("crates/ironrdp-server"));
             for directory in [
                 "crates/ironrdp-rdpdr/src",
                 "crates/ironrdp-rdpdr",
@@ -197,5 +291,20 @@ mod tests {
     #[test]
     fn a_missing_checkout_fails() {
         assert!(prepare(Path::new("/mios-missing-rdp-upstream-fixture")).is_err());
+    }
+    #[test]
+    fn dynamic_extension_is_idempotent_and_rejects_unknown_shapes() {
+        let source = include_str!("../ironrdp/crates/ironrdp-server/src/server.rs");
+        let prepared = camera_extension(source)
+            .unwrap()
+            .unwrap_or_else(|| source.into());
+        assert!(prepared.contains("factory.attach_dynamic(&mut dvc, self.ev_sender.clone())"));
+        assert!(prepared.contains("ServerEvent::DvcAction(action)"));
+        assert!(camera_extension(&prepared).unwrap().is_none());
+        assert!(
+            camera_extension("unknown upstream API")
+                .unwrap_err()
+                .contains("boundary changed")
+        );
     }
 }

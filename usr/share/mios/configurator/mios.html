@@ -2335,6 +2335,26 @@
             <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
             <label for="f-rdp-mic-source">Microphone source prefix</label>
             <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
+            <label for="f-rdp-camera-enabled">Allow cameras selected and permitted by the remote client</label>
+            <input type="text" id="f-rdp-camera-enabled" data-key="remote.rdp.redirect.camera" data-type="bool" placeholder="true">
+            <label for="f-rdp-camera-video-program">Native video executable</label>
+            <input type="text" id="f-rdp-camera-video-program" data-key="remote.rdp.native.camera_video_program" value="gst-launch-1.0">
+            <label for="f-rdp-camera-graph-program">Native camera graph executable</label>
+            <input type="text" id="f-rdp-camera-graph-program" data-key="remote.rdp.native.camera_graph_program" value="pw-dump">
+            <label for="f-rdp-camera-max-width">Maximum camera width</label>
+            <input type="number" id="f-rdp-camera-max-width" data-key="remote.rdp.native.camera_max_width" min="16" max="1920" data-type="int" value="1280">
+            <label for="f-rdp-camera-max-height">Maximum camera height</label>
+            <input type="number" id="f-rdp-camera-max-height" data-key="remote.rdp.native.camera_max_height" min="16" max="1080" data-type="int" value="720">
+            <label for="f-rdp-camera-max-fps">Maximum camera frame rate</label>
+            <input type="number" id="f-rdp-camera-max-fps" data-key="remote.rdp.native.camera_max_fps" min="1" max="60" data-type="int" value="30">
+            <label for="f-rdp-camera-max-devices">Cameras per connection</label>
+            <input type="number" id="f-rdp-camera-max-devices" data-key="remote.rdp.native.camera_max_devices" min="1" max="8" data-type="int" value="4">
+            <label for="f-rdp-camera-poll-ms">Camera consumer polling (ms)</label>
+            <input type="number" id="f-rdp-camera-poll-ms" data-key="remote.rdp.native.camera_poll_ms" min="250" max="2000" data-type="int" value="500">
+            <label for="f-rdp-camera-timeout-ms">Camera frame timeout (ms)</label>
+            <input type="number" id="f-rdp-camera-timeout-ms" data-key="remote.rdp.native.camera_timeout_ms" min="2000" max="30000" data-type="int" value="10000">
+            <label for="f-rdp-camera-source">Camera source prefix</label>
+            <input type="text" id="f-rdp-camera-source" data-key="remote.rdp.naming.camera_source_prefix" value="mios-remote-camera">
             <label for="f-rdp-files-enabled">Allow client-selected shared folders</label>
             <input type="text" id="f-rdp-files-enabled" data-key="remote.rdp.redirect.drives" data-type="bool" placeholder="true">
             <label for="f-rdp-drive-timeout">Remote file request timeout (ms)</label>
