@@ -102,8 +102,9 @@ Launch **MiOS Desktop Session** from the application drawer or run
 `mios-gen nested-session`. Each session has a private runtime, compositor,
 Quickshell entry and Tmux-OS server. Closing its parent window (or the session's
 compositor exiting) stops the session, its private Tmux-OS server and its
-registry entry. Physical input nodes and the parent's legacy controller packet are
-masked inside the session's namespace unless devices are assigned (below).
+registry entry. The session's `/dev/input` is empty unless devices are assigned
+(below); the parent's legacy controller packet is isolated as described under
+"Private /tmp and the room packet".
 
 ### Launch targets
 
@@ -128,6 +129,16 @@ masked inside the session's namespace unless devices are assigned (below).
   seat and reaches the focused session window like any other window. An output
   reporting 0x0 is never used. With no remote client attached the launch is
   refused, or waits up to `wait_ms`. The RDP server itself is unchanged.
+* Every session descriptor (`session.json`) also carries `serve`: `mode =
+  "mirror"`, the session's `runtime`, `hypr_instance`, `wayland_display` and its
+  only `output`. That is what a remote server needs to share the session itself
+  with no parent output at all (the native RDP server's nested lab mode reads the
+  same runtime and instance), for example a remote user who should not appear on
+  any local display.
+* Inside a nested *parent* (a test lab), a headless output cannot allocate
+  buffers on this Wayland backend (`GBM: Failed to allocate a GBM buffer`, 0x0),
+  so the remote target is verified there on the parent's second Wayland output;
+  on the desktop the RDP bridge's headless output is a real DRM-backed output.
 * **hypr3d** sizes the window to the session's logical size, clamped into the work
   area minus the shell edge margin, so the session renders at fit scale 1 (one
   texel per parent pixel) and the room's Retina opening shows it at its flat size.
@@ -176,6 +187,29 @@ local user's keyboard and mouse need the input bridge to stop routing those node
 to the parent and forward them into the session. That bridge work belongs to the
 input daemon; the launcher binds the nodes and publishes the assignment.
 
-Plugin state files that compositor plugins write under the shared `/tmp`
-(`desktop.nested.private_files`) get a private copy per session, so a Hypr3D room
-inside a session never touches the parent's status files.
+### Private /tmp and the room packet
+
+`desktop.nested.private_tmp` (`seat` by default) gives every labelled seat a private
+`/tmp` (`<runtime>/tmp`, removed with the session): a second local user, a remote
+user or a room seat never shares the operator's `/tmp`, compositor plugin state
+files inside the session are its own, and the parent's legacy Hypr3D controller
+packet (`/tmp/mios-hypr3d-pad.bin`) is not visible. The descriptor and registry
+entry name that directory (`tmp`) and `pad_state`, the file an input bridge writes
+this session's own room packet to. `always` applies it to every session, `never`
+to none.
+
+The unlabelled development session keeps the shared `/tmp`. Its plugin state files
+(`desktop.nested.private_files`) each get a private copy bound over them, and the
+legacy packet is masked with `/dev/null`. mios-inputd replaces that packet by
+rename several times a second, and a rename detaches a bind over the old file, so
+that mask is best effort; a launch that races such a rename inside bwrap is retried
+(bounded). Use a seat or `private_tmp = "always"` where isolation from the
+operator's controller matters.
+
+### Sessions inside sessions
+
+A session launched inside another nested session lives under the outermost
+runtime directory (with a link at the usual place in its parent) because UNIX
+socket paths are limited to 107 bytes: `<runtime>/hypr/<signature>/.socket2.sock`
+of a runtime nested twice would not fit. Tools that look a session up in its
+parent's runtime (session zoom) follow the link.

@@ -3272,6 +3272,7 @@
         <label>Default session seat label (empty = unlabelled) <input data-key="desktop.nested.seat" type="text" pattern="[a-z0-9][a-z0-9-]{0,31}"></label>
         <label>Session user display name (empty = the seat label) <input data-key="desktop.nested.user_label" type="text" maxlength="64"></label>
         <label>Session registry directory (under the runtime directory) <input data-key="desktop.nested.registry_dir" type="text"></label>
+        <label>Private /tmp per session <select data-key="desktop.nested.private_tmp"><option value="seat">Labelled seats (second, remote and room users)</option><option value="always">Every session</option><option value="never">Never (shared /tmp, per-file masks)</option></select></label>
         <label>Per-session private plugin state files (comma separated) <input data-key="desktop.nested.private_files" data-array="csv" type="text"></label>
         <label>Whole-output target: default output (empty = --output required) <input data-key="desktop.nested.targets.output.output" type="text"></label>
         <label>Whole-output target scaling <select data-key="desktop.nested.targets.output.scale_mode"><option value="native">Output pixels 1:1</option><option value="fit">Scale the desktop to the output</option></select></label>

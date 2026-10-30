@@ -18114,7 +18114,8 @@ terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiO
 seat = ""                             # default seat label (--seat); "" = an unlabelled session (several may run at once); a label is unique among live sessions
 user_label = ""                       # display name of the session's user (--user; exported to the session); "" = the seat label
 registry_dir = "mios/nested-sessions" # under the parent XDG_RUNTIME_DIR: one JSON entry per live session (seat, compositor socket, assigned devices) -- the mios-inputd contract
-private_files = ["/tmp/hypr3d-status.txt", "/tmp/mios-hypr3d-crt.state", "/tmp/hypr3d-skirt-mask.pgm"]  # shared-/tmp files compositor plugins write; each session binds its own empty copy so a room in the session never touches the parent's
+private_tmp = "seat"                  # always | seat (labelled seats: a second user, a remote user, a room seat) | never: a private /tmp (<runtime>/tmp, removed with the session) isolates every plugin state file and the legacy room packet; the unlabelled development session keeps the shared /tmp
+private_files = ["/tmp/hypr3d-status.txt", "/tmp/mios-hypr3d-crt.state", "/tmp/hypr3d-skirt-mask.pgm"]  # with the shared /tmp: plugin state files each session binds its own empty copy over, so a room in the session never touches the parent's (files elsewhere are bound with a private /tmp too)
 
 # Per-target policy. scale_mode (fit | native) overrides [desktop.nested].scale_mode for that target; pip, window,
 # side-by-side and hypr3d keep the logical width x height (fit), a whole output or remote display maps 1:1 (native).

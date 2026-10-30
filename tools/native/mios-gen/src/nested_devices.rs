@@ -175,7 +175,9 @@ pub struct Host<'a> {
     pub check_node: bool,
 }
 
-pub const HOST: Host<'static> = Host { dev: Path::new("/dev/input"), sys: Path::new("/sys/class/input"), check_node: true };
+pub fn host() -> Host<'static> {
+    Host { dev: Path::new("/dev/input"), sys: Path::new("/sys/class/input"), check_node: true }
+}
 
 /// Resolve one spec: a /dev/input path (by-id/by-path links followed), `name:<exact evdev name>` or `virtual-pad`.
 pub fn resolve_one(host: &Host, spec: &str, seat: &str, policy: &Policy) -> Result<Device, String> {
@@ -493,7 +495,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("reg");
         let pad = Device { path: "/dev/input/event5".into(), spec: "x".into(), name: "Pad".into(), kind: "controller".into(), virtual_node: false, siblings: vec!["/dev/input/js1".into()] };
-        let kb = Device { path: "/dev/input/event6".into(), ..pad.clone() };
+        let kb = Device { path: "/dev/input/event6".into(), siblings: vec![], ..pad.clone() };
         let js_only = Device { path: "/dev/input/event8".into(), siblings: vec!["/dev/input/js1".into()], ..pad.clone() };
         let mut a = Claim::take(&dir, "p1", std::slice::from_ref(&pad), true, json!({"target": "output"})).unwrap();
         assert!(Claim::take(&dir, "p1", &[], true, json!({})).unwrap_err().contains("already in use"));

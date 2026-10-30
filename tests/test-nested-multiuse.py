@@ -189,7 +189,9 @@ class TestDevices(unittest.TestCase):
         by_name = b.plan('--device', f'name:{self.pad.name}')['devices']
         by_path = b.plan('--device', self.pad.node)['devices']
         self.assertEqual(len(by_name), 1)
-        self.assertEqual(by_name, by_path)
+        strip = lambda ds: [{k: v for k, v in x.items() if k != 'spec'} for x in ds]
+        self.assertEqual(strip(by_name), strip(by_path), 'the same node either way')
+        self.assertEqual((by_name[0]['spec'], by_path[0]['spec']), (f'name:{self.pad.name}', self.pad.node), 'the spec is recorded as given')
         d = by_name[0]
         self.assertEqual((d['path'], d['kind'], d['virtual'], d['name']), (self.pad.node, 'controller', True, self.pad.name))
         both = b.plan('--device', self.pad.node, '--device', f'name:{self.pad.name}')['devices']
