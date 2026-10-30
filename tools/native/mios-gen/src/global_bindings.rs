@@ -42,7 +42,9 @@ pub fn literal_binds(lua: &str, sep: &str) -> std::collections::BTreeMap<String,
         }
         let Some(e)=end else {continue};
         if let Some(chord)=lua_literal(&rest[..e]) {
-            if let Ok(c)=canonical(&chord,sep) { out.entry(c).or_default().push(rest[e+1..].trim().to_owned()); }
+            // The dispatcher expression, without hl.bind's own closing parenthesis.
+            let d=rest[e+1..].trim(); let d=d.strip_suffix(')').unwrap_or(d);
+            if let Ok(c)=canonical(&chord,sep) { out.entry(c).or_default().push(d.trim().to_owned()); }
         }
     }
     out
@@ -172,7 +174,8 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
             let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
             let quoted=format!("'{}'",action.replace('\'', "'\\''"));
             // The dispatcher is kept with the handle so a `bypass` on this row binds the same action (escapes below).
-            out+=&format!(" local d=mios_native_hl.dsp.exec_cmd({})\n local b=mios_native_hl.bind({},d{flags})\n if b then table.insert(mios_input_handles,{{handle=b,key={},dispatcher=d,escape={escape}}}) end\n",q(&format!("/usr/libexec/mios/mios-inputd dispatch {quoted}")),q(&chord),q(&chord));
+            // do ... end scopes d and b to this row: the section's closure keeps its Lua local budget (200) for rows.
+            out+=&format!(" do local d=mios_native_hl.dsp.exec_cmd({})\n local b=mios_native_hl.bind({},d{flags})\n if b then table.insert(mios_input_handles,{{handle=b,key={},dispatcher=d,escape={escape}}}) end end\n",q(&format!("/usr/libexec/mios/mios-inputd dispatch {quoted}")),q(&chord),q(&chord));
         }
         if binding.get("tier").and_then(Value::as_integer)==Some(2) {
             let action=binding.get("action").and_then(Value::as_str).ok_or("VM action missing")?;
@@ -207,7 +210,7 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
             }
             if !matches!(action,"mios:toggle_vm_passthrough"|"mios:vm-capture-toggle"|"mios:vm-fullscreen") {return Err(format!("unsupported native VM action {action}"));}
             let action=action.strip_prefix("mios:").unwrap();
-            out+=&format!(" local b=mios_native_hl.bind({},mios_native_hl.dsp.exec_cmd({}),{{dont_inhibit=true,submap_universal=true}})\n if b then table.insert(mios_input_handles,{{handle=b,key={},escape=true}}) end\n",q(&chord),q(&format!("/usr/libexec/mios/mios-inputd vm-action {action}")),q(&chord));
+            out+=&format!(" do local b=mios_native_hl.bind({},mios_native_hl.dsp.exec_cmd({}),{{dont_inhibit=true,submap_universal=true}})\n if b then table.insert(mios_input_handles,{{handle=b,key={},escape=true}}) end end\n",q(&chord),q(&format!("/usr/libexec/mios/mios-inputd vm-action {action}")),q(&chord));
         }
     }
     for name in ["vm-passthrough","game","terminal"] {
@@ -563,7 +566,7 @@ io.write('native policy controls passed')
 local window={address='0xabc',pid=42,class='Alacritty',tags={},fullscreen=0}
 local owner=0
 local hooks,handles={},{}
-hl={plugin={hypr3d={active=function() return false end,input_owner=function() return owner end}},dsp={exec_cmd=function(c) return c end},get_active_window=function() return window end,get_windows=function() return {window} end,window_rule=function() end}
+hl={plugin={hypr3d={active=function() return false end,input_owner=function() return owner end}},dsp={exec_cmd=function(c) return c end,window={close=function() return 'close' end}},get_active_window=function() return window end,get_windows=function() return {window} end,window_rule=function() end}
 hl.bind=function(key,dispatcher,flags)
  local h={key=key,enabled=true,dispatcher=dispatcher,flags=flags or {}}
  h.set_enabled=function(self,value) self.enabled=value end
@@ -585,7 +588,8 @@ local function handle(key) for _,v in ipairs(MIOS_INPUT_POLICY.handles) do if v.
     /// off bypass_mod stays disabled there, including SUPER+ALT (not a prefix of SUPER+CTRL).
     #[test]
     fn bypass_mod_handles_are_escapes_and_nothing_else_is() {
-        let literal="hl.bind(\"SUPER + C\", hl.dsp.exec_cmd(\"close\"))\nhl.bind(\"SUPER + ALT + G\", hl.dsp.exec_cmd(\"setup\"))\nhl.bind(\"SUPER + CTRL + SHIFT + k\", hl.dsp.exec_cmd(\"lit\"))";
+        // SUPER+C is close-window's own realization (window.close = hypr:killactive), so it carries no second handle.
+        let literal="hl.bind(\"SUPER + C\", hl.dsp.window.close())\nhl.bind(\"SUPER + ALT + G\", hl.dsp.exec_cmd(\"setup\"))\nhl.bind(\"SUPER + CTRL + SHIFT + k\", hl.dsp.exec_cmd(\"lit\"))";
         run_lua(&vendor(),literal,r#"
 local p=MIOS_INPUT_POLICY
 local scale,close,alt,lit=handle('SUPER+CTRL+equal'),handle('SUPER + C'),handle('SUPER + ALT + G'),handle('SUPER + CTRL + SHIFT + k')
@@ -713,7 +717,7 @@ end
         assert!(finish(&d,literal).is_ok(),"control: the vendor rows render");
         row_mut(&mut d,"session-scale-up")["chord"]=Value::String("SUPER+J".into());
         let err=finish(&d,literal).unwrap_err();
-        assert!(err.contains("session-scale-up: chord SUPER+j is already bound by the compositor to hl.dsp.layout(\"togglesplit\"))"),"{err}");
+        assert!(err.contains("session-scale-up: chord SUPER+j is already bound by the compositor to hl.dsp.layout(\"togglesplit\") (not mios:session-scale-up)"),"{err}");
         let mut d=vendor();
         row_mut(&mut d,"screenshot-region")["chord"]=Value::String("SUPER+J".into());
         assert!(finish(&d,literal).unwrap_err().contains("screenshot-region: chord SUPER+j"));
@@ -729,6 +733,22 @@ end
         assert!(realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"fullscreen\", [\"action\"] = \"toggle\"}))"));
         assert!(!realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"maximized\"}))"));
         assert_eq!(exec_command("hl.dsp.exec_cmd(\"a \\\"b\\\" \\065\")"),Some("a \"b\" A".into()));
+    }
+
+    /// Verifier observation 2: each dispatch row used to declare two section-level locals (d, b), halving the 200-local
+    /// budget of the global-input closure. Rows are scoped in do ... end now: 250 rows load in real Lua. Negative
+    /// control: the same rows without the scope exceed the limit.
+    #[test]
+    fn many_dispatch_rows_fit_the_lua_local_limit() {
+        let mut d=vendor();
+        let rows=d["keybindings"]["global"]["bindings"].as_array_mut().unwrap();
+        for i in 0..250 { rows.push(toml::from_str(&format!("id='bulk-{i}'\ntier=1\nchord='SUPER+CTRL+ALT+SHIFT+F{}'\naction='mios:session-scale-up'\nrealized_by='hyprland'", i%24+1)).unwrap()); }
+        run_lua(&d,"","");
+        let unscoped=finish(&d,"").unwrap().replace(" do local d="," local d=").replace(" do local b="," local b=").replace(" end end\n"," end\n");
+        let text=format!("{MOCK}\n{}\n{unscoped}\nio.write('ok')",prelude(&d).unwrap());
+        let dir=tempfile::tempdir().unwrap();let file=dir.path().join("p.lua");std::fs::write(&file,text).unwrap();
+        let out=std::process::Command::new("lua").arg(&file).output().unwrap();
+        assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("too many local variables"),"control: {}",String::from_utf8_lossy(&out.stderr));
     }
 
     #[test]

@@ -66,6 +66,28 @@ class Validation(Base):
         self.assertIn('[hyprland.lua]', r.stdout, 'the re-rendered compositor session must see the moved bind')
         self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
 
+    def test_realized_row_on_a_foreign_compositor_chord_is_rejected(self):
+        # D1 (generators verify): a realized_by row moved onto SUPER+J (the compositor's togglesplit) used to pass
+        # with 0 findings and a dead row. Now render-hyprland refuses it, so the draft is rejected and never written.
+        # The pre-fix generator (MIOS_GEN_OLD) is the negative control: it accepts the same draft.
+        for row in ('session-scale-up', 'screenshot-region'):
+            r = self.run_cli('set', row, '--chord', 'SUPER+J', '--passthrough', 'vm-passthrough', '--apply')
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f'{row}: chord SUPER+j is already bound by the compositor', r.stdout + r.stderr)
+            self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
+        old_gen, old_bin = os.environ.get('MIOS_GEN_OLD'), os.environ.get('MIOS_CONTROLS_OLD')
+        draft = ['set', 'session-scale-up', '--chord', 'SUPER+J', '--passthrough', 'vm-passthrough']
+        if old_gen:
+            # Second line alone: the gate analysis (compiled into this editor) flags the row even when the generator
+            # still drops it silently.
+            r = subprocess.run([str(self.bin), '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('session-scale-up: realized_by hyprland on SUPER+j but that chord is desktop.hyprland.bindings:Toggle split direction', r.stdout)
+        if old_gen and old_bin:
+            r = subprocess.run([old_bin, '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertEqual(r.returncode, 0, 'negative control: the pre-fix editor + generator accept the dead row\n' + r.stdout + r.stderr)
+            self.assertIn('0 finding(s)', r.stdout)
+
     def test_reserved_terminal_chord_is_rejected(self):
         r = self.run_cli('add', 'steal-ctrl-c', '--chord', 'CTRL+c', '--action', 'exec:true', '--contexts', 'terminal')
         self.assertEqual(r.returncode, 1, r.stdout)

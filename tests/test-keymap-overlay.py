@@ -5,7 +5,7 @@
 # MIOS_GEN = the candidate mios-gen (required); MIOS_GEN_OLD = a mios-gen without keymap-overlay (default
 # /usr/bin/mios-gen). MIOS_SYNC_THEME overrides the script under test; MIOS_SYNC_THEME_OLD names the negative-control
 # script (default: the script at git main, which must FAIL the remap and toggle_chord checks).
-import json, os, re, subprocess, sys, tempfile
+import json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +38,27 @@ def keymap(script, vendor_text, tmp, tag, gen=None):
     if r.returncode != 0:
         raise RuntimeError(f'{script}: rc={r.returncode} {r.stderr[-400:]}')
     return json.loads((d / 'out/theme.json').read_text())['keymap']
+
+
+def configured_gen_runs(script, tmp, tag, as_root):
+    """Verifier observation 3: does `script` execute a [desktop.controls].mios_gen named by the merged tiers? A fake
+    generator leaves a marker. as_root runs the script with euid 0 in a user namespace (unshare -r), as
+    mios-sync-theme.service does, without real root."""
+    d = Path(tmp) / tag
+    d.mkdir()
+    marker = d / 'ran'
+    fake = d / 'fake-gen'
+    fake.write_text(f'#!/bin/sh\ntouch {marker}\necho "[]"\n')
+    fake.chmod(0o700)
+    (d / 'vendor.toml').write_text(VENDOR.read_text())
+    (d / 'user.toml').write_text(f'[desktop.controls]\nmios_gen = "{fake}"\n')
+    (d / 'out').mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_GEN', 'MIOS_VENDOR_TOML_D', 'MIOS_USER_TOML_D')}
+    env.update(MIOS_VENDOR_TOML=str(d / 'vendor.toml'), MIOS_HOST_TOML=str(d / 'none.toml'), MIOS_USER_TOML=str(d / 'user.toml'),
+               MIOS_THEME_OUT_DIR=str(d / 'out'), MIOS_LIB_DIR=str(ROOT / 'usr/lib/mios'))
+    cmd = (['unshare', '-r'] if as_root else []) + ['bash', str(script), '--bridge-only']
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+    return r.returncode == 0 and (d / 'out/theme.json').is_file(), marker.exists(), r.stderr[-300:]
 
 
 def has(km, keys, label_re=None):
@@ -102,6 +123,20 @@ def main():
         if GEN_OLD and os.access(GEN_OLD, os.X_OK) and Path(GEN_OLD).resolve() != Path(GEN).resolve():
             km = keymap(SCRIPT, VENDOR.read_text(), tmp, 'oldgen', GEN_OLD)
             check('negative control (mios-gen without keymap-overlay): the overlay is empty', km == [], len(km))
+        # Observation 3: as root only the caller's environment may name the generator, never the merged tiers.
+        if shutil.which('unshare') and subprocess.run(['unshare', '-r', 'true']).returncode == 0:
+            ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-user', False)
+            check('as a user: the configured mios_gen runs (the editor\'s candidate path)', ok and ran, err)
+            ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-root', True)
+            check('as root (euid 0): a tier-configured mios_gen never runs', ok and not ran, err)
+            prev = subprocess.run(['git', '-C', str(ROOT), 'show', 'e9e6afba3:usr/libexec/mios/mios-sync-theme'], capture_output=True, text=True)
+            if prev.returncode == 0:
+                p = Path(tmp) / 'prev-sync-theme'
+                p.write_text(prev.stdout)
+                ok, ran, err = configured_gen_runs(p, tmp, 'cfg-root-prev', True)
+                check('negative control (previous script): as root it ran the tier-configured binary', ok and ran, err)
+        else:
+            print('info: unshare -r unavailable; the root-policy check is skipped', flush=True)
     print(f'{sum(res)}/{len(res)} passed')
     return 0 if all(res) else 1
 

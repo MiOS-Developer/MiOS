@@ -79,7 +79,13 @@ resolved["hyprbars"] = {
 # the controller map). This script only hands it the merged layers; it holds no binding logic of its own.
 def _keymap_overlay():
     import subprocess
-    gen = os.environ.get("MIOS_GEN") or merged.get("desktop", {}).get("controls", {}).get("mios_gen") or "/usr/bin/mios-gen"
+    # Run as root (mios-sync-theme.service), only the caller's own environment may name the generator: the merged
+    # tiers include user and DB overlays, and a configured path would run as root.
+    configured = None if os.geteuid() == 0 else merged.get("desktop", {}).get("controls", {}).get("mios_gen")
+    gen = os.environ.get("MIOS_GEN") or configured or "/usr/bin/mios-gen"
+    if not os.path.isabs(gen):
+        print(f"[mios-sync-theme] WARNING: mios_gen {gen!r} is not an absolute path; keymap overlay skipped", file=sys.stderr)
+        return []
     try:
         r = subprocess.run([gen, "keymap-overlay", "--from-json", "-"], input=json.dumps(merged, default=str),
                            capture_output=True, text=True, timeout=30)

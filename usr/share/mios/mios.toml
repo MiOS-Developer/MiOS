@@ -17508,6 +17508,7 @@ unit = [
     "tests/test-tmux-workspace-hook-storm.py",
     "tests/test-mcp-federation.py",
     "tests/test-nested-multiuse.py",
+    "tests/test-mios-lamp-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",

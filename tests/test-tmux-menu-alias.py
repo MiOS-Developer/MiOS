@@ -109,6 +109,7 @@ def main():
         ob, oa = b.take(), a.take(0.3)
         check('route: the MiOS menu opens on client B', r.returncode == 0 and MENU_TEXT in ob, r.stderr.strip())
         check('route: client A shows no menu', MENU_TEXT not in oa, f'{len(oa)} bytes')
+        s.t('split-window', '-d', '-t', 'u1')   # zoom needs a second pane
         z0 = s.zoomed()
         s.t('send-keys', '-c', nb, '-K', 'P'); b.take(0.5)
         s.t('send-keys', '-c', nb, '-K', 'z'); b.take(0.5)
@@ -120,6 +121,17 @@ def main():
         p = subprocess.Popen(['tmux', '-L', s.name, 'mios-menu', '-c', nb], env=s.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         ob, oa = b.take(), a.take(0.3)
         check('negative control: `mios-menu -c B` does not open on B', MENU_TEXT not in ob, f'opened on A={MENU_TEXT in oa} rc={p.poll()}')
+        for n in (na, nb):
+            s.t('send-keys', '-c', n, '-K', 'Escape')
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+        # ... while the bare alias works: it opens the menu on a client tmux picks (not one the caller chose).
+        a.take(0.3); b.take(0.3)
+        p = subprocess.Popen(['tmux', '-L', s.name, 'mios-menu'], env=s.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ob, oa = b.take(), a.take(0.3)
+        check('the bare mios-menu alias opens the menu on one tmux-picked client', (MENU_TEXT in oa) != (MENU_TEXT in ob), f'A={MENU_TEXT in oa} B={MENU_TEXT in ob}')
         for n in (na, nb):
             s.t('send-keys', '-c', n, '-K', 'Escape')
         try:

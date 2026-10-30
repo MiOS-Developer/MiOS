@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the G1/U1 generator outputs in owned nested MiOS PiP sessions, candidate launcher vs the installed one (negative control): bypass_mod escapes act over a captured fullscreen app (session scale), Super+C stays with the app, exactly one Print handle plus the Super+Ctrl+Print escape, literal workspace binds, the capture predicate and the virtual-keyboard layout rule; the tmux mios-menu alias opens and acts in a private tmux server inside the session. Real key events; primary untouched.
+# AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the G1/U1 generator outputs in owned nested MiOS PiP sessions, candidate launcher vs the installed one (negative control): bypass_mod escapes act over a captured fullscreen app (session scale), Super+C stays with the app, exactly one Print handle plus the Super+Ctrl+Print escape, literal workspace binds, the capture predicate and the virtual-keyboard layout rule; the MiOS tmux menu opens and acts in a private tmux server inside the session, by real prefix keys and by the controller's client-exact route (@mios-menu-keys). Real key events; primary untouched.
 # AI-related: tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-gen/src/render.rs, tools/native/mios-unit-gen/src/lib.rs, usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux], tests/test-global-bindings-s0-live.py
 # Env: MIOS_GEN = candidate mios-gen (the launcher whose projection is under test), MIOS_GEN_OLD = negative control
 # launcher (default /usr/bin/mios-gen), MIOS_VENDOR_TOML = SSOT (default: this tree's), MIOS_TMUX_CONF = generated
@@ -95,6 +95,8 @@ class Nested:
             held.append(('', 'Super_L', 'SUPER'))
         if 'CTRL' in mods:
             held.append(('SUPER' if 'SUPER' in mods else '', 'Control_L', 'SUPER CTRL' if 'SUPER' in mods else 'CTRL'))
+        if mods == 'SHIFT':
+            held.append(('', 'Shift_L', 'SHIFT'))
         for m, k, _ in held:
             sk(m, k, 'down')
         sk(mods, key, 'down'); sk(mods, key, 'up')
@@ -259,21 +261,24 @@ def tmux_menu(n):
         z = lambda: T('display', '-p', '-t', 'u1', '#{window_zoomed_flag}').stdout.strip()
         active = n.wait(lambda: json.loads(n.ctl('-j', 'activewindow').stdout or '{}').get('class') == 'mios-u1-tmux', 4)
         check('[u1] the tmux window has keyboard focus', active, n.ctl('-j', 'activewindow').stdout[:120])
+        keys = T('show', '-sv', '@mios-menu-keys').stdout.split()
+        check('[u1] the server publishes the client-exact menu route', keys == ['C-b', 'Space'], keys)
+        # Keyboard path, real key events: prefix Space opens the MiOS menu, Shift+P (its accelerator) enters Pane >,
+        # z zooms.
         z0 = z()
-        p = subprocess.Popen(['tmux', '-L', sock, 'mios-menu'], env=tenv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        time.sleep(0.8)
+        n.key('CTRL', 'b'); n.key('', 'space')
         n.shot('03-menu')
-        check('[u1] mios-menu alias opens the menu on the client', p.poll() is None and z0 == '0', f'zoomed={z0}')
-        n.key('', 'z')
-        check('[u1] a real key event picks Zoom from the menu', n.wait(lambda: z() == '1', 4) and p.wait(timeout=5) == 0, z())
+        n.key('SHIFT', 'p'); n.key('', 'z')
+        check('[u1] real keys: prefix Space -> Pane > Zoom acts', z0 == '0' and n.wait(lambda: z() == '1', 4), f'{z0} -> {z()}')
         if z() == '1':
             T('resize-pane', '-Z', '-t', 'u1')
-        if p.poll() is None:  # a menu the real key did not close: close it so the controller check starts clean
-            T('send-keys', '-c', client, '-K', 'Escape')
-        p = subprocess.Popen(['tmux', '-L', sock, 'mios-menu'], env=tenv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        time.sleep(0.8)
-        r = T('send-keys', '-c', client, '-K', 'z')
-        check('[u1] controller path (send-keys -c <client> -K) picks the item', r.returncode == 0 and n.wait(lambda: z() == '1', 4) and p.wait(timeout=5) == 0, r.stderr.strip())
+        T('send-keys', '-c', client, '-K', 'Escape')
+        # Controller path (tmux:menu): send-keys -c <client> -K <route>, then the item keys on that same client.
+        r = T('send-keys', '-c', client, '-K', *keys)
+        for k in ('P', 'z'):
+            time.sleep(0.4)
+            T('send-keys', '-c', client, '-K', k)
+        check('[u1] controller route (send-keys -c <client> -K C-b Space, P, z) picks the item', r.returncode == 0 and n.wait(lambda: z() == '1', 4), r.stderr.strip())
         check('[u1] linux:mouse terminal feature active', 'linux:mouse' in T('show', '-s', 'terminal-features').stdout)
     except Exception as e:
         check('[u1] driver', False, repr(e))

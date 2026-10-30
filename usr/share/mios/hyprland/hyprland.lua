@@ -281,33 +281,33 @@ mios_section("global-input", function()
  policies["SUPER+escape"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["SUPER+escape"]="SUPER+CTRL+escape"
  policies["SUPER+CTRL+equal"]={contexts={},passthrough={}}
- local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
  local b=mios_native_hl.bind("SUPER+CTRL+equal",d,{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal",dispatcher=d,escape=true}) end
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal",dispatcher=d,escape=true}) end end
  policies["SUPER+CTRL+minus"]={contexts={},passthrough={}}
- local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
  local b=mios_native_hl.bind("SUPER+CTRL+minus",d,{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+minus",dispatcher=d,escape=true}) end
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+minus",dispatcher=d,escape=true}) end end
  policies["SUPER+CTRL+0"]={contexts={},passthrough={}}
- local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-reset'")
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-reset'")
  local b=mios_native_hl.bind("SUPER+CTRL+0",d,{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+0",dispatcher=d,escape=true}) end
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+0",dispatcher=d,escape=true}) end end
  policies["SUPER+CTRL+mouse_up"]={contexts={},passthrough={}}
- local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
  local b=mios_native_hl.bind("SUPER+CTRL+mouse_up",d,{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_up",dispatcher=d,escape=true}) end
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_up",dispatcher=d,escape=true}) end end
  policies["SUPER+CTRL+mouse_down"]={contexts={},passthrough={}}
- local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
  local b=mios_native_hl.bind("SUPER+CTRL+mouse_down",d,{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_down",dispatcher=d,escape=true}) end
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_down",dispatcher=d,escape=true}) end end
  policies["print"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["print"]="SUPER+CTRL+print"
  policies["SUPER+CTRL+p"]={contexts={"desktop-2d","desktop-3d","vm-passthrough"},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+p",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action toggle_vm_passthrough"),{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+p",escape=true}) end
+ do local b=mios_native_hl.bind("SUPER+CTRL+p",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action toggle_vm_passthrough"),{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+p",escape=true}) end end
  policies["SUPER+CTRL+f"]={contexts={"vm-passthrough"},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+f",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action vm-fullscreen"),{dont_inhibit=true,submap_universal=true})
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+f",escape=true}) end
+ do local b=mios_native_hl.bind("SUPER+CTRL+f",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action vm-fullscreen"),{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+f",escape=true}) end end
  policies["SUPER+CTRL+m"]={contexts={"vm-passthrough"},passthrough={}}
  local lg_classes={"looking-glass-client"}
  local lg_key="Scroll_Lock"
