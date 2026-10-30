@@ -3668,3 +3668,8 @@ Native RDPDR FUSE bridge is active at a19368271b9144ee680d58dfacf98e949a06676a29
 ## 2026-10-30T15:52:07.134521+00:00 — mios-native-camera-live
 
 Camera channels and native PipeWire sources are live at bb6dcd8f3ef84e7b217daf40fb528d0311acb5e676a82041bcd5a75c2d5ddcba; idle RDP-only activation preserved compositor5764/apps/physical geometry. 67 Rust, four preparation tests, two codec fixtures, four native camera cases across three codecs and channel teardown,33 backend passes/four skips, full TCP/TLS microphone and file regressions passed. Physical phone camera negotiation is awaiting reconnect; not claimed passed. PipeWire dependency update/Pulse crash, scoped recovery and failed idle watcher are recorded in docs/design/mios-desktop-continuation-handoff.md. Module cleanup now guards against audio-daemon ID reuse. No push by this lane.
+
+
+## 2026-10-30T20:11:31.806725+00:00 — mios-global-launch-camera-normalization
+
+Shared native application preflight and all dock/drawer/search call sites are LIVE; all11 installed Flatpak sandbox probes and mapped Spotify/Discord window checks pass. Source/static build audit, five native tests, one desktop metadata test, five private portal controls and actual shared-QML failure/timeout tests passed. Normalized camera build 3c556268b307306135dc0b14ae0a20a1447257df88e22b5a32e566ece87c110e LIVE,71 regular/four source-preparer/two codec/seven native camera cases passed. Phone disconnected; physical camera proof pending. Primary760519/apps/geometry preserved. Evidence and limitations in docs/design/mios-desktop-continuation-handoff.md. No desktop restart or push.

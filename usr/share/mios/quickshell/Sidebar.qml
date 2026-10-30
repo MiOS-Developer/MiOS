@@ -188,8 +188,7 @@ QS.Scope {
         if (!entry) return
         const outName = screen ? screen.name : ""
         const rect = (Array.isArray(iconRect) && iconRect.length === 4) ? iconRect : dock.rectForEntry(entry)
-        DockLamp.recordLaunch(entry, outName, rect)
-        if (typeof entry.execute === "function") entry.execute()
+        AppLaunch.launch(entry, outName, rect)
         shellState.drawerOpen = false
     }
 

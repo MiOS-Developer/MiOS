@@ -14,6 +14,7 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=zen
 MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+X-Flatpak=app.zen_browser.zen
 Actions=new-window;new-private-window;
 
 [Desktop Action new-window]

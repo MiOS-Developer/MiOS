@@ -1083,3 +1083,13 @@ usr/share/mios/virtio/*.iso
 !/src/mios-rdp-server/crates/mios-rdp-server/src/remote_camera.rs
 !/tests/fixtures/mios-rdp/camera.py
 !/usr/share/doc/mios/remote-camera.md
+
+!/tools/native/mios-gen/src/app_preflight.rs
+
+!/usr/share/mios/quickshell/AppLaunch.qml
+
+!/tests/test-app-launch-health.py
+
+!/tests/test-app-launch-qml.py
+
+!/usr/share/doc/mios/application-launching.md
