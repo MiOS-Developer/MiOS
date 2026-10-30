@@ -202,9 +202,11 @@ def main():
             time.sleep(0.2)
             return ptr(x, y, 'click')
 
-        def start_shell(qml, label, items):
+        def start_shell(qml, label, items, desktop=True):
             stop_shells()
-            senv = dict(env, MIOS_NESTED_TOPBAR_ITEMS=items, MIOS_MOBILE_OUTPUTS_JSON=str(desk_json))
+            senv = dict(env, MIOS_NESTED_TOPBAR_ITEMS=items)
+            if desktop:
+                senv['MIOS_MOBILE_OUTPUTS_JSON'] = str(desk_json)
             p = subprocess.Popen(['bwrap', '--die-with-parent', '--bind', '/', '/', '--dev-bind', '/dev', '/dev',
                                   '--ro-bind', str(d / 'input'), '/dev/input', '--', QS, '--no-duplicate', '--path', qml],
                                  env=senv, stdout=open(OUT / f'shell-{label}.log', 'w'), stderr=subprocess.STDOUT)
@@ -362,6 +364,13 @@ def main():
         st3 = wait_state(QML, lambda s: s.get('app_id') == 'org.mios.MenuFixture')
         check('NEGATIVE CONTROL: without app_menu in the island items the pills stay hidden',
               isinstance(st3, dict) and not st3.get('visible'), st3)
+
+        # ---- NEGATIVE CONTROL: under the session's own (mobile) verdict the desktop app menu is hidden --------------
+        if any(policy.values()):
+            start_shell(QML, 'tree-mobile', 'clock,fps,workspaces,app_menu', desktop=False)
+            st4 = wait_state(QML, lambda s: s.get('app_id') == 'org.mios.MenuFixture')
+            check('NEGATIVE CONTROL: with the PiP output\'s own mobile verdict the app-menu pills stay hidden '
+                  '(why the checks above pass a desktop verdict)', isinstance(st4, dict) and not st4.get('visible'), st4)
 
         # ---- NEGATIVE CONTROL: main's nested shell has no app-menu surface ----------------------------------------
         if Path(OLD_QML).is_file() and Path(OLD_QML).resolve() != Path(QML).resolve():
