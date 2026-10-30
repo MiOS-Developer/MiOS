@@ -1057,6 +1057,33 @@ mod tests {
         assert!(!disabled_tmux.contains("-T root MouseDown3Status \"if-shell"));
     }
 
+    fn tmux_conf(doc: &toml::Value) -> Result<String, String> {
+        super::render_keybindings(&toml::to_string(doc).unwrap())
+            .map(|p| p["usr/share/mios/tmux/mios-keys.tmux.conf"].clone())
+            .map_err(|e| e.to_string())
+    }
+
+    /// U1 C-18: mouse_terms gives the Linux VT the tmux mouse feature; without it (or with mouse off) nothing changes.
+    #[test]
+    fn mouse_terms_add_the_mouse_terminal_feature() {
+        let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        assert!(tmux_conf(&doc).unwrap().contains("set -s terminal-features[130] 'linux:mouse'\n"));
+        let mut none = doc.clone();
+        none["keybindings"]["tmux"].as_table_mut().unwrap().remove("mouse_terms");
+        assert!(!tmux_conf(&none).unwrap().contains(":mouse'"));
+        let mut off = doc.clone();
+        off["keybindings"]["mouse"] = toml::Value::Boolean(false);
+        let off_conf = tmux_conf(&off).unwrap();
+        assert!(!off_conf.contains(":mouse'"), "the mouse master toggle wins");
+        assert!(off_conf.contains("set -su terminal-features[130]\n"), "the owned slots are still cleared on reload");
+        let mut bad = doc.clone();
+        bad["keybindings"]["tmux"]["mouse_terms"] = toml::Value::Array(vec![toml::Value::String("linux\" ; run-shell x".into())]);
+        assert!(tmux_conf(&bad).unwrap_err().contains("invalid terminal pattern"));
+        let mut overlap = doc.clone();
+        overlap["keybindings"]["tmux"]["mouse_features_index"] = toml::Value::Integer(125);
+        assert!(tmux_conf(&overlap).unwrap_err().contains("overlaps the extended-keys"), "never clobber the extkeys slots");
+    }
+
     #[test]
     fn mobile_keybindings_reject_duplicate() {
         let mut doc: toml::Value =
