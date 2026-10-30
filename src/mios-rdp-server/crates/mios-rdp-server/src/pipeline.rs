@@ -234,6 +234,7 @@ pub struct PipeStats {
     pub camera_workers: AtomicU64,
     pub camera_frames: AtomicU64,
     pub camera_bytes: AtomicU64,
+    pub camera_restarts: AtomicU64,
     pub camera_sources: Mutex<Vec<serde_json::Value>>,
     pub camera_error: Mutex<Option<String>>,
     pub drive_generation: AtomicU64,

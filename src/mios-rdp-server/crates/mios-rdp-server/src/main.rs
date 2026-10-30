@@ -777,6 +777,8 @@ async fn stats_loop(s: Arc<Session>) {
                     "sources": s.stats.camera_sources.lock().unwrap().clone(),
                     "frames_forwarded": s.stats.camera_frames.load(Ordering::Relaxed),
                     "bytes_forwarded": s.stats.camera_bytes.load(Ordering::Relaxed),
+                    "provider_restarts": s.stats.camera_restarts.load(Ordering::Relaxed),
+                    "consumers": remote_camera::consumers(&s.cfg),
                     "error": s.stats.camera_error.lock().unwrap().clone()},
                 "drives": {"implemented": true, "permitted": s.cfg.redirect.drives, "mounts": s.stats.drive_mounts.lock().unwrap().clone(), "error": s.stats.drive_error.lock().unwrap().clone()},
                 "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},

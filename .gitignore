@@ -484,6 +484,7 @@ etc/sysctl.d/*
 !/usr/bin/mios-pull
 !/usr/bin/mios-rebuild
 !/usr/bin/mios-update
+!/usr/bin/mios-camera-v4l2
 !/usr/bin/iommu-groups
 !/usr/bin/@
 !/usr/bin/hermes
