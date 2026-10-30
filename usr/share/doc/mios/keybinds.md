@@ -59,8 +59,10 @@ app owns the input, or uncaptured, so MiOS owns it.**
   Today half-capture also runs Guide combinations and LB/RB on the host. That is a known
   bug, and step I1 fixes it.
 - **While captured, the keyboard belongs to the app.** Only the chords on
-  `bypass_mod = "SUPER+CTRL"` reach the host. Today that covers the declared bypass
-  chords and the VM escape handles. The session-scale chords join them in step G1.
+  `bypass_mod = "SUPER+CTRL"` reach the host: mios-gen marks every compositor handle
+  whose chord starts with `bypass_mod` as an escape (the declared bypass chords, the
+  session-scale chords, the VM escape handles and any literal bind on `bypass_mod`).
+  Nothing else does, whatever the window kind.
 - **Notice.** Every capture and release shows "Controller -> <app>. Hold L3+R3 to
   release." [step I2]
 - A VM client's own keyboard/mouse capture state stays owned by the client.
@@ -173,6 +175,14 @@ sensors are not forwarded.
 | L3+R3 hold | release capture | release capture | suppressed [step I2] | | |
 
 On a VT:
+- **The mouse reaches tmux.** tmux turns on mouse reporting on the kernel console, and gpm
+  injects the pointer as mouse reports, so a gpm click selects panes and scrolls.
+  `[keybindings.tmux].mouse_terms = ["linux"]` pins the tmux `mouse` terminal feature for
+  it (the linux terminfo already has `kmous`); a terminal type without `kmous`, such as
+  `vt220`, gets mouse reporting only through an entry there. The controller path does not
+  need the mouse.
+- **The session selector takes the controller.** Tab (West) opens a new session, like `n`;
+  the arrows move, Enter opens and Esc drops to a shell.
 - **Shift+Enter cannot be sent.** The console encodes it like Enter, so South has no hold there.
 - **The Guide layer does nothing**, because there is no compositor.
 - **The keys are pressed by a virtual keyboard**, pinned to the US layout.
@@ -202,9 +212,11 @@ Inputs: `BTN_*`, `BTN_DPAD_*`, `BTN_TL2`/`BTN_TR2`, `LS_*`/`RS_*` and `TOGGLE_CH
 
 Namespaces: `key:`, `pointer:`, `tmux:`, `hypr:`, `quickshell:` and `mios:`.
 
-The configurator at `/usr/share/mios/configurator/mios.html` edits the global binding map
-and the system layer. The nav and room tables are TOML-only. `mios-controls list` shows
-them [step GT].
+The configurator at `/usr/share/mios/configurator/mios.html` edits the global binding map,
+the system layer, the virtual keyboard layout and the tmux menu alias / VT mouse terminals.
+The nav and room tables are TOML-only. `mios-controls list` (and `list --json`) shows them
+with the toggle chord, the half-capture chord and the room buttons, and `mios-controls
+check` audits the resolved user projection with the same controller audit as the gate.
 
 ## 4. Keyboard
 
@@ -219,16 +231,17 @@ them [step GT].
 | Super+F11 | fullscreen (bypass Super+Ctrl+F11, which un-fullscreens a captured app) |
 | Super+Shift+F11 | maximize (not a capture) |
 | Super+arrows, Super+left/right mouse drag | focus, move, resize |
-| Super+Escape | keymap overlay (bypass Super+Ctrl+Escape) |
+| Super+Escape | keymap overlay (bypass Super+Ctrl+Escape). The overlay is generated from the same tables: compositor binds with their global remaps, every global row and its bypass, the toggle chord, North, Start, the half-capture chord, the system layer and the nav / room tables |
 | Super+G, Super+Shift+G, Super+Alt+G | ShaderGlass toggle, cycle, setup (in the room: CRT toggle and picker) |
-| Super+1..0, Super+Shift+1..0 | workspace, move to workspace |
+| Super+1..0, Super+Shift+1..0 | workspace, move to workspace (emitted as literal binds, so the gate audits each one) |
 | Super+F12 | Hypr3D room |
-| Print, Super+Shift+S / Shift+Print / Alt+Print / Ctrl+Print | screenshot region / output / window / all (bypass Super+Ctrl+Print [step G1]) |
+| Print, Super+Shift+S / Shift+Print / Alt+Print / Ctrl+Print | screenshot region / output / window / all (bypass Super+Ctrl+Print over captured apps and VMs; Print keeps exactly one handle) |
 | Ctrl+Alt+Shift+T / A / G / M | terminal / AI / agents / system monitor |
-| Super+Ctrl+= / - / 0, Super+Ctrl+wheel | session scale (live over captured apps and VMs [step G1]) |
+| Super+Ctrl+= / - / 0, Super+Ctrl+wheel | session scale (live over captured apps and VMs) |
 | Super+Ctrl+P / F / M | VM passthrough latch / VM fullscreen / Looking Glass command key (held) |
 | tmux `Ctrl-b` + one key | MiOS-Tmux prefix table (section 4.1); `Ctrl-b Space` opens the MiOS menu |
 | tmux Shift+Enter | agent accept |
+| tmux command `mios-menu` | the MiOS menu (the same items as the right-click menu), centred: `tmux -L <socket_name> mios-menu`. The controller opens it without a prefix key |
 
 Every tmux action is also reachable from the MiOS menu with arrows and Enter, so the
 punctuation and Shift prefix keys are accelerators, not requirements. POSIX signals, Readline
@@ -295,7 +308,13 @@ controller or MCP can drive it through `send-keys -c CLIENT -K`. A menu opened
 by right-click also takes mouse clicks. Menus opened by a key are keyboard-only:
 tmux ignores the starting item of a menu that handles the mouse (`-M`), and
 Enter must choose an item without a mouse. The
-`mios-menu` alias is the entry point for the controller's `tmux:menu` verb. A
+controller's `tmux:menu` verb is client-exact: it runs
+`tmux -L <socket> send-keys -c <client> -K <prefix> <menu_key>`, and the
+server publishes those two key words as `@mios-menu-keys`
+(`tmux show -sv @mios-menu-keys` prints `C-b Space`). The `mios-menu` command
+alias opens the same menu by name from the command prompt, but it cannot be
+aimed at a client: tmux appends CLI arguments to an alias's expansion, so run
+from outside tmux it opens on whichever client tmux picks. A
 client shorter than `[keybindings.tmux].menu_min_client_rows` gets
 `menu_too_small_message` instead of a silently dropped menu.
 
@@ -417,6 +436,11 @@ Run the real executable tests with explicit candidate paths:
 
 ```sh
 MIOS_GATE=/path/to/mios-gate python3 /tests/test-keybind-collisions.py
+MIOS_CONTROLS=/path/to/mios-controls MIOS_GEN=/path/to/mios-gen python3 /tests/test-mios-controls.py
+MIOS_GEN=/path/to/mios-gen python3 /tests/test-keymap-overlay.py          # Super+Escape overlay
+MIOS_UNIT_GEN=/path/to/mios-unit-gen python3 /tests/test-tmux-menu-alias.py  # mios-menu, VT mouse
+MIOSD=/path/to/miosd python3 /tests/test-session-selector-controller.py   # Tab = new session
+MIOS_LIVE_NESTED=1 MIOS_GEN=/path/to/mios-gen python3 /tests/test-generators-g1-live.py
 MIOS_INPUTD_BIN=/path/to/mios-inputd \
   MIOS_INPUTD_SSOT=/usr/share/mios/mios.toml \
   MIOS_INPUTD_UINPUT_TEST=1 python3 /tests/test-mios-inputd.py
@@ -429,4 +453,10 @@ If the gate binary is missing, the collision tests fail instead of skipping.
 
 The gate reports dynamic Lua bindings separately. It does not audit live
 shortcut-inhibition behavior. The controller completeness audit, in which every input ×
-MiOS-owned context maps to an action or `"none"`, is [step GT].
+MiOS-owned context maps to an action or `"none"`, runs in the gate and in `mios-controls
+check`. It also checks the nav value grammar (`""` and `"app"` are rejected), `inherits`
+cycles, `tmux:key` against the bound prefix keys, console rows (only `key:`, `tmux:` and
+`mios:graphical-vt` act on a VT), and that the toggle chord, the half-capture chord and the
+room buttons do not overlap. `console` is never in a row's default contexts, so a
+compositor bind is not active on a VT. Two literal compositor binds on one chord are a
+finding (no double binds).

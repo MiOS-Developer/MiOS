@@ -398,6 +398,14 @@ enum Commands {
         #[arg(long)] list_sessions: bool,
     },
 
+    /// Print the Super+Escape overlay rows (JSON [{keys,label}]) generated from the binding tables; writes nothing.
+    #[command(name = "keymap-overlay")]
+    KeymapOverlay {
+        #[arg(long)] root: Option<PathBuf>,
+        /// Read the merged SSOT as JSON from this file ("-" = stdin) instead of resolving --root's layers.
+        #[arg(long)] from_json: Option<PathBuf>,
+    },
+
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
     #[command(name = "session-scale")]
     SessionScale {
@@ -1564,6 +1572,25 @@ fn main() -> ExitCode {
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
+        ),
+        Commands::KeymapOverlay {root,from_json} => (
+            "keymap-overlay", "desktop",
+            (|| -> Result<(), String> {
+                let data: toml::Value = match from_json {
+                    Some(p) => {
+                        let mut raw = String::new();
+                        if p.as_os_str() == "-" {
+                            std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 16 << 20), &mut raw).map_err(|e| e.to_string())?;
+                        } else {
+                            raw = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                        }
+                        serde_json::from_str(&raw).map_err(|e| format!("merged SSOT JSON: {e}"))?
+                    }
+                    None => mios_resolver::resolve_merged(Some(&root.unwrap_or_else(||PathBuf::from("/"))), false).map_err(|e| e.to_string())?,
+                };
+                println!("{}", global_bindings::keymap_overlay_json(&data)?);
+                Ok(())
+            })().map_err(|e|(e,1)),
         ),
         Commands::SessionScale {root,direction} => (
             "session-scale", "desktop",

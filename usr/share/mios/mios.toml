@@ -4216,7 +4216,9 @@ adapters = [
 # or digit, one of *`:?[]=,$!&(){}<>, or Space Enter Tab BTab BSpace Up Down Left Right PPage NPage) and rejects
 # duplicates across bindings, menu/launcher keys, float keys and [keybindings.agent].accept_key. The controller
 # does not add prefix keys: its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3)
-# and its tmux:menu verb runs the generated mios-menu command alias.
+# and its tmux:menu verb is client-exact: `tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>`, the
+# key words published by the server as @mios-menu-keys. The generated `mios-menu` command alias opens the same menu by
+# name (command prompt, one-client scripts) but cannot be aimed: tmux appends CLI arguments to an alias's expansion.
 [keybindings.tmux]
 # MiOS-Tmux (tmux-os), tier 3 of [keybindings.global] in the terminal context. Every binding below is in the
 # PREFIX table ([keybindings].tmux_prefix, then one key), so none can shadow a reserved_terminal chord; the
@@ -4227,6 +4229,14 @@ extended_feature_slots  = 8         # terminal-features[index .. index+slots-1] 
 extended_keys = "on"                # on | off | always (off also clears the MiOS terminal-features slots)
 extended_keys_format = "csi-u"
 extended_key_terms = ["xterm*", "kitty*", "foot*", "alacritty*"]
+# Client terminals that get the tmux "mouse" terminal feature, so tmux turns mouse reporting on there. "linux" is the
+# kernel VT: while reporting is on, gpm injects the pointer as mouse reports (TIOCL_SELMOUSEREPORT), so a VT click
+# selects a tmux pane. The linux terminfo already has kmous, so this entry pins that; a terminal type whose terminfo
+# lacks kmous (vt220, vt100) only gets reporting through an entry here. "[]" emits only the slot clears;
+# [keybindings].mouse = false wins.
+mouse_terms = ["linux"]
+mouse_features_index = 130          # terminal-features[index .. index+slots-1] is MiOS-owned (clear of 90-94 and 120-127)
+mouse_feature_slots = 4
 command_alias_index = 200           # command-alias[index .. index+slots-1] holds the generated menus
 command_alias_slots = 32
 menu_key = "Space"                  # prefix + this key opens the MiOS menu (mirrors SUPER+Space, the desktop drawer)
@@ -4410,11 +4420,10 @@ items = [
   { label = "No", key = "n", command = "" },
 ]
 
-# Read by mios-sync-theme:98 (enabled) and the mios-controls TUI (tui.rs:809, hypr3d_toggle_chord). The router itself uses
-# [desktop.hyprland.hypr3d.controller].toggle_chord.
+# Read by mios-gen keymap-overlay (enabled: the controller rows of the Super+Escape overlay). The router, the overlay
+# and the mios-controls TUI read the chord itself from [desktop.hyprland.hypr3d.controller].toggle_chord.
 [keybindings.controller]
 enabled = true
-hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]   # mirror of toggle_chord
 
 # --- Global input contract (/usr/share/doc/mios/keybinds.md) ---
 # One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
@@ -4456,6 +4465,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
 "mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
+"mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
@@ -4534,8 +4544,8 @@ passthrough = ["vm-passthrough"]
 note = "The bypass shows the bindings over a captured app or a VM."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
-# On bypass_mod. They reach the host in captured apps and VMs only once mios-gen marks bypass_mod handles as
-# escapes (G1). Until then hyprland.lua:319 disables them there.
+# On bypass_mod, so mios-gen marks their handles as escapes: they reach the host over captured apps and VMs (in
+# app-capture and vm-passthrough exactly the bypass_mod chords reach the host).
 [[keybindings.global.bindings]]
 id = "session-scale-up"
 tier = 1
@@ -4571,8 +4581,17 @@ chord = "SUPER+CTRL+mouse_down"
 action = "mios:session-scale-down"
 realized_by = "hyprland"
 
-# G1: a screenshot that works over a fullscreen game. mios-gen must stop adding a second bind for a row whose chord
-# the compositor tables already bind (global_bindings.rs:53). Only then may this row land.
+# A screenshot that works over a fullscreen game. mios-gen adds no dispatch bind for a row whose chord the compositor
+# already binds literally, so Print keeps exactly one handle and the bypass becomes its escape.
+[[keybindings.global.bindings]]
+id = "screenshot-region"
+tier = 1
+chord = "Print"
+bypass = "SUPER+CTRL+Print"
+action = "mios:screenshot-region"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+note = "Print stays a literal compositor bind; the bypass reaches the host over captured apps and VMs."
 
 # Tier 2: VM / remote-client host keys. They live on bypass_mod so they work while the VM owns the keyboard (the
 # research proposed Super+Alt+P; the guest would swallow that chord). Realised by escape handles that mios-gen generates
@@ -4639,6 +4658,8 @@ exclusive_grab = true                # one physical evdev owner; the bridge re-g
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
 capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
+virtual_keyboard = "mios-vctl-keyboard"   # the key: projection's uinput keyboard (Hyprland device name)
+virtual_keyboard_layout = "us"           # key: names are US keycodes; mios-gen pins this device to the layout
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
 context_stale_ms = 1000                # transport failure never invents terminal focus; a pending capture waits for it
 capture_hold_ms = 500                 # THE hold threshold: North tap/hold, L3+R3 release, and every nav [tap, hold] pair
@@ -8623,7 +8644,7 @@ mode_confirm_s = 15                # a new mode is restored after this long unle
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
 modeset_min_interval_s = 30        # at least this long between two modesets of one output
 pacing_plugin = "mios-pacing"      # the [desktop.hyprland.<name>] compositor plugin that holds the cap
-state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, SUPER+G
+state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, the Hypr3D room toggle
 user_fragment = "50-framerate.toml"        # `miosd framerate set-unlocked` writes `unlocked` here (user-tier mios.d)
 [desktop.framerate.profiles]       # power profile -> tier; "unknown" = any other profile or no profile daemon
 power-saver = "power-saver"
@@ -8783,7 +8804,7 @@ bindings = [
 [desktop.controls]
 input_cpu = -1                     # CPU the editor's input thread is pinned to; -1 = the last CPU it may use (others are kept off it)
 backup_suffix = "controls-backup"  # apply keeps the previous user tier as mios.toml.<suffix> (0600)
-mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written)
+mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written); mios-sync-theme runs its keymap-overlay
 
 # ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
 # shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
@@ -9022,7 +9043,7 @@ recenter_seconds = 0.3
 
 # Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
 # render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
-# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by SUPER+G and
+# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by the room toggle (toggle_key) and
 # miosd framerate; mios-gen rejects them here while the policy is enabled.
 
 # Retina window opening (hypr3d-mios-retina-spawn.patch; tools/native/mios-gen/src/hypr3d_spawn.rs). A window opens in
@@ -17547,6 +17568,24 @@ unit = [
     "tests/test-hypr3d-room-input-live.py",
     "tests/test-window-fps.py",
     "tests/test-window-fps-live.py",
+    # Opt-in live suites (MIOS_LIVE_NESTED=1 inside a MiOS desktop session; each prints "skip:" and exits 0
+    # otherwise) and real-binary suites (candidate binaries via MIOS_GEN / MIOS_CONTROLS / MIOS_MIOSD / ...).
+    "tests/test-generators-g1-live.py",
+    "tests/test-global-bindings-s0-live.py",
+    "tests/test-mios-controls-live.py",
+    "tests/test-nested-multiuse-live.py",
+    "tests/test-nested-session-scaling.py",
+    "tests/test-pip-gravity-drawer-live.py",
+    "tests/test-blender-mcp-live.py",
+    "tests/test-blender-mcp-real.py",
+    "tests/test-keymap-overlay.py",
+    "tests/test-mios-controls.py",
+    "tests/test-session-selector-controller.py",
+    "tests/test-tmux-menu-alias.py",
+    "tests/test-tmux-workspace-hook-storm.py",
+    "tests/test-mcp-federation.py",
+    "tests/test-nested-multiuse.py",
+    "tests/test-mios-lamp-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",

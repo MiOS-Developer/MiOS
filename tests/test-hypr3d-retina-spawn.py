@@ -911,7 +911,7 @@ class NestedTransform(unittest.TestCase):
 
 @unittest.skipUnless(NESTED and MIOS_GEN, "nested Hypr3D session + MIOS_GEN not provided")
 class NestedToggle(unittest.TestCase):
-    """The real `mios-gen hyprland-3d-toggle` (SUPER+G) against the nest, with the staged SSOT."""
+    """The real `mios-gen hyprland-3d-toggle` (the room toggle, SUPER+F12) against the nest, with the staged SSOT."""
 
     def toggle(self, vendor):
         env = hermetic_env(vendor)

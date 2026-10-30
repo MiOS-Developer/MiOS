@@ -1,9 +1,9 @@
 // AI-hint: Desktop frame-rate policy ([desktop.framerate]) -- ONE pure table + precedence shared by `miosd framerate`
-//          (runtime tier), `mios-gen render-hyprland` (login projection, SUPER+G overlay) and the tests: inputs ->
+//          (runtime tier), `mios-gen render-hyprland` (login projection, room-toggle overlay) and the tests: inputs ->
 //          tier -> desktop rate D (2D compositor + Hypr3D), glass rate G = D / glass_divisor (Hyprglass re-sampling,
 //          Hypr3D refraction/reflection), wallpaper rate W = D / wallpaper_divisor (living wallpaper, Hypr3D dome).
 //          Also the host readers both runtimes need (tuned-ppd profile map, sysfs mains/battery) and the
-//          $XDG_RUNTIME_DIR state file every consumer reads (miosd writes it; Lua, Host.qml, SUPER+G read it).
+//          $XDG_RUNTIME_DIR state file every consumer reads (miosd writes it; Lua, Host.qml, the room toggle read it).
 // AI-related: usr/share/mios/mios.toml [desktop.framerate], src/mios-rs/miosd/src/framerate.rs,
 // AI-related: tools/native/mios-gen/src/render.rs (framerate_lua, toggle_3d), usr/share/mios/wallpaper/Host.qml
 //! Operator policy (2026-10-23 20:15 / 20:20): performance 90, balanced/power-saver/battery 60, gaming 120,

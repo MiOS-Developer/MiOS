@@ -146,3 +146,140 @@ pub fn axis_code(name: &str) -> Result<u16, String> {
         _ => Err(format!("unknown controller axis {name}")),
     }
 }
+
+// ---- D1: when a literal compositor bind IS a global row's realization -----------------------------------------------
+// One rule for mios-gen (render-hyprland suppresses the row's dispatch handle) and the gate (a realized_by row on a
+// chord the compositor holds for anything else is a finding). A literal realizes a row only when it runs exactly what
+// mios-inputd would run for the row's action; sharing a word with it (`alacritty -e ... --action system` for
+// `exec:alacritty`) is another action, and the row would be dead.
+
+/// The command mios-gen binds as a global row's own dispatch handle (`'` shell-quoted).
+pub fn dispatch_command(action: &str) -> String {
+    format!("/usr/libexec/mios/mios-inputd dispatch '{}'", action.replace('\'', "'\\''"))
+}
+
+fn ssot_at<'a>(v: &'a toml::Value, path: &str) -> Option<&'a toml::Value> {
+    path.split('.').try_fold(v, |v, k| v.get(k))
+}
+
+/// Whether a compositor exec bind running `command` runs `action` itself:
+/// - an action with [keybindings.global.action_argv] runs exactly that argv;
+/// - `exec:mios-terminal` runs exactly the `desktop_command` of the [[keybindings.actions]] `terminal` row (what
+///   mios-inputd resolves it to);
+/// - any other `exec:<prog>` runs exactly `prog` (or `/path/prog`) with no arguments.
+pub fn command_realizes(ssot: &toml::Value, action: &str, command: &str) -> bool {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if let Some(argv) = ssot_at(ssot, "keybindings.global.action_argv").and_then(|a| a.get(action)).and_then(toml::Value::as_array) {
+        let argv: Option<Vec<&str>> = argv.iter().map(toml::Value::as_str).collect();
+        return argv.is_some_and(|a| !a.is_empty() && a == words);
+    }
+    let Some(prog) = action.strip_prefix("exec:").filter(|p| !p.is_empty() && !p.contains(char::is_whitespace)) else {
+        return false;
+    };
+    if prog == "mios-terminal" {
+        let terminal = ssot_at(ssot, "keybindings.actions").and_then(toml::Value::as_array).into_iter().flatten()
+            .find(|a| a.get("id").and_then(toml::Value::as_str) == Some("terminal"))
+            .and_then(|a| a.get("desktop_command")).and_then(toml::Value::as_str);
+        return terminal.is_some_and(|t| t.split_whitespace().eq(words.iter().copied()));
+    }
+    matches!(words.as_slice(), [w] if *w == prog || w.rsplit_once('/').is_some_and(|(_, base)| base == prog))
+}
+
+/// The command of a literal `hl.dsp.exec_cmd("...")` Lua dispatcher (string escapes undone), else None.
+pub fn lua_exec_command(dispatcher: &str) -> Option<String> {
+    let body = dispatcher.trim_start().strip_prefix("hl.dsp.exec_cmd(")?.trim_start().strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                d if d.is_ascii_digit() => {
+                    let mut n = d.to_digit(10)?;
+                    for _ in 0..2 {
+                        n = n * 10 + chars.next()?.to_digit(10)?;
+                    }
+                    out.push(char::from_u32(n)?);
+                }
+                o => out.push(o),
+            },
+            c => out.push(c),
+        }
+    }
+    None
+}
+
+/// Whether the literal Lua compositor `dispatcher` (an `hl.dsp.*` expression) runs `action` itself: an exec bind by
+/// [`command_realizes`], or the native dispatcher of the hypr: verbs the compositor tables carry.
+pub fn lua_dispatcher_realizes(ssot: &toml::Value, action: &str, dispatcher: &str) -> bool {
+    if let Some(cmd) = lua_exec_command(dispatcher) {
+        return command_realizes(ssot, action, &cmd);
+    }
+    let d = dispatcher.trim_start();
+    match action {
+        "hypr:killactive" => d.starts_with("hl.dsp.window.close("),
+        "hypr:fullscreen" => d.starts_with("hl.dsp.window.fullscreen(") && d.contains("\"fullscreen\""),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod realization_tests {
+    use super::*;
+    fn ssot() -> toml::Value {
+        toml::from_str(r#"
+[keybindings.global.action_argv]
+"mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
+[[keybindings.actions]]
+id = "terminal"
+desktop_command = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal"
+[[keybindings.actions]]
+id = "system"
+desktop_command = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal --action system"
+"#).unwrap()
+    }
+    fn exec(cmd: &str) -> String { format!("hl.dsp.exec_cmd({})", serde_json::to_string(cmd).unwrap()) }
+    #[test]
+    fn argv_rows_need_the_exact_argv() {
+        let s = ssot();
+        assert!(command_realizes(&s, "mios:screenshot-region", "/usr/bin/mios-shot region"));
+        assert!(!command_realizes(&s, "mios:screenshot-region", "/usr/bin/mios-shot window"));
+        assert!(!command_realizes(&s, "mios:screenshot-region", "/usr/bin/mios-shot region --extra"));
+    }
+    /// V1: an `exec:<prog>` row is realized only by the program itself (or, for mios-terminal, by the SSOT terminal
+    /// action), never by a literal that merely mentions the program among its words. Each negative here was a
+    /// silently dead row under the old any-word rule.
+    #[test]
+    fn exec_rows_are_never_realized_by_an_unrelated_literal() {
+        let s = ssot();
+        let system = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal --action system";
+        let drawer = "quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call drawer toggle";
+        let terminal = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal";
+        assert!(!command_realizes(&s, "exec:alacritty", system));
+        assert!(!command_realizes(&s, "exec:mios-terminal", system));
+        assert!(!command_realizes(&s, "exec:mios-terminal", &format!("{terminal} --action ai")));
+        assert!(!command_realizes(&s, "exec:quickshell", drawer));
+        assert!(!command_realizes(&s, "exec:env", terminal));
+        assert!(!command_realizes(&s, "exec:mios-terminal", "/usr/libexec/mios/mios-terminal"));
+        // positive controls: the row's own realization
+        assert!(command_realizes(&s, "exec:mios-terminal", terminal));
+        assert!(command_realizes(&s, "exec:alacritty", "alacritty"));
+        assert!(command_realizes(&s, "exec:alacritty", "/usr/bin/alacritty"));
+        assert!(!command_realizes(&s, "exec:", "alacritty"));
+    }
+    #[test]
+    fn lua_dispatchers() {
+        let s = ssot();
+        assert_eq!(lua_exec_command(r#"hl.dsp.exec_cmd("a \"b\" \065"), {repeating=true}"#).as_deref(), Some("a \"b\" A"));
+        assert!(lua_dispatcher_realizes(&s, "mios:screenshot-region", &exec("/usr/bin/mios-shot region")));
+        assert!(!lua_dispatcher_realizes(&s, "exec:alacritty", &exec("alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal --action system")));
+        assert!(lua_dispatcher_realizes(&s, "hypr:killactive", "hl.dsp.window.close()"));
+        assert!(!lua_dispatcher_realizes(&s, "hypr:killactive", "hl.dsp.layout(\"togglesplit\")"));
+        assert!(lua_dispatcher_realizes(&s, "hypr:fullscreen", r#"hl.dsp.window.fullscreen({["mode"] = "fullscreen"})"#));
+        assert!(!lua_dispatcher_realizes(&s, "hypr:fullscreen", r#"hl.dsp.window.fullscreen({["mode"] = "maximized"})"#));
+        assert_eq!(dispatch_command("tmux:key it's"), "/usr/libexec/mios/mios-inputd dispatch 'tmux:key it'\\''s'");
+    }
+}

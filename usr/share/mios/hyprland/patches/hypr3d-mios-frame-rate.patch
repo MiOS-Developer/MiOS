@@ -2,7 +2,7 @@ MiOS Hypr3D frame rate (applies after hypr3d-mios-edge-quality.patch). The room 
 policy ([desktop.framerate], operator 2026-10-23: performance 90, balanced / power-saver / battery 60, gaming
 120, unlocked = the output maximum; glass refraction and reflection at 1/3 of the desktop rate, 1/2 for gaming
 and unlocked; the wallpaper at 1/2, the full rate when unlocked). miosd framerate and mios-gen
-hyprland-3d-toggle (SUPER+G) send the running tier's rates; every key is partial and live, and 0 keeps the
+hyprland-3d-toggle (the room toggle_key, SUPER+F12) send the running tier's rates; every key is partial and live, and 0 keeps the
 upstream behaviour:
 
 - render.max_fps (0..1000; 0 = the fixed 8 ms pump). The frame pump that keeps the room animated asks for a
@@ -442,7 +442,7 @@ index e0f0e9e..c828f93 100644
 +// MiOS frame rate (hypr3d-mios-frame-rate.patch, [desktop.framerate]): render.max_fps paces the pump on
 +// phase-locked deadlines (0 = the 8 ms pump above); world.live_fps re-captures the live dome only that often
 +// (0 = every frame); render.glass_fps / glass_cache_mib live in GLScene (refraction backdrops + reflected dome).
-+// miosd framerate and SUPER+G send the running tier's D, W and G; the compositor cap (mios-pacing) stays the
++// miosd framerate and the room toggle send the running tier's D, W and G; the compositor cap (mios-pacing) stays the
 +// hard limit, this only stops the room asking for frames the cap would defer anyway.
 +static float                                 g_cfgMaxFps  = 0.f;
 +static float                                 g_cfgLiveFps = 0.f;
